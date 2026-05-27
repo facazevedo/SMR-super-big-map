@@ -60,7 +60,7 @@ local function ConfigBool(name, default)
 end
 
 local function DebugPrint(text)
-	if ConfigBool("DebugPrint", true) and Global("print") then
+	if ConfigBool("EnableDiagnosticLogs", ConfigBool("DebugPrint", true)) and Global("print") then
 		print(MOD_PREFIX .. text)
 	end
 end
@@ -317,6 +317,12 @@ local function TileObjects(map, source_width, source_height)
 		end
 	end)
 
+	DebugPrint(string.format(
+		"quadrant object scan complete: source=%s outside=%s",
+		tostring(#source_objects),
+		tostring(#outside_objects)
+	))
+
 	if ConfigBool("QuadrantCopyDeleteGeneratedOutsideSource", true) then
 		local done_object = Global("DoneObject")
 		for i = 1, #outside_objects do
@@ -325,6 +331,9 @@ local function TileObjects(map, source_width, source_height)
 				SafeCall(done_object, obj)
 			elseif type(obj.delete) == "function" then
 				SafeCall(obj.delete, obj)
+			end
+			if i % 1000 == 0 or i == #outside_objects then
+				DebugPrint("quadrant outside-object cleanup progress " .. tostring(i) .. "/" .. tostring(#outside_objects))
 			end
 		end
 	end
@@ -348,12 +357,20 @@ local function TileObjects(map, source_width, source_height)
 				cloned = cloned + 1
 			end
 		end
+		if i % 1000 == 0 or i == #source_objects then
+			DebugPrint(string.format(
+				"quadrant object clone progress %s/%s source, %s clones",
+				tostring(i),
+				tostring(#source_objects),
+				tostring(cloned)
+			))
+		end
 	end
 
 	return #source_objects, cloned
 end
 
-local function TileGrid(grid, map_width, map_height, source_width, source_height)
+local function TileGrid(grid, map_width, map_height, source_width, source_height, label)
 	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
 		return false
 	end
@@ -371,6 +388,18 @@ local function TileGrid(grid, map_width, map_height, source_width, source_height
 
 	local source_max_x = math.min(offset_x, grid_width - offset_x - 1)
 	local source_max_y = math.min(offset_y, grid_height - offset_y - 1)
+	local progress_interval = 512
+
+	DebugPrint(string.format(
+		"quadrant %s grid copy begin: grid=%s x %s source=%s x %s offset=%s x %s",
+		tostring(label or "terrain"),
+		tostring(grid_width),
+		tostring(grid_height),
+		tostring(source_max_x + 1),
+		tostring(source_max_y + 1),
+		tostring(offset_x),
+		tostring(offset_y)
+	))
 
 	for y = 0, source_max_y do
 		for x = 0, source_max_x do
@@ -379,8 +408,12 @@ local function TileGrid(grid, map_width, map_height, source_width, source_height
 			grid:set(x, y + offset_y, value)
 			grid:set(x + offset_x, y + offset_y, value)
 		end
+		if y % progress_interval == 0 or y == source_max_y then
+			DebugPrint("quadrant " .. tostring(label or "terrain") .. " grid copy row " .. tostring(y + 1) .. "/" .. tostring(source_max_y + 1))
+		end
 	end
 
+	DebugPrint("quadrant " .. tostring(label or "terrain") .. " grid copy complete")
 	return true
 end
 
@@ -402,8 +435,10 @@ local function TileTerrain(map, source_width, source_height)
 	local tiled_any = false
 
 	if type(terrain_api.GetHeightGrid) == "function" and type(terrain_api.SetHeightGrid) == "function" then
+		DebugPrint("quadrant terrain height grid fetch")
 		local height_grid = SafeCall(terrain_api.GetHeightGrid, map)
-		if TileGrid(height_grid, map_width, map_height, source_width, source_height) then
+		if TileGrid(height_grid, map_width, map_height, source_width, source_height, "height") then
+			DebugPrint("quadrant terrain height grid apply")
 			local ok = TryCall(terrain_api.SetHeightGrid, map, height_grid)
 			if not ok then
 				TryCall(terrain_api.SetHeightGrid, map, { height_grid = height_grid })
@@ -416,8 +451,10 @@ local function TileTerrain(map, source_width, source_height)
 	end
 
 	if type(terrain_api.GetTypeGrid) == "function" and type(terrain_api.SetTypeGrid) == "function" then
+		DebugPrint("quadrant terrain type grid fetch")
 		local type_grid = SafeCall(terrain_api.GetTypeGrid, map)
-		if TileGrid(type_grid, map_width, map_height, source_width, source_height) then
+		if TileGrid(type_grid, map_width, map_height, source_width, source_height, "type") then
+			DebugPrint("quadrant terrain type grid apply")
 			local ok = TryCall(terrain_api.SetTypeGrid, map, type_grid)
 			if not ok then
 				TryCall(terrain_api.SetTypeGrid, map, { type_grid = type_grid })
@@ -430,7 +467,9 @@ local function TileTerrain(map, source_width, source_height)
 	end
 
 	if tiled_any and type(terrain_api.RebuildPassability) == "function" then
+		DebugPrint("quadrant terrain rebuild passability begin")
 		SafeCall(terrain_api.RebuildPassability, map)
+		DebugPrint("quadrant terrain rebuild passability complete")
 	end
 
 	return tiled_any

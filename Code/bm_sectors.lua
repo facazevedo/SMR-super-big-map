@@ -1,8 +1,19 @@
 local MOD_PREFIX = "[Bigger Maps] "
-local SECTOR_PATCH_VERSION = 4
+local SECTOR_PATCH_VERSION = 8
 
 local function Global(name)
 	return rawget(_G, name)
+end
+
+local function ClassTable(name)
+	local global_class = Global(name)
+	if type(global_class) == "table" then
+		return global_class
+	end
+
+	local classes = Global("g_Classes")
+	local class_table = type(classes) == "table" and classes[name]
+	return type(class_table) == "table" and class_table or false
 end
 
 local function Config()
@@ -26,8 +37,12 @@ local function ConfigNumber(name, default, min_value)
 	return default
 end
 
+local function DiagnosticLogsEnabled()
+	return ConfigBool("EnableDiagnosticLogs", ConfigBool("DebugPrint", true))
+end
+
 local function DebugPrint(message)
-	if ConfigBool("DebugPrint", true) then
+	if DiagnosticLogsEnabled() then
 		print(MOD_PREFIX .. tostring(message))
 	end
 end
@@ -76,9 +91,13 @@ local function TerrainSize(map)
 	return 0, 0
 end
 
+local function MapData(map)
+	return map and map.mapdata or map
+end
+
 local function MapTileWorldSize(map)
 	local width = TerrainSize(map)
-	local mapdata = map and map.mapdata
+	local mapdata = MapData(map)
 	if width and width > 0 and mapdata and type(mapdata.Width) == "number" and mapdata.Width > 0 then
 		return width / mapdata.Width
 	end
@@ -92,7 +111,7 @@ local function MapTileWorldSize(map)
 end
 
 local function OriginalWidthTiles(map)
-	local mapdata = map and map.mapdata
+	local mapdata = MapData(map)
 	if ConfigBool("VanillaSectorUseSourceQuadrant", true) then
 		local source = map and map.BiggerMapsSourceWidthTiles
 		if type(source) == "number" and source > 0 then
@@ -124,7 +143,7 @@ local function OriginalWidthTiles(map)
 end
 
 local function SectorTargetSize(map)
-	local mapdata = map and map.mapdata
+	local mapdata = MapData(map)
 	local base_tiles = OriginalWidthTiles(map)
 	local base_count = math.floor(ConfigNumber("VanillaSectorBaseCount", 10, 1))
 	local base_border = mapdata and mapdata.BiggerMapsOriginalPassBorder
@@ -137,32 +156,72 @@ local function SectorTargetSize(map)
 end
 
 local function HasExpandedSectorSource(map)
-	local mapdata = map and map.mapdata
+	local mapdata = MapData(map)
 	return map and map.BiggerMapsSourceWidthTiles
 		or map and map.BiggerMapsGeneratorWidthTiles
+		or map and map.BiggerMapsDesiredWidthTiles
 		or mapdata and mapdata.BiggerMapsQuadrantSourceWidthTiles
 end
 
-local function UseCustomSectorsForMap(map)
+local function CustomSectorStatus(map)
 	if not ConfigBool("EnableVanillaSizedSectors", true) or not map then
-		return false
+		return false, not map and "no map" or "disabled"
 	end
 
-	local mapdata = map.mapdata
+	local mapdata = MapData(map)
 	if ConfigBool("VanillaSectorSurfaceOnly", true) and mapdata and mapdata.Environment ~= "Surface" then
-		return false
+		return false, "not surface"
 	end
 
 	if ConfigBool("VanillaSectorExpandedOnly", true) and not HasExpandedSectorSource(map) then
+		return false, "not expanded/no source"
+	end
+
+	return true, "ok"
+end
+
+local function UseCustomSectorsForMap(map)
+	return CustomSectorStatus(map)
+end
+
+-- Forward declaration. ResolveSectorCount derives the grid count from a
+-- configured VanillaSectorForcedCount when set, otherwise from the exact tile
+-- ratio (desired tiles / source tiles * base count). Both the built grid
+-- (ResolveSectorLayout) and the engine-global const.SectorCount
+-- (ConfigureGlobalSectorCount) read it, so they can never disagree.
+local SectorCountFromTiles
+
+local function SectorCountBounds()
+	local min_count = math.floor(ConfigNumber("VanillaSectorMinCount", 10, 1))
+	local max_count = math.floor(ConfigNumber("VanillaSectorMaxCount", 26, min_count))
+	return min_count, max_count
+end
+
+-- Single source of truth for the per-axis sector count. A configured
+-- VanillaSectorForcedCount wins (clamped to the min/max bounds); otherwise the
+-- exact tile ratio is used. Returns false for maps that keep vanilla sectors.
+local function ResolveSectorCount(map)
+	if not UseCustomSectorsForMap(map) then
 		return false
 	end
 
-	return true
+	local min_count, max_count = SectorCountBounds()
+	local forced_count = Config()["VanillaSectorForcedCount"]
+	if type(forced_count) == "number" and forced_count > 0 then
+		return ClampNumber(math.floor(forced_count), min_count, max_count)
+	end
+
+	local tile_count = SectorCountFromTiles(map)
+	if tile_count then
+		return ClampNumber(tile_count, min_count, max_count)
+	end
+
+	return false
 end
 
 local function ResolveSectorLayout(map)
 	local width, height = TerrainSize(map)
-	local mapdata = map and map.mapdata
+	local mapdata = MapData(map)
 	local border = mapdata and mapdata.PassBorder or 0
 	local target = SectorTargetSize(map)
 	local usable_width = math.max(1, width - 2 * border)
@@ -170,13 +229,14 @@ local function ResolveSectorLayout(map)
 	local uniform = ConfigBool("VanillaSectorUniformGrid", true)
 	local count_x = uniform and Round(usable_width / target) or math.ceil(usable_width / target)
 	local count_y = uniform and Round(usable_height / target) or math.ceil(usable_height / target)
-	local min_count = math.floor(ConfigNumber("VanillaSectorMinCount", 10, 1))
-	local max_count = math.floor(ConfigNumber("VanillaSectorMaxCount", 26, min_count))
-	local forced_count = Config()["VanillaSectorForcedCount"]
+	local min_count, max_count = SectorCountBounds()
 
-	if type(forced_count) == "number" and forced_count > 0 then
-		count_x = ClampNumber(math.floor(forced_count), min_count, max_count)
-		count_y = count_x
+	local resolved = ResolveSectorCount(map)
+	if resolved then
+		-- Forced count or exact tile ratio. Keeps the built grid in sync with the
+		-- SectorCount set by ConfigureGlobalSectorCount.
+		count_x = resolved
+		count_y = resolved
 	else
 		count_x = ClampNumber(count_x, min_count, max_count)
 		count_y = ClampNumber(count_y, min_count, max_count)
@@ -196,6 +256,121 @@ local function ResolveSectorLayout(map)
 		width = width,
 		height = height,
 	}
+end
+
+local function DesiredWidthTiles(map)
+	local mapdata = MapData(map)
+	local value = map and map.BiggerMapsDesiredWidthTiles
+	if type(value) == "number" and value > 0 then
+		return value
+	end
+
+	value = mapdata and mapdata.Width
+	if type(value) == "number" and value > 0 then
+		return value
+	end
+
+	return false
+end
+
+local function SourceWidthTiles(map)
+	local mapdata = MapData(map)
+	local value = map and (map.BiggerMapsSourceWidthTiles or map.BiggerMapsGeneratorWidthTiles)
+	if type(value) == "number" and value > 0 then
+		return value
+	end
+
+	value = mapdata and mapdata.BiggerMapsQuadrantSourceWidthTiles
+	if type(value) == "number" and value > 0 then
+		return value
+	end
+
+	return OriginalWidthTiles(map)
+end
+
+-- Assigns to the local forward-declared above so ResolveSectorLayout can call it.
+function SectorCountFromTiles(map)
+	if not UseCustomSectorsForMap(map) then
+		return false
+	end
+
+	local desired = DesiredWidthTiles(map)
+	local source = SourceWidthTiles(map)
+	local base_count = math.floor(ConfigNumber("VanillaSectorBaseCount", 10, 1))
+	if desired and source and source > 0 then
+		return math.max(1, Round(desired * base_count / source))
+	end
+
+	return false
+end
+
+local function BoolText(value)
+	return value and "true" or "false"
+end
+
+local function MapName(map)
+	local mapdata = MapData(map)
+	return tostring(map and map.name or mapdata and (mapdata.id or mapdata.name) or "map")
+end
+
+local function DescribeMap(map)
+	local mapdata = MapData(map)
+	local width, height = TerrainSize(map)
+	local custom, reason = CustomSectorStatus(map)
+	local desired = DesiredWidthTiles(map)
+	local source = SourceWidthTiles(map)
+	local count = ResolveSectorCount(map) or false
+
+	return string.format(
+		"map=%s env=%s terrain=%s x %s mapdata=%s x %s sourceTiles=%s desiredTiles=%s custom=%s reason=%s count=%s const=%s",
+		MapName(map),
+		tostring(mapdata and mapdata.Environment),
+		tostring(width),
+		tostring(height),
+		tostring(mapdata and mapdata.Width),
+		tostring(mapdata and mapdata.Height),
+		tostring(source),
+		tostring(desired),
+		BoolText(custom),
+		tostring(reason),
+		tostring(count),
+		tostring(Global("const") and const.SectorCount)
+	)
+end
+
+local function ConfigureGlobalSectorCount(map, reason)
+	local const = Global("const")
+	if type(const) ~= "table" then
+		DebugPrint("sector count not configured via " .. tostring(reason) .. ": const missing")
+		return false
+	end
+
+	local count = ResolveSectorCount(map)
+	if not count then
+		DebugPrint("sector count not configured via " .. tostring(reason) .. ": " .. DescribeMap(map))
+		return false
+	end
+
+	if const.BiggerMapsOriginalSectorCount == nil then
+		const.BiggerMapsOriginalSectorCount = const.SectorCount
+	end
+
+	if const.SectorCount ~= count then
+		const.SectorCount = count
+		DebugPrint(string.format(
+			"sector count set to %s via %s",
+			tostring(count),
+			tostring(reason or "map")
+		))
+	else
+		DebugPrint(string.format(
+			"sector count already %s via %s",
+			tostring(count),
+			tostring(reason or "map")
+		))
+	end
+
+	return count
 end
 
 local function ForEachSector(city, callback)
@@ -269,6 +444,9 @@ local function BuildFastInitialReveal(original_initial_reveal)
 		local has_metals, has_concrete = {}, {}
 		local qty_per_sector = {}
 		local deposit_resources = Global("GroupResourceIds") and GroupResourceIds.DepositResources or {}
+		local progress_interval = math.floor(ConfigNumber("VanillaSectorInitialRevealProgressInterval", 50, 1))
+
+		DebugPrint("fast initial reveal evaluating " .. tostring(#eligible) .. " candidate sectors")
 
 		for i = 1, #eligible do
 			local sector = eligible[i]
@@ -297,6 +475,9 @@ local function BuildFastInitialReveal(original_initial_reveal)
 				has_concrete[#has_concrete + 1] = sector
 			end
 			qty_per_sector[sector.id] = qtys
+			if progress_interval > 0 and i % progress_interval == 0 then
+				DebugPrint("fast initial reveal progress " .. tostring(i) .. "/" .. tostring(#eligible))
+			end
 		end
 
 		local function weight_func(sector)
@@ -397,7 +578,8 @@ local function BuildSector(map, city, row, col, layout, orient, unbuildable_z, e
 		col = col,
 		city = city,
 	}
-	local sector = MapSector:new(sector_data, map.slot)
+	local map_sector_class = ClassTable("MapSector")
+	local sector = map_sector_class:new(sector_data, map.slot)
 	InitSector(map, sector, eligible_sectors)
 	return sector
 end
@@ -421,33 +603,33 @@ local function SetSectorCountForInit(count, fn)
 	return result
 end
 
-local function InstallSectorPatch()
-	if not ConfigBool("EnableVanillaSizedSectors", true) then
-		return false
-	end
+local function InstallBasicSectorPatch()
+	DebugPrint(string.format(
+		"sector basic patch attempt v%s: GetMapSectorTileSize=%s GetMapSectorXY=%s InitialReveal=%s",
+		tostring(SECTOR_PATCH_VERSION),
+		type(Global("GetMapSectorTileSize")),
+		type(Global("GetMapSectorXY")),
+		type(Global("InitialReveal"))
+	))
 
-	if Global("BiggerMapsSectorPatchVersion") == SECTOR_PATCH_VERSION then
+	if Global("BiggerMapsSectorBasicPatchVersion") == SECTOR_PATCH_VERSION then
+		DebugPrint("sector basic functions already patched")
 		return true
 	end
 
-	if type(Global("Exploration")) ~= "table" or type(Global("MapSector")) ~= "table" or type(Global("InitSector")) ~= "function" then
+	if type(Global("GetMapSectorTileSize")) ~= "function" then
+		DebugPrint("sector patch waiting for GetMapSectorTileSize")
 		return false
 	end
 
-	if type(Global("GetMapSectorTileSize")) ~= "function" then
+	if type(Global("GetMapSectorXY")) ~= "function" then
+		DebugPrint("sector patch waiting for GetMapSectorXY")
 		return false
 	end
 
 	rawset(_G, "BiggerMapsOriginalGetMapSectorTileSize", Global("BiggerMapsOriginalGetMapSectorTileSize") or GetMapSectorTileSize)
 	rawset(_G, "BiggerMapsOriginalGetMapSectorXY", Global("BiggerMapsOriginalGetMapSectorXY") or GetMapSectorXY)
-	rawset(_G, "BiggerMapsOriginalExplorationInitSectors", Global("BiggerMapsOriginalExplorationInitSectors") or Exploration.InitSectors)
-	rawset(_G, "BiggerMapsOriginalExplorationInitMapArea", Global("BiggerMapsOriginalExplorationInitMapArea") or Exploration.InitMapArea)
-	rawset(_G, "BiggerMapsOriginalExplorationUpdateBuildableRatio", Global("BiggerMapsOriginalExplorationUpdateBuildableRatio") or Exploration.UpdateBuildableRatio)
 	rawset(_G, "BiggerMapsOriginalInitialReveal", Global("BiggerMapsOriginalInitialReveal") or InitialReveal)
-
-	if type(Global("BiggerMapsOriginalInitialReveal")) == "function" then
-		InitialReveal = BuildFastInitialReveal(BiggerMapsOriginalInitialReveal)
-	end
 
 	function GetMapSectorTileSize(map)
 		if UseCustomSectorsForMap(map) then
@@ -471,14 +653,82 @@ local function InstallSectorPatch()
 		return sector_col and sector_col[row]
 	end
 
-	function Exploration:InitSectors(map, eligible_sectors_with_surface_deposits_out)
+	if type(Global("BiggerMapsOriginalInitialReveal")) == "function" then
+		InitialReveal = BuildFastInitialReveal(BiggerMapsOriginalInitialReveal)
+	end
+
+	rawset(_G, "BiggerMapsSectorBasicPatchVersion", SECTOR_PATCH_VERSION)
+	DebugPrint("sector basic functions patched")
+	return true
+end
+
+local function InstallSectorPatch()
+	DebugPrint(string.format(
+		"sector full patch attempt v%s: Exploration=%s g_Exploration=%s MapSector=%s InitSector=%s",
+		tostring(SECTOR_PATCH_VERSION),
+		type(Global("Exploration")),
+		type(ClassTable("Exploration")),
+		type(ClassTable("MapSector")),
+		type(Global("InitSector"))
+	))
+
+	if not ConfigBool("EnableVanillaSizedSectors", true) then
+		DebugPrint("sector full patch disabled")
+		return false
+	end
+
+	if Global("BiggerMapsSectorPatchVersion") == SECTOR_PATCH_VERSION then
+		DebugPrint("sector full patch already installed")
+		return true
+	end
+
+	if not InstallBasicSectorPatch() then
+		return false
+	end
+
+	local exploration_class = ClassTable("Exploration")
+	local map_sector_class = ClassTable("MapSector")
+
+	if type(Global("InitSector")) ~= "function" then
+		DebugPrint("sector patch waiting for InitSector")
+		return false
+	end
+
+	if not exploration_class then
+		DebugPrint("sector patch waiting for Exploration class")
+		return false
+	end
+
+	if not map_sector_class then
+		DebugPrint("sector patch waiting for MapSector class")
+		return false
+	end
+
+	rawset(_G, "BiggerMapsOriginalExplorationInitSectors", Global("BiggerMapsOriginalExplorationInitSectors") or exploration_class.InitSectors)
+	rawset(_G, "BiggerMapsOriginalExplorationInitMapArea", Global("BiggerMapsOriginalExplorationInitMapArea") or exploration_class.InitMapArea)
+	rawset(_G, "BiggerMapsOriginalExplorationUpdateBuildableRatio", Global("BiggerMapsOriginalExplorationUpdateBuildableRatio") or exploration_class.UpdateBuildableRatio)
+
+	exploration_class.InitSectors = function(self, map, eligible_sectors_with_surface_deposits_out)
 		if not UseCustomSectorsForMap(map) then
+			DebugPrint("sector InitSectors using vanilla path: " .. DescribeMap(map))
 			return BiggerMapsOriginalExplorationInitSectors(self, map, eligible_sectors_with_surface_deposits_out)
 		end
 
+		ConfigureGlobalSectorCount(map, "InitSectors")
 		local layout = ResolveSectorLayout(map)
 		local orient = map.mapdata.OverviewOrientation
 		local unbuildable_z = buildUnbuildableZ()
+		local progress_interval = math.floor(ConfigNumber("VanillaSectorProgressColumnInterval", 2, 1))
+
+		DebugPrint(string.format(
+			"sector InitSectors begin: %s layout=%s x %s target=%s actual=%s x %s",
+			DescribeMap(map),
+			tostring(layout.count_x),
+			tostring(layout.count_y),
+			tostring(layout.target),
+			tostring(Round(layout.step_x)),
+			tostring(Round(layout.step_y))
+		))
 
 		return SetSectorCountForInit(layout.count, function()
 			self.ExplorationQueue = {}
@@ -493,6 +743,9 @@ local function InstallSectorPatch()
 					local sector = BuildSector(map, self, row, col, layout, orient, unbuildable_z, eligible_sectors_with_surface_deposits_out)
 					sectors_col[row] = sector
 					self.MapSectors[sector] = true
+				end
+				if progress_interval > 0 and (col % progress_interval == 0 or col == layout.count_x) then
+					DebugPrint("sector InitSectors progress column " .. tostring(col) .. "/" .. tostring(layout.count_x))
 				end
 			end
 
@@ -509,8 +762,9 @@ local function InstallSectorPatch()
 		end)
 	end
 
-	function Exploration:InitMapArea()
+	exploration_class.InitMapArea = function(self)
 		if not UseCustomSectorsForMap(self:GetMap()) then
+			DebugPrint("sector InitMapArea using vanilla path: " .. DescribeMap(self:GetMap()))
 			return BiggerMapsOriginalExplorationInitMapArea(self)
 		end
 
@@ -520,20 +774,24 @@ local function InstallSectorPatch()
 		self.MapArea = box(
 			self.MapSectors[1][1].area:min(),
 			self.MapSectors[last_col][last_row].area:max())
+		DebugPrint("sector InitMapArea complete: " .. tostring(last_col) .. " x " .. tostring(last_row))
 	end
 
-	function Exploration:UpdateBuildableRatio(bbox)
+	exploration_class.UpdateBuildableRatio = function(self, bbox)
 		if not UseCustomSectorsForMap(self:GetMap()) then
 			return BiggerMapsOriginalExplorationUpdateBuildableRatio(self, bbox)
 		end
 
 		local unbuildable_z = buildUnbuildableZ()
 		local buildable_grid = self:GetMap().buildable
+		local processed = 0
 		ForEachSector(self, function(sector)
 			if not bbox or bbox:Intersect2D(sector.area) ~= const.irOutside then
 				sector.play_ratio = BuildableGridRatio(buildable_grid.z_grid, unbuildable_z, 100, sector.area)
+				processed = processed + 1
 			end
 		end)
+		DebugPrint("sector UpdateBuildableRatio processed " .. tostring(processed) .. " sectors")
 	end
 
 	function UnexploredSectorsExist(city)
@@ -557,7 +815,7 @@ local function InstallSectorPatch()
 		return can_scan, fully_scanned
 	end
 
-	function Exploration:GatherDiscoveredDeposits()
+	exploration_class.GatherDiscoveredDeposits = function(self)
 		local deposits = InitDepositInfoTable()
 
 		ForEachSector(self, function(sector)
@@ -612,37 +870,47 @@ local function ChainOnMsg(message_name, handler)
 	end
 end
 
-DebugPrint("sector patch loaded")
+DebugPrint("sector patch loaded v" .. tostring(SECTOR_PATCH_VERSION))
 InstallSectorPatch()
 
+local function EnsureSectorPatch(map, reason)
+	DebugPrint("sector EnsureSectorPatch via " .. tostring(reason) .. ": " .. DescribeMap(map))
+	InstallSectorPatch()
+	ConfigureGlobalSectorCount(map, reason)
+end
+
 ChainOnMsg("ClassesPostprocess", function()
+	DebugPrint("sector hook ClassesPostprocess")
 	InstallSectorPatch()
 end)
 
 ChainOnMsg("ClassesBuilt", function()
+	DebugPrint("sector hook ClassesBuilt")
 	InstallSectorPatch()
 end)
 
 ChainOnMsg("DataLoaded", function()
+	DebugPrint("sector hook DataLoaded")
 	InstallSectorPatch()
 end)
 
 ChainOnMsg("ModsReloaded", function()
+	DebugPrint("sector hook ModsReloaded")
 	InstallSectorPatch()
 end)
 
-ChainOnMsg("ChangingMap", function()
-	InstallSectorPatch()
+ChainOnMsg("ChangingMap", function(map_slot, map_name, map_instance)
+	EnsureSectorPatch(map_instance, "ChangingMap")
 end)
 
-ChainOnMsg("PreNewMap", function()
-	InstallSectorPatch()
+ChainOnMsg("PreNewMap", function(map, mapdata)
+	EnsureSectorPatch(map or mapdata, "PreNewMap")
 end)
 
-ChainOnMsg("NewMap", function()
-	InstallSectorPatch()
+ChainOnMsg("NewMap", function(map, mapdata)
+	EnsureSectorPatch(map or mapdata, "NewMap")
 end)
 
-ChainOnMsg("MapGenerated", function()
-	InstallSectorPatch()
+ChainOnMsg("MapGenerated", function(map)
+	EnsureSectorPatch(map, "MapGenerated")
 end)

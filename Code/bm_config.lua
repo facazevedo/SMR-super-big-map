@@ -37,7 +37,9 @@ config.OverviewFarZ = 12000000
 -- Hide the dark overview map curtains around the visible map.
 config.HideOverviewCurtains = true
 
--- Print one-line Bigger Maps status messages in the game console/log.
+-- Print Bigger Maps status and diagnostic messages in the game console/log.
+-- Turn this off once the experimental map/sector flow is stable.
+config.EnableDiagnosticLogs = true
 config.DebugPrint = true
 
 -- Experimental 2x2 map tiling.
@@ -71,16 +73,22 @@ config.QuadrantCopyDeleteGeneratedOutsideSource = true
 -- Experimental sector layout for expanded maps.
 -- The native expansion hack generates a 4096-tile source quadrant with the
 -- normal 10 x 10 sector layout, then tiles that quadrant into an 8192 map.
--- Using the source quadrant as the sector base gives a clean 20 x 20 grid with
--- the same sector footprint as the generated pre-copy map.
+-- The exact tile ratio (8192 / 4096 * 10) yields a 20 x 20 grid with the same
+-- sector footprint as the pre-copy map. To get a finer overview grid, set
+-- VanillaSectorForcedCount to the desired per-axis count (e.g. 40 -> 40 x 40,
+-- half-size sectors). The forced count is clamped to [MinCount, MaxCount], so
+-- MaxCount must be at least the forced count. ResolveSectorCount feeds both the
+-- built grid and const.SectorCount, so they always match.
 config.EnableVanillaSizedSectors = true
 config.VanillaSectorUniformGrid = true
 config.VanillaSectorUseSourceQuadrant = true
 config.VanillaSectorSurfaceOnly = true
 config.VanillaSectorExpandedOnly = true
-config.VanillaSectorForcedCount = false
+config.VanillaSectorForcedCount = 40
 config.VanillaSectorBaseMapTiles = 4096
 config.VanillaSectorBaseCount = 10
 config.VanillaSectorMinCount = 10
-config.VanillaSectorMaxCount = 30
+config.VanillaSectorMaxCount = 40
 config.VanillaSectorFastInitialReveal = true
+config.VanillaSectorProgressColumnInterval = 2
+config.VanillaSectorInitialRevealProgressInterval = 50

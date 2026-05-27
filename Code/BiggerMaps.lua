@@ -135,7 +135,7 @@ local NORMAL_ZOOM_MULTIPLIER = ConfigNumber(
 )
 local ALLOW_ZOOMPLUS_WITH_SCENARIO_EDITOR_HOST = ConfigBool("AllowZoomPlusWithScenarioEditorHost", true)
 local HIDE_OVERVIEW_CURTAINS = ConfigBool("HideOverviewCurtains", true)
-local DEBUG_PRINT = ConfigBool("DebugPrint", true)
+local DEBUG_PRINT = ConfigBool("EnableDiagnosticLogs", ConfigBool("DebugPrint", true))
 local overview_camera_patched = false
 local original_calc_overview_camera_pos = false
 local original_calc_overview_curtains_size = false
