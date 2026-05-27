@@ -15,4 +15,8 @@ return {
 		'name', "BiggerMapsQuadrantTiler",
 		'CodeFileName', "Code/bm_quadrant_tiler.lua",
 	}),
+	PlaceObj('ModItemCode', {
+		'name', "BiggerMapsSectors",
+		'CodeFileName', "Code/bm_sectors.lua",
+	}),
 }

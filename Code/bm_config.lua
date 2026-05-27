@@ -67,3 +67,20 @@ config.QuadrantCopyTerrain = true
 config.QuadrantCopyObjects = true
 config.QuadrantCopyEnumFlags = false
 config.QuadrantCopyDeleteGeneratedOutsideSource = true
+
+-- Experimental sector layout for expanded maps.
+-- The native expansion hack generates a 4096-tile source quadrant with the
+-- normal 10 x 10 sector layout, then tiles that quadrant into an 8192 map.
+-- Using the source quadrant as the sector base gives a clean 20 x 20 grid with
+-- the same sector footprint as the generated pre-copy map.
+config.EnableVanillaSizedSectors = true
+config.VanillaSectorUniformGrid = true
+config.VanillaSectorUseSourceQuadrant = true
+config.VanillaSectorSurfaceOnly = true
+config.VanillaSectorExpandedOnly = true
+config.VanillaSectorForcedCount = false
+config.VanillaSectorBaseMapTiles = 4096
+config.VanillaSectorBaseCount = 10
+config.VanillaSectorMinCount = 10
+config.VanillaSectorMaxCount = 30
+config.VanillaSectorFastInitialReveal = true

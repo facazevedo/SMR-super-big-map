@@ -12,6 +12,7 @@ return PlaceObj('ModDef', {
 		"Code/ZoomPlus.lua",
 		"Code/BiggerMaps.lua",
 		"Code/bm_quadrant_tiler.lua",
+		"Code/bm_sectors.lua",
 	},
 	'saved', 1780000000,
 	'TagGameplay', true,
