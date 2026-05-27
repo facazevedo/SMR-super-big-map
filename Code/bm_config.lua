@@ -7,6 +7,67 @@ if type(config) ~= "table" then
 	rawset(_G, "BiggerMapsConfig", config)
 end
 
+-- ============================================================================
+-- MAIN SETTINGS: map size and sector grid
+-- ============================================================================
+-- These two values are the primary controls for the mod. The detailed flags in
+-- the "Experimental ..." sections below are DERIVED from them, so in normal use
+-- you only edit these two lines. Set BOTH to "original" for plain, unmodified
+-- vanilla Surviving Mars behaviour.
+--
+-- config.BiggerMapsTerrainSize -- how large the playable terrain is:
+--     "original"  Vanilla map size. No expansion: the game builds and renders
+--                 its normal terrain. (Vanilla configuration.)
+--     "expanded"  2x2 native expansion. The mod allocates an 8192-tile map, has
+--                 the generator produce only a 4096-tile top-left source
+--                 quadrant, then copies that quadrant into the other three
+--                 quadrants -- about 4x the vanilla play area on a single map.
+--                 Applies to random Surface maps only; everything else (e.g.
+--                 underground breakthroughs) stays vanilla.
+--
+-- config.BiggerMapsSectorGrid -- how the overview "sector tiles" (the lettered
+--                                scan grid you see in overview) are laid out.
+--                                Sectors are always vanilla-sized (~40960 world
+--                                units / 410 tiles, never changes); the options
+--                                differ in count and grid position:
+--     "original"                Vanilla: a 10 x 10 grid over the bordered PLAYABLE
+--                               area only -- the map's outer border is left out of
+--                               the grid, exactly like the unmodified game. The mod
+--                               does not touch sectors or bounds. (Vanilla.)
+--     "expanded"                Clean grid from the map corner (0,0): 20 x 20 full
+--                               vanilla-sized sectors on the 8192 map, no partials.
+--                               The whole terrain is made playable. RECOMMENDED:
+--                               this matches the engine's own overview/selection
+--                               grid (which the engine always anchors at the map
+--                               corner), so the hover highlight lines up with the
+--                               sectors and you can click them precisely.
+--     "expanded_with_vanilla_grid"
+--                               Same vanilla-sized sectors, but the grid is shifted
+--                               to the ORIGINAL map's grid offset so the lines match
+--                               where vanilla drew them. CAVEAT: the engine's hover-
+--                               highlight is hard-anchored at the map corner and
+--                               cannot be moved from Lua, so with this option the
+--                               selection highlight does NOT line up with the shifted
+--                               grid (you can't reliably click a sector). Use only if
+--                               you care about the grid lines' position over clicking.
+--
+-- Recommended combinations:
+--     "expanded" + "expanded"                    big 8192 map, clean grid, working selection (default)
+--     "original" + "original"                    completely vanilla map and sectors
+--     "expanded" + "expanded_with_vanilla_grid"  vanilla-aligned grid lines, but selection is offset
+-- ============================================================================
+config.BiggerMapsTerrainSize = "expanded"
+config.BiggerMapsSectorGrid = "expanded_with_vanilla_grid"
+
+-- Derived from the two settings above (edit the settings, not these helpers).
+local bm_expanded_terrain = config.BiggerMapsTerrainSize == "expanded"
+local bm_align_vanilla_grid = config.BiggerMapsSectorGrid == "expanded_with_vanilla_grid"
+local bm_expanded_grid = config.BiggerMapsSectorGrid == "expanded" or bm_align_vanilla_grid
+-- Enlarge the playable area to the full terrain (border included) whenever the
+-- terrain or the sector grid is expanded; "original" + "original" leaves the
+-- vanilla border untouched. Read by BiggerMaps.lua.
+config.BiggerMapsFullMapPlayable = bm_expanded_terrain or bm_expanded_grid
+
 -- Normal camera zoom. ZoomPlus applies:
 -- LookatDistZoomOut = original.LookatDistZoomOut * ZoomPlusLookatDistZoomOutMultiplier.
 config.EnableNormalZoomPlus = true
@@ -42,11 +103,10 @@ config.HideOverviewCurtains = true
 config.EnableDiagnosticLogs = true
 config.DebugPrint = true
 
--- Experimental 2x2 map tiling.
--- New random surface maps are created at twice their normal width and height.
--- After vanilla generation finishes, the upper-left quadrant is copied to the
--- right, bottom, and bottom-right quadrants.
-config.EnableQuadrantMapCopy = true
+-- Experimental 2x2 map tiling. Controlled by BiggerMapsTerrainSize above
+-- ("expanded" enables it, "original" disables it). New random surface maps are
+-- created larger, then the source quadrant is copied into the other quadrants.
+config.EnableQuadrantMapCopy = bm_expanded_terrain
 config.QuadrantCopyScale = 2
 config.QuadrantCopyMaxTerrainTiles = 8192
 -- The random map generator's stable-position helper asserts around 8192
@@ -56,7 +116,8 @@ config.QuadrantCopyMaxRandomGeneratorTiles = 6144
 config.QuadrantCopyRendererNodeTileAlignment = 2048
 -- Experimental native-size hack: allocate an 8192 map, generate only a 4096
 -- top-left source quadrant, then tile that quadrant into the rest of the map.
-config.QuadrantCopyNativeExpansionHack = true
+-- Enabled together with BiggerMapsTerrainSize = "expanded".
+config.QuadrantCopyNativeExpansionHack = bm_expanded_terrain
 config.QuadrantCopyForceExpandedTiles = 8192
 config.QuadrantCopyGeneratorSourceTiles = 4096
 config.QuadrantCopyLimitGeneratorToSource = true
@@ -70,21 +131,28 @@ config.QuadrantCopyObjects = true
 config.QuadrantCopyEnumFlags = false
 config.QuadrantCopyDeleteGeneratedOutsideSource = true
 
--- Experimental sector layout for expanded maps.
--- The native expansion hack generates a 4096-tile source quadrant with the
--- normal 10 x 10 sector layout, then tiles that quadrant into an 8192 map.
--- The exact tile ratio (8192 / 4096 * 10) yields a 20 x 20 grid with the same
--- sector footprint as the pre-copy map. To get a finer overview grid, set
--- VanillaSectorForcedCount to the desired per-axis count (e.g. 40 -> 40 x 40,
--- half-size sectors). The forced count is clamped to [MinCount, MaxCount], so
--- MaxCount must be at least the forced count. ResolveSectorCount feeds both the
--- built grid and const.SectorCount, so they always match.
-config.EnableVanillaSizedSectors = true
+-- Experimental sector (overview-grid) layout, used only when BiggerMapsSectorGrid
+-- is "expanded". The mod divides the whole map into vanilla-sized sectors;
+-- ResolveSectorCount feeds both the built grid and const.SectorCount from the
+-- same value, so they always match. When BiggerMapsSectorGrid is "original" the
+-- whole patch stays out of the way (EnableVanillaSizedSectors = false) and the
+-- game builds its normal 10 x 10 playable-area grid.
+config.EnableVanillaSizedSectors = bm_expanded_grid
 config.VanillaSectorUniformGrid = true
 config.VanillaSectorUseSourceQuadrant = true
 config.VanillaSectorSurfaceOnly = true
-config.VanillaSectorExpandedOnly = true
-config.VanillaSectorForcedCount = 40
+-- The expanded grid covers the whole loaded map, so it is not restricted to maps
+-- that were terrain-expanded.
+config.VanillaSectorExpandedOnly = false
+-- No fixed number: the count auto-derives so each sector matches the vanilla
+-- sector footprint (see ResolveSectorCount in bm_sectors.lua).
+config.VanillaSectorForcedCount = false
+-- "expanded_with_vanilla_grid": anchor the grid to the original map's border
+-- offset (partial edge sectors) instead of a clean division from the corner.
+config.VanillaSectorAlignToVanillaGrid = bm_align_vanilla_grid
+-- Optional manual anchor (world units) for the aligned grid. false = derive it
+-- from the original map's PassBorder. Set a number to override if needed.
+config.VanillaSectorGridAnchor = false
 config.VanillaSectorBaseMapTiles = 4096
 config.VanillaSectorBaseCount = 10
 config.VanillaSectorMinCount = 10

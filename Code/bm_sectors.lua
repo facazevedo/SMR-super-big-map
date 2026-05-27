@@ -1,5 +1,5 @@
 local MOD_PREFIX = "[Bigger Maps] "
-local SECTOR_PATCH_VERSION = 8
+local SECTOR_PATCH_VERSION = 21
 
 local function Global(name)
 	return rawget(_G, name)
@@ -142,16 +142,16 @@ local function OriginalWidthTiles(map)
 	return ConfigNumber("VanillaSectorBaseMapTiles", 4096, 1)
 end
 
+-- The TRUE vanilla sector footprint, in world units. It must never change with
+-- map expansion: every sector always stays the size of a vanilla sector.
+-- Verified against a full-resolution vanilla sector dump
+-- (terrains/sector_15.lua: a 410 x 410 grid at step 100 ~= 40960 world units),
+-- which equals source map tiles / vanilla sector count (4096 * 100 / 10 = 40960).
+-- No border term: vanilla sectors span essentially the whole source map.
 local function SectorTargetSize(map)
-	local mapdata = MapData(map)
 	local base_tiles = OriginalWidthTiles(map)
 	local base_count = math.floor(ConfigNumber("VanillaSectorBaseCount", 10, 1))
-	local base_border = mapdata and mapdata.BiggerMapsOriginalPassBorder
-	if type(base_border) ~= "number" then
-		base_border = mapdata and mapdata.PassBorder or 0
-	end
-
-	local target = (base_tiles * MapTileWorldSize(map) - 2 * base_border) / base_count
+	local target = base_tiles * MapTileWorldSize(map) / base_count
 	return math.max(1, Round(target))
 end
 
@@ -184,62 +184,63 @@ local function UseCustomSectorsForMap(map)
 	return CustomSectorStatus(map)
 end
 
--- Forward declaration. ResolveSectorCount derives the grid count from a
--- configured VanillaSectorForcedCount when set, otherwise from the exact tile
--- ratio (desired tiles / source tiles * base count). Both the built grid
--- (ResolveSectorLayout) and the engine-global const.SectorCount
--- (ConfigureGlobalSectorCount) read it, so they can never disagree.
-local SectorCountFromTiles
-
 local function SectorCountBounds()
 	local min_count = math.floor(ConfigNumber("VanillaSectorMinCount", 10, 1))
 	local max_count = math.floor(ConfigNumber("VanillaSectorMaxCount", 26, min_count))
 	return min_count, max_count
 end
 
--- Single source of truth for the per-axis sector count. A configured
--- VanillaSectorForcedCount wins (clamped to the min/max bounds); otherwise the
--- exact tile ratio is used. Returns false for maps that keep vanilla sectors.
-local function ResolveSectorCount(map)
+-- The grid offset (world units) for the current map: the vanilla-grid alignment
+-- offset for "expanded_with_vanilla_grid", else 0. Computed deterministically here
+-- (NOT read from mapdata.PassBorder, which the engine and other code reset at
+-- various times) so the BUILT grid and the cursor->sector lookup always use the
+-- exact same value. If they ever disagree, the hover highlight drifts off the
+-- sectors (e.g. sectors built at offset 20480 but the cursor mapped from 0).
+local function GridBorder(map)
 	if not UseCustomSectorsForMap(map) then
-		return false
+		return 0
 	end
-
-	local min_count, max_count = SectorCountBounds()
-	local forced_count = Config()["VanillaSectorForcedCount"]
-	if type(forced_count) == "number" and forced_count > 0 then
-		return ClampNumber(math.floor(forced_count), min_count, max_count)
+	if not ConfigBool("VanillaSectorAlignToVanillaGrid", false) then
+		return 0
 	end
-
-	local tile_count = SectorCountFromTiles(map)
-	if tile_count then
-		return ClampNumber(tile_count, min_count, max_count)
+	local target = SectorTargetSize(map)
+	if target <= 0 then
+		return 0
 	end
-
-	return false
+	local mapdata = MapData(map)
+	local anchor = Config()["VanillaSectorGridAnchor"]
+	if type(anchor) ~= "number" then
+		anchor = mapdata and mapdata.BiggerMapsOriginalPassBorder
+	end
+	if type(anchor) ~= "number" then
+		return 0
+	end
+	return anchor % target
 end
 
+-- Resolves the full sector grid for a map. Sectors are always vanilla-sized
+-- (SectorTargetSize), laid out uniformly from GridBorder(map). For
+-- "expanded_with_vanilla_grid" that offset puts the grid on the vanilla lines and,
+-- because the same offset feeds both the build and the cursor lookup, the hover
+-- highlight tracks it. VanillaSectorForcedCount, if set, overrides the count.
 local function ResolveSectorLayout(map)
 	local width, height = TerrainSize(map)
 	local mapdata = MapData(map)
-	local border = mapdata and mapdata.PassBorder or 0
+	local border = GridBorder(map)
 	local target = SectorTargetSize(map)
 	local usable_width = math.max(1, width - 2 * border)
 	local usable_height = math.max(1, height - 2 * border)
 	local uniform = ConfigBool("VanillaSectorUniformGrid", true)
-	local count_x = uniform and Round(usable_width / target) or math.ceil(usable_width / target)
-	local count_y = uniform and Round(usable_height / target) or math.ceil(usable_height / target)
 	local min_count, max_count = SectorCountBounds()
 
-	local resolved = ResolveSectorCount(map)
-	if resolved then
-		-- Forced count or exact tile ratio. Keeps the built grid in sync with the
-		-- SectorCount set by ConfigureGlobalSectorCount.
-		count_x = resolved
-		count_y = resolved
-	else
-		count_x = ClampNumber(count_x, min_count, max_count)
-		count_y = ClampNumber(count_y, min_count, max_count)
+	local forced = Config()["VanillaSectorForcedCount"]
+	forced = (type(forced) == "number" and forced > 0) and ClampNumber(math.floor(forced), min_count, max_count) or nil
+
+	local count_x = forced
+	local count_y = forced
+	if not count_x then
+		count_x = ClampNumber(uniform and Round(usable_width / target) or math.ceil(usable_width / target), min_count, max_count)
+		count_y = ClampNumber(uniform and Round(usable_height / target) or math.ceil(usable_height / target), min_count, max_count)
 	end
 
 	return {
@@ -256,6 +257,29 @@ local function ResolveSectorLayout(map)
 		width = width,
 		height = height,
 	}
+end
+
+-- Single source of truth for const.SectorCount: it equals the built grid's count
+-- (ResolveSectorLayout) so the two can never disagree. False for maps that keep
+-- vanilla sectors or when the terrain size is not available yet.
+local function ResolveSectorCount(map)
+	if not UseCustomSectorsForMap(map) then
+		return false
+	end
+
+	local width, height = TerrainSize(map)
+	if not width or width <= 0 or not height or height <= 0 then
+		return false
+	end
+
+	return ResolveSectorLayout(map).count
+end
+
+-- The map border (world units) ResetMapDataBounds (BiggerMaps.lua) imposes so the
+-- engine's PassBorder-based selection overlay matches the sectors. Same value the
+-- grid is built from (GridBorder), so they can never disagree.
+function BiggerMaps_ResolveMapBorder(map)
+	return GridBorder(map)
 end
 
 local function DesiredWidthTiles(map)
@@ -286,22 +310,6 @@ local function SourceWidthTiles(map)
 	end
 
 	return OriginalWidthTiles(map)
-end
-
--- Assigns to the local forward-declared above so ResolveSectorLayout can call it.
-function SectorCountFromTiles(map)
-	if not UseCustomSectorsForMap(map) then
-		return false
-	end
-
-	local desired = DesiredWidthTiles(map)
-	local source = SourceWidthTiles(map)
-	local base_count = math.floor(ConfigNumber("VanillaSectorBaseCount", 10, 1))
-	if desired and source and source > 0 then
-		return math.max(1, Round(desired * base_count / source))
-	end
-
-	return false
 end
 
 local function BoolText(value)
@@ -553,7 +561,25 @@ local function SectorName(row, col, count, orient)
 	return IndexToLetters(col) .. tostring(row - 1)
 end
 
+-- Finds the 1-based column index for world coordinate v in a boundary list.
+local function ColFromBounds(bounds, v)
+	for i = 1, #bounds - 1 do
+		if v < bounds[i + 1] then
+			return i
+		end
+	end
+	return math.max(1, #bounds - 1)
+end
+
 local function SectorBounds(layout, col, row)
+	if layout.bounds_x and layout.bounds_y then
+		local x1 = layout.bounds_x[col]
+		local y1 = layout.bounds_y[row]
+		local x2 = layout.bounds_x[col + 1]
+		local y2 = layout.bounds_y[row + 1]
+		return x1, y1, math.max(x1 + 1, x2), math.max(y1 + 1, y2)
+	end
+
 	local x1 = layout.border + Round((col - 1) * layout.step_x)
 	local y1 = layout.border + Round((row - 1) * layout.step_y)
 	local x2 = col < layout.count_x and layout.border + Round(col * layout.step_x) or layout.border + layout.usable_width
@@ -647,8 +673,14 @@ local function InstallBasicSectorPatch()
 		local layout = ResolveSectorLayout(map)
 		local x = mx - layout.border
 		local y = my - layout.border
-		local col = ClampNumber(1 + math.floor(x / layout.step_x), 1, layout.count_x)
-		local row = ClampNumber(1 + math.floor(y / layout.step_y), 1, layout.count_y)
+		local col, row
+		if layout.bounds_x and layout.bounds_y then
+			col = ColFromBounds(layout.bounds_x, x)
+			row = ColFromBounds(layout.bounds_y, y)
+		else
+			col = ClampNumber(1 + math.floor(x / layout.step_x), 1, layout.count_x)
+			row = ClampNumber(1 + math.floor(y / layout.step_y), 1, layout.count_y)
+		end
 		local sector_col = city.MapSectors and city.MapSectors[col]
 		return sector_col and sector_col[row]
 	end
@@ -662,6 +694,42 @@ local function InstallBasicSectorPatch()
 	return true
 end
 
+-- The scan-mode hover highlight ("SectorTarget", a SectorDecal = {Decal, Object})
+-- is placed by SelectSector at sector.area:Center(), but unlike the plain-Decal
+-- grid cells it anchors at its corner, so on our grids it renders half a sector
+-- off (its top-left at the sector center) even though scans pick the right sector.
+-- Re-place it at the sector's min corner on custom maps so it lines up.
+local function InstallOverviewHighlightPatch()
+	if Global("BiggerMapsOverviewPatchVersion") == SECTOR_PATCH_VERSION then
+		return true
+	end
+
+	local overview_class = ClassTable("OverviewModeDialog")
+	if not overview_class or type(overview_class.SelectSector) ~= "function" then
+		return false
+	end
+
+	rawset(_G, "BiggerMapsOriginalOverviewSelectSector", Global("BiggerMapsOriginalOverviewSelectSector") or overview_class.SelectSector)
+
+	overview_class.SelectSector = function(self, sector, ...)
+		local result = BiggerMapsOriginalOverviewSelectSector(self, sector, ...)
+		local point_fn = Global("point")
+		if sector and sector.area and self.sector_obj and type(point_fn) == "function"
+				and UseCustomSectorsForMap(Global("CurrentMap")) then
+			-- The highlight decal anchors at a corner, so it lands half a sector off
+			-- the cell. Nudge it back by half a sector on each axis -- a fixed
+			-- per-sector compensation, independent of grid origin, count or size.
+			local half = Round(sector.area:sizex() / 2)
+			SafeCall(self.sector_obj.SetPos, self.sector_obj, sector.area:Center() + point_fn(half, half, 0))
+		end
+		return result
+	end
+
+	rawset(_G, "BiggerMapsOverviewPatchVersion", SECTOR_PATCH_VERSION)
+	DebugPrint("overview highlight patch installed")
+	return true
+end
+
 local function InstallSectorPatch()
 	DebugPrint(string.format(
 		"sector full patch attempt v%s: Exploration=%s g_Exploration=%s MapSector=%s InitSector=%s",
@@ -671,6 +739,8 @@ local function InstallSectorPatch()
 		type(ClassTable("MapSector")),
 		type(Global("InitSector"))
 	))
+
+	InstallOverviewHighlightPatch()
 
 	if not ConfigBool("EnableVanillaSizedSectors", true) then
 		DebugPrint("sector full patch disabled")
@@ -729,6 +799,17 @@ local function InstallSectorPatch()
 			tostring(Round(layout.step_x)),
 			tostring(Round(layout.step_y))
 		))
+
+		if layout.bounds_x then
+			local b = layout.bounds_x
+			DebugPrint(string.format(
+				"sector aligned grid: anchor=%s first sector=[%s..%s] last sector=[%s..%s] columns=%s",
+				tostring(layout.anchor),
+				tostring(b[1]), tostring(b[2]),
+				tostring(b[#b - 1]), tostring(b[#b]),
+				tostring(layout.count_x)
+			))
+		end
 
 		return SetSectorCountForInit(layout.count, function()
 			self.ExplorationQueue = {}

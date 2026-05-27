@@ -145,7 +145,15 @@ local overview_render_distance_active = false
 local overview_render_original_hr = false
 local overview_reset_token = 0
 
+local function FullMapPlayableEnabled()
+	return ConfigBool("BiggerMapsFullMapPlayable", true)
+end
+
 local function ResetMapDataBounds(map, mapdata)
+	if not FullMapPlayableEnabled() then
+		return
+	end
+
 	mapdata = mapdata or map and map.mapdata
 	if not mapdata then
 		return
@@ -161,8 +169,24 @@ local function ResetMapDataBounds(map, mapdata)
 		mapdata.BiggerMapsOriginalVisibleHeightRange = mapdata.visible_height_range
 	end
 
-	mapdata.PassBorder = 0
-	mapdata.PassBorderTiles = 0
+	-- The sector code decides the border: 0 for grids anchored at the map corner,
+	-- or the vanilla grid offset for "expanded_with_vanilla_grid" (so the engine's
+	-- selection overlay, anchored at PassBorder, stays aligned with the sectors).
+	local resolve_border = Global("BiggerMaps_ResolveMapBorder")
+	local new_border = (type(resolve_border) == "function" and SafeCall(resolve_border, map)) or 0
+	if type(new_border) ~= "number" or new_border < 0 then
+		new_border = 0
+	end
+	mapdata.PassBorder = new_border
+	local width = TerrainSize(map)
+	if new_border > 0 and width and width > 0 and type(mapdata.Width) == "number" and mapdata.Width > 0 then
+		mapdata.PassBorderTiles = math.floor(new_border * mapdata.Width / width + 0.5)
+	else
+		mapdata.PassBorderTiles = 0
+	end
+	if DEBUG_PRINT and Global("print") then
+		print(MOD_PREFIX .. "ResetMapDataBounds set PassBorder=" .. tostring(new_border) .. " (mapdata.Width=" .. tostring(mapdata.Width) .. ")")
+	end
 	mapdata.playable_height_range = false
 	mapdata.visible_height_range = false
 
@@ -172,7 +196,7 @@ local function ResetMapDataBounds(map, mapdata)
 end
 
 local function ResetMapAreas(map)
-	if not map then
+	if not FullMapPlayableEnabled() or not map then
 		return
 	end
 
@@ -627,7 +651,7 @@ function BiggerMaps_Apply(map, rebuild)
 	ResetMapDataBounds(map, map.mapdata)
 	ResetMapAreas(map)
 
-	if rebuild then
+	if rebuild and FullMapPlayableEnabled() then
 		RebuildMapBounds(map)
 		RefreshSectors(map)
 	end
