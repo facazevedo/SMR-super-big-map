@@ -39,3 +39,31 @@ config.HideOverviewCurtains = true
 
 -- Print one-line Bigger Maps status messages in the game console/log.
 config.DebugPrint = true
+
+-- Experimental 2x2 map tiling.
+-- New random surface maps are created at twice their normal width and height.
+-- After vanilla generation finishes, the upper-left quadrant is copied to the
+-- right, bottom, and bottom-right quadrants.
+config.EnableQuadrantMapCopy = true
+config.QuadrantCopyScale = 2
+config.QuadrantCopyMaxTerrainTiles = 8192
+-- The random map generator's stable-position helper asserts around 8192
+-- terrain tiles, while the renderer rejects some intermediate sizes. 6144 is
+-- the largest renderer-safe random blank map size confirmed so far.
+config.QuadrantCopyMaxRandomGeneratorTiles = 6144
+config.QuadrantCopyRendererNodeTileAlignment = 2048
+-- Experimental native-size hack: allocate an 8192 map, generate only a 4096
+-- top-left source quadrant, then tile that quadrant into the rest of the map.
+config.QuadrantCopyNativeExpansionHack = true
+config.QuadrantCopyForceExpandedTiles = 8192
+config.QuadrantCopyGeneratorSourceTiles = 4096
+config.QuadrantCopyLimitGeneratorToSource = true
+config.QuadrantCopyMainMapOnly = true
+config.QuadrantCopySurfaceOnly = true
+config.QuadrantCopyRandomMapsOnly = true
+config.QuadrantCopyPatchRandomGenerator = true
+config.QuadrantCopyVerbose = false
+config.QuadrantCopyTerrain = true
+config.QuadrantCopyObjects = true
+config.QuadrantCopyEnumFlags = false
+config.QuadrantCopyDeleteGeneratedOutsideSource = true

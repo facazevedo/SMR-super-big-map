@@ -1,7 +1,7 @@
 return PlaceObj('ModDef', {
 	'title', "Bigger Maps",
 	'description', "Expands the loaded map's playable construction boundary to the full terrain area.",
-	'short_description', "Use the full visible terrain as playable map area.",
+	'short_description', "Use the full terrain and experimentally tile random maps 2x2.",
 	'id', "BiggerMaps",
 	'author', "fredware",
 	'version', 1,
@@ -11,6 +11,7 @@ return PlaceObj('ModDef', {
 		"Code/bm_config.lua",
 		"Code/ZoomPlus.lua",
 		"Code/BiggerMaps.lua",
+		"Code/bm_quadrant_tiler.lua",
 	},
 	'saved', 1780000000,
 	'TagGameplay', true,
