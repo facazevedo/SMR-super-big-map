@@ -1,11 +1,13 @@
 -- Bigger Maps configuration.
 -- Edit these values, then reload the mod or restart the game.
 
-local config = rawget(_G, "BiggerMapsConfig")
-if type(config) ~= "table" then
-	config = {}
-	rawset(_G, "BiggerMapsConfig", config)
-end
+-- Private builder table (NOT a global). The raw settings below are read once into
+-- the typed BiggerMaps.Config view at the bottom of this file; every module reads
+-- that view. The bundled third-party ZoomPlus.lua used to read a global
+-- BiggerMapsConfig, but it degrades safely without one (its fallback uses the same
+-- multiplier 4.0 / scenario-editor-host = true configured here) and the ZoomPlus
+-- integration also drives it directly, so no global config table is exported.
+local config = {}
 
 -- ============================================================================
 -- MAIN SETTINGS: map size and sector grid
@@ -160,3 +162,97 @@ config.VanillaSectorMaxCount = 40
 config.VanillaSectorFastInitialReveal = true
 config.VanillaSectorProgressColumnInterval = 2
 config.VanillaSectorInitialRevealProgressInterval = 50
+
+-- ============================================================================
+-- Typed config view: BiggerMaps.Config
+-- ============================================================================
+-- The private `config` builder above is the single source of values. This view
+-- re-exposes the same values under stable UPPERCASE names plus an ENABLE_MOD master
+-- flag, with booleans coerced to real booleans, so the mod's own modules read a
+-- clean, typed config (BiggerMaps.Config.*). Edit the settings above, not this view.
+local BiggerMaps = rawget(_G, "BiggerMaps")
+if type(BiggerMaps) ~= "table" then
+	BiggerMaps = {}
+	rawset(_G, "BiggerMaps", BiggerMaps)
+end
+
+local function as_bool(value)
+	return value == true
+end
+
+local function as_number(value, default)
+	if type(value) == "number" then
+		return value
+	end
+	return default
+end
+
+local C = {}
+
+-- Lifecycle / master
+C.ENABLE_MOD = true
+
+-- Map size + sector grid (master settings)
+C.TERRAIN_SIZE = config.BiggerMapsTerrainSize
+C.SECTOR_GRID = config.BiggerMapsSectorGrid
+C.FULL_MAP_PLAYABLE = as_bool(config.BiggerMapsFullMapPlayable)
+
+-- Debug logging
+C.DEBUG_LOGS = as_bool(config.EnableDiagnosticLogs) or as_bool(config.DebugPrint)
+C.DEBUG_QUADRANT_VERBOSE = as_bool(config.QuadrantCopyVerbose)
+
+-- ZoomPlus integration
+C.ENABLE_NORMAL_ZOOM_PLUS = as_bool(config.EnableNormalZoomPlus)
+C.NORMAL_ZOOM_MULTIPLIER = as_number(config.ZoomPlusLookatDistZoomOutMultiplier, as_number(config.NormalZoomMultiplier, 4.0))
+C.ALLOW_ZOOMPLUS_WITH_SCENARIO_EDITOR_HOST = as_bool(config.AllowZoomPlusWithScenarioEditorHost)
+
+-- Overview camera / curtains / render distance
+C.OVERVIEW_ZOOM_DISTANCE_PERCENT = as_number(config.OverviewZoomDistancePercent, 140)
+C.OVERVIEW_CAMERA_XY_PERCENT = as_number(config.OverviewCameraXYPercent, 28)
+C.OVERVIEW_DISTANCE_MULTIPLIER = as_number(config.OverviewDistanceMultiplier, 2.5)
+C.OVERVIEW_MIN_HEIGHT_PERCENT = as_number(config.OverviewMinHeightPercent, 140)
+C.OVERVIEW_NUDGE_HORIZONTAL_PERCENT = as_number(config.OverviewNudgeHorizontalPercent, 0)
+C.OVERVIEW_NUDGE_VERTICAL_PERCENT = as_number(config.OverviewNudgeVerticalPercent, 0)
+C.OVERVIEW_VIEW_ANGLE_DEGREES = config.OverviewViewAngleDegrees -- number, or false to use the game's angle
+C.OVERVIEW_FOV_16_9 = as_number(config.OverviewFovX16_9, 3600)
+C.OVERVIEW_FOV_4_3 = as_number(config.OverviewFovX4_3, 3400)
+C.OVERVIEW_FAR_Z = as_number(config.OverviewFarZ, 12000000)
+C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
+
+-- Map generation (quadrant tiling)
+C.ENABLE_QUADRANT_MAP_COPY = as_bool(config.EnableQuadrantMapCopy)
+C.QUADRANT_COPY_SCALE = as_number(config.QuadrantCopyScale, 2)
+C.QUADRANT_MAX_TERRAIN_TILES = as_number(config.QuadrantCopyMaxTerrainTiles, 8192)
+C.QUADRANT_MAX_RANDOM_GENERATOR_TILES = as_number(config.QuadrantCopyMaxRandomGeneratorTiles, 6144)
+C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererNodeTileAlignment, 2048)
+C.QUADRANT_NATIVE_EXPANSION_HACK = as_bool(config.QuadrantCopyNativeExpansionHack)
+C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
+C.QUADRANT_GENERATOR_SOURCE_TILES = as_number(config.QuadrantCopyGeneratorSourceTiles, 4096)
+C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
+C.QUADRANT_MAIN_MAP_ONLY = as_bool(config.QuadrantCopyMainMapOnly)
+C.QUADRANT_SURFACE_ONLY = as_bool(config.QuadrantCopySurfaceOnly)
+C.QUADRANT_RANDOM_MAPS_ONLY = as_bool(config.QuadrantCopyRandomMapsOnly)
+C.QUADRANT_PATCH_RANDOM_GENERATOR = as_bool(config.QuadrantCopyPatchRandomGenerator)
+C.QUADRANT_COPY_TERRAIN = as_bool(config.QuadrantCopyTerrain)
+C.QUADRANT_COPY_OBJECTS = as_bool(config.QuadrantCopyObjects)
+C.QUADRANT_COPY_ENUM_FLAGS = as_bool(config.QuadrantCopyEnumFlags)
+C.QUADRANT_DELETE_GENERATED_OUTSIDE_SOURCE = as_bool(config.QuadrantCopyDeleteGeneratedOutsideSource)
+
+-- Sectors (grid layout + exploration)
+C.ENABLE_VANILLA_SIZED_SECTORS = as_bool(config.EnableVanillaSizedSectors)
+C.SECTOR_UNIFORM_GRID = as_bool(config.VanillaSectorUniformGrid)
+C.SECTOR_USE_SOURCE_QUADRANT = as_bool(config.VanillaSectorUseSourceQuadrant)
+C.SECTOR_SURFACE_ONLY = as_bool(config.VanillaSectorSurfaceOnly)
+C.SECTOR_EXPANDED_ONLY = as_bool(config.VanillaSectorExpandedOnly)
+C.SECTOR_FORCED_COUNT = config.VanillaSectorForcedCount -- number, or false
+C.SECTOR_ALIGN_TO_VANILLA_GRID = as_bool(config.VanillaSectorAlignToVanillaGrid)
+C.SECTOR_GRID_ANCHOR = config.VanillaSectorGridAnchor -- number, or false
+C.SECTOR_BASE_MAP_TILES = as_number(config.VanillaSectorBaseMapTiles, 4096)
+C.SECTOR_BASE_COUNT = as_number(config.VanillaSectorBaseCount, 10)
+C.SECTOR_MIN_COUNT = as_number(config.VanillaSectorMinCount, 10)
+C.SECTOR_MAX_COUNT = as_number(config.VanillaSectorMaxCount, 40)
+C.SECTOR_FAST_INITIAL_REVEAL = as_bool(config.VanillaSectorFastInitialReveal)
+C.SECTOR_PROGRESS_COLUMN_INTERVAL = as_number(config.VanillaSectorProgressColumnInterval, 2)
+C.SECTOR_INITIAL_REVEAL_PROGRESS_INTERVAL = as_number(config.VanillaSectorInitialRevealProgressInterval, 50)
+
+BiggerMaps.Config = C

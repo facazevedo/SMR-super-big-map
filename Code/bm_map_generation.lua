@@ -1,17 +1,32 @@
-local MOD_PREFIX = "[Bigger Maps] "
-local GENERATOR_PATCH_VERSION = 2
+-- Bigger Maps -- experimental 2x2 quadrant map expansion.
+--
+-- For eligible random Surface maps this allocates a larger terrain, has the random
+-- map generator produce only a top-left source quadrant, then tiles that quadrant
+-- (terrain grids + objects) into the other three quadrants -- roughly 4x the play
+-- area on a single map. The RandomMapGenerator.Generate/DoGenerate hook and the
+-- tiling pass share pending-map state, so they live together here.
+--
+-- This module keeps its OWN small engine helpers (a 3-result SafeCall, a generation-
+-- time TerrainSize, the infinite-loop-pause guard) on purpose: their behavior is
+-- context-specific to map generation -- e.g. DoGenerate temporarily overrides
+-- terrain.GetMapSize so the generator only fills the source quadrant -- so they must
+-- not be the generic bm_engine versions.
 
-local pending_maps = rawget(_G, "BiggerMapsQuadrantPendingMaps")
-if type(pending_maps) ~= "table" then
-	pending_maps = {}
-	rawset(_G, "BiggerMapsQuadrantPendingMaps", pending_maps)
+local BiggerMaps = rawget(_G, "BiggerMaps")
+if type(BiggerMaps) ~= "table" then
+	BiggerMaps = {}
+	rawset(_G, "BiggerMaps", BiggerMaps)
 end
 
-local blocked_maps = rawget(_G, "BiggerMapsQuadrantBlockedMaps")
-if type(blocked_maps) ~= "table" then
-	blocked_maps = {}
-	rawset(_G, "BiggerMapsQuadrantBlockedMaps", blocked_maps)
-end
+local GENERATOR_PATCH_VERSION = BiggerMaps.GENERATOR_PATCH_VERSION or 2
+
+-- Pending/blocked per-map state shared across this module's hooks (kept in the
+-- shared State table rather than _G globals).
+BiggerMaps.State = BiggerMaps.State or {}
+BiggerMaps.State.quadrant_pending_maps = BiggerMaps.State.quadrant_pending_maps or {}
+BiggerMaps.State.quadrant_blocked_maps = BiggerMaps.State.quadrant_blocked_maps or {}
+local pending_maps = BiggerMaps.State.quadrant_pending_maps
+local blocked_maps = BiggerMaps.State.quadrant_blocked_maps
 
 local function Global(name)
 	return rawget(_G, name)
@@ -38,35 +53,31 @@ local function Unpack(t, first, last)
 	return unpack_fn(t, first, last)
 end
 
-local function Config()
-	local config = Global("BiggerMapsConfig")
-	return type(config) == "table" and config or {}
-end
-
-local function ConfigNumber(name, default, min_value)
-	local value = Config()[name]
-	if type(value) == "number" and (min_value == nil or value >= min_value) then
-		return value
-	end
-	return default
-end
-
-local function ConfigBool(name, default)
-	local value = Config()[name]
+local function cfg_bool(key, default)
+	local value = (BiggerMaps.Config or {})[key]
 	if type(value) == "boolean" then
 		return value
 	end
 	return default
 end
 
+local function cfg_number(key, default, min_value)
+	local value = (BiggerMaps.Config or {})[key]
+	if type(value) == "number" and (min_value == nil or value >= min_value) then
+		return value
+	end
+	return default
+end
+
 local function DebugPrint(text)
-	if ConfigBool("EnableDiagnosticLogs", ConfigBool("DebugPrint", true)) and Global("print") then
-		print(MOD_PREFIX .. text)
+	local DebugLog = BiggerMaps.DebugLog
+	if DebugLog then
+		DebugLog.Info("Quadrant", text)
 	end
 end
 
 local function VerbosePrint(text)
-	if ConfigBool("QuadrantCopyVerbose", true) then
+	if cfg_bool("DEBUG_QUADRANT_VERBOSE", false) then
 		DebugPrint(text)
 	end
 end
@@ -263,7 +274,7 @@ local function CopyObjectTransform(source, clone, offset)
 		end
 	end
 
-	if ConfigBool("QuadrantCopyEnumFlags", false) and type(source.GetEnumFlags) == "function" and type(clone.SetEnumFlags) == "function" then
+	if cfg_bool("QUADRANT_COPY_ENUM_FLAGS", false) and type(source.GetEnumFlags) == "function" and type(clone.SetEnumFlags) == "function" then
 		local flags = SafeCall(source.GetEnumFlags, source)
 		if type(flags) == "number" and flags ~= 0 then
 			SafeCall(clone.SetEnumFlags, clone, flags)
@@ -293,7 +304,7 @@ local function CloneObjectAtOffset(map, source, offset)
 end
 
 local function TileObjects(map, source_width, source_height)
-	if not ConfigBool("QuadrantCopyObjects", true) then
+	if not cfg_bool("QUADRANT_COPY_OBJECTS", true) then
 		return 0, 0
 	end
 
@@ -323,7 +334,7 @@ local function TileObjects(map, source_width, source_height)
 		tostring(#outside_objects)
 	))
 
-	if ConfigBool("QuadrantCopyDeleteGeneratedOutsideSource", true) then
+	if cfg_bool("QUADRANT_DELETE_GENERATED_OUTSIDE_SOURCE", true) then
 		local done_object = Global("DoneObject")
 		for i = 1, #outside_objects do
 			local obj = outside_objects[i]
@@ -418,7 +429,7 @@ local function TileGrid(grid, map_width, map_height, source_width, source_height
 end
 
 local function TileTerrain(map, source_width, source_height)
-	if not ConfigBool("QuadrantCopyTerrain", true) then
+	if not cfg_bool("QUADRANT_COPY_TERRAIN", true) then
 		return false
 	end
 
@@ -476,15 +487,15 @@ local function TileTerrain(map, source_width, source_height)
 end
 
 local function IsEligibleMapData(map_slot, mapdata, map_instance)
-	if not ConfigBool("EnableQuadrantMapCopy", false) then
+	if not cfg_bool("ENABLE_QUADRANT_MAP_COPY", false) then
 		return false, "feature disabled"
 	end
 
-	if ConfigBool("QuadrantCopyMainMapOnly", true) and map_slot ~= 1 then
+	if cfg_bool("QUADRANT_MAIN_MAP_ONLY", true) and map_slot ~= 1 then
 		return false, "not the main map slot"
 	end
 
-	if ConfigBool("QuadrantCopyRandomMapsOnly", true) and not (map_instance and map_instance.RandomMapGenObject) then
+	if cfg_bool("QUADRANT_RANDOM_MAPS_ONLY", true) and not (map_instance and map_instance.RandomMapGenObject) then
 		return false, "not a random map generation"
 	end
 
@@ -492,7 +503,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "missing terrain mapdata"
 	end
 
-	if ConfigBool("QuadrantCopySurfaceOnly", true) and mapdata.Environment ~= "Surface" then
+	if cfg_bool("QUADRANT_SURFACE_ONLY", true) and mapdata.Environment ~= "Surface" then
 		return false, "not a surface map"
 	end
 
@@ -573,7 +584,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		return false
 	end
 
-	local scale = math.floor(ConfigNumber("QuadrantCopyScale", 2, 2))
+	local scale = math.floor(cfg_number("QUADRANT_COPY_SCALE", 2, 2))
 	if scale ~= 2 then
 		scale = 2
 	end
@@ -582,9 +593,9 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	local original_height = mapdata.BiggerMapsOriginalHeightTiles or mapdata.Height
 	local requested_width = original_width * scale
 	local requested_height = original_height * scale
-	local max_terrain_tiles = math.floor(ConfigNumber("QuadrantCopyMaxTerrainTiles", 8192, 1))
-	local max_random_tiles = math.floor(ConfigNumber("QuadrantCopyMaxRandomGeneratorTiles", 6144, 1))
-	local renderer_align = math.floor(ConfigNumber("QuadrantCopyRendererNodeTileAlignment", 2048, 1))
+	local max_terrain_tiles = math.floor(cfg_number("QUADRANT_MAX_TERRAIN_TILES", 8192, 1))
+	local max_random_tiles = math.floor(cfg_number("QUADRANT_MAX_RANDOM_GENERATOR_TILES", 6144, 1))
+	local renderer_align = math.floor(cfg_number("QUADRANT_RENDERER_NODE_TILE_ALIGNMENT", 2048, 1))
 	local max_tiles = math.min(max_terrain_tiles, max_random_tiles)
 	local desired_width = AlignDown(math.min(requested_width, max_tiles), renderer_align)
 	local desired_height = AlignDown(math.min(requested_height, max_tiles), renderer_align)
@@ -596,13 +607,13 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	local generator_height_tiles = false
 	local height_tile_size = Global("const") and const.HeightTileSize or 1
 
-	if ConfigBool("QuadrantCopyNativeExpansionHack", false) then
-		local forced_tiles = math.floor(ConfigNumber("QuadrantCopyForceExpandedTiles", 8192, 1))
+	if cfg_bool("QUADRANT_NATIVE_EXPANSION_HACK", false) then
+		local forced_tiles = math.floor(cfg_number("QUADRANT_FORCE_EXPANDED_TILES", 8192, 1))
 		desired_width = AlignDown(math.min(forced_tiles, max_terrain_tiles), renderer_align)
 		desired_height = AlignDown(math.min(forced_tiles, max_terrain_tiles), renderer_align)
 		desired_width = AlignDown(desired_width, scale)
 		desired_height = AlignDown(desired_height, scale)
-		local generator_tiles = math.floor(ConfigNumber("QuadrantCopyGeneratorSourceTiles", math.floor(desired_width / scale), 1))
+		local generator_tiles = math.floor(cfg_number("QUADRANT_GENERATOR_SOURCE_TILES", math.floor(desired_width / scale), 1))
 		generator_width_tiles = math.min(generator_tiles, math.floor(desired_width / scale), original_width)
 		generator_height_tiles = math.min(generator_tiles, math.floor(desired_height / scale), original_height)
 		source_width_tiles = generator_width_tiles
@@ -721,7 +732,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	return true
 end
 
-function BiggerMaps_TileQuadrants(map)
+local function TileQuadrants(map)
 	if map and not map.BiggerMapsQuadrantCopyPending then
 		AttachPendingMapState(map)
 	end
@@ -773,7 +784,9 @@ function BiggerMaps_TileQuadrants(map)
 		SafeCall(update_radius, map)
 	end
 
-	local apply_bounds = Global("BiggerMaps_Apply")
+	-- Re-apply the full-map bounds / sector fit-up after tiling. Prefer the
+	-- lifecycle entry (final), falling back to the transitional global export.
+	local apply_bounds = (BiggerMaps.Lifecycle and BiggerMaps.Lifecycle.Apply) or Global("BiggerMaps_Apply")
 	if type(apply_bounds) == "function" then
 		SafeCall(apply_bounds, map, true)
 	end
@@ -793,7 +806,7 @@ function BiggerMaps_TileQuadrants(map)
 	return true
 end
 
-function BiggerMaps_PrintQuadrantDebug()
+local function PrintQuadrantDebug()
 	local current_map = Global("CurrentMap")
 	local map_width, map_height = TerrainSize(current_map)
 	local mapdata = current_map and current_map.mapdata
@@ -802,8 +815,8 @@ function BiggerMaps_PrintQuadrantDebug()
 
 	DebugPrint(string.format(
 		"quadrant debug: enabled=%s, random-only=%s, current=%s, terrain=%s x %s, mapdata=%s x %s, env=%s, pending=%s, source=%s x %s",
-		tostring(ConfigBool("EnableQuadrantMapCopy", false)),
-		tostring(ConfigBool("QuadrantCopyRandomMapsOnly", true)),
+		tostring(cfg_bool("ENABLE_QUADRANT_MAP_COPY", false)),
+		tostring(cfg_bool("QUADRANT_RANDOM_MAPS_ONLY", true)),
 		tostring(map_name),
 		tostring(map_width),
 		tostring(map_height),
@@ -818,7 +831,7 @@ function BiggerMaps_PrintQuadrantDebug()
 end
 
 local function PatchRandomMapGenerator()
-	if not ConfigBool("QuadrantCopyPatchRandomGenerator", true) then
+	if not cfg_bool("QUADRANT_PATCH_RANDOM_GENERATOR", true) then
 		VerbosePrint("quadrant random-map generator hook disabled")
 		return false
 	end
@@ -829,14 +842,15 @@ local function PatchRandomMapGenerator()
 		return false
 	end
 
-	if generator_class.BiggerMapsQuadrantGeneratePatchVersion == GENERATOR_PATCH_VERSION then
+	local State = BiggerMaps.State
+	if State.generator_patch_version == GENERATOR_PATCH_VERSION then
 		return true
 	end
 
-	local original_generate = generator_class.BiggerMapsQuadrantOriginalGenerate or generator_class.Generate
-	local original_do_generate = generator_class.BiggerMapsQuadrantOriginalDoGenerate or generator_class.DoGenerate
-	generator_class.BiggerMapsQuadrantOriginalGenerate = original_generate
-	generator_class.BiggerMapsQuadrantOriginalDoGenerate = original_do_generate
+	local original_generate = State.generator_original_generate or generator_class.Generate
+	local original_do_generate = State.generator_original_do_generate or generator_class.DoGenerate
+	State.generator_original_generate = original_generate
+	State.generator_original_do_generate = original_do_generate
 	generator_class.Generate = function(self, params)
 		params = type(params) == "table" and params or {}
 		local blank_map = self and self.BlankMap
@@ -868,7 +882,7 @@ local function PatchRandomMapGenerator()
 	end
 	if type(original_do_generate) == "function" then
 		generator_class.DoGenerate = function(self, map, ...)
-			if not ConfigBool("QuadrantCopyLimitGeneratorToSource", true)
+			if not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true)
 					or not (map and map.BiggerMapsQuadrantCopyPending and map.BiggerMapsGeneratorWidth and map.BiggerMapsGeneratorHeight) then
 				return original_do_generate(self, map, ...)
 			end
@@ -917,43 +931,40 @@ local function PatchRandomMapGenerator()
 			return Unpack(results, 2)
 		end
 	end
-	generator_class.BiggerMapsQuadrantGeneratePatched = true
-	generator_class.BiggerMapsQuadrantGeneratePatchVersion = GENERATOR_PATCH_VERSION
+	State.generator_patch_version = GENERATOR_PATCH_VERSION
 	DebugPrint("quadrant random-map generator hook installed")
 	return true
 end
 
-local function ChainOnMsg(message_name, handler)
-	local previous = OnMsg[message_name]
+local MapGeneration = {}
 
-	OnMsg[message_name] = function(...)
-		if previous then
-			previous(...)
-		end
+MapGeneration.TileQuadrants = TileQuadrants
+MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
+MapGeneration.AttachPendingMapState = AttachPendingMapState
+MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
+MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 
-		handler(...)
-	end
+function MapGeneration.ApplyModBehavior()
+	PatchRandomMapGenerator()
 end
 
-DebugPrint("quadrant tiler loaded")
-PatchRandomMapGenerator()
+-- Restoring only affects FUTURE generation; maps already tiled stay tiled.
+function MapGeneration.RestoreVanillaBehavior()
+	local State = BiggerMaps.State or {}
+	local generator_class = Global("RandomMapGenerator")
+	if type(generator_class) == "table" then
+		if type(State.generator_original_generate) == "function" then
+			generator_class.Generate = State.generator_original_generate
+		end
+		if type(State.generator_original_do_generate) == "function" then
+			generator_class.DoGenerate = State.generator_original_do_generate
+		end
+	end
+	State.generator_original_generate = nil
+	State.generator_original_do_generate = nil
+	State.generator_patch_version = nil
+end
 
-ChainOnMsg("ClassesPostprocess", function()
-	PatchRandomMapGenerator()
-end)
+BiggerMaps.MapGeneration = MapGeneration
 
-ChainOnMsg("DataLoaded", function()
-	PatchRandomMapGenerator()
-end)
-
-ChainOnMsg("ChangingMap", function(map_slot, map_name, map_instance)
-	PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, "ChangingMap")
-end)
-
-ChainOnMsg("NewMapObject", function(map)
-	AttachPendingMapState(map)
-end)
-
-ChainOnMsg("MapGenerated", function(map)
-	BiggerMaps_TileQuadrants(map)
-end)
+DebugPrint("map generation module loaded")
