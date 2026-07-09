@@ -33,6 +33,24 @@ local function Log(message, data)
 	end
 end
 
+local function ToggleLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("PregameToggle", message, data)
+	end
+end
+
+local function BoxText(b)
+	if not b then
+		return "nil"
+	end
+	if type(b.minx) == "function" and type(b.miny) == "function"
+		and type(b.maxx) == "function" and type(b.maxy) == "function" then
+		return string.format("%s,%s,%s,%s", tostring(b:minx()), tostring(b:miny()), tostring(b:maxx()), tostring(b:maxy()))
+	end
+	return tostring(b)
+end
+
 local function SetCurrentParamsArmed(value)
 	local params = Global("g_CurrentMapParams")
 	if type(params) == "table" then
@@ -91,6 +109,10 @@ end
 local function UpdateExpandActionLabel(action)
 	if action then
 		action.ActionName = ExpandActionName()
+		ToggleLog("action label updated", {
+			action = tostring(action.ActionId),
+			name = tostring(action.ActionName),
+		})
 	end
 	return action
 end
@@ -125,12 +147,43 @@ local function ResolveExpandButton(dialog)
 	if type(resolve) == "function" then
 		local ok, button = pcall(resolve, toolbar, "idsuper_big_map_expand")
 		if ok and button then
+			ToggleLog("expand button resolved via toolbar", {
+				button_box = BoxText(button.box),
+				measure_width = tostring(button.measure_width),
+				measure_height = tostring(button.measure_height),
+			})
 			return button
 		end
 	end
 	resolve = dialog and dialog.ResolveId
 	if type(resolve) == "function" then
 		local ok, button = pcall(resolve, dialog, "idsuper_big_map_expand")
+		if ok and button then
+			ToggleLog("expand button resolved via dialog", {
+				button_box = BoxText(button.box),
+				measure_width = tostring(button.measure_width),
+				measure_height = tostring(button.measure_height),
+			})
+			return button
+		end
+	end
+	ToggleLog("expand button not resolved")
+	return false
+end
+
+local function ResolveStartButton(dialog)
+	local action_bar = dialog and dialog.idActionBar
+	local toolbar = action_bar and action_bar.idToolBar
+	local resolve = toolbar and toolbar.ResolveId
+	if type(resolve) == "function" then
+		local ok, button = pcall(resolve, toolbar, "idstart")
+		if ok and button then
+			return button
+		end
+	end
+	resolve = dialog and dialog.ResolveId
+	if type(resolve) == "function" then
+		local ok, button = pcall(resolve, dialog, "idstart")
 		if ok and button then
 			return button
 		end
@@ -158,6 +211,9 @@ end
 local function ApplyExpandUnderline(dialog)
 	local button = ResolveExpandButton(dialog)
 	if not button then
+		ToggleLog("underline skipped: button missing", {
+			selected = IsSelected(),
+		})
 		return false
 	end
 	local resolve = button.ResolveId
@@ -170,18 +226,29 @@ local function ApplyExpandUnderline(dialog)
 		local XWindow = Global("XWindow")
 		local box_fn = Global("box")
 		if type(XWindow) ~= "table" or type(box_fn) ~= "function" then
+			ToggleLog("underline skipped: XWindow/box unavailable", {
+				box_type = type(box_fn),
+				xwindow_type = type(XWindow),
+			})
 			return false
 		end
 		underline = XWindow:new({
 			Id = "idSuperBigMapUnderline",
+			Dock = false,
 			ZOrder = 100,
 			HAlign = "stretch",
 			VAlign = "bottom",
 			MinHeight = 4,
 			MaxHeight = 4,
-			Margins = box_fn(0, 0, 0, 11),
+			Margins = box_fn(0, 0, 0, 0),
 			Background = ActionTextColor(button),
 		}, button, button.context)
+		ToggleLog("underline created", {
+			button_box = BoxText(button.box),
+			underline_box = BoxText(underline.box),
+			measure_width = tostring(underline.measure_width),
+			measure_height = tostring(underline.measure_height),
+		})
 	end
 	local color = ActionTextColor(button)
 	if underline.SetBackground then
@@ -194,6 +261,14 @@ local function ApplyExpandUnderline(dialog)
 	else
 		underline.Visible = IsSelected()
 	end
+	ToggleLog("underline applied", {
+		button_box = BoxText(button.box),
+		color = tostring(color),
+		selected = IsSelected(),
+		start_box = BoxText((ResolveStartButton(dialog) or {}).box),
+		underline_box = BoxText(underline.box),
+		visible = type(underline.GetVisible) == "function" and tostring(underline:GetVisible()) or tostring(underline.Visible),
+	})
 	return true
 end
 
@@ -208,6 +283,9 @@ end
 
 local function RefreshActions(host)
 	if not host or type(host.UpdateActionViews) ~= "function" then return end
+	ToggleLog("refresh actions", {
+		host = tostring(host.class or host.Id or host),
+	})
 	SafeCall(host.UpdateActionViews, host, host.idActionBar or host)
 	ApplyExpandUnderline(host)
 end
@@ -246,8 +324,12 @@ local function InstallLandingDialogAction(dialog)
 		ActionSortKey = "040",
 		OnAction = function(action, host)
 			SetSelected(not IsSelected(), "toggle")
+			ToggleLog("expand action clicked", {
+				host = tostring(host and (host.class or host.Id) or "nil"),
+				selected = IsSelected(),
+			})
 			UpdateExpandActionLabel(action)
-			RefreshActions(host or dialog)
+			ApplyExpandUnderline(host or dialog)
 		end,
 		RolloverText = "Generate this new game as a 20 x 20 Super Big Map.",
 	}, dialog, dialog.context)
