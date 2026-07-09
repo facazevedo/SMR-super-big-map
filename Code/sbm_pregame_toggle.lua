@@ -216,18 +216,16 @@ local function ApplyExpandUnderline(dialog)
 		})
 		return false
 	end
-	local resolve = button.ResolveId
-	local underline = false
+	local underline = dialog and dialog.SuperBigMapExpandUnderline or false
+	local resolve = dialog and dialog.ResolveId
 	if type(resolve) == "function" then
-		local ok, child = pcall(resolve, button, "idSuperBigMapUnderline")
-		if ok then underline = child end
+		local ok, child = pcall(resolve, dialog, "idSuperBigMapUnderline")
+		if ok and child then underline = child end
 	end
 	if not underline then
 		local XWindow = Global("XWindow")
-		local box_fn = Global("box")
-		if type(XWindow) ~= "table" or type(box_fn) ~= "function" then
-			ToggleLog("underline skipped: XWindow/box unavailable", {
-				box_type = type(box_fn),
+		if type(XWindow) ~= "table" then
+			ToggleLog("underline skipped: XWindow unavailable", {
 				xwindow_type = type(XWindow),
 			})
 			return false
@@ -236,13 +234,11 @@ local function ApplyExpandUnderline(dialog)
 			Id = "idSuperBigMapUnderline",
 			Dock = false,
 			ZOrder = 100,
-			HAlign = "stretch",
-			VAlign = "bottom",
 			MinHeight = 4,
 			MaxHeight = 4,
-			Margins = box_fn(0, 0, 0, 0),
 			Background = ActionTextColor(button),
-		}, button, button.context)
+		}, dialog, dialog.context)
+		dialog.SuperBigMapExpandUnderline = underline
 		ToggleLog("underline created", {
 			button_box = BoxText(button.box),
 			underline_box = BoxText(underline.box),
@@ -255,6 +251,12 @@ local function ApplyExpandUnderline(dialog)
 		SafeCall(underline.SetBackground, underline, color)
 	else
 		underline.Background = color
+	end
+	if button.box and type(button.box.minx) == "function" and type(button.box.maxy) == "function"
+		and type(button.box.sizex) == "function" and type(underline.SetBox) == "function" then
+		local line_height = 4
+		local y = button.box:maxy() - 10
+		SafeCall(underline.SetBox, underline, button.box:minx(), y, button.box:sizex(), line_height)
 	end
 	if type(underline.SetVisible) == "function" then
 		SafeCall(underline.SetVisible, underline, IsSelected())
