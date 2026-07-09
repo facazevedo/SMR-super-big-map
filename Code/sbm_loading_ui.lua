@@ -508,8 +508,9 @@ local function SilenceLoadingBox(box)
 		local XText = Global("XText")
 		local box_fn = Global("box")
 		if container and type(XText) == "table" then
-			local untranslated = Global("Untranslated")
-			local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
+			-- Translate=false REQUIRES a plain Lua string: the engine asserts
+			-- `self.Translate or type(text)=="string"`. Do NOT wrap this in Untranslated()/T
+			-- (that returns a T value and trips the assert) -- pass the literal directly.
 			local ok_add = pcall(function()
 				XText:new({
 					Id = "idSuperBigMapPleaseWait",
@@ -518,7 +519,7 @@ local function SilenceLoadingBox(box)
 					Margins = (type(box_fn) == "function") and box_fn(20, 16, 20, 16) or nil,
 					TextStyle = "CommonMessageDescription",
 					Translate = false,
-					Text = wrap("Please wait."),
+					Text = "Please wait.",
 				}, container, container.context)
 			end)
 			if ok_add then changed = true end
