@@ -192,14 +192,23 @@ local function ResolveStartButton(dialog)
 end
 
 local function ActionTextColor(button)
-	local const_tbl = Global("const")
-	if type(const_tbl) == "table" and type(const_tbl.GameColorA) == "number" then
-		return const_tbl.GameColorA
+	local label = button and button.idLabel
+	if label and type(label.CalcTextColor) == "function" then
+		local color = SafeCall(label.CalcTextColor, label)
+		if type(color) == "number" then return color end
+	end
+	if button and type(button.CalcTextColor) == "function" then
+		local color = SafeCall(button.CalcTextColor, button)
+		if type(color) == "number" then return color end
 	end
 	local styles = Global("TextStyles")
 	local style = type(styles) == "table" and styles.ActionSmall
 	if type(style) == "table" and type(style.TextColor) == "number" then
 		return style.TextColor
+	end
+	local const_tbl = Global("const")
+	if type(const_tbl) == "table" and type(const_tbl.GameColorA) == "number" then
+		return const_tbl.GameColorA
 	end
 	local rgba = Global("RGBA")
 	if type(rgba) == "function" then
@@ -208,87 +217,20 @@ local function ActionTextColor(button)
 	return 4293840584
 end
 
-local function TransparentColor()
-	local rgba = Global("RGBA")
-	if type(rgba) == "function" then
-		return rgba(0, 0, 0, 0)
-	end
-	return 0
-end
-
-local function PanelColor()
-	local rgba = Global("RGBA")
-	if type(rgba) == "function" then
-		return rgba(0, 0, 0, 180)
-	end
-	return 3019898880
-end
-
-local function HoverColor()
-	local rgba = Global("RGBA")
-	if type(rgba) == "function" then
-		return rgba(90, 120, 150, 180)
-	end
-	return 3025821846
-end
-
-local function TrackColor()
-	local rgba = Global("RGBA")
-	if type(rgba) == "function" then
-		return rgba(168, 183, 201, 107)
-	end
-	return 1806223272
-end
-
-local function UiBox(...)
-	local box_fn = Global("box")
-	if type(box_fn) == "function" then
-		return box_fn(...)
-	end
-	return nil
-end
-
-local function IsUnderlineTunerEnabled()
-	local config = SuperBigMap.Config
-	return type(config) == "table" and config.DEBUG_PREGAMETOGGLE == true
-end
+local EXPAND_BAR_X = 905
+local EXPAND_BAR_Y = 2072
+local EXPAND_BAR_LENGTH = 217
 
 local function EnsureUnderlineTuneDefaults(button)
-	if not button or not button.box then return end
-	if State.pregame_underline_x == nil and type(button.box.minx) == "function" then
-		State.pregame_underline_x = button.box:minx()
-	end
-	if State.pregame_underline_y == nil and type(button.box.maxy) == "function" then
-		State.pregame_underline_y = button.box:maxy() - 10
-	end
-	if State.pregame_underline_length == nil and type(button.box.sizex) == "function" then
-		State.pregame_underline_length = button.box:sizex()
-	end
+	State.pregame_underline_x = EXPAND_BAR_X
+	State.pregame_underline_y = EXPAND_BAR_Y
+	State.pregame_underline_length = EXPAND_BAR_LENGTH
 end
 
 local ApplyExpandUnderline
 
 local function IsAlive(win)
 	return win and win.window_state ~= "destroying"
-end
-
-local function SetText(ctrl, text)
-	if ctrl and type(ctrl.SetText) == "function" then
-		SafeCall(ctrl.SetText, ctrl, tostring(text))
-	end
-end
-
-local function UnderlineTunerState(dialog)
-	local info = State.pregame_underline_tuner
-	if type(info) ~= "table" or info.dialog ~= dialog then
-		info = {
-			dialog = dialog,
-			window = false,
-			labels = {},
-		}
-		State.pregame_underline_tuner = info
-	end
-	return info
 end
 
 local function ExpandBarState(dialog)
@@ -303,173 +245,6 @@ local function ExpandBarState(dialog)
 		State.pregame_expand_bar = info
 	end
 	return info
-end
-
-local function UpdateUnderlineTuner(dialog)
-	local info = State.pregame_underline_tuner
-	if type(info) ~= "table" or info.dialog ~= dialog or type(info.labels) ~= "table" then return end
-	SetText(info.labels.x, State.pregame_underline_x or 0)
-	SetText(info.labels.y, State.pregame_underline_y or 0)
-	SetText(info.labels.length, State.pregame_underline_length or 0)
-end
-
-local function AdjustUnderlineValue(dialog, field, delta)
-	local button = ResolveExpandButton(dialog)
-	EnsureUnderlineTuneDefaults(button)
-	if field == "x" then
-		State.pregame_underline_x = (State.pregame_underline_x or 0) + delta
-	elseif field == "y" then
-		State.pregame_underline_y = (State.pregame_underline_y or 0) + delta
-	elseif field == "length" then
-		State.pregame_underline_length = math.max(1, (State.pregame_underline_length or 1) + delta)
-	end
-	UpdateUnderlineTuner(dialog)
-	if ApplyExpandUnderline then
-		ApplyExpandUnderline(dialog)
-	end
-end
-
-local function SetUnderlineValue(dialog, field, value)
-	local button = ResolveExpandButton(dialog)
-	EnsureUnderlineTuneDefaults(button)
-	value = tonumber(value)
-	if not value then
-		UpdateUnderlineTuner(dialog)
-		return
-	end
-	value = math.floor(value)
-	if field == "x" then
-		State.pregame_underline_x = value
-	elseif field == "y" then
-		State.pregame_underline_y = value
-	elseif field == "length" then
-		State.pregame_underline_length = math.max(1, value)
-	end
-	UpdateUnderlineTuner(dialog)
-	if ApplyExpandUnderline then
-		ApplyExpandUnderline(dialog)
-	end
-end
-
-local function NewTextButton(parent, text, on_press)
-	local XTextButton = Global("XTextButton")
-	if type(XTextButton) ~= "table" then return nil end
-	local btn = XTextButton:new({
-		Translate = false,
-		TextStyle = "ActionSmall",
-		MinWidth = 38,
-		MinHeight = 30,
-		Background = TransparentColor(),
-		FocusedBackground = TransparentColor(),
-		RolloverBackground = HoverColor(),
-		PressedBackground = HoverColor(),
-	}, parent, parent and parent.context)
-	SetText(btn, text)
-	btn.OnPress = function()
-		if type(on_press) == "function" then
-			on_press()
-		end
-	end
-	return btn
-end
-
-local function NewTextLabel(parent, text, min_width)
-	local XLabel = Global("XLabel")
-	if type(XLabel) ~= "table" then return nil end
-	local label = XLabel:new({
-		Translate = false,
-		TextStyle = "ActionSmall",
-		MinWidth = min_width or 0,
-		VAlign = "center",
-		HAlign = "center",
-	}, parent, parent and parent.context)
-	SetText(label, text)
-	return label
-end
-
-local function NewNumberEdit(parent, dialog, field)
-	local XNumberEdit = Global("XNumberEdit")
-	if type(XNumberEdit) ~= "table" then return nil end
-	local edit = XNumberEdit:new({
-		Translate = false,
-		TextStyle = "ActionSmall",
-		TextHAlign = "center",
-		MinWidth = 90,
-		MaxWidth = 90,
-		MinHeight = 30,
-		Background = TransparentColor(),
-		FocusedBackground = HoverColor(),
-		BorderColor = ActionTextColor(),
-		FocusedBorderColor = ActionTextColor(),
-		IsInRange = false,
-		OnShortcut = function(control, shortcut, ...)
-			if shortcut == "Enter" then
-				local number = type(control.GetNumber) == "function" and control:GetNumber() or tonumber(control:GetText())
-				SetUnderlineValue(dialog, field, number)
-				return "break"
-			end
-			return XNumberEdit.OnShortcut(control, shortcut, ...)
-		end,
-	}, parent, parent and parent.context)
-	return edit
-end
-
-local function AddTuneRow(dialog, tuner, labels, field, label_text)
-	local XWindow = Global("XWindow")
-	if type(XWindow) ~= "table" then return end
-	local row = XWindow:new({
-		LayoutMethod = "HList",
-		LayoutHSpacing = 6,
-		HAlign = "center",
-		MinHeight = 34,
-	}, tuner, tuner.context)
-	NewTextLabel(row, label_text, 95)
-	NewTextButton(row, "<", function() AdjustUnderlineValue(dialog, field, -1) end)
-	local value_label = NewNumberEdit(row, dialog, field) or NewTextLabel(row, "0", 90)
-	NewTextButton(row, ">", function() AdjustUnderlineValue(dialog, field, 1) end)
-	labels[field] = value_label
-end
-
-local function EnsureUnderlineTuner(dialog, button)
-	if not IsUnderlineTunerEnabled() or not dialog then return false end
-	EnsureUnderlineTuneDefaults(button)
-	local info = UnderlineTunerState(dialog)
-	if info.window and info.window.window_state ~= "destroying" then
-		UpdateUnderlineTuner(dialog)
-		return info.window
-	end
-	local XWindow = Global("XWindow")
-	if type(XWindow) ~= "table" then return false end
-	local tuner = XWindow:new({
-		Id = "idSuperBigMapUnderlineTuner",
-		Dock = false,
-		HAlign = "center",
-		VAlign = "center",
-		ZOrder = 200,
-		LayoutMethod = "VList",
-		LayoutVSpacing = 8,
-		MinWidth = 420,
-		Padding = UiBox(16, 12, 16, 12),
-		Background = PanelColor(),
-		BorderWidth = 1,
-		BorderColor = ActionTextColor(button),
-	}, dialog, dialog.context)
-	info.window = tuner
-	info.labels = {}
-	NewTextLabel(tuner, "EXPAND MAP BAR", 0)
-	AddTuneRow(dialog, tuner, info.labels, "x", "X")
-	AddTuneRow(dialog, tuner, info.labels, "y", "Y")
-	AddTuneRow(dialog, tuner, info.labels, "length", "LENGTH")
-	if type(tuner.Open) == "function" and tuner.window_state == "new" then
-		SafeCall(tuner.Open, tuner)
-	end
-	UpdateUnderlineTuner(dialog)
-	ToggleLog("underline tuner created", {
-		x = tostring(State.pregame_underline_x),
-		y = tostring(State.pregame_underline_y),
-		length = tostring(State.pregame_underline_length),
-	})
-	return tuner
 end
 
 local function DeleteOldUnderline(dialog)
@@ -504,7 +279,7 @@ local function EnsureExpandBar(dialog, button)
 		Dock = "ignore",
 		HAlign = "none",
 		VAlign = "none",
-		Background = TrackColor(),
+		Background = ActionTextColor(button),
 		HandleMouse = false,
 		ZOrder = 0,
 	}, holder, dialog.context)
@@ -535,11 +310,15 @@ ApplyExpandUnderline = function(dialog)
 	end
 	local color = ActionTextColor(button)
 	EnsureUnderlineTuneDefaults(button)
-	EnsureUnderlineTuner(dialog, button)
 	local bar = EnsureExpandBar(dialog, button)
 	if not bar then
 		ToggleLog("expand bar skipped: missing windows")
 		return false
+	end
+	if type(bar.track.SetBackground) == "function" then
+		SafeCall(bar.track.SetBackground, bar.track, color)
+	else
+		bar.track.Background = color
 	end
 	if type(bar.fill.SetBackground) == "function" then
 		SafeCall(bar.fill.SetBackground, bar.fill, color)
@@ -556,7 +335,7 @@ ApplyExpandUnderline = function(dialog)
 		SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
 		SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
 	end
-	local visible = IsSelected() or IsUnderlineTunerEnabled()
+	local visible = IsSelected()
 	for _, win in ipairs({ bar.holder, bar.track, bar.fill }) do
 		if IsAlive(win) then
 			if type(win.SetVisible) == "function" then
@@ -612,6 +391,19 @@ local function InstallLandingDialogAction(dialog)
 	SetSortKey(ActionById(dialog, "custom"), "020")
 	SetSortKey(ActionById(dialog, "random"), "030")
 	SetSortKey(ActionById(dialog, "start"), "050")
+
+	local back_action = ActionById(dialog, "back")
+	if back_action and back_action.SuperBigMapBackWrapped ~= true then
+		local original_on_action = back_action.OnAction
+		back_action.OnAction = function(action, host, source, ...)
+			SetSelected(false, "back")
+			ApplyExpandUnderline(host or dialog)
+			if type(original_on_action) == "function" then
+				return original_on_action(action, host, source, ...)
+			end
+		end
+		back_action.SuperBigMapBackWrapped = true
+	end
 
 	local start_action = ActionById(dialog, "start")
 	if start_action and start_action.SuperBigMapStartWrapped ~= true then
