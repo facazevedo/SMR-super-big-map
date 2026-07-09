@@ -140,6 +140,8 @@ local function UpdateDialogExpandActionLabel(dialog)
 	return UpdateExpandActionLabel(ActionById(dialog, "super_big_map_expand"))
 end
 
+local UpdateExpandButtonVisual
+
 local function ResolveExpandButton(dialog)
 	local action_bar = dialog and dialog.idActionBar
 	local toolbar = action_bar and action_bar.idToolBar
@@ -171,26 +173,6 @@ local function ResolveExpandButton(dialog)
 	return false
 end
 
-local function ResolveStartButton(dialog)
-	local action_bar = dialog and dialog.idActionBar
-	local toolbar = action_bar and action_bar.idToolBar
-	local resolve = toolbar and toolbar.ResolveId
-	if type(resolve) == "function" then
-		local ok, button = pcall(resolve, toolbar, "idstart")
-		if ok and button then
-			return button
-		end
-	end
-	resolve = dialog and dialog.ResolveId
-	if type(resolve) == "function" then
-		local ok, button = pcall(resolve, dialog, "idstart")
-		if ok and button then
-			return button
-		end
-	end
-	return false
-end
-
 local function ActionTextColor(button)
 	local const_tbl = Global("const")
 	if type(const_tbl) == "table" and type(const_tbl.GameColorA) == "number" then
@@ -208,69 +190,171 @@ local function ActionTextColor(button)
 	return 4293840584
 end
 
-local function ApplyExpandUnderline(dialog)
-	local button = ResolveExpandButton(dialog)
-	if not button then
-		ToggleLog("underline skipped: button missing", {
-			selected = IsSelected(),
-		})
-		return false
+local function SetWindowVisible(win, value)
+	if not win then return end
+	if type(win.SetVisible) == "function" then
+		SafeCall(win.SetVisible, win, value == true)
+	else
+		win.Visible = value == true
 	end
-	local underline = dialog and dialog.SuperBigMapExpandUnderline or false
-	local resolve = dialog and dialog.ResolveId
+end
+
+local function CleanupDialogUnderline(dialog)
+	if not dialog then return end
+	local underline = dialog.SuperBigMapExpandUnderline
+	local resolve = dialog.ResolveId
 	if type(resolve) == "function" then
 		local ok, child = pcall(resolve, dialog, "idSuperBigMapUnderline")
 		if ok and child then underline = child end
 	end
-	if not underline then
-		local XWindow = Global("XWindow")
-		if type(XWindow) ~= "table" then
-			ToggleLog("underline skipped: XWindow unavailable", {
-				xwindow_type = type(XWindow),
-			})
-			return false
+	if underline then
+		if type(underline.delete) == "function" then
+			SafeCall(underline.delete, underline)
+		else
+			SetWindowVisible(underline, false)
 		end
-		underline = XWindow:new({
-			Id = "idSuperBigMapUnderline",
-			Dock = false,
-			ZOrder = 100,
-			MinHeight = 4,
-			MaxHeight = 4,
-			Background = ActionTextColor(button),
-		}, dialog, dialog.context)
-		dialog.SuperBigMapExpandUnderline = underline
-		ToggleLog("underline created", {
-			button_box = BoxText(button.box),
-			underline_box = BoxText(underline.box),
-			measure_width = tostring(underline.measure_width),
-			measure_height = tostring(underline.measure_height),
+	end
+	dialog.SuperBigMapExpandUnderline = nil
+end
+
+UpdateExpandButtonVisual = function(button)
+	if not button then
+		ToggleLog("button visual skipped: button missing", {
+			selected = IsSelected(),
 		})
+		return false
+	end
+	local underline = button.SuperBigMapUnderline
+	if not underline then
+		local resolve = button.ResolveId
+		if type(resolve) == "function" then
+			local ok, child = pcall(resolve, button, "idSuperBigMapUnderline")
+			if ok and child then underline = child end
+		end
+	end
+	if not underline then
+		ToggleLog("button visual skipped: underline missing", {
+			button_box = BoxText(button.box),
+			class = tostring(button.class),
+		})
+		return false
 	end
 	local color = ActionTextColor(button)
-	if underline.SetBackground then
+	if type(underline.SetBackground) == "function" then
 		SafeCall(underline.SetBackground, underline, color)
 	else
 		underline.Background = color
 	end
-	if button.box and type(button.box.minx) == "function" and type(button.box.maxy) == "function"
-		and type(button.box.sizex) == "function" and type(underline.SetBox) == "function" then
+
+	local visible = IsSelected()
+	local box = button.box
+	local valid_box = box and type(box.minx) == "function" and type(box.maxy) == "function" and type(box.sizex) == "function"
+		and box:sizex() > 0
+	if valid_box and type(underline.SetBox) == "function" then
 		local line_height = 4
-		local y = button.box:maxy() - 10
-		SafeCall(underline.SetBox, underline, button.box:minx(), y, button.box:sizex(), line_height)
-	end
-	if type(underline.SetVisible) == "function" then
-		SafeCall(underline.SetVisible, underline, IsSelected())
+		local bottom_gap = 6
+		local y = box:maxy() - bottom_gap - line_height
+		SafeCall(underline.SetBox, underline, box:minx(), y, box:sizex(), line_height, "dont-move")
 	else
-		underline.Visible = IsSelected()
+		visible = false
 	end
-	ToggleLog("underline applied", {
+	SetWindowVisible(underline, visible)
+	ToggleLog("button visual applied", {
 		button_box = BoxText(button.box),
+		class = tostring(button.class),
 		color = tostring(color),
 		selected = IsSelected(),
-		start_box = BoxText((ResolveStartButton(dialog) or {}).box),
 		underline_box = BoxText(underline.box),
-		visible = type(underline.GetVisible) == "function" and tostring(underline:GetVisible()) or tostring(underline.Visible),
+		visible = tostring(visible),
 	})
+	return true
+end
+
+local function EnsureExpandButtonClass()
+	local cls = Global("SuperBigMapExpandMenuEntry")
+	if type(cls) ~= "table" then
+		local DefineClass = Global("DefineClass")
+		local MenuEntry = Global("MenuEntry")
+		if type(DefineClass) ~= "table" or type(MenuEntry) ~= "table" then
+			ToggleLog("button class skipped: base unavailable", {
+				define_class_type = type(DefineClass),
+				menu_entry_type = type(MenuEntry),
+			})
+			return false
+		end
+		DefineClass.SuperBigMapExpandMenuEntry = {
+			__parents = { "MenuEntry" },
+		}
+		cls = Global("SuperBigMapExpandMenuEntry")
+	end
+	if type(cls) ~= "table" then
+		ToggleLog("button class skipped: define failed")
+		return false
+	end
+
+	cls.Init = function(self, parent, context)
+		local MenuEntry = Global("MenuEntry")
+		if type(MenuEntry) == "table" and type(MenuEntry.Init) == "function" then
+			SafeCall(MenuEntry.Init, self, parent, context)
+		end
+		local XWindow = Global("XWindow")
+		if type(XWindow) ~= "table" then
+			ToggleLog("underline child skipped: XWindow unavailable", {
+				xwindow_type = type(XWindow),
+			})
+			return
+		end
+		local underline = XWindow:new({
+			Id = "idSuperBigMapUnderline",
+			Dock = "ignore",
+			HAlign = "none",
+			VAlign = "none",
+			ZOrder = 100,
+			MinHeight = 4,
+			MaxHeight = 4,
+			HandleMouse = false,
+			Background = ActionTextColor(self),
+		}, self, context)
+		self.SuperBigMapUnderline = underline
+		SetWindowVisible(underline, false)
+		ToggleLog("underline child created", {
+			button_box = BoxText(self.box),
+			underline_box = BoxText(underline.box),
+		})
+	end
+
+	cls.Open = function(self, ...)
+		local XTextButton = Global("XTextButton")
+		if type(XTextButton) == "table" and type(XTextButton.Open) == "function" then
+			SafeCall(XTextButton.Open, self, ...)
+		end
+		UpdateExpandButtonVisual(self)
+	end
+
+	cls.OnLayoutComplete = function(self, ...)
+		local MenuEntry = Global("MenuEntry")
+		if type(MenuEntry) == "table" and type(MenuEntry.OnLayoutComplete) == "function" then
+			SafeCall(MenuEntry.OnLayoutComplete, self, ...)
+		end
+		UpdateExpandButtonVisual(self)
+	end
+
+	cls.OnSetFocus = function(self, ...)
+		local MenuEntry = Global("MenuEntry")
+		if type(MenuEntry) == "table" and type(MenuEntry.OnSetFocus) == "function" then
+			SafeCall(MenuEntry.OnSetFocus, self, ...)
+		end
+		UpdateExpandButtonVisual(self)
+	end
+
+	cls.OnSetRollover = function(self, ...)
+		local XTextButton = Global("XTextButton")
+		if type(XTextButton) == "table" and type(XTextButton.OnSetRollover) == "function" then
+			SafeCall(XTextButton.OnSetRollover, self, ...)
+		end
+		UpdateExpandButtonVisual(self)
+	end
+
 	return true
 end
 
@@ -289,7 +373,7 @@ local function RefreshActions(host)
 		host = tostring(host.class or host.Id or host),
 	})
 	SafeCall(host.UpdateActionViews, host, host.idActionBar or host)
-	ApplyExpandUnderline(host)
+	UpdateExpandButtonVisual(ResolveExpandButton(host))
 end
 
 local function InstallLandingDialogAction(dialog)
@@ -300,6 +384,8 @@ local function InstallLandingDialogAction(dialog)
 	if type(XAction) ~= "table" then
 		return false
 	end
+	local expand_button_template = EnsureExpandButtonClass() and "SuperBigMapExpandMenuEntry" or "MenuEntry"
+	CleanupDialogUnderline(dialog)
 
 	SetSortKey(ActionById(dialog, "back"), "010")
 	SetSortKey(ActionById(dialog, "custom"), "020")
@@ -322,16 +408,18 @@ local function InstallLandingDialogAction(dialog)
 		ActionId = "super_big_map_expand",
 		ActionName = ExpandActionName(),
 		ActionTranslate = false,
+		ActionButtonTemplate = expand_button_template,
 		ActionToolbar = "ActionBar",
 		ActionSortKey = "040",
-		OnAction = function(action, host)
+		OnAction = function(action, host, source)
 			SetSelected(not IsSelected(), "toggle")
 			ToggleLog("expand action clicked", {
 				host = tostring(host and (host.class or host.Id) or "nil"),
+				source = tostring(source and (source.class or source.Id) or "nil"),
 				selected = IsSelected(),
 			})
 			UpdateExpandActionLabel(action)
-			ApplyExpandUnderline(host or dialog)
+			UpdateExpandButtonVisual(source or ResolveExpandButton(host or dialog))
 		end,
 		RolloverText = "Generate this new game as a 20 x 20 Super Big Map.",
 	}, dialog, dialog.context)
