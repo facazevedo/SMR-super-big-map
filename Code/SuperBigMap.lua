@@ -1,26 +1,26 @@
--- Bigger Maps -- mod entry point.
+-- Super Big Map -- mod entry point.
 --
 -- By the time this file loads, the foundation (version/config/debug/engine), the
 -- domain modules, and the lifecycle have all loaded (see metadata.lua `code` order).
 -- This file does nothing but log the active configuration and start the reversible
 -- lifecycle once. Everything else -- patching, per-map apply, OnMsg wiring -- lives
--- in the domain modules and bm_lifecycle.lua.
+-- in the domain modules and sbm_lifecycle.lua.
 
-local BiggerMaps = rawget(_G, "BiggerMaps")
-if type(BiggerMaps) ~= "table" then
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
 	return
 end
 
-local Config = BiggerMaps.Config or {}
-local DebugLog = BiggerMaps.DebugLog
+local Config = SuperBigMap.Config or {}
+local DebugLog = SuperBigMap.DebugLog
 if DebugLog then
-	DebugLog.Info("Init", "Bigger Maps loaded", {
+	DebugLog.Info("Lifecycle", "Super Big Map loaded", {
 		enabled = Config.ENABLE_MOD ~= false,
 		terrain = Config.TERRAIN_SIZE,
 		grid = Config.SECTOR_GRID,
 	})
 end
 
-if BiggerMaps.Lifecycle and type(BiggerMaps.Lifecycle.Enable) == "function" then
-	BiggerMaps.Lifecycle.Enable()
+if SuperBigMap.Lifecycle and type(SuperBigMap.Lifecycle.Enable) == "function" then
+	SuperBigMap.Lifecycle.Enable()
 end

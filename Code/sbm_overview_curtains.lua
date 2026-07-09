@@ -1,4 +1,4 @@
--- Bigger Maps -- overview curtain hiding.
+-- Super Big Map -- overview curtain hiding.
 --
 -- The vanilla overview draws dark "curtains" around the visible map. On expanded
 -- maps these cover terrain the player can now use, so this module zeroes them out:
@@ -6,25 +6,39 @@
 -- ShowOverviewMapCurtains and hides any live curtain dialog. Gated on
 -- Config.HIDE_OVERVIEW_CURTAINS; RestoreVanillaBehavior reinstalls the originals.
 
-local BiggerMaps = rawget(_G, "BiggerMaps")
-if type(BiggerMaps) ~= "table" then
-	BiggerMaps = {}
-	rawset(_G, "BiggerMaps", BiggerMaps)
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
+	SuperBigMap = {}
+	rawset(_G, "SuperBigMap", SuperBigMap)
 end
 
-local Engine = BiggerMaps.Engine
+local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local Config = BiggerMaps.Config or {}
+local Config = SuperBigMap.Config or {}
 
 local HIDE_OVERVIEW_CURTAINS = Config.HIDE_OVERVIEW_CURTAINS == true
+
+-- Curtains are hidden ONLY on mod-expanded maps. On vanilla maps / old saves the
+-- stubs below delegate to the originals so the vanilla curtains show normally.
+local function IsModMap(map)
+	local grid = SuperBigMap.SectorGrid
+	if grid and type(grid.IsModMap) == "function" then
+		return grid.IsModMap(map) == true
+	end
+	return false
+end
+
+local function CurrentMapIsMod()
+	return IsModMap(Global("CurrentMap"))
+end
 
 local original_calc_overview_curtains_size = false
 local original_show_overview_map_curtains = false
 local original_set_overview_curtains = false
 
 local function HideOverviewCurtains()
-	if not HIDE_OVERVIEW_CURTAINS then
+	if not HIDE_OVERVIEW_CURTAINS or not CurrentMapIsMod() then
 		return
 	end
 
@@ -49,7 +63,10 @@ local function PatchOverviewCurtains()
 
 	if not original_calc_overview_curtains_size and type(Global("CalcOverviewCurtainsSize")) == "function" then
 		original_calc_overview_curtains_size = Global("CalcOverviewCurtainsSize")
-		_G.CalcOverviewCurtainsSize = function()
+		_G.CalcOverviewCurtainsSize = function(...)
+			if not CurrentMapIsMod() then
+				return original_calc_overview_curtains_size(...)
+			end
 			return 0, 0
 		end
 	end
@@ -61,7 +78,10 @@ local function PatchOverviewCurtains()
 		and not original_set_overview_curtains
 	then
 		original_set_overview_curtains = curtains_class.SetOverviewCurtains
-		curtains_class.SetOverviewCurtains = function(self)
+		curtains_class.SetOverviewCurtains = function(self, ...)
+			if not CurrentMapIsMod() then
+				return original_set_overview_curtains(self, ...)
+			end
 			return original_set_overview_curtains(self, 0, 0)
 		end
 	end
@@ -69,6 +89,9 @@ local function PatchOverviewCurtains()
 	if not original_show_overview_map_curtains and type(Global("ShowOverviewMapCurtains")) == "function" then
 		original_show_overview_map_curtains = Global("ShowOverviewMapCurtains")
 		_G.ShowOverviewMapCurtains = function(show, force_close)
+			if not CurrentMapIsMod() then
+				return original_show_overview_map_curtains(show, force_close)
+			end
 			if show then
 				HideOverviewCurtains()
 				return
@@ -78,6 +101,14 @@ local function PatchOverviewCurtains()
 	end
 
 	HideOverviewCurtains()
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Overview", "overview curtains patched/hidden", {
+			calc = original_calc_overview_curtains_size ~= nil,
+			set = original_set_overview_curtains ~= nil,
+			show = original_show_overview_map_curtains ~= nil,
+		})
+	end
 end
 
 local OverviewCurtains = {}
@@ -107,4 +138,4 @@ function OverviewCurtains.RestoreVanillaBehavior()
 	end
 end
 
-BiggerMaps.OverviewCurtains = OverviewCurtains
+SuperBigMap.OverviewCurtains = OverviewCurtains

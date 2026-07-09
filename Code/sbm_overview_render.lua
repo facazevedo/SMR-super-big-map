@@ -1,23 +1,23 @@
--- Bigger Maps -- overview render-distance patch.
+-- Super Big Map -- overview render-distance patch.
 --
 -- In overview mode the camera pulls far back, so the engine's default FarZ and
 -- shadow ranges clip the now-distant terrain. While overview is active this module
 -- pushes FarZ and the shadow ranges out (via the reversible hr table.change/restore)
 -- and restores them on exit. Apply(true/false) is driven by the overview-mode flow
--- in bm_lifecycle; RestoreVanillaBehavior forces the vanilla render distance back.
+-- in sbm_lifecycle; RestoreVanillaBehavior forces the vanilla render distance back.
 
-local BiggerMaps = rawget(_G, "BiggerMaps")
-if type(BiggerMaps) ~= "table" then
-	BiggerMaps = {}
-	rawset(_G, "BiggerMaps", BiggerMaps)
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
+	SuperBigMap = {}
+	rawset(_G, "SuperBigMap", SuperBigMap)
 end
 
-local Engine = BiggerMaps.Engine
+local Engine = SuperBigMap.Engine
 local Global = Engine.Global
-local Config = BiggerMaps.Config or {}
+local Config = SuperBigMap.Config or {}
 
 local OVERVIEW_FAR_Z = (type(Config.OVERVIEW_FAR_Z) == "number") and Config.OVERVIEW_FAR_Z or 12000000
-local OVERVIEW_HR_KEY = "BiggerMapsOverview"
+local OVERVIEW_HR_KEY = "SuperBigMapOverview"
 
 local overview_render_distance_active = false
 local overview_render_original_hr = false
@@ -60,6 +60,12 @@ function OverviewRender.Apply(enable)
 			hr.ShadowFadeOutRangePercent = 0
 		end
 		overview_render_distance_active = true
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Overview", "render distance extended for overview", {
+				far_z = OVERVIEW_FAR_Z, via = changed and "table.change" or "direct",
+			})
+		end
 	else
 		if not overview_render_distance_active then
 			return
@@ -78,6 +84,10 @@ function OverviewRender.Apply(enable)
 		end
 		overview_render_distance_active = false
 		overview_render_original_hr = false
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Overview", "render distance restored to vanilla", { via = restored and "table.restore" or "direct" })
+		end
 	end
 end
 
@@ -90,4 +100,4 @@ function OverviewRender.RestoreVanillaBehavior()
 	OverviewRender.Apply(false)
 end
 
-BiggerMaps.OverviewRender = OverviewRender
+SuperBigMap.OverviewRender = OverviewRender

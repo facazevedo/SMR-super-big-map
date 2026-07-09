@@ -1,11 +1,11 @@
 -- Zoom+ camera controls.
 --
--- A standalone module that increases the RTS camera's far zoom-out distance
--- by a configurable multiplier without touching zoom-in or the overview-exit
--- targeting logic. Designed to also be usable as a standalone mod: it has no
--- dependencies on any other mod's namespace.
+-- A module that increases the RTS camera's far zoom-out distance by a configurable
+-- multiplier without touching zoom-in or the overview-exit targeting logic. This copy
+-- is PRIVATE to Super Big Map: it lives on the unique global SuperBigMapZoomPlus, never
+-- the shared `ZoomPlus` global, and references no other mod (no Scenario Editor hooks).
 --
--- Public API (all on the global ZoomPlus table):
+-- Public API (all on the SuperBigMapZoomPlus table):
 --   ZoomPlus.Enable(preserve_camera) -> bool
 --   ZoomPlus.Disable()                -> bool
 --   ZoomPlus.Toggle()                 -> string status
@@ -22,49 +22,18 @@
 --   preserves vanilla's overview targeting so the camera still exits toward
 --   the hovered sector.
 
-ZoomPlus = rawget(_G, "ZoomPlus") or {}
-_G.ZoomPlus = ZoomPlus
-
-local function ZoomPlus_BiggerMapsConfig()
-	local config = rawget(_G, "BiggerMapsConfig")
-	return type(config) == "table" and config or false
-end
-
-local function ZoomPlus_ConfigNumber(name, default, min_value)
-	local config = ZoomPlus_BiggerMapsConfig()
-	local value = config and config[name]
-	if type(value) == "number" and (min_value == nil or value >= min_value) then
-		return value
-	end
-	return default
-end
-
-local function ZoomPlus_ConfigBool(name, default)
-	local config = ZoomPlus_BiggerMapsConfig()
-	local value = config and config[name]
-	if type(value) == "boolean" then
-		return value
-	end
-	return default
-end
+-- Super Big Map's PRIVATE ZoomPlus instance. It must NOT share the global `ZoomPlus`
+-- table with other mods (e.g. the Scenario Editor mod bundles its own ZoomPlus under
+-- that same name) -- each owns its own state and camera handling. So this copy is
+-- registered ONLY under a unique global and the table itself is kept local; nothing
+-- here ever touches _G.ZoomPlus. Used solely by Super Big Map.
+local ZoomPlus = rawget(_G, "SuperBigMapZoomPlus") or {}
+rawset(_G, "SuperBigMapZoomPlus", ZoomPlus)
 
 ZoomPlus.Config = ZoomPlus.Config or {}
--- Default multiplier tuned for large maps. Hosts can override this via
--- ZoomPlus.SetMultiplier().
-if ZoomPlus_BiggerMapsConfig() then
-	ZoomPlus.Config.MULTIPLIER = ZoomPlus_ConfigNumber(
-		"ZoomPlusLookatDistZoomOutMultiplier",
-		ZoomPlus_ConfigNumber("NormalZoomMultiplier", 4.0, 1.01),
-		1.01
-	)
-	ZoomPlus.Config.ALLOW_WITH_SCENARIO_EDITOR_HOST = ZoomPlus_ConfigBool("AllowZoomPlusWithScenarioEditorHost", true)
-else
-	if type(ZoomPlus.Config.MULTIPLIER) ~= "number" or ZoomPlus.Config.MULTIPLIER <= 1 then
-		ZoomPlus.Config.MULTIPLIER = 4.0
-	end
-	if ZoomPlus.Config.ALLOW_WITH_SCENARIO_EDITOR_HOST == nil then
-		ZoomPlus.Config.ALLOW_WITH_SCENARIO_EDITOR_HOST = true
-	end
+-- Default multiplier; Super Big Map overrides it via ZoomPlus.SetMultiplier().
+if type(ZoomPlus.Config.MULTIPLIER) ~= "number" or ZoomPlus.Config.MULTIPLIER <= 1 then
+	ZoomPlus.Config.MULTIPLIER = 1.5
 end
 
 local ZP = ZoomPlus
@@ -77,6 +46,7 @@ local ZOOM_RESTORE_RETRY_COUNT = 60
 -- ZOOM_DEFERRED_CLAMP_RETRY_MS * ZOOM_DEFERRED_CLAMP_RETRY_COUNT (about 6 s).
 local ZOOM_DEFERRED_CLAMP_RETRY_MS = 100
 local ZOOM_DEFERRED_CLAMP_RETRY_COUNT = 60
+local ZOOM_FIRST_EXIT_TAKEOVER_TIMEOUT_MS = 5000
 
 local ZoomPlus_InstallOverviewReturnCameraHook
 local ZoomPlus_RemoveOverviewReturnCameraHook
@@ -86,24 +56,11 @@ local ZoomPlus_RemoveWheelEventDebugHook
 local ZoomPlus_InstallVanillaOverviewDiagnostics
 local ZoomPlus_RemoveVanillaOverviewDiagnostics
 
-local function ZoomPlus_HasScenarioEditorHost()
-	return rawget(_G, "ScenarioEditor") ~= nil or type(rawget(_G, "ScenarioEditor_ModeIsActive")) == "function"
-end
-
-local function ZoomPlus_ScenarioEditorModeActive()
-	local mode_is_active = rawget(_G, "ScenarioEditor_ModeIsActive")
-	if type(mode_is_active) ~= "function" then
-		return false
-	end
-	local ok, active = pcall(mode_is_active)
-	return ok and active == true
-end
-
 local function ZoomPlus_CanModifyCamera()
-	if type(ZP.Config) == "table" and ZP.Config.ALLOW_WITH_SCENARIO_EDITOR_HOST == true then
-		return true
-	end
-	return not ZoomPlus_HasScenarioEditorHost() or ZoomPlus_ScenarioEditorModeActive()
+	-- Super Big Map owns this instance and decides when it is enabled/disabled (the
+	-- integration disables it where vanilla camera is wanted, e.g. the editor), so the
+	-- camera may always be modified while ZoomPlus is enabled.
+	return true
 end
 
 local function ZoomPlus_ShouldApplyZoomPlusCamera()
@@ -138,11 +95,6 @@ end
 local function ZoomPlus_DebugEnabled(allow_inactive)
 	if not allow_inactive and not ZoomPlus_CanModifyCamera() then
 		return false
-	end
-	local scenario_editor = rawget(_G, "ScenarioEditor")
-	local config = type(scenario_editor) == "table" and scenario_editor.Config
-	if type(config) == "table" and config.SHOW_ZOOM_DEBUG_LOGS == true then
-		return true
 	end
 	return type(ZP.Config) == "table" and ZP.Config.SHOW_ZOOM_DEBUG_LOGS == true
 end
@@ -223,11 +175,6 @@ local function ZoomPlus_Debug(trigger, object, path, success, extra, key, allow_
 	if not ZoomPlus_DebugEnabled(allow_inactive) then
 		return
 	end
-	local debug_zoom = rawget(_G, "ScenarioEditor_DebugZoom")
-	if type(debug_zoom) == "function" then
-		pcall(debug_zoom, trigger, object, path, success, extra, key, allow_inactive)
-		return
-	end
 	local message = "zoom: "
 		.. "trigger=" .. tostring(trigger or "")
 		.. "; object=" .. ZoomPlus_DebugUiLabel(object)
@@ -242,36 +189,20 @@ local function ZoomPlus_Debug(trigger, object, path, success, extra, key, allow_
 	if key then
 		ZP.debug_last[key] = message
 	end
-	local log = rawget(_G, "ScenarioEditor_Log")
-	if type(log) == "function" then
-		log(message)
-	else
-		print("ScenarioEditor: " .. message)
-	end
+	print("[Super Big Map] ZoomPlus: " .. message)
 end
 
 local function ZoomPlus_ShouldLogVanillaDiagnostics()
 	return ZP.vanilla_diagnostics_armed == true and ZP.enabled ~= true and ZoomPlus_DebugEnabled(true)
 end
 
--- Route a one-shot disable-path diagnostic line to the Scenario Editor host helper
--- when present. Safe to call from this standalone module: it is a no-op when the
--- host is absent or when SHOW_ZOOM_DISABLE_DEBUG_LOGS is false.
+-- Disable/enable-path diagnostics. These previously routed to a host helper; this
+-- private copy has no host, so they are no-ops kept only so existing call sites stay
+-- valid. (General zoom diagnostics still go through ZoomPlus_Debug.)
 local function ZoomPlus_DebugDisable(trigger, path, success, extra, key)
-	local fn = rawget(_G, "ScenarioEditor_DebugZoomDisable")
-	if type(fn) == "function" then
-		pcall(fn, trigger, path, success, extra, key)
-	end
 end
 
--- Route a one-shot enable-path diagnostic line to the Scenario Editor host helper
--- when present. Safe to call from this standalone module: it is a no-op when the
--- host is absent or when SHOW_ZOOM_ENABLE_DEBUG_LOGS is false.
 local function ZoomPlus_DebugEnable(trigger, path, success, extra, key)
-	local fn = rawget(_G, "ScenarioEditor_DebugZoomEnable")
-	if type(fn) == "function" then
-		pcall(fn, trigger, path, success, extra, key)
-	end
 end
 
 -- ---------------------------------------------------------------------------
@@ -289,7 +220,7 @@ end
 function ZP.GetMultiplier()
 	local value = ZP.Config and ZP.Config.MULTIPLIER
 	if type(value) ~= "number" or value <= 1 then
-		return 5.0
+		return 1.5
 	end
 	return value
 end
@@ -500,40 +431,24 @@ local function ZoomPlus_ClearTransientState()
 	ZP.last_overview_zoom_out = false
 	ZP.overview_zoom_out_count = false
 	ZP.vanilla_overview_eye_offset = false
+	ZP.first_overview_exit_takeover_armed = false
+	ZP.first_overview_exit_takeover_token = false
 end
 
-local function ZoomPlus_IsInvalidPos(point_value)
-	local invalid_pos = rawget(_G, "InvalidPos")
-	if type(invalid_pos) == "function" then
-		local ok, value = pcall(invalid_pos)
-		if ok and point_value == value then
-			return true
-		end
-	end
-	return false
-end
-
-local function ZoomPlus_IsValidPoint(point_value)
-	if not point_value or ZoomPlus_IsInvalidPos(point_value) then
+local function ZoomPlus_IsValidCameraPoint(point)
+	if not point then
 		return false
 	end
-
-	local is_point = rawget(_G, "IsPoint")
-	if type(is_point) == "function" then
-		local ok, result = pcall(is_point, point_value)
-		if ok and result ~= true then
-			return false
-		end
-	end
-
 	local ok_method, is_valid = pcall(function()
-		return point_value.IsValid
+		return point.IsValid
 	end)
-	if ok_method and type(is_valid) == "function" then
-		local ok, valid = pcall(is_valid, point_value)
+	if not ok_method then
+		return false
+	end
+	if type(is_valid) == "function" then
+		local ok, valid = pcall(is_valid, point)
 		return ok and valid == true
 	end
-
 	return true
 end
 
@@ -555,7 +470,7 @@ local function ZoomPlus_ReapplyCurrentCameraForZoomProperties()
 	if not ok_eye or not ok_lookat or not eye or not lookat then
 		return false
 	end
-	if not ZoomPlus_IsValidPoint(eye) or not ZoomPlus_IsValidPoint(lookat) then
+	if not ZoomPlus_IsValidCameraPoint(eye) or not ZoomPlus_IsValidCameraPoint(lookat) then
 		return false
 	end
 	local ok = pcall(camera_rts.SetCamera, eye, lookat, 0)
@@ -646,6 +561,166 @@ local function ZoomPlus_ApplyOverviewReturnCamera(dialog)
 	return ZoomPlus_ClampOverviewSavedCameraToVanilla()
 end
 
+local function ZoomPlus_HasPointExitTarget(dialog)
+	local exit_to = dialog and dialog.exit_to
+	if not exit_to then
+		return false
+	end
+	local is_point = rawget(_G, "IsPoint")
+	if type(is_point) == "function" and not is_point(exit_to) then
+		return false
+	end
+	return true
+end
+
+-- Arm one mod-driven transition override only for the startup overview return
+-- camera that the host marks. Later overview exits have vanilla saved_camera data
+-- and should be left completely to vanilla's transition path.
+local function ZoomPlus_ArmFirstOverviewExitTakeover(dialog)
+	if not ZoomPlus_HasPointExitTarget(dialog) then
+		return false
+	end
+	local saved = dialog.saved_camera
+	if type(saved) ~= "table" or saved.bigger_maps_startup_overview_return ~= true then
+		return false
+	end
+
+	saved.bigger_maps_startup_overview_return = nil
+	local token = {}
+	ZP.first_overview_exit_takeover_token = token
+	ZP.first_overview_exit_takeover_armed = true
+	ZoomPlus_Debug(
+		"overview_exit",
+		dialog,
+		"first_exit_takeover_armed",
+		true,
+		"exit_to=" .. ZoomPlus_VectorSummary(dialog.exit_to)
+	)
+
+	local create_thread = rawget(_G, "CreateRealTimeThread")
+	local sleep = rawget(_G, "Sleep")
+	if type(create_thread) == "function" and type(sleep) == "function" then
+		pcall(create_thread, function(thread_token)
+			sleep(ZOOM_FIRST_EXIT_TAKEOVER_TIMEOUT_MS)
+			if ZP.first_overview_exit_takeover_token == thread_token then
+				ZP.first_overview_exit_takeover_token = false
+				ZP.first_overview_exit_takeover_armed = false
+				ZoomPlus_Debug(
+					"overview_exit",
+					ZP,
+					"first_exit_takeover_expired",
+					true,
+					"timeout_ms=" .. tostring(ZOOM_FIRST_EXIT_TAKEOVER_TIMEOUT_MS)
+				)
+			end
+		end, token)
+	end
+	return true
+end
+
+function ZP.ConsumeFirstOverviewExitTakeover()
+	if ZP.first_overview_exit_takeover_armed ~= true then
+		return false
+	end
+	ZP.first_overview_exit_takeover_armed = false
+	ZP.first_overview_exit_takeover_token = false
+	ZoomPlus_Debug("overview_exit", ZP, "first_exit_takeover_consumed", true, "")
+	return true
+end
+
+-- Pre-aim the overview exit: just before vanilla's RestoreCamera runs its descent
+-- SetCamera(eye, lookat=exit_to, time), snap the LIVE camera's lookat to the exit
+-- sector (keeping the current eye). RestoreCamera then interpolates from a camera
+-- already looking at the sector to one looking at the same sector -> the lookat
+-- stays put, so the sector is locked on screen and the camera descends STRAIGHT
+-- onto it instead of panning across the map (the curved first zoom-in). Only fires
+-- when exiting toward a specific sector/point (exit_to set); the "return to where
+-- you were" (Escape, exit_to=false) path is left to vanilla. Gated by
+-- ZP.Config.PRE_AIM_OVERVIEW_EXIT (default on).
+local function ZoomPlus_PreAimOverviewExit(dialog, first_exit_takeover_armed)
+	if first_exit_takeover_armed ~= true then
+		return false
+	end
+	if not dialog then
+		return false
+	end
+	if type(ZP.Config) == "table" and ZP.Config.PRE_AIM_OVERVIEW_EXIT == false then
+		return false
+	end
+	local exit_to = dialog.exit_to
+	if not ZoomPlus_HasPointExitTarget(dialog) then
+		return false
+	end
+	local camera_rts = ZoomPlus_GetRTSCamera()
+	if not camera_rts or type(camera_rts.SetCamera) ~= "function"
+		or type(camera_rts.GetEye) ~= "function" or type(camera_rts.GetLookAt) ~= "function" then
+		return false
+	end
+	local ok_eye, eye = pcall(camera_rts.GetEye)
+	local ok_la, lookat = pcall(camera_rts.GetLookAt)
+	if not ok_eye or not ok_la or not eye or not lookat
+		or not ZoomPlus_IsValidCameraPoint(eye) or not ZoomPlus_IsValidCameraPoint(lookat) then
+		return false
+	end
+	-- Re-position the WHOLE overview camera over the chosen sector at the current
+	-- overview height/angle: keep the current eye->lookat offset but move both so
+	-- the lookat sits on the sector. Vanilla's descent then keeps the camera facing
+	-- the same way and X/Y-aligned to the sector, so it drops STRAIGHT onto it with
+	-- no lookat pan and no eye overshoot. (Snapping only the lookat -- keeping the
+	-- eye over map-center -- created a large sideways offset that the descent then
+	-- interpolated away, which is the swing we saw.)
+	local ok_off, offset = pcall(function()
+		return eye - lookat
+	end)
+	if not ok_off or not offset then
+		return false
+	end
+	local ok_new, new_eye = pcall(function()
+		return exit_to + offset
+	end)
+	if not ok_new or not new_eye then
+		return false
+	end
+	-- Stop the host mod's overview re-centering schedule first: it periodically
+	-- re-snaps the overview camera to map-center, and if it fires during our pan it
+	-- yanks the camera back to center, so vanilla's descent restarts from center and
+	-- the curve returns. Optional/guarded -- a no-op when there's no such host.
+	local host = rawget(_G, "SuperBigMap")
+	if host and type(host.OverviewCamera) == "table" and type(host.OverviewCamera.CancelScheduledRefresh) == "function" then
+		pcall(host.OverviewCamera.CancelScheduledRefresh)
+	end
+
+	-- Animate the lateral PAN to center the sector at the current overview height,
+	-- then wait for it to finish, so vanilla's following descent starts from a
+	-- camera already over the sector (lookat fixed) -> a straight drop with NO
+	-- jump. Doing this instantly (time 0) teleported the camera sideways, which
+	-- read as "jump to a farther spot, then zoom in". The Close wrapper runs in
+	-- vanilla's sleepable transition thread, so Sleep here just delays the descent.
+	local pan_time = (type(ZP.Config) == "table" and tonumber(ZP.Config.OVERVIEW_EXIT_PAN_TIME)) or 250
+	if pan_time < 0 then
+		pan_time = 0
+	end
+	local ok = pcall(camera_rts.SetCamera, new_eye, exit_to, pan_time)
+	ZoomPlus_Debug(
+		"overview_exit",
+		dialog,
+		"pre_aim_pan_over_sector",
+		ok == true,
+		"pan_time=" .. tostring(pan_time)
+			.. "; exit_to=" .. ZoomPlus_VectorSummary(exit_to)
+			.. "; old_eye=" .. ZoomPlus_VectorSummary(eye)
+			.. "; new_eye=" .. ZoomPlus_VectorSummary(new_eye)
+			.. "; offset=" .. ZoomPlus_VectorSummary(offset)
+	)
+	if ok and pan_time > 0 then
+		local sleep = rawget(_G, "Sleep")
+		if type(sleep) == "function" then
+			pcall(sleep, pan_time)
+		end
+	end
+	return ok == true
+end
+
 local function ZoomPlus_RestoreOriginalZoomProperties(original, path, reapply_camera)
 	ZoomPlus_RestoreDefaultZoomOut()
 
@@ -688,7 +763,7 @@ local function ZoomPlus_CaptureLiveCameraView()
 	if not ok_eye or not ok_lookat or not eye or not lookat then
 		return false, false, false
 	end
-	if not ZoomPlus_IsValidPoint(eye) or not ZoomPlus_IsValidPoint(lookat) then
+	if not ZoomPlus_IsValidCameraPoint(eye) or not ZoomPlus_IsValidCameraPoint(lookat) then
 		return false, false, false
 	end
 
@@ -717,7 +792,7 @@ local function ZoomPlus_ApplyCapturedCameraView(eye, lookat)
 	if not eye or not lookat then
 		return false
 	end
-	if not ZoomPlus_IsValidPoint(eye) or not ZoomPlus_IsValidPoint(lookat) then
+	if not ZoomPlus_IsValidCameraPoint(eye) or not ZoomPlus_IsValidCameraPoint(lookat) then
 		return false
 	end
 	local camera_rts = ZoomPlus_GetRTSCamera()
@@ -1630,6 +1705,8 @@ ZoomPlus_InstallOverviewReturnCameraHook = function()
 
 	ZP.original_overview_close = overview.Close
 	ZP.overview_close_wrapper = function(self, ...)
+		local first_exit_takeover_armed = ZoomPlus_ArmFirstOverviewExitTakeover(self)
+		ZoomPlus_PreAimOverviewExit(self, first_exit_takeover_armed)
 		ZoomPlus_ApplyOverviewReturnCamera(self)
 		return ZP.original_overview_close(self, ...)
 	end

@@ -1,70 +1,114 @@
 return {
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsVersion",
-		'CodeFileName', "Code/bm_version.lua",
+		'name', "sbm_version",
+		'CodeFileName', "Code/sbm_version.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsConfig",
-		'CodeFileName', "Code/bm_config.lua",
+		'name', "sbm_config",
+		'CodeFileName', "Code/sbm_config.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsDebug",
-		'CodeFileName', "Code/bm_debug.lua",
+		'name', "sbm_debug",
+		'CodeFileName', "Code/sbm_debug.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsEngine",
-		'CodeFileName', "Code/bm_engine.lua",
+		'name', "sbm_engine",
+		'CodeFileName', "Code/sbm_engine.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "ZoomPlus",
 		'CodeFileName', "Code/ZoomPlus.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsOverviewCamera",
-		'CodeFileName', "Code/overview/bm_overview_camera.lua",
+		'name', "sbm_overview_camera",
+		'CodeFileName', "Code/sbm_overview_camera.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsOverviewCurtains",
-		'CodeFileName', "Code/overview/bm_overview_curtains.lua",
+		'name', "sbm_overview_curtains",
+		'CodeFileName', "Code/sbm_overview_curtains.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsOverviewRender",
-		'CodeFileName', "Code/overview/bm_overview_render.lua",
+		'name', "sbm_overview_render",
+		'CodeFileName', "Code/sbm_overview_render.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsZoomPlusIntegration",
-		'CodeFileName', "Code/integrations/bm_zoomplus_integration.lua",
+		'name', "sbm_zoomplus_integration",
+		'CodeFileName', "Code/sbm_zoomplus_integration.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsSectorGrid",
-		'CodeFileName', "Code/bm_sector_grid.lua",
+		'name', "sbm_zoom_option",
+		'CodeFileName', "Code/sbm_zoom_option.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsMapBounds",
-		'CodeFileName', "Code/bm_map_bounds.lua",
+		'name', "sbm_sector_grid",
+		'CodeFileName', "Code/sbm_sector_grid.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsSectorExploration",
-		'CodeFileName', "Code/sectors/bm_sector_exploration.lua",
+		'name', "sbm_map_bounds",
+		'CodeFileName', "Code/sbm_map_bounds.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsSectorHighlight",
-		'CodeFileName', "Code/sectors/bm_sector_highlight.lua",
+		'name', "sbm_sector_exploration",
+		'CodeFileName', "Code/sbm_sector_exploration.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsMapGeneration",
-		'CodeFileName', "Code/bm_map_generation.lua",
+		'name', "sbm_sector_highlight",
+		'CodeFileName', "Code/sbm_sector_highlight.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsValidation",
-		'CodeFileName', "Code/bm_validation.lua",
+		'name', "sbm_object_clone",
+		'CodeFileName', "Code/sbm_object_clone.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMapsLifecycle",
-		'CodeFileName', "Code/bm_lifecycle.lua",
+		'name', "sbm_terrain_copy",
+		'CodeFileName', "Code/sbm_terrain_copy.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "BiggerMaps",
-		'CodeFileName', "Code/BiggerMaps.lua",
+		'name', "sbm_map_generation",
+		'CodeFileName', "Code/sbm_map_generation.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_seam_blend",
+		'CodeFileName', "Code/sbm_seam_blend.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_seam_tuner",
+		'CodeFileName', "Code/sbm_seam_tuner.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_scan_all_button",
+		'CodeFileName', "Code/sbm_scan_all_button.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_deposits",
+		'CodeFileName', "Code/sbm_deposits.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_fake_terrain",
+		'CodeFileName', "Code/sbm_fake_terrain.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_rocket_rules",
+		'CodeFileName', "Code/sbm_rocket_rules.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_heat_safety",
+		'CodeFileName', "Code/sbm_heat_safety.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_validation",
+		'CodeFileName', "Code/sbm_validation.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_loading_ui",
+		'CodeFileName', "Code/sbm_loading_ui.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "sbm_lifecycle",
+		'CodeFileName', "Code/sbm_lifecycle.lua",
+	}),
+	PlaceObj('ModItemCode', {
+		'name', "SuperBigMap",
+		'CodeFileName', "Code/SuperBigMap.lua",
 	}),
 }

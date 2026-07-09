@@ -1,21 +1,21 @@
--- Bigger Maps -- diagnostic self-checks (logs only, no behavior).
+-- Super Big Map -- diagnostic self-checks (logs only, no behavior).
 --
 -- Cheap, read-only snapshots of the mod's runtime state, written through the
 -- centralized logger. Called by the lifecycle around Enable/Disable when DEBUG_LOGS
 -- is on, and available to call by hand from the console for troubleshooting. These
 -- never change engine state.
 
-local BiggerMaps = rawget(_G, "BiggerMaps")
-if type(BiggerMaps) ~= "table" then
-	BiggerMaps = {}
-	rawset(_G, "BiggerMaps", BiggerMaps)
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
+	SuperBigMap = {}
+	rawset(_G, "SuperBigMap", SuperBigMap)
 end
 
-local Engine = BiggerMaps.Engine
+local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 
 local function log(message, data)
-	local DebugLog = BiggerMaps.DebugLog
+	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
 		DebugLog.Info("Validation", message, data)
 	end
@@ -25,7 +25,7 @@ local Validation = {}
 
 -- After Enable: patches should be installed (version guards set, globals patched).
 function Validation.CheckRuntimeState()
-	local State = BiggerMaps.State or {}
+	local State = SuperBigMap.State or {}
 	local const = Global("const")
 	log("runtime state", {
 		active = State.active == true,
@@ -42,7 +42,7 @@ end
 
 -- After Disable: the patch guards should be cleared (nil) and globals restored.
 function Validation.CheckVanillaRestoration()
-	local State = BiggerMaps.State or {}
+	local State = SuperBigMap.State or {}
 	log("vanilla restoration", {
 		active = State.active == true,
 		sector_patch = State.sector_patch_version,
@@ -56,7 +56,7 @@ end
 
 -- Snapshot of the optional ZoomPlus integration.
 function Validation.CheckIntegrations()
-	local zoom_plus = Global("ZoomPlus")
+	local zoom_plus = Global("SuperBigMapZoomPlus")
 	local present = type(zoom_plus) == "table"
 	local enabled = false
 	if present and type(zoom_plus.IsEnabled) == "function" then
@@ -70,4 +70,4 @@ function Validation.CheckIntegrations()
 	return true
 end
 
-BiggerMaps.Validation = Validation
+SuperBigMap.Validation = Validation
