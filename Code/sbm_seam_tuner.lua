@@ -26,16 +26,18 @@ local function cfg() return SuperBigMap.Config or {} end
 
 -- key = raw config field (= normalized C key via NORM). int=false -> float (shown with decimals).
 local PARAMS = {
-	{ key = "SeamBlendHalfWidthTiles",      label = "Half width (tiles)",    default = 12,   step = 1,   min = 1, max = 64,     int = true },
-	{ key = "SeamBlendStableSampleTiles",   label = "Stable sample (tiles)", default = 3,    step = 1,   min = 1, max = 20,     int = true },
-	{ key = "SeamBlendNoiseOctaves",        label = "Noise octaves",         default = 4,    step = 1,   min = 1, max = 8,      int = true },
-	{ key = "SeamBlendNoiseFrequencyTiles", label = "Noise wavelength",      default = 6,    step = 1,   min = 1, max = 40,     int = true },
-	{ key = "SeamBlendNoiseAmplitudeScale", label = "Noise amplitude",       default = 0.6,  step = 0.1, min = 0, max = 3,      int = false, decimals = 2 },
-	{ key = "SeamBlendSeed",                label = "Seed",                  default = 1337, step = 1,   min = 0, max = 999999, int = true },
+	{ key = "SeamBlendHalfWidthTiles",      label = "Half width (tiles)",    default = 18,   step = 1,    min = 1, max = 64,     int = true },
+	{ key = "SeamBlendSmoothIterations",    label = "Smooth iterations",     default = 8,    step = 1,    min = 0, max = 40,     int = true },
+	{ key = "SeamBlendStableSampleTiles",   label = "Stable sample (tiles)", default = 3,    step = 1,    min = 1, max = 20,     int = true },
+	{ key = "SeamBlendNoiseOctaves",        label = "Noise octaves",         default = 4,    step = 1,    min = 1, max = 8,      int = true },
+	{ key = "SeamBlendNoiseFrequencyTiles", label = "Noise wavelength",      default = 6,    step = 1,    min = 1, max = 40,     int = true },
+	{ key = "SeamBlendNoiseAmplitudeScale", label = "Noise amplitude",       default = 0.25, step = 0.05, min = 0, max = 3,      int = false, decimals = 2 },
+	{ key = "SeamBlendSeed",                label = "Seed",                  default = 1337, step = 1,    min = 0, max = 999999, int = true },
 }
 
 local NORM = {
 	SeamBlendHalfWidthTiles = "SEAM_BLEND_HALF_WIDTH_TILES",
+	SeamBlendSmoothIterations = "SEAM_BLEND_SMOOTH_ITERATIONS",
 	SeamBlendStableSampleTiles = "SEAM_BLEND_STABLE_SAMPLE_TILES",
 	SeamBlendNoiseOctaves = "SEAM_BLEND_NOISE_OCTAVES",
 	SeamBlendNoiseFrequencyTiles = "SEAM_BLEND_NOISE_FREQUENCY_TILES",

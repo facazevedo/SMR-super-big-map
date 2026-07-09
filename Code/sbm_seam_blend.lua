@@ -221,30 +221,43 @@ local function BlendCorridor(data, vertical, lb, W, stable, perp_global0, wave, 
 		if vertical then data:set(p, a, v) else data:set(a, p, v) end
 	end
 
+	local iters = max(1, floor(num("SEAM_BLEND_SMOOTH_ITERATIONS", 8)))
 	local sleep = Global("Sleep")
 	local modified = 0
+	local prof = {}   -- reused per-row perpendicular height profile [pL..pR]
 	for a = 0, along_n - 1 do
 		-- Yield every so often so the caller's thread stays cooperative: the UI keeps painting
 		-- (e.g. the tuner's "Wait..." label) and the game doesn't freeze for the whole blend.
 		if sleep and a > 0 and (a % 128 == 0) then sleep(0) end
 		if not (skip_lo and a >= skip_lo and a <= skip_hi) then
-			local Lh = get(pL, a)
-			local Rh = get(pR, a)
-			local sL = (get(pL, a) - get(pL - stable, a)) / stable -- per-cell slope at pL
-			local sR = (get(pR + stable, a) - get(pR, a)) / stable -- per-cell slope at pR
-			-- local relief over the band+margins drives the detail amplitude.
-			local lo, hi = Lh, Lh
-			for p = pL - stable, pR + stable do
+			-- Load the perpendicular profile across the band and the local relief (drives the
+			-- residual-noise amplitude). pL and pR are the anchors -- never modified.
+			local lo, hi = get(pL, a), get(pL, a)
+			for p = pL, pR do
 				local h = get(p, a)
+				prof[p] = h
 				if h < lo then lo = h end
 				if h > hi then hi = h end
 			end
 			local relief = hi - lo
+			-- Windowed diffusion (Laplacian smoothing) ACROSS the seam. The window is 1 at the
+			-- seam centre and 0 at the band edges, so the sharp mirror crease/ridge in the middle
+			-- is rounded away (high-frequency artefact) while the trench shape (low-frequency)
+			-- survives and the band edges stay pinned to the untouched terrain -> no new step. A
+			-- smooth base RAMP (the old Hermite) instead flattened the trench and left the crease.
+			for _ = 1, iters do
+				for p = pL + 1, pR - 1 do
+					local w = Window((p - pL) / span)
+					local avg = (prof[p - 1] + prof[p + 1]) * 0.5
+					prof[p] = prof[p] + w * (avg - prof[p])
+				end
+			end
+			-- Write the smoothed profile + only SUBTLE windowed noise, so the seam line meanders
+			-- (breaks the dead-straight symmetry) without the blocky, washed-out look of heavy noise.
 			for p = pL + 1, pR - 1 do
 				local t = (p - pL) / span
-				local base = Hermite(Lh, sL * span, Rh, sR * span, t)
 				local detail = Fbm((perp_global0 + p) / wave, a / wave, octaves, seed) * relief * amp_scale * Window(t)
-				set(p, a, floor(base + detail + 0.5))
+				set(p, a, floor(prof[p] + detail + 0.5))
 				modified = modified + 1
 			end
 		end
@@ -321,15 +334,45 @@ local function BlendIntersection(api, map, seam_x, seam_y, gw, gh, map_w, map_h,
 		if h > hi then hi = h end
 	end
 	local relief = hi - lo
-	local modified = 0
-	for y = y0, y1 do
-		local v = (y - ay0) / deny
+	local iters = max(1, floor(num("SEAM_BLEND_SMOOTH_ITERATIONS", 8)))
+	-- Load the patch (+1-cell border) into a 2D buffer, 2D-diffuse the interior windowed to the
+	-- crossing centre (border stays pinned -> continuous with the two corridors), then write +
+	-- subtle noise. Matches the corridor smoothing so the junction is coherent.
+	local buf = {}
+	for x = max(0, x0 - 1), min(bw - 1, x1 + 1) do
+		local col = {}
+		for y = max(0, y0 - 1), min(bh - 1, y1 + 1) do col[y] = NumAt(data, x, y) end
+		buf[x] = col
+	end
+	local spanx = max(1, x1 - x0)
+	local spany = max(1, y1 - y0)
+	local function bget(x, y, fallback)
+		local c = buf[x]
+		local v = c and c[y]
+		return (type(v) == "number") and v or fallback
+	end
+	for _ = 1, iters do
 		for x = x0, x1 do
-			local u = (x - ax0) / denx
-			local base = (1 - u) * (1 - v) * TL + u * (1 - v) * TR + (1 - u) * v * BL + u * v * BR
+			local uu = (x - x0) / spanx
+			local colx = buf[x]
+			for y = y0, y1 do
+				local vv = (y - y0) / spany
+				local w = Window(uu) * Window(vv)
+				local h = colx[y]
+				local avg = (bget(x - 1, y, h) + bget(x + 1, y, h) + bget(x, y - 1, h) + bget(x, y + 1, h)) * 0.25
+				colx[y] = h + w * (avg - h)
+			end
+		end
+	end
+	local modified = 0
+	for x = x0, x1 do
+		local uu = (x - x0) / spanx
+		local colx = buf[x]
+		for y = y0, y1 do
+			local vv = (y - y0) / spany
 			local detail = Fbm((cx_lo + x) / wave, (cy_lo + y) / wave, octaves, seed)
-				* relief * amp_scale * Window(u) * Window(v)
-			data:set(x, y, floor(base + detail + 0.5))
+				* relief * amp_scale * Window(uu) * Window(vv)
+			data:set(x, y, floor(colx[y] + detail + 0.5))
 			modified = modified + 1
 		end
 	end

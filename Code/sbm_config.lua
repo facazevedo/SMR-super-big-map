@@ -445,19 +445,21 @@ config.ClearInitialConcreteImprint = true
 config.ConcreteImprintMaxTiles = 0
 
 -- SEAM BLEND (sbm_seam_blend.lua): the mirror copy makes terrain SYMMETRIC across the E/F
--- (vertical) and 14/15 (horizontal) junctions, which shows as doubled ridges / a symmetric
--- trench. The fix recomputes a band of HalfWidth tiles on each side of each seam as a
--- C1-continuous cubic-Hermite base (anchored to the stable terrain at the band edges) PLUS
--- fractal value-noise detail, windowed to fade to zero at the band edges. Result: the join
--- stays continuous with both sides but is naturally rough and NON-symmetric -> seamless.
--- Tune HalfWidth (coverage), NoiseAmplitudeScale (roughness vs the smooth base), and
--- NoiseFrequencyTiles (feature size) to taste; turn off to leave the raw mirror seam.
+-- (vertical) and 14/15 (horizontal) junctions, which shows as a hard central crease + doubled
+-- ridges. The fix, over a band of HalfWidth tiles each side of each seam, applies WINDOWED
+-- DIFFUSION (Laplacian smoothing) whose strength is 1 at the seam and 0 at the band edges: it
+-- rounds the sharp seam crease/ridge away (high-frequency artefacts) while preserving the trench
+-- shape (low-frequency) and pinning the band edges to the untouched terrain (no new step). A
+-- small windowed noise then makes the seam line meander so it is not dead-straight. Tune
+-- HalfWidth (coverage), SmoothIterations (how hard it rounds the crease -- too high flattens the
+-- trench), and NoiseAmplitudeScale (keep low). Turn off to leave the raw mirror seam.
 config.SeamBlendEnabled = true
 config.SeamBlendHalfWidthTiles = 18        -- band half-width (tiles) on each side of the seam
-config.SeamBlendStableSampleTiles = 3      -- tiles outside the band used to anchor height+slope
+config.SeamBlendStableSampleTiles = 3      -- tiles of margin kept outside the band (band-fit check)
+config.SeamBlendSmoothIterations = 8       -- windowed-diffusion passes: higher = smoother join (rounds the seam crease/ridge); too high flattens the trench
 config.SeamBlendNoiseOctaves = 4           -- fractal noise octaves (detail layers)
 config.SeamBlendNoiseFrequencyTiles = 6    -- base noise wavelength in tiles (feature size)
-config.SeamBlendNoiseAmplitudeScale = 0.6  -- detail amplitude as a fraction of local relief
+config.SeamBlendNoiseAmplitudeScale = 0.25 -- SUBTLE detail to break the straight seam line; the diffusion does the smoothing, so keep low (high values smear into blocky noise)
 config.SeamBlendSeed = 1337                -- deterministic noise seed
 -- TEMPORARY on-screen tuner (sbm_seam_tuner.lua): shows a panel with -/+/value rows for each
 -- SeamBlend param plus Apply / Reset / Close, so the seam look can be tuned live (each Apply
@@ -681,6 +683,7 @@ C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
 C.SEAM_BLEND_ENABLED = as_bool(config.SeamBlendEnabled)
 C.SEAM_BLEND_HALF_WIDTH_TILES = as_number(config.SeamBlendHalfWidthTiles, 12)
 C.SEAM_BLEND_STABLE_SAMPLE_TILES = as_number(config.SeamBlendStableSampleTiles, 3)
+C.SEAM_BLEND_SMOOTH_ITERATIONS = as_number(config.SeamBlendSmoothIterations, 8)
 C.SEAM_BLEND_NOISE_OCTAVES = as_number(config.SeamBlendNoiseOctaves, 4)
 C.SEAM_BLEND_NOISE_FREQUENCY_TILES = as_number(config.SeamBlendNoiseFrequencyTiles, 6)
 C.SEAM_BLEND_NOISE_AMPLITUDE_SCALE = as_number(config.SeamBlendNoiseAmplitudeScale, 0.6)
