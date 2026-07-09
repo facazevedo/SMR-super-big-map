@@ -84,6 +84,17 @@ local function ShouldUseModZoom(map)
 	return IsModMap(map or Global("CurrentMap"))
 end
 
+local function ExpandActionName()
+	return "EXPAND MAP"
+end
+
+local function UpdateExpandActionLabel(action)
+	if action then
+		action.ActionName = ExpandActionName()
+	end
+	return action
+end
+
 local function ActionById(host, id)
 	if not host then return nil end
 	if type(host.ActionById) == "function" then
@@ -103,6 +114,91 @@ local function ActionById(host, id)
 	return nil
 end
 
+local function UpdateDialogExpandActionLabel(dialog)
+	return UpdateExpandActionLabel(ActionById(dialog, "super_big_map_expand"))
+end
+
+local function ResolveExpandButton(dialog)
+	local action_bar = dialog and dialog.idActionBar
+	local toolbar = action_bar and action_bar.idToolBar
+	local resolve = toolbar and toolbar.ResolveId
+	if type(resolve) == "function" then
+		local ok, button = pcall(resolve, toolbar, "idsuper_big_map_expand")
+		if ok and button then
+			return button
+		end
+	end
+	resolve = dialog and dialog.ResolveId
+	if type(resolve) == "function" then
+		local ok, button = pcall(resolve, dialog, "idsuper_big_map_expand")
+		if ok and button then
+			return button
+		end
+	end
+	return false
+end
+
+local function ActionTextColor(button)
+	if button and type(button.TextColor) == "number" then
+		return button.TextColor
+	end
+	if button and type(button.RolloverTextColor) == "number" then
+		return button.RolloverTextColor
+	end
+	local styles = Global("TextStyles")
+	local style = type(styles) == "table" and styles.ActionSmall
+	if type(style) == "table" and type(style.TextColor) == "number" then
+		return style.TextColor
+	end
+	local rgba = Global("RGBA")
+	if type(rgba) == "function" then
+		return rgba(255, 238, 200, 255)
+	end
+	return 4293840584
+end
+
+local function ApplyExpandUnderline(dialog)
+	local button = ResolveExpandButton(dialog)
+	if not button then
+		return false
+	end
+	local resolve = button.ResolveId
+	local underline = false
+	if type(resolve) == "function" then
+		local ok, child = pcall(resolve, button, "idSuperBigMapUnderline")
+		if ok then underline = child end
+	end
+	if not underline then
+		local XWindow = Global("XWindow")
+		local box_fn = Global("box")
+		if type(XWindow) ~= "table" or type(box_fn) ~= "function" then
+			return false
+		end
+		underline = XWindow:new({
+			Id = "idSuperBigMapUnderline",
+			Dock = "bottom",
+			HAlign = "stretch",
+			VAlign = "bottom",
+			MinHeight = 4,
+			MaxHeight = 4,
+			Margins = box_fn(0, 0, 0, 9),
+			Background = ActionTextColor(button),
+		}, button, button.context)
+	end
+	local color = ActionTextColor(button)
+	if underline.SetBackground then
+		SafeCall(underline.SetBackground, underline, color)
+	else
+		underline.Background = color
+	end
+	if type(underline.SetVisible) == "function" then
+		SafeCall(underline.SetVisible, underline, IsSelected())
+	else
+		underline.Visible = IsSelected()
+	end
+	return true
+end
+
 local function SetSortKey(action, key)
 	if not action then return end
 	if type(action.SetActionSortKey) == "function" then
@@ -115,6 +211,7 @@ end
 local function RefreshActions(host)
 	if not host or type(host.UpdateActionViews) ~= "function" then return end
 	SafeCall(host.UpdateActionViews, host, host.idActionBar or host)
+	ApplyExpandUnderline(host)
 end
 
 local function InstallLandingDialogAction(dialog)
@@ -145,22 +242,20 @@ local function InstallLandingDialogAction(dialog)
 
 	XAction:new({
 		ActionId = "super_big_map_expand",
-		ActionName = "EXPAND MAP",
+		ActionName = ExpandActionName(),
 		ActionTranslate = false,
 		ActionToolbar = "ActionBar",
 		ActionSortKey = "040",
-		ActionToggle = true,
-		ActionToggled = function()
-			return IsSelected()
-		end,
-		OnAction = function(_action, host)
+		OnAction = function(action, host)
 			SetSelected(not IsSelected(), "toggle")
+			UpdateExpandActionLabel(action)
 			RefreshActions(host or dialog)
 		end,
 		RolloverText = "Generate this new game as a 20 x 20 Super Big Map.",
 	}, dialog, dialog.context)
 
 	dialog.SuperBigMapExpandActionInstalled = true
+	UpdateDialogExpandActionLabel(dialog)
 	RefreshActions(dialog)
 	return true
 end
@@ -222,4 +317,3 @@ function PregameToggle.RestoreVanillaBehavior()
 end
 
 SuperBigMap.PregameToggle = PregameToggle
-
