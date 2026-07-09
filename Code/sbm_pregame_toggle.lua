@@ -477,13 +477,41 @@ local function InstallLandingDialogAction(dialog)
 	return true
 end
 
+-- Diagnostic: is the live PGMissionLandingSpotRemastered.Open our wrapper, the captured
+-- original, or a FOREIGN one (another landing-spot mod replaced it after us)?
+local function OpenIsOurs()
+	local cls = Global("PGMissionLandingSpotRemastered")
+	if type(cls) ~= "table" then return "no-class" end
+	if type(cls.Open) ~= "function" then return "no-open" end
+	if cls.Open == State.pregame_toggle_open_wrapper then return "ours" end
+	if cls.Open == State.pregame_toggle_open_original then return "original/vanilla" end
+	return "foreign"
+end
+
+local function LogOpenState(reason)
+	local cls = Global("PGMissionLandingSpotRemastered")
+	ToggleLog("Open-state check", {
+		reason = tostring(reason or "?"),
+		class_present = type(cls) == "table",
+		open_is = OpenIsOurs(),
+		live_open = tostring((type(cls) == "table") and cls.Open or "nil"),
+		our_wrapper = tostring(State.pregame_toggle_open_wrapper or "nil"),
+		our_original = tostring(State.pregame_toggle_open_original or "nil"),
+	})
+end
+
 local function PatchLandingDialog()
 	local cls = Global("PGMissionLandingSpotRemastered")
 	if type(cls) ~= "table" or type(cls.Open) ~= "function" then
+		ToggleLog("PatchLandingDialog: class/Open unavailable", {
+			class_present = type(cls) == "table",
+		})
 		return false
 	end
 	if State.pregame_toggle_open_original and cls.Open == State.pregame_toggle_open_wrapper then
-		ToggleLog("PatchLandingDialog: our Open wrapper already installed (ok)")
+		ToggleLog("PatchLandingDialog: our Open wrapper already installed (ok)", {
+			live_open = tostring(cls.Open),
+		})
 		return true
 	end
 	if cls.Open ~= State.pregame_toggle_open_wrapper then
@@ -491,20 +519,27 @@ local function PatchLandingDialog()
 		-- (e.g. Filter Landing Spots) replaced/re-wrapped it. Capture whatever is live as the
 		-- original so we chain over it instead of clobbering the other mod.
 		ToggleLog("PatchLandingDialog: (re)wrapping Open -- live method was not ours", {
+			open_is = OpenIsOurs(),
 			had_prior_wrapper = State.pregame_toggle_open_wrapper ~= nil,
 			live_is_prior_original = cls.Open == State.pregame_toggle_open_original,
+			live_open = tostring(cls.Open),
+			prior_wrapper = tostring(State.pregame_toggle_open_wrapper or "nil"),
 		})
 		State.pregame_toggle_open_original = cls.Open
 	end
 
 	local original_open = State.pregame_toggle_open_original
 	local wrapper = function(self, ...)
+		ToggleLog("landing dialog Open wrapper ENTER", {
+			dialog_instance = tostring(self),
+			dialog_class = tostring(self and self.class or "nil"),
+		})
 		SetSelected(false, "landing_open")
 		SetStartArmed(false, "landing_open")
 		local results = { original_open(self, ...) }
 		InstallLandingDialogAction(self)
-		ToggleLog("landing dialog Open wrapper fired", {
-			dialog = tostring(self and (self.class or self.Id) or "nil"),
+		ToggleLog("landing dialog Open wrapper fired (after install)", {
+			dialog_instance = tostring(self),
 			action_present_after = self and ActionById(self, "super_big_map_expand") ~= nil,
 		})
 		return Unpack(results)
@@ -534,6 +569,7 @@ local PregameToggle = {
 	ShouldUseModZoom = ShouldUseModZoom,
 	InstallLandingDialogAction = InstallLandingDialogAction,
 	PatchLandingDialog = PatchLandingDialog,
+	LogOpenState = LogOpenState,
 }
 
 function PregameToggle.ApplyModBehavior()

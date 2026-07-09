@@ -215,7 +215,15 @@ local function InstallPreGameMainMenuResetGuard()
 		State.original_open_pregame_main_menu = original
 	end
 	local wrapper = function(...)
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
+			DebugLog.Info("PregameToggle", "OpenPreGameMainMenu fired (returned to main menu)")
+		end
 		ForceVanillaPregameState("OpenPreGameMainMenu")
+		local toggle = SuperBigMap.PregameToggle
+		if toggle and type(toggle.LogOpenState) == "function" then
+			toggle.LogOpenState("after OpenPreGameMainMenu")
+		end
 		return State.original_open_pregame_main_menu(...)
 	end
 	State.open_pregame_main_menu_reset_wrapper = wrapper
@@ -975,14 +983,25 @@ local function EnsureGeneratorHookInstalled()
 	end
 end
 
-local function EnsurePregameToggleInstalled()
+local function EnsurePregameToggleInstalled(reason)
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
+		local mode_fn = Global("GetInGameInterfaceMode")
+		DebugLog.Info("PregameToggle", "EnsurePregameToggleInstalled", {
+			reason = tostring(reason or "?"),
+			igi_mode = (type(mode_fn) == "function") and tostring(SafeCall(mode_fn)) or "?",
+		})
 	end
 	InstallPreGameMainMenuResetGuard()
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.PatchLandingDialog) == "function" then
 		toggle.PatchLandingDialog()
+	end
+	if toggle and type(toggle.LogOpenState) == "function" then
+		toggle.LogOpenState("after EnsurePregameToggleInstalled(" .. tostring(reason or "?") .. ")")
 	end
 end
 
