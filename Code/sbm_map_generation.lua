@@ -834,14 +834,6 @@ local function PatchRandomMapGenerator()
 end
 
 
--- The two expansion seams in world units: vertical between columns E and F (full height),
--- horizontal between rows 14 and 15 (full width). Returns (ef_x, rr_y); either may be nil.
--- Used by sbm_seam_blend to locate the junctions it recomputes.
-local function GetSeamWorldBoundaries(map)
-	return SectorBoundary(map, "F0", "E0", "x"), SectorBoundary(map, "F14", "F15", "y")
-end
-
-
 -- Config-driven L-frame fill: at game start, run the three block copies (fast
 -- path: one grid flip per block instead of one per sector). Gated on a full 20x20
 -- terrain grid. Yields inside the object loops; ONE combined refresh at the end.
@@ -973,15 +965,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			if type(terrain_api.HashGrids) == "function" then SafeCall(terrain_api.HashGrids, map) end
 		end
 
-		-- Seam blend: the mirror copy makes the terrain symmetric across the E/F and 14/15
-		-- junctions (doubled ridges / a symmetric trench). Recompute a band around each seam
-		-- as a continuity base + windowed fractal noise, so the join is continuous AND natural
-		-- (non-symmetric). Runs before objects/deposits snap to the new heights.
-		local seam = SuperBigMap.SeamBlend
-		if seam and type(seam.Apply) == "function" then
-			SafeCall(seam.Apply, map)
-		end
-
 		-- PHASE 2 -- OBJECTS: delete/clone/resnap each block's scatter (the slow part,
 		-- yields throughout), then ONE heavy rebuild so the placed objects' passability
 		-- and Z settle.
@@ -1080,15 +1063,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		-- Expansion fully done (terrain + objects): restore the welcome
 		-- popup's Close button + original text so the player can dismiss it and play.
 		end_loading()
-		-- TEMPORARY: show the seam-blend tuner panel (config-gated) once the map is up so the
-		-- junction look can be tuned live. SeamTuner.Show is a no-op when SEAM_TUNER_ENABLED is off.
-		local tuner = SuperBigMap.SeamTuner
-		if tuner and type(tuner.Show) == "function" then
-			create_thread(function()
-				sleep(2000)
-				SafeCall(tuner.Show)
-			end)
-		end
 		DebugPrint(string.format(
 			"RunSectorMirrorPlanIfEnabled: completed terrain=%s/%s objects=%s/%s blocks (settle=%sms)",
 			tostring(terrain_done), tostring(n), tostring(obj_done), tostring(n), tostring(settle_ms)))
@@ -1147,7 +1121,6 @@ end
 local MapGeneration = {}
 
 MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
-MapGeneration.GetSeamWorldBoundaries = GetSeamWorldBoundaries
 MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
 MapGeneration.AttachPendingMapState = AttachPendingMapState
 MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy

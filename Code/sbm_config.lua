@@ -198,7 +198,6 @@ config.DebugSector        = true    -- Sector: grid build/patch, visibility, dec
 config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
 config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up (TEMP: investigating landing-spot crowding / vanilla-proportion distribution)
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
-config.DebugSeam          = true    -- Seam: seam-blend height math (TEMP: diagnosing visible seam -- confirms the blend ran, seam location, cells modified)
 config.DebugOverview      = true    -- Overview: overview curtains + render-distance (TEMP: measuring overview camera eye/distance for "overview too far")
 config.DebugCamera        = false   -- Camera: overview-camera state snapshots (very noisy)
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
@@ -444,27 +443,6 @@ config.ClearInitialConcreteImprint = true
 -- (always-unscanned, frame) position, so it never affects concrete in scanned/playable sectors.
 config.ConcreteImprintMaxTiles = 0
 
--- SEAM BLEND (sbm_seam_blend.lua): the mirror copy makes terrain SYMMETRIC across the E/F
--- (vertical) and 14/15 (horizontal) junctions, which shows as a hard central crease + doubled
--- ridges. The fix, over a band of HalfWidth tiles each side of each seam, applies WINDOWED
--- DIFFUSION (Laplacian smoothing) whose strength is 1 at the seam and 0 at the band edges: it
--- rounds the sharp seam crease/ridge away (high-frequency artefacts) while preserving the trench
--- shape (low-frequency) and pinning the band edges to the untouched terrain (no new step). A
--- small windowed noise then makes the seam line meander so it is not dead-straight. Tune
--- HalfWidth (coverage), SmoothIterations (how hard it rounds the crease -- too high flattens the
--- trench), and NoiseAmplitudeScale (keep low). Turn off to leave the raw mirror seam.
-config.SeamBlendEnabled = true
-config.SeamBlendHalfWidthTiles = 18        -- band half-width (tiles) on each side of the seam
-config.SeamBlendStableSampleTiles = 3      -- tiles of margin kept outside the band (band-fit check)
-config.SeamBlendSmoothIterations = 8       -- windowed-diffusion passes: higher = smoother join (rounds the seam crease/ridge); too high flattens the trench
-config.SeamBlendNoiseOctaves = 4           -- fractal noise octaves (detail layers)
-config.SeamBlendNoiseFrequencyTiles = 6    -- base noise wavelength in tiles (feature size)
-config.SeamBlendNoiseAmplitudeScale = 0.25 -- SUBTLE detail to break the straight seam line; the diffusion does the smoothing, so keep low (high values smear into blocky noise)
-config.SeamBlendSeed = 1337                -- deterministic noise seed
--- TEMPORARY on-screen tuner (sbm_seam_tuner.lua): shows a panel with -/+/value rows for each
--- SeamBlend param plus Apply / Reset / Close, so the seam look can be tuned live (each Apply
--- re-blends from the snapshot of the raw mirror -- no compounding). Turn OFF once dialled in.
-config.SeamTunerEnabled = true
 -- Optional "Scan All Sectors" button (sbm_scan_all_button.lua): a bottom-right button that
 -- deep-scans every sector (reveals surface/subsurface/deep deposits + anomalies). Config-gated --
 -- the code ships but only appears when this is true. Handy for revealing the whole expanded map
@@ -656,7 +634,6 @@ C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
 C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
-C.DEBUG_SEAM          = as_bool(config.DebugSeam)
 C.DEBUG_OVERVIEW      = as_bool(config.DebugOverview)
 C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
 C.DEBUG_ROCKET        = as_bool(config.DebugRocket)
@@ -680,15 +657,6 @@ C.MIRROR_SKIP_EDGE_TOUCHING_DECOR = as_bool(config.MirrorSkipEdgeTouchingDecor)
 C.WARN_ON_CANNOT_EXPAND = as_bool(config.WarnOnCannotExpand)
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
-C.SEAM_BLEND_ENABLED = as_bool(config.SeamBlendEnabled)
-C.SEAM_BLEND_HALF_WIDTH_TILES = as_number(config.SeamBlendHalfWidthTiles, 12)
-C.SEAM_BLEND_STABLE_SAMPLE_TILES = as_number(config.SeamBlendStableSampleTiles, 3)
-C.SEAM_BLEND_SMOOTH_ITERATIONS = as_number(config.SeamBlendSmoothIterations, 8)
-C.SEAM_BLEND_NOISE_OCTAVES = as_number(config.SeamBlendNoiseOctaves, 4)
-C.SEAM_BLEND_NOISE_FREQUENCY_TILES = as_number(config.SeamBlendNoiseFrequencyTiles, 6)
-C.SEAM_BLEND_NOISE_AMPLITUDE_SCALE = as_number(config.SeamBlendNoiseAmplitudeScale, 0.6)
-C.SEAM_BLEND_SEED = as_number(config.SeamBlendSeed, 1337)
-C.SEAM_TUNER_ENABLED = as_bool(config.SeamTunerEnabled)
 C.SCAN_ALL_BUTTON_ENABLED = as_bool(config.ScanAllButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.RESHUFFLE_CLONED_DEPOSITS = as_bool(config.ReshuffleClonedDeposits)

@@ -76,14 +76,6 @@ return {
 		'CodeFileName', "Code/sbm_map_generation.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "sbm_seam_blend",
-		'CodeFileName', "Code/sbm_seam_blend.lua",
-	}),
-	PlaceObj('ModItemCode', {
-		'name', "sbm_seam_tuner",
-		'CodeFileName', "Code/sbm_seam_tuner.lua",
-	}),
-	PlaceObj('ModItemCode', {
 		'name', "sbm_scan_all_button",
 		'CodeFileName', "Code/sbm_scan_all_button.lua",
 	}),
