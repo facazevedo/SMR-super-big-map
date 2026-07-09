@@ -139,11 +139,9 @@ local function ResolveExpandButton(dialog)
 end
 
 local function ActionTextColor(button)
-	if button and type(button.TextColor) == "number" then
-		return button.TextColor
-	end
-	if button and type(button.RolloverTextColor) == "number" then
-		return button.RolloverTextColor
+	local const_tbl = Global("const")
+	if type(const_tbl) == "table" and type(const_tbl.GameColorA) == "number" then
+		return const_tbl.GameColorA
 	end
 	local styles = Global("TextStyles")
 	local style = type(styles) == "table" and styles.ActionSmall
@@ -176,12 +174,12 @@ local function ApplyExpandUnderline(dialog)
 		end
 		underline = XWindow:new({
 			Id = "idSuperBigMapUnderline",
-			Dock = "bottom",
+			ZOrder = 100,
 			HAlign = "stretch",
 			VAlign = "bottom",
 			MinHeight = 4,
 			MaxHeight = 4,
-			Margins = box_fn(0, 0, 0, 9),
+			Margins = box_fn(0, 0, 0, 11),
 			Background = ActionTextColor(button),
 		}, button, button.context)
 	end
