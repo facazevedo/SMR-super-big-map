@@ -516,8 +516,11 @@ local function StretchSourceToFull(map, debug)
 			tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th)))
 		return false, 0
 	end
-	local frac_w = sw_tiles / full_tw
-	local frac_h = sh_tiles / full_th
+	-- Force FLOAT division: this engine's Lua does INTEGER division on int/int (6144/8192 -> 0),
+	-- which would collapse the source corner to 1x1 and stretch a single pixel across the map.
+	-- (+ 0.0) promotes to float (matching the game's own DivToStr idiom) -> 0.75 as intended.
+	local frac_w = (sw_tiles + 0.0) / full_tw
+	local frac_h = (sh_tiles + 0.0) / full_th
 
 	local function free_grid(x)
 		if x and (type(x) == "table" or type(x) == "userdata") then
