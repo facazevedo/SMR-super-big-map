@@ -938,24 +938,11 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			WarnCannotExpand(map, "terrain size unavailable")
 			return
 		end
-		local fits, why = SectorMirrorBlocksFit(map, map_w, map_h)
-		if not fits then
-			map.SuperBigMapSectorMirrorDone = true
-			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: skipped -- not a full 20x20 terrain grid (%s)", tostring(why)))
-			end_loading()
-			WarnCannotExpand(map, why)
-			return
-		end
-		local terrain_api = Global("terrain")
-		local box_fn = Global("box")
-		local n = #SECTOR_MIRROR_BLOCKS
 
-		-- FRAME FILL MODE dispatch (config EXPANSION_FRAME_FILL_MODE, see sbm_config.lua). The
-		-- native source is already generated; here we choose how the surrounding L-frame is built.
-		-- "mirror" (default) runs the reflect-edge-blocks plan below. The other modes
-		-- ("desymmetrize", "stretch", "noise") are being implemented incrementally -- until each
-		-- lands it logs a notice and falls back to "mirror" so the map is always complete.
+		-- FRAME FILL MODE dispatch (config EXPANSION_FRAME_FILL_MODE, see sbm_config.lua). Chosen
+		-- HERE, BEFORE the mirror-block fit check, because non-mirror modes do NOT use the named
+		-- mirror sectors: "stretch" works purely on the terrain grids by world coordinates, so it
+		-- must never be gated by (or warn via) SectorMirrorBlocksFit.
 		local fill_mode = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
 
 		-- STRETCH: resample the generated source to fill the whole 20x20 (no frame, no mirror
@@ -998,6 +985,21 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			InitSeq("RunSectorMirrorPlan: frame-fill mode fallback", { requested = fill_mode, used = "mirror" })
 			fill_mode = "mirror"
 		end
+
+		-- MIRROR (and any not-yet-implemented mode that falls back to it) needs the full 20x20
+		-- sector grid to reflect edge blocks into the named frame sectors:
+		local fits, why = SectorMirrorBlocksFit(map, map_w, map_h)
+		if not fits then
+			map.SuperBigMapSectorMirrorDone = true
+			DebugPrint(string.format(
+				"RunSectorMirrorPlanIfEnabled: skipped -- not a full 20x20 terrain grid (%s)", tostring(why)))
+			end_loading()
+			WarnCannotExpand(map, why)
+			return
+		end
+		local terrain_api = Global("terrain")
+		local box_fn = Global("box")
+		local n = #SECTOR_MIRROR_BLOCKS
 
 		-- PHASE 1 -- TERRAIN: copy every block's grids first, then render the mirrored
 		-- ground immediately (cheap Invalidate, no full rebuild), so the player sees the
