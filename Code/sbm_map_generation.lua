@@ -1029,6 +1029,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			if type(deposits.RespaceAnomalies) == "function" then
 				SafeCall(deposits.RespaceAnomalies, map)
 			end
+			-- Even out RESOURCE-deposit density: the generator crams the full preset count into
+			-- the shrunken gen-zone, so the source (incl. the start sector) is far denser than
+			-- vanilla. This caps per-sector density and moves the surplus into the sparse frame.
+			if type(deposits.EvenOutDepositDensity) == "function" then
+				SafeCall(deposits.EvenOutDepositDensity, map)
+			end
 		end
 
 		-- Rebuild the BUILDABLE z-grid now that the copy finalized the

@@ -807,6 +807,154 @@ function DepositRules.RespaceAnomalies(map)
 	DepositRules.LogDistributionReport(map, "final (post-respace)")
 end
 
+-- Even out RESOURCE-deposit density to vanilla-like proportions. The generator packs the full
+-- preset count into the shrunken gen-zone (see sbm_rmg_placement), so the source region --
+-- including the scanned START sector -- is several times denser than vanilla while the mirrored
+-- frame is sparse. This caps each sector at MAX_RESOURCE_DEPOSITS_PER_SECTOR and relocates the
+-- surplus onto terrain-matched frame tiles (outside the source quadrant), thinning the source
+-- and filling the frame -- total count unchanged, distribution evened. Surplus taken out of an
+-- already-scanned sector (the start sector) is DESPAWNED + reset to unplaced + hidden, so it
+-- re-spawns vanilla-style only when its new frame sector is scanned. Runs after the
+-- clone/reshuffle/respace passes. Gated by EVEN_OUT_DEPOSIT_DENSITY.
+function DepositRules.EvenOutDepositDensity(map)
+	if cfg().EVEN_OUT_DEPOSIT_DENSITY ~= true then return end
+	map = map or Global("CurrentMap")
+	local point = Global("point")
+	local city = map and map.City
+	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" or not city then
+		Log("even-out skipped", { reason = "map/city/point unavailable" })
+		return
+	end
+	local map_w, map_h, tile = MapWorldSize(map)
+	if not map_w or not tile or tile <= 0 then
+		Log("even-out skipped", { reason = "map size unavailable" })
+		return
+	end
+	local cap = math.max(1, math.floor(cfg().MAX_RESOURCE_DEPOSITS_PER_SECTOR or 3))
+	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
+	local margin = margin_tiles * tile
+	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
+	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
+	local lo_x, span_x = margin, (map_w - 2 * margin)
+	local lo_y, span_y = margin, (map_h - 2 * margin)
+	if span_x <= 0 or span_y <= 0 then
+		Log("even-out skipped", { reason = "placeable span <= 0" })
+		return
+	end
+
+	local moved, over_sectors, concrete_moves = 0, 0, {}
+	local DoneObject = Global("DoneObject")
+	local IsValid = Global("IsValid")
+	RunPaused("SuperBigMapEvenOut", function()
+		-- Frame candidate pool (terrain-bucketed), same shape as the reshuffle: sampled tiles
+		-- OUTSIDE the source quadrant, so surplus source deposits move into the sparse frame.
+		local buckets, pool = {}, 0
+		local MAX_SAMPLES, MAX_POOL = 6000, 3000
+		for _ = 1, MAX_SAMPLES do
+			if pool >= MAX_POOL then break end
+			local x = lo_x + RandInt(span_x)
+			local y = lo_y + RandInt(span_y)
+			if not (x < src_w and y < src_h) then
+				local pt = point(x, y)
+				if CanReceiveDeposit(map, pt) then
+					local tt = TerrainTypeAt(map, pt) or -1
+					local b = buckets[tt]; if not b then b = {}; buckets[tt] = b end
+					b[#b + 1] = { x = x, y = y }
+					pool = pool + 1
+				end
+			end
+		end
+		local function take(tt)
+			local b = tt ~= nil and buckets[tt] or nil
+			if b and #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end
+			return nil
+		end
+		local function take_any()
+			for _, b in pairs(buckets) do if #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end end
+			return nil
+		end
+
+		-- Bucket resource-deposit markers by the sector they sit in.
+		local by_sector = {}
+		pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+			if not (marker and IsResourceDepositMarker(marker)) then return end
+			local pos = ObjectPos(marker)
+			if not pos or type(pos.xy) ~= "function" then return end
+			local px, py = pos:xy()
+			if px == nil then return end
+			local sector = SectorAtPoint(map, px, py)
+			if not sector then return end
+			local rec = by_sector[sector]
+			if not rec then rec = {}; by_sector[sector] = rec end
+			rec[#rec + 1] = { marker = marker, px = px, py = py, pos = pos }
+		end)
+
+		-- Thin each over-cap sector: relocate the surplus markers into the frame pool.
+		for sector, list in pairs(by_sector) do
+			local n = #list
+			if n > cap then
+				over_sectors = over_sectors + 1
+				for i = cap + 1, n do
+					local item = list[i]
+					local marker = item.marker
+					local tt = TerrainTypeAt(map, item.pos) or -1
+					local c = take(tt) or take_any()
+					if c then
+						local pt = point(c.x, c.y)
+						if type(pt.SetTerrainZ) == "function" then
+							local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+							if ok and snapped then pt = snapped end
+						end
+						local is_concrete = IsConcreteTerrainDepositMarker(marker)
+						if type(sector.UnregisterDeposit) == "function" then
+							pcall(sector.UnregisterDeposit, sector, marker)
+						end
+						-- Surplus taken from an already-placed/revealed sector (the start sector):
+						-- despawn the visible deposit and reset to unplaced so it re-spawns hidden
+						-- when its new (frame) sector is scanned -- matching vanilla fog-of-war.
+						if marker.is_placed == true then
+							if IsValid and IsValid(marker.placed_obj) and DoneObject then
+								pcall(DoneObject, marker.placed_obj)
+							end
+							marker.placed_obj = false
+							marker.is_placed = false
+						end
+						SetRevealedState(marker, false)
+						local ok_move = type(marker.SetPos) == "function" and pcall(marker.SetPos, marker, pt)
+						if ok_move then
+							moved = moved + 1
+							local nx, ny = c.x, c.y
+							if type(pt.xy) == "function" then nx, ny = pt:xy() end
+							local new_sector = SectorAtPoint(map, nx, ny)
+							if new_sector and type(new_sector.RegisterDeposit) == "function" then
+								pcall(new_sector.RegisterDeposit, new_sector, marker)
+							elseif type(sector.RegisterDeposit) == "function" then
+								pcall(sector.RegisterDeposit, sector, marker)
+							end
+							if is_concrete then
+								concrete_moves[#concrete_moves + 1] = {
+									from = { x = item.px, y = item.py },
+									to = { x = nx, y = ny },
+									paint_now = SectorIsScanned(new_sector),
+								}
+							end
+						elseif type(sector.RegisterDeposit) == "function" then
+							pcall(sector.RegisterDeposit, sector, marker) -- move failed: undo
+						end
+					end
+				end
+			end
+		end
+		MoveConcreteImprints(map, concrete_moves)
+	end)
+	Log("evened out resource-deposit density", {
+		cap_per_sector = cap,
+		over_cap_sectors = over_sectors,
+		markers_moved = moved,
+	})
+	DepositRules.LogDistributionReport(map, "after even-out")
+end
+
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 
 -- Reveal the clones inside a scanned sector's area (called from the SectorScanned handler).

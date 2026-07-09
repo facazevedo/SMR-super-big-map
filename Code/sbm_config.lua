@@ -387,6 +387,22 @@ config.DepositEdgeMarginTiles = 4
 -- (unregister from the old sector -> move -> register in the new sector; scanning still reveals
 -- them normally). Live anomalies in the already-scanned start sector are left untouched. Deposits
 -- are NOT touched by this. true = re-space anomalies (recommended for vanilla-like spread).
+-- EVEN OUT DEPOSIT DENSITY (sbm_deposits.lua EvenOutDepositDensity). The generator packs the
+-- full preset deposit count into the shrunken gen-zone (see RMG PLACEMENT AUTO-FIT), so the
+-- source region -- including the scanned START/landing sector -- ends up several times denser
+-- than vanilla while the mirrored frame is sparse. When true, a post-generation pass caps each
+-- sector at MaxResourceDepositsPerSector and relocates the surplus onto terrain-matched frame
+-- tiles: it thins the source (start sector included -- surplus there is despawned and re-hidden
+-- so it re-spawns vanilla-style when its new frame sector is scanned) and fills the frame. Total
+-- count is unchanged; only the distribution is evened to vanilla-like proportions. false = leave
+-- the packed source distribution.
+config.EvenOutDepositDensity = true
+-- Per-sector resource-deposit cap the even-out pass thins down to. Vanilla start sectors carry
+-- only a couple of deposits; 3 keeps a small starting cluster while spreading the rest across the
+-- map. Lower = sparser (closer to vanilla), higher = keep more in place. Tune from the
+-- DebugDeposits DISTRIBUTION report (start-sector count vs average).
+config.MaxResourceDepositsPerSector = 3
+
 config.RespaceAnomaliesToVanilla = true
 -- How spread out the re-spaced anomalies are: the minimum distance between anomalies is
 -- factor * sqrt(playable_area / anomaly_count). Lower = tighter (closer to the original packed
@@ -644,6 +660,8 @@ C.CLEAR_INITIAL_CONCRETE_IMPRINT = as_bool(config.ClearInitialConcreteImprint)
 C.CONCRETE_IMPRINT_MAX_TILES = as_number(config.ConcreteImprintMaxTiles, 0)
 C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
 C.RESPACE_ANOMALIES_TO_VANILLA = as_bool(config.RespaceAnomaliesToVanilla)
+C.EVEN_OUT_DEPOSIT_DENSITY = as_bool(config.EvenOutDepositDensity)
+C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
 C.ANOMALY_EVEN_SPREAD_FACTOR = as_number(config.AnomalyEvenSpreadFactor, 0.6)
 C.REMOVE_FRAME_CRATERS = as_bool(config.RemoveFrameCraters)
 C.REMOVE_FRAME_UNDERGROUND_ACCESS = as_bool(config.RemoveFrameUndergroundAccess)
