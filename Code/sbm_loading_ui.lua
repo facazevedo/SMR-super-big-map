@@ -435,11 +435,12 @@ end
 -- While the mod expands a new map (terrain copy + object clone), we show a dedicated
 -- "Loading Super Big Map" message box and HIDE the new-game "Welcome to Mars, Commander!"
 -- popup behind it -- the same approach as ShowMessageOverWelcome (a separate StdMessageDialog
--- shown on top while the welcome popup is made invisible). The box's OK/action bar is hidden
--- so it can't be dismissed mid-expansion; when the expansion completes we delete the box and
--- re-show the welcome popup once. (An earlier version mutated the welcome popup's own
--- title/body text instead; the popup kept re-applying its context, producing a
--- welcome -> loading -> welcome flicker. Hiding it and drawing our own box avoids that.)
+-- shown on top while the welcome popup is made invisible). The box keeps the standard
+-- title/body/footer layout, but its footer button reads "Please wait." and is DISABLED so it
+-- can't be pressed mid-expansion; when the expansion completes we delete the box and re-show the
+-- welcome popup once. (An earlier version mutated the welcome popup's own title/body text
+-- instead; the popup kept re-applying its context, producing a welcome -> loading -> welcome
+-- flicker. Hiding it and drawing our own box avoids that.)
 local LOADING_TITLE = "Loading Super Big Map..."
 local LOADING_BODY = "3x more map, no extra fries."
 local loading_on_welcome = false
@@ -451,9 +452,9 @@ local function LoadingLog(message, data)
 	end
 end
 
--- Our separate "Loading Super Big Map" message box (a StdMessageDialog), shown ON TOP of the
--- HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, but non-dismissable
--- (OK/action bar hidden) and auto-closed when the expansion finishes (no OK-button wait).
+-- Our separate "Loading Super Big Map" message box (a standard message dialog), shown ON TOP of
+-- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, but non-dismissable
+-- (its "Please wait." footer button is disabled) and auto-closed when the expansion finishes.
 -- Previously the mod MUTATED the welcome popup's own title/body text; the popup kept
 -- re-applying its context (OnContextUpdate / re-pop), which produced the welcome -> loading
 -- -> welcome flicker. We no longer touch the popup's text: we hide it and draw our own box,
@@ -474,62 +475,6 @@ local function HideWelcomePopupInstant()
 	return dlg ~= nil
 end
 
--- Hide the loading box's OK button / action bar so it is button-less and cannot be dismissed.
--- Called EVERY watch tick, not just at creation: the OK button (idActionBar.idOk) is built during
--- the message dialog's async open, so a one-time hide at creation misses it and it appears a frame
--- later looking pressable. Re-hiding each tick keeps it gone until end_loading() removes the box.
-local function SilenceLoadingBox(box)
-	if not box then return end
-	local resolve = type(box.ResolveId) == "function"
-	local changed = false
-	-- Fold the action bar so hiding it removes its reserved space. The message dialog's
-	-- idActionBar (XToolBarList) is NOT FoldWhenHidden by default, so merely hiding it still
-	-- leaves the OK row's height as an empty gap. FoldWhenHidden makes a hidden window take 0 space.
-	local bar = (resolve and box:ResolveId("idActionBar")) or box.idActionBar
-	if bar then
-		if bar.FoldWhenHidden ~= true then bar.FoldWhenHidden = true; changed = true end
-		if type(bar.SetVisible) == "function" then pcall(function() bar:SetVisible(false) end) end
-	end
-	-- The dialog's text area (idText) has MinHeight = 100 (sized for long messages), which left a
-	-- big empty gap below our short body. Shrink it to 0 so the box wraps the body snugly; the
-	-- "Please wait." footer below then occupies the bottom (where the OK row was), not empty space.
-	local BODY_MIN_HEIGHT = 0
-	local txt = resolve and box:ResolveId("idText") or nil
-	if txt and (txt.MinHeight or 0) ~= BODY_MIN_HEIGHT then
-		txt.MinHeight = BODY_MIN_HEIGHT
-		changed = true
-	end
-	-- Put a "Please wait." footer where the OK button used to be (bottom of the box), so that row
-	-- reads as intentional instead of empty. Created once (guarded by its Id); a child of the
-	-- container, so it shows/hides and is destroyed with the box.
-	if resolve and not box:ResolveId("idSuperBigMapPleaseWait") then
-		local barp = box:ResolveId("idActionBar")
-		local container = barp and barp.parent
-		local XText = Global("XText")
-		local box_fn = Global("box")
-		if container and type(XText) == "table" then
-			-- Translate=false REQUIRES a plain Lua string: the engine asserts
-			-- `self.Translate or type(text)=="string"`. Do NOT wrap this in Untranslated()/T
-			-- (that returns a T value and trips the assert) -- pass the literal directly.
-			local ok_add = pcall(function()
-				XText:new({
-					Id = "idSuperBigMapPleaseWait",
-					Dock = "bottom",
-					HAlign = "left",
-					Margins = (type(box_fn) == "function") and box_fn(20, 16, 20, 16) or nil,
-					TextStyle = "CommonMessageDescription",
-					Translate = false,
-					Text = "Please wait.",
-				}, container, container.context)
-			end)
-			if ok_add then changed = true end
-		end
-	end
-	if changed then
-		if txt and type(txt.InvalidateMeasure) == "function" then pcall(function() txt:InvalidateMeasure() end) end
-		if type(box.InvalidateLayout) == "function" then pcall(function() box:InvalidateLayout() end) end
-	end
-end
 
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
@@ -546,17 +491,19 @@ local function SetWelcomeLoading(active)
 			if type(create_box) == "function" then
 				local untranslated = Global("Untranslated")
 				local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
-				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY))
+				-- Build a normal message dialog (image + title + body + footer button), just like
+				-- the game's own welcome popup -- NO stripping of the layout. The footer button is
+				-- labelled "Please wait." and its action is DISABLED (ok_action_state -> "disabled"),
+				-- so it renders in the Close-button spot but cannot be pressed and its Enter/gamepad
+				-- shortcut is ignored (see XActionsHost:ActionByShortcut) -- the player never needs to
+				-- (and cannot) dismiss it; ExpansionLoadingEnd tears the box down when the map is ready.
+				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY),
+					wrap("Please wait."), { ok_action_state = function() return "disabled" end })
 				if ok and box then
 					loading_box = box
 					LoadingLog("loading box created over hidden welcome popup")
 				end
 			end
-		end
-		-- Re-silence the OK/action bar every tick (it is built async after creation, so a
-		-- one-time hide misses it). Keeps the box button-less until end_loading() removes it.
-		if LoadingBoxValid() then
-			SilenceLoadingBox(loading_box)
 		end
 		return LoadingBoxValid() == true
 	else
