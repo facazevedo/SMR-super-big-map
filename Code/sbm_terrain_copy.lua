@@ -672,6 +672,89 @@ local function StretchSourceToFull(map, debug)
 	return done > 0, done
 end
 
+-- STRETCH step 2 (decorations): the generator placed all its scatter/decor in the SOURCE corner
+-- (anchored at world origin); once the terrain is stretched to full size those decorations are
+-- clustered in one corner on the wrong ground. Move each decoration to its matching spot on the
+-- stretched terrain (position * full/source), snap it onto the new surface (SetTerrainZ), and grow
+-- the object itself by the SAME factor so it matches the enlarged terrain features.
+--
+-- Only cosmetic decor is touched: `not ShouldSkipObject` (skips City/sectors/buildings/units/
+-- rockets/mystery/underground) AND `not IsImportantSectorObject` (skips resource-deposit markers).
+-- Anomalies/effect markers are already skipped by ShouldSkipObject. The colony/landing objects stay
+-- put (ShouldSkipObject); only the scatter moves. Deposits/anomalies are a separate later pass.
+-- Returns the number of decorations moved.
+local function ScaleDecorationsToFull(map, debug)
+	StretchLog("ScaleDecorationsToFull: ENTER", { map = tostring(map and (map.name or "?")) })
+	if not map then return 0 end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	if type(box_fn) ~= "function" or type(point_fn) ~= "function" then
+		StretchLog("ScaleDecorationsToFull: box/point unavailable -- skip")
+		return 0
+	end
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	local full_tw = map.SuperBigMapDesiredWidthTiles
+	local full_th = map.SuperBigMapDesiredHeightTiles
+	if type(full_tw) ~= "number" or full_tw <= 0 then
+		local mapdata = map.mapdata
+		full_tw = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width or nil
+		full_th = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height or full_tw
+	end
+	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
+		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= sw_tiles then
+		StretchLog("ScaleDecorationsToFull: sizes unknown / no expansion -- skip")
+		return 0
+	end
+	-- Terrain was stretched UP by full/source; decorations move the same way AND grow by that factor
+	-- (force FLOAT division -- this Lua does integer division on int/int).
+	local scale_x = (full_tw + 0.0) / sw_tiles
+	local scale_y = (full_th + 0.0) / sh_tiles
+	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
+	local objs = CollectObjectsInBox(map, src_box)
+	StretchLog("ScaleDecorationsToFull: collected", { count = #objs, scale = tostring(scale_x) })
+
+	local MAX_SCALE = 500 -- engine object-scale ceiling (percent)
+	local moved, scaled, skipped = 0, 0, 0
+	for _, obj in ipairs(objs) do
+		if obj and not ShouldSkipObject(obj) and not IsImportantSectorObject(obj) then
+			pcall(function()
+				local pos = ObjectPosition(obj)
+				if not pos then return end
+				local ox, oy = PointXY(pos)
+				if type(ox) ~= "number" or type(oy) ~= "number" then return end
+				local np = point_fn(math.floor(ox * scale_x + 0.5), math.floor(oy * scale_y + 0.5))
+				if type(np.SetTerrainZ) == "function" then
+					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
+					if ok_z and pz then np = pz end
+				end
+				if type(obj.SetPos) == "function" then
+					pcall(obj.SetPos, obj, np)
+					moved = moved + 1
+				end
+				-- Grow the object to match the enlarged terrain features.
+				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
+					local s = SafeCall(obj.GetScale, obj)
+					if type(s) == "number" and s > 0 then
+						local ns = math.floor(s * scale_x + 0.5)
+						if ns > MAX_SCALE then ns = MAX_SCALE elseif ns < 1 then ns = 1 end
+						SafeCall(obj.SetScale, obj, ns)
+						scaled = scaled + 1
+					end
+				end
+			end)
+		else
+			skipped = skipped + 1
+		end
+	end
+	StretchLog("ScaleDecorationsToFull: DONE", { moved = moved, scaled = scaled, skipped = skipped })
+	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, skipped %s)",
+		tostring(moved), tostring(scaled), tostring(skipped)))
+	return moved
+end
+
 -- After a sector's terrain is copied into to_box, any object that was ALREADY
 -- sitting in that destination region (e.g. a mystery "pile of stone" / anomaly a
 -- story event dropped into the frame) is now floating above or buried under the
@@ -1216,6 +1299,7 @@ local TerrainCopy = {
 	CopyGridRect = CopyGridRect,
 	CopyEditorGrid = CopyEditorGrid,
 	StretchSourceToFull = StretchSourceToFull,
+	ScaleDecorationsToFull = ScaleDecorationsToFull,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

@@ -168,6 +168,7 @@ local ForceFramePassable = TerrainCopy.ForceFramePassable
 local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
 local RemoveFrameUndergroundAccess = TerrainCopy.RemoveFrameUndergroundAccess
 local StretchSourceToFull = TerrainCopy.StretchSourceToFull
+local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -976,6 +977,13 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
 					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
+				end
+				-- Step 2: reposition + scale the generated decorations onto the stretched terrain
+				-- (must run AFTER the height stretch so SetTerrainZ reads the new surface).
+				if type(ScaleDecorationsToFull) == "function" then
+					StretchLog("stretch branch: -> ScaleDecorationsToFull")
+					local n_dec = ScaleDecorationsToFull(map, false)
+					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
 				end
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
