@@ -429,9 +429,11 @@ SuperBigMap.ShowFreshRestartNotice = ShowFreshRestartNotice
 -- "Loading Super Big Map" message box and HIDE the new-game "Welcome to Mars, Commander!"
 -- popup behind it -- the same approach as ShowMessageOverWelcome (a separate StdMessageDialog
 -- shown on top while the welcome popup is made invisible). The box keeps the standard
--- title/body/footer layout, but its footer button reads "Please wait." and is DISABLED so it
--- can't be pressed mid-expansion; when the expansion completes we delete the box and re-show the
--- welcome popup once. (An earlier version mutated the welcome popup's own title/body text
+-- title/body/footer layout, with a bright-gold "Please wait." footer button; the player never
+-- needs to press it (the box auto-closes when expansion finishes, and if pressed the watch loop
+-- just recreates it, so the welcome popup can't be reached mid-expansion). When the expansion
+-- completes we delete the box and re-show the welcome popup once. (An earlier version mutated
+-- the welcome popup's own title/body text
 -- instead; the popup kept re-applying its context, producing a welcome -> loading -> welcome
 -- flicker. Hiding it and drawing our own box avoids that.)
 local LOADING_TITLE = "Loading Super Big Map..."
@@ -446,8 +448,8 @@ local function LoadingLog(message, data)
 end
 
 -- Our separate "Loading Super Big Map" message box (a standard message dialog), shown ON TOP of
--- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, but non-dismissable
--- (its "Please wait." footer button is disabled) and auto-closed when the expansion finishes.
+-- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, with a bright-gold
+-- "Please wait." footer button, auto-closed when the expansion finishes.
 -- Previously the mod MUTATED the welcome popup's own title/body text; the popup kept
 -- re-applying its context (OnContextUpdate / re-pop), which produced the welcome -> loading
 -- -> welcome flicker. We no longer touch the popup's text: we hide it and draw our own box,
@@ -468,27 +470,6 @@ local function HideWelcomePopupInstant()
 	return dlg ~= nil
 end
 
--- The "Please wait." footer action is DISABLED so it can't be pressed; a disabled XTextButton
--- normally renders dim grey (its DisabledTextColor -- see XFontControl:CalcTextColor). Copy the
--- button's own enabled TextColor (the gold used by the vanilla Close button) into its disabled
--- colours so it reads just as bright while staying non-interactive. Applied every watch tick
--- because the button is built during the dialog's async open; it no-ops once the colours match.
-local function StyleLoadingButton(box)
-	if not box or type(box.ResolveId) ~= "function" then return end
-	local bar = box:ResolveId("idActionBar")
-	if type(bar) ~= "table" then return end
-	for _, btn in ipairs(bar) do
-		local gold = btn.TextColor
-		if gold ~= nil and btn.DisabledTextColor ~= gold then
-			pcall(function()
-				btn.DisabledTextColor = gold
-				btn.DisabledRolloverTextColor = btn.RolloverTextColor or gold
-				if type(btn.Invalidate) == "function" then btn:Invalidate() end
-			end)
-		end
-	end
-end
-
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
 -- Returns true when the loading box is up (active path) so the watch loop can log "applied".
@@ -505,23 +486,18 @@ local function SetWelcomeLoading(active)
 				local untranslated = Global("Untranslated")
 				local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
 				-- Build a normal message dialog (image + title + body + footer button), just like
-				-- the game's own welcome popup -- NO stripping of the layout. The footer button is
-				-- labelled "Please wait." and its action is DISABLED (ok_action_state -> "disabled"),
-				-- so it renders in the Close-button spot but cannot be pressed and its Enter/gamepad
-				-- shortcut is ignored (see XActionsHost:ActionByShortcut) -- the player never needs to
-				-- (and cannot) dismiss it; ExpansionLoadingEnd tears the box down when the map is ready.
+				-- the game's own welcome popup. The footer button reads "Please wait." and is left
+				-- ENABLED so it renders in the bright GOLD of the vanilla Close button (a disabled
+				-- action greys out). The player never NEEDS to press it -- ExpansionLoadingEnd tears
+				-- the box down when the map is ready -- and if it IS pressed, the watch loop simply
+				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
 				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY),
-					wrap("Please wait."), { ok_action_state = function() return "disabled" end })
+					wrap("Please wait."))
 				if ok and box then
 					loading_box = box
 					LoadingLog("loading box created over hidden welcome popup")
 				end
 			end
-		end
-		-- Keep the disabled "Please wait." button bright (gold like Close), not dim grey. The
-		-- button is built async during open, so re-apply each tick until the colours match.
-		if LoadingBoxValid() then
-			StyleLoadingButton(loading_box)
 		end
 		return LoadingBoxValid() == true
 	else

@@ -60,6 +60,16 @@ local function InitSeq(message, data)
 	end
 end
 
+-- Per-step trace for the STRETCH frame-fill (gated on Config.DEBUG_STRETCH). Deliberately
+-- fine-grained so the LAST line before a stuck-at-loading pinpoints exactly which grid step hung
+-- or threw. Temporary diagnostic scope; the code stays, only the flag is turned off for release.
+local function StretchLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Stretch", message, data)
+	end
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -472,6 +482,7 @@ end
 -- converted to a compute grid (GridToCompute) before resampling and written back through the
 -- terrain setter (terrain.SetHeightGrid / SetTypeGrid accept a compute grid). Returns (ok, done).
 local function StretchSourceToFull(map, debug)
+	StretchLog("StretchSourceToFull: ENTER", { map = tostring(map and (map.name or "?")) })
 	if not map then return false, 0 end
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
@@ -517,43 +528,62 @@ local function StretchSourceToFull(map, debug)
 	-- Read the full grid via get_fn, take its source corner (cells [0..scw]x[0..sch]), resample
 	-- that up to the full cell dims (all in compute-grid space so GridResample accepts it), then
 	-- write back via set_fn (+ invalidate). The 'raw' grid from get_fn is left for the engine.
+	-- EVERY sub-step is StretchLog'd so a stuck/failed grid is pinpointed to the exact line.
 	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate)
-		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then return false end
-		local ok_g, raw = pcall(get_fn, map)
-		if not ok_g or not raw then
-			if debug then DebugPrint(string.format("  stretch %-8s get failed", tostring(label))) end
+		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then
+			StretchLog("stretch_one: missing get/set fn", { grid = label })
 			return false
 		end
+		StretchLog("stretch_one: BEGIN", { grid = label, interpolate = interpolate == true })
+		local ok_g, raw = pcall(get_fn, map)
+		if not ok_g or not raw then
+			StretchLog("stretch_one: get FAILED", { grid = label, err = tostring(raw) })
+			return false
+		end
+		StretchLog("stretch_one: got source grid", { grid = label })
 		local ok_all, res = pcall(function()
+			StretchLog("stretch_one: GridToCompute...", { grid = label })
 			local full_c = GridToCompute(raw)
 			local fw, fh = full_c:size()
+			StretchLog("stretch_one: full grid size", { grid = label, fw = fw, fh = fh })
 			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
 			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
 			local fmt, bits = IsComputeGrid(full_c)
+			StretchLog("stretch_one: NewComputeGrid corner", { grid = label, scw = scw, sch = sch, fmt = tostring(fmt), bits = tostring(bits) })
 			local src_sub = NewComputeGrid(scw, sch, fmt, bits)
+			StretchLog("stretch_one: copyrect corner...", { grid = label })
 			src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
+			StretchLog("stretch_one: GridResample...", { grid = label, to_w = fw, to_h = fh })
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			StretchLog("stretch_one: resample done -> set_fn...", { grid = label })
 			local ok_set = pcall(set_fn, map, stretched)
+			StretchLog("stretch_one: set_fn done", { grid = label, ok_set = ok_set })
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
+			StretchLog("stretch_one: invalidate done -> freeing", { grid = label })
 			free_grid(src_sub)
 			if stretched ~= src_sub then free_grid(stretched) end
 			if full_c ~= raw then free_grid(full_c) end
-			if debug then DebugPrint(string.format("  stretch %-8s fw=%s scw=%s set=%s",
-				tostring(label), tostring(fw), tostring(scw), tostring(ok_set))) end
 			return ok_set == true
 		end)
-		if not ok_all and debug then
-			DebugPrint(string.format("  stretch %-8s FAILED (%s)", tostring(label), tostring(res)))
+		if not ok_all then
+			StretchLog("stretch_one: EXCEPTION", { grid = label, err = tostring(res) })
+		else
+			StretchLog("stretch_one: END", { grid = label, ok = res == true })
 		end
 		return ok_all and res == true
 	end
 
+	StretchLog("StretchSourceToFull: begin resample", { src_w = sw_tiles, src_h = sh_tiles, full_w = full_tw, full_h = full_th, frac_w = tostring(frac_w) })
 	DebugPrint(string.format("StretchSourceToFull: source %sx%s tiles -> full %sx%s tiles (frac %s)",
 		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
 	local done = 0
+	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
 	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
+	StretchLog("StretchSourceToFull: -> stretch TYPE")
 	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
+	StretchLog("StretchSourceToFull: -> ReinvalidateExpandedTerrain")
 	ReinvalidateExpandedTerrain(map)
+	StretchLog("StretchSourceToFull: COMPLETE", { grids_done = done })
 	DebugPrint(string.format("StretchSourceToFull: done (%s/2 grids stretched: height, terrain_type)", tostring(done)))
 	return done > 0, done
 end

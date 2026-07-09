@@ -67,6 +67,16 @@ local function DebugPrint(text)
 	end
 end
 
+-- Per-step trace for the STRETCH frame-fill orchestration (gated on Config.DEBUG_STRETCH).
+-- Pairs with the same-scope logging in sbm_terrain_copy so the whole path is traceable end to
+-- end when diagnosing a stuck-at-loading. Temporary diagnostic scope; only the flag is flipped.
+local function StretchLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Stretch", message, data)
+	end
+end
+
 -- Per-object generation spam routes to its own scope so DEBUG_GENERATION stays readable;
 -- enable DEBUG_GENERATIONVERBOSE (or the master) to see it.
 local function VerbosePrint(text)
@@ -951,30 +961,51 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		-- source corner until the object pass lands. Finalize (buildable/passability/rockets) and
 		-- return -- the mirror block phases below are skipped entirely for this mode.
 		if fill_mode == "stretch" then
+			-- FAIL-SAFE: run the whole stretch + finalize inside pcall so that if ANY step throws,
+			-- the expansion thread does not die before end_loading() -- that is what leaves the
+			-- loading box stuck on screen forever. Whatever happens, we mark the map done and close
+			-- the loading box below. Every step is StretchLog'd so the last line before a hang
+			-- pinpoints where it stopped.
+			StretchLog("stretch branch: ENTER")
 			local ok_stretch, n_grids = false, 0
-			if type(StretchSourceToFull) == "function" then
-				ok_stretch, n_grids = StretchSourceToFull(map, false)
-			else
-				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
-			end
-			do
+			local ok_branch, branch_err = pcall(function()
+				if type(StretchSourceToFull) == "function" then
+					StretchLog("stretch branch: -> StretchSourceToFull")
+					ok_stretch, n_grids = StretchSourceToFull(map, false)
+					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
+				else
+					StretchLog("stretch branch: StretchSourceToFull MISSING")
+					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
+				end
+				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
 					SafeCall(rebuild_buildable, map)
 				end
+				StretchLog("stretch branch: -> ForceFramePassable")
+				SafeCall(ForceFramePassable, map)
+				StretchLog("stretch branch: -> ResnapRocketsOnMap")
+				local rockets = SuperBigMap.RocketRules
+				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
+					SafeCall(rockets.ResnapRocketsOnMap, map)
+				end
+				StretchLog("stretch branch: finalize steps done")
+			end)
+			if not ok_branch then
+				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })
+				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
 			end
-			ForceFramePassable(map)
-			local rockets = SuperBigMap.RocketRules
-			if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
-				SafeCall(rockets.ResnapRocketsOnMap, map)
-			end
+			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
+			-- never hangs on the loading screen.
 			map.SuperBigMapSectorMirrorDone = true
 			map.SuperBigMapExpanded = true
 			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: STRETCH mode complete (terrain only) ok=%s grids=%s -- objects NOT yet repositioned",
-				tostring(ok_stretch), tostring(n_grids)))
-			InitSeq("RunSectorMirrorPlan: stretch complete (terrain only)", { ok = ok_stretch, grids = n_grids })
+				"RunSectorMirrorPlanIfEnabled: STRETCH mode complete (terrain only) branch_ok=%s stretch_ok=%s grids=%s -- objects NOT yet repositioned",
+				tostring(ok_branch), tostring(ok_stretch), tostring(n_grids)))
+			InitSeq("RunSectorMirrorPlan: stretch complete (terrain only)", { branch_ok = ok_branch, ok = ok_stretch, grids = n_grids })
+			StretchLog("stretch branch: -> end_loading()")
 			end_loading()
+			StretchLog("stretch branch: DONE")
 			return
 		end
 

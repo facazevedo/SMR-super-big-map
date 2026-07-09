@@ -10,7 +10,7 @@
 -- print() in mod-owned modules.
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
---   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Overview,
+--   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Overview,
 --   Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom, ZoomVanilla, RestartNotice,
 --   PregameToggle, EditorCamera, InitSeq.
 
