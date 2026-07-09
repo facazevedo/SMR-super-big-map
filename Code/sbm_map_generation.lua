@@ -1,10 +1,10 @@
--- Super Big Map -- experimental 2x2 quadrant map expansion.
+-- Super Big Map -- 20x20 frame map expansion.
 --
--- For eligible random Surface maps this allocates a larger terrain, has the random
--- map generator produce only a top-left source quadrant, then tiles that quadrant
--- (terrain grids + objects) into the other three quadrants -- roughly 4x the play
--- area on a single map. The RandomMapGenerator.Generate/DoGenerate hook and the
--- tiling pass share pending-map state, so they live together here.
+-- For eligible random Surface maps this allocates an 8192-tile terrain, has the
+-- random map generator produce the native source terrain, then fills the added
+-- L-shaped frame by mirroring source edge blocks. The RandomMapGenerator.Generate/
+-- DoGenerate hook and the frame-fill pass share pending-map state, so they live
+-- together here.
 --
 -- Generic engine helpers come from sbm_engine. This module keeps ONLY a gen-time
 -- TerrainSize and the infinite-loop-pause guard local, because their behavior is
@@ -162,6 +162,74 @@ local function StorePendingMap(map_name, pending)
 	end
 end
 
+local function ClearPendingMap(map_name)
+	if map_name and map_name ~= "" then
+		pending_maps[map_name] = nil
+	end
+end
+
+local function ShouldExpandNewMap()
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.ShouldExpandNewMap) == "function" then
+		local ok, result = pcall(toggle.ShouldExpandNewMap)
+		return ok and result == true
+	end
+	return false
+end
+
+local function ClearPreparedMapInstance(map)
+	if type(map) ~= "table" then
+		return false
+	end
+	map.SuperBigMapQuadrantCopyPending = nil
+	map.SuperBigMapSourceWidth = nil
+	map.SuperBigMapSourceHeight = nil
+	map.SuperBigMapSourceX = nil
+	map.SuperBigMapSourceY = nil
+	map.SuperBigMapOriginalWidthTiles = nil
+	map.SuperBigMapOriginalHeightTiles = nil
+	map.SuperBigMapSourceWidthTiles = nil
+	map.SuperBigMapSourceHeightTiles = nil
+	map.SuperBigMapDesiredWidthTiles = nil
+	map.SuperBigMapDesiredHeightTiles = nil
+	map.SuperBigMapGeneratorWidth = nil
+	map.SuperBigMapGeneratorHeight = nil
+	map.SuperBigMapGeneratorWidthTiles = nil
+	map.SuperBigMapGeneratorHeightTiles = nil
+	return true
+end
+
+local function RestorePreparedMapData(map_name, mapdata)
+	if type(mapdata) ~= "table" then
+		return false
+	end
+	local original_width = mapdata.SuperBigMapOriginalWidthTiles
+	local original_height = mapdata.SuperBigMapOriginalHeightTiles
+	if type(original_width) == "number" and original_width > 0 then
+		mapdata.Width = original_width
+	end
+	if type(original_height) == "number" and original_height > 0 then
+		mapdata.Height = original_height
+	end
+	if mapdata.SuperBigMapOriginalPassBorder ~= nil then
+		mapdata.PassBorder = mapdata.SuperBigMapOriginalPassBorder
+		local const_tbl = Global("const")
+		local tile = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
+			and const_tbl.HeightTileSize or 100
+		if type(mapdata.PassBorderTiles) == "number" then
+			mapdata.PassBorderTiles = math.floor((mapdata.PassBorder or 0) / tile)
+		end
+	end
+	mapdata.SuperBigMapOriginalWidthTiles = nil
+	mapdata.SuperBigMapOriginalHeightTiles = nil
+	mapdata.SuperBigMapQuadrantCopyScale = nil
+	mapdata.SuperBigMapQuadrantSourceWidthTiles = nil
+	mapdata.SuperBigMapQuadrantSourceHeightTiles = nil
+	mapdata.SuperBigMapOriginalPassBorder = nil
+	ClearPendingMap(map_name)
+	return true
+end
+
 local function AlignDown(value, step)
 	step = type(step) == "number" and step > 0 and step or 1
 	return math.floor(value / step) * step
@@ -243,6 +311,17 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	if not mapdata and type(map_data_table) == "table" then
 		mapdata = map_data_table[map_name or false]
 		map_instance.mapdata = mapdata
+	end
+
+	if not ShouldExpandNewMap() then
+		RestorePreparedMapData(map_name, mapdata)
+		ClearPreparedMapInstance(map_instance)
+		VerbosePrint(string.format(
+			"quadrant prepare skipped for %s via %s: EXPAND MAP toggle is off",
+			tostring(map_name),
+			tostring(source or "ChangingMap")
+		))
+		return false
 	end
 
 	local ok, reason = IsEligibleMapData(map_slot, mapdata, map_instance)

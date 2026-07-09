@@ -220,6 +220,7 @@ end
 
 -- Install order (dependencies first); restore is the exact reverse.
 local APPLY_ORDER = {
+	"PregameToggle",
 	"MapGeneration",
 	"SectorGrid",
 	"SectorExploration",
@@ -247,6 +248,7 @@ local RESTORE_ORDER = {
 	"SectorExploration",
 	"SectorGrid",
 	"MapGeneration",
+	"PregameToggle",
 }
 
 local function run_phase(order, method)
@@ -901,10 +903,21 @@ local function EnsureGeneratorHookInstalled()
 	end
 end
 
+local function EnsurePregameToggleInstalled()
+	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
+		return
+	end
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.PatchLandingDialog) == "function" then
+		toggle.PatchLandingDialog()
+	end
+end
+
 RegisterOnce("ClassesPostprocess", function()
 	-- Install the generator hook regardless of active() so it is ready before any pre-game
 	-- landing-spot preview generates a map (prevents the GSRP overflow crash).
 	EnsureGeneratorHookInstalled()
+	EnsurePregameToggleInstalled()
 	if not active() then
 		return
 	end
@@ -929,6 +942,7 @@ RegisterOnce("DataLoaded", function()
 	-- Ensure the generator hook is in place before any pre-game generation (independent of
 	-- active()); DataLoaded fires at boot before the landing-spot screen.
 	EnsureGeneratorHookInstalled()
+	EnsurePregameToggleInstalled()
 	if not active() then
 		return
 	end
@@ -958,6 +972,7 @@ RegisterOnce("ClassesBuilt", function()
 	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla. Re-install our hook even before a
 	-- mod map is active, so a pre-game landing-spot preview can't run vanilla DoGenerate.
 	EnsureGeneratorHookInstalled()
+	EnsurePregameToggleInstalled()
 	if not active() then
 		return
 	end
@@ -983,6 +998,7 @@ RegisterOnce("ModsReloaded", function()
 	-- Re-install the generator hook on reload regardless of active() (a mod reload resets the
 	-- RandomMapGenerator class to vanilla; the pre-game preview can run before any map is active).
 	EnsureGeneratorHookInstalled()
+	EnsurePregameToggleInstalled()
 	if not active() then
 		return
 	end
@@ -1025,6 +1041,7 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	-- mod isn't active() yet (landing-spot previews regenerate without ClassesBuilt and before
 	-- any map is applied). This is the path that was overflowing GSRP into a crash.
 	EnsureGeneratorHookInstalled()
+	EnsurePregameToggleInstalled()
 	if not active() then
 		return
 	end

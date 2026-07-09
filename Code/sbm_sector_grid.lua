@@ -253,7 +253,15 @@ local function CustomSectorStatus(map)
 		return false, "not surface"
 	end
 
-	if cfg_bool("SECTOR_EXPANDED_ONLY", true) and not HasExpandedSectorSource(map) then
+	local is_mod_map = IsModMap(map)
+	if not is_mod_map then
+		return false, "not a Super Big Map-expanded map"
+	end
+
+	local has_expanded_marker = HasExpandedSectorSource(map)
+		or map.SuperBigMapExpanded == true
+		or (mapdata and type(mapdata.SuperBigMapOriginalWidthTiles) == "number" and mapdata.SuperBigMapOriginalWidthTiles > 0)
+	if cfg_bool("SECTOR_EXPANDED_ONLY", true) and not has_expanded_marker then
 		return false, "not expanded/no source"
 	end
 

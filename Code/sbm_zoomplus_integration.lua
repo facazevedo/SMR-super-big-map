@@ -23,6 +23,11 @@ local SHOW_ZOOM_DEBUG_LOGS = Config.DEBUG_ZOOM == true or Config.DEBUG_LOGS == t
 local PRE_AIM_OVERVIEW_EXIT = Config.PRE_AIM_OVERVIEW_EXIT ~= false
 local OVERVIEW_EXIT_PAN_TIME = (type(Config.OVERVIEW_EXIT_PAN_TIME) == "number") and Config.OVERVIEW_EXIT_PAN_TIME or 250
 
+-- Multiplier actually applied to ZoomPlus on the last ApplyNormalZoom, so a CHANGED
+-- value (e.g. the user moved the Max Zoom Level slider) is re-applied from the vanilla
+-- baseline instead of stacking on the previous far distance.
+local last_applied_multiplier = false
+
 -- True on the MOD EDITOR test map -- Super Big Map must leave the camera vanilla there.
 local function InModEditor()
 	local fn = Global("IsModEditorMap")
@@ -33,10 +38,26 @@ local function InModEditor()
 	return false
 end
 
--- Multiplier actually applied to ZoomPlus on the last ApplyNormalZoom, so a CHANGED
--- value (e.g. the user moved the Max Zoom Level slider) is re-applied from the vanilla
--- baseline instead of stacking on the previous far distance.
-local last_applied_multiplier = false
+local function ShouldUseModZoom()
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.ShouldUseModZoom) == "function" then
+		local ok, result = pcall(toggle.ShouldUseModZoom, Global("CurrentMap"))
+		return ok and result == true
+	end
+	local grid = SuperBigMap.SectorGrid
+	if grid and type(grid.IsModMap) == "function" then
+		local ok, result = pcall(grid.IsModMap, Global("CurrentMap"))
+		return ok and result == true
+	end
+	return false
+end
+
+local function DisableZoomPlus(zoom_plus)
+	if type(zoom_plus) == "table" and type(zoom_plus.Disable) == "function" then
+		SafeCall(zoom_plus.Disable)
+	end
+	last_applied_multiplier = false
+end
 
 -- The far-zoom multiplier to use: the per-save "Max Zoom Level" option when present
 -- (sbm_zoom_option), else the static Config multiplier. >= 1.0 (1.0 = vanilla).
@@ -61,13 +82,19 @@ local function ApplyNormalZoom()
 		return false
 	end
 
+	if not ShouldUseModZoom() then
+		DisableZoomPlus(zoom_plus)
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Zoom", "current map is not Super Big Map-expanded -- ZoomPlus left disabled")
+		end
+		return false
+	end
+
 	-- In the mod editor, stay VANILLA: disable ZoomPlus instead of applying it, so the
 	-- editor camera/zoom is stock. (ZoomPlus re-applies normally on real game maps.)
 	if InModEditor() then
-		if type(zoom_plus.Disable) == "function" then
-			SafeCall(zoom_plus.Disable)
-		end
-		last_applied_multiplier = false
+		DisableZoomPlus(zoom_plus)
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog then
 			DebugLog.Info("Zoom", "mod editor detected -- ZoomPlus left disabled (vanilla camera)")
