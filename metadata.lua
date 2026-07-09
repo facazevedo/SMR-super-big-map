@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "Fix: load the RMG placement auto-fit module (was present but never in the load order), so expanded maps get full deposit/anomaly placement (incl. FreeTech) instead of vanilla under-placement.",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 323,
+	'version', 324,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {

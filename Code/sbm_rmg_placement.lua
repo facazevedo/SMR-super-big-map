@@ -94,6 +94,18 @@ local PRESET_SPACING_FIELDS = { "RepulseSame", "RepulseSameLayer", "RepulseAll",
 -- Active relaxation snapshot for the in-flight generation (one synchronous thread).
 local active = nil
 
+-- Stride for the gen-zone coverage sample: read every Nth type-grid cell on each axis
+-- instead of all of them. This is the fine terrain TYPE grid (millions of cells at
+-- TypeTileSize resolution), NOT the 20x20 sector grid -- so the stride is a sub-sampling
+-- rate, not a per-sector count. Coverage is a ratio, so a strided sample of hundreds of
+-- thousands of cells is statistically identical to the full scan at ~1/stride^2 the work
+-- (stride 5 -> ~25x fewer reads). 5 is deliberately coprime with the generator work-step
+-- period (const.PrefabWorkRatio = 8) and with the power-of-two grid dimensions, so the
+-- sample lattice walks all phases instead of phase-locking to any 8-periodic structure
+-- (avoids aliasing bias). A full scan of the 8192-tile expanded type grid is millions of
+-- per-cell C calls and dominated expanded-map load time.
+local COVERAGE_SAMPLE_STRIDE = 5
+
 local function WorkStep()
 	local const_tbl = Global("const")
 	if type(const_tbl) ~= "table" then return nil end
@@ -162,19 +174,32 @@ local function MeasureGenZoneCoverage(generator, map)
 		return nil, "type grid empty"
 	end
 
-	-- Count gen-type cells over the WHOLE buffer. The generated region is the top-left
-	-- corner; the surrounding frame is non-generated (non-gen-type), so every gen-type
-	-- cell lies inside the generated span -- which lets us derive the generated-span
-	-- coverage analytically (below) instead of guessing a sub-rect.
-	local full_content = 0
-	for y = 0, gh - 1 do
-		for x = 0, gw - 1 do
+	-- Count gen-type cells over the WHOLE buffer, STRIDE-SAMPLED. The generated region is
+	-- the top-left corner; the surrounding frame is non-generated (non-gen-type), so every
+	-- gen-type cell lies inside the generated span -- which lets us derive the generated-span
+	-- coverage analytically (below) instead of guessing a sub-rect. We read every Nth cell on
+	-- each axis (COVERAGE_SAMPLE_STRIDE) and scale the sampled count back up to a whole-buffer
+	-- estimate; coverage is a ratio, so this matches the full scan to within sampling noise at
+	-- ~1/stride^2 the cost.
+	local grid_cells = gw * gh
+	local stride = (type(COVERAGE_SAMPLE_STRIDE) == "number" and COVERAGE_SAMPLE_STRIDE >= 1)
+		and math.floor(COVERAGE_SAMPLE_STRIDE) or 1
+	local sampled_matches = 0
+	for y = 0, gh - 1, stride do
+		for x = 0, gw - 1, stride do
 			if set[grid:get(x, y)] then
-				full_content = full_content + 1
+				sampled_matches = sampled_matches + 1
 			end
 		end
 	end
-	local grid_cells = gw * gh
+	local sampled_cells = (math.floor((gw - 1) / stride) + 1) * (math.floor((gh - 1) / stride) + 1)
+	-- Scale the sample up to the whole-buffer gen-type count the exact scan would have
+	-- produced (sampled density * total cells). * 1.0 forces float (this runtime truncates
+	-- integer/integer division). full_content is thus an estimate; the downstream coverage
+	-- ratio is stride-independent.
+	local full_content = (sampled_cells > 0)
+		and math.floor(sampled_matches * 1.0 * grid_cells / sampled_cells + 0.5)
+		or 0
 
 	-- The type grid spans the full ALLOCATED buffer, but the generator only generated
 	-- (and the player only ever plays) the top-left generated span. play_zone/gen_zone
@@ -204,6 +229,7 @@ local function MeasureGenZoneCoverage(generator, map)
 	local coverage_full = (grid_cells > 0) and (full_content * 1.0 / grid_cells) or nil
 	return coverage, nil, {
 		grid_w = gw, grid_h = gh,
+		sample_stride = stride, sampled_cells = sampled_cells, sampled_matches = sampled_matches,
 		gen_cells = full_content, gen_span_cells = gen_span_cells,
 		gen_fraction = string.format("%.3f", gen_fraction),
 		cov_permille = (gen_span_cells > 0) and math.floor(full_content * 1000 / gen_span_cells) or -1,
