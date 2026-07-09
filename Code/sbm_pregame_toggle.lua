@@ -232,6 +232,14 @@ local function HoverColor()
 	return 3025821846
 end
 
+local function TrackColor()
+	local rgba = Global("RGBA")
+	if type(rgba) == "function" then
+		return rgba(168, 183, 201, 107)
+	end
+	return 1806223272
+end
+
 local function UiBox(...)
 	local box_fn = Global("box")
 	if type(box_fn) == "function" then
@@ -260,6 +268,10 @@ end
 
 local ApplyExpandUnderline
 
+local function IsAlive(win)
+	return win and win.window_state ~= "destroying"
+end
+
 local function SetText(ctrl, text)
 	if ctrl and type(ctrl.SetText) == "function" then
 		SafeCall(ctrl.SetText, ctrl, tostring(text))
@@ -275,6 +287,20 @@ local function UnderlineTunerState(dialog)
 			labels = {},
 		}
 		State.pregame_underline_tuner = info
+	end
+	return info
+end
+
+local function ExpandBarState(dialog)
+	local info = State.pregame_expand_bar
+	if type(info) ~= "table" or info.dialog ~= dialog then
+		info = {
+			dialog = dialog,
+			holder = false,
+			track = false,
+			fill = false,
+		}
+		State.pregame_expand_bar = info
 	end
 	return info
 end
@@ -430,7 +456,7 @@ local function EnsureUnderlineTuner(dialog, button)
 	}, dialog, dialog.context)
 	info.window = tuner
 	info.labels = {}
-	NewTextLabel(tuner, "EXPAND MAP UNDERLINE", 0)
+	NewTextLabel(tuner, "EXPAND MAP BAR", 0)
 	AddTuneRow(dialog, tuner, info.labels, "x", "X")
 	AddTuneRow(dialog, tuner, info.labels, "y", "Y")
 	AddTuneRow(dialog, tuner, info.labels, "length", "LENGTH")
@@ -446,6 +472,59 @@ local function EnsureUnderlineTuner(dialog, button)
 	return tuner
 end
 
+local function DeleteOldUnderline(dialog)
+	local resolve = dialog and dialog.ResolveId
+	if type(resolve) ~= "function" then return end
+	local ok, old = pcall(resolve, dialog, "idSuperBigMapUnderline")
+	if ok and old and type(old.delete) == "function" then
+		SafeCall(old.delete, old)
+	end
+end
+
+local function EnsureExpandBar(dialog, button)
+	local info = ExpandBarState(dialog)
+	if IsAlive(info.holder) and IsAlive(info.track) and IsAlive(info.fill) then
+		return info
+	end
+	local XWindow = Global("XWindow")
+	if type(XWindow) ~= "table" or not dialog then
+		return false
+	end
+	DeleteOldUnderline(dialog)
+	local holder = XWindow:new({
+		Id = "idSuperBigMapExpandBar",
+		Dock = "ignore",
+		HAlign = "none",
+		VAlign = "none",
+		ZOrder = 100,
+		HandleMouse = false,
+		DrawOnTop = true,
+	}, dialog, dialog.context)
+	local track = XWindow:new({
+		Dock = "ignore",
+		HAlign = "none",
+		VAlign = "none",
+		Background = TrackColor(),
+		HandleMouse = false,
+		ZOrder = 0,
+	}, holder, dialog.context)
+	local fill = XWindow:new({
+		Dock = "ignore",
+		HAlign = "none",
+		VAlign = "none",
+		Background = ActionTextColor(button),
+		HandleMouse = false,
+		ZOrder = 1,
+	}, holder, dialog.context)
+	info.holder = holder
+	info.track = track
+	info.fill = fill
+	ToggleLog("expand bar created", {
+		button_box = BoxText(button and button.box),
+	})
+	return info
+end
+
 ApplyExpandUnderline = function(dialog)
 	local button = ResolveExpandButton(dialog)
 	if not button then
@@ -454,69 +533,50 @@ ApplyExpandUnderline = function(dialog)
 		})
 		return false
 	end
-	local underline = dialog and dialog.SuperBigMapExpandUnderline or false
-	local resolve = dialog and dialog.ResolveId
-	if type(resolve) == "function" then
-		local ok, child = pcall(resolve, dialog, "idSuperBigMapUnderline")
-		if ok and child then underline = child end
-	end
-	if not underline then
-		local XWindow = Global("XWindow")
-		if type(XWindow) ~= "table" then
-			ToggleLog("underline skipped: XWindow unavailable", {
-				xwindow_type = type(XWindow),
-			})
-			return false
-		end
-		underline = XWindow:new({
-			Id = "idSuperBigMapUnderline",
-			Dock = "ignore",
-			HAlign = "none",
-			VAlign = "none",
-			ZOrder = 100,
-			MinHeight = 4,
-			MaxHeight = 4,
-			Background = ActionTextColor(button),
-		}, dialog, dialog.context)
-		dialog.SuperBigMapExpandUnderline = underline
-		ToggleLog("underline created", {
-			button_box = BoxText(button.box),
-			underline_box = BoxText(underline.box),
-			measure_width = tostring(underline.measure_width),
-			measure_height = tostring(underline.measure_height),
-		})
-	end
 	local color = ActionTextColor(button)
 	EnsureUnderlineTuneDefaults(button)
 	EnsureUnderlineTuner(dialog, button)
-	if underline.SetBackground then
-		SafeCall(underline.SetBackground, underline, color)
+	local bar = EnsureExpandBar(dialog, button)
+	if not bar then
+		ToggleLog("expand bar skipped: missing windows")
+		return false
+	end
+	if type(bar.fill.SetBackground) == "function" then
+		SafeCall(bar.fill.SetBackground, bar.fill, color)
 	else
-		underline.Background = color
+		bar.fill.Background = color
 	end
 	if button.box and type(button.box.minx) == "function" and type(button.box.maxy) == "function"
-		and type(button.box.sizex) == "function" and type(underline.SetBox) == "function" then
-		local line_height = 4
+		and type(button.box.sizex) == "function" and type(bar.holder.SetBox) == "function" then
+		local line_height = 8
 		local x = State.pregame_underline_x or button.box:minx()
 		local y = State.pregame_underline_y or button.box:maxy() - 10
 		local length = math.max(1, State.pregame_underline_length or button.box:sizex())
-		SafeCall(underline.SetBox, underline, x, y, length, line_height, "dont-move")
+		SafeCall(bar.holder.SetBox, bar.holder, x, y - 10, length, line_height + 20, "dont-move")
+		SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
+		SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
 	end
-	if type(underline.SetVisible) == "function" then
-		SafeCall(underline.SetVisible, underline, IsSelected())
-	else
-		underline.Visible = IsSelected()
+	local visible = IsSelected() or IsUnderlineTunerEnabled()
+	for _, win in ipairs({ bar.holder, bar.track, bar.fill }) do
+		if IsAlive(win) then
+			if type(win.SetVisible) == "function" then
+				SafeCall(win.SetVisible, win, visible)
+			else
+				win.Visible = visible
+			end
+		end
 	end
 	ToggleLog("underline applied", {
 		button_box = BoxText(button.box),
 		color = tostring(color),
 		selected = IsSelected(),
 		start_box = BoxText((ResolveStartButton(dialog) or {}).box),
-		underline_box = BoxText(underline.box),
+		bar_box = BoxText(bar.holder and bar.holder.box),
+		fill_box = BoxText(bar.fill and bar.fill.box),
 		tune_x = tostring(State.pregame_underline_x),
 		tune_y = tostring(State.pregame_underline_y),
 		tune_length = tostring(State.pregame_underline_length),
-		visible = type(underline.GetVisible) == "function" and tostring(underline:GetVisible()) or tostring(underline.Visible),
+		visible = tostring(visible),
 	})
 	return true
 end
