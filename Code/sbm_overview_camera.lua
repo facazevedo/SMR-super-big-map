@@ -211,9 +211,23 @@ local function OverviewAngle(angle)
 	return angle or 45 * 60
 end
 
+local RestoreOverviewFovVanilla  -- defined below; called by PatchOverviewFov's non-mod guard
+
 local function PatchOverviewFov()
 	local const = Global("const")
 	if type(const) ~= "table" or type(const.Camera) ~= "table" then
+		return
+	end
+
+	-- Only widen the overview FOV on maps THIS mod expanded. On a vanilla / non-EXPAND
+	-- map keep the stock FOV (restore it if a prior mod map widened the shared const).
+	-- This is the fix for "a normal map's overview was not vanilla": the widen used to
+	-- run unconditionally (ApplyOverviewPatches calls it on every map) and was only undone
+	-- by RefreshOverviewCamera, so the two flip-flopped and the FOV was often left widened.
+	if not IsModMap(ResolveLiveMap(Global("CurrentMap"))) then
+		if type(RestoreOverviewFovVanilla) == "function" then
+			RestoreOverviewFovVanilla()
+		end
 		return
 	end
 
@@ -230,7 +244,7 @@ local function PatchOverviewFov()
 	end)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
-		DebugLog.Info("ZoomVanilla", "PatchOverviewFov ran (UNCONDITIONAL -- not gated on IsModMap)", {
+		DebugLog.Info("ZoomVanilla", "PatchOverviewFov widened FOV (mod map only -- gated on IsModMap)", {
 			is_mod_map = IsModMap(ResolveLiveMap(Global("CurrentMap"))),
 			fov_16_9 = const.Camera.OverviewFovX_16_9,
 			fov_4_3 = const.Camera.OverviewFovX_4_3,
@@ -473,7 +487,7 @@ end
 -- Put the vanilla overview FOV back (the widened value is a global const, so it
 -- must be actively restored when overview is entered on a non-mod map). Leaves the
 -- saved-original markers in place so a later mod-map entry can re-widen.
-local function RestoreOverviewFovVanilla()
+function RestoreOverviewFovVanilla()
 	local const = Global("const")
 	if type(const) ~= "table" or type(const.Camera) ~= "table" then
 		return
