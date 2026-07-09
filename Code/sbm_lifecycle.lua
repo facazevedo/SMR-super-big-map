@@ -151,6 +151,70 @@ local function ApplyOverviewPatches()
 	end
 end
 
+local function ForceVanillaPregameState(reason)
+	local toggle = SuperBigMap.PregameToggle
+	if toggle then
+		if type(toggle.ResetForVanillaSession) == "function" then
+			SafeCall(toggle.ResetForVanillaSession, tostring(reason or "vanilla_reset"))
+		else
+			if type(toggle.SetSelected) == "function" then
+				SafeCall(toggle.SetSelected, false, tostring(reason or "vanilla_reset"))
+			end
+			if type(toggle.SetStartArmed) == "function" then
+				SafeCall(toggle.SetStartArmed, false, tostring(reason or "vanilla_reset"))
+			end
+		end
+	end
+
+	local zoom = SuperBigMap.ZoomPlusIntegration
+	if zoom and type(zoom.RestoreVanillaBehavior) == "function" then
+		zoom.RestoreVanillaBehavior()
+	end
+	local camera = SuperBigMap.OverviewCamera
+	if camera and type(camera.RestoreVanillaBehavior) == "function" then
+		camera.RestoreVanillaBehavior()
+	end
+	local render = SuperBigMap.OverviewRender
+	if render and type(render.RestoreVanillaBehavior) == "function" then
+		render.RestoreVanillaBehavior()
+	elseif render and type(render.Apply) == "function" then
+		render.Apply(false)
+	end
+	local curtains = SuperBigMap.OverviewCurtains
+	if curtains and type(curtains.RestoreVanillaBehavior) == "function" then
+		curtains.RestoreVanillaBehavior()
+	end
+
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Lifecycle", "forced vanilla pregame state", {
+			reason = tostring(reason or "?"),
+		})
+	end
+end
+
+local function InstallPreGameMainMenuResetGuard()
+	local State = SuperBigMap.State
+	if State.open_pregame_main_menu_reset_wrapper
+		and rawget(_G, "OpenPreGameMainMenu") == State.open_pregame_main_menu_reset_wrapper then
+		return true
+	end
+	local original = rawget(_G, "OpenPreGameMainMenu")
+	if type(original) ~= "function" then
+		return false
+	end
+	if original ~= State.open_pregame_main_menu_reset_wrapper then
+		State.original_open_pregame_main_menu = original
+	end
+	local wrapper = function(...)
+		ForceVanillaPregameState("OpenPreGameMainMenu")
+		return State.original_open_pregame_main_menu(...)
+	end
+	State.open_pregame_main_menu_reset_wrapper = wrapper
+	rawset(_G, "OpenPreGameMainMenu", wrapper)
+	return true
+end
+
 local Lifecycle = {}
 
 function Lifecycle.IsActive()
@@ -907,6 +971,7 @@ local function EnsurePregameToggleInstalled()
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
+	InstallPreGameMainMenuResetGuard()
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.PatchLandingDialog) == "function" then
 		toggle.PatchLandingDialog()

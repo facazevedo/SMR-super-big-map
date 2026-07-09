@@ -160,9 +160,7 @@ end
 
 function ZoomPlusIntegration.RestoreVanillaBehavior()
 	local zoom_plus = Global("SuperBigMapZoomPlus")
-	if type(zoom_plus) == "table" and type(zoom_plus.Disable) == "function" then
-		SafeCall(zoom_plus.Disable)
-	end
+	DisableZoomPlus(zoom_plus)
 end
 
 SuperBigMap.ZoomPlusIntegration = ZoomPlusIntegration

@@ -98,8 +98,18 @@ local function IsModMap(map)
 	return false
 end
 
+local ApplyExpandUnderline
+
 local function ShouldUseModZoom(map)
 	return IsModMap(map or Global("CurrentMap"))
+end
+
+local function ResetForVanillaSession(source, dialog)
+	SetSelected(false, source or "vanilla_session_reset")
+	SetStartArmed(false, source or "vanilla_session_reset")
+	if dialog then
+		ApplyExpandUnderline(dialog)
+	end
 end
 
 local function ExpandActionName()
@@ -235,8 +245,6 @@ local function EnsureUnderlineTuneDefaults(button)
 	State.pregame_underline_y = EXPAND_BAR_Y
 	State.pregame_underline_length = EXPAND_BAR_LENGTH
 end
-
-local ApplyExpandUnderline
 
 local function IsAlive(win)
 	return win and win.window_state ~= "destroying"
@@ -489,6 +497,7 @@ end
 local PregameToggle = {
 	SetSelected = SetSelected,
 	SetStartArmed = SetStartArmed,
+	ResetForVanillaSession = ResetForVanillaSession,
 	IsSelected = IsSelected,
 	ShouldExpandNewMap = ShouldExpandNewMap,
 	ShouldUseModZoom = ShouldUseModZoom,
