@@ -11,7 +11,7 @@
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
 --   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Seam, Overview,
---   Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom, RestartNotice,
+--   Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom, ZoomVanilla, RestartNotice,
 --   PregameToggle, EditorCamera, InitSeq.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")

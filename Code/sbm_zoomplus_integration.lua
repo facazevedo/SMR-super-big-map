@@ -82,6 +82,16 @@ local function ApplyNormalZoom()
 		return false
 	end
 
+	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("ZoomVanilla") then
+		SuperBigMap.DebugLog.Info("ZoomVanilla", "ApplyNormalZoom decision", {
+			map = tostring((Global("CurrentMap") or {}).name or "?"),
+			should_use_mod_zoom = ShouldUseModZoom(),
+			normal_zoom_enabled = NORMAL_ZOOM_ENABLED,
+			zp_enabled = type(zoom_plus.IsEnabled) == "function" and (SafeCall(zoom_plus.IsEnabled) == true) or "?",
+			effective_multiplier = EffectiveMultiplier(),
+		})
+	end
+
 	if not ShouldUseModZoom() then
 		DisableZoomPlus(zoom_plus)
 		local DebugLog = SuperBigMap.DebugLog

@@ -135,6 +135,14 @@ local TerrainSize = Engine.TerrainSize
 -- Re-install the static overview patches (FOV widen, camera override, curtain stubs)
 -- and re-apply ZoomPlus. Delegates to the extracted domain modules.
 local function ApplyOverviewPatches()
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
+		local is_ov = Global("IsOverviewMode")
+		DebugLog.Info("ZoomVanilla", "ApplyOverviewPatches (widens FOV + patches camera + ApplyNormalZoom -- runs on EVERY map)", {
+			is_mod_map = IsModMap(Global("CurrentMap")),
+			overview = type(is_ov) == "function" and (SafeCall(is_ov) == true) or "?",
+		})
+	end
 	local camera = SuperBigMap.OverviewCamera
 	local curtains = SuperBigMap.OverviewCurtains
 	local zoom = SuperBigMap.ZoomPlusIntegration

@@ -228,6 +228,15 @@ local function PatchOverviewFov()
 		const.Camera.OverviewFovX_16_9 = math.max(const.Camera.OverviewFovX_16_9 or 0, OVERVIEW_FOV_16_9)
 		const.Camera.OverviewFovX_4_3 = math.max(const.Camera.OverviewFovX_4_3 or 0, OVERVIEW_FOV_4_3)
 	end)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
+		DebugLog.Info("ZoomVanilla", "PatchOverviewFov ran (UNCONDITIONAL -- not gated on IsModMap)", {
+			is_mod_map = IsModMap(ResolveLiveMap(Global("CurrentMap"))),
+			fov_16_9 = const.Camera.OverviewFovX_16_9,
+			fov_4_3 = const.Camera.OverviewFovX_4_3,
+			vanilla_16_9 = const.Camera.SuperBigMapOriginalOverviewFovX_16_9,
+		})
+	end
 end
 
 local function PatchOverviewCamera()
@@ -477,6 +486,13 @@ local function RestoreOverviewFovVanilla()
 			const.Camera.OverviewFovX_4_3 = const.Camera.SuperBigMapOriginalOverviewFovX_4_3
 		end
 	end)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
+		DebugLog.Info("ZoomVanilla", "RestoreOverviewFovVanilla ran (FOV set back to vanilla)", {
+			fov_16_9 = const.Camera.OverviewFovX_16_9,
+			fov_4_3 = const.Camera.OverviewFovX_4_3,
+		})
+	end
 end
 
 local function RefreshOverviewCamera(source)
