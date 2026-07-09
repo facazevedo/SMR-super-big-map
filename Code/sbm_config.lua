@@ -402,6 +402,15 @@ config.EvenOutDepositDensity = true
 -- map. Lower = sparser (closer to vanilla), higher = keep more in place. Tune from the
 -- DebugDeposits DISTRIBUTION report (start-sector count vs average).
 config.MaxResourceDepositsPerSector = 3
+-- DEPOSIT TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
+-- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
+-- deposits are cloned onto terrain-matched frame tiles until the total reaches
+-- source_count * area_factor (vanilla density x the bigger area); the clones are hidden until
+-- their sector is scanned, and the even-out pass then spreads everything. Concrete deposits are
+-- not topped up (terrain-imprint tied). false = native (Big) deposit count.
+config.EnableDepositTopUp = true
+-- Override the deposit target scale. false = auto (area factor); a number forces that multiplier.
+config.DepositCountScaleOverride = false
 
 config.RespaceAnomaliesToVanilla = true
 -- Also thin the SCANNED start sector's REVEALED anomalies. RespaceAnomalies normally keeps
@@ -544,6 +553,24 @@ config.RmgPlacementExtraSqueeze = 1.0
 -- by this fixed fraction instead. 0.6 = ~1.7x the candidate-cell capacity, which
 -- seats the full anomaly set. Scaling never exceeds the preset target counts.
 config.RmgPlacementFallbackScale = 0.6
+
+-- SCALE ANOMALY COUNTS TO MAP SIZE (sbm_rmg_placement.lua). The generator places the native
+-- (Big) preset anomaly count; spread over the larger 20x20 that is well below vanilla density
+-- for the map's size. When true, the anomaly count properties (AnomFreeTechCount/EventCount/
+-- TechUnlockCount/BreakthroughCount + BonusCount*) are scaled up by the area factor
+-- ((desired/generated tiles)^2 ~= 1.78) before generation, so the generator places
+-- proportionally more anomalies WITH correct unique rewards (breakthroughs self-trim to the
+-- game's available pool at load -- safe, they just plateau below the full scale). The gen-zone
+-- anomaly spacing is tightened to fit the higher count; RespaceAnomalies spreads them after.
+-- false = native (Big) anomaly count (leaner research for the bigger map).
+config.ScaleAnomalyCountsToMapSize = true
+-- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
+-- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
+config.AnomalyCountScaleOverride = false
+-- Lower spacing floor used ONLY while fitting the scaled-up anomaly count into the gen-zone
+-- (below the normal RmgPlacementSpacingFloor, since more anomalies must fit). Raise toward the
+-- normal floor if a run over-packs; lower if the RmgPlacement log shows placement shortfall.
+config.AnomalyCountSpacingFloor = 0.35
 config.QuadrantCopyMainMapOnly = true
 config.QuadrantCopySurfaceOnly = true
 config.QuadrantCopyRandomMapsOnly = true
@@ -668,6 +695,9 @@ C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
 C.RESPACE_ANOMALIES_TO_VANILLA = as_bool(config.RespaceAnomaliesToVanilla)
 C.EVEN_OUT_DEPOSIT_DENSITY = as_bool(config.EvenOutDepositDensity)
 C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
+C.ENABLE_DEPOSIT_TOPUP = as_bool(config.EnableDepositTopUp)
+C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
+	and config.DepositCountScaleOverride or false
 C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
 C.ANOMALY_EVEN_SPREAD_FACTOR = as_number(config.AnomalyEvenSpreadFactor, 0.6)
 C.REMOVE_FRAME_CRATERS = as_bool(config.RemoveFrameCraters)
@@ -729,6 +759,10 @@ C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.8)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
 C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
+C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
+C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
+	and config.AnomalyCountScaleOverride or false
+C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)
 C.QUADRANT_MAIN_MAP_ONLY = as_bool(config.QuadrantCopyMainMapOnly)
 C.QUADRANT_SURFACE_ONLY = as_bool(config.QuadrantCopySurfaceOnly)
 C.QUADRANT_RANDOM_MAPS_ONLY = as_bool(config.QuadrantCopyRandomMapsOnly)

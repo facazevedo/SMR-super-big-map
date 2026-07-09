@@ -1021,6 +1021,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			if type(deposits.ReshuffleClonedMarkers) == "function" then
 				SafeCall(deposits.ReshuffleClonedMarkers, map)
 			end
+			-- Top up resource deposits to the expanded map's full vanilla density (clone extra
+			-- source markers into the frame) BEFORE registration, so the added clones get
+			-- registered and then spread by the even-out pass below.
+			if type(deposits.TopUpDeposits) == "function" then
+				SafeCall(deposits.TopUpDeposits, map)
+			end
 			if type(deposits.RegisterClonedMarkers) == "function" then
 				SafeCall(deposits.RegisterClonedMarkers, map)
 				end

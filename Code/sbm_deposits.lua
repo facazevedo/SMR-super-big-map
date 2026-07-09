@@ -822,6 +822,151 @@ function DepositRules.RespaceAnomalies(map)
 	DepositRules.LogDistributionReport(map, "final (post-respace)")
 end
 
+-- Top up RESOURCE deposits to full vanilla density for the expanded map's SIZE. The generator
+-- places the native (Big) preset count; spread over the larger 20x20 that is below vanilla
+-- density. This clones additional source resource-deposit markers onto terrain-matched FRAME
+-- tiles until the total reaches source_count * area_factor (vanilla density x the bigger area).
+-- Clones are hidden markers (CloneObjectAtOffset -> ProcessClone sets is_placed=false) that spawn
+-- when their frame sector is scanned; RegisterClonedMarkers (run right after) registers them, and
+-- EvenOutDepositDensity then spreads everything to even per-sector density. Concrete
+-- (TerrainDeposit) templates are skipped (their terrain imprint would need painting). Gated by
+-- ENABLE_DEPOSIT_TOPUP.
+function DepositRules.TopUpDeposits(map)
+	if cfg().ENABLE_DEPOSIT_TOPUP ~= true then return end
+	map = map or Global("CurrentMap")
+	local point = Global("point")
+	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
+	local city = map and map.City
+	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
+		or type(clone_fn) ~= "function" or not city then
+		Log("deposit top-up skipped", { reason = "map/city/point/clone unavailable" })
+		return
+	end
+	local map_w, map_h, tile = MapWorldSize(map)
+	if not map_w or not tile or tile <= 0 then
+		Log("deposit top-up skipped", { reason = "map size unavailable" })
+		return
+	end
+	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
+	local margin = margin_tiles * tile
+	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
+	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
+	local lo_x, span_x = margin, (map_w - 2 * margin)
+	local lo_y, span_y = margin, (map_h - 2 * margin)
+	if span_x <= 0 or span_y <= 0 then
+		Log("deposit top-up skipped", { reason = "placeable span <= 0" })
+		return
+	end
+
+	-- Area factor = (desired/generated)^2 (same as sbm_rmg_placement); an override forces it.
+	local area_factor = 1.0
+	local override = cfg().DEPOSIT_COUNT_SCALE_OVERRIDE
+	if type(override) == "number" and override > 0 then
+		area_factor = override
+	else
+		local gen_t = map.SuperBigMapGeneratorWidthTiles
+		local full_t = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+		if type(gen_t) == "number" and gen_t > 0 and type(full_t) == "number" and full_t > gen_t then
+			local r = full_t * 1.0 / gen_t   -- * 1.0: this runtime truncates integer division
+			area_factor = r * r
+		end
+	end
+	if area_factor <= 1.0 then
+		Log("deposit top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
+		return
+	end
+
+	-- Count current resource markers (total) and the ones inside the source quadrant (the
+	-- generated density baseline); collect non-concrete source markers as clone templates.
+	local total_current, source_count = 0, 0
+	local templates = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not (marker and IsResourceDepositMarker(marker)) then return end
+		total_current = total_current + 1
+		local pos = ObjectPos(marker)
+		if not pos or type(pos.xy) ~= "function" then return end
+		local px, py = pos:xy()
+		if px == nil then return end
+		if px < src_w and py < src_h then
+			source_count = source_count + 1
+			if not IsConcreteTerrainDepositMarker(marker) then
+				templates[#templates + 1] = marker
+			end
+		end
+	end)
+
+	local target = math.floor(source_count * area_factor + 0.5)
+	local shortfall = target - total_current
+	if shortfall <= 0 or #templates == 0 then
+		Log("deposit top-up: nothing to add", {
+			total_current = total_current, source_count = source_count, target = target,
+			shortfall = shortfall, templates = #templates,
+			area_factor = string.format("%.3f", area_factor),
+		})
+		return
+	end
+
+	local added = 0
+	RunPaused("SuperBigMapDepositTopUp", function()
+		-- Frame candidate pool (terrain-bucketed), same as EvenOutDepositDensity: sampled tiles
+		-- OUTSIDE the source quadrant, so the added deposits fill the sparse frame.
+		local buckets, pool = {}, 0
+		local MAX_SAMPLES, MAX_POOL = 8000, 4000
+		for _ = 1, MAX_SAMPLES do
+			if pool >= MAX_POOL then break end
+			local x = lo_x + RandInt(span_x)
+			local y = lo_y + RandInt(span_y)
+			if not (x < src_w and y < src_h) then
+				local pt = point(x, y)
+				if CanReceiveDeposit(map, pt) then
+					local tt = TerrainTypeAt(map, pt) or -1
+					local b = buckets[tt]; if not b then b = {}; buckets[tt] = b end
+					b[#b + 1] = { x = x, y = y }
+					pool = pool + 1
+				end
+			end
+		end
+		local function take(tt)
+			local b = tt ~= nil and buckets[tt] or nil
+			if b and #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end
+			return nil
+		end
+		local function take_any()
+			for _, b in pairs(buckets) do if #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end end
+			return nil
+		end
+
+		for _ = 1, shortfall do
+			local template = templates[RandInt(#templates) + 1]
+			local tpos = ObjectPos(template)
+			if tpos and type(tpos.xy) == "function" then
+				local tt = TerrainTypeAt(map, tpos) or -1
+				local c = take(tt) or take_any()
+				if not c then break end   -- pool exhausted
+				local tx, ty = tpos:xy()
+				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+				if clone and type(clone) == "table" then
+					added = added + 1
+					if type(clone.SetPos) == "function" then
+						local pt = point(c.x, c.y)
+						if type(pt.SetTerrainZ) == "function" then
+							local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+							if ok and snapped then pt = snapped end
+						end
+						pcall(clone.SetPos, clone, pt)
+					end
+				end
+			end
+		end
+	end)
+	Log("topped up resource deposits to map-size proportions", {
+		area_factor = string.format("%.3f", area_factor),
+		source_count = source_count, total_before = total_current,
+		target = target, added = added, templates = #templates,
+	})
+	DepositRules.LogDistributionReport(map, "after deposit top-up")
+end
+
 -- Even out RESOURCE-deposit density to vanilla-like proportions. The generator packs the full
 -- preset count into the shrunken gen-zone (see sbm_rmg_placement), so the source region --
 -- including the scanned START sector -- is several times denser than vanilla while the mirrored

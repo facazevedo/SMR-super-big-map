@@ -80,6 +80,18 @@ local SPACING_PROPS = {
 	"EffectDepSpacing", "EffectDepRepulse", "EffectDepRepulseAll",
 }
 
+-- Anomaly COUNT properties on the generator instance (consumed at gen time,
+-- RandomMapGenerator.lua ~3262-3291). Scaling these up before DoGenerate makes the generator
+-- place proportionally more anomalies for the bigger map, WITH correct unique rewards: the
+-- generator only stamps a category (tech_action/sequence); the reward resolves at scan time,
+-- and the breakthrough pool self-trims to the available set at load (City:InitBreakThroughAnomalies).
+-- FreeTech/TechUnlock/Event scale freely; breakthrough plateaus at the pool (safe). Each is a
+-- plain number or a {from,to} range.
+local COUNT_PROPS = {
+	"AnomFreeTechCount", "AnomEventCount", "AnomTechUnlockCount", "AnomBreakthroughCount",
+	"BonusCountFreeTech", "BonusCountEvent", "BonusCountBreakthrough",
+}
+
 -- Per-layer placement borders eroded off play_zone (L3334/L3384). Zeroing these
 -- recovers the candidate cells the erosion ate -- the FreeTech=0 culprit.
 local BORDER_PROPS = {
@@ -116,6 +128,40 @@ local function WorkStep()
 		return work_ratio * type_tile
 	end
 	return nil
+end
+
+-- Area up-scale factor = (full_tiles / generated_source_tiles)^2 -- how many times bigger the
+-- expanded 20x20 playable area is than the native source (e.g. (8192/6144)^2 = 1.78). Used to
+-- scale anomaly counts to full vanilla density for the larger map. 1.0 if the markers are absent.
+local function AreaFactor(map)
+	local gen_t = map and map.SuperBigMapGeneratorWidthTiles
+	local full_t = map and (map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width))
+	if type(gen_t) == "number" and gen_t > 0 and type(full_t) == "number" and full_t > gen_t then
+		local r = full_t * 1.0 / gen_t   -- * 1.0: this runtime truncates integer division
+		return r * r
+	end
+	return 1.0
+end
+
+-- Scale a generator COUNT property (plain number OR {from,to}/{[1],[2]} range) by factor,
+-- returning a NEW value (never mutates the original, so the snapshot can restore it). Rounds to
+-- integers, floored at 1 for plain numbers so a positive count never scales to 0.
+local function ScaleCountValue(v, factor)
+	if type(v) == "number" then
+		return math.max(1, math.floor(v * factor + 0.5))
+	end
+	if type(v) == "table" then
+		local from, to = v.from or v[1], v.to or v[2]
+		if type(from) == "number" and type(to) == "number" then
+			local nv = {}
+			for k, val in pairs(v) do nv[k] = val end
+			local nf, nt = math.floor(from * factor + 0.5), math.floor(to * factor + 0.5)
+			if v.from ~= nil then nv.from = nf else nv[1] = nf end
+			if v.to ~= nil then nv.to = nt else nv[2] = nt end
+			return nv
+		end
+	end
+	return v
 end
 
 -- Round a scaled distance DOWN to a multiple of work_step (the generator asserts
@@ -300,39 +346,69 @@ function RmgPlacement.Begin(generator, map)
 		end
 	end
 
-	-- 2) Scale instance spacing/repulse (only when actually tightening).
-	if scale < 0.999 then
-		for _, name in ipairs(SPACING_PROPS) do
-			local v = generator[name]
-			if type(v) == "number" and v > 0 then
-				local nv = RoundToStep(v * scale, step)
+	-- 2) Anomaly COUNT scaling: place proportionally MORE anomalies so the bigger map reaches
+	-- full vanilla density for its size. Reward-safe (generator stamps a category only; reward
+	-- resolves at scan; breakthrough self-trims to the available pool at load). FreeTech/
+	-- TechUnlock/Event scale freely; breakthrough plateaus at the pool.
+	local anom_scale = 1.0
+	if cfg().SCALE_ANOMALY_COUNTS_TO_MAP_SIZE == true then
+		local override = cfg().ANOMALY_COUNT_SCALE_OVERRIDE
+		anom_scale = (type(override) == "number" and override > 0) and override or AreaFactor(map)
+		if anom_scale > 1.0 then
+			for _, name in ipairs(COUNT_PROPS) do
+				local v = generator[name]
+				local nv = ScaleCountValue(v, anom_scale)
 				if nv ~= v then
 					snapshot.props[#snapshot.props + 1] = { obj = generator, key = name, value = v }
 					generator[name] = nv
 				end
 			end
 		end
+	end
 
-		-- 3) Per-resource deposit spacing on the shared ResourcePreset table -- OFF by
-		-- default. Resource deposits already place at their full preset counts with
-		-- vanilla spacing once the borders are zeroed (confirmed: dep_Concrete=23/23 in
-		-- a borders-only run), so scaling them is pure, unnecessary deviation from
-		-- vanilla. Only enable if a map ever shows a resource-deposit shortfall.
-		if cfg().RMG_PLACEMENT_SCALE_DEPOSITS == true then
-			local presets = Global("Presets")
-			local list = type(presets) == "table" and presets.ResourcePreset and presets.ResourcePreset.Default
-			if type(list) == "table" then
-				for i = 1, #list do
-					local preset = list[i]
-					if type(preset) == "table" then
-						for _, field in ipairs(PRESET_SPACING_FIELDS) do
-							local v = preset[field]
-							if type(v) == "number" and v > 0 then
-								local nv = RoundToStep(v * scale, step)
-								if nv ~= v then
-									snapshot.presets[#snapshot.presets + 1] = { obj = preset, key = field, value = v }
-									preset[field] = nv
-								end
+	-- 3) Spacing for the anomaly/effect layers. Base is the coverage-driven `scale`; when the
+	-- anomaly COUNT was scaled up, the same gen-zone must hold ~anom_scale x more anomalies, so
+	-- tighten spacing by an extra 1/sqrt(anom_scale) (area ~ spacing^2), floored at a lower
+	-- dedicated minimum so they fit. RespaceAnomalies later spreads them evenly across the map.
+	local spacing_scale = scale
+	if anom_scale > 1.0 then
+		spacing_scale = scale / math.sqrt(anom_scale)
+		local anom_floor = cfg().ANOMALY_COUNT_SPACING_FLOOR
+		anom_floor = (type(anom_floor) == "number" and anom_floor > 0 and anom_floor <= 1) and anom_floor or 0.35
+		if spacing_scale < anom_floor then spacing_scale = anom_floor end
+	end
+	if spacing_scale < 0.999 then
+		for _, name in ipairs(SPACING_PROPS) do
+			local v = generator[name]
+			if type(v) == "number" and v > 0 then
+				local nv = RoundToStep(v * spacing_scale, step)
+				if nv ~= v then
+					snapshot.props[#snapshot.props + 1] = { obj = generator, key = name, value = v }
+					generator[name] = nv
+				end
+			end
+		end
+	end
+
+	-- 4) Per-resource deposit spacing on the shared ResourcePreset table -- OFF by default.
+	-- Resource deposits already reach their full preset counts with vanilla spacing once the
+	-- borders are zeroed, so scaling them is unnecessary deviation from vanilla. Only enable if
+	-- a map ever shows a resource-deposit shortfall. Uses the base (coverage) scale, not the
+	-- anomaly-tightened spacing_scale.
+	if cfg().RMG_PLACEMENT_SCALE_DEPOSITS == true and scale < 0.999 then
+		local presets = Global("Presets")
+		local list = type(presets) == "table" and presets.ResourcePreset and presets.ResourcePreset.Default
+		if type(list) == "table" then
+			for i = 1, #list do
+				local preset = list[i]
+				if type(preset) == "table" then
+					for _, field in ipairs(PRESET_SPACING_FIELDS) do
+						local v = preset[field]
+						if type(v) == "number" and v > 0 then
+							local nv = RoundToStep(v * scale, step)
+							if nv ~= v then
+								snapshot.presets[#snapshot.presets + 1] = { obj = preset, key = field, value = v }
+								preset[field] = nv
 							end
 						end
 					end
@@ -348,6 +424,8 @@ function RmgPlacement.Begin(generator, map)
 			coverage = (type(coverage) == "number") and string.format("%.3f", coverage) or (why or "n/a"),
 			scale = string.format("%.3f", scale),
 			scale_basis = scale_basis,
+			anom_count_scale = string.format("%.3f", anom_scale),
+			anom_spacing_scale = string.format("%.3f", spacing_scale),
 			work_step = step,
 			zeroed_borders = zero_borders,
 			props_changed = #snapshot.props,
