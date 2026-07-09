@@ -471,6 +471,64 @@ local function CopyEditorGrid(map, name, from_box, to_box, debug, mirror_x, mirr
 	return ok_set == true
 end
 
+-- Resample one EDITOR MapGrid (colour / biome / clutter / grass) from the source region (from_box)
+-- up to the full map (to_box). These are compute-backed grids, so editor.GetGrid returns a
+-- resample-able grid directly (unlike the NATIVE height/type grids, which need the terrain API and
+-- assert in GridResample). GridToCompute guards the odd case; the result is repacked to the
+-- destination format before editor.SetGrid so its copyrect into storage matches. Returns success.
+local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
+	local editor_api = Global("editor")
+	local GridToCompute = Global("GridToCompute")
+	local GridResample = Global("GridResample")
+	local GridRepack = Global("GridRepack")
+	local IsComputeGrid = Global("IsComputeGrid")
+	if type(editor_api) ~= "table" or type(editor_api.GetGrid) ~= "function"
+		or type(editor_api.SetGrid) ~= "function" or type(GridToCompute) ~= "function"
+		or type(GridResample) ~= "function" then
+		return false
+	end
+	local function free_grid(x)
+		if x and (type(x) == "table" or type(x) == "userdata") then
+			pcall(function() if type(x.free) == "function" then x:free() end end)
+		end
+	end
+	StretchLog("mapgrid: get src", { grid = name })
+	local ok_s, src = pcall(editor_api.GetGrid, map, name, from_box)
+	if not ok_s or not src then
+		StretchLog("mapgrid: src absent/failed -- skip", { grid = name, err = tostring(src) })
+		return false
+	end
+	local ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
+	if not ok_d or not dst_ref then
+		free_grid(src)
+		StretchLog("mapgrid: dst ref failed -- skip", { grid = name })
+		return false
+	end
+	local ok_all, res = pcall(function()
+		local dw, dh = dst_ref:size()
+		StretchLog("mapgrid: dims", { grid = name, dw = dw, dh = dh })
+		local src_c = GridToCompute(src)
+		local stretched = GridResample(src_c, dw, dh, interpolate == true)
+		local out = stretched
+		if type(GridRepack) == "function" and type(IsComputeGrid) == "function" then
+			local fmt, bits = IsComputeGrid(dst_ref)
+			if fmt then out = GridRepack(stretched, fmt, bits) end
+		end
+		local ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
+		StretchLog("mapgrid: set done", { grid = name, ok_set = ok_set })
+		if src_c ~= src then free_grid(src_c) end
+		if out ~= stretched then free_grid(out) end
+		free_grid(stretched)
+		return ok_set == true
+	end)
+	free_grid(dst_ref)
+	free_grid(src)
+	if not ok_all then
+		StretchLog("mapgrid: EXCEPTION", { grid = name, err = tostring(res) })
+	end
+	return ok_all and res == true
+end
+
 -- STRETCH frame-fill mode: resample the generated SOURCE corner of the terrain up to the FULL map
 -- size, so the map is ONE continuous terrain (no L-frame, no mirror seam). Features come out
 -- ~full/source (about 1.33x) larger -- a "zoomed" version of the real generated terrain.
@@ -584,10 +642,33 @@ local function StretchSourceToFull(map, debug)
 	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
 	StretchLog("StretchSourceToFull: -> stretch TYPE")
 	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
+	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
+	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
+	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
+	-- API). editor.GetGrid with a WORLD box returns exactly the source region, so no corner extract.
+	do
+		local const_tbl = Global("const")
+		local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+		local box_fn = Global("box")
+		if type(box_fn) == "function" then
+			local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
+			local full_box = box_fn(0, 0, full_tw * hts, full_th * hts)
+			local map_grids = {
+				{ name = "colorize",        interp = false },
+				{ name = "BiomeGrid",       interp = false },
+				{ name = "clutter_density", interp = true  },
+				{ name = "grass_density",   interp = true  },
+			}
+			for _, mg in ipairs(map_grids) do
+				StretchLog("StretchSourceToFull: -> stretch MAPGRID", { grid = mg.name })
+				if ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
+			end
+		end
+	end
 	StretchLog("StretchSourceToFull: -> ReinvalidateExpandedTerrain")
 	ReinvalidateExpandedTerrain(map)
 	StretchLog("StretchSourceToFull: COMPLETE", { grids_done = done })
-	DebugPrint(string.format("StretchSourceToFull: done (%s/2 grids stretched: height, terrain_type)", tostring(done)))
+	DebugPrint(string.format("StretchSourceToFull: done (%s grids stretched: height+type+colour/biome/clutter/grass)", tostring(done)))
 	return done > 0, done
 end
 
