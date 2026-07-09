@@ -519,7 +519,9 @@ config.ExpansionFrameMode = sbm_expanded_terrain
 --   "desymmetrize" -- not implemented yet; logs a notice and falls back to "mirror".
 --   "noise"        -- not implemented yet; logs a notice and falls back to "mirror".
 -- The map is always complete/playable whatever is selected.
-config.ExpansionFrameFillMode = "mirror"
+-- TEMPORARY: set to "stretch" for testing the stretched-terrain look (step 1). Set back to
+-- "mirror" before release (stretch does not reposition objects/deposits yet).
+config.ExpansionFrameFillMode = "stretch"
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
