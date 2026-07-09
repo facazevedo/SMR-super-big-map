@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "The loading box now uses the game's standard popup layout (image, title, body, footer) with a disabled 'Please wait.' button in the button spot -- no more stray text or empty gap, and nothing to press (it closes itself when the map is ready). Also removed the experimental junction-smoothing; expanded maps show the raw mirror junction for now.",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 349,
+	'version', 350,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {

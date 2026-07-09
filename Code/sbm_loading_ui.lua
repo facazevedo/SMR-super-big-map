@@ -475,6 +475,26 @@ local function HideWelcomePopupInstant()
 	return dlg ~= nil
 end
 
+-- The "Please wait." footer action is DISABLED so it can't be pressed; a disabled XTextButton
+-- normally renders dim grey (its DisabledTextColor -- see XFontControl:CalcTextColor). Copy the
+-- button's own enabled TextColor (the gold used by the vanilla Close button) into its disabled
+-- colours so it reads just as bright while staying non-interactive. Applied every watch tick
+-- because the button is built during the dialog's async open; it no-ops once the colours match.
+local function StyleLoadingButton(box)
+	if not box or type(box.ResolveId) ~= "function" then return end
+	local bar = box:ResolveId("idActionBar")
+	if type(bar) ~= "table" then return end
+	for _, btn in ipairs(bar) do
+		local gold = btn.TextColor
+		if gold ~= nil and btn.DisabledTextColor ~= gold then
+			pcall(function()
+				btn.DisabledTextColor = gold
+				btn.DisabledRolloverTextColor = btn.RolloverTextColor or gold
+				if type(btn.Invalidate) == "function" then btn:Invalidate() end
+			end)
+		end
+	end
+end
 
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
@@ -504,6 +524,11 @@ local function SetWelcomeLoading(active)
 					LoadingLog("loading box created over hidden welcome popup")
 				end
 			end
+		end
+		-- Keep the disabled "Please wait." button bright (gold like Close), not dim grey. The
+		-- button is built async during open, so re-apply each tick until the colours match.
+		if LoadingBoxValid() then
+			StyleLoadingButton(loading_box)
 		end
 		return LoadingBoxValid() == true
 	else
