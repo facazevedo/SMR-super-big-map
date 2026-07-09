@@ -198,7 +198,7 @@ config.DebugSector        = true    -- Sector: grid build/patch, visibility, dec
 config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
 config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up (TEMP: investigating landing-spot crowding / vanilla-proportion distribution)
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
-config.DebugSeam          = false   -- Seam: seam-blend height math
+config.DebugSeam          = true    -- Seam: seam-blend height math (TEMP: diagnosing visible seam -- confirms the blend ran, seam location, cells modified)
 config.DebugOverview      = true    -- Overview: overview curtains + render-distance (TEMP: measuring overview camera eye/distance for "overview too far")
 config.DebugCamera        = false   -- Camera: overview-camera state snapshots (very noisy)
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
@@ -453,7 +453,7 @@ config.ConcreteImprintMaxTiles = 0
 -- Tune HalfWidth (coverage), NoiseAmplitudeScale (roughness vs the smooth base), and
 -- NoiseFrequencyTiles (feature size) to taste; turn off to leave the raw mirror seam.
 config.SeamBlendEnabled = true
-config.SeamBlendHalfWidthTiles = 12        -- band half-width (tiles) on each side of the seam
+config.SeamBlendHalfWidthTiles = 18        -- band half-width (tiles) on each side of the seam
 config.SeamBlendStableSampleTiles = 3      -- tiles outside the band used to anchor height+slope
 config.SeamBlendNoiseOctaves = 4           -- fractal noise octaves (detail layers)
 config.SeamBlendNoiseFrequencyTiles = 6    -- base noise wavelength in tiles (feature size)
@@ -462,7 +462,7 @@ config.SeamBlendSeed = 1337                -- deterministic noise seed
 -- TEMPORARY on-screen tuner (sbm_seam_tuner.lua): shows a panel with -/+/value rows for each
 -- SeamBlend param plus Apply / Reset / Close, so the seam look can be tuned live (each Apply
 -- re-blends from the snapshot of the raw mirror -- no compounding). Turn OFF once dialled in.
-config.SeamTunerEnabled = false
+config.SeamTunerEnabled = true
 -- Optional "Scan All Sectors" button (sbm_scan_all_button.lua): a bottom-right button that
 -- deep-scans every sector (reveals surface/subsurface/deep deposits + anomalies). Config-gated --
 -- the code ships but only appears when this is true. Handy for revealing the whole expanded map
