@@ -303,6 +303,28 @@ local function AdjustUnderlineValue(dialog, field, delta)
 	end
 end
 
+local function SetUnderlineValue(dialog, field, value)
+	local button = ResolveExpandButton(dialog)
+	EnsureUnderlineTuneDefaults(button)
+	value = tonumber(value)
+	if not value then
+		UpdateUnderlineTuner(dialog)
+		return
+	end
+	value = math.floor(value)
+	if field == "x" then
+		State.pregame_underline_x = value
+	elseif field == "y" then
+		State.pregame_underline_y = value
+	elseif field == "length" then
+		State.pregame_underline_length = math.max(1, value)
+	end
+	UpdateUnderlineTuner(dialog)
+	if ApplyExpandUnderline then
+		ApplyExpandUnderline(dialog)
+	end
+end
+
 local function NewTextButton(parent, text, on_press)
 	local XTextButton = Global("XTextButton")
 	if type(XTextButton) ~= "table" then return nil end
@@ -339,6 +361,33 @@ local function NewTextLabel(parent, text, min_width)
 	return label
 end
 
+local function NewNumberEdit(parent, dialog, field)
+	local XNumberEdit = Global("XNumberEdit")
+	if type(XNumberEdit) ~= "table" then return nil end
+	local edit = XNumberEdit:new({
+		Translate = false,
+		TextStyle = "ActionSmall",
+		TextHAlign = "center",
+		MinWidth = 90,
+		MaxWidth = 90,
+		MinHeight = 30,
+		Background = TransparentColor(),
+		FocusedBackground = HoverColor(),
+		BorderColor = ActionTextColor(),
+		FocusedBorderColor = ActionTextColor(),
+		IsInRange = false,
+		OnShortcut = function(control, shortcut, ...)
+			if shortcut == "Enter" then
+				local number = type(control.GetNumber) == "function" and control:GetNumber() or tonumber(control:GetText())
+				SetUnderlineValue(dialog, field, number)
+				return "break"
+			end
+			return XNumberEdit.OnShortcut(control, shortcut, ...)
+		end,
+	}, parent, parent and parent.context)
+	return edit
+end
+
 local function AddTuneRow(dialog, tuner, labels, field, label_text)
 	local XWindow = Global("XWindow")
 	if type(XWindow) ~= "table" then return end
@@ -350,7 +399,7 @@ local function AddTuneRow(dialog, tuner, labels, field, label_text)
 	}, tuner, tuner.context)
 	NewTextLabel(row, label_text, 95)
 	NewTextButton(row, "<", function() AdjustUnderlineValue(dialog, field, -1) end)
-	local value_label = NewTextLabel(row, "0", 90)
+	local value_label = NewNumberEdit(row, dialog, field) or NewTextLabel(row, "0", 90)
 	NewTextButton(row, ">", function() AdjustUnderlineValue(dialog, field, 1) end)
 	labels[field] = value_label
 end
@@ -421,7 +470,9 @@ ApplyExpandUnderline = function(dialog)
 		end
 		underline = XWindow:new({
 			Id = "idSuperBigMapUnderline",
-			Dock = false,
+			Dock = "ignore",
+			HAlign = "none",
+			VAlign = "none",
 			ZOrder = 100,
 			MinHeight = 4,
 			MaxHeight = 4,
@@ -449,7 +500,7 @@ ApplyExpandUnderline = function(dialog)
 		local x = State.pregame_underline_x or button.box:minx()
 		local y = State.pregame_underline_y or button.box:maxy() - 10
 		local length = math.max(1, State.pregame_underline_length or button.box:sizex())
-		SafeCall(underline.SetBox, underline, x, y, length, line_height)
+		SafeCall(underline.SetBox, underline, x, y, length, line_height, "dont-move")
 	end
 	if type(underline.SetVisible) == "function" then
 		SafeCall(underline.SetVisible, underline, IsSelected())
