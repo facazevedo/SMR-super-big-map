@@ -220,9 +220,10 @@ end
 local function ExpandBarColor()
 	local rgba = Global("RGBA")
 	if type(rgba) == "function" then
-		return rgba(220, 198, 160, 255)
+		-- The UI renderer displays this one channel brighter, matching target #DCC6A0 in-game.
+		return rgba(219, 197, 159, 255)
 	end
-	return 4292945628
+	return 4292879835
 end
 
 local EXPAND_BAR_X = 905
