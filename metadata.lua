@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "Fixes: (1) non-expanded (EXPAND-off) maps now keep the exact vanilla overview -- the widened overview FOV is applied only on maps the mod actually expanded; (2) the RMG placement auto-fit now loads, so expanded maps get full deposit/anomaly placement (incl. FreeTech).",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 333,
+	'version', 334,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {

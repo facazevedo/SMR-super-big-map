@@ -404,6 +404,12 @@ config.EvenOutDepositDensity = true
 config.MaxResourceDepositsPerSector = 3
 
 config.RespaceAnomaliesToVanilla = true
+-- Also thin the SCANNED start sector's REVEALED anomalies. RespaceAnomalies normally keeps
+-- placed/revealed anomalies fixed; on an expanded map that leaves the landing sector denser than
+-- vanilla (the generator packed them there). When true, revealed start-sector anomalies are
+-- despawned + re-hidden and respaced out evenly with the rest, so the landing spot matches
+-- vanilla anomaly density (they re-appear when their new sector is scanned). false = keep them.
+config.EvenOutStartSectorAnomalies = true
 -- How spread out the re-spaced anomalies are: the minimum distance between anomalies is
 -- factor * sqrt(playable_area / anomaly_count). Lower = tighter (closer to the original packed
 -- look), higher = more spread. 0.6 gives an even, vanilla-like fill that always fits; raise
@@ -662,6 +668,7 @@ C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
 C.RESPACE_ANOMALIES_TO_VANILLA = as_bool(config.RespaceAnomaliesToVanilla)
 C.EVEN_OUT_DEPOSIT_DENSITY = as_bool(config.EvenOutDepositDensity)
 C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
+C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
 C.ANOMALY_EVEN_SPREAD_FACTOR = as_number(config.AnomalyEvenSpreadFactor, 0.6)
 C.REMOVE_FRAME_CRATERS = as_bool(config.RemoveFrameCraters)
 C.REMOVE_FRAME_UNDERGROUND_ACCESS = as_bool(config.RemoveFrameUndergroundAccess)

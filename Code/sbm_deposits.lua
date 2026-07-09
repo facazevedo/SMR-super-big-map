@@ -713,6 +713,7 @@ function DepositRules.RespaceAnomalies(map)
 		-- are KEPT in place and only seed the spacing list so moved ones avoid them.
 		local placed = {}
 		local to_move = {}
+		local move_revealed = cfg().EVEN_OUT_START_SECTOR_ANOMALIES ~= false
 		pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 			if not IsSubsurfaceAnomalyMarker(marker) then return end
 			local pos = ObjectPos(marker)
@@ -720,11 +721,15 @@ function DepositRules.RespaceAnomalies(map)
 			if pos and type(pos.xy) == "function" then px, py = pos:xy() end
 			if px == nil then return end
 			local sector = SectorAtPoint(map, px, py)
-			if marker.is_placed == true or SectorIsScanned(sector) then
+			local revealed = marker.is_placed == true or SectorIsScanned(sector)
+			if revealed and not move_revealed then
+				-- Keep live/revealed anomalies fixed (vanilla behavior); they seed the spacing.
 				placed[#placed + 1] = { x = px, y = py }
 				kept = kept + 1
 			else
-				to_move[#to_move + 1] = { marker = marker, px = px, py = py, sector = sector }
+				-- Move it. `was_revealed` items are despawned + re-hidden in Pass 2 so a
+				-- start-sector anomaly re-spawns vanilla-style when its new sector is scanned.
+				to_move[#to_move + 1] = { marker = marker, px = px, py = py, sector = sector, was_revealed = revealed }
 			end
 		end)
 
@@ -771,6 +776,16 @@ function DepositRules.RespaceAnomalies(map)
 				-- Unregister from old sector, move, register into the new sector.
 				if item.sector and type(item.sector.UnregisterDeposit) == "function" then
 					pcall(item.sector.UnregisterDeposit, item.sector, marker)
+				end
+				-- Revealed (start-sector) anomaly: despawn its spawned object and reset to unplaced
+				-- + hidden, so it re-spawns vanilla-style when its new (frame) sector is scanned.
+				if item.was_revealed then
+					local IsValid = Global("IsValid")
+					local DoneObject = Global("DoneObject")
+					if IsValid and IsValid(marker.placed_obj) and DoneObject then pcall(DoneObject, marker.placed_obj) end
+					marker.placed_obj = false
+					marker.is_placed = false
+					SetRevealedState(marker, false)
 				end
 				local ok_move = type(marker.SetPos) == "function" and pcall(marker.SetPos, marker, pt)
 				if ok_move then
