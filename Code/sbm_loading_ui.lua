@@ -491,10 +491,13 @@ local function SilenceLoadingBox(box)
 		if type(bar.SetVisible) == "function" then pcall(function() bar:SetVisible(false) end) end
 	end
 	-- The dialog's text area (idText) has MinHeight = 100 (sized for long messages); our body is a
-	-- single line, so that reserves a big empty gap below it. Shrink it so the box fits the text.
+	-- single line, so that reserved a big empty gap below it. Give it a MODEST fixed height so the
+	-- centered body (TextVAlign is "center") sits a little lower with balanced breathing room --
+	-- not flush under the title, not the original 100px gap. Tune this to move the body up/down.
+	local BODY_MIN_HEIGHT = 56
 	local txt = resolve and box:ResolveId("idText") or nil
-	if txt and (txt.MinHeight or 0) ~= 0 then
-		txt.MinHeight = 0
+	if txt and (txt.MinHeight or 0) ~= BODY_MIN_HEIGHT then
+		txt.MinHeight = BODY_MIN_HEIGHT
 		changed = true
 	end
 	if changed then
