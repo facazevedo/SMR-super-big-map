@@ -480,15 +480,26 @@ end
 -- later looking pressable. Re-hiding each tick keeps it gone until end_loading() removes the box.
 local function SilenceLoadingBox(box)
 	if not box then return end
-	local bar = (type(box.ResolveId) == "function") and box:ResolveId("idActionBar") or box.idActionBar
-	if bar and type(bar.SetVisible) == "function" then
-		pcall(function() bar:SetVisible(false) end)
+	local resolve = type(box.ResolveId) == "function"
+	local changed = false
+	-- Fold the action bar so hiding it removes its reserved space. The message dialog's
+	-- idActionBar (XToolBarList) is NOT FoldWhenHidden by default, so merely hiding it still
+	-- leaves the OK row's height as an empty gap. FoldWhenHidden makes a hidden window take 0 space.
+	local bar = (resolve and box:ResolveId("idActionBar")) or box.idActionBar
+	if bar then
+		if bar.FoldWhenHidden ~= true then bar.FoldWhenHidden = true; changed = true end
+		if type(bar.SetVisible) == "function" then pcall(function() bar:SetVisible(false) end) end
 	end
-	if type(box.ResolveId) == "function" then
-		local ok_btn = box:ResolveId("idOk")
-		if ok_btn and type(ok_btn.SetVisible) == "function" then
-			pcall(function() ok_btn:SetVisible(false) end)
-		end
+	-- The dialog's text area (idText) has MinHeight = 100 (sized for long messages); our body is a
+	-- single line, so that reserves a big empty gap below it. Shrink it so the box fits the text.
+	local txt = resolve and box:ResolveId("idText") or nil
+	if txt and (txt.MinHeight or 0) ~= 0 then
+		txt.MinHeight = 0
+		changed = true
+	end
+	if changed then
+		if txt and type(txt.InvalidateMeasure) == "function" then pcall(function() txt:InvalidateMeasure() end) end
+		if type(box.InvalidateLayout) == "function" then pcall(function() box:InvalidateLayout() end) end
 	end
 end
 
