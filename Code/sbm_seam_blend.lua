@@ -37,6 +37,7 @@ local max = math.max
 local min = math.min
 local sin = math.sin
 local pi = math.pi
+local abs = math.abs
 
 local function cfg() return SuperBigMap.Config or {} end
 local function num(key, default)
@@ -223,44 +224,57 @@ local function BlendCorridor(data, vertical, lb, W, stable, perp_global0, wave, 
 
 	local iters = max(1, floor(num("SEAM_BLEND_SMOOTH_ITERATIONS", 8)))
 	local sleep = Global("Sleep")
-	local modified = 0
-	local prof = {}   -- reused per-row perpendicular height profile [pL..pR]
+	-- Perpendicular smoothing window: a smooth bump, 1 at the seam and 0 with ZERO slope at the
+	-- band edges, so the smoothing fades in gently and leaves no crease/ridge where the band meets
+	-- untouched terrain (the old sin(pi*t) window has a non-zero edge slope -> faint edge lines).
+	local function Wp(p)
+		local t = (p - pL) / span
+		return SmoothStep(1 - abs(2 * t - 1))
+	end
+
+	-- Load the band (+1-cell perpendicular border) into a flat buffer for fast 2D access.
+	local p0 = pL - 1
+	local pwid = (pR + 1) - p0 + 1
+	local function bi(a, p) return a * pwid + (p - p0) + 1 end
+	local buf = {}
 	for a = 0, along_n - 1 do
-		-- Yield every so often so the caller's thread stays cooperative: the UI keeps painting
-		-- (e.g. the tuner's "Wait..." label) and the game doesn't freeze for the whole blend.
-		if sleep and a > 0 and (a % 128 == 0) then sleep(0) end
-		if not (skip_lo and a >= skip_lo and a <= skip_hi) then
-			-- Load the perpendicular profile across the band and the local relief (drives the
-			-- residual-noise amplitude). pL and pR are the anchors -- never modified.
-			local lo, hi = get(pL, a), get(pL, a)
-			for p = pL, pR do
-				local h = get(p, a)
-				prof[p] = h
-				if h < lo then lo = h end
-				if h > hi then hi = h end
-			end
-			local relief = hi - lo
-			-- Windowed diffusion (Laplacian smoothing) ACROSS the seam. The window is 1 at the
-			-- seam centre and 0 at the band edges, so the sharp mirror crease/ridge in the middle
-			-- is rounded away (high-frequency artefact) while the trench shape (low-frequency)
-			-- survives and the band edges stay pinned to the untouched terrain -> no new step. A
-			-- smooth base RAMP (the old Hermite) instead flattened the trench and left the crease.
-			for _ = 1, iters do
-				for p = pL + 1, pR - 1 do
-					local w = Window((p - pL) / span)
-					local avg = (prof[p - 1] + prof[p + 1]) * 0.5
-					prof[p] = prof[p] + w * (avg - prof[p])
-				end
-			end
-			-- Write the smoothed profile + only SUBTLE windowed noise, so the seam line meanders
-			-- (breaks the dead-straight symmetry) without the blocky, washed-out look of heavy noise.
+		for p = p0, pR + 1 do buf[bi(a, p)] = get(p, a) end
+		if sleep and a > 0 and (a % 256 == 0) then sleep(0) end
+	end
+
+	-- 2D windowed diffusion -- ACROSS the seam AND ALONG it. Smoothing along the seam (not each
+	-- row independently) is what removes the vertical raised/sunken streaks: per-row smoothing
+	-- rounded each row to a slightly different level, leaving those bump/crease lines. Diffusing
+	-- in both axes makes the junction one coherent, naturally-eroded surface. pL/pR stay pinned.
+	for _ = 1, iters do
+		for a = 0, along_n - 1 do
+			local am = (a > 0) and (a - 1) or a
+			local ap = (a < along_n - 1) and (a + 1) or a
 			for p = pL + 1, pR - 1 do
-				local t = (p - pL) / span
-				local detail = Fbm((perp_global0 + p) / wave, a / wave, octaves, seed) * relief * amp_scale * Window(t)
-				set(p, a, floor(prof[p] + detail + 0.5))
+				local w = Wp(p)
+				local c = buf[bi(a, p)]
+				local avg = (buf[bi(a, p - 1)] + buf[bi(a, p + 1)] + buf[bi(am, p)] + buf[bi(ap, p)]) * 0.25
+				buf[bi(a, p)] = c + w * (avg - c)
+			end
+			if sleep and a > 0 and (a % 256 == 0) then sleep(0) end
+		end
+	end
+
+	-- Write back + only SUBTLE windowed noise (keep amplitude low; the diffusion does the work).
+	local modified = 0
+	for a = 0, along_n - 1 do
+		if not (skip_lo and a >= skip_lo and a <= skip_hi) then
+			local lo, hi = buf[bi(a, pL)], buf[bi(a, pL)]
+			for p = pL, pR do local h = buf[bi(a, p)]; if h < lo then lo = h end; if h > hi then hi = h end end
+			local relief = hi - lo
+			for p = pL + 1, pR - 1 do
+				local detail = (amp_scale > 0)
+					and (Fbm((perp_global0 + p) / wave, a / wave, octaves, seed) * relief * amp_scale * Wp(p)) or 0
+				set(p, a, floor(buf[bi(a, p)] + detail + 0.5))
 				modified = modified + 1
 			end
 		end
+		if sleep and a > 0 and (a % 256 == 0) then sleep(0) end
 	end
 	return modified
 end

@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "Expanded maps now get resources, anomalies and research sites at full VANILLA DENSITY for the larger size (deposits topped up and anomaly counts scaled by the area factor, then spread evenly -- landing spot no longer over-crowded). Also: non-expanded maps keep the exact vanilla overview, and the EXPAND MAP button no longer disappears after returning to the colony-site screen.",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 344,
+	'version', 345,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {
