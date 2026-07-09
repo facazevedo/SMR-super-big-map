@@ -474,6 +474,24 @@ local function HideWelcomePopupInstant()
 	return dlg ~= nil
 end
 
+-- Hide the loading box's OK button / action bar so it is button-less and cannot be dismissed.
+-- Called EVERY watch tick, not just at creation: the OK button (idActionBar.idOk) is built during
+-- the message dialog's async open, so a one-time hide at creation misses it and it appears a frame
+-- later looking pressable. Re-hiding each tick keeps it gone until end_loading() removes the box.
+local function SilenceLoadingBox(box)
+	if not box then return end
+	local bar = (type(box.ResolveId) == "function") and box:ResolveId("idActionBar") or box.idActionBar
+	if bar and type(bar.SetVisible) == "function" then
+		pcall(function() bar:SetVisible(false) end)
+	end
+	if type(box.ResolveId) == "function" then
+		local ok_btn = box:ResolveId("idOk")
+		if ok_btn and type(ok_btn.SetVisible) == "function" then
+			pcall(function() ok_btn:SetVisible(false) end)
+		end
+	end
+end
+
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
 -- Returns true when the loading box is up (active path) so the watch loop can log "applied".
@@ -492,14 +510,14 @@ local function SetWelcomeLoading(active)
 				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY))
 				if ok and box then
 					loading_box = box
-					-- Hide the OK/action bar so the box can't be dismissed mid-expansion.
-					local bar = (type(box.ResolveId) == "function") and box:ResolveId("idActionBar") or box.idActionBar
-					if bar and type(bar.SetVisible) == "function" then
-						pcall(function() bar:SetVisible(false) end)
-					end
 					LoadingLog("loading box created over hidden welcome popup")
 				end
 			end
+		end
+		-- Re-silence the OK/action bar every tick (it is built async after creation, so a
+		-- one-time hide misses it). Keeps the box button-less until end_loading() removes it.
+		if LoadingBoxValid() then
+			SilenceLoadingBox(loading_box)
 		end
 		return LoadingBoxValid() == true
 	else
@@ -565,12 +583,14 @@ end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
 function SuperBigMap.ExpansionLoadingEnd()
-	if not loading_on_welcome then
-		return
-	end
+	local was_on = loading_on_welcome
 	loading_on_welcome = false
+	-- Always tear the loading box down (idempotent), even if the flag was cleared by a mid-load
+	-- mod reload -- so a stale box can never linger on screen waiting for an OK press.
 	SetWelcomeLoading(false)
-	LoadingLog("ExpansionLoadingEnd: loading box removed, welcome popup re-shown")
+	if was_on then
+		LoadingLog("ExpansionLoadingEnd: loading box removed, welcome popup re-shown")
+	end
 end
 
 -- Public API. ShowEditorWarning + NoticeLog are bound by sbm_lifecycle at load; the
