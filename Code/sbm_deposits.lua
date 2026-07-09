@@ -439,7 +439,11 @@ function DepositRules.ReshuffleClonedMarkers(map)
 			if pool >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
-			if not (x < src_w and y < src_h) then        -- skip the original scenario quadrant
+			-- Spread across the whole UNSCANNED map (source + frame), not just the frame: this
+			-- avoids piling markers into the frame L-strip (one region ending far denser). Hidden
+			-- markers still never land in the scanned start sector (they'd never reveal there).
+			local sector = SectorAtPoint(map, x, y)
+			if sector and not SectorIsScanned(sector) then
 				local pt = point(x, y)
 				if CanReceiveDeposit(map, pt) then
 					local tt = TerrainTypeAt(map, pt) or -1
@@ -917,7 +921,12 @@ function DepositRules.TopUpDeposits(map)
 			if pool >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
-			if not (x < src_w and y < src_h) then
+			-- Spread across the whole UNSCANNED map (rendered source AND mirrored frame),
+			-- excluding only the scanned start sector: this keeps relocated/added markers from
+			-- piling into the frame L-strip (which made one region far denser than the rest), and
+			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
+			local sector = SectorAtPoint(map, x, y)
+			if sector and not SectorIsScanned(sector) then
 				local pt = point(x, y)
 				if CanReceiveDeposit(map, pt) then
 					local tt = TerrainTypeAt(map, pt) or -1
@@ -1015,7 +1024,12 @@ function DepositRules.EvenOutDepositDensity(map)
 			if pool >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
-			if not (x < src_w and y < src_h) then
+			-- Spread across the whole UNSCANNED map (rendered source AND mirrored frame),
+			-- excluding only the scanned start sector: this keeps relocated/added markers from
+			-- piling into the frame L-strip (which made one region far denser than the rest), and
+			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
+			local sector = SectorAtPoint(map, x, y)
+			if sector and not SectorIsScanned(sector) then
 				local pt = point(x, y)
 				if CanReceiveDeposit(map, pt) then
 					local tt = TerrainTypeAt(map, pt) or -1
