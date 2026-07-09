@@ -266,12 +266,25 @@ local function SetText(ctrl, text)
 	end
 end
 
+local function UnderlineTunerState(dialog)
+	local info = State.pregame_underline_tuner
+	if type(info) ~= "table" or info.dialog ~= dialog then
+		info = {
+			dialog = dialog,
+			window = false,
+			labels = {},
+		}
+		State.pregame_underline_tuner = info
+	end
+	return info
+end
+
 local function UpdateUnderlineTuner(dialog)
-	local tuner = dialog and dialog.SuperBigMapUnderlineTuner
-	if not tuner or type(tuner.SuperBigMapValueLabels) ~= "table" then return end
-	SetText(tuner.SuperBigMapValueLabels.x, State.pregame_underline_x or 0)
-	SetText(tuner.SuperBigMapValueLabels.y, State.pregame_underline_y or 0)
-	SetText(tuner.SuperBigMapValueLabels.length, State.pregame_underline_length or 0)
+	local info = State.pregame_underline_tuner
+	if type(info) ~= "table" or info.dialog ~= dialog or type(info.labels) ~= "table" then return end
+	SetText(info.labels.x, State.pregame_underline_x or 0)
+	SetText(info.labels.y, State.pregame_underline_y or 0)
+	SetText(info.labels.length, State.pregame_underline_length or 0)
 end
 
 local function AdjustUnderlineValue(dialog, field, delta)
@@ -326,7 +339,7 @@ local function NewTextLabel(parent, text, min_width)
 	return label
 end
 
-local function AddTuneRow(dialog, tuner, field, label_text)
+local function AddTuneRow(dialog, tuner, labels, field, label_text)
 	local XWindow = Global("XWindow")
 	if type(XWindow) ~= "table" then return end
 	local row = XWindow:new({
@@ -339,15 +352,16 @@ local function AddTuneRow(dialog, tuner, field, label_text)
 	NewTextButton(row, "<", function() AdjustUnderlineValue(dialog, field, -1) end)
 	local value_label = NewTextLabel(row, "0", 90)
 	NewTextButton(row, ">", function() AdjustUnderlineValue(dialog, field, 1) end)
-	tuner.SuperBigMapValueLabels[field] = value_label
+	labels[field] = value_label
 end
 
 local function EnsureUnderlineTuner(dialog, button)
 	if not IsUnderlineTunerEnabled() or not dialog then return false end
 	EnsureUnderlineTuneDefaults(button)
-	if dialog.SuperBigMapUnderlineTuner then
+	local info = UnderlineTunerState(dialog)
+	if info.window and info.window.window_state ~= "destroying" then
 		UpdateUnderlineTuner(dialog)
-		return dialog.SuperBigMapUnderlineTuner
+		return info.window
 	end
 	local XWindow = Global("XWindow")
 	if type(XWindow) ~= "table" then return false end
@@ -365,12 +379,12 @@ local function EnsureUnderlineTuner(dialog, button)
 		BorderWidth = 1,
 		BorderColor = ActionTextColor(button),
 	}, dialog, dialog.context)
-	tuner.SuperBigMapValueLabels = {}
+	info.window = tuner
+	info.labels = {}
 	NewTextLabel(tuner, "EXPAND MAP UNDERLINE", 0)
-	AddTuneRow(dialog, tuner, "x", "X")
-	AddTuneRow(dialog, tuner, "y", "Y")
-	AddTuneRow(dialog, tuner, "length", "LENGTH")
-	dialog.SuperBigMapUnderlineTuner = tuner
+	AddTuneRow(dialog, tuner, info.labels, "x", "X")
+	AddTuneRow(dialog, tuner, info.labels, "y", "Y")
+	AddTuneRow(dialog, tuner, info.labels, "length", "LENGTH")
 	if type(tuner.Open) == "function" and tuner.window_state == "new" then
 		SafeCall(tuner.Open, tuner)
 	end
