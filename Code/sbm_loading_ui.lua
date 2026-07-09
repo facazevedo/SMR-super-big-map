@@ -2,11 +2,11 @@
 -- expansion loading box.
 --
 -- Leaf UI subsystem: styled message boxes shown over the game's welcome popup
--- (ShowMessageOverWelcome / ShowEditorWarning), the runtime "restart recommended"
+-- (ShowMessageOverWelcome), the runtime "restart recommended"
 -- notice with its persistent suppression flags, and the "Loading Super Big Map" box
 -- shown during expansion (ExpansionLoadingBegin/End). Reached through its SuperBigMap.*
 -- exports; calls back into the lifecycle only via the runtime SuperBigMap.Lifecycle.IsActive()
--- gate. Loads BEFORE sbm_lifecycle so the latter can bind ShowEditorWarning / NoticeLog
+-- gate. Loads BEFORE sbm_lifecycle so the latter can bind NoticeLog
 -- at load time.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -424,13 +424,6 @@ end
 
 SuperBigMap.ShowFreshRestartNotice = ShowFreshRestartNotice
 
-local function ShowEditorWarning()
-	ShowMessageOverWelcome("Super Big Map is OFF",
-		"Super Big Map does not operate in the mod editor.\n\n" ..
-		"The editor uses the stock camera/zoom; the expanded map and the mod's " ..
-		"camera only apply to a NEW GAME started with the mod enabled.")
-end
-
 -- ---- expansion loading state (separate box over the hidden welcome popup) --------
 -- While the mod expands a new map (terrain copy + object clone), we show a dedicated
 -- "Loading Super Big Map" message box and HIDE the new-game "Welcome to Mars, Commander!"
@@ -604,11 +597,10 @@ function SuperBigMap.ExpansionLoadingEnd()
 	end
 end
 
--- Public API. ShowEditorWarning + NoticeLog are bound by sbm_lifecycle at load; the
--- welcome-popup / restart-notice / loading-box entry points are published on the
--- SuperBigMap namespace above for runtime callers (sbm_map_generation, sbm_terrain_copy).
+-- Public API. NoticeLog is bound by sbm_lifecycle at load; the welcome-popup /
+-- restart-notice / loading-box entry points are published on the SuperBigMap
+-- namespace above for runtime callers (sbm_map_generation, sbm_terrain_copy).
 local LoadingUI = {
-	ShowEditorWarning = ShowEditorWarning,
 	NoticeLog = NoticeLog,
 }
 SuperBigMap.LoadingUI = LoadingUI

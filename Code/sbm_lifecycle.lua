@@ -530,23 +530,16 @@ end
 local LoadingUI = SuperBigMap.LoadingUI
 assert(type(LoadingUI) == "table",
 	"sbm_lifecycle: SuperBigMap.LoadingUI missing -- load sbm_loading_ui before this file")
-local ShowEditorWarning = LoadingUI.ShowEditorWarning
 local NoticeLog = LoadingUI.NoticeLog
-assert(type(ShowEditorWarning) == "function" and type(NoticeLog) == "function",
+assert(type(NoticeLog) == "function",
 	"sbm_lifecycle: required LoadingUI helpers missing (check sbm_loading_ui exports)")
 
--- One-time guard so the mod-editor "mod is OFF" warning shows once per editor entry.
-local editor_warn_shown = false
-
 -- When on the mod editor map, force Super Big Map fully vanilla: disable ZoomPlus,
--- restore the overview camera/render. Also shows a one-time
--- warning popup on top of the editor's welcome message (see ShowEditorWarning).
+-- restore the overview camera/render (no popup -- the mod is silently inert in the editor).
 -- Called from the map-load events (GameEnterEditor does not fire for the mod editor).
 -- Returns true when the mod editor was detected/handled.
 local function HandleModEditorMap()
 	if not editor_active() then
-		-- Left the editor: re-arm the one-time warning for the next editor entry.
-		editor_warn_shown = false
 		return false
 	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
@@ -557,14 +550,6 @@ local function HandleModEditorMap()
 	if render and type(render.Apply) == "function" then render.Apply(false) end
 
 	EditorCamLog("mod editor map detected -- forcing vanilla", CameraSnapshot())
-
-	-- Show the warning once per editor entry, on top of the editor's welcome popup.
-	-- Several map-load events fire on a single entry; the flag keeps it to one box.
-	local cfg = SuperBigMap.Config or {}
-	if not editor_warn_shown and cfg.WARN_OLD_SAVE_NEEDS_NEW_GAME == true then
-		editor_warn_shown = true
-		ShowEditorWarning()
-	end
 	return true
 end
 
@@ -1353,18 +1338,6 @@ RegisterOnce("GameEnterEditor", function()
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
 		DebugLog.Info("Lifecycle", "GameEnterEditor: mod set inert (vanilla editor camera)")
-	end
-
-	local cfg = SuperBigMap.Config or {}
-	if cfg.WARN_OLD_SAVE_NEEDS_NEW_GAME == true and SuperBigMap.State.editor_warned ~= true then
-		SuperBigMap.State.editor_warned = true
-		local create_box = Global("CreateMessageBox")
-		if type(create_box) == "function" then
-			pcall(create_box, nil, "Super Big Map",
-				"Super Big Map does not operate in the map editor.\n\n" ..
-				"The editor runs in vanilla mode; the expanded map and the mod's camera " ..
-				"only apply to a NEW GAME started with the mod enabled.")
-		end
 	end
 
 	EditorCamLog("GameEnterEditor -- AFTER restore", CameraSnapshot())
