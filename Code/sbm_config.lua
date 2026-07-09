@@ -192,10 +192,10 @@ config.HideOverviewCurtains = true
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugGeneration    = false   -- Generation: generator hook, frame allocation, mirror/clone plan
+config.DebugGeneration    = true    -- Generation: generator hook, frame allocation, mirror/clone plan (TEMP: investigating "cannot expand / not 20x20")
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
-config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup
-config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
+config.DebugSector        = true    -- Sector: grid build/patch, visibility, decal cleanup (TEMP: investigating "cannot expand / not 20x20")
+config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
 config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 config.DebugSeam          = false   -- Seam: seam-blend height math
@@ -211,7 +211,7 @@ config.DebugZoomVanilla   = true    -- ZoomVanilla: TEMP investigation -- trace 
 config.DebugPregameToggle = true    -- PregameToggle: EXPAND MAP button/underline layout diagnostics (TEMP: investigating disappearing EXPAND MAP button)
 config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
-config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequence trace
+config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 
 -- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
