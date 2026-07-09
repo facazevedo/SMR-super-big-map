@@ -217,6 +217,14 @@ local function ActionTextColor(button)
 	return 4293840584
 end
 
+local function ExpandBarColor()
+	local rgba = Global("RGBA")
+	if type(rgba) == "function" then
+		return rgba(220, 198, 160, 255)
+	end
+	return 4292945628
+end
+
 local EXPAND_BAR_X = 905
 local EXPAND_BAR_Y = 2072
 local EXPAND_BAR_LENGTH = 217
@@ -279,7 +287,7 @@ local function EnsureExpandBar(dialog, button)
 		Dock = "ignore",
 		HAlign = "none",
 		VAlign = "none",
-		Background = ActionTextColor(button),
+		Background = ExpandBarColor(),
 		HandleMouse = false,
 		ZOrder = 0,
 	}, holder, dialog.context)
@@ -287,7 +295,7 @@ local function EnsureExpandBar(dialog, button)
 		Dock = "ignore",
 		HAlign = "none",
 		VAlign = "none",
-		Background = ActionTextColor(button),
+		Background = ExpandBarColor(),
 		HandleMouse = false,
 		ZOrder = 1,
 	}, holder, dialog.context)
@@ -308,7 +316,7 @@ ApplyExpandUnderline = function(dialog)
 		})
 		return false
 	end
-	local color = ActionTextColor(button)
+	local color = ExpandBarColor()
 	EnsureUnderlineTuneDefaults(button)
 	local bar = EnsureExpandBar(dialog, button)
 	if not bar then
