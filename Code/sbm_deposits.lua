@@ -605,12 +605,22 @@ function DepositRules.LogDistributionReport(map, phase)
 	map = map or Global("CurrentMap")
 	if not map or type(map.MapForEach) ~= "function" then return end
 
+	local map_w, map_h = MapWorldSize(map)
+	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
+	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
+	local region_source, region_frame = 0, 0   -- markers inside the source quadrant vs the frame L
+
 	local per_sector, order = {}, {}
 	local function bucket(kind, marker)
 		local pos = ObjectPos(marker)
 		if not pos or type(pos.xy) ~= "function" then return end
 		local px, py = pos:xy()
 		if px == nil then return end
+		if src_w > 0 and src_h > 0 and px < src_w and py < src_h then
+			region_source = region_source + 1
+		else
+			region_frame = region_frame + 1
+		end
 		local sector = SectorAtPoint(map, px, py)
 		local name = tostring((type(sector) == "table" and (sector.display_name or sector.id)) or "offgrid")
 		local rec = per_sector[name]
@@ -671,6 +681,21 @@ function DepositRules.LogDistributionReport(map, phase)
 	})
 	Log("DISTRIBUTION [" .. tostring(phase) .. "] top density (name*=scanned; =total(dDeposits/aAnomalies))", {
 		top = table.concat(top, " "),
+	})
+	-- Regional check: markers-per-area in the mirrored frame L vs the rendered source quadrant.
+	-- frame_over_source_ratio ~= 1.0 means one region is denser (the "bottom-left denser" bug);
+	-- ~1.0 means the redistribution evened it out.
+	local src_area = src_w * src_h
+	local total_area = (map_w or 0) * (map_h or 0)
+	local frame_area = total_area - src_area
+	local dens_source = (src_area > 0) and (region_source * 1000000.0 / src_area) or 0
+	local dens_frame = (frame_area > 0) and (region_frame * 1000000.0 / frame_area) or 0
+	Log("DISTRIBUTION [" .. tostring(phase) .. "] region density (frame L vs source quadrant, markers/Mwu^2)", {
+		source_markers = region_source,
+		frame_markers = region_frame,
+		density_source = string.format("%.3f", dens_source),
+		density_frame = string.format("%.3f", dens_frame),
+		frame_over_source_ratio = (dens_source > 0) and string.format("%.2f", dens_frame / dens_source) or "n/a",
 	})
 end
 
