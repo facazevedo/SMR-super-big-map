@@ -509,6 +509,10 @@ local function RefreshOverviewCamera(source)
 		if render then
 			render.Apply(false)
 		end
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
+			DebugLog.Info("ZoomVanilla", "RefreshOverviewCamera: non-mod map -> restored vanilla FOV + render (no reframe)", { source = source })
+		end
 		OverviewDiag("RefreshOverviewCamera skipped (non-mod map -> vanilla overview)", { source = source })
 		return false
 	end

@@ -83,12 +83,26 @@ local function ApplyNormalZoom()
 	end
 
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("ZoomVanilla") then
-		SuperBigMap.DebugLog.Info("ZoomVanilla", "ApplyNormalZoom decision", {
+		-- Ground-truth snapshot: the live camera zoom-out limit and const default (which
+		-- ZoomPlus patches) + overview FOV (current vs saved-vanilla). Lets one repro show
+		-- directly whether zoom/FOV is vanilla and which mechanism made it non-vanilla.
+		local const_tbl = Global("const")
+		local def = type(const_tbl) == "table" and const_tbl.DefaultCameraRTS or nil
+		local cam_cfg = type(const_tbl) == "table" and const_tbl.Camera or nil
+		local cam = Global("cameraRTS")
+		local live_props = (type(cam) == "table" and type(cam.GetProperties) == "function")
+			and SafeCall(cam.GetProperties, 1) or nil
+		SuperBigMap.DebugLog.Info("ZoomVanilla", "ApplyNormalZoom snapshot", {
 			map = tostring((Global("CurrentMap") or {}).name or "?"),
 			should_use_mod_zoom = ShouldUseModZoom(),
 			normal_zoom_enabled = NORMAL_ZOOM_ENABLED,
 			zp_enabled = type(zoom_plus.IsEnabled) == "function" and (SafeCall(zoom_plus.IsEnabled) == true) or "?",
 			effective_multiplier = EffectiveMultiplier(),
+			const_default_zoom_out = (type(def) == "table") and def.LookatDistZoomOut or "?",
+			live_zoom_out = (type(live_props) == "table") and live_props.LookatDistZoomOut or "?",
+			zp_saved_vanilla_zoom_out = zoom_plus.original_default_zoom_out,
+			fov_16_9 = (type(cam_cfg) == "table") and cam_cfg.OverviewFovX_16_9 or "?",
+			vanilla_fov_16_9 = (type(cam_cfg) == "table") and cam_cfg.SuperBigMapOriginalOverviewFovX_16_9 or "?",
 		})
 	end
 
