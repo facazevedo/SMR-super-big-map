@@ -157,6 +157,7 @@ local WarnCannotExpand = TerrainCopy.WarnCannotExpand
 local ForceFramePassable = TerrainCopy.ForceFramePassable
 local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
 local RemoveFrameUndergroundAccess = TerrainCopy.RemoveFrameUndergroundAccess
+local StretchSourceToFull = TerrainCopy.StretchSourceToFull
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -956,6 +957,40 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		-- ("desymmetrize", "stretch", "noise") are being implemented incrementally -- until each
 		-- lands it logs a notice and falls back to "mirror" so the map is always complete.
 		local fill_mode = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
+
+		-- STRETCH: resample the generated source to fill the whole 20x20 (no frame, no mirror
+		-- seam) -- one continuous terrain, features ~1.33x larger. STEP 1 = TERRAIN ONLY: the
+		-- generated objects/deposits are NOT yet repositioned, so they stay clustered in the
+		-- source corner until the object pass lands. Finalize (buildable/passability/rockets) and
+		-- return -- the mirror block phases below are skipped entirely for this mode.
+		if fill_mode == "stretch" then
+			local ok_stretch, n_grids = false, 0
+			if type(StretchSourceToFull) == "function" then
+				ok_stretch, n_grids = StretchSourceToFull(map, false)
+			else
+				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
+			end
+			do
+				local rebuild_buildable = Global("RebuildBuildableGrid")
+				if type(rebuild_buildable) == "function" and map and map.buildable then
+					SafeCall(rebuild_buildable, map)
+				end
+			end
+			ForceFramePassable(map)
+			local rockets = SuperBigMap.RocketRules
+			if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
+				SafeCall(rockets.ResnapRocketsOnMap, map)
+			end
+			map.SuperBigMapSectorMirrorDone = true
+			map.SuperBigMapExpanded = true
+			DebugPrint(string.format(
+				"RunSectorMirrorPlanIfEnabled: STRETCH mode complete (terrain only) ok=%s grids=%s -- objects NOT yet repositioned",
+				tostring(ok_stretch), tostring(n_grids)))
+			InitSeq("RunSectorMirrorPlan: stretch complete (terrain only)", { ok = ok_stretch, grids = n_grids })
+			end_loading()
+			return
+		end
+
 		if fill_mode ~= "mirror" then
 			DebugPrint(string.format(
 				"RunSectorMirrorPlanIfEnabled: frame-fill mode '%s' not yet implemented -- falling back to 'mirror'",

@@ -461,6 +461,112 @@ local function CopyEditorGrid(map, name, from_box, to_box, debug, mirror_x, mirr
 	return ok_set == true
 end
 
+-- STRETCH mode helper: resample one named terrain grid from the source region (from_box) UP to
+-- the full-map region (to_box). Unlike CopyEditorGrid (a 1:1 blit with optional mirror flip),
+-- this SCALES the grid to fill the whole map. interpolate=true for continuous data (height);
+-- false for discrete index/flag grids (terrain_type, BiomeGrid, passability) so their values are
+-- not blended into invalid intermediates. Repacks to the destination grid's exact format (same
+-- idiom as MapGen's GridMakeSame) and writes through the render-aware editor.SetGrid.
+local function ResampleEditorGrid(map, name, from_box, to_box, interpolate, debug)
+	local editor_api = Global("editor")
+	if type(editor_api) ~= "table" or type(editor_api.GetGrid) ~= "function" or type(editor_api.SetGrid) ~= "function" then
+		return false, "GetGrid/SetGrid unavailable"
+	end
+	local GridResample = Global("GridResample")
+	if type(GridResample) ~= "function" then return false, "GridResample unavailable" end
+	local GridRepack = Global("GridRepack")
+	local IsComputeGrid = Global("IsComputeGrid")
+	local function free_grid(x)
+		if x and (type(x) == "table" or type(x) == "userdata") then
+			pcall(function() if type(x.free) == "function" then x:free() end end)
+		end
+	end
+	local ok_src, src = pcall(editor_api.GetGrid, map, name, from_box)
+	if not ok_src or not src then
+		if debug then DebugPrint(string.format("  stretch grid %-16s GetGrid(src) failed", tostring(name))) end
+		return false, "GetGrid src failed"
+	end
+	local ok_dst, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
+	if not ok_dst or not dst_ref then
+		free_grid(src)
+		return false, "GetGrid dst failed"
+	end
+	local dw, dh = dst_ref:size()
+	local g0, g1
+	local ok_rs, err = pcall(function()
+		g0 = GridResample(src, dw, dh, interpolate == true)
+		g1 = g0
+		if type(GridRepack) == "function" and type(IsComputeGrid) == "function" then
+			local fmt, bits = IsComputeGrid(dst_ref)
+			g1 = GridRepack(g0, fmt, bits)
+		end
+	end)
+	free_grid(dst_ref)
+	if not ok_rs or not g1 then
+		free_grid(src); free_grid(g0)
+		if debug then DebugPrint(string.format("  stretch grid %-16s resample failed (%s)", tostring(name), tostring(err))) end
+		return false, "resample failed"
+	end
+	local ok_set, set_err = pcall(editor_api.SetGrid, map, name, g1, to_box)
+	if g1 ~= g0 then free_grid(g0) end
+	free_grid(g1)
+	free_grid(src)
+	if debug then
+		DebugPrint(string.format("  stretch grid %-16s set_ok=%s (%sx%s interp=%s)%s",
+			tostring(name), tostring(ok_set), tostring(dw), tostring(dh), tostring(interpolate == true),
+			ok_set and "" or (" err=" .. tostring(set_err))))
+	end
+	return ok_set == true
+end
+
+-- STRETCH frame-fill mode: resample the whole generated SOURCE region up to the full map size, so
+-- the map is ONE continuous terrain (no L-frame, no mirror seam). Features come out ~full/source
+-- (about 1.33x) larger -- a "zoomed" version of the real generated terrain. TERRAIN GRIDS ONLY:
+-- generated objects/deposits are NOT repositioned here (a separate pass), so they stay clustered
+-- in the source corner until that lands. Returns (ok, grids_done).
+local function StretchSourceToFull(map, debug)
+	if not map then return false, 0 end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0 then
+		DebugPrint("StretchSourceToFull: source tile size unknown -- cannot stretch")
+		return false, 0
+	end
+	local box_fn = Global("box")
+	if type(box_fn) ~= "function" then return false, 0 end
+	local sx = map.SuperBigMapSourceX or 0
+	local sy = map.SuperBigMapSourceY or 0
+	local src_w, src_h = sw_tiles * hts, sh_tiles * hts
+	local full_w, full_h = TerrainSize(map)
+	if type(full_w) ~= "number" or full_w <= 0 or type(full_h) ~= "number" or full_h <= 0 then
+		DebugPrint("StretchSourceToFull: full terrain size unknown -- cannot stretch")
+		return false, 0
+	end
+	local from_box = box_fn(sx, sy, sx + src_w, sy + src_h)
+	local to_box = box_fn(0, 0, full_w, full_h)
+	local names
+	local editor_api = Global("editor")
+	if type(editor_api) == "table" and type(editor_api.GetGridNames) == "function" then
+		local ok, list = pcall(editor_api.GetGridNames)
+		if ok and type(list) == "table" and #list > 0 then names = list end
+	end
+	names = names or { "height", "terrain_type", "colorize", "BiomeGrid", "clutter_density", "grass_density", "impassability", "passability" }
+	DebugPrint(string.format("StretchSourceToFull: source %sx%s wu -> full %sx%s wu (%s grids)",
+		tostring(src_w), tostring(src_h), tostring(full_w), tostring(full_h), tostring(#names)))
+	local done = 0
+	for _, name in ipairs(names) do
+		local interpolate = (name == "height")
+		if ResampleEditorGrid(map, name, from_box, to_box, interpolate, debug) then
+			done = done + 1
+		end
+	end
+	ReinvalidateExpandedTerrain(map)
+	DebugPrint(string.format("StretchSourceToFull: done (%s/%s grids resampled)", tostring(done), tostring(#names)))
+	return done > 0, done
+end
+
 -- After a sector's terrain is copied into to_box, any object that was ALREADY
 -- sitting in that destination region (e.g. a mystery "pile of stone" / anomaly a
 -- story event dropped into the frame) is now floating above or buried under the
@@ -1004,6 +1110,8 @@ local TerrainCopy = {
 	SectorBoundary = SectorBoundary,
 	CopyGridRect = CopyGridRect,
 	CopyEditorGrid = CopyEditorGrid,
+	ResampleEditorGrid = ResampleEditorGrid,
+	StretchSourceToFull = StretchSourceToFull,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

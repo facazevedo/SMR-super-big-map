@@ -511,9 +511,14 @@ config.ExpansionFrameMode = sbm_expanded_terrain
 --                     thin join at the source->frame boundary remains to blend. Most natural, but
 --                     the hardest to make match the generator's texture/biome look.
 --
--- Any unrecognised value falls back to "mirror". NOTE: "mirror" is fully implemented today;
--- "desymmetrize", "stretch" and "noise" are being added incrementally -- until each one lands it
--- logs a notice and falls back to "mirror", so the map is always playable whatever is selected.
+-- Any unrecognised value falls back to "mirror". IMPLEMENTATION STATUS (added incrementally):
+--   "mirror"       -- complete.
+--   "stretch"      -- TERRAIN done (grids are resampled to full size); generated objects and
+--                     deposits are NOT yet repositioned, so they still sit in the source corner
+--                     until the object pass lands. Use it now to judge the stretched-terrain look.
+--   "desymmetrize" -- not implemented yet; logs a notice and falls back to "mirror".
+--   "noise"        -- not implemented yet; logs a notice and falls back to "mirror".
+-- The map is always complete/playable whatever is selected.
 config.ExpansionFrameFillMode = "mirror"
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
