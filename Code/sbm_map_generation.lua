@@ -52,6 +52,14 @@ local function cfg_number(key, default, min_value)
 	return default
 end
 
+local function cfg_string(key, default)
+	local value = (SuperBigMap.Config or {})[key]
+	if type(value) == "string" and value ~= "" then
+		return value
+	end
+	return default
+end
+
 local function DebugPrint(text)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -941,6 +949,20 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		local terrain_api = Global("terrain")
 		local box_fn = Global("box")
 		local n = #SECTOR_MIRROR_BLOCKS
+
+		-- FRAME FILL MODE dispatch (config EXPANSION_FRAME_FILL_MODE, see sbm_config.lua). The
+		-- native source is already generated; here we choose how the surrounding L-frame is built.
+		-- "mirror" (default) runs the reflect-edge-blocks plan below. The other modes
+		-- ("desymmetrize", "stretch", "noise") are being implemented incrementally -- until each
+		-- lands it logs a notice and falls back to "mirror" so the map is always complete.
+		local fill_mode = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
+		if fill_mode ~= "mirror" then
+			DebugPrint(string.format(
+				"RunSectorMirrorPlanIfEnabled: frame-fill mode '%s' not yet implemented -- falling back to 'mirror'",
+				tostring(fill_mode)))
+			InitSeq("RunSectorMirrorPlan: frame-fill mode fallback", { requested = fill_mode, used = "mirror" })
+			fill_mode = "mirror"
+		end
 
 		-- PHASE 1 -- TERRAIN: copy every block's grids first, then render the mirrored
 		-- ground immediately (cheap Invalidate, no full rebuild), so the player sees the

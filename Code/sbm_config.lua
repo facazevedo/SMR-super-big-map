@@ -487,6 +487,35 @@ config.QuadrantCopyRendererNodeTileAlignment = 2048
 -- is corner-anchored at (0,0); the flat frame forms an L on the right + bottom in world coords.
 config.ExpansionFrameMode = sbm_expanded_terrain
 
+-- FRAME FILL MODE -- how the L-shaped FRAME of new sectors (everything beyond the native
+-- generated source, i.e. the outer band of the 20x20 map) gets its terrain. The native source
+-- is ALWAYS produced by the vanilla map generator; only the surrounding frame is built by the
+-- method chosen here. Flip this string to compare approaches to the source<->frame junction:
+--
+--   "mirror"       -- (default, original) reflect the source's edge blocks outward to fill the
+--                     frame. Fast and uses real generated terrain, but the reflection is
+--                     SYMMETRIC across the seam, so it shows a straight central crease and
+--                     doubled / abrupt walls (the artifact we are trying to get rid of).
+--
+--   "desymmetrize" -- mirror as above, then WARP the frame so it is no longer a perfect
+--                     reflection. Breaks the dead-straight crease and the mirror symmetry, but
+--                     the terrain is still derived from the reflected source (a compromise).
+--
+--   "stretch"      -- NO frame at all: resample (stretch) the whole generated source to fill the
+--                     full 20x20 allocation. Perfectly seamless -- one continuous terrain of real
+--                     generator output -- but every feature ends up ~33% larger ("zoomed"),
+--                     rather than genuinely new terrain.
+--
+--   "noise"        -- synthesize the frame with fractal noise that CONTINUES the source edge
+--                     outward (no reflection). Adds genuinely new, non-symmetric terrain; only a
+--                     thin join at the source->frame boundary remains to blend. Most natural, but
+--                     the hardest to make match the generator's texture/biome look.
+--
+-- Any unrecognised value falls back to "mirror". NOTE: "mirror" is fully implemented today;
+-- "desymmetrize", "stretch" and "noise" are being added incrementally -- until each one lands it
+-- logs a notice and falls back to "mirror", so the map is always playable whatever is selected.
+config.ExpansionFrameFillMode = "mirror"
+
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
@@ -615,6 +644,13 @@ local function as_number(value, default)
 	return default
 end
 
+local function as_string(value, default)
+	if type(value) == "string" and value ~= "" then
+		return value
+	end
+	return default
+end
+
 local C = {}
 
 -- Lifecycle / master
@@ -723,6 +759,7 @@ C.QUADRANT_MAX_TERRAIN_TILES = as_number(config.QuadrantCopyMaxTerrainTiles, 819
 C.QUADRANT_MAX_RANDOM_GENERATOR_TILES = as_number(config.QuadrantCopyMaxRandomGeneratorTiles, 6144)
 C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererNodeTileAlignment, 2048)
 C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionFrameMode)
+C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)
