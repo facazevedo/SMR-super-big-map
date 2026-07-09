@@ -412,6 +412,7 @@ end
 -- then move each marker to a RANDOM tile from its own terrain-type bucket (removed so two
 -- markers never share a tile). Runs BEFORE registration so markers register to their new sector.
 function DepositRules.ReshuffleClonedMarkers(map)
+	DepositRules.LogDistributionReport(map, "pre-reshuffle (post-generation + clone)")
 	if not ReshuffleEnabled() then return end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
@@ -586,6 +587,89 @@ local function IsSubsurfaceAnomalyMarker(obj)
 	return obj ~= nil and IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
 end
 
+-- Exhaustive distribution diagnostic (gated by DebugDeposits): bucket every deposit and
+-- anomaly MARKER by the sector it sits in and report totals + which sectors are dense. This
+-- is the evidence for "the landing spot is over-crowded on expanded maps": the SCANNED
+-- (start) sector's marker count vs the per-sector average shows the overpacking, and the
+-- top-density sectors reveal where the generator concentrated placement. Vanilla spreads the
+-- preset count over the whole playable area; the expansion packs the same count into the
+-- shrunken gen-zone (see sbm_rmg_placement borders-zeroed + spacing scale), and the scanned
+-- start sector's markers are never thinned (respace/reshuffle skip revealed sectors).
+function DepositRules.LogDistributionReport(map, phase)
+	local DebugLog = SuperBigMap.DebugLog
+	if not (DebugLog and DebugLog.On and DebugLog.On("Deposits")) then return end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then return end
+
+	local per_sector, order = {}, {}
+	local function bucket(kind, marker)
+		local pos = ObjectPos(marker)
+		if not pos or type(pos.xy) ~= "function" then return end
+		local px, py = pos:xy()
+		if px == nil then return end
+		local sector = SectorAtPoint(map, px, py)
+		local name = tostring((type(sector) == "table" and (sector.display_name or sector.id)) or "offgrid")
+		local rec = per_sector[name]
+		if not rec then
+			rec = { dep = 0, anom = 0, scanned = SectorIsScanned(sector) }
+			per_sector[name] = rec
+			order[#order + 1] = name
+		end
+		rec[kind] = rec[kind] + 1
+	end
+
+	local total_dep, total_anom = 0, 0
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(m)
+		if not IsKindOfSafe(m, "DepositMarker") then return end
+		total_dep = total_dep + 1
+		bucket("dep", m)
+	end)
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(m)
+		if not IsSubsurfaceAnomalyMarker(m) then return end
+		total_anom = total_anom + 1
+		bucket("anom", m)
+	end)
+
+	local sectors_with, scanned_sectors, scanned_dep, scanned_anom = 0, 0, 0, 0
+	local scanned_detail = {}
+	for _, name in ipairs(order) do
+		local rec = per_sector[name]
+		sectors_with = sectors_with + 1
+		if rec.scanned then
+			scanned_sectors = scanned_sectors + 1
+			scanned_dep = scanned_dep + rec.dep
+			scanned_anom = scanned_anom + rec.anom
+			scanned_detail[#scanned_detail + 1] = string.format("%s[d%d/a%d]", name, rec.dep, rec.anom)
+		end
+	end
+
+	table.sort(order, function(a, b)
+		local ra, rb = per_sector[a], per_sector[b]
+		return (ra.dep + ra.anom) > (rb.dep + rb.anom)
+	end)
+	local top = {}
+	for i = 1, math.min(#order, 12) do
+		local name = order[i]
+		local rec = per_sector[name]
+		top[#top + 1] = string.format("%s%s=%d(d%d/a%d)", name, rec.scanned and "*" or "", rec.dep + rec.anom, rec.dep, rec.anom)
+	end
+
+	local avg = (sectors_with > 0) and string.format("%.2f", (total_dep + total_anom) / sectors_with) or "n/a"
+	Log("DISTRIBUTION [" .. tostring(phase) .. "] summary", {
+		total_deposits = total_dep,
+		total_anomalies = total_anom,
+		sectors_with_markers = sectors_with,
+		avg_markers_per_occupied_sector = avg,
+		scanned_sectors = scanned_sectors,
+		scanned_deposits = scanned_dep,
+		scanned_anomalies = scanned_anom,
+		scanned_detail = table.concat(scanned_detail, " "),
+	})
+	Log("DISTRIBUTION [" .. tostring(phase) .. "] top density (name*=scanned; =total(dDeposits/aAnomalies))", {
+		top = table.concat(top, " "),
+	})
+end
+
 function DepositRules.RespaceAnomalies(map)
 	if cfg().RESPACE_ANOMALIES_TO_VANILLA ~= true then return end
 	map = map or Global("CurrentMap")
@@ -720,6 +804,7 @@ function DepositRules.RespaceAnomalies(map)
 		spread_factor = cfg().ANOMALY_EVEN_SPREAD_FACTOR or 0.6,
 		margin_tiles = margin_tiles,
 	})
+	DepositRules.LogDistributionReport(map, "final (post-respace)")
 end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
