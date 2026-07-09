@@ -828,9 +828,10 @@ end
 -- tiles until the total reaches source_count * area_factor (vanilla density x the bigger area).
 -- Clones are hidden markers (CloneObjectAtOffset -> ProcessClone sets is_placed=false) that spawn
 -- when their frame sector is scanned; RegisterClonedMarkers (run right after) registers them, and
--- EvenOutDepositDensity then spreads everything to even per-sector density. Concrete
--- (TerrainDeposit) templates are skipped (their terrain imprint would need painting). Gated by
--- ENABLE_DEPOSIT_TOPUP.
+-- EvenOutDepositDensity then spreads everything to even per-sector density. ALL resource types
+-- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
+-- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
+-- generates the terrain patch), so no manual imprint is needed. Gated by ENABLE_DEPOSIT_TOPUP.
 function DepositRules.TopUpDeposits(map)
 	if cfg().ENABLE_DEPOSIT_TOPUP ~= true then return end
 	map = map or Global("CurrentMap")
@@ -889,9 +890,9 @@ function DepositRules.TopUpDeposits(map)
 		if px == nil then return end
 		if px < src_w and py < src_h then
 			source_count = source_count + 1
-			if not IsConcreteTerrainDepositMarker(marker) then
-				templates[#templates + 1] = marker
-			end
+			-- All resource types are templates (incl. concrete) so the top-up mix is
+			-- proportional to the source; cloned concrete self-paints its patch on scan.
+			templates[#templates + 1] = marker
 		end
 	end)
 

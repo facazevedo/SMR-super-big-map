@@ -406,8 +406,9 @@ config.MaxResourceDepositsPerSector = 3
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
 -- deposits are cloned onto terrain-matched frame tiles until the total reaches
 -- source_count * area_factor (vanilla density x the bigger area); the clones are hidden until
--- their sector is scanned, and the even-out pass then spreads everything. Concrete deposits are
--- not topped up (terrain-imprint tied). false = native (Big) deposit count.
+-- their sector is scanned, and the even-out pass then spreads everything. All resource types
+-- scale proportionally, including concrete (a cloned concrete marker paints its own regolith
+-- patch on scan). false = native (Big) deposit count.
 config.EnableDepositTopUp = true
 -- Override the deposit target scale. false = auto (area factor); a number forces that multiplier.
 config.DepositCountScaleOverride = false
