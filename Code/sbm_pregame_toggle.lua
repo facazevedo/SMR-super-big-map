@@ -317,6 +317,55 @@ local function EnsureExpandBar(dialog, button)
 	return info
 end
 
+-- True while the landing screen is the interactive front, i.e. no modal popup (e.g. the "Custom
+-- coordinates" input) is covering it. The underline bar draws on top (DrawOnTop) and is a child
+-- of the landing dialog, so without this gate it would float OVER such a popup even though the
+-- EXPAND MAP button underneath is covered. Uses the desktop's modal window: if a modal is up and
+-- the landing dialog is not within it, the button is covered -> the bar must hide.
+local function LandingScreenInteractive(dialog)
+	if not IsAlive(dialog) then return false end
+	local desktop = dialog.desktop
+	if not desktop then
+		local terminal = Global("terminal")
+		desktop = terminal and terminal.desktop
+	end
+	if not desktop then return true end
+	local modal = (type(desktop.GetModalWindow) == "function" and desktop:GetModalWindow()) or desktop.modal_window
+	if not modal or modal == desktop then return true end
+	return type(dialog.IsWithin) == "function" and dialog:IsWithin(modal) == true
+end
+
+-- Keep the expand-underline bar's visibility synced to (selected AND landing screen interactive)
+-- while it exists, so it hides the instant a modal popup (Custom coordinates, etc.) covers the
+-- EXPAND MAP button and re-shows when the popup closes. Runs only during the pregame landing
+-- screen: it self-terminates once the bar (a child of the landing dialog) is destroyed, and
+-- ApplyExpandUnderline restarts it when the bar is recreated. One instance at a time.
+local function StartExpandBarWatcher()
+	local is_valid = Global("IsValidThread")
+	local existing = State.pregame_expand_bar_watcher
+	if existing and (type(is_valid) ~= "function" or is_valid(existing)) then
+		return
+	end
+	local create_thread = Global("CreateRealTimeThread")
+	local sleep = Global("Sleep")
+	if type(create_thread) ~= "function" or type(sleep) ~= "function" then return end
+	State.pregame_expand_bar_watcher = create_thread(function()
+		while true do
+			local info = State.pregame_expand_bar
+			if type(info) ~= "table" or not IsAlive(info.holder) then
+				break   -- bar gone (left the landing screen); ApplyExpandUnderline restarts it
+			end
+			local visible = IsSelected() and LandingScreenInteractive(info.dialog)
+			for _, win in ipairs({ info.holder, info.track, info.fill }) do
+				if IsAlive(win) and type(win.SetVisible) == "function" then
+					SafeCall(win.SetVisible, win, visible)
+				end
+			end
+			sleep(50)
+		end
+	end)
+end
+
 ApplyExpandUnderline = function(dialog)
 	local button = ResolveExpandButton(dialog)
 	if not button then
@@ -352,7 +401,7 @@ ApplyExpandUnderline = function(dialog)
 		SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
 		SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
 	end
-	local visible = IsSelected()
+	local visible = IsSelected() and LandingScreenInteractive(dialog)
 	for _, win in ipairs({ bar.holder, bar.track, bar.fill }) do
 		if IsAlive(win) then
 			if type(win.SetVisible) == "function" then
@@ -362,6 +411,8 @@ ApplyExpandUnderline = function(dialog)
 			end
 		end
 	end
+	-- Keep it synced while the screen is up (hide over modal popups, re-show on close).
+	StartExpandBarWatcher()
 	ToggleLog("underline applied", {
 		button_box = BoxText(button.box),
 		color = tostring(color),
