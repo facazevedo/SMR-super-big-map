@@ -490,15 +490,39 @@ local function SilenceLoadingBox(box)
 		if bar.FoldWhenHidden ~= true then bar.FoldWhenHidden = true; changed = true end
 		if type(bar.SetVisible) == "function" then pcall(function() bar:SetVisible(false) end) end
 	end
-	-- The dialog's text area (idText) has MinHeight = 100 (sized for long messages); our body is a
-	-- single line, so that reserved a big empty gap below it. Give it a MODEST fixed height so the
-	-- centered body (TextVAlign is "center") sits a little lower with balanced breathing room --
-	-- not flush under the title, not the original 100px gap. Tune this to move the body up/down.
-	local BODY_MIN_HEIGHT = 56
+	-- The dialog's text area (idText) has MinHeight = 100 (sized for long messages), which left a
+	-- big empty gap below our short body. Shrink it to 0 so the box wraps the body snugly; the
+	-- "Please wait." footer below then occupies the bottom (where the OK row was), not empty space.
+	local BODY_MIN_HEIGHT = 0
 	local txt = resolve and box:ResolveId("idText") or nil
 	if txt and (txt.MinHeight or 0) ~= BODY_MIN_HEIGHT then
 		txt.MinHeight = BODY_MIN_HEIGHT
 		changed = true
+	end
+	-- Put a "Please wait." footer where the OK button used to be (bottom of the box), so that row
+	-- reads as intentional instead of empty. Created once (guarded by its Id); a child of the
+	-- container, so it shows/hides and is destroyed with the box.
+	if resolve and not box:ResolveId("idSuperBigMapPleaseWait") then
+		local barp = box:ResolveId("idActionBar")
+		local container = barp and barp.parent
+		local XText = Global("XText")
+		local box_fn = Global("box")
+		if container and type(XText) == "table" then
+			local untranslated = Global("Untranslated")
+			local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
+			local ok_add = pcall(function()
+				XText:new({
+					Id = "idSuperBigMapPleaseWait",
+					Dock = "bottom",
+					HAlign = "left",
+					Margins = (type(box_fn) == "function") and box_fn(20, 16, 20, 16) or nil,
+					TextStyle = "CommonMessageDescription",
+					Translate = false,
+					Text = wrap("Please wait."),
+				}, container, container.context)
+			end)
+			if ok_add then changed = true end
+		end
 	end
 	if changed then
 		if txt and type(txt.InvalidateMeasure) == "function" then pcall(function() txt:InvalidateMeasure() end) end
