@@ -461,109 +461,100 @@ local function CopyEditorGrid(map, name, from_box, to_box, debug, mirror_x, mirr
 	return ok_set == true
 end
 
--- STRETCH mode helper: resample one named terrain grid from the source region (from_box) UP to
--- the full-map region (to_box). Unlike CopyEditorGrid (a 1:1 blit with optional mirror flip),
--- this SCALES the grid to fill the whole map. interpolate=true for continuous data (height);
--- false for discrete index/flag grids (terrain_type, BiomeGrid, passability) so their values are
--- not blended into invalid intermediates. Repacks to the destination grid's exact format (same
--- idiom as MapGen's GridMakeSame) and writes through the render-aware editor.SetGrid.
-local function ResampleEditorGrid(map, name, from_box, to_box, interpolate, debug)
-	local editor_api = Global("editor")
-	if type(editor_api) ~= "table" or type(editor_api.GetGrid) ~= "function" or type(editor_api.SetGrid) ~= "function" then
-		return false, "GetGrid/SetGrid unavailable"
-	end
+-- STRETCH frame-fill mode: resample the generated SOURCE corner of the terrain up to the FULL map
+-- size, so the map is ONE continuous terrain (no L-frame, no mirror seam). Features come out
+-- ~full/source (about 1.33x) larger -- a "zoomed" version of the real generated terrain.
+--
+-- Scope: HEIGHT + TERRAIN-TYPE only (shape + ground texture -- enough to judge the look). Biome/
+-- colour and objects/deposits are NOT touched here (separate passes). We must go through the
+-- engine's COMPUTE-grid terrain API the same way the map generator does: editor.GetGrid returns
+-- NATIVE storage grids that GridResample rejects ("Grid Type Not Supported"), so each grid is
+-- converted to a compute grid (GridToCompute) before resampling and written back through the
+-- terrain setter (terrain.SetHeightGrid / SetTypeGrid accept a compute grid). Returns (ok, done).
+local function StretchSourceToFull(map, debug)
+	if not map then return false, 0 end
+	local terrain_api = Global("terrain")
+	local GridToCompute = Global("GridToCompute")
 	local GridResample = Global("GridResample")
-	if type(GridResample) ~= "function" then return false, "GridResample unavailable" end
-	local GridRepack = Global("GridRepack")
 	local IsComputeGrid = Global("IsComputeGrid")
+	local NewComputeGrid = Global("NewComputeGrid")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	if type(terrain_api) ~= "table" or type(GridToCompute) ~= "function" or type(GridResample) ~= "function"
+		or type(IsComputeGrid) ~= "function" or type(NewComputeGrid) ~= "function"
+		or type(box_fn) ~= "function" or type(point_fn) ~= "function" then
+		DebugPrint("StretchSourceToFull: required grid/terrain API unavailable -- cannot stretch")
+		return false, 0
+	end
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	local full_tw = map.SuperBigMapDesiredWidthTiles
+	local full_th = map.SuperBigMapDesiredHeightTiles
+	if type(full_tw) ~= "number" or full_tw <= 0 then
+		local mapdata = map.mapdata
+		full_tw = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width or nil
+		full_th = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height or full_tw
+	end
+	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
+		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= 0 or full_th <= 0 then
+		DebugPrint("StretchSourceToFull: source/full tile sizes unknown -- cannot stretch")
+		return false, 0
+	end
+	if full_tw <= sw_tiles and full_th <= sh_tiles then
+		DebugPrint(string.format("StretchSourceToFull: no expansion to stretch (source %sx%s == full %sx%s tiles)",
+			tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th)))
+		return false, 0
+	end
+	local frac_w = sw_tiles / full_tw
+	local frac_h = sh_tiles / full_th
+
 	local function free_grid(x)
 		if x and (type(x) == "table" or type(x) == "userdata") then
 			pcall(function() if type(x.free) == "function" then x:free() end end)
 		end
 	end
-	local ok_src, src = pcall(editor_api.GetGrid, map, name, from_box)
-	if not ok_src or not src then
-		if debug then DebugPrint(string.format("  stretch grid %-16s GetGrid(src) failed", tostring(name))) end
-		return false, "GetGrid src failed"
-	end
-	local ok_dst, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
-	if not ok_dst or not dst_ref then
-		free_grid(src)
-		return false, "GetGrid dst failed"
-	end
-	local dw, dh = dst_ref:size()
-	local g0, g1
-	local ok_rs, err = pcall(function()
-		g0 = GridResample(src, dw, dh, interpolate == true)
-		g1 = g0
-		if type(GridRepack) == "function" and type(IsComputeGrid) == "function" then
-			local fmt, bits = IsComputeGrid(dst_ref)
-			g1 = GridRepack(g0, fmt, bits)
-		end
-	end)
-	free_grid(dst_ref)
-	if not ok_rs or not g1 then
-		free_grid(src); free_grid(g0)
-		if debug then DebugPrint(string.format("  stretch grid %-16s resample failed (%s)", tostring(name), tostring(err))) end
-		return false, "resample failed"
-	end
-	local ok_set, set_err = pcall(editor_api.SetGrid, map, name, g1, to_box)
-	if g1 ~= g0 then free_grid(g0) end
-	free_grid(g1)
-	free_grid(src)
-	if debug then
-		DebugPrint(string.format("  stretch grid %-16s set_ok=%s (%sx%s interp=%s)%s",
-			tostring(name), tostring(ok_set), tostring(dw), tostring(dh), tostring(interpolate == true),
-			ok_set and "" or (" err=" .. tostring(set_err))))
-	end
-	return ok_set == true
-end
 
--- STRETCH frame-fill mode: resample the whole generated SOURCE region up to the full map size, so
--- the map is ONE continuous terrain (no L-frame, no mirror seam). Features come out ~full/source
--- (about 1.33x) larger -- a "zoomed" version of the real generated terrain. TERRAIN GRIDS ONLY:
--- generated objects/deposits are NOT repositioned here (a separate pass), so they stay clustered
--- in the source corner until that lands. Returns (ok, grids_done).
-local function StretchSourceToFull(map, debug)
-	if not map then return false, 0 end
-	local const_tbl = Global("const")
-	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
-	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
-	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
-	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0 then
-		DebugPrint("StretchSourceToFull: source tile size unknown -- cannot stretch")
-		return false, 0
-	end
-	local box_fn = Global("box")
-	if type(box_fn) ~= "function" then return false, 0 end
-	local sx = map.SuperBigMapSourceX or 0
-	local sy = map.SuperBigMapSourceY or 0
-	local src_w, src_h = sw_tiles * hts, sh_tiles * hts
-	local full_w, full_h = TerrainSize(map)
-	if type(full_w) ~= "number" or full_w <= 0 or type(full_h) ~= "number" or full_h <= 0 then
-		DebugPrint("StretchSourceToFull: full terrain size unknown -- cannot stretch")
-		return false, 0
-	end
-	local from_box = box_fn(sx, sy, sx + src_w, sy + src_h)
-	local to_box = box_fn(0, 0, full_w, full_h)
-	local names
-	local editor_api = Global("editor")
-	if type(editor_api) == "table" and type(editor_api.GetGridNames) == "function" then
-		local ok, list = pcall(editor_api.GetGridNames)
-		if ok and type(list) == "table" and #list > 0 then names = list end
-	end
-	names = names or { "height", "terrain_type", "colorize", "BiomeGrid", "clutter_density", "grass_density", "impassability", "passability" }
-	DebugPrint(string.format("StretchSourceToFull: source %sx%s wu -> full %sx%s wu (%s grids)",
-		tostring(src_w), tostring(src_h), tostring(full_w), tostring(full_h), tostring(#names)))
-	local done = 0
-	for _, name in ipairs(names) do
-		local interpolate = (name == "height")
-		if ResampleEditorGrid(map, name, from_box, to_box, interpolate, debug) then
-			done = done + 1
+	-- Read the full grid via get_fn, take its source corner (cells [0..scw]x[0..sch]), resample
+	-- that up to the full cell dims (all in compute-grid space so GridResample accepts it), then
+	-- write back via set_fn (+ invalidate). The 'raw' grid from get_fn is left for the engine.
+	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate)
+		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then return false end
+		local ok_g, raw = pcall(get_fn, map)
+		if not ok_g or not raw then
+			if debug then DebugPrint(string.format("  stretch %-8s get failed", tostring(label))) end
+			return false
 		end
+		local ok_all, res = pcall(function()
+			local full_c = GridToCompute(raw)
+			local fw, fh = full_c:size()
+			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
+			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
+			local fmt, bits = IsComputeGrid(full_c)
+			local src_sub = NewComputeGrid(scw, sch, fmt, bits)
+			src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
+			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			local ok_set = pcall(set_fn, map, stretched)
+			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
+			free_grid(src_sub)
+			if stretched ~= src_sub then free_grid(stretched) end
+			if full_c ~= raw then free_grid(full_c) end
+			if debug then DebugPrint(string.format("  stretch %-8s fw=%s scw=%s set=%s",
+				tostring(label), tostring(fw), tostring(scw), tostring(ok_set))) end
+			return ok_set == true
+		end)
+		if not ok_all and debug then
+			DebugPrint(string.format("  stretch %-8s FAILED (%s)", tostring(label), tostring(res)))
+		end
+		return ok_all and res == true
 	end
+
+	DebugPrint(string.format("StretchSourceToFull: source %sx%s tiles -> full %sx%s tiles (frac %s)",
+		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
+	local done = 0
+	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
+	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
 	ReinvalidateExpandedTerrain(map)
-	DebugPrint(string.format("StretchSourceToFull: done (%s/%s grids resampled)", tostring(done), tostring(#names)))
+	DebugPrint(string.format("StretchSourceToFull: done (%s/2 grids stretched: height, terrain_type)", tostring(done)))
 	return done > 0, done
 end
 
@@ -1110,7 +1101,6 @@ local TerrainCopy = {
 	SectorBoundary = SectorBoundary,
 	CopyGridRect = CopyGridRect,
 	CopyEditorGrid = CopyEditorGrid,
-	ResampleEditorGrid = ResampleEditorGrid,
 	StretchSourceToFull = StretchSourceToFull,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
