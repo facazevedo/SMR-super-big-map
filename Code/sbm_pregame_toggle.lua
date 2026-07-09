@@ -396,13 +396,32 @@ local function RefreshActions(host)
 end
 
 local function InstallLandingDialogAction(dialog)
-	if not dialog or dialog.SuperBigMapExpandActionInstalled == true then
+	if not dialog then
 		return false
 	end
 	local XAction = Global("XAction")
 	if type(XAction) ~= "table" then
 		return false
 	end
+	-- Source of truth is whether our action is ACTUALLY on the dialog, not a sticky
+	-- per-dialog flag: the dialog instance can be reused across opens while its action bar
+	-- is rebuilt (by the engine or another landing-spot mod, e.g. Filter Landing Spots),
+	-- which drops our action but leaves SuperBigMapExpandActionInstalled set -- that was the
+	-- "EXPAND MAP button disappeared" case. Re-add whenever it is missing; skip only when it
+	-- is genuinely still present.
+	local action_present = ActionById(dialog, "super_big_map_expand") ~= nil
+	if action_present then
+		ToggleLog("InstallLandingDialogAction: action already present -- skip", {
+			dialog = tostring(dialog.class or dialog.Id or "nil"),
+			flag = dialog.SuperBigMapExpandActionInstalled == true,
+		})
+		dialog.SuperBigMapExpandActionInstalled = true
+		return false
+	end
+	ToggleLog("InstallLandingDialogAction: (re)installing action", {
+		dialog = tostring(dialog.class or dialog.Id or "nil"),
+		flag_was_set = dialog.SuperBigMapExpandActionInstalled == true,
+	})
 
 	SetSortKey(ActionById(dialog, "back"), "010")
 	SetSortKey(ActionById(dialog, "custom"), "020")
@@ -464,9 +483,17 @@ local function PatchLandingDialog()
 		return false
 	end
 	if State.pregame_toggle_open_original and cls.Open == State.pregame_toggle_open_wrapper then
+		ToggleLog("PatchLandingDialog: our Open wrapper already installed (ok)")
 		return true
 	end
 	if cls.Open ~= State.pregame_toggle_open_wrapper then
+		-- Live Open is NOT our wrapper: first install, a ClassesBuilt reset, or another mod
+		-- (e.g. Filter Landing Spots) replaced/re-wrapped it. Capture whatever is live as the
+		-- original so we chain over it instead of clobbering the other mod.
+		ToggleLog("PatchLandingDialog: (re)wrapping Open -- live method was not ours", {
+			had_prior_wrapper = State.pregame_toggle_open_wrapper ~= nil,
+			live_is_prior_original = cls.Open == State.pregame_toggle_open_original,
+		})
 		State.pregame_toggle_open_original = cls.Open
 	end
 
@@ -476,6 +503,10 @@ local function PatchLandingDialog()
 		SetStartArmed(false, "landing_open")
 		local results = { original_open(self, ...) }
 		InstallLandingDialogAction(self)
+		ToggleLog("landing dialog Open wrapper fired", {
+			dialog = tostring(self and (self.class or self.Id) or "nil"),
+			action_present_after = self and ActionById(self, "super_big_map_expand") ~= nil,
+		})
 		return Unpack(results)
 	end
 	cls.Open = wrapper
