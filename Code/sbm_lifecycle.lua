@@ -714,6 +714,15 @@ RegisterOnce("NewMapLoaded", function(map, mapdata)
 end)
 
 RegisterOnce("PostNewMapLoaded", function(map, mapdata)
+	-- Entry trace (before the active() gate): confirms the message fired for THIS map and whether
+	-- the handler will proceed. If a mod-expanded map loads but this never logs, the message hook
+	-- was lost (typically a mid-session hot-reload) -- that is why the stretch/expansion silently
+	-- does not run. On a clean launch it must log with is_mod_map=true for the real game map.
+	InitSeq("PostNewMapLoaded FIRED (entry)", {
+		map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
+		active = active() == true,
+		is_mod_map = IsModMap(map) == true,
+	})
 	if not active() then
 		return
 	end
