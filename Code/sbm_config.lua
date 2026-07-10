@@ -582,12 +582,12 @@ config.UndergroundExplorationUI = true
 -- underground spatial relationship -- entrances, deposits, cavern shape -- while making all
 -- entrance pairs correspond vertically.
 config.AlignUndergroundEntrances = true
--- Move the entrance VISUALS with the stretch transform. OFF: entrances (markers AND visuals, on
--- BOTH maps) are left at their native positions -- vanilla generates the surface and underground
--- natural entrances at identical coordinates, so leaving both sides untouched keeps every pair
--- vertically corresponding exactly where the player first saw them. (Kept as an option in case a
--- map ever needs the moved-entrances behavior back.)
-config.StretchMoveEntranceVisuals = false
+-- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
+-- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
+-- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
+-- was generated on, and -- because both maps get the identical transform of natively identical
+-- coordinates -- every surface/underground entrance pair keeps corresponding vertically.
+config.StretchMoveEntranceVisuals = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
