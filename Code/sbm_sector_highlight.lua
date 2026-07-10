@@ -55,17 +55,13 @@ local function Install()
 		return ok and env == "Underground"
 	end
 
-	-- UNDERGROUND overview frames: OUTLINE-ONLY sector frames (opaque border, transparent
+	-- UNDERGROUND overview HOVER frame: an OUTLINE-ONLY sector frame (opaque border, transparent
 	-- interior), built from the game's own per-sector grid decal entity ("SectorUnexplored" -- a
-	-- thin square outline; vanilla itself colors it red for blocked sectors, Exploration.lua:351).
-	-- The vanilla hover decal (SectorTarget) FILLS its interior, so underground we hide it and
-	-- drive our own outline frame instead:
-	--   * hover frame -- follows the hovered sector (default outline color);
-	--   * entrance frames -- RED outlines on every sector containing an underground entrance/exit
-	--     (UndergroundPassageBase buildings or SurfaceUndergroundTunnelMarker markers).
-	-- They exist ONLY while the underground overview is active: built on OverviewMode(true),
-	-- destroyed on OverviewMode(false) and on map switches (lifecycle calls
-	-- SectorHighlight.UpdateUndergroundOverviewFrames).
+	-- thin square outline). The vanilla hover decal (SectorTarget) FILLS its interior, so
+	-- underground we hide it and drive this outline frame instead; it follows the hovered sector
+	-- and exists only while the underground overview is active (torn down on OverviewMode(false)
+	-- and on map switches via SectorHighlight.UpdateUndergroundOverviewFrames). The former cyan
+	-- entrance frames were removed at the user's request.
 	local function FrameForSector(map, sector, red)
 		local place = Engine.Global("PlaceObjectIn")
 		local mdr = Engine.Global("MulDivRound")
@@ -108,17 +104,7 @@ local function Install()
 			if ef_visible and type(obj.SetEnumFlags) == "function" then
 				pcall(obj.SetEnumFlags, obj, ef_visible)
 			end
-			if red and type(obj.SetColorModifier) == "function" then
-				-- CYAN entrance tint. SetColorModifier tints this decal (vanilla uses it with the
-				-- `red` global for blocked sectors, Exploration.lua:351); build cyan via RGB, or
-				-- the `cyan` global if the engine exposes one.
-				local cyan_col = Engine.Global("cyan")
-				if cyan_col == nil then
-					local rgb = Engine.Global("RGB")
-					if type(rgb) == "function" then cyan_col = rgb(0, 255, 255) end
-				end
-				if cyan_col ~= nil then pcall(obj.SetColorModifier, obj, cyan_col) end
-			end
+			-- (entrance tinting removed -- the hover frame keeps the decal's default color)
 		end)
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog and DebugLog.On("Hover") then
@@ -173,79 +159,25 @@ local function Install()
 		State.ug_hover_frame_sector = sector.id
 	end
 
-	local function DestroyUndergroundEntranceFrames()
-		for _, obj in ipairs(State.ug_entrance_frames or {}) do
-			DestroyFrame(obj)
-		end
-		State.ug_entrance_frames = nil
-	end
+	-- (The cyan entrance/exit frames were removed at the user's request -- the underground
+	-- overview keeps ONLY the outline hover frame with the transparent interior.)
 
-	local function BuildUndergroundEntranceFrames()
-		DestroyUndergroundEntranceFrames()
-		local cur_map = Engine.Global("CurrentMap")
-		local get_sector = Engine.Global("GetMapSectorXY")
-		local city = cur_map and cur_map.City
-		if not cur_map or not city or type(get_sector) ~= "function"
-			or type(cur_map.MapForEach) ~= "function" then
-			return
-		end
-		local DebugLog = SuperBigMap.DebugLog
-		local seen, frames, found_objs = {}, {}, 0
-		local function mark_entrances(class_name)
-			local n = 0
-			pcall(cur_map.MapForEach, cur_map, "map", class_name, function(obj)
-				n = n + 1
-				found_objs = found_objs + 1
-				local ok_xy, x, y = pcall(function()
-					local pos = obj:GetPos()
-					return pos:x(), pos:y()
-				end)
-				local ok_s, sector = false, nil
-				if ok_xy and type(x) == "number" then
-					ok_s, sector = pcall(get_sector, city, x, y)
-				end
-				if DebugLog and DebugLog.On("Hover") then
-					-- Log EVERY entrance object found: its class, world pos, and resolved sector,
-					-- so we can confirm the framed sectors match the visible entrance/exit.
-					DebugLog.Info("Hover", "entrance object found", {
-						query_class = class_name,
-						obj_class = tostring(obj and obj.class or "?"),
-						pos_xy = (ok_xy and type(x) == "number") and (tostring(x) .. "," .. tostring(y)) or "?",
-						sector = tostring((ok_s and sector) and sector.id or "nil"),
-						already_seen = (ok_s and sector and seen[sector.id]) == true,
-					})
-				end
-				if ok_s and sector and sector.id and not seen[sector.id] then
-					seen[sector.id] = true
-					frames[#frames + 1] = FrameForSector(cur_map, sector, true)
-				end
-			end)
-			return n
-		end
-		local n_passage = mark_entrances("UndergroundPassageBase")
-		local n_tunnel = mark_entrances("SurfaceUndergroundTunnelMarker")
-		State.ug_entrance_frames = frames
-		if DebugLog then
-			DebugLog.Info("Hover", "underground entrance frames built", {
-				frames = #frames, objects_found = found_objs,
-				passages = n_passage, tunnel_markers = n_tunnel,
-			})
-		end
-	end
-
-	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches.
+	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches; now it
+	-- only tears down the hover frame when the overview closes / the map changes.
 	-- Install() runs after module load, so SuperBigMap.SectorHighlight already exists (the local
 	-- SectorHighlight table is declared later in this file, hence the namespace assignment).
 	if type(SuperBigMap.SectorHighlight) == "table" then
 		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewFrames = function(show)
-			if show and UndergroundUiActive() then
-				BuildUndergroundEntranceFrames()
-			else
-				DestroyUndergroundEntranceFrames()
+			if not show then
 				HideUndergroundHoverFrame()
 			end
 		end
 	end
+	-- Clean up any entrance frames left over from a previous version of this patch.
+	for _, obj in ipairs(State.ug_entrance_frames or {}) do
+		DestroyFrame(obj)
+	end
+	State.ug_entrance_frames = nil
 
 	-- UNDERGROUND rollover: informational ONLY -- "Sector <name>" + the single line
 	-- "Underground". No scan status ("Unexplored"), no buildable %, no queue/probe hints:
