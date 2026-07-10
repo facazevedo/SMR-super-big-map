@@ -109,15 +109,37 @@ local function Install()
 				pcall(obj.SetEnumFlags, obj, ef_visible)
 			end
 			if red and type(obj.SetColorModifier) == "function" then
-				local rgb = Engine.Global("RGB")
-				if type(rgb) == "function" then obj:SetColorModifier(rgb(255, 40, 40)) end
+				-- Use the game's own `red` color constant -- exactly what vanilla UpdateDecal
+				-- feeds SetColorModifier for blocked sectors (Exploration.lua:351), so it is
+				-- known to tint this decal. Fall back to RGB(255,0,0) if `red` is absent.
+				local red_col = Engine.Global("red")
+				if red_col == nil then
+					local rgb = Engine.Global("RGB")
+					if type(rgb) == "function" then red_col = rgb(255, 0, 0) end
+				end
+				if red_col ~= nil then pcall(obj.SetColorModifier, obj, red_col) end
 			end
 		end)
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog and DebugLog.On("Hover") then
+			-- Post-creation state, to distinguish "placed but not rendering" causes: is the decal
+			-- still valid, is efVisible actually set, what scale/color/entity did it end up with.
+			local valid_s, flags_s, scale_s, ent_s, col_s = "?", "?", "?", "?", "?"
+			pcall(function()
+				valid_s = (type(is_valid) == "function" and is_valid(obj)) and "valid" or "INVALID"
+				if type(obj.GetEnumFlags) == "function" then
+					local ct = Engine.Global("const")
+					local efv = type(ct) == "table" and ct.efVisible
+					if efv then flags_s = (obj:GetEnumFlags(efv) ~= 0) and "visible" or "HIDDEN" end
+				end
+				if type(obj.GetScale) == "function" then scale_s = tostring(obj:GetScale()) end
+				if type(obj.GetEntity) == "function" then ent_s = tostring(obj:GetEntity()) end
+				if type(obj.GetColorModifier) == "function" then col_s = tostring(obj:GetColorModifier()) end
+			end)
 			DebugLog.Info("Hover", "frame placed", {
 				sector = tostring(sector.id), red = red == true,
 				pos_xy = (px and py) and (tostring(px) .. "," .. tostring(py)) or "?",
+				valid = valid_s, visible = flags_s, scale = scale_s, entity = ent_s, color = col_s,
 			})
 		end
 		return obj
@@ -167,27 +189,47 @@ local function Install()
 			or type(cur_map.MapForEach) ~= "function" then
 			return
 		end
-		local seen, frames = {}, {}
+		local DebugLog = SuperBigMap.DebugLog
+		local seen, frames, found_objs = {}, {}, 0
 		local function mark_entrances(class_name)
+			local n = 0
 			pcall(cur_map.MapForEach, cur_map, "map", class_name, function(obj)
+				n = n + 1
+				found_objs = found_objs + 1
 				local ok_xy, x, y = pcall(function()
 					local pos = obj:GetPos()
 					return pos:x(), pos:y()
 				end)
-				if not ok_xy or type(x) ~= "number" then return end
-				local ok_s, sector = pcall(get_sector, city, x, y)
+				local ok_s, sector = false, nil
+				if ok_xy and type(x) == "number" then
+					ok_s, sector = pcall(get_sector, city, x, y)
+				end
+				if DebugLog and DebugLog.On("Hover") then
+					-- Log EVERY entrance object found: its class, world pos, and resolved sector,
+					-- so we can confirm the framed sectors match the visible entrance/exit.
+					DebugLog.Info("Hover", "entrance object found", {
+						query_class = class_name,
+						obj_class = tostring(obj and obj.class or "?"),
+						pos_xy = (ok_xy and type(x) == "number") and (tostring(x) .. "," .. tostring(y)) or "?",
+						sector = tostring((ok_s and sector) and sector.id or "nil"),
+						already_seen = (ok_s and sector and seen[sector.id]) == true,
+					})
+				end
 				if ok_s and sector and sector.id and not seen[sector.id] then
 					seen[sector.id] = true
 					frames[#frames + 1] = FrameForSector(cur_map, sector, true)
 				end
 			end)
+			return n
 		end
-		mark_entrances("UndergroundPassageBase")
-		mark_entrances("SurfaceUndergroundTunnelMarker")
+		local n_passage = mark_entrances("UndergroundPassageBase")
+		local n_tunnel = mark_entrances("SurfaceUndergroundTunnelMarker")
 		State.ug_entrance_frames = frames
-		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog then
-			DebugLog.Info("Hover", "underground entrance frames built", { frames = #frames })
+			DebugLog.Info("Hover", "underground entrance frames built", {
+				frames = #frames, objects_found = found_objs,
+				passages = n_passage, tunnel_markers = n_tunnel,
+			})
 		end
 	end
 
@@ -224,14 +266,9 @@ local function Install()
 					return original_generate_rollover(self, sector, forced)
 				end
 				local old = self.rollover_context_cache
-				-- Same texts-join idiom as vanilla GenerateSectorRolloverContext (line 721).
-				local texts = {
-					untranslated("Underground"),
-					T_fn{4051, "Buildable area: <em><percent(number)></em>", number = sector.play_ratio or 0},
-				}
 				self.rollover_context_cache = {
 					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
-					RolloverText = table.concat(texts, "<newline><left>"),
+					RolloverText = T_fn{4051, "Buildable area: <em><percent(number)></em>", number = sector.play_ratio or 0},
 					RolloverAnchor = "smart",
 				}
 				return self.rollover_context_cache, old

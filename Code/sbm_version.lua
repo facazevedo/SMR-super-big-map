@@ -21,7 +21,8 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 29: underground rollover is informational-only (custom context, frames hidden, queue no-op'd).
 -- 30: underground overview frames -- outline-only hover frame + red entrance frames.
 -- 31: frame Z/visibility fix, off-map cursor suppression, underground buildable-% tooltip line.
-SuperBigMap.SECTOR_PATCH_VERSION = 31
+-- 32: red frame uses `red` color global; entrance/frame diagnostics; tooltip drops 'Underground'.
+SuperBigMap.SECTOR_PATCH_VERSION = 32
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 7:
 -- the DoGenerate wrapper now calls RmgPlacement.Begin/End around the original, so the
 -- closure changed and must reinstall cleanly on an in-session reload.
