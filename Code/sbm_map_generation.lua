@@ -914,22 +914,13 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			waited_ms = waited,
 			f0_found = FindSectorByName(map, "F0") ~= nil,
 		})
-		-- STRETCH: instead of blindly sleeping the full settle (which just sits on the loading
-		-- screen doing nothing, then does the ~8s stretch -- too long to wait through), POLL until
-		-- BiomeGrid is resized to the full map, then start immediately. settle_ms is the CAP. This
-		-- proceeds the instant the terrain is ready (typically well under the cap) -> faster load.
-		if fill_mode_early == "stretch" and type(StretchBiomeReady) == "function" then
-			local polled, poll_step = 0, 200
-			while polled < settle_ms and not StretchBiomeReady(map) do
-				sleep(poll_step)
-				polled = polled + poll_step
-			end
-			StretchLog("RunSectorMirrorPlan: biome-readiness poll done", {
-				polled_ms = polled, ready = StretchBiomeReady(map), cap_ms = settle_ms,
-			})
-		else
-			sleep(settle_ms)
-		end
+		-- MUST wait the full settle before stretching: the map keeps loading AFTER PostNewMapLoaded
+		-- (terrain data fills + ~7500 decorations get placed over the next few seconds). A
+		-- readiness poll on BiomeGrid's SIZE fires far too early (size is allocated up front, data
+		-- is not) -- stretching a half-loaded map gives the grey/incomplete result with almost no
+		-- decorations and a bloated reinvalidate. The fixed settle is the reliable "map fully
+		-- loaded" wait; tune StretchSettleMs if needed, but it must cover the async object placement.
+		sleep(settle_ms)
 		if map.SuperBigMapSectorMirrorDone == true then
 			InitSeq("RunSectorMirrorPlan: already done after settle -- aborting", {})
 			end_loading()
