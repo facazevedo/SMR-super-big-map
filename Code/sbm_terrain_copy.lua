@@ -833,6 +833,13 @@ local function ScaleDecorationsToFull(map, debug)
 	local topup_permille = math.max(0, area_factor_permille - 1000)         -- e.g. 778
 	local TOPUP_JITTER = 30000 -- wu (~3/4 sector)
 	local topped_up = 0
+	-- BATCH passability edits around the mass move: without this every SetPos/SetScale runs its
+	-- own local passability update -- measured ~10ms per object, 87s for ~8300 objects (log
+	-- 09.18.54); the engine's own mass-spawn code (Billboards.lua, AutoRemoveObj.lua) uses this
+	-- exact Suspend/Resume idiom to batch the rebuild into ONE pass at Resume. The per-object
+	-- bodies are pcall'd, so the loop cannot throw past the Resume below.
+	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
+	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
@@ -908,6 +915,7 @@ local function ScaleDecorationsToFull(map, debug)
 			end)
 		end
 	end
+	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor") end
 	local elapsed_ms = 0
 	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then elapsed_ms = t - t0 end end
 	StretchLog("ScaleDecorationsToFull: DONE", {
@@ -966,6 +974,9 @@ local function ScaleMarkersToFull(map, debug)
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
 	local moved, sample_n = 0, 0
+	-- Batch passability edits around the mass marker move (same idiom/reason as the decor pass).
+	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
+	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
 	for _, obj in ipairs(objs) do
 		if obj and is_marker(obj) then
 			pcall(function()
@@ -994,6 +1005,7 @@ local function ScaleMarkersToFull(map, debug)
 			end)
 		end
 	end
+	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers") end
 	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved })
 	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers", tostring(moved)))
 	return moved
