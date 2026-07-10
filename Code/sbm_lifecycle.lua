@@ -975,6 +975,23 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
 	end
+	-- TEMP (config UNDERGROUND_REVEAL_ALL_DARKNESS): fully reveal the underground's darkness fog
+	-- so the whole stretched underground can be inspected. Vanilla re-applies the fog on EVERY
+	-- map switch (RevealDarkness.lua OnMsg.CurrentMapChangeDone sets hr.EnableDarknessReveal=90
+	-- for underground maps); mod handlers run after vanilla's, so overriding to 0 here wins.
+	if (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true then
+		local env = map and map.mapdata and map.mapdata.Environment
+		if env == "Underground" then
+			local hr = Global("hr")
+			if type(hr) == "table" then
+				hr.EnableDarknessReveal = 0
+				local DebugLog = SuperBigMap.DebugLog
+				if DebugLog then
+					DebugLog.Info("Lifecycle", "TEMP: underground darkness fully revealed (config UNDERGROUND_REVEAL_ALL_DARKNESS)")
+				end
+			end
+		end
+	end
 end)
 
 -- Authoritative, class-agnostic rocket-landing hook: the RocketLanded message fires for

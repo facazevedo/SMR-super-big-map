@@ -555,6 +555,10 @@ config.StretchUnderground = true
 -- underground can be inspected immediately via the map switcher (vanilla unlocks it later).
 -- Turn OFF for release.
 config.UnlockUndergroundViewAtStart = true
+-- TEMP (testing): fully reveal the underground darkness fog (hr.EnableDarknessReveal=0) whenever
+-- the underground map is viewed, so the whole stretched underground is visible without exploring.
+-- Vanilla gameplay hides it and reveals by rover proximity. Turn OFF for release.
+config.UndergroundRevealAllDarkness = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -821,6 +825,7 @@ C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
 C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = as_bool(config.StretchUnderground)
 C.UNLOCK_UNDERGROUND_VIEW_AT_START = as_bool(config.UnlockUndergroundViewAtStart)
+C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
