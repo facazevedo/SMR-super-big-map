@@ -1581,6 +1581,62 @@ local function AlignEntrancePairs(ug_map)
 	local hex_add = Global("HexGridShapeAddObject")
 	local CLUSTER_R = 15000  -- wu: entrance-cluster radius around the old underground endpoint
 	local ALIGNED_TOL = 8000 -- wu: pairs already within ~1/5 sector are left alone
+	local PATCH_R = 18000    -- wu: ground patch brought along with the endpoint (covers the elevator shape)
+
+	-- Bring the GROUND with the passage: outside the carved cavern the underground terrain is
+	-- UNBUILDABLE solid rock (height sentinel nUnbuildableZ) -- an endpoint moved under its
+	-- surface partner can land in rock, and the elevator's underground construction then asserts
+	-- C-side in FlattenTerrainInShape (z != nUnbuildableZ; crash on the 2nd elevator). Copy a
+	-- height+type terrain patch from the OLD endpoint (open cavern floor) to the NEW location so
+	-- the destination is real, buildable ground matching the entrance's original surroundings.
+	local terrain_api = Global("terrain")
+	local GridToCompute = Global("GridToCompute")
+	local IsComputeGrid = Global("IsComputeGrid")
+	local NewComputeGrid = Global("NewComputeGrid")
+	local function copy_ground_patch(fx, fy, tx, ty)
+		if type(terrain_api) ~= "table" or type(GridToCompute) ~= "function"
+			or type(IsComputeGrid) ~= "function" or type(NewComputeGrid) ~= "function" then
+			return false
+		end
+		local map_w = type(ug_map.Width) == "number" and ug_map.Width or nil
+		if not map_w or map_w <= 0 then return false end
+		local function clamp(v, lo, hi)
+			if v < lo then return lo elseif v > hi then return hi end
+			return v
+		end
+		local function one(get_fn, set_fn, inv_fn, label)
+			local ok, err = pcall(function()
+				local src = get_fn(ug_map)
+				if not src then return end
+				local cg = GridToCompute(src)
+				local gw, gh = cg:size()
+				local function cells(v) return math.floor(v * gw / map_w) end
+				local r = cells(PATCH_R)
+				local x1 = clamp(cells(fx) - r, 0, gw)
+				local y1 = clamp(cells(fy) - r, 0, gh)
+				local x2 = clamp(cells(fx) + r, 0, gw)
+				local y2 = clamp(cells(fy) + r, 0, gh)
+				local w, h = x2 - x1, y2 - y1
+				if w <= 0 or h <= 0 then return end
+				local dx1 = clamp(cells(tx) - r, 0, gw - w)
+				local dy1 = clamp(cells(ty) - r, 0, gh - h)
+				-- Stage through a temp grid (same-grid overlapping copyrect is undefined).
+				local fmt, bits = IsComputeGrid(cg)
+				local tmp = NewComputeGrid(w, h, fmt, bits)
+				tmp:copyrect(cg, box_fn(x1, y1, x2, y2), point_fn(0, 0))
+				cg:copyrect(tmp, box_fn(0, 0, w, h), point_fn(dx1, dy1))
+				pcall(function() if type(tmp.free) == "function" then tmp:free() end end)
+				set_fn(ug_map, cg)
+				if type(inv_fn) == "function" then pcall(inv_fn, ug_map) end
+				if cg ~= src then pcall(function() if type(cg.free) == "function" then cg:free() end end) end
+				pcall(function() if type(src.free) == "function" then src:free() end end)
+			end)
+			AlignLog("pair-align: ground patch copied", { grid = label, ok = ok, err = ok and nil or tostring(err) })
+		end
+		one(terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, "height")
+		one(terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, "type")
+		return true
+	end
 
 	-- Move one object to (tx,ty), Z-snapped; Buildings get their hex shape re-registered
 	-- (bare SetPos leaves hex entries behind -- the elevator-snap lesson).
@@ -1652,7 +1708,9 @@ local function AlignEntrancePairs(ug_map)
 					cluster[#cluster + 1] = o
 				end
 			end)
-			-- Move the passage building, then the cluster preserving each member's offset.
+			-- Bring the cavern floor along FIRST (so the Z-snaps below land on the new ground),
+			-- then move the passage building and the cluster preserving each member's offset.
+			copy_ground_patch(ux, uy, sx, sy)
 			move_to(other, sx, sy)
 			for _, o in ipairs(cluster) do
 				local op = ObjectPosition(o)
@@ -1679,6 +1737,14 @@ local function AlignEntrancePairs(ug_map)
 				to = tostring(sx) .. "," .. tostring(sy), cluster_objects = #cluster,
 			})
 		end)
+	end
+	if moved_pairs > 0 then
+		-- The ground patches changed heights: refresh the buildable grid so the relocated
+		-- endpoints are constructible.
+		local rebuild_buildable = Global("RebuildBuildableGrid")
+		if type(rebuild_buildable) == "function" and ug_map.buildable then
+			SafeCall(rebuild_buildable, ug_map)
+		end
 	end
 	StretchLog("pair-align: DONE", { surface_passages = #surface_passages, pairs_moved = moved_pairs })
 	DebugPrint(string.format("entrance pair-align: moved %s underground endpoint(s)", tostring(moved_pairs)))
