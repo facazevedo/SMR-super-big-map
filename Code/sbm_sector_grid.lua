@@ -250,7 +250,16 @@ local function CustomSectorStatus(map)
 
 	local mapdata = MapData(map)
 	if cfg_bool("SECTOR_SURFACE_ONLY", true) and mapdata and mapdata.Environment ~= "Surface" then
-		return false, "not surface"
+		-- Expanded UNDERGROUND maps get the 20x20 custom grid too when the underground stretch is
+		-- enabled (config STRETCH_UNDERGROUND): same layout math, driven by the same mapdata
+		-- markers (SuperBigMapOriginalWidthTiles set by the prepare step). Without this exemption
+		-- the underground keeps vanilla 10x10 sectors over the 8192 allocation -- the Sector logs
+		-- showed exactly "custom=false reason=not surface" for BlankUnderground_01.
+		local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
+			and mapdata.Environment == "Underground"
+		if not underground_ok then
+			return false, "not surface"
+		end
 	end
 
 	local is_mod_map = IsModMap(map)
