@@ -269,6 +269,12 @@ function Lifecycle.Apply(map, rebuild)
 		scan_btn.Show()
 	end
 
+	-- TEMP "Place Elevator" button (config-gated; instant free elevator for entrance testing).
+	local elevator_btn = SuperBigMap.PlaceElevatorButton
+	if elevator_btn and type(elevator_btn.Show) == "function" then
+		elevator_btn.Show()
+	end
+
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
 		bounds.ResetMapDataBounds(map, map.mapdata)

@@ -1,0 +1,126 @@
+-- Super Big Map -- TEMPORARY "Place Elevator" debug button (bottom-right, above Scan All).
+--
+-- One on-screen button for testing surface<->underground entrance correspondence: press it,
+-- place the Elevator with the game's NORMAL placement cursor, and the construction site is
+-- completed INSTANTLY on placement (ConstructionSite:Complete("quick_build") -- the same call
+-- vanilla's own 'Construct all buildings' cheat uses). quick_build finishes the site before any
+-- resource is requested or delivered, so the elevator costs NOTHING and needs no tech (the
+-- template is force-unlocked on press). Gated by Config.PLACE_ELEVATOR_BUTTON_ENABLED; TEMP --
+-- turn OFF for release. Self-contained, modeled on sbm_scan_all_button.lua.
+
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
+	SuperBigMap = {}
+	rawset(_G, "SuperBigMap", SuperBigMap)
+end
+
+local Engine = SuperBigMap.Engine
+local Global = Engine.Global
+local SafeCall = Engine.SafeCall
+
+local function cfg() return SuperBigMap.Config or {} end
+
+local button = false
+local armed = false -- next Elevator construction site placed gets instantly completed
+
+local function Valid()
+	return button and button.window_state ~= "destroying" and button.window_state ~= "destroyed"
+end
+
+local function Color(r, g, b, a)
+	local RGBA = Global("RGBA")
+	return (type(RGBA) == "function") and RGBA(r, g, b, a) or 0
+end
+local function White() return Color(236, 236, 238, 255) end
+
+local function Log(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("Lifecycle", message, data) end
+end
+
+-- Press: unlock the Elevator template (placement rejects locked buildings), arm the one-shot
+-- instant-complete, and enter the game's normal construction placement for it. The player then
+-- clicks where they want it -- real placement rules (flat ground etc.) apply, cost does not.
+local function StartElevatorPlacement()
+	local igi_fn = Global("GetInGameInterface")
+	local igi = type(igi_fn) == "function" and igi_fn() or nil
+	if not igi or type(igi.SetMode) ~= "function" then
+		Log("place-elevator: no in-game interface")
+		return
+	end
+	local unlock = Global("UnlockBuilding")
+	if type(unlock) == "function" then pcall(unlock, "Elevator") end
+	armed = true
+	SafeCall(igi.SetMode, igi, "construction", { template = "Elevator" })
+	Log("place-elevator: placement mode entered (instant-complete armed)")
+end
+
+-- One-shot instant completion: fires for the NEXT Elevator site placed while armed. Runs the
+-- completion on a game-time thread (Complete mutates game state).
+function OnMsg.ConstructionSitePlaced(site, class_name)
+	if not armed then return end
+	if cfg().PLACE_ELEVATOR_BUTTON_ENABLED ~= true then armed = false return end
+	local is_elevator = class_name == "Elevator"
+		or (site and (site.building_class == "Elevator"
+			or (type(site.GetBuildingClass) == "function" and select(2, pcall(site.GetBuildingClass, site)) == "Elevator")))
+	if not is_elevator then return end
+	armed = false
+	local create_gt = Global("CreateGameTimeThread")
+	local function finish()
+		if site and type(site.Complete) == "function" then
+			local ok, err = pcall(site.Complete, site, "quick_build")
+			Log("place-elevator: site instantly completed", { ok = ok, err = ok and nil or tostring(err) })
+		end
+	end
+	if type(create_gt) == "function" then create_gt(finish) else finish() end
+end
+
+local function Hide()
+	if Valid() and type(button.delete) == "function" then
+		pcall(function() button:delete() end)
+	end
+	button = false
+	armed = false
+end
+
+local function Build()
+	local desktop = (Global("terminal") or {}).desktop
+	local XTextButton = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(XTextButton) ~= "table" then
+		return false
+	end
+	button = XTextButton:new({
+		Id = "SBMPlaceElevator",
+		Text = "Place Elevator",
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 70), -- sits just above the Scan All Sectors button
+		Padding = box(12, 4, 12, 4),
+		Background = Color(70, 55, 30, 235),
+		RolloverBackground = Color(105, 82, 45, 235),
+		PressedBackground = Color(55, 42, 22, 235),
+		RolloverTextColor = White(),
+		DisabledTextColor = White(),
+		DisabledRolloverTextColor = White(),
+		ZOrder = 100000,
+		OnPress = function(_self, _gamepad) SafeCall(StartElevatorPlacement) end,
+	}, desktop)
+	if Valid() and type(button.SetTextColor) == "function" then button:SetTextColor(White()) end
+	if Valid() and type(button.Open) == "function" then pcall(function() button:Open() end) end
+	return true
+end
+
+local PlaceElevatorButton = {}
+
+function PlaceElevatorButton.Show()
+	if cfg().PLACE_ELEVATOR_BUTTON_ENABLED ~= true then return false end
+	if Valid() then return true end
+	return Build()
+end
+
+PlaceElevatorButton.Hide = Hide
+
+SuperBigMap.PlaceElevatorButton = PlaceElevatorButton

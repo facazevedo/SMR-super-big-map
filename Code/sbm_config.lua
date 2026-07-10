@@ -454,6 +454,13 @@ config.ConcreteImprintMaxTiles = 0
 -- (and for verifying the anomaly top-up). true = show the button, false = hide it.
 config.ScanAllButtonEnabled = false
 
+-- TEMP "Place Elevator" button (sbm_place_elevator_button.lua): a bottom-right button that enters
+-- the normal Elevator placement cursor and instantly completes the site on placement
+-- (Complete("quick_build") -- vanilla's own construct-all cheat call). Free (completion happens
+-- before any resource is requested), no tech needed (force-unlocked on press). For testing the
+-- surface<->underground entrance correspondence with player-built elevators. Turn OFF for release.
+config.PlaceElevatorButtonEnabled = true
+
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
 -- (an off->on toggle), NOT on a normal launch where it was already enabled. Set false to
@@ -784,6 +791,7 @@ C.WARN_ON_CANNOT_EXPAND = as_bool(config.WarnOnCannotExpand)
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
 C.SCAN_ALL_BUTTON_ENABLED = as_bool(config.ScanAllButtonEnabled)
+C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.RESHUFFLE_CLONED_DEPOSITS = as_bool(config.ReshuffleClonedDeposits)
 C.RESHUFFLE_SEARCH_RADIUS_TILES = as_number(config.ReshuffleSearchRadiusTiles, 12)
