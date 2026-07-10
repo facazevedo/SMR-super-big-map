@@ -1211,6 +1211,18 @@ RegisterOnce("OverviewMode", function(enabled)
 		if camera then
 			camera.CancelScheduledRefresh()
 		end
+		-- Re-apply the mod's NORMAL zoom (restores const.DefaultCameraRTS to the ZoomPlus value)
+		-- and then pull the LIVE camera's zoom-out limit back down from the engine's overview
+		-- far-distance (~20000) to that selection limit. The engine raises the live limit on
+		-- overview ENTRY but doesn't restore it on exit, so without this a normal-mode zoom-out
+		-- runs all the way out to 20000 (the "zoom gets bugged when zooming out" report).
+		local zoom = SuperBigMap.ZoomPlusIntegration
+		if zoom and type(zoom.ApplyNormalZoom) == "function" then
+			zoom.ApplyNormalZoom()
+		end
+		if camera and type(camera.RestoreSelectionZoomOutLimit) == "function" then
+			camera.RestoreSelectionZoomOutLimit()
+		end
 		local render = SuperBigMap.OverviewRender
 		if render then
 			render.Apply(false)

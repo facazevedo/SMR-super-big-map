@@ -606,6 +606,43 @@ function OverviewCamera.CancelScheduledRefresh()
 	overview_reset_token = overview_reset_token + 1
 end
 
+-- Counterpart to EnsureOverviewZoomOutLimit: when LEAVING overview, pull the LIVE camera's
+-- LookatDistZoomOut back down to the SELECTION limit (const.DefaultCameraRTS, which ZoomPlus sets
+-- to vanilla*multiplier, e.g. 5400). The engine raises the live limit to its overview far-distance
+-- (~20000) on overview entry but does NOT restore it on exit, so without this a normal-mode
+-- zoom-out runs all the way out to 20000 ("the zoom gets bugged when zooming out"). Only LOWERS
+-- the limit (never raises), so it can't clamp a legitimately-larger normal zoom.
+function OverviewCamera.RestoreSelectionZoomOutLimit()
+	local camera = Global("cameraRTS")
+	if type(camera) ~= "table" or type(camera.GetProperties) ~= "function" or type(camera.SetProperties) ~= "function" then
+		return false
+	end
+	local const_tbl = Global("const")
+	local def = type(const_tbl) == "table" and const_tbl.DefaultCameraRTS or nil
+	local target = type(def) == "table" and tonumber(def.LookatDistZoomOut) or nil
+	if type(target) ~= "number" or target <= 0 then
+		return false
+	end
+	local props = SafeCall(camera.GetProperties, 1)
+	if type(props) ~= "table" then
+		return false
+	end
+	local current = tonumber(props.LookatDistZoomOut)
+	local DebugLog = SuperBigMap.DebugLog
+	if type(current) == "number" and current <= target then
+		if DebugLog then
+			DebugLog.Info("Overview", "RestoreSelectionZoomOutLimit: no-op (live already <= selection)", { live = current, selection = target })
+		end
+		return false
+	end
+	props.LookatDistZoomOut = target
+	SafeCall(camera.SetProperties, 1, props)
+	if DebugLog then
+		DebugLog.Info("Overview", "RestoreSelectionZoomOutLimit: pulled live limit down to selection", { from = current, to = target })
+	end
+	return true
+end
+
 -- Take over only the first/startup overview->sector EXIT descent with a straight,
 -- mod-driven camera animation. ZoomPlus arms this one-shot from the marked startup
 -- saved_camera; later overview exits are left to vanilla's transition path.
