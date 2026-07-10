@@ -1674,9 +1674,10 @@ local function AlignEntrancePairs(ug_map)
 			-- SURFACE destination: directly above the underground endpoint, adjusted by vanilla's
 			-- buildable-area search. The result is accepted ONLY within MAX_DRIFT of the overhead
 			-- point -- its random-walk fallback can wander sectors away (178k wu once). If no
-			-- acceptable spot exists (or the search is unavailable), the pair is LEFT AS the
-			-- stretch placed it (user-confirmed fallback): an honest vanilla-style mismatch beats
-			-- relocating an entrance onto forced terrain.
+			-- acceptable spot exists, FALL BACK to the EXACT overhead point: the pad flatten below
+			-- (vanilla's own FlattenTerrainInBuildShape) levels it into valid ground
+			-- (user-confirmed: guaranteed same-sector correspondence beats leaving the vanilla
+			-- mismatch, e.g. the D3-vs-K7 pair whose overhead point is mountainside).
 			local tx, ty
 			local shape
 			if type(spawn_shape_fn) == "function" then
@@ -1703,7 +1704,7 @@ local function AlignEntrancePairs(ug_map)
 								drift = tostring(drift_x) .. "," .. tostring(drift_y),
 							})
 						else
-							AlignLog("pair-align: no buildable ground near the overhead point -- pair left as stretched", {
+							AlignLog("pair-align: no buildable ground near the overhead point -- flattening a pad at the exact spot", {
 								found_xy = tostring(fx) .. "," .. tostring(fy),
 								drift = tostring(drift_x) .. "," .. tostring(drift_y),
 							})
@@ -1712,8 +1713,8 @@ local function AlignEntrancePairs(ug_map)
 				end
 			end
 			if not tx then
-				AlignLog("pair-align: no acceptable destination -- pair left as stretched", {})
-				return
+				-- Exact overhead point; the flatten after the move levels the pad into valid ground.
+				tx, ty = ux, uy
 			end
 			local dx, dy = tx - sx, ty - sy
 			-- Collect the SURFACE entrance cluster around the old endpoint (marker, sign, rocks,
