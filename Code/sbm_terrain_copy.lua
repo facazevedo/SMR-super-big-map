@@ -1176,18 +1176,53 @@ local function TranslateUndergroundToMatchEntrances(map, debug)
 		return false
 	end
 
-	-- 1) Collect entrance marker positions on both maps.
-	local function collect(m)
+	-- Exhaustive alignment diagnostics: scope "Align" (config DEBUG_ALIGN).
+	local DebugLog = SuperBigMap.DebugLog
+	local function AlignLog(message, data)
+		if DebugLog then DebugLog.Info("Align", message, data) end
+	end
+	local function map_ident(m)
+		if not m then return "nil" end
+		return tostring(m.name or (m.mapdata and m.mapdata.id) or "?")
+	end
+	local function sector_of(m, x, y)
+		local get_sector = Global("GetMapSectorXY")
+		local m_city = m and m.City
+		if type(get_sector) ~= "function" or not m_city then return "?" end
+		local ok, sec = pcall(get_sector, m_city, x, y)
+		return tostring((ok and sec) and sec.id or "nil")
+	end
+	-- CRITICAL sanity checks: which map objects are we actually measuring? A wrong MainMap (e.g.
+	-- pointing at the underground) would make the two entrance sets nearly identical and produce
+	-- a bogus ~zero offset that "matches" everything.
+	AlignLog("maps", {
+		main_map = map_ident(main_map), ug_map = map_ident(map),
+		same_object = main_map == map,
+		current_map = map_ident(Global("CurrentMap")),
+		map_w = map_w, map_h = map_h,
+	})
+
+	-- 1) Collect entrance marker positions on both maps (with class -- the surface should carry
+	-- UndergroundTunnelMarker, the underground SurfaceTunnelMarker; a mismatch means we measured
+	-- the wrong map).
+	local function collect(m, label)
 		local list = {}
 		pcall(m.MapForEach, m, "map", "SurfaceUndergroundTunnelMarker", function(o)
 			local pos = ObjectPosition(o)
 			if not pos then return end
 			local x, y = PointXY(pos)
-			if type(x) == "number" then list[#list + 1] = { x = x, y = y } end
+			if type(x) == "number" then
+				list[#list + 1] = { x = x, y = y, class = tostring(o.class or "?") }
+				AlignLog("entrance", {
+					side = label, n = #list, class = tostring(o.class or "?"),
+					xy = tostring(x) .. "," .. tostring(y),
+					sector = sector_of(m, x, y),
+				})
+			end
 		end)
 		return list
 	end
-	local surf, ug = collect(main_map), collect(map)
+	local surf, ug = collect(main_map, "surface"), collect(map, "underground")
 	StretchLog("underground align: entrances collected", { surf = #surf, ug = #ug })
 	if #surf == 0 or #ug == 0 then
 		map.SuperBigMapUndergroundAligned = true
@@ -1201,24 +1236,56 @@ local function TranslateUndergroundToMatchEntrances(map, debug)
 		if d > size / 2 then d = d - size end
 		return d
 	end
-	local best_offset, best_matches
-	for _, s in ipairs(surf) do
+	-- Full pairwise delta matrix (wu and sectors) -- shows the true pairing at a glance.
+	for i, u in ipairs(ug) do
+		for j, s in ipairs(surf) do
+			local ddx = wrap_delta(u.x, s.x, map_w)
+			local ddy = wrap_delta(u.y, s.y, map_h)
+			AlignLog("delta ug->surf", {
+				ug = i, surf = j, dx = ddx, dy = ddy,
+				sectors = string.format("%.2f,%.2f", (ddx + 0.0) / 40960, (ddy + 0.0) / 40960),
+			})
+		end
+	end
+	-- Candidate evaluation with DISTINCT matching: each underground entrance must match a
+	-- DIFFERENT surface entrance (injective) -- without this, near-coincident sets let one surface
+	-- entrance satisfy several underground ones and a bogus offset can claim a full match.
+	local best_offset, best_matches, best_err
+	for cand_j, s in ipairs(surf) do
 		local dx = wrap_delta(ug[1].x, s.x, map_w)
 		local dy = wrap_delta(ug[1].y, s.y, map_h)
-		local matches = 0
-		for _, u in ipairs(ug) do
-			for _, s2 in ipairs(surf) do
-				local ex = math.abs(wrap_delta((u.x + dx) % map_w, s2.x, map_w))
-				local ey = math.abs(wrap_delta((u.y + dy) % map_h, s2.y, map_h))
-				if ex <= TOL and ey <= TOL then
-					matches = matches + 1
-					break
+		local matches, total_err = 0, 0
+		local used_surf = {}
+		for ui, u in ipairs(ug) do
+			local best_j, best_e
+			for j, s2 in ipairs(surf) do
+				if not used_surf[j] then
+					local ex = math.abs(wrap_delta((u.x + dx) % map_w, s2.x, map_w))
+					local ey = math.abs(wrap_delta((u.y + dy) % map_h, s2.y, map_h))
+					local e = ex + ey
+					if ex <= TOL and ey <= TOL and (not best_e or e < best_e) then
+						best_j, best_e = j, e
+					end
 				end
 			end
+			AlignLog("candidate pair", {
+				candidate = cand_j, ug = ui,
+				matched_surf = tostring(best_j or "none"),
+				residual_wu = tostring(best_e or "-"),
+			})
+			if best_j then
+				used_surf[best_j] = true
+				matches = matches + 1
+				total_err = total_err + best_e
+			end
 		end
-		StretchLog("underground align: candidate offset", { dx = dx, dy = dy, matches = matches, of = #ug })
-		if not best_matches or matches > best_matches then
-			best_matches, best_offset = matches, { dx = dx, dy = dy }
+		StretchLog("underground align: candidate offset", {
+			dx = dx, dy = dy, matches = matches, of = #ug, total_err = total_err,
+		})
+		-- Prefer more matches; tie-break on smaller total residual.
+		if not best_matches or matches > best_matches
+			or (matches == best_matches and total_err < (best_err or math.huge)) then
+			best_matches, best_offset, best_err = matches, { dx = dx, dy = dy }, total_err
 		end
 	end
 	if not best_offset or best_matches < #ug then
@@ -1229,7 +1296,10 @@ local function TranslateUndergroundToMatchEntrances(map, debug)
 		return false
 	end
 	local dx, dy = best_offset.dx, best_offset.dy
-	StretchLog("underground align: offset chosen", { dx = dx, dy = dy, matches = best_matches })
+	StretchLog("underground align: offset chosen", {
+		dx = dx, dy = dy, matches = best_matches, total_err = best_err,
+		sectors = string.format("%.2f,%.2f", (dx + 0.0) / 40960, (dy + 0.0) / 40960),
+	})
 	map.SuperBigMapUndergroundAligned = true
 	if dx == 0 and dy == 0 then
 		return true
