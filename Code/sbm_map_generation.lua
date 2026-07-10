@@ -172,6 +172,7 @@ local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
+local TranslateUndergroundToMatchEntrances = TerrainCopy.TranslateUndergroundToMatchEntrances
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1418,6 +1419,21 @@ local function RunUndergroundStretchIfEnabled(map)
 				StretchLog("underground stretch: -> ScaleMarkersToFull")
 				local n_mark = ScaleMarkersToFull(map, false)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
+			end
+			-- ENTRANCE ALIGNMENT: shift the whole underground map (toroidal wrap) so the natural
+			-- tunnel entrances sit beneath their surface counterparts. Needs the SURFACE
+			-- expansion finished first (its tunnel markers at final stretched positions) -- wait
+			-- for the main map's done flag, capped at 60s.
+			if type(TranslateUndergroundToMatchEntrances) == "function" then
+				local waited_align = 0
+				while waited_align < 60000 do
+					local mm = Global("MainMap")
+					if mm and mm.SuperBigMapSectorMirrorDone == true then break end
+					sleep(500)
+					waited_align = waited_align + 500
+				end
+				StretchLog("underground stretch: -> TranslateUndergroundToMatchEntrances", { waited_for_surface_ms = waited_align })
+				TranslateUndergroundToMatchEntrances(map, false)
 			end
 			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
 			-- deposit/anomaly so the stretched underground layout can be inspected.

@@ -24,7 +24,8 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 32: red frame uses `red` color global; entrance/frame diagnostics; tooltip drops 'Underground'.
 -- 33: entrance frame color changed from red to cyan.
 -- 34: force-align underground tunnel entrances under the surface ones before framing.
-SuperBigMap.SECTOR_PATCH_VERSION = 34
+-- 35: alignment moved out of the highlight module (whole-map translation in terrain_copy).
+SuperBigMap.SECTOR_PATCH_VERSION = 35
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 7:
 -- the DoGenerate wrapper now calls RmgPlacement.Begin/End around the original, so the
 -- closure changed and must reinstall cleanly on an in-session reload.

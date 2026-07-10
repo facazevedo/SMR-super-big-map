@@ -573,11 +573,13 @@ config.UndergroundOverviewEnabled = true
 -- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
--- Force the pre-placed underground tunnel entrances to sit directly beneath the SURFACE entrances.
--- Vanilla places surface & underground natural tunnels independently (no shared coordinate), so
--- they don't line up. When on, each underground tunnel marker is moved onto its nearest surface
--- tunnel marker's (x,y) -- same coordinate space after the stretch, so it lands in the matching
--- sector. Changes where the natural underground arrival is (emergence follows the marker).
+-- Align the underground map under the surface: TRANSLATE the whole underground map (toroidal
+-- wrap -- content pushed off one edge re-enters on the opposite side) so the natural tunnel
+-- entrances sit directly beneath their surface counterparts. The offset is DERIVED PER MAP from
+-- the actual entrance positions (kept only if one uniform offset matches ALL entrance pairs,
+-- half-sector tolerance; otherwise the map is left unchanged and a log says so). Preserves every
+-- underground spatial relationship -- entrances, deposits, cavern shape -- while making all
+-- entrance pairs correspond vertically.
 config.AlignUndergroundEntrances = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is

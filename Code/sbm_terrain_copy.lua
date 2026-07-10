@@ -1137,6 +1137,238 @@ local function StretchRelocateStartSector(map)
 	return relocated
 end
 
+-- UNDERGROUND ENTRANCE ALIGNMENT (config ALIGN_UNDERGROUND_ENTRANCES): translate the WHOLE
+-- underground map so the natural tunnel entrances sit directly beneath their surface
+-- counterparts. Vanilla generates the two maps' tunnel spawners at unrelated coordinates, but
+-- observation (56W0N) shows the underground entrance layout is the surface layout shifted by ONE
+-- uniform offset (ug H9->surf K7 and ug K7->surf N5 are both exactly -3,-2 sectors). The offset
+-- is NOT assumed constant across maps: it is DERIVED per map from the actual entrance sets --
+-- try anchoring the first underground entrance to each surface entrance and keep the candidate
+-- offset under which EVERY underground entrance has a surface entrance at ug+offset (wrapped,
+-- half-sector tolerance). If no candidate matches all entrances, the map has no uniform
+-- translation: log and change NOTHING. Otherwise TOROIDALLY shift the entire underground map by
+-- the offset: every terrain grid (height/type/colour/biome) and every object moves by (dx,dy)
+-- with wrap-around -- content pushed off one edge re-enters on the opposite side -- preserving
+-- all underground spatial relationships while making every entrance pair correspond vertically.
+-- Deposit markers are re-registered into their new sectors. Runs once per underground map.
+local function TranslateUndergroundToMatchEntrances(map, debug)
+	if not cfg_bool("ALIGN_UNDERGROUND_ENTRANCES", false) then return false end
+	if not map or map.SuperBigMapUndergroundAligned == true then return false end
+	local main_map = Global("MainMap")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	local terrain_api = Global("terrain")
+	local GridToCompute = Global("GridToCompute")
+	local IsComputeGrid = Global("IsComputeGrid")
+	local NewComputeGrid = Global("NewComputeGrid")
+	local GridRepack = Global("GridRepack")
+	if not main_map or type(main_map.MapForEach) ~= "function" or type(map.MapForEach) ~= "function"
+		or type(box_fn) ~= "function" or type(point_fn) ~= "function" or type(terrain_api) ~= "table"
+		or type(GridToCompute) ~= "function" or type(IsComputeGrid) ~= "function"
+		or type(NewComputeGrid) ~= "function" then
+		StretchLog("underground align: required APIs unavailable -- skip")
+		return false
+	end
+	local map_w = type(map.Width) == "number" and map.Width or nil
+	local map_h = type(map.Height) == "number" and map.Height or map_w
+	if not map_w or map_w <= 0 then
+		StretchLog("underground align: map size unknown -- skip")
+		return false
+	end
+
+	-- 1) Collect entrance marker positions on both maps.
+	local function collect(m)
+		local list = {}
+		pcall(m.MapForEach, m, "map", "SurfaceUndergroundTunnelMarker", function(o)
+			local pos = ObjectPosition(o)
+			if not pos then return end
+			local x, y = PointXY(pos)
+			if type(x) == "number" then list[#list + 1] = { x = x, y = y } end
+		end)
+		return list
+	end
+	local surf, ug = collect(main_map), collect(map)
+	StretchLog("underground align: entrances collected", { surf = #surf, ug = #ug })
+	if #surf == 0 or #ug == 0 then
+		map.SuperBigMapUndergroundAligned = true
+		return false
+	end
+
+	-- 2) Derive the per-map uniform offset (see header). Wrapped, half-sector tolerance.
+	local TOL = 20480
+	local function wrap_delta(a, b, size) -- shortest wrapped delta from a to b
+		local d = (b - a) % size
+		if d > size / 2 then d = d - size end
+		return d
+	end
+	local best_offset, best_matches
+	for _, s in ipairs(surf) do
+		local dx = wrap_delta(ug[1].x, s.x, map_w)
+		local dy = wrap_delta(ug[1].y, s.y, map_h)
+		local matches = 0
+		for _, u in ipairs(ug) do
+			for _, s2 in ipairs(surf) do
+				local ex = math.abs(wrap_delta((u.x + dx) % map_w, s2.x, map_w))
+				local ey = math.abs(wrap_delta((u.y + dy) % map_h, s2.y, map_h))
+				if ex <= TOL and ey <= TOL then
+					matches = matches + 1
+					break
+				end
+			end
+		end
+		StretchLog("underground align: candidate offset", { dx = dx, dy = dy, matches = matches, of = #ug })
+		if not best_matches or matches > best_matches then
+			best_matches, best_offset = matches, { dx = dx, dy = dy }
+		end
+	end
+	if not best_offset or best_matches < #ug then
+		StretchLog("underground align: NO uniform offset matches all entrances -- map left unchanged", {
+			best_matches = tostring(best_matches), needed = #ug,
+		})
+		map.SuperBigMapUndergroundAligned = true
+		return false
+	end
+	local dx, dy = best_offset.dx, best_offset.dy
+	StretchLog("underground align: offset chosen", { dx = dx, dy = dy, matches = best_matches })
+	map.SuperBigMapUndergroundAligned = true
+	if dx == 0 and dy == 0 then
+		return true
+	end
+
+	-- 3) Toroidal grid shift: copy into a fresh compute grid as 4 wrapped blocks.
+	local function wrap_translate_compute(cg, w, h, dxc, dyc)
+		local fmt, bits = IsComputeGrid(cg)
+		if not fmt then return nil end
+		local dst = NewComputeGrid(w, h, fmt, bits)
+		dxc = dxc % w
+		dyc = dyc % h
+		local function blk(sx1, sy1, sx2, sy2, tx, ty)
+			if sx2 > sx1 and sy2 > sy1 then
+				dst:copyrect(cg, box_fn(sx1, sy1, sx2, sy2), point_fn(tx, ty))
+			end
+		end
+		blk(0, 0, w - dxc, h - dyc, dxc, dyc)
+		blk(w - dxc, 0, w, h - dyc, 0, dyc)
+		blk(0, h - dyc, w - dxc, h, dxc, 0)
+		blk(w - dxc, h - dyc, w, h, 0, 0)
+		return dst
+	end
+	local function free_grid(x)
+		if x and (type(x) == "table" or type(x) == "userdata") then
+			pcall(function() if type(x.free) == "function" then x:free() end end)
+		end
+	end
+
+	-- Height + type via the terrain API (native grids -> compute, same as the stretch).
+	local function shift_terrain_grid(label, get_fn, set_fn, invalidate_fn)
+		local ok, err = pcall(function()
+			local src = get_fn(map)
+			if not src then return end
+			local cg = GridToCompute(src)
+			local w, h = cg:size()
+			local dxc = math.floor((dx % map_w) * w / map_w + 0.5)
+			local dyc = math.floor((dy % map_h) * h / map_h + 0.5)
+			local dst = wrap_translate_compute(cg, w, h, dxc, dyc)
+			if dst then
+				set_fn(map, dst)
+				if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
+				free_grid(dst)
+			end
+			if cg ~= src then free_grid(cg) end
+			free_grid(src)
+		end)
+		StretchLog("underground align: grid shifted", { grid = label, ok = ok, err = ok and nil or tostring(err) })
+	end
+	shift_terrain_grid("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight)
+	shift_terrain_grid("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType)
+
+	-- Editor MapGrids (colour/biome); absent grids are skipped by the pcall guards.
+	local editor_api = Global("editor")
+	if type(editor_api) == "table" and type(editor_api.GetGrid) == "function" and type(editor_api.SetGrid) == "function" then
+		local full_box = box_fn(0, 0, map_w, map_h)
+		for _, name in ipairs({ "colorize", "BiomeGrid" }) do
+			local ok, err = pcall(function()
+				local ok_g, src = pcall(editor_api.GetGrid, map, name, full_box)
+				if not ok_g or not src then return end
+				local cg = GridToCompute(src)
+				local w, h = cg:size()
+				local dxc = math.floor((dx % map_w) * w / map_w + 0.5)
+				local dyc = math.floor((dy % map_h) * h / map_h + 0.5)
+				local dst = wrap_translate_compute(cg, w, h, dxc, dyc)
+				if dst then
+					local out = dst
+					if type(GridRepack) == "function" then
+						local fmt, bits = IsComputeGrid(src)
+						if fmt then out = GridRepack(dst, fmt, bits) end
+					end
+					pcall(editor_api.SetGrid, map, name, out, full_box)
+					if out ~= dst then free_grid(out) end
+					free_grid(dst)
+				end
+				if cg ~= src then free_grid(cg) end
+				free_grid(src)
+			end)
+			StretchLog("underground align: mapgrid shifted", { grid = name, ok = ok, err = ok and nil or tostring(err) })
+		end
+	end
+
+	-- 4) Move EVERY object by the wrapped offset (Z-snapped), batching passability edits.
+	-- UI/bookkeeping objects (sector decals, holders, overview decals) stay put.
+	local skip_classes = {
+		City = true, MapSector = true, RandomMapGeneratorHolder = true, RevealedMapSector = true,
+		SectorUnexplored = true, SectorScanned = true, SectorTarget = true, SectorRadius = true,
+	}
+	local city = map.City
+	local get_sector = Global("GetMapSectorXY")
+	local objs = {}
+	pcall(map.MapForEach, map, "map", "CObject", function(o) objs[#objs + 1] = o end)
+	local moved, reregistered = 0, 0
+	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
+	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapUndergroundAlign") end
+	for _, obj in ipairs(objs) do
+		if obj and not skip_classes[obj.class or false] then
+			pcall(function()
+				local pos = ObjectPosition(obj)
+				if not pos then return end
+				local ox, oy = PointXY(pos)
+				if type(ox) ~= "number" or type(oy) ~= "number" then return end
+				local nx = (ox + dx) % map_w
+				local ny = (oy + dy) % map_h
+				local np = point_fn(math.floor(nx), math.floor(ny))
+				if type(np.SetTerrainZ) == "function" then
+					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
+					if ok_z and pz then np = pz end
+				end
+				if type(obj.SetPos) == "function" then
+					pcall(obj.SetPos, obj, np)
+					moved = moved + 1
+					if city and type(get_sector) == "function" and IsKindOfSafe(obj, "DepositMarker") then
+						local ok_o, old_sec = pcall(get_sector, city, ox, oy)
+						local ok_n, new_sec = pcall(get_sector, city, nx, ny)
+						if ok_o and ok_n and old_sec and new_sec and old_sec ~= new_sec then
+							if type(old_sec.UnregisterDeposit) == "function" then pcall(old_sec.UnregisterDeposit, old_sec, obj) end
+							if type(new_sec.RegisterDeposit) == "function" then pcall(new_sec.RegisterDeposit, new_sec, obj) end
+							reregistered = reregistered + 1
+						end
+					end
+				end
+			end)
+		end
+	end
+	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapUndergroundAlign") end
+
+	-- 5) Rebuild derived state over the shifted map.
+	ReinvalidateExpandedTerrain(map)
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	if type(rebuild_buildable) == "function" and map.buildable then
+		SafeCall(rebuild_buildable, map)
+	end
+	StretchLog("underground align: DONE", { dx = dx, dy = dy, moved = moved, reregistered = reregistered })
+	DebugPrint(string.format("underground aligned to surface entrances: shifted by %s,%s wu (%s objects)",
+		tostring(dx), tostring(dy), tostring(moved)))
+	return true
+end
+
 -- After a sector's terrain is copied into to_box, any object that was ALREADY
 -- sitting in that destination region (e.g. a mystery "pile of stone" / anomaly a
 -- story event dropped into the frame) is now floating above or buried under the
@@ -1685,6 +1917,7 @@ local TerrainCopy = {
 	ScaleDecorationsToFull = ScaleDecorationsToFull,
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
+	TranslateUndergroundToMatchEntrances = TranslateUndergroundToMatchEntrances,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,
