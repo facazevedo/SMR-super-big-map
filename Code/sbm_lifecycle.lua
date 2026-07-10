@@ -750,6 +750,45 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 			if elevator_btn and type(elevator_btn.Show) == "function" then
 				elevator_btn.Show()
 			end
+			-- GROUND-TRUTH entrance dump (gated on DEBUG_ALIGN): logs every tunnel spawner /
+			-- marker / passage on this map, EXPANDED OR NOT -- so a vanilla run (EXPAND off) and
+			-- an expanded run at the SAME coordinates can be diffed to find where the expansion
+			-- relocates a surface entrance relative to vanilla (user-proven: vanilla corresponds
+			-- D4<->D4 / F3<->F3 on both views). Delayed 3s so CityInit-spawned markers exist.
+			local DebugLog = SuperBigMap.DebugLog
+			if DebugLog and DebugLog.On and DebugLog.On("Align") then
+				local create_thread = Global("CreateRealTimeThread")
+				local sleep = Global("Sleep")
+				if type(create_thread) == "function" and type(sleep) == "function" then
+					create_thread(function()
+						sleep(3000)
+						local get_sector = Global("GetMapSectorXY")
+						local city = map.City
+						local map_id = tostring((map.mapdata and map.mapdata.id) or map.name or "?")
+						for _, class_name in ipairs({ "SpawnsTunnelOnCityInit", "SurfaceUndergroundTunnelMarker", "ElevatorPassage" }) do
+							local n = 0
+							pcall(map.MapForEach, map, "map", class_name, function(o)
+								n = n + 1
+								local ok, x, y = pcall(function()
+									local p = o:GetPos()
+									return p:x(), p:y()
+								end)
+								local sector = "?"
+								if ok and type(x) == "number" and city and type(get_sector) == "function" then
+									local ok_s, sec = pcall(get_sector, city, x, y)
+									sector = tostring((ok_s and sec) and sec.id or "nil")
+								end
+								DebugLog.Info("Align", "entrance ground truth", {
+									map = map_id, query = class_name, n = n,
+									class = tostring(o.class or "?"),
+									xy = ok and (tostring(x) .. "," .. tostring(y)) or "?",
+									sector = sector,
+								})
+							end)
+						end
+					end)
+				end
+			end
 		end
 	end
 	Lifecycle.Apply(map, true)
