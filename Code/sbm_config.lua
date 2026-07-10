@@ -532,11 +532,14 @@ config.ExpansionFrameFillMode = "stretch"
 -- nearby, bringing density back to the generated look.
 config.StretchScaleMarkers = true
 config.StretchDecorTopUp = true
--- Settle delay (ms) before the STRETCH fill runs. Mirror needs a long settle (5s) to wait for the
--- sector-by-sector grid to finish building; stretch works purely on the terrain grids (ready as
--- soon as generation completes + the F0 sector exists), so it uses this much shorter settle --
--- the main lever for "load faster". Lower = faster start; raise if the stretch runs too early.
-config.StretchSettleMs = 800
+-- Settle delay (ms) before the STRETCH fill runs. It must be long enough that ALL terrain grids
+-- have been resized to the full expanded map before we resample them -- in particular BiomeGrid
+-- gets resized LATE, and if the stretch runs before it is full-size the frame keeps the default
+-- biome and renders GREY (and the size guard in sbm_terrain_copy skips it). 5000ms is the proven
+-- value (matches the a8474a8 build where the whole map stretched correctly). A shorter value loads
+-- faster but risks the grey-frame biome issue; the real fix for speed is to poll for grid-readiness
+-- rather than lower this blindly.
+config.StretchSettleMs = 5000
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
