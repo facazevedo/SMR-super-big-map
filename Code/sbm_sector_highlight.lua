@@ -41,6 +41,10 @@ local function Install()
 	local original_select_sector = State.original_overview_select_sector or overview_class.SelectSector
 	State.original_overview_select_sector = original_select_sector
 
+	-- Declared FIRST: every helper below (frame create/destroy, hover-frame reuse check, the
+	-- wrapper's sector_obj guard, the visual diagnostics) validates objects through this.
+	local is_valid = Engine.Global("IsValid")
+
 	-- True when the currently VIEWED city/map is the underground and the underground exploration
 	-- UI feature is on. Drives the underground-specific rollover/frame/queue behavior below.
 	local function UndergroundUiActive()
@@ -308,8 +312,6 @@ local function Install()
 			bounds = bounds, cursor_inside_sector = inside,
 		})
 	end
-
-	local is_valid = Engine.Global("IsValid")
 
 	-- Visual-condition diagnostic (gated on Config.DEBUG_HOVER): vanilla SelectSector early-outs
 	-- before drawing the highlight/rollover on any of these -- no sector_obj decal,
