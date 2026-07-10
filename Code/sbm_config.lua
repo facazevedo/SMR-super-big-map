@@ -573,6 +573,12 @@ config.UndergroundOverviewEnabled = true
 -- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
+-- Force the pre-placed underground tunnel entrances to sit directly beneath the SURFACE entrances.
+-- Vanilla places surface & underground natural tunnels independently (no shared coordinate), so
+-- they don't line up. When on, each underground tunnel marker is moved onto its nearest surface
+-- tunnel marker's (x,y) -- same coordinate space after the stretch, so it lands in the matching
+-- sector. Changes where the natural underground arrival is (emergence follows the marker).
+config.AlignUndergroundEntrances = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -843,6 +849,7 @@ C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
+C.ALIGN_UNDERGROUND_ENTRANCES = as_bool(config.AlignUndergroundEntrances)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)

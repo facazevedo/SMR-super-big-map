@@ -180,6 +180,88 @@ local function Install()
 		State.ug_entrance_frames = nil
 	end
 
+	-- FORCE ALIGNMENT (config ALIGN_UNDERGROUND_ENTRANCES): the pre-placed surface and underground
+	-- natural tunnel markers are placed independently by each map's generation (SpawnsOnCityInit
+	-- spawns each at its own position -- no shared coordinate), so the underground entrances don't
+	-- sit under the surface ones. Move each underground tunnel marker onto the (x,y) of its nearest
+	-- surface tunnel marker: both maps share the same 8192 coordinate space after the stretch, so a
+	-- shared (x,y) lands in the matching sector -> vertical correspondence. The pair link is by
+	-- object reference (unaffected by position); emergence uses the marker's position, so this also
+	-- makes the natural arrival emerge under the surface entrance. Runs ONCE per underground map.
+	local function AlignUndergroundEntrancesToSurface(ug_map)
+		if (SuperBigMap.Config or {}).ALIGN_UNDERGROUND_ENTRANCES ~= true then return end
+		if not ug_map or ug_map.SuperBigMapUndergroundEntrancesAligned == true then return end
+		local main_map = Engine.Global("MainMap")
+		local get_sector = Engine.Global("GetMapSectorXY")
+		local point_fn = Engine.Global("point")
+		if not main_map or type(main_map.MapForEach) ~= "function"
+			or type(ug_map.MapForEach) ~= "function" or type(point_fn) ~= "function" then
+			return
+		end
+		local DebugLog = SuperBigMap.DebugLog
+		local function collect(m)
+			local list = {}
+			pcall(m.MapForEach, m, "map", "SurfaceUndergroundTunnelMarker", function(o)
+				local ok, x, y = pcall(function() local p = o:GetPos() return p:x(), p:y() end)
+				if ok and type(x) == "number" then list[#list + 1] = { obj = o, x = x, y = y } end
+			end)
+			return list
+		end
+		local surf, ug = collect(main_map), collect(ug_map)
+		ug_map.SuperBigMapUndergroundEntrancesAligned = true -- run once regardless of outcome
+		if #surf == 0 or #ug == 0 then
+			if DebugLog then DebugLog.Info("Hover", "entrance alignment: nothing to pair", { surf = #surf, ug = #ug }) end
+			return
+		end
+		local ug_city = ug_map.City
+		local used, moved = {}, 0
+		for _, s in ipairs(surf) do
+			local best, bestd
+			for j, u in ipairs(ug) do
+				if not used[j] then
+					local dx, dy = u.x - s.x, u.y - s.y
+					local d = dx * dx + dy * dy
+					if not bestd or d < bestd then bestd, best = d, j end
+				end
+			end
+			if best then
+				used[best] = true
+				local u = ug[best]
+				pcall(function()
+					local np = point_fn(s.x, s.y)
+					if type(np.SetTerrainZ) == "function" then
+						local okz, snapped = pcall(np.SetTerrainZ, np, ug_map)
+						if okz and snapped then np = snapped end
+					end
+					if ug_city and type(get_sector) == "function" then
+						local oks, oldsec = pcall(get_sector, ug_city, u.x, u.y)
+						local okn, newsec = pcall(get_sector, ug_city, s.x, s.y)
+						if oks and okn and oldsec and newsec and oldsec ~= newsec then
+							if type(oldsec.UnregisterDeposit) == "function" then pcall(oldsec.UnregisterDeposit, oldsec, u.obj) end
+							if type(newsec.RegisterDeposit) == "function" then pcall(newsec.RegisterDeposit, newsec, u.obj) end
+						end
+					end
+					if type(u.obj.SetPos) == "function" then u.obj:SetPos(np) end
+					-- Move the attached surface sign so the visual entrance follows.
+					if u.obj.tunnel_sign and type(is_valid) == "function" and is_valid(u.obj.tunnel_sign)
+						and type(u.obj.tunnel_sign.SetPos) == "function" then
+						u.obj.tunnel_sign:SetPos(np)
+					end
+					moved = moved + 1
+					if DebugLog and DebugLog.On("Hover") then
+						DebugLog.Info("Hover", "entrance aligned", {
+							from_xy = tostring(u.x) .. "," .. tostring(u.y),
+							to_xy = tostring(s.x) .. "," .. tostring(s.y),
+						})
+					end
+				end)
+			end
+		end
+		if DebugLog then
+			DebugLog.Info("Hover", "underground entrances aligned to surface", { surf = #surf, ug = #ug, moved = moved })
+		end
+	end
+
 	local function BuildUndergroundEntranceFrames()
 		DestroyUndergroundEntranceFrames()
 		local cur_map = Engine.Global("CurrentMap")
@@ -189,6 +271,9 @@ local function Install()
 			or type(cur_map.MapForEach) ~= "function" then
 			return
 		end
+		-- Align the underground entrances under the surface ones BEFORE framing, so the cyan
+		-- frames (and the markers themselves) land on the matching sectors. Once-guarded internally.
+		AlignUndergroundEntrancesToSurface(cur_map)
 		local DebugLog = SuperBigMap.DebugLog
 		local seen, frames, found_objs = {}, {}, 0
 		local function mark_entrances(class_name)
