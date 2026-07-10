@@ -77,9 +77,67 @@ local function Install()
 		))
 	end
 
+	-- Hover-misalignment diagnostic (gated on Config.DEBUG_HOVER, scope "Hover"): per NEW hovered
+	-- sector, log the terrain-cursor world position, the cursor ray-hit Z vs the AUTHORITATIVE
+	-- terrain height at that x,y (a large dz means the mouse ray intersected a STALE height
+	-- surface -- e.g. pre-stretch heights -- so the cursor lands at the wrong world point), the
+	-- resolved sector + bounds, and whether the cursor is inside it (false = sector math wrong).
+	-- One line per sector as the mouse sweeps; enough to tell WHICH half of the mapping is off.
+	local last_hover_id = false
+	local function HoverDiag(sector)
+		local DebugLog = SuperBigMap.DebugLog
+		if not (DebugLog and DebugLog.On("Hover")) then return end
+		if not sector or sector.id == last_hover_id then return end
+		last_hover_id = sector.id
+		local Global = Engine.Global
+		local gtc = Global("GetTerrainCursor")
+		if type(gtc) ~= "function" then return end
+		local ok_c, cur = pcall(gtc)
+		if not ok_c or not cur then return end
+		local cx, cy, cz
+		if type(cur.xyz) == "function" then
+			local ok; ok, cx, cy, cz = pcall(cur.xyz, cur)
+			if not ok then cx = nil end
+		end
+		if type(cx) ~= "number" or type(cy) ~= "number" then return end
+		-- Authoritative height at the cursor's x,y (post-stretch grid).
+		local h
+		local terrain_api = Global("terrain")
+		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+			local map = Global("CurrentMap")
+			local ok_h, v = pcall(terrain_api.GetHeight, map, cur)
+			if not ok_h then ok_h, v = pcall(terrain_api.GetHeight, cur) end
+			if ok_h and type(v) == "number" then h = v end
+		end
+		-- Sector bounds + containment.
+		local inside, bounds = "?", "?"
+		if sector.area then
+			local ok_ctr, ctr = pcall(sector.area.Center, sector.area)
+			local ok_sx, sx = pcall(sector.area.sizex, sector.area)
+			local ok_sy, sy = pcall(sector.area.sizey, sector.area)
+			if ok_ctr and ctr and ok_sx and ok_sy and type(ctr.xy) == "function" then
+				local ok_xy, ax, ay = pcall(ctr.xy, ctr)
+				if ok_xy and type(ax) == "number" then
+					local x1, y1 = ax - sx / 2, ay - sy / 2
+					local x2, y2 = ax + sx / 2, ay + sy / 2
+					inside = (cx >= x1 and cx <= x2 and cy >= y1 and cy <= y2)
+					bounds = string.format("%d,%d..%d,%d", x1, y1, x2, y2)
+				end
+			end
+		end
+		DebugLog.Info("Hover", "hovered sector", {
+			sector = tostring(sector.id), col = sector.col, row = sector.row,
+			cursor_xy = tostring(cx) .. "," .. tostring(cy),
+			cursor_z = cz, terrain_h = h,
+			dz = (type(cz) == "number" and type(h) == "number") and (cz - h) or "?",
+			bounds = bounds, cursor_inside_sector = inside,
+		})
+	end
+
 	local is_valid = Engine.Global("IsValid")
 	overview_class.SelectSector = function(self, sector, ...)
 		DiagSelect(sector)
+		HoverDiag(sector)
 		-- Guard against a destroyed hover-highlight object. self.sector_obj is the
 		-- dialog's SectorTarget/SectorRadius decal (placed in CurrentMap); our sector
 		-- rebuild (forced InitSectors) and surface/underground map switches can
