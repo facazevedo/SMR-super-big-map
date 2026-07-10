@@ -739,6 +739,43 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "PostNewMapLoaded")
 	end
+	-- UNDERGROUND maps take their own (minimal) stretch path -- never the surface pipeline
+	-- (sector mirror plan, relocation, density suite are surface-only). Also the TEMP
+	-- config-gated unlock of the underground map VIEW so it can be inspected from the start.
+	local env = map and map.mapdata and map.mapdata.Environment
+	if env == "Underground" then
+		local gen = SuperBigMap.MapGeneration
+		if gen and type(gen.RunUndergroundStretchIfEnabled) == "function" then
+			gen.RunUndergroundStretchIfEnabled(map)
+		end
+		if (SuperBigMap.Config or {}).UNLOCK_UNDERGROUND_VIEW_AT_START == true then
+			local create_thread = Global("CreateRealTimeThread")
+			local sleep = Global("Sleep")
+			if type(create_thread) == "function" and type(sleep) == "function" then
+				create_thread(function()
+					-- UIColony exists a bit after map load; poll briefly, then flip the flag the
+					-- map-switch UI reads (MapSwitchClass:IsAvailable -> underground_map_unlocked).
+					for _ = 1, 120 do
+						local colony = Global("UIColony")
+						if type(colony) == "table" then
+							if colony.underground_map_unlocked ~= true then
+								colony.underground_map_unlocked = true
+								local DebugLog = SuperBigMap.DebugLog
+								if DebugLog then
+									DebugLog.Info("Lifecycle", "TEMP: underground map view unlocked at start (config UNLOCK_UNDERGROUND_VIEW_AT_START)")
+								end
+							end
+							return
+						end
+						sleep(500)
+					end
+				end)
+			end
+		end
+		DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
+		return
+	end
+
 	-- Expansion-completion work (grid sync, re-invalidate, frame copy/mirror, crater
 	-- cleanup) runs ONLY on a real mod-expanded scenario. The "PreGame" mission-setup
 	-- preview and any non-mod map are skipped entirely -- this is what stops the

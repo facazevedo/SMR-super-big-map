@@ -300,7 +300,14 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "feature disabled"
 	end
 
-	if cfg_bool("QUADRANT_MAIN_MAP_ONLY", true) and map_slot ~= 1 then
+	-- Underground expansion (config STRETCH_UNDERGROUND): the underground map generates in its
+	-- own slot with Environment=="Underground"; when the flag is on it is exempt from the
+	-- main-slot-only and surface-only gates, so it gets the same 8192 allocation + native-capped
+	-- generator as the surface (its stretch then applies the identical transform).
+	local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
+		and type(mapdata) == "table" and mapdata.Environment == "Underground"
+
+	if cfg_bool("QUADRANT_MAIN_MAP_ONLY", true) and map_slot ~= 1 and not underground_ok then
 		return false, "not the main map slot"
 	end
 
@@ -312,7 +319,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "missing terrain mapdata"
 	end
 
-	if cfg_bool("QUADRANT_SURFACE_ONLY", true) and mapdata.Environment ~= "Surface" then
+	if cfg_bool("QUADRANT_SURFACE_ONLY", true) and mapdata.Environment ~= "Surface" and not underground_ok then
 		return false, "not a surface map"
 	end
 
@@ -1366,8 +1373,71 @@ local function SyncMapDataToGrids(map)
 	return true
 end
 
+-- STRETCH for the UNDERGROUND map (config STRETCH_UNDERGROUND): the same resample pipeline as the
+-- surface in its minimal form -- terrain grids + decorations + markers (incl. tunnel markers), no
+-- sector-grid work, no start-sector relocation, no density suite yet. Because BOTH maps receive
+-- the IDENTICAL x(full/source) transform, surface<->underground entrances keep corresponding: the
+-- game spawns an underground passage AT the surface passage's own x,y and links the pair by
+-- object reference. Triggered from PostNewMapLoaded for Environment=="Underground" maps; gates on
+-- the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
+local function RunUndergroundStretchIfEnabled(map)
+	if not cfg_bool("STRETCH_UNDERGROUND", false) then return false end
+	map = map or Global("CurrentMap")
+	if not map or map.SuperBigMapUndergroundStretchDone == true then return false end
+	local desired = map.SuperBigMapDesiredWidthTiles
+	local gen_t = map.SuperBigMapGeneratorWidthTiles
+	if not (type(desired) == "number" and type(gen_t) == "number" and desired > gen_t) then
+		StretchLog("underground stretch: not an expanded underground map -- skip", {
+			desired = tostring(desired), generator = tostring(gen_t),
+		})
+		return false
+	end
+	local create_thread = Global("CreateRealTimeThread")
+	local sleep = Global("Sleep")
+	if type(create_thread) ~= "function" or type(sleep) ~= "function" then return false end
+	map.SuperBigMapUndergroundStretchDone = true
+	local settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
+	StretchLog("underground stretch: scheduled", { settle_ms = settle_ms, desired = desired, generator = gen_t })
+	create_thread(function()
+		sleep(settle_ms)
+		local pause_ild = Global("PauseInfiniteLoopDetection")
+		local resume_ild = Global("ResumeInfiniteLoopDetection")
+		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
+		local ok_branch, branch_err = pcall(function()
+			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
+			SafeCall(SyncMapDataToGrids, map)
+			StretchLog("underground stretch: -> StretchSourceToFull")
+			local ok_s, n_grids = StretchSourceToFull(map, false)
+			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
+			if type(ScaleDecorationsToFull) == "function" then
+				StretchLog("underground stretch: -> ScaleDecorationsToFull")
+				local n_dec = ScaleDecorationsToFull(map, false)
+				StretchLog("underground stretch: decorations done", { moved = n_dec })
+			end
+			if type(ScaleMarkersToFull) == "function" then
+				StretchLog("underground stretch: -> ScaleMarkersToFull")
+				local n_mark = ScaleMarkersToFull(map, false)
+				StretchLog("underground stretch: markers done", { moved = n_mark })
+			end
+			local rebuild_buildable = Global("RebuildBuildableGrid")
+			if type(rebuild_buildable) == "function" and map.buildable then
+				SafeCall(rebuild_buildable, map)
+			end
+		end)
+		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end
+		if not ok_branch then
+			StretchLog("underground stretch: EXCEPTION -- map left as generated", { err = tostring(branch_err) })
+			DebugPrint("RunUndergroundStretchIfEnabled ERROR: " .. tostring(branch_err))
+		end
+		StretchLog("underground stretch: DONE", { ok = ok_branch })
+		DebugPrint("underground stretch complete")
+	end)
+	return true
+end
+
 local MapGeneration = {}
 
+MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled
 MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
 MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
 MapGeneration.AttachPendingMapState = AttachPendingMapState

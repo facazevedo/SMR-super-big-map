@@ -544,6 +544,17 @@ config.StretchEnforceScanGate = true
 -- sector at the scaled center, and moves the landed rocket along -- keeping the start "as close
 -- as possible to the corresponding original sector" on the expanded map.
 config.StretchRelocateStartSector = true
+-- UNDERGROUND stretch (in development, step 1+2: allocation + terrain/decor/marker stretch).
+-- Expands the underground map to the same 8192 allocation and applies the IDENTICAL
+-- x(full/source) transform as the surface, so surface<->underground entrances correspond
+-- perfectly (the game spawns an underground passage AT the surface passage's own x,y and links
+-- the pair by object reference -- equal transforms on both maps preserve that correspondence).
+-- No underground sector-grid or density work yet.
+config.StretchUnderground = true
+-- TEMP (testing): unlock the underground map VIEW from the start of the game, so the stretched
+-- underground can be inspected immediately via the map switcher (vanilla unlocks it later).
+-- Turn OFF for release.
+config.UnlockUndergroundViewAtStart = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -808,6 +819,8 @@ C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
 C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
 C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
 C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
+C.STRETCH_UNDERGROUND = as_bool(config.StretchUnderground)
+C.UNLOCK_UNDERGROUND_VIEW_AT_START = as_bool(config.UnlockUndergroundViewAtStart)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
