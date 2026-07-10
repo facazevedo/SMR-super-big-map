@@ -1091,15 +1091,34 @@ local function MoveEntranceVisualsToScale(map)
 			if ok_z and pz then np = pz end
 		end
 		local ok_set = false
+		local rehexed = false
 		if type(obj.SetPos) == "function" then
+			-- BUILDINGS (e.g. the natural UndergroundPassage) occupy object_hex_grid slots at
+			-- their placement position; a bare SetPos moves the visuals but LEAVES THE HEX
+			-- REGISTRATION BEHIND -- construction snapping (the Elevator's ElevatorPassage search
+			-- goes through HexGridShapeGetObjectList) then finds nothing at the visible spot.
+			-- Re-register the hex shape across the move.
+			local hex_grid = map.object_hex_grid
+			local hex_remove = Global("HexGridShapeRemoveObject")
+			local hex_add = Global("HexGridShapeAddObject")
+			local shape
+			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
+				and type(obj.GetShapePoints) == "function" then
+				local ok_sh, sh = pcall(obj.GetShapePoints, obj)
+				if ok_sh and sh then shape = sh end
+			end
+			if shape then pcall(hex_remove, hex_grid, obj, shape) end
 			ok_set = pcall(obj.SetPos, obj, np)
+			if shape then
+				rehexed = pcall(hex_add, hex_grid, obj, shape) == true
+			end
 		end
 		if ok_set then moved = moved + 1 end
 		AlignLog("entrance visual moved", {
 			via = via, class = tostring(obj.class or "?"),
 			from = tostring(ox) .. "," .. tostring(oy),
 			to = tostring(math.floor(ox * scale + 0.5)) .. "," .. tostring(math.floor(oy * scale + 0.5)),
-			ok = ok_set,
+			ok = ok_set, rehexed = rehexed,
 		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
