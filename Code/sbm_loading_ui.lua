@@ -447,6 +447,16 @@ local function LoadingLog(message, data)
 	end
 end
 
+-- Exhaustive loading-box trace (gated on Config.DEBUG_LOADING): the watch-loop lifetime and the
+-- "Please wait" dot animation, so we can see whether the animation stopped because the box closed
+-- (fast load) or the watch thread died. Temporary diagnostic scope; only the flag is turned off.
+local function LoadingDbg(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Loading", message, data)
+	end
+end
+
 -- Our separate "Loading Super Big Map" message box (a standard message dialog), shown ON TOP of
 -- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, with a bright-gold
 -- "Please wait." footer button, auto-closed when the expansion finishes.
@@ -498,18 +508,26 @@ end
 -- translate context (same as the original ok_text). No-op until the async button exists.
 local function AnimateWaitButton(box)
 	if not box then return end
+	local had_btn = loading_wait_button ~= false and loading_wait_button ~= nil
 	local btn = loading_wait_button
 	if not btn or btn.window_state == "destroyed" or btn.window_state == "destroying" then
 		btn = FindOkButton(box) or false
 		loading_wait_button = btn
+		if btn and not had_btn then LoadingDbg("wait anim: OK button FOUND") end
+		if not btn and had_btn then LoadingDbg("wait anim: OK button LOST -> re-searching") end
 	end
 	local dots = 1 + (math.floor(loading_anim_tick / WAIT_DOTS_EVERY) % 3)
+	local at_boundary = (loading_anim_tick % WAIT_DOTS_EVERY == 0)
 	loading_anim_tick = loading_anim_tick + 1
-	if not btn or type(btn.SetText) ~= "function" then return end
+	if not btn or type(btn.SetText) ~= "function" then
+		if at_boundary then LoadingDbg("wait anim: no button yet", { tick = loading_anim_tick, dots = dots }) end
+		return
+	end
 	local text = WAIT_BASE .. string.rep(".", dots)
 	local untranslated = Global("Untranslated")
 	if type(untranslated) == "function" then text = untranslated(text) end
-	pcall(btn.SetText, btn, text)
+	local ok_set = pcall(btn.SetText, btn, text)
+	if at_boundary then LoadingDbg("wait anim: set dots", { tick = loading_anim_tick, dots = dots, ok = ok_set }) end
 end
 
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
@@ -591,11 +609,21 @@ function SuperBigMap.ExpansionLoadingBegin()
 	create_thread(function()
 		local sleep = Global("Sleep")
 		local applied = false
+		local iter = 0
+		LoadingDbg("watch loop: START")
 		for _ = 1, 2000 do -- ~60s backstop (30ms ticks)
+			iter = iter + 1
 			if not loading_on_welcome then
+				LoadingDbg("watch loop: EXIT (loading_on_welcome cleared)", { iter = iter })
 				return -- ended (expansion finished) before/while watching
 			end
-			local ok = SetWelcomeLoading(true)
+			-- pcall so a throw inside SetWelcomeLoading / the dot animation can NEVER kill this
+			-- watch thread (which would freeze the box + stop the animation while it stays up).
+			local ok_call, ok = pcall(SetWelcomeLoading, true)
+			if not ok_call then
+				LoadingDbg("watch loop: SetWelcomeLoading THREW (loop kept alive)", { iter = iter, err = tostring(ok) })
+				ok = false
+			end
 			if ok and not applied then
 				applied = true
 				LoadingLog("loading box shown over hidden welcome popup")
@@ -603,11 +631,16 @@ function SuperBigMap.ExpansionLoadingBegin()
 				applied = false
 				LoadingLog("loading box not present; will recreate")
 			end
+			if iter % 33 == 0 then
+				LoadingDbg("watch loop: tick", { iter = iter, box_valid = LoadingBoxValid() == true, anim_tick = loading_anim_tick })
+			end
 			if type(sleep) ~= "function" then
+				LoadingDbg("watch loop: EXIT (no Sleep fn)", { iter = iter })
 				return
 			end
 			sleep(30)
 		end
+		LoadingDbg("watch loop: EXIT (backstop expired)", { iter = iter })
 		LoadingLog("ExpansionLoadingBegin: watch backstop expired (60s)")
 	end)
 end
