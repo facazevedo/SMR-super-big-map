@@ -34,8 +34,10 @@ end
 local function White() return Color(236, 236, 238, 255) end
 
 local function Log(message, data)
+	-- "Align" scope: it is ON during the entrance-correspondence investigation (the earlier
+	-- "Lifecycle" scope was OFF in config, which silently swallowed all this module's logs).
 	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("Lifecycle", message, data) end
+	if DebugLog then DebugLog.Info("Align", message, data) end
 end
 
 -- Press: unlock the Elevator template (placement rejects locked buildings), arm the one-shot
