@@ -740,6 +740,18 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded", map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "PostNewMapLoaded")
+	-- TEMP Place Elevator button also on NON-expanded games (user request): Lifecycle.Apply only
+	-- runs on mod maps, so show it here for any real game map (PreGame preview excluded;
+	-- config-gated + idempotent inside Show).
+	do
+		local id = tostring((map and map.mapdata and map.mapdata.id) or (map and map.name) or "")
+		if map and map.mapdata and id ~= "PreGame" then
+			local elevator_btn = SuperBigMap.PlaceElevatorButton
+			if elevator_btn and type(elevator_btn.Show) == "function" then
+				elevator_btn.Show()
+			end
+		end
+	end
 	Lifecycle.Apply(map, true)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then

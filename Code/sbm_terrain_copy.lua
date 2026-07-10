@@ -1550,14 +1550,19 @@ end
 
 -- PER-PAIR ENTRANCE ALIGNMENT (config ALIGN_UNDERGROUND_ENTRANCES): natural tunnel pairs are
 -- linked by object reference (ElevatorPassage:Link -> passage.other on both sides), but their
--- endpoints are NOT always co-located by generation -- log 16.31.59 showed one pair matching
--- within ~5k wu and the other ~140k wu (3.4 sectors) apart, so no uniform transform can fix them
--- all. For every SURFACE passage with a linked underground counterpart that is not already
--- beneath it, move the UNDERGROUND endpoint -- the passage building (hex re-registered) plus its
--- entrance cluster (tunnel marker / sign / rocks / imprint objects near the old endpoint) -- to
--- the surface endpoint's (x,y), Z-snapped. The surface (normal view) is canonical and never
--- moves. Travel/link semantics are untouched (the pair link is by reference, and emergence
--- follows the endpoint positions). Runs once per underground map.
+-- endpoints are NOT always co-located by generation (log 16.31.59: one pair within ~5k wu, the
+-- other ~140k wu / 3.4 sectors apart -- and no scale/translation/affine transform fits both, so
+-- this must be fixed PER PAIR). For every mismatched pair, move the SURFACE endpoint above the
+-- underground one (user-confirmed direction): the underground endpoint must stay in its carved
+-- cavern (moving it lands in solid rock -- the isolated floor-pocket problem), while the surface
+-- has natural terrain everywhere. Mountainside destinations are handled with vanilla's own
+-- passage-spawn tools: FindPassageSpawnPos slides the target to the nearest BUILDABLE area
+-- (searched on the buildable grid) and FlattenTerrainInBuildShape levels the pad -- exactly what
+-- SpawnUndergroundPassage does when vanilla spawns a passage at an arbitrary point; any drift
+-- from the exact overhead point is logged. Moved pieces: the surface passage building (hex
+-- re-registered, ElevatorPassage-whitelisted) plus its entrance cluster (tunnel marker / sign /
+-- rocks / imprint near the old surface endpoint), markers re-registered into their new sectors.
+-- Runs once per underground map load.
 local function AlignEntrancePairs(ug_map)
 	if not cfg_bool("ALIGN_UNDERGROUND_ENTRANCES", false) then return 0 end
 	if not ug_map or ug_map.SuperBigMapEntrancePairsAligned == true then return 0 end
@@ -1579,76 +1584,23 @@ local function AlignEntrancePairs(ug_map)
 	local get_sector = Global("GetMapSectorXY")
 	local hex_remove = Global("HexGridShapeRemoveObject")
 	local hex_add = Global("HexGridShapeAddObject")
-	local CLUSTER_R = 15000  -- wu: entrance-cluster radius around the old underground endpoint
+	local find_spawn_pos = Global("FindPassageSpawnPos")
+	local spawn_shape_fn = Global("GetExtendedSpawnShape")
+	local flatten = Global("FlattenTerrainInBuildShape")
+	local CLUSTER_R = 15000  -- wu: entrance-cluster radius around the old surface endpoint
 	local ALIGNED_TOL = 8000 -- wu: pairs already within ~1/5 sector are left alone
-	local PATCH_R = 18000    -- wu: ground patch brought along with the endpoint (covers the elevator shape)
 
-	-- Bring the GROUND with the passage: outside the carved cavern the underground terrain is
-	-- UNBUILDABLE solid rock (height sentinel nUnbuildableZ) -- an endpoint moved under its
-	-- surface partner can land in rock, and the elevator's underground construction then asserts
-	-- C-side in FlattenTerrainInShape (z != nUnbuildableZ; crash on the 2nd elevator). Copy a
-	-- height+type terrain patch from the OLD endpoint (open cavern floor) to the NEW location so
-	-- the destination is real, buildable ground matching the entrance's original surroundings.
-	local terrain_api = Global("terrain")
-	local GridToCompute = Global("GridToCompute")
-	local IsComputeGrid = Global("IsComputeGrid")
-	local NewComputeGrid = Global("NewComputeGrid")
-	local function copy_ground_patch(fx, fy, tx, ty)
-		if type(terrain_api) ~= "table" or type(GridToCompute) ~= "function"
-			or type(IsComputeGrid) ~= "function" or type(NewComputeGrid) ~= "function" then
-			return false
-		end
-		local map_w = type(ug_map.Width) == "number" and ug_map.Width or nil
-		if not map_w or map_w <= 0 then return false end
-		local function clamp(v, lo, hi)
-			if v < lo then return lo elseif v > hi then return hi end
-			return v
-		end
-		local function one(get_fn, set_fn, inv_fn, label)
-			local ok, err = pcall(function()
-				local src = get_fn(ug_map)
-				if not src then return end
-				local cg = GridToCompute(src)
-				local gw, gh = cg:size()
-				local function cells(v) return math.floor(v * gw / map_w) end
-				local r = cells(PATCH_R)
-				local x1 = clamp(cells(fx) - r, 0, gw)
-				local y1 = clamp(cells(fy) - r, 0, gh)
-				local x2 = clamp(cells(fx) + r, 0, gw)
-				local y2 = clamp(cells(fy) + r, 0, gh)
-				local w, h = x2 - x1, y2 - y1
-				if w <= 0 or h <= 0 then return end
-				local dx1 = clamp(cells(tx) - r, 0, gw - w)
-				local dy1 = clamp(cells(ty) - r, 0, gh - h)
-				-- Stage through a temp grid (same-grid overlapping copyrect is undefined).
-				local fmt, bits = IsComputeGrid(cg)
-				local tmp = NewComputeGrid(w, h, fmt, bits)
-				tmp:copyrect(cg, box_fn(x1, y1, x2, y2), point_fn(0, 0))
-				cg:copyrect(tmp, box_fn(0, 0, w, h), point_fn(dx1, dy1))
-				pcall(function() if type(tmp.free) == "function" then tmp:free() end end)
-				set_fn(ug_map, cg)
-				if type(inv_fn) == "function" then pcall(inv_fn, ug_map) end
-				if cg ~= src then pcall(function() if type(cg.free) == "function" then cg:free() end end) end
-				pcall(function() if type(src.free) == "function" then src:free() end end)
-			end)
-			AlignLog("pair-align: ground patch copied", { grid = label, ok = ok, err = ok and nil or tostring(err) })
-		end
-		one(terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, "height")
-		one(terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, "type")
-		return true
-	end
-
-	-- Move one object to (tx,ty), Z-snapped; Buildings get their hex shape re-registered
-	-- (bare SetPos leaves hex entries behind -- the elevator-snap lesson).
+	-- Move one SURFACE object to (tx,ty), Z-snapped; ElevatorPassage buildings get their hex
+	-- shape re-registered (bare SetPos leaves hex entries behind -- the elevator-snap lesson;
+	-- whitelisted because other Building-derived entrance pieces are not hex-registered and
+	-- luaHex asserts C-side on them).
 	local function move_to(o, tx, ty)
 		local np = point_fn(math.floor(tx), math.floor(ty))
 		if type(np.SetTerrainZ) == "function" then
-			local ok_z, pz = pcall(np.SetTerrainZ, np, ug_map)
+			local ok_z, pz = pcall(np.SetTerrainZ, np, main_map)
 			if ok_z and pz then np = pz end
 		end
 		local shape
-		-- Same whitelist as MoveEntranceVisualsToScale: only ElevatorPassage buildings are
-		-- guaranteed hex-registered; other Building-derived entrance pieces can assert C-side.
 		if type(hex_remove) == "function" and type(hex_add) == "function"
 			and IsKindOfSafe(o, "ElevatorPassage")
 			and type(o.handle) == "number" and o.handle > 0
@@ -1656,9 +1608,9 @@ local function AlignEntrancePairs(ug_map)
 			local ok_sh, sh = pcall(o.GetShapePoints, o)
 			if ok_sh and sh then shape = sh end
 		end
-		if shape then pcall(hex_remove, ug_map.object_hex_grid, o, shape) end
+		if shape then pcall(hex_remove, main_map.object_hex_grid, o, shape) end
 		local ok_set = type(o.SetPos) == "function" and pcall(o.SetPos, o, np) or false
-		if shape then pcall(hex_add, ug_map.object_hex_grid, o, shape) end
+		if shape then pcall(hex_add, main_map.object_hex_grid, o, shape) end
 		return ok_set
 	end
 
@@ -1686,19 +1638,53 @@ local function AlignEntrancePairs(ug_map)
 			local sx, sy = PointXY(sp)
 			local ux, uy = PointXY(up)
 			if type(sx) ~= "number" or type(ux) ~= "number" then return end
-			local dx, dy = sx - ux, sy - uy
 			AlignLog("pair-align: pair", {
 				surface_xy = tostring(sx) .. "," .. tostring(sy),
 				underground_xy = tostring(ux) .. "," .. tostring(uy),
-				delta = tostring(dx) .. "," .. tostring(dy),
+				delta = tostring(sx - ux) .. "," .. tostring(sy - uy),
 			})
-			if (dx * dx + dy * dy) <= ALIGNED_TOL * ALIGNED_TOL then return end
-			-- Collect the underground entrance cluster around the OLD endpoint (marker, sign,
-			-- rocks, imprint -- anything underground-access plus tunnel markers).
+			do
+				local ddx, ddy = sx - ux, sy - uy
+				if (ddx * ddx + ddy * ddy) <= ALIGNED_TOL * ALIGNED_TOL then return end
+			end
+			-- SURFACE destination: directly above the underground endpoint, slid to the nearest
+			-- BUILDABLE area if that exact spot is mountainside/blocked (vanilla's own
+			-- FindPassageSpawnPos search over the buildable grid).
+			local tx, ty = ux, uy
+			local shape
+			if type(spawn_shape_fn) == "function" then
+				local ok_s, sh = pcall(spawn_shape_fn, "Elevator")
+				if ok_s and sh then shape = sh end
+			end
+			if type(find_spawn_pos) == "function" and shape and main_map.object_hex_grid and main_map.buildable then
+				local angle = 0
+				if type(p.GetAngle) == "function" then
+					local ok_a, a = pcall(p.GetAngle, p)
+					if ok_a and type(a) == "number" then angle = a end
+				end
+				local ok_f, found = pcall(find_spawn_pos, main_map, main_map.object_hex_grid, main_map.buildable,
+					point_fn(ux, uy), angle, shape, nil, {})
+				if ok_f and found then
+					local fx, fy = PointXY(found)
+					if type(fx) == "number" then
+						tx, ty = fx, fy
+						AlignLog("pair-align: destination adjusted to buildable ground", {
+							target_xy = tostring(ux) .. "," .. tostring(uy),
+							found_xy = tostring(tx) .. "," .. tostring(ty),
+							drift = tostring(tx - ux) .. "," .. tostring(ty - uy),
+						})
+					end
+				else
+					AlignLog("pair-align: buildable search unavailable/failed -- using exact overhead point")
+				end
+			end
+			local dx, dy = tx - sx, ty - sy
+			-- Collect the SURFACE entrance cluster around the old endpoint (marker, sign, rocks,
+			-- imprint -- anything underground-access plus tunnel markers).
 			local cluster = {}
-			local around = box_fn(ux - CLUSTER_R, uy - CLUSTER_R, ux + CLUSTER_R, uy + CLUSTER_R)
-			pcall(ug_map.MapForEach, ug_map, around, "CObject", function(o)
-				if o == other then return end
+			local around = box_fn(sx - CLUSTER_R, sy - CLUSTER_R, sx + CLUSTER_R, sy + CLUSTER_R)
+			pcall(main_map.MapForEach, main_map, around, "CObject", function(o)
+				if o == p then return end
 				local matched = false
 				if type(is_access) == "function" then
 					local ok_m, m = pcall(is_access, o)
@@ -1708,10 +1694,12 @@ local function AlignEntrancePairs(ug_map)
 					cluster[#cluster + 1] = o
 				end
 			end)
-			-- Bring the cavern floor along FIRST (so the Z-snaps below land on the new ground),
-			-- then move the passage building and the cluster preserving each member's offset.
-			copy_ground_patch(ux, uy, sx, sy)
-			move_to(other, sx, sy)
+			-- Move the passage building, flatten its pad vanilla-style (the same call
+			-- SpawnUndergroundPassage uses), then move the cluster preserving each member's offset.
+			move_to(p, tx, ty)
+			if type(flatten) == "function" and shape then
+				pcall(flatten, shape, p, "flatten unbuildable")
+			end
 			for _, o in ipairs(cluster) do
 				local op = ObjectPosition(o)
 				if op then
@@ -1721,9 +1709,9 @@ local function AlignEntrancePairs(ug_map)
 						AlignLog("pair-align: cluster member moved", {
 							class = tostring(o.class or "?"), ok = ok_moved,
 						})
-						if IsKindOfSafe(o, "DepositMarker") and ug_map.City and type(get_sector) == "function" then
-							local ok_o, old_sec = pcall(get_sector, ug_map.City, ox2, oy2)
-							local ok_n, new_sec = pcall(get_sector, ug_map.City, ox2 + dx, oy2 + dy)
+						if IsKindOfSafe(o, "DepositMarker") and main_map.City and type(get_sector) == "function" then
+							local ok_o, old_sec = pcall(get_sector, main_map.City, ox2, oy2)
+							local ok_n, new_sec = pcall(get_sector, main_map.City, ox2 + dx, oy2 + dy)
 							if ok_o and ok_n and old_sec and new_sec and old_sec ~= new_sec then
 								if type(old_sec.UnregisterDeposit) == "function" then pcall(old_sec.UnregisterDeposit, old_sec, o) end
 								if type(new_sec.RegisterDeposit) == "function" then pcall(new_sec.RegisterDeposit, new_sec, o) end
@@ -1733,21 +1721,13 @@ local function AlignEntrancePairs(ug_map)
 				end
 			end
 			moved_pairs = moved_pairs + 1
-			AlignLog("pair-align: underground endpoint moved under its surface partner", {
-				to = tostring(sx) .. "," .. tostring(sy), cluster_objects = #cluster,
+			AlignLog("pair-align: SURFACE endpoint moved above its underground partner", {
+				to = tostring(tx) .. "," .. tostring(ty), cluster_objects = #cluster,
 			})
 		end)
 	end
-	if moved_pairs > 0 then
-		-- The ground patches changed heights: refresh the buildable grid so the relocated
-		-- endpoints are constructible.
-		local rebuild_buildable = Global("RebuildBuildableGrid")
-		if type(rebuild_buildable) == "function" and ug_map.buildable then
-			SafeCall(rebuild_buildable, ug_map)
-		end
-	end
 	StretchLog("pair-align: DONE", { surface_passages = #surface_passages, pairs_moved = moved_pairs })
-	DebugPrint(string.format("entrance pair-align: moved %s underground endpoint(s)", tostring(moved_pairs)))
+	DebugPrint(string.format("entrance pair-align: moved %s surface endpoint(s)", tostring(moved_pairs)))
 	return moved_pairs
 end
 

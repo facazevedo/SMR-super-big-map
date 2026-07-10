@@ -581,13 +581,14 @@ config.UndergroundOverviewEnabled = true
 -- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
--- Align the underground map under the surface: TRANSLATE the whole underground map (toroidal
--- wrap -- content pushed off one edge re-enters on the opposite side) so the natural tunnel
--- entrances sit directly beneath their surface counterparts. The offset is DERIVED PER MAP from
--- the actual entrance positions (kept only if one uniform offset matches ALL entrance pairs,
--- half-sector tolerance; otherwise the map is left unchanged and a log says so). Preserves every
--- underground spatial relationship -- entrances, deposits, cavern shape -- while making all
--- entrance pairs correspond vertically.
+-- Make every natural entrance pair correspond vertically across the two maps. Two layers:
+-- 1) whole-map toroidal translation when ALL pairs share one uniform offset (derived per map;
+--    no-ops when they don't);
+-- 2) PER-PAIR fixup for pairs vanilla generated at unrelated spots: the SURFACE endpoint (and
+--    its entrance cluster) moves directly above the underground one -- the underground endpoint
+--    stays in its carved cavern (moving it strands it in solid rock). Mountainside destinations
+--    are slid to the nearest buildable ground (vanilla FindPassageSpawnPos) and the pad is
+--    flattened vanilla-style (FlattenTerrainInBuildShape).
 config.AlignUndergroundEntrances = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
