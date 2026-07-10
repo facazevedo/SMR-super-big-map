@@ -173,6 +173,7 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
+local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1084,6 +1085,15 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
 					local n_vis = MoveEntranceVisualsToScale(map)
 					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
+				end
+				-- Step 3c: FLOATER AUDIT -- objects hovering above the stretched terrain (e.g.
+				-- decor-pass-skipped rocks that kept their old Z over now-lower ground). Logs
+				-- class/dz/skip-verdict per floater under the Align scope; snaps non-Building
+				-- floaters down when STRETCH_RESNAP_FLOATERS is on.
+				if type(AuditFloatingObjects) == "function" then
+					StretchLog("stretch branch: -> AuditFloatingObjects")
+					local n_float = AuditFloatingObjects(map)
+					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
 				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
 				-- original pick, moving the landed rocket along (config STRETCH_RELOCATE_START_SECTOR).

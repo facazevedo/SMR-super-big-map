@@ -1144,6 +1144,93 @@ local function MoveEntranceVisualsToScale(map)
 	return moved
 end
 
+-- STRETCH step 3c (floater audit): find objects HOVERING above the stretched terrain and log
+-- exactly who they are. Cause under investigation (user screenshot: large rock formations
+-- floating): the decoration pass SKIPS several categories (ShouldSkipObject: mystery objects,
+-- underground access, buildings, ~450-800 per map in the logs) -- a skipped object keeps its OLD
+-- Z at its OLD position while the terrain there stretched away and may now be lower. Every
+-- floater logs class / position / z / terrain height / dz / whether it has a parent and, most
+-- diagnostic, the ShouldSkipObject verdict (true = the decor pass skipped it -- cause confirmed).
+-- When STRETCH_RESNAP_FLOATERS is on, non-Building floaters are snapped down onto the terrain
+-- (Buildings are logged but never touched). Surface map only -- underground ceilings would
+-- misflag. Threshold 300 wu above terrain.
+local function AuditFloatingObjects(map)
+	if not map or type(map.MapForEach) ~= "function" then return 0 end
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
+		or type(point_fn) ~= "function" then
+		return 0
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	local function AlignLog(msg, data)
+		if DebugLog then DebugLog.Info("Align", msg, data) end
+	end
+	local object_clone = SuperBigMap.ObjectClone
+	local should_skip = object_clone and object_clone.ShouldSkipObject
+	local fix = cfg_bool("STRETCH_RESNAP_FLOATERS", true)
+	local THRESHOLD = 300 -- wu above terrain = floating
+	local skip_classes = {
+		City = true, MapSector = true, RandomMapGeneratorHolder = true, RevealedMapSector = true,
+		SectorUnexplored = true, SectorScanned = true, SectorTarget = true, SectorRadius = true,
+	}
+	local floaters, fixed, examined = 0, 0, 0
+	local class_counts = {}
+	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
+	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapFloaterAudit") end
+	pcall(map.MapForEach, map, "map", "CObject", function(obj)
+		if not obj or skip_classes[obj.class or false] then return end
+		-- Attached children follow their parent; only audit root objects.
+		if type(obj.GetParent) == "function" then
+			local ok_p, parent = pcall(obj.GetParent, obj)
+			if ok_p and parent then return end
+		end
+		local pos = ObjectPosition(obj)
+		if not pos then return end
+		local px, py = PointXY(pos)
+		if type(px) ~= "number" or type(py) ~= "number" then return end
+		local pz
+		pcall(function() pz = pos:z() end)
+		if type(pz) ~= "number" then return end -- terrain-glued objects have no explicit z
+		examined = examined + 1
+		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
+		if not ok_h or type(h) ~= "number" then return end
+		local dz = pz - h
+		if dz <= THRESHOLD then return end
+		floaters = floaters + 1
+		local cls = tostring(obj.class or "?")
+		class_counts[cls] = (class_counts[cls] or 0) + 1
+		local skipped_verdict = "?"
+		if type(should_skip) == "function" then
+			local ok_s, v = pcall(should_skip, obj)
+			if ok_s then skipped_verdict = v and true or false end
+		end
+		local is_building = IsKindOfSafe(obj, "Building")
+		if floaters <= 25 then
+			AlignLog("floater", {
+				class = cls, xy = tostring(px) .. "," .. tostring(py),
+				z = pz, terrain_h = h, dz = dz,
+				decor_pass_skips_it = skipped_verdict, building = is_building,
+			})
+		end
+		if fix and not is_building and type(obj.SetPos) == "function" then
+			local np = point_fn(px, py, h)
+			if pcall(obj.SetPos, obj, np) then fixed = fixed + 1 end
+		end
+	end)
+	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapFloaterAudit") end
+	local top = {}
+	for cls, n in pairs(class_counts) do top[#top + 1] = cls .. "=" .. n end
+	table.sort(top)
+	AlignLog("floater audit DONE", {
+		examined = examined, floaters = floaters, fixed = fixed,
+		by_class = table.concat(top, " "),
+	})
+	StretchLog("AuditFloatingObjects: DONE", { floaters = floaters, fixed = fixed })
+	DebugPrint(string.format("floater audit: %s floating objects (%s snapped down)", tostring(floaters), tostring(fixed)))
+	return floaters
+end
+
 -- STRETCH step 5: relocate the INITIAL revealed sector(s). Vanilla picks the start sector by its
 -- expected resources BEFORE the stretch moves everything x(full/source), so the scanned sector
 -- (e.g. K11) no longer matches where its content went. For each scanned sector: find the sector
@@ -1795,6 +1882,7 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
+	AuditFloatingObjects = AuditFloatingObjects,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

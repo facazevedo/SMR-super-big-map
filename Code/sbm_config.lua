@@ -583,6 +583,12 @@ config.UndergroundOverviewEnabled = true
 config.UndergroundExplorationUI = true
 -- (Entrance placement correction removed by user decision: entrances receive only the stretch
 -- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
+
+-- FLOATER fix: after the stretch, snap objects found hovering >300 wu above the terrain back
+-- down onto it (surface map only; Buildings are logged but never touched). The audit itself
+-- always logs floaters -- class, height above ground, and whether the decor pass had skipped
+-- the object -- under the Align scope.
+config.StretchResnapFloaters = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -862,6 +868,7 @@ C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
+C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
