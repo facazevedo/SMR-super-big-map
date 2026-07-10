@@ -1587,8 +1587,11 @@ local function AlignEntrancePairs(ug_map)
 	local find_spawn_pos = Global("FindPassageSpawnPos")
 	local spawn_shape_fn = Global("GetExtendedSpawnShape")
 	local flatten = Global("FlattenTerrainInBuildShape")
-	local CLUSTER_R = 15000  -- wu: entrance-cluster radius around the old surface endpoint
-	local ALIGNED_TOL = 8000 -- wu: pairs already within ~1/5 sector are left alone
+	local CLUSTER_R = 15000   -- wu: entrance-cluster radius around the old surface endpoint
+	local ALIGNED_TOL = 20480 -- wu: half a sector -- also aligned when both ends share a sector
+	local MAX_DRIFT = 30000   -- wu: max accepted buildable-search drift from the overhead point;
+	                          -- beyond it use the EXACT overhead point + flatten (a bounded pad
+	                          -- beats vanilla's random-walk fallback, which once drifted 178k wu)
 
 	-- Move one SURFACE object to (tx,ty), Z-snapped; ElevatorPassage buildings get their hex
 	-- shape re-registered (bare SetPos leaves hex entries behind -- the elevator-snap lesson;
@@ -1638,18 +1641,40 @@ local function AlignEntrancePairs(ug_map)
 			local sx, sy = PointXY(sp)
 			local ux, uy = PointXY(up)
 			if type(sx) ~= "number" or type(ux) ~= "number" then return end
+			-- "Aligned" by the criterion the player actually uses: the SAME SECTOR on both views
+			-- (or within half a sector). Log 17.27.58 showed an 18.7k-wu pair getting "fixed"
+			-- into a 23k-wu one -- moving near-aligned pairs only makes things worse.
+			local s_sector, u_sector
+			if type(get_sector) == "function" then
+				if main_map.City then
+					local ok_ss, ss = pcall(get_sector, main_map.City, sx, sy)
+					if ok_ss and ss then s_sector = ss end
+				end
+				if ug_map.City then
+					local ok_us, us = pcall(get_sector, ug_map.City, ux, uy)
+					if ok_us and us then u_sector = us end
+				end
+			end
+			local same_sector = s_sector and u_sector and s_sector.id == u_sector.id
 			AlignLog("pair-align: pair", {
 				surface_xy = tostring(sx) .. "," .. tostring(sy),
 				underground_xy = tostring(ux) .. "," .. tostring(uy),
 				delta = tostring(sx - ux) .. "," .. tostring(sy - uy),
+				surface_sector = tostring(s_sector and s_sector.id or "?"),
+				underground_sector = tostring(u_sector and u_sector.id or "?"),
+				same_sector = same_sector == true,
 			})
 			do
 				local ddx, ddy = sx - ux, sy - uy
-				if (ddx * ddx + ddy * ddy) <= ALIGNED_TOL * ALIGNED_TOL then return end
+				if same_sector or (ddx * ddx + ddy * ddy) <= ALIGNED_TOL * ALIGNED_TOL then
+					AlignLog("pair-align: already corresponding -- left alone", {})
+					return
+				end
 			end
-			-- SURFACE destination: directly above the underground endpoint, slid to the nearest
-			-- BUILDABLE area if that exact spot is mountainside/blocked (vanilla's own
-			-- FindPassageSpawnPos search over the buildable grid).
+			-- SURFACE destination: directly above the underground endpoint. Try vanilla's
+			-- buildable-area search first, but accept its result ONLY within MAX_DRIFT of the
+			-- overhead point -- its random-walk fallback can wander sectors away (178k wu once).
+			-- Beyond that, use the EXACT overhead point; the pad flatten below makes it valid.
 			local tx, ty = ux, uy
 			local shape
 			if type(spawn_shape_fn) == "function" then
@@ -1667,12 +1692,20 @@ local function AlignEntrancePairs(ug_map)
 				if ok_f and found then
 					local fx, fy = PointXY(found)
 					if type(fx) == "number" then
-						tx, ty = fx, fy
-						AlignLog("pair-align: destination adjusted to buildable ground", {
-							target_xy = tostring(ux) .. "," .. tostring(uy),
-							found_xy = tostring(tx) .. "," .. tostring(ty),
-							drift = tostring(tx - ux) .. "," .. tostring(ty - uy),
-						})
+						local drift_x, drift_y = fx - ux, fy - uy
+						if (drift_x * drift_x + drift_y * drift_y) <= MAX_DRIFT * MAX_DRIFT then
+							tx, ty = fx, fy
+							AlignLog("pair-align: destination adjusted to buildable ground", {
+								target_xy = tostring(ux) .. "," .. tostring(uy),
+								found_xy = tostring(tx) .. "," .. tostring(ty),
+								drift = tostring(drift_x) .. "," .. tostring(drift_y),
+							})
+						else
+							AlignLog("pair-align: buildable search drifted too far -- using exact overhead point + flatten", {
+								found_xy = tostring(fx) .. "," .. tostring(fy),
+								drift = tostring(drift_x) .. "," .. tostring(drift_y),
+							})
+						end
 					end
 				else
 					AlignLog("pair-align: buildable search unavailable/failed -- using exact overhead point")
