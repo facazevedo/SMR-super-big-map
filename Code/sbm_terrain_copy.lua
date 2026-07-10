@@ -713,45 +713,96 @@ local function ScaleDecorationsToFull(map, debug)
 	local scale_x = (full_tw + 0.0) / sw_tiles
 	local scale_y = (full_th + 0.0) / sh_tiles
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
-	local objs = CollectObjectsInBox(map, src_box)
-	StretchLog("ScaleDecorationsToFull: collected", { count = #objs, scale = tostring(scale_x) })
+	-- Collect into a Lua list first (inline MapForEach -- avoids a forward reference to the
+	-- CollectObjectsInBox helper declared later in this file), so we mutate objects OUTSIDE the
+	-- C callback (moving/scaling inside MapForEach is unsafe).
+	local objs = {}
+	if type(map.MapForEach) == "function" then
+		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
+	end
+	StretchLog("ScaleDecorationsToFull: collected", {
+		count = #objs, scale_x = tostring(scale_x), scale_y = tostring(scale_y),
+		src_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
+		full_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
+		src_box_wu = tostring(sw_tiles * hts) .. "x" .. tostring(sh_tiles * hts),
+	})
 
+	-- Exhaustive trace (gated on Config.DEBUG_STRETCH via StretchLog): per-category skip counts, a
+	-- sample of the first objects' old->new position + old->new scale (verifies the transform), and
+	-- the min/max of the resulting positions (confirms the decor fans out across the full map, i.e.
+	-- new_x_range ~ 0..full_wu, not clustered in the source corner).
 	local MAX_SCALE = 500 -- engine object-scale ceiling (percent)
-	local moved, scaled, skipped = 0, 0, 0
+	local full_wu = full_tw * hts
+	local moved, scaled = 0, 0
+	local skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0
+	local sample_n = 0
+	local minx, miny, maxx, maxy
 	for _, obj in ipairs(objs) do
-		if obj and not ShouldSkipObject(obj) and not IsImportantSectorObject(obj) then
+		if not obj then
+			-- nil entry, ignore
+		elseif ShouldSkipObject(obj) then
+			skipped_skip = skipped_skip + 1
+		elseif IsImportantSectorObject(obj) then
+			skipped_marker = skipped_marker + 1
+		else
 			pcall(function()
 				local pos = ObjectPosition(obj)
-				if not pos then return end
+				if not pos then skipped_nopos = skipped_nopos + 1; return end
 				local ox, oy = PointXY(pos)
-				if type(ox) ~= "number" or type(oy) ~= "number" then return end
-				local np = point_fn(math.floor(ox * scale_x + 0.5), math.floor(oy * scale_y + 0.5))
+				if type(ox) ~= "number" or type(oy) ~= "number" then skipped_nopos = skipped_nopos + 1; return end
+				local nx = math.floor(ox * scale_x + 0.5)
+				local ny = math.floor(oy * scale_y + 0.5)
+				local np = point_fn(nx, ny)
+				local z_ok = false
 				if type(np.SetTerrainZ) == "function" then
 					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
-					if ok_z and pz then np = pz end
+					if ok_z and pz then np = pz; z_ok = true end
 				end
 				if type(obj.SetPos) == "function" then
 					pcall(obj.SetPos, obj, np)
 					moved = moved + 1
+					minx = minx and math.min(minx, nx) or nx
+					maxx = maxx and math.max(maxx, nx) or nx
+					miny = miny and math.min(miny, ny) or ny
+					maxy = maxy and math.max(maxy, ny) or ny
+				else
+					no_setpos = no_setpos + 1
 				end
 				-- Grow the object to match the enlarged terrain features.
+				local old_scale, new_scale
 				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
 					local s = SafeCall(obj.GetScale, obj)
 					if type(s) == "number" and s > 0 then
+						old_scale = s
 						local ns = math.floor(s * scale_x + 0.5)
 						if ns > MAX_SCALE then ns = MAX_SCALE elseif ns < 1 then ns = 1 end
 						SafeCall(obj.SetScale, obj, ns)
+						new_scale = ns
 						scaled = scaled + 1
 					end
 				end
+				if sample_n < 15 then
+					sample_n = sample_n + 1
+					StretchLog("decor sample", {
+						n = sample_n, class = tostring(obj.class),
+						old_xy = tostring(ox) .. "," .. tostring(oy),
+						new_xy = tostring(nx) .. "," .. tostring(ny),
+						z_snapped = z_ok, old_scale = old_scale, new_scale = new_scale,
+					})
+				end
 			end)
-		else
-			skipped = skipped + 1
 		end
 	end
-	StretchLog("ScaleDecorationsToFull: DONE", { moved = moved, scaled = scaled, skipped = skipped })
-	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, skipped %s)",
-		tostring(moved), tostring(scaled), tostring(skipped)))
+	StretchLog("ScaleDecorationsToFull: DONE", {
+		collected = #objs, moved = moved, scaled = scaled,
+		skipped_shouldskip = skipped_skip, skipped_marker = skipped_marker,
+		skipped_nopos = skipped_nopos, no_setpos = no_setpos,
+		new_x_range = minx and (tostring(minx) .. ".." .. tostring(maxx)) or "none",
+		new_y_range = miny and (tostring(miny) .. ".." .. tostring(maxy)) or "none",
+		full_wu = full_wu,
+	})
+	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s; skipped skip=%s marker=%s nopos=%s)",
+		tostring(moved), tostring(scaled), tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
 	return moved
 end
 
