@@ -968,11 +968,11 @@ local function ScaleMarkersToFull(map, debug)
 			or IsKindOfSafe(obj, "SubsurfaceAnomaly")
 			or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
 			or IsKindOfSafe(obj, "EffectDepositMarker")
-			-- Underground tunnel/entrance MARKERS move too, on BOTH maps: the surface and
-			-- underground stretches apply the identical transform, so moving both sides keeps
-			-- every entrance pair perfectly aligned (the game spawns the underground passage at
-			-- the surface passage's own x,y and links the pair by object reference).
-			or IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker")
+		-- Tunnel/entrance markers are deliberately NOT moved (and neither are their visuals):
+		-- vanilla generates the surface and underground natural entrances at IDENTICAL native
+		-- coordinates (Align logs proved it), so leaving BOTH sides untouched keeps every
+		-- entrance pair vertically corresponding exactly where the player first saw them. Moving
+		-- them x(full/source) would relocate the entrances the user sees -- rejected.
 	end
 	local objs = {}
 	if type(map.MapForEach) == "function" then
