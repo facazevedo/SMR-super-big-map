@@ -1158,6 +1158,88 @@ end
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 
 -- Reveal the clones inside a scanned sector's area (called from the SectorScanned handler).
+-- STRETCH scan-gate enforcement (config STRETCH_ENFORCE_SCAN_GATE). The stretch moves every
+-- generated marker AND every already-spawned deposit/anomaly to position * (full/source). The
+-- start sector's enrichments were REVEALED at generation; after the move they land in OTHER,
+-- unscanned sectors -- still visible (the "enrichments visible in G15/H15 while only K11 is
+-- scanned" report). Conversely, markers that moved INTO the already-scanned start sector never
+-- got their scan-time placement. Fix both:
+--   A) any revealed scan-gated deposit/anomaly now sitting in an UNSCANNED sector is hidden and
+--      flagged SuperBigMapQuadrantClone, so the existing OnSectorScanned reveal shows it when its
+--      sector is actually scanned;
+--   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
+--      what moved in), plus a reveal of any hidden scan-gated objects inside it.
+function DepositRules.EnforceScanGateAfterStretch(map)
+	if cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
+	map = map or Global("CurrentMap")
+	local city = map and map.City
+	local get_sector = Global("GetMapSectorXY")
+	if not map or not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
+		Log("stretch scan-gate enforcement skipped", { reason = "map/city/GetMapSectorXY unavailable" })
+		return
+	end
+	-- A) hide revealed scan-gated objects that now sit in unscanned sectors.
+	local hidden = 0
+	local function hide_leaks(class_name)
+		pcall(map.MapForEach, map, "map", class_name, function(obj)
+			if not (obj and IsScanGatedDeposit(obj)) then return end
+			if obj.revealed ~= true then return end
+			local pos = ObjectPos(obj)
+			if not pos or type(pos.xy) ~= "function" then return end
+			local px, py = pos:xy()
+			if px == nil then return end
+			local ok_s, sector = pcall(get_sector, city, px, py)
+			if ok_s and sector and not SectorIsScanned(sector) then
+				SetRevealedState(obj, false)
+				-- Flag so the existing OnSectorScanned reveal path shows it on a real scan.
+				obj.SuperBigMapQuadrantClone = true
+				hidden = hidden + 1
+			end
+		end)
+	end
+	hide_leaks("SubsurfaceDeposit")
+	hide_leaks("SubsurfaceAnomaly")
+	-- B) scanned sectors: run vanilla's RevealDeposits over their markers (place what moved in)
+	-- and reveal any hidden scan-gated objects inside.
+	local reveal_deposits = Global("RevealDeposits")
+	local placed_sectors, revealed_objs = 0, 0
+	if type(city.MapSectors) == "table" then
+		for _, sector_col in pairs(city.MapSectors) do
+			if type(sector_col) == "table" then
+				for _, sector in pairs(sector_col) do
+					if type(sector) == "table" and SectorIsScanned(sector) and sector.area then
+						if type(reveal_deposits) == "function" then
+							local markers = {}
+							pcall(map.MapForEach, map, sector.area, "DepositMarker", function(m)
+								if m and IsResourceDepositMarker(m) and m.is_placed ~= true then
+									markers[#markers + 1] = m
+								end
+							end)
+							if #markers > 0 then
+								pcall(reveal_deposits, markers)
+								placed_sectors = placed_sectors + 1
+							end
+						end
+						local function reveal_in_area(class_name)
+							pcall(map.MapForEach, map, sector.area, class_name, function(obj)
+								if obj and IsScanGatedDeposit(obj) and obj.revealed ~= true then
+									SetRevealedState(obj, true)
+									revealed_objs = revealed_objs + 1
+								end
+							end)
+						end
+						reveal_in_area("SubsurfaceDeposit")
+						reveal_in_area("SubsurfaceAnomaly")
+					end
+				end
+			end
+		end
+	end
+	Log("stretch scan-gate enforced", {
+		hidden_leaks = hidden, scanned_sectors_placed = placed_sectors, revealed_in_scanned = revealed_objs,
+	})
+end
+
 function DepositRules.OnSectorScanned(_status, sector)
 	if not Enabled() then return end
 	if type(sector) ~= "table" then return end

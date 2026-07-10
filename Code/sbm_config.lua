@@ -533,6 +533,11 @@ config.ExpansionFrameFillMode = "stretch"
 -- so each moved decoration gets a chance ((area_factor-1) probability) to spawn one jittered clone
 -- nearby, bringing density back to the generated look.
 config.StretchScaleMarkers = true
+-- After the marker/deposit move, re-enforce scan-gating: hide revealed enrichments that landed in
+-- UNSCANNED sectors (they re-reveal on a real scan) and place/reveal what moved INTO already-
+-- scanned sectors -- otherwise the start sector's revealed deposits stay visible wherever the
+-- stretch relocated them (e.g. G15/H15 visible while only K11 is scanned).
+config.StretchEnforceScanGate = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -795,6 +800,7 @@ C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererN
 C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionFrameMode)
 C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
 C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
+C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)

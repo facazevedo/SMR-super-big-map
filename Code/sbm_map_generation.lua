@@ -1058,6 +1058,15 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 				end
+				-- Step 4: re-enforce scan-gating after the move (hide revealed enrichments that
+				-- landed in unscanned sectors; place/reveal what moved into scanned ones).
+				do
+					local deposits = SuperBigMap.DepositRules
+					if deposits and type(deposits.EnforceScanGateAfterStretch) == "function" then
+						StretchLog("stretch branch: -> EnforceScanGateAfterStretch")
+						SafeCall(deposits.EnforceScanGateAfterStretch, map)
+					end
+				end
 				local function now2()
 					if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then return t end end
 					return 0
