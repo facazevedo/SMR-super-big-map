@@ -71,22 +71,55 @@ local function Install()
 		local mdr = Engine.Global("MulDivRound")
 		local guim_v = Engine.Global("guim") or 1000
 		if type(place) ~= "function" or not sector or not sector.area then return nil end
-		local ok, obj = pcall(place, "SectorUnexplored", map)
+		-- Place the decal IN the sector (like vanilla UpdateDecal) so it inherits the sector's
+		-- proper terrain Z; placing in the map at area:Center() (Z~=0) sank it below the
+		-- underground floor -> built-but-invisible (log showed frames=2 yet nothing on screen).
+		local parent = (type(sector.GetPos) == "function") and sector or map
+		local ok, obj = pcall(place, "SectorUnexplored", parent)
 		if not ok or not obj then return nil end
 		local del_on_load = Engine.Global("DeleteOnLoadGame")
 		if type(del_on_load) == "function" then pcall(del_on_load, obj) end
+		local px, py
 		pcall(function()
-			obj:SetPos(sector.area:Center())
+			-- Position: vanilla uses sector:GetPos() (has terrain Z); fall back to a Z-snapped
+			-- area center. Explicit efVisible -- decals default hidden when placed off the
+			-- normal UpdateDecal path.
+			local pos
+			if type(sector.GetPos) == "function" then
+				local ok_p, p = pcall(sector.GetPos, sector)
+				if ok_p and p then pos = p end
+			end
+			if not pos then
+				pos = sector.area:Center()
+				if type(pos.SetTerrainZ) == "function" then
+					local ok_z, snapped = pcall(pos.SetTerrainZ, pos, map)
+					if ok_z and snapped then pos = snapped end
+				end
+			end
+			obj:SetPos(pos)
+			if type(pos.xy) == "function" then px, py = pos:xy() end
 			local scale = 100
 			if type(mdr) == "function" then
 				scale = mdr(sector.area:sizex(), 100, 100 * guim_v) + 1 -- vanilla UpdateDecal formula
 			end
 			obj:SetScale(scale)
+			local const_tbl = Engine.Global("const")
+			local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
+			if ef_visible and type(obj.SetEnumFlags) == "function" then
+				pcall(obj.SetEnumFlags, obj, ef_visible)
+			end
 			if red and type(obj.SetColorModifier) == "function" then
 				local rgb = Engine.Global("RGB")
 				if type(rgb) == "function" then obj:SetColorModifier(rgb(255, 40, 40)) end
 			end
 		end)
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog and DebugLog.On("Hover") then
+			DebugLog.Info("Hover", "frame placed", {
+				sector = tostring(sector.id), red = red == true,
+				pos_xy = (px and py) and (tostring(px) .. "," .. tostring(py)) or "?",
+			})
+		end
 		return obj
 	end
 
@@ -191,9 +224,14 @@ local function Install()
 					return original_generate_rollover(self, sector, forced)
 				end
 				local old = self.rollover_context_cache
+				-- Same texts-join idiom as vanilla GenerateSectorRolloverContext (line 721).
+				local texts = {
+					untranslated("Underground"),
+					T_fn{4051, "Buildable area: <em><percent(number)></em>", number = sector.play_ratio or 0},
+				}
 				self.rollover_context_cache = {
 					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
-					RolloverText = untranslated("Underground"),
+					RolloverText = table.concat(texts, "<newline><left>"),
 					RolloverAnchor = "smart",
 				}
 				return self.rollover_context_cache, old
@@ -354,7 +392,42 @@ local function Install()
 		})
 	end
 
-	overview_class.SelectSector = function(self, sector, ...)
+	-- Off-map cursor test (both maps): GetTerrainCursor CLAMPS to the map edge and GetMapSectorXY
+	-- CLAMPS into 1..count, so pointing into the black beyond the map still resolves a border
+	-- sector and lights it up. Detect it by round-tripping the clamped terrain cursor back to
+	-- screen (GameToScreen) and comparing to the real mouse position: on-map they coincide;
+	-- off-map the clamp pins the cursor to the edge while the mouse is out in the black, so the
+	-- screen positions diverge. Beyond a small pixel threshold -> treat as off-map (no highlight,
+	-- no tooltip). Mouse-only; forced/gamepad selections skip this.
+	local function CursorOffMap()
+		local gtc, g2s, term = Engine.Global("GetTerrainCursor"), Engine.Global("GameToScreen"), Engine.Global("terminal")
+		if type(gtc) ~= "function" or type(g2s) ~= "function" or type(term) ~= "table" then return false end
+		local ok_c, cur = pcall(gtc)
+		if not ok_c or not cur then return false end
+		local ok_s, a, b = pcall(g2s, cur)
+		if not ok_s then return false end
+		local spt = b or a -- GameToScreen returns (success, pt)
+		local ok_m, mpt = pcall(term.GetMousePos)
+		if not ok_m or not mpt then return false end
+		local function xy(p)
+			if type(p) ~= "table" and type(p) ~= "userdata" then return nil end
+			local ok, x, y = pcall(function() return p:x(), p:y() end)
+			if ok and type(x) == "number" and type(y) == "number" then return x, y end
+			return nil
+		end
+		local sx, sy = xy(spt)
+		local mx, my = xy(mpt)
+		if not sx or not mx then return false end
+		local dx, dy = sx - mx, sy - my
+		return (dx * dx + dy * dy) > (40 * 40)
+	end
+
+	overview_class.SelectSector = function(self, sector, rollover_pos, forced, ...)
+		-- Suppress highlight + tooltip when the mouse is off the map (mouse-driven calls only;
+		-- a `forced` selection e.g. overview exit_to has no meaningful cursor).
+		if sector and not forced and CursorOffMap() then
+			sector = false
+		end
 		DiagSelect(sector)
 		HoverDiag(sector)
 		-- Guard against a destroyed hover-highlight object. self.sector_obj is the
@@ -370,7 +443,7 @@ local function Install()
 			and type(self.EnsureSectorObjPresent) == "function" then
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
-		local r1, r2 = original_select_sector(self, sector, ...)
+		local r1, r2 = original_select_sector(self, sector, rollover_pos, forced, ...)
 		-- UNDERGROUND: hide the vanilla FILLED highlight (SectorTarget) + scan-pattern frames and
 		-- drive our OUTLINE-ONLY hover frame instead (opaque border, transparent interior).
 		if UndergroundUiActive() then
