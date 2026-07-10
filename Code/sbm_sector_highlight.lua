@@ -135,6 +135,48 @@ local function Install()
 	end
 
 	local is_valid = Engine.Global("IsValid")
+
+	-- Visual-condition diagnostic (gated on Config.DEBUG_HOVER): vanilla SelectSector early-outs
+	-- before drawing the highlight/rollover on any of these -- no sector_obj decal,
+	-- IsExplorationAvailable_Sectors false (vanilla hard-gates underground/asteroid!), a running
+	-- camera transition, IsExplorationAvailable_Queue false or a popup (both kill the rollover).
+	-- One line per newly hovered sector with every condition, so "hover shows nothing" is
+	-- immediately attributable to the exact failing gate.
+	local last_visual_id = false
+	local function HoverVisualDiag(self, sector)
+		local DebugLog = SuperBigMap.DebugLog
+		if not (DebugLog and DebugLog.On("Hover")) then return end
+		if not sector or sector.id == last_visual_id then return end
+		last_visual_id = sector.id
+		local Global = Engine.Global
+		local uicity = Global("UICity")
+		local function avail(fn_name)
+			local fn = Global(fn_name)
+			if type(fn) ~= "function" or not uicity then return "?" end
+			local ok, v = pcall(fn, uicity)
+			return ok and (v == true) or false
+		end
+		local notif = "?"
+		local get_dialog = Global("GetDialog")
+		if type(get_dialog) == "function" then
+			local ok, d = pcall(get_dialog, "PopupNotification")
+			if ok then notif = d ~= nil end
+		end
+		local obj = self.sector_obj
+		local obj_state = obj == nil and "nil"
+			or (type(is_valid) == "function" and not is_valid(obj)) and "INVALID"
+			or "valid"
+		DebugLog.Info("Hover", "visual conditions", {
+			sector = tostring(sector.id),
+			sector_obj = obj_state,
+			avail_sectors = avail("IsExplorationAvailable_Sectors"),
+			avail_queue = avail("IsExplorationAvailable_Queue"),
+			camera_transition = Global("CameraTransitionThread") and true or false,
+			popup_notification_up = notif,
+			dialog_sector_id = tostring(self.sector_id),
+		})
+	end
+
 	overview_class.SelectSector = function(self, sector, ...)
 		DiagSelect(sector)
 		HoverDiag(sector)
@@ -151,7 +193,9 @@ local function Install()
 			and type(self.EnsureSectorObjPresent) == "function" then
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
-		return original_select_sector(self, sector, ...)
+		local r1, r2 = original_select_sector(self, sector, ...)
+		HoverVisualDiag(self, sector)
+		return r1, r2
 	end
 
 	State.overview_highlight_patch_version = SECTOR_PATCH_VERSION

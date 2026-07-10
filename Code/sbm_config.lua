@@ -567,6 +567,11 @@ config.UndergroundRevealAllDeposits = true
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
 config.UndergroundOverviewEnabled = true
+-- Enable the sector hover/rollover/scan-queue UI on the underground overview. Vanilla hard-gates
+-- these off underground (IsExplorationAvailable_Sectors/Queue return false for
+-- Environment=="Underground"), so without this the overview shows no hover highlight there.
+-- NOTE: also makes underground sectors click-queueable for scanning, like the surface.
+config.UndergroundExplorationUI = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -836,6 +841,7 @@ C.UNLOCK_UNDERGROUND_VIEW_AT_START = as_bool(config.UnlockUndergroundViewAtStart
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
+C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)

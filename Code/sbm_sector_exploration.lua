@@ -694,6 +694,35 @@ local function InstallBasicSectorPatch()
 		return sector
 	end
 
+	-- Underground overview sector UI: vanilla HARD-GATES the sector hover/rollover/scan-queue off
+	-- underground maps -- IsExplorationAvailable_Sectors/Queue return false for
+	-- Environment=="Underground" (Exploration.lua:569-577), so OverviewModeDialog:SelectSector
+	-- early-outs before drawing the highlight decal or rollover (the "hover shows nothing
+	-- underground" report; the Hover logs proved sector RESOLUTION worked). Wrap both to return
+	-- true for underground cities when config UNDERGROUND_EXPLORATION_UI is on (checked live, so
+	-- flipping the config takes effect without a reload). Asteroids keep vanilla behavior.
+	local orig_avail_sectors = State.original_is_expl_avail_sectors or Global("IsExplorationAvailable_Sectors")
+	local orig_avail_queue = State.original_is_expl_avail_queue or Global("IsExplorationAvailable_Queue")
+	State.original_is_expl_avail_sectors = orig_avail_sectors
+	State.original_is_expl_avail_queue = orig_avail_queue
+	local function UndergroundExplorationUiOn(city)
+		if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true then return false end
+		local ok, env = pcall(function() return city:GetMap().mapdata.Environment end)
+		return ok and env == "Underground"
+	end
+	if type(orig_avail_sectors) == "function" then
+		function IsExplorationAvailable_Sectors(city)
+			if UndergroundExplorationUiOn(city) then return true end
+			return orig_avail_sectors(city)
+		end
+	end
+	if type(orig_avail_queue) == "function" then
+		function IsExplorationAvailable_Queue(city)
+			if UndergroundExplorationUiOn(city) then return true end
+			return orig_avail_queue(city)
+		end
+	end
+
 	if type(original_initial_reveal) == "function" then
 		InitialReveal = BuildFastInitialReveal(original_initial_reveal)
 	end
@@ -1222,9 +1251,17 @@ function SectorExploration.RestoreVanillaBehavior()
 	if type(State.original_initial_reveal) == "function" then
 		rawset(_G, "InitialReveal", State.original_initial_reveal)
 	end
+	if type(State.original_is_expl_avail_sectors) == "function" then
+		rawset(_G, "IsExplorationAvailable_Sectors", State.original_is_expl_avail_sectors)
+	end
+	if type(State.original_is_expl_avail_queue) == "function" then
+		rawset(_G, "IsExplorationAvailable_Queue", State.original_is_expl_avail_queue)
+	end
 	State.original_get_map_sector_tile_size = nil
 	State.original_get_map_sector_xy = nil
 	State.original_initial_reveal = nil
+	State.original_is_expl_avail_sectors = nil
+	State.original_is_expl_avail_queue = nil
 
 	local exploration_class = ClassTable("Exploration")
 	if exploration_class then
