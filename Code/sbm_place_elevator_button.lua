@@ -50,6 +50,26 @@ local function StartElevatorPlacement()
 	end
 	local unlock = Global("UnlockBuilding")
 	if type(unlock) == "function" then pcall(unlock, "Elevator") end
+	-- VANILLA BLOCKER (Data/BuildingTemplate/Elevator.lua): snap_target_type="ElevatorPassage" +
+	-- only_build_on_snapped_locations=true -- vanilla Elevators may ONLY be built over an existing
+	-- Underground Entrance / Surface Tunnel (the red "Must be built on..." status). For this TEMP
+	-- tool, lift the snap requirement so it can be placed on any valid flat ground (stays lifted
+	-- for the session; TEMP tool). Template state is logged before/after for diagnosis.
+	local templates = Global("BuildingTemplates")
+	local tmpl = type(templates) == "table" and templates.Elevator or nil
+	if tmpl then
+		Log("place-elevator: template snap props", {
+			snap_target_type = tostring(tmpl.snap_target_type),
+			only_on_snapped = tostring(tmpl.only_build_on_snapped_locations),
+			rotate_to_snap = tostring(tmpl.rotate_to_snap_target),
+		})
+		if tmpl.only_build_on_snapped_locations then
+			tmpl.only_build_on_snapped_locations = false
+			Log("place-elevator: snap requirement LIFTED (free placement enabled)")
+		end
+	else
+		Log("place-elevator: BuildingTemplates.Elevator NOT FOUND", { templates_type = type(templates) })
+	end
 	armed = true
 	SafeCall(igi.SetMode, igi, "construction", { template = "Elevator" })
 	Log("place-elevator: placement mode entered (instant-complete armed)")
