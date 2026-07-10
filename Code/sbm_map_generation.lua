@@ -823,7 +823,10 @@ local function PatchRandomMapGenerator()
 			local placement = SuperBigMap.RmgPlacement
 			local placement_active = placement and placement.Begin(self, map) or false
 
+			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
+			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
 			local results = { pcall(original_do_generate, self, map, ...) }
+			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
 
 			if placement_active then
 				placement.End(map)
@@ -881,6 +884,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 800))
 	end
 	StretchLog("RunSectorMirrorPlan: scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
+	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+		SuperBigMap.DebugLog.LoadTime("expansion plan scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
+	end
 	InitSeq("RunSectorMirrorPlan: scheduled (waiting for F0 + settle)", {
 		settle_ms = settle_ms,
 		frame_sectors = FrameSectorProbe(map),
@@ -898,6 +904,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			SuperBigMap.ExpansionLoadingBegin()
 		end
 		local function end_loading()
+			if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+				SuperBigMap.DebugLog.LoadTime("loading box torn down (expansion path finished)")
+			end
 			if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 				SuperBigMap.ExpansionLoadingEnd()
 			end
@@ -914,13 +923,41 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			waited_ms = waited,
 			f0_found = FindSectorByName(map, "F0") ~= nil,
 		})
+		if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+			SuperBigMap.DebugLog.LoadTime("F0 sector ready", { waited_ms = waited })
+		end
 		-- MUST wait the full settle before stretching: the map keeps loading AFTER PostNewMapLoaded
 		-- (terrain data fills + ~7500 decorations get placed over the next few seconds). A
 		-- readiness poll on BiomeGrid's SIZE fires far too early (size is allocated up front, data
 		-- is not) -- stretching a half-loaded map gives the grey/incomplete result with almost no
 		-- decorations and a bloated reinvalidate. The fixed settle is the reliable "map fully
 		-- loaded" wait; tune StretchSettleMs if needed, but it must cover the async object placement.
-		sleep(settle_ms)
+		--
+		-- LOAD-TIMELINE SAMPLING (DEBUG_LOADTIME): while waiting, sample the map's object count
+		-- every 500ms. The full settle is ALWAYS waited (measurement only, no behavior change);
+		-- the samples show exactly when object placement completes, so the settle can later be
+		-- shortened to a data-backed value instead of another guess.
+		do
+			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
+			local lt_on = LT and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("LoadTime")
+			if lt_on and type(map.MapForEach) == "function" then
+				local function count_objects()
+					local n = 0
+					pcall(map.MapForEach, map, "map", "CObject", function() n = n + 1 end)
+					return n
+				end
+				LT("settle begin", { settle_ms = settle_ms, objects = count_objects() })
+				local waited, step = 0, 500
+				while waited < settle_ms do
+					sleep(step)
+					waited = waited + step
+					LT("settle sample", { waited_ms = waited, objects = count_objects() })
+				end
+				LT("settle done")
+			else
+				sleep(settle_ms)
+			end
+		end
 		if map.SuperBigMapSectorMirrorDone == true then
 			InitSeq("RunSectorMirrorPlan: already done after settle -- aborting", {})
 			end_loading()
@@ -983,6 +1020,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			-- the loading box below. Every step is StretchLog'd so the last line before a hang
 			-- pinpoints where it stopped.
 			StretchLog("stretch branch: ENTER")
+			if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+				SuperBigMap.DebugLog.LoadTime("stretch begin")
+			end
 			-- The stretch passes iterate the full-map grids + EVERY object in one uninterrupted go;
 			-- without the old per-step yields the engine's infinite-loop detector trips ("Infinite
 			-- loop detected!"). Pause it for the duration -- these are BOUNDED passes (finite grid
@@ -1046,6 +1086,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				local tnow = 0
 				if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then tnow = t end end
 				StretchLog("stretch branch: TOTAL expansion time", { ms = tnow - stretch_t0 })
+				if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+					SuperBigMap.DebugLog.LoadTime("stretch end", { stretch_ms = tnow - stretch_t0 })
+				end
 			end
 			if not ok_branch then
 				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })

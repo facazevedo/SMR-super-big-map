@@ -542,6 +542,9 @@ function SuperBigMap.ExpansionLoadingBegin()
 	end
 	loading_on_welcome = true
 	LoadingLog("ExpansionLoadingBegin: watching for welcome popup")
+	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+		SuperBigMap.DebugLog.LoadTime("loading box watch begin")
+	end
 	local create_thread = Global("CreateRealTimeThread")
 	if type(create_thread) ~= "function" then
 		SetWelcomeLoading(true)
@@ -590,6 +593,9 @@ end
 function SuperBigMap.ExpansionLoadingEnd()
 	local was_on = loading_on_welcome
 	loading_on_welcome = false
+	if was_on and SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
+		SuperBigMap.DebugLog.LoadTime("loading box end (welcome popup restored)")
+	end
 	-- Always tear the loading box down (idempotent), even if the flag was cleared by a mid-load
 	-- mod reload -- so a stale box can never linger on screen waiting for an OK press.
 	SetWelcomeLoading(false)

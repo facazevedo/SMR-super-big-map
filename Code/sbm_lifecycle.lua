@@ -723,6 +723,11 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		active = active() == true,
 		is_mod_map = IsModMap(map) == true,
 	})
+	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime and IsModMap(map) then
+		SuperBigMap.DebugLog.LoadTime("PostNewMapLoaded (mod map)", {
+			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
+		})
+	end
 	if not active() then
 		return
 	end

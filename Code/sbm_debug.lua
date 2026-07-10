@@ -10,9 +10,13 @@
 -- print() in mod-owned modules.
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
---   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Loading, Overview,
---   Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom, ZoomVanilla, RestartNotice,
---   PregameToggle, EditorCamera, InitSeq.
+--   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Loading, LoadTime,
+--   Overview, Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom, ZoomVanilla,
+--   RestartNotice, PregameToggle, EditorCamera, InitSeq.
+--
+-- DebugLog.LoadTime(step, data) is the LOAD TIMELINE channel (scope "LoadTime"): each mark prints
+-- total=+Xms (since the first mark this session) and delta=+Yms (since the previous mark), so one
+-- grep of "LoadTime" reconstructs the whole loading pipeline with where every ms went.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -91,6 +95,31 @@ end
 -- expensive log data when the scope is off.
 function DebugLog.On(scope)
 	return enabled(scope)
+end
+
+-- Load-timeline trace: the "LoadTime" scope. Marks a named step with total ms since the first
+-- mark and delta ms since the previous mark. Timer resets when marks are >30s apart (a new load).
+local load_t0, load_prev = false, false
+function DebugLog.LoadTime(step, data)
+	if not enabled("LoadTime") then
+		return false
+	end
+	local gpt = rawget(_G, "GetPreciseTicks") or rawget(_G, "RealTime")
+	local t = 0
+	if type(gpt) == "function" then
+		local ok, v = pcall(gpt)
+		if ok and type(v) == "number" then t = v end
+	end
+	if not load_t0 or (load_prev and (t - load_prev) > 30000) then
+		load_t0, load_prev = t, t
+	end
+	local out = { total_ms = t - load_t0, delta_ms = t - (load_prev or t) }
+	if type(data) == "table" then
+		for k, v in pairs(data) do out[k] = v end
+	end
+	load_prev = t
+	emit("", "LoadTime", step, out)
+	return true
 end
 
 -- Init-sequence trace: the "InitSeq" scope. Kept as named helpers because callers use
