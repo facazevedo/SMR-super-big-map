@@ -1419,6 +1419,15 @@ local function RunUndergroundStretchIfEnabled(map)
 				local n_mark = ScaleMarkersToFull(map, false)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
 			end
+			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
+			-- deposit/anomaly so the stretched underground layout can be inspected.
+			if cfg_bool("UNDERGROUND_REVEAL_ALL_DEPOSITS", false) then
+				local deposits = SuperBigMap.DepositRules
+				if deposits and type(deposits.ForceRevealAllOnMap) == "function" then
+					StretchLog("underground stretch: -> ForceRevealAllOnMap (TEMP)")
+					SafeCall(deposits.ForceRevealAllOnMap, map)
+				end
+			end
 			local rebuild_buildable = Global("RebuildBuildableGrid")
 			if type(rebuild_buildable) == "function" and map.buildable then
 				SafeCall(rebuild_buildable, map)
