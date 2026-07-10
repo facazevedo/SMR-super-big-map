@@ -748,6 +748,21 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		if gen and type(gen.RunUndergroundStretchIfEnabled) == "function" then
 			gen.RunUndergroundStretchIfEnabled(map)
 		end
+		-- Underground OVERVIEW mode (config UNDERGROUND_OVERVIEW_ENABLED): vanilla disallows
+		-- overview on underground maps (mapdata.IsAllowedToEnterOverview=false), which is why
+		-- there is no hover sector-highlight there -- zooming out stays in plain selection mode.
+		-- Flipping the mapdata flag makes the game's own OverviewModeDialog (hover highlight,
+		-- sector rollover, scan queue UI) work underground exactly as on the surface: the flag is
+		-- read at CityStart and on every CurrentMapChangeDone to pick the dialog mode.
+		if (SuperBigMap.Config or {}).UNDERGROUND_OVERVIEW_ENABLED == true then
+			if map.mapdata.IsAllowedToEnterOverview ~= true then
+				map.mapdata.IsAllowedToEnterOverview = true
+				local DebugLog = SuperBigMap.DebugLog
+				if DebugLog then
+					DebugLog.Info("Lifecycle", "underground overview mode enabled (mapdata.IsAllowedToEnterOverview=true)")
+				end
+			end
+		end
 		if (SuperBigMap.Config or {}).UNLOCK_UNDERGROUND_VIEW_AT_START == true then
 			local create_thread = Global("CreateRealTimeThread")
 			local sleep = Global("Sleep")
