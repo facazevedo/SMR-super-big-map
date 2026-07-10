@@ -1102,7 +1102,13 @@ local function MoveEntranceVisualsToScale(map)
 			local hex_remove = Global("HexGridShapeRemoveObject")
 			local hex_add = Global("HexGridShapeAddObject")
 			local shape
+			-- ONLY actual Buildings (the passage structure): the hex grid works on object handles
+			-- and asserts C-side ('luaHex.cpp: handle > 0', uncatchable) when fed a decorative
+			-- object (sign/rocks) that merely inherits a GetShapePoints method but has no handle.
+			-- Also require a valid positive handle explicitly.
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
+				and IsKindOfSafe(obj, "Building")
+				and type(obj.handle) == "number" and obj.handle > 0
 				and type(obj.GetShapePoints) == "function" then
 				local ok_sh, sh = pcall(obj.GetShapePoints, obj)
 				if ok_sh and sh then shape = sh end
