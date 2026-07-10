@@ -171,6 +171,7 @@ local StretchSourceToFull = TerrainCopy.StretchSourceToFull
 local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
+local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1058,7 +1059,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 				end
-				-- Step 4: re-enforce scan-gating after the move (hide revealed enrichments that
+				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
+				-- original pick, moving the landed rocket along (config STRETCH_RELOCATE_START_SECTOR).
+				if type(StretchRelocateStartSector) == "function" then
+					StretchLog("stretch branch: -> StretchRelocateStartSector")
+					local n_rel = StretchRelocateStartSector(map)
+					StretchLog("stretch branch: StretchRelocateStartSector returned", { relocated = n_rel })
+				end
+				-- Step 5: re-enforce scan-gating after the move (hide revealed enrichments that
 				-- landed in unscanned sectors; place/reveal what moved into scanned ones).
 				do
 					local deposits = SuperBigMap.DepositRules

@@ -973,7 +973,13 @@ local function ScaleMarkersToFull(map, debug)
 	if type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
-	local moved, sample_n = 0, 0
+	local moved, sample_n, reregistered = 0, 0, 0
+	-- Sector marker REGISTRIES: each MapSector keeps per-sector marker lists (sector.markers.*)
+	-- that vanilla Scan reveals from. A moved marker must be re-registered from its old sector to
+	-- its new one, or scanning the new sector misses it (and scanning the old one reveals a marker
+	-- that is no longer there). Same Unregister/Register pattern as EvenOutDepositDensity.
+	local city = map.City
+	local get_sector = Global("GetMapSectorXY")
 	-- Batch passability edits around the mass marker move (same idiom/reason as the decor pass).
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
@@ -992,6 +998,18 @@ local function ScaleMarkersToFull(map, debug)
 				if type(obj.SetPos) == "function" then
 					pcall(obj.SetPos, obj, np)
 					moved = moved + 1
+					if city and type(get_sector) == "function" and IsKindOfSafe(obj, "DepositMarker") then
+						local nx2, ny2 = PointXY(np)
+						if type(nx2) == "number" then
+							local ok_o, old_sec = pcall(get_sector, city, ox, oy)
+							local ok_n, new_sec = pcall(get_sector, city, nx2, ny2)
+							if ok_o and ok_n and old_sec and new_sec and old_sec ~= new_sec then
+								if type(old_sec.UnregisterDeposit) == "function" then pcall(old_sec.UnregisterDeposit, old_sec, obj) end
+								if type(new_sec.RegisterDeposit) == "function" then pcall(new_sec.RegisterDeposit, new_sec, obj) end
+								reregistered = reregistered + 1
+							end
+						end
+					end
 					if sample_n < 10 then
 						sample_n = sample_n + 1
 						local nx2, ny2 = PointXY(np)
@@ -1006,9 +1024,112 @@ local function ScaleMarkersToFull(map, debug)
 		end
 	end
 	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers") end
-	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved })
-	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers", tostring(moved)))
+	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved, reregistered = reregistered })
+	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers (%s re-registered to new sectors)",
+		tostring(moved), tostring(reregistered)))
 	return moved
+end
+
+-- STRETCH step 5: relocate the INITIAL revealed sector(s). Vanilla picks the start sector by its
+-- expected resources BEFORE the stretch moves everything x(full/source), so the scanned sector
+-- (e.g. K11) no longer matches where its content went. For each scanned sector: find the sector
+-- containing its SCALED center; if different, move any landed rocket in it to its scaled spot,
+-- un-scan the old sector (status + persisted revealed_obj + decal) and vanilla-Scan the target
+-- (spawns deposits from the re-registered marker lists, updates decal/notifications). Keeps the
+-- start sector "as close as possible to the corresponding original sector" on the expanded map.
+-- Must run AFTER ScaleMarkersToFull (re-registered lists) and BEFORE EnforceScanGateAfterStretch
+-- (which then hides anything revealed that spilled outside the new scanned sector). Gated on
+-- config STRETCH_RELOCATE_START_SECTOR.
+local function StretchRelocateStartSector(map)
+	StretchLog("StretchRelocateStartSector: ENTER")
+	if not map or not cfg_bool("STRETCH_RELOCATE_START_SECTOR", true) then return 0 end
+	local city = map.City
+	local get_sector = Global("GetMapSectorXY")
+	local DoneObject = Global("DoneObject")
+	local IsValid = Global("IsValid")
+	local point_fn = Global("point")
+	if not city or type(get_sector) ~= "function" or type(point_fn) ~= "function" then
+		StretchLog("StretchRelocateStartSector: city/GetMapSectorXY unavailable -- skip")
+		return 0
+	end
+	local sw = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local full = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+	if not (type(sw) == "number" and type(full) == "number" and sw > 0 and full > sw) then
+		StretchLog("StretchRelocateStartSector: sizes unknown / no expansion -- skip")
+		return 0
+	end
+	local scale = (full + 0.0) / sw
+	-- Collect the currently scanned sectors (at this point in the load: the 1-2 initial ones).
+	local scanned = {}
+	if type(city.MapSectors) == "table" then
+		for _, sector_col in pairs(city.MapSectors) do
+			if type(sector_col) == "table" then
+				for _, sec in pairs(sector_col) do
+					if type(sec) == "table" and sec.status and sec.status ~= "unexplored" then
+						scanned[#scanned + 1] = sec
+					end
+				end
+			end
+		end
+	end
+	local relocated = 0
+	for _, old in ipairs(scanned) do
+		pcall(function()
+			if not old.area then return end
+			local ctr = old.area:Center()
+			local cx, cy = PointXY(ctr)
+			if type(cx) ~= "number" then return end
+			local ok_t, target = pcall(get_sector, city, math.floor(cx * scale + 0.5), math.floor(cy * scale + 0.5))
+			if not ok_t or not target or target == old then
+				StretchLog("relocate: target same/none -- sector kept", { old = tostring(old.id) })
+				return
+			end
+			local status = old.status
+			-- Move any landed rocket in the old sector to its scaled position (Z-snapped).
+			local rockets_moved = 0
+			if type(map.MapForEach) == "function" then
+				pcall(map.MapForEach, map, old.area, "RocketBase", function(r)
+					local rp = ObjectPosition(r)
+					if not rp then return end
+					local rx, ry = PointXY(rp)
+					if type(rx) ~= "number" then return end
+					local np = point_fn(math.floor(rx * scale + 0.5), math.floor(ry * scale + 0.5))
+					if type(np.SetTerrainZ) == "function" then
+						local ok_z, pz = pcall(np.SetTerrainZ, np, map)
+						if ok_z and pz then np = pz end
+					end
+					if type(r.SetPos) == "function" then
+						pcall(r.SetPos, r, np)
+						rockets_moved = rockets_moved + 1
+					end
+				end)
+			end
+			-- Un-scan the old sector: reset live status, delete the PERSISTED reveal marker (a
+			-- RevealedMapSector object that would re-apply the scan on save/load), refresh decal.
+			old.status = "unexplored"
+			if old.revealed_obj then
+				if type(IsValid) == "function" and IsValid(old.revealed_obj) and type(DoneObject) == "function" then
+					pcall(DoneObject, old.revealed_obj)
+				end
+				old.revealed_obj = nil
+			end
+			old.revealed_surf = nil
+			old.revealed_deep = nil
+			if type(old.UpdateDecal) == "function" then pcall(old.UpdateDecal, old) end
+			-- Vanilla-scan the target with the old status (spawns deposits, decal, notifications).
+			if type(target.Scan) == "function" then pcall(target.Scan, target, status) end
+			-- Keep the exploration bookkeeping consistent (overview exit_to, profile fallbacks).
+			if city.InitialSector == old then city.InitialSector = target end
+			relocated = relocated + 1
+			StretchLog("relocate: start sector moved", {
+				old = tostring(old.id), new = tostring(target.id),
+				status = tostring(status), rockets_moved = rockets_moved,
+			})
+		end)
+	end
+	StretchLog("StretchRelocateStartSector: DONE", { scanned = #scanned, relocated = relocated })
+	DebugPrint(string.format("StretchRelocateStartSector: relocated %s scanned sector(s)", tostring(relocated)))
+	return relocated
 end
 
 -- After a sector's terrain is copied into to_box, any object that was ALREADY
@@ -1558,6 +1679,7 @@ local TerrainCopy = {
 	StretchBiomeReady = StretchBiomeReady,
 	ScaleDecorationsToFull = ScaleDecorationsToFull,
 	ScaleMarkersToFull = ScaleMarkersToFull,
+	StretchRelocateStartSector = StretchRelocateStartSector,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

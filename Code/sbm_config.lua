@@ -538,6 +538,12 @@ config.StretchScaleMarkers = true
 -- scanned sectors -- otherwise the start sector's revealed deposits stay visible wherever the
 -- stretch relocated them (e.g. G15/H15 visible while only K11 is scanned).
 config.StretchEnforceScanGate = true
+-- Relocate the INITIAL revealed sector to the scaled position of the original pick: vanilla
+-- chooses the start sector by its resources BEFORE the stretch moves everything, so the scanned
+-- sector no longer matches where its content went. Un-scans the original, vanilla-scans the
+-- sector at the scaled center, and moves the landed rocket along -- keeping the start "as close
+-- as possible to the corresponding original sector" on the expanded map.
+config.StretchRelocateStartSector = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -801,6 +807,7 @@ C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionFrameMode)
 C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
 C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
 C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
+C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
