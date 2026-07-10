@@ -1102,12 +1102,14 @@ local function MoveEntranceVisualsToScale(map)
 			local hex_remove = Global("HexGridShapeRemoveObject")
 			local hex_add = Global("HexGridShapeAddObject")
 			local shape
-			-- ONLY actual Buildings (the passage structure): the hex grid works on object handles
-			-- and asserts C-side ('luaHex.cpp: handle > 0', uncatchable) when fed a decorative
-			-- object (sign/rocks) that merely inherits a GetShapePoints method but has no handle.
-			-- Also require a valid positive handle explicitly.
+			-- ONLY ElevatorPassage buildings (the elevator snap targets): they are the one class
+			-- that NEEDS hex re-registration and is guaranteed to actually BE registered.
+			-- luaHex.cpp asserts 'handle > 0' (uncatchable C-side) both for handle-less objects
+			-- AND when removing an object that is not currently registered in the grid -- some
+			-- Building-derived entrance indicators pass a Building+handle test yet were never
+			-- hex-registered by vanilla (crash log 16.44.48). Whitelist, don't heuristic.
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
-				and IsKindOfSafe(obj, "Building")
+				and IsKindOfSafe(obj, "ElevatorPassage")
 				and type(obj.handle) == "number" and obj.handle > 0
 				and type(obj.GetShapePoints) == "function" then
 				local ok_sh, sh = pcall(obj.GetShapePoints, obj)
@@ -1589,8 +1591,10 @@ local function AlignEntrancePairs(ug_map)
 			if ok_z and pz then np = pz end
 		end
 		local shape
+		-- Same whitelist as MoveEntranceVisualsToScale: only ElevatorPassage buildings are
+		-- guaranteed hex-registered; other Building-derived entrance pieces can assert C-side.
 		if type(hex_remove) == "function" and type(hex_add) == "function"
-			and IsKindOfSafe(o, "Building")
+			and IsKindOfSafe(o, "ElevatorPassage")
 			and type(o.handle) == "number" and o.handle > 0
 			and type(o.GetShapePoints) == "function" then
 			local ok_sh, sh = pcall(o.GetShapePoints, o)
