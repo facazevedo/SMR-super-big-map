@@ -22,7 +22,8 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 30: underground overview frames -- outline-only hover frame + red entrance frames.
 -- 31: frame Z/visibility fix, off-map cursor suppression, underground buildable-% tooltip line.
 -- 32: red frame uses `red` color global; entrance/frame diagnostics; tooltip drops 'Underground'.
-SuperBigMap.SECTOR_PATCH_VERSION = 32
+-- 33: entrance frame color changed from red to cyan.
+SuperBigMap.SECTOR_PATCH_VERSION = 33
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 7:
 -- the DoGenerate wrapper now calls RmgPlacement.Begin/End around the original, so the
 -- closure changed and must reinstall cleanly on an in-session reload.

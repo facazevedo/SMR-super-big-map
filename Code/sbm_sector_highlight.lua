@@ -109,15 +109,15 @@ local function Install()
 				pcall(obj.SetEnumFlags, obj, ef_visible)
 			end
 			if red and type(obj.SetColorModifier) == "function" then
-				-- Use the game's own `red` color constant -- exactly what vanilla UpdateDecal
-				-- feeds SetColorModifier for blocked sectors (Exploration.lua:351), so it is
-				-- known to tint this decal. Fall back to RGB(255,0,0) if `red` is absent.
-				local red_col = Engine.Global("red")
-				if red_col == nil then
+				-- CYAN entrance tint. SetColorModifier tints this decal (vanilla uses it with the
+				-- `red` global for blocked sectors, Exploration.lua:351); build cyan via RGB, or
+				-- the `cyan` global if the engine exposes one.
+				local cyan_col = Engine.Global("cyan")
+				if cyan_col == nil then
 					local rgb = Engine.Global("RGB")
-					if type(rgb) == "function" then red_col = rgb(255, 0, 0) end
+					if type(rgb) == "function" then cyan_col = rgb(0, 255, 255) end
 				end
-				if red_col ~= nil then pcall(obj.SetColorModifier, obj, red_col) end
+				if cyan_col ~= nil then pcall(obj.SetColorModifier, obj, cyan_col) end
 			end
 		end)
 		local DebugLog = SuperBigMap.DebugLog
