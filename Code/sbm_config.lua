@@ -581,15 +581,8 @@ config.UndergroundOverviewEnabled = true
 -- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
--- Make every natural entrance pair correspond vertically across the two maps. Two layers:
--- 1) whole-map toroidal translation when ALL pairs share one uniform offset (derived per map;
---    no-ops when they don't);
--- 2) PER-PAIR fixup for pairs vanilla generated at unrelated spots: the SURFACE endpoint (and
---    its entrance cluster) moves directly above the underground one -- the underground endpoint
---    stays in its carved cavern (moving it strands it in solid rock). Mountainside destinations
---    are slid to the nearest buildable ground (vanilla FindPassageSpawnPos) and the pad is
---    flattened vanilla-style (FlattenTerrainInBuildShape).
-config.AlignUndergroundEntrances = true
+-- (Entrance placement correction removed by user decision: entrances receive only the stretch
+-- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -868,7 +861,6 @@ C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
-C.ALIGN_UNDERGROUND_ENTRANCES = as_bool(config.AlignUndergroundEntrances)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)

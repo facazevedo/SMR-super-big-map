@@ -172,8 +172,6 @@ local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
-local TranslateUndergroundToMatchEntrances = TerrainCopy.TranslateUndergroundToMatchEntrances
-local AlignEntrancePairs = TerrainCopy.AlignEntrancePairs
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
@@ -1435,29 +1433,10 @@ local function RunUndergroundStretchIfEnabled(map)
 				local n_vis = MoveEntranceVisualsToScale(map)
 				StretchLog("underground stretch: entrance visuals done", { moved = n_vis })
 			end
-			-- ENTRANCE ALIGNMENT: shift the whole underground map (toroidal wrap) so the natural
-			-- tunnel entrances sit beneath their surface counterparts. Needs the SURFACE
-			-- expansion finished first (its tunnel markers at final stretched positions) -- wait
-			-- for the main map's done flag, capped at 60s.
-			if type(TranslateUndergroundToMatchEntrances) == "function" then
-				local waited_align = 0
-				while waited_align < 60000 do
-					local mm = Global("MainMap")
-					if mm and mm.SuperBigMapSectorMirrorDone == true then break end
-					sleep(500)
-					waited_align = waited_align + 500
-				end
-				StretchLog("underground stretch: -> TranslateUndergroundToMatchEntrances", { waited_for_surface_ms = waited_align })
-				TranslateUndergroundToMatchEntrances(map, false)
-			end
-			-- PER-PAIR fixup: pairs the whole-map translation cannot fix (endpoints not
-			-- co-generated; no uniform offset exists) get their underground endpoint moved
-			-- directly beneath the linked surface partner.
-			if type(AlignEntrancePairs) == "function" then
-				StretchLog("underground stretch: -> AlignEntrancePairs")
-				local n_pairs = AlignEntrancePairs(map)
-				StretchLog("underground stretch: pair-align returned", { pairs_moved = n_pairs })
-			end
+			-- NOTE (user decision): NO entrance placement correction of any kind. Entrances on
+			-- both maps receive exactly ONE transformation -- the stretch itself (position *
+			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
+			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
 			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
 			-- deposit/anomaly so the stretched underground layout can be inspected.
 			if cfg_bool("UNDERGROUND_REVEAL_ALL_DEPOSITS", false) then
