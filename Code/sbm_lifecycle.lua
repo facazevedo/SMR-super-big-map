@@ -761,30 +761,42 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 				local sleep = Global("Sleep")
 				if type(create_thread) == "function" and type(sleep) == "function" then
 					create_thread(function()
-						sleep(3000)
+						-- Multiple phases: the SURFACE generator finishes well after map load, so
+						-- a +3s dump found nothing there (log 18.20.22: only the underground's
+						-- fixed spawners appeared). Dump at 3s/30s/60s with a phase label and a
+						-- per-class summary even when empty -- the last non-empty dump is the
+						-- generation ground truth.
 						local get_sector = Global("GetMapSectorXY")
-						local city = map.City
 						local map_id = tostring((map.mapdata and map.mapdata.id) or map.name or "?")
-						for _, class_name in ipairs({ "SpawnsTunnelOnCityInit", "SurfaceUndergroundTunnelMarker", "ElevatorPassage" }) do
-							local n = 0
-							pcall(map.MapForEach, map, "map", class_name, function(o)
-								n = n + 1
-								local ok, x, y = pcall(function()
-									local p = o:GetPos()
-									return p:x(), p:y()
+						local elapsed = 0
+						for _, delay in ipairs({ 3000, 27000, 30000 }) do
+							sleep(delay)
+							elapsed = elapsed + delay
+							local city = map.City
+							for _, class_name in ipairs({ "SpawnsTunnelOnCityInit", "SurfaceUndergroundTunnelMarker", "ElevatorPassage" }) do
+								local n = 0
+								pcall(map.MapForEach, map, "map", class_name, function(o)
+									n = n + 1
+									local ok, x, y = pcall(function()
+										local p = o:GetPos()
+										return p:x(), p:y()
+									end)
+									local sector = "?"
+									if ok and type(x) == "number" and city and type(get_sector) == "function" then
+										local ok_s, sec = pcall(get_sector, city, x, y)
+										sector = tostring((ok_s and sec) and sec.id or "nil")
+									end
+									DebugLog.Info("Align", "entrance ground truth", {
+										map = map_id, query = class_name, n = n, at_ms = elapsed,
+										class = tostring(o.class or "?"),
+										xy = ok and (tostring(x) .. "," .. tostring(y)) or "?",
+										sector = sector,
+									})
 								end)
-								local sector = "?"
-								if ok and type(x) == "number" and city and type(get_sector) == "function" then
-									local ok_s, sec = pcall(get_sector, city, x, y)
-									sector = tostring((ok_s and sec) and sec.id or "nil")
-								end
-								DebugLog.Info("Align", "entrance ground truth", {
-									map = map_id, query = class_name, n = n,
-									class = tostring(o.class or "?"),
-									xy = ok and (tostring(x) .. "," .. tostring(y)) or "?",
-									sector = sector,
+								DebugLog.Info("Align", "entrance ground truth summary", {
+									map = map_id, query = class_name, found = n, at_ms = elapsed,
 								})
-							end)
+							end
 						end
 					end)
 				end
