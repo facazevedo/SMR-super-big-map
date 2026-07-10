@@ -173,6 +173,7 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local TranslateUndergroundToMatchEntrances = TerrainCopy.TranslateUndergroundToMatchEntrances
+local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1078,6 +1079,13 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 				end
+				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
+				-- decor pass) with the same transform, so what the player SEES matches the markers.
+				if type(MoveEntranceVisualsToScale) == "function" then
+					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
+					local n_vis = MoveEntranceVisualsToScale(map)
+					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
+				end
 				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
 				-- original pick, moving the landed rocket along (config STRETCH_RELOCATE_START_SECTOR).
 				if type(StretchRelocateStartSector) == "function" then
@@ -1419,6 +1427,12 @@ local function RunUndergroundStretchIfEnabled(map)
 				StretchLog("underground stretch: -> ScaleMarkersToFull")
 				local n_mark = ScaleMarkersToFull(map, false)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
+			end
+			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
+			if type(MoveEntranceVisualsToScale) == "function" then
+				StretchLog("underground stretch: -> MoveEntranceVisualsToScale")
+				local n_vis = MoveEntranceVisualsToScale(map)
+				StretchLog("underground stretch: entrance visuals done", { moved = n_vis })
 			end
 			-- ENTRANCE ALIGNMENT: shift the whole underground map (toroidal wrap) so the natural
 			-- tunnel entrances sit beneath their surface counterparts. Needs the SURFACE

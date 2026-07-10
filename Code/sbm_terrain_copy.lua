@@ -1035,6 +1035,86 @@ local function ScaleMarkersToFull(map, debug)
 	return moved
 end
 
+-- STRETCH step 3b (entrance VISUALS): the Align diagnostics proved the tunnel MARKERS on both
+-- maps already correspond after the stretch (both moved x1.333), but the entrances the player
+-- SEES stayed at the pre-stretch positions: the decoration pass deliberately SKIPS every
+-- underground-access object (ShouldSkipObject/IsUndergroundAccessObject -- a mirror-era guard
+-- against cloning/deleting entrance structures), so the signs / entrance structures / spawner
+-- visuals never moved (observed: surface visuals at K7+N5 = markers' H9+K7 positions / 1.333).
+-- This pass applies the SAME position*(full/source) transform to those visuals -- everything
+-- matching IsUndergroundAccessObject or a SpawnsOnCityInit tunnel spawner, EXCEPT the tunnel
+-- markers themselves (already moved by ScaleMarkersToFull; moving twice would double-scale).
+-- Runs on BOTH maps, so entrance pairs stay vertically corresponding. Every object handled is
+-- logged under the "Align" scope. Gated on STRETCH_MOVE_ENTRANCE_VISUALS; once per map.
+local function MoveEntranceVisualsToScale(map)
+	if not cfg_bool("STRETCH_MOVE_ENTRANCE_VISUALS", true) then return 0 end
+	if not map or map.SuperBigMapEntranceVisualsMoved == true then return 0 end
+	local object_clone = SuperBigMap.ObjectClone
+	local is_access = object_clone and object_clone.IsUndergroundAccessObject
+	local point_fn = Global("point")
+	if type(is_access) ~= "function" or type(point_fn) ~= "function"
+		or type(map.MapForEach) ~= "function" then
+		return 0
+	end
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local full_tw = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+	if not (type(sw_tiles) == "number" and type(full_tw) == "number" and sw_tiles > 0 and full_tw > sw_tiles) then
+		return 0
+	end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local scale = (full_tw + 0.0) / sw_tiles
+	local src_w = sw_tiles * hts
+	map.SuperBigMapEntranceVisualsMoved = true
+	local DebugLog = SuperBigMap.DebugLog
+	local function AlignLog(message, data)
+		if DebugLog then DebugLog.Info("Align", message, data) end
+	end
+	local moved, seen_objs = 0, {}
+	local function handle(obj, via)
+		if not obj or seen_objs[obj] then return end
+		seen_objs[obj] = true
+		-- Tunnel markers themselves are moved by ScaleMarkersToFull -- never twice.
+		if IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker") then return end
+		local pos = ObjectPosition(obj)
+		if not pos then return end
+		local ox, oy = PointXY(pos)
+		if type(ox) ~= "number" or type(oy) ~= "number" then return end
+		-- Only objects still inside the SOURCE region need moving (idempotence: an already-moved
+		-- or frame-placed object lies beyond it on at least one axis).
+		if ox >= src_w or oy >= src_w then return end
+		local np = point_fn(math.floor(ox * scale + 0.5), math.floor(oy * scale + 0.5))
+		if type(np.SetTerrainZ) == "function" then
+			local ok_z, pz = pcall(np.SetTerrainZ, np, map)
+			if ok_z and pz then np = pz end
+		end
+		local ok_set = false
+		if type(obj.SetPos) == "function" then
+			ok_set = pcall(obj.SetPos, obj, np)
+		end
+		if ok_set then moved = moved + 1 end
+		AlignLog("entrance visual moved", {
+			via = via, class = tostring(obj.class or "?"),
+			from = tostring(ox) .. "," .. tostring(oy),
+			to = tostring(math.floor(ox * scale + 0.5)) .. "," .. tostring(math.floor(oy * scale + 0.5)),
+			ok = ok_set,
+		})
+	end
+	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
+	pcall(map.MapForEach, map, "map", "CObject", function(obj)
+		local ok, matched = pcall(is_access, obj)
+		if ok and matched then handle(obj, "access") end
+	end)
+	-- Sweep 2: the CityInit tunnel SPAWNER prefabs (they can carry the visible structure and are
+	-- not underground-access-classified).
+	pcall(map.MapForEach, map, "map", "SpawnsTunnelOnCityInit", function(obj)
+		handle(obj, "spawner")
+	end)
+	StretchLog("MoveEntranceVisualsToScale: DONE", { moved = moved })
+	DebugPrint(string.format("MoveEntranceVisualsToScale: moved %s entrance visuals", tostring(moved)))
+	return moved
+end
+
 -- STRETCH step 5: relocate the INITIAL revealed sector(s). Vanilla picks the start sector by its
 -- expected resources BEFORE the stretch moves everything x(full/source), so the scanned sector
 -- (e.g. K11) no longer matches where its content went. For each scanned sector: find the sector
@@ -1988,6 +2068,7 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	TranslateUndergroundToMatchEntrances = TranslateUndergroundToMatchEntrances,
+	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

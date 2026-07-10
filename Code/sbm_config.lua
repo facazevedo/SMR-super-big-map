@@ -582,6 +582,12 @@ config.UndergroundExplorationUI = true
 -- underground spatial relationship -- entrances, deposits, cavern shape -- while making all
 -- entrance pairs correspond vertically.
 config.AlignUndergroundEntrances = true
+-- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
+-- the same position*(full/source) transform as their markers, on BOTH maps. The decoration pass
+-- deliberately skips underground-access objects (mirror-era guard), so without this the visible
+-- entrances stay at pre-stretch positions while the markers (and the actual travel endpoints)
+-- moved -- the visible/actual entrance mismatch.
+config.StretchMoveEntranceVisuals = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -854,6 +860,7 @@ C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.ALIGN_UNDERGROUND_ENTRANCES = as_bool(config.AlignUndergroundEntrances)
+C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
