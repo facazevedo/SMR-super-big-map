@@ -85,8 +85,28 @@ local function IsSelected()
 	return State.pregame_expand_selected == true
 end
 
+-- The new-game flow RELOADS Lua between the landing screen and generation, wiping
+-- SuperBigMap.State -- including the armed EXPAND flag -- so Generate could run UNEXPANDED
+-- (v378 crash log: 'expand action clicked selected=true' but no 'frame expansion' prepare and a
+-- 'SKIP (fits)' 6144 cap check). g_CurrentMapParams is deliberately NOT a GlobalVar ("they have
+-- to persist between PreGame and in-game" -- PreGameMission.lua:314) so it SURVIVES that reload,
+-- and SetStartArmed already mirrors the flag into it (SetCurrentParamsArmed). Read it back:
+-- ShouldExpandNewMap falls back to the params flag, and module load restores State from it.
+local function ParamsArmed()
+	local params = Global("g_CurrentMapParams")
+	return type(params) == "table" and params.SuperBigMapExpandMap == true
+end
+
 local function ShouldExpandNewMap()
-	return State.pregame_expand_start_armed == true
+	return State.pregame_expand_start_armed == true or ParamsArmed()
+end
+
+-- Post-reload restore: re-hydrate the wiped State from the surviving params flag so the
+-- selection/armed state (and the UI underline) stay consistent after the new-game Lua reload.
+if ParamsArmed() and State.pregame_expand_start_armed ~= true then
+	State.pregame_expand_selected = true
+	State.pregame_expand_start_armed = true
+	Log("pregame expand-map state RESTORED from g_CurrentMapParams (post-reload)", {})
 end
 
 local function IsModMap(map)
