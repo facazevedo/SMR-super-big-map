@@ -50,25 +50,62 @@ local function StartElevatorPlacement()
 	end
 	local unlock = Global("UnlockBuilding")
 	if type(unlock) == "function" then pcall(unlock, "Elevator") end
-	-- VANILLA BLOCKER (Data/BuildingTemplate/Elevator.lua): snap_target_type="ElevatorPassage" +
-	-- only_build_on_snapped_locations=true -- vanilla Elevators may ONLY be built over an existing
-	-- Underground Entrance / Surface Tunnel (the red "Must be built on..." status). For this TEMP
-	-- tool, lift the snap requirement so it can be placed on any valid flat ground (stays lifted
-	-- for the session; TEMP tool). Template state is logged before/after for diagnosis.
+	-- VANILLA SNAP RULE kept as-is (user's choice): the Elevator template has
+	-- snap_target_type="ElevatorPassage" + only_build_on_snapped_locations=true, so it may only
+	-- be built over an existing ElevatorPassage (the natural Underground Entrance / Surface
+	-- Tunnel structures, present from map generation). Ensure the flag is at its vanilla value
+	-- (repairs a session where the earlier lift ran) and log the template state.
 	local templates = Global("BuildingTemplates")
 	local tmpl = type(templates) == "table" and templates.Elevator or nil
 	if tmpl then
+		if tmpl.only_build_on_snapped_locations == false then
+			tmpl.only_build_on_snapped_locations = true
+			Log("place-elevator: snap requirement RESTORED to vanilla")
+		end
 		Log("place-elevator: template snap props", {
 			snap_target_type = tostring(tmpl.snap_target_type),
 			only_on_snapped = tostring(tmpl.only_build_on_snapped_locations),
 			rotate_to_snap = tostring(tmpl.rotate_to_snap_target),
 		})
-		if tmpl.only_build_on_snapped_locations then
-			tmpl.only_build_on_snapped_locations = false
-			Log("place-elevator: snap requirement LIFTED (free placement enabled)")
-		end
 	else
 		Log("place-elevator: BuildingTemplates.Elevator NOT FOUND", { templates_type = type(templates) })
+	end
+	-- SNAP-TARGET DIAGNOSTICS: enumerate every valid snap target (ElevatorPassage objects) and
+	-- every tunnel marker on the current map, with class/pos/sector -- the log then answers "why
+	-- didn't it snap": either no ElevatorPassage exists, or the targets are not where you aimed.
+	do
+		local map = Global("CurrentMap")
+		local get_sector = Global("GetMapSectorXY")
+		local city = map and map.City
+		local function sector_at(x, y)
+			if not city or type(get_sector) ~= "function" then return "?" end
+			local ok, sec = pcall(get_sector, city, x, y)
+			return tostring((ok and sec) and sec.id or "nil")
+		end
+		local function dump(class_name)
+			local n = 0
+			if map and type(map.MapForEach) == "function" then
+				pcall(map.MapForEach, map, "map", class_name, function(o)
+					n = n + 1
+					local ok, x, y = pcall(function()
+						local p = o:GetPos()
+						return p:x(), p:y()
+					end)
+					Log("place-elevator: snap-diag object", {
+						query = class_name, n = n, class = tostring(o.class or "?"),
+						xy = ok and (tostring(x) .. "," .. tostring(y)) or "?",
+						sector = ok and sector_at(x, y) or "?",
+					})
+				end)
+			end
+			return n
+		end
+		local n_passage = dump("ElevatorPassage")
+		local n_markers = dump("SurfaceUndergroundTunnelMarker")
+		Log("place-elevator: snap-diag summary", {
+			elevator_passages = n_passage, tunnel_markers = n_markers,
+			note = n_passage == 0 and "NO SNAP TARGETS EXIST on this map" or "snap only works over the listed ElevatorPassage sectors",
+		})
 	end
 	armed = true
 	SafeCall(igi.SetMode, igi, "construction", { template = "Elevator" })
