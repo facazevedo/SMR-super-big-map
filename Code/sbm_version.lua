@@ -19,7 +19,8 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- Sector exploration + overview-highlight patches (sbm_sector_exploration / sbm_sector_highlight).
 -- 28: added the IsExplorationAvailable_Sectors/Queue wraps (underground overview sector UI).
 -- 29: underground rollover is informational-only (custom context, frames hidden, queue no-op'd).
-SuperBigMap.SECTOR_PATCH_VERSION = 29
+-- 30: underground overview frames -- outline-only hover frame + red entrance frames.
+SuperBigMap.SECTOR_PATCH_VERSION = 30
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 7:
 -- the DoGenerate wrapper now calls RmgPlacement.Begin/End around the original, so the
 -- closure changed and must reinstall cleanly on an in-session reload.

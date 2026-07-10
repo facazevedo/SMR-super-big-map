@@ -51,6 +51,123 @@ local function Install()
 		return ok and env == "Underground"
 	end
 
+	-- UNDERGROUND overview frames: OUTLINE-ONLY sector frames (opaque border, transparent
+	-- interior), built from the game's own per-sector grid decal entity ("SectorUnexplored" -- a
+	-- thin square outline; vanilla itself colors it red for blocked sectors, Exploration.lua:351).
+	-- The vanilla hover decal (SectorTarget) FILLS its interior, so underground we hide it and
+	-- drive our own outline frame instead:
+	--   * hover frame -- follows the hovered sector (default outline color);
+	--   * entrance frames -- RED outlines on every sector containing an underground entrance/exit
+	--     (UndergroundPassageBase buildings or SurfaceUndergroundTunnelMarker markers).
+	-- They exist ONLY while the underground overview is active: built on OverviewMode(true),
+	-- destroyed on OverviewMode(false) and on map switches (lifecycle calls
+	-- SectorHighlight.UpdateUndergroundOverviewFrames).
+	local function FrameForSector(map, sector, red)
+		local place = Engine.Global("PlaceObjectIn")
+		local mdr = Engine.Global("MulDivRound")
+		local guim_v = Engine.Global("guim") or 1000
+		if type(place) ~= "function" or not sector or not sector.area then return nil end
+		local ok, obj = pcall(place, "SectorUnexplored", map)
+		if not ok or not obj then return nil end
+		local del_on_load = Engine.Global("DeleteOnLoadGame")
+		if type(del_on_load) == "function" then pcall(del_on_load, obj) end
+		pcall(function()
+			obj:SetPos(sector.area:Center())
+			local scale = 100
+			if type(mdr) == "function" then
+				scale = mdr(sector.area:sizex(), 100, 100 * guim_v) + 1 -- vanilla UpdateDecal formula
+			end
+			obj:SetScale(scale)
+			if red and type(obj.SetColorModifier) == "function" then
+				local rgb = Engine.Global("RGB")
+				if type(rgb) == "function" then obj:SetColorModifier(rgb(255, 40, 40)) end
+			end
+		end)
+		return obj
+	end
+
+	local function DestroyFrame(obj)
+		if obj and type(is_valid) == "function" and is_valid(obj) then
+			local done = Engine.Global("DoneObject")
+			if type(done) == "function" then pcall(done, obj) end
+		end
+	end
+
+	local function HideUndergroundHoverFrame()
+		DestroyFrame(State.ug_hover_frame)
+		State.ug_hover_frame = nil
+		State.ug_hover_frame_sector = nil
+	end
+
+	local function UpdateUndergroundHoverFrame(sector)
+		local cur_map = Engine.Global("CurrentMap")
+		if not sector or not cur_map then
+			HideUndergroundHoverFrame()
+			return
+		end
+		if State.ug_hover_frame_sector == sector.id and State.ug_hover_frame
+			and type(is_valid) == "function" and is_valid(State.ug_hover_frame) then
+			return
+		end
+		HideUndergroundHoverFrame()
+		State.ug_hover_frame = FrameForSector(cur_map, sector, false)
+		State.ug_hover_frame_sector = sector.id
+	end
+
+	local function DestroyUndergroundEntranceFrames()
+		for _, obj in ipairs(State.ug_entrance_frames or {}) do
+			DestroyFrame(obj)
+		end
+		State.ug_entrance_frames = nil
+	end
+
+	local function BuildUndergroundEntranceFrames()
+		DestroyUndergroundEntranceFrames()
+		local cur_map = Engine.Global("CurrentMap")
+		local get_sector = Engine.Global("GetMapSectorXY")
+		local city = cur_map and cur_map.City
+		if not cur_map or not city or type(get_sector) ~= "function"
+			or type(cur_map.MapForEach) ~= "function" then
+			return
+		end
+		local seen, frames = {}, {}
+		local function mark_entrances(class_name)
+			pcall(cur_map.MapForEach, cur_map, "map", class_name, function(obj)
+				local ok_xy, x, y = pcall(function()
+					local pos = obj:GetPos()
+					return pos:x(), pos:y()
+				end)
+				if not ok_xy or type(x) ~= "number" then return end
+				local ok_s, sector = pcall(get_sector, city, x, y)
+				if ok_s and sector and sector.id and not seen[sector.id] then
+					seen[sector.id] = true
+					frames[#frames + 1] = FrameForSector(cur_map, sector, true)
+				end
+			end)
+		end
+		mark_entrances("UndergroundPassageBase")
+		mark_entrances("SurfaceUndergroundTunnelMarker")
+		State.ug_entrance_frames = frames
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Hover", "underground entrance frames built", { frames = #frames })
+		end
+	end
+
+	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches.
+	-- Install() runs after module load, so SuperBigMap.SectorHighlight already exists (the local
+	-- SectorHighlight table is declared later in this file, hence the namespace assignment).
+	if type(SuperBigMap.SectorHighlight) == "table" then
+		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewFrames = function(show)
+			if show and UndergroundUiActive() then
+				BuildUndergroundEntranceFrames()
+			else
+				DestroyUndergroundEntranceFrames()
+				HideUndergroundHoverFrame()
+			end
+		end
+	end
+
 	-- UNDERGROUND rollover: informational ONLY -- "Sector <name>" + the single line
 	-- "Underground". No scan status ("Unexplored"), no buildable %, no queue/probe hints:
 	-- underground sectors are not scannable, the tooltip just names what the mouse is over.
@@ -252,9 +369,9 @@ local function Install()
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
 		local r1, r2 = original_select_sector(self, sector, ...)
-		-- UNDERGROUND: keep the tooltip but hide the highlight square + scan-pattern frames --
-		-- the hover display is informational only there ("I don't need even the frames").
-		if sector and UndergroundUiActive() then
+		-- UNDERGROUND: hide the vanilla FILLED highlight (SectorTarget) + scan-pattern frames and
+		-- drive our OUTLINE-ONLY hover frame instead (opaque border, transparent interior).
+		if UndergroundUiActive() then
 			local const_tbl = Engine.Global("const")
 			local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
 			if ef_visible then
@@ -267,6 +384,7 @@ local function Install()
 					end
 				end
 			end
+			UpdateUndergroundHoverFrame(sector) -- nil sector hides the frame
 		end
 		HoverVisualDiag(self, sector)
 		return r1, r2
