@@ -1597,11 +1597,18 @@ local function AlignEntrancePairs(ug_map)
 	-- shape re-registered (bare SetPos leaves hex entries behind -- the elevator-snap lesson;
 	-- whitelisted because other Building-derived entrance pieces are not hex-registered and
 	-- luaHex asserts C-side on them).
-	local function move_to(o, tx, ty)
-		local np = point_fn(math.floor(tx), math.floor(ty))
-		if type(np.SetTerrainZ) == "function" then
-			local ok_z, pz = pcall(np.SetTerrainZ, np, main_map)
-			if ok_z and pz then np = pz end
+	local function move_to(o, tx, ty, tz)
+		-- Explicit tz places at that height (used for the passage so the pad flatten levels to a
+		-- sane height); otherwise Z-snap to the terrain.
+		local np
+		if type(tz) == "number" then
+			np = point_fn(math.floor(tx), math.floor(ty), math.floor(tz))
+		else
+			np = point_fn(math.floor(tx), math.floor(ty))
+			if type(np.SetTerrainZ) == "function" then
+				local ok_z, pz = pcall(np.SetTerrainZ, np, main_map)
+				if ok_z and pz then np = pz end
+			end
 		end
 		local shape
 		if type(hex_remove) == "function" and type(hex_add) == "function"
@@ -1732,9 +1739,30 @@ local function AlignEntrancePairs(ug_map)
 					cluster[#cluster + 1] = o
 				end
 			end)
-			-- Move the passage building, flatten its pad vanilla-style (the same call
-			-- SpawnUndergroundPassage uses), then move the cluster preserving each member's offset.
-			move_to(p, tx, ty)
+			-- PAD HEIGHT: the destination can be a mountain PEAK, and the pad flatten levels to
+			-- the OBJECT's Z -- snapping the passage to the peak extruded a giant terrain column
+			-- (user screenshot, log 18.20.22). Sample the terrain around the destination and use
+			-- the LOWEST nearby height, so the pad is CUT INTO the slope instead of towering.
+			local pad_z
+			do
+				local terrain_api = Global("terrain")
+				if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+					local min_h
+					for _, off in ipairs({ {0,0}, {6000,0}, {-6000,0}, {0,6000}, {0,-6000},
+						{4200,4200}, {-4200,4200}, {4200,-4200}, {-4200,-4200} }) do
+						local ok_h, h = pcall(terrain_api.GetHeight, main_map, point_fn(tx + off[1], ty + off[2]))
+						if ok_h and type(h) == "number" then
+							if not min_h or h < min_h then min_h = h end
+						end
+					end
+					pad_z = min_h
+					AlignLog("pair-align: pad height chosen (lowest nearby sample)", { z = tostring(pad_z) })
+				end
+			end
+			-- Move the passage building at the pad height, flatten its pad vanilla-style (the same
+			-- call SpawnUndergroundPassage uses), then move the cluster preserving each member's
+			-- offset (they Z-snap onto the freshly flattened pad).
+			move_to(p, tx, ty, pad_z)
 			if type(flatten) == "function" and shape then
 				pcall(flatten, shape, p, "flatten unbuildable")
 			end
