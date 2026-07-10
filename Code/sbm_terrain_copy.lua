@@ -493,9 +493,38 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		end
 	end
 	StretchLog("mapgrid: get src", { grid = name })
+	-- GetGrid(from_box) is ALWAYS safe: the source region is within any grid's coverage.
 	local ok_s, src = pcall(editor_api.GetGrid, map, name, from_box)
 	if not ok_s or not src then
 		StretchLog("mapgrid: src absent/failed -- skip", { grid = name, err = tostring(src) })
+		return false
+	end
+	-- SIZE GUARD: some MapGrids (e.g. BiomeGrid) are allocated only for the generated SOURCE region,
+	-- NOT the full expanded map. GetGrid(to_box = full) on such a grid overflows its storage and
+	-- trips a C assert (dtGrid.h: x2 <= src.m_width) that pcall CANNOT catch. Detect it without
+	-- issuing the bad read: for a FULL-map grid the source sub-grid is ~frac of the ref; for a
+	-- SOURCE-sized grid it is ~all of it. If the source region already fills most of the grid, the
+	-- grid does not cover the full map -> skip (leaving it source-only rather than asserting).
+	local function grid_w(g)
+		if not g or type(g.size) ~= "function" then return nil end
+		local ok, w = pcall(function() return g:size() end)
+		return ok and type(w) == "number" and w or nil
+	end
+	local frac = 1.0
+	if type(to_box.sizex) == "function" and type(from_box.sizex) == "function" then
+		local ok_t, tw = pcall(function() return to_box:sizex() end)
+		local ok_f, fw = pcall(function() return from_box:sizex() end)
+		if ok_t and ok_f and type(tw) == "number" and tw > 0 and type(fw) == "number" then
+			frac = (fw + 0.0) / tw
+		end
+	end
+	local ref = (type(editor_api.GetGridRef) == "function") and SafeCall(editor_api.GetGridRef, map, name) or nil
+	local ref_w, src_w = grid_w(ref), grid_w(src)
+	if type(ref_w) == "number" and ref_w > 0 and type(src_w) == "number"
+		and src_w > ref_w * (frac + 1.0) / 2 then
+		StretchLog("mapgrid: NOT full-map sized -- skip (avoids full-box overflow assert)",
+			{ grid = name, src_w = src_w, ref_w = ref_w, frac = tostring(frac) })
+		free_grid(src)
 		return false
 	end
 	local ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
