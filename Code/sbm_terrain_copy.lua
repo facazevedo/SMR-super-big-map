@@ -1671,11 +1671,13 @@ local function AlignEntrancePairs(ug_map)
 					return
 				end
 			end
-			-- SURFACE destination: directly above the underground endpoint. Try vanilla's
-			-- buildable-area search first, but accept its result ONLY within MAX_DRIFT of the
-			-- overhead point -- its random-walk fallback can wander sectors away (178k wu once).
-			-- Beyond that, use the EXACT overhead point; the pad flatten below makes it valid.
-			local tx, ty = ux, uy
+			-- SURFACE destination: directly above the underground endpoint, adjusted by vanilla's
+			-- buildable-area search. The result is accepted ONLY within MAX_DRIFT of the overhead
+			-- point -- its random-walk fallback can wander sectors away (178k wu once). If no
+			-- acceptable spot exists (or the search is unavailable), the pair is LEFT AS the
+			-- stretch placed it (user-confirmed fallback): an honest vanilla-style mismatch beats
+			-- relocating an entrance onto forced terrain.
+			local tx, ty
 			local shape
 			if type(spawn_shape_fn) == "function" then
 				local ok_s, sh = pcall(spawn_shape_fn, "Elevator")
@@ -1701,15 +1703,17 @@ local function AlignEntrancePairs(ug_map)
 								drift = tostring(drift_x) .. "," .. tostring(drift_y),
 							})
 						else
-							AlignLog("pair-align: buildable search drifted too far -- using exact overhead point + flatten", {
+							AlignLog("pair-align: no buildable ground near the overhead point -- pair left as stretched", {
 								found_xy = tostring(fx) .. "," .. tostring(fy),
 								drift = tostring(drift_x) .. "," .. tostring(drift_y),
 							})
 						end
 					end
-				else
-					AlignLog("pair-align: buildable search unavailable/failed -- using exact overhead point")
 				end
+			end
+			if not tx then
+				AlignLog("pair-align: no acceptable destination -- pair left as stretched", {})
+				return
 			end
 			local dx, dy = tx - sx, ty - sy
 			-- Collect the SURFACE entrance cluster around the old endpoint (marker, sign, rocks,
