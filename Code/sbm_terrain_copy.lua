@@ -558,6 +558,40 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	return ok_all and res == true
 end
 
+-- True once BiomeGrid has been resized to the FULL expanded map (so the stretch won't leave a grey
+-- frame). Same source-vs-ref size test as the ResampleMapGrid guard: for a full-map grid the
+-- source sub-grid is ~frac of the ref; for a source-only grid it is ~all of it. Returns true if
+-- biome is full-map OR absent (nothing to wait for). Polled before the stretch instead of a fixed
+-- settle -- lets the load proceed the instant biome is ready rather than always waiting the cap.
+local function StretchBiomeReady(map)
+	if not map then return true end
+	local editor_api = Global("editor")
+	if type(editor_api) ~= "table" or type(editor_api.GetGrid) ~= "function"
+		or type(editor_api.GetGridRef) ~= "function" then return true end
+	local box_fn = Global("box")
+	if type(box_fn) ~= "function" then return true end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local sw = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	local full = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+	if not (type(sw) == "number" and type(full) == "number" and full > sw) then return true end
+	local from_box = box_fn(0, 0, sw * hts, (sh or sw) * hts)
+	local ok_s, src = pcall(editor_api.GetGrid, map, "BiomeGrid", from_box)
+	if not ok_s or not src then return true end -- absent -> nothing to wait for
+	local function gw(g)
+		if not g or type(g.size) ~= "function" then return nil end
+		local ok, w = pcall(function() return g:size() end)
+		return ok and type(w) == "number" and w or nil
+	end
+	local ref = SafeCall(editor_api.GetGridRef, map, "BiomeGrid")
+	local rw, sw2 = gw(ref), gw(src)
+	pcall(function() if type(src.free) == "function" then src:free() end end)
+	if type(rw) ~= "number" or type(sw2) ~= "number" or rw <= 0 then return true end
+	local frac = (sw + 0.0) / full
+	return sw2 <= rw * (frac + 1.0) / 2
+end
+
 -- STRETCH frame-fill mode: resample the generated SOURCE corner of the terrain up to the FULL map
 -- size, so the map is ONE continuous terrain (no L-frame, no mirror seam). Features come out
 -- ~full/source (about 1.33x) larger -- a "zoomed" version of the real generated terrain.
@@ -1509,6 +1543,7 @@ local TerrainCopy = {
 	CopyGridRect = CopyGridRect,
 	CopyEditorGrid = CopyEditorGrid,
 	StretchSourceToFull = StretchSourceToFull,
+	StretchBiomeReady = StretchBiomeReady,
 	ScaleDecorationsToFull = ScaleDecorationsToFull,
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	ResnapForeignObjects = ResnapForeignObjects,

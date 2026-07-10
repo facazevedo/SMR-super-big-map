@@ -168,6 +168,7 @@ local ForceFramePassable = TerrainCopy.ForceFramePassable
 local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
 local RemoveFrameUndergroundAccess = TerrainCopy.RemoveFrameUndergroundAccess
 local StretchSourceToFull = TerrainCopy.StretchSourceToFull
+local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
@@ -913,7 +914,22 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			waited_ms = waited,
 			f0_found = FindSectorByName(map, "F0") ~= nil,
 		})
-		sleep(settle_ms)
+		-- STRETCH: instead of blindly sleeping the full settle (which just sits on the loading
+		-- screen doing nothing, then does the ~8s stretch -- too long to wait through), POLL until
+		-- BiomeGrid is resized to the full map, then start immediately. settle_ms is the CAP. This
+		-- proceeds the instant the terrain is ready (typically well under the cap) -> faster load.
+		if fill_mode_early == "stretch" and type(StretchBiomeReady) == "function" then
+			local polled, poll_step = 0, 200
+			while polled < settle_ms and not StretchBiomeReady(map) do
+				sleep(poll_step)
+				polled = polled + poll_step
+			end
+			StretchLog("RunSectorMirrorPlan: biome-readiness poll done", {
+				polled_ms = polled, ready = StretchBiomeReady(map), cap_ms = settle_ms,
+			})
+		else
+			sleep(settle_ms)
+		end
 		if map.SuperBigMapSectorMirrorDone == true then
 			InitSeq("RunSectorMirrorPlan: already done after settle -- aborting", {})
 			end_loading()

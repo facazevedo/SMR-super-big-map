@@ -531,7 +531,10 @@ config.ExpansionFrameFillMode = "stretch"
 -- so each moved decoration gets a chance ((area_factor-1) probability) to spawn one jittered clone
 -- nearby, bringing density back to the generated look.
 config.StretchScaleMarkers = true
-config.StretchDecorTopUp = true
+-- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
+-- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
+-- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
+config.StretchDecorTopUp = false
 -- Settle delay (ms) before the STRETCH fill runs. It must be long enough that ALL terrain grids
 -- have been resized to the full expanded map before we resample them -- in particular BiomeGrid
 -- gets resized LATE, and if the stretch runs before it is full-size the frame keeps the default
