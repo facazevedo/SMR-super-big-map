@@ -41,6 +41,64 @@ local function Install()
 	local original_select_sector = State.original_overview_select_sector or overview_class.SelectSector
 	State.original_overview_select_sector = original_select_sector
 
+	-- True when the currently VIEWED city/map is the underground and the underground exploration
+	-- UI feature is on. Drives the underground-specific rollover/frame/queue behavior below.
+	local function UndergroundUiActive()
+		if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true then return false end
+		local uicity = Engine.Global("UICity")
+		if not uicity then return false end
+		local ok, env = pcall(function() return uicity:GetMap().mapdata.Environment end)
+		return ok and env == "Underground"
+	end
+
+	-- UNDERGROUND rollover: informational ONLY -- "Sector <name>" + the single line
+	-- "Underground". No scan status ("Unexplored"), no buildable %, no queue/probe hints:
+	-- underground sectors are not scannable, the tooltip just names what the mouse is over.
+	local original_generate_rollover = State.original_overview_generate_rollover
+		or overview_class.GenerateSectorRolloverContext
+	State.original_overview_generate_rollover = original_generate_rollover
+	if type(original_generate_rollover) == "function" then
+		overview_class.GenerateSectorRolloverContext = function(self, sector, forced)
+			if UndergroundUiActive() then
+				if (not forced and Engine.Global("CameraTransitionThread")) or not sector
+					or sector.id ~= self.sector_id then
+					return
+				end
+				local T_fn = Engine.Global("T")
+				local untranslated = Engine.Global("Untranslated")
+				if type(T_fn) ~= "function" or type(untranslated) ~= "function" then
+					return original_generate_rollover(self, sector, forced)
+				end
+				local old = self.rollover_context_cache
+				self.rollover_context_cache = {
+					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
+					RolloverText = untranslated("Underground"),
+					RolloverAnchor = "smart",
+				}
+				return self.rollover_context_cache, old
+			end
+			return original_generate_rollover(self, sector, forced)
+		end
+	end
+
+	-- UNDERGROUND queue block: the rollover requires IsExplorationAvailable_Queue==true to be
+	-- created at all, which also makes sectors click-queueable -- but underground sectors are NOT
+	-- scannable. No-op the queue entry point for underground sectors so clicks do nothing.
+	local map_sector_class = ClassTable("MapSector")
+	if map_sector_class and type(map_sector_class.QueueForExploration) == "function" then
+		local original_queue = State.original_sector_queue_for_exploration or map_sector_class.QueueForExploration
+		State.original_sector_queue_for_exploration = original_queue
+		map_sector_class.QueueForExploration = function(self, ...)
+			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
+				local ok, env = pcall(function() return self:GetMap().mapdata.Environment end)
+				if ok and env == "Underground" then
+					return
+				end
+			end
+			return original_queue(self, ...)
+		end
+	end
+
 	-- One-shot diagnostic helper: when Config.SHOW_SECTOR_DIAGNOSTICS is on, log
 	-- the selected sector's identity + area dimensions every time a NEW sector
 	-- is hovered (vanilla's SelectSector already gates on sector_id change so we
@@ -194,6 +252,22 @@ local function Install()
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
 		local r1, r2 = original_select_sector(self, sector, ...)
+		-- UNDERGROUND: keep the tooltip but hide the highlight square + scan-pattern frames --
+		-- the hover display is informational only there ("I don't need even the frames").
+		if sector and UndergroundUiActive() then
+			local const_tbl = Engine.Global("const")
+			local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
+			if ef_visible then
+				if self.sector_obj and type(self.sector_obj.ClearEnumFlags) == "function" then
+					pcall(self.sector_obj.ClearEnumFlags, self.sector_obj, ef_visible)
+				end
+				for _, obj in ipairs(self.sector_objs or {}) do
+					if obj and type(obj.ClearEnumFlags) == "function" then
+						pcall(obj.ClearEnumFlags, obj, ef_visible)
+					end
+				end
+			end
+		end
 		HoverVisualDiag(self, sector)
 		return r1, r2
 	end
@@ -217,8 +291,17 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if overview_class and State and type(State.original_overview_select_sector) == "function" then
 		overview_class.SelectSector = State.original_overview_select_sector
 	end
+	if overview_class and State and type(State.original_overview_generate_rollover) == "function" then
+		overview_class.GenerateSectorRolloverContext = State.original_overview_generate_rollover
+	end
+	local map_sector_class = ClassTable("MapSector")
+	if map_sector_class and State and type(State.original_sector_queue_for_exploration) == "function" then
+		map_sector_class.QueueForExploration = State.original_sector_queue_for_exploration
+	end
 	if State then
 		State.original_overview_select_sector = nil
+		State.original_overview_generate_rollover = nil
+		State.original_sector_queue_for_exploration = nil
 		State.overview_highlight_patch_version = nil
 	end
 end

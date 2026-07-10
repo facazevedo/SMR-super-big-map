@@ -567,10 +567,11 @@ config.UndergroundRevealAllDeposits = true
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
 config.UndergroundOverviewEnabled = true
--- Enable the sector hover/rollover/scan-queue UI on the underground overview. Vanilla hard-gates
--- these off underground (IsExplorationAvailable_Sectors/Queue return false for
--- Environment=="Underground"), so without this the overview shows no hover highlight there.
--- NOTE: also makes underground sectors click-queueable for scanning, like the surface.
+-- Underground hover tooltip (informational ONLY). Vanilla hard-gates the overview sector UI off
+-- underground (IsExplorationAvailable_Sectors/Queue return false for Environment=="Underground"),
+-- so without this the overview shows nothing on hover there. With it, hovering shows a minimal
+-- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
+-- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
