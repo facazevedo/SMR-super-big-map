@@ -524,6 +524,14 @@ config.ExpansionFrameMode = sbm_expanded_terrain
 -- TEMPORARY: set to "stretch" for testing the stretched-terrain look (step 1). Set back to
 -- "mirror" before release (stretch does not reposition objects/deposits yet).
 config.ExpansionFrameFillMode = "stretch"
+-- STRETCH extras. ScaleMarkers moves the generated DEPOSIT / ANOMALY / EFFECT markers (and any
+-- already-spawned deposits/anomalies) to their scaled spots on the stretched terrain, exactly like
+-- the decorations -- without it they stay clustered in the source corner. DecorTopUp restores the
+-- per-area decoration density: the stretch spreads the ORIGINAL decor count over ~1.78x the area,
+-- so each moved decoration gets a chance ((area_factor-1) probability) to spawn one jittered clone
+-- nearby, bringing density back to the generated look.
+config.StretchScaleMarkers = true
+config.StretchDecorTopUp = true
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
@@ -771,6 +779,8 @@ C.QUADRANT_MAX_RANDOM_GENERATOR_TILES = as_number(config.QuadrantCopyMaxRandomGe
 C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererNodeTileAlignment, 2048)
 C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionFrameMode)
 C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
+C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
+C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)

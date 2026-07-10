@@ -634,14 +634,40 @@ local function StretchSourceToFull(map, debug)
 		return ok_all and res == true
 	end
 
+	-- Per-step wall-clock timing (DEBUG_STRETCH) to find the loading hotspot, and a Sleep(1) yield
+	-- BETWEEN steps so other realtime threads (the loading box watch loop -> the "Please wait" dot
+	-- animation) get a tick. NOTE: each individual grid call is one long C call -- Lua is single-
+	-- threaded, so NOTHING (not even the UI) runs during it; yielding between steps is the best a
+	-- mod can do to keep the dots visibly alternating through the stretch.
+	local sleep = Global("Sleep")
+	local ticks = Global("GetPreciseTicks") or Global("RealTime")
+	local function now_ms()
+		if type(ticks) == "function" then
+			local ok, t = pcall(ticks)
+			if ok and type(t) == "number" then return t end
+		end
+		return 0
+	end
+	local function yield()
+		if type(sleep) == "function" then pcall(sleep, 1) end
+	end
+	local t_total = now_ms()
+	local function timed(label, fn, ...)
+		local t0 = now_ms()
+		local a, b = fn(...)
+		StretchLog("TIMING: " .. label, { ms = now_ms() - t0 })
+		yield()
+		return a, b
+	end
+
 	StretchLog("StretchSourceToFull: begin resample", { src_w = sw_tiles, src_h = sh_tiles, full_w = full_tw, full_h = full_th, frac_w = tostring(frac_w) })
 	DebugPrint(string.format("StretchSourceToFull: source %sx%s tiles -> full %sx%s tiles (frac %s)",
 		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
 	local done = 0
 	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
-	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
+	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
 	StretchLog("StretchSourceToFull: -> stretch TYPE")
-	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
+	if timed("type", stretch_one, "type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
 	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
 	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
@@ -661,13 +687,13 @@ local function StretchSourceToFull(map, debug)
 			}
 			for _, mg in ipairs(map_grids) do
 				StretchLog("StretchSourceToFull: -> stretch MAPGRID", { grid = mg.name })
-				if ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
+				if timed("mapgrid:" .. mg.name, ResampleMapGrid, map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
 			end
 		end
 	end
 	StretchLog("StretchSourceToFull: -> ReinvalidateExpandedTerrain")
-	ReinvalidateExpandedTerrain(map)
-	StretchLog("StretchSourceToFull: COMPLETE", { grids_done = done })
+	timed("reinvalidate", ReinvalidateExpandedTerrain, map)
+	StretchLog("StretchSourceToFull: COMPLETE", { grids_done = done, total_ms = now_ms() - t_total })
 	DebugPrint(string.format("StretchSourceToFull: done (%s grids stretched: height+type+colour/biome/clutter/grass)", tostring(done)))
 	return done > 0, done
 end
@@ -737,7 +763,27 @@ local function ScaleDecorationsToFull(map, debug)
 	local skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0
 	local sample_n = 0
 	local minx, miny, maxx, maxy
+	-- Yield every N objects so the loading watch loop (dot animation) keeps ticking through this
+	-- pass, and time the whole pass (DEBUG_STRETCH) for the loading-hotspot investigation.
+	local sleep = Global("Sleep")
+	local ticks = Global("GetPreciseTicks") or Global("RealTime")
+	local t0 = 0
+	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then t0 = t end end
+	-- DECOR TOP-UP (config STRETCH_DECOR_TOPUP): the stretch spreads the ORIGINAL decoration count
+	-- over area_factor (~1.78x) more area, thinning density. Give each moved decoration an
+	-- (area_factor - 1) chance to spawn ONE jittered clone nearby (within ~0.75 sector), restoring
+	-- per-area density while keeping the generator's local clustering character.
+	local rand_fn = Global("AsyncRand")
+	local topup_on = cfg_bool("STRETCH_DECOR_TOPUP", true) and type(rand_fn) == "function"
+		and type(CloneObjectAtOffset) == "function"
+	local area_factor_permille = math.floor(scale_x * scale_y * 1000 + 0.5) -- e.g. 1778
+	local topup_permille = math.max(0, area_factor_permille - 1000)         -- e.g. 778
+	local TOPUP_JITTER = 30000 -- wu (~3/4 sector)
+	local topped_up = 0
+	local processed = 0
 	for _, obj in ipairs(objs) do
+		processed = processed + 1
+		if processed % 250 == 0 and type(sleep) == "function" then pcall(sleep, 1) end
 		if not obj then
 			-- nil entry, ignore
 		elseif ShouldSkipObject(obj) then
@@ -790,19 +836,119 @@ local function ScaleDecorationsToFull(map, debug)
 						z_snapped = z_ok, old_scale = old_scale, new_scale = new_scale,
 					})
 				end
+				-- Density top-up: chance to add one jittered clone of this decoration nearby.
+				if topup_on and rand_fn(1000) < topup_permille then
+					local jx = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
+					local jy = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
+					local cx = math.max(0, math.min(full_wu - 1, nx + jx))
+					local cy = math.max(0, math.min(full_wu - 1, ny + jy))
+					-- obj is already AT np, so the clone offset is just the jitter (clamped).
+					local clone = CloneObjectAtOffset(map, obj, point_fn(cx - nx, cy - ny))
+					if clone then
+						-- Snap the clone onto the surface at its jittered spot.
+						local cp = point_fn(cx, cy)
+						if type(cp.SetTerrainZ) == "function" then
+							local ok_cz, cpz = pcall(cp.SetTerrainZ, cp, map)
+							if ok_cz and cpz then cp = cpz end
+						end
+						if type(clone.SetPos) == "function" then pcall(clone.SetPos, clone, cp) end
+						topped_up = topped_up + 1
+					end
+				end
 			end)
 		end
 	end
+	local elapsed_ms = 0
+	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then elapsed_ms = t - t0 end end
 	StretchLog("ScaleDecorationsToFull: DONE", {
 		collected = #objs, moved = moved, scaled = scaled,
 		skipped_shouldskip = skipped_skip, skipped_marker = skipped_marker,
 		skipped_nopos = skipped_nopos, no_setpos = no_setpos,
 		new_x_range = minx and (tostring(minx) .. ".." .. tostring(maxx)) or "none",
 		new_y_range = miny and (tostring(miny) .. ".." .. tostring(maxy)) or "none",
-		full_wu = full_wu,
+		full_wu = full_wu, elapsed_ms = elapsed_ms,
+		topped_up = topped_up, topup_permille = topup_permille,
 	})
-	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s; skipped skip=%s marker=%s nopos=%s)",
-		tostring(moved), tostring(scaled), tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
+	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, topped up %s; skipped skip=%s marker=%s nopos=%s)",
+		tostring(moved), tostring(scaled), tostring(topped_up), tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
+	return moved
+end
+
+-- STRETCH step 3 (markers): move the generated DEPOSIT / ANOMALY / EFFECT markers (and any
+-- already-spawned deposits/anomalies, e.g. the start sector's revealed ones) to their scaled spot
+-- on the stretched terrain -- the same position * (full/source) transform as the decorations.
+-- Without this they stay clustered in the source corner. Positions only: marker SIZE is gameplay
+-- (scan radius/visuals), so scale is left untouched. Gated on config STRETCH_SCALE_MARKERS.
+local function ScaleMarkersToFull(map, debug)
+	StretchLog("ScaleMarkersToFull: ENTER")
+	if not map or not cfg_bool("STRETCH_SCALE_MARKERS", true) then return 0 end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	local sleep = Global("Sleep")
+	if type(box_fn) ~= "function" or type(point_fn) ~= "function" then return 0 end
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	local full_tw = map.SuperBigMapDesiredWidthTiles
+	local full_th = map.SuperBigMapDesiredHeightTiles
+	if type(full_tw) ~= "number" or full_tw <= 0 then
+		local mapdata = map.mapdata
+		full_tw = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width or nil
+		full_th = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height or full_tw
+	end
+	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
+		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= sw_tiles then
+		StretchLog("ScaleMarkersToFull: sizes unknown / no expansion -- skip")
+		return 0
+	end
+	local scale_x = (full_tw + 0.0) / sw_tiles
+	local scale_y = (full_th + 0.0) / sh_tiles
+	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
+	local function is_marker(obj)
+		return IsImportantSectorObject(obj) -- resource deposit markers (surface/subsurface/terrain)
+			or IsKindOfSafe(obj, "Deposit")
+			or IsKindOfSafe(obj, "SubsurfaceAnomaly")
+			or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
+			or IsKindOfSafe(obj, "EffectDepositMarker")
+	end
+	local objs = {}
+	if type(map.MapForEach) == "function" then
+		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
+	end
+	local moved, sample_n, processed = 0, 0, 0
+	for _, obj in ipairs(objs) do
+		processed = processed + 1
+		if processed % 250 == 0 and type(sleep) == "function" then pcall(sleep, 1) end
+		if obj and is_marker(obj) then
+			pcall(function()
+				local pos = ObjectPosition(obj)
+				if not pos then return end
+				local ox, oy = PointXY(pos)
+				if type(ox) ~= "number" or type(oy) ~= "number" then return end
+				local np = point_fn(math.floor(ox * scale_x + 0.5), math.floor(oy * scale_y + 0.5))
+				if type(np.SetTerrainZ) == "function" then
+					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
+					if ok_z and pz then np = pz end
+				end
+				if type(obj.SetPos) == "function" then
+					pcall(obj.SetPos, obj, np)
+					moved = moved + 1
+					if sample_n < 10 then
+						sample_n = sample_n + 1
+						local nx2, ny2 = PointXY(np)
+						StretchLog("marker sample", {
+							n = sample_n, class = tostring(obj.class),
+							old_xy = tostring(ox) .. "," .. tostring(oy),
+							new_xy = tostring(nx2) .. "," .. tostring(ny2),
+						})
+					end
+				end
+			end)
+		end
+	end
+	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved })
+	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers", tostring(moved)))
 	return moved
 end
 
@@ -1351,6 +1497,7 @@ local TerrainCopy = {
 	CopyEditorGrid = CopyEditorGrid,
 	StretchSourceToFull = StretchSourceToFull,
 	ScaleDecorationsToFull = ScaleDecorationsToFull,
+	ScaleMarkersToFull = ScaleMarkersToFull,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

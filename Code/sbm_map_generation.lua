@@ -169,6 +169,7 @@ local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
 local RemoveFrameUndergroundAccess = TerrainCopy.RemoveFrameUndergroundAccess
 local StretchSourceToFull = TerrainCopy.StretchSourceToFull
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
+local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -985,13 +986,25 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_dec = ScaleDecorationsToFull(map, false)
 					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
 				end
+				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
+				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
+				if type(ScaleMarkersToFull) == "function" then
+					StretchLog("stretch branch: -> ScaleMarkersToFull")
+					local n_mark = ScaleMarkersToFull(map, false)
+					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
+				end
+				-- Yield between the heavy finalize calls so the loading watch loop (dot animation)
+				-- gets a tick between each blocking C call.
+				sleep(1)
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
 					SafeCall(rebuild_buildable, map)
 				end
+				sleep(1)
 				StretchLog("stretch branch: -> ForceFramePassable")
 				SafeCall(ForceFramePassable, map)
+				sleep(1)
 				StretchLog("stretch branch: -> ResnapRocketsOnMap")
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
