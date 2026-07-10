@@ -480,56 +480,6 @@ local function HideWelcomePopupInstant()
 	return dlg ~= nil
 end
 
--- Animated "Please wait" footer: cycle the trailing dots (. -> .. -> ...) so the player can see
--- the loading screen is alive, not frozen. The footer is the message dialog's toolbar OK button
--- (its action id is "Ok"); it is built async during the dialog open, so we search for it on the
--- watch tick and SetText it. Dots change ~every 450ms (15 x the 30ms tick).
-local loading_anim_tick = 0
-local loading_wait_button = false
-local WAIT_BASE = "Please wait"
-local WAIT_DOTS_EVERY = 15
-
--- Depth-first search for the footer OK button (a toolbar XTextButton carrying action.ActionId "Ok").
-local function FindOkButton(win)
-	if type(win) ~= "table" then return nil end
-	local act = win.action
-	if type(act) == "table" and act.ActionId == "Ok" and type(win.SetText) == "function" then
-		return win
-	end
-	for i = 1, #win do
-		local found = FindOkButton(win[i])
-		if found then return found end
-	end
-	return nil
-end
-
--- Called each watch tick while the box is up: (re)locate the OK button and set its text to
--- "Please wait" + a cycling 1..3 dots. Wrapped in Untranslated so it matches the button's
--- translate context (same as the original ok_text). No-op until the async button exists.
-local function AnimateWaitButton(box)
-	if not box then return end
-	local had_btn = loading_wait_button ~= false and loading_wait_button ~= nil
-	local btn = loading_wait_button
-	if not btn or btn.window_state == "destroyed" or btn.window_state == "destroying" then
-		btn = FindOkButton(box) or false
-		loading_wait_button = btn
-		if btn and not had_btn then LoadingDbg("wait anim: OK button FOUND") end
-		if not btn and had_btn then LoadingDbg("wait anim: OK button LOST -> re-searching") end
-	end
-	local dots = 1 + (math.floor(loading_anim_tick / WAIT_DOTS_EVERY) % 3)
-	local at_boundary = (loading_anim_tick % WAIT_DOTS_EVERY == 0)
-	loading_anim_tick = loading_anim_tick + 1
-	if not btn or type(btn.SetText) ~= "function" then
-		if at_boundary then LoadingDbg("wait anim: no button yet", { tick = loading_anim_tick, dots = dots }) end
-		return
-	end
-	local text = WAIT_BASE .. string.rep(".", dots)
-	local untranslated = Global("Untranslated")
-	if type(untranslated) == "function" then text = untranslated(text) end
-	local ok_set = pcall(btn.SetText, btn, text)
-	if at_boundary then LoadingDbg("wait anim: set dots", { tick = loading_anim_tick, dots = dots, ok = ok_set }) end
-end
-
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
 -- Returns true when the loading box is up (active path) so the watch loop can log "applied".
@@ -555,16 +505,9 @@ local function SetWelcomeLoading(active)
 					wrap("Please wait."))
 				if ok and box then
 					loading_box = box
-					-- New box -> re-find the footer button for the animation.
-					loading_wait_button = false
-					loading_anim_tick = 0
 					LoadingLog("loading box created over hidden welcome popup")
 				end
 			end
-		end
-		-- Animate the "Please wait" dots so the screen visibly isn't frozen.
-		if LoadingBoxValid() then
-			AnimateWaitButton(loading_box)
 		end
 		return LoadingBoxValid() == true
 	else
@@ -577,8 +520,6 @@ local function SetWelcomeLoading(active)
 			end
 		end
 		loading_box = false
-		loading_wait_button = false
-		loading_anim_tick = 0
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
@@ -617,8 +558,8 @@ function SuperBigMap.ExpansionLoadingBegin()
 				LoadingDbg("watch loop: EXIT (loading_on_welcome cleared)", { iter = iter })
 				return -- ended (expansion finished) before/while watching
 			end
-			-- pcall so a throw inside SetWelcomeLoading / the dot animation can NEVER kill this
-			-- watch thread (which would freeze the box + stop the animation while it stays up).
+			-- pcall so a throw inside SetWelcomeLoading can NEVER kill this watch thread (which
+			-- would leave the loading box stuck on screen).
 			local ok_call, ok = pcall(SetWelcomeLoading, true)
 			if not ok_call then
 				LoadingDbg("watch loop: SetWelcomeLoading THREW (loop kept alive)", { iter = iter, err = tostring(ok) })
@@ -632,7 +573,7 @@ function SuperBigMap.ExpansionLoadingBegin()
 				LoadingLog("loading box not present; will recreate")
 			end
 			if iter % 33 == 0 then
-				LoadingDbg("watch loop: tick", { iter = iter, box_valid = LoadingBoxValid() == true, anim_tick = loading_anim_tick })
+				LoadingDbg("watch loop: tick", { iter = iter, box_valid = LoadingBoxValid() == true })
 			end
 			if type(sleep) ~= "function" then
 				LoadingDbg("watch loop: EXIT (no Sleep fn)", { iter = iter })

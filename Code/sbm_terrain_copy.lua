@@ -634,12 +634,8 @@ local function StretchSourceToFull(map, debug)
 		return ok_all and res == true
 	end
 
-	-- Per-step wall-clock timing (DEBUG_STRETCH) to find the loading hotspot, and a Sleep(1) yield
-	-- BETWEEN steps so other realtime threads (the loading box watch loop -> the "Please wait" dot
-	-- animation) get a tick. NOTE: each individual grid call is one long C call -- Lua is single-
-	-- threaded, so NOTHING (not even the UI) runs during it; yielding between steps is the best a
-	-- mod can do to keep the dots visibly alternating through the stretch.
-	local sleep = Global("Sleep")
+	-- Per-step wall-clock timing (DEBUG_STRETCH) to find the loading hotspot. Each grid call is one
+	-- long C call -- Lua is single-threaded, so nothing else (not even the UI) runs during it.
 	local ticks = Global("GetPreciseTicks") or Global("RealTime")
 	local function now_ms()
 		if type(ticks) == "function" then
@@ -648,15 +644,11 @@ local function StretchSourceToFull(map, debug)
 		end
 		return 0
 	end
-	local function yield()
-		if type(sleep) == "function" then pcall(sleep, 1) end
-	end
 	local t_total = now_ms()
 	local function timed(label, fn, ...)
 		local t0 = now_ms()
 		local a, b = fn(...)
 		StretchLog("TIMING: " .. label, { ms = now_ms() - t0 })
-		yield()
 		return a, b
 	end
 
@@ -763,9 +755,7 @@ local function ScaleDecorationsToFull(map, debug)
 	local skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0
 	local sample_n = 0
 	local minx, miny, maxx, maxy
-	-- Yield every N objects so the loading watch loop (dot animation) keeps ticking through this
-	-- pass, and time the whole pass (DEBUG_STRETCH) for the loading-hotspot investigation.
-	local sleep = Global("Sleep")
+	-- Time the whole pass (DEBUG_STRETCH) for the loading-hotspot investigation.
 	local ticks = Global("GetPreciseTicks") or Global("RealTime")
 	local t0 = 0
 	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then t0 = t end end
@@ -780,10 +770,7 @@ local function ScaleDecorationsToFull(map, debug)
 	local topup_permille = math.max(0, area_factor_permille - 1000)         -- e.g. 778
 	local TOPUP_JITTER = 30000 -- wu (~3/4 sector)
 	local topped_up = 0
-	local processed = 0
 	for _, obj in ipairs(objs) do
-		processed = processed + 1
-		if processed % 250 == 0 and type(sleep) == "function" then pcall(sleep, 1) end
 		if not obj then
 			-- nil entry, ignore
 		elseif ShouldSkipObject(obj) then
@@ -886,7 +873,6 @@ local function ScaleMarkersToFull(map, debug)
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
 	local box_fn = Global("box")
 	local point_fn = Global("point")
-	local sleep = Global("Sleep")
 	if type(box_fn) ~= "function" or type(point_fn) ~= "function" then return 0 end
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
 	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
@@ -916,10 +902,8 @@ local function ScaleMarkersToFull(map, debug)
 	if type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
-	local moved, sample_n, processed = 0, 0, 0
+	local moved, sample_n = 0, 0
 	for _, obj in ipairs(objs) do
-		processed = processed + 1
-		if processed % 250 == 0 and type(sleep) == "function" then pcall(sleep, 1) end
 		if obj and is_marker(obj) then
 			pcall(function()
 				local pos = ObjectPosition(obj)

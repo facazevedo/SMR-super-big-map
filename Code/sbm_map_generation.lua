@@ -993,18 +993,13 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 				end
-				-- Yield between the heavy finalize calls so the loading watch loop (dot animation)
-				-- gets a tick between each blocking C call.
-				sleep(1)
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
 					SafeCall(rebuild_buildable, map)
 				end
-				sleep(1)
 				StretchLog("stretch branch: -> ForceFramePassable")
 				SafeCall(ForceFramePassable, map)
-				sleep(1)
 				StretchLog("stretch branch: -> ResnapRocketsOnMap")
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
