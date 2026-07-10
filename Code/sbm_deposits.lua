@@ -908,6 +908,11 @@ function DepositRules.TopUpDeposits(map)
 
 	-- Count current resource markers (total) and the ones inside the source quadrant (the
 	-- generated density baseline); collect non-concrete source markers as clone templates.
+	-- STRETCH mode: ScaleMarkersToFull has already spread the generated markers over the WHOLE
+	-- map, so the source-quadrant test no longer identifies the generated baseline (it would
+	-- undercount by ~1/area_factor and make the top-up a no-op). In stretch the baseline IS the
+	-- full current population (every marker is generator output), so count/keep them all.
+	local stretch_mode = tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
 	local total_current, source_count = 0, 0
 	local templates = {}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
@@ -917,7 +922,7 @@ function DepositRules.TopUpDeposits(map)
 		if not pos or type(pos.xy) ~= "function" then return end
 		local px, py = pos:xy()
 		if px == nil then return end
-		if px < src_w and py < src_h then
+		if stretch_mode or (px < src_w and py < src_h) then
 			source_count = source_count + 1
 			-- All resource types are templates (incl. concrete) so the top-up mix is
 			-- proportional to the source; cloned concrete self-paints its patch on scan.

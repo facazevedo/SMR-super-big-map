@@ -816,6 +816,17 @@ local function PatchRandomMapGenerator()
 				tostring(blank), tostring(cur_w_tiles), tostring(cur_h_tiles)
 			))
 
+			-- Make the AREA FACTOR computable at Begin time: mapdata.Width was just overridden to
+			-- the generator size, and the pending-map markers can be wiped by the new-game Lua
+			-- reload -- with both gone AreaFactor read 6144/6144 = 1 and the anomaly/research count
+			-- scaling silently did nothing (logs showed anom_count_scale=1.000). Stamp the DETECTED
+			-- full + generator tile sizes on the map so RmgPlacement (and the later stretch passes)
+			-- always see desired=8192 / generator=6144.
+			map.SuperBigMapDesiredWidthTiles = map.SuperBigMapDesiredWidthTiles or cur_w_tiles
+			map.SuperBigMapDesiredHeightTiles = map.SuperBigMapDesiredHeightTiles or cur_h_tiles
+			map.SuperBigMapGeneratorWidthTiles = map.SuperBigMapGeneratorWidthTiles or gen_width_tiles
+			map.SuperBigMapGeneratorHeightTiles = map.SuperBigMapGeneratorHeightTiles or gen_height_tiles
+
 			-- Terrain-safe placement auto-fit: relax the deposit/anomaly placement
 			-- margins + spacing (placement-only knobs; never touch gen_zone/terrain)
 			-- so the full preset counts seat in the smaller expanded play_zone. Sizes
@@ -1073,6 +1084,37 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					if deposits and type(deposits.EnforceScanGateAfterStretch) == "function" then
 						StretchLog("stretch branch: -> EnforceScanGateAfterStretch")
 						SafeCall(deposits.EnforceScanGateAfterStretch, map)
+					end
+					-- Step 6: DENSITY NORMALIZATION (same suite as the mirror path, which the
+					-- stretch branch never ran -- the cause of the over-crowded start sector):
+					--   TopUpDeposits     raise the TOTAL to vanilla density x area (~1.78x),
+					--                     stretch-aware baseline (all markers are generator output);
+					--   RegisterCloned    register the top-up clones with their sectors;
+					--   RespaceAnomalies  thin/respace the start sector's revealed anomalies;
+					--   EvenOutDeposit    cap per-sector density (vanilla-like) and relocate the
+					--                     surplus into sparse unscanned sectors.
+					-- Net effect: proportionally MORE enrichments for the 20x20, at vanilla
+					-- per-sector density -- no crowding.
+					if deposits then
+						if type(deposits.TopUpDeposits) == "function" then
+							StretchLog("stretch branch: -> TopUpDeposits")
+							SafeCall(deposits.TopUpDeposits, map)
+						end
+						if type(deposits.RegisterClonedMarkers) == "function" then
+							StretchLog("stretch branch: -> RegisterClonedMarkers")
+							SafeCall(deposits.RegisterClonedMarkers, map)
+						end
+						if type(deposits.RespaceAnomalies) == "function" then
+							StretchLog("stretch branch: -> RespaceAnomalies")
+							SafeCall(deposits.RespaceAnomalies, map)
+						end
+						if type(deposits.EvenOutDepositDensity) == "function" then
+							StretchLog("stretch branch: -> EvenOutDepositDensity")
+							SafeCall(deposits.EvenOutDepositDensity, map)
+						end
+						if type(deposits.LogDistributionReport) == "function" then
+							SafeCall(deposits.LogDistributionReport, map, "stretch after density suite")
+						end
 					end
 				end
 				local function now2()
