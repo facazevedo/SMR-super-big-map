@@ -1199,6 +1199,40 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	end
 	hide_leaks("SubsurfaceDeposit")
 	hide_leaks("SubsurfaceAnomaly")
+	-- A2) spawned SURFACE / CONCRETE deposits: these spawn at scan time, so the only pre-spawned
+	-- ones are the start sector's -- which the stretch moved into unscanned sectors (visible
+	-- deposit icons + painted regolith, the "concrete still visible" report). Despawn the spawned
+	-- object and reset its marker to unplaced/hidden so it re-spawns vanilla-style when its new
+	-- sector is really scanned (same pattern as EvenOutDepositDensity's start-sector surplus), and
+	-- clear the concrete regolith imprint at the unscanned position (PlaceDeposit repaints it on
+	-- scan). MoveConcreteImprints' flood fill runs inside the stretch branch's paused-ILD scope.
+	local IsValid = Global("IsValid")
+	local DoneObject = Global("DoneObject")
+	local despawned = 0
+	local concrete_moves = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not (marker and IsResourceDepositMarker(marker)) then return end
+		if marker.is_placed ~= true then return end
+		local pos = ObjectPos(marker)
+		if not pos or type(pos.xy) ~= "function" then return end
+		local px, py = pos:xy()
+		if px == nil then return end
+		local ok_s, sector = pcall(get_sector, city, px, py)
+		if not (ok_s and sector) or SectorIsScanned(sector) then return end
+		if type(IsValid) == "function" and IsValid(marker.placed_obj) and type(DoneObject) == "function" then
+			pcall(DoneObject, marker.placed_obj)
+		end
+		marker.placed_obj = false
+		marker.is_placed = false
+		SetRevealedState(marker, false)
+		despawned = despawned + 1
+		if IsConcreteTerrainDepositMarker(marker) then
+			-- from == to with paint_now=false: clears the blob at the unscanned position and
+			-- postpones the repaint to the marker's own scan-time PlaceDeposit.
+			concrete_moves[#concrete_moves + 1] = { from = { x = px, y = py }, to = { x = px, y = py }, paint_now = false }
+		end
+	end)
+	MoveConcreteImprints(map, concrete_moves)
 	-- B) scanned sectors: run vanilla's RevealDeposits over their markers (place what moved in)
 	-- and reveal any hidden scan-gated objects inside.
 	local reveal_deposits = Global("RevealDeposits")
@@ -1236,7 +1270,8 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 		end
 	end
 	Log("stretch scan-gate enforced", {
-		hidden_leaks = hidden, scanned_sectors_placed = placed_sectors, revealed_in_scanned = revealed_objs,
+		hidden_leaks = hidden, despawned_surface = despawned, concrete_imprints_cleared = #concrete_moves,
+		scanned_sectors_placed = placed_sectors, revealed_in_scanned = revealed_objs,
 	})
 end
 
