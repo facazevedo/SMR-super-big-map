@@ -1154,7 +1154,8 @@ end
 -- When STRETCH_RESNAP_FLOATERS is on, non-Building floaters are snapped down onto the terrain
 -- (Buildings are logged but never touched). Surface map only -- underground ceilings would
 -- misflag. Threshold 300 wu above terrain.
-local function AuditFloatingObjects(map)
+local function AuditFloatingObjects(map, phase)
+	phase = tostring(phase or "?")
 	if not map or type(map.MapForEach) ~= "function" then return 0 end
 	local terrain_api = Global("terrain")
 	local point_fn = Global("point")
@@ -1169,21 +1170,29 @@ local function AuditFloatingObjects(map)
 	local object_clone = SuperBigMap.ObjectClone
 	local should_skip = object_clone and object_clone.ShouldSkipObject
 	local fix = cfg_bool("STRETCH_RESNAP_FLOATERS", true)
-	local THRESHOLD = 300 -- wu above terrain = floating
+	local THRESHOLD = 300       -- wu above terrain at the ORIGIN = floating
+	local EDGE_THRESHOLD = 1500 -- wu clearance under a big mesh's EDGES = visual overhang float
+	local BIG_RADIUS = 6000     -- wu: objects at least this wide get the edge check
 	local skip_classes = {
 		City = true, MapSector = true, RandomMapGeneratorHolder = true, RevealedMapSector = true,
 		SectorUnexplored = true, SectorScanned = true, SectorTarget = true, SectorRadius = true,
+		CameraObj = true,
 	}
 	local floaters, fixed, examined = 0, 0, 0
+	local edge_floaters, skipped_parent, no_explicit_z = 0, 0, 0
 	local class_counts = {}
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapFloaterAudit") end
 	pcall(map.MapForEach, map, "map", "CObject", function(obj)
 		if not obj or skip_classes[obj.class or false] then return end
-		-- Attached children follow their parent; only audit root objects.
+		-- Attached children follow their parent; only audit root objects (counted -- a large
+		-- attached mesh under a distant parent would be a blind spot worth knowing about).
 		if type(obj.GetParent) == "function" then
 			local ok_p, parent = pcall(obj.GetParent, obj)
-			if ok_p and parent then return end
+			if ok_p and parent then
+				skipped_parent = skipped_parent + 1
+				return
+			end
 		end
 		local pos = ObjectPosition(obj)
 		if not pos then return end
@@ -1191,31 +1200,62 @@ local function AuditFloatingObjects(map)
 		if type(px) ~= "number" or type(py) ~= "number" then return end
 		local pz
 		pcall(function() pz = pos:z() end)
-		if type(pz) ~= "number" then return end -- terrain-glued objects have no explicit z
+		if type(pz) ~= "number" then
+			no_explicit_z = no_explicit_z + 1
+			return
+		end
 		examined = examined + 1
 		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
 		if not ok_h or type(h) ~= "number" then return end
 		local dz = pz - h
-		if dz <= THRESHOLD then return end
-		floaters = floaters + 1
 		local cls = tostring(obj.class or "?")
-		class_counts[cls] = (class_counts[cls] or 0) + 1
-		local skipped_verdict = "?"
-		if type(should_skip) == "function" then
-			local ok_s, v = pcall(should_skip, obj)
-			if ok_s then skipped_verdict = v and true or false end
+		if dz > THRESHOLD then
+			floaters = floaters + 1
+			class_counts[cls] = (class_counts[cls] or 0) + 1
+			local skipped_verdict = "?"
+			if type(should_skip) == "function" then
+				local ok_s, v = pcall(should_skip, obj)
+				if ok_s then skipped_verdict = v and true or false end
+			end
+			local is_building = IsKindOfSafe(obj, "Building")
+			if floaters <= 25 then
+				AlignLog("floater", {
+					phase = phase, class = cls, xy = tostring(px) .. "," .. tostring(py),
+					z = pz, terrain_h = h, dz = dz,
+					decor_pass_skips_it = skipped_verdict, building = is_building,
+				})
+			end
+			if fix and not is_building and type(obj.SetPos) == "function" then
+				local np = point_fn(px, py, h)
+				if pcall(obj.SetPos, obj, np) then fixed = fixed + 1 end
+			end
+			return
 		end
-		local is_building = IsKindOfSafe(obj, "Building")
-		if floaters <= 25 then
-			AlignLog("floater", {
-				class = cls, xy = tostring(px) .. "," .. tostring(py),
-				z = pz, terrain_h = h, dz = dz,
-				decor_pass_skips_it = skipped_verdict, building = is_building,
-			})
-		end
-		if fix and not is_building and type(obj.SetPos) == "function" then
-			local np = point_fn(px, py, h)
-			if pcall(obj.SetPos, obj, np) then fixed = fixed + 1 end
+		-- EDGE CHECK for large meshes: the origin can sit ON the ground while the mesh bulk
+		-- hangs over lower terrain (screenshot: razor-flat rock base high above a dip). Sample
+		-- the terrain under the mesh edges; large positive clearance = visual float that the
+		-- origin test cannot see. Log-only (auto-lowering could bury the origin side).
+		if type(obj.GetRadius) == "function" then
+			local ok_r, r = pcall(obj.GetRadius, obj)
+			if ok_r and type(r) == "number" and r >= BIG_RADIUS then
+				local worst
+				for _, off in ipairs({ {r, 0}, {-r, 0}, {0, r}, {0, -r} }) do
+					local ok_h2, h2 = pcall(terrain_api.GetHeight, map, point_fn(px + off[1], py + off[2]))
+					if ok_h2 and type(h2) == "number" then
+						local clearance = pz - h2
+						if not worst or clearance > worst then worst = clearance end
+					end
+				end
+				if worst and worst > EDGE_THRESHOLD then
+					edge_floaters = edge_floaters + 1
+					if edge_floaters <= 25 then
+						AlignLog("floater (edge overhang)", {
+							phase = phase, class = cls, xy = tostring(px) .. "," .. tostring(py),
+							z = pz, dz_origin = dz, worst_edge_clearance = worst, radius = r,
+						})
+					end
+				end
+			end
 		end
 	end)
 	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapFloaterAudit") end
@@ -1223,11 +1263,13 @@ local function AuditFloatingObjects(map)
 	for cls, n in pairs(class_counts) do top[#top + 1] = cls .. "=" .. n end
 	table.sort(top)
 	AlignLog("floater audit DONE", {
-		examined = examined, floaters = floaters, fixed = fixed,
+		phase = phase, examined = examined, floaters = floaters, fixed = fixed,
+		edge_overhangs = edge_floaters, skipped_attached = skipped_parent, no_explicit_z = no_explicit_z,
 		by_class = table.concat(top, " "),
 	})
-	StretchLog("AuditFloatingObjects: DONE", { floaters = floaters, fixed = fixed })
-	DebugPrint(string.format("floater audit: %s floating objects (%s snapped down)", tostring(floaters), tostring(fixed)))
+	StretchLog("AuditFloatingObjects: DONE", { phase = phase, floaters = floaters, fixed = fixed, edge_overhangs = edge_floaters })
+	DebugPrint(string.format("floater audit [%s]: %s floating (%s snapped), %s edge overhangs",
+		phase, tostring(floaters), tostring(fixed), tostring(edge_floaters)))
 	return floaters
 end
 

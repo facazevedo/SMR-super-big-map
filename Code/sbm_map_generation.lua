@@ -1091,8 +1091,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				-- class/dz/skip-verdict per floater under the Align scope; snaps non-Building
 				-- floaters down when STRETCH_RESNAP_FLOATERS is on.
 				if type(AuditFloatingObjects) == "function" then
-					StretchLog("stretch branch: -> AuditFloatingObjects")
-					local n_float = AuditFloatingObjects(map)
+					StretchLog("stretch branch: -> AuditFloatingObjects (early)")
+					local n_float = AuditFloatingObjects(map, "early")
 					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
 				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
@@ -1156,6 +1156,20 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				StretchLog("stretch branch: -> ForceFramePassable")
 				SafeCall(ForceFramePassable, map)
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
+				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
+				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
+				-- audit found only 7 small floaters yet big rocks still hovered on screen).
+				if type(AuditFloatingObjects) == "function" then
+					AuditFloatingObjects(map, "late")
+					local ct = Global("CreateRealTimeThread")
+					local sl = Global("Sleep")
+					if type(ct) == "function" and type(sl) == "function" then
+						ct(function()
+							sl(30000)
+							AuditFloatingObjects(map, "post30s")
+						end)
+					end
+				end
 				StretchLog("stretch branch: -> ResnapRocketsOnMap")
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then

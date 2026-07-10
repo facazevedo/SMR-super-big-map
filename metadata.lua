@@ -6,7 +6,7 @@ return PlaceObj('ModDef', {
 	'last_changes', "Removed the 'Super Big Map is OFF' popup that appeared when entering the map/mod editor -- the mod is now silently inert in the editor (it still forces vanilla camera/zoom there). The loading box uses the standard popup layout with a bright, non-pressable 'Please wait.' button.",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 417,
+	'version', 418,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {
