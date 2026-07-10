@@ -173,6 +173,7 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local TranslateUndergroundToMatchEntrances = TerrainCopy.TranslateUndergroundToMatchEntrances
+local AlignEntrancePairs = TerrainCopy.AlignEntrancePairs
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
@@ -1448,6 +1449,14 @@ local function RunUndergroundStretchIfEnabled(map)
 				end
 				StretchLog("underground stretch: -> TranslateUndergroundToMatchEntrances", { waited_for_surface_ms = waited_align })
 				TranslateUndergroundToMatchEntrances(map, false)
+			end
+			-- PER-PAIR fixup: pairs the whole-map translation cannot fix (endpoints not
+			-- co-generated; no uniform offset exists) get their underground endpoint moved
+			-- directly beneath the linked surface partner.
+			if type(AlignEntrancePairs) == "function" then
+				StretchLog("underground stretch: -> AlignEntrancePairs")
+				local n_pairs = AlignEntrancePairs(map)
+				StretchLog("underground stretch: pair-align returned", { pairs_moved = n_pairs })
 			end
 			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
 			-- deposit/anomaly so the stretched underground layout can be inspected.

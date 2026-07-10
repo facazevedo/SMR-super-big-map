@@ -1546,6 +1546,141 @@ local function TranslateUndergroundToMatchEntrances(map, debug)
 	return true
 end
 
+-- PER-PAIR ENTRANCE ALIGNMENT (config ALIGN_UNDERGROUND_ENTRANCES): natural tunnel pairs are
+-- linked by object reference (ElevatorPassage:Link -> passage.other on both sides), but their
+-- endpoints are NOT always co-located by generation -- log 16.31.59 showed one pair matching
+-- within ~5k wu and the other ~140k wu (3.4 sectors) apart, so no uniform transform can fix them
+-- all. For every SURFACE passage with a linked underground counterpart that is not already
+-- beneath it, move the UNDERGROUND endpoint -- the passage building (hex re-registered) plus its
+-- entrance cluster (tunnel marker / sign / rocks / imprint objects near the old endpoint) -- to
+-- the surface endpoint's (x,y), Z-snapped. The surface (normal view) is canonical and never
+-- moves. Travel/link semantics are untouched (the pair link is by reference, and emergence
+-- follows the endpoint positions). Runs once per underground map.
+local function AlignEntrancePairs(ug_map)
+	if not cfg_bool("ALIGN_UNDERGROUND_ENTRANCES", false) then return 0 end
+	if not ug_map or ug_map.SuperBigMapEntrancePairsAligned == true then return 0 end
+	local main_map = Global("MainMap")
+	local point_fn = Global("point")
+	local box_fn = Global("box")
+	local IsValid = Global("IsValid")
+	if not main_map or type(main_map.MapForEach) ~= "function" or type(ug_map.MapForEach) ~= "function"
+		or type(point_fn) ~= "function" or type(box_fn) ~= "function" then
+		return 0
+	end
+	ug_map.SuperBigMapEntrancePairsAligned = true
+	local DebugLog = SuperBigMap.DebugLog
+	local function AlignLog(msg, data)
+		if DebugLog then DebugLog.Info("Align", msg, data) end
+	end
+	local object_clone = SuperBigMap.ObjectClone
+	local is_access = object_clone and object_clone.IsUndergroundAccessObject
+	local get_sector = Global("GetMapSectorXY")
+	local hex_remove = Global("HexGridShapeRemoveObject")
+	local hex_add = Global("HexGridShapeAddObject")
+	local CLUSTER_R = 15000  -- wu: entrance-cluster radius around the old underground endpoint
+	local ALIGNED_TOL = 8000 -- wu: pairs already within ~1/5 sector are left alone
+
+	-- Move one object to (tx,ty), Z-snapped; Buildings get their hex shape re-registered
+	-- (bare SetPos leaves hex entries behind -- the elevator-snap lesson).
+	local function move_to(o, tx, ty)
+		local np = point_fn(math.floor(tx), math.floor(ty))
+		if type(np.SetTerrainZ) == "function" then
+			local ok_z, pz = pcall(np.SetTerrainZ, np, ug_map)
+			if ok_z and pz then np = pz end
+		end
+		local shape
+		if type(hex_remove) == "function" and type(hex_add) == "function"
+			and IsKindOfSafe(o, "Building")
+			and type(o.handle) == "number" and o.handle > 0
+			and type(o.GetShapePoints) == "function" then
+			local ok_sh, sh = pcall(o.GetShapePoints, o)
+			if ok_sh and sh then shape = sh end
+		end
+		if shape then pcall(hex_remove, ug_map.object_hex_grid, o, shape) end
+		local ok_set = type(o.SetPos) == "function" and pcall(o.SetPos, o, np) or false
+		if shape then pcall(hex_add, ug_map.object_hex_grid, o, shape) end
+		return ok_set
+	end
+
+	local surface_passages = {}
+	pcall(main_map.MapForEach, main_map, "map", "ElevatorPassage", function(p)
+		surface_passages[#surface_passages + 1] = p
+	end)
+	local moved_pairs = 0
+	for _, p in ipairs(surface_passages) do
+		pcall(function()
+			local other = p.other
+			if not other or (type(IsValid) == "function" and not IsValid(other)) then
+				AlignLog("pair-align: surface passage has NO linked counterpart", { class = tostring(p.class) })
+				return
+			end
+			local omap = type(other.GetMap) == "function" and select(2, pcall(other.GetMap, other)) or nil
+			if omap ~= ug_map then
+				AlignLog("pair-align: counterpart not on the underground map -- skip", {
+					class = tostring(other.class), omap = tostring(omap and (omap.name or "?") or "nil"),
+				})
+				return
+			end
+			local sp, up = ObjectPosition(p), ObjectPosition(other)
+			if not sp or not up then return end
+			local sx, sy = PointXY(sp)
+			local ux, uy = PointXY(up)
+			if type(sx) ~= "number" or type(ux) ~= "number" then return end
+			local dx, dy = sx - ux, sy - uy
+			AlignLog("pair-align: pair", {
+				surface_xy = tostring(sx) .. "," .. tostring(sy),
+				underground_xy = tostring(ux) .. "," .. tostring(uy),
+				delta = tostring(dx) .. "," .. tostring(dy),
+			})
+			if (dx * dx + dy * dy) <= ALIGNED_TOL * ALIGNED_TOL then return end
+			-- Collect the underground entrance cluster around the OLD endpoint (marker, sign,
+			-- rocks, imprint -- anything underground-access plus tunnel markers).
+			local cluster = {}
+			local around = box_fn(ux - CLUSTER_R, uy - CLUSTER_R, ux + CLUSTER_R, uy + CLUSTER_R)
+			pcall(ug_map.MapForEach, ug_map, around, "CObject", function(o)
+				if o == other then return end
+				local matched = false
+				if type(is_access) == "function" then
+					local ok_m, m = pcall(is_access, o)
+					matched = (ok_m and m) and true or false
+				end
+				if matched or IsKindOfSafe(o, "SurfaceUndergroundTunnelMarker") then
+					cluster[#cluster + 1] = o
+				end
+			end)
+			-- Move the passage building, then the cluster preserving each member's offset.
+			move_to(other, sx, sy)
+			for _, o in ipairs(cluster) do
+				local op = ObjectPosition(o)
+				if op then
+					local ox2, oy2 = PointXY(op)
+					if type(ox2) == "number" then
+						local ok_moved = move_to(o, ox2 + dx, oy2 + dy)
+						AlignLog("pair-align: cluster member moved", {
+							class = tostring(o.class or "?"), ok = ok_moved,
+						})
+						if IsKindOfSafe(o, "DepositMarker") and ug_map.City and type(get_sector) == "function" then
+							local ok_o, old_sec = pcall(get_sector, ug_map.City, ox2, oy2)
+							local ok_n, new_sec = pcall(get_sector, ug_map.City, ox2 + dx, oy2 + dy)
+							if ok_o and ok_n and old_sec and new_sec and old_sec ~= new_sec then
+								if type(old_sec.UnregisterDeposit) == "function" then pcall(old_sec.UnregisterDeposit, old_sec, o) end
+								if type(new_sec.RegisterDeposit) == "function" then pcall(new_sec.RegisterDeposit, new_sec, o) end
+							end
+						end
+					end
+				end
+			end
+			moved_pairs = moved_pairs + 1
+			AlignLog("pair-align: underground endpoint moved under its surface partner", {
+				to = tostring(sx) .. "," .. tostring(sy), cluster_objects = #cluster,
+			})
+		end)
+	end
+	StretchLog("pair-align: DONE", { surface_passages = #surface_passages, pairs_moved = moved_pairs })
+	DebugPrint(string.format("entrance pair-align: moved %s underground endpoint(s)", tostring(moved_pairs)))
+	return moved_pairs
+end
+
 -- After a sector's terrain is copied into to_box, any object that was ALREADY
 -- sitting in that destination region (e.g. a mystery "pile of stone" / anomaly a
 -- story event dropped into the frame) is now floating above or buried under the
@@ -2095,6 +2230,7 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	TranslateUndergroundToMatchEntrances = TranslateUndergroundToMatchEntrances,
+	AlignEntrancePairs = AlignEntrancePairs,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
