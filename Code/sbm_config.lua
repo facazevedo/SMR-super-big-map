@@ -532,6 +532,11 @@ config.ExpansionFrameFillMode = "stretch"
 -- nearby, bringing density back to the generated look.
 config.StretchScaleMarkers = true
 config.StretchDecorTopUp = true
+-- Settle delay (ms) before the STRETCH fill runs. Mirror needs a long settle (5s) to wait for the
+-- sector-by-sector grid to finish building; stretch works purely on the terrain grids (ready as
+-- soon as generation completes + the F0 sector exists), so it uses this much shorter settle --
+-- the main lever for "load faster". Lower = faster start; raise if the stretch runs too early.
+config.StretchSettleMs = 800
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
@@ -781,6 +786,7 @@ C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionFrameMode)
 C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
 C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
+C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)

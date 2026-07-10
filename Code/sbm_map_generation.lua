@@ -872,7 +872,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		return false
 	end
 	map.SuperBigMapSectorMirrorScheduled = true
+	-- STRETCH loads fast (grid resample, no sector-by-sector work), so it does not need the long
+	-- mirror-plan settle -- use a short stretch-specific settle to cut several seconds off the load.
+	local fill_mode_early = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
 	local settle_ms = math.max(0, cfg_number("TEST_COPY_SECTOR_DELAY_MS", 5000))
+	if fill_mode_early == "stretch" then
+		settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 800))
+	end
+	StretchLog("RunSectorMirrorPlan: scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
 	InitSeq("RunSectorMirrorPlan: scheduled (waiting for F0 + settle)", {
 		settle_ms = settle_ms,
 		frame_sectors = FrameSectorProbe(map),
@@ -969,6 +976,17 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			-- the loading box below. Every step is StretchLog'd so the last line before a hang
 			-- pinpoints where it stopped.
 			StretchLog("stretch branch: ENTER")
+			-- The stretch passes iterate the full-map grids + EVERY object in one uninterrupted go;
+			-- without the old per-step yields the engine's infinite-loop detector trips ("Infinite
+			-- loop detected!"). Pause it for the duration -- these are BOUNDED passes (finite grid
+			-- steps + a fixed object list), the same guard the deposit top-up uses. The resume below
+			-- is balanced and ALWAYS runs (after the pcall, before we return).
+			local pause_ild = Global("PauseInfiniteLoopDetection")
+			local resume_ild = Global("ResumeInfiniteLoopDetection")
+			if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapStretch") end
+			local stretch_ticks = Global("GetPreciseTicks") or Global("RealTime")
+			local stretch_t0 = 0
+			if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then stretch_t0 = t end end
 			local ok_stretch, n_grids = false, 0
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
@@ -993,20 +1011,35 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 				end
+				local function now2()
+					if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then return t end end
+					return 0
+				end
+				local ft = now2()
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
 					SafeCall(rebuild_buildable, map)
 				end
+				StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
 				StretchLog("stretch branch: -> ForceFramePassable")
 				SafeCall(ForceFramePassable, map)
+				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				StretchLog("stretch branch: -> ResnapRocketsOnMap")
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
 					SafeCall(rockets.ResnapRocketsOnMap, map)
 				end
+				StretchLog("TIMING: ResnapRocketsOnMap", { ms = now2() - ft })
 				StretchLog("stretch branch: finalize steps done")
 			end)
+			-- Balanced resume (always, even on error) so the loop detector is restored.
+			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
+			do
+				local tnow = 0
+				if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then tnow = t end end
+				StretchLog("stretch branch: TOTAL expansion time", { ms = tnow - stretch_t0 })
+			end
 			if not ok_branch then
 				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })
 				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
