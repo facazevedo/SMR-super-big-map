@@ -217,6 +217,7 @@ config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision pa
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
+config.DebugVeil          = true    -- Veil: underground sector-veil lifecycle (every build/teardown with reason + decal census, watchdog repairs: rebuilds after map-switch teardown races, re-shows decals whose efVisible got cleared) (TEMP: investigating "only one sector translucent")
 config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics on mod maps (per-call anchor hex buildable-z vs terrain z, unbuildable footprint counts; also logs the unbuildable-anchor guard skips) (TEMP: investigating elevator-placement FlattenTerrainInShape assert)
 config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
 
@@ -807,6 +808,7 @@ C.DEBUG_LIFECYCLE     = as_bool(config.DebugLifecycle)
 C.DEBUG_GENERATION    = as_bool(config.DebugGeneration)
 C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)
 C.DEBUG_FLATTEN       = as_bool(config.DebugFlatten)
+C.DEBUG_VEIL          = as_bool(config.DebugVeil)
 C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
 C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)

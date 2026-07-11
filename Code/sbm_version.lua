@@ -28,7 +28,10 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 36: cyan entrance frames removed -- only the outline hover frame remains.
 -- 37: underground sector veil -- every sector gets a translucent SectorUnexplored pane
 --     during the underground overview (UpdateUndergroundOverviewFrames builds/tears it).
-SuperBigMap.SECTOR_PATCH_VERSION = 37
+-- 38: veil watchdog + Veil debug scope -- OverviewMode(true) fires mid map-transition and
+--     CurrentMapChangeDone's teardown destroyed the fresh veil 6 ms later; the watchdog
+--     rebuilds/re-shows the veil while the underground overview is active.
+SuperBigMap.SECTOR_PATCH_VERSION = 38
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall

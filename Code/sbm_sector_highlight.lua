@@ -170,42 +170,159 @@ local function Install()
 	-- hover decal on top, so it reads slightly darker -- a natural hover highlight. Built on
 	-- OverviewMode(true) while the underground is viewed; torn down on OverviewMode(false)
 	-- and on map switches (both routed through UpdateUndergroundOverviewFrames below).
-	local function HideUndergroundSectorVeil()
-		for _, obj in ipairs(State.ug_sector_veil or {}) do
+	-- Veil diagnostics (scope "Veil", gated DEBUG_VEIL): the first veil died silently -- the
+	-- log showed it built (400 decals) at OverviewMode(true), which fires DURING the
+	-- surface->underground transition, 6 ms BEFORE OnMsg.CurrentMapChangeDone -- whose
+	-- lifecycle handler calls UpdateUndergroundOverviewFrames(false) on every map switch and
+	-- destroyed the fresh veil. Every build/teardown/visibility change is logged with its
+	-- reason so any future fight over the decals is visible in one grep.
+	local function VeilLog(message, data)
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then DebugLog.Info("Veil", message, data) end
+	end
+
+	-- Census of the current veil decals: how many are still valid, and of those how many
+	-- still carry efVisible (something like HideSectorVisuals clears flags without destroying).
+	local function VeilCensus()
+		local veil = State.ug_sector_veil
+		if not veil then return nil end
+		local const_tbl = Engine.Global("const")
+		local efv = type(const_tbl) == "table" and const_tbl.efVisible
+		local n_valid, n_visible = 0, 0
+		for _, obj in ipairs(veil) do
+			if type(is_valid) == "function" and is_valid(obj) then
+				n_valid = n_valid + 1
+				if efv and type(obj.GetEnumFlags) == "function" then
+					local ok, f = pcall(obj.GetEnumFlags, obj, efv)
+					if ok and f ~= 0 then n_visible = n_visible + 1 end
+				end
+			end
+		end
+		return { total = #veil, valid = n_valid, visible = n_visible }
+	end
+
+	local function HideUndergroundSectorVeil(reason)
+		local veil = State.ug_sector_veil
+		if not veil then return end
+		local census = VeilCensus()
+		for _, obj in ipairs(veil) do
 			DestroyFrame(obj)
 		end
 		State.ug_sector_veil = nil
+		VeilLog("veil DESTROYED", { reason = tostring(reason), before = census })
 	end
 
-	local function ShowUndergroundSectorVeil()
+	local function ShowUndergroundSectorVeil(reason)
 		if (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL ~= true then return end
 		if State.ug_sector_veil then return end -- already built for this overview session
 		local grid = SuperBigMap.SectorGrid
 		local uicity = Engine.Global("UICity")
 		local cur_map = Engine.Global("CurrentMap")
-		if not (grid and type(grid.ForEachSector) == "function" and uicity and cur_map) then return end
+		if not (grid and type(grid.ForEachSector) == "function" and uicity and cur_map) then
+			VeilLog("veil build SKIPPED", {
+				reason = tostring(reason),
+				grid = tostring(grid ~= nil), uicity = tostring(uicity ~= nil), cur_map = tostring(cur_map ~= nil),
+			})
+			return
+		end
 		local veil = {}
 		pcall(grid.ForEachSector, uicity, function(sector)
 			local obj = FrameForSector(cur_map, sector, false, "quiet")
 			if obj then veil[#veil + 1] = obj end
 		end)
 		State.ug_sector_veil = veil
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then DebugLog.Info("Hover", "underground sector veil built", { decals = #veil }) end
+		VeilLog("veil BUILT", {
+			reason = tostring(reason), decals = #veil,
+			map = tostring(cur_map.name), census = VeilCensus(),
+		})
+	end
+
+	-- WATCHDOG: the veil's lifetime is contested -- OverviewMode(true) fires mid-transition,
+	-- CurrentMapChangeDone tears frames down on every map switch, HideSectorVisuals clears
+	-- efVisible on SectorUnexplored decals, and forced sector rebuilds invalidate parented
+	-- decals. Rather than chase every ordering, a real-time thread runs while the underground
+	-- overview is active: every 500 ms it verifies the veil exists, its decals are valid and
+	-- efVisible, and repairs whatever broke (rebuild / re-show), logging each repair with what
+	-- it found -- which doubles as the DEBUG_VEIL inspection instrument. Exits (and tears the
+	-- veil down) as soon as the overview closes or the viewed map stops being the underground.
+	local function EnsureVeilWatchdog()
+		local thread = State.ug_veil_thread
+		local thread_valid = Engine.Global("IsValidThread")
+		if thread then
+			if type(thread_valid) ~= "function" then return end
+			local ok, alive = pcall(thread_valid, thread)
+			if ok and alive == true then return end -- already running
+		end
+		local create_thread = Engine.Global("CreateRealTimeThread")
+		local sleep = Engine.Global("Sleep")
+		if type(create_thread) ~= "function" or type(sleep) ~= "function" then return end
+		State.ug_veil_thread = create_thread(function()
+			VeilLog("watchdog started")
+			local is_overview = Engine.Global("IsOverviewMode")
+			local const_tbl = Engine.Global("const")
+			local efv = type(const_tbl) == "table" and const_tbl.efVisible
+			while true do
+				sleep(500)
+				local overview_on = false
+				if type(is_overview) == "function" then
+					local ok_ov, ov = pcall(is_overview)
+					overview_on = ok_ov and ov == true
+				end
+				local active = overview_on and UndergroundUiActive()
+					and (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL == true
+				if not active then
+					HideUndergroundSectorVeil("watchdog exit (overview=" .. tostring(overview_on) .. ")")
+					break
+				end
+				local census = VeilCensus()
+				if not census or census.valid == 0 then
+					-- Torn down (map-switch teardown raced the build) or all invalidated
+					-- (sector rebuild): rebuild from the live sector grid.
+					HideUndergroundSectorVeil("watchdog rebuild (census=" .. tostring(census and census.valid) .. ")")
+					ShowUndergroundSectorVeil("watchdog rebuild")
+				elseif census.visible < census.valid and efv then
+					-- Something cleared efVisible (HideSectorVisuals sweeps SectorUnexplored
+					-- decals): re-show in place.
+					local reshown = 0
+					for _, obj in ipairs(State.ug_sector_veil or {}) do
+						if type(is_valid) == "function" and is_valid(obj)
+							and type(obj.GetEnumFlags) == "function" and type(obj.SetEnumFlags) == "function" then
+							local ok, f = pcall(obj.GetEnumFlags, obj, efv)
+							if ok and f == 0 then
+								pcall(obj.SetEnumFlags, obj, efv)
+								reshown = reshown + 1
+							end
+						end
+					end
+					VeilLog("watchdog re-showed hidden veil decals", { reshown = reshown, census = census })
+				elseif census.valid < census.total then
+					-- Some decals invalidated (partial sector rebuild): full rebuild.
+					HideUndergroundSectorVeil("watchdog partial-invalid rebuild")
+					ShowUndergroundSectorVeil("watchdog partial-invalid rebuild")
+				end
+			end
+			State.ug_veil_thread = nil
+			VeilLog("watchdog stopped")
+		end)
 	end
 
 	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches.
-	-- show=true while viewing the underground builds the all-sector veil; anything else tears
-	-- down the veil AND the hover frame.
+	-- show=true while viewing the underground builds the all-sector veil (and arms the
+	-- watchdog); anything else tears down the veil AND the hover frame. The watchdog rebuilds
+	-- the veil if a map-switch teardown lands AFTER the build (observed ordering:
+	-- OverviewMode(true) fires 6 ms before CurrentMapChangeDone's teardown).
 	-- Install() runs after module load, so SuperBigMap.SectorHighlight already exists (the local
 	-- SectorHighlight table is declared later in this file, hence the namespace assignment).
 	if type(SuperBigMap.SectorHighlight) == "table" then
 		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewFrames = function(show)
-			if show and UndergroundUiActive() then
-				ShowUndergroundSectorVeil()
+			local underground = UndergroundUiActive()
+			VeilLog("UpdateUndergroundOverviewFrames", { show = show == true, underground_ui = underground })
+			if show and underground then
+				ShowUndergroundSectorVeil("UpdateUndergroundOverviewFrames(true)")
+				EnsureVeilWatchdog()
 			else
 				HideUndergroundHoverFrame()
-				HideUndergroundSectorVeil()
+				HideUndergroundSectorVeil("UpdateUndergroundOverviewFrames(" .. tostring(show) .. ")")
 			end
 		end
 	end
