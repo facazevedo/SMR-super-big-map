@@ -1046,6 +1046,62 @@ local function PatchPassagePairing()
 					PadDiag(tag .. " AFTER", center)
 				end
 				LevelPad(np, "corrected-pos")
+				-- BUILDABLE-GRID PATCH: v438's clean leveling was UNDONE by Picard itself --
+				-- right after Link it runs FlattenTerrainInBuildShape(shape, surface_passage,
+				-- "flatten unbuildable") at the passage's (now corrected) position, and that
+				-- levels each hex to its buildable-grid value, which here is the UNBUILDABLE
+				-- sentinel (65535, log-proven: buildable_z_at_center=65535) -> the spike crown
+				-- re-created right after our repair, then scaled x1.333 by the stretch. That
+				-- call bypasses our wraps (engine-internal path), so instead make the grid it
+				-- READS clean: write the pad's terrain z into the buildable z-grid for the pad
+				-- hexes. Any later buildable-grid flatten there (Picard's, the elevator's)
+				-- then levels to the pad height -- flat, exactly like a vanilla valid spot.
+				-- (Grid units == terrain z units: log shows buildable_z == terrain z on valid
+				-- ground, e.g. 19249/19249 at the abandoned spot.)
+				local function PatchBuildablePad(center, z, radius_hexes)
+					local buildable = surface_map.buildable
+					local z_grid = buildable and buildable.z_grid
+					local wth = Global("WorldToHex")
+					if not (z_grid and type(z_grid.set) == "function" and type(wth) == "function") then
+						PairingLog("buildable pad patch skipped (z_grid unavailable)")
+						return
+					end
+					local ok_c, cq, cr = pcall(wth, center)
+					if not (ok_c and type(cq) == "number") then return end
+					local patched = 0
+					for dq = -radius_hexes, radius_hexes do
+						for dr = -radius_hexes, radius_hexes do
+							-- axial hex distance = (|dq| + |dr| + |dq+dr|) / 2
+							local dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+							if dist <= radius_hexes then
+								local q, r = cq + dq, cr + dr
+								-- HexToStorage: x = q + r/2 (engine Lua divides integers)
+								local ok_s = pcall(z_grid.set, z_grid, q + math.floor(r / 2), r, z)
+								if ok_s then patched = patched + 1 end
+							end
+						end
+					end
+					local verify = "n/a"
+					pcall(function() verify = tostring(buildable:GetZ(cq, cr)) end)
+					PairingLog("buildable pad patched", {
+						center = tostring(center), z = z, hexes = patched,
+						buildable_z_at_center_now = verify,
+					})
+				end
+				local ok_padz, padz = pcall(function() return np:z() end)
+				if not (ok_padz and type(padz) == "number") then
+					local ok_g, g = pcall(terrain_api2.GetHeight, surface_map, np)
+					padz = (ok_g and type(g) == "number") and g or nil
+				end
+				if padz then
+					PatchBuildablePad(np, padz, 6)
+					-- Remember the pad for the post-generation re-level (belt and braces: if
+					-- anything else re-poisons the terrain during the rest of the generation,
+					-- the pad is re-leveled to this exact z after DoGenerate returns).
+					State.sbm_entrance_pads = State.sbm_entrance_pads or {}
+					local nx, ny = np:xy()
+					table.insert(State.sbm_entrance_pads, { map = surface_map, x = nx, y = ny, z = padz })
+				end
 				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran the
 				-- same buildable-grid flatten at the RANDOM position before our move -- same
 				-- sentinel mechanism, same potential spike crown, just at an abandoned spot.
@@ -1431,6 +1487,49 @@ local function PatchRandomMapGenerator()
 					GenRandLog("DoGenerate FAILED (expanded)", { err = tostring(results[2]) })
 				end
 				error(results[2])
+			end
+			-- POST-GENERATION PAD RE-LEVEL: Picard re-flattens the surface passage pad against
+			-- the sentinel-poisoned buildable grid AFTER our link-time repair (creating the
+			-- spike crown); the buildable-grid patch above should prevent that, but re-level
+			-- each remembered pad to its recorded z here regardless -- after everything the
+			-- generator does, nothing can have the last word but us.
+			do
+				local pads = State.sbm_entrance_pads
+				if type(pads) == "table" and #pads > 0 then
+					local terrain_api3 = Global("terrain")
+					local point_fn3 = Global("point")
+					local const_tbl3 = Global("const")
+					local hex3 = (type(const_tbl3) == "table" and type(const_tbl3.HexSize) == "number"
+						and const_tbl3.HexSize > 0) and const_tbl3.HexSize or 1000
+					if type(terrain_api3) == "table" and type(terrain_api3.SetHeightCircle) == "function"
+						and type(point_fn3) == "function" then
+						for _, pad in ipairs(pads) do
+							local pmap = pad.map
+							if pmap then
+								local center = point_fn3(pad.x, pad.y)
+								local z_now = "n/a"
+								if type(terrain_api3.GetHeight) == "function" then
+									local ok_g, g = pcall(terrain_api3.GetHeight, pmap, center)
+									if ok_g then z_now = tostring(g) end
+								end
+								local suspended = pcall(pmap.SuspendPassEdits, pmap, "SBMPadRelevel")
+								local ok_c = pcall(terrain_api3.SetHeightCircle, pmap, center,
+									4 * hex3, 7 * hex3, pad.z)
+								if suspended then pcall(pmap.ResumePassEdits, pmap, "SBMPadRelevel") end
+								if type(terrain_api3.InvalidateHeight) == "function" then
+									pcall(terrain_api3.InvalidateHeight, pmap)
+								end
+								PairingLog("post-gen pad re-level", {
+									x = pad.x, y = pad.y, target_z = pad.z,
+									z_at_center_before = z_now, ok = ok_c,
+								})
+							end
+						end
+						-- Consumed: never re-level stale pads on a later generation/new game
+						-- (State survives the new-game Lua reload).
+						State.sbm_entrance_pads = nil
+					end
+				end
 			end
 			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
 			return Unpack(results, 2)
