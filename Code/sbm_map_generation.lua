@@ -782,12 +782,20 @@ end
 -- the later stretch scales BOTH endpoints by the same factor, preserving correspondence.
 -- Vanilla-size maps always run the original. Self-verifying via State (survives the
 -- new-game Lua reload through the ClassesBuilt/ModsReloaded re-install).
+-- Pairing trace (scope "Pairing", gated DEBUG_PAIRING): the v434 deterministic pairing
+-- placed NOTHING (a run had the install line but zero placement lines while the entrance
+-- moved again), so every call and every branch now logs -- one run pins the failure point.
+local function PairingLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("Pairing", message, data) end
+end
+
 local function PatchPassagePairing()
 	if not cfg_bool("STRETCH_DETERMINISTIC_PASSAGES", true) then return false end
 	local State = SuperBigMap.State
 	local current = Global("SpawnUndergroundPassage")
 	if type(current) ~= "function" then
-		VerbosePrint("passage pairing hook waiting for SpawnUndergroundPassage")
+		PairingLog("install waiting: SpawnUndergroundPassage not defined yet")
 		return false
 	end
 	if current == State.spawn_passage_wrapper then return true end
@@ -797,7 +805,14 @@ local function PatchPassagePairing()
 		local desired = map and map.SuperBigMapDesiredWidthTiles
 		local gen_t = map and map.SuperBigMapGeneratorWidthTiles
 		local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
+		PairingLog("SpawnUndergroundPassage call", {
+			map = tostring(map and map.name), pos = tostring(pos), angle = tostring(angle),
+			min_dist = tostring(min_dist), passages_so_far = tostring(passages and #passages),
+			desired_tiles = tostring(desired), generator_tiles = tostring(gen_t),
+			expanded = expanded == true,
+		})
 		if not expanded then
+			PairingLog("-> vanilla path (map not stamped as expanded)")
 			return original(map, pos, angle, min_dist, passages)
 		end
 		local snap_hex = Global("SnapWorldToHex")
@@ -807,6 +822,9 @@ local function PatchPassagePairing()
 		local flatten = Global("FlattenTerrainInBuildShape")
 		local const_tbl = Global("const")
 		if type(snap_hex) ~= "function" or type(place_building) ~= "function" then
+			PairingLog("-> vanilla path (helpers missing)", {
+				snap_hex = tostring(type(snap_hex)), place_building = tostring(type(place_building)),
+			})
 			return original(map, pos, angle, min_dist, passages)
 		end
 		local position = snap_hex(pos)
@@ -821,7 +839,7 @@ local function PatchPassagePairing()
 		local shape = type(get_shape) == "function" and get_shape("Elevator") or nil
 		local ok_p, passage = pcall(place_building, "UndergroundPassage", map)
 		if not ok_p or not passage then
-			DebugPrint("deterministic passage pairing: PlaceBuildingIn failed -- vanilla fallback")
+			PairingLog("-> vanilla path (PlaceBuildingIn failed)", { err = tostring(passage) })
 			return original(map, pos, angle, min_dist, passages)
 		end
 		pcall(passage.SetPos, passage, position)
@@ -833,6 +851,7 @@ local function PatchPassagePairing()
 		if shape and type(flatten) == "function" then
 			pcall(flatten, shape, passage, "flatten unbuildable")
 		end
+		PairingLog("-> DETERMINISTIC placement done", { position = tostring(position) })
 		DebugPrint(string.format(
 			"deterministic passage pairing: surface UndergroundPassage at %s (= underground marker pos, no search/random)",
 			tostring(position)))
@@ -840,6 +859,7 @@ local function PatchPassagePairing()
 	end
 	rawset(_G, "SpawnUndergroundPassage", wrapper)
 	State.spawn_passage_wrapper = wrapper
+	PairingLog("wrapper installed")
 	DebugPrint("SpawnUndergroundPassage wrapped (deterministic passage pairing on expanded maps)")
 	return true
 end
@@ -1142,6 +1162,25 @@ local function PatchRandomMapGenerator()
 			if GenRandEnabled() then
 				State.genrand_active_mapdata = mapdata or template or false
 				GenRandLog("DoGenerate begin (EXPANDED run, capped sizes)", GenRandInputs(self, map))
+			end
+
+			-- JUST-IN-TIME pairing-wrapper verification: the passage pairing runs INSIDE the
+			-- underground map's DoGenerate (Picard PlaceArtefacts_Passages), and anything can
+			-- have redefined the global since module load (a v434 run had the install line but
+			-- ZERO pairing calls). Verify + reinstall right here, and log the verdict.
+			do
+				local live = Global("SpawnUndergroundPassage")
+				local was_installed = live ~= nil and live == State.spawn_passage_wrapper
+				if not was_installed then
+					PatchPassagePairing()
+				end
+				local live2 = Global("SpawnUndergroundPassage")
+				PairingLog("wrapper status at DoGenerate", {
+					blank = tostring(self.BlankMap),
+					was_installed = was_installed,
+					now_installed = live2 ~= nil and live2 == State.spawn_passage_wrapper,
+					global_type = tostring(type(live)),
+				})
 			end
 
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
