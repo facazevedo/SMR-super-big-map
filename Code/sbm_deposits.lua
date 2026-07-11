@@ -1007,6 +1007,125 @@ function DepositRules.TopUpDeposits(map)
 	DepositRules.LogDistributionReport(map, "after deposit top-up")
 end
 
+-- POST-GENERATION anomaly top-up (config ANOMALY_TOPUP_POST_GEN). Raises the ANOMALY population
+-- to vanilla density x area WITHOUT touching the generator: the previous in-generation count
+-- scaling (sbm_rmg_placement) shifted the generator's random stream, so the same coordinates
+-- produced a DIFFERENT map than vanilla (terrain prefabs at other positions/rotations) -- the
+-- user requires bit-identical generation, so RmgPlacement.Begin is now skipped in stretch mode
+-- and the scaling happens here instead. Clones existing anomaly markers: CloneObjectAtOffset's
+-- CopyProperties preserves the CATEGORY (sequence / tech_action); the actual reward resolves at
+-- scan time, and breakthroughs remain pool-capped by the game (City trims extras) -- the same
+-- safety arguments as the original design. Placement mirrors TopUpDeposits: unscanned-sector
+-- tiles across the whole map, hidden + sector-registered so a real scan reveals them.
+function DepositRules.TopUpAnomalies(map)
+	if cfg().ANOMALY_TOPUP_POST_GEN ~= true then return end
+	map = map or Global("CurrentMap")
+	local point = Global("point")
+	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
+	local city = map and map.City
+	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
+		or type(clone_fn) ~= "function" or not city then
+		Log("anomaly top-up skipped", { reason = "map/city/point/clone unavailable" })
+		return
+	end
+	local map_w, map_h, tile = MapWorldSize(map)
+	if not map_w or not tile or tile <= 0 then
+		Log("anomaly top-up skipped", { reason = "map size unavailable" })
+		return
+	end
+	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
+	local lo_x, span_x = margin, (map_w - 2 * margin)
+	local lo_y, span_y = margin, (map_h - 2 * margin)
+	if span_x <= 0 or span_y <= 0 then return end
+	local area_factor = 1.0
+	do
+		local gen_t = map.SuperBigMapGeneratorWidthTiles
+		local full_t = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+		if type(gen_t) == "number" and gen_t > 0 and type(full_t) == "number" and full_t > gen_t then
+			local r = full_t * 1.0 / gen_t -- * 1.0: this runtime truncates integer division
+			area_factor = r * r
+		end
+	end
+	if area_factor <= 1.0 then
+		Log("anomaly top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
+		return
+	end
+	-- Baseline = generator-output anomaly markers (non-clones); counting clones in total_current
+	-- keeps the target ABSOLUTE, so re-runs are no-ops.
+	local total_current = 0
+	local templates = {}
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if not marker then return end
+		total_current = total_current + 1
+		if not marker.SuperBigMapQuadrantClone then
+			templates[#templates + 1] = marker
+		end
+	end)
+	local target = math.floor(#templates * area_factor + 0.5)
+	local shortfall = target - total_current
+	if shortfall <= 0 or #templates == 0 then
+		Log("anomaly top-up: nothing to add", {
+			total_current = total_current, templates = #templates, target = target,
+			shortfall = shortfall, area_factor = string.format("%.3f", area_factor),
+		})
+		return
+	end
+	local added = 0
+	RunPaused("SuperBigMapAnomalyTopUp", function()
+		local candidates = {}
+		local MAX_SAMPLES, MAX_POOL = 6000, 2500
+		for _ = 1, MAX_SAMPLES do
+			if #candidates >= MAX_POOL then break end
+			local x = lo_x + RandInt(span_x)
+			local y = lo_y + RandInt(span_y)
+			local sector = SectorAtPoint(map, x, y)
+			if sector and not SectorIsScanned(sector) then
+				local pt = point(x, y)
+				if CanReceiveDeposit(map, pt) then
+					candidates[#candidates + 1] = { x = x, y = y }
+				end
+			end
+		end
+		for _ = 1, shortfall do
+			if #candidates == 0 then break end
+			local ci = RandInt(#candidates) + 1
+			local c = candidates[ci]
+			table.remove(candidates, ci)
+			local template = templates[RandInt(#templates) + 1]
+			local tpos = ObjectPos(template)
+			if tpos and type(tpos.xy) == "function" then
+				local tx, ty = tpos:xy()
+				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+				if clone and type(clone) == "table" then
+					added = added + 1
+					if type(clone.SetPos) == "function" then
+						local pt = point(c.x, c.y)
+						if type(pt.SetTerrainZ) == "function" then
+							local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+							if ok and snapped then pt = snapped end
+						end
+						pcall(clone.SetPos, clone, pt)
+					end
+					-- ProcessClone resets is_placed only for RESOURCE markers; anomaly-marker
+					-- clones must be reset here (a start-sector template may already be placed).
+					clone.is_placed = false
+					clone.placed_obj = false
+					-- Hidden until its sector is scanned; registered so the scan reveals it.
+					SetRevealedState(clone, false)
+					local sec = SectorAtPoint(map, c.x, c.y)
+					if sec and type(sec.RegisterDeposit) == "function" then
+						pcall(sec.RegisterDeposit, sec, clone)
+					end
+				end
+			end
+		end
+	end)
+	Log("topped up anomalies to map-size proportions (post-gen)", {
+		area_factor = string.format("%.3f", area_factor),
+		total_before = total_current, target = target, added = added, templates = #templates,
+	})
+end
+
 -- Even out RESOURCE-deposit density to vanilla-like proportions. The generator packs the full
 -- preset count into the shrunken gen-zone (see sbm_rmg_placement), so the source region --
 -- including the scanned START sector -- is several times denser than vanilla while the mirrored

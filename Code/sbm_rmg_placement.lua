@@ -293,6 +293,18 @@ local RmgPlacement = {}
 -- called), false otherwise.
 function RmgPlacement.Begin(generator, map)
 	if not Enabled() then return false end
+	-- STRETCH mode: NO in-generation interference at all (user-confirmed determinism
+	-- requirement). Any preset-prop change here (spacing, borders, anomaly counts) shifts the
+	-- generator's random stream, so the SAME coordinates produce a DIFFERENT map than vanilla --
+	-- observed as terrain-feature prefabs (a dried lake) at other positions/rotations and as
+	-- run-to-run non-determinism of the tunnel spawners. In stretch the generator runs at native
+	-- size with the native play zone, so the mirror-era auto-fit is unnecessary anyway; the
+	-- map-size enrichment scaling happens POST-generation instead (TopUpDeposits +
+	-- TopUpAnomalies). Mirror mode keeps the auto-fit (its shrunken play zone needs it).
+	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
+		Log("Begin skipped: stretch mode -- generator runs bit-identical to vanilla (enrichment moved post-gen)")
+		return false
+	end
 	if active then
 		Log("Begin skipped: a relaxation is already active (re-entrant DoGenerate?)")
 		return false

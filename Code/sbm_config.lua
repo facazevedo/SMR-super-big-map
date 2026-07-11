@@ -679,7 +679,18 @@ config.RmgPlacementFallbackScale = 0.6
 -- game's available pool at load -- safe, they just plateau below the full scale). The gen-zone
 -- anomaly spacing is tightened to fit the higher count; RespaceAnomalies spreads them after.
 -- false = native (Big) anomaly count (leaner research for the bigger map).
+-- NOTE: in STRETCH fill mode this (and the whole RmgPlacement in-generation auto-fit) is
+-- SKIPPED: any preset-prop change shifts the generator's random stream, so the same map
+-- coordinates produce a DIFFERENT layout than vanilla (terrain prefabs at other positions /
+-- rotations). Stretch uses the POST-generation AnomalyTopupPostGen pass below instead.
 config.ScaleAnomalyCountsToMapSize = true
+-- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies) -- the stretch-mode
+-- replacement for ScaleAnomalyCountsToMapSize. After generation, clones anomaly MARKERS
+-- (categories preserved via property copy; rewards resolve at scan; breakthroughs stay
+-- pool-capped by the game) up to vanilla density x area factor, onto unscanned-sector tiles,
+-- hidden + sector-registered so a real scan reveals them. Generator output stays bit-identical
+-- to vanilla.
+config.AnomalyTopupPostGen = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -896,6 +907,7 @@ C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
 C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
 C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
+C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)

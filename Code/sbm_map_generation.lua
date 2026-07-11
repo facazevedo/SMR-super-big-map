@@ -1133,6 +1133,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							StretchLog("stretch branch: -> TopUpDeposits")
 							SafeCall(deposits.TopUpDeposits, map)
 						end
+						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
+						-- scaling (which shifted the generator's random stream and made expanded
+						-- layouts diverge from vanilla). BEFORE RespaceAnomalies so clones get
+						-- spaced too.
+						if type(deposits.TopUpAnomalies) == "function" then
+							StretchLog("stretch branch: -> TopUpAnomalies")
+							SafeCall(deposits.TopUpAnomalies, map)
+						end
 						if type(deposits.RegisterClonedMarkers) == "function" then
 							StretchLog("stretch branch: -> RegisterClonedMarkers")
 							SafeCall(deposits.RegisterClonedMarkers, map)
