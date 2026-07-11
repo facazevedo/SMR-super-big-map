@@ -861,6 +861,34 @@ local function PatchPassagePairing()
 	State.spawn_passage_wrapper = wrapper
 	PairingLog("wrapper installed")
 	DebugPrint("SpawnUndergroundPassage wrapped (deterministic passage pairing on expanded maps)")
+
+	-- CREATOR TRAP (DEBUG_PAIRING): the SpawnUndergroundPassage wrapper was verified LIVE at
+	-- the underground DoGenerate and still received ZERO calls while a surface
+	-- UndergroundPassage appeared at a new random spot -- so the entrance is created through
+	-- some other path. Every creation funnels through PlaceBuildingIn, so trap it there and
+	-- log the CALLSTACK for UndergroundPassage placements; one run names the creator.
+	local place_building = Global("PlaceBuildingIn")
+	if type(place_building) == "function" and place_building ~= State.place_building_trap then
+		State.original_place_building = place_building
+		local trap = function(class, ...)
+			if class == "UndergroundPassage" and (SuperBigMap.Config or {}).DEBUG_PAIRING == true then
+				local stack = "n/a"
+				pcall(function()
+					if type(debug) == "table" and type(debug.traceback) == "function" then
+						stack = debug.traceback("", 2)
+					else
+						local get_stack = Global("GetStack")
+						if type(get_stack) == "function" then stack = tostring(get_stack(2)) end
+					end
+				end)
+				PairingLog("PlaceBuildingIn(UndergroundPassage) CREATOR STACK: " .. tostring(stack))
+			end
+			return State.original_place_building(class, ...)
+		end
+		rawset(_G, "PlaceBuildingIn", trap)
+		State.place_building_trap = trap
+		PairingLog("PlaceBuildingIn creator trap installed")
+	end
 	return true
 end
 
@@ -1954,6 +1982,12 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	State.spawn_passage_wrapper = nil
 	State.original_spawn_passage = nil
+	if State.place_building_trap and Global("PlaceBuildingIn") == State.place_building_trap
+		and type(State.original_place_building) == "function" then
+		rawset(_G, "PlaceBuildingIn", State.original_place_building)
+	end
+	State.place_building_trap = nil
+	State.original_place_building = nil
 end
 
 SuperBigMap.MapGeneration = MapGeneration
