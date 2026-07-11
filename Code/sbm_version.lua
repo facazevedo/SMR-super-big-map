@@ -31,7 +31,10 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 38: veil watchdog + Veil debug scope -- OverviewMode(true) fires mid map-transition and
 --     CurrentMapChangeDone's teardown destroyed the fresh veil 6 ms later; the watchdog
 --     rebuilds/re-shows the veil while the underground overview is active.
-SuperBigMap.SECTOR_PATCH_VERSION = 38
+-- 39: veil panes snap Z to LIVE terrain -- sector positions cache pre-stretch heights, so
+--     after the x1.333 height scale most panes projected onto nothing (only 2 rendered);
+--     census now reports decal-Z vs terrain-Z deltas, flat fields.
+SuperBigMap.SECTOR_PATCH_VERSION = 39
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall

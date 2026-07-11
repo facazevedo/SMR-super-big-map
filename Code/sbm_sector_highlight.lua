@@ -77,9 +77,13 @@ local function Install()
 		if type(del_on_load) == "function" then pcall(del_on_load, obj) end
 		local px, py
 		pcall(function()
-			-- Position: vanilla uses sector:GetPos() (has terrain Z); fall back to a Z-snapped
-			-- area center. Explicit efVisible -- decals default hidden when placed off the
-			-- normal UpdateDecal path.
+			-- Position: vanilla uses sector:GetPos(); fall back to the area center. Then ALWAYS
+			-- re-snap the Z to the LIVE terrain: a decal only renders while it projects onto
+			-- nearby geometry, and sector positions cache their Z from sector creation --
+			-- PRE-stretch heights. After the x1.333 height scale most cached Zs sit far below
+			-- the raised floor, so the pane projects onto nothing (veil log: 400 decals built
+			-- valid+visible, yet only the sectors where old Z ~= new Z rendered). Explicit
+			-- efVisible -- decals default hidden when placed off the normal UpdateDecal path.
 			local pos
 			if type(sector.GetPos) == "function" then
 				local ok_p, p = pcall(sector.GetPos, sector)
@@ -87,10 +91,10 @@ local function Install()
 			end
 			if not pos then
 				pos = sector.area:Center()
-				if type(pos.SetTerrainZ) == "function" then
-					local ok_z, snapped = pcall(pos.SetTerrainZ, pos, map)
-					if ok_z and snapped then pos = snapped end
-				end
+			end
+			if type(pos.SetTerrainZ) == "function" then
+				local ok_z, snapped = pcall(pos.SetTerrainZ, pos, map)
+				if ok_z and snapped then pos = snapped end
 			end
 			obj:SetPos(pos)
 			if type(pos.xy) == "function" then px, py = pos:xy() end
@@ -181,14 +185,22 @@ local function Install()
 		if DebugLog then DebugLog.Info("Veil", message, data) end
 	end
 
-	-- Census of the current veil decals: how many are still valid, and of those how many
-	-- still carry efVisible (something like HideSectorVisuals clears flags without destroying).
+	-- Census of the current veil decals: how many are still valid, of those how many still
+	-- carry efVisible (HideSectorVisuals clears flags without destroying), and -- the render
+	-- test -- the decal-Z vs live-terrain-Z deltas: a decal only renders while it projects
+	-- onto nearby geometry, so a large |dz| means "valid+visible but invisible on screen".
+	-- Fields are FLAT so they print inline in the log (nested tables log as pointers).
 	local function VeilCensus()
 		local veil = State.ug_sector_veil
 		if not veil then return nil end
 		local const_tbl = Engine.Global("const")
 		local efv = type(const_tbl) == "table" and const_tbl.efVisible
+		local terrain_api = Engine.Global("terrain")
+		local cur_map = Engine.Global("CurrentMap")
+		local get_h = type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
+			and terrain_api.GetHeight or nil
 		local n_valid, n_visible = 0, 0
+		local dz_min, dz_max, n_far = nil, nil, 0
 		for _, obj in ipairs(veil) do
 			if type(is_valid) == "function" and is_valid(obj) then
 				n_valid = n_valid + 1
@@ -196,9 +208,31 @@ local function Install()
 					local ok, f = pcall(obj.GetEnumFlags, obj, efv)
 					if ok and f ~= 0 then n_visible = n_visible + 1 end
 				end
+				if get_h and cur_map and type(obj.GetPos) == "function" then
+					local ok_p, p = pcall(obj.GetPos, obj)
+					if ok_p and p and type(p.z) == "function" then
+						local ok_z, oz = pcall(p.z, p)
+						local ok_g, gz = pcall(get_h, cur_map, p)
+						if ok_z and ok_g and type(oz) == "number" and type(gz) == "number" then
+							local dz = oz - gz
+							if dz_min == nil or dz < dz_min then dz_min = dz end
+							if dz_max == nil or dz > dz_max then dz_max = dz end
+							if dz < -1000 or dz > 1000 then n_far = n_far + 1 end
+						end
+					end
+				end
 			end
 		end
-		return { total = #veil, valid = n_valid, visible = n_visible }
+		return {
+			total = #veil, valid = n_valid, visible = n_visible,
+			dz_min = tostring(dz_min), dz_max = tostring(dz_max), far_from_ground = n_far,
+		}
+	end
+
+	-- Merge the flat census fields into a log-data table (so they print inline).
+	local function WithCensus(data, census)
+		for k, v in pairs(census or {}) do data[k] = v end
+		return data
 	end
 
 	local function HideUndergroundSectorVeil(reason)
@@ -209,7 +243,7 @@ local function Install()
 			DestroyFrame(obj)
 		end
 		State.ug_sector_veil = nil
-		VeilLog("veil DESTROYED", { reason = tostring(reason), before = census })
+		VeilLog("veil DESTROYED", WithCensus({ reason = tostring(reason) }, census))
 	end
 
 	local function ShowUndergroundSectorVeil(reason)
@@ -231,10 +265,9 @@ local function Install()
 			if obj then veil[#veil + 1] = obj end
 		end)
 		State.ug_sector_veil = veil
-		VeilLog("veil BUILT", {
-			reason = tostring(reason), decals = #veil,
-			map = tostring(cur_map.name), census = VeilCensus(),
-		})
+		VeilLog("veil BUILT", WithCensus({
+			reason = tostring(reason), decals = #veil, map = tostring(cur_map.name),
+		}, VeilCensus()))
 	end
 
 	-- WATCHDOG: the veil's lifetime is contested -- OverviewMode(true) fires mid-transition,
@@ -294,7 +327,7 @@ local function Install()
 							end
 						end
 					end
-					VeilLog("watchdog re-showed hidden veil decals", { reshown = reshown, census = census })
+					VeilLog("watchdog re-showed hidden veil decals", WithCensus({ reshown = reshown }, census))
 				elseif census.valid < census.total then
 					-- Some decals invalidated (partial sector rebuild): full rebuild.
 					HideUndergroundSectorVeil("watchdog partial-invalid rebuild")
