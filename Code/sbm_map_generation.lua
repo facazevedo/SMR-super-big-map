@@ -973,15 +973,87 @@ local function PatchPassagePairing()
 				local ok_set = pcall(surface_obj.SetPos, surface_obj, np)
 				local rehexed = false
 				if shape then rehexed = pcall(hex_add, hex_grid, surface_obj, shape) == true end
-				-- Pad + obstruction clearing at the corrected spot -- what vanilla's spawn path
-				-- did at the random spot.
-				local get_shape = Global("GetExtendedSpawnShape")
-				local flatten = Global("FlattenTerrainInBuildShape")
-				local espace = type(get_shape) == "function" and get_shape("Elevator") or nil
-				if espace and type(flatten) == "function" then
-					pcall(flatten, espace, surface_obj, "flatten unbuildable")
+				-- PAD LEVELING via TERRAIN heights, NOT FlattenTerrainInBuildShape. v437's
+				-- correction used FlattenTerrainInBuildShape(..., "flatten unbuildable"),
+				-- which levels each hex to its BUILDABLE-GRID z -- and in flatten-unbuildable
+				-- mode a hex whose grid value is the UNBUILDABLE sentinel (2^16-1) gets
+				-- "leveled" to that garbage height -> the crown of needle spikes around the
+				-- entrance (user screenshot). Vanilla never hits it because its search only
+				-- picks all-buildable spots; we force the marker spot while the surface
+				-- buildable grid is stale/mid-build during generation. SetHeightCircle to the
+				-- live terrain height has no such dependency (falloff ring blends smoothly).
+				local terrain_api2 = Global("terrain")
+				local const_tbl2 = Global("const")
+				local hex_size = (type(const_tbl2) == "table" and type(const_tbl2.HexSize) == "number"
+					and const_tbl2.HexSize > 0) and const_tbl2.HexSize or 1000
+				-- Diagnostics (DEBUG_PAIRING): terrain z min/max sampled around a pad center +
+				-- the buildable-grid value there, before and after each leveling -- makes any
+				-- future artifact attributable from one log read.
+				local function PadDiag(tag, center)
+					if (SuperBigMap.Config or {}).DEBUG_PAIRING ~= true then return end
+					if type(terrain_api2) ~= "table" or type(terrain_api2.GetHeight) ~= "function" then return end
+					local cx, cy = center:xy()
+					local zmin, zmax
+					for _, r in ipairs({ 0, 3 * hex_size, 6 * hex_size }) do
+						local d = math.floor(r * 7 / 10) -- ~r/sqrt(2), engine Lua divides integers
+						local offsets = r == 0 and { { 0, 0 } } or {
+							{ r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
+							{ d, d }, { -d, d }, { d, -d }, { -d, -d },
+						}
+						for _, o in ipairs(offsets) do
+							local okh, h = pcall(terrain_api2.GetHeight, surface_map, point_fn(cx + o[1], cy + o[2]))
+							if okh and type(h) == "number" then
+								if zmin == nil or h < zmin then zmin = h end
+								if zmax == nil or h > zmax then zmax = h end
+							end
+						end
+					end
+					local bz = "n/a"
+					pcall(function()
+						local wth = Global("WorldToHex")
+						local q, r2 = wth(center)
+						bz = tostring(surface_map.buildable and surface_map.buildable:GetZ(q, r2))
+					end)
+					PairingLog("pad terrain " .. tag, {
+						center = tostring(cx) .. "," .. tostring(cy),
+						z_min = tostring(zmin), z_max = tostring(zmax),
+						spread = tostring(zmin and zmax and (zmax - zmin)),
+						buildable_z_at_center = bz,
+					})
 				end
+				local function LevelPad(center, tag)
+					if type(terrain_api2) ~= "table" or type(terrain_api2.SetHeightCircle) ~= "function"
+						or type(terrain_api2.GetHeight) ~= "function" then
+						PairingLog("pad leveling skipped (terrain API unavailable)", { tag = tag })
+						return
+					end
+					PadDiag(tag .. " BEFORE", center)
+					local ok_h, z = pcall(terrain_api2.GetHeight, surface_map, center)
+					if not (ok_h and type(z) == "number") then
+						PairingLog("pad leveling skipped (no terrain z)", { tag = tag })
+						return
+					end
+					local suspended = pcall(surface_map.SuspendPassEdits, surface_map, "SBMPassagePad")
+					local ok_c, err_c = pcall(terrain_api2.SetHeightCircle, surface_map, center,
+						4 * hex_size, 7 * hex_size, z)
+					if suspended then pcall(surface_map.ResumePassEdits, surface_map, "SBMPassagePad") end
+					if type(terrain_api2.InvalidateHeight) == "function" then
+						pcall(terrain_api2.InvalidateHeight, surface_map)
+					end
+					PairingLog("pad leveled via SetHeightCircle", {
+						tag = tag, z = z, ok = ok_c, err = ok_c and nil or tostring(err_c),
+					})
+					PadDiag(tag .. " AFTER", center)
+				end
+				LevelPad(np, "corrected-pos")
+				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran the
+				-- same buildable-grid flatten at the RANDOM position before our move -- same
+				-- sentinel mechanism, same potential spike crown, just at an abandoned spot.
+				-- Re-level it to its own local terrain height so no artifact is left behind.
+				LevelPad(point_fn(sx, sy), "abandoned-spawn-spot")
 				local clear = Global("ClearObstructions")
+				local get_shape = Global("GetExtendedSpawnShape")
+				local espace = type(get_shape) == "function" and get_shape("Elevator") or nil
 				if type(clear) == "function" and espace then
 					local ok_a2, ang = pcall(surface_obj.GetAngle, surface_obj)
 					pcall(clear, surface_map, np, (ok_a2 and ang) or 0, surface_map.obj_prefab_marker, nil, espace)
