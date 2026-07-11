@@ -653,7 +653,7 @@ local function StretchSourceToFull(map, debug)
 	-- that up to the full cell dims (all in compute-grid space so GridResample accepts it), then
 	-- write back via set_fn (+ invalidate). The 'raw' grid from get_fn is left for the engine.
 	-- EVERY sub-step is StretchLog'd so a stuck/failed grid is pinpointed to the exact line.
-	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate)
+	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
 		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then
 			StretchLog("stretch_one: missing get/set fn", { grid = label })
 			return false
@@ -679,6 +679,52 @@ local function StretchSourceToFull(map, debug)
 			src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
 			StretchLog("stretch_one: GridResample...", { grid = label, to_w = fw, to_h = fh })
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
+			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
+			-- slope steepness and object seating geometry are preserved (XY-only stretching made
+			-- slopes 25% shallower while object meshes scaled x1.333 in all axes; big formations
+			-- sculpted into relief ended up floating). Height grid only -- type/colour/biome are
+			-- CATEGORICAL values and must never be scaled. In-place GridMulDivAdd (grid*mul/div),
+			-- clamped to the engine height ceiling if the map's peaks would overflow.
+			if scale_values and cfg_bool("STRETCH_SCALE_HEIGHTS", true) then
+				local grid_muldivadd = Global("GridMulDivAdd")
+				local grid_minmax = Global("GridMinMax")
+				if type(grid_muldivadd) == "function" then
+					local min0, max0
+					if type(grid_minmax) == "function" then
+						local ok_mm, a, b = pcall(grid_minmax, stretched)
+						if ok_mm then min0, max0 = a, b end
+					end
+					local cap
+					local const_tbl = Global("const")
+					if type(const_tbl) == "table" and type(const_tbl.MaxTerrainHeight) == "number"
+						and type(const_tbl.TerrainHeightScale) == "number" and const_tbl.TerrainHeightScale > 0 then
+						cap = math.floor(const_tbl.MaxTerrainHeight / const_tbl.TerrainHeightScale)
+					end
+					local ok_scale, err_scale = pcall(grid_muldivadd, stretched, full_tw, sw_tiles, 0)
+					local min1, max1
+					if type(grid_minmax) == "function" then
+						local ok_mm2, a2, b2 = pcall(grid_minmax, stretched)
+						if ok_mm2 then min1, max1 = a2, b2 end
+					end
+					local clamped = false
+					if cap and type(max1) == "number" and max1 > cap then
+						local grid_clamp = Global("GridClamp")
+						if type(grid_clamp) == "function" then
+							clamped = pcall(grid_clamp, stretched, 0, cap) == true
+						end
+					end
+					StretchLog("height scale (full 3D stretch)", {
+						grid = label, ok = ok_scale, err = ok_scale and nil or tostring(err_scale),
+						mul = full_tw, div = sw_tiles,
+						min_before = tostring(min0), max_before = tostring(max0),
+						min_after = tostring(min1), max_after = tostring(max1),
+						cap = tostring(cap), clamped = clamped,
+					})
+				else
+					StretchLog("height scale SKIPPED -- GridMulDivAdd unavailable", { grid = label })
+				end
+			end
 			StretchLog("stretch_one: resample done -> set_fn...", { grid = label })
 			local ok_set = pcall(set_fn, map, stretched)
 			StretchLog("stretch_one: set_fn done", { grid = label, ok_set = ok_set })
@@ -720,7 +766,7 @@ local function StretchSourceToFull(map, debug)
 		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
 	local done = 0
 	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
-	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true) then done = done + 1 end
+	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then done = done + 1 end
 	StretchLog("StretchSourceToFull: -> stretch TYPE")
 	if timed("type", stretch_one, "type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but

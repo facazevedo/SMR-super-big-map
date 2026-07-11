@@ -589,6 +589,13 @@ config.UndergroundExplorationUI = true
 -- always logs floaters -- class, height above ground, and whether the decor pass had skipped
 -- the object -- under the Align scope.
 config.StretchResnapFloaters = true
+
+-- FULL 3D STRETCH: also scale the terrain HEIGHT VALUES by full/source (x1.333), matching the
+-- X/Y grid stretch and the object mesh scaling -- a true similarity transform. Restores vanilla
+-- slope steepness and object seating geometry (XY-only stretching made slopes 25% shallower
+-- while meshes grew x1.333 in all axes; formations sculpted into relief floated). Off = the old
+-- wider-and-gentler terrain for comparison.
+config.StretchScaleHeights = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -869,6 +876,7 @@ C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
+C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
