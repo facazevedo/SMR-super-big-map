@@ -34,7 +34,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 39: veil panes snap Z to LIVE terrain -- sector positions cache pre-stretch heights, so
 --     after the x1.333 height scale most panes projected onto nothing (only 2 rendered);
 --     census now reports decal-Z vs terrain-Z deltas, flat fields.
-SuperBigMap.SECTOR_PATCH_VERSION = 39
+-- 40: veil diagnostic round -- TEMP red tint on veil panes (is SectorUnexplored outline-only?)
+--     + hover forensic log identifying which object draws the hovered sector's fill.
+SuperBigMap.SECTOR_PATCH_VERSION = 40
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall

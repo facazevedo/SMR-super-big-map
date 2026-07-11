@@ -590,6 +590,11 @@ config.UndergroundExplorationUI = true
 -- The hovered sector stacks the hover decal on top and reads slightly darker. Built on
 -- overview enter, torn down on overview exit / map switch.
 config.UndergroundSectorVeil = true
+-- TEMP DIAGNOSTIC: tint the veil panes {r,g,b,a} so whatever they render is unmistakable
+-- (red grid lines -> the SectorUnexplored entity is outline-only and the hover fill comes
+-- from another object; red translucent interiors -> the fill renders, tune alpha instead).
+-- Set false for no tint.
+config.UndergroundSectorVeilTint = {255, 40, 40, 255}
 -- (Entrance placement correction removed by user decision: entrances receive only the stretch
 -- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
 
@@ -920,6 +925,7 @@ C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.UNDERGROUND_SECTOR_VEIL = as_bool(config.UndergroundSectorVeil)
+C.UNDERGROUND_SECTOR_VEIL_TINT = type(config.UndergroundSectorVeilTint) == "table" and config.UndergroundSectorVeilTint or false
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)

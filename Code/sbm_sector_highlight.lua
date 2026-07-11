@@ -108,7 +108,21 @@ local function Install()
 			if ef_visible and type(obj.SetEnumFlags) == "function" then
 				pcall(obj.SetEnumFlags, obj, ef_visible)
 			end
-			-- (entrance tinting removed -- the hover frame keeps the decal's default color)
+			-- TEMP DIAGNOSTIC TINT (config UNDERGROUND_SECTOR_VEIL_TINT, veil panes only): the
+			-- veil panes were valid+visible at ground level and still nothing rendered, so it is
+			-- unknown whether the SectorUnexplored entity even HAS a fill or where the panes end
+			-- up on screen. A loud tint makes whatever they render unmistakable: red grid lines
+			-- -> the entity is outline-only (the translucent fill seen on hover is some OTHER
+			-- object); red translucent interiors -> the fill renders and the untinted look was
+			-- just too faint. false = no tint.
+			if red == "veil" then
+				local tint = (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL_TINT
+				local rgba = Engine.Global("RGBA")
+				if type(tint) == "table" and type(rgba) == "function" and type(obj.SetColorModifier) == "function" then
+					local ok_c, c = pcall(rgba, tint[1] or 255, tint[2] or 0, tint[3] or 0, tint[4] or 255)
+					if ok_c and c then pcall(obj.SetColorModifier, obj, c) end
+				end
+			end
 		end)
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog and DebugLog.On("Hover") and not quiet then
@@ -261,7 +275,7 @@ local function Install()
 		end
 		local veil = {}
 		pcall(grid.ForEachSector, uicity, function(sector)
-			local obj = FrameForSector(cur_map, sector, false, "quiet")
+			local obj = FrameForSector(cur_map, sector, "veil", "quiet")
 			if obj then veil[#veil + 1] = obj end
 		end)
 		State.ug_sector_veil = veil
@@ -615,6 +629,32 @@ local function Install()
 				end
 			end
 			UpdateUndergroundHoverFrame(sector) -- nil sector hides the frame
+			-- FORENSIC (DEBUG_VEIL): identify what actually draws the translucent fill on the
+			-- hovered sector -- the vanilla SectorTarget (hide failing?) or our SectorUnexplored
+			-- pane. Logs entity + visibility of every candidate right after the hide + place.
+			local DebugLogV = SuperBigMap.DebugLog
+			if sector and DebugLogV and DebugLogV.On("Veil") then
+				local function describe(obj)
+					if obj == nil then return "nil" end
+					if type(is_valid) == "function" and not is_valid(obj) then return "INVALID" end
+					local ent, vis = "?", "?"
+					pcall(function()
+						if type(obj.GetEntity) == "function" then ent = tostring(obj:GetEntity()) end
+						if ef_visible and type(obj.GetEnumFlags) == "function" then
+							vis = (obj:GetEnumFlags(ef_visible) ~= 0) and "visible" or "hidden"
+						end
+					end)
+					return ent .. "/" .. vis
+				end
+				DebugLogV.Info("Veil", "hover forensic", {
+					sector = tostring(sector.id),
+					vanilla_sector_obj = describe(self.sector_obj),
+					vanilla_sector_objs = tostring(#(self.sector_objs or {})),
+					vanilla_sector_decal = describe(sector.decal),
+					our_hover_pane = describe(State.ug_hover_frame),
+					veil_alive = tostring(State.ug_sector_veil and #State.ug_sector_veil or "nil"),
+				})
+			end
 		end
 		HoverVisualDiag(self, sector)
 		return r1, r2
