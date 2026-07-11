@@ -2114,8 +2114,80 @@ local function RemoveFrameUndergroundAccess(map)
 	return true, removed
 end
 
+-- TERRAIN SPIKE AUDIT (config DEBUG_SPIKES, scope "Spikes"). The entrance "spike crown"
+-- artifact persisted even after the entrance pads were PROVEN clean at generation end
+-- (post-gen re-level read back the exact leveled z) -- so some LATER pipeline stage creates
+-- it, or it is on the other map. This audit samples the height field on a coarse lattice
+-- (~16k GetHeight calls, one long C burst) and logs the global min/max plus the TALLEST
+-- samples with world coordinates. Called with a stage label at every stretch-pipeline step
+-- on both maps: the first stage whose report shows the max exploding (and where) names the
+-- culprit. Cheap enough to leave in while DEBUG_SPIKES is on.
+local function SpikeAudit(map, label)
+	if not cfg_bool("DEBUG_SPIKES", false) then return end
+	map = map or Global("CurrentMap")
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if not (map and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
+		and type(point_fn) == "function") then
+		return
+	end
+	local w, h
+	if type(terrain_api.GetMapSize) == "function" then
+		local ok, ww, hh = pcall(terrain_api.GetMapSize, map)
+		if ok then w, h = ww, hh end
+	end
+	if not (type(w) == "number" and w > 0) then
+		local mapdata = map.mapdata
+		local tile = 100
+		local const_tbl = Global("const")
+		if type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number" then
+			tile = const_tbl.HeightTileSize
+		end
+		w = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width * tile or nil
+		h = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height * tile or w
+	end
+	if not w then return end
+	h = h or w
+	local step = math.max(1, math.floor(w / 128)) -- 128x128 lattice
+	local zmin, zmax
+	local top = {} -- top-8 tallest samples { z, x, y }
+	local function consider(z, x, y)
+		if zmin == nil or z < zmin then zmin = z end
+		if zmax == nil or z > zmax then zmax = z end
+		if #top < 8 then
+			top[#top + 1] = { z = z, x = x, y = y }
+			table.sort(top, function(a, b) return a.z > b.z end)
+		elseif z > top[#top].z then
+			top[#top] = { z = z, x = x, y = y }
+			table.sort(top, function(a, b) return a.z > b.z end)
+		end
+	end
+	local y = 0
+	while y < h do
+		local x = 0
+		while x < w do
+			local ok_h, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
+			if ok_h and type(z) == "number" then consider(z, x, y) end
+			x = x + step
+		end
+		y = y + step
+	end
+	local parts = {}
+	for _, t in ipairs(top) do
+		parts[#parts + 1] = string.format("z=%d@(%d,%d)", t.z, t.x, t.y)
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Spikes", "audit " .. tostring(label), {
+			map = tostring(map.name), z_min = tostring(zmin), z_max = tostring(zmax),
+			step = step, tallest = table.concat(parts, " "),
+		})
+	end
+end
+
 -- Public API: terrain/grid copy + mirror-block mechanics consumed by sbm_map_generation.
 local TerrainCopy = {
+	SpikeAudit = SpikeAudit,
 	ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain,
 	SectorWorldRect = SectorWorldRect,
 	FindSectorByName = FindSectorByName,

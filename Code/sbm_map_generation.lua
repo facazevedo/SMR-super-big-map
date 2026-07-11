@@ -176,6 +176,7 @@ local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
+local SpikeAudit = TerrainCopy.SpikeAudit or function() end
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1532,6 +1533,15 @@ local function PatchRandomMapGenerator()
 				end
 			end
 			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
+			-- Spike audits (DEBUG_SPIKES): the generated map, and -- after the UNDERGROUND
+			-- generation, which is when the passage pairing touches MainMap -- the surface too.
+			SpikeAudit(map, "post-gen " .. tostring(self.BlankMap))
+			do
+				local main_map = Global("MainMap")
+				if main_map and main_map ~= map then
+					SpikeAudit(main_map, "post-gen(" .. tostring(self.BlankMap) .. ") MainMap")
+				end
+			end
 			return Unpack(results, 2)
 		end
 		generator_class.DoGenerate = do_generate_wrapper
@@ -1727,9 +1737,11 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						StretchLog("stretch branch: -> AnnotateDecorRelief")
 						AnnotateDecorRelief(map)
 					end
+					SpikeAudit(map, "surface pre-stretch")
 					StretchLog("stretch branch: -> StretchSourceToFull")
 					ok_stretch, n_grids = StretchSourceToFull(map, false)
 					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
+					SpikeAudit(map, "surface post-StretchSourceToFull")
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
 					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
@@ -1740,6 +1752,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: -> ScaleDecorationsToFull")
 					local n_dec = ScaleDecorationsToFull(map, false)
 					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
+					SpikeAudit(map, "surface post-ScaleDecorations")
 				end
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
@@ -1754,6 +1767,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
 					local n_vis = MoveEntranceVisualsToScale(map)
 					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
+					SpikeAudit(map, "surface post-MoveEntranceVisuals")
 				end
 				-- Step 3c: FLOATER AUDIT -- objects hovering above the stretched terrain (e.g.
 				-- decor-pass-skipped rocks that kept their old Z over now-lower ground). Logs
@@ -1824,6 +1838,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					return 0
 				end
 				local ft = now2()
+				SpikeAudit(map, "surface post-density-suite")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
@@ -2116,6 +2131,7 @@ local function RunUndergroundStretchIfEnabled(map)
 		local ok_branch, branch_err = pcall(function()
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall(SyncMapDataToGrids, map)
+			SpikeAudit(map, "underground pre-stretch")
 			-- Relief annotations BEFORE the underground terrain stretch (same as the surface).
 			if type(AnnotateDecorRelief) == "function" then
 				StretchLog("underground stretch: -> AnnotateDecorRelief")
@@ -2124,6 +2140,7 @@ local function RunUndergroundStretchIfEnabled(map)
 			StretchLog("underground stretch: -> StretchSourceToFull")
 			local ok_s, n_grids = StretchSourceToFull(map, false)
 			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
+			SpikeAudit(map, "underground post-StretchSourceToFull")
 			if type(ScaleDecorationsToFull) == "function" then
 				StretchLog("underground stretch: -> ScaleDecorationsToFull")
 				local n_dec = ScaleDecorationsToFull(map, false)
@@ -2140,6 +2157,7 @@ local function RunUndergroundStretchIfEnabled(map)
 				local n_vis = MoveEntranceVisualsToScale(map)
 				StretchLog("underground stretch: entrance visuals done", { moved = n_vis })
 			end
+			SpikeAudit(map, "underground post-MoveEntranceVisuals")
 			-- NOTE (user decision): NO entrance placement correction of any kind. Entrances on
 			-- both maps receive exactly ONE transformation -- the stretch itself (position *
 			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
@@ -2211,6 +2229,11 @@ local function RunUndergroundStretchIfEnabled(map)
 			end
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
+			SpikeAudit(map, "underground DONE")
+			local main_map2 = Global("MainMap")
+			if main_map2 and main_map2 ~= map then
+				SpikeAudit(main_map2, "surface at underground-stretch DONE")
+			end
 		end)
 		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end
 		if not ok_branch then

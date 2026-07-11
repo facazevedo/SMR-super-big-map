@@ -797,6 +797,13 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 									map = map_id, query = class_name, found = n, at_ms = elapsed,
 								})
 							end
+							-- Terrain spike audit per phase (DEBUG_SPIKES): the entrance spike
+							-- crown appears at SOME post-generation stage; this stamps the
+							-- terrain max + tallest sample coordinates over time.
+							local tc = SuperBigMap.TerrainCopy
+							if tc and type(tc.SpikeAudit) == "function" then
+								SafeCall(tc.SpikeAudit, map, "ground-truth dump at " .. tostring(elapsed) .. "ms")
+							end
 						end
 					end)
 				end
