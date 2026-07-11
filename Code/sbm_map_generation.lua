@@ -889,6 +889,117 @@ local function PatchPassagePairing()
 		State.place_building_trap = trap
 		PairingLog("PlaceBuildingIn creator trap installed")
 	end
+
+	-- LINK-TIME CORRECTION (the reliable layer). Both GLOBAL wraps were bypassed (verified
+	-- live, zero calls) while the entrance kept moving -- but CLASS-method patches in this
+	-- codebase demonstrably intercept vanilla (SelectSector, LandOnMars, ...). Every passage
+	-- pair goes through exactly one ElevatorPassage:Link(other) at creation, with both
+	-- endpoints in hand -- so correct the position THERE: on expanded games, if the pair's
+	-- SURFACE endpoint is far from the UNDERGROUND endpoint's XY (vanilla authors the maps to
+	-- correspond; the wandering entrance is the random-fallback placement), MOVE the surface
+	-- passage to the underground marker's XY (terrain-snapped), re-register its hex shape
+	-- (ElevatorPassage is the whitelisted hex-registered class), and sculpt the pad +
+	-- clear obstructions exactly like vanilla's own spawn path does. Deterministic: the
+	-- underground marker positions are proven identical across runs. Diagnostics log both
+	-- endpoints and the caller stack (DEBUG_PAIRING).
+	local passage_class = Engine.ClassTable and Engine.ClassTable("ElevatorPassage")
+	if type(passage_class) == "table" and type(passage_class.Link) == "function"
+		and passage_class.Link ~= State.passage_link_wrapper then
+		State.original_passage_link = passage_class.Link
+		local link_wrapper = function(self, other, ...)
+			State.original_passage_link(self, other, ...)
+			local ok_fix, fix_err = pcall(function()
+				local function env_of(o)
+					if type(o) ~= "table" or type(o.GetMap) ~= "function" then return nil, nil end
+					local ok_m, m = pcall(o.GetMap, o)
+					if not ok_m or not m then return nil, nil end
+					local md = m.mapdata
+					return (type(md) == "table") and md.Environment or nil, m
+				end
+				local env_a, map_a = env_of(self)
+				local env_b, map_b = env_of(other)
+				local surface_obj, surface_map, under_obj
+				if env_a == "Surface" and env_b == "Underground" then
+					surface_obj, surface_map, under_obj = self, map_a, other
+				elseif env_b == "Surface" and env_a == "Underground" then
+					surface_obj, surface_map, under_obj = other, map_b, self
+				end
+				if not (surface_obj and under_obj) then return end
+				local ok_ps, ps = pcall(surface_obj.GetPos, surface_obj)
+				local ok_pu, pu = pcall(under_obj.GetPos, under_obj)
+				if not (ok_ps and ok_pu and ps and pu) then return end
+				local sx, sy = ps:xy()
+				local ux, uy = pu:xy()
+				if (SuperBigMap.Config or {}).DEBUG_PAIRING == true then
+					local stack = "n/a"
+					pcall(function()
+						if type(debug) == "table" and type(debug.traceback) == "function" then
+							stack = debug.traceback("", 3)
+						end
+					end)
+					PairingLog("ElevatorPassage:Link", {
+						surface_class = tostring(surface_obj.class), underground_class = tostring(under_obj.class),
+						surface_pos = tostring(sx) .. "," .. tostring(sy),
+						underground_pos = tostring(ux) .. "," .. tostring(uy),
+					})
+					PairingLog("Link caller stack: " .. tostring(stack))
+				end
+				if not cfg_bool("STRETCH_DETERMINISTIC_PASSAGES", true) then return end
+				local desired = surface_map and surface_map.SuperBigMapDesiredWidthTiles
+				local gen_t = surface_map and surface_map.SuperBigMapGeneratorWidthTiles
+				local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
+				if not expanded then return end
+				local dx, dy = sx - ux, sy - uy
+				if (dx * dx + dy * dy) <= (2000 * 2000) then return end -- already corresponding
+				-- Move the surface passage onto the underground marker's XY.
+				local point_fn = Global("point")
+				if type(point_fn) ~= "function" then return end
+				local np = point_fn(ux, uy)
+				if type(np.SetTerrainZ) == "function" then
+					local ok_z, snapped = pcall(np.SetTerrainZ, np, surface_map)
+					if ok_z and snapped then np = snapped end
+				end
+				local hex_grid = surface_map.object_hex_grid
+				local hex_remove = Global("HexGridShapeRemoveObject")
+				local hex_add = Global("HexGridShapeAddObject")
+				local shape
+				if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
+					and type(surface_obj.handle) == "number" and surface_obj.handle > 0
+					and type(surface_obj.GetShapePoints) == "function" then
+					local ok_sh, sh = pcall(surface_obj.GetShapePoints, surface_obj)
+					if ok_sh and sh then shape = sh end
+				end
+				if shape then pcall(hex_remove, hex_grid, surface_obj, shape) end
+				local ok_set = pcall(surface_obj.SetPos, surface_obj, np)
+				local rehexed = false
+				if shape then rehexed = pcall(hex_add, hex_grid, surface_obj, shape) == true end
+				-- Pad + obstruction clearing at the corrected spot -- what vanilla's spawn path
+				-- did at the random spot.
+				local get_shape = Global("GetExtendedSpawnShape")
+				local flatten = Global("FlattenTerrainInBuildShape")
+				local espace = type(get_shape) == "function" and get_shape("Elevator") or nil
+				if espace and type(flatten) == "function" then
+					pcall(flatten, espace, surface_obj, "flatten unbuildable")
+				end
+				local clear = Global("ClearObstructions")
+				if type(clear) == "function" and espace then
+					local ok_a2, ang = pcall(surface_obj.GetAngle, surface_obj)
+					pcall(clear, surface_map, np, (ok_a2 and ang) or 0, surface_map.obj_prefab_marker, nil, espace)
+				end
+				PairingLog("LINK-TIME CORRECTION: surface passage moved onto underground marker XY", {
+					from = tostring(sx) .. "," .. tostring(sy),
+					to = tostring(ux) .. "," .. tostring(uy),
+					moved = ok_set, rehexed = rehexed,
+				})
+			end)
+			if not ok_fix then
+				PairingLog("Link correction ERROR", { err = tostring(fix_err) })
+			end
+		end
+		passage_class.Link = link_wrapper
+		State.passage_link_wrapper = link_wrapper
+		PairingLog("ElevatorPassage:Link wrapped (link-time correction)")
+	end
 	return true
 end
 
@@ -1988,6 +2099,14 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	State.place_building_trap = nil
 	State.original_place_building = nil
+	local passage_class = Engine.ClassTable and Engine.ClassTable("ElevatorPassage")
+	if type(passage_class) == "table" and State.passage_link_wrapper
+		and passage_class.Link == State.passage_link_wrapper
+		and type(State.original_passage_link) == "function" then
+		passage_class.Link = State.original_passage_link
+	end
+	State.passage_link_wrapper = nil
+	State.original_passage_link = nil
 end
 
 SuperBigMap.MapGeneration = MapGeneration
