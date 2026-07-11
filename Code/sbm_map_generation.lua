@@ -1714,6 +1714,39 @@ local function RunUndergroundStretchIfEnabled(map)
 			-- both maps receive exactly ONE transformation -- the stretch itself (position *
 			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
 			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
+			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
+			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
+			-- density too (they weren't -- the underground sat ~44% under vanilla density).
+			-- Runs BEFORE the TEMP ForceRevealAllOnMap so the inspection reveal also
+			-- places/reveals the clones.
+			do
+				local deposits = SuperBigMap.DepositRules
+				if deposits then
+					if type(deposits.TopUpDeposits) == "function" then
+						StretchLog("underground stretch: -> TopUpDeposits")
+						SafeCall(deposits.TopUpDeposits, map)
+					end
+					if type(deposits.TopUpAnomalies) == "function" then
+						StretchLog("underground stretch: -> TopUpAnomalies")
+						SafeCall(deposits.TopUpAnomalies, map)
+					end
+					if type(deposits.RegisterClonedMarkers) == "function" then
+						StretchLog("underground stretch: -> RegisterClonedMarkers")
+						SafeCall(deposits.RegisterClonedMarkers, map)
+					end
+					if type(deposits.RespaceAnomalies) == "function" then
+						StretchLog("underground stretch: -> RespaceAnomalies")
+						SafeCall(deposits.RespaceAnomalies, map)
+					end
+					if type(deposits.EvenOutDepositDensity) == "function" then
+						StretchLog("underground stretch: -> EvenOutDepositDensity")
+						SafeCall(deposits.EvenOutDepositDensity, map)
+					end
+					if type(deposits.LogDistributionReport) == "function" then
+						SafeCall(deposits.LogDistributionReport, map, "underground after density suite")
+					end
+				end
+			end
 			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
 			-- deposit/anomaly so the stretched underground layout can be inspected.
 			if cfg_bool("UNDERGROUND_REVEAL_ALL_DEPOSITS", false) then

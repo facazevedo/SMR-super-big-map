@@ -861,6 +861,16 @@ end
 -- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
 -- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
 -- generates the terrain patch), so no manual imprint is needed. Gated by ENABLE_DEPOSIT_TOPUP.
+-- "Water=5 Metals=3 ..." -- sorted flat tally string for the top-up proportion logs.
+local function TallyString(tbl)
+	local keys = {}
+	for k in pairs(tbl) do keys[#keys + 1] = k end
+	table.sort(keys)
+	local parts = {}
+	for _, k in ipairs(keys) do parts[#parts + 1] = k .. "=" .. tostring(tbl[k]) end
+	return table.concat(parts, " ")
+end
+
 function DepositRules.TopUpDeposits(map)
 	if cfg().ENABLE_DEPOSIT_TOPUP ~= true then return end
 	map = map or Global("CurrentMap")
@@ -941,6 +951,14 @@ function DepositRules.TopUpDeposits(map)
 		return
 	end
 
+	-- Per-resource tallies: prove the added mix keeps the SOURCE (vanilla) proportions --
+	-- templates are drawn uniformly, so added/source should match per type up to sampling noise.
+	local src_by_type, added_by_type = {}, {}
+	for _, t in ipairs(templates) do
+		local res = tostring(t.resource or t.class or "?")
+		src_by_type[res] = (src_by_type[res] or 0) + 1
+	end
+
 	local added = 0
 	RunPaused("SuperBigMapDepositTopUp", function()
 		-- Frame candidate pool (terrain-bucketed), same as EvenOutDepositDensity: sampled tiles
@@ -987,6 +1005,8 @@ function DepositRules.TopUpDeposits(map)
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
 					added = added + 1
+					local res = tostring(template.resource or template.class or "?")
+					added_by_type[res] = (added_by_type[res] or 0) + 1
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
 						if type(pt.SetTerrainZ) == "function" then
@@ -1003,6 +1023,9 @@ function DepositRules.TopUpDeposits(map)
 		area_factor = string.format("%.3f", area_factor),
 		source_count = source_count, total_before = total_current,
 		target = target, added = added, templates = #templates,
+		map = tostring(map.name),
+		source_mix = TallyString(src_by_type),
+		added_mix = TallyString(added_by_type),
 	})
 	DepositRules.LogDistributionReport(map, "after deposit top-up")
 end
@@ -1070,6 +1093,20 @@ function DepositRules.TopUpAnomalies(map)
 		})
 		return
 	end
+	-- Per-category tallies (class + tech_action/sequence distinguish breakthrough / event /
+	-- tech-unlock / free-tech): prove the added mix keeps the source (vanilla) proportions.
+	local function AnomalyCategory(marker)
+		local cat = tostring(marker.class or "?")
+		local action = marker.tech_action or (marker.sequence and "sequence") or nil
+		if action then cat = cat .. "/" .. tostring(action) end
+		return cat
+	end
+	local src_by_cat, added_by_cat = {}, {}
+	for _, t in ipairs(templates) do
+		local cat = AnomalyCategory(t)
+		src_by_cat[cat] = (src_by_cat[cat] or 0) + 1
+	end
+
 	local added = 0
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
@@ -1098,6 +1135,8 @@ function DepositRules.TopUpAnomalies(map)
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
 					added = added + 1
+					local cat = AnomalyCategory(template)
+					added_by_cat[cat] = (added_by_cat[cat] or 0) + 1
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
 						if type(pt.SetTerrainZ) == "function" then
@@ -1123,6 +1162,9 @@ function DepositRules.TopUpAnomalies(map)
 	Log("topped up anomalies to map-size proportions (post-gen)", {
 		area_factor = string.format("%.3f", area_factor),
 		total_before = total_current, target = target, added = added, templates = #templates,
+		map = tostring(map.name),
+		source_mix = TallyString(src_by_cat),
+		added_mix = TallyString(added_by_cat),
 	})
 end
 
