@@ -62,7 +62,7 @@ local function Install()
 	-- and exists only while the underground overview is active (torn down on OverviewMode(false)
 	-- and on map switches via SectorHighlight.UpdateUndergroundOverviewFrames). The former cyan
 	-- entrance frames were removed at the user's request.
-	local function FrameForSector(map, sector, red, quiet)
+	local function FrameForSector(map, sector, red, quiet, entity_override)
 		local place = Engine.Global("PlaceObjectIn")
 		local mdr = Engine.Global("MulDivRound")
 		local guim_v = Engine.Global("guim") or 1000
@@ -70,8 +70,12 @@ local function Install()
 		-- Place the decal IN the sector (like vanilla UpdateDecal) so it inherits the sector's
 		-- proper terrain Z; placing in the map at area:Center() (Z~=0) sank it below the
 		-- underground floor -> built-but-invisible (log showed frames=2 yet nothing on screen).
+		-- Entity: "SectorUnexplored" is OUTLINE-ONLY (proven by the red-tint diagnostic: the
+		-- tinted veil turned the grid lines red, never the interiors) -- the game's translucent
+		-- FILL decal is "SectorTarget" (vanilla's filled hover highlight), so the veil passes
+		-- that as entity_override; the hover frame keeps the outline entity.
 		local parent = (type(sector.GetPos) == "function") and sector or map
-		local ok, obj = pcall(place, "SectorUnexplored", parent)
+		local ok, obj = pcall(place, entity_override or "SectorUnexplored", parent)
 		if not ok or not obj then return nil end
 		local del_on_load = Engine.Global("DeleteOnLoadGame")
 		if type(del_on_load) == "function" then pcall(del_on_load, obj) end
@@ -108,13 +112,9 @@ local function Install()
 			if ef_visible and type(obj.SetEnumFlags) == "function" then
 				pcall(obj.SetEnumFlags, obj, ef_visible)
 			end
-			-- TEMP DIAGNOSTIC TINT (config UNDERGROUND_SECTOR_VEIL_TINT, veil panes only): the
-			-- veil panes were valid+visible at ground level and still nothing rendered, so it is
-			-- unknown whether the SectorUnexplored entity even HAS a fill or where the panes end
-			-- up on screen. A loud tint makes whatever they render unmistakable: red grid lines
-			-- -> the entity is outline-only (the translucent fill seen on hover is some OTHER
-			-- object); red translucent interiors -> the fill renders and the untinted look was
-			-- just too faint. false = no tint.
+			-- Veil tint (config UNDERGROUND_SECTOR_VEIL_TINT, veil panes only): color modifier
+			-- for the fill panes -- values below 128 darken. (The earlier red diagnostic tint
+			-- proved SectorUnexplored is outline-only.) false = the entity's natural color.
 			if red == "veil" then
 				local tint = (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL_TINT
 				local rgba = Engine.Global("RGBA")
@@ -274,8 +274,9 @@ local function Install()
 			return
 		end
 		local veil = {}
+		local veil_entity = (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL_ENTITY or "SectorTarget"
 		pcall(grid.ForEachSector, uicity, function(sector)
-			local obj = FrameForSector(cur_map, sector, "veil", "quiet")
+			local obj = FrameForSector(cur_map, sector, "veil", "quiet", veil_entity)
 			if obj then veil[#veil + 1] = obj end
 		end)
 		State.ug_sector_veil = veil

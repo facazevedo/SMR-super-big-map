@@ -36,7 +36,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     census now reports decal-Z vs terrain-Z deltas, flat fields.
 -- 40: veil diagnostic round -- TEMP red tint on veil panes (is SectorUnexplored outline-only?)
 --     + hover forensic log identifying which object draws the hovered sector's fill.
-SuperBigMap.SECTOR_PATCH_VERSION = 40
+-- 41: veil panes switch to the "SectorTarget" FILL entity (SectorUnexplored proved
+--     outline-only: the red tint colored the grid lines, never the interiors), dark tint.
+SuperBigMap.SECTOR_PATCH_VERSION = 41
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall
