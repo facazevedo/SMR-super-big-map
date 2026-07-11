@@ -217,6 +217,7 @@ config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision pa
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
+config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
 
 -- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
 -- generation in sbm_map_generation; no per-load passability pass is needed.)
@@ -691,6 +692,14 @@ config.ScaleAnomalyCountsToMapSize = true
 -- hidden + sector-registered so a real scan reveals them. Generator output stays bit-identical
 -- to vanilla.
 config.AnomalyTopupPostGen = true
+-- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
+-- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
+-- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI
+-- frame), so 0 gave it a BIGGER play zone than vanilla and diverged the per-proc random
+-- stream (same lake prefab at another position/rotation). When true, the ORIGINAL PassBorder
+-- is restored for just the DoGenerate window (the engine already baked full passability at
+-- ChangeMap; only the generator's Lua-side reads see the restored value) and re-zeroed after.
+config.StretchVanillaExactPassBorder = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -782,6 +791,7 @@ C.FULL_MAP_PLAYABLE = as_bool(config.SuperBigMapFullMapPlayable)
 C.DEBUG_LOGS          = as_bool(config.EnableDiagnosticLogs)   -- master: enables every scope
 C.DEBUG_LIFECYCLE     = as_bool(config.DebugLifecycle)
 C.DEBUG_GENERATION    = as_bool(config.DebugGeneration)
+C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)
 C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
 C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
@@ -908,6 +918,7 @@ C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
 C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
 C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
+C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)

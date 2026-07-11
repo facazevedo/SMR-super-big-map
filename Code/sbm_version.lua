@@ -27,7 +27,8 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 35: alignment moved out of the highlight module (whole-map translation in terrain_copy).
 -- 36: cyan entrance frames removed -- only the outline hover frame remains.
 SuperBigMap.SECTOR_PATCH_VERSION = 36
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 7:
--- the DoGenerate wrapper now calls RmgPlacement.Begin/End around the original, so the
--- closure changed and must reinstall cleanly on an in-session reload.
-SuperBigMap.GENERATOR_PATCH_VERSION = 7
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
+-- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
+-- PassBorder window in DoGenerate, so the closures changed and must reinstall
+-- cleanly on an in-session reload.
+SuperBigMap.GENERATOR_PATCH_VERSION = 8

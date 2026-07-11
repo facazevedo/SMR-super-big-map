@@ -646,6 +646,123 @@ local function PrintQuadrantDebug()
 	return true
 end
 
+-- ---------------------------------------------------------------------------------------
+-- GENERATION-DETERMINISM instrumentation (config DebugGenRand -> scope "GenRand").
+-- Purpose: find WHERE the expanded run's generator random stream diverges from vanilla.
+-- The vanilla generator re-seeds its PRNG per procedure (ProcInvoke: rand_state:Set(
+-- xxhash(Seed, tag)) before each proc), so divergence cannot leak across procs -- the
+-- per-proc rand fingerprint (rand_state:Last() at ProcEnd) identifies exactly which proc
+-- consumed a different roll sequence. Instrument:
+--   * ProcStart: tag + per-proc seed + the map sizes / PassBorder the generator sees
+--     (play-zone inputs -- GetPlayableArea reads map.mapdata.PassBorder);
+--   * ProcEnd: tag + rand_state:Last() = the proc's stream FINGERPRINT;
+--   * post-DoGenerate object census: per-class count + position/angle sums + samples,
+--     logged in PRE-STRETCH coordinates, directly diffable between a vanilla run and an
+--     expanded run (vanilla pos x 1 vs expanded pre-stretch pos must be IDENTICAL).
+-- To use: run once vanilla (EXPAND off), once expanded, then diff the GenRand lines --
+-- the first proc whose ProcEnd fingerprint differs is the divergence point.
+-- ---------------------------------------------------------------------------------------
+local function GenRandEnabled()
+	return cfg_bool("DEBUG_GENRAND", false) or cfg_bool("DEBUG_LOGS", false)
+end
+
+local function GenRandLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("GenRand", message, data) end
+end
+
+-- Reads the generator's rand fingerprint; RandState:Last() is what vanilla's own debug
+-- instrumentation logs (RandomMapGenerator.lua AddHistory "RAND ... last %d").
+local function GenRandLast(generator)
+	local rs = generator and generator.rand_state
+	if rs and type(rs.Last) == "function" then
+		local ok, last = pcall(rs.Last, rs)
+		if ok then return last end
+	end
+	return "n/a"
+end
+
+-- Per-class census of every map object: count + coordinate/angle sums + first samples.
+-- Sum-based fingerprints make the diff robust to enumeration order.
+local function GenRandCensus(map, label)
+	if not GenRandEnabled() then return end
+	if not map or type(map.MapForEach) ~= "function" then return end
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMGenRandCensus") end
+	local per, total = {}, 0
+	local swept_ok = pcall(map.MapForEach, map, "map", "CObject", function(obj)
+		local class = (obj and obj.class) or "?"
+		local e = per[class]
+		if not e then
+			e = { n = 0, sx = 0, sy = 0, sz = 0, sa = 0, samples = {} }
+			per[class] = e
+		end
+		e.n = e.n + 1
+		total = total + 1
+		if type(obj.GetPos) == "function" then
+			local okp, pos = pcall(obj.GetPos, obj)
+			if okp and pos and type(pos.xyz) == "function" then
+				local x, y, z = pos:xyz()
+				if type(x) == "number" then
+					e.sx = e.sx + x
+					e.sy = e.sy + (y or 0)
+					e.sz = e.sz + (type(z) == "number" and z or 0)
+					local a = 0
+					if type(obj.GetAngle) == "function" then
+						local oka, aa = pcall(obj.GetAngle, obj)
+						if oka and type(aa) == "number" then a = aa end
+					end
+					e.sa = e.sa + a
+					if #e.samples < 3 then
+						e.samples[#e.samples + 1] = string.format("(%s,%s,%s a=%s)",
+							tostring(x), tostring(y), tostring(z), tostring(a))
+					end
+				end
+			end
+		end
+	end)
+	local classes = {}
+	for class in pairs(per) do classes[#classes + 1] = class end
+	table.sort(classes)
+	GenRandLog("census begin", {
+		label = tostring(label), map = tostring(map.name),
+		classes = #classes, total_objects = total, swept_ok = swept_ok,
+	})
+	for _, class in ipairs(classes) do
+		local e = per[class]
+		GenRandLog(string.format("census %-44s n=%-6d sum=(%s,%s,%s) suma=%s %s",
+			class, e.n, tostring(e.sx), tostring(e.sy), tostring(e.sz), tostring(e.sa),
+			table.concat(e.samples, " ")))
+	end
+	GenRandLog("census end", { label = tostring(label), map = tostring(map.name) })
+	if type(resume) == "function" then pcall(resume, "SBMGenRandCensus") end
+end
+
+-- Snapshot of every size/border input the generator derives placement from.
+local function GenRandInputs(generator, map)
+	local map_data_table = Global("MapData")
+	local blank = generator and generator.BlankMap
+	local template = type(map_data_table) == "table" and type(blank) == "string" and map_data_table[blank] or nil
+	local mapdata = map and map.mapdata
+	local mw, mh = "n/a", "n/a"
+	if map and type(map.GetMapSize) == "function" then
+		local ok, ww, hh = pcall(map.GetMapSize, map)
+		if ok then mw, mh = ww, hh end
+	end
+	return {
+		Seed = tostring(generator and generator.Seed),
+		Id = tostring(generator and generator.Id),
+		BlankMap = tostring(blank),
+		map_getsize = tostring(mw) .. "x" .. tostring(mh),
+		mapdata_wh = tostring(mapdata and mapdata.Width) .. "x" .. tostring(mapdata and mapdata.Height),
+		template_wh = tostring(template and template.Width) .. "x" .. tostring(template and template.Height),
+		mapdata_passborder = tostring(mapdata and mapdata.PassBorder),
+		template_passborder = tostring(template and template.PassBorder),
+		rand_last = tostring(GenRandLast(generator)),
+	}
+end
+
 local function PatchRandomMapGenerator()
 	if not cfg_bool("QUADRANT_PATCH_RANDOM_GENERATOR", true) then
 		VerbosePrint("quadrant random-map generator hook disabled")
@@ -665,7 +782,9 @@ local function PatchRandomMapGenerator()
 	-- and never re-install, leaving vanilla DoGenerate -> GSRP overflow.
 	if State.generator_patch_version == GENERATOR_PATCH_VERSION
 		and generator_class.Generate == State.generator_generate_wrapper
-		and generator_class.DoGenerate == State.generator_do_generate_wrapper then
+		and generator_class.DoGenerate == State.generator_do_generate_wrapper
+		and generator_class.ProcStart == State.generator_proc_start_wrapper
+		and generator_class.ProcEnd == State.generator_proc_end_wrapper then
 		return true
 	end
 
@@ -677,8 +796,50 @@ local function PatchRandomMapGenerator()
 	if generator_class.DoGenerate ~= State.generator_do_generate_wrapper then
 		State.generator_original_do_generate = generator_class.DoGenerate
 	end
+	if generator_class.ProcStart ~= State.generator_proc_start_wrapper then
+		State.generator_original_proc_start = generator_class.ProcStart
+	end
+	if generator_class.ProcEnd ~= State.generator_proc_end_wrapper then
+		State.generator_original_proc_end = generator_class.ProcEnd
+	end
 	local original_generate = State.generator_original_generate
 	local original_do_generate = State.generator_original_do_generate
+	local original_proc_start = State.generator_original_proc_start
+	local original_proc_end = State.generator_original_proc_end
+
+	-- GenRand instrumentation: per-proc rand-stream fingerprints (see helpers above).
+	-- ProcInvoke re-seeds the PRNG (rand_state:Set(xxhash(Seed, tag))) right BEFORE
+	-- ProcStart, so ProcStart logs the fresh per-proc seed state and ProcEnd logs the
+	-- last value the proc consumed -- its stream fingerprint.
+	if type(original_proc_start) == "function" then
+		local proc_start_wrapper = function(self, tag, ...)
+			if GenRandEnabled() then
+				local seed = "n/a"
+				if type(self.ProcSeed) == "function" then
+					local ok, s = pcall(self.ProcSeed, self, tag)
+					if ok then seed = s end
+				end
+				local md = State.genrand_active_mapdata
+				GenRandLog(string.format("ProcStart %-24s seed=%s rand_last=%s passborder=%s mapdata_w=%s",
+					tostring(tag), tostring(seed), tostring(GenRandLast(self)),
+					tostring(md and md.PassBorder), tostring(md and md.Width)))
+			end
+			return original_proc_start(self, tag, ...)
+		end
+		generator_class.ProcStart = proc_start_wrapper
+		State.generator_proc_start_wrapper = proc_start_wrapper
+	end
+	if type(original_proc_end) == "function" then
+		local proc_end_wrapper = function(self, tag, ...)
+			if GenRandEnabled() then
+				GenRandLog(string.format("ProcEnd   %-24s rand_last=%s   <-- fingerprint",
+					tostring(tag), tostring(GenRandLast(self))))
+			end
+			return original_proc_end(self, tag, ...)
+		end
+		generator_class.ProcEnd = proc_end_wrapper
+		State.generator_proc_end_wrapper = proc_end_wrapper
+	end
 	local generate_wrapper = function(self, params)
 		params = type(params) == "table" and params or {}
 		local blank_map = self and self.BlankMap
@@ -771,8 +932,21 @@ local function PatchRandomMapGenerator()
 				tostring(cur_w_tiles), tostring(cur_h_tiles), tostring(max_random_tiles),
 				(cur_w_tiles <= max_random_tiles and cur_h_tiles <= max_random_tiles) and "SKIP (fits)" or "CAP"))
 
-			-- Map fits the vanilla generator: run completely untouched.
+			-- Map fits the vanilla generator: run completely untouched (but instrumented
+			-- when GenRand debugging is on -- this path IS the vanilla baseline run).
 			if cur_w_tiles <= max_random_tiles and cur_h_tiles <= max_random_tiles then
+				if GenRandEnabled() then
+					State.genrand_active_mapdata = mapdata or template or false
+					GenRandLog("DoGenerate begin (NATIVE-size run, vanilla baseline)", GenRandInputs(self, map))
+					local results = { pcall(original_do_generate, self, map, ...) }
+					State.genrand_active_mapdata = false
+					if not results[1] then
+						GenRandLog("DoGenerate FAILED (native)", { err = tostring(results[2]) })
+						error(results[2])
+					end
+					GenRandCensus(map, "post-gen NATIVE")
+					return Unpack(results, 2)
+				end
 				return original_do_generate(self, map, ...)
 			end
 
@@ -838,18 +1012,63 @@ local function PatchRandomMapGenerator()
 			map.SuperBigMapGeneratorWidthTiles = map.SuperBigMapGeneratorWidthTiles or gen_width_tiles
 			map.SuperBigMapGeneratorHeightTiles = map.SuperBigMapGeneratorHeightTiles or gen_height_tiles
 
+			-- VANILLA-EXACT PLAY ZONE: PrepareMapDataForQuadrantCopy zeroed mapdata.PassBorder
+			-- BEFORE ChangeMap so the engine bakes full passability (frame reachable). But the
+			-- generator ALSO reads map.mapdata.PassBorder to compute its play zone
+			-- (RandomMapGenerator GetPlayableArea x2, BiomeFiller POI frame) -- with 0 instead
+			-- of the native ~1024-tile border the play zone is BIGGER than vanilla, the
+			-- placement masks differ, and the per-proc rand stream diverges: the same seed
+			-- placed the same lake prefab at a different position/rotation. The engine consumed
+			-- PassBorder at ChangeMap (before DoGenerate), so restoring the ORIGINAL value for
+			-- just this DoGenerate window gives the generator vanilla-identical inputs while
+			-- the baked passability stays border-free. Restored (re-zeroed) below.
+			local saved_mapdata_pb, saved_mapdata_pbt, saved_template_pb, saved_template_pbt
+			if cfg_bool("STRETCH_VANILLA_EXACT_PASSBORDER", true) then
+				local orig_pb = (type(mapdata) == "table" and mapdata.SuperBigMapOriginalPassBorder)
+					or (template and template.SuperBigMapOriginalPassBorder)
+				if type(orig_pb) == "number" and orig_pb > 0 then
+					if type(mapdata) == "table" and mapdata.PassBorder ~= orig_pb then
+						saved_mapdata_pb = mapdata.PassBorder
+						saved_mapdata_pbt = mapdata.PassBorderTiles
+						mapdata.PassBorder = orig_pb
+						if type(mapdata.PassBorderTiles) == "number" then
+							mapdata.PassBorderTiles = math.floor(orig_pb / height_tile_size)
+						end
+					end
+					if template and template ~= mapdata and template.PassBorder ~= orig_pb then
+						saved_template_pb = template.PassBorder
+						saved_template_pbt = template.PassBorderTiles
+						template.PassBorder = orig_pb
+						if type(template.PassBorderTiles) == "number" then
+							template.PassBorderTiles = math.floor(orig_pb / height_tile_size)
+						end
+					end
+					DebugPrint(string.format(
+						"vanilla-exact play zone: PassBorder %s -> %s for the DoGenerate window (re-zeroed after)",
+						tostring(saved_mapdata_pb), tostring(orig_pb)))
+				end
+			end
+
 			-- Terrain-safe placement auto-fit: relax the deposit/anomaly placement
 			-- margins + spacing (placement-only knobs; never touch gen_zone/terrain)
 			-- so the full preset counts seat in the smaller expanded play_zone. Sizes
 			-- are already overridden here, so coverage is measured over the generated
 			-- span. Restored in End() below, regardless of success.
+			-- (In STRETCH mode Begin() self-skips: bit-identical generation required.)
 			local placement = SuperBigMap.RmgPlacement
 			local placement_active = placement and placement.Begin(self, map) or false
+
+			if GenRandEnabled() then
+				State.genrand_active_mapdata = mapdata or template or false
+				GenRandLog("DoGenerate begin (EXPANDED run, capped sizes)", GenRandInputs(self, map))
+			end
 
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
 			local results = { pcall(original_do_generate, self, map, ...) }
 			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
+
+			State.genrand_active_mapdata = false
 
 			if placement_active then
 				placement.End(map)
@@ -862,15 +1081,27 @@ local function PatchRandomMapGenerator()
 			if template then
 				template.Width = saved_template_w
 				template.Height = saved_template_h
+				if saved_template_pb ~= nil then
+					template.PassBorder = saved_template_pb
+					template.PassBorderTiles = saved_template_pbt
+				end
 			end
 			if type(mapdata) == "table" then
 				mapdata.Width = saved_mapdata_w
 				mapdata.Height = saved_mapdata_h
+				if saved_mapdata_pb ~= nil then
+					mapdata.PassBorder = saved_mapdata_pb
+					mapdata.PassBorderTiles = saved_mapdata_pbt
+				end
 			end
 
 			if not results[1] then
+				if GenRandEnabled() then
+					GenRandLog("DoGenerate FAILED (expanded)", { err = tostring(results[2]) })
+				end
 				error(results[2])
 			end
+			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
 			return Unpack(results, 2)
 		end
 		generator_class.DoGenerate = do_generate_wrapper
