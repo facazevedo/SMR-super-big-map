@@ -545,8 +545,14 @@ end
 -- After the expansion copy, register every cloned RESOURCE deposit marker with the map sector
 -- it now sits in, so scanning that frame sector spawns the deposit (vanilla RevealDeposits
 -- reads sector.markers, which is populated by sector:RegisterDeposit). Idempotent.
+-- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
+-- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
 	map = map or Global("CurrentMap")
+	if IsUndergroundMap(map) then
+		Log("register skipped", { reason = "underground -- proximity reveal, no sector dependence" })
+		return
+	end
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
@@ -861,6 +867,16 @@ end
 -- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
 -- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
 -- generates the terrain patch), so no manual imprint is needed. Gated by ENABLE_DEPOSIT_TOPUP.
+-- UNDERGROUND maps must not depend on sector mechanics AT ALL (user directive): their
+-- enrichments follow vanilla's proximity reveal -- a DepositRevealer (on rovers/units) calls
+-- RevealDepositsInRange, which PlaceDeposit()s every UNPLACED DepositMarker in range and
+-- reveals ExplorableObjects. An unplaced clone marker is therefore all the gating needed;
+-- sector registration (the surface scan-reveal hook) is skipped underground.
+local function IsUndergroundMap(map)
+	local mapdata = map and map.mapdata
+	return type(mapdata) == "table" and mapdata.Environment == "Underground"
+end
+
 -- "Water=5 Metals=3 ..." -- sorted flat tally string for the top-up proportion logs.
 local function TallyString(tbl)
 	local keys = {}
@@ -1149,11 +1165,15 @@ function DepositRules.TopUpAnomalies(map)
 					-- clones must be reset here (a start-sector template may already be placed).
 					clone.is_placed = false
 					clone.placed_obj = false
-					-- Hidden until its sector is scanned; registered so the scan reveals it.
 					SetRevealedState(clone, false)
-					local sec = SectorAtPoint(map, c.x, c.y)
-					if sec and type(sec.RegisterDeposit) == "function" then
-						pcall(sec.RegisterDeposit, sec, clone)
+					-- Surface: hidden until its sector is scanned; registered so the scan
+					-- reveals it. Underground: NO sector dependence -- the unplaced marker is
+					-- placed+revealed by vanilla's proximity DepositRevealer instead.
+					if not IsUndergroundMap(map) then
+						local sec = SectorAtPoint(map, c.x, c.y)
+						if sec and type(sec.RegisterDeposit) == "function" then
+							pcall(sec.RegisterDeposit, sec, clone)
+						end
 					end
 				end
 			end
