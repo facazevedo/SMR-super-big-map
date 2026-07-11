@@ -1725,7 +1725,15 @@ local function RunUndergroundStretchIfEnabled(map)
 			end
 			local rebuild_buildable = Global("RebuildBuildableGrid")
 			if type(rebuild_buildable) == "function" and map.buildable then
+				StretchLog("underground stretch: -> RebuildBuildableGrid")
 				SafeCall(rebuild_buildable, map)
+			end
+			-- Explicit passability rebuild after the height edits (RebuildGrids/RebuildBuildableGrid
+			-- do NOT cover it -- proven by the v424 buildable-grid regression on the surface).
+			local terrain_api2 = Global("terrain")
+			if type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function" then
+				StretchLog("underground stretch: -> RebuildPassability")
+				SafeCall(terrain_api2.RebuildPassability, map)
 			end
 		end)
 		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end

@@ -602,6 +602,63 @@ end
 -- NATIVE storage grids that GridResample rejects ("Grid Type Not Supported"), so each grid is
 -- converted to a compute grid (GridToCompute) before resampling and written back through the
 -- terrain setter (terrain.SetHeightGrid / SetTypeGrid accept a compute grid). Returns (ok, done).
+-- After the x(full/source) HEIGHT-VALUE scale the map's declared height RANGES go stale:
+-- BuildableGrid:Build marks every hex outside mapdata.visible_height_range as UNBUILDABLE
+-- (map_max_height = range.to*guim), and playable_height_range gates playable-area checks
+-- the same way. Terrain that sat near the top of a range EXCEEDS it after the x1.333 scale,
+-- so the post-stretch RebuildBuildableGrid marked e.g. the underground floor around a
+-- passage unbuildable -- and placing the elevator's underground construction site asserted
+-- in C (HGE::FlattenTerrainInShape: z != nUnbuildableZ, the flatten target z was the
+-- unbuildable sentinel). Scale both ranges by the same factor, rounding OUTWARD (floor the
+-- bottom, ceil the top). Ranges are in METERS; the scale is a pure ratio, so meters scale by
+-- the same mul/div. Deliberately NOT calling terrain.SetPassableHeight: vanilla only applies
+-- it from the map-editor property handler, so calling it in-game would ADD a restriction
+-- vanilla games don't have. Idempotent per map (flag stamp). MUST run before the stretch
+-- branches' RebuildBuildableGrid.
+local function ScaleHeightRanges(map, mul, div)
+	if cfg_bool("STRETCH_SCALE_HEIGHTS", true) ~= true then return false end
+	local mapdata = map and map.mapdata
+	if type(mapdata) ~= "table" or type(mul) ~= "number" or type(div) ~= "number" or div <= 0 then
+		StretchLog("ScaleHeightRanges: skipped", { reason = "mapdata/factor unavailable" })
+		return false
+	end
+	if mapdata.SuperBigMapHeightRangesScaled == true then
+		StretchLog("ScaleHeightRanges: already scaled -- skip")
+		return false
+	end
+	local function scale_out(v, up)
+		local scaled = (v * mul + 0.0) / div
+		return up and math.ceil(scaled) or math.floor(scaled)
+	end
+	local function scale_range(tag, range)
+		if type(range) ~= "table" or type(range.from) ~= "number" or type(range.to) ~= "number" then
+			StretchLog("ScaleHeightRanges: no range to scale", { range = tag, value = tostring(range) })
+			return
+		end
+		local from0, to0 = range.from, range.to
+		range.from = scale_out(from0, false)
+		range.to = scale_out(to0, true)
+		StretchLog("ScaleHeightRanges: scaled", {
+			range = tag, mul = mul, div = div,
+			from = tostring(from0) .. " -> " .. tostring(range.from),
+			to = tostring(to0) .. " -> " .. tostring(range.to),
+		})
+	end
+	scale_range("visible_height_range", mapdata.visible_height_range)
+	scale_range("playable_height_range", mapdata.playable_height_range)
+	-- Some engine paths read the range straight off the MAP object (Pathfinding
+	-- GetPlayableAreaNearby reads map.playable_height_range); scale it too when it is a
+	-- separate table (if it aliases mapdata's, the scale above already covered it).
+	if type(map.playable_height_range) == "table" and map.playable_height_range ~= mapdata.playable_height_range then
+		scale_range("map.playable_height_range", map.playable_height_range)
+	end
+	if type(map.visible_height_range) == "table" and map.visible_height_range ~= mapdata.visible_height_range then
+		scale_range("map.visible_height_range", map.visible_height_range)
+	end
+	mapdata.SuperBigMapHeightRangesScaled = true
+	return true
+end
+
 local function StretchSourceToFull(map, debug)
 	StretchLog("StretchSourceToFull: ENTER", { map = tostring(map and (map.name or "?")) })
 	if not map then return false, 0 end
@@ -766,7 +823,12 @@ local function StretchSourceToFull(map, debug)
 		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
 	local done = 0
 	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
-	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then done = done + 1 end
+	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then
+		done = done + 1
+		-- Height VALUES just scaled x(full/source) -> the declared buildable/playable height
+		-- ranges must scale with them (see ScaleHeightRanges) before any buildable rebuild.
+		timed("height-ranges", ScaleHeightRanges, map, full_tw, sw_tiles)
+	end
 	StretchLog("StretchSourceToFull: -> stretch TYPE")
 	if timed("type", stretch_one, "type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but

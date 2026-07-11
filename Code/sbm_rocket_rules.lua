@@ -514,6 +514,87 @@ end
 local flatten_patched = false
 local original_flatten_in_build_shape = false
 
+-- Flatten diagnostics (scope "Flatten", gated DEBUG_FLATTEN) + C-assert guard.
+-- HGE::FlattenTerrainInShape asserts `z != nUnbuildableZ` when the flatten target z read
+-- from the buildable z-grid is the UNBUILDABLE sentinel (buildUnbuildableZ() = 2^16-1) --
+-- observed when placing the elevator's underground construction site on a stretched map
+-- whose buildable grid was rebuilt against STALE height ranges (root fix: sbm_terrain_copy
+-- ScaleHeightRanges). The analyzer reports, for every flatten on a MOD map, the anchor
+-- hex's buildable z vs live terrain z and how many footprint hexes are unbuildable; the
+-- guard (config FLATTEN_SKIP_WHEN_UNBUILDABLE) SKIPS the flatten when the anchor hex is
+-- unbuildable -- vanilla's own Lua reference implementation skips unbuildable hexes the
+-- same way (Construction.lua: `if z ~= UnbuildableZ then SetHeightCircle(...) end`); the
+-- C assert is debug-build strictness on the same condition. Vanilla maps never touched.
+local function FlattenLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("Flatten", message, data) end
+end
+
+local function AnalyzeFlattenShape(map, shape_data, obj)
+	local buildable = map and map.buildable
+	if not buildable or type(buildable.GetZ) ~= "function" then return nil end
+	if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return nil end
+	local world_to_hex = Global("WorldToHex")
+	local hex_rotate = Global("HexRotate")
+	local angle_to_dir = Global("HexAngleToDirection")
+	local build_unbuildable = Global("buildUnbuildableZ")
+	if type(world_to_hex) ~= "function" or type(build_unbuildable) ~= "function" then return nil end
+	local ok_u, unbuildable = pcall(build_unbuildable)
+	if not ok_u then return nil end
+	local ok_p, pos = pcall(obj.GetPos, obj)
+	if not ok_p or not pos then return nil end
+	local ok_h, q, r = pcall(world_to_hex, pos)
+	if not ok_h or type(q) ~= "number" then return nil end
+	local ok_az, anchor_z = pcall(buildable.GetZ, buildable, q, r)
+	anchor_z = ok_az and anchor_z or nil
+	local dir = 0
+	if type(angle_to_dir) == "function" and type(obj.GetAngle) == "function" then
+		local ok_a, a = pcall(obj.GetAngle, obj)
+		if ok_a and type(a) == "number" then
+			local ok_d, d = pcall(angle_to_dir, a)
+			if ok_d and type(d) == "number" then dir = d end
+		end
+	end
+	local n_hexes, n_unbuildable, samples = 0, 0, {}
+	if type(shape_data) == "table" and type(hex_rotate) == "function" then
+		for _, pt in ipairs(shape_data) do
+			local ok_xy, sx, sy = pcall(function() return pt:x(), pt:y() end)
+			if ok_xy and type(sx) == "number" then
+				local ok_r, hx, hy = pcall(hex_rotate, sx, sy, dir)
+				if ok_r and type(hx) == "number" then
+					n_hexes = n_hexes + 1
+					local ok_z, z = pcall(buildable.GetZ, buildable, q + hx, r + hy)
+					local zz = ok_z and z or nil
+					if zz == unbuildable or zz == nil then
+						n_unbuildable = n_unbuildable + 1
+						if #samples < 8 then
+							samples[#samples + 1] = string.format("hex(%s,%s)=UNBUILDABLE", tostring(q + hx), tostring(r + hy))
+						end
+					end
+				end
+			end
+		end
+	end
+	local terrain_api = Global("terrain")
+	local ground_z
+	if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+		local ok_g, g = pcall(terrain_api.GetHeight, map, pos)
+		if ok_g then ground_z = g end
+	end
+	return {
+		obj_class = tostring(obj.class),
+		map = tostring(map and map.name),
+		pos = tostring(pos),
+		anchor_hex = tostring(q) .. "," .. tostring(r),
+		anchor_buildable_z = tostring(anchor_z),
+		terrain_z = tostring(ground_z),
+		anchor_unbuildable = (anchor_z == unbuildable or anchor_z == nil),
+		shape_hexes = n_hexes,
+		shape_unbuildable = n_unbuildable,
+		samples = table.concat(samples, " "),
+	}
+end
+
 local function PatchLandingFlatten()
 	if flatten_patched then
 		return
@@ -545,6 +626,24 @@ local function PatchLandingFlatten()
 				mode_reason = reason,
 			})
 			return
+		end
+		-- Diagnostics + unbuildable-anchor guard (MOD maps only; vanilla untouched).
+		if mod_map then
+			local info = AnalyzeFlattenShape(map, shape_data, obj)
+			if info then
+				if Config.DEBUG_FLATTEN == true then
+					FlattenLog("FlattenTerrainInBuildShape call", info)
+				end
+				if info.anchor_unbuildable and Config.FLATTEN_SKIP_WHEN_UNBUILDABLE ~= false then
+					-- Loud even without DEBUG_FLATTEN: this is the C-assert path being averted.
+					FlattenLog("FlattenTerrainInBuildShape SKIPPED (anchor hex UNBUILDABLE -> would assert z != nUnbuildableZ)", info)
+					RocketLog("FlattenTerrainInBuildShape SKIPPED (anchor hex unbuildable guard)", {
+						obj_class = info.obj_class, map = info.map, pos = info.pos,
+						shape_unbuildable = info.shape_unbuildable .. "/" .. info.shape_hexes,
+					})
+					return
+				end
+			end
 		end
 		return original_flatten_in_build_shape(shape_data, obj, flatten_unbuildable)
 	end)
