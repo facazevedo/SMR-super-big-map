@@ -799,6 +799,69 @@ local function StretchSourceToFull(map, debug)
 	return done > 0, done
 end
 
+-- RELIEF ANNOTATIONS (config STRETCH_RELIEF_AWARE_DECOR): captured BEFORE the terrain stretch,
+-- per map: for every root object with an explicit Z in the source region, its relationship to
+-- the ground -- dz = obj_z - terrain_height(xy). After the terrain stretches in X/Y/Z, the
+-- correct placement is new_z = stretched_terrain_height(new_xy) + dz * (full/source): anchored
+-- to the ACTUAL stretched ground (absorbing resample smoothing) while preserving the scaled
+-- embedding (half-buried stays proportionally half-buried; the SetTerrainZ hard-snap destroyed
+-- intentional embedding). Weak keys: entries vanish with their objects; table dropped per map
+-- after the stretch branch (never savegame-persisted).
+local decor_relief_by_map = setmetatable({}, { __mode = "k" })
+
+local function AnnotateDecorRelief(map)
+	if not map or not cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true) then return 0 end
+	if type(map.MapForEach) ~= "function" then return 0 end
+	local terrain_api = Global("terrain")
+	local box_fn = Global("box")
+	if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
+		or type(box_fn) ~= "function" then
+		return 0
+	end
+	local const_tbl = Global("const")
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
+	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
+	if type(sw_tiles) ~= "number" or sw_tiles <= 0 then return 0 end
+	sh_tiles = (type(sh_tiles) == "number" and sh_tiles > 0) and sh_tiles or sw_tiles
+	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
+	local relief = setmetatable({}, { __mode = "k" })
+	local annotated, sampled = 0, 0
+	local DebugLog = SuperBigMap.DebugLog
+	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
+		if not obj then return end
+		if type(obj.GetParent) == "function" then
+			local ok_p, parent = pcall(obj.GetParent, obj)
+			if ok_p and parent then return end -- attached children follow their parent
+		end
+		local pos = ObjectPosition(obj)
+		if not pos then return end
+		local pz
+		pcall(function() pz = pos:z() end)
+		if type(pz) ~= "number" then return end -- terrain-glued: no explicit z to preserve
+		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
+		if not ok_h or type(h) ~= "number" then return end
+		relief[obj] = pz - h
+		annotated = annotated + 1
+		if sampled < 8 and DebugLog and DebugLog.On("Align") then
+			sampled = sampled + 1
+			local px, py = PointXY(pos)
+			DebugLog.Info("Align", "relief annotated", {
+				n = sampled, class = tostring(obj.class or "?"),
+				xy = tostring(px) .. "," .. tostring(py), dz = pz - h,
+			})
+		end
+	end)
+	decor_relief_by_map[map] = relief
+	StretchLog("AnnotateDecorRelief: DONE", { annotated = annotated })
+	DebugPrint(string.format("relief annotations: %s objects", tostring(annotated)))
+	return annotated
+end
+
+local function ClearDecorRelief(map)
+	if map then decor_relief_by_map[map] = nil end
+end
+
 -- STRETCH step 2 (decorations): the generator placed all its scatter/decor in the SOURCE corner
 -- (anchored at world origin); once the terrain is stretched to full size those decorations are
 -- clustered in one corner on the wrong ground. Move each decoration to its matching spot on the
@@ -812,6 +875,7 @@ end
 -- Returns the number of decorations moved.
 local function ScaleDecorationsToFull(map, debug)
 	StretchLog("ScaleDecorationsToFull: ENTER", { map = tostring(map and (map.name or "?")) })
+	local terrain_api_g = Global("terrain") -- for relief-aware Z placement
 	if not map then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -903,7 +967,22 @@ local function ScaleDecorationsToFull(map, debug)
 				local ny = math.floor(oy * scale_y + 0.5)
 				local np = point_fn(nx, ny)
 				local z_ok = false
-				if type(np.SetTerrainZ) == "function" then
+				local z_mode = "snap"
+				-- Relief-aware Z: reproduce the object's pre-stretch relationship to the ground
+				-- (dz annotated before the terrain stretch), scaled by the same factor, on top of
+				-- the ACTUAL stretched terrain height at the destination.
+				local relief = decor_relief_by_map[map]
+				local dz = relief and relief[obj]
+				if type(dz) == "number" and type(terrain_api_g) == "table"
+					and type(terrain_api_g.GetHeight) == "function" then
+					local ok_h, h = pcall(terrain_api_g.GetHeight, map, np)
+					if ok_h and type(h) == "number" then
+						np = point_fn(nx, ny, h + math.floor(dz * scale_x + 0.5))
+						z_ok = true
+						z_mode = "relief"
+					end
+				end
+				if not z_ok and type(np.SetTerrainZ) == "function" then
 					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 					if ok_z and pz then np = pz; z_ok = true end
 				end
@@ -936,7 +1015,8 @@ local function ScaleDecorationsToFull(map, debug)
 						n = sample_n, class = tostring(obj.class),
 						old_xy = tostring(ox) .. "," .. tostring(oy),
 						new_xy = tostring(nx) .. "," .. tostring(ny),
-						z_snapped = z_ok, old_scale = old_scale, new_scale = new_scale,
+						z_snapped = z_ok, z_mode = z_mode,
+						old_scale = old_scale, new_scale = new_scale,
 					})
 				end
 				-- Density top-up: chance to add one jittered clone of this decoration nearby.
@@ -1131,8 +1211,24 @@ local function MoveEntranceVisualsToScale(map)
 		-- Only objects still inside the SOURCE region need moving (idempotence: an already-moved
 		-- or frame-placed object lies beyond it on at least one axis).
 		if ox >= src_w or oy >= src_w then return end
-		local np = point_fn(math.floor(ox * scale + 0.5), math.floor(oy * scale + 0.5))
-		if type(np.SetTerrainZ) == "function" then
+		local nx = math.floor(ox * scale + 0.5)
+		local ny = math.floor(oy * scale + 0.5)
+		local np = point_fn(nx, ny)
+		-- Relief-aware Z (same scheme as the decor pass): reproduce the annotated pre-stretch
+		-- ground relationship, scaled, on the actual stretched terrain; fall back to a snap.
+		local placed_z = false
+		local relief = decor_relief_by_map[map]
+		local dz = relief and relief[obj]
+		local terrain_api = Global("terrain")
+		if type(dz) == "number" and type(terrain_api) == "table"
+			and type(terrain_api.GetHeight) == "function" then
+			local ok_h, h = pcall(terrain_api.GetHeight, map, np)
+			if ok_h and type(h) == "number" then
+				np = point_fn(nx, ny, h + math.floor(dz * scale + 0.5))
+				placed_z = true
+			end
+		end
+		if not placed_z and type(np.SetTerrainZ) == "function" then
 			local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 			if ok_z and pz then np = pz end
 		end
@@ -1971,6 +2067,8 @@ local TerrainCopy = {
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
 	AuditFloatingObjects = AuditFloatingObjects,
+	AnnotateDecorRelief = AnnotateDecorRelief,
+	ClearDecorRelief = ClearDecorRelief,
 	ResnapForeignObjects = ResnapForeignObjects,
 	DestroyObject = DestroyObject,
 	BlockBox = BlockBox,

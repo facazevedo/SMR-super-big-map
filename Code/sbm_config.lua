@@ -596,6 +596,13 @@ config.StretchResnapFloaters = true
 -- while meshes grew x1.333 in all axes; formations sculpted into relief floated). Off = the old
 -- wider-and-gentler terrain for comparison.
 config.StretchScaleHeights = true
+
+-- RELIEF-AWARE decoration Z (user-designed): before the terrain stretch, annotate each object's
+-- relationship to its ground (dz = z - terrain height); after the stretch, place it at the
+-- ACTUAL stretched terrain height at its new spot + dz * (full/source). Preserves intentional
+-- embedding (half-buried stays proportionally half-buried) and absorbs resample smoothing --
+-- the plain SetTerrainZ snap (used as fallback / when off) forces every base onto the surface.
+config.StretchReliefAwareDecor = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -877,6 +884,7 @@ C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
+C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)

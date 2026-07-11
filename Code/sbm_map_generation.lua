@@ -174,6 +174,8 @@ local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
+local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
+local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
 	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
 	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
@@ -1058,6 +1060,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			local ok_stretch, n_grids = false, 0
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
+					-- Relief annotations MUST be captured BEFORE the terrain stretch (they record
+					-- each object's relationship to the PRE-stretch ground).
+					if type(AnnotateDecorRelief) == "function" then
+						StretchLog("stretch branch: -> AnnotateDecorRelief")
+						AnnotateDecorRelief(map)
+					end
 					StretchLog("stretch branch: -> StretchSourceToFull")
 					ok_stretch, n_grids = StretchSourceToFull(map, false)
 					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
@@ -1180,6 +1188,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			end)
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
+			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
 			do
 				local tnow = 0
 				if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then tnow = t end end
@@ -1438,6 +1447,11 @@ local function RunUndergroundStretchIfEnabled(map)
 		local ok_branch, branch_err = pcall(function()
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall(SyncMapDataToGrids, map)
+			-- Relief annotations BEFORE the underground terrain stretch (same as the surface).
+			if type(AnnotateDecorRelief) == "function" then
+				StretchLog("underground stretch: -> AnnotateDecorRelief")
+				AnnotateDecorRelief(map)
+			end
 			StretchLog("underground stretch: -> StretchSourceToFull")
 			local ok_s, n_grids = StretchSourceToFull(map, false)
 			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
@@ -1480,6 +1494,7 @@ local function RunUndergroundStretchIfEnabled(map)
 			StretchLog("underground stretch: EXCEPTION -- map left as generated", { err = tostring(branch_err) })
 			DebugPrint("RunUndergroundStretchIfEnabled ERROR: " .. tostring(branch_err))
 		end
+		if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
 		StretchLog("underground stretch: DONE", { ok = ok_branch })
 		DebugPrint("underground stretch complete")
 	end)
