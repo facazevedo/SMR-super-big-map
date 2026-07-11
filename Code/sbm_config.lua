@@ -217,7 +217,7 @@ config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision pa
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
-config.DebugVeil          = true    -- Veil: underground sector-veil lifecycle (every build/teardown with reason + decal census, watchdog repairs: rebuilds after map-switch teardown races, re-shows decals whose efVisible got cleared) (TEMP: investigating "only one sector translucent")
+config.DebugVeil          = false   -- Veil: underground sector-veil lifecycle (build/teardown with reason + decal census, watchdog repairs, hover forensic). Investigation closed: SectorUnexplored proved outline-only; veil now disabled by user decision (interiors stay clear)
 config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics on mod maps (per-call anchor hex buildable-z vs terrain z, unbuildable footprint counts; also logs the unbuildable-anchor guard skips) (TEMP: investigating elevator-placement FlattenTerrainInShape assert)
 config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
 
@@ -585,11 +585,11 @@ config.UndergroundOverviewEnabled = true
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
 -- Underground SECTOR VEIL: during the underground overview every sector gets its own
--- translucent "SectorUnexplored" pane (the same decal the hover highlight uses), so the areas
--- between the grid frames read as translucent panes over the terrain instead of bare ground.
--- The hovered sector stacks the hover decal on top and reads slightly darker. Built on
--- overview enter, torn down on overview exit / map switch.
-config.UndergroundSectorVeil = true
+-- translucent fill pane, so the areas between the grid frames read as shaded panes over the
+-- terrain. OFF by user decision (2026-07-11): the areas inside the frames stay COMPLETELY
+-- CLEAR -- frames only, plain terrain visible, no fill. The machinery (veil build + watchdog
+-- + SectorTarget fill entity + tint) stays available behind this flag.
+config.UndergroundSectorVeil = false
 -- Veil pane ENTITY. "SectorUnexplored" is OUTLINE-ONLY (proven by the red-tint diagnostic:
 -- it turned the grid lines red, never the interiors), so the veil uses "SectorTarget" -- the
 -- game's translucent FILL decal (vanilla's filled hover highlight on the surface).
