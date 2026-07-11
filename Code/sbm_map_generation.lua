@@ -1714,14 +1714,37 @@ local function RunUndergroundStretchIfEnabled(map)
 			-- both maps receive exactly ONE transformation -- the stretch itself (position *
 			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
 			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
+			-- Grids FIRST: the density suite's placement pools require the LIVE buildable grid
+			-- (underground pools are buildable-floor-only -- without the rebuild they would
+			-- sample the stale pre-stretch grid and put enrichments out in the inaccessible
+			-- rock/void, which is exactly what happened). Explicit RebuildBuildableGrid +
+			-- RebuildPassability after the height edits (RebuildGrids does NOT cover them).
+			do
+				local rebuild_buildable = Global("RebuildBuildableGrid")
+				if type(rebuild_buildable) == "function" and map.buildable then
+					StretchLog("underground stretch: -> RebuildBuildableGrid")
+					SafeCall(rebuild_buildable, map)
+				end
+				local terrain_api2 = Global("terrain")
+				if type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function" then
+					StretchLog("underground stretch: -> RebuildPassability")
+					SafeCall(terrain_api2.RebuildPassability, map)
+				end
+			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
 			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
 			-- density too (they weren't -- the underground sat ~44% under vanilla density).
-			-- Runs BEFORE the TEMP ForceRevealAllOnMap so the inspection reveal also
-			-- places/reveals the clones.
+			-- The x1.78 factor is correct per BUILDABLE area as well: the buildable floor
+			-- stretched by the same factor as the map (the census logs the measured numbers).
+			-- Placement pools are buildable-floor-only underground (CanReceiveDeposit), so no
+			-- enrichment lands in the inaccessible rock/void. Runs BEFORE the TEMP
+			-- ForceRevealAllOnMap so the inspection reveal also places/reveals the clones.
 			do
 				local deposits = SuperBigMap.DepositRules
 				if deposits then
+					if type(deposits.LogBuildableSectorCensus) == "function" then
+						SafeCall(deposits.LogBuildableSectorCensus, map, "underground post-stretch, pre-topup")
+					end
 					if type(deposits.TopUpDeposits) == "function" then
 						StretchLog("underground stretch: -> TopUpDeposits")
 						SafeCall(deposits.TopUpDeposits, map)
@@ -1756,18 +1779,8 @@ local function RunUndergroundStretchIfEnabled(map)
 					SafeCall(deposits.ForceRevealAllOnMap, map)
 				end
 			end
-			local rebuild_buildable = Global("RebuildBuildableGrid")
-			if type(rebuild_buildable) == "function" and map.buildable then
-				StretchLog("underground stretch: -> RebuildBuildableGrid")
-				SafeCall(rebuild_buildable, map)
-			end
-			-- Explicit passability rebuild after the height edits (RebuildGrids/RebuildBuildableGrid
-			-- do NOT cover it -- proven by the v424 buildable-grid regression on the surface).
-			local terrain_api2 = Global("terrain")
-			if type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function" then
-				StretchLog("underground stretch: -> RebuildPassability")
-				SafeCall(terrain_api2.RebuildPassability, map)
-			end
+			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
+			-- buildable-floor-only pools need the live grid.)
 		end)
 		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end
 		if not ok_branch then

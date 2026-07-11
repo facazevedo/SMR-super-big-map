@@ -150,8 +150,37 @@ end
 
 -- A tile can receive a deposit if it is passable and flat enough (not a cliff).
 local FLATNESS_MIN = 3700   -- normal.z (of 4096); ~ below this is too steep
+local function IsBuildableAt(map, pt)
+	local buildable = map and map.buildable
+	local world_to_hex = Global("WorldToHex")
+	local build_unbuildable = Global("buildUnbuildableZ")
+	if not (buildable and type(buildable.GetZ) == "function" and type(world_to_hex) == "function"
+		and type(build_unbuildable) == "function") then
+		return true -- grid unavailable: don't block placement
+	end
+	local ok_u, sentinel = pcall(build_unbuildable)
+	if not ok_u then return true end
+	local ok_h, q, r = pcall(world_to_hex, pt)
+	if not ok_h or type(q) ~= "number" then return true end
+	local ok_z, z = pcall(buildable.GetZ, buildable, q, r)
+	return ok_z and z ~= nil and z ~= sentinel
+end
+
 local function CanReceiveDeposit(map, pt)
-	return PassableAt(map, pt) and (FlatnessAt(map, pt) or 0) >= FLATNESS_MIN
+	if not (PassableAt(map, pt) and (FlatnessAt(map, pt) or 0) >= FLATNESS_MIN) then
+		return false
+	end
+	-- UNDERGROUND: only the cavern floor is real accessible terrain; the surrounding rock/
+	-- void passes the passable+flat tests (the whole map is passable since the expansion
+	-- zeroes PassBorder, and the void is uniformly flat) -- which put topped-up anomalies
+	-- out in the black inaccessible area. Require the hex to be BUILDABLE (the game's own
+	-- accessibility measure: hills/rock/void are unbuildable, the floor is buildable), so
+	-- every top-up/respace/even-out pool samples only the playable floor. Surface pools are
+	-- unchanged (vanilla surface deposits legitimately sit on rough terrain).
+	if IsUndergroundMap(map) and not IsBuildableAt(map, pt) then
+		return false
+	end
+	return true
 end
 
 local function SectorAtPoint(map, x, y)
@@ -888,6 +917,40 @@ local function TallyString(tbl)
 	return table.concat(parts, " ")
 end
 
+-- BUILDABLE-SECTOR CENSUS (verification aid): random-sample the map against the buildable
+-- grid and report the buildable fraction + how many sectors contain buildable floor. On a
+-- stretched map the buildable region scales by the same area factor as the map, so the
+-- density target (count x area_factor) is correct per BUILDABLE area too -- this census
+-- provides the measured numbers for the log. Runs AFTER RebuildBuildableGrid.
+function DepositRules.LogBuildableSectorCensus(map, label)
+	map = map or Global("CurrentMap")
+	local point = Global("point")
+	if not map or type(point) ~= "function" then return end
+	local map_w, map_h = MapWorldSize(map)
+	if not map_w or not map_h then return end
+	local SAMPLES = 20000
+	local buildable_hits = 0
+	local sectors_hit, sectors_seen = {}, {}
+	for _ = 1, SAMPLES do
+		local x, y = RandInt(map_w), RandInt(map_h)
+		local sector = SectorAtPoint(map, x, y)
+		if sector and sector.id then sectors_seen[sector.id] = true end
+		if IsBuildableAt(map, point(x, y)) then
+			buildable_hits = buildable_hits + 1
+			if sector and sector.id then sectors_hit[sector.id] = true end
+		end
+	end
+	local n_hit, n_seen = 0, 0
+	for _ in pairs(sectors_hit) do n_hit = n_hit + 1 end
+	for _ in pairs(sectors_seen) do n_seen = n_seen + 1 end
+	Log("buildable census", {
+		label = tostring(label), map = tostring(map.name),
+		buildable_fraction = string.format("%.3f", (buildable_hits + 0.0) / SAMPLES),
+		sectors_with_buildable_floor = n_hit, sectors_sampled = n_seen,
+		samples = SAMPLES,
+	})
+end
+
 function DepositRules.TopUpDeposits(map)
 	if cfg().ENABLE_DEPOSIT_TOPUP ~= true then return end
 	map = map or Global("CurrentMap")
@@ -977,6 +1040,7 @@ function DepositRules.TopUpDeposits(map)
 	end
 
 	local added = 0
+	local pool_final = 0
 	RunPaused("SuperBigMapDepositTopUp", function()
 		-- Frame candidate pool (terrain-bucketed), same as EvenOutDepositDensity: sampled tiles
 		-- OUTSIDE the source quadrant, so the added deposits fill the sparse frame.
@@ -1001,6 +1065,7 @@ function DepositRules.TopUpDeposits(map)
 				end
 			end
 		end
+		pool_final = pool
 		local function take(tt)
 			local b = tt ~= nil and buckets[tt] or nil
 			if b and #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end
@@ -1040,7 +1105,7 @@ function DepositRules.TopUpDeposits(map)
 		area_factor = string.format("%.3f", area_factor),
 		source_count = source_count, total_before = total_current,
 		target = target, added = added, templates = #templates,
-		map = tostring(map.name),
+		map = tostring(map.name), pool = pool_final,
 		source_mix = TallyString(src_by_type),
 		added_mix = TallyString(added_by_type),
 	})
@@ -1125,6 +1190,7 @@ function DepositRules.TopUpAnomalies(map)
 	end
 
 	local added = 0
+	local pool_final = 0
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
@@ -1140,6 +1206,7 @@ function DepositRules.TopUpAnomalies(map)
 				end
 			end
 		end
+		pool_final = #candidates
 		for _ = 1, shortfall do
 			if #candidates == 0 then break end
 			local ci = RandInt(#candidates) + 1
@@ -1183,7 +1250,7 @@ function DepositRules.TopUpAnomalies(map)
 	Log("topped up anomalies to map-size proportions (post-gen)", {
 		area_factor = string.format("%.3f", area_factor),
 		total_before = total_current, target = target, added = added, templates = #templates,
-		map = tostring(map.name),
+		map = tostring(map.name), pool = pool_final,
 		source_mix = TallyString(src_by_cat),
 		added_mix = TallyString(added_by_cat),
 	})
