@@ -65,6 +65,17 @@ local function IsConcreteTerrainDepositMarker(obj)
 	return obj ~= nil and obj.resource == "Concrete" and IsKindOfSafe(obj, "TerrainDepositMarker")
 end
 
+-- UNDERGROUND maps must not depend on sector mechanics AT ALL (user directive): their
+-- enrichments follow vanilla's proximity reveal -- a DepositRevealer (on rovers/units) calls
+-- RevealDepositsInRange, which PlaceDeposit()s every UNPLACED DepositMarker in range and
+-- reveals ExplorableObjects. An unplaced clone marker is therefore all the gating needed;
+-- sector registration (the surface scan-reveal hook) is skipped underground.
+-- (Declared early: RegisterClonedMarkers and both top-ups below use it.)
+local function IsUndergroundMap(map)
+	local mapdata = map and map.mapdata
+	return type(mapdata) == "table" and mapdata.Environment == "Underground"
+end
+
 local function SetRevealedState(obj, revealed)
 	-- Prefer the object's own SetRevealed if present (CrystalsBuilding etc.); else set the
 	-- property and re-pick visibility the way the engine does on reveal.
@@ -867,16 +878,6 @@ end
 -- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
 -- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
 -- generates the terrain patch), so no manual imprint is needed. Gated by ENABLE_DEPOSIT_TOPUP.
--- UNDERGROUND maps must not depend on sector mechanics AT ALL (user directive): their
--- enrichments follow vanilla's proximity reveal -- a DepositRevealer (on rovers/units) calls
--- RevealDepositsInRange, which PlaceDeposit()s every UNPLACED DepositMarker in range and
--- reveals ExplorableObjects. An unplaced clone marker is therefore all the gating needed;
--- sector registration (the surface scan-reveal hook) is skipped underground.
-local function IsUndergroundMap(map)
-	local mapdata = map and map.mapdata
-	return type(mapdata) == "table" and mapdata.Environment == "Underground"
-end
-
 -- "Water=5 Metals=3 ..." -- sorted flat tally string for the top-up proportion logs.
 local function TallyString(tbl)
 	local keys = {}
