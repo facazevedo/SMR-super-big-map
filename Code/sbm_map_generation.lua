@@ -763,6 +763,87 @@ local function GenRandInputs(generator, map)
 	}
 end
 
+-- DETERMINISTIC PASSAGE PAIRING (config STRETCH_DETERMINISTIC_PASSAGES). During the
+-- UNDERGROUND map's generation, vanilla spawns each SURFACE UndergroundPassage by searching
+-- MainMap's buildable grid around the underground SurfacePassageMarker's position
+-- (Picard RandomMapGen_PlaceArtefacts_Passages -> SpawnUndergroundPassage ->
+-- FindPassageSpawnPos) and, when the search fails, falls back to a RANDOM passable position
+-- (GetRandomPassable; up to 12 attempts). On an expanded map that search races the surface
+-- map's ASYNC buildable-grid build ("Buildable grid ready" lands seconds after generation)
+-- and the stretch passes, so an entrance can take the random fallback -- a DIFFERENT spot
+-- every restart (log-proven: same surface generation fingerprints, entrances G8+Q16 one run
+-- and J4+G8 the next), sometimes on a mountain ("passable" does not imply buildable, which
+-- then asserts the construction flatten when the elevator is placed there). Vanilla's own
+-- intent is CORRESPONDENCE: the underground maps are authored so the marker position is
+-- valid on the surface too (see the vanilla TODO comment right at that call site). So on
+-- expanded maps the surface passage is placed EXACTLY at the underground marker's position
+-- (hex- and terrain-snapped, like vanilla's own placement) -- no search, no randomness. The
+-- caller (Picard) then clears obstructions and links the pair exactly as vanilla does, and
+-- the later stretch scales BOTH endpoints by the same factor, preserving correspondence.
+-- Vanilla-size maps always run the original. Self-verifying via State (survives the
+-- new-game Lua reload through the ClassesBuilt/ModsReloaded re-install).
+local function PatchPassagePairing()
+	if not cfg_bool("STRETCH_DETERMINISTIC_PASSAGES", true) then return false end
+	local State = SuperBigMap.State
+	local current = Global("SpawnUndergroundPassage")
+	if type(current) ~= "function" then
+		VerbosePrint("passage pairing hook waiting for SpawnUndergroundPassage")
+		return false
+	end
+	if current == State.spawn_passage_wrapper then return true end
+	State.original_spawn_passage = current
+	local wrapper = function(map, pos, angle, min_dist, passages)
+		local original = State.original_spawn_passage
+		local desired = map and map.SuperBigMapDesiredWidthTiles
+		local gen_t = map and map.SuperBigMapGeneratorWidthTiles
+		local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
+		if not expanded then
+			return original(map, pos, angle, min_dist, passages)
+		end
+		local snap_hex = Global("SnapWorldToHex")
+		local snap_angle = Global("SnapWorldToHexAngle")
+		local get_shape = Global("GetExtendedSpawnShape")
+		local place_building = Global("PlaceBuildingIn")
+		local flatten = Global("FlattenTerrainInBuildShape")
+		local const_tbl = Global("const")
+		if type(snap_hex) ~= "function" or type(place_building) ~= "function" then
+			return original(map, pos, angle, min_dist, passages)
+		end
+		local position = snap_hex(pos)
+		if type(snap_angle) == "function" then
+			local ok_a, a = pcall(snap_angle, angle)
+			if ok_a and a then angle = a end
+		end
+		if type(map.SnapToTerrain) == "function" then
+			local ok_s, snapped = pcall(map.SnapToTerrain, map, position)
+			if ok_s and snapped then position = snapped end
+		end
+		local shape = type(get_shape) == "function" and get_shape("Elevator") or nil
+		local ok_p, passage = pcall(place_building, "UndergroundPassage", map)
+		if not ok_p or not passage then
+			DebugPrint("deterministic passage pairing: PlaceBuildingIn failed -- vanilla fallback")
+			return original(map, pos, angle, min_dist, passages)
+		end
+		pcall(passage.SetPos, passage, position)
+		pcall(passage.SetAngle, passage, angle)
+		if type(const_tbl) == "table" and const_tbl.gofPermanent and type(passage.SetGameFlags) == "function" then
+			pcall(passage.SetGameFlags, passage, const_tbl.gofPermanent)
+		end
+		-- Same pad sculpting vanilla does at this point ("flatten unbuildable" mode).
+		if shape and type(flatten) == "function" then
+			pcall(flatten, shape, passage, "flatten unbuildable")
+		end
+		DebugPrint(string.format(
+			"deterministic passage pairing: surface UndergroundPassage at %s (= underground marker pos, no search/random)",
+			tostring(position)))
+		return passage, shape
+	end
+	rawset(_G, "SpawnUndergroundPassage", wrapper)
+	State.spawn_passage_wrapper = wrapper
+	DebugPrint("SpawnUndergroundPassage wrapped (deterministic passage pairing on expanded maps)")
+	return true
+end
+
 local function PatchRandomMapGenerator()
 	if not cfg_bool("QUADRANT_PATCH_RANDOM_GENERATOR", true) then
 		VerbosePrint("quadrant random-map generator hook disabled")
@@ -1802,6 +1883,7 @@ MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
 MapGeneration.AttachPendingMapState = AttachPendingMapState
 MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
+MapGeneration.PatchPassagePairing = PatchPassagePairing
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
 MapGeneration.ForceFramePassable = ForceFramePassable
@@ -1809,6 +1891,7 @@ MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 
 function MapGeneration.ApplyModBehavior()
 	PatchRandomMapGenerator()
+	PatchPassagePairing()
 end
 
 -- Restoring only affects FUTURE generation; maps already tiled stay tiled.
@@ -1826,6 +1909,12 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.generator_original_generate = nil
 	State.generator_original_do_generate = nil
 	State.generator_patch_version = nil
+	if State.spawn_passage_wrapper and Global("SpawnUndergroundPassage") == State.spawn_passage_wrapper
+		and type(State.original_spawn_passage) == "function" then
+		rawset(_G, "SpawnUndergroundPassage", State.original_spawn_passage)
+	end
+	State.spawn_passage_wrapper = nil
+	State.original_spawn_passage = nil
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -1840,6 +1929,11 @@ SuperBigMap.MapGeneration = MapGeneration
 -- re-installs still handle later class rebuilds (which reset the methods to vanilla).
 if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
 	PatchRandomMapGenerator()
+	-- Passage pairing wrap installs at module load for the same reason -- and because module
+	-- load is what re-runs after the NEW-GAME Lua reload (game files redefine the global,
+	-- wiping any wrapper; Lifecycle.Enable early-returns since State.active persisted, so a
+	-- reinstall must not depend on it). Self-verifying, so repeat calls are no-ops.
+	PatchPassagePairing()
 end
 
 DebugPrint("map generation module loaded")

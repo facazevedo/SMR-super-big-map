@@ -723,6 +723,15 @@ config.StretchVanillaExactPassBorder = true
 -- the same way. Root cause was stale height ranges after the 3D stretch (see
 -- ScaleHeightRanges); this guard keeps any residual case from crashing.
 config.FlattenSkipWhenUnbuildable = true
+-- DETERMINISTIC PASSAGE PAIRING (sbm_map_generation PatchPassagePairing). Vanilla spawns
+-- each SURFACE underground-entrance by searching the surface buildable grid around the
+-- underground marker's position, falling back to a RANDOM passable position when the search
+-- fails. On expanded maps that search races the async buildable-grid build and the stretch,
+-- so an entrance could land somewhere DIFFERENT every restart (sometimes on mountains).
+-- When true, expanded maps place the surface passage exactly at the underground marker's
+-- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
+-- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
+config.StretchDeterministicPassages = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -949,6 +958,7 @@ C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
 C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
 C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
+C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)

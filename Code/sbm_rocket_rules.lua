@@ -511,8 +511,8 @@ end
 -- landing sites on mod maps, so the site sits on the natural terrain -- the rocket then
 -- lands there via the terrain-Z snap, with no carved/raised pad. Other buildings flatten
 -- normally. Heavy logging gated on DEBUG_ROCKET.
-local flatten_patched = false
-local original_flatten_in_build_shape = false
+-- (flatten wrap bookkeeping lives in SuperBigMap.State -- module locals reset on the
+-- new-game Lua reload while the wiped global needs re-wrapping; see PatchLandingFlatten.)
 
 -- Flatten diagnostics (scope "Flatten", gated DEBUG_FLATTEN) + C-assert guard.
 -- HGE::FlattenTerrainInShape asserts `z != nUnbuildableZ` when the flatten target z read
@@ -595,22 +595,30 @@ local function AnalyzeFlattenShape(map, shape_data, obj)
 	}
 end
 
+-- State-verified (NOT module-local-guarded): the NEW-GAME Lua reload re-executes the game's
+-- Construction.lua, which redefines the global and silently WIPES any wrapper -- proven by a
+-- session where the elevator flatten asserted with ZERO Flatten: log lines (the assert stack
+-- showed vanilla's function directly, no sbm frame in between). Module load re-runs this
+-- after every reload; the State check makes repeat calls no-ops while catching a reverted
+-- global.
 local function PatchLandingFlatten()
-	if flatten_patched then
-		return
-	end
+	local State = SuperBigMap.State or {}
 	-- NOTE: this used to also wrap terrain.SetHeightCircle / SetHeightGrid to log a captured
 	-- call stack on EVERY call (pillar investigation). That was removed: RegolithExtractor dig
 	-- animations call SetHeightCircle every tick, so the wrap flooded the log with thousands of
 	-- stack traces per minute and stalled the game. The pillar issue is resolved via vanilla
 	-- buildability, so the diagnostic is no longer needed.
-	local fn = Global("FlattenTerrainInBuildShape")
-	if type(fn) ~= "function" then
+	local current = Global("FlattenTerrainInBuildShape")
+	if type(current) ~= "function" then
 		RocketLog("flatten patch skipped", { reason = "FlattenTerrainInBuildShape unavailable" })
 		return
 	end
-	original_flatten_in_build_shape = fn
-	rawset(_G, "FlattenTerrainInBuildShape", function(shape_data, obj, flatten_unbuildable)
+	if current == State.flatten_in_build_shape_wrapper then
+		return -- still installed
+	end
+	State.original_flatten_in_build_shape = current
+	local wrapper = function(shape_data, obj, flatten_unbuildable)
+		local original = State.original_flatten_in_build_shape
 		local map = (type(obj) == "table" and type(obj.GetMap) == "function") and SafeCall(obj.GetMap, obj) or Global("CurrentMap")
 		local mod_map = IsModMap(map)
 		local site_obj = IsLandingSite(obj)
@@ -628,7 +636,10 @@ local function PatchLandingFlatten()
 			return
 		end
 		-- Diagnostics + unbuildable-anchor guard (MOD maps only; vanilla untouched).
-		if mod_map then
+		-- flatten_unbuildable calls are EXEMPT from the guard: callers passing
+		-- "flatten unbuildable" (e.g. the passage-pad sculpting at entrance spawn) explicitly
+		-- intend to flatten unbuildable terrain, and the C path supports that mode.
+		if mod_map and not flatten_unbuildable then
 			local info = AnalyzeFlattenShape(map, shape_data, obj)
 			if info then
 				if Config.DEBUG_FLATTEN == true then
@@ -645,9 +656,10 @@ local function PatchLandingFlatten()
 				end
 			end
 		end
-		return original_flatten_in_build_shape(shape_data, obj, flatten_unbuildable)
-	end)
-	flatten_patched = true
+		return original(shape_data, obj, flatten_unbuildable)
+	end
+	rawset(_G, "FlattenTerrainInBuildShape", wrapper)
+	State.flatten_in_build_shape_wrapper = wrapper
 	RocketLog("FlattenTerrainInBuildShape wrapped (skip flatten for landing sites on mod maps)")
 end
 
@@ -668,11 +680,14 @@ function RocketRules.ApplyModBehavior()
 end
 
 function RocketRules.RestoreVanillaBehavior()
-	if flatten_patched and original_flatten_in_build_shape then
-		rawset(_G, "FlattenTerrainInBuildShape", original_flatten_in_build_shape)
-		original_flatten_in_build_shape = false
-		flatten_patched = false
+	local State = SuperBigMap.State or {}
+	if State.flatten_in_build_shape_wrapper
+		and Global("FlattenTerrainInBuildShape") == State.flatten_in_build_shape_wrapper
+		and type(State.original_flatten_in_build_shape) == "function" then
+		rawset(_G, "FlattenTerrainInBuildShape", State.original_flatten_in_build_shape)
 	end
+	State.flatten_in_build_shape_wrapper = nil
+	State.original_flatten_in_build_shape = nil
 	if not rocket_land_patched then
 		return
 	end
@@ -690,3 +705,11 @@ function RocketRules.RestoreVanillaBehavior()
 end
 
 SuperBigMap.RocketRules = RocketRules
+
+-- Install the flatten wrap at MODULE LOAD too: the new-game Lua reload redefines the global
+-- (wiping the wrapper) and re-executes this module, but Lifecycle.Enable early-returns when
+-- State.active persisted -- so module load is the reliable reinstall point. Self-verifying.
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false and Config.FIX_ROCKET_LANDING_Z == true
+	and Config.PREVENT_LANDING_PAD_FLATTEN == true then
+	PatchLandingFlatten()
+end
