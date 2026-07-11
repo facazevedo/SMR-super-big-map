@@ -62,7 +62,7 @@ local function Install()
 	-- and exists only while the underground overview is active (torn down on OverviewMode(false)
 	-- and on map switches via SectorHighlight.UpdateUndergroundOverviewFrames). The former cyan
 	-- entrance frames were removed at the user's request.
-	local function FrameForSector(map, sector, red)
+	local function FrameForSector(map, sector, red, quiet)
 		local place = Engine.Global("PlaceObjectIn")
 		local mdr = Engine.Global("MulDivRound")
 		local guim_v = Engine.Global("guim") or 1000
@@ -107,7 +107,7 @@ local function Install()
 			-- (entrance tinting removed -- the hover frame keeps the decal's default color)
 		end)
 		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog and DebugLog.On("Hover") then
+		if DebugLog and DebugLog.On("Hover") and not quiet then
 			-- Post-creation state, to distinguish "placed but not rendering" causes: is the decal
 			-- still valid, is efVisible actually set, what scale/color/entity did it end up with.
 			local valid_s, flags_s, scale_s, ent_s, col_s = "?", "?", "?", "?", "?"
@@ -162,14 +162,50 @@ local function Install()
 	-- (The cyan entrance/exit frames were removed at the user's request -- the underground
 	-- overview keeps ONLY the outline hover frame with the transparent interior.)
 
-	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches; now it
-	-- only tears down the hover frame when the overview closes / the map changes.
+	-- UNDERGROUND SECTOR VEIL (config UNDERGROUND_SECTOR_VEIL): during the underground
+	-- overview, EVERY sector gets its own translucent "SectorUnexplored" pane -- the same
+	-- decal the hover frame uses -- so the areas BETWEEN the grid frames read as translucent
+	-- panes over the terrain (user request: "I want the frames there but all of the areas
+	-- between the frames should be translucid"). The hovered sector additionally carries the
+	-- hover decal on top, so it reads slightly darker -- a natural hover highlight. Built on
+	-- OverviewMode(true) while the underground is viewed; torn down on OverviewMode(false)
+	-- and on map switches (both routed through UpdateUndergroundOverviewFrames below).
+	local function HideUndergroundSectorVeil()
+		for _, obj in ipairs(State.ug_sector_veil or {}) do
+			DestroyFrame(obj)
+		end
+		State.ug_sector_veil = nil
+	end
+
+	local function ShowUndergroundSectorVeil()
+		if (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL ~= true then return end
+		if State.ug_sector_veil then return end -- already built for this overview session
+		local grid = SuperBigMap.SectorGrid
+		local uicity = Engine.Global("UICity")
+		local cur_map = Engine.Global("CurrentMap")
+		if not (grid and type(grid.ForEachSector) == "function" and uicity and cur_map) then return end
+		local veil = {}
+		pcall(grid.ForEachSector, uicity, function(sector)
+			local obj = FrameForSector(cur_map, sector, false, "quiet")
+			if obj then veil[#veil + 1] = obj end
+		end)
+		State.ug_sector_veil = veil
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then DebugLog.Info("Hover", "underground sector veil built", { decals = #veil }) end
+	end
+
+	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches.
+	-- show=true while viewing the underground builds the all-sector veil; anything else tears
+	-- down the veil AND the hover frame.
 	-- Install() runs after module load, so SuperBigMap.SectorHighlight already exists (the local
 	-- SectorHighlight table is declared later in this file, hence the namespace assignment).
 	if type(SuperBigMap.SectorHighlight) == "table" then
 		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewFrames = function(show)
-			if not show then
+			if show and UndergroundUiActive() then
+				ShowUndergroundSectorVeil()
+			else
 				HideUndergroundHoverFrame()
+				HideUndergroundSectorVeil()
 			end
 		end
 	end

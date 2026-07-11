@@ -583,6 +583,12 @@ config.UndergroundOverviewEnabled = true
 -- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
+-- Underground SECTOR VEIL: during the underground overview every sector gets its own
+-- translucent "SectorUnexplored" pane (the same decal the hover highlight uses), so the areas
+-- between the grid frames read as translucent panes over the terrain instead of bare ground.
+-- The hovered sector stacks the hover decal on top and reads slightly darker. Built on
+-- overview enter, torn down on overview exit / map switch.
+config.UndergroundSectorVeil = true
 -- (Entrance placement correction removed by user decision: entrances receive only the stretch
 -- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
 
@@ -911,6 +917,7 @@ C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
+C.UNDERGROUND_SECTOR_VEIL = as_bool(config.UndergroundSectorVeil)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)

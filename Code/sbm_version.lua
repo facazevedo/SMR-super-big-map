@@ -26,7 +26,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 34: force-align underground tunnel entrances under the surface ones before framing.
 -- 35: alignment moved out of the highlight module (whole-map translation in terrain_copy).
 -- 36: cyan entrance frames removed -- only the outline hover frame remains.
-SuperBigMap.SECTOR_PATCH_VERSION = 36
+-- 37: underground sector veil -- every sector gets a translucent SectorUnexplored pane
+--     during the underground overview (UpdateUndergroundOverviewFrames builds/tears it).
+SuperBigMap.SECTOR_PATCH_VERSION = 37
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall
