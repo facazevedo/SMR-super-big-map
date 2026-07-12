@@ -1549,13 +1549,6 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			local generation_env = (type(mapdata) == "table" and mapdata.Environment)
-				or (template and template.Environment)
-			if generation_env == "Underground" then
-				SetLoadingPhase("Generating underground terrain and discoveries")
-			elseif generation_env == "Surface" then
-				SetLoadingPhase("Generating surface terrain and discoveries")
-			end
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
 			local results = { pcall(original_do_generate, self, map, ...) }
@@ -1994,7 +1987,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				do
 					local deposits = SuperBigMap.DepositRules
 					if deposits and type(deposits.EnforceScanGateAfterStretch) == "function" then
-						SetLoadingPhase("Preparing surface discoveries for scanning")
 						StretchLog("stretch branch: -> EnforceScanGateAfterStretch")
 						SafeCall(deposits.EnforceScanGateAfterStretch, map)
 					end
@@ -2009,8 +2001,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					-- Net effect: proportionally MORE enrichments for the 20x20, at vanilla
 					-- per-sector density -- no crowding.
 					if deposits then
+						SetLoadingPhase("Distributing surface resources and anomalies")
 						if type(deposits.TopUpDeposits) == "function" then
-							SetLoadingPhase("Adding surface resource deposits")
 							StretchLog("stretch branch: -> TopUpDeposits")
 							SafeCall(deposits.TopUpDeposits, map)
 						end
@@ -2019,17 +2011,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						-- layouts diverge from vanilla). BEFORE RespaceAnomalies so clones get
 						-- spaced too.
 						if type(deposits.TopUpAnomalies) == "function" then
-							SetLoadingPhase("Placing surface anomaly rewards near the map edges")
 							StretchLog("stretch branch: -> TopUpAnomalies")
 							SafeCall(deposits.TopUpAnomalies, map)
 						end
 						if type(deposits.TopUpEffectDeposits) == "function" then
-							SetLoadingPhase("Adding surface Vistas and Research Sites")
 							StretchLog("stretch branch: -> TopUpEffectDeposits")
 							SafeCall(deposits.TopUpEffectDeposits, map)
 						end
 						if type(deposits.RegisterClonedMarkers) == "function" then
-							SetLoadingPhase("Registering surface discoveries with exploration sectors")
 							StretchLog("stretch branch: -> RegisterClonedMarkers")
 							SafeCall(deposits.RegisterClonedMarkers, map)
 						end
@@ -2420,22 +2409,19 @@ local function RunUndergroundStretchIfEnabled(map)
 						SafeCall(deposits.LogBuildableSectorCensus, map, "underground post-stretch, pre-topup")
 					end
 					if type(deposits.TopUpDeposits) == "function" then
-						SetLoadingPhase("Adding underground resource deposits")
+						SetLoadingPhase("Distributing underground resources and anomalies")
 						StretchLog("underground stretch: -> TopUpDeposits")
 						SafeCall(deposits.TopUpDeposits, map)
 					end
 					if type(deposits.TopUpAnomalies) == "function" then
-						SetLoadingPhase("Adding underground anomaly rewards")
 						StretchLog("underground stretch: -> TopUpAnomalies")
 						SafeCall(deposits.TopUpAnomalies, map)
 					end
 					if type(deposits.TopUpEffectDeposits) == "function" then
-						SetLoadingPhase("Adding underground Vistas and Research Sites")
 						StretchLog("underground stretch: -> TopUpEffectDeposits")
 						SafeCall(deposits.TopUpEffectDeposits, map)
 					end
 					if type(deposits.RegisterClonedMarkers) == "function" then
-						SetLoadingPhase("Registering underground discoveries")
 						StretchLog("underground stretch: -> RegisterClonedMarkers")
 						SafeCall(deposits.RegisterClonedMarkers, map)
 					end
