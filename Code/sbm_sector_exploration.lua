@@ -770,20 +770,26 @@ local function VanillaStartPick(city, map)
 	if type(city.CreateMapRand) ~= "function" then
 		return nil, "CreateMapRand unavailable"
 	end
+	local mapdata = map.mapdata
+	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number")
+		and const_tbl.HeightTileSize or 100
 	local src_w = map.SuperBigMapSourceWidth
 	if type(src_w) ~= "number" or src_w <= 0 then
 		local swt = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
-		local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number")
-			and const_tbl.HeightTileSize or 100
 		src_w = (type(swt) == "number" and swt > 0) and swt * hts or nil
+	end
+	if not src_w and type(mapdata) == "table" and type(mapdata.Width) == "number" then
+		-- Vanilla (non-expanded) map: analysis mode uses the real map width.
+		src_w = mapdata.Width * hts
 	end
 	if not src_w then return nil, "source width unknown" end
 	-- VANILLA geometry: 10x10 tiles of (source_width - 2*border)/10 starting at border. The
 	-- expansion zeroed mapdata.PassBorder; the vanilla value is preserved in
-	-- SuperBigMapOriginalPassBorder.
-	local mapdata = map.mapdata
+	-- SuperBigMapOriginalPassBorder (on vanilla maps PassBorder itself is intact).
 	local border = (type(mapdata) == "table" and type(mapdata.SuperBigMapOriginalPassBorder) == "number")
-		and mapdata.SuperBigMapOriginalPassBorder or 0
+		and mapdata.SuperBigMapOriginalPassBorder
+		or (type(mapdata) == "table" and type(mapdata.PassBorder) == "number") and mapdata.PassBorder
+		or 0
 	local VN = 10 -- vanilla const.SectorCount (vanilla CreateSector's naming hardcodes 10)
 	local tile = math.floor((src_w - 2 * border) / VN)
 	if tile <= 0 then return nil, "bad tile size" end
@@ -837,8 +843,36 @@ local function VanillaStartPick(city, map)
 			if has_surface and row > 1 and row < VN and col > 1 and col < VN then
 				eligible[#eligible + 1] = sec
 				eligible[sec] = true
-				diag[#diag + 1] = string.format("%s(m=%d pr=%d heat=%d)",
-					sec.id, #sec.markers.surface, sec.play_ratio, sec.avg_heat)
+				-- Vanilla's exact qty math (CanPlaceDeposit-gated GetEstimatedAmount /
+				-- max_amount, deposit resources only) so both runs' candidate tables are
+				-- directly comparable line by line.
+				local qty_m, qty_c = 0, 0
+				pcall(function()
+					local group = Global("GroupResourceIds")
+					local dep_res = group and group.DepositResources or {}
+					local is_kind = Global("IsKindOf")
+					for _, m in ipairs(sec.markers.surface) do
+						local res = m.resource
+						if res and dep_res[res] then
+							local ok_cp, spawn = pcall(m.CanPlaceDeposit, m)
+							if ok_cp and spawn then
+								local amount
+								if type(is_kind) == "function" and is_kind(m, "SurfaceDepositMarker")
+									and type(m.GetEstimatedAmount) == "function" then
+									local ok_a, a = pcall(m.GetEstimatedAmount, m)
+									amount = ok_a and a or 0
+								else
+									amount = m.max_amount or 0
+								end
+								if res == "Metals" then qty_m = qty_m + amount end
+								if res == "Concrete" then qty_c = qty_c + amount end
+							end
+						end
+					end
+				end)
+				diag[#diag + 1] = string.format("%s(m=%d M=%d C=%d pr=%d heat=%d w=%d)",
+					sec.id, #sec.markers.surface, qty_m, qty_c, sec.play_ratio, sec.avg_heat,
+					math.floor(sec.play_ratio * sec.avg_heat / max_heat))
 			end
 		end
 	end
@@ -894,7 +928,33 @@ local function PatchInitialExplore()
 		local env = map and map.mapdata and map.mapdata.Environment
 		if not (expanded and stretch and env == "Surface"
 			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
-			return original(self, eligible_out, ...)
+			-- VALIDATION MODE on VANILLA surface maps (DEBUG_STARTSECTOR): run the same
+			-- reconstruction ANALYSIS (no scanning, no deferral, own rand stream -- zero
+			-- interference) right before vanilla's own selection, so one vanilla run logs
+			-- our predicted pick next to vanilla's native 'starting sector selected:' print.
+			-- A mismatch, with both candidate tables in the log, pinpoints the divergent
+			-- input (qty / play_ratio / heat / eligibility).
+			if env == "Surface" and not expanded
+				and (SuperBigMap.Config or {}).DEBUG_STARTSECTOR == true then
+				local ok_a, pick_a, reason_a = pcall(VanillaStartPick, self, map)
+				StartLog("VALIDATION (vanilla map): reconstruction pick", {
+					ok = ok_a and pick_a ~= nil,
+					prediction = (ok_a and pick_a) and table.concat((function()
+						local ids = {}
+						for _, w in ipairs(pick_a.winners) do ids[#ids + 1] = tostring(w.id) end
+						return ids
+					end)(), "+") or tostring(ok_a and reason_a or pick_a),
+				})
+			end
+			original(self, eligible_out, ...) -- InitialExplore returns nothing
+			pcall(function()
+				if env == "Surface" and not expanded then
+					StartLog("VALIDATION (vanilla map): vanilla actual InitialSector", {
+						id = tostring(self.InitialSector and self.InitialSector.id),
+					})
+				end
+			end)
+			return
 		end
 		local ok_pick, pick, reason = pcall(VanillaStartPick, self, map)
 		if not (ok_pick and pick) then
