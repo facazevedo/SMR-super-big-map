@@ -1089,19 +1089,47 @@ local function PatchPassagePairing()
 						buildable_z_at_center_now = verify,
 					})
 				end
+				-- PATCH/LEVEL RADIUS = the FLATTEN SHAPE's real extent. v439 patched a 6-hex
+				-- radius, but Picard's re-flatten uses GetExtendedSpawnShape("Elevator"),
+				-- which is LARGER -- the spike audit shows a surviving ANNULUS of sentinel
+				-- needles outside our patch but inside the flatten shape (center read back
+				-- clean at 8533 while 65535 spikes sat ~2-5k wu out): the "crown" is that
+				-- ring. Measure the shape's max hex distance and cover it with margin.
+				local pad_hex_radius = 8
+				do
+					local get_shape2 = Global("GetExtendedSpawnShape")
+					if type(get_shape2) == "function" then
+						local ok_sh2, shp = pcall(get_shape2, "Elevator")
+						if ok_sh2 and type(shp) == "table" then
+							local maxd = 0
+							for _, hexpt in ipairs(shp) do
+								local ok_xy2, hq, hr = pcall(function() return hexpt:x(), hexpt:y() end)
+								if ok_xy2 and type(hq) == "number" then
+									local d2 = (math.abs(hq) + math.abs(hr) + math.abs(hq + hr)) / 2
+									if d2 > maxd then maxd = d2 end
+								end
+							end
+							if maxd > 0 then pad_hex_radius = maxd + 2 end
+						end
+					end
+					PairingLog("pad radius resolved from flatten shape", { hex_radius = pad_hex_radius })
+				end
 				local ok_padz, padz = pcall(function() return np:z() end)
 				if not (ok_padz and type(padz) == "number") then
 					local ok_g, g = pcall(terrain_api2.GetHeight, surface_map, np)
 					padz = (ok_g and type(g) == "number") and g or nil
 				end
 				if padz then
-					PatchBuildablePad(np, padz, 6)
+					PatchBuildablePad(np, padz, pad_hex_radius)
 					-- Remember the pad for the post-generation re-level (belt and braces: if
 					-- anything else re-poisons the terrain during the rest of the generation,
 					-- the pad is re-leveled to this exact z after DoGenerate returns).
 					State.sbm_entrance_pads = State.sbm_entrance_pads or {}
 					local nx, ny = np:xy()
-					table.insert(State.sbm_entrance_pads, { map = surface_map, x = nx, y = ny, z = padz })
+					table.insert(State.sbm_entrance_pads, {
+						map = surface_map, x = nx, y = ny, z = padz,
+						hex_radius = pad_hex_radius,
+					})
 				end
 				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran the
 				-- same buildable-grid flatten at the RANDOM position before our move -- same
@@ -1509,20 +1537,35 @@ local function PatchRandomMapGenerator()
 							if pmap then
 								local center = point_fn3(pad.x, pad.y)
 								local z_now = "n/a"
+								local z_worst = "n/a"
 								if type(terrain_api3.GetHeight) == "function" then
 									local ok_g, g = pcall(terrain_api3.GetHeight, pmap, center)
 									if ok_g then z_now = tostring(g) end
+									-- Worst spike within the pad (diagnostic): sample a ring at
+									-- the flatten-shape radius, where the sentinel annulus sat.
+									local rr = ((pad.hex_radius or 8) - 1) * hex3
+									local wmax
+									for _, o in ipairs({ { rr, 0 }, { -rr, 0 }, { 0, rr }, { 0, -rr } }) do
+										local ok_w, wz = pcall(terrain_api3.GetHeight, pmap, point_fn3(pad.x + o[1], pad.y + o[2]))
+										if ok_w and type(wz) == "number" and (wmax == nil or wz > wmax) then wmax = wz end
+									end
+									z_worst = tostring(wmax)
 								end
+								-- Inner radius covers the WHOLE flatten shape (the v439 4-hex
+								-- inner circle left the sentinel annulus standing in/beyond its
+								-- falloff ring).
+								local inner = ((pad.hex_radius or 8) + 1) * hex3
 								local suspended = pcall(pmap.SuspendPassEdits, pmap, "SBMPadRelevel")
 								local ok_c = pcall(terrain_api3.SetHeightCircle, pmap, center,
-									4 * hex3, 7 * hex3, pad.z)
+									inner, inner + 3 * hex3, pad.z)
 								if suspended then pcall(pmap.ResumePassEdits, pmap, "SBMPadRelevel") end
 								if type(terrain_api3.InvalidateHeight) == "function" then
 									pcall(terrain_api3.InvalidateHeight, pmap)
 								end
 								PairingLog("post-gen pad re-level", {
 									x = pad.x, y = pad.y, target_z = pad.z,
-									z_at_center_before = z_now, ok = ok_c,
+									z_at_center_before = z_now, z_ring_worst_before = z_worst,
+									hex_radius = pad.hex_radius or 8, ok = ok_c,
 								})
 							end
 						end
