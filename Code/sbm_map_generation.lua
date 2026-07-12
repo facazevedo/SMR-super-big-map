@@ -1954,7 +1954,20 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
 				-- original pick, moving the landed rocket along (config STRETCH_RELOCATE_START_SECTOR).
-				if type(StretchRelocateStartSector) == "function" then
+				-- START SECTOR: when the InitialExplore wrapper deferred the vanilla pick
+				-- (STRETCH_VANILLA_START_SECTOR), reveal the winner's x4/3 block NOW -- the
+				-- markers are at their scaled positions, so Scan spawns deposits correctly.
+				-- Mutually exclusive with the legacy relocation (which would re-scale a
+				-- freshly scanned sector).
+				local vanilla_start_pending = (SuperBigMap.State or {}).sbm_vanilla_start ~= nil
+				if vanilla_start_pending then
+					local sectors_mod = SuperBigMap.SectorExploration
+					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
+						StretchLog("stretch branch: -> RevealVanillaStartSectors (vanilla-equivalent start)")
+						local n_rev = SafeCall(sectors_mod.RevealVanillaStartSectors, map)
+						StretchLog("stretch branch: RevealVanillaStartSectors returned", { scanned = n_rev })
+					end
+				elseif type(StretchRelocateStartSector) == "function" then
 					StretchLog("stretch branch: -> StretchRelocateStartSector")
 					local n_rel = StretchRelocateStartSector(map)
 					StretchLog("stretch branch: StretchRelocateStartSector returned", { relocated = n_rel })

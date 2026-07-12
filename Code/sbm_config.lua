@@ -773,6 +773,15 @@ config.StretchShiftHeightsDown = true
 -- ~90% of vanilla steepness ONLY on maps that need it; most maps keep the full 4/3. The
 -- relief-dz and height-range consumers read the stamped factor, so seating stays correct.
 config.StretchAdaptiveZScale = true
+-- VANILLA-EQUIVALENT START SECTOR (sbm_sector_exploration PatchInitialExplore +
+-- RevealVanillaStartSectors). Vanilla picks the initially revealed sector by resource
+-- quality over its 10x10 grid with a map-seed-deterministic weighted rand; on the expanded
+-- 20x20 grid the same algorithm picks somewhere else. When true, vanilla's OWN InitialReveal
+-- runs over virtual 10x10 sectors at vanilla geometry (same markers, play_ratio, heat,
+-- seeded rand), and after the stretch the expanded sectors covering the winner's x4/3 box
+-- are revealed instead (replaces the legacy start-sector relocation on this path).
+config.StretchVanillaStartSector = true
+config.DebugStartSector = true      -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace (TEMP: verifying vanilla-equivalent start)
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -1006,6 +1015,8 @@ C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.PairingSurfaceBuildableRebu
 C.PASSAGE_PAD_SMOOTHING = as_bool(config.PassagePadSmoothing)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
+C.STRETCH_VANILLA_START_SECTOR = as_bool(config.StretchVanillaStartSector)
+C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
 C.PASSAGE_CORRECTION_MIN_DELTA = as_number(config.PassageCorrectionMinDelta, 40000)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false

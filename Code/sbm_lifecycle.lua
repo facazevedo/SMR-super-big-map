@@ -1248,6 +1248,9 @@ RegisterOnce("ClassesBuilt", function()
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.InstallSectorPatch()
+		if type(sectors.PatchInitialExplore) == "function" then
+			sectors.PatchInitialExplore()
+		end
 	end
 	-- Global-function wraps (FlattenTerrainInBuildShape etc.) get wiped when a Lua reload
 	-- re-executes the game files; the rocket patches self-verify, so re-applying is a no-op

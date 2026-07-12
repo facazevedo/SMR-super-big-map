@@ -732,6 +732,296 @@ local function InstallBasicSectorPatch()
 	return true
 end
 
+-- ---------------------------------------------------------------------------------------
+-- VANILLA-EQUIVALENT START SECTOR (config STRETCH_VANILLA_START_SECTOR, scope "StartSector").
+-- Vanilla picks the initially revealed sector by RESOURCE QUALITY, not position:
+-- Exploration:InitialExplore -> InitialReveal(eligible, trand) over the 10x10 sector grid
+-- (origin PassBorder, tile (W-2*border)/10), preferring Metals>=50 + Concrete, weighted by
+-- play_ratio*avg_heat, with the map-seed-deterministic CreateMapRand("Exploration") stream.
+-- On the expanded map the candidate set is the 20x20 grid, so the (deterministic) pick lands
+-- somewhere unrelated to vanilla's. Fix: reproduce vanilla's pick with vanilla's OWN
+-- ORIGINAL InitialReveal (not the fast wrapper -- exact vanilla semantics incl.
+-- CanPlaceDeposit gating) over VIRTUAL 10x10 sectors built at vanilla geometry from the
+-- pre-stretch map, then AFTER the stretch reveal the expanded sectors covering the winner's
+-- x4/3 box (replaces StretchRelocateStartSector on this path). InitialReveal only reads
+-- plain fields (markers.surface / play_ratio / avg_heat / area / id) from its candidates,
+-- so lightweight virtual tables work.
+-- ---------------------------------------------------------------------------------------
+local function StartLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("StartSector", message, data) end
+end
+
+-- Build the virtual vanilla sector list and run vanilla's InitialReveal over it.
+-- Returns { winners = { {x0,y0,x1,y1,id}, ... } } or nil + reason.
+local function VanillaStartPick(city, map)
+	local State = SuperBigMap.State or {}
+	local box_fn = Global("box")
+	local initial_reveal = State.original_initial_reveal or Global("InitialReveal")
+	local ratio_fn = Global("BuildableGridRatio")
+	local unb_fn = Global("buildUnbuildableZ")
+	local is_kind_classes = Global("IsKindOfClasses")
+	local const_tbl = Global("const")
+	if type(box_fn) ~= "function" or type(initial_reveal) ~= "function"
+		or type(ratio_fn) ~= "function" or type(unb_fn) ~= "function"
+		or type(is_kind_classes) ~= "function" or type(map.MapForEach) ~= "function" then
+		return nil, "api unavailable"
+	end
+	if type(city.CreateMapRand) ~= "function" then
+		return nil, "CreateMapRand unavailable"
+	end
+	local src_w = map.SuperBigMapSourceWidth
+	if type(src_w) ~= "number" or src_w <= 0 then
+		local swt = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+		local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number")
+			and const_tbl.HeightTileSize or 100
+		src_w = (type(swt) == "number" and swt > 0) and swt * hts or nil
+	end
+	if not src_w then return nil, "source width unknown" end
+	-- VANILLA geometry: 10x10 tiles of (source_width - 2*border)/10 starting at border. The
+	-- expansion zeroed mapdata.PassBorder; the vanilla value is preserved in
+	-- SuperBigMapOriginalPassBorder.
+	local mapdata = map.mapdata
+	local border = (type(mapdata) == "table" and type(mapdata.SuperBigMapOriginalPassBorder) == "number")
+		and mapdata.SuperBigMapOriginalPassBorder or 0
+	local VN = 10 -- vanilla const.SectorCount (vanilla CreateSector's naming hardcodes 10)
+	local tile = math.floor((src_w - 2 * border) / VN)
+	if tile <= 0 then return nil, "bad tile size" end
+	local ok_u, unbuildable = pcall(unb_fn)
+	if not ok_u then return nil, "unbuildable z unavailable" end
+	local buildable = map.buildable
+	local heat_grid = map.heat_grid
+	local orient = (type(mapdata) == "table" and mapdata.OverviewOrientation) or 0
+	local max_heat = (type(const_tbl) == "table" and type(const_tbl.MaxHeat) == "number")
+		and const_tbl.MaxHeat or 100
+	-- Vanilla CreateSector naming (its formula hardcodes the 10x10 layout).
+	local function vname(row, col)
+		if orient == 90 then
+			return string.char(string.byte("A") + 10 - row) .. (10 - col)
+		elseif orient == 180 then
+			return string.char(string.byte("A") + col - 1) .. (10 - row)
+		elseif orient == 270 then
+			return string.char(string.byte("A") + row - 1) .. (col - 1)
+		end
+		return string.char(string.byte("A") + 10 - col) .. (row - 1)
+	end
+	local eligible = {}
+	local diag = {}
+	for col = 1, VN do
+		local x = border + (col - 1) * tile
+		for row = 1, VN do
+			local y = border + (row - 1) * tile
+			local area = box_fn(x, y, x + tile, y + tile)
+			local sec = {
+				id = vname(row, col), area = area, row = row, col = col,
+				markers = { surface = {} },
+				play_ratio = 0, avg_heat = max_heat,
+			}
+			if buildable and buildable.z_grid then
+				local ok_r, r = pcall(ratio_fn, buildable.z_grid, unbuildable, 100, area)
+				if ok_r and type(r) == "number" then sec.play_ratio = r end
+			end
+			if heat_grid and type(heat_grid.GetAverageHeatIn) == "function" then
+				local ok_h, hv = pcall(heat_grid.GetAverageHeatIn, heat_grid, area)
+				if ok_h and type(hv) == "number" then sec.avg_heat = hv end
+			end
+			local has_surface = false
+			pcall(map.MapForEach, map, area, "DepositMarker", function(m)
+				local ok_k, is_surf = pcall(is_kind_classes, m, "TerrainDepositMarker", "SurfaceDepositMarker")
+				if ok_k and is_surf then
+					sec.markers.surface[#sec.markers.surface + 1] = m
+					has_surface = true
+				end
+			end)
+			-- Vanilla eligibility: has a surface/terrain marker AND not on the outer ring.
+			if has_surface and row > 1 and row < VN and col > 1 and col < VN then
+				eligible[#eligible + 1] = sec
+				eligible[sec] = true
+				diag[#diag + 1] = string.format("%s(m=%d pr=%d heat=%d)",
+					sec.id, #sec.markers.surface, sec.play_ratio, sec.avg_heat)
+			end
+		end
+	end
+	if #eligible == 0 then return nil, "no eligible virtual sectors" end
+	StartLog("virtual vanilla sectors built", {
+		eligible = #eligible, tile = tile, border = border, orient = orient,
+		candidates = table.concat(diag, " "),
+	})
+	-- Same seeded stream vanilla's InitialExplore would create.
+	local ok_rand, _, trand = pcall(city.CreateMapRand, city, "Exploration")
+	if not (ok_rand and type(trand) == "function") then return nil, "trand unavailable" end
+	local ok_pick, revealed = pcall(initial_reveal, eligible, trand)
+	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
+		return nil, "InitialReveal failed: " .. tostring(revealed)
+	end
+	local winners = {}
+	for _, sec in ipairs(revealed) do
+		local mn, mx = sec.area:min(), sec.area:max()
+		local x0, y0 = mn:xy()
+		local x1, y1 = mx:xy()
+		winners[#winners + 1] = { x0 = x0, y0 = y0, x1 = x1, y1 = y1, id = sec.id }
+		StartLog("vanilla start pick", { id = tostring(sec.id), box = string.format("%d,%d-%d,%d", x0, y0, x1, y1) })
+		DebugPrint("vanilla-equivalent starting sector selected: " .. tostring(sec.id))
+	end
+	return { winners = winners }
+end
+
+-- Wrap Exploration:InitialExplore: on expanded STRETCH surface maps, skip vanilla's own
+-- 20x20 reveal entirely; compute the vanilla pick and defer the reveal to post-stretch
+-- (RevealVanillaStartSectors, called from the stretch branch instead of the legacy
+-- relocation). Everything else (vanilla maps, mirror mode, failures) runs the original.
+local function PatchInitialExplore()
+	if (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR ~= true then return false end
+	local State = SuperBigMap.State
+	local cls = ClassTable("Exploration")
+	if type(cls) ~= "table" or type(cls.InitialExplore) ~= "function" then
+		cls = ClassTable("City")
+	end
+	if type(cls) ~= "table" or type(cls.InitialExplore) ~= "function" then
+		StartLog("InitialExplore patch waiting (class unavailable)")
+		return false
+	end
+	if cls.InitialExplore == State.initial_explore_wrapper then return true end
+	State.original_initial_explore = cls.InitialExplore
+	local wrapper = function(self, eligible_out, ...)
+		local original = State.original_initial_explore
+		local map
+		pcall(function() map = self:GetMap() end)
+		local desired = map and map.SuperBigMapDesiredWidthTiles
+		local gen_t = map and map.SuperBigMapGeneratorWidthTiles
+		local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
+		local stretch = tostring((SuperBigMap.Config or {}).EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
+		local env = map and map.mapdata and map.mapdata.Environment
+		if not (expanded and stretch and env == "Surface"
+			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
+			return original(self, eligible_out, ...)
+		end
+		local ok_pick, pick, reason = pcall(VanillaStartPick, self, map)
+		if not (ok_pick and pick) then
+			StartLog("vanilla start pick FAILED -- falling back to vanilla InitialExplore", {
+				reason = tostring(ok_pick and reason or pick),
+			})
+			return original(self, eligible_out, ...)
+		end
+		-- Defer the reveal to after the stretch; nothing is scanned now.
+		State.sbm_vanilla_start = pick
+		StartLog("initial reveal DEFERRED to post-stretch", { winners = #pick.winners })
+	end
+	cls.InitialExplore = wrapper
+	State.initial_explore_wrapper = wrapper
+	StartLog("Exploration.InitialExplore wrapped (vanilla-equivalent start sector)")
+	return true
+end
+
+-- Post-stretch reveal: scan the expanded sectors covering each winner's x4/3 box, set
+-- InitialSector/overview exit_to, and replicate vanilla InitialExplore's tail (commander
+-- profile bonus deposit + forced overview SelectSector). Called from the stretch branch
+-- INSTEAD of StretchRelocateStartSector when a deferred pick is pending.
+local function RevealVanillaStartSectors(map)
+	local State = SuperBigMap.State or {}
+	local data = State.sbm_vanilla_start
+	if not data then return 0 end
+	State.sbm_vanilla_start = nil
+	map = map or Global("MainMap")
+	local city = map and map.City
+	if not (city and Grid and type(Grid.ForEachSector) == "function") then
+		StartLog("post-stretch reveal skipped (city/grid unavailable)")
+		return 0
+	end
+	local sw = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
+	local full = map.SuperBigMapDesiredWidthTiles
+	if not (type(sw) == "number" and type(full) == "number" and sw > 0 and full > sw) then
+		StartLog("post-stretch reveal skipped (sizes unknown)")
+		return 0
+	end
+	local MIN_OVERLAP_PCT = 30
+	local scanned_total = 0
+	local primary
+	local last_revealed
+	for wi, wbox in ipairs(data.winners) do
+		local x0 = math.floor(wbox.x0 * full / sw)
+		local y0 = math.floor(wbox.y0 * full / sw)
+		local x1 = math.floor(wbox.x1 * full / sw)
+		local y1 = math.floor(wbox.y1 * full / sw)
+		local cx, cy = math.floor((x0 + x1) / 2), math.floor((y0 + y1) / 2)
+		Grid.ForEachSector(city, function(sector)
+			pcall(function()
+				local a = sector.area
+				if not a then return end
+				local mn, mx = a:min(), a:max()
+				local ax0, ay0 = mn:xy()
+				local ax1, ay1 = mx:xy()
+				local ix = math.min(ax1, x1) - math.max(ax0, x0)
+				local iy = math.min(ay1, y1) - math.max(ay0, y0)
+				if ix <= 0 or iy <= 0 then return end
+				local sector_area = (ax1 - ax0) * (ay1 - ay0)
+				if sector_area <= 0 then return end
+				local contains_center = cx >= ax0 and cx < ax1 and cy >= ay0 and cy < ay1
+				if contains_center or (ix * iy * 100) >= (MIN_OVERLAP_PCT * sector_area) then
+					if sector.status == "unexplored" then
+						-- No spawn_positions: those were computed pre-stretch; Scan resolves
+						-- placement itself against the markers' current (scaled) positions.
+						pcall(sector.Scan, sector, "scanned")
+						scanned_total = scanned_total + 1
+					end
+					last_revealed = sector
+					if wi == 1 and contains_center then primary = sector end
+					StartLog("post-stretch reveal: sector scanned", {
+						winner = tostring(wbox.id), sector = tostring(sector.id),
+						overlap_pct = math.floor((ix * iy * 100.0) / sector_area + 0.5),
+						center = contains_center,
+					})
+				end
+			end)
+		end)
+	end
+	if primary or last_revealed then
+		city.InitialSector = primary or last_revealed
+		-- Vanilla tail: overview exit_to + forced SelectSector on the last revealed sector.
+		pcall(function()
+			local igi = Global("GetInGameInterface")()
+			if igi and igi:IsInMode("overview") then
+				if igi.mode_dialog then
+					igi.mode_dialog.exit_to = city.InitialSector.area:Center()
+				end
+				local get_mode_dlg = Global("GetInGameInterfaceModeDlg")
+				local dlg = type(get_mode_dlg) == "function" and get_mode_dlg() or nil
+				if dlg and type(dlg.SelectSector) == "function" then
+					dlg:SelectSector(last_revealed, nil, "forced")
+				end
+			end
+		end)
+		-- Vanilla tail: commander-profile bonus subsurface deposit near the start.
+		pcall(function()
+			local get_profile = Global("GetCommanderProfile")
+			local profile = type(get_profile) == "function" and get_profile().id or nil
+			local deposit, resource
+			if profile == "hydroengineer" then
+				deposit, resource = "SubsurfaceDepositWater", "Water"
+			elseif profile == "astrogeologist" then
+				deposit, resource = "SubsurfaceDepositPreciousMetals", "PreciousMetals"
+			end
+			if deposit and not map:MapHasAny("map", deposit) then
+				local marker = map:MapFindNearest(city.InitialSector.area:Center(), "map",
+					"SubsurfaceDepositMarker", function(o)
+						return not o.is_placed and o.resource == resource and o.depth_layer <= 1
+					end)
+				if marker then
+					marker.revealed = true
+					marker:PlaceDeposit()
+				end
+			end
+		end)
+	end
+	StartLog("post-stretch reveal DONE", {
+		scanned = scanned_total,
+		initial_sector = tostring(city.InitialSector and city.InitialSector.id),
+	})
+	DebugPrint(string.format("vanilla-equivalent start revealed: %s sector(s), InitialSector=%s",
+		tostring(scanned_total), tostring(city.InitialSector and city.InitialSector.id)))
+	return scanned_total
+end
+
 local function InstallSectorPatch()
 	local State = SuperBigMap.State
 
@@ -1227,6 +1517,8 @@ local SectorExploration = {}
 SectorExploration.RefreshSectorDecals = RefreshSectorDecals
 
 SectorExploration.InstallSectorPatch = InstallSectorPatch
+SectorExploration.PatchInitialExplore = PatchInitialExplore
+SectorExploration.RevealVanillaStartSectors = RevealVanillaStartSectors
 SectorExploration.EnsureSectorPatch = EnsureSectorPatch
 SectorExploration.EnsureSectorsBuilt = EnsureSectorsBuilt
 SectorExploration.HideSectorVisuals = HideSectorVisuals
@@ -1237,6 +1529,7 @@ SectorExploration.DescribeInitSectorsBinding = DescribeInitSectorsBinding
 
 function SectorExploration.ApplyModBehavior()
 	InstallSectorPatch()
+	PatchInitialExplore()
 end
 
 function SectorExploration.RestoreVanillaBehavior()
@@ -1250,6 +1543,19 @@ function SectorExploration.RestoreVanillaBehavior()
 	end
 	if type(State.original_initial_reveal) == "function" then
 		rawset(_G, "InitialReveal", State.original_initial_reveal)
+	end
+	do
+		local cls = ClassTable("Exploration")
+		if not (type(cls) == "table" and cls.InitialExplore == State.initial_explore_wrapper) then
+			cls = ClassTable("City")
+		end
+		if type(cls) == "table" and cls.InitialExplore == State.initial_explore_wrapper
+			and type(State.original_initial_explore) == "function" then
+			cls.InitialExplore = State.original_initial_explore
+		end
+		State.initial_explore_wrapper = nil
+		State.original_initial_explore = nil
+		State.sbm_vanilla_start = nil
 	end
 	if type(State.original_is_expl_avail_sectors) == "function" then
 		rawset(_G, "IsExplorationAvailable_Sectors", State.original_is_expl_avail_sectors)

@@ -38,7 +38,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     + hover forensic log identifying which object draws the hovered sector's fill.
 -- 41: veil panes switch to the "SectorTarget" FILL entity (SectorUnexplored proved
 --     outline-only: the red tint colored the grid lines, never the interiors), dark tint.
-SuperBigMap.SECTOR_PATCH_VERSION = 41
+-- 42: vanilla-equivalent start sector -- InitialExplore wrapped (vanilla pick over virtual
+--     10x10 sectors, reveal deferred to post-stretch).
+SuperBigMap.SECTOR_PATCH_VERSION = 42
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall
