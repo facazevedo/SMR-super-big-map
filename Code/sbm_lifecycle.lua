@@ -773,6 +773,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 							sleep(delay)
 							elapsed = elapsed + delay
 							local city = map.City
+							local entrance_positions = {}
 							for _, class_name in ipairs({ "SpawnsTunnelOnCityInit", "SurfaceUndergroundTunnelMarker", "ElevatorPassage" }) do
 								local n = 0
 								pcall(map.MapForEach, map, "map", class_name, function(o)
@@ -786,6 +787,9 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 										local ok_s, sec = pcall(get_sector, city, x, y)
 										sector = tostring((ok_s and sec) and sec.id or "nil")
 									end
+									if ok and type(x) == "number" and class_name == "SpawnsTunnelOnCityInit" then
+										entrance_positions[#entrance_positions + 1] = { x = x, y = y }
+									end
 									DebugLog.Info("Align", "entrance ground truth", {
 										map = map_id, query = class_name, n = n, at_ms = elapsed,
 										class = tostring(o.class or "?"),
@@ -796,6 +800,18 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 								DebugLog.Info("Align", "entrance ground truth summary", {
 									map = map_id, query = class_name, found = n, at_ms = elapsed,
 								})
+							end
+							-- FINE spike scan around each entrance (DEBUG_SPIKES): the map-wide
+							-- audit lattice misses 1-2-cell needles; this dense scan catches
+							-- them (or proves the ground clean) right where they matter.
+							do
+								local tc2 = SuperBigMap.TerrainCopy
+								if tc2 and type(tc2.FineSpikeScan) == "function" then
+									for _, ep in ipairs(entrance_positions) do
+										SafeCall(tc2.FineSpikeScan, map, ep.x, ep.y, 12000, 400,
+											"entrance @" .. tostring(ep.x) .. "," .. tostring(ep.y) .. " at " .. tostring(elapsed) .. "ms")
+									end
+								end
 							end
 							-- Terrain spike audit per phase (DEBUG_SPIKES): the entrance spike
 							-- crown appears at SOME post-generation stage; this stamps the

@@ -950,6 +950,87 @@ local function PatchPassagePairing()
 				local gen_t = surface_map and surface_map.SuperBigMapGeneratorWidthTiles
 				local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
 				if not expanded then return end
+				-- SENTINEL FOOTPRINT PATCH (needle guard, runs for EVERY expanded pairing).
+				-- Picard's post-Link flatten ("flatten unbuildable") covers the FULL extended
+				-- spawn footprint; hexes at the footprint FRINGE can be unbuildable-sentinel
+				-- even when the search approved the spot -- each such hex becomes one 65535
+				-- needle ("crowning just before the entrance", too thin for the coarse spike
+				-- audit lattice to catch). For every SENTINEL hex in the footprint, write the
+				-- hex's OWN real terrain height into the buildable z-grid: the flatten then
+				-- levels it to the height it already has -- a no-op. No constant-z pad, so no
+				-- platform; buildable hexes keep their vanilla plateau values untouched.
+				local point_fn0 = Global("point")
+				local function PatchSentinelFootprint(cx0, cy0, radius_hexes, tag)
+					local buildable = surface_map.buildable
+					local z_grid = buildable and buildable.z_grid
+					local wth = Global("WorldToHex")
+					local hex_to_world = Global("HexToWorld")
+					local build_unbuildable = Global("buildUnbuildableZ")
+					local terrain_api0 = Global("terrain")
+					if not (z_grid and type(z_grid.set) == "function" and type(wth) == "function"
+						and type(hex_to_world) == "function" and type(build_unbuildable) == "function"
+						and type(terrain_api0) == "table" and type(terrain_api0.GetHeight) == "function"
+						and type(point_fn0) == "function") then
+						PairingLog("sentinel footprint patch skipped (api unavailable)", { tag = tag })
+						return
+					end
+					local ok_u, sentinel = pcall(build_unbuildable)
+					if not ok_u then return end
+					local ok_c, cq, cr = pcall(wth, point_fn0(cx0, cy0))
+					if not (ok_c and type(cq) == "number") then return end
+					local patched, kept = 0, 0
+					local samples = {}
+					for dq = -radius_hexes, radius_hexes do
+						for dr = -radius_hexes, radius_hexes do
+							local dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+							if dist <= radius_hexes then
+								local q, r = cq + dq, cr + dr
+								local ok_z, bz = pcall(buildable.GetZ, buildable, q, r)
+								if ok_z and bz == sentinel then
+									local okw, hx, hy = pcall(hex_to_world, q, r)
+									if okw and type(hx) == "number" then
+										local okh, tz = pcall(terrain_api0.GetHeight, surface_map, point_fn0(hx, hy))
+										if okh and type(tz) == "number" then
+											local ok_s = pcall(z_grid.set, z_grid, q + math.floor(r / 2), r, tz)
+											if ok_s then
+												patched = patched + 1
+												if #samples < 6 then
+													samples[#samples + 1] = string.format("(%+d,%+d)z=%d", dq, dr, tz)
+												end
+											end
+										end
+									end
+								elseif ok_z then
+									kept = kept + 1
+								end
+							end
+						end
+					end
+					PairingLog("sentinel footprint patch", {
+						tag = tostring(tag), center = tostring(cx0) .. "," .. tostring(cy0),
+						radius = radius_hexes, sentinel_patched = patched, buildable_kept = kept,
+						samples = table.concat(samples, " "),
+					})
+				end
+				-- Footprint radius from the actual spawn shape (max hex distance + margin).
+				local footprint_radius = 8
+				do
+					local get_shape0 = Global("GetExtendedSpawnShape")
+					if type(get_shape0) == "function" then
+						local ok_sh0, shp0 = pcall(get_shape0, "Elevator")
+						if ok_sh0 and type(shp0) == "table" then
+							local maxd = 0
+							for _, hexpt in ipairs(shp0) do
+								local ok_xy0, hq, hr = pcall(function() return hexpt:x(), hexpt:y() end)
+								if ok_xy0 and type(hq) == "number" then
+									local d0 = (math.abs(hq) + math.abs(hr) + math.abs(hq + hr)) / 2
+									if d0 > maxd then maxd = d0 end
+								end
+							end
+							if maxd > 0 then footprint_radius = maxd + 2 end
+						end
+					end
+				end
 				-- Relocate ONLY the random-fallback case. Vanilla's search legitimately walks
 				-- a short distance from the marker to reach buildable ground (log-proven:
 				-- entrance #1 sits ~15k from its marker in VANILLA, and its scaled position is
@@ -963,6 +1044,9 @@ local function PatchPassagePairing()
 					PairingLog("Link: vanilla placement kept (within local-walk range)", {
 						delta = math.floor(math.sqrt(dx * dx + dy * dy + 0.0) + 0.5), threshold = min_delta,
 					})
+					-- Needle guard applies to KEPT placements too (their footprint fringe can
+					-- also touch sentinel hexes; runs before Picard's post-Link flatten).
+					PatchSentinelFootprint(sx, sy, footprint_radius, "kept-placement")
 					return
 				end
 				-- DETERMINISTIC NEAR-MARKER SEARCH (no terrain edits). Forcing the exact
@@ -1053,6 +1137,8 @@ local function PatchPassagePairing()
 				if type(clear) == "function" then
 					pcall(clear, surface_map, np, angle, surface_map.obj_prefab_marker, nil, espace)
 				end
+				-- Needle guard at the relocated position (before Picard's post-Link flatten).
+				PatchSentinelFootprint(found_x, found_y, footprint_radius, "relocated-placement")
 				local fdx, fdy = found_x - ux, found_y - uy
 				PairingLog("LINK-TIME CORRECTION: fallback entrance moved to nearest buildable ground by the marker", {
 					from = tostring(sx) .. "," .. tostring(sy),

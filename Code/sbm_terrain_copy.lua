@@ -2185,9 +2185,63 @@ local function SpikeAudit(map, label)
 	end
 end
 
+-- FINE spike scan (config DEBUG_SPIKES): dense sampling around a point. The map-wide
+-- SpikeAudit lattice (step ~6400) is blind to 1-2-cell needles (a needle is ~100-200 wu
+-- wide); this scans a small area at 400-wu steps -- used around each entrance in the timed
+-- ground-truth dumps to prove or disprove thin needles the coarse audit misses.
+local function FineSpikeScan(map, cx, cy, radius, step, label)
+	if not cfg_bool("DEBUG_SPIKES", false) then return end
+	map = map or Global("CurrentMap")
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if not (map and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
+		and type(point_fn) == "function" and type(cx) == "number" and type(cy) == "number") then
+		return
+	end
+	radius = radius or 12000
+	step = step or 400
+	local zmin, zmax
+	local top = {}
+	local y = cy - radius
+	while y <= cy + radius do
+		local x = cx - radius
+		while x <= cx + radius do
+			local ok, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
+			if ok and type(z) == "number" then
+				if zmin == nil or z < zmin then zmin = z end
+				if zmax == nil or z > zmax then zmax = z end
+				if #top < 5 then
+					top[#top + 1] = { z = z, x = x, y = y }
+					table.sort(top, function(a, b) return a.z > b.z end)
+				elseif z > top[#top].z then
+					top[#top] = { z = z, x = x, y = y }
+					table.sort(top, function(a, b) return a.z > b.z end)
+				end
+			end
+			x = x + step
+		end
+		y = y + step
+	end
+	local parts = {}
+	for _, t in ipairs(top) do
+		parts[#parts + 1] = string.format("z=%d@(%d,%d)", t.z, t.x, t.y)
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Spikes", "fine scan " .. tostring(label), {
+			map = tostring(map.name), center = tostring(cx) .. "," .. tostring(cy),
+			radius = radius, step = step,
+			z_min = tostring(zmin), z_max = tostring(zmax),
+			spread = tostring(zmin and zmax and (zmax - zmin)),
+			tallest = table.concat(parts, " "),
+		})
+	end
+end
+
 -- Public API: terrain/grid copy + mirror-block mechanics consumed by sbm_map_generation.
 local TerrainCopy = {
 	SpikeAudit = SpikeAudit,
+	FineSpikeScan = FineSpikeScan,
 	ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain,
 	SectorWorldRect = SectorWorldRect,
 	FindSectorByName = FindSectorByName,
