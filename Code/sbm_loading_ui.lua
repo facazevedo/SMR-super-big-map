@@ -490,13 +490,40 @@ end
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
 -- Returns true when the loading box is up (active path) so the watch loop can log "applied".
--- The engine's own big loading screen: present while the map is (re)loading, gone once the
--- game is on screen. We show our box the instant it disappears (see below).
-local function EngineLoadingScreenUp()
+-- The engine's own big loading screen. Keep its loading reasons/lifecycle intact, but while an
+-- SBM expansion is active temporarily hide its artwork dialog so our phase box can take over
+-- visually earlier. If expansion ends before the engine closes it, restore it immediately.
+local function EngineLoadingScreenDialog()
 	local get_ls = Global("GetLoadingScreenDialog")
-	if type(get_ls) ~= "function" then return false end
+	if type(get_ls) ~= "function" then return nil end
 	local ok, dlg = pcall(get_ls, true) -- true: ignore the account-storage save screen
-	return ok and dlg ~= nil
+	return ok and dlg or nil
+end
+
+local hidden_engine_loading = false
+
+local function HideEngineLoadingScreenInstant()
+	local dlg = EngineLoadingScreenDialog()
+	if not dlg then return true end
+	local ok = false
+	if type(dlg.SetVisibleInstant) == "function" then
+		ok = pcall(dlg.SetVisibleInstant, dlg, false)
+	elseif type(dlg.SetVisible) == "function" then
+		ok = pcall(dlg.SetVisible, dlg, false)
+	end
+	if ok then hidden_engine_loading = dlg end
+	return ok
+end
+
+local function RestoreEngineLoadingScreenInstant()
+	local dlg = hidden_engine_loading
+	hidden_engine_loading = false
+	if not dlg or dlg.window_state == "destroying" or dlg.window_state == "destroyed" then return end
+	if type(dlg.SetVisibleInstant) == "function" then
+		pcall(dlg.SetVisibleInstant, dlg, true)
+	elseif type(dlg.SetVisible) == "function" then
+		pcall(dlg.SetVisible, dlg, true)
+	end
 end
 
 local function DesktopReady()
@@ -507,14 +534,12 @@ end
 local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
-		local welcome_present = HideWelcomePopupInstant()
-		-- Show our loading box the MOMENT the engine's big loading screen is gone and the
-		-- desktop exists -- NOT waiting for the welcome popup. The welcome popup appears
-		-- noticeably LATER than the loading screen closes, and in that gap the player could
-		-- see the map being rebuilt uncovered (user report). The engine loading screen covers
-		-- everything before this, so there is nothing to draw earlier; the welcome popup, when
-		-- it does appear, is hidden by HideWelcomePopupInstant above on the next watch tick.
-		if not EngineLoadingScreenUp() and DesktopReady() and not LoadingBoxValid() then
+		HideWelcomePopupInstant()
+		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
+		-- is still open. We HIDE that dialog rather than closing it, preserving every engine
+		-- loading reason and the normal map-generation synchronization behind the scenes.
+		local engine_ready = HideEngineLoadingScreenInstant()
+		if engine_ready and DesktopReady() and not LoadingBoxValid() then
 			local create_box = Global("CreateMessageBox")
 			if type(create_box) == "function" then
 				local untranslated = Global("Untranslated")
@@ -546,6 +571,7 @@ local function SetWelcomeLoading(active)
 			end
 		end
 		loading_box = false
+		RestoreEngineLoadingScreenInstant()
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
@@ -570,7 +596,7 @@ function SuperBigMap.SetLoadingPhase(message)
 	local text = tostring(message or "")
 	text = text:gsub("%s+$", "")
 	if text == "" then
-		text = LOADING_DEFAULT_BODY
+		text = LOADING_DEFAULT_STATUS
 	elseif not text:find("[Pp]lease wait%.?$") then
 		if not text:find("[%.!%?]$") then text = text .. "." end
 		text = text .. " Please wait."
