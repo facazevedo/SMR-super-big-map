@@ -218,8 +218,8 @@ config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugVeil          = false   -- Veil: underground sector-veil lifecycle (build/teardown with reason + decal census, watchdog repairs, hover forensic). Investigation closed: SectorUnexplored proved outline-only; veil now disabled by user decision (interiors stay clear)
-config.DebugSpikes        = false   -- Spikes: terrain spike audit (global z min/max + tallest sample coordinates) at every stretch-pipeline stage. Investigation closed: the spikes came from the deterministic-passage correction chain, now disabled (StretchDeterministicPassages=false)
-config.DebugPairing       = false   -- Pairing: underground<->surface entrance pairing trace. Investigation closed: entrance placement reverted to vanilla (see StretchDeterministicPassages)
+config.DebugSpikes        = true    -- Spikes: terrain spike audit at every stretch-pipeline stage (TEMP: verifying the re-enabled fallback relocation leaves no artifacts)
+config.DebugPairing       = true    -- Pairing: entrance pairing trace + pad diagnostics (TEMP: verifying the fallback-only relocation and footprint-sized pad repairs)
 config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics on mod maps (per-call anchor hex buildable-z vs terrain z, unbuildable footprint counts; also logs the unbuildable-anchor guard skips) (TEMP: investigating elevator-placement FlattenTerrainInShape assert)
 config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
 
@@ -733,14 +733,21 @@ config.FlattenSkipWhenUnbuildable = true
 -- When true, expanded maps place the surface passage exactly at the underground marker's
 -- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
 -- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
--- OFF by user decision (2026-07-11): the correction chain (move + pad repairs, v437-v441)
--- kept leaving terrain-spike artifacts around the entrances, because the generator's own
--- entrance re-flatten runs on an engine-internal path that cannot be intercepted and reads
--- the sentinel-poisoned buildable grid at any forced position. Vanilla placement (search +
--- random fallback) never touches unbuildable spots, so it leaves NO artifacts -- at the cost
--- of one entrance possibly landing elsewhere per restart on expanded maps (exactly the
--- 8bba69d behavior the user asked to return to).
-config.StretchDeterministicPassages = false
+-- RE-ENABLED (2026-07-11, user decision) for the RANDOM-FALLBACK case only, now safe:
+-- (a) PairingSurfaceBuildableRebuild gives the pairing (and any flatten) a REAL grid -- the
+--     spike crowns came from the sentinel-poisoned stale grid;
+-- (b) PassageCorrectionMinDelta keeps vanilla's legitimate local-walk placements untouched
+--     (entrance #1 is vanilla-equivalent to the unit and must stay);
+-- (c) the pad repairs are footprint-sized everywhere (v441's leftover ring came from the
+--     abandoned-spot repair still using a hardcoded small circle).
+-- Net: an entrance vanilla seats near its marker stays exactly vanilla-equivalent; an
+-- entrance vanilla rolls at random (no derivable vanilla spot) is placed at its underground
+-- marker's scaled position instead -- deterministic AND corresponding across maps.
+config.StretchDeterministicPassages = true
+-- Distance separating vanilla's legitimate local search walk (~15k wu observed) from a
+-- random-fallback placement (207k observed): below = keep vanilla's spot, above = relocate
+-- onto the underground marker.
+config.PassageCorrectionMinDelta = 40000
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
 -- on expanded maps that grid is stale at that moment (async rebuild lands seconds later), so
@@ -980,6 +987,7 @@ C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorde
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.PairingSurfaceBuildableRebuild)
+C.PASSAGE_CORRECTION_MIN_DELTA = as_number(config.PassageCorrectionMinDelta, 40000)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)

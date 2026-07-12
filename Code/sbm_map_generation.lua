@@ -950,8 +950,21 @@ local function PatchPassagePairing()
 				local gen_t = surface_map and surface_map.SuperBigMapGeneratorWidthTiles
 				local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
 				if not expanded then return end
+				-- Relocate ONLY the random-fallback case. Vanilla's search legitimately walks
+				-- a short distance from the marker to reach buildable ground (log-proven:
+				-- entrance #1 sits ~15k from its marker in VANILLA, and its scaled position is
+				-- vanilla-equivalent to the unit -- it must NOT be touched). A fallback
+				-- placement is hundreds of thousands of wu away (207k in the vanilla
+				-- reference). The threshold separates the two regimes; below it the vanilla
+				-- placement stands.
+				local min_delta = cfg_number("PASSAGE_CORRECTION_MIN_DELTA", 40000, 0)
 				local dx, dy = sx - ux, sy - uy
-				if (dx * dx + dy * dy) <= (2000 * 2000) then return end -- already corresponding
+				if (dx * dx + dy * dy) <= (min_delta * min_delta) then
+					PairingLog("Link: vanilla placement kept (within local-walk range)", {
+						delta = math.floor(math.sqrt(dx * dx + dy * dy + 0.0) + 0.5), threshold = min_delta,
+					})
+					return
+				end
 				-- Move the surface passage onto the underground marker's XY.
 				local point_fn = Global("point")
 				if type(point_fn) ~= "function" then return end
@@ -1022,7 +1035,11 @@ local function PatchPassagePairing()
 						buildable_z_at_center = bz,
 					})
 				end
-				local function LevelPad(center, tag)
+				-- radius_hexes: MUST cover the vanilla flatten footprint. The v441 leftover
+				-- spikes came from the ABANDONED-spot repair still using a hardcoded 4/7-hex
+				-- circle while the footprint is larger -- the surviving ring outside it was
+				-- the remaining "crown".
+				local function LevelPad(center, tag, radius_hexes)
 					if type(terrain_api2) ~= "table" or type(terrain_api2.SetHeightCircle) ~= "function"
 						or type(terrain_api2.GetHeight) ~= "function" then
 						PairingLog("pad leveling skipped (terrain API unavailable)", { tag = tag })
@@ -1034,19 +1051,19 @@ local function PatchPassagePairing()
 						PairingLog("pad leveling skipped (no terrain z)", { tag = tag })
 						return
 					end
+					local inner = ((radius_hexes or 8) + 1) * hex_size
 					local suspended = pcall(surface_map.SuspendPassEdits, surface_map, "SBMPassagePad")
 					local ok_c, err_c = pcall(terrain_api2.SetHeightCircle, surface_map, center,
-						4 * hex_size, 7 * hex_size, z)
+						inner, inner + 3 * hex_size, z)
 					if suspended then pcall(surface_map.ResumePassEdits, surface_map, "SBMPassagePad") end
 					if type(terrain_api2.InvalidateHeight) == "function" then
 						pcall(terrain_api2.InvalidateHeight, surface_map)
 					end
 					PairingLog("pad leveled via SetHeightCircle", {
-						tag = tag, z = z, ok = ok_c, err = ok_c and nil or tostring(err_c),
+						tag = tag, z = z, inner = inner, ok = ok_c, err = ok_c and nil or tostring(err_c),
 					})
 					PadDiag(tag .. " AFTER", center)
 				end
-				LevelPad(np, "corrected-pos")
 				-- BUILDABLE-GRID PATCH: v438's clean leveling was UNDONE by Picard itself --
 				-- right after Link it runs FlattenTerrainInBuildShape(shape, surface_passage,
 				-- "flatten unbuildable") at the passage's (now corrected) position, and that
@@ -1114,6 +1131,7 @@ local function PatchPassagePairing()
 					end
 					PairingLog("pad radius resolved from flatten shape", { hex_radius = pad_hex_radius })
 				end
+				LevelPad(np, "corrected-pos", pad_hex_radius)
 				local ok_padz, padz = pcall(function() return np:z() end)
 				if not (ok_padz and type(padz) == "number") then
 					local ok_g, g = pcall(terrain_api2.GetHeight, surface_map, np)
@@ -1131,11 +1149,13 @@ local function PatchPassagePairing()
 						hex_radius = pad_hex_radius,
 					})
 				end
-				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran the
-				-- same buildable-grid flatten at the RANDOM position before our move -- same
-				-- sentinel mechanism, same potential spike crown, just at an abandoned spot.
-				-- Re-level it to its own local terrain height so no artifact is left behind.
-				LevelPad(point_fn(sx, sy), "abandoned-spawn-spot")
+				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran its
+				-- flatten at the fallback position before our move. With the fresh buildable
+				-- grid (PairingSurfaceBuildableRebuild) that flatten was CLEAN (the spot came
+				-- from an all-buildable search), so this is belt-and-braces -- full footprint
+				-- radius, unlike v441's hardcoded 4/7-hex circle whose leftover ring was the
+				-- remaining crown.
+				LevelPad(point_fn(sx, sy), "abandoned-spawn-spot", pad_hex_radius)
 				local clear = Global("ClearObstructions")
 				local get_shape = Global("GetExtendedSpawnShape")
 				local espace = type(get_shape) == "function" and get_shape("Elevator") or nil
