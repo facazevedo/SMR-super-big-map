@@ -628,6 +628,13 @@ config.StretchReliefAwareDecor = true
 -- was generated on, and -- because both maps get the identical transform of natively identical
 -- coordinates -- every surface/underground entrance pair keeps corresponding vertically.
 config.StretchMoveEntranceVisuals = true
+-- Entrance SIGN badge float (sbm_terrain_copy MoveEntranceVisualsToScale). The surface
+-- underground-entrance badge is placed at terrain level by vanilla, so a nearby terrain rise
+-- half-occludes it under the tilted overview camera. The mod floats it above the LOCAL
+-- terrain maximum (sampled within the radius below) plus this clearance, so the whole badge
+-- always shows. Clearance in world units; radius in hexes.
+config.EntranceSignClearanceWu = 1500
+config.EntranceSignClearanceRadiusHexes = 3
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -993,6 +1000,8 @@ C.UNDERGROUND_SECTOR_VEIL_TINT = type(config.UndergroundSectorVeilTint) == "tabl
 C.UNDERGROUND_SECTOR_VEIL_ENTITY = (type(config.UndergroundSectorVeilEntity) == "string" and config.UndergroundSectorVeilEntity ~= "")
 	and config.UndergroundSectorVeilEntity or "SectorTarget"
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
+C.ENTRANCE_SIGN_CLEARANCE_WU = as_number(config.EntranceSignClearanceWu, 1500)
+C.ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES = as_number(config.EntranceSignClearanceRadiusHexes, 3)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)

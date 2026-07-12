@@ -490,14 +490,31 @@ end
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
 -- Returns true when the loading box is up (active path) so the watch loop can log "applied".
+-- The engine's own big loading screen: present while the map is (re)loading, gone once the
+-- game is on screen. We show our box the instant it disappears (see below).
+local function EngineLoadingScreenUp()
+	local get_ls = Global("GetLoadingScreenDialog")
+	if type(get_ls) ~= "function" then return false end
+	local ok, dlg = pcall(get_ls, true) -- true: ignore the account-storage save screen
+	return ok and dlg ~= nil
+end
+
+local function DesktopReady()
+	local term = Global("terminal")
+	return term ~= nil and term.desktop ~= nil
+end
+
 local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
 		local welcome_present = HideWelcomePopupInstant()
-		-- Only show our loading box once the welcome popup exists -- that means the engine
-		-- loading screen has closed and the UI is ready. Before that, the engine loading
-		-- screen already covers the early expansion, so we have nothing to draw.
-		if welcome_present and not LoadingBoxValid() then
+		-- Show our loading box the MOMENT the engine's big loading screen is gone and the
+		-- desktop exists -- NOT waiting for the welcome popup. The welcome popup appears
+		-- noticeably LATER than the loading screen closes, and in that gap the player could
+		-- see the map being rebuilt uncovered (user report). The engine loading screen covers
+		-- everything before this, so there is nothing to draw earlier; the welcome popup, when
+		-- it does appear, is hidden by HideWelcomePopupInstant above on the next watch tick.
+		if not EngineLoadingScreenUp() and DesktopReady() and not LoadingBoxValid() then
 			local create_box = Global("CreateMessageBox")
 			if type(create_box) == "function" then
 				local untranslated = Global("Untranslated")

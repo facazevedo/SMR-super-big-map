@@ -1351,6 +1351,40 @@ local function MoveEntranceVisualsToScale(map)
 			local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 			if ok_z and pz then np = pz end
 		end
+		-- ENTRANCE SIGN: the badge is placed at terrain level (vanilla InvalidZ), so a nearby
+		-- terrain rise half-occludes it under the tilted overview camera (user report: sign
+		-- "half exposed"). Float it above the LOCAL terrain MAX (sampled in a small radius, so
+		-- a bump between camera and sign can't clip it) plus a clearance, guaranteeing the whole
+		-- badge is visible. Config ENTRANCE_SIGN_CLEARANCE_WU / ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES.
+		if IsKindOfSafe(obj, "SurfaceUndergroundTunnelSign")
+			and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+			local clearance = cfg_number("ENTRANCE_SIGN_CLEARANCE_WU", 1500, 0)
+			local rad_hexes = math.max(0, math.floor(cfg_number("ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES", 3, 0)))
+			local hex_wu = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
+				and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
+			local r = rad_hexes * hex_wu
+			local zmax
+			local offsets = { { 0, 0 } }
+			if r > 0 then
+				local d = math.floor(r * 7 / 10)
+				offsets = {
+					{ 0, 0 }, { r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
+					{ d, d }, { -d, d }, { d, -d }, { -d, -d },
+				}
+			end
+			for _, o in ipairs(offsets) do
+				local ok_h2, h2 = pcall(terrain_api.GetHeight, map, point_fn(nx + o[1], ny + o[2]))
+				if ok_h2 and type(h2) == "number" and (zmax == nil or h2 > zmax) then zmax = h2 end
+			end
+			if type(zmax) == "number" then
+				np = point_fn(nx, ny, zmax + clearance)
+				placed_z = true
+				AlignLog("entrance sign floated above local terrain max", {
+					xy = tostring(nx) .. "," .. tostring(ny),
+					terrain_max = zmax, clearance = clearance, z = zmax + clearance,
+				})
+			end
+		end
 		local ok_set = false
 		local rehexed = false
 		if type(obj.SetPos) == "function" then
