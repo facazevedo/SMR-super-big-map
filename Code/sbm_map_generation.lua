@@ -1047,6 +1047,11 @@ local function PatchPassagePairing()
 					-- Needle guard applies to KEPT placements too (their footprint fringe can
 					-- also touch sentinel hexes; runs before Picard's post-Link flatten).
 					PatchSentinelFootprint(sx, sy, footprint_radius, "kept-placement")
+					-- Remember the pad for the post-generation smoothing pass.
+					State.sbm_entrance_pads = State.sbm_entrance_pads or {}
+					table.insert(State.sbm_entrance_pads, {
+						map = surface_map, x = sx, y = sy, hex_radius = footprint_radius,
+					})
 					return
 				end
 				-- DETERMINISTIC NEAR-MARKER SEARCH (no terrain edits). Forcing the exact
@@ -1121,14 +1126,36 @@ local function PatchPassagePairing()
 				end
 				local hex_remove = Global("HexGridShapeRemoveObject")
 				local hex_add = Global("HexGridShapeAddObject")
+				local is_valid_fn = Global("IsValid")
 				local shape
 				if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
+					and (type(is_valid_fn) ~= "function" or is_valid_fn(surface_obj) == true)
 					and type(surface_obj.handle) == "number" and surface_obj.handle > 0
 					and type(surface_obj.GetShapePoints) == "function" then
 					local ok_sh, sh = pcall(surface_obj.GetShapePoints, surface_obj)
 					if ok_sh and sh then shape = sh end
 				end
-				if shape then pcall(hex_remove, hex_grid, surface_obj, shape) end
+				-- Registration pre-check: luaHex asserts (uncatchable) on removing an object
+				-- that is not actually registered at its cells; verify first, and if not
+				-- registered skip the remove but still add after the move (desired end state).
+				local was_registered = false
+				if shape then
+					local hex_list = Global("HexGridShapeGetObjectList")
+					if type(hex_list) == "function" then
+						local ok_l, list = pcall(hex_list, hex_grid, surface_obj, shape)
+						if ok_l and type(list) == "table" then
+							for _, o2 in ipairs(list) do
+								if o2 == surface_obj then was_registered = true break end
+							end
+						end
+					end
+					if not was_registered then
+						PairingLog("hex re-reg pre-check: passage NOT registered at its cells -- remove skipped", {
+							handle = tostring(surface_obj.handle),
+						})
+					end
+				end
+				if shape and was_registered then pcall(hex_remove, hex_grid, surface_obj, shape) end
 				local ok_set = pcall(surface_obj.SetPos, surface_obj, np)
 				local rehexed = false
 				if shape then rehexed = pcall(hex_add, hex_grid, surface_obj, shape) == true end
@@ -1139,6 +1166,11 @@ local function PatchPassagePairing()
 				end
 				-- Needle guard at the relocated position (before Picard's post-Link flatten).
 				PatchSentinelFootprint(found_x, found_y, footprint_radius, "relocated-placement")
+				-- Remember the pad for the post-generation smoothing pass.
+				State.sbm_entrance_pads = State.sbm_entrance_pads or {}
+				table.insert(State.sbm_entrance_pads, {
+					map = surface_map, x = found_x, y = found_y, hex_radius = footprint_radius,
+				})
 				local fdx, fdy = found_x - ux, found_y - uy
 				PairingLog("LINK-TIME CORRECTION: fallback entrance moved to nearest buildable ground by the marker", {
 					from = tostring(sx) .. "," .. tostring(sy),
@@ -1550,62 +1582,93 @@ local function PatchRandomMapGenerator()
 				end
 				error(results[2])
 			end
-			-- POST-GENERATION PAD RE-LEVEL: Picard re-flattens the surface passage pad against
-			-- the sentinel-poisoned buildable grid AFTER our link-time repair (creating the
-			-- spike crown); the buildable-grid patch above should prevent that, but re-level
-			-- each remembered pad to its recorded z here regardless -- after everything the
-			-- generator does, nothing can have the last word but us.
+			-- POST-GENERATION PAD SMOOTHING (config PASSAGE_PAD_SMOOTHING). The generator's
+			-- entrance flatten is PER-HEX -- one height per hex -- so even with clean values it
+			-- leaves faint hex terracing (zigzag creases) around the entrances. After the
+			-- generator has fully finished (nothing re-flattens after this), smooth the height
+			-- field around each remembered entrance footprint with the engine's own GridSmooth
+			-- (the same op the map generator uses for terrain filtering). Runs PRE-stretch, so
+			-- the stretch resample carries the smoothed ground to the final map. One height-grid
+			-- get/set for all pads (~1-2s during loading).
 			do
 				local pads = State.sbm_entrance_pads
-				if type(pads) == "table" and #pads > 0 then
+				if type(pads) == "table" and #pads > 0 and cfg_bool("PASSAGE_PAD_SMOOTHING", true) then
 					local terrain_api3 = Global("terrain")
+					local grid_to_compute = Global("GridToCompute")
+					local new_grid = Global("NewComputeGrid")
+					local is_compute = Global("IsComputeGrid")
+					local grid_smooth = Global("GridSmooth")
+					local box_fn3 = Global("box")
 					local point_fn3 = Global("point")
 					local const_tbl3 = Global("const")
+					local tile3 = (type(const_tbl3) == "table" and type(const_tbl3.HeightTileSize) == "number"
+						and const_tbl3.HeightTileSize > 0) and const_tbl3.HeightTileSize or 100
 					local hex3 = (type(const_tbl3) == "table" and type(const_tbl3.HexSize) == "number"
 						and const_tbl3.HexSize > 0) and const_tbl3.HexSize or 1000
-					if type(terrain_api3) == "table" and type(terrain_api3.SetHeightCircle) == "function"
-						and type(point_fn3) == "function" then
+					local function free_grid3(g)
+						if g then pcall(function() if type(g.free) == "function" then g:free() end end) end
+					end
+					if type(terrain_api3) == "table" and type(terrain_api3.GetHeightGrid) == "function"
+						and type(terrain_api3.SetHeightGrid) == "function" and type(grid_smooth) == "function"
+						and type(grid_to_compute) == "function" and type(new_grid) == "function"
+						and type(box_fn3) == "function" and type(point_fn3) == "function" then
+						-- All pads are on the same (surface) map in practice; group by map anyway.
+						local by_map = {}
 						for _, pad in ipairs(pads) do
-							local pmap = pad.map
-							if pmap then
-								local center = point_fn3(pad.x, pad.y)
-								local z_now = "n/a"
-								local z_worst = "n/a"
-								if type(terrain_api3.GetHeight) == "function" then
-									local ok_g, g = pcall(terrain_api3.GetHeight, pmap, center)
-									if ok_g then z_now = tostring(g) end
-									-- Worst spike within the pad (diagnostic): sample a ring at
-									-- the flatten-shape radius, where the sentinel annulus sat.
-									local rr = ((pad.hex_radius or 8) - 1) * hex3
-									local wmax
-									for _, o in ipairs({ { rr, 0 }, { -rr, 0 }, { 0, rr }, { 0, -rr } }) do
-										local ok_w, wz = pcall(terrain_api3.GetHeight, pmap, point_fn3(pad.x + o[1], pad.y + o[2]))
-										if ok_w and type(wz) == "number" and (wmax == nil or wz > wmax) then wmax = wz end
-									end
-									z_worst = tostring(wmax)
+							if pad.map then
+								by_map[pad.map] = by_map[pad.map] or {}
+								table.insert(by_map[pad.map], pad)
+							end
+						end
+						for pmap, plist in pairs(by_map) do
+							local ok_all, err_all = pcall(function()
+								local raw = terrain_api3.GetHeightGrid(pmap)
+								local full = grid_to_compute(raw)
+								local fw, fh = full:size()
+								local fmt, bits
+								if type(is_compute) == "function" then
+									fmt, bits = is_compute(full)
 								end
-								-- Inner radius covers the WHOLE flatten shape (the v439 4-hex
-								-- inner circle left the sentinel annulus standing in/beyond its
-								-- falloff ring).
-								local inner = ((pad.hex_radius or 8) + 1) * hex3
-								local suspended = pcall(pmap.SuspendPassEdits, pmap, "SBMPadRelevel")
-								local ok_c = pcall(terrain_api3.SetHeightCircle, pmap, center,
-									inner, inner + 3 * hex3, pad.z)
-								if suspended then pcall(pmap.ResumePassEdits, pmap, "SBMPadRelevel") end
+								fmt = fmt or "F"
+								for _, pad in ipairs(plist) do
+									local radius_wu = ((pad.hex_radius or 10) + 6) * hex3
+									local r_tiles = math.floor(radius_wu / tile3 + 0.5)
+									local cx_t = math.floor(pad.x / tile3 + 0.5)
+									local cy_t = math.floor(pad.y / tile3 + 0.5)
+									local x0 = math.max(0, cx_t - r_tiles)
+									local y0 = math.max(0, cy_t - r_tiles)
+									local x1 = math.min(fw, cx_t + r_tiles)
+									local y1 = math.min(fh, cy_t + r_tiles)
+									local w, h = x1 - x0, y1 - y0
+									if w > 4 and h > 4 then
+										local region = new_grid(w, h, fmt, bits)
+										region:copyrect(full, box_fn3(x0, y0, x1, y1), point_fn3(0, 0))
+										local smoothed = new_grid(w, h, fmt, bits)
+										local ok_s, err_s = pcall(grid_smooth, region, smoothed, 3)
+										if ok_s then
+											full:copyrect(smoothed, box_fn3(0, 0, w, h), point_fn3(x0, y0))
+										end
+										free_grid3(region)
+										free_grid3(smoothed)
+										PairingLog("post-gen pad smoothing", {
+											x = pad.x, y = pad.y, region = tostring(w) .. "x" .. tostring(h),
+											smoothed = ok_s, err = ok_s and nil or tostring(err_s),
+										})
+									end
+								end
+								terrain_api3.SetHeightGrid(pmap, full)
 								if type(terrain_api3.InvalidateHeight) == "function" then
 									pcall(terrain_api3.InvalidateHeight, pmap)
 								end
-								PairingLog("post-gen pad re-level", {
-									x = pad.x, y = pad.y, target_z = pad.z,
-									z_at_center_before = z_now, z_ring_worst_before = z_worst,
-									hex_radius = pad.hex_radius or 8, ok = ok_c,
-								})
+								if full ~= raw then free_grid3(full) end
+							end)
+							if not ok_all then
+								PairingLog("post-gen pad smoothing ERROR", { err = tostring(err_all) })
 							end
 						end
-						-- Consumed: never re-level stale pads on a later generation/new game
-						-- (State survives the new-game Lua reload).
-						State.sbm_entrance_pads = nil
 					end
+					-- Consumed: never smooth stale pads on a later generation/new game.
+					State.sbm_entrance_pads = nil
 				end
 			end
 			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")

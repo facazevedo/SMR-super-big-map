@@ -1312,14 +1312,38 @@ local function MoveEntranceVisualsToScale(map)
 			-- AND when removing an object that is not currently registered in the grid -- some
 			-- Building-derived entrance indicators pass a Building+handle test yet were never
 			-- hex-registered by vanilla (crash log 16.44.48). Whitelist, don't heuristic.
+			local is_valid_fn = Global("IsValid")
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
 				and IsKindOfSafe(obj, "ElevatorPassage")
+				and (type(is_valid_fn) ~= "function" or is_valid_fn(obj) == true)
 				and type(obj.handle) == "number" and obj.handle > 0
 				and type(obj.GetShapePoints) == "function" then
 				local ok_sh, sh = pcall(obj.GetShapePoints, obj)
 				if ok_sh and sh then shape = sh end
 			end
-			if shape then pcall(hex_remove, hex_grid, obj, shape) end
+			-- REGISTRATION PRE-CHECK: luaHex.cpp asserts 'handle > 0' (uncatchable) when
+			-- REMOVING an object that is not currently registered at its cells. Verify via
+			-- HexGridShapeGetObjectList that the object really is registered there before
+			-- removing; if it is not, skip the remove but still ADD after the move (that IS
+			-- the desired end state for the snap machinery), and log the anomaly.
+			local was_registered = false
+			if shape then
+				local hex_list = Global("HexGridShapeGetObjectList")
+				if type(hex_list) == "function" then
+					local ok_l, list = pcall(hex_list, hex_grid, obj, shape)
+					if ok_l and type(list) == "table" then
+						for _, o2 in ipairs(list) do
+							if o2 == obj then was_registered = true break end
+						end
+					end
+				end
+				if not was_registered then
+					AlignLog("hex re-reg pre-check: object NOT registered at its cells -- remove skipped", {
+						class = tostring(obj.class or "?"), handle = tostring(obj.handle),
+					})
+				end
+			end
+			if shape and was_registered then pcall(hex_remove, hex_grid, obj, shape) end
 			ok_set = pcall(obj.SetPos, obj, np)
 			if shape then
 				rehexed = pcall(hex_add, hex_grid, obj, shape) == true

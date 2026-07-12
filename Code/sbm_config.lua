@@ -757,6 +757,10 @@ config.PassageCorrectionMinDelta = 40000
 -- search conditions: same spot every restart, vanilla's own clean flatten, no mod terrain
 -- edits (unlike the retired StretchDeterministicPassages correction chain).
 config.PairingSurfaceBuildableRebuild = true
+-- Post-generation smoothing of the ground around each entrance footprint (GridSmooth, the
+-- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
+-- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
+config.PassagePadSmoothing = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -987,6 +991,7 @@ C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorde
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.PairingSurfaceBuildableRebuild)
+C.PASSAGE_PAD_SMOOTHING = as_bool(config.PassagePadSmoothing)
 C.PASSAGE_CORRECTION_MIN_DELTA = as_number(config.PassageCorrectionMinDelta, 40000)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
