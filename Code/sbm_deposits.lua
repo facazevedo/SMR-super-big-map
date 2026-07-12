@@ -747,6 +747,15 @@ end
 
 function DepositRules.RespaceAnomalies(map)
 	if cfg().RESPACE_ANOMALIES_TO_VANILLA ~= true then return end
+	-- STRETCH mode: skip (user decision 2026-07-12). This pass repairs the MIRROR path's
+	-- crammed distribution; in stretch the vanilla layout x4/3 is already vanilla-like, so
+	-- respacing only moved VANILLA anomalies away from their vanilla-equivalent positions.
+	-- The distribution model is now: vanilla markers exactly at scaled positions, only the
+	-- top-up extras placed pseudo-randomly.
+	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
+		Log("anomaly respace skipped (stretch mode: vanilla markers stay at scaled positions)")
+		return
+	end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	local city = map and map.City
@@ -1267,6 +1276,13 @@ end
 -- clone/reshuffle/respace passes. Gated by EVEN_OUT_DEPOSIT_DENSITY.
 function DepositRules.EvenOutDepositDensity(map)
 	if cfg().EVEN_OUT_DEPOSIT_DENSITY ~= true then return end
+	-- STRETCH mode: skip (user decision 2026-07-12, same rationale as RespaceAnomalies):
+	-- the vanilla deposit distribution x4/3 is already vanilla density per area; capping and
+	-- relocating surplus only moved VANILLA deposits away from their scaled positions.
+	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
+		Log("deposit even-out skipped (stretch mode: vanilla markers stay at scaled positions)")
+		return
+	end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	local city = map and map.City
