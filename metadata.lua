@@ -3,10 +3,10 @@ return PlaceObj('ModDef', {
 	'description', "Beta testing version: bugs will occur. Please test and report.\n\n[BUG] Apparently it gets stuck at loading in the PS5 version. I need a tester so that I can fix that.\n\n------------------------------------------------------------\n\nSuper Big Map\n\n3x more map. No extra fries.\n\nOn the Colony Site screen, toggle EXPAND MAP before pressing START to expand that new game from a 10 x 10 sector grid to a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on.\n\nLeave EXPAND MAP off to start normally with vanilla map size and vanilla zoom. ZoomPlus is only enabled on maps actually expanded by this mod. Expanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game with EXPAND MAP toggled on. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n------------------------------------------------------------\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested only on Surviving Mars Relaunched v1.0.7 on Windows 11.\nPlease complain! I can’t fix what I don’t know is broken. Anonymous feedback: https://smr-mods-feedback.fredware.app or github: https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
 	'short_description', "Adds an opt-in EXPAND MAP start toggle for 20 x 20 maps.",
 	'image', "Mod/SuperBigMap/Images/final_composed.jpg",
-	'last_changes', "Start-sector validation build: the start-sector reconstruction now also runs in analysis-only mode on vanilla (non-expanded) games, logging its predicted pick right next to the game's own selection -- one vanilla run directly validates or pinpoints the divergence, with full candidate tables (per-sector Metals/Concrete quantities computed the game's way, buildability ratio, heat, weight) logged on both vanilla and expanded runs.",
+	'last_changes', "The expanded map now always starts with exactly ONE revealed sector: when the game's start-sector selection returns a two-sector fallback pair (best metals plus nearest concrete), one of the pair is chosen with the same map-seeded random -- deterministic per scenario, single revealed sector, at the vanilla-equivalent position.",
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 453,
+	'version', 454,
 	'lua_revision', 350453,
 	'saved_with_revision', 396349,
 	'code', {

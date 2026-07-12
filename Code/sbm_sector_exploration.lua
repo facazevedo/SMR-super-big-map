@@ -888,6 +888,21 @@ local function VanillaStartPick(city, map)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
+	-- SINGLE START SECTOR (user decision): vanilla's fallback branch can return TWO winners
+	-- (best-metals sector + nearest-concrete sector) when no single sector has both
+	-- Metals>=50 and Concrete. The expanded start reveals exactly ONE sector: pick one of
+	-- the winners with the SAME seeded stream (deterministic per map seed).
+	if #revealed > 1 then
+		local ok_one, chosen = pcall(trand, revealed)
+		if ok_one and chosen then
+			StartLog("multiple winners -- picking one (single start sector)", {
+				count = #revealed, chosen = tostring(chosen.id),
+			})
+			revealed = { chosen }
+		else
+			revealed = { revealed[1] }
+		end
+	end
 	local winners = {}
 	for _, sec in ipairs(revealed) do
 		local mn, mx = sec.area:min(), sec.area:max()
