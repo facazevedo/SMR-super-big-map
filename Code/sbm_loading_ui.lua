@@ -437,13 +437,14 @@ SuperBigMap.ShowFreshRestartNotice = ShowFreshRestartNotice
 -- instead; the popup kept re-applying its context, producing a welcome -> loading -> welcome
 -- flicker. Hiding it and drawing our own box avoids that.)
 local LOADING_TITLE = "Loading Super Big Map..."
--- The BODY is a live status line describing the current work; it always ends with
--- "Please wait." (SetLoadingPhase normalizes that). The gold footer button carries the mod's
--- flavor tagline instead of a second "Please wait." The default covers the window before any
--- phase sets its message.
-local LOADING_DEFAULT_BODY = "Preparing the expanded map. Please wait."
-local LOADING_FOOTER = "3x more map, no extra fries."
-local current_phase_body = LOADING_DEFAULT_BODY
+-- Layout (top -> bottom): title, then the flavor tagline (BODY / idText), then the live
+-- status line on the GOLD FOOTER BUTTON at the very bottom -- the status ("what is happening.
+-- Please wait.") occupies the bottom-most position per the user's request. The status always
+-- ends with "Please wait." (SetLoadingPhase normalizes that); the default covers the window
+-- before any phase sets its message.
+local LOADING_BODY_TAGLINE = "3x more map, no extra fries."
+local LOADING_DEFAULT_STATUS = "Preparing the expanded map. Please wait."
+local current_phase_body = LOADING_DEFAULT_STATUS
 local loading_on_welcome = false
 
 local function LoadingLog(message, data)
@@ -507,11 +508,13 @@ local function SetWelcomeLoading(active)
 				-- action greys out). The player never NEEDS to press it -- ExpansionLoadingEnd tears
 				-- the box down when the map is ready -- and if it IS pressed, the watch loop simply
 				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
-				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(current_phase_body),
-					wrap(LOADING_FOOTER))
+				-- text (idText, middle) = the static tagline; ok_text (footer button, bottom) =
+				-- the live status line. So the status sits at the bottom-most position.
+				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY_TAGLINE),
+					wrap(current_phase_body))
 				if ok and box then
 					loading_box = box
-					LoadingLog("loading box created over hidden welcome popup", { body = current_phase_body })
+					LoadingLog("loading box created over hidden welcome popup", { status = current_phase_body })
 				end
 			end
 		end
@@ -556,12 +559,24 @@ function SuperBigMap.SetLoadingPhase(message)
 		text = text .. " Please wait."
 	end
 	current_phase_body = text
-	if LoadingBoxValid() and loading_box.idText and type(loading_box.idText.SetText) == "function" then
+	-- Live-update the FOOTER BUTTON (bottom-most): set the Ok action's name and rebuild the
+	-- action bar (no box recreate -> no flicker). MarsMessageQuestionBox uses the same
+	-- action-name + UpdateActionViews pattern.
+	if LoadingBoxValid() and type(loading_box.actions) == "table" then
 		local untranslated = Global("Untranslated")
 		local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
-		pcall(function() loading_box.idText:SetText(wrap(text)) end)
+		pcall(function()
+			for _, a in ipairs(loading_box.actions) do
+				if a.ActionToolbar == "ActionBar" then
+					a.ActionName = wrap(text)
+				end
+			end
+			if type(loading_box.GetActionBar) == "function" and type(loading_box.UpdateActionViews) == "function" then
+				loading_box:UpdateActionViews(loading_box:GetActionBar())
+			end
+		end)
 	end
-	LoadingLog("loading phase set", { body = text, box = LoadingBoxValid() == true })
+	LoadingLog("loading phase set", { status = text, box = LoadingBoxValid() == true })
 end
 
 -- REFERENCE-COUNTED phases (user report: the welcome popup appeared -- unclickable -- while
