@@ -1265,6 +1265,149 @@ function DepositRules.TopUpAnomalies(map)
 	})
 end
 
+-- POST-GENERATION EFFECT-DEPOSIT top-up (config ENABLE_EFFECT_DEPOSIT_TOPUP). These markers
+-- spawn the non-minable map bonuses used by Vistas and Research Sites. They are not resource
+-- deposits or anomalies, so neither existing top-up includes them. Top up each enabled
+-- deposit_type independently to preserve its exact source ratio. BeautyEffectDeposit,
+-- ResearchEffectDeposit, and MoraleEffectDeposit are separately gated. Unknown/custom
+-- EffectDeposit subclasses are deliberately excluded.
+local EFFECT_TOPUP_FLAG = {
+	BeautyEffectDeposit = "TOPUP_VISTAS",
+	ResearchEffectDeposit = "TOPUP_RESEARCH_SITES",
+	MoraleEffectDeposit = "TOPUP_MORALE_VISTAS",
+}
+
+local function EffectDepositTopUpEnabled(deposit_type)
+	local flag = EFFECT_TOPUP_FLAG[deposit_type]
+	return flag ~= nil and cfg()[flag] == true
+end
+
+function DepositRules.TopUpEffectDeposits(map)
+	if cfg().ENABLE_EFFECT_DEPOSIT_TOPUP ~= true then return end
+	map = map or Global("CurrentMap")
+	local point = Global("point")
+	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
+	local city = map and map.City
+	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
+		or type(clone_fn) ~= "function" or not city then
+		Log("effect-deposit top-up skipped", { reason = "map/city/point/clone unavailable" })
+		return
+	end
+	local map_w, map_h, tile = MapWorldSize(map)
+	if not map_w or not tile or tile <= 0 then
+		Log("effect-deposit top-up skipped", { reason = "map size unavailable" })
+		return
+	end
+	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
+	local lo_x, span_x = margin, map_w - 2 * margin
+	local lo_y, span_y = margin, map_h - 2 * margin
+	if span_x <= 0 or span_y <= 0 then return end
+
+	local area_factor = 1.0
+	do
+		local gen_t = map.SuperBigMapGeneratorWidthTiles
+		local full_t = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
+		if type(gen_t) == "number" and gen_t > 0 and type(full_t) == "number" and full_t > gen_t then
+			local r = full_t * 1.0 / gen_t
+			area_factor = r * r
+		end
+	end
+	if area_factor <= 1.0 then
+		Log("effect-deposit top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
+		return
+	end
+
+	local current_by_type, templates_by_type = {}, {}
+	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
+		if not marker then return end
+		local deposit_type = tostring(marker.deposit_type or "")
+		if deposit_type == "" or not EffectDepositTopUpEnabled(deposit_type) then return end
+		current_by_type[deposit_type] = (current_by_type[deposit_type] or 0) + 1
+		if not marker.SuperBigMapQuadrantClone then
+			local list = templates_by_type[deposit_type]
+			if not list then list = {}; templates_by_type[deposit_type] = list end
+			list[#list + 1] = marker
+		end
+	end)
+
+	local types, total_shortfall = {}, 0
+	local target_by_type = {}
+	for deposit_type, templates in pairs(templates_by_type) do
+		if #templates > 0 then
+			types[#types + 1] = deposit_type
+			local target = math.floor(#templates * area_factor + 0.5)
+			target_by_type[deposit_type] = target
+			total_shortfall = total_shortfall + math.max(0, target - (current_by_type[deposit_type] or 0))
+		end
+	end
+	table.sort(types)
+	if total_shortfall <= 0 then
+		Log("effect-deposit top-up: nothing to add", {
+			area_factor = string.format("%.3f", area_factor), current = TallyString(current_by_type),
+			target = TallyString(target_by_type),
+		})
+		return
+	end
+
+	local added_by_type = {}
+	local pool_final = 0
+	RunPaused("SuperBigMapEffectDepositTopUp", function()
+		local candidates = {}
+		local MAX_SAMPLES, MAX_POOL = 6000, 2500
+		for _ = 1, MAX_SAMPLES do
+			if #candidates >= MAX_POOL then break end
+			local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
+			local sector = SectorAtPoint(map, x, y)
+			if sector and (IsUndergroundMap(map) or not SectorIsScanned(sector)) then
+				local pt = point(x, y)
+				if CanReceiveDeposit(map, pt) then candidates[#candidates + 1] = { x = x, y = y } end
+			end
+		end
+		pool_final = #candidates
+		for _, deposit_type in ipairs(types) do
+			local templates = templates_by_type[deposit_type]
+			local shortfall = target_by_type[deposit_type] - (current_by_type[deposit_type] or 0)
+			for _ = 1, math.max(0, shortfall) do
+				if #candidates == 0 then break end
+				local ci = RandInt(#candidates) + 1
+				local c = candidates[ci]
+				table.remove(candidates, ci)
+				local template = templates[RandInt(#templates) + 1]
+				local tpos = ObjectPos(template)
+				if tpos and type(tpos.xy) == "function" then
+					local tx, ty = tpos:xy()
+					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+					if clone and type(clone) == "table" then
+						added_by_type[deposit_type] = (added_by_type[deposit_type] or 0) + 1
+						if type(clone.SetPos) == "function" then
+							local pt = point(c.x, c.y)
+							if type(pt.SetTerrainZ) == "function" then
+								local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+								if ok and snapped then pt = snapped end
+							end
+							pcall(clone.SetPos, clone, pt)
+						end
+						clone.is_placed = false
+						clone.placed_obj = false
+						SetRevealedState(clone, false)
+						if not IsUndergroundMap(map) then
+							local sec = SectorAtPoint(map, c.x, c.y)
+							if sec and type(sec.RegisterDeposit) == "function" then
+								pcall(sec.RegisterDeposit, sec, clone)
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+	Log("topped up effect deposits to map-size proportions (post-gen)", {
+		area_factor = string.format("%.3f", area_factor), current = TallyString(current_by_type),
+		target = TallyString(target_by_type), added = TallyString(added_by_type),
+		map = tostring(map.name), pool = pool_final,
+	})
+end
+
 -- Even out RESOURCE-deposit density to vanilla-like proportions. The generator packs the full
 -- preset count into the shrunken gen-zone (see sbm_rmg_placement), so the source region --
 -- including the scanned START sector -- is several times denser than vanilla while the mirrored

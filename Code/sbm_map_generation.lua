@@ -2014,6 +2014,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							StretchLog("stretch branch: -> TopUpAnomalies")
 							SafeCall(deposits.TopUpAnomalies, map)
 						end
+						if type(deposits.TopUpEffectDeposits) == "function" then
+							StretchLog("stretch branch: -> TopUpEffectDeposits")
+							SafeCall(deposits.TopUpEffectDeposits, map)
+						end
 						if type(deposits.RegisterClonedMarkers) == "function" then
 							StretchLog("stretch branch: -> RegisterClonedMarkers")
 							SafeCall(deposits.RegisterClonedMarkers, map)
@@ -2412,6 +2416,10 @@ local function RunUndergroundStretchIfEnabled(map)
 					if type(deposits.TopUpAnomalies) == "function" then
 						StretchLog("underground stretch: -> TopUpAnomalies")
 						SafeCall(deposits.TopUpAnomalies, map)
+					end
+					if type(deposits.TopUpEffectDeposits) == "function" then
+						StretchLog("underground stretch: -> TopUpEffectDeposits")
+						SafeCall(deposits.TopUpEffectDeposits, map)
 					end
 					if type(deposits.RegisterClonedMarkers) == "function" then
 						StretchLog("underground stretch: -> RegisterClonedMarkers")

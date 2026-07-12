@@ -722,6 +722,15 @@ config.ScaleAnomalyCountsToMapSize = true
 -- hidden + sector-registered so a real scan reveals them. Generator output stays bit-identical
 -- to vanilla.
 config.AnomalyTopupPostGen = true
+-- EFFECT-DEPOSIT TOP-UP (sbm_deposits.lua TopUpEffectDeposits). EffectDepositMarker is the
+-- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
+-- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
+-- enabled effect types up to their source count x area factor. The master switch disables all
+-- effect-deposit top-ups; the per-type switches let each family be controlled separately.
+config.EnableEffectDepositTopUp = true
+config.TopUpVistas = true
+config.TopUpResearchSites = true
+config.TopUpMoraleVistas = true
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI
@@ -1019,6 +1028,10 @@ C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
 C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
 C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
+C.ENABLE_EFFECT_DEPOSIT_TOPUP = as_bool(config.EnableEffectDepositTopUp)
+C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
+C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
+C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
 C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
