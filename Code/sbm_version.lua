@@ -40,7 +40,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     outline-only: the red tint colored the grid lines, never the interiors), dark tint.
 -- 42: vanilla-equivalent start sector -- InitialExplore wrapped (vanilla pick over virtual
 --     10x10 sectors, reveal deferred to post-stretch).
-SuperBigMap.SECTOR_PATCH_VERSION = 42
+-- 43: start reveal = CENTER sector only per winner (count parity with vanilla; the >=30%
+--     overlap rule revealed 5); hover screen-space offset diagnostics.
+SuperBigMap.SECTOR_PATCH_VERSION = 43
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall

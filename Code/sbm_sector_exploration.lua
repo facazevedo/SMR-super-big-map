@@ -957,7 +957,11 @@ local function RevealVanillaStartSectors(map)
 				local sector_area = (ax1 - ax0) * (ay1 - ay0)
 				if sector_area <= 0 then return end
 				local contains_center = cx >= ax0 and cx < ax1 and cy >= ay0 and cy < ay1
-				if contains_center or (ix * iy * 100) >= (MIN_OVERLAP_PCT * sector_area) then
+				-- COUNT PARITY WITH VANILLA (user report: '5 sectors revealed'): vanilla
+				-- reveals exactly ONE sector per winner, so scan ONLY the sector containing
+				-- the winner's scaled center. Overlapping neighbors are logged (diagnostic)
+				-- but not revealed.
+				if contains_center then
 					if sector.status == "unexplored" then
 						-- No spawn_positions: those were computed pre-stretch; Scan resolves
 						-- placement itself against the markers' current (scaled) positions.
@@ -965,11 +969,16 @@ local function RevealVanillaStartSectors(map)
 						scanned_total = scanned_total + 1
 					end
 					last_revealed = sector
-					if wi == 1 and contains_center then primary = sector end
-					StartLog("post-stretch reveal: sector scanned", {
+					if wi == 1 then primary = sector end
+					StartLog("post-stretch reveal: sector scanned (center of winner)", {
+						winner = tostring(wbox.id), sector = tostring(sector.id),
+						winner_scaled_center = tostring(cx) .. "," .. tostring(cy),
+						sector_bounds = string.format("%d,%d-%d,%d", ax0, ay0, ax1, ay1),
+					})
+				elseif (ix * iy * 100) >= (MIN_OVERLAP_PCT * sector_area) then
+					StartLog("post-stretch reveal: overlapping neighbor NOT revealed (count parity)", {
 						winner = tostring(wbox.id), sector = tostring(sector.id),
 						overlap_pct = math.floor((ix * iy * 100.0) / sector_area + 0.5),
-						center = contains_center,
 					})
 				end
 			end)

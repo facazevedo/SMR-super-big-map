@@ -560,6 +560,55 @@ local function Install()
 			popup_notification_up = notif,
 			dialog_sector_id = tostring(self.sector_id),
 		})
+		-- SCREEN-SPACE offset measurement (user report: highlighted sector is not the one
+		-- under the cursor). Project the SELECTED sector's center AND the highlight decal's
+		-- actual position to screen and compare with the live mouse position -- the pixel
+		-- deltas measure the perceived offset directly, and the decal z vs live terrain z
+		-- shows whether a stale/shifted height (v449 down-shift) displaces the visual.
+		pcall(function()
+			local game_to_screen = Global("GameToScreen")
+			local get_mouse = Global("GetMousePos")
+			local terrain_api = Global("terrain")
+			local cur_map = Global("CurrentMap")
+			if type(game_to_screen) ~= "function" then return end
+			local mouse = type(get_mouse) == "function" and get_mouse() or nil
+			local center = sector.area and sector.area:Center()
+			local center_scr = center and game_to_screen(center) or nil
+			local obj_pos, obj_scr, obj_z, ground_z
+			if obj and type(obj.GetPos) == "function" then
+				local ok_p, p = pcall(obj.GetPos, obj)
+				if ok_p and p then
+					obj_pos = p
+					obj_scr = game_to_screen(p)
+					local ok_z, z = pcall(function() return p:z() end)
+					obj_z = ok_z and z or nil
+					if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" and cur_map then
+						local ok_g, g = pcall(terrain_api.GetHeight, cur_map, p)
+						ground_z = ok_g and g or nil
+					end
+				end
+			end
+			local function d(a, b)
+				if not (a and b) then return "n/a" end
+				local ok_d, dx, dy = pcall(function()
+					local ax, ay = a:xy()
+					local bx, by = b:xy()
+					return ax - bx, ay - by
+				end)
+				return ok_d and (tostring(dx) .. "," .. tostring(dy)) or "n/a"
+			end
+			DebugLog.Info("Hover", "screen-space offsets", {
+				sector = tostring(sector.id),
+				mouse = tostring(mouse),
+				sector_center_scr = tostring(center_scr),
+				highlight_scr = tostring(obj_scr),
+				mouse_minus_center_px = d(mouse, center_scr),
+				mouse_minus_highlight_px = d(mouse, obj_scr),
+				highlight_pos = tostring(obj_pos),
+				highlight_z = tostring(obj_z), ground_z_at_highlight = tostring(ground_z),
+				z_delta = tostring(obj_z and ground_z and (obj_z - ground_z)),
+			})
+		end)
 	end
 
 	-- Off-map cursor test (both maps): GetTerrainCursor CLAMPS to the map edge and GetMapSectorXY
