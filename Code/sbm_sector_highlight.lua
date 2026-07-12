@@ -710,6 +710,48 @@ local function Install()
 		return r1, r2
 	end
 
+	-- ENTRANCE SIGN always visible: vanilla ScaleSmallObjects (run on overview camera
+	-- transitions) sets the SurfaceUndergroundTunnelSign depth-tested in the close/normal
+	-- camera (disableZ=false), so terrain occludes the ground badge and it "disappears when
+	-- you come closer" (user report). Wrap it so that AFTER its animation thread finishes we
+	-- re-assert no-depth-test + visible on every tunnel sign, keeping the entrance badge on
+	-- top at all zooms. (MoveEntranceVisualsToScale already sets this at placement for the
+	-- never-entered-overview case.) State-verified so a reload reinstalls cleanly.
+	if type(overview_class.ScaleSmallObjects) == "function"
+		and overview_class.ScaleSmallObjects ~= State.scale_small_objects_wrapper then
+		State.original_scale_small_objects = overview_class.ScaleSmallObjects
+		local function ReassertEntranceSigns(map, delay_ms)
+			if not map or type(map.CreateRealTimeThread) ~= "function" then return end
+			map:CreateRealTimeThread(function()
+				local sleep = Engine.Global("Sleep")
+				if type(sleep) == "function" and type(delay_ms) == "number" and delay_ms > 0 then
+					sleep(delay_ms)
+				end
+				local is_valid_fn = Engine.Global("IsValid")
+				local signs = map:MapGet(true, "SurfaceUndergroundTunnelSign") or {}
+				for _, s in ipairs(signs) do
+					if type(is_valid_fn) ~= "function" or is_valid_fn(s) then
+						if type(s.SetNoDepthTest) == "function" then pcall(s.SetNoDepthTest, s, true) end
+						if type(s.SetVisible) == "function" then pcall(s.SetVisible, s, true) end
+						if type(s.SetOpacity) == "function" then pcall(s.SetOpacity, s, 100) end
+					end
+				end
+			end)
+		end
+		local wrapper = function(self, time, direction, ...)
+			local r = State.original_scale_small_objects(self, time, direction, ...)
+			if (SuperBigMap.Config or {}).ALWAYS_SHOW_ENTRANCE_SIGN ~= false then
+				-- Re-assert after the original's transition thread (length = time) completes.
+				local map = Engine.Global("CurrentMap")
+				ReassertEntranceSigns(map, (type(time) == "number" and time or 0) + 60)
+			end
+			return r
+		end
+		overview_class.ScaleSmallObjects = wrapper
+		State.scale_small_objects_wrapper = wrapper
+		DebugPrint("OverviewModeDialog.ScaleSmallObjects wrapped (entrance sign always visible)")
+	end
+
 	State.overview_highlight_patch_version = SECTOR_PATCH_VERSION
 	DebugPrint("overview highlight patch installed")
 	return true
@@ -732,6 +774,11 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if overview_class and State and type(State.original_overview_generate_rollover) == "function" then
 		overview_class.GenerateSectorRolloverContext = State.original_overview_generate_rollover
 	end
+	if overview_class and State and State.scale_small_objects_wrapper
+		and overview_class.ScaleSmallObjects == State.scale_small_objects_wrapper
+		and type(State.original_scale_small_objects) == "function" then
+		overview_class.ScaleSmallObjects = State.original_scale_small_objects
+	end
 	local map_sector_class = ClassTable("MapSector")
 	if map_sector_class and State and type(State.original_sector_queue_for_exploration) == "function" then
 		map_sector_class.QueueForExploration = State.original_sector_queue_for_exploration
@@ -740,6 +787,8 @@ function SectorHighlight.RestoreVanillaBehavior()
 		State.original_overview_select_sector = nil
 		State.original_overview_generate_rollover = nil
 		State.original_sector_queue_for_exploration = nil
+		State.scale_small_objects_wrapper = nil
+		State.original_scale_small_objects = nil
 		State.overview_highlight_patch_version = nil
 	end
 end

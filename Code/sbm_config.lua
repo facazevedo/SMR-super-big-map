@@ -635,6 +635,11 @@ config.StretchMoveEntranceVisuals = true
 -- always shows. Clearance in world units; radius in hexes.
 config.EntranceSignClearanceWu = 1500
 config.EntranceSignClearanceRadiusHexes = 3
+-- Keep the underground-entrance badge visible at ALL zoom levels. Vanilla renders these
+-- signs depth-tested in the close/normal camera (so terrain occludes them; the badge
+-- "disappears when you come closer") and on-top only in overview. When true the mod forces
+-- the entrance sign to no-depth-test + visible always, so it shows at every zoom.
+config.AlwaysShowEntranceSign = true
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -1002,6 +1007,7 @@ C.UNDERGROUND_SECTOR_VEIL_ENTITY = (type(config.UndergroundSectorVeilEntity) == 
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.ENTRANCE_SIGN_CLEARANCE_WU = as_number(config.EntranceSignClearanceWu, 1500)
 C.ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES = as_number(config.EntranceSignClearanceRadiusHexes, 3)
+C.ALWAYS_SHOW_ENTRANCE_SIGN = as_bool(config.AlwaysShowEntranceSign)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)

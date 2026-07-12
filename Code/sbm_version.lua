@@ -45,7 +45,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 44: start-sector VALIDATION mode -- reconstruction analysis also runs (log-only) on
 --     vanilla surface maps next to vanilla's own pick; candidate tables now carry the
 --     vanilla-formula Metals/Concrete quantities + weights.
-SuperBigMap.SECTOR_PATCH_VERSION = 44
+-- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
+--     the underground entrance signs so the badge stays visible at every zoom.
+SuperBigMap.SECTOR_PATCH_VERSION = 45
 -- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
 -- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
 -- PassBorder window in DoGenerate, so the closures changed and must reinstall
