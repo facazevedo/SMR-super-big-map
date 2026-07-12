@@ -903,14 +903,12 @@ local function PatchPassagePairing()
 	-- live, zero calls) while the entrance kept moving -- but CLASS-method patches in this
 	-- codebase demonstrably intercept vanilla (SelectSector, LandOnMars, ...). Every passage
 	-- pair goes through exactly one ElevatorPassage:Link(other) at creation, with both
-	-- endpoints in hand -- so correct the position THERE: on expanded games, if the pair's
-	-- SURFACE endpoint is far from the UNDERGROUND endpoint's XY (vanilla authors the maps to
-	-- correspond; the wandering entrance is the random-fallback placement), MOVE the surface
-	-- passage to the underground marker's XY (terrain-snapped), re-register its hex shape
-	-- (ElevatorPassage is the whitelisted hex-registered class), and sculpt the pad +
-	-- clear obstructions exactly like vanilla's own spawn path does. Deterministic: the
-	-- underground marker positions are proven identical across runs. Diagnostics log both
-	-- endpoints and the caller stack (DEBUG_PAIRING).
+	-- endpoints in hand -- so correct the position THERE. On expanded games, always search from
+	-- the UNDERGROUND endpoint's equivalent surface hex. If the complete Elevator footprint is
+	-- buildable there, the surface passage uses that exact hex; otherwise choose the candidate
+	-- with the smallest hex distance. Re-register its hex shape and clear obstructions exactly
+	-- like vanilla's own spawn path does. Deterministic: the underground marker positions are
+	-- proven identical across runs. Diagnostics log both endpoints and the caller stack.
 	local passage_class = Engine.ClassTable and Engine.ClassTable("ElevatorPassage")
 	if type(passage_class) == "table" and type(passage_class.Link) == "function"
 		and passage_class.Link ~= State.passage_link_wrapper then
@@ -1039,41 +1037,13 @@ local function PatchPassagePairing()
 						end
 					end
 				end
-				-- Relocate ONLY the random-fallback case. Vanilla's search legitimately walks
-				-- a short distance from the marker to reach buildable ground (log-proven:
-				-- entrance #1 sits ~15k from its marker in VANILLA, and its scaled position is
-				-- vanilla-equivalent to the unit -- it must NOT be touched). A fallback
-				-- placement is hundreds of thousands of wu away (207k in the vanilla
-				-- reference). The threshold separates the two regimes; below it the vanilla
-				-- placement stands.
-				local min_delta = cfg_number("PASSAGE_CORRECTION_MIN_DELTA", 40000, 0)
-				local dx, dy = sx - ux, sy - uy
-				if (dx * dx + dy * dy) <= (min_delta * min_delta) then
-					PairingLog("Link: vanilla placement kept (within local-walk range)", {
-						delta = math.floor(math.sqrt(dx * dx + dy * dy + 0.0) + 0.5), threshold = min_delta,
-					})
-					-- Needle guard applies to KEPT placements too (their footprint fringe can
-					-- also touch sentinel hexes; runs before Picard's post-Link flatten).
-					PatchSentinelFootprint(sx, sy, footprint_radius, "kept-placement")
-					-- Remember the pad for the post-generation smoothing pass.
-					State.sbm_entrance_pads = State.sbm_entrance_pads or {}
-					table.insert(State.sbm_entrance_pads, {
-						map = surface_map, x = sx, y = sy, hex_radius = footprint_radius,
-					})
-					return
-				end
-				-- DETERMINISTIC NEAR-MARKER SEARCH (no terrain edits). Forcing the exact
-				-- marker XY required an artificial pad -- SetHeightCircle at center height --
-				-- which reads as an elevated platform on sloped ground (user: no platforms).
-				-- Instead run vanilla's own placement search (FindBuildableAreaAround, against
-				-- the fresh grid from PairingSurfaceBuildableRebuild) from the marker outward
-				-- in a DETERMINISTIC spiral of retry centers -- identical mechanics to
-				-- vanilla's random-retry loop, but reproducible. The entrance lands on the
-				-- nearest naturally-buildable ground to the marker; vanilla's own flatten at
-				-- an all-buildable spot is a visual no-op (this is why vanilla entrances never
-				-- show platforms), so the mod edits NO terrain at all. If nothing is found
-				-- within the spiral, the vanilla (deterministic since the grid rebuild)
-				-- placement stands.
+				-- EXACT-HEX-FIRST SEARCH (no terrain edits). Run vanilla's own footprint-aware
+				-- placement search (FindBuildableAreaAround, against the fresh grid from
+				-- PairingSurfaceBuildableRebuild) from the underground exit's equivalent surface
+				-- hex outward. Candidate selection is by axial-hex distance, not call order: an
+				-- exact-hex result always wins; otherwise the closest buildable footprint wins.
+				-- This accounts for mountains/cliffs through the buildable grid and decorations/
+				-- structures through object_hex_grid without manufacturing a terrain platform.
 				local point_fn = Global("point")
 				local find_area = Global("FindBuildableAreaAround")
 				local get_shape = Global("GetExtendedSpawnShape")
@@ -1093,11 +1063,21 @@ local function PatchPassagePairing()
 				angle = (ok_ang and angle) or 0
 				local hex_grid = surface_map.object_hex_grid
 				local buildable = surface_map.buildable
-				local found_x, found_y, found_depth, attempts = nil, nil, nil, 0
+				local found_x, found_y, found_depth, found_hex_dist, found_world_dist = nil, nil, nil, nil, nil
+				local attempts = 0
+				local world_to_hex = Global("WorldToHex")
+				local marker_q, marker_r
+				if type(world_to_hex) == "function" then
+					local ok_mh, mq, mr = pcall(world_to_hex, point_fn(ux, uy))
+					if ok_mh and type(mq) == "number" and type(mr) == "number" then
+						marker_q, marker_r = mq, mr
+					end
+				end
 				local const_tbl2 = Global("const")
 				local hexsz = (type(const_tbl2) == "table" and type(const_tbl2.HexSize) == "number"
 					and const_tbl2.HexSize > 0) and const_tbl2.HexSize or 1000
 				local ring_step = 10 * hexsz
+				local exact_hex = false
 				for ring = 0, 12 do
 					local r = ring * ring_step
 					local centers
@@ -1115,11 +1095,27 @@ local function PatchPassagePairing()
 						local ok_f, fx, fy, fd = pcall(find_area, hex_grid, buildable,
 							point_fn(ux + o[1], uy + o[2]), angle, espace)
 						if ok_f and type(fx) == "number" and type(fy) == "number" then
-							found_x, found_y, found_depth = fx, fy, fd
-							break
+							local wdx, wdy = fx - ux, fy - uy
+							local world_dist = wdx * wdx + wdy * wdy
+							local hex_dist
+							if marker_q and type(world_to_hex) == "function" then
+								local ok_ch, cq, cr = pcall(world_to_hex, point_fn(fx, fy))
+								if ok_ch and type(cq) == "number" and type(cr) == "number" then
+									local dq, dr = cq - marker_q, cr - marker_r
+									hex_dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+								end
+							end
+							local better = found_x == nil
+								or (hex_dist ~= nil and (found_hex_dist == nil or hex_dist < found_hex_dist))
+								or (hex_dist == found_hex_dist and world_dist < found_world_dist)
+							if better then
+								found_x, found_y, found_depth = fx, fy, fd
+								found_hex_dist, found_world_dist = hex_dist, world_dist
+							end
+							if hex_dist == 0 then exact_hex = true break end
 						end
 					end
-					if found_x then break end
+					if exact_hex then break end
 				end
 				if not found_x then
 					PairingLog("near-marker search FAILED -- vanilla placement kept", {
@@ -1180,10 +1176,11 @@ local function PatchPassagePairing()
 					map = surface_map, x = found_x, y = found_y, hex_radius = footprint_radius,
 				})
 				local fdx, fdy = found_x - ux, found_y - uy
-				PairingLog("LINK-TIME CORRECTION: fallback entrance moved to nearest buildable ground by the marker", {
+				PairingLog("LINK-TIME CORRECTION: surface entrance aligned to underground exit hex", {
 					from = tostring(sx) .. "," .. tostring(sy),
 					marker = tostring(ux) .. "," .. tostring(uy),
 					to = tostring(found_x) .. "," .. tostring(found_y),
+					exact_hex = exact_hex, hex_distance = tostring(found_hex_dist),
 					dist_from_marker = math.floor(math.sqrt(fdx * fdx + fdy * fdy + 0.0) + 0.5),
 					attempts = attempts, moved = ok_set, rehexed = rehexed,
 				})

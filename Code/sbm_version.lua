@@ -48,8 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 8:
--- adds ProcStart/ProcEnd GenRand instrumentation wrappers and the vanilla-exact
--- PassBorder window in DoGenerate, so the closures changed and must reinstall
--- cleanly on an in-session reload.
-SuperBigMap.GENERATOR_PATCH_VERSION = 8
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 9:
+-- surface underground entrances now test the underground exit's equivalent hex first and
+-- fall back to the closest footprint-valid surface hex by axial-hex distance.
+SuperBigMap.GENERATOR_PATCH_VERSION = 9

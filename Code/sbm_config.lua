@@ -745,21 +745,17 @@ config.FlattenSkipWhenUnbuildable = true
 -- When true, expanded maps place the surface passage exactly at the underground marker's
 -- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
 -- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
--- RE-ENABLED (2026-07-11, user decision) for the RANDOM-FALLBACK case only, now safe:
+-- RE-ENABLED (2026-07-11) and tightened to preserve vertical correspondence:
 -- (a) PairingSurfaceBuildableRebuild gives the pairing (and any flatten) a REAL grid -- the
 --     spike crowns came from the sentinel-poisoned stale grid;
--- (b) PassageCorrectionMinDelta keeps vanilla's legitimate local-walk placements untouched
---     (entrance #1 is vanilla-equivalent to the unit and must stay);
+-- (b) every linked surface passage first tests the underground exit's equivalent anchor hex;
+--     if the complete Elevator footprint is not buildable there, it selects the closest
+--     buildable candidate by hex distance;
 -- (c) the pad repairs are footprint-sized everywhere (v441's leftover ring came from the
 --     abandoned-spot repair still using a hardcoded small circle).
--- Net: an entrance vanilla seats near its marker stays exactly vanilla-equivalent; an
--- entrance vanilla rolls at random (no derivable vanilla spot) is placed at its underground
--- marker's scaled position instead -- deterministic AND corresponding across maps.
+-- Net: every surface entrance occupies the same hex as its underground exit whenever that
+-- complete surface footprint is buildable; otherwise it occupies the closest buildable hex.
 config.StretchDeterministicPassages = true
--- Distance separating vanilla's legitimate local search walk (~15k wu observed) from a
--- random-fallback placement (207k observed): below = keep vanilla's spot, above = relocate
--- onto the underground marker.
-config.PassageCorrectionMinDelta = 40000
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
 -- on expanded maps that grid is stale at that moment (async rebuild lands seconds later), so
@@ -1032,7 +1028,6 @@ C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_VANILLA_START_SECTOR = as_bool(config.StretchVanillaStartSector)
 C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
-C.PASSAGE_CORRECTION_MIN_DELTA = as_number(config.PassageCorrectionMinDelta, 40000)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)
