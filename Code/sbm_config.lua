@@ -203,6 +203,10 @@ config.DebugLoading       = true    -- Loading: loading-box watch loop + "Please
 config.DebugLoadTime      = true    -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle) (TEMP: finding where load time goes to speed it up)
 config.DebugHover         = true    -- Hover: overview hover-highlight mapping (cursor pos, ray-hit Z vs authoritative height, sector bounds + containment) (TEMP: investigating misaligned overview highlight)
 config.DebugAlign         = true    -- Align: underground->surface entrance alignment (map identities, per-entrance pos/class/sector, pairwise delta matrix, per-candidate matches + residuals) (TEMP: investigating the underground translation choosing a wrong offset)
+-- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
+-- marker, spawner, and linked passage with world+hex positions, terrain/buildability data,
+-- pairwise cross-map deltas, and best matches at lifecycle and generation-event snapshots.
+config.DebugEntrancePositions = true
 config.DebugOverview      = true    -- Overview: overview curtains + render-distance (TEMP: measuring overview camera eye/distance for "overview too far")
 config.DebugCamera        = true    -- Camera: overview-camera state samples through transitions (TEMP: investigating overview->zoom-in smoothness + far snap)
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
@@ -914,6 +918,7 @@ C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
 C.DEBUG_HOVER         = as_bool(config.DebugHover)
 C.DEBUG_ALIGN         = as_bool(config.DebugAlign)
+C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)
 C.DEBUG_OVERVIEW      = as_bool(config.DebugOverview)
 C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
 C.DEBUG_ROCKET        = as_bool(config.DebugRocket)

@@ -48,7 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 10:
--- the surface and underground stretch density suites now include the independently
--- configurable EffectDepositMarker top-up for Vistas, Research Sites, and Morale Vistas.
-SuperBigMap.GENERATOR_PATCH_VERSION = 10
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 11:
+-- the passage Link wrapper and generation/stretch stages now emit exhaustive, config-gated
+-- surface entrance / underground exit position snapshots.
+SuperBigMap.GENERATOR_PATCH_VERSION = 11

@@ -52,6 +52,21 @@ local function SetLoadingPhase(message)
 	end
 end
 
+-- Exhaustive entrance/exit forensic snapshots (no-op unless DEBUG_ENTRANCEPOSITIONS is on).
+local function EntranceSnapshot(phase, map)
+	local debug_mod = SuperBigMap.EntranceDebug
+	if debug_mod and type(debug_mod.SnapshotAll) == "function" then
+		pcall(debug_mod.SnapshotAll, phase, map)
+	end
+end
+
+local function EntranceLinkSnapshot(a, b, phase)
+	local debug_mod = SuperBigMap.EntranceDebug
+	if debug_mod and type(debug_mod.LogLink) == "function" then
+		pcall(debug_mod.LogLink, a, b, phase)
+	end
+end
+
 local function cfg_number(key, default, min_value)
 	local value = (SuperBigMap.Config or {})[key]
 	if type(value) == "number" and (min_value == nil or value >= min_value) then
@@ -915,6 +930,7 @@ local function PatchPassagePairing()
 		State.original_passage_link = passage_class.Link
 		local link_wrapper = function(self, other, ...)
 			State.original_passage_link(self, other, ...)
+			EntranceLinkSnapshot(self, other, "ElevatorPassage.Link after vanilla link, before SBM correction")
 			local ok_fix, fix_err = pcall(function()
 				local function env_of(o)
 					if type(o) ~= "table" or type(o.GetMap) ~= "function" then return nil, nil end
@@ -1188,6 +1204,8 @@ local function PatchPassagePairing()
 			if not ok_fix then
 				PairingLog("Link correction ERROR", { err = tostring(fix_err) })
 			end
+			EntranceLinkSnapshot(self, other, "ElevatorPassage.Link after SBM correction")
+			EntranceSnapshot("passage link completed", nil)
 		end
 		passage_class.Link = link_wrapper
 		State.passage_link_wrapper = link_wrapper
@@ -1551,7 +1569,9 @@ local function PatchRandomMapGenerator()
 
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
+			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
 			local results = { pcall(original_do_generate, self, map, ...) }
+			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
 			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
 
 			State.genrand_active_mapdata = false
@@ -1894,6 +1914,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			-- the loading box below. Every step is StretchLog'd so the last line before a hang
 			-- pinpoints where it stopped.
 			StretchLog("stretch branch: ENTER")
+			EntranceSnapshot("surface stretch begin", map)
 			if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
 				SuperBigMap.DebugLog.LoadTime("stretch begin")
 			end
@@ -1943,6 +1964,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: -> ScaleMarkersToFull")
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
+					EntranceSnapshot("surface after ScaleMarkersToFull", map)
 				end
 				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
 				-- decor pass) with the same transform, so what the player SEES matches the markers.
@@ -1951,6 +1973,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
 					local n_vis = MoveEntranceVisualsToScale(map)
 					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
+					EntranceSnapshot("surface after MoveEntranceVisualsToScale", map)
 					SpikeAudit(map, "surface post-MoveEntranceVisuals")
 				end
 				-- Step 3c: FLOATER AUDIT -- objects hovering above the stretched terrain (e.g.
@@ -2097,6 +2120,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				tostring(ok_branch), tostring(ok_stretch), tostring(n_grids)))
 			InitSeq("RunSectorMirrorPlan: stretch complete (terrain only)", { branch_ok = ok_branch, ok = ok_stretch, grids = n_grids })
 			StretchLog("stretch branch: -> end_loading()")
+			EntranceSnapshot("surface stretch final", map)
 			end_loading()
 			StretchLog("stretch branch: DONE")
 			return
@@ -2340,6 +2364,7 @@ local function RunUndergroundStretchIfEnabled(map)
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
 		local ok_branch, branch_err = pcall(function()
+			EntranceSnapshot("underground stretch begin", map)
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall(SyncMapDataToGrids, map)
 			SpikeAudit(map, "underground pre-stretch")
@@ -2364,12 +2389,14 @@ local function RunUndergroundStretchIfEnabled(map)
 				StretchLog("underground stretch: -> ScaleMarkersToFull")
 				local n_mark = ScaleMarkersToFull(map, false)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
+				EntranceSnapshot("underground after ScaleMarkersToFull", map)
 			end
 			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
 			if type(MoveEntranceVisualsToScale) == "function" then
 				StretchLog("underground stretch: -> MoveEntranceVisualsToScale")
 				local n_vis = MoveEntranceVisualsToScale(map)
 				StretchLog("underground stretch: entrance visuals done", { moved = n_vis })
+				EntranceSnapshot("underground after MoveEntranceVisualsToScale", map)
 			end
 			SpikeAudit(map, "underground post-MoveEntranceVisuals")
 			-- NOTE (user decision): NO entrance placement correction of any kind. Entrances on
@@ -2455,6 +2482,7 @@ local function RunUndergroundStretchIfEnabled(map)
 				SpikeAudit(main_map2, "surface at underground-stretch DONE")
 			end
 		end)
+		EntranceSnapshot("underground stretch final", map)
 		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end
 		if not ok_branch then
 			StretchLog("underground stretch: EXCEPTION -- map left as generated", { err = tostring(branch_err) })

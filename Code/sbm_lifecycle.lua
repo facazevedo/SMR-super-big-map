@@ -750,6 +750,10 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 			if elevator_btn and type(elevator_btn.Show) == "function" then
 				elevator_btn.Show()
 			end
+			local entrance_debug = SuperBigMap.EntranceDebug
+			if entrance_debug and type(entrance_debug.SnapshotAll) == "function" then
+				entrance_debug.SnapshotAll("PostNewMapLoaded:" .. id, map)
+			end
 			-- GROUND-TRUTH entrance dump (gated on DEBUG_ALIGN): logs every tunnel spawner /
 			-- marker / passage on this map, EXPANDED OR NOT -- so a vanilla run (EXPAND off) and
 			-- an expanded run at the SAME coordinates can be diffed to find where the expansion
