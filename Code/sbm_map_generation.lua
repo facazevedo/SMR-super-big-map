@@ -1631,7 +1631,9 @@ local function PatchRandomMapGenerator()
 								end
 								fmt = fmt or "F"
 								for _, pad in ipairs(plist) do
-									local radius_wu = ((pad.hex_radius or 10) + 6) * hex3
+									-- +10 hexes: the outer ~30 tiles are the FEATHER band (see below),
+								-- so the footprint itself stays inside the fully-smoothed core.
+								local radius_wu = ((pad.hex_radius or 10) + 10) * hex3
 									local r_tiles = math.floor(radius_wu / tile3 + 0.5)
 									local cx_t = math.floor(pad.x / tile3 + 0.5)
 									local cy_t = math.floor(pad.y / tile3 + 0.5)
@@ -1645,14 +1647,47 @@ local function PatchRandomMapGenerator()
 										region:copyrect(full, box_fn3(x0, y0, x1, y1), point_fn3(0, 0))
 										local smoothed = new_grid(w, h, fmt, bits)
 										local ok_s, err_s = pcall(grid_smooth, region, smoothed, 3)
+										local blended = 0
 										if ok_s then
+											-- FEATHER the region edge: a hard copyrect boundary
+											-- between smoothed interior and untouched exterior
+											-- reads as a straight LINE on the ground (user
+											-- report). Blend an edge band: original terrain at
+											-- the border -> fully smoothed at band depth, so the
+											-- transition is gradual and invisible. Integer math:
+											-- multiply before dividing (engine Lua truncates).
+											local BAND = 30 -- tiles (~3000 wu)
+											local pause3 = Global("PauseInfiniteLoopDetection")
+											local resume3 = Global("ResumeInfiniteLoopDetection")
+											if type(pause3) == "function" then pcall(pause3, "SBMPadFeather") end
+											local ok_f, err_f = pcall(function()
+												for yy = 0, h - 1 do
+													local dy0 = math.min(yy, h - 1 - yy)
+													for xx = 0, w - 1 do
+														local dd = math.min(xx, w - 1 - xx, dy0)
+														if dd < BAND then
+															local ov = region:get(xx, yy)
+															local sv = smoothed:get(xx, yy)
+															if type(ov) == "number" and type(sv) == "number" then
+																smoothed:set(xx, yy, ov + (sv - ov) * dd / BAND)
+																blended = blended + 1
+															end
+														end
+													end
+												end
+											end)
+											if type(resume3) == "function" then pcall(resume3, "SBMPadFeather") end
+											if not ok_f then
+												PairingLog("pad feather ERROR", { err = tostring(err_f) })
+											end
 											full:copyrect(smoothed, box_fn3(0, 0, w, h), point_fn3(x0, y0))
 										end
 										free_grid3(region)
 										free_grid3(smoothed)
 										PairingLog("post-gen pad smoothing", {
 											x = pad.x, y = pad.y, region = tostring(w) .. "x" .. tostring(h),
-											smoothed = ok_s, err = ok_s and nil or tostring(err_s),
+											smoothed = ok_s, feathered_cells = blended,
+											err = ok_s and nil or tostring(err_s),
 										})
 									end
 								end
