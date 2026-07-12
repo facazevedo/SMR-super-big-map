@@ -218,8 +218,8 @@ config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugVeil          = false   -- Veil: underground sector-veil lifecycle (build/teardown with reason + decal census, watchdog repairs, hover forensic). Investigation closed: SectorUnexplored proved outline-only; veil now disabled by user decision (interiors stay clear)
-config.DebugSpikes        = true    -- Spikes: terrain spike audit (global z min/max + tallest sample coordinates on a 128x128 lattice) at every stretch-pipeline stage on both maps + the timed ground-truth dumps (TEMP: locating which stage creates the entrance spike crown)
-config.DebugPairing       = true    -- Pairing: underground<->surface entrance pairing trace (every SpawnUndergroundPassage call with gate values + branch taken, wrapper install/verification at DoGenerate) (TEMP: investigating the second entrance moving per restart)
+config.DebugSpikes        = false   -- Spikes: terrain spike audit (global z min/max + tallest sample coordinates) at every stretch-pipeline stage. Investigation closed: the spikes came from the deterministic-passage correction chain, now disabled (StretchDeterministicPassages=false)
+config.DebugPairing       = false   -- Pairing: underground<->surface entrance pairing trace. Investigation closed: entrance placement reverted to vanilla (see StretchDeterministicPassages)
 config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics on mod maps (per-call anchor hex buildable-z vs terrain z, unbuildable footprint counts; also logs the unbuildable-anchor guard skips) (TEMP: investigating elevator-placement FlattenTerrainInShape assert)
 config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
 
@@ -733,7 +733,14 @@ config.FlattenSkipWhenUnbuildable = true
 -- When true, expanded maps place the surface passage exactly at the underground marker's
 -- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
 -- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
-config.StretchDeterministicPassages = true
+-- OFF by user decision (2026-07-11): the correction chain (move + pad repairs, v437-v441)
+-- kept leaving terrain-spike artifacts around the entrances, because the generator's own
+-- entrance re-flatten runs on an engine-internal path that cannot be intercepted and reads
+-- the sentinel-poisoned buildable grid at any forced position. Vanilla placement (search +
+-- random fallback) never touches unbuildable spots, so it leaves NO artifacts -- at the cost
+-- of one entrance possibly landing elsewhere per restart on expanded maps (exactly the
+-- 8bba69d behavior the user asked to return to).
+config.StretchDeterministicPassages = false
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
