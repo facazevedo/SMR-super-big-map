@@ -50,11 +50,6 @@ local function SetLoadingPhase(message)
 	if type(SuperBigMap.SetLoadingPhase) == "function" then
 		pcall(SuperBigMap.SetLoadingPhase, message)
 	end
-	-- Phase changes happen immediately before long bounded grid/object passes. Yield one real-time
-	-- frame so the footer repaint reaches the screen before the next pass occupies the Lua thread.
-	local sleep = Global("Sleep")
-	local is_realtime = Global("IsRealTimeThread")
-	if type(sleep) == "function" and type(is_realtime) == "function" and is_realtime() then sleep(1) end
 end
 
 local function cfg_number(key, default, min_value)
