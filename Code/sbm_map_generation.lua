@@ -965,15 +965,76 @@ local function PatchPassagePairing()
 					})
 					return
 				end
-				-- Move the surface passage onto the underground marker's XY.
+				-- DETERMINISTIC NEAR-MARKER SEARCH (no terrain edits). Forcing the exact
+				-- marker XY required an artificial pad -- SetHeightCircle at center height --
+				-- which reads as an elevated platform on sloped ground (user: no platforms).
+				-- Instead run vanilla's own placement search (FindBuildableAreaAround, against
+				-- the fresh grid from PairingSurfaceBuildableRebuild) from the marker outward
+				-- in a DETERMINISTIC spiral of retry centers -- identical mechanics to
+				-- vanilla's random-retry loop, but reproducible. The entrance lands on the
+				-- nearest naturally-buildable ground to the marker; vanilla's own flatten at
+				-- an all-buildable spot is a visual no-op (this is why vanilla entrances never
+				-- show platforms), so the mod edits NO terrain at all. If nothing is found
+				-- within the spiral, the vanilla (deterministic since the grid rebuild)
+				-- placement stands.
 				local point_fn = Global("point")
-				if type(point_fn) ~= "function" then return end
-				local np = point_fn(ux, uy)
-				if type(np.SetTerrainZ) == "function" then
-					local ok_z, snapped = pcall(np.SetTerrainZ, np, surface_map)
-					if ok_z and snapped then np = snapped end
+				local find_area = Global("FindBuildableAreaAround")
+				local get_shape = Global("GetExtendedSpawnShape")
+				if type(point_fn) ~= "function" or type(find_area) ~= "function"
+					or type(get_shape) ~= "function" then
+					PairingLog("near-marker search unavailable -- vanilla placement kept", {
+						find_area = tostring(type(find_area)),
+					})
+					return
 				end
+				local ok_shp, espace = pcall(get_shape, "Elevator")
+				if not (ok_shp and espace) then
+					PairingLog("near-marker search: no spawn shape -- vanilla placement kept")
+					return
+				end
+				local ok_ang, angle = pcall(surface_obj.GetAngle, surface_obj)
+				angle = (ok_ang and angle) or 0
 				local hex_grid = surface_map.object_hex_grid
+				local buildable = surface_map.buildable
+				local found_x, found_y, found_depth, attempts = nil, nil, nil, 0
+				local const_tbl2 = Global("const")
+				local hexsz = (type(const_tbl2) == "table" and type(const_tbl2.HexSize) == "number"
+					and const_tbl2.HexSize > 0) and const_tbl2.HexSize or 1000
+				local ring_step = 10 * hexsz
+				for ring = 0, 12 do
+					local r = ring * ring_step
+					local centers
+					if r == 0 then
+						centers = { { 0, 0 } }
+					else
+						local d = math.floor(r * 7 / 10)
+						centers = {
+							{ r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
+							{ d, d }, { -d, d }, { d, -d }, { -d, -d },
+						}
+					end
+					for _, o in ipairs(centers) do
+						attempts = attempts + 1
+						local ok_f, fx, fy, fd = pcall(find_area, hex_grid, buildable,
+							point_fn(ux + o[1], uy + o[2]), angle, espace)
+						if ok_f and type(fx) == "number" and type(fy) == "number" then
+							found_x, found_y, found_depth = fx, fy, fd
+							break
+						end
+					end
+					if found_x then break end
+				end
+				if not found_x then
+					PairingLog("near-marker search FAILED -- vanilla placement kept", {
+						attempts = attempts, marker = tostring(ux) .. "," .. tostring(uy),
+					})
+					return
+				end
+				local np = point_fn(found_x, found_y, found_depth)
+				if type(surface_map.SnapToTerrain) == "function" then
+					local ok_s, snapped = pcall(surface_map.SnapToTerrain, surface_map, np)
+					if ok_s and snapped then np = snapped end
+				end
 				local hex_remove = Global("HexGridShapeRemoveObject")
 				local hex_add = Global("HexGridShapeAddObject")
 				local shape
@@ -987,186 +1048,18 @@ local function PatchPassagePairing()
 				local ok_set = pcall(surface_obj.SetPos, surface_obj, np)
 				local rehexed = false
 				if shape then rehexed = pcall(hex_add, hex_grid, surface_obj, shape) == true end
-				-- PAD LEVELING via TERRAIN heights, NOT FlattenTerrainInBuildShape. v437's
-				-- correction used FlattenTerrainInBuildShape(..., "flatten unbuildable"),
-				-- which levels each hex to its BUILDABLE-GRID z -- and in flatten-unbuildable
-				-- mode a hex whose grid value is the UNBUILDABLE sentinel (2^16-1) gets
-				-- "leveled" to that garbage height -> the crown of needle spikes around the
-				-- entrance (user screenshot). Vanilla never hits it because its search only
-				-- picks all-buildable spots; we force the marker spot while the surface
-				-- buildable grid is stale/mid-build during generation. SetHeightCircle to the
-				-- live terrain height has no such dependency (falloff ring blends smoothly).
-				local terrain_api2 = Global("terrain")
-				local const_tbl2 = Global("const")
-				local hex_size = (type(const_tbl2) == "table" and type(const_tbl2.HexSize) == "number"
-					and const_tbl2.HexSize > 0) and const_tbl2.HexSize or 1000
-				-- Diagnostics (DEBUG_PAIRING): terrain z min/max sampled around a pad center +
-				-- the buildable-grid value there, before and after each leveling -- makes any
-				-- future artifact attributable from one log read.
-				local function PadDiag(tag, center)
-					if (SuperBigMap.Config or {}).DEBUG_PAIRING ~= true then return end
-					if type(terrain_api2) ~= "table" or type(terrain_api2.GetHeight) ~= "function" then return end
-					local cx, cy = center:xy()
-					local zmin, zmax
-					for _, r in ipairs({ 0, 3 * hex_size, 6 * hex_size }) do
-						local d = math.floor(r * 7 / 10) -- ~r/sqrt(2), engine Lua divides integers
-						local offsets = r == 0 and { { 0, 0 } } or {
-							{ r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
-							{ d, d }, { -d, d }, { d, -d }, { -d, -d },
-						}
-						for _, o in ipairs(offsets) do
-							local okh, h = pcall(terrain_api2.GetHeight, surface_map, point_fn(cx + o[1], cy + o[2]))
-							if okh and type(h) == "number" then
-								if zmin == nil or h < zmin then zmin = h end
-								if zmax == nil or h > zmax then zmax = h end
-							end
-						end
-					end
-					local bz = "n/a"
-					pcall(function()
-						local wth = Global("WorldToHex")
-						local q, r2 = wth(center)
-						bz = tostring(surface_map.buildable and surface_map.buildable:GetZ(q, r2))
-					end)
-					PairingLog("pad terrain " .. tag, {
-						center = tostring(cx) .. "," .. tostring(cy),
-						z_min = tostring(zmin), z_max = tostring(zmax),
-						spread = tostring(zmin and zmax and (zmax - zmin)),
-						buildable_z_at_center = bz,
-					})
-				end
-				-- radius_hexes: MUST cover the vanilla flatten footprint. The v441 leftover
-				-- spikes came from the ABANDONED-spot repair still using a hardcoded 4/7-hex
-				-- circle while the footprint is larger -- the surviving ring outside it was
-				-- the remaining "crown".
-				local function LevelPad(center, tag, radius_hexes)
-					if type(terrain_api2) ~= "table" or type(terrain_api2.SetHeightCircle) ~= "function"
-						or type(terrain_api2.GetHeight) ~= "function" then
-						PairingLog("pad leveling skipped (terrain API unavailable)", { tag = tag })
-						return
-					end
-					PadDiag(tag .. " BEFORE", center)
-					local ok_h, z = pcall(terrain_api2.GetHeight, surface_map, center)
-					if not (ok_h and type(z) == "number") then
-						PairingLog("pad leveling skipped (no terrain z)", { tag = tag })
-						return
-					end
-					local inner = ((radius_hexes or 8) + 1) * hex_size
-					local suspended = pcall(surface_map.SuspendPassEdits, surface_map, "SBMPassagePad")
-					local ok_c, err_c = pcall(terrain_api2.SetHeightCircle, surface_map, center,
-						inner, inner + 3 * hex_size, z)
-					if suspended then pcall(surface_map.ResumePassEdits, surface_map, "SBMPassagePad") end
-					if type(terrain_api2.InvalidateHeight) == "function" then
-						pcall(terrain_api2.InvalidateHeight, surface_map)
-					end
-					PairingLog("pad leveled via SetHeightCircle", {
-						tag = tag, z = z, inner = inner, ok = ok_c, err = ok_c and nil or tostring(err_c),
-					})
-					PadDiag(tag .. " AFTER", center)
-				end
-				-- BUILDABLE-GRID PATCH: v438's clean leveling was UNDONE by Picard itself --
-				-- right after Link it runs FlattenTerrainInBuildShape(shape, surface_passage,
-				-- "flatten unbuildable") at the passage's (now corrected) position, and that
-				-- levels each hex to its buildable-grid value, which here is the UNBUILDABLE
-				-- sentinel (65535, log-proven: buildable_z_at_center=65535) -> the spike crown
-				-- re-created right after our repair, then scaled x1.333 by the stretch. That
-				-- call bypasses our wraps (engine-internal path), so instead make the grid it
-				-- READS clean: write the pad's terrain z into the buildable z-grid for the pad
-				-- hexes. Any later buildable-grid flatten there (Picard's, the elevator's)
-				-- then levels to the pad height -- flat, exactly like a vanilla valid spot.
-				-- (Grid units == terrain z units: log shows buildable_z == terrain z on valid
-				-- ground, e.g. 19249/19249 at the abandoned spot.)
-				local function PatchBuildablePad(center, z, radius_hexes)
-					local buildable = surface_map.buildable
-					local z_grid = buildable and buildable.z_grid
-					local wth = Global("WorldToHex")
-					if not (z_grid and type(z_grid.set) == "function" and type(wth) == "function") then
-						PairingLog("buildable pad patch skipped (z_grid unavailable)")
-						return
-					end
-					local ok_c, cq, cr = pcall(wth, center)
-					if not (ok_c and type(cq) == "number") then return end
-					local patched = 0
-					for dq = -radius_hexes, radius_hexes do
-						for dr = -radius_hexes, radius_hexes do
-							-- axial hex distance = (|dq| + |dr| + |dq+dr|) / 2
-							local dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
-							if dist <= radius_hexes then
-								local q, r = cq + dq, cr + dr
-								-- HexToStorage: x = q + r/2 (engine Lua divides integers)
-								local ok_s = pcall(z_grid.set, z_grid, q + math.floor(r / 2), r, z)
-								if ok_s then patched = patched + 1 end
-							end
-						end
-					end
-					local verify = "n/a"
-					pcall(function() verify = tostring(buildable:GetZ(cq, cr)) end)
-					PairingLog("buildable pad patched", {
-						center = tostring(center), z = z, hexes = patched,
-						buildable_z_at_center_now = verify,
-					})
-				end
-				-- PATCH/LEVEL RADIUS = the FLATTEN SHAPE's real extent. v439 patched a 6-hex
-				-- radius, but Picard's re-flatten uses GetExtendedSpawnShape("Elevator"),
-				-- which is LARGER -- the spike audit shows a surviving ANNULUS of sentinel
-				-- needles outside our patch but inside the flatten shape (center read back
-				-- clean at 8533 while 65535 spikes sat ~2-5k wu out): the "crown" is that
-				-- ring. Measure the shape's max hex distance and cover it with margin.
-				local pad_hex_radius = 8
-				do
-					local get_shape2 = Global("GetExtendedSpawnShape")
-					if type(get_shape2) == "function" then
-						local ok_sh2, shp = pcall(get_shape2, "Elevator")
-						if ok_sh2 and type(shp) == "table" then
-							local maxd = 0
-							for _, hexpt in ipairs(shp) do
-								local ok_xy2, hq, hr = pcall(function() return hexpt:x(), hexpt:y() end)
-								if ok_xy2 and type(hq) == "number" then
-									local d2 = (math.abs(hq) + math.abs(hr) + math.abs(hq + hr)) / 2
-									if d2 > maxd then maxd = d2 end
-								end
-							end
-							if maxd > 0 then pad_hex_radius = maxd + 2 end
-						end
-					end
-					PairingLog("pad radius resolved from flatten shape", { hex_radius = pad_hex_radius })
-				end
-				LevelPad(np, "corrected-pos", pad_hex_radius)
-				local ok_padz, padz = pcall(function() return np:z() end)
-				if not (ok_padz and type(padz) == "number") then
-					local ok_g, g = pcall(terrain_api2.GetHeight, surface_map, np)
-					padz = (ok_g and type(g) == "number") and g or nil
-				end
-				if padz then
-					PatchBuildablePad(np, padz, pad_hex_radius)
-					-- Remember the pad for the post-generation re-level (belt and braces: if
-					-- anything else re-poisons the terrain during the rest of the generation,
-					-- the pad is re-leveled to this exact z after DoGenerate returns).
-					State.sbm_entrance_pads = State.sbm_entrance_pads or {}
-					local nx, ny = np:xy()
-					table.insert(State.sbm_entrance_pads, {
-						map = surface_map, x = nx, y = ny, z = padz,
-						hex_radius = pad_hex_radius,
-					})
-				end
-				-- REPAIR the abandoned spawn spot: vanilla's own spawn path already ran its
-				-- flatten at the fallback position before our move. With the fresh buildable
-				-- grid (PairingSurfaceBuildableRebuild) that flatten was CLEAN (the spot came
-				-- from an all-buildable search), so this is belt-and-braces -- full footprint
-				-- radius, unlike v441's hardcoded 4/7-hex circle whose leftover ring was the
-				-- remaining crown.
-				LevelPad(point_fn(sx, sy), "abandoned-spawn-spot", pad_hex_radius)
+				-- Obstruction clearing, exactly as vanilla does after its own placement.
 				local clear = Global("ClearObstructions")
-				local get_shape = Global("GetExtendedSpawnShape")
-				local espace = type(get_shape) == "function" and get_shape("Elevator") or nil
-				if type(clear) == "function" and espace then
-					local ok_a2, ang = pcall(surface_obj.GetAngle, surface_obj)
-					pcall(clear, surface_map, np, (ok_a2 and ang) or 0, surface_map.obj_prefab_marker, nil, espace)
+				if type(clear) == "function" then
+					pcall(clear, surface_map, np, angle, surface_map.obj_prefab_marker, nil, espace)
 				end
-				PairingLog("LINK-TIME CORRECTION: surface passage moved onto underground marker XY", {
+				local fdx, fdy = found_x - ux, found_y - uy
+				PairingLog("LINK-TIME CORRECTION: fallback entrance moved to nearest buildable ground by the marker", {
 					from = tostring(sx) .. "," .. tostring(sy),
-					to = tostring(ux) .. "," .. tostring(uy),
-					moved = ok_set, rehexed = rehexed,
+					marker = tostring(ux) .. "," .. tostring(uy),
+					to = tostring(found_x) .. "," .. tostring(found_y),
+					dist_from_marker = math.floor(math.sqrt(fdx * fdx + fdy * fdy + 0.0) + 0.5),
+					attempts = attempts, moved = ok_set, rehexed = rehexed,
 				})
 			end)
 			if not ok_fix then
