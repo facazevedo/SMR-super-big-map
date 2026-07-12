@@ -44,6 +44,14 @@ local function cfg_bool(key, default)
 	return default
 end
 
+-- Update the loading box's live status line (see sbm_loading_ui SetLoadingPhase). Safe no-op
+-- if the loading UI isn't present; " Please wait." is appended by SetLoadingPhase.
+local function SetLoadingPhase(message)
+	if type(SuperBigMap.SetLoadingPhase) == "function" then
+		pcall(SuperBigMap.SetLoadingPhase, message)
+	end
+end
+
 local function cfg_number(key, default, min_value)
 	local value = (SuperBigMap.Config or {})[key]
 	if type(value) == "number" and (min_value == nil or value >= min_value) then
@@ -1770,6 +1778,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			and lc_grid.IsModMap(map) == true
 		if lc_name ~= "PreGame" and lc_mod_map and type(SuperBigMap.ExpansionLoadingBegin) == "function" then
 			SuperBigMap.ExpansionLoadingBegin()
+			SetLoadingPhase("Expanding the surface map")
 		end
 		local function end_loading()
 			if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
@@ -1912,6 +1921,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						AnnotateDecorRelief(map)
 					end
 					SpikeAudit(map, "surface pre-stretch")
+					SetLoadingPhase("Stretching the surface terrain")
 					StretchLog("stretch branch: -> StretchSourceToFull")
 					ok_stretch, n_grids = StretchSourceToFull(map, false)
 					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
@@ -1923,6 +1933,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				-- Step 2: reposition + scale the generated decorations onto the stretched terrain
 				-- (must run AFTER the height stretch so SetTerrainZ reads the new surface).
 				if type(ScaleDecorationsToFull) == "function" then
+					SetLoadingPhase("Repositioning surface rocks and decorations")
 					StretchLog("stretch branch: -> ScaleDecorationsToFull")
 					local n_dec = ScaleDecorationsToFull(map, false)
 					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
@@ -1931,6 +1942,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
 				if type(ScaleMarkersToFull) == "function" then
+					SetLoadingPhase("Repositioning surface resource deposits")
 					StretchLog("stretch branch: -> ScaleMarkersToFull")
 					local n_mark = ScaleMarkersToFull(map, false)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
@@ -1938,6 +1950,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
 				-- decor pass) with the same transform, so what the player SEES matches the markers.
 				if type(MoveEntranceVisualsToScale) == "function" then
+					SetLoadingPhase("Aligning the underground entrances")
 					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
 					local n_vis = MoveEntranceVisualsToScale(map)
 					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
@@ -1991,6 +2004,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					-- Net effect: proportionally MORE enrichments for the 20x20, at vanilla
 					-- per-sector density -- no crowding.
 					if deposits then
+						SetLoadingPhase("Distributing surface resources and anomalies")
 						if type(deposits.TopUpDeposits) == "function" then
 							StretchLog("stretch branch: -> TopUpDeposits")
 							SafeCall(deposits.TopUpDeposits, map)
@@ -2026,6 +2040,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				local ft = now2()
 				SpikeAudit(map, "surface post-density-suite")
+				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map and map.buildable then
@@ -2316,6 +2331,7 @@ local function RunUndergroundStretchIfEnabled(map)
 	-- blocked the game (reference-counted; see sbm_loading_ui).
 	if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
 		pcall(SuperBigMap.ExpansionLoadingBegin)
+		SetLoadingPhase("Expanding the underground map")
 	end
 	create_thread(function()
 		sleep(settle_ms)
@@ -2331,16 +2347,19 @@ local function RunUndergroundStretchIfEnabled(map)
 				StretchLog("underground stretch: -> AnnotateDecorRelief")
 				AnnotateDecorRelief(map)
 			end
+			SetLoadingPhase("Stretching the underground terrain")
 			StretchLog("underground stretch: -> StretchSourceToFull")
 			local ok_s, n_grids = StretchSourceToFull(map, false)
 			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
 			SpikeAudit(map, "underground post-StretchSourceToFull")
 			if type(ScaleDecorationsToFull) == "function" then
+				SetLoadingPhase("Repositioning underground rocks and decorations")
 				StretchLog("underground stretch: -> ScaleDecorationsToFull")
 				local n_dec = ScaleDecorationsToFull(map, false)
 				StretchLog("underground stretch: decorations done", { moved = n_dec })
 			end
 			if type(ScaleMarkersToFull) == "function" then
+				SetLoadingPhase("Repositioning underground resource deposits")
 				StretchLog("underground stretch: -> ScaleMarkersToFull")
 				local n_mark = ScaleMarkersToFull(map, false)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
@@ -2364,6 +2383,7 @@ local function RunUndergroundStretchIfEnabled(map)
 			do
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map.buildable then
+					SetLoadingPhase("Rebuilding the underground build grid")
 					StretchLog("underground stretch: -> RebuildBuildableGrid")
 					SafeCall(rebuild_buildable, map)
 				end
@@ -2388,6 +2408,7 @@ local function RunUndergroundStretchIfEnabled(map)
 						SafeCall(deposits.LogBuildableSectorCensus, map, "underground post-stretch, pre-topup")
 					end
 					if type(deposits.TopUpDeposits) == "function" then
+						SetLoadingPhase("Distributing underground resources and anomalies")
 						StretchLog("underground stretch: -> TopUpDeposits")
 						SafeCall(deposits.TopUpDeposits, map)
 					end

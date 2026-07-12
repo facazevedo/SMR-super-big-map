@@ -437,7 +437,13 @@ SuperBigMap.ShowFreshRestartNotice = ShowFreshRestartNotice
 -- instead; the popup kept re-applying its context, producing a welcome -> loading -> welcome
 -- flicker. Hiding it and drawing our own box avoids that.)
 local LOADING_TITLE = "Loading Super Big Map..."
-local LOADING_BODY = "3x more map, no extra fries."
+-- The BODY is a live status line describing the current work; it always ends with
+-- "Please wait." (SetLoadingPhase normalizes that). The gold footer button carries the mod's
+-- flavor tagline instead of a second "Please wait." The default covers the window before any
+-- phase sets its message.
+local LOADING_DEFAULT_BODY = "Preparing the expanded map. Please wait."
+local LOADING_FOOTER = "3x more map, no extra fries."
+local current_phase_body = LOADING_DEFAULT_BODY
 local loading_on_welcome = false
 
 local function LoadingLog(message, data)
@@ -501,11 +507,11 @@ local function SetWelcomeLoading(active)
 				-- action greys out). The player never NEEDS to press it -- ExpansionLoadingEnd tears
 				-- the box down when the map is ready -- and if it IS pressed, the watch loop simply
 				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
-				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY),
-					wrap("Please wait."))
+				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(current_phase_body),
+					wrap(LOADING_FOOTER))
 				if ok and box then
 					loading_box = box
-					LoadingLog("loading box created over hidden welcome popup")
+					LoadingLog("loading box created over hidden welcome popup", { body = current_phase_body })
 				end
 			end
 		end
@@ -536,6 +542,28 @@ end
 -- our loading box on top. A short tick (30ms) hides the popup within ~1 frame of it appearing
 -- so it barely flashes. The loop ends when ExpansionLoadingEnd clears the flag (set on every
 -- expansion exit path), with a 60s safety backstop.
+-- Set the loading box's live status line (the body). The message is normalized to end with
+-- "Please wait." and applied to the on-screen box IMMEDIATELY via idText:SetText (no
+-- recreate -> no flicker); if the box isn't up yet, it's stored so the next box creation
+-- uses it. Callers pass a short present-tense description of the current work.
+function SuperBigMap.SetLoadingPhase(message)
+	local text = tostring(message or "")
+	text = text:gsub("%s+$", "")
+	if text == "" then
+		text = LOADING_DEFAULT_BODY
+	elseif not text:find("[Pp]lease wait%.?$") then
+		if not text:find("[%.!%?]$") then text = text .. "." end
+		text = text .. " Please wait."
+	end
+	current_phase_body = text
+	if LoadingBoxValid() and loading_box.idText and type(loading_box.idText.SetText) == "function" then
+		local untranslated = Global("Untranslated")
+		local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
+		pcall(function() loading_box.idText:SetText(wrap(text)) end)
+	end
+	LoadingLog("loading phase set", { body = text, box = LoadingBoxValid() == true })
+end
+
 -- REFERENCE-COUNTED phases (user report: the welcome popup appeared -- unclickable -- while
 -- the UNDERGROUND stretch was still hammering the main thread, because the SURFACE branch's
 -- end tore the box down as soon as IT finished). Every busy phase calls Begin/End in pairs
