@@ -741,6 +741,15 @@ config.FlattenSkipWhenUnbuildable = true
 -- of one entrance possibly landing elsewhere per restart on expanded maps (exactly the
 -- 8bba69d behavior the user asked to return to).
 config.StretchDeterministicPassages = false
+-- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
+-- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
+-- on expanded maps that grid is stale at that moment (async rebuild lands seconds later), so
+-- the search sometimes fails at the underground marker -> vanilla's random fallback -> the
+-- entrance wanders per restart. When true, the surface buildable grid is rebuilt
+-- synchronously right before the underground generation, restoring vanilla's deterministic
+-- search conditions: same spot every restart, vanilla's own clean flatten, no mod terrain
+-- edits (unlike the retired StretchDeterministicPassages correction chain).
+config.PairingSurfaceBuildableRebuild = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -970,6 +979,7 @@ C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
 C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
+C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.PairingSurfaceBuildableRebuild)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)

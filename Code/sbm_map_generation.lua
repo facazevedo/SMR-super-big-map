@@ -1479,6 +1479,40 @@ local function PatchRandomMapGenerator()
 				})
 			end
 
+			-- DETERMINISTIC ENTRANCE PAIRING, the no-terrain-touching way (config
+			-- PAIRING_SURFACE_BUILDABLE_REBUILD). The entrance pairing runs INSIDE the
+			-- UNDERGROUND generation: vanilla searches MainMap's BUILDABLE grid around each
+			-- underground marker and falls back to a RANDOM position when the search fails.
+			-- On expanded maps the surface buildable grid is STALE at that moment (built from
+			-- the blank map; the async "Buildable grid ready" rebuild lands seconds later), so
+			-- the search sometimes fails -> random fallback -> an entrance at a different spot
+			-- per restart. Rebuilding the surface buildable grid RIGHT HERE -- synchronously,
+			-- from the fully generated surface terrain, before the underground generation --
+			-- makes the search inputs deterministic: same terrain, same grid, same marker
+			-- positions => the SAME all-buildable spot every run, vanilla's own clean flatten,
+			-- zero terrain interference from the mod. (The forced-position correction chain of
+			-- v437-v441 stays retired: forcing spots the grid calls unbuildable is what
+			-- produced the spike artifacts.)
+			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
+				local env = (type(mapdata) == "table" and mapdata.Environment)
+					or (template and template.Environment)
+				if env == "Underground" then
+					local main_map = Global("MainMap")
+					local rebuild = Global("RebuildBuildableGrid")
+					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
+						local t0 = 0
+						local ticks = Global("GetPreciseTicks")
+						if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
+						local ok_rb, err_rb = pcall(rebuild, main_map)
+						local t1 = t0
+						if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
+						DebugPrint(string.format(
+							"surface buildable grid rebuilt before underground generation (deterministic entrance pairing): ok=%s ms=%s%s",
+							tostring(ok_rb), tostring(t1 - t0), ok_rb and "" or (" err=" .. tostring(err_rb))))
+					end
+				end
+			end
+
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
 			local results = { pcall(original_do_generate, self, map, ...) }
