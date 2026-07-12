@@ -200,6 +200,67 @@ local function SectorIsScanned(sector)
 	return type(sector) == "table" and sector.status ~= "unexplored"
 end
 
+-- True for the N-sector-wide perimeter ring of the expanded sector grid. Prefer the live
+-- sector's col/row; fall back to world-distance math when sector metadata is unavailable.
+-- Used only to route TOP-UP extras -- vanilla-generated markers stay put.
+local function IsInOuterSectorRing(map, x, y, ring_sectors)
+	ring_sectors = math.max(0, math.floor(ring_sectors or 0))
+	if ring_sectors <= 0 then return false end
+	local city = map and map.City
+	local sector = SectorAtPoint(map, x, y)
+	local col, row = sector and sector.col, sector and sector.row
+	local cols, rows = 0, 0
+	if city and type(city.MapSectors) == "table" then
+		while type(city.MapSectors[cols + 1]) == "table" do cols = cols + 1 end
+		if cols > 0 then
+			while city.MapSectors[1][rows + 1] ~= nil do rows = rows + 1 end
+		end
+	end
+	if type(col) == "number" and type(row) == "number" and cols > 0 and rows > 0 then
+		return col <= ring_sectors or row <= ring_sectors
+			or col > cols - ring_sectors or row > rows - ring_sectors
+	end
+	local map_w, map_h = MapWorldSize(map)
+	local get_step = Global("GetMapSectorTileSize")
+	if map_w and map_h and type(get_step) == "function" then
+		local ok_s, step = pcall(get_step, map)
+		if ok_s and type(step) == "number" and step > 0 then
+			local band = ring_sectors * step
+			return x < band or y < band or x >= map_w - band or y >= map_h - band
+		end
+	end
+	return false
+end
+
+-- How much higher the surrounding terrain is than this already-flat/buildable candidate.
+-- Best-of-N random selection uses this only as a preference, keeping placement random while
+-- favoring low pockets between mountains over isolated mountaintops.
+local function ValleyScore(map, pt)
+	local terrain_api = Global("terrain")
+	local point = Global("point")
+	if not (type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
+		and type(point) == "function" and pt and type(pt.xy) == "function") then return 0 end
+	local ok_c, center_z = pcall(terrain_api.GetHeight, map, pt)
+	if not ok_c or type(center_z) ~= "number" then return 0 end
+	local x, y = pt:xy()
+	local const_tbl = Global("const")
+	local hex = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
+		and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
+	local radius = 4 * hex
+	local diagonal = math.floor(radius * 7 / 10)
+	local offsets = {
+		{ radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
+		{ diagonal, diagonal }, { -diagonal, diagonal },
+		{ diagonal, -diagonal }, { -diagonal, -diagonal },
+	}
+	local score = 0
+	for _, o in ipairs(offsets) do
+		local ok_h, z = pcall(terrain_api.GetHeight, map, point(x + o[1], y + o[2]))
+		if ok_h and type(z) == "number" and z > center_z then score = score + (z - center_z) end
+	end
+	return score
+end
+
 local DepositRules = {}
 
 -- Called for every freshly-created expansion clone (no-op unless it is a scan-gated deposit).
@@ -1063,8 +1124,11 @@ function DepositRules.TopUpDeposits(map)
 			-- excluding only the scanned start sector: this keeps relocated/added markers from
 			-- piling into the frame L-strip (which made one region far denser than the rest), and
 			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
+			-- The surface outer ring is reserved for anomaly top-up extras.
 			local sector = SectorAtPoint(map, x, y)
-			if sector and not SectorIsScanned(sector) then
+			local reserved_ring = not IsUndergroundMap(map) and IsInOuterSectorRing(map, x, y,
+				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)
+			if sector and not SectorIsScanned(sector) and not reserved_ring then
 				local pt = point(x, y)
 				if CanReceiveDeposit(map, pt) then
 					local tt = TerrainTypeAt(map, pt) or -1
@@ -1129,8 +1193,10 @@ end
 -- and the scaling happens here instead. Clones existing anomaly markers: CloneObjectAtOffset's
 -- CopyProperties preserves the CATEGORY (sequence / tech_action); the actual reward resolves at
 -- scan time, and breakthroughs remain pool-capped by the game (City trims extras) -- the same
--- safety arguments as the original design. Placement mirrors TopUpDeposits: unscanned-sector
--- tiles across the whole map, hidden + sector-registered so a real scan reveals them.
+-- safety arguments as the original design. Surface extras are placed in the outer sector ring,
+-- hidden + sector-registered so a real scan reveals them. Underground extras retain whole-map
+-- placement because there is no surface mountain-edge ring there. Surface candidates must also
+-- be buildable, and random selection is biased toward valleys between higher terrain.
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	map = map or Global("CurrentMap")
@@ -1203,22 +1269,37 @@ function DepositRules.TopUpAnomalies(map)
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
+		local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
+		local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 		for _ = 1, MAX_SAMPLES do
 			if #candidates >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
 			local sector = SectorAtPoint(map, x, y)
-			if sector and not SectorIsScanned(sector) then
+			local in_target_area = not surface_edge_ring or IsInOuterSectorRing(map, x, y, ring_sectors)
+			if sector and not SectorIsScanned(sector) and in_target_area then
 				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt) then
-					candidates[#candidates + 1] = { x = x, y = y }
+				local reachable_ground = CanReceiveDeposit(map, pt)
+					and (not surface_edge_ring or IsBuildableAt(map, pt))
+				if reachable_ground then
+					candidates[#candidates + 1] = {
+						x = x, y = y, valley_score = surface_edge_ring and ValleyScore(map, pt) or 0,
+					}
 				end
 			end
 		end
 		pool_final = #candidates
 		for _ = 1, shortfall do
 			if #candidates == 0 then break end
+			-- Best-of-N random choice: random across the ring, biased toward a lower
+			-- candidate when nearby mountain relief makes one available.
+			local choices = surface_edge_ring
+				and math.max(1, math.floor(cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4)) or 1
 			local ci = RandInt(#candidates) + 1
+			for _ = 2, math.min(choices, #candidates) do
+				local alt = RandInt(#candidates) + 1
+				if (candidates[alt].valley_score or 0) > (candidates[ci].valley_score or 0) then ci = alt end
+			end
 			local c = candidates[ci]
 			table.remove(candidates, ci)
 			local template = templates[RandInt(#templates) + 1]
@@ -1260,6 +1341,9 @@ function DepositRules.TopUpAnomalies(map)
 		area_factor = string.format("%.3f", area_factor),
 		total_before = total_current, target = target, added = added, templates = #templates,
 		map = tostring(map.name), pool = pool_final,
+		surface_edge_ring = not IsUndergroundMap(map),
+		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
+		valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4,
 		source_mix = TallyString(src_by_cat),
 		added_mix = TallyString(added_by_cat),
 	})
@@ -1357,7 +1441,9 @@ function DepositRules.TopUpEffectDeposits(map)
 			if #candidates >= MAX_POOL then break end
 			local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
 			local sector = SectorAtPoint(map, x, y)
-			if sector and (IsUndergroundMap(map) or not SectorIsScanned(sector)) then
+			local reserved_ring = not IsUndergroundMap(map) and IsInOuterSectorRing(map, x, y,
+				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)
+			if sector and (IsUndergroundMap(map) or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
 				if CanReceiveDeposit(map, pt) then candidates[#candidates + 1] = { x = x, y = y } end
 			end

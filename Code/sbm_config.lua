@@ -417,6 +417,14 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
+-- Surface anomaly TOP-UP extras are reserved for this many sector rows/columns along every
+-- outer edge. Other top-up families avoid this ring. Vanilla-generated markers are not moved.
+-- 0 restores whole-map placement with no reserved ring.
+config.TopUpAnomalyOuterRingSectors = 3
+-- For each anomaly extra, compare this many random valid ring candidates and use the one with
+-- the most higher terrain nearby. This keeps distribution random while preferring reachable
+-- low ground between mountains. 1 = no valley preference.
+config.TopUpAnomalyValleyChoices = 4
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
@@ -945,6 +953,8 @@ C.TOPUP_ANOMALIES = as_bool(config.TopUpAnomalies)
 C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
 C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
 C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
+C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
+C.TOPUP_ANOMALY_VALLEY_CHOICES = as_number(config.TopUpAnomalyValleyChoices, 4)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
