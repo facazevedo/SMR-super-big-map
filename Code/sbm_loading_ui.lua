@@ -536,8 +536,17 @@ end
 -- our loading box on top. A short tick (30ms) hides the popup within ~1 frame of it appearing
 -- so it barely flashes. The loop ends when ExpansionLoadingEnd clears the flag (set on every
 -- expansion exit path), with a 60s safety backstop.
+-- REFERENCE-COUNTED phases (user report: the welcome popup appeared -- unclickable -- while
+-- the UNDERGROUND stretch was still hammering the main thread, because the SURFACE branch's
+-- end tore the box down as soon as IT finished). Every busy phase calls Begin/End in pairs
+-- (surface stretch branch, underground stretch thread); the box + popup-hiding stay up until
+-- the LAST phase ends, so the game becomes interactive exactly when everything is done.
+local loading_refs = 0
+
 function SuperBigMap.ExpansionLoadingBegin()
+	loading_refs = loading_refs + 1
 	if loading_on_welcome then
+		LoadingLog("ExpansionLoadingBegin: additional phase joined", { refs = loading_refs })
 		return
 	end
 	loading_on_welcome = true
@@ -591,6 +600,12 @@ end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
 function SuperBigMap.ExpansionLoadingEnd()
+	if loading_refs > 1 then
+		loading_refs = loading_refs - 1
+		LoadingLog("ExpansionLoadingEnd: phase ended, others still busy -- box stays", { refs = loading_refs })
+		return
+	end
+	loading_refs = 0
 	local was_on = loading_on_welcome
 	loading_on_welcome = false
 	if was_on and SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then

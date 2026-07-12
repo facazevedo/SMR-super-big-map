@@ -2310,6 +2310,13 @@ local function RunUndergroundStretchIfEnabled(map)
 	map.SuperBigMapUndergroundStretchDone = true
 	local settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
 	StretchLog("underground stretch: scheduled", { settle_ms = settle_ms, desired = desired, generator = gen_t })
+	-- LOADING PHASE: keep the loading box up (and the welcome popup hidden) until this
+	-- stretch too has finished -- the box previously came down when the SURFACE branch
+	-- finished, leaving the welcome popup visible but unclickable while this thread still
+	-- blocked the game (reference-counted; see sbm_loading_ui).
+	if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
+		pcall(SuperBigMap.ExpansionLoadingBegin)
+	end
 	create_thread(function()
 		sleep(settle_ms)
 		local pause_ild = Global("PauseInfiniteLoopDetection")
@@ -2430,6 +2437,11 @@ local function RunUndergroundStretchIfEnabled(map)
 		if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
 		StretchLog("underground stretch: DONE", { ok = ok_branch })
 		DebugPrint("underground stretch complete")
+		-- End of this loading phase (single exit point of the thread; every step above is
+		-- pcall-guarded, so this always runs).
+		if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
+			pcall(SuperBigMap.ExpansionLoadingEnd)
+		end
 	end)
 	return true
 end
