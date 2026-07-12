@@ -761,6 +761,18 @@ config.PairingSurfaceBuildableRebuild = true
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
 -- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
 config.PassagePadSmoothing = true
+-- HEIGHT BUDGET (sbm_terrain_copy stretch_one). The height grid is 16-bit (0..65535); on
+-- high-relief maps the x4/3 height scale overflows the ceiling (60657*4/3 = 80876) and the
+-- tallest peaks clip into flat plateaus. Two remedies (user decision "shift + adaptive
+-- z-scale"), applied as one affine transform h' = h*zmul/zdiv + zadd:
+-- Shift the whole height field down so the SOURCE minimum lands ~1 m above 0 -- frees
+-- min*scale of headroom at the top. Pure translation: slopes and relief unchanged.
+config.StretchShiftHeightsDown = true
+-- If the span STILL overflows after the shift, reduce ONLY the Z scale to exactly fit:
+-- zmul/zdiv = (cap-margin)/(max-min) (~1.20 on the reference map vs 1.333). Slopes come out
+-- ~90% of vanilla steepness ONLY on maps that need it; most maps keep the full 4/3. The
+-- relief-dz and height-range consumers read the stamped factor, so seating stays correct.
+config.StretchAdaptiveZScale = true
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
@@ -992,6 +1004,8 @@ C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.PairingSurfaceBuildableRebuild)
 C.PASSAGE_PAD_SMOOTHING = as_bool(config.PassagePadSmoothing)
+C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
+C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.PASSAGE_CORRECTION_MIN_DELTA = as_number(config.PassageCorrectionMinDelta, 40000)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false

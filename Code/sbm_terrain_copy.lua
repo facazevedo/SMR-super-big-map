@@ -615,7 +615,7 @@ end
 -- it from the map-editor property handler, so calling it in-game would ADD a restriction
 -- vanilla games don't have. Idempotent per map (flag stamp). MUST run before the stretch
 -- branches' RebuildBuildableGrid.
-local function ScaleHeightRanges(map, mul, div)
+local function ScaleHeightRanges(map, mul, div, add_wu)
 	if cfg_bool("STRETCH_SCALE_HEIGHTS", true) ~= true then return false end
 	local mapdata = map and map.mapdata
 	if type(mapdata) ~= "table" or type(mul) ~= "number" or type(div) ~= "number" or div <= 0 then
@@ -626,8 +626,12 @@ local function ScaleHeightRanges(map, mul, div)
 		StretchLog("ScaleHeightRanges: already scaled -- skip")
 		return false
 	end
+	-- Ranges are in METERS; the height transform is affine in world units
+	-- (h' = h*mul/div + add_wu), so the meter transform is v*mul/div + add_wu/guim.
+	add_wu = type(add_wu) == "number" and add_wu or 0
+	local guim_v = Global("guim") or 1000
 	local function scale_out(v, up)
-		local scaled = (v * mul + 0.0) / div
+		local scaled = (v * mul + 0.0) / div + (add_wu + 0.0) / guim_v
 		return up and math.ceil(scaled) or math.floor(scaled)
 	end
 	local function scale_range(tag, range)
@@ -639,7 +643,7 @@ local function ScaleHeightRanges(map, mul, div)
 		range.from = scale_out(from0, false)
 		range.to = scale_out(to0, true)
 		StretchLog("ScaleHeightRanges: scaled", {
-			range = tag, mul = mul, div = div,
+			range = tag, mul = mul, div = div, add_wu = add_wu,
 			from = tostring(from0) .. " -> " .. tostring(range.from),
 			to = tostring(to0) .. " -> " .. tostring(range.to),
 		})
@@ -741,15 +745,30 @@ local function StretchSourceToFull(map, debug)
 			-- slope steepness and object seating geometry are preserved (XY-only stretching made
 			-- slopes 25% shallower while object meshes scaled x1.333 in all axes; big formations
 			-- sculpted into relief ended up floating). Height grid only -- type/colour/biome are
-			-- CATEGORICAL values and must never be scaled. In-place GridMulDivAdd (grid*mul/div),
-			-- clamped to the engine height ceiling if the map's peaks would overflow.
+			-- CATEGORICAL values and must never be scaled.
+			--
+			-- HEIGHT BUDGET (user decision, "shift + adaptive z-scale"): the grid is 16-bit
+			-- (0..cap=65535). High-relief maps overflow at x4/3 (60657*4/3 = 80876) and clip
+			-- into flat-top plateaus. Two gated remedies, applied as ONE affine GridMulDivAdd
+			-- (h' = h*zmul/zdiv + zadd):
+			--   STRETCH_SHIFT_HEIGHTS_DOWN -- shift the whole field down so the SOURCE minimum
+			--     lands at FLOOR_MARGIN (frees min*scale of headroom at the top);
+			--   STRETCH_ADAPTIVE_Z_SCALE   -- if the span STILL overflows, reduce only the Z
+			--     scale to exactly fit: zmul/zdiv = (cap-FLOOR_MARGIN)/(max0-min0) (~1.20 on
+			--     this map vs 1.333; slopes ~90% of vanilla steepness ONLY on maps that need it).
+			-- min0/max0 are measured on the SOURCE grid (src_sub) BEFORE the resample: the
+			-- resampled grid's minimum includes the border-ring interpolation artifact (~33),
+			-- which would nullify the shift. The applied transform is STAMPED on the map
+			-- (SuperBigMapZScaleMul/Div/Add) for the height-range scaling and the relief-dz
+			-- consumers. Both flags false = exactly the old behavior (x full/source, add 0).
 			if scale_values and cfg_bool("STRETCH_SCALE_HEIGHTS", true) then
 				local grid_muldivadd = Global("GridMulDivAdd")
 				local grid_minmax = Global("GridMinMax")
 				if type(grid_muldivadd) == "function" then
+					-- Source-grid span (pre-resample: artifact-free vanilla values).
 					local min0, max0
 					if type(grid_minmax) == "function" then
-						local ok_mm, a, b = pcall(grid_minmax, stretched)
+						local ok_mm, a, b = pcall(grid_minmax, src_sub)
 						if ok_mm then min0, max0 = a, b end
 					end
 					local cap
@@ -758,23 +777,44 @@ local function StretchSourceToFull(map, debug)
 						and type(const_tbl.TerrainHeightScale) == "number" and const_tbl.TerrainHeightScale > 0 then
 						cap = math.floor(const_tbl.MaxTerrainHeight / const_tbl.TerrainHeightScale)
 					end
-					local ok_scale, err_scale = pcall(grid_muldivadd, stretched, full_tw, sw_tiles, 0)
+					local FLOOR_MARGIN = 1000 -- 1 m of bottom headroom (resample undershoot buffer)
+					local zmul, zdiv, zadd = full_tw, sw_tiles, 0
+					local adaptive = false
+					if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
+						local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
+						if shift and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
+							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
+							zmul, zdiv = cap - FLOOR_MARGIN, max0 - min0
+							adaptive = true
+						end
+						if shift then
+							zadd = FLOOR_MARGIN - math.floor(min0 * zmul / zdiv)
+						end
+					end
+					local ok_scale, err_scale = pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
+					-- Stamp the applied Z transform for consumers (height ranges, relief dz).
+					map.SuperBigMapZScaleMul = zmul
+					map.SuperBigMapZScaleDiv = zdiv
+					map.SuperBigMapZScaleAdd = zadd
 					local min1, max1
 					if type(grid_minmax) == "function" then
 						local ok_mm2, a2, b2 = pcall(grid_minmax, stretched)
 						if ok_mm2 then min1, max1 = a2, b2 end
 					end
+					-- Clamp belt-and-braces: the border-ring resample undershoot can go negative
+					-- after the shift, and a hair of overshoot can exceed the cap at the rim.
 					local clamped = false
-					if cap and type(max1) == "number" and max1 > cap then
+					if cap and ((type(max1) == "number" and max1 > cap) or (type(min1) == "number" and min1 < 0)) then
 						local grid_clamp = Global("GridClamp")
 						if type(grid_clamp) == "function" then
 							clamped = pcall(grid_clamp, stretched, 0, cap) == true
 						end
 					end
-					StretchLog("height scale (full 3D stretch)", {
+					StretchLog("height scale (full 3D stretch, shift + adaptive z)", {
 						grid = label, ok = ok_scale, err = ok_scale and nil or tostring(err_scale),
-						mul = full_tw, div = sw_tiles,
-						min_before = tostring(min0), max_before = tostring(max0),
+						zmul = zmul, zdiv = zdiv, zadd = zadd, adaptive = adaptive,
+						z_scale = string.format("%.4f", (zmul + 0.0) / zdiv),
+						src_min = tostring(min0), src_max = tostring(max0),
 						min_after = tostring(min1), max_after = tostring(max1),
 						cap = tostring(cap), clamped = clamped,
 					})
@@ -825,9 +865,13 @@ local function StretchSourceToFull(map, debug)
 	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
 	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then
 		done = done + 1
-		-- Height VALUES just scaled x(full/source) -> the declared buildable/playable height
-		-- ranges must scale with them (see ScaleHeightRanges) before any buildable rebuild.
-		timed("height-ranges", ScaleHeightRanges, map, full_tw, sw_tiles)
+		-- Height VALUES just transformed (h*zmul/zdiv + zadd, stamped by stretch_one) -> the
+		-- declared buildable/playable height ranges must follow the SAME affine transform
+		-- before any buildable rebuild.
+		timed("height-ranges", ScaleHeightRanges, map,
+			map.SuperBigMapZScaleMul or full_tw,
+			map.SuperBigMapZScaleDiv or sw_tiles,
+			map.SuperBigMapZScaleAdd or 0)
 	end
 	StretchLog("StretchSourceToFull: -> stretch TYPE")
 	if timed("type", stretch_one, "type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
@@ -1039,7 +1083,14 @@ local function ScaleDecorationsToFull(map, debug)
 					and type(terrain_api_g.GetHeight) == "function" then
 					local ok_h, h = pcall(terrain_api_g.GetHeight, map, np)
 					if ok_h and type(h) == "number" then
-						np = point_fn(nx, ny, h + math.floor(dz * scale_x + 0.5))
+						-- dz scales by the Z factor (which the shift+adaptive height transform
+						-- may have set below the XY factor; the shift offset cancels in a
+						-- difference). Fallback: the XY factor when no stamp (heights unscaled).
+						local zs = (type(map.SuperBigMapZScaleMul) == "number"
+							and type(map.SuperBigMapZScaleDiv) == "number"
+							and map.SuperBigMapZScaleDiv > 0)
+							and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
+						np = point_fn(nx, ny, h + math.floor(dz * zs + 0.5))
 						z_ok = true
 						z_mode = "relief"
 					end
@@ -1286,7 +1337,13 @@ local function MoveEntranceVisualsToScale(map)
 			and type(terrain_api.GetHeight) == "function" then
 			local ok_h, h = pcall(terrain_api.GetHeight, map, np)
 			if ok_h and type(h) == "number" then
-				np = point_fn(nx, ny, h + math.floor(dz * scale + 0.5))
+				-- dz scales by the Z factor stamped by the height transform (may be below the
+				-- XY factor under adaptive z-scale; the shift offset cancels in a difference).
+				local zs = (type(map.SuperBigMapZScaleMul) == "number"
+					and type(map.SuperBigMapZScaleDiv) == "number"
+					and map.SuperBigMapZScaleDiv > 0)
+					and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale
+				np = point_fn(nx, ny, h + math.floor(dz * zs + 0.5))
 				placed_z = true
 			end
 		end
