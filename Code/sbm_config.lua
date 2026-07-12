@@ -411,14 +411,20 @@ config.EvenOutDepositDensity = true
 -- map. Lower = sparser (closer to vanilla), higher = keep more in place. Tune from the
 -- DebugDeposits DISTRIBUTION report (start-sector count vs average).
 config.MaxResourceDepositsPerSector = 3
--- DEPOSIT TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
+-- ENRICHMENT TOP-UP SWITCHES. Each expanded-map population can be controlled independently.
+config.TopUpResources = true
+config.TopUpAnomalies = true
+config.TopUpVistas = true
+config.TopUpResearchSites = true
+config.TopUpMoraleVistas = true
+
+-- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
 -- deposits are cloned onto terrain-matched frame tiles until the total reaches
 -- source_count * area_factor (vanilla density x the bigger area); the clones are hidden until
 -- their sector is scanned, and the even-out pass then spreads everything. All resource types
 -- scale proportionally, including concrete (a cloned concrete marker paints its own regolith
 -- patch on scan). false = native (Big) deposit count.
-config.EnableDepositTopUp = true
 -- Override the deposit target scale. false = auto (area factor); a number forces that multiplier.
 config.DepositCountScaleOverride = false
 
@@ -713,24 +719,19 @@ config.RmgPlacementFallbackScale = 0.6
 -- NOTE: in STRETCH fill mode this (and the whole RmgPlacement in-generation auto-fit) is
 -- SKIPPED: any preset-prop change shifts the generator's random stream, so the same map
 -- coordinates produce a DIFFERENT layout than vanilla (terrain prefabs at other positions /
--- rotations). Stretch uses the POST-generation AnomalyTopupPostGen pass below instead.
-config.ScaleAnomalyCountsToMapSize = true
+-- rotations). Stretch uses the POST-generation anomaly top-up pass below instead. Both paths
+-- are controlled by TopUpAnomalies above.
 -- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies) -- the stretch-mode
--- replacement for ScaleAnomalyCountsToMapSize. After generation, clones anomaly MARKERS
+-- replacement for in-generation count scaling. After generation, clones anomaly MARKERS
 -- (categories preserved via property copy; rewards resolve at scan; breakthroughs stay
 -- pool-capped by the game) up to vanilla density x area factor, onto unscanned-sector tiles,
 -- hidden + sector-registered so a real scan reveals them. Generator output stays bit-identical
 -- to vanilla.
-config.AnomalyTopupPostGen = true
 -- EFFECT-DEPOSIT TOP-UP (sbm_deposits.lua TopUpEffectDeposits). EffectDepositMarker is the
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
--- enabled effect types up to their source count x area factor. The master switch disables all
--- effect-deposit top-ups; the per-type switches let each family be controlled separately.
-config.EnableEffectDepositTopUp = true
-config.TopUpVistas = true
-config.TopUpResearchSites = true
-config.TopUpMoraleVistas = true
+-- enabled effect types up to their source count x area factor. The three per-type switches above
+-- let each family be controlled separately.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI
@@ -939,7 +940,11 @@ C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
 C.RESPACE_ANOMALIES_TO_VANILLA = as_bool(config.RespaceAnomaliesToVanilla)
 C.EVEN_OUT_DEPOSIT_DENSITY = as_bool(config.EvenOutDepositDensity)
 C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
-C.ENABLE_DEPOSIT_TOPUP = as_bool(config.EnableDepositTopUp)
+C.TOPUP_RESOURCES = as_bool(config.TopUpResources)
+C.TOPUP_ANOMALIES = as_bool(config.TopUpAnomalies)
+C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
+C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
+C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
@@ -1026,12 +1031,6 @@ C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.8)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
 C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
-C.SCALE_ANOMALY_COUNTS_TO_MAP_SIZE = as_bool(config.ScaleAnomalyCountsToMapSize)
-C.ANOMALY_TOPUP_POST_GEN = as_bool(config.AnomalyTopupPostGen)
-C.ENABLE_EFFECT_DEPOSIT_TOPUP = as_bool(config.EnableEffectDepositTopUp)
-C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
-C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
-C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
 C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)

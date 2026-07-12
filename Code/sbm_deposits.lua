@@ -915,7 +915,7 @@ end
 -- EvenOutDepositDensity then spreads everything to even per-sector density. ALL resource types
 -- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
 -- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
--- generates the terrain patch), so no manual imprint is needed. Gated by ENABLE_DEPOSIT_TOPUP.
+-- generates the terrain patch), so no manual imprint is needed. Gated by TOPUP_RESOURCES.
 -- "Water=5 Metals=3 ..." -- sorted flat tally string for the top-up proportion logs.
 local function TallyString(tbl)
 	local keys = {}
@@ -961,7 +961,7 @@ function DepositRules.LogBuildableSectorCensus(map, label)
 end
 
 function DepositRules.TopUpDeposits(map)
-	if cfg().ENABLE_DEPOSIT_TOPUP ~= true then return end
+	if cfg().TOPUP_RESOURCES ~= true then return end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
@@ -1121,7 +1121,7 @@ function DepositRules.TopUpDeposits(map)
 	DepositRules.LogDistributionReport(map, "after deposit top-up")
 end
 
--- POST-GENERATION anomaly top-up (config ANOMALY_TOPUP_POST_GEN). Raises the ANOMALY population
+-- POST-GENERATION anomaly top-up (config TOPUP_ANOMALIES). Raises the ANOMALY population
 -- to vanilla density x area WITHOUT touching the generator: the previous in-generation count
 -- scaling (sbm_rmg_placement) shifted the generator's random stream, so the same coordinates
 -- produced a DIFFERENT map than vanilla (terrain prefabs at other positions/rotations) -- the
@@ -1132,7 +1132,7 @@ end
 -- safety arguments as the original design. Placement mirrors TopUpDeposits: unscanned-sector
 -- tiles across the whole map, hidden + sector-registered so a real scan reveals them.
 function DepositRules.TopUpAnomalies(map)
-	if cfg().ANOMALY_TOPUP_POST_GEN ~= true then return end
+	if cfg().TOPUP_ANOMALIES ~= true then return end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
@@ -1265,7 +1265,7 @@ function DepositRules.TopUpAnomalies(map)
 	})
 end
 
--- POST-GENERATION EFFECT-DEPOSIT top-up (config ENABLE_EFFECT_DEPOSIT_TOPUP). These markers
+-- POST-GENERATION EFFECT-DEPOSIT top-up. These markers
 -- spawn the non-minable map bonuses used by Vistas and Research Sites. They are not resource
 -- deposits or anomalies, so neither existing top-up includes them. Top up each enabled
 -- deposit_type independently to preserve its exact source ratio. BeautyEffectDeposit,
@@ -1283,7 +1283,6 @@ local function EffectDepositTopUpEnabled(deposit_type)
 end
 
 function DepositRules.TopUpEffectDeposits(map)
-	if cfg().ENABLE_EFFECT_DEPOSIT_TOPUP ~= true then return end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset

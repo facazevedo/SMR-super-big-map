@@ -363,7 +363,7 @@ function RmgPlacement.Begin(generator, map)
 	-- resolves at scan; breakthrough self-trims to the available pool at load). FreeTech/
 	-- TechUnlock/Event scale freely; breakthrough plateaus at the pool.
 	local anom_scale = 1.0
-	if cfg().SCALE_ANOMALY_COUNTS_TO_MAP_SIZE == true then
+	if cfg().TOPUP_ANOMALIES == true then
 		local override = cfg().ANOMALY_COUNT_SCALE_OVERRIDE
 		anom_scale = (type(override) == "number" and override > 0) and override or AreaFactor(map)
 		if anom_scale > 1.0 then
