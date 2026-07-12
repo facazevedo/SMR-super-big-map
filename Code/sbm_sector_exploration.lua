@@ -890,18 +890,21 @@ local function VanillaStartPick(city, map)
 	end
 	-- SINGLE START SECTOR (user decision): vanilla's fallback branch can return TWO winners
 	-- (best-metals sector + nearest-concrete sector) when no single sector has both
-	-- Metals>=50 and Concrete. The expanded start reveals exactly ONE sector: pick one of
-	-- the winners with the SAME seeded stream (deterministic per map seed).
+	-- Metals>=50 and Concrete. The expanded start reveals exactly ONE sector, chosen
+	-- PLAIN-RANDOMLY among the winners (user decision: no determinism needed here -- a
+	-- restart may pick the other one).
 	if #revealed > 1 then
-		local ok_one, chosen = pcall(trand, revealed)
-		if ok_one and chosen then
-			StartLog("multiple winners -- picking one (single start sector)", {
-				count = #revealed, chosen = tostring(chosen.id),
-			})
-			revealed = { chosen }
-		else
-			revealed = { revealed[1] }
+		local idx = 1
+		local rand_int = Engine.RandInt
+		if type(rand_int) == "function" then
+			local ok_r, r = pcall(rand_int, #revealed)
+			if ok_r and type(r) == "number" then idx = r + 1 end
 		end
+		local chosen = revealed[idx] or revealed[1]
+		StartLog("multiple winners -- picking one at random (single start sector)", {
+			count = #revealed, chosen = tostring(chosen.id),
+		})
+		revealed = { chosen }
 	end
 	local winners = {}
 	for _, sec in ipairs(revealed) do
