@@ -1840,7 +1840,120 @@ local function MoveEntranceVisualsToScale(map)
 	-- That is harmless on a vanilla-sized map, but after the independent 4/3 stretch the badge can
 	-- end up tens of thousands of world units from the passage and the Elevator that snaps to it.
 	-- Preserve the gameplay marker position, but bind its visual sign to marker.spawner -- the exact
-	-- final Surface/UndergroundPassage object that owns the entrance.
+	-- final Surface/UndergroundPassage object that owns the entrance. Keep the badge one or two
+	-- clear hexes OUTSIDE the future Elevator footprint so it is close without sitting on its roof.
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local get_unbuildable = Global("buildUnbuildableZ")
+	local get_elevator_shape = Global("GetExtendedSpawnShape")
+	local badge_footprint_radius = 0
+	if type(get_elevator_shape) == "function" then
+		local ok_shape, shape = pcall(get_elevator_shape, "Elevator")
+		if ok_shape and type(shape) == "table" then
+			for _, shape_hex in ipairs(shape) do
+				local hq, hr = PointXY(shape_hex)
+				if type(hq) == "number" and type(hr) == "number" then
+					local distance = (math.abs(hq) + math.abs(hr) + math.abs(hq + hr)) / 2
+					if distance > badge_footprint_radius then badge_footprint_radius = distance end
+				end
+			end
+		end
+	end
+	badge_footprint_radius = math.floor(badge_footprint_radius)
+	local function find_badge_side_position(sign, center_x, center_y)
+		local buildable = map.buildable
+		local hex_grid = map.object_hex_grid
+		if type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function"
+			or not buildable or type(buildable.GetZ) ~= "function"
+			or type(get_unbuildable) ~= "function" then
+			return nil, { reason = "hex/buildable APIs unavailable" }
+		end
+		local ok_center, center_q, center_r = pcall(world_to_hex, point_fn(center_x, center_y))
+		local ok_sentinel, unbuildable = pcall(get_unbuildable)
+		if not ok_center or type(center_q) ~= "number" or not ok_sentinel then
+			return nil, { reason = "center hex or unbuildable sentinel unavailable" }
+		end
+		local old_pos = ObjectPosition(sign)
+		local old_x, old_y = PointXY(old_pos)
+		local rejected = { unbuildable = 0, impassable = 0, uneven = 0, obstructed = 0, api = 0 }
+		local checked = 0
+		local function candidate_valid(q, r)
+			checked = checked + 1
+			local ok_b, build_z = pcall(buildable.GetZ, buildable, q, r)
+			if not ok_b or build_z == nil or build_z == unbuildable then
+				rejected.unbuildable = rejected.unbuildable + 1
+				return nil
+			end
+			local ok_w, x, y = pcall(hex_to_world, q, r)
+			if not ok_w or type(x) ~= "number" or type(y) ~= "number" then
+				rejected.api = rejected.api + 1
+				return nil
+			end
+			local pt = point_fn(x, y)
+			if type(terrain_api) == "table" and type(terrain_api.IsPassable) == "function" then
+				local ok_p, passable = pcall(terrain_api.IsPassable, map, pt)
+				if not ok_p or passable ~= true then
+					rejected.impassable = rejected.impassable + 1
+					return nil
+				end
+			end
+			if type(terrain_api) == "table" and type(terrain_api.GetTerrainNormal) == "function" then
+				local ok_n, normal = pcall(terrain_api.GetTerrainNormal, map, pt)
+				local normal_z = ok_n and normal and type(normal.z) == "function"
+					and SafeCall(normal.z, normal) or nil
+				if type(normal_z) ~= "number" or normal_z < 3700 then
+					rejected.uneven = rejected.uneven + 1
+					return nil
+				end
+			end
+			if hex_grid and type(hex_grid.GetBuildObstructions) == "function" then
+				local ok_o, obstructions = pcall(hex_grid.GetBuildObstructions, hex_grid, q, r)
+				if not ok_o then
+					rejected.api = rejected.api + 1
+					return nil
+				end
+				if obstructions and #obstructions > 0 then
+					rejected.obstructed = rejected.obstructed + 1
+					return nil
+				end
+			end
+			local direction_score = 0
+			if type(old_x) == "number" and type(old_y) == "number" then
+				local dx, dy = x - old_x, y - old_y
+				direction_score = dx * dx + dy * dy
+			end
+			return { x = x, y = y, q = q, r = r, direction_score = direction_score }
+		end
+		-- Primary requirement: one hex outside the Elevator footprint, then two. If terrain
+		-- makes every one of those sides unusable, continue outward only as a safe fallback.
+		for side_tiles = 1, 8 do
+			local radius = badge_footprint_radius + side_tiles
+			local best
+			for dq = -radius, radius do
+				for dr = -radius, radius do
+					local distance = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+					if distance == radius then
+						local candidate = candidate_valid(center_q + dq, center_r + dr)
+						if candidate and (not best or candidate.direction_score < best.direction_score) then
+							best = candidate
+						end
+					end
+				end
+			end
+			if best then
+				best.side_tiles = side_tiles
+				best.footprint_radius = badge_footprint_radius
+				best.checked = checked
+				best.rejected = rejected
+				best.fallback = side_tiles > 2
+				return best
+			end
+		end
+		return nil, {
+			reason = "no safe side hex within eight tiles of footprint",
+			footprint_radius = badge_footprint_radius, checked = checked, rejected = rejected,
+		}
+	end
 	local signs_anchored, signs_unresolved = 0, 0
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
 		local marker = sign and sign.tunnel_marker
@@ -1857,7 +1970,25 @@ local function MoveEntranceVisualsToScale(map)
 		end
 		local old_pos = ObjectPosition(sign)
 		local sx, sy = PointXY(old_pos)
-		local anchor = point_fn(px, py)
+		local side, side_error = find_badge_side_position(sign, px, py)
+		if not side then
+			signs_unresolved = signs_unresolved + 1
+			AlignLog("entrance sign safe side unresolved", {
+				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
+				center_x = px, center_y = py, reason = tostring(side_error and side_error.reason),
+				footprint_radius = tostring(side_error and side_error.footprint_radius),
+				checked = tostring(side_error and side_error.checked),
+				rejected = side_error and side_error.rejected and
+					("unbuildable=" .. tostring(side_error.rejected.unbuildable)
+					.. " impassable=" .. tostring(side_error.rejected.impassable)
+					.. " uneven=" .. tostring(side_error.rejected.uneven)
+					.. " obstructed=" .. tostring(side_error.rejected.obstructed)
+					.. " api=" .. tostring(side_error.rejected.api)) or "?",
+			})
+			return
+		end
+		local badge_x, badge_y = side.x, side.y
+		local anchor = point_fn(badge_x, badge_y)
 		local clearance = cfg_number("ENTRANCE_SIGN_CLEARANCE_WU", 1500, 0)
 		local rad_hexes = math.max(0, math.floor(cfg_number("ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES", 3, 0)))
 		local hex_wu = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
@@ -1876,14 +2007,14 @@ local function MoveEntranceVisualsToScale(map)
 			end
 			for _, offset in ipairs(offsets) do
 				local ok_h, height = pcall(terrain_api.GetHeight, map,
-					point_fn(px + offset[1], py + offset[2]))
+					point_fn(badge_x + offset[1], badge_y + offset[2]))
 				if ok_h and type(height) == "number" and (zmax == nil or height > zmax) then
 					zmax = height
 				end
 			end
 		end
 		if type(zmax) == "number" then
-			anchor = point_fn(px, py, zmax + clearance)
+			anchor = point_fn(badge_x, badge_y, zmax + clearance)
 		elseif type(anchor.SetTerrainZ) == "function" then
 			local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
 			if ok_z and snapped then anchor = snapped end
@@ -1905,10 +2036,16 @@ local function MoveEntranceVisualsToScale(map)
 			local dx, dy = sx - px, sy - py
 			before_distance = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
 		end
+		local after_dx, after_dy = badge_x - px, badge_y - py
+		local after_distance = math.floor(math.sqrt(after_dx * after_dx + after_dy * after_dy) + 0.5)
 		AlignLog("entrance sign anchored to final passage", {
 			sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
-			from_x = tostring(sx), from_y = tostring(sy), to_x = px, to_y = py,
-			distance_before = tostring(before_distance), distance_after = ok_set and 0 or "unchanged",
+			from_x = tostring(sx), from_y = tostring(sy), passage_x = px, passage_y = py,
+			to_x = badge_x, to_y = badge_y, side_tiles = side.side_tiles,
+			footprint_radius = side.footprint_radius, fallback = tostring(side.fallback),
+			candidates_checked = side.checked,
+			distance_before = tostring(before_distance),
+			distance_after = ok_set and after_distance or "unchanged",
 			terrain_max = tostring(zmax), clearance = clearance,
 			ok = tostring(ok_set), error = ok_set and "none" or tostring(set_err),
 		})
