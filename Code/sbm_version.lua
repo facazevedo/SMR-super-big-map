@@ -48,7 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 22:
--- directly intercept the generated underground HUD button, exhaustively trace every access-state
--- branch, and recover at CurrentMapChangeDone if an engine/UI route bypasses the pre-switch gate.
-SuperBigMap.GENERATOR_PATCH_VERSION = 22
+-- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 23:
+-- make HUD/map-slot wrappers capture immutable predecessors, preserve later generic constructor
+-- wrappers, and block constructor re-entry instead of allowing a mutual-recursion C stack overflow.
+SuperBigMap.GENERATOR_PATCH_VERSION = 23

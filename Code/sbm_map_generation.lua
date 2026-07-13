@@ -2976,8 +2976,8 @@ end
 
 -- The generated HUD handler was observed reaching CurrentMapChangeDone without calling the
 -- replaceable global ChangeCurrentMapSlot in v478. Wrap each concrete HUD button's OnPress too,
--- so the underground symbol has a direct, deterministic route into our gate. This chains around
--- Project Ark's HUD wrapper and leaves surface/asteroid entries untouched.
+-- so the underground symbol has a direct, deterministic route into our gate. This composes with
+-- later generic constructor wrappers and leaves surface/asteroid entries untouched.
 local function PatchDeferredUndergroundHudAccess(source)
 	local State = SuperBigMap.State
 	local hud_class = Engine.ClassTable("HUDButtonMapSwitch")
@@ -2986,6 +2986,8 @@ local function PatchDeferredUndergroundHudAccess(source)
 		source = tostring(source or "?"), hud_class = tostring(hud_class),
 		current_init = tostring(current), stored_wrapper = tostring(State.underground_hud_init_wrapper),
 		patch_version = tostring(State.underground_hud_patch_version),
+		external_wrapper_present = tostring(State.underground_hud_init_wrapper ~= nil
+			and current ~= State.underground_hud_init_wrapper),
 	})
 	if type(current) ~= "function" then
 		UndergroundAccessLog("HUD patch unavailable: HUDButtonMapSwitch.Init missing", {
@@ -2998,6 +3000,18 @@ local function PatchDeferredUndergroundHudAccess(source)
 		UndergroundAccessLog("HUD patch verified", { source = tostring(source or "?") })
 		return true
 	end
+	-- Another engine/mod layer may wrap this constructor after us. Preserve that generic chain
+	-- instead of wrapping it a second time: our stored wrapper remains its predecessor, while the
+	-- CurrentMapChangeDone recovery independently guarantees preparation if a reload replaced it.
+	if State.underground_hud_init_wrapper ~= nil
+		and current ~= State.underground_hud_init_wrapper
+		and State.underground_hud_patch_version == GENERATOR_PATCH_VERSION then
+		UndergroundAccessLog("HUD patch preserved beneath a later wrapper", {
+			source = tostring(source or "?"), current_init = tostring(current),
+			stored_wrapper = tostring(State.underground_hud_init_wrapper),
+		})
+		return true
+	end
 	if current == State.underground_hud_init_wrapper
 		and type(State.original_underground_hud_init) == "function" then
 		current = State.original_underground_hud_init
@@ -3007,11 +3021,29 @@ local function PatchDeferredUndergroundHudAccess(source)
 		})
 	end
 	State.original_underground_hud_init = current
+	-- Capture the predecessor in this closure. Never read State.original_underground_hud_init from
+	-- inside the wrapper: lifecycle re-verification may update that shared field later, and v479's
+	-- mutable lookup allowed two generic wrapper layers to call one another indefinitely.
+	local captured_original_init = current
 	local wrapper = function(self, parent, context)
-		local original_init = State.original_underground_hud_init
-		local result
-		if type(original_init) == "function" then
-			result = original_init(self, parent, context)
+		local depth = (State.underground_hud_init_depth or 0) + 1
+		State.underground_hud_init_depth = depth
+		if depth > 1 then
+			State.underground_hud_init_depth = depth - 1
+			UndergroundAccessLog("HUD constructor recursion blocked", {
+				source = tostring(source or "?"), depth = tostring(depth),
+				captured_original_init = tostring(captured_original_init), current_init = tostring(hud_class.Init),
+			}, "error")
+			return
+		end
+		local ok_init, result = pcall(captured_original_init, self, parent, context)
+		State.underground_hud_init_depth = depth - 1
+		if not ok_init then
+			UndergroundAccessLog("HUD predecessor constructor failed", {
+				source = tostring(source or "?"), predecessor = tostring(captured_original_init),
+				error = tostring(result),
+			}, "error")
+			error(result)
 		end
 		local frame = self and self[1]
 		UndergroundAccessLog("HUD map-switch instance initialized", {
@@ -3084,6 +3116,7 @@ local function PatchDeferredUndergroundHudAccess(source)
 	State.underground_hud_patch_version = GENERATOR_PATCH_VERSION
 	UndergroundAccessLog("HUD patch installed", {
 		source = tostring(source or "?"), replaced_init = tostring(current), wrapper = tostring(wrapper),
+		captured_original_init = tostring(captured_original_init),
 	})
 	return true
 end
@@ -3129,8 +3162,11 @@ local function PatchDeferredUndergroundAccess(source)
 		})
 	end
 	State.original_change_current_map_slot = current
+	local captured_original_switch = current
 	local wrapper = function(map_slot, loading_screen, loading_screen_id)
-		local original = State.original_change_current_map_slot
+		-- Immutable predecessor: later lifecycle verification may update shared patch state, but an
+		-- already-installed closure must never change which function it calls.
+		local original = captured_original_switch
 		UndergroundAccessLog("map-slot gate entered", {
 			map_slot = tostring(map_slot), loading_screen = tostring(loading_screen),
 			loading_screen_id = tostring(loading_screen_id), original_switch = tostring(original),
@@ -3283,6 +3319,7 @@ local function PatchDeferredUndergroundAccess(source)
 	})
 	UndergroundAccessLog("map-slot gate installed", {
 		source = tostring(source or "?"), replaced_switch = tostring(current), wrapper = tostring(wrapper),
+		captured_original_switch = tostring(captured_original_switch),
 	})
 	PatchDeferredUndergroundHudAccess(source)
 	DebugPrint("deferred underground first-access gate installed via " .. tostring(source or "module load"))
