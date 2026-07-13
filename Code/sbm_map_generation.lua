@@ -305,6 +305,8 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
+local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
+local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
@@ -2735,8 +2737,20 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			and loading_profiler.Begin("underground expansion: complete stretch pipeline", {
 				settle_ms = settle_ms, desired_tiles = desired, generator_tiles = gen_t,
 			}, map) or false
+		local elevator_migrations = {}
 		local ok_branch, branch_err = pcall(function()
 			EntranceSnapshot("underground stretch begin", map)
+			-- A surface Elevator may already be finished while its paired underground half is a
+			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
+			-- before any position sweep; rebuild it after the final buildable grid exists.
+			if type(BeginDeferredElevatorMigration) ~= "function"
+				or type(RestoreDeferredElevatorMigration) ~= "function" then
+				error("deferred Elevator migration helpers are unavailable")
+			end
+			elevator_migrations = BeginDeferredElevatorMigration(map)
+			StretchLog("underground stretch: deferred Elevator annotation complete", {
+				migrations = type(elevator_migrations) == "table" and #elevator_migrations or 0,
+			})
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall(SyncMapDataToGrids, map)
 			SpikeAudit(map, "underground pre-stretch")
@@ -2774,10 +2788,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				EntranceSnapshot("underground after MoveEntranceVisualsToScale", map)
 			end
 			SpikeAudit(map, "underground post-MoveEntranceVisuals")
-			-- NOTE (user decision): NO entrance placement correction of any kind. Entrances on
-			-- both maps receive exactly ONE transformation -- the stretch itself (position *
-			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
-			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
+			-- Natural entrance objects still receive exactly one transformation (the stretch).
+			-- The one exception is an Elevator already completed on the surface: its removed
+			-- pending underground half is rebuilt later at the surface Elevator's exact XY.
 			-- FINAL GRIDS FIRST. The consolidated terrain revalidation can report success on a
 			-- non-current underground map before the Lua BuildableGrid has completed. v480 then
 			-- sampled its stale pre-stretch grid and the authoritative rebuild happened only after
@@ -2802,6 +2815,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local build_ok, build_err = pcall(rebuild_buildable, map)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
+				if #elevator_migrations > 0 then
+					SetLoadingPhase("Rebuilding underground Elevator counterparts")
+					StretchLog("underground stretch: -> RestoreDeferredElevatorMigration", {
+						migrations = #elevator_migrations,
+					})
+					local rebuilt = RestoreDeferredElevatorMigration(map, elevator_migrations, "post-buildable-grid")
+					if rebuilt ~= #elevator_migrations then
+						error("deferred Elevator migration rebuilt " .. tostring(rebuilt)
+							.. "/" .. tostring(#elevator_migrations) .. " counterparts")
+					end
+				end
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
 				if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -2896,6 +2920,15 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				SpikeAudit(main_map2, "surface at underground-stretch DONE")
 			end
 		end)
+		if not ok_branch and type(elevator_migrations) == "table" and #elevator_migrations > 0 then
+			-- Do not strand the player without the removed underground half if a later stretch stage
+			-- fails. Rebuild any record not already restored on the map's current live terrain.
+			local recovery_ok, recovery_err = pcall(RestoreDeferredElevatorMigration, map,
+				elevator_migrations, "pipeline-failure-recovery")
+			StretchLog("underground stretch: deferred Elevator failure recovery", {
+				ok = recovery_ok, err = recovery_ok and nil or tostring(recovery_err),
+			})
+		end
 		if stretch_token and type(loading_profiler.End) == "function" then
 			loading_profiler.End(stretch_token, {
 				error = ok_branch and nil or tostring(branch_err),

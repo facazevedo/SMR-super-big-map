@@ -1337,8 +1337,209 @@ end
 -- underground-access object (ShouldSkipObject/IsUndergroundAccessObject -- a mirror-era guard
 -- against cloning/deleting entrance structures), so the signs / entrance structures / spawner
 -- visuals never moved (observed: surface visuals at K7+N5 = markers' H9+K7 positions / 1.333).
--- This pass applies the SAME position*(full/source) transform to those visuals -- everything
--- matching IsUndergroundAccessObject or a SpawnsOnCityInit tunnel spawner, EXCEPT the tunnel
+-- This pass applies the SAME position*(full/source) transform to those visuals.
+--
+-- DEFERRED ELEVATOR MIGRATION:
+-- A surface Elevator can be instant-completed before deferred underground expansion while its
+-- underground half is still a ConstructionSite. Completion destroys the surface site, leaving
+-- the underground site's linked_obj as a stale Lua table; moving that site later also carries
+-- stale construction/build-grid state. Snapshot those pairs, remove ONLY the pending underground
+-- site with DoneObject (never Cancel/RestoreTerrain), then rebuild a finished underground half
+-- after terrain + buildability are final. The correctly placed surface Elevator is untouched.
+local function IsLiveGameObject(obj)
+	if not obj then return false end
+	local is_valid = Global("IsValid")
+	if type(is_valid) == "function" then
+		return SafeCall(is_valid, obj) == true
+	end
+	return type(obj.GetPos) == "function"
+end
+
+local function IsElevatorConstructionSite(obj)
+	if not IsLiveGameObject(obj) or not IsKindOfSafe(obj, "ConstructionSite") then return false end
+	local class_name = obj.building_class or obj.template_name
+	if type(obj.GetBuildingClass) == "function" then
+		local value = SafeCall(obj.GetBuildingClass, obj)
+		if type(value) == "string" then class_name = value end
+	end
+	return class_name == "Elevator" or IsKindOfSafe(obj.building_class_proto, "ElevatorBase")
+end
+
+local function ElevatorMigrationLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
+end
+
+local function ElevatorTerrainFingerprint(map, cx, cy)
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
+		or type(point_fn) ~= "function" then return nil end
+	local values, checksum, lo, hi = {}, 0, nil, nil
+	for gy = -2, 2 do
+		for gx = -2, 2 do
+			local z = SafeCall(terrain_api.GetHeight, map, point_fn(cx + gx * 512, cy + gy * 512))
+			if type(z) ~= "number" then return nil end
+			values[#values + 1] = z
+			checksum = checksum + z * (#values + 11)
+			lo = not lo and z or math.min(lo, z)
+			hi = not hi and z or math.max(hi, z)
+		end
+	end
+	return { values = values, checksum = checksum, min_z = lo, max_z = hi }
+end
+
+local function SameElevatorTerrainFingerprint(a, b)
+	if type(a) ~= "table" or type(b) ~= "table" or #a.values ~= #b.values then return false end
+	for i = 1, #a.values do
+		if a.values[i] ~= b.values[i] then return false end
+	end
+	return true
+end
+
+local function BeginDeferredElevatorMigration(map)
+	local records = {}
+	if not map or not map.mapdata or map.mapdata.Environment ~= "Underground"
+		or type(map.MapForEach) ~= "function" or type(map.MapFindNearest) ~= "function" then
+		return records
+	end
+	local sites = {}
+	pcall(map.MapForEach, map, "map", "ConstructionSite", function(site)
+		if IsElevatorConstructionSite(site) then sites[#sites + 1] = site end
+	end)
+	local done_object = Global("DoneObject")
+	if #sites > 0 and type(done_object) ~= "function" then
+		error("deferred Elevator migration cannot remove pending underground sites")
+	end
+	for _, site in ipairs(sites) do
+		local site_pos = ObjectPosition(site)
+		local passage = site_pos and SafeCall(map.MapFindNearest, map, site_pos, "map",
+			"SurfacePassageBase", "UndergroundPassageBase") or nil
+		local surface_passage = IsLiveGameObject(passage) and passage.other or nil
+		local surface_elevator = IsLiveGameObject(surface_passage) and surface_passage.elevator or nil
+		if IsLiveGameObject(surface_elevator) and IsKindOfSafe(surface_elevator, "ElevatorBase") then
+			local surface_pos = ObjectPosition(surface_elevator)
+			local sx, sy = PointXY(surface_pos)
+			if type(sx) == "number" and type(sy) == "number" then
+				local angle = type(site.GetAngle) == "function" and SafeCall(site.GetAngle, site) or 0
+				local palette
+				if type(surface_elevator.GetColorizationMaterials) == "function" then
+					local ok_colors, c1, c2, c3, c4 = pcall(surface_elevator.GetColorizationMaterials, surface_elevator)
+					if ok_colors then palette = { c1, c2, c3, c4 } end
+				end
+				local record = {
+					surface_elevator = surface_elevator,
+					surface_passage = surface_passage,
+					underground_passage = passage,
+					surface_x = sx,
+					surface_y = sy,
+					angle = angle or 0,
+					name = surface_elevator.name,
+					palette = palette,
+					user_include_in_lrt = surface_elevator.user_include_in_lrt,
+					old_site = site,
+					restored = false,
+				}
+				records[#records + 1] = record
+				ElevatorMigrationLog("deferred Elevator annotated before underground expansion", {
+					n = #records, site = tostring(site), surface_elevator = tostring(surface_elevator),
+					underground_passage = tostring(passage), surface_passage = tostring(surface_passage),
+					target_x = sx, target_y = sy, angle = tostring(angle),
+				})
+				-- Clear passage occupancy first. The old linked_obj is deliberately never dereferenced:
+				-- it may be the destroyed surface ConstructionSite that caused HGE::l_GetPos.
+				if passage.elevator_construction == site or not IsLiveGameObject(passage.elevator_construction) then
+					passage.elevator_construction = false
+				end
+				if surface_passage.elevator_construction == site
+					or not IsLiveGameObject(surface_passage.elevator_construction) then
+					surface_passage.elevator_construction = false
+				end
+				site.linked_obj = false
+				local ok_done, done_err = pcall(done_object, site)
+				if not ok_done or IsLiveGameObject(site) then
+					error("failed to remove pending underground Elevator site: " .. tostring(done_err))
+				end
+				ElevatorMigrationLog("pending underground Elevator site removed without terrain restore", {
+					n = #records, old_site = tostring(site), target_x = sx, target_y = sy,
+				})
+			end
+		else
+			ElevatorMigrationLog("underground Elevator site left in place (no finished surface counterpart)", {
+				site = tostring(site), passage = tostring(passage), surface_passage = tostring(surface_passage),
+				surface_elevator = tostring(surface_elevator),
+			})
+		end
+	end
+	ElevatorMigrationLog("deferred Elevator annotation/removal complete", {
+		pending_sites = #sites, migrations = #records,
+	})
+	return records
+end
+
+local function RestoreDeferredElevatorMigration(map, records, reason)
+	if type(records) ~= "table" or #records == 0 then return 0 end
+	local point_fn = Global("point")
+	local place_building = Global("PlaceBuildingIn")
+	if type(point_fn) ~= "function" or type(place_building) ~= "function" then
+		error("deferred Elevator migration cannot rebuild finished underground counterparts")
+	end
+	local restored = 0
+	for i, record in ipairs(records) do
+		if not record.restored then
+			local terrain_before = ElevatorTerrainFingerprint(map, record.surface_x, record.surface_y)
+			local target = point_fn(record.surface_x, record.surface_y)
+			if type(target.SetTerrainZ) == "function" then
+				local snapped = SafeCall(target.SetTerrainZ, target, map)
+				if snapped then target = snapped end
+			end
+			local target_z = type(target.z) == "function" and SafeCall(target.z, target) or nil
+			local instance = {
+				city = map.City,
+				name = record.name,
+			}
+			local params = {
+				alternative_entity_t = {
+					entity = "ElevatorUnderground",
+					palette = record.palette,
+				},
+			}
+			local bld = SafeCall(place_building, "Elevator", map, instance, params)
+			if not IsLiveGameObject(bld) then
+				error("failed to rebuild underground Elevator counterpart " .. tostring(i))
+			end
+			if type(bld.SetAngle) == "function" then SafeCall(bld.SetAngle, bld, record.angle or 0) end
+			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
+			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
+			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
+			local terrain_after = ElevatorTerrainFingerprint(map, record.surface_x, record.surface_y)
+			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
+			if not terrain_unchanged then
+				error("rebuilding underground Elevator counterpart changed terrain at "
+					.. tostring(record.surface_x) .. "," .. tostring(record.surface_y))
+			end
+			local passage = type(map.MapFindNearest) == "function"
+				and SafeCall(map.MapFindNearest, map, target, "map", "SurfacePassageBase", "UndergroundPassageBase") or nil
+			if IsLiveGameObject(passage) then passage.elevator_construction = false end
+			record.rebuilt_elevator = bld
+			record.restored = true
+			restored = restored + 1
+			ElevatorMigrationLog("finished underground Elevator counterpart rebuilt", {
+				n = i, reason = tostring(reason or "normal"), elevator = tostring(bld),
+				surface_elevator = tostring(record.surface_elevator), passage = tostring(passage),
+				x = record.surface_x, y = record.surface_y, z = tostring(target_z),
+				terrain_unchanged = tostring(terrain_unchanged),
+				terrain_checksum = terrain_after and terrain_after.checksum or "?",
+				terrain_min_z = terrain_after and terrain_after.min_z or "?",
+				terrain_max_z = terrain_after and terrain_after.max_z or "?",
+			})
+		end
+	end
+	return restored
+end
+
+-- Continue STRETCH step 3b: move everything matching IsUndergroundAccessObject or a
+-- SpawnsOnCityInit tunnel spawner, EXCEPT the tunnel
 -- markers themselves (already moved by ScaleMarkersToFull; moving twice would double-scale).
 -- Runs on BOTH maps, so entrance pairs stay vertically corresponding. Every object handled is
 -- logged under the "Align" scope. Gated on STRETCH_MOVE_ENTRANCE_VISUALS; once per map.
@@ -1398,7 +1599,9 @@ local function MoveEntranceVisualsToScale(map)
 		local elevator_kind = is_elevator_or_site(obj)
 		if elevator_kind then
 			local linked = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
-			if linked and type(linked.GetPos) == "function" then
+			-- A destroyed construction site remains a Lua table with GetPos but is no longer a
+			-- luaGameObject. Never cross the engine boundary unless IsValid confirms it is live.
+			if IsLiveGameObject(linked) and type(linked.GetPos) == "function" then
 				local ok_lp, linked_pos = pcall(linked.GetPos, linked)
 				local lx, ly
 				if ok_lp then lx, ly = PointXY(linked_pos) end
@@ -2481,6 +2684,8 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
+	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
+	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AuditFloatingObjects = AuditFloatingObjects,
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,
