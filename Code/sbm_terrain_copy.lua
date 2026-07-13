@@ -1840,8 +1840,8 @@ local function MoveEntranceVisualsToScale(map)
 	-- That is harmless on a vanilla-sized map, but after the independent 4/3 stretch the badge can
 	-- end up tens of thousands of world units from the passage and the Elevator that snaps to it.
 	-- Preserve the gameplay marker position, but bind its visual sign to marker.spawner -- the exact
-	-- final Surface/UndergroundPassage object that owns the entrance. Keep the badge exactly three
-	-- or four clear hexes from the entrance CENTER so it is close without sitting on its roof.
+	-- final Surface/UndergroundPassage object that owns the entrance. Keep the badge exactly one
+	-- or two clear hexes from the entrance CENTER so it stays close without sharing the center hex.
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
 	local get_unbuildable = Global("buildUnbuildableZ")
@@ -1909,9 +1909,9 @@ local function MoveEntranceVisualsToScale(map)
 			end
 			return { x = x, y = y, q = q, r = r, direction_score = direction_score }
 		end
-		-- Primary requirement: exactly three hexes from the entrance center, then four. If
+		-- Primary requirement: exactly one hex from the entrance center, then two. If
 		-- terrain makes both complete rings unusable, continue outward only as a safe fallback.
-		for radius = 3, 10 do
+		for radius = 1, 8 do
 			local best
 			for dq = -radius, radius do
 				for dr = -radius, radius do
@@ -1928,12 +1928,12 @@ local function MoveEntranceVisualsToScale(map)
 				best.center_tiles = radius
 				best.checked = checked
 				best.rejected = rejected
-				best.fallback = radius > 4
+				best.fallback = radius > 2
 				return best
 			end
 		end
 		return nil, {
-			reason = "no safe side hex within ten tiles of entrance center",
+			reason = "no safe side hex within eight tiles of entrance center",
 			checked = checked, rejected = rejected,
 		}
 	end
