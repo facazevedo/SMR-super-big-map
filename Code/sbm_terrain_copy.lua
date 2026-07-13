@@ -1346,6 +1346,9 @@ end
 -- stale construction/build-grid state. Snapshot those pairs, remove ONLY the pending underground
 -- site with DoneObject (never Cancel/RestoreTerrain), then rebuild a finished underground half
 -- after terrain + buildability are final. The correctly placed surface Elevator is untouched.
+-- The rebuilt half must also receive the tail of ConstructionSite:Complete's vanilla lifecycle;
+-- merely calling PlaceBuildingIn creates a Building object but omits QuickBuildSetup and the
+-- ConstructionComplete message, which can leave the two halves at observably different stages.
 local function IsLiveGameObject(obj)
 	if not obj then return false end
 	local is_valid = Global("IsValid")
@@ -1465,9 +1468,14 @@ local function BeginDeferredElevatorMigration(map)
 				})
 			end
 		else
+			local surface_site = IsLiveGameObject(surface_passage)
+				and surface_passage.elevator_construction or nil
 			ElevatorMigrationLog("underground Elevator site left in place (no finished surface counterpart)", {
 				site = tostring(site), passage = tostring(passage), surface_passage = tostring(surface_passage),
 				surface_elevator = tostring(surface_elevator),
+				surface_site = tostring(surface_site),
+				surface_stage = IsElevatorConstructionSite(surface_site) and "construction" or "absent",
+				underground_stage = "construction", stages_match = tostring(IsElevatorConstructionSite(surface_site)),
 			})
 		end
 	end
@@ -1481,7 +1489,9 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 	if type(records) ~= "table" or #records == 0 then return 0 end
 	local point_fn = Global("point")
 	local place_building = Global("PlaceBuildingIn")
-	if type(point_fn) ~= "function" or type(place_building) ~= "function" then
+	local msg = Global("Msg")
+	if type(point_fn) ~= "function" or type(place_building) ~= "function"
+		or type(msg) ~= "function" then
 		error("deferred Elevator migration cannot rebuild finished underground counterparts")
 	end
 	local restored = 0
@@ -1512,6 +1522,24 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
 			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
 			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
+
+			-- Match the final steps of ConstructionSite:Complete("quick_build"). PlaceBuildingIn
+			-- already performed the vanilla object creation above; these are the completion steps
+			-- that distinguish a fully quick-built building from a directly spawned one.
+			local quick_build_setup = false
+			if type(bld.HasMember) == "function"
+				and SafeCall(bld.HasMember, bld, "QuickBuildSetup") == true
+				and type(bld.Notify) == "function" then
+				local ok_notify, notify_err = pcall(bld.Notify, bld, "QuickBuildSetup")
+				if not ok_notify then
+					error("underground Elevator QuickBuildSetup failed: " .. tostring(notify_err))
+				end
+				quick_build_setup = true
+			end
+			local ok_complete, complete_err = pcall(msg, "ConstructionComplete", bld, false)
+			if not ok_complete then
+				error("underground Elevator ConstructionComplete failed: " .. tostring(complete_err))
+			end
 			local terrain_after = ElevatorTerrainFingerprint(map, record.surface_x, record.surface_y)
 			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
 			if not terrain_unchanged then
@@ -1527,6 +1555,8 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			ElevatorMigrationLog("finished underground Elevator counterpart rebuilt", {
 				n = i, reason = tostring(reason or "normal"), elevator = tostring(bld),
 				surface_elevator = tostring(record.surface_elevator), passage = tostring(passage),
+				surface_stage = "complete", underground_stage = "complete", stages_match = "true",
+				quick_build_setup = tostring(quick_build_setup), construction_complete = "true",
 				x = record.surface_x, y = record.surface_y, z = tostring(target_z),
 				terrain_unchanged = tostring(terrain_unchanged),
 				terrain_checksum = terrain_after and terrain_after.checksum or "?",
