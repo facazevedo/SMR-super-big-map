@@ -504,6 +504,36 @@ local function DesktopReady()
 	return term ~= nil and term.desktop ~= nil
 end
 
+-- StdMessageDialog opens the vanilla MarsBlur layer during gameplay. Its full-screen
+-- XBlurRect normally preserves a 10-pixel frame on every side. Against the red Martian
+-- terrain those untreated strips remain saturated while the rest of the scene is blurred
+-- and desaturated, which looks like a red ring around the screen. Keep the blur itself,
+-- but remove only those four frame strips for this loading dialog.
+local function RemoveLoadingBlurEdge(box)
+	for _, opener in ipairs(box or {}) do
+		if opener and opener.Layer == "MarsBlur" then
+			local blur_layer = opener.dialog
+			for _, blur in ipairs(blur_layer or {}) do
+				if blur and blur.BlurRadius ~= nil then
+					blur.FrameLeft = 0
+					blur.FrameTop = 0
+					blur.FrameRight = 0
+					blur.FrameBottom = 0
+					if type(blur.Invalidate) == "function" then
+						pcall(function() blur:Invalidate() end)
+					end
+					LoadingLog("loading blur retained with edge frame removed", {
+						blur_radius = blur.BlurRadius,
+					})
+					return true
+				end
+			end
+		end
+	end
+	LoadingLog("loading blur edge frame not found")
+	return false
+end
+
 local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
@@ -530,6 +560,7 @@ local function SetWelcomeLoading(active)
 				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY_TAGLINE),
 					wrap(current_phase_body))
 				if ok and box then
+					RemoveLoadingBlurEdge(box)
 					loading_box = box
 					LoadingLog("loading box created over hidden welcome popup", { status = current_phase_body })
 				end
