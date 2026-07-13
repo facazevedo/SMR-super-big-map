@@ -675,7 +675,9 @@ config.StretchMoveEntranceVisuals = true
 -- underground-entrance badge is placed at terrain level by vanilla, so a nearby terrain rise
 -- half-occludes it under the tilted overview camera. The mod floats it above the LOCAL
 -- terrain maximum (sampled within the radius below) plus this clearance, so the whole badge
--- always shows. Clearance in world units; radius in hexes.
+-- always shows. Once this initial post-expansion XYZ is established, it is locked: reveal-time
+-- sign creation and overview refreshes may update appearance but cannot relocate the badge.
+-- Clearance in world units; radius in hexes.
 config.EntranceSignClearanceWu = 1500
 config.EntranceSignClearanceRadiusHexes = 3
 -- Keep the underground-entrance badge visible at ALL zoom levels. Vanilla renders these

@@ -305,6 +305,9 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
+local PatchEntranceBadgePosition = TerrainCopy.PatchEntranceBadgePosition
+local RestoreEntranceBadgePositionPatch = TerrainCopy.RestoreEntranceBadgePositionPatch
+local RestoreEntranceBadgePositions = TerrainCopy.RestoreEntranceBadgePositions
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
@@ -3476,6 +3479,8 @@ MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 MapGeneration.PatchPassagePairing = PatchPassagePairing
 MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
+MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
+MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
@@ -3485,6 +3490,7 @@ MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 function MapGeneration.ApplyModBehavior()
 	PatchRandomMapGenerator()
 	PatchPassagePairing()
+	PatchEntranceBadgePosition()
 	PatchDeferredUndergroundAccess("ApplyModBehavior")
 end
 
@@ -3540,6 +3546,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.underground_hud_init_wrapper = nil
 	State.original_underground_hud_init = nil
 	State.underground_hud_patch_version = nil
+	RestoreEntranceBadgePositionPatch()
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -3559,6 +3566,7 @@ if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
 	-- wiping any wrapper; Lifecycle.Enable early-returns since State.active persisted, so a
 	-- reinstall must not depend on it). Self-verifying, so repeat calls are no-ops.
 	PatchPassagePairing()
+	PatchEntranceBadgePosition()
 	PatchDeferredUndergroundAccess("module load")
 end
 

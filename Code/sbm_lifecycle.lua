@@ -1315,6 +1315,16 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 	if deposits and type(deposits.OnSectorScanned) == "function" then
 		deposits.OnSectorScanned(status, sector)
 	end
+	-- Revealing an underground entrance completes a vanilla scenario that may create or refresh
+	-- its sign. Re-assert the exact post-expansion starting XYZ after the reveal has run.
+	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.RestoreEntranceBadgePositions) == "function" then
+		local map = sector and type(sector.GetMap) == "function" and SafeCall(sector.GetMap, sector) or nil
+		if not map and sector and sector.city and type(sector.city.GetMap) == "function" then
+			map = SafeCall(sector.city.GetMap, sector.city)
+		end
+		SafeCall(gen.RestoreEntranceBadgePositions, map or Global("CurrentMap"), "SectorScanned")
+	end
 end)
 
 RegisterOnce("ClassesBuilt", function()
@@ -1332,6 +1342,9 @@ RegisterOnce("ClassesBuilt", function()
 		gen.PatchRandomMapGenerator()
 		if type(gen.PatchPassagePairing) == "function" then
 			gen.PatchPassagePairing()
+		end
+		if type(gen.PatchEntranceBadgePosition) == "function" then
+			gen.PatchEntranceBadgePosition()
 		end
 	end
 	local sectors = SuperBigMap.SectorExploration

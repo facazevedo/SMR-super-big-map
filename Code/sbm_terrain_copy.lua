@@ -1588,6 +1588,167 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 	return restored
 end
 
+-- Keep an underground-entrance badge at the exact position where it first settles after the
+-- surface stretch. Vanilla reveal completes the SurfaceUndergroundPassage scenario later and can
+-- call marker:PlaceSign again (or recreate the sign). Overview refreshes also revisit the sign.
+-- Those lifecycle operations remain untouched; only their authority over the badge XYZ is removed.
+-- The anchor is copied onto the marker, its passage (when available), and the current sign so a
+-- replacement sign can recover the same position. Vanilla maps never receive a final anchor.
+local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 1
+local ENTRANCE_BADGE_MARKER_CLASSES = {
+	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
+}
+
+local function EntranceBadgeLog(message, data)
+	local log = SuperBigMap.DebugLog
+	if log then log.Info("EntrancePositions", message, data) end
+end
+
+local function PositionXYZ(pos)
+	local x, y = PointXY(pos)
+	local z
+	if pos and type(pos.z) == "function" then z = SafeCall(pos.z, pos) end
+	return x, y, z
+end
+
+local function WriteEntranceBadgeAnchor(obj, x, y, z)
+	if not obj then return end
+	obj.SuperBigMapEntranceBadgeAnchorX = x
+	obj.SuperBigMapEntranceBadgeAnchorY = y
+	obj.SuperBigMapEntranceBadgeAnchorZ = z
+	obj.SuperBigMapEntranceBadgeAnchorFinal = true
+end
+
+local function EntranceBadgeAnchor(marker, sign)
+	local passage = marker and marker.spawner
+	local objects = { [1] = marker, [2] = passage, [3] = sign }
+	for i = 1, 3 do
+		local obj = objects[i]
+		if obj and obj.SuperBigMapEntranceBadgeAnchorFinal == true
+			and type(obj.SuperBigMapEntranceBadgeAnchorX) == "number"
+			and type(obj.SuperBigMapEntranceBadgeAnchorY) == "number" then
+			return obj.SuperBigMapEntranceBadgeAnchorX, obj.SuperBigMapEntranceBadgeAnchorY,
+				obj.SuperBigMapEntranceBadgeAnchorZ, obj
+		end
+	end
+	return nil
+end
+
+local function CaptureEntranceBadgePosition(marker, sign, reason)
+	if not marker or not sign then return false end
+	local pos = ObjectPosition(sign)
+	local x, y, z = PositionXYZ(pos)
+	if type(x) ~= "number" or type(y) ~= "number" then return false end
+	WriteEntranceBadgeAnchor(marker, x, y, z)
+	WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
+	WriteEntranceBadgeAnchor(sign, x, y, z)
+	EntranceBadgeLog("entrance badge starting position locked", {
+		reason = tostring(reason or "capture"), marker = tostring(marker), sign = tostring(sign),
+		passage = tostring(marker.spawner), x = x, y = y, z = tostring(z),
+	})
+	return true
+end
+
+local function RestoreEntranceBadgePosition(marker, sign, reason)
+	if not marker or not sign or type(sign.SetPos) ~= "function" then return false end
+	local x, y, z, source = EntranceBadgeAnchor(marker, sign)
+	if type(x) ~= "number" or type(y) ~= "number" then return false end
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" then return false end
+	local before = ObjectPosition(sign)
+	local bx, by, bz = PositionXYZ(before)
+	local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
+	local ok, err = pcall(sign.SetPos, sign, target)
+	if ok then
+		-- Refresh every carrier in case the reveal replaced only the sign object.
+		WriteEntranceBadgeAnchor(marker, x, y, z)
+		WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
+		WriteEntranceBadgeAnchor(sign, x, y, z)
+	end
+	EntranceBadgeLog("entrance badge position restored after refresh", {
+		reason = tostring(reason or "restore"), marker = tostring(marker), sign = tostring(sign),
+		passage = tostring(marker.spawner), anchor_source = tostring(source),
+		before_x = tostring(bx), before_y = tostring(by), before_z = tostring(bz),
+		after_x = x, after_y = y, after_z = tostring(z), moved = tostring(bx ~= x or by ~= y or bz ~= z),
+		ok = tostring(ok), error = ok and "none" or tostring(err),
+	})
+	return ok
+end
+
+local function RestoreEntranceBadgePositions(map, reason)
+	if not map or type(map.MapForEach) ~= "function" then return 0 end
+	local restored = 0
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
+		local marker = sign and sign.tunnel_marker
+		if RestoreEntranceBadgePosition(marker, sign, reason) then restored = restored + 1 end
+	end)
+	return restored
+end
+
+local function PatchEntranceBadgePosition()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	State.entrance_badge_place_sign_originals = State.entrance_badge_place_sign_originals or {}
+	State.entrance_badge_place_sign_wrappers = State.entrance_badge_place_sign_wrappers or {}
+	local originals = State.entrance_badge_place_sign_originals
+	local wrappers = State.entrance_badge_place_sign_wrappers
+	local targets = {}
+	for _, class_name in ipairs(ENTRANCE_BADGE_MARKER_CLASSES) do
+		local cls = Engine.ClassTable and Engine.ClassTable(class_name)
+		local current = type(cls) == "table" and cls.PlaceSign or nil
+		if current == wrappers[class_name] and type(originals[class_name]) == "function" then
+			-- Peel off the previous hot-reload wrapper before installing the current code.
+			current = originals[class_name]
+		end
+		if type(cls) == "table" and type(current) == "function" then
+			targets[#targets + 1] = { name = class_name, cls = cls, original = current }
+		end
+	end
+	local installed = 0
+	for _, target in ipairs(targets) do
+		local class_name, cls, original = target.name, target.cls, target.original
+		local wrapper = function(marker, ...)
+			local result = original(marker, ...)
+			local sign = marker and marker.tunnel_sign
+			if sign then
+				local x = EntranceBadgeAnchor(marker, sign)
+				if type(x) == "number" then
+					RestoreEntranceBadgePosition(marker, sign, "PlaceSign:" .. class_name)
+				else
+					local map = type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) or nil
+					if map and map.SuperBigMapExpanded == true then
+						CaptureEntranceBadgePosition(marker, sign, "first post-expansion PlaceSign:" .. class_name)
+					end
+				end
+			end
+			return result
+		end
+		originals[class_name] = original
+		wrappers[class_name] = wrapper
+		cls.PlaceSign = wrapper
+		installed = installed + 1
+	end
+	State.entrance_badge_position_patch_version = ENTRANCE_BADGE_POSITION_PATCH_VERSION
+	EntranceBadgeLog("entrance badge position-lock patch installed", { classes = installed })
+	return installed > 0
+end
+
+local function RestoreEntranceBadgePositionPatch()
+	local State = SuperBigMap.State or {}
+	local originals = State.entrance_badge_place_sign_originals or {}
+	local wrappers = State.entrance_badge_place_sign_wrappers or {}
+	for _, class_name in ipairs(ENTRANCE_BADGE_MARKER_CLASSES) do
+		local cls = Engine.ClassTable and Engine.ClassTable(class_name)
+		if type(cls) == "table" and cls.PlaceSign == wrappers[class_name]
+			and type(originals[class_name]) == "function" then
+			cls.PlaceSign = originals[class_name]
+		end
+	end
+	State.entrance_badge_place_sign_originals = nil
+	State.entrance_badge_place_sign_wrappers = nil
+	State.entrance_badge_position_patch_version = nil
+end
+
 -- Continue STRETCH step 3b: move everything matching IsUndergroundAccessObject or a
 -- SpawnsOnCityInit tunnel spawner, EXCEPT the tunnel
 -- markers themselves (already moved by ScaleMarkersToFull; moving twice would double-scale).
@@ -1945,6 +2106,9 @@ local function MoveEntranceVisualsToScale(map)
 		local px, py = PointXY(passage_pos)
 		if not sign or type(sign.SetPos) ~= "function"
 			or type(px) ~= "number" or type(py) ~= "number" then
+			if marker and sign then
+				CaptureEntranceBadgePosition(marker, sign, "initial position; passage anchor unresolved")
+			end
 			signs_unresolved = signs_unresolved + 1
 			AlignLog("entrance sign passage anchor unresolved", {
 				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
@@ -1955,6 +2119,7 @@ local function MoveEntranceVisualsToScale(map)
 		local sx, sy = PointXY(old_pos)
 		local side, side_error = find_badge_side_position(sign, px, py)
 		if not side then
+			CaptureEntranceBadgePosition(marker, sign, "initial position; no safe side hex")
 			signs_unresolved = signs_unresolved + 1
 			AlignLog("entrance sign safe side unresolved", {
 				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
@@ -2005,12 +2170,14 @@ local function MoveEntranceVisualsToScale(map)
 		if ok_set then
 			signs_anchored = signs_anchored + 1
 			sign.SuperBigMapPassageAnchored = true
+			CaptureEntranceBadgePosition(marker, sign, "initial post-expansion passage anchor")
 			if cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
 				if type(sign.SetNoDepthTest) == "function" then pcall(sign.SetNoDepthTest, sign, true) end
 				if type(sign.SetVisible) == "function" then pcall(sign.SetVisible, sign, true) end
 				if type(sign.SetOpacity) == "function" then pcall(sign.SetOpacity, sign, 100) end
 			end
 		else
+			CaptureEntranceBadgePosition(marker, sign, "initial position; anchor SetPos failed")
 			signs_unresolved = signs_unresolved + 1
 		end
 		local before_distance
@@ -2950,6 +3117,9 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
+	PatchEntranceBadgePosition = PatchEntranceBadgePosition,
+	RestoreEntranceBadgePositionPatch = RestoreEntranceBadgePositionPatch,
+	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AuditFloatingObjects = AuditFloatingObjects,

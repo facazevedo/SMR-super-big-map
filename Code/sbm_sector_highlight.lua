@@ -458,6 +458,11 @@ local function Install()
 						if type(s.SetOpacity) == "function" then pcall(s.SetOpacity, s, 100) end
 					end
 				end
+				local terrain_copy = SuperBigMap.TerrainCopy
+				if terrain_copy and type(terrain_copy.RestoreEntranceBadgePositions) == "function" then
+					Engine.SafeCall(terrain_copy.RestoreEntranceBadgePositions, map,
+						"OverviewModeDialog.ScaleSmallObjects")
+				end
 			end)
 		end
 		local wrapper = function(self, time, direction, ...)
