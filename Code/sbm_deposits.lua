@@ -1507,20 +1507,51 @@ function DepositRules.TopUpAnomalies(map)
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 	local edge_stats = {
-		sampled_by_edge = {}, sampled_by_requested_side = {}, sampled_by_source_region = {}, accepted_by_edge = {},
-		accepted_by_sector = {}, rejected_by_reason = {}, selected_by_edge = {},
+		sampled_by_edge = {}, sampled_by_planned_ring_edge = {}, sampled_by_source_region = {}, accepted_by_edge = {},
+		accepted_by_sector = {}, rejected_by_reason = {}, selected_by_edge = {}, selected_by_sector = {},
 		selected_by_target_side = {}, selected_by_nearest_side = {}, selected_by_scope = {},
 		added_by_edge = {}, added_by_sector = {}, final_by_edge = {}, final_by_nearest_side = {},
-		final_by_sector = {}, ring_predicate_comparison = {},
+		final_by_sector = {}, ring_predicate_comparison = {}, ring_sector_coverage = {},
+		accepted_by_exclusive_side = {}, accepted_by_side_layer = {},
+		selected_by_side_layer = {}, final_by_side_layer = {},
 	}
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
-		local MAX_SAMPLES, MAX_POOL = 6000, 2500
+		local BASE_WHOLE_MAP_SAMPLES = 6000
+		local SAMPLES_PER_RING_SECTOR = 32
+		local MAX_POOL = 10000
 		edge_debug = surface_edge_ring and TopUpEdgeLogOn()
 		-- Build the live, index-base-independent edge context for production placement as well as
-		-- diagnostics. The previous global random draw had no per-side quota: a valid pool could
-		-- contain all four sides yet the small top-up draw could leave one or two sides empty.
+		-- diagnostics. Surface sampling is stratified by EVERY live ring sector so random sampling
+		-- cannot silently omit the final bottom/right runs (or any other part of the perimeter).
 		edge_ctx = surface_edge_ring and BuildTopUpEdgeDebugContext(map, ring_sectors) or nil
+		local sampling_plan = {}
+		local ring_sector_count = 0
+		local function ring_edges_for_sector(s)
+			if not (edge_ctx and s) then return "whole_map" end
+			local sides = {}
+			if s.col <= edge_ctx.min_col + ring_sectors - 1 then sides[#sides + 1] = "left" end
+			if s.col >= edge_ctx.max_col - ring_sectors + 1 then sides[#sides + 1] = "right" end
+			if s.row <= edge_ctx.min_row + ring_sectors - 1 then sides[#sides + 1] = "top" end
+			if s.row >= edge_ctx.max_row - ring_sectors + 1 then sides[#sides + 1] = "bottom" end
+			return #sides > 0 and table.concat(sides, "+") or "interior"
+		end
+		if surface_edge_ring and edge_ctx and type(edge_ctx.sector_step) == "number" then
+			for _, s in ipairs(edge_ctx.sectors) do
+				local expected_edge = ring_edges_for_sector(s)
+				if expected_edge ~= "interior" then
+					ring_sector_count = ring_sector_count + 1
+					s.expected_edge = expected_edge
+					edge_stats.ring_sector_coverage[tostring(s.id)] = {
+						id = s.id, col = s.col, row = s.row, expected_edge = expected_edge,
+						planned = SAMPLES_PER_RING_SECTOR, sampled = 0, sector_match = 0,
+						accepted = 0, rejected = {},
+					}
+					for _ = 1, SAMPLES_PER_RING_SECTOR do sampling_plan[#sampling_plan + 1] = s end
+				end
+			end
+		end
+		local MAX_SAMPLES = #sampling_plan > 0 and #sampling_plan or BASE_WHOLE_MAP_SAMPLES
 		if edge_debug then
 			local marker_n = 0
 			pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
@@ -1553,8 +1584,10 @@ function DepositRules.TopUpAnomalies(map)
 			TopUpEdgeLog("top-up target", {
 				total_before = total_current, templates = #templates, target = target, shortfall = shortfall,
 				area_factor = string.format("%.3f", area_factor), max_samples = MAX_SAMPLES,
-				max_pool = MAX_POOL, valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4,
-				sampling_mode = "direct_final_perimeter",
+				max_pool = MAX_POOL, valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1,
+				sampling_mode = surface_edge_ring and "every_final_ring_sector_random" or "whole_map_random",
+				ring_sector_count = ring_sector_count,
+				samples_per_ring_sector = SAMPLES_PER_RING_SECTOR,
 				target_ring_w = tostring(edge_ctx.ring_w), target_ring_h = tostring(edge_ctx.ring_h),
 				band_world = tostring(edge_ctx.band_world), margin_world = tostring(margin),
 			})
@@ -1572,39 +1605,25 @@ function DepositRules.TopUpAnomalies(map)
 			if span <= 0 then return first end
 			return first + RandInt(span)
 		end
-		local sampled_sides = { "left", "top", "right", "bottom" }
-		local function shuffle_sampled_sides()
-			for i = #sampled_sides, 2, -1 do
-				local j = RandInt(i) + 1
-				sampled_sides[i], sampled_sides[j] = sampled_sides[j], sampled_sides[i]
-			end
-		end
 		local function sample_position(sample_n)
-			if not surface_edge_ring or not edge_ctx or type(edge_ctx.ring_w) ~= "number"
-				or type(edge_ctx.ring_h) ~= "number" or type(edge_ctx.band_world) ~= "number" then
-				return lo_x + RandInt(span_x), lo_y + RandInt(span_y), "whole_map"
+			local expected = sampling_plan[sample_n]
+			if not expected or not edge_ctx or type(edge_ctx.sector_step) ~= "number" then
+				return lo_x + RandInt(span_x), lo_y + RandInt(span_y), "whole_map", nil
 			end
-			local rw, rh = edge_ctx.ring_w, edge_ctx.ring_h
-			local band = math.max(1, math.floor(edge_ctx.band_world))
-			local side_i = ((sample_n - 1) % #sampled_sides) + 1
-			if side_i == 1 then shuffle_sampled_sides() end
-			local side = sampled_sides[side_i]
-			if side == "left" then
-				return random_between(margin, math.min(band, rw - margin)),
-					random_between(margin, rh - margin), side
-			elseif side == "right" then
-				return random_between(math.max(margin, rw - band), rw - margin),
-					random_between(margin, rh - margin), side
-			elseif side == "top" then
-				return random_between(margin, rw - margin),
-					random_between(margin, math.min(band, rh - margin)), side
-			end
-			return random_between(margin, rw - margin),
-				random_between(math.max(margin, rh - band), rh - margin), side
+			local step = edge_ctx.sector_step
+			-- Prefer the live MapSector box. The arithmetic fallback is valid for the current
+			-- zero-border 20x20 layout, while the live bounds also keep this sampler correct if a
+			-- scenario supplies a border or a non-uniform final sector layout.
+			local x0 = expected.area_x0 or ((expected.col - edge_ctx.min_col) * step)
+			local y0 = expected.area_y0 or ((expected.row - edge_ctx.min_row) * step)
+			local x1 = math.min(edge_ctx.ring_w - margin, expected.area_x1 or (x0 + step))
+			local y1 = math.min(edge_ctx.ring_h - margin, expected.area_y1 or (y0 + step))
+			x0 = math.max(margin, x0)
+			y0 = math.max(margin, y0)
+			return random_between(x0, x1), random_between(y0, y1), expected.expected_edge, expected
 		end
 		for sample_n = 1, reused_pool and 0 or MAX_SAMPLES do
-			if #candidates >= MAX_POOL then break end
-			local x, y, sampled_side = sample_position(sample_n)
+			local x, y, sampled_side, expected_sector = sample_position(sample_n)
 			local sector = SectorAtPoint(map, x, y)
 			local candidate_edge, candidate_source_region
 			if edge_ctx then
@@ -1613,9 +1632,18 @@ function DepositRules.TopUpAnomalies(map)
 			local in_target_area = not surface_edge_ring or IsInFinalOuterSectorRing(map, x, y, ring_sectors)
 			local scanned = sector and SectorIsScanned(sector) or false
 			local can_receive, buildable, unobstructed, valley_score = false, false, false, 0
+			local coverage = expected_sector
+				and edge_stats.ring_sector_coverage[tostring(expected_sector.id)] or nil
+			if coverage then coverage.sampled = coverage.sampled + 1 end
+			local sector_matches_plan = not expected_sector or (sector
+				and sector.id == expected_sector.id
+				and sector.col == expected_sector.col and sector.row == expected_sector.row)
+			if coverage and sector_matches_plan then coverage.sector_match = coverage.sector_match + 1 end
 			local rejection
 			if not sector then
 				rejection = "no_sector"
+			elseif not sector_matches_plan then
+				rejection = "sector_mapping_mismatch"
 			elseif scanned then
 				rejection = "sector_scanned"
 			elseif not in_target_area then
@@ -1636,19 +1664,28 @@ function DepositRules.TopUpAnomalies(map)
 					if surface_edge_ring and valley_score <= 0 then
 						rejection = "not_mountain_base"
 					else
+						local perimeter_u, nearest_side, edge_depth =
+							PerimeterCoordinate(edge_ctx, x, y)
+						local layer = surface_edge_ring and type(edge_ctx.sector_step) == "number"
+							and math.min(ring_sectors, math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
+							or nil
 						candidates[#candidates + 1] = {
 							x = x, y = y, valley_score = valley_score,
 							edge = candidate_edge, source_region = candidate_source_region,
 							sector_id = sector and sector.id, col = sector and sector.col,
 							row = sector and sector.row, sample_n = sample_n,
-							sampled_side = sampled_side,
+							sampled_side = sampled_side, expected_sector_id = expected_sector and expected_sector.id,
+							perimeter_u = perimeter_u, nearest_side = nearest_side,
+							edge_depth = edge_depth, layer = layer,
 						}
-						if surface_edge_ring then
-							local candidate = candidates[#candidates]
-							candidate.perimeter_u, candidate.nearest_side, candidate.edge_depth =
-								PerimeterCoordinate(edge_ctx, x, y)
-						end
 					end
+				end
+			end
+			if coverage then
+				if rejection then
+					IncrementTally(coverage.rejected, rejection)
+				else
+					coverage.accepted = coverage.accepted + 1
 				end
 			end
 			if edge_debug then
@@ -1659,13 +1696,17 @@ function DepositRules.TopUpAnomalies(map)
 					.. "_observed_" .. tostring(observed_ring)
 				IncrementTally(edge_stats.ring_predicate_comparison, comparison)
 				IncrementTally(edge_stats.sampled_by_edge, edge)
-				IncrementTally(edge_stats.sampled_by_requested_side, sampled_side)
+				IncrementTally(edge_stats.sampled_by_planned_ring_edge, sampled_side)
 				IncrementTally(edge_stats.sampled_by_source_region, source_region)
 				if rejection then
 					IncrementTally(edge_stats.rejected_by_reason, rejection)
 				else
 					IncrementTally(edge_stats.accepted_by_edge, edge)
 					IncrementTally(edge_stats.accepted_by_sector, sector and sector.id)
+					IncrementTally(edge_stats.accepted_by_exclusive_side, nearest_side)
+					local layer = type(edge_depth) == "number" and type(edge_ctx.sector_step) == "number"
+						and math.min(ring_sectors, math.floor(edge_depth / edge_ctx.sector_step) + 1) or "?"
+					IncrementTally(edge_stats.accepted_by_side_layer, tostring(nearest_side) .. "/L" .. tostring(layer))
 				end
 				-- Independent read-only terrain probes run even for samples rejected by the ring
 				-- predicate, so a missing edge can be separated from genuinely unusable mountains.
@@ -1682,6 +1723,10 @@ function DepositRules.TopUpAnomalies(map)
 				end
 				TopUpEdgeLog("candidate sample", {
 					n = sample_n, x = x, y = y, sector = tostring(sector and sector.id),
+					expected_sector = tostring(expected_sector and expected_sector.id),
+					expected_col = tostring(expected_sector and expected_sector.col),
+					expected_row = tostring(expected_sector and expected_sector.row),
+					sector_matches_plan = tostring(sector_matches_plan),
 					sampled_side = tostring(sampled_side),
 					col = tostring(sector and sector.col), row = tostring(sector and sector.row),
 					status = tostring(sector and sector.status), edge = edge, source_region = source_region,
@@ -1710,22 +1755,16 @@ function DepositRules.TopUpAnomalies(map)
 		ProfileStep("anomaly candidate pool ready", {
 			candidates = pool_final, reused = reused_pool,
 		}, map)
-		-- Keep the chosen hexes genuinely random while guaranteeing that no physical side can be
-		-- omitted. Each randomized four-placement cycle contains top/right/bottom/left once; within
-		-- that side, every safe candidate along the COMPLETE run is eligible, including both corner
-		-- blocks. Best-of-N only biases those random choices toward valleys between mountains.
+		-- Keep coordinates genuinely random while guaranteeing coarse coverage. Each randomized
+		-- four-placement cycle contains every physical side. Candidates own exactly one nearest side;
+		-- each side's quota is then spread over shuffled broad bins and all three depth layers, with
+		-- explicit nearest-bin fallbacks only where terrain has no safe mountain-base candidate.
 		local side_cycle = { "top", "right", "bottom", "left" }
 		local function shuffle_side_cycle()
 			for i = #side_cycle, 2, -1 do
 				local j = RandInt(i) + 1
 				side_cycle[i], side_cycle[j] = side_cycle[j], side_cycle[i]
 			end
-		end
-		local function edge_has_side(edge, side)
-			for token in string.gmatch(tostring(edge or ""), "[^+]+") do
-				if token == side then return true end
-			end
-			return false
 		end
 		if edge_debug then
 			local counts = { left = 0, top = 0, right = 0, bottom = 0 }
@@ -1735,7 +1774,7 @@ function DepositRules.TopUpAnomalies(map)
 			}
 			for _, candidate in ipairs(candidates) do
 				for _, side in ipairs({ "left", "top", "right", "bottom" }) do
-					if edge_has_side(candidate.edge, side) then
+					if candidate.nearest_side == side then
 						counts[side] = counts[side] + 1
 						local along = (side == "left" or side == "right") and candidate.y or candidate.x
 						spans[side].min = spans[side].min and math.min(spans[side].min, along) or along
@@ -1743,7 +1782,7 @@ function DepositRules.TopUpAnomalies(map)
 					end
 				end
 			end
-			TopUpEdgeLog("accepted candidate pool side coverage", {
+			TopUpEdgeLog("accepted candidate pool EXCLUSIVE side coverage", {
 				pool = #candidates, left = counts.left, top = counts.top,
 				right = counts.right, bottom = counts.bottom,
 				left_y_span = tostring(spans.left.min) .. ".." .. tostring(spans.left.max),
@@ -1753,35 +1792,160 @@ function DepositRules.TopUpAnomalies(map)
 				target_final_w = tostring(edge_ctx.ring_w), target_final_h = tostring(edge_ctx.ring_h),
 			})
 		end
-		local function random_side_candidate_index(side, choices)
-			local matching = {}
-			for i, candidate in ipairs(candidates) do
-				if edge_has_side(candidate.edge, side) then matching[#matching + 1] = i end
+		-- Precompute the randomized side quota, then subdivide each side into that many broad
+		-- along-side bins. One random candidate is selected from every shuffled bin before a bin is
+		-- reused. Coordinates remain random; unlike the old edge-token test, a corner has exactly one
+		-- owner (nearest_side) and cannot satisfy two different side quotas.
+		local placement_side_schedule = {}
+		local side_totals = { top = 0, right = 0, bottom = 0, left = 0 }
+		local side_bin_order, side_layer_order, side_occurrence = {}, {}, {}
+		if surface_edge_ring then
+			for placement_n = 1, shortfall do
+				local side_i = ((placement_n - 1) % #side_cycle) + 1
+				if side_i == 1 then shuffle_side_cycle() end
+				local side = side_cycle[side_i]
+				placement_side_schedule[placement_n] = side
+				side_totals[side] = side_totals[side] + 1
 			end
-			if #matching == 0 then
-				return RandInt(#candidates) + 1, "whole_ring_fallback", 0
+			for _, side in ipairs({ "top", "right", "bottom", "left" }) do
+				local total = side_totals[side]
+				local bins, layers = {}, {}
+				for i = 1, total do
+					bins[i] = i
+					layers[i] = ((i - 1) % math.max(1, ring_sectors)) + 1
+				end
+				for i = total, 2, -1 do
+					local j = RandInt(i) + 1
+					bins[i], bins[j] = bins[j], bins[i]
+				end
+				-- Shuffle each complete layer cycle independently, so every side uses all three depths
+				-- before repeating while not imposing a fixed outside-to-inside order.
+				for first = 1, total, math.max(1, ring_sectors) do
+					local last = math.min(total, first + math.max(1, ring_sectors) - 1)
+					for i = last, first + 1, -1 do
+						local j = first + RandInt(i - first + 1)
+						layers[i], layers[j] = layers[j], layers[i]
+					end
+				end
+				side_bin_order[side], side_layer_order[side], side_occurrence[side] = bins, layers, 0
 			end
+		end
+		local function along_index(candidate, side)
+			if side == "top" or side == "bottom" then
+				return (candidate.col or edge_ctx.min_col) - edge_ctx.min_col + 1, edge_ctx.cols
+			end
+			return (candidate.row or edge_ctx.min_row) - edge_ctx.min_row + 1, edge_ctx.rows
+		end
+		local function candidate_bin(candidate, side, bin_count)
+			local along, along_count = along_index(candidate, side)
+			return math.min(bin_count, math.max(1,
+				math.floor(((along - 1) * bin_count) / math.max(1, along_count)) + 1))
+		end
+		if edge_debug and surface_edge_ring then
+			TopUpEdgeLog("coverage-aware selection side quotas", {
+				top = side_totals.top, right = side_totals.right,
+				bottom = side_totals.bottom, left = side_totals.left,
+			})
+			for _, side in ipairs({ "top", "right", "bottom", "left" }) do
+				local bin_count = math.max(1, side_totals[side])
+				for occurrence = 1, side_totals[side] do
+					local target_bin = side_bin_order[side][occurrence]
+					local target_layer = side_layer_order[side][occurrence]
+					local by_layer, total = {}, 0
+					local min_along, max_along
+					for _, candidate in ipairs(candidates) do
+						if candidate.nearest_side == side
+							and candidate_bin(candidate, side, bin_count) == target_bin then
+							total = total + 1
+							IncrementTally(by_layer, candidate.layer)
+							local along = (side == "left" or side == "right") and candidate.row or candidate.col
+							min_along = min_along and math.min(min_along, along) or along
+							max_along = max_along and math.max(max_along, along) or along
+						end
+					end
+					TopUpEdgeLog("selection bin exhaustive inventory", {
+						side = side, occurrence = occurrence, side_quota = side_totals[side],
+						target_bin = target_bin, target_layer = target_layer,
+						candidate_count = total, candidates_by_layer = TallyString(by_layer),
+						along_sector_span = tostring(min_along) .. ".." .. tostring(max_along),
+					})
+				end
+			end
+		end
+		local function pick_random_best(matching, choices)
+			if #matching == 0 then return nil end
 			local winner = matching[RandInt(#matching) + 1]
 			for _ = 2, math.min(choices, #matching) do
 				local challenger_i = matching[RandInt(#matching) + 1]
-				local incumbent = candidates[winner]
-				local challenger = candidates[challenger_i]
-				if (challenger.valley_score or 0) > (incumbent.valley_score or 0) then
+				if (candidates[challenger_i].valley_score or 0)
+					> (candidates[winner].valley_score or 0) then
 					winner = challenger_i
 				end
 			end
-			return winner, "random_full_side", #matching
+			return winner
+		end
+		local function coverage_candidate_index(side, target_bin, target_layer, choices)
+			local bin_count = math.max(1, side_totals[side])
+			local function collect(require_bin, require_layer, max_bin_distance)
+				local matching = {}
+				for i, candidate in ipairs(candidates) do
+					if candidate.nearest_side == side then
+						local bin = candidate_bin(candidate, side, bin_count)
+						local bin_ok = not require_bin or bin == target_bin
+						if max_bin_distance ~= nil then bin_ok = math.abs(bin - target_bin) <= max_bin_distance end
+						local layer_ok = not require_layer or candidate.layer == target_layer
+						if bin_ok and layer_ok then matching[#matching + 1] = i end
+					end
+				end
+				return matching
+			end
+			local matching = collect(true, true)
+			local scope, fallback_distance = "exact_side_bin_layer", 0
+			if #matching == 0 then
+				matching, scope = collect(true, false), "same_bin_any_layer"
+			end
+			if #matching == 0 then
+				for distance = 1, bin_count - 1 do
+					matching = collect(false, true, distance)
+					if #matching > 0 then
+						scope, fallback_distance = "nearest_bin_same_layer", distance
+						break
+					end
+				end
+			end
+			if #matching == 0 then
+				for distance = 1, bin_count - 1 do
+					matching = collect(false, false, distance)
+					if #matching > 0 then
+						scope, fallback_distance = "nearest_bin_any_layer", distance
+						break
+					end
+				end
+			end
+			if #matching == 0 then matching, scope = collect(false, false), "same_side_anywhere" end
+			if #matching == 0 then
+				local whole = {}
+				for i = 1, #candidates do whole[#whole + 1] = i end
+				matching, scope = whole, "whole_ring_no_owned_candidate"
+			end
+			local winner = pick_random_best(matching, choices)
+			local actual = winner and candidates[winner]
+			return winner, scope, #matching, fallback_distance,
+				actual and candidate_bin(actual, side, bin_count), actual and actual.layer
 		end
 		for placement_n = 1, shortfall do
 			if #candidates == 0 then break end
-			local side_i = ((placement_n - 1) % #side_cycle) + 1
-			if surface_edge_ring and side_i == 1 then shuffle_side_cycle() end
-			local preferred_side = surface_edge_ring and side_cycle[side_i] or nil
+			local preferred_side = surface_edge_ring and placement_side_schedule[placement_n] or nil
+			if preferred_side then side_occurrence[preferred_side] = side_occurrence[preferred_side] + 1 end
+			local occurrence = preferred_side and side_occurrence[preferred_side] or nil
+			local target_bin = preferred_side and side_bin_order[preferred_side][occurrence] or nil
+			local target_layer = preferred_side and side_layer_order[preferred_side][occurrence] or nil
 			local choices = surface_edge_ring
-				and math.max(1, math.floor(cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4)) or 1
-			local ci, selection_scope, matching_count
+				and math.max(1, math.floor(cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1)) or 1
+			local ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer
 			if surface_edge_ring then
-				ci, selection_scope, matching_count = random_side_candidate_index(preferred_side, choices)
+				ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer =
+					coverage_candidate_index(preferred_side, target_bin, target_layer, choices)
 			else
 				ci, selection_scope, matching_count = RandInt(#candidates) + 1, "whole_map", #candidates
 			end
@@ -1795,6 +1959,10 @@ function DepositRules.TopUpAnomalies(map)
 					edge = tostring(initial.edge), source_region = tostring(initial.source_region),
 					valley_score = initial.valley_score, pool_size = #candidates,
 					preferred_side = tostring(preferred_side),
+					target_bin = tostring(target_bin), target_layer = tostring(target_layer),
+					actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
+					fallback_bin_distance = tostring(fallback_distance),
+					side_quota = tostring(preferred_side and side_totals[preferred_side]),
 					candidate_perimeter_u = tostring(initial.perimeter_u),
 					nearest_side = tostring(initial.nearest_side), edge_depth = tostring(initial.edge_depth),
 					selection_scope = selection_scope, matching_side_candidates = matching_count,
@@ -1805,8 +1973,11 @@ function DepositRules.TopUpAnomalies(map)
 			c.used = true
 			if edge_debug then
 				IncrementTally(edge_stats.selected_by_edge, c.edge)
+				IncrementTally(edge_stats.selected_by_sector, c.sector_id)
 				IncrementTally(edge_stats.selected_by_target_side, preferred_side)
 				IncrementTally(edge_stats.selected_by_nearest_side, c.nearest_side)
+				IncrementTally(edge_stats.selected_by_side_layer,
+					tostring(c.nearest_side) .. "/L" .. tostring(c.layer or "?"))
 				IncrementTally(edge_stats.selected_by_scope, selection_scope)
 				TopUpEdgeLog("placement candidate selected", {
 					placement = placement_n, candidate_index = ci, sample_n = tostring(c.sample_n),
@@ -1815,6 +1986,9 @@ function DepositRules.TopUpAnomalies(map)
 					edge = tostring(c.edge), source_region = tostring(c.source_region),
 					valley_score = c.valley_score, pool_remaining = #candidates,
 					preferred_side = tostring(preferred_side),
+					target_bin = tostring(target_bin), target_layer = tostring(target_layer),
+					actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
+					fallback_bin_distance = tostring(fallback_distance),
 					candidate_perimeter_u = tostring(c.perimeter_u),
 					nearest_side = tostring(c.nearest_side), edge_depth = tostring(c.edge_depth),
 					selection_scope = selection_scope, matching_side_candidates = matching_count,
@@ -1831,6 +2005,11 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapEdgeTopUp = surface_edge_ring or nil
 					clone.SuperBigMapEdgeTopUpPlacement = surface_edge_ring and placement_n or nil
 					clone.SuperBigMapEdgeTopUpPreferredSide = surface_edge_ring and preferred_side or nil
+					clone.SuperBigMapEdgeTopUpTargetBin = surface_edge_ring and target_bin or nil
+					clone.SuperBigMapEdgeTopUpTargetLayer = surface_edge_ring and target_layer or nil
+					clone.SuperBigMapEdgeTopUpActualBin = surface_edge_ring and actual_bin or nil
+					clone.SuperBigMapEdgeTopUpActualLayer = surface_edge_ring and actual_layer or nil
+					clone.SuperBigMapEdgeTopUpSelectionScope = surface_edge_ring and selection_scope or nil
 					added_markers[#added_markers + 1] = clone
 					local cat = AnomalyCategory(template)
 					local reward_family = AnomalyRewardFamily(template)
@@ -1899,6 +2078,8 @@ function DepositRules.TopUpAnomalies(map)
 				local sector = SectorAtPoint(map, x, y)
 				local edge, source_region = DescribeTopUpEdge(edge_ctx, sector, x, y)
 				local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
+				local layer = type(edge_depth) == "number" and type(edge_ctx.sector_step) == "number"
+					and math.min(ring_sectors, math.floor(edge_depth / edge_ctx.sector_step) + 1) or "?"
 				local registered = false
 				if sector and type(sector.GetDepositList) == "function" then
 					local ok_list, list = pcall(sector.GetDepositList, sector, clone)
@@ -1913,14 +2094,21 @@ function DepositRules.TopUpAnomalies(map)
 				end
 				IncrementTally(edge_stats.final_by_edge, edge)
 				IncrementTally(edge_stats.final_by_nearest_side, nearest_side)
+				IncrementTally(edge_stats.final_by_side_layer,
+					tostring(nearest_side) .. "/L" .. tostring(layer))
 				IncrementTally(edge_stats.final_by_sector, sector and sector.id)
 				TopUpEdgeLog("final live clone audit", {
 					n = n, clone = tostring(clone), placement = tostring(clone.SuperBigMapEdgeTopUpPlacement),
 					x = x, y = y, sector = tostring(sector and sector.id), col = tostring(sector and sector.col),
 					row = tostring(sector and sector.row), status = tostring(sector and sector.status),
-					edge = edge, nearest_side = nearest_side, edge_depth = tostring(edge_depth),
+					edge = edge, nearest_side = nearest_side, edge_depth = tostring(edge_depth), layer = tostring(layer),
 					perimeter_u = tostring(perimeter_u),
 					preferred_side = tostring(clone.SuperBigMapEdgeTopUpPreferredSide),
+					target_bin = tostring(clone.SuperBigMapEdgeTopUpTargetBin),
+					target_layer = tostring(clone.SuperBigMapEdgeTopUpTargetLayer),
+					actual_bin = tostring(clone.SuperBigMapEdgeTopUpActualBin),
+					actual_layer = tostring(clone.SuperBigMapEdgeTopUpActualLayer),
+					selection_scope = tostring(clone.SuperBigMapEdgeTopUpSelectionScope),
 					source_region = source_region,
 					in_target_final_ring = tostring(IsInFinalOuterSectorRing(map, x, y, ring_sectors)),
 					distance_to_final_right = tostring(edge_ctx.ring_w and (edge_ctx.ring_w - x)),
@@ -1930,23 +2118,84 @@ function DepositRules.TopUpAnomalies(map)
 				})
 			end
 		end
+		local ring_sectors_audited, ring_sectors_fully_sampled = 0, 0
+		local ring_sectors_with_candidates, ring_sectors_selected, ring_sectors_final = 0, 0, 0
+		local matrix_by_row = {}
+		for _, s in ipairs(edge_ctx.sectors or {}) do
+			local coverage = edge_stats.ring_sector_coverage[tostring(s.id)]
+			if coverage then
+				ring_sectors_audited = ring_sectors_audited + 1
+				if coverage.sampled == coverage.planned and coverage.sector_match == coverage.planned then
+					ring_sectors_fully_sampled = ring_sectors_fully_sampled + 1
+				end
+				local selected = edge_stats.selected_by_sector[tostring(s.id)] or 0
+				local added_here = edge_stats.added_by_sector[tostring(s.id)] or 0
+				local final_here = edge_stats.final_by_sector[tostring(s.id)] or 0
+				if coverage.accepted > 0 then ring_sectors_with_candidates = ring_sectors_with_candidates + 1 end
+				if selected > 0 then ring_sectors_selected = ring_sectors_selected + 1 end
+				if final_here > 0 then ring_sectors_final = ring_sectors_final + 1 end
+				local step = edge_ctx.sector_step or 0
+				local x0 = s.area_x0 or ((s.col - edge_ctx.min_col) * step)
+				local y0 = s.area_y0 or ((s.row - edge_ctx.min_row) * step)
+				local x1 = s.area_x1 or (x0 + step)
+				local y1 = s.area_y1 or (y0 + step)
+				TopUpEdgeLog("ring sector exhaustive coverage", {
+					sector = tostring(s.id), col = s.col, row = s.row, raw_edges = coverage.expected_edge,
+					world_x = tostring(x0) .. ".." .. tostring(x1),
+					world_y = tostring(y0) .. ".." .. tostring(y1),
+					planned = coverage.planned, sampled = coverage.sampled,
+					sector_match = coverage.sector_match, accepted = coverage.accepted,
+					rejected = TallyString(coverage.rejected), selected = selected,
+					clone_added = added_here, final_markers = final_here,
+					candidate_status = coverage.accepted > 0 and "eligible"
+						or "no_safe_candidate_in_32_random_probes",
+				})
+				local row = matrix_by_row[s.row]
+				if not row then row = {}; matrix_by_row[s.row] = row end
+				row[s.col] = tostring(coverage.accepted) .. "/" .. tostring(selected) .. "/" .. tostring(final_here)
+			end
+		end
+		for row_n = edge_ctx.min_row or 1, edge_ctx.max_row or 0 do
+			local row = matrix_by_row[row_n]
+			if row then
+				local cells = {}
+				for col_n = edge_ctx.min_col or 1, edge_ctx.max_col or 0 do
+					cells[#cells + 1] = row[col_n] or "."
+				end
+				TopUpEdgeLog("ring coverage matrix row (accepted/selected/final)", {
+					row = row_n, cells_col_ascending = table.concat(cells, " "),
+				})
+			end
+		end
+		TopUpEdgeLog("ring sector coverage totals", {
+			ring_sectors_expected = ring_sector_count, audited = ring_sectors_audited,
+			fully_sampled = ring_sectors_fully_sampled,
+			with_safe_candidates = ring_sectors_with_candidates,
+			without_safe_candidates = ring_sectors_audited - ring_sectors_with_candidates,
+			selected_sectors = ring_sectors_selected, final_marker_sectors = ring_sectors_final,
+		})
 		TopUpEdgeLog("END surface anomaly edge-distribution trace", {
 			total_before = total_current, target = target, requested = shortfall, added = added,
 			pool_initial = pool_final, sampled_by_edge = TallyString(edge_stats.sampled_by_edge),
-			sampled_by_requested_side = TallyString(edge_stats.sampled_by_requested_side),
+			sampled_by_planned_ring_edge = TallyString(edge_stats.sampled_by_planned_ring_edge),
 			sampled_by_source_region = TallyString(edge_stats.sampled_by_source_region),
 			accepted_by_edge = TallyString(edge_stats.accepted_by_edge),
+			accepted_by_exclusive_side = TallyString(edge_stats.accepted_by_exclusive_side),
+			accepted_by_side_layer = TallyString(edge_stats.accepted_by_side_layer),
 			accepted_by_sector = TallyString(edge_stats.accepted_by_sector),
 			rejected_by_reason = TallyString(edge_stats.rejected_by_reason),
 			ring_predicate_comparison = TallyString(edge_stats.ring_predicate_comparison),
 			selected_by_edge = TallyString(edge_stats.selected_by_edge),
+			selected_by_sector = TallyString(edge_stats.selected_by_sector),
 			selected_by_target_side = TallyString(edge_stats.selected_by_target_side),
 			selected_by_nearest_side = TallyString(edge_stats.selected_by_nearest_side),
+			selected_by_side_layer = TallyString(edge_stats.selected_by_side_layer),
 			selected_by_scope = TallyString(edge_stats.selected_by_scope),
 			added_by_edge = TallyString(edge_stats.added_by_edge),
 			added_by_sector = TallyString(edge_stats.added_by_sector),
 			final_by_edge = TallyString(edge_stats.final_by_edge),
 			final_by_nearest_side = TallyString(edge_stats.final_by_nearest_side),
+			final_by_side_layer = TallyString(edge_stats.final_by_side_layer),
 			final_by_sector = TallyString(edge_stats.final_by_sector),
 		})
 	end
@@ -1957,7 +2206,7 @@ function DepositRules.TopUpAnomalies(map)
 		reused_pool = reused_pool,
 		surface_edge_ring = not IsUndergroundMap(map),
 		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
-		valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4,
+		valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1,
 		source_mix = TallyString(src_by_cat),
 		added_mix = TallyString(added_by_cat),
 		source_reward_families = TallyString(src_by_reward),
@@ -2001,13 +2250,22 @@ BuildTopUpEdgeDebugContext = function(map, ring_sectors)
 				for inner_key, sector in pairs(line) do
 					local col, row = type(sector) == "table" and sector.col, type(sector) == "table" and sector.row
 					if type(col) == "number" and type(row) == "number" then
+						local area_x0, area_y0, area_x1, area_y1
+						if sector.area then
+							pcall(function()
+								local mn, mx = sector.area:min(), sector.area:max()
+								area_x0, area_y0 = mn:xy()
+								area_x1, area_y1 = mx:xy()
+							end)
+						end
 						ctx.min_col = ctx.min_col == nil and col or math.min(ctx.min_col, col)
 						ctx.max_col = ctx.max_col == nil and col or math.max(ctx.max_col, col)
 						ctx.min_row = ctx.min_row == nil and row or math.min(ctx.min_row, row)
 						ctx.max_row = ctx.max_row == nil and row or math.max(ctx.max_row, row)
 						ctx.sectors[#ctx.sectors + 1] = {
 							id = sector.id, col = col, row = row, status = sector.status,
-							outer_key = outer_key, inner_key = inner_key,
+							outer_key = outer_key, inner_key = inner_key, sector_ref = sector,
+							area_x0 = area_x0, area_y0 = area_y0, area_x1 = area_x1, area_y1 = area_y1,
 						}
 					end
 				end
@@ -2054,10 +2312,27 @@ BuildTopUpEdgeDebugContext = function(map, ring_sectors)
 		target_bottom_world = tostring(ctx.ring_h and ctx.band_world and (ctx.ring_h - ctx.band_world))
 			.. ".." .. tostring(ctx.ring_h),
 	})
+	local probe_margin = math.max(1, math.floor((tile or 1) * 2))
+	local corner_probes = {
+		{ raw_corner = "x_low_y_low", x = probe_margin, y = probe_margin },
+		{ raw_corner = "x_high_y_low", x = (map_w or 0) - probe_margin, y = probe_margin },
+		{ raw_corner = "x_low_y_high", x = probe_margin, y = (map_h or 0) - probe_margin },
+		{ raw_corner = "x_high_y_high", x = (map_w or 0) - probe_margin, y = (map_h or 0) - probe_margin },
+	}
+	for _, probe in ipairs(corner_probes) do
+		local sector = SectorAtPoint(map, probe.x, probe.y)
+		TopUpEdgeLog("raw-world corner to sector orientation probe", {
+			raw_corner = probe.raw_corner, x = probe.x, y = probe.y,
+			sector = tostring(sector and sector.id), col = tostring(sector and sector.col),
+			row = tostring(sector and sector.row),
+		})
+	end
 	for n, s in ipairs(ctx.sectors) do
 		TopUpEdgeLog("sector topology", {
 			n = n, id = tostring(s.id), col = s.col, row = s.row, status = tostring(s.status),
 			outer_key = tostring(s.outer_key), inner_key = tostring(s.inner_key),
+			area_x = tostring(s.area_x0) .. ".." .. tostring(s.area_x1),
+			area_y = tostring(s.area_y0) .. ".." .. tostring(s.area_y1),
 		})
 	end
 	return ctx
@@ -2972,6 +3247,11 @@ function DepositRules.OnSectorScanned(status, sector)
 				n = n, marker = tostring(marker), x = tostring(x), y = tostring(y),
 				placement = tostring(marker.SuperBigMapEdgeTopUpPlacement),
 				preferred_side = tostring(marker.SuperBigMapEdgeTopUpPreferredSide),
+				target_bin = tostring(marker.SuperBigMapEdgeTopUpTargetBin),
+				target_layer = tostring(marker.SuperBigMapEdgeTopUpTargetLayer),
+				actual_bin = tostring(marker.SuperBigMapEdgeTopUpActualBin),
+				actual_layer = tostring(marker.SuperBigMapEdgeTopUpActualLayer),
+				selection_scope = tostring(marker.SuperBigMapEdgeTopUpSelectionScope),
 				is_placed = tostring(marker.is_placed), placed_obj = tostring(marker.placed_obj),
 			})
 		end
@@ -3003,6 +3283,12 @@ function DepositRules.OnSectorScanned(status, sector)
 				n = n, marker = tostring(marker), x = tostring(x), y = tostring(y),
 				is_placed = tostring(marker.is_placed), placed_obj = tostring(placed_obj),
 				placed_x = tostring(ox), placed_y = tostring(oy),
+				position_matches_marker = tostring(ox == x and oy == y),
+				preferred_side = tostring(marker.SuperBigMapEdgeTopUpPreferredSide),
+				target_bin = tostring(marker.SuperBigMapEdgeTopUpTargetBin),
+				target_layer = tostring(marker.SuperBigMapEdgeTopUpTargetLayer),
+				actual_bin = tostring(marker.SuperBigMapEdgeTopUpActualBin),
+				actual_layer = tostring(marker.SuperBigMapEdgeTopUpActualLayer),
 				placed_revealed = tostring(placed_obj and placed_obj.revealed),
 			})
 		end
