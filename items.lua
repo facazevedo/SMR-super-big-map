@@ -16,6 +16,10 @@ return {
 		'CodeFileName', "Code/sbm_engine.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_loading_profiler",
+		'CodeFileName', "Code/sbm_loading_profiler.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_entrance_debug",
 		'CodeFileName', "Code/sbm_entrance_debug.lua",
 	}),

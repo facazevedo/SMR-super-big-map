@@ -19,6 +19,13 @@ local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 
+local LOAD_PROFILE_MESSAGES = {
+	ChangingMap = true, PreNewMap = true, NewMap = true, NewMapObject = true,
+	NewMapLoaded = true, PostNewMapLoaded = true, MapGenerated = true,
+	MapSectorsReady = true, CityInitialized = true, LoadGame = true,
+	CurrentMapChangeDone = true,
+}
+
 -- Register an OnMsg handler at most ONCE per message per session, even across mod
 -- hot-reloads. Engine.ChainOnMsg CHAINS (wraps the previous handler), so a mid-game
 -- reload -- which re-executes this module -- would otherwise STACK our handlers and run
@@ -34,7 +41,26 @@ local function RegisterOnce(message_name, handler)
 		return
 	end
 	State.registered_msgs[message_name] = true
-	Engine.ChainOnMsg(message_name, handler)
+	Engine.ChainOnMsg(message_name, function(...)
+		local profiler = SuperBigMap.LoadingProfiler
+		local tracked = LOAD_PROFILE_MESSAGES[message_name] == true
+		if tracked and profiler and type(profiler.Start) == "function"
+			and (message_name == "ChangingMap" or message_name == "PreNewMap")
+			and not (type(profiler.IsActive) == "function" and profiler.IsActive()) then
+			profiler.Start("OnMsg." .. message_name, nil, select(1, ...))
+		end
+		local token = tracked and profiler and type(profiler.Begin) == "function"
+			and type(profiler.IsActive) == "function" and profiler.IsActive()
+			and profiler.Begin("OnMsg." .. message_name, nil, select(1, ...)) or false
+		local function complete(...)
+			if token and type(profiler.End) == "function" then
+				profiler.End(token, { handler_returned = true,
+					result_count = select("#", ...) }, true)
+			end
+			return ...
+		end
+		return complete(handler(...))
+	end)
 end
 
 -- Init-sequence trace (gated on Config.DEBUG_INIT_SEQUENCE via DebugLog.InitSeq).

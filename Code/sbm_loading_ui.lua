@@ -576,6 +576,10 @@ function SuperBigMap.SetLoadingPhase(message)
 		text = text .. " Please wait."
 	end
 	current_phase_body = text
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("loading footer phase", { status = text, box_visible = LoadingBoxValid() == true }, Global("CurrentMap"))
+	end
 	-- Live-update the FOOTER BUTTON (bottom-most): set the Ok action's name and rebuild the
 	-- action bar (no box recreate -> no flicker). MarsMessageQuestionBox uses the same
 	-- action-name + UpdateActionViews pattern.
@@ -605,6 +609,10 @@ local loading_refs = 0
 
 function SuperBigMap.ExpansionLoadingBegin()
 	loading_refs = loading_refs + 1
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Start) == "function" then
+		profiler.Start("ExpansionLoadingBegin", { refs = loading_refs }, Global("CurrentMap"))
+	end
 	if loading_on_welcome then
 		LoadingLog("ExpansionLoadingBegin: additional phase joined", { refs = loading_refs })
 		return
@@ -660,8 +668,12 @@ end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
 function SuperBigMap.ExpansionLoadingEnd()
+	local profiler = SuperBigMap.LoadingProfiler
 	if loading_refs > 1 then
 		loading_refs = loading_refs - 1
+		if profiler and type(profiler.Step) == "function" then
+			profiler.Step("ExpansionLoadingEnd: phase complete, work remains", { refs = loading_refs }, Global("CurrentMap"))
+		end
 		LoadingLog("ExpansionLoadingEnd: phase ended, others still busy -- box stays", { refs = loading_refs })
 		return
 	end
@@ -676,6 +688,11 @@ function SuperBigMap.ExpansionLoadingEnd()
 	SetWelcomeLoading(false)
 	if was_on then
 		LoadingLog("ExpansionLoadingEnd: loading box removed, welcome popup re-shown")
+	end
+	if profiler and type(profiler.Stop) == "function" then
+		profiler.Stop("ExpansionLoadingEnd: all expansion work complete", {
+			refs = loading_refs, loading_box_was_on = was_on,
+		}, Global("CurrentMap"))
 	end
 end
 

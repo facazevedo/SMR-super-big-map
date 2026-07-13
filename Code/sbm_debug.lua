@@ -10,7 +10,7 @@
 -- print() in mod-owned modules.
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
---   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Loading, LoadTime,
+--   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Loading, LoadTime, LoadingSteps,
 --   Hover, Align, EntrancePositions, Overview, Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom,
 --   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
 --
@@ -101,6 +101,10 @@ end
 -- mark and delta ms since the previous mark. Timer resets when marks are >30s apart (a new load).
 local load_t0, load_prev = false, false
 function DebugLog.LoadTime(step, data)
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("legacy timeline: " .. tostring(step), data)
+	end
 	if not enabled("LoadTime") then
 		return false
 	end
@@ -129,6 +133,10 @@ function DebugLog.InitSeqOn()
 end
 
 function DebugLog.InitSeq(message, data)
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("init sequence: " .. tostring(message), data)
+	end
 	if not enabled("InitSeq") then
 		return false
 	end

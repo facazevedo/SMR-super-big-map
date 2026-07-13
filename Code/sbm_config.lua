@@ -201,6 +201,10 @@ config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement a
 config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
 config.DebugLoading       = true    -- Loading: loading-box watch loop + "Please wait" dot animation (TEMP: investigating animation stopping)
 config.DebugLoadTime      = true    -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle) (TEMP: finding where load time goes to speed it up)
+-- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
+-- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
+-- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
+config.DebugLoadingSteps  = true
 config.DebugHover         = true    -- Hover: overview hover-highlight mapping (cursor pos, ray-hit Z vs authoritative height, sector bounds + containment) (TEMP: investigating misaligned overview highlight)
 config.DebugAlign         = true    -- Align: underground->surface entrance alignment (map identities, per-entrance pos/class/sector, pairwise delta matrix, per-candidate matches + residuals) (TEMP: investigating the underground translation choosing a wrong offset)
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
@@ -916,6 +920,7 @@ C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
+C.DEBUG_LOADINGSTEPS  = as_bool(config.DebugLoadingSteps)
 C.DEBUG_HOVER         = as_bool(config.DebugHover)
 C.DEBUG_ALIGN         = as_bool(config.DebugAlign)
 C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)

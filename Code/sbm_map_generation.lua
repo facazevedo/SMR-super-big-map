@@ -98,6 +98,10 @@ local function StretchLog(message, data)
 	if DebugLog then
 		DebugLog.Info("Stretch", message, data)
 	end
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("stretch: " .. tostring(message), data, Global("CurrentMap"))
+	end
 end
 
 -- Per-object generation spam routes to its own scope so DEBUG_GENERATION stays readable;
@@ -1389,7 +1393,16 @@ local function PatchRandomMapGenerator()
 				if GenRandEnabled() then
 					State.genrand_active_mapdata = mapdata or template or false
 					GenRandLog("DoGenerate begin (NATIVE-size run, vanilla baseline)", GenRandInputs(self, map))
+					local profiler = SuperBigMap.LoadingProfiler
+					local load_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+						"RandomMapGenerator.DoGenerate native body",
+						{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
+							detected_height_tiles = cur_h_tiles }, map) or false
 					local results = { pcall(original_do_generate, self, map, ...) }
+					if load_token and type(profiler.End) == "function" then
+						profiler.End(load_token, { result_count = #results - 1,
+							error = results[1] and nil or tostring(results[2]) }, results[1] == true)
+					end
 					State.genrand_active_mapdata = false
 					if not results[1] then
 						GenRandLog("DoGenerate FAILED (native)", { err = tostring(results[2]) })
@@ -1398,7 +1411,17 @@ local function PatchRandomMapGenerator()
 					GenRandCensus(map, "post-gen NATIVE")
 					return Unpack(results, 2)
 				end
-				return original_do_generate(self, map, ...)
+				local profiler = SuperBigMap.LoadingProfiler
+				local load_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+					"RandomMapGenerator.DoGenerate native body",
+					{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
+						detected_height_tiles = cur_h_tiles }, map) or false
+				if not load_token then return original_do_generate(self, map, ...) end
+				local function complete(...)
+					profiler.End(load_token, { result_count = select("#", ...) }, true)
+					return ...
+				end
+				return complete(original_do_generate(self, map, ...))
 			end
 
 			-- Cap to the per-map generator markers if present, else the max.
@@ -1569,9 +1592,19 @@ local function PatchRandomMapGenerator()
 
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
+			local profiler = SuperBigMap.LoadingProfiler
+			local load_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+				"RandomMapGenerator.DoGenerate vanilla body",
+				{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
+					detected_height_tiles = cur_h_tiles, generator_width_tiles = gen_width_tiles,
+					generator_height_tiles = gen_height_tiles }, map) or false
 			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
 			local results = { pcall(original_do_generate, self, map, ...) }
 			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
+			if load_token and type(profiler.End) == "function" then
+				profiler.End(load_token, { result_count = #results - 1,
+					error = results[1] and nil or tostring(results[2]) }, results[1] == true)
+			end
 			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
 
 			State.genrand_active_mapdata = false
@@ -1805,13 +1838,20 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				SuperBigMap.ExpansionLoadingEnd()
 			end
 		end
+		local loading_profiler = SuperBigMap.LoadingProfiler
 		local waited = 0
+		local f0_token = loading_profiler and type(loading_profiler.Begin) == "function"
+			and loading_profiler.Begin("surface readiness: wait for F0 sector", { max_wait_ms = 15000 }, map) or false
 		for _ = 1, 60 do
 			if FindSectorByName(map, "F0") then
 				break
 			end
 			sleep(250)
 			waited = waited + 250
+		end
+		if f0_token and type(loading_profiler.End) == "function" then
+			loading_profiler.End(f0_token, { waited_ms = waited,
+				f0_found = FindSectorByName(map, "F0") ~= nil }, true)
 		end
 		InitSeq("RunSectorMirrorPlan: F0 wait finished", {
 			waited_ms = waited,
@@ -1832,6 +1872,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		-- the samples show exactly when object placement completes, so the settle can later be
 		-- shortened to a data-backed value instead of another guess.
 		do
+			local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
+				and loading_profiler.Begin("surface readiness: fixed settle", { settle_ms = settle_ms }, map) or false
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			local lt_on = LT and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("LoadTime")
 			if lt_on and type(map.MapForEach) == "function" then
@@ -1850,6 +1892,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				LT("settle done")
 			else
 				sleep(settle_ms)
+			end
+			if settle_token and type(loading_profiler.End) == "function" then
+				loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
 			end
 		end
 		if map.SuperBigMapSectorMirrorDone == true then
@@ -1930,6 +1975,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			local stretch_t0 = 0
 			if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then stretch_t0 = t end end
 			local ok_stretch, n_grids = false, 0
+			local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
+				and loading_profiler.Begin("surface expansion: complete stretch pipeline", {
+					fill_mode = fill_mode, settle_ms = settle_ms,
+				}, map) or false
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
 					-- Relief annotations MUST be captured BEFORE the terrain stretch (they record
@@ -2096,6 +2145,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				StretchLog("TIMING: ResnapRocketsOnMap", { ms = now2() - ft })
 				StretchLog("stretch branch: finalize steps done")
 			end)
+			if stretch_token and type(loading_profiler.End) == "function" then
+				loading_profiler.End(stretch_token, {
+					grids = n_grids, stretch_ok = ok_stretch,
+					error = ok_branch and nil or tostring(branch_err),
+				}, ok_branch == true)
+			end
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
 			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
@@ -2359,10 +2414,20 @@ local function RunUndergroundStretchIfEnabled(map)
 		SetLoadingPhase("Expanding the underground map")
 	end
 	create_thread(function()
+		local loading_profiler = SuperBigMap.LoadingProfiler
+		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
+			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
 		sleep(settle_ms)
+		if settle_token and type(loading_profiler.End) == "function" then
+			loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
+		end
 		local pause_ild = Global("PauseInfiniteLoopDetection")
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
+		local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
+			and loading_profiler.Begin("underground expansion: complete stretch pipeline", {
+				settle_ms = settle_ms, desired_tiles = desired, generator_tiles = gen_t,
+			}, map) or false
 		local ok_branch, branch_err = pcall(function()
 			EntranceSnapshot("underground stretch begin", map)
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
@@ -2482,6 +2547,11 @@ local function RunUndergroundStretchIfEnabled(map)
 				SpikeAudit(main_map2, "surface at underground-stretch DONE")
 			end
 		end)
+		if stretch_token and type(loading_profiler.End) == "function" then
+			loading_profiler.End(stretch_token, {
+				error = ok_branch and nil or tostring(branch_err),
+			}, ok_branch == true)
+		end
 		EntranceSnapshot("underground stretch final", map)
 		if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapUndergroundStretch") end
 		if not ok_branch then
