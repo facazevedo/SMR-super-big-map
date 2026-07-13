@@ -176,6 +176,55 @@ local function SizingDiag(tag, msg)
 	DebugLog.Info("SectorSizing", msg, { tag = "expl/" .. tostring(tag) })
 end
 
+-- GetMapSectorXY is called from engine hex searches once per tested hex. Recomputing the full
+-- layout there can execute tens of thousands of Lua instructions during one deposit placement and
+-- trip the engine's infinite-loop detector. Cache the immutable lookup layout after the live grid
+-- is complete. The MapSectors table plus its first/last sector objects form the invalidation key,
+-- so InitSectors rebuilds and save-loaded grids automatically force one fresh resolution.
+local sector_lookup_layout_cache = setmetatable({}, { __mode = "k" })
+local function GetLiveCachedSectorLookupLayout(city)
+	local sectors = city and city.MapSectors
+	local cached = city and sector_lookup_layout_cache[city]
+	if cached and cached.sectors == sectors and type(sectors) == "table" then
+		local first_col = sectors[1]
+		local last_col = sectors[cached.count_x]
+		if first_col and first_col[1] == cached.first_sector
+			and last_col and last_col[cached.count_y] == cached.last_sector then
+			return cached.layout
+		end
+	end
+	return nil
+end
+
+local function GetCachedSectorLookupLayout(city, map)
+	local live = GetLiveCachedSectorLookupLayout(city)
+	if live then return live end
+	local sectors = city and city.MapSectors
+
+	local layout = Grid.ResolveSectorLayout(map)
+	if city and type(sectors) == "table" and layout then
+		local first_col = sectors[1]
+		local last_col = sectors[layout.count_x]
+		local first_sector = first_col and first_col[1]
+		local last_sector = last_col and last_col[layout.count_y]
+		-- Do not cache a partially-built grid; a later lookup after InitSectors completes will retry.
+		if first_sector and last_sector then
+			sector_lookup_layout_cache[city] = {
+				sectors = sectors,
+				first_sector = first_sector,
+				last_sector = last_sector,
+				count_x = layout.count_x,
+				count_y = layout.count_y,
+				layout = layout,
+			}
+			SizingDiag("GetMapSectorXYLayoutCache", string.format(
+				"cached completed %sx%s lookup layout for city=%s map=%s",
+				tostring(layout.count_x), tostring(layout.count_y), tostring(city), tostring(map)))
+		end
+	end
+	return layout
+end
+
 -- World-unit width of the live sector[1][1] (the actual built size), or nil.
 local function LiveSectorSize(city)
 	local sectors = city and type(city.MapSectors) == "table" and city.MapSectors
@@ -642,7 +691,9 @@ local function InstallBasicSectorPatch()
 
 	function GetMapSectorTileSize(map)
 		if Grid.UseCustomSectorsForMap(map) then
-			local step = Grid.ResolveSectorLayout(map).step_x
+			local city = map and map.City
+			local layout = city and GetCachedSectorLookupLayout(city, map) or Grid.ResolveSectorLayout(map)
+			local step = layout.step_x
 			SizingDiag("GetMapSectorTileSize", string.format("GetMapSectorTileSize CUSTOM -> step_x=%s", tostring(Round(step))))
 			return step
 		end
@@ -658,12 +709,16 @@ local function InstallBasicSectorPatch()
 	-- 10 rows but our layout says col=15).
 	local last_logged_xy = false
 	function GetMapSectorXY(city, mx, my)
-		local map = city and city.GetMap and city:GetMap()
-		if not Grid.UseCustomSectorsForMap(map) then
-			return original_sector_xy(city, mx, my)
+		-- The completed expanded grid is the steady-state hot path. Avoid even resolving the map
+		-- or re-running the custom-map predicate for every hex tested by HexGridFindBuildable.
+		local layout = GetLiveCachedSectorLookupLayout(city)
+		if not layout then
+			local map = city and city.GetMap and city:GetMap()
+			if not Grid.UseCustomSectorsForMap(map) then
+				return original_sector_xy(city, mx, my)
+			end
+			layout = GetCachedSectorLookupLayout(city, map)
 		end
-
-		local layout = Grid.ResolveSectorLayout(map)
 		local x = mx - layout.border
 		local y = my - layout.border
 		local col = ClampNumber(1 + math.floor(x / layout.step_x), 1, layout.count_x)

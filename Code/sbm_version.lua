@@ -51,7 +51,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     retaining sector-name and buildable-area rollover data.
 -- 47: share the underground UI predicate across installers and rebuild each rollover from the
 --     exact hovered sector plus its live post-stretch buildable-grid ratio.
-SuperBigMap.SECTOR_PATCH_VERSION = 47
+-- 48: cache the completed sector lookup layout so engine hex searches do not recompute the full
+--     20x20 layout for every candidate hex and trip the infinite-loop detector.
+SuperBigMap.SECTOR_PATCH_VERSION = 48
 -- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 24:
 -- finalize underground grids before enrichment, require entrance-connected path reachability,
 -- relocate invalid vanilla/top-up markers, and skip the now-duplicate post-switch grid rebuild.
