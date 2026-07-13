@@ -446,19 +446,18 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
--- Surface anomaly TOP-UP extras are reserved for this many sector rows/columns along every edge
--- of the ORIGINAL generated terrain extent. This includes the former bottom/right boundaries,
--- which lie inside the expanded map. Other top-up families avoid this ring. Vanilla-generated
--- markers are not moved.
+-- Every surface anomaly TOP-UP extra is reserved for this many sector rows/columns along all four
+-- edges of the FINAL expanded map. These anomaly rewards cover research/technology progress,
+-- metal or rare-metal discovery events, breakthroughs, and large-cache/unique-scenic events.
+-- Resource, Vista, Research Site, and Morale Vista top-ups avoid this ring. Vanilla-generated
+-- markers are not moved by this routing rule.
 -- 0 restores whole-map placement with no reserved ring.
 config.TopUpAnomalyOuterRingSectors = 3
--- the most higher terrain nearby. This keeps distribution random while preferring reachable
--- low ground between mountains. 1 = no valley preference.
--- For each anomaly extra, compare this many random valid candidates from its requested full side
--- and use the one with the most higher terrain nearby. This keeps distribution random while
--- preferring reachable low ground between mountains. 1 = no valley preference.
--- the most higher terrain nearby. This keeps distribution random while preferring reachable
--- low ground between mountains. 1 = no valley preference.
+-- Surface candidates must already be passable, buildable, unobstructed mountain-base hexes
+-- (surrounding terrain higher than the candidate). For each anomaly extra, compare this many
+-- random valid candidates from its requested full side and use the deepest valley. This keeps
+-- distribution random while excluding tops and cliffs. 1 = random valid base with no extra
+-- valley preference.
 config.TopUpAnomalyValleyChoices = 4
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
@@ -797,7 +796,8 @@ config.RmgPlacementFallbackScale = 0.6
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
 -- enabled effect types up to their source count x area factor. The three per-type switches above
--- let each family be controlled separately.
+-- let each family be controlled separately. Surface extras are randomly distributed outside the
+-- anomaly-only outer ring and require passable, flat, buildable, unobstructed terrain.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI

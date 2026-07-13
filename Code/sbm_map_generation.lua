@@ -2276,6 +2276,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							StretchLog("stretch branch: -> EvenOutDepositDensity")
 							SafeCall(deposits.EvenOutDepositDensity, map)
 						end
+						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
+							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
+							SafeCall(deposits.AuditSurfaceTopUpRingExclusivity, map)
+						end
 						if type(deposits.LogDistributionReport) == "function" then
 							SafeCall(deposits.LogDistributionReport, map, "stretch after density suite")
 						end
