@@ -1470,6 +1470,12 @@ local function BeginDeferredElevatorMigration(map)
 		else
 			local surface_site = IsLiveGameObject(surface_passage)
 				and surface_passage.elevator_construction or nil
+			-- Preserve the authoritative underground snap target across the stretch. Once the
+			-- passage has moved, a nearest search from this site's old coordinates can select the
+			-- wrong entrance, while linked_obj points to the intentionally offset surface site.
+			if IsElevatorConstructionSite(surface_site) then
+				site.SuperBigMapDeferredElevatorPassage = passage
+			end
 			ElevatorMigrationLog("underground Elevator site left in place (no finished surface counterpart)", {
 				site = tostring(site), passage = tostring(passage), surface_passage = tostring(surface_passage),
 				surface_elevator = tostring(surface_elevator),
@@ -1497,8 +1503,17 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 	local restored = 0
 	for i, record in ipairs(records) do
 		if not record.restored then
-			local terrain_before = ElevatorTerrainFingerprint(map, record.surface_x, record.surface_y)
-			local target = point_fn(record.surface_x, record.surface_y)
+			-- Vanilla constructs the underground half on its linked underground passage/imprint.
+			-- The surface entrance may have been shifted to nearby buildable terrain, so its XY is
+			-- deliberately not authoritative for underground placement.
+			local passage = record.underground_passage
+			local passage_pos = IsLiveGameObject(passage) and ObjectPosition(passage) or nil
+			local passage_x, passage_y = PointXY(passage_pos)
+			if type(passage_x) ~= "number" or type(passage_y) ~= "number" then
+				error("deferred Elevator migration lost underground passage " .. tostring(i))
+			end
+			local terrain_before = ElevatorTerrainFingerprint(map, passage_x, passage_y)
+			local target = point_fn(passage_x, passage_y)
 			if type(target.SetTerrainZ) == "function" then
 				local snapped = SafeCall(target.SetTerrainZ, target, map)
 				if snapped then target = snapped end
@@ -1518,7 +1533,9 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			if not IsLiveGameObject(bld) then
 				error("failed to rebuild underground Elevator counterpart " .. tostring(i))
 			end
-			if type(bld.SetAngle) == "function" then SafeCall(bld.SetAngle, bld, record.angle or 0) end
+			local passage_angle = type(passage.GetAngle) == "function"
+				and SafeCall(passage.GetAngle, passage) or record.angle or 0
+			if type(bld.SetAngle) == "function" then SafeCall(bld.SetAngle, bld, passage_angle) end
 			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
 			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
 			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
@@ -1540,24 +1557,27 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			if not ok_complete then
 				error("underground Elevator ConstructionComplete failed: " .. tostring(complete_err))
 			end
-			local terrain_after = ElevatorTerrainFingerprint(map, record.surface_x, record.surface_y)
+			local terrain_after = ElevatorTerrainFingerprint(map, passage_x, passage_y)
 			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
 			if not terrain_unchanged then
 				error("rebuilding underground Elevator counterpart changed terrain at "
-					.. tostring(record.surface_x) .. "," .. tostring(record.surface_y))
+					.. tostring(passage_x) .. "," .. tostring(passage_y))
 			end
-			local passage = type(map.MapFindNearest) == "function"
+			local nearest_passage = type(map.MapFindNearest) == "function"
 				and SafeCall(map.MapFindNearest, map, target, "map", "SurfacePassageBase", "UndergroundPassageBase") or nil
-			if IsLiveGameObject(passage) then passage.elevator_construction = false end
+			passage.elevator_construction = false
 			record.rebuilt_elevator = bld
 			record.restored = true
 			restored = restored + 1
 			ElevatorMigrationLog("finished underground Elevator counterpart rebuilt", {
 				n = i, reason = tostring(reason or "normal"), elevator = tostring(bld),
 				surface_elevator = tostring(record.surface_elevator), passage = tostring(passage),
+				nearest_passage = tostring(nearest_passage), passage_is_nearest = tostring(nearest_passage == passage),
 				surface_stage = "complete", underground_stage = "complete", stages_match = "true",
 				quick_build_setup = tostring(quick_build_setup), construction_complete = "true",
-				x = record.surface_x, y = record.surface_y, z = tostring(target_z),
+				x = passage_x, y = passage_y, z = tostring(target_z),
+				surface_x = record.surface_x, surface_y = record.surface_y,
+				offset_x = record.surface_x - passage_x, offset_y = record.surface_y - passage_y,
 				terrain_unchanged = tostring(terrain_unchanged),
 				terrain_checksum = terrain_after and terrain_after.checksum or "?",
 				terrain_min_z = terrain_after and terrain_after.min_z or "?",
@@ -1626,18 +1646,31 @@ local function MoveEntranceVisualsToScale(map)
 		local nx = math.floor(ox * scale + 0.5)
 		local ny = math.floor(oy * scale + 0.5)
 		local pair_exact = false
+		local pair_anchor = "scaled"
 		local elevator_kind = is_elevator_or_site(obj)
 		if elevator_kind then
-			local linked = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
+			local underground = map.mapdata and map.mapdata.Environment == "Underground"
+			local anchor
+			if underground then
+				-- On the underground map, vanilla's passage/imprint is authoritative. The linked
+				-- surface half can be offset because the exact corresponding surface hex was not
+				-- buildable. Never pull the underground site/building away from its imprint.
+				anchor = IsKindOfSafe(obj, "ElevatorBase") and obj.passage
+					or obj.SuperBigMapDeferredElevatorPassage
+				pair_anchor = "underground_passage"
+			else
+				anchor = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
+				pair_anchor = "linked_counterpart"
+			end
 			-- A destroyed construction site remains a Lua table with GetPos but is no longer a
 			-- luaGameObject. Never cross the engine boundary unless IsValid confirms it is live.
-			if IsLiveGameObject(linked) and type(linked.GetPos) == "function" then
-				local ok_lp, linked_pos = pcall(linked.GetPos, linked)
+			if IsLiveGameObject(anchor) and type(anchor.GetPos) == "function" then
+				local ok_lp, linked_pos = pcall(anchor.GetPos, anchor)
 				local lx, ly
 				if ok_lp then lx, ly = PointXY(linked_pos) end
 				if type(lx) == "number" and type(ly) == "number" then
-					-- The surface half already occupies its final expanded coordinate. Use that exact
-					-- XY for the underground half instead of relying on rounding the scale twice.
+					-- Use the selected live anchor's exact final coordinate instead of independently
+					-- scaling the Elevator and allowing it to drift away from its passage/counterpart.
 					nx, ny = lx, ly
 					pair_exact = true
 				end
@@ -1758,6 +1791,9 @@ local function MoveEntranceVisualsToScale(map)
 			end
 		end
 		if ok_set then moved = moved + 1 end
+		if ok_set and obj.SuperBigMapDeferredElevatorPassage then
+			obj.SuperBigMapDeferredElevatorPassage = nil
+		end
 		-- ENTRANCE SIGN always visible (user report: badge vanishes when the camera comes
 		-- close). Vanilla's ScaleSmallObjects sets these signs depth-tested (disableZ=false) in
 		-- the close/normal camera, so terrain occludes the ground badge; in overview it uses
@@ -1776,6 +1812,7 @@ local function MoveEntranceVisualsToScale(map)
 			from = tostring(ox) .. "," .. tostring(oy),
 			to = tostring(nx) .. "," .. tostring(ny),
 			ok = ok_set, rehexed = rehexed, paired_exact_xy = pair_exact,
+			pair_anchor = pair_anchor,
 		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.

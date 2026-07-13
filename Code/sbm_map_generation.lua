@@ -2790,7 +2790,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			SpikeAudit(map, "underground post-MoveEntranceVisuals")
 			-- Natural entrance objects still receive exactly one transformation (the stretch).
 			-- The one exception is an Elevator already completed on the surface: its removed
-			-- pending underground half is rebuilt later at the surface Elevator's exact XY.
+			-- pending underground half is rebuilt later on its live underground passage/imprint.
 			-- FINAL GRIDS FIRST. The consolidated terrain revalidation can report success on a
 			-- non-current underground map before the Lua BuildableGrid has completed. v480 then
 			-- sampled its stale pre-stretch grid and the authoritative rebuild happened only after
