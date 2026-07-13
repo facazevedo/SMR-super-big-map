@@ -2243,37 +2243,112 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local concrete_moves = {}
 	local moved, moved_placed, unresolved = 0, 0, 0
 	local moved_by_class = {}
-	for _, item in ipairs(invalid) do
+	local relocation_attempts, relocation_retries = 0, 0
+	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
+	for invalid_i, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
-		local c = take_near(old_pos)
-		if not c or not marker or type(marker.SetPos) ~= "function" then
+		local class = tostring(marker and marker.class or "?")
+		local ox, oy
+		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
+		if not marker or type(marker.SetPos) ~= "function" then
 			unresolved = unresolved + 1
+			Log("underground enrichment relocation unresolved", {
+				class = class, index = invalid_i, old_x = ox, old_y = oy,
+				reason = not marker and "marker unavailable" or "SetPos unavailable",
+			})
 		else
-			local new_pos = point(c.x, c.y)
-			if type(new_pos.SetTerrainZ) == "function" then
-				local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
-				if ok_z and snapped then new_pos = snapped end
+			-- Leave at least one candidate for every marker still to process. A candidate was
+			-- reachable when sampled, but terrain-Z snapping or SetPos can alter the effective
+			-- point. The old single-attempt path therefore produced a false unresolved result
+			-- despite hundreds of alternatives remaining in the pool.
+			local later_markers = #invalid - invalid_i
+			local max_attempts = math.min(32, math.max(0, #candidates - later_markers))
+			local attempts, success = 0, false
+			local successful_pos
+			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
+			while attempts < max_attempts and not success do
+				local c = take_near(old_pos)
+				if not c then
+					last_reason = "candidate pool exhausted"
+					break
+				end
+				attempts = attempts + 1
+				relocation_attempts = relocation_attempts + 1
+				if attempts > 1 then relocation_retries = relocation_retries + 1 end
+				local new_pos = point(c.x, c.y)
+				if type(new_pos.SetTerrainZ) == "function" then
+					local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
+					if ok_z and snapped then new_pos = snapped end
+				end
+				local nx, ny
+				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
+				if not CanReceiveDeposit(map, new_pos) then
+					snapped_rejected = snapped_rejected + 1
+					last_reason = "terrain-snapped candidate not reachable/buildable"
+					Log("underground enrichment relocation candidate rejected", {
+						attempt = attempts, candidate_x = c.x, candidate_y = c.y,
+						class = class, index = invalid_i, old_x = ox, old_y = oy,
+						reason = last_reason, snapped_x = nx, snapped_y = ny,
+					})
+				else
+					local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
+					if not ok_move then
+						setpos_failed = setpos_failed + 1
+						last_reason = "SetPos failed: " .. tostring(move_error)
+						Log("underground enrichment relocation candidate rejected", {
+							attempt = attempts, candidate_x = c.x, candidate_y = c.y,
+							class = class, index = invalid_i, old_x = ox, old_y = oy,
+							reason = last_reason, snapped_x = nx, snapped_y = ny,
+						})
+					else
+						local actual_pos = ObjectPos(marker)
+						local ax, ay
+						if actual_pos and type(actual_pos.xy) == "function" then ax, ay = actual_pos:xy() end
+						if actual_pos and CanReceiveDeposit(map, actual_pos) then
+							success = true
+							successful_pos = actual_pos
+							Log("underground enrichment relocation accepted", {
+								actual_x = ax, actual_y = ay, attempt = attempts,
+								candidate_x = c.x, candidate_y = c.y, class = class,
+								index = invalid_i, old_x = ox, old_y = oy,
+								snapped_x = nx, snapped_y = ny,
+							})
+						else
+							postmove_rejected = postmove_rejected + 1
+							last_reason = actual_pos and "actual marker position not reachable/buildable" or "actual marker position unavailable"
+							Log("underground enrichment relocation candidate rejected", {
+								actual_x = ax, actual_y = ay, attempt = attempts,
+								candidate_x = c.x, candidate_y = c.y, class = class,
+								index = invalid_i, old_x = ox, old_y = oy,
+								reason = last_reason, snapped_x = nx, snapped_y = ny,
+							})
+						end
+					end
+				end
 			end
-			local ok_move = pcall(marker.SetPos, marker, new_pos)
-			if ok_move and CanReceiveDeposit(map, new_pos) then
+			if success then
 				moved = moved + 1
-				local class = tostring(marker.class or "?")
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				marker.SuperBigMapReachabilityRelocated = true
 				local placed = marker.placed_obj
 				local placed_valid = placed and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
-				if placed_valid and type(placed.SetPos) == "function" and pcall(placed.SetPos, placed, new_pos) then
+				if placed_valid and type(placed.SetPos) == "function" and pcall(placed.SetPos, placed, successful_pos) then
 					moved_placed = moved_placed + 1
 				end
 				if IsConcreteTerrainDepositMarker(marker) and old_pos and type(old_pos.xy) == "function" then
-					local ox, oy = old_pos:xy()
+					local tx, ty = successful_pos:xy()
 					concrete_moves[#concrete_moves + 1] = {
-						from = { x = ox, y = oy }, to = { x = c.x, y = c.y },
+						from = { x = ox, y = oy }, to = { x = tx, y = ty },
 						paint_now = marker.is_placed == true,
 					}
 				end
 			else
 				unresolved = unresolved + 1
+				Log("underground enrichment relocation unresolved", {
+					attempts = attempts, candidates_remaining = #candidates,
+					class = class, index = invalid_i, old_x = ox, old_y = oy,
+					reason = last_reason,
+				})
 			end
 		end
 	end
@@ -2281,6 +2356,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local stats = {
 		checked = #markers, invalid = #invalid, moved = moved, moved_placed = moved_placed,
 		unresolved = unresolved, candidates_built = pool_built,
+		relocation_attempts = relocation_attempts, relocation_retries = relocation_retries,
+		snapped_rejected = snapped_rejected, setpos_failed = setpos_failed,
+		postmove_rejected = postmove_rejected, candidates_remaining = #candidates,
 		seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
 		connectivity_reachable = reachable_state.reachable,
 		connectivity_rejected = reachable_state.rejected,
