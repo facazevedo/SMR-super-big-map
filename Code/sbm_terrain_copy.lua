@@ -2009,6 +2009,9 @@ local function MoveEntranceVisualsToScale(map)
 	local function find_badge_side_position(sign, center_x, center_y)
 		local buildable = map.buildable
 		local hex_grid = map.object_hex_grid
+		local badge_rules = SuperBigMap.DepositRules
+		local badge_occupancy = badge_rules and type(badge_rules.BuildBadgeOccupancy) == "function"
+			and badge_rules.BuildBadgeOccupancy(map, nil, sign) or nil
 		if type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function"
 			or not buildable or type(buildable.GetZ) ~= "function"
 			or type(get_unbuildable) ~= "function" then
@@ -2021,10 +2024,17 @@ local function MoveEntranceVisualsToScale(map)
 		end
 		local old_pos = ObjectPosition(sign)
 		local old_x, old_y = PointXY(old_pos)
-		local rejected = { unbuildable = 0, impassable = 0, uneven = 0, obstructed = 0, api = 0 }
+		local rejected = {
+			unbuildable = 0, impassable = 0, uneven = 0, obstructed = 0, badge = 0, api = 0,
+		}
 		local checked = 0
 		local function candidate_valid(q, r)
 			checked = checked + 1
+			if badge_occupancy and type(badge_rules.BadgeHexOccupied) == "function"
+				and badge_rules.BadgeHexOccupied(badge_occupancy, q, r) then
+				rejected.badge = rejected.badge + 1
+				return nil
+			end
 			local ok_b, build_z = pcall(buildable.GetZ, buildable, q, r)
 			if not ok_b or build_z == nil or build_z == unbuildable then
 				rejected.unbuildable = rejected.unbuildable + 1
@@ -2130,6 +2140,7 @@ local function MoveEntranceVisualsToScale(map)
 					.. " impassable=" .. tostring(side_error.rejected.impassable)
 					.. " uneven=" .. tostring(side_error.rejected.uneven)
 					.. " obstructed=" .. tostring(side_error.rejected.obstructed)
+					.. " badge=" .. tostring(side_error.rejected.badge)
 					.. " api=" .. tostring(side_error.rejected.api)) or "?",
 			})
 			return

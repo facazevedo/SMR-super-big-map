@@ -54,7 +54,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 48: cache the completed sector lookup layout so engine hex searches do not recompute the full
 --     20x20 layout for every candidate hex and trip the infinite-loop detector.
 SuperBigMap.SECTOR_PATCH_VERSION = 48
--- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 24:
--- finalize underground grids before enrichment, require entrance-connected path reachability,
--- relocate invalid vanilla/top-up markers, and skip the now-duplicate post-switch grid rebuild.
-SuperBigMap.GENERATOR_PATCH_VERSION = 24
+-- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 25:
+-- run the global badge-overlap resolver after each surface/underground density suite so generated
+-- resource, anomaly, effect, and entrance badges cannot claim the same hex.
+SuperBigMap.GENERATOR_PATCH_VERSION = 25

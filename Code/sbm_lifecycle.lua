@@ -334,6 +334,7 @@ end
 local APPLY_ORDER = {
 	"PregameToggle",
 	"MapGeneration",
+	"DepositRules",
 	"SectorGrid",
 	"SectorExploration",
 	"SectorHighlight",
@@ -359,6 +360,7 @@ local RESTORE_ORDER = {
 	"SectorHighlight",
 	"SectorExploration",
 	"SectorGrid",
+	"DepositRules",
 	"MapGeneration",
 	"PregameToggle",
 }
@@ -1346,6 +1348,10 @@ RegisterOnce("ClassesBuilt", function()
 		if type(gen.PatchEntranceBadgePosition) == "function" then
 			gen.PatchEntranceBadgePosition()
 		end
+	end
+	local deposits = SuperBigMap.DepositRules
+	if deposits and type(deposits.ApplyModBehavior) == "function" then
+		SafeCall(deposits.ApplyModBehavior)
 	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then

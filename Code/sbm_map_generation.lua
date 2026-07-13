@@ -2279,6 +2279,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							StretchLog("stretch branch: -> EvenOutDepositDensity")
 							SafeCall(deposits.EvenOutDepositDensity, map)
 						end
+						if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
+							StretchLog("stretch branch: -> ResolveBadgeMarkerOverlaps")
+							SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
+						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
 							SafeCall(deposits.AuditSurfaceTopUpRingExclusivity, map)
@@ -2483,6 +2487,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			-- vanilla. This caps per-sector density and moves the surplus into the sparse frame.
 			if type(deposits.EvenOutDepositDensity) == "function" then
 				SafeCall(deposits.EvenOutDepositDensity, map)
+			end
+			if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
+				SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "mirror density suite")
 			end
 		end
 
@@ -2901,6 +2908,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					if audit_ok ~= true then
 						error("underground enrichment reachability audit left "
 							.. tostring(audit_stats and audit_stats.unresolved or "unknown") .. " unresolved markers")
+					end
+					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
+						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
+						SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
 					end
 					if type(deposits.LogDistributionReport) == "function" then
 						SafeCall(deposits.LogDistributionReport, map, "underground after reachable density suite")

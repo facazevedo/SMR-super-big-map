@@ -433,6 +433,327 @@ end
 
 local DepositRules = {}
 
+-- ---------------------------------------------------------------------------------------
+-- Badge collision prevention.
+--
+-- The overview "badges" are the world objects themselves: SubsurfaceDeposit (including
+-- anomalies and effect deposits), TerrainDeposit, and SurfaceUndergroundTunnelSign. Moving a
+-- spawned resource sign independently from its marker would desynchronise gameplay, so resolve
+-- collisions while DepositMarker:FindSectorPos is choosing the final spawn position. Hidden,
+-- unrevealed markers reserve their future badge hex too. Adjacent hexes are allowed; only an
+-- identical hex is a collision.
+-- ---------------------------------------------------------------------------------------
+local BADGE_SPACING_PATCH_VERSION = 1
+local BADGE_SEARCH_MAX_RADIUS = 64
+
+local function BadgeSpacingEnabledOnMap(map)
+	if not map then return false end
+	if map.SuperBigMapExpanded == true then return true end
+	local desired = map.SuperBigMapDesiredWidthTiles
+	local generated = map.SuperBigMapGeneratorWidthTiles
+	return type(desired) == "number" and type(generated) == "number" and desired > generated
+end
+
+local function IsBadgeMarker(obj)
+	if obj == nil then return false end
+	return IsKindOfSafe(obj, "SubsurfaceDepositMarker")
+		or IsKindOfSafe(obj, "TerrainDepositMarker")
+		or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
+		or IsKindOfSafe(obj, "EffectDepositMarker")
+end
+
+local function BadgeHexKey(q, r)
+	if type(q) ~= "number" or type(r) ~= "number" then return nil end
+	return tostring(q) .. ":" .. tostring(r)
+end
+
+local function BadgeObjectHex(obj)
+	local world_to_hex = Global("WorldToHex")
+	local pos = obj and ObjectPos(obj)
+	if type(world_to_hex) ~= "function" or not pos then return nil end
+	local ok, q, r = pcall(world_to_hex, pos)
+	if not ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
+	return q, r, BadgeHexKey(q, r)
+end
+
+local function StampResolvedBadgeHex(marker, q, r)
+	if not marker or type(q) ~= "number" or type(r) ~= "number" then return end
+	marker.SuperBigMapBadgeResolvedQ = q
+	marker.SuperBigMapBadgeResolvedR = r
+	marker.SuperBigMapBadgeResolvedVersion = BADGE_SPACING_PATCH_VERSION
+end
+
+local function BuildBadgeOccupancy(map, ignore_marker, ignore_object, counts)
+	counts = counts == true
+	local occupied = {}
+	local function reserve(obj)
+		if not obj or obj == ignore_marker or obj == ignore_object then return end
+		local _, _, key = BadgeObjectHex(obj)
+		if not key then return end
+		if counts then occupied[key] = (occupied[key] or 0) + 1 else occupied[key] = true end
+	end
+	if not map or type(map.MapForEach) ~= "function" then return occupied end
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if IsBadgeMarker(marker) and marker ~= ignore_marker then reserve(marker) end
+	end)
+	-- A normal spawned badge is represented by its marker above. Reserve only standalone live
+	-- badges here, plus tunnel signs (whose tunnel marker is deliberately not a badge marker).
+	local function reserve_standalone(obj)
+		local marker = obj and obj.marker
+		if marker and IsBadgeMarker(marker) then
+			if marker == ignore_marker then return end
+			return
+		end
+		reserve(obj)
+	end
+	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", reserve_standalone)
+	pcall(map.MapForEach, map, "map", "TerrainDeposit", reserve_standalone)
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", reserve)
+	return occupied
+end
+
+local function BadgeHexOccupied(occupied, q, r)
+	local value = occupied and occupied[BadgeHexKey(q, r)]
+	return type(value) == "number" and value > 0 or value == true
+end
+
+local function BadgeCandidateAllowed(marker, map, pt, x, y)
+	if not CanReceiveDeposit(map, pt) or not IsUnobstructedAt(map, pt, true) then return false end
+	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
+	if not IsUndergroundMap(map) and ring_sectors > 0 then
+		local in_ring = IsInFinalOuterSectorRing(map, x, y, ring_sectors)
+		if marker.SuperBigMapEdgeTopUp and not in_ring then return false end
+		if (marker.SuperBigMapResourceTopUp or marker.SuperBigMapEffectTopUp) and in_ring then return false end
+	end
+	-- These top-ups were explicitly required to use accessible, buildable ground.
+	if (marker.SuperBigMapEdgeTopUp or marker.SuperBigMapEffectTopUp)
+		and not IsBuildableAt(map, pt, true) then return false end
+	return true
+end
+
+local function FindNearestFreeBadgePosition(marker, map, x, y, occupied)
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" then return nil, "hex APIs unavailable" end
+	local ok_center, center_q, center_r = pcall(world_to_hex, point_fn(x, y))
+	if not ok_center or type(center_q) ~= "number" or type(center_r) ~= "number" then
+		return nil, "origin hex unavailable"
+	end
+	occupied = occupied or BuildBadgeOccupancy(map, marker, nil, false)
+	if not BadgeHexOccupied(occupied, center_q, center_r) then return nil, "free" end
+	local original_sector = SectorAtPoint(map, x, y)
+	local map_w, map_h = MapWorldSize(map)
+	for radius = 1, BADGE_SEARCH_MAX_RADIUS do
+		local same_sector, nearest
+		for dq = -radius, radius do
+			for dr = -radius, radius do
+				local distance = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+				if distance == radius then
+					local q, r = center_q + dq, center_r + dr
+					if not BadgeHexOccupied(occupied, q, r) then
+						local ok_world, cx, cy = pcall(hex_to_world, q, r)
+						if ok_world and type(cx) == "number" and type(cy) == "number"
+							and (type(map_w) ~= "number" or (cx >= 0 and cx < map_w))
+							and (type(map_h) ~= "number" or (cy >= 0 and cy < map_h)) then
+							local pt = point_fn(cx, cy)
+							if BadgeCandidateAllowed(marker, map, pt, cx, cy) then
+								if type(pt.SetTerrainZ) == "function" then
+									local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
+									if ok_z and snapped then pt = snapped end
+								end
+								local candidate = { point = pt, x = cx, y = cy, q = q, r = r,
+									radius = radius, sector = SectorAtPoint(map, cx, cy) }
+								nearest = nearest or candidate
+								if original_sector and candidate.sector == original_sector then
+									same_sector = candidate
+									break
+								end
+							end
+						end
+					end
+				end
+			end
+			if same_sector then break end
+		end
+		if same_sector or nearest then return same_sector or nearest, "moved" end
+	end
+	return nil, "no free valid badge hex within search radius"
+end
+
+local function MoveBadgeMarker(marker, map, candidate, previous_sector)
+	if not marker or not candidate or type(marker.SetPos) ~= "function" then return false end
+	local ok = pcall(marker.SetPos, marker, candidate.point)
+	if not ok then return false end
+	local new_sector = candidate.sector
+	if previous_sector and new_sector and previous_sector ~= new_sector then
+		if type(previous_sector.UnregisterDeposit) == "function" then
+			pcall(previous_sector.UnregisterDeposit, previous_sector, marker)
+		end
+		if type(new_sector.RegisterDeposit) == "function" then
+			pcall(new_sector.RegisterDeposit, new_sector, marker)
+		end
+	end
+	return true
+end
+
+local function PatchBadgeOverlapPrevention()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	local cls = Engine.ClassTable and Engine.ClassTable("DepositMarker")
+	if type(cls) ~= "table" or type(cls.FindSectorPos) ~= "function" then return false end
+	local current = cls.FindSectorPos
+	if current == State.badge_spacing_find_sector_wrapper
+		and type(State.badge_spacing_find_sector_original) == "function" then
+		current = State.badge_spacing_find_sector_original
+	end
+	local original = current
+	local wrapper = function(marker, ...)
+		local sector, x, y, obstructed, moved = original(marker, ...)
+		local map = marker and type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) or nil
+		if BadgeSpacingEnabledOnMap(map) and IsBadgeMarker(marker)
+			and type(x) == "number" and type(y) == "number" then
+			local world_to_hex = Global("WorldToHex")
+			local point_fn = Global("point")
+			local target_q, target_r
+			if type(world_to_hex) == "function" and type(point_fn) == "function" then
+				local ok_h, q, r = pcall(world_to_hex, point_fn(x, y))
+				if ok_h then target_q, target_r = q, r end
+			end
+			local already_resolved = marker.SuperBigMapBadgeResolvedVersion == BADGE_SPACING_PATCH_VERSION
+				and marker.SuperBigMapBadgeResolvedQ == target_q
+				and marker.SuperBigMapBadgeResolvedR == target_r
+			local candidate, reason
+			if not already_resolved then
+				candidate, reason = FindNearestFreeBadgePosition(marker, map, x, y)
+			end
+			if candidate and MoveBadgeMarker(marker, map, candidate, sector) then
+				Log("overlapping badge marker moved to nearest free hex", {
+					marker = tostring(marker), class = tostring(marker.class),
+					from_x = x, from_y = y, to_x = candidate.x, to_y = candidate.y,
+					hex_radius = candidate.radius, old_sector = tostring(sector and sector.id),
+					new_sector = tostring(candidate.sector and candidate.sector.id),
+				})
+				StampResolvedBadgeHex(marker, candidate.q, candidate.r)
+				sector, x, y, obstructed, moved = candidate.sector, candidate.x, candidate.y, false, true
+			elseif not already_resolved and reason == "free" then
+				StampResolvedBadgeHex(marker, target_q, target_r)
+			elseif not already_resolved and reason ~= "free" and reason ~= "moved" then
+				Log("overlapping badge marker could not be moved", {
+					marker = tostring(marker), class = tostring(marker.class), x = x, y = y,
+					reason = tostring(reason),
+				})
+			end
+		end
+		return sector, x, y, obstructed, moved
+	end
+	State.badge_spacing_find_sector_original = original
+	State.badge_spacing_find_sector_wrapper = wrapper
+	State.badge_spacing_patch_version = BADGE_SPACING_PATCH_VERSION
+	cls.FindSectorPos = wrapper
+	Log("badge overlap-prevention patch installed", { version = BADGE_SPACING_PATCH_VERSION })
+	return true
+end
+
+local function RestoreBadgeOverlapPrevention()
+	local State = SuperBigMap.State or {}
+	local cls = Engine.ClassTable and Engine.ClassTable("DepositMarker")
+	if type(cls) == "table" and cls.FindSectorPos == State.badge_spacing_find_sector_wrapper
+		and type(State.badge_spacing_find_sector_original) == "function" then
+		cls.FindSectorPos = State.badge_spacing_find_sector_original
+	end
+	State.badge_spacing_find_sector_original = nil
+	State.badge_spacing_find_sector_wrapper = nil
+	State.badge_spacing_patch_version = nil
+end
+
+function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
+	map = map or Global("CurrentMap")
+	if not BadgeSpacingEnabledOnMap(map) or type(map.MapForEach) ~= "function" then return 0, 0 end
+	local markers = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if marker and IsBadgeMarker(marker) then markers[#markers + 1] = marker end
+	end)
+	-- Start with fixed live badges. Unplaced markers are then claimed one at a time; the first
+	-- claimant stays and only a later collision is moved.
+	local occupied = {}
+	local function reserve_object(obj)
+		local _, _, key = BadgeObjectHex(obj)
+		if key then occupied[key] = true end
+	end
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", reserve_object)
+	local function reserve_standalone(obj)
+		if not (obj and obj.marker and IsBadgeMarker(obj.marker)) then reserve_object(obj) end
+	end
+	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", reserve_standalone)
+	pcall(map.MapForEach, map, "map", "TerrainDeposit", reserve_standalone)
+	for _, marker in ipairs(markers) do
+		if marker.is_placed == true then reserve_object(marker) end
+	end
+	local moved, unresolved = 0, 0
+	for _, marker in ipairs(markers) do
+		if marker.is_placed ~= true then
+			local pos = ObjectPos(marker)
+			local x, y
+			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+			local q, r, key = BadgeObjectHex(marker)
+			if key and BadgeHexOccupied(occupied, q, r) then
+				local candidate, why = FindNearestFreeBadgePosition(marker, map, x, y, occupied)
+				local old_sector = SectorAtPoint(map, x, y)
+				if candidate and MoveBadgeMarker(marker, map, candidate, old_sector) then
+					occupied[BadgeHexKey(candidate.q, candidate.r)] = true
+					moved = moved + 1
+					Log("pre-reveal badge collision resolved", {
+						reason = tostring(reason), marker = tostring(marker), class = tostring(marker.class),
+						from_x = x, from_y = y, to_x = candidate.x, to_y = candidate.y,
+						hex_radius = candidate.radius,
+					})
+				else
+					occupied[key] = true
+					unresolved = unresolved + 1
+					Log("pre-reveal badge collision unresolved", {
+						reason = tostring(reason), marker = tostring(marker), class = tostring(marker.class),
+						x = tostring(x), y = tostring(y), error = tostring(why),
+					})
+				end
+			elseif key then
+				occupied[key] = true
+			end
+		end
+		local final_q, final_r = BadgeObjectHex(marker)
+		StampResolvedBadgeHex(marker, final_q, final_r)
+	end
+	local final_counts = BuildBadgeOccupancy(map, nil, nil, true)
+	local remaining_overlaps = 0
+	for _, count in pairs(final_counts) do
+		if type(count) == "number" and count > 1 then
+			remaining_overlaps = remaining_overlaps + count - 1
+		end
+	end
+	Log("badge overlap audit complete", {
+		reason = tostring(reason), markers = #markers, moved = moved,
+		search_failures = unresolved, remaining_overlaps = remaining_overlaps,
+	})
+	return moved, remaining_overlaps
+end
+
+function DepositRules.BuildBadgeOccupancy(map, ignore_marker, ignore_object)
+	return BuildBadgeOccupancy(map, ignore_marker, ignore_object, false)
+end
+
+function DepositRules.BadgeHexOccupied(occupied, q, r)
+	return BadgeHexOccupied(occupied, q, r)
+end
+
+function DepositRules.ApplyModBehavior()
+	return PatchBadgeOverlapPrevention()
+end
+
+function DepositRules.RestoreVanillaBehavior()
+	RestoreBadgeOverlapPrevention()
+end
+
 -- Called for every freshly-created expansion clone (no-op unless it is a scan-gated deposit).
 function DepositRules.HideClone(obj)
 	if not Enabled() then return end
@@ -3522,3 +3843,7 @@ end
 DepositRules.ClearTopUpPlacementPool = ClearTopUpPlacementPool
 
 SuperBigMap.DepositRules = DepositRules
+
+if cfg().ENABLE_MOD ~= false then
+	PatchBadgeOverlapPrevention()
+end
