@@ -1094,20 +1094,26 @@ local function PatchPassagePairing()
 						end
 					end
 				end
-				-- EXACT-HEX-FIRST SEARCH (no terrain edits). One FindBuildableAreaAround call
-				-- invokes the engine's native HexGridFindBuildable search: it tests the equivalent
-				-- surface hex first, expands outward by hex distance, validates the complete rotated
-				-- Elevator footprint, and stops at the nearest valid placement. Do not wrap this in
-				-- another Lua ring search: each call already performs the entire outward search.
+				-- EXACT-HEX-FIRST SEARCH (no terrain edits). One HexGridFindBuildable call tests
+				-- the equivalent surface hex first and expands outward by hex distance. Use our own
+				-- footprint filter instead of FindBuildableAreaAround: vanilla keeps the first
+				-- candidate elevation in a closure for the whole search, so a rejected mountain/cliff
+				-- elevation can prevent a later, nearby buildable elevation from ever being accepted.
+				-- Here every candidate independently establishes its own required flat elevation.
 				-- Mountains/cliffs are rejected through the buildable grid and decorations/
 				-- structures through object_hex_grid without manufacturing a terrain platform.
 				local point_fn = Global("point")
-				local find_area = Global("FindBuildableAreaAround")
+				local native_find = Global("HexGridFindBuildable")
+				local hex_to_world = Global("HexToWorld")
+				local validate_shape = Global("ValidateEachShapeHexPos")
+				local get_unbuildable = Global("buildUnbuildableZ")
 				local get_shape = Global("GetExtendedSpawnShape")
-				if type(point_fn) ~= "function" or type(find_area) ~= "function"
-					or type(get_shape) ~= "function" then
+				if type(point_fn) ~= "function" or type(native_find) ~= "function"
+					or type(hex_to_world) ~= "function" or type(validate_shape) ~= "function"
+					or type(get_unbuildable) ~= "function" or type(get_shape) ~= "function" then
 					PairingLog("near-marker search unavailable -- vanilla placement kept", {
-						find_area = tostring(type(find_area)),
+						native_find = tostring(type(native_find)),
+						validate_shape = tostring(type(validate_shape)),
 					})
 					return
 				end
@@ -1120,6 +1126,10 @@ local function PatchPassagePairing()
 				angle = (ok_ang and angle) or 0
 				local hex_grid = surface_map.object_hex_grid
 				local buildable = surface_map.buildable
+				if not (buildable and buildable.z_grid and type(buildable.GetZ) == "function") then
+					PairingLog("near-marker search: buildable grid unavailable -- vanilla placement kept")
+					return
+				end
 				local found_x, found_y, found_depth, found_hex_dist = nil, nil, nil, nil
 				local attempts = 1
 				local world_to_hex = Global("WorldToHex")
@@ -1130,19 +1140,54 @@ local function PatchPassagePairing()
 						marker_q, marker_r = mq, mr
 					end
 				end
+				if marker_q == nil then
+					PairingLog("near-marker search: WorldToHex unavailable -- vanilla placement kept")
+					return
+				end
+				local ok_uz, unbuildable_z = pcall(get_unbuildable)
+				if not (ok_uz and type(unbuildable_z) == "number") then
+					PairingLog("near-marker search: unbuildable sentinel unavailable -- vanilla placement kept")
+					return
+				end
+				local candidates_checked = 0
+				local footprint_hexes_checked = 0
+				local function candidate_rejected(q, r)
+					candidates_checked = candidates_checked + 1
+					local candidate_z = false
+					local function footprint_hex_valid(x, y)
+						footprint_hexes_checked = footprint_hexes_checked + 1
+						local z = buildable:GetZ(x, y)
+						if z == unbuildable_z then return false end
+						candidate_z = candidate_z or z
+						if z ~= candidate_z then return false end
+						local obstructions = hex_grid and hex_grid:GetBuildObstructions(x, y)
+						if obstructions and #obstructions > 0 then return false end
+						return true
+					end
+					local candidate_pos = point_fn(hex_to_world(q, r))
+					return validate_shape(espace, candidate_pos, angle, footprint_hex_valid) ~= true
+				end
 				local profiler = SuperBigMap.LoadingProfiler
 				local search_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
 					"entrance alignment: native nearest-footprint search", {
-						target_x = ux, target_y = uy, algorithm = "single HexGridFindBuildable",
+						target_x = ux, target_y = uy,
+						algorithm = "single HexGridFindBuildable + candidate-local footprint",
 					}, surface_map) or false
-				local ok_f, fx, fy, fd = pcall(find_area, hex_grid, buildable,
-					point_fn(ux, uy), angle, espace)
+				local ok_f, fx, fy, fd, result_q, result_r = pcall(function()
+					local bq, br, depth = native_find(marker_q, marker_r, hex_grid,
+						buildable.z_grid, unbuildable_z, candidate_rejected)
+					if bq == nil then return end
+					local x, y = hex_to_world(bq, br)
+					return x, y, depth, bq, br
+				end)
 				local search_ok = ok_f and type(fx) == "number" and type(fy) == "number"
 				if search_token and type(profiler.End) == "function" then
 					profiler.End(search_token, {
 						found = search_ok, result_x = search_ok and fx or nil,
-						result_y = search_ok and fy or nil,
-						error = ok_f and nil or tostring(fx),
+						result_y = search_ok and fy or nil, result_q = result_q, result_r = result_r,
+						candidates_checked = candidates_checked,
+						footprint_hexes_checked = footprint_hexes_checked,
+						error = not ok_f and tostring(fx) or nil,
 					}, search_ok)
 				end
 				if search_ok then
@@ -1158,8 +1203,10 @@ local function PatchPassagePairing()
 				local exact_hex = found_hex_dist == 0
 				if not found_x then
 					PairingLog("near-marker search FAILED -- vanilla placement kept", {
-						attempts = attempts, algorithm = "single-native-hex-search",
-						marker = tostring(ux) .. "," .. tostring(uy), error = ok_f and nil or tostring(fx),
+						attempts = attempts, algorithm = "single-native-candidate-local-search",
+						candidates_checked = candidates_checked,
+						marker = tostring(ux) .. "," .. tostring(uy),
+						error = not ok_f and tostring(fx) or nil,
 					})
 					return
 				end
@@ -1222,7 +1269,8 @@ local function PatchPassagePairing()
 					to = tostring(found_x) .. "," .. tostring(found_y),
 					exact_hex = exact_hex, hex_distance = tostring(found_hex_dist),
 					dist_from_marker = math.floor(math.sqrt(fdx * fdx + fdy * fdy + 0.0) + 0.5),
-					attempts = attempts, algorithm = "single-native-hex-search",
+					attempts = attempts, algorithm = "single-native-candidate-local-search",
+					candidates_checked = candidates_checked,
 					moved = ok_set, rehexed = rehexed,
 				})
 			end)
