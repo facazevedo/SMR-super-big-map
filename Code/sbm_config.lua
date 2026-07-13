@@ -229,7 +229,6 @@ config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision pa
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
-config.DebugVeil          = false   -- Veil: underground sector-veil lifecycle (build/teardown with reason + decal census, watchdog repairs, hover forensic). Investigation closed: SectorUnexplored proved outline-only; veil now disabled by user decision (interiors stay clear)
 config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
 config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
 config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
@@ -616,23 +615,11 @@ config.UndergroundOverviewEnabled = true
 -- Underground hover tooltip (informational ONLY). Vanilla hard-gates the overview sector UI off
 -- underground (IsExplorationAvailable_Sectors/Queue return false for Environment=="Underground"),
 -- so without this the overview shows nothing on hover there. With it, hovering shows a minimal
--- rollover -- "Sector <name>" + "Underground" -- with NO scan status, NO highlight frames, and
+-- rollover -- "Sector <name>" + buildable area -- with NO scan status or visual grid, and
 -- clicking does NOT queue anything (QueueForExploration is no-op'd for underground sectors).
 config.UndergroundExplorationUI = true
--- Underground SECTOR VEIL: during the underground overview every sector gets its own
--- translucent fill pane, so the areas between the grid frames read as shaded panes over the
--- terrain. OFF by user decision (2026-07-11): the areas inside the frames stay COMPLETELY
--- CLEAR -- frames only, plain terrain visible, no fill. The machinery (veil build + watchdog
--- + SectorTarget fill entity + tint) stays available behind this flag.
-config.UndergroundSectorVeil = false
--- Veil pane ENTITY. "SectorUnexplored" is OUTLINE-ONLY (proven by the red-tint diagnostic:
--- it turned the grid lines red, never the interiors), so the veil uses "SectorTarget" -- the
--- game's translucent FILL decal (vanilla's filled hover highlight on the surface).
-config.UndergroundSectorVeilEntity = "SectorTarget"
--- Veil pane tint {r,g,b,a} (SetColorModifier; values below 128 darken). SectorTarget's
--- natural color is a bright selection glow -- this darkens it into a subtle dark pane.
--- Set false for the entity's natural color.
-config.UndergroundSectorVeilTint = {60, 60, 90, 255}
+-- Underground sectors remain available as invisible data for hover resolution, sector names,
+-- and buildable-area percentages. No sector grid, veil, or hover-frame decals are drawn.
 -- (Entrance placement correction removed by user decision: entrances receive only the stretch
 -- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
 
@@ -950,7 +937,6 @@ C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)
 C.DEBUG_FLATTEN       = as_bool(config.DebugFlatten)
 C.DEBUG_PAIRING       = as_bool(config.DebugPairing)
 C.DEBUG_SPIKES        = as_bool(config.DebugSpikes)
-C.DEBUG_VEIL          = as_bool(config.DebugVeil)
 C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
 C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
@@ -1071,10 +1057,6 @@ C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
-C.UNDERGROUND_SECTOR_VEIL = as_bool(config.UndergroundSectorVeil)
-C.UNDERGROUND_SECTOR_VEIL_TINT = type(config.UndergroundSectorVeilTint) == "table" and config.UndergroundSectorVeilTint or false
-C.UNDERGROUND_SECTOR_VEIL_ENTITY = (type(config.UndergroundSectorVeilEntity) == "string" and config.UndergroundSectorVeilEntity ~= "")
-	and config.UndergroundSectorVeilEntity or "SectorTarget"
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
 C.ENTRANCE_SIGN_CLEARANCE_WU = as_number(config.EntranceSignClearanceWu, 1500)
 C.ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES = as_number(config.EntranceSignClearanceRadiusHexes, 3)

@@ -1166,12 +1166,11 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
 	end
-	-- Map switch invalidates the per-map underground overview frames -- destroy them; they are
-	-- rebuilt by the OverviewMode(true) that fires when the new map opens in overview.
+	-- Clear any legacy underground overview decals on a map switch.
 	do
 		local highlight = SuperBigMap.SectorHighlight
-		if highlight and type(highlight.UpdateUndergroundOverviewFrames) == "function" then
-			SafeCall(highlight.UpdateUndergroundOverviewFrames, false)
+		if highlight and type(highlight.UpdateUndergroundOverviewVisuals) == "function" then
+			SafeCall(highlight.UpdateUndergroundOverviewVisuals, false)
 		end
 	end
 	-- TEMP (config UNDERGROUND_REVEAL_ALL_DARKNESS): fully reveal the underground's darkness fog
@@ -1488,11 +1487,10 @@ RegisterOnce("OverviewMode", function(enabled)
 	if DebugLog then
 		DebugLog.Info("Overview", "OverviewMode message", { enabled = enabled == true })
 	end
-	-- Underground overview frames (outline hover frame + red entrance frames): build on overview
-	-- ENTER when viewing the underground, destroy on EXIT ("frames appear only during overview").
+	-- Underground sectors are data-only: keep their hover context but suppress all grid decals.
 	local highlight = SuperBigMap.SectorHighlight
-	if highlight and type(highlight.UpdateUndergroundOverviewFrames) == "function" then
-		SafeCall(highlight.UpdateUndergroundOverviewFrames, enabled == true)
+	if highlight and type(highlight.UpdateUndergroundOverviewVisuals) == "function" then
+		SafeCall(highlight.UpdateUndergroundOverviewVisuals, enabled == true)
 	end
 	local camera = SuperBigMap.OverviewCamera
 	if enabled then

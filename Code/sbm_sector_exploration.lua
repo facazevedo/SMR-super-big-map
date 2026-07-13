@@ -1371,6 +1371,12 @@ local function InstallSectorPatch()
 		State.original_show_exploration_sectors = Global("ShowExploration_Sectors") or false
 	end
 	function ShowExploration_Sectors(city, time)
+		-- Underground MapSectors are data-only: keep them for hover names and buildable ratios,
+		-- but never re-show their grid decals when overview mode opens.
+		if UndergroundExplorationUiOn(city) then
+			HideSectorVisuals(city, "ShowExploration_Sectors underground data-only")
+			return
+		end
 		Grid.ForEachSector(city, function(sector)
 			local decal = sector.decal
 			if IsValid(decal) then
@@ -1390,7 +1396,12 @@ local function InstallSectorPatch()
 		State.original_update_scanned_sector_visuals = Global("UpdateScannedSectorVisuals") or false
 	end
 	function UpdateScannedSectorVisuals(status)
-		Grid.ForEachSector(Global("MainCity"), function(sector)
+		local city = Global("MainCity")
+		if UndergroundExplorationUiOn(city) then
+			HideSectorVisuals(city, "UpdateScannedSectorVisuals underground data-only")
+			return
+		end
+		Grid.ForEachSector(city, function(sector)
 			if not status or sector.status == status then
 				sector:UpdateDecal()
 			end
@@ -1583,6 +1594,11 @@ end
 local function RefreshSectorDecals(city)
 	city = city or Global("MainCity")
 	if not city then
+		return 0
+	end
+	local ok_env, env = pcall(function() return city:GetMap().mapdata.Environment end)
+	if ok_env and env == "Underground" and (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
+		HideSectorVisuals(city, "RefreshSectorDecals underground data-only")
 		return 0
 	end
 	local recreated = 0

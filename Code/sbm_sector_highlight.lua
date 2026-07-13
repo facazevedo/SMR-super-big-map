@@ -1,13 +1,11 @@
--- Super Big Map -- overview scan hover-highlight diagnostic wrapper.
+-- Super Big Map -- overview sector rollover and visual-control wrapper.
 --
 -- Vanilla OverviewModeDialog:SelectSector places the SectorTarget decal at
 -- sector.area:Center() with scale = sector.area:sizex(). Once MapSectors is
 -- correctly rebuilt to our vanilla-sized layout (via EnsureSectorsBuilt) the
--- vanilla path produces a correctly-aligned highlight, so this module no longer
--- needs to re-position the decal. The SelectSector override is kept only to log
--- the selected sector's identity + area dimensions when
--- Config.SHOW_SECTOR_DIAGNOSTICS is on -- useful next time the overview grid
--- drifts and we need to see what sector size + position the highlight is using.
+-- vanilla path produces a correctly-aligned highlight on the surface. Underground,
+-- the SelectSector override retains the rollover but suppresses all grid/highlight
+-- decals. It also logs sector identity and area dimensions when diagnostics are on.
 -- Driven by the sector-exploration patch (InstallSectorPatch calls Install()).
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -45,8 +43,7 @@ local function Install()
 	-- wrapper's sector_obj guard, the visual diagnostics) validates objects through this.
 	local is_valid = Engine.Global("IsValid")
 
-	-- True when the currently VIEWED city/map is the underground and the underground exploration
-	-- UI feature is on. Drives the underground-specific rollover/frame/queue behavior below.
+	-- True when the currently viewed city/map is underground and its informational sector UI is on.
 	local function UndergroundUiActive()
 		if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true then return false end
 		local uicity = Engine.Global("UICity")
@@ -55,334 +52,47 @@ local function Install()
 		return ok and env == "Underground"
 	end
 
-	-- UNDERGROUND overview HOVER frame: an OUTLINE-ONLY sector frame (opaque border, transparent
-	-- interior), built from the game's own per-sector grid decal entity ("SectorUnexplored" -- a
-	-- thin square outline). The vanilla hover decal (SectorTarget) FILLS its interior, so
-	-- underground we hide it and drive this outline frame instead; it follows the hovered sector
-	-- and exists only while the underground overview is active (torn down on OverviewMode(false)
-	-- and on map switches via SectorHighlight.UpdateUndergroundOverviewFrames). The former cyan
-	-- entrance frames were removed at the user's request.
-	local function FrameForSector(map, sector, red, quiet, entity_override)
-		local place = Engine.Global("PlaceObjectIn")
-		local mdr = Engine.Global("MulDivRound")
-		local guim_v = Engine.Global("guim") or 1000
-		if type(place) ~= "function" or not sector or not sector.area then return nil end
-		-- Place the decal IN the sector (like vanilla UpdateDecal) so it inherits the sector's
-		-- proper terrain Z; placing in the map at area:Center() (Z~=0) sank it below the
-		-- underground floor -> built-but-invisible (log showed frames=2 yet nothing on screen).
-		-- Entity: "SectorUnexplored" is OUTLINE-ONLY (proven by the red-tint diagnostic: the
-		-- tinted veil turned the grid lines red, never the interiors) -- the game's translucent
-		-- FILL decal is "SectorTarget" (vanilla's filled hover highlight), so the veil passes
-		-- that as entity_override; the hover frame keeps the outline entity.
-		local parent = (type(sector.GetPos) == "function") and sector or map
-		local ok, obj = pcall(place, entity_override or "SectorUnexplored", parent)
-		if not ok or not obj then return nil end
-		local del_on_load = Engine.Global("DeleteOnLoadGame")
-		if type(del_on_load) == "function" then pcall(del_on_load, obj) end
-		local px, py
-		pcall(function()
-			-- Position: vanilla uses sector:GetPos(); fall back to the area center. Then ALWAYS
-			-- re-snap the Z to the LIVE terrain: a decal only renders while it projects onto
-			-- nearby geometry, and sector positions cache their Z from sector creation --
-			-- PRE-stretch heights. After the x1.333 height scale most cached Zs sit far below
-			-- the raised floor, so the pane projects onto nothing (veil log: 400 decals built
-			-- valid+visible, yet only the sectors where old Z ~= new Z rendered). Explicit
-			-- efVisible -- decals default hidden when placed off the normal UpdateDecal path.
-			local pos
-			if type(sector.GetPos) == "function" then
-				local ok_p, p = pcall(sector.GetPos, sector)
-				if ok_p and p then pos = p end
-			end
-			if not pos then
-				pos = sector.area:Center()
-			end
-			if type(pos.SetTerrainZ) == "function" then
-				local ok_z, snapped = pcall(pos.SetTerrainZ, pos, map)
-				if ok_z and snapped then pos = snapped end
-			end
-			obj:SetPos(pos)
-			if type(pos.xy) == "function" then px, py = pos:xy() end
-			local scale = 100
-			if type(mdr) == "function" then
-				scale = mdr(sector.area:sizex(), 100, 100 * guim_v) + 1 -- vanilla UpdateDecal formula
-			end
-			obj:SetScale(scale)
-			local const_tbl = Engine.Global("const")
-			local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
-			if ef_visible and type(obj.SetEnumFlags) == "function" then
-				pcall(obj.SetEnumFlags, obj, ef_visible)
-			end
-			-- Veil tint (config UNDERGROUND_SECTOR_VEIL_TINT, veil panes only): color modifier
-			-- for the fill panes -- values below 128 darken. (The earlier red diagnostic tint
-			-- proved SectorUnexplored is outline-only.) false = the entity's natural color.
-			if red == "veil" then
-				local tint = (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL_TINT
-				local rgba = Engine.Global("RGBA")
-				if type(tint) == "table" and type(rgba) == "function" and type(obj.SetColorModifier) == "function" then
-					local ok_c, c = pcall(rgba, tint[1] or 255, tint[2] or 0, tint[3] or 0, tint[4] or 255)
-					if ok_c and c then pcall(obj.SetColorModifier, obj, c) end
-				end
-			end
-		end)
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog and DebugLog.On("Hover") and not quiet then
-			-- Post-creation state, to distinguish "placed but not rendering" causes: is the decal
-			-- still valid, is efVisible actually set, what scale/color/entity did it end up with.
-			local valid_s, flags_s, scale_s, ent_s, col_s = "?", "?", "?", "?", "?"
-			pcall(function()
-				valid_s = (type(is_valid) == "function" and is_valid(obj)) and "valid" or "INVALID"
-				if type(obj.GetEnumFlags) == "function" then
-					local ct = Engine.Global("const")
-					local efv = type(ct) == "table" and ct.efVisible
-					if efv then flags_s = (obj:GetEnumFlags(efv) ~= 0) and "visible" or "HIDDEN" end
-				end
-				if type(obj.GetScale) == "function" then scale_s = tostring(obj:GetScale()) end
-				if type(obj.GetEntity) == "function" then ent_s = tostring(obj:GetEntity()) end
-				if type(obj.GetColorModifier) == "function" then col_s = tostring(obj:GetColorModifier()) end
-			end)
-			DebugLog.Info("Hover", "frame placed", {
-				sector = tostring(sector.id), red = red == true,
-				pos_xy = (px and py) and (tostring(px) .. "," .. tostring(py)) or "?",
-				valid = valid_s, visible = flags_s, scale = scale_s, entity = ent_s, color = col_s,
-			})
-		end
-		return obj
-	end
-
-	local function DestroyFrame(obj)
+	-- Underground sectors remain as an INVISIBLE data grid so cursor lookup, sector names, and
+	-- BuildableGridRatio keep working. The user no longer wants an underground visual grid, so
+	-- never create hover frames or veil panes and actively hide the game's sector decals.
+	local function DestroyOldVisual(obj)
 		if obj and type(is_valid) == "function" and is_valid(obj) then
 			local done = Engine.Global("DoneObject")
 			if type(done) == "function" then pcall(done, obj) end
 		end
 	end
 
-	local function HideUndergroundHoverFrame()
-		DestroyFrame(State.ug_hover_frame)
+	local function RemoveLegacyUndergroundGridVisuals()
+		DestroyOldVisual(State.ug_hover_frame)
 		State.ug_hover_frame = nil
 		State.ug_hover_frame_sector = nil
-	end
-
-	local function UpdateUndergroundHoverFrame(sector)
-		local cur_map = Engine.Global("CurrentMap")
-		if not sector or not cur_map then
-			HideUndergroundHoverFrame()
-			return
-		end
-		if State.ug_hover_frame_sector == sector.id and State.ug_hover_frame
-			and type(is_valid) == "function" and is_valid(State.ug_hover_frame) then
-			return
-		end
-		HideUndergroundHoverFrame()
-		State.ug_hover_frame = FrameForSector(cur_map, sector, false)
-		State.ug_hover_frame_sector = sector.id
-	end
-
-	-- (The cyan entrance/exit frames were removed at the user's request -- the underground
-	-- overview keeps ONLY the outline hover frame with the transparent interior.)
-
-	-- UNDERGROUND SECTOR VEIL (config UNDERGROUND_SECTOR_VEIL): during the underground
-	-- overview, EVERY sector gets its own translucent "SectorUnexplored" pane -- the same
-	-- decal the hover frame uses -- so the areas BETWEEN the grid frames read as translucent
-	-- panes over the terrain (user request: "I want the frames there but all of the areas
-	-- between the frames should be translucid"). The hovered sector additionally carries the
-	-- hover decal on top, so it reads slightly darker -- a natural hover highlight. Built on
-	-- OverviewMode(true) while the underground is viewed; torn down on OverviewMode(false)
-	-- and on map switches (both routed through UpdateUndergroundOverviewFrames below).
-	-- Veil diagnostics (scope "Veil", gated DEBUG_VEIL): the first veil died silently -- the
-	-- log showed it built (400 decals) at OverviewMode(true), which fires DURING the
-	-- surface->underground transition, 6 ms BEFORE OnMsg.CurrentMapChangeDone -- whose
-	-- lifecycle handler calls UpdateUndergroundOverviewFrames(false) on every map switch and
-	-- destroyed the fresh veil. Every build/teardown/visibility change is logged with its
-	-- reason so any future fight over the decals is visible in one grep.
-	local function VeilLog(message, data)
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then DebugLog.Info("Veil", message, data) end
-	end
-
-	-- Census of the current veil decals: how many are still valid, of those how many still
-	-- carry efVisible (HideSectorVisuals clears flags without destroying), and -- the render
-	-- test -- the decal-Z vs live-terrain-Z deltas: a decal only renders while it projects
-	-- onto nearby geometry, so a large |dz| means "valid+visible but invisible on screen".
-	-- Fields are FLAT so they print inline in the log (nested tables log as pointers).
-	local function VeilCensus()
-		local veil = State.ug_sector_veil
-		if not veil then return nil end
-		local const_tbl = Engine.Global("const")
-		local efv = type(const_tbl) == "table" and const_tbl.efVisible
-		local terrain_api = Engine.Global("terrain")
-		local cur_map = Engine.Global("CurrentMap")
-		local get_h = type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
-			and terrain_api.GetHeight or nil
-		local n_valid, n_visible = 0, 0
-		local dz_min, dz_max, n_far = nil, nil, 0
-		for _, obj in ipairs(veil) do
-			if type(is_valid) == "function" and is_valid(obj) then
-				n_valid = n_valid + 1
-				if efv and type(obj.GetEnumFlags) == "function" then
-					local ok, f = pcall(obj.GetEnumFlags, obj, efv)
-					if ok and f ~= 0 then n_visible = n_visible + 1 end
-				end
-				if get_h and cur_map and type(obj.GetPos) == "function" then
-					local ok_p, p = pcall(obj.GetPos, obj)
-					if ok_p and p and type(p.z) == "function" then
-						local ok_z, oz = pcall(p.z, p)
-						local ok_g, gz = pcall(get_h, cur_map, p)
-						if ok_z and ok_g and type(oz) == "number" and type(gz) == "number" then
-							local dz = oz - gz
-							if dz_min == nil or dz < dz_min then dz_min = dz end
-							if dz_max == nil or dz > dz_max then dz_max = dz end
-							if dz < -1000 or dz > 1000 then n_far = n_far + 1 end
-						end
-					end
-				end
-			end
-		end
-		return {
-			total = #veil, valid = n_valid, visible = n_visible,
-			dz_min = tostring(dz_min), dz_max = tostring(dz_max), far_from_ground = n_far,
-		}
-	end
-
-	-- Merge the flat census fields into a log-data table (so they print inline).
-	local function WithCensus(data, census)
-		for k, v in pairs(census or {}) do data[k] = v end
-		return data
-	end
-
-	local function HideUndergroundSectorVeil(reason)
-		local veil = State.ug_sector_veil
-		if not veil then return end
-		local census = VeilCensus()
-		for _, obj in ipairs(veil) do
-			DestroyFrame(obj)
-		end
+		for _, obj in ipairs(State.ug_sector_veil or {}) do DestroyOldVisual(obj) end
 		State.ug_sector_veil = nil
-		VeilLog("veil DESTROYED", WithCensus({ reason = tostring(reason) }, census))
-	end
-
-	local function ShowUndergroundSectorVeil(reason)
-		if (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL ~= true then return end
-		if State.ug_sector_veil then return end -- already built for this overview session
-		local grid = SuperBigMap.SectorGrid
-		local uicity = Engine.Global("UICity")
-		local cur_map = Engine.Global("CurrentMap")
-		if not (grid and type(grid.ForEachSector) == "function" and uicity and cur_map) then
-			VeilLog("veil build SKIPPED", {
-				reason = tostring(reason),
-				grid = tostring(grid ~= nil), uicity = tostring(uicity ~= nil), cur_map = tostring(cur_map ~= nil),
-			})
-			return
-		end
-		local veil = {}
-		local veil_entity = (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL_ENTITY or "SectorTarget"
-		pcall(grid.ForEachSector, uicity, function(sector)
-			local obj = FrameForSector(cur_map, sector, "veil", "quiet", veil_entity)
-			if obj then veil[#veil + 1] = obj end
-		end)
-		State.ug_sector_veil = veil
-		VeilLog("veil BUILT", WithCensus({
-			reason = tostring(reason), decals = #veil, map = tostring(cur_map.name),
-		}, VeilCensus()))
-	end
-
-	-- WATCHDOG: the veil's lifetime is contested -- OverviewMode(true) fires mid-transition,
-	-- CurrentMapChangeDone tears frames down on every map switch, HideSectorVisuals clears
-	-- efVisible on SectorUnexplored decals, and forced sector rebuilds invalidate parented
-	-- decals. Rather than chase every ordering, a real-time thread runs while the underground
-	-- overview is active: every 500 ms it verifies the veil exists, its decals are valid and
-	-- efVisible, and repairs whatever broke (rebuild / re-show), logging each repair with what
-	-- it found -- which doubles as the DEBUG_VEIL inspection instrument. Exits (and tears the
-	-- veil down) as soon as the overview closes or the viewed map stops being the underground.
-	local function EnsureVeilWatchdog()
+		for _, obj in ipairs(State.ug_entrance_frames or {}) do DestroyOldVisual(obj) end
+		State.ug_entrance_frames = nil
 		local thread = State.ug_veil_thread
-		local thread_valid = Engine.Global("IsValidThread")
-		if thread then
-			if type(thread_valid) ~= "function" then return end
-			local ok, alive = pcall(thread_valid, thread)
-			if ok and alive == true then return end -- already running
-		end
-		local create_thread = Engine.Global("CreateRealTimeThread")
-		local sleep = Engine.Global("Sleep")
-		if type(create_thread) ~= "function" or type(sleep) ~= "function" then return end
-		State.ug_veil_thread = create_thread(function()
-			VeilLog("watchdog started")
-			local is_overview = Engine.Global("IsOverviewMode")
-			local const_tbl = Engine.Global("const")
-			local efv = type(const_tbl) == "table" and const_tbl.efVisible
-			while true do
-				sleep(500)
-				local overview_on = false
-				if type(is_overview) == "function" then
-					local ok_ov, ov = pcall(is_overview)
-					overview_on = ok_ov and ov == true
-				end
-				local active = overview_on and UndergroundUiActive()
-					and (SuperBigMap.Config or {}).UNDERGROUND_SECTOR_VEIL == true
-				if not active then
-					HideUndergroundSectorVeil("watchdog exit (overview=" .. tostring(overview_on) .. ")")
-					break
-				end
-				local census = VeilCensus()
-				if not census or census.valid == 0 then
-					-- Torn down (map-switch teardown raced the build) or all invalidated
-					-- (sector rebuild): rebuild from the live sector grid.
-					HideUndergroundSectorVeil("watchdog rebuild (census=" .. tostring(census and census.valid) .. ")")
-					ShowUndergroundSectorVeil("watchdog rebuild")
-				elseif census.visible < census.valid and efv then
-					-- Something cleared efVisible (HideSectorVisuals sweeps SectorUnexplored
-					-- decals): re-show in place.
-					local reshown = 0
-					for _, obj in ipairs(State.ug_sector_veil or {}) do
-						if type(is_valid) == "function" and is_valid(obj)
-							and type(obj.GetEnumFlags) == "function" and type(obj.SetEnumFlags) == "function" then
-							local ok, f = pcall(obj.GetEnumFlags, obj, efv)
-							if ok and f == 0 then
-								pcall(obj.SetEnumFlags, obj, efv)
-								reshown = reshown + 1
-							end
-						end
-					end
-					VeilLog("watchdog re-showed hidden veil decals", WithCensus({ reshown = reshown }, census))
-				elseif census.valid < census.total then
-					-- Some decals invalidated (partial sector rebuild): full rebuild.
-					HideUndergroundSectorVeil("watchdog partial-invalid rebuild")
-					ShowUndergroundSectorVeil("watchdog partial-invalid rebuild")
-				end
-			end
-			State.ug_veil_thread = nil
-			VeilLog("watchdog stopped")
-		end)
+		local delete_thread = Engine.Global("DeleteThread")
+		if thread and type(delete_thread) == "function" then pcall(delete_thread, thread) end
+		State.ug_veil_thread = nil
 	end
 
-	-- Exported: called by the lifecycle on OverviewMode(true/false) and on map switches.
-	-- show=true while viewing the underground builds the all-sector veil (and arms the
-	-- watchdog); anything else tears down the veil AND the hover frame. The watchdog rebuilds
-	-- the veil if a map-switch teardown lands AFTER the build (observed ordering:
-	-- OverviewMode(true) fires 6 ms before CurrentMapChangeDone's teardown).
-	-- Install() runs after module load, so SuperBigMap.SectorHighlight already exists (the local
-	-- SectorHighlight table is declared later in this file, hence the namespace assignment).
+	local function HideUndergroundGridVisuals()
+		if not UndergroundUiActive() then return end
+		local city = Engine.Global("UICity")
+		local hide = Engine.Global("HideExploration_Sectors")
+		if city and type(hide) == "function" then pcall(hide, city, 0) end
+	end
+
+	RemoveLegacyUndergroundGridVisuals()
 	if type(SuperBigMap.SectorHighlight) == "table" then
-		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewFrames = function(show)
-			local underground = UndergroundUiActive()
-			VeilLog("UpdateUndergroundOverviewFrames", { show = show == true, underground_ui = underground })
-			if show and underground then
-				ShowUndergroundSectorVeil("UpdateUndergroundOverviewFrames(true)")
-				EnsureVeilWatchdog()
-			else
-				HideUndergroundHoverFrame()
-				HideUndergroundSectorVeil("UpdateUndergroundOverviewFrames(" .. tostring(show) .. ")")
-			end
+		SuperBigMap.SectorHighlight.UpdateUndergroundOverviewVisuals = function(show)
+			RemoveLegacyUndergroundGridVisuals()
+			if show == true then HideUndergroundGridVisuals() end
 		end
 	end
-	-- Clean up any entrance frames left over from a previous version of this patch.
-	for _, obj in ipairs(State.ug_entrance_frames or {}) do
-		DestroyFrame(obj)
-	end
-	State.ug_entrance_frames = nil
 
-	-- UNDERGROUND rollover: informational ONLY -- "Sector <name>" + the single line
-	-- "Underground". No scan status ("Unexplored"), no buildable %, no queue/probe hints:
-	-- underground sectors are not scannable, the tooltip just names what the mouse is over.
+	-- UNDERGROUND rollover: informational only -- sector name plus buildable-area percentage.
+	-- There is no scan status or queue/probe hint because underground sectors are not scannable.
 	local original_generate_rollover = State.original_overview_generate_rollover
 		or overview_class.GenerateSectorRolloverContext
 	State.original_overview_generate_rollover = original_generate_rollover
@@ -414,6 +124,26 @@ local function Install()
 	-- created at all, which also makes sectors click-queueable -- but underground sectors are NOT
 	-- scannable. No-op the queue entry point for underground sectors so clicks do nothing.
 	local map_sector_class = ClassTable("MapSector")
+	if map_sector_class and type(map_sector_class.UpdateDecal) == "function" then
+		local original_update_decal = State.original_map_sector_update_decal or map_sector_class.UpdateDecal
+		State.original_map_sector_update_decal = original_update_decal
+		map_sector_class.UpdateDecal = function(self, ...)
+			local underground = false
+			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
+				local ok, env = pcall(function() return self:GetMap().mapdata.Environment end)
+				underground = ok and env == "Underground"
+			end
+			if underground then
+				if self.decal and type(is_valid) == "function" and is_valid(self.decal) then
+					local done = Engine.Global("DoneObject")
+					if type(done) == "function" then pcall(done, self.decal) end
+				end
+				self.decal = nil
+				return
+			end
+			return original_update_decal(self, ...)
+		end
+	end
 	if map_sector_class and type(map_sector_class.QueueForExploration) == "function" then
 		local original_queue = State.original_sector_queue_for_exploration or map_sector_class.QueueForExploration
 		State.original_sector_queue_for_exploration = original_queue
@@ -663,8 +393,8 @@ local function Install()
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
 		local r1, r2 = original_select_sector(self, sector, rollover_pos, forced, ...)
-		-- UNDERGROUND: hide the vanilla FILLED highlight (SectorTarget) + scan-pattern frames and
-		-- drive our OUTLINE-ONLY hover frame instead (opaque border, transparent interior).
+		-- UNDERGROUND: retain the rollover created by vanilla, but hide every visual selection
+		-- object and sector decal. Sector resolution and play_ratio remain available as data.
 		if UndergroundUiActive() then
 			local const_tbl = Engine.Global("const")
 			local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
@@ -678,33 +408,7 @@ local function Install()
 					end
 				end
 			end
-			UpdateUndergroundHoverFrame(sector) -- nil sector hides the frame
-			-- FORENSIC (DEBUG_VEIL): identify what actually draws the translucent fill on the
-			-- hovered sector -- the vanilla SectorTarget (hide failing?) or our SectorUnexplored
-			-- pane. Logs entity + visibility of every candidate right after the hide + place.
-			local DebugLogV = SuperBigMap.DebugLog
-			if sector and DebugLogV and DebugLogV.On("Veil") then
-				local function describe(obj)
-					if obj == nil then return "nil" end
-					if type(is_valid) == "function" and not is_valid(obj) then return "INVALID" end
-					local ent, vis = "?", "?"
-					pcall(function()
-						if type(obj.GetEntity) == "function" then ent = tostring(obj:GetEntity()) end
-						if ef_visible and type(obj.GetEnumFlags) == "function" then
-							vis = (obj:GetEnumFlags(ef_visible) ~= 0) and "visible" or "hidden"
-						end
-					end)
-					return ent .. "/" .. vis
-				end
-				DebugLogV.Info("Veil", "hover forensic", {
-					sector = tostring(sector.id),
-					vanilla_sector_obj = describe(self.sector_obj),
-					vanilla_sector_objs = tostring(#(self.sector_objs or {})),
-					vanilla_sector_decal = describe(sector.decal),
-					our_hover_pane = describe(State.ug_hover_frame),
-					veil_alive = tostring(State.ug_sector_veil and #State.ug_sector_veil or "nil"),
-				})
-			end
+			HideUndergroundGridVisuals()
 		end
 		HoverVisualDiag(self, sector)
 		return r1, r2
@@ -783,10 +487,14 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if map_sector_class and State and type(State.original_sector_queue_for_exploration) == "function" then
 		map_sector_class.QueueForExploration = State.original_sector_queue_for_exploration
 	end
+	if map_sector_class and State and type(State.original_map_sector_update_decal) == "function" then
+		map_sector_class.UpdateDecal = State.original_map_sector_update_decal
+	end
 	if State then
 		State.original_overview_select_sector = nil
 		State.original_overview_generate_rollover = nil
 		State.original_sector_queue_for_exploration = nil
+		State.original_map_sector_update_decal = nil
 		State.scale_small_objects_wrapper = nil
 		State.original_scale_small_objects = nil
 		State.overview_highlight_patch_version = nil

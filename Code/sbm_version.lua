@@ -47,7 +47,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     vanilla-formula Metals/Concrete quantities + weights.
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
-SuperBigMap.SECTOR_PATCH_VERSION = 45
+-- 46: underground sectors become data-only -- remove grid/veil/hover-frame rendering while
+--     retaining sector-name and buildable-area rollover data.
+SuperBigMap.SECTOR_PATCH_VERSION = 46
 -- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 24:
 -- finalize underground grids before enrichment, require entrance-connected path reachability,
 -- relocate invalid vanilla/top-up markers, and skip the now-duplicate post-switch grid rebuild.
