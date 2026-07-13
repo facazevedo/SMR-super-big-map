@@ -2778,31 +2778,43 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- both maps receive exactly ONE transformation -- the stretch itself (position *
 			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
 			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
-			-- Grids FIRST: the density suite's placement pools require the LIVE buildable grid
-			-- (underground pools are buildable-floor-only -- without the rebuild they would
-			-- sample the stale pre-stretch grid and put enrichments out in the inaccessible
-			-- rock/void, which is exactly what happened). RebuildBuildableGrid remains explicit.
-			-- Passability is already rebuilt inside StretchSourceToFull's final terrain revalidation;
-			-- the optimization avoids immediately rebuilding that identical grid a second time.
+			-- FINAL GRIDS FIRST. The consolidated terrain revalidation can report success on a
+			-- non-current underground map before the Lua BuildableGrid has completed. v480 then
+			-- sampled its stale pre-stretch grid and the authoritative rebuild happened only after
+			-- CurrentMapChangeDone -- too late. Correctness wins here: synchronously rebuild final
+			-- passability and buildability, invalidate every cached pool, and seed connectivity from
+			-- the real underground entrances before any enrichment is accepted or moved.
 			do
-				local rebuild_buildable = Global("RebuildBuildableGrid")
-				local buildable_already_rebuilt = cfg_bool("OPTIMIZE_STRETCH_REVALIDATION", true)
-					and map.SuperBigMapRevalidationRebuiltGrids == true
-				if buildable_already_rebuilt then
-					StretchLog("underground stretch: RebuildBuildableGrid already completed by consolidated revalidation -- skip duplicate")
-				elseif type(rebuild_buildable) == "function" and map.buildable then
-					SetLoadingPhase("Rebuilding the underground build grid")
-					StretchLog("underground stretch: -> RebuildBuildableGrid")
-					SafeCall(rebuild_buildable, map)
-				end
+				SetLoadingPhase("Finalizing reachable underground terrain")
 				local terrain_api2 = Global("terrain")
-				if type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function" then
-					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
-						StretchLog("underground stretch: RebuildPassability already completed by stretch revalidation -- skip duplicate")
-					else
-						StretchLog("underground stretch: -> RebuildPassability")
-						SafeCall(terrain_api2.RebuildPassability, map)
-					end
+				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
+					error("underground final passability rebuild is unavailable")
+				end
+				StretchLog("underground stretch: -> final RebuildPassability")
+				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				if not pass_ok then error("underground final passability rebuild failed: " .. tostring(pass_err)) end
+				local rebuild_buildable = Global("RebuildBuildableGrid")
+				if type(rebuild_buildable) ~= "function" then
+					error("underground final buildable-grid rebuild is unavailable")
+				end
+				SetLoadingPhase("Rebuilding the final underground build grid")
+				StretchLog("underground stretch: -> final RebuildBuildableGrid")
+				local build_ok, build_err = pcall(rebuild_buildable, map)
+				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
+				map.SuperBigMapRevalidationRebuiltGrids = true
+				local deposits = SuperBigMap.DepositRules
+				if not deposits then error("underground deposit rules are unavailable") end
+				if type(deposits.ClearTopUpPlacementPool) == "function" then
+					deposits.ClearTopUpPlacementPool(map)
+				end
+				if type(deposits.PrepareUndergroundReachability) ~= "function" then
+					error("underground entrance-reachability preparation is unavailable")
+				end
+				StretchLog("underground stretch: -> PrepareUndergroundReachability")
+				local reach_ok, reach_state = deposits.PrepareUndergroundReachability(map)
+				if reach_ok ~= true then
+					error("underground entrance connectivity could not be initialized (seeds="
+						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
 				end
 			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
@@ -2844,8 +2856,23 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						StretchLog("underground stretch: -> EvenOutDepositDensity")
 						SafeCall(deposits.EvenOutDepositDensity, map)
 					end
+					if type(deposits.RelocateUnreachableUndergroundEnrichments) ~= "function" then
+						error("underground enrichment reachability audit is unavailable")
+					end
+					SetLoadingPhase("Moving underground enrichments onto reachable terrain")
+					StretchLog("underground stretch: -> RelocateUnreachableUndergroundEnrichments")
+					local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+					StretchLog("underground enrichment reachability audit returned", {
+						ok = audit_ok, checked = audit_stats and audit_stats.checked,
+						invalid = audit_stats and audit_stats.invalid, moved = audit_stats and audit_stats.moved,
+						unresolved = audit_stats and audit_stats.unresolved,
+					})
+					if audit_ok ~= true then
+						error("underground enrichment reachability audit left "
+							.. tostring(audit_stats and audit_stats.unresolved or "unknown") .. " unresolved markers")
+					end
 					if type(deposits.LogDistributionReport) == "function" then
-						SafeCall(deposits.LogDistributionReport, map, "underground after density suite")
+						SafeCall(deposits.LogDistributionReport, map, "underground after reachable density suite")
 					end
 					if type(deposits.ClearTopUpPlacementPool) == "function" then
 						deposits.ClearTopUpPlacementPool(map)
@@ -2896,6 +2923,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapUndergroundStretchDone = true
 			map.SuperBigMapUndergroundPrepared = true
 			map.SuperBigMapExpanded = true
+			-- The final passability/buildable grids were synchronously rebuilt before the
+			-- reachability-filtered density suite. CurrentMapChangeDone must not immediately
+			-- rebuild them again after placement and silently change the accepted terrain.
+			map.SuperBigMapSkipNextLifecycleBoundsRebuild = true
 			map.SuperBigMapUndergroundDeferredGeometry = false
 			map.SuperBigMapUndergroundStretchPending = false
 			map.SuperBigMapUndergroundStretchFailed = nil
@@ -2907,11 +2938,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapUndergroundStretchPending = false
 			map.SuperBigMapUndergroundStretchFailed = tostring(branch_err or "unknown error")
 			map.SuperBigMapUndergroundPreparationFailed = true
+			map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
 		end
 		map.SuperBigMapUndergroundStretchRunning = false
 		UndergroundAccessLog("complete deferred pipeline finished", UndergroundAccessState(map, {
 			ok = tostring(ok_branch), error = tostring(branch_err), first_access = tostring(force_now == true),
-		}), ok_branch and nil or "error")
+		}), ok_branch and "info" or "error")
 		StretchLog("underground stretch: DONE", {
 			ok = ok_branch, first_access = force_now == true,
 			error = ok_branch and nil or tostring(branch_err),
@@ -3280,7 +3312,7 @@ local function PatchDeferredUndergroundAccess(source)
 		local ok, err = RunUndergroundStretchIfEnabled(target, true)
 		UndergroundAccessLog("complete preparation returned to map-slot gate", UndergroundAccessState(target, {
 			ok = tostring(ok), error = tostring(err),
-		}), ok == true and nil or "error")
+		}), ok == true and "info" or "error")
 		if ok ~= true then
 			if screen_open then
 				UndergroundAccessLog("closing first-access loading screen after failure", UndergroundAccessState(target, {
@@ -3373,7 +3405,7 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 		local ok, err = RunUndergroundStretchIfEnabled(map, true)
 		UndergroundAccessLog("fallback complete preparation returned", UndergroundAccessState(map, {
 			ok = tostring(ok), error = tostring(err),
-		}), ok == true and nil or "error")
+		}), ok == true and "info" or "error")
 		if screen_open and type(close_screen) == "function" then
 			close_screen(screen_id, map_slot)
 			if type(wait_render) == "function" then wait_render("scene") end
@@ -3391,7 +3423,7 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 		end
 		UndergroundAccessLog("fallback preparation thread exited", UndergroundAccessState(map, {
 			ok = tostring(ok), screen_closed = tostring(screen_open and type(close_screen) == "function"),
-		}), ok == true and nil or "error")
+		}), ok == true and "info" or "error")
 	end)
 	return true
 end

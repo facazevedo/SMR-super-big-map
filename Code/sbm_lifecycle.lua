@@ -1148,7 +1148,20 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	end
 	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
 		and gen.ShouldDeferStretchRebuilds(map) == true
-	Lifecycle.Apply(map, not defer_rebuild)
+	local skip_final_underground_rebuild = map
+		and map.SuperBigMapSkipNextLifecycleBoundsRebuild == true
+	if skip_final_underground_rebuild then
+		map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Lifecycle", "skipping duplicate first-access underground grid rebuild; final grids already validated")
+		end
+		local profiler = SuperBigMap.LoadingProfiler
+		if profiler and type(profiler.Step) == "function" then
+			profiler.Step("underground first access: duplicate lifecycle grid rebuild skipped", nil, map)
+		end
+	end
+	Lifecycle.Apply(map, not defer_rebuild and not skip_final_underground_rebuild)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")

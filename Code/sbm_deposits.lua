@@ -37,6 +37,10 @@ end
 -- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
 -- equivalent pools. Weak map keys release abandoned-map entries automatically.
 local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
+-- Final underground connectivity state, built only after the stretched passability/buildable
+-- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
+-- and the final marker audit ask the same entrance-reachability question repeatedly.
+local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
 
 local function CachedTopUpCandidates(map)
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return nil end
@@ -44,7 +48,10 @@ local function CachedTopUpCandidates(map)
 end
 
 local function ClearTopUpPlacementPool(map)
-	if map then topup_candidate_pool_by_map[map] = nil end
+	if map then
+		topup_candidate_pool_by_map[map] = nil
+		underground_reachability_by_map[map] = nil
+	end
 end
 
 local function Enabled()
@@ -171,20 +178,125 @@ end
 
 -- A tile can receive a deposit if it is passable and flat enough (not a cliff).
 local FLATNESS_MIN = 3700   -- normal.z (of 4096); ~ below this is too steep
-local function IsBuildableAt(map, pt)
+local function IsBuildableAt(map, pt, strict)
 	local buildable = map and map.buildable
 	local world_to_hex = Global("WorldToHex")
 	local build_unbuildable = Global("buildUnbuildableZ")
 	if not (buildable and type(buildable.GetZ) == "function" and type(world_to_hex) == "function"
 		and type(build_unbuildable) == "function") then
-		return true -- grid unavailable: don't block placement
+		return strict ~= true -- surface keeps the historical fail-open behavior; underground is strict
 	end
 	local ok_u, sentinel = pcall(build_unbuildable)
-	if not ok_u then return true end
+	if not ok_u then return strict ~= true end
 	local ok_h, q, r = pcall(world_to_hex, pt)
-	if not ok_h or type(q) ~= "number" then return true end
+	if not ok_h or type(q) ~= "number" then return strict ~= true end
 	local ok_z, z = pcall(buildable.GetZ, buildable, q, r)
 	return ok_z and z ~= nil and z ~= sentinel
+end
+
+local function BuildUndergroundReachability(map)
+	if not IsUndergroundMap(map) then return nil end
+	local cached = underground_reachability_by_map[map]
+	if cached then return cached end
+	local state = {
+		seeds = {}, results = {}, checks = 0, reachable = 0, rejected = 0,
+		failures = 0, method = "unavailable",
+	}
+	underground_reachability_by_map[map] = state
+	local connectivity_check = Global("ConnectivityCheck")
+	local pf_api = Global("pf")
+	if type(connectivity_check) == "function" then
+		state.method = "ConnectivityCheck"
+	elseif type(pf_api) == "table" and type(pf_api.HasPosPath) == "function" then
+		state.method = "pf.HasPosPath"
+	end
+	local resume = Global("ConnectivityResume")
+	if type(resume) == "function" then pcall(resume, map) end
+	local terrain_api = Global("terrain")
+	local find_passable = type(terrain_api) == "table" and terrain_api.FindPassable or nil
+	local const_tbl = Global("const")
+	local hex = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 0
+	local snap_radius = math.max(8000, hex * 12)
+	local world_to_hex = Global("WorldToHex")
+	local seed_hexes = {}
+	local function add_seed(obj)
+		local pos = ObjectPos(obj)
+		if not pos then return end
+		if type(find_passable) == "function" then
+			local ok_p, passable = pcall(find_passable, map, pos, 1, snap_radius)
+			if ok_p and passable then pos = passable end
+		end
+		local key = tostring(pos)
+		if type(world_to_hex) == "function" then
+			local ok_h, q, r = pcall(world_to_hex, pos)
+			if ok_h and type(q) == "number" and type(r) == "number" then
+				key = tostring(q) .. ":" .. tostring(r)
+			end
+		end
+		if not seed_hexes[key] then
+			seed_hexes[key] = true
+			state.seeds[#state.seeds + 1] = pos
+		end
+	end
+	if map and type(map.MapForEach) == "function" then
+		pcall(map.MapForEach, map, "map", "UndergroundPassageBase", add_seed)
+		-- A map may contain only natural tunnel markers before their passage structure spawns.
+		-- They are a safe fallback, but real underground passage structures remain preferred.
+		if #state.seeds == 0 then
+			pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelMarker", add_seed)
+		end
+	end
+	state.available = #state.seeds > 0 and state.method ~= "unavailable"
+	Log("underground entrance reachability initialized", {
+		map = tostring(map and map.name), seeds = #state.seeds, method = state.method,
+		available = state.available, snap_radius = snap_radius,
+	})
+	ProfileStep("underground entrance reachability initialized", {
+		seeds = #state.seeds, method = state.method, available = state.available,
+	}, map)
+	return state
+end
+
+local function IsReachableFromUndergroundEntrance(map, pt)
+	local state = BuildUndergroundReachability(map)
+	if not state or state.available ~= true or not pt then return false end
+	local target = pt
+	if type(pt.SetTerrainZ) == "function" then
+		local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
+		if ok_z and snapped then target = snapped end
+	end
+	local world_to_hex = Global("WorldToHex")
+	local key = tostring(target)
+	if type(world_to_hex) == "function" then
+		local ok_h, q, r = pcall(world_to_hex, target)
+		if ok_h and type(q) == "number" and type(r) == "number" then
+			key = tostring(q) .. ":" .. tostring(r)
+		end
+	end
+	local cached = state.results[key]
+	if cached ~= nil then return cached == true end
+	state.checks = state.checks + 1
+	local connectivity_check = Global("ConnectivityCheck")
+	local pf_api = Global("pf")
+	local reachable = false
+	for _, seed in ipairs(state.seeds) do
+		local ok, result
+		if state.method == "ConnectivityCheck" and type(connectivity_check) == "function" then
+			ok, result = pcall(connectivity_check, map, seed, target, 1, 0)
+		elseif state.method == "pf.HasPosPath" and type(pf_api) == "table"
+			and type(pf_api.HasPosPath) == "function" then
+			ok, result = pcall(pf_api.HasPosPath, map, seed, target, 1)
+		end
+		if ok and result == true then
+			reachable = true
+			break
+		elseif not ok then
+			state.failures = state.failures + 1
+		end
+	end
+	state.results[key] = reachable
+	if reachable then state.reachable = state.reachable + 1 else state.rejected = state.rejected + 1 end
+	return reachable
 end
 
 local function CanReceiveDeposit(map, pt)
@@ -198,8 +310,9 @@ local function CanReceiveDeposit(map, pt)
 	-- accessibility measure: hills/rock/void are unbuildable, the floor is buildable), so
 	-- every top-up/respace/even-out pool samples only the playable floor. Surface pools are
 	-- unchanged (vanilla surface deposits legitimately sit on rough terrain).
-	if IsUndergroundMap(map) and not IsBuildableAt(map, pt) then
-		return false
+	if IsUndergroundMap(map) then
+		if not IsBuildableAt(map, pt, true) then return false end
+		if not IsReachableFromUndergroundEntrance(map, pt) then return false end
 	end
 	return true
 end
@@ -219,6 +332,16 @@ end
 
 local function SectorIsScanned(sector)
 	return type(sector) == "table" and sector.status ~= "unexplored"
+end
+
+local function IsAnomalyMarker(obj)
+	return obj ~= nil and IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
+end
+
+local function IsEnrichmentMarker(obj)
+	return IsResourceDepositMarker(obj)
+		or IsAnomalyMarker(obj)
+		or IsKindOfSafe(obj, "EffectDepositMarker")
 end
 
 -- True for the N-sector-wide perimeter ring of the expanded sector grid. Prefer the live
@@ -1734,6 +1857,156 @@ function DepositRules.EvenOutDepositDensity(map)
 		markers_moved = moved,
 	})
 	DepositRules.LogDistributionReport(map, "after even-out")
+end
+
+-- Rebuild the entrance-seeded connectivity cache after the caller has synchronously finalized
+-- underground passability/buildability. This is intentionally separate from lazy candidate
+-- checks so the pipeline can fail closed before creating any extra enrichments.
+function DepositRules.PrepareUndergroundReachability(map)
+	if not IsUndergroundMap(map) then return true end
+	topup_candidate_pool_by_map[map] = nil
+	underground_reachability_by_map[map] = nil
+	local state = BuildUndergroundReachability(map)
+	return state and state.available == true, state
+end
+
+-- Final correctness audit for every resource/anomaly/effect marker, regardless of whether it
+-- came from vanilla generation, geometric stretch movement, or a top-up clone. Any marker that
+-- is not on the final buildable grid or is not connected by the rover path grid to at least one
+-- real underground entrance is moved to the nearest of several random reachable candidates.
+function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
+	if not IsUndergroundMap(map) then return true, { checked = 0, moved = 0, unresolved = 0 } end
+	local point = Global("point")
+	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" then
+		return false, { error = "map/MapForEach/point unavailable" }
+	end
+	local reachable_state = BuildUndergroundReachability(map)
+	if not reachable_state or reachable_state.available ~= true then
+		return false, { error = "entrance connectivity unavailable", seeds = reachable_state and #reachable_state.seeds or 0 }
+	end
+	local markers, invalid = {}, {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if marker and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
+	end)
+	for _, marker in ipairs(markers) do
+		local pos = ObjectPos(marker)
+		if not pos or not CanReceiveDeposit(map, pos) then
+			invalid[#invalid + 1] = { marker = marker, pos = pos }
+		end
+	end
+	if #invalid == 0 then
+		local stats = {
+			checked = #markers, invalid = 0, moved = 0, unresolved = 0,
+			seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
+			connectivity_rejected = reachable_state.rejected, connectivity_failures = reachable_state.failures,
+		}
+		Log("underground enrichment reachability audit complete", stats)
+		ProfileStep("underground enrichment reachability audit complete", stats, map)
+		return true, stats
+	end
+
+	local map_w, map_h, tile = MapWorldSize(map)
+	if not map_w or not map_h or not tile then
+		return false, { error = "map size unavailable", checked = #markers, invalid = #invalid }
+	end
+	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
+	local span_x, span_y = map_w - 2 * margin, map_h - 2 * margin
+	if span_x <= 0 or span_y <= 0 then
+		return false, { error = "placeable span unavailable", checked = #markers, invalid = #invalid }
+	end
+	local candidates, seen = {}, {}
+	local world_to_hex = Global("WorldToHex")
+	local target_pool = math.min(6000, math.max(512, #invalid * 10))
+	local max_samples = math.max(24000, target_pool * 30)
+	for _ = 1, max_samples do
+		if #candidates >= target_pool then break end
+		local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
+		local pt = point(x, y)
+		if CanReceiveDeposit(map, pt) then
+			local key = tostring(x) .. ":" .. tostring(y)
+			if type(world_to_hex) == "function" then
+				local ok_h, q, r = pcall(world_to_hex, pt)
+				if ok_h and type(q) == "number" and type(r) == "number" then
+					key = tostring(q) .. ":" .. tostring(r)
+				end
+			end
+			if not seen[key] then
+				seen[key] = true
+				candidates[#candidates + 1] = { x = x, y = y }
+			end
+		end
+	end
+	local pool_built = #candidates
+
+	local function take_near(pos)
+		if #candidates == 0 then return nil end
+		local ox, oy
+		if pos and type(pos.xy) == "function" then ox, oy = pos:xy() end
+		if type(ox) ~= "number" then
+			return table.remove(candidates, RandInt(#candidates) + 1)
+		end
+		local best_i, best_d
+		for _ = 1, math.min(16, #candidates) do
+			local i = RandInt(#candidates) + 1
+			local c = candidates[i]
+			local dx, dy = c.x - ox, c.y - oy
+			local d = dx * dx + dy * dy
+			if not best_d or d < best_d then best_i, best_d = i, d end
+		end
+		return table.remove(candidates, best_i)
+	end
+
+	local is_valid = Global("IsValid")
+	local concrete_moves = {}
+	local moved, moved_placed, unresolved = 0, 0, 0
+	local moved_by_class = {}
+	for _, item in ipairs(invalid) do
+		local marker, old_pos = item.marker, item.pos
+		local c = take_near(old_pos)
+		if not c or not marker or type(marker.SetPos) ~= "function" then
+			unresolved = unresolved + 1
+		else
+			local new_pos = point(c.x, c.y)
+			if type(new_pos.SetTerrainZ) == "function" then
+				local ok_z, snapped = pcall(new_pos.SetTerrainZ, new_pos, map)
+				if ok_z and snapped then new_pos = snapped end
+			end
+			local ok_move = pcall(marker.SetPos, marker, new_pos)
+			if ok_move and CanReceiveDeposit(map, new_pos) then
+				moved = moved + 1
+				local class = tostring(marker.class or "?")
+				moved_by_class[class] = (moved_by_class[class] or 0) + 1
+				marker.SuperBigMapReachabilityRelocated = true
+				local placed = marker.placed_obj
+				local placed_valid = placed and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
+				if placed_valid and type(placed.SetPos) == "function" and pcall(placed.SetPos, placed, new_pos) then
+					moved_placed = moved_placed + 1
+				end
+				if IsConcreteTerrainDepositMarker(marker) and old_pos and type(old_pos.xy) == "function" then
+					local ox, oy = old_pos:xy()
+					concrete_moves[#concrete_moves + 1] = {
+						from = { x = ox, y = oy }, to = { x = c.x, y = c.y },
+						paint_now = marker.is_placed == true,
+					}
+				end
+			else
+				unresolved = unresolved + 1
+			end
+		end
+	end
+	if #concrete_moves > 0 then MoveConcreteImprints(map, concrete_moves) end
+	local stats = {
+		checked = #markers, invalid = #invalid, moved = moved, moved_placed = moved_placed,
+		unresolved = unresolved, candidates_built = pool_built,
+		seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
+		connectivity_reachable = reachable_state.reachable,
+		connectivity_rejected = reachable_state.rejected,
+		connectivity_failures = reachable_state.failures,
+		moved_by_class = TallyString(moved_by_class),
+	}
+	Log("underground enrichment reachability audit complete", stats)
+	ProfileStep("underground enrichment reachability audit complete", stats, map)
+	return unresolved == 0, stats
 end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
