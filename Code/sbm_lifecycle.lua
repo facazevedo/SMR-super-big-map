@@ -1107,7 +1107,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	DiagSnapshotEvent("OnMsg.CurrentMapChangeDone(slot=" .. tostring(map_slot) .. ")", map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "CurrentMapChangeDone")
-	Lifecycle.Apply(map, true)
+	local gen = SuperBigMap.MapGeneration
+	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
+		and gen.ShouldDeferStretchRebuilds(map) == true
+	Lifecycle.Apply(map, not defer_rebuild)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
@@ -1374,6 +1377,8 @@ RegisterOnce("MapGenerated", function(map)
 	end
 	DiagSnapshotEvent("OnMsg.MapGenerated_BEFORE_tile", map)
 	local gen = SuperBigMap.MapGeneration
+	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
+		and gen.ShouldDeferStretchRebuilds(map) == true
 	if gen then
 		gen.FinalizeExpandedMap(map)
 	end
@@ -1396,8 +1401,13 @@ RegisterOnce("MapGenerated", function(map)
 		if type(gen.SyncMapDataToGrids) == "function" then
 			gen.SyncMapDataToGrids(map)
 		end
-		if type(gen.ReinvalidateExpandedTerrain) == "function" then
+		if not defer_rebuild and type(gen.ReinvalidateExpandedTerrain) == "function" then
 			gen.ReinvalidateExpandedTerrain(map)
+		elseif defer_rebuild then
+			local profiler = SuperBigMap.LoadingProfiler
+			if profiler and type(profiler.Step) == "function" then
+				profiler.Step("stretch optimization: deferred MapGenerated terrain revalidation", nil, map)
+			end
 		end
 	end
 	local fake_terrain = SuperBigMap.FakeTerrain

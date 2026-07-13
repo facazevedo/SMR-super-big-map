@@ -194,7 +194,7 @@ config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below als
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
 config.DebugGeneration    = true    -- Generation: generator hook, frame allocation, mirror/clone plan (TEMP: investigating "cannot expand / not 20x20")
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
-config.DebugSector        = true    -- Sector: grid build/patch, visibility, decal cleanup (TEMP: investigating "cannot expand / not 20x20")
+config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
 config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up (TEMP: investigating landing-spot crowding / vanilla-proportion distribution)
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
@@ -205,31 +205,31 @@ config.DebugLoadTime      = true    -- LoadTime: end-to-end load TIMELINE (each 
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
 config.DebugLoadingSteps  = true
-config.DebugHover         = true    -- Hover: overview hover-highlight mapping (cursor pos, ray-hit Z vs authoritative height, sector bounds + containment) (TEMP: investigating misaligned overview highlight)
-config.DebugAlign         = true    -- Align: underground->surface entrance alignment (map identities, per-entrance pos/class/sector, pairwise delta matrix, per-candidate matches + residuals) (TEMP: investigating the underground translation choosing a wrong offset)
+config.DebugHover         = false   -- Hover: overview hover-highlight mapping
+config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
 -- marker, spawner, and linked passage with world+hex positions, terrain/buildability data,
 -- pairwise cross-map deltas, and best matches at lifecycle and generation-event snapshots.
 config.DebugEntrancePositions = true
-config.DebugOverview      = true    -- Overview: overview curtains + render-distance (TEMP: measuring overview camera eye/distance for "overview too far")
-config.DebugCamera        = true    -- Camera: overview-camera state samples through transitions (TEMP: investigating overview->zoom-in smoothness + far snap)
+config.DebugOverview      = false   -- Overview: overview curtains + render-distance
+config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
 config.DebugZoom          = false   -- Zoom: ZoomPlus integration (also drives ZoomPlus's own logs)
-config.DebugZoomVanilla   = true    -- ZoomVanilla: TEMP investigation -- trace why a NON-expanded (vanilla) map's zoom/FOV is or isn't left vanilla (ApplyNormalZoom gate + overview FOV widen/restore). Turn OFF after diagnosing.
-config.DebugPregameToggle = true    -- PregameToggle: EXPAND MAP button/underline layout diagnostics (TEMP: investigating disappearing EXPAND MAP button)
+config.DebugZoomVanilla   = false   -- ZoomVanilla: normal-map zoom/FOV diagnostics
+config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP button/underline layout diagnostics
 config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugVeil          = false   -- Veil: underground sector-veil lifecycle (build/teardown with reason + decal census, watchdog repairs, hover forensic). Investigation closed: SectorUnexplored proved outline-only; veil now disabled by user decision (interiors stay clear)
-config.DebugSpikes        = true    -- Spikes: terrain spike audit at every stretch-pipeline stage (TEMP: verifying the re-enabled fallback relocation leaves no artifacts)
-config.DebugPairing       = true    -- Pairing: entrance pairing trace + pad diagnostics (TEMP: verifying the fallback-only relocation and footprint-sized pad repairs)
-config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics on mod maps (per-call anchor hex buildable-z vs terrain z, unbuildable footprint counts; also logs the unbuildable-anchor guard skips) (TEMP: investigating elevator-placement FlattenTerrainInShape assert)
-config.DebugGenRand       = true    -- GenRand: generation-determinism trace (per-proc PRNG fingerprints at ProcStart/ProcEnd, generator size/PassBorder inputs, post-gen per-class object census in pre-stretch coords). Diff a vanilla run vs an expanded run to find the first divergent proc. (TEMP: investigating expanded layout differing from vanilla -- lake at another position/rotation)
+config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
+config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
+config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
+config.DebugGenRand       = false   -- GenRand: generation-determinism trace
 
 -- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
 -- generation in sbm_map_generation; no per-load passability pass is needed.)
@@ -674,6 +674,15 @@ config.StretchDecorTopUp = false
 -- faster but risks the grey-frame biome issue; the real fix for speed is to poll for grid-readiness
 -- rather than lower this blindly.
 config.StretchSettleMs = 5000
+-- LOADING OPTIMIZATIONS (stretch mode only). When a stretch pipeline is already scheduled,
+-- defer MapGenerated's full-map bounds/buildable/passability rebuild because the stretch changes
+-- those grids moments later and performs the authoritative final rebuild. Non-stretch paths are
+-- untouched. The final sector geometry and max-object-radius refresh still run after stretching.
+config.OptimizeStretchDeferredRebuilds = true
+-- Apply the surface frame-passable overlay before the stretch's existing full revalidation and
+-- avoid rebuilding the same passability grid again afterward. Underground likewise keeps the
+-- revalidation performed inside StretchSourceToFull and skips its immediately repeated rebuild.
+config.OptimizeStretchPassability = true
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
@@ -1043,6 +1052,8 @@ C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
+C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
+C.OPTIMIZE_STRETCH_PASSABILITY = as_bool(config.OptimizeStretchPassability)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)

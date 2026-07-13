@@ -104,6 +104,36 @@ local function StretchLog(message, data)
 	end
 end
 
+-- True only while a real stretch pipeline has been scheduled and has not completed. Used to
+-- suppress full-map rebuilds whose results would immediately be discarded by that stretch.
+local function ShouldDeferStretchRebuilds(map)
+	return cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true)
+		and type(map) == "table" and map.SuperBigMapStretchPipelinePending == true
+end
+
+-- Cheap final state refresh after the stretch's authoritative grid rebuilds. Deliberately does
+-- not call Lifecycle.Apply(..., true) or RebuildMapBounds: those are the duplicate full-grid
+-- passes this optimization removes. Sector boxes/play ratios and max object radius are refreshed.
+local function FinalizeDeferredStretchState(map, phase)
+	if not map then return false end
+	local bounds = SuperBigMap.MapBounds
+	if bounds then
+		if type(bounds.ResetMapDataBounds) == "function" then SafeCall(bounds.ResetMapDataBounds, map, map.mapdata) end
+		if type(bounds.ResetMapAreas) == "function" then SafeCall(bounds.ResetMapAreas, map) end
+		if type(bounds.RefreshSectors) == "function" then SafeCall(bounds.RefreshSectors, map) end
+	end
+	local update_radius = Global("UpdateMapMaxObjRadius")
+	if type(update_radius) == "function" then SafeCall(update_radius, map) end
+	map.SuperBigMapStretchPipelinePending = false
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("stretch optimization: final lightweight state refresh", {
+			phase = tostring(phase), deferred_rebuilds = true,
+		}, map)
+	end
+	return true
+end
+
 -- Per-object generation spam routes to its own scope so DEBUG_GENERATION stays readable;
 -- enable DEBUG_GENERATIONVERBOSE (or the master) to see it.
 local function VerbosePrint(text)
@@ -639,7 +669,14 @@ local function FinalizeExpandedMap(map)
 
 	local apply_bounds = (SuperBigMap.Lifecycle and SuperBigMap.Lifecycle.Apply) or Global("SuperBigMap_Apply")
 	if type(apply_bounds) == "function" then
-		SafeCall(apply_bounds, map, true)
+		local defer = ShouldDeferStretchRebuilds(map)
+		SafeCall(apply_bounds, map, not defer)
+		if defer then
+			local profiler = SuperBigMap.LoadingProfiler
+			if profiler and type(profiler.Step) == "function" then
+				profiler.Step("stretch optimization: deferred FinalizeExpandedMap full rebuild", nil, map)
+			end
+		end
 	end
 
 	map.SuperBigMapQuadrantCopyPending = false
@@ -1808,6 +1845,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 	local settle_ms = math.max(0, cfg_number("TEST_COPY_SECTOR_DELAY_MS", 5000))
 	if fill_mode_early == "stretch" then
 		settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 800))
+		if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
+			map.SuperBigMapStretchPipelinePending = true
+		end
 	end
 	StretchLog("RunSectorMirrorPlan: scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
@@ -1831,6 +1871,19 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			SetLoadingPhase("Expanding the surface map")
 		end
 		local function end_loading()
+			-- Fail-safe: if the stretch exited before its final lightweight refresh, restore the
+			-- original full rebuild path rather than leave partially refreshed map state.
+			if map.SuperBigMapStretchPipelinePending == true then
+				local lifecycle = SuperBigMap.Lifecycle
+				if lifecycle and type(lifecycle.Apply) == "function" then
+					SafeCall(lifecycle.Apply, map, true)
+				end
+				map.SuperBigMapStretchPipelinePending = false
+				local profiler = SuperBigMap.LoadingProfiler
+				if profiler and type(profiler.Step) == "function" then
+					profiler.Step("stretch optimization: fallback full rebuild", { phase = "surface exit" }, map)
+				end
+			end
 			if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
 				SuperBigMap.DebugLog.LoadTime("loading box torn down (expansion path finished)")
 			end
@@ -1987,6 +2040,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						StretchLog("stretch branch: -> AnnotateDecorRelief")
 						AnnotateDecorRelief(map)
 					end
+					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
+						StretchLog("stretch branch: pre-applying frame passability before authoritative revalidation")
+						SafeCall(ForceFramePassable, map, true)
+					end
 					SpikeAudit(map, "surface pre-stretch")
 					SetLoadingPhase("Stretching the surface terrain")
 					StretchLog("stretch branch: -> StretchSourceToFull")
@@ -2121,7 +2178,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
 				StretchLog("stretch branch: -> ForceFramePassable")
-				SafeCall(ForceFramePassable, map)
+				SafeCall(ForceFramePassable, map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
@@ -2165,6 +2222,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			if not ok_branch then
 				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })
 				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
+			end
+			if ok_branch and map.SuperBigMapStretchPipelinePending == true then
+				FinalizeDeferredStretchState(map, "surface")
 			end
 			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
 			-- never hangs on the loading screen.
@@ -2403,6 +2463,9 @@ local function RunUndergroundStretchIfEnabled(map)
 	local sleep = Global("Sleep")
 	if type(create_thread) ~= "function" or type(sleep) ~= "function" then return false end
 	map.SuperBigMapUndergroundStretchDone = true
+	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
+		map.SuperBigMapStretchPipelinePending = true
+	end
 	local settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
 	StretchLog("underground stretch: scheduled", { settle_ms = settle_ms, desired = desired, generator = gen_t })
 	-- LOADING PHASE: keep the loading box up (and the welcome popup hidden) until this
@@ -2471,8 +2534,9 @@ local function RunUndergroundStretchIfEnabled(map)
 			-- Grids FIRST: the density suite's placement pools require the LIVE buildable grid
 			-- (underground pools are buildable-floor-only -- without the rebuild they would
 			-- sample the stale pre-stretch grid and put enrichments out in the inaccessible
-			-- rock/void, which is exactly what happened). Explicit RebuildBuildableGrid +
-			-- RebuildPassability after the height edits (RebuildGrids does NOT cover them).
+			-- rock/void, which is exactly what happened). RebuildBuildableGrid remains explicit.
+			-- Passability is already rebuilt inside StretchSourceToFull's final terrain revalidation;
+			-- the optimization avoids immediately rebuilding that identical grid a second time.
 			do
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) == "function" and map.buildable then
@@ -2482,8 +2546,12 @@ local function RunUndergroundStretchIfEnabled(map)
 				end
 				local terrain_api2 = Global("terrain")
 				if type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function" then
-					StretchLog("underground stretch: -> RebuildPassability")
-					SafeCall(terrain_api2.RebuildPassability, map)
+					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
+						StretchLog("underground stretch: RebuildPassability already completed by stretch revalidation -- skip duplicate")
+					else
+						StretchLog("underground stretch: -> RebuildPassability")
+						SafeCall(terrain_api2.RebuildPassability, map)
+					end
 				end
 			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
@@ -2559,6 +2627,17 @@ local function RunUndergroundStretchIfEnabled(map)
 			DebugPrint("RunUndergroundStretchIfEnabled ERROR: " .. tostring(branch_err))
 		end
 		if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
+		if ok_branch and map.SuperBigMapStretchPipelinePending == true then
+			FinalizeDeferredStretchState(map, "underground")
+		elseif map.SuperBigMapStretchPipelinePending == true then
+			local lifecycle = SuperBigMap.Lifecycle
+			if lifecycle and type(lifecycle.Apply) == "function" then SafeCall(lifecycle.Apply, map, true) end
+			map.SuperBigMapStretchPipelinePending = false
+			local profiler = SuperBigMap.LoadingProfiler
+			if profiler and type(profiler.Step) == "function" then
+				profiler.Step("stretch optimization: fallback full rebuild", { phase = "underground exit" }, map)
+			end
+		end
 		StretchLog("underground stretch: DONE", { ok = ok_branch })
 		DebugPrint("underground stretch complete")
 		-- End of this loading phase (single exit point of the thread; every step above is
@@ -2573,6 +2652,7 @@ end
 local MapGeneration = {}
 
 MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled
+MapGeneration.ShouldDeferStretchRebuilds = ShouldDeferStretchRebuilds
 MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
 MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
 MapGeneration.AttachPendingMapState = AttachPendingMapState

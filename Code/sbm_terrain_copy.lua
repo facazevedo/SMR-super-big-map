@@ -2112,8 +2112,10 @@ end
 -- edge ring; this removes the slope-based impassability INSIDE the frame. The frame is the
 -- L beyond the corner-anchored source: right strip [source_w, map_w] x full height, plus
 -- bottom strip x[0, source_w] x y[source_h, map_h], with an optional seam bridge into the
--- source. Mod maps only; gated on FORCE_FRAME_PASSABLE.
-local function ForceFramePassable(map)
+-- source. Mod maps only; gated on FORCE_FRAME_PASSABLE. defer_rebuild=true applies the
+-- overlay without a standalone rebuild when an immediately-following full revalidation will
+-- rebuild passability once for the same final state.
+local function ForceFramePassable(map, defer_rebuild)
 	if not cfg_bool("FORCE_FRAME_PASSABLE", true) then
 		return false, "disabled"
 	end
@@ -2157,6 +2159,7 @@ local function ForceFramePassable(map)
 	local net_resume = Global("NetResumeUpdateHash")
 	local has_set_impassable = type(editor_api.SetImpassableBox) == "function"
 	local has_rebuild = type(terrain_api.RebuildPassability) == "function"
+	defer_rebuild = defer_rebuild == true
 
 	if type(net_pause) == "function" then SafeCall(net_pause, reason) end
 	if type(map.SuspendPassEdits) == "function" then SafeCall(map.SuspendPassEdits, map, reason) end
@@ -2169,7 +2172,7 @@ local function ForceFramePassable(map)
 		end
 	end)
 	local ok_rebuild = true
-	if has_rebuild then
+	if has_rebuild and not defer_rebuild then
 		ok_rebuild = pcall(function()
 			for i = 1, #boxes do terrain_api.RebuildPassability(map, boxes[i]) end
 		end)
@@ -2183,9 +2186,9 @@ local function ForceFramePassable(map)
 		map.SuperBigMapFramePassable = true
 	end
 	DebugPrint(string.format(
-		"ForceFramePassable: source=%sx%s map=%sx%s bridge=%s set_impassable=%s rebuild=%s ok_set=%s ok_rebuild=%s",
+		"ForceFramePassable: source=%sx%s map=%sx%s bridge=%s set_impassable=%s rebuild=%s deferred=%s ok_set=%s ok_rebuild=%s",
 		tostring(source_width), tostring(source_height), tostring(map_width), tostring(map_height),
-		tostring(bridge), tostring(has_set_impassable), tostring(has_rebuild),
+		tostring(bridge), tostring(has_set_impassable), tostring(has_rebuild), tostring(defer_rebuild),
 		tostring(ok_set), tostring(ok_rebuild)))
 	return ok_set and ok_rebuild
 end
