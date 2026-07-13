@@ -34,10 +34,10 @@ end
 local function White() return Color(236, 236, 238, 255) end
 
 local function Log(message, data)
-	-- "Align" scope: it is ON during the entrance-correspondence investigation (the earlier
-	-- "Lifecycle" scope was OFF in config, which silently swallowed all this module's logs).
+	-- Keep the placement-button trace beside the terrain samples. This scope is independently
+	-- gated, so one switch captures the button, class method, linked sites, and Quick Build.
 	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("Align", message, data) end
+	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
 end
 
 -- Press: unlock the Elevator template (placement rejects locked buildings), arm the one-shot
@@ -127,8 +127,18 @@ function OnMsg.ConstructionSitePlaced(site, class_name)
 	local create_gt = Global("CreateGameTimeThread")
 	local function finish()
 		if site and type(site.Complete) == "function" then
+			local rockets = SuperBigMap.RocketRules
+			local map = type(site.GetMap) == "function" and SafeCall(site.GetMap, site) or nil
+			local pos = type(site.GetPos) == "function" and SafeCall(site.GetPos, site) or nil
+			local before = rockets and type(rockets.CaptureElevatorTerrain) == "function"
+				and rockets.CaptureElevatorTerrain(map, pos, "PrimaryBeforeQuickComplete") or nil
 			local ok, err = pcall(site.Complete, site, "quick_build")
 			Log("place-elevator: site instantly completed", { ok = ok, err = ok and nil or tostring(err) })
+			local after = rockets and type(rockets.CaptureElevatorTerrain) == "function"
+				and rockets.CaptureElevatorTerrain(map, pos, "PrimaryAfterQuickComplete") or nil
+			if rockets and type(rockets.CompareElevatorTerrain) == "function" then
+				rockets.CompareElevatorTerrain(before, after, "Primary QuickBuild Complete")
+			end
 		end
 	end
 	if type(create_gt) == "function" then create_gt(finish) else finish() end

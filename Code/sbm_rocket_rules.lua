@@ -505,6 +505,115 @@ end
 
 local FlattenLog
 
+-- Dedicated Elevator trace. It is deliberately separate from the broad Flatten/Align scopes:
+-- the v484 runtime log proved that the placement path bypassed both global wrappers, and those
+-- scopes were disabled, leaving no evidence. DEBUG_ELEVATORTERRAIN is enabled temporarily in
+-- config while this issue is investigated. DebugLog itself prints directly, so these lines are
+-- guaranteed to reach MarsDebug whenever that one flag is on.
+local function ElevatorTerrainOn()
+	local DebugLog = SuperBigMap.DebugLog
+	return DebugLog and type(DebugLog.On) == "function" and DebugLog.On("ElevatorTerrain") == true
+end
+
+local function ElevatorTerrainLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
+end
+
+local function PositionXYZ(pos)
+	if not pos then return nil, nil, nil end
+	if type(pos.xyz) == "function" then
+		local ok, x, y, z = pcall(pos.xyz, pos)
+		if ok then return x, y, z end
+	end
+	local x = type(pos.x) == "function" and SafeCall(pos.x, pos) or nil
+	local y = type(pos.y) == "function" and SafeCall(pos.y, pos) or nil
+	return x, y, PointZ(pos)
+end
+
+local function ElevatorMapData(map)
+	return {
+		map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "nil"),
+		map_ref = tostring(map),
+		environment = tostring(map and map.mapdata and map.mapdata.Environment or "?"),
+		is_mod_map = tostring(IsModMap(map)),
+	}
+end
+
+-- Capture the live terrain itself, not object Z. A 13x13 grid at 512 world-unit spacing
+-- spans 6144 units (~61 m), covering the Elevator foundation and enough neighboring natural
+-- ground to make a raised pillar/hole unmistakable. Each row is logged, while the returned
+-- flat array lets the caller report exactly how many samples changed and by how much.
+local function CaptureElevatorTerrain(map, pos, label)
+	if not ElevatorTerrainOn() then return nil end
+	local cx, cy, pos_z = PositionXYZ(pos)
+	if type(cx) ~= "number" or type(cy) ~= "number" then
+		ElevatorTerrainLog("terrain capture skipped", { label = label, reason = "invalid position", pos = tostring(pos) })
+		return nil
+	end
+	local capture = { map = map, x = cx, y = cy, pos_z = pos_z, values = {}, label = label }
+	local step, radius = 512, 6
+	local lo, hi, center, checksum, sample_count = nil, nil, nil, 0, 0
+	for gy = -radius, radius do
+		local row = {}
+		for gx = -radius, radius do
+			local z = TerrainHeightAt(map, cx + gx * step, cy + gy * step)
+			capture.values[#capture.values + 1] = z
+			row[#row + 1] = type(z) == "number" and tostring(z) or "?"
+			if type(z) == "number" then
+				sample_count = sample_count + 1
+				lo = not lo and z or math.min(lo, z)
+				hi = not hi and z or math.max(hi, z)
+				checksum = checksum + z * (#capture.values + 17)
+				if gx == 0 and gy == 0 then center = z end
+			end
+		end
+		ElevatorTerrainLog("terrain height row", {
+			label = label, gy = gy, x = cx, y = cy, step = step, z = table.concat(row, ","),
+		})
+	end
+	local data = ElevatorMapData(map)
+	data.label, data.x, data.y, data.pos_z = label, cx, cy, pos_z
+	data.center_terrain_z = center
+	data.anchor_buildable_z = BuildableZAt(map, cx, cy)
+	data.min_z, data.max_z = lo, hi
+	data.range = lo and hi and (hi - lo) or "?"
+	data.samples, data.grid, data.step, data.checksum = sample_count, "13x13", step, checksum
+	ElevatorTerrainLog("terrain capture summary", data)
+	return capture
+end
+
+local function CompareElevatorTerrain(before, after, label)
+	if not ElevatorTerrainOn() then return end
+	if type(before) ~= "table" or type(after) ~= "table" then
+		ElevatorTerrainLog("terrain comparison unavailable", {
+			label = label, before = tostring(before ~= nil), after = tostring(after ~= nil),
+		})
+		return
+	end
+	local changed, max_delta, first_changes = 0, 0, {}
+	local count = math.max(#before.values, #after.values)
+	for i = 1, count do
+		local a, b = before.values[i], after.values[i]
+		if a ~= b then
+			changed = changed + 1
+			if type(a) == "number" and type(b) == "number" then
+				local delta = b - a
+				max_delta = math.max(max_delta, math.abs(delta))
+				if #first_changes < 12 then
+					first_changes[#first_changes + 1] = tostring(i) .. ":" .. tostring(a) .. "->" .. tostring(b) .. "(" .. tostring(delta) .. ")"
+				end
+			elseif #first_changes < 12 then
+				first_changes[#first_changes + 1] = tostring(i) .. ":" .. tostring(a) .. "->" .. tostring(b)
+			end
+		end
+	end
+	ElevatorTerrainLog(changed == 0 and "terrain comparison UNCHANGED" or "terrain comparison CHANGED", {
+		label = label, samples = count, changed = changed, max_abs_delta = max_delta,
+		first_changes = table.concat(first_changes, " "),
+	})
+end
+
 -- ElevatorBase:PlaceConstructionSite accepts `no_flatten` from the construction controller but
 -- fails to forward it to either linked PlaceConstructionSite call. Detect all forms involved in
 -- elevator placement so both the high-level site wrapper and the low-level flatten guard can
@@ -570,6 +679,179 @@ local function PatchElevatorConstructionNoFlatten()
 	rawset(_G, "PlaceConstructionSite", wrapper)
 	State.elevator_place_construction_site_wrapper = wrapper
 	FlattenLog("PlaceConstructionSite wrapped (Elevator no-flatten)")
+end
+
+-- Vanilla ElevatorBase:PlaceConstructionSite receives no_flatten=true from the construction
+-- controller (Elevator is snap-only), but its override silently drops both optional arguments
+-- when it creates the linked Surface and Underground construction sites. Wrapping the raw global
+-- PlaceConstructionSite was insufficient because Elevator.lua resolves that name through its own
+-- file environment. Patch the class method itself and reproduce its short vanilla implementation,
+-- changing only the two calls to explicitly pass no_flatten=true. This is the authoritative
+-- boundary and cannot be bypassed by Elevator.lua's environment.
+local ELEVATOR_METHOD_PATCH_VERSION = 1
+local function PatchElevatorBasePlaceConstructionSite()
+	local State = SuperBigMap.State or {}
+	local ElevatorBase = Engine.ClassTable("ElevatorBase")
+	local ElevatorClass = Engine.ClassTable("Elevator")
+	local templates = Global("BuildingTemplates")
+	local ElevatorTemplate = type(templates) == "table" and templates.Elevator or nil
+	local current = type(ElevatorBase) == "table" and ElevatorBase.PlaceConstructionSite or nil
+	local class_current = type(ElevatorClass) == "table" and ElevatorClass.PlaceConstructionSite or nil
+	local template_current = type(ElevatorTemplate) == "table" and ElevatorTemplate.PlaceConstructionSite or nil
+	ElevatorTerrainLog("ElevatorBase patch check", {
+		class = tostring(ElevatorBase), current = tostring(current),
+		elevator_class = tostring(ElevatorClass), class_current = tostring(class_current),
+		elevator_template = tostring(ElevatorTemplate), template_current = tostring(template_current),
+		stored_wrapper = tostring(State.elevator_base_place_construction_site_wrapper),
+		stored_original = tostring(State.original_elevator_base_place_construction_site),
+		stored_version = tostring(State.elevator_base_place_construction_site_version),
+		target_version = ELEVATOR_METHOD_PATCH_VERSION,
+		global_place_site = tostring(Global("PlaceConstructionSite")),
+		global_flatten = tostring(Global("FlattenTerrainInBuildShape")),
+	})
+	if type(current) ~= "function" then
+		ElevatorTerrainLog("ElevatorBase patch skipped", { reason = "class method unavailable" })
+		return false
+	end
+	local stored_wrapper = State.elevator_base_place_construction_site_wrapper
+	local class_verified = type(ElevatorClass) ~= "table" or ElevatorClass == ElevatorBase
+		or class_current == stored_wrapper
+	local template_verified = type(ElevatorTemplate) ~= "table"
+		or ElevatorTemplate == ElevatorBase or ElevatorTemplate == ElevatorClass
+		or template_current == stored_wrapper
+	if current == stored_wrapper
+		and State.elevator_base_place_construction_site_version == ELEVATOR_METHOD_PATCH_VERSION
+		and class_verified and template_verified then
+		ElevatorTerrainLog("Elevator method patch verified on all dispatch targets", {
+			wrapper = tostring(current), class_verified = tostring(class_verified),
+			template_verified = tostring(template_verified),
+		})
+		return true
+	end
+	-- Hot reload of a newer patch version: peel off our older wrapper before capturing the
+	-- immutable vanilla original. If ClassesBuilt recreated the class, current is already vanilla.
+	if current == State.elevator_base_place_construction_site_wrapper
+		and type(State.original_elevator_base_place_construction_site) == "function" then
+		current = State.original_elevator_base_place_construction_site
+	end
+	local original = current
+	local wrapper
+	wrapper = function(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
+		local map = city and type(city.GetMap) == "function" and SafeCall(city.GetMap, city) or nil
+		local enforce = class_name == "Elevator" and IsModMap(map)
+			and Config.PREVENT_ELEVATOR_FLATTEN == true
+		local x, y, z = PositionXYZ(pos)
+		local entry = ElevatorMapData(map)
+		entry.class_name, entry.x, entry.y, entry.pos_z = tostring(class_name), x, y, z
+		entry.incoming_no_block_pass = tostring(no_block_pass)
+		entry.incoming_no_flatten = tostring(no_flatten)
+		entry.enforce_no_flatten = tostring(enforce)
+		entry.self = tostring(self)
+		entry.city = tostring(city)
+		ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite ENTER", entry)
+		if not enforce then
+			ElevatorTerrainLog("ElevatorBase method using vanilla path", {
+				reason = class_name ~= "Elevator" and "not Elevator" or "not enabled/mod map",
+			})
+			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
+		end
+
+		local create_group = Global("CreateConstructionGroup")
+		local place_site = Global("PlaceConstructionSite")
+		if type(create_group) ~= "function" or type(place_site) ~= "function"
+			or type(map) ~= "table" or type(map.MapFindNearest) ~= "function" then
+			ElevatorTerrainLog("direct no-flatten path unavailable; falling back to vanilla", {
+				create_group = tostring(create_group), place_site = tostring(place_site),
+				map = tostring(map), map_find = tostring(map and map.MapFindNearest),
+			})
+			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
+		end
+
+		-- Resolve both sides before creating anything, so an invalid passage cannot leave a
+		-- half-created group. This mirrors vanilla's nearest-passage selection.
+		local passage = SafeCall(map.MapFindNearest, map, pos, "map", "SurfacePassageBase", "UndergroundPassageBase")
+		local other = passage and passage.other
+		local other_map = other and type(other.GetMap) == "function" and SafeCall(other.GetMap, other) or nil
+		local other_city = other_map and other_map.City
+		local other_pos = other and type(other.GetPos) == "function" and SafeCall(other.GetPos, other) or nil
+		local other_angle = other and type(other.GetAngle) == "function" and SafeCall(other.GetAngle, other) or nil
+		local ox, oy, oz = PositionXYZ(other_pos)
+		ElevatorTerrainLog("linked passage resolved", {
+			passage = tostring(passage), passage_class = tostring(passage and passage.class),
+			passage_other = tostring(other), other_class = tostring(other and other.class),
+			other_map = tostring(other_map and (other_map.name or (other_map.mapdata and other_map.mapdata.id))),
+			other_environment = tostring(other_map and other_map.mapdata and other_map.mapdata.Environment),
+			other_x = ox, other_y = oy, other_pos_z = oz, other_angle = tostring(other_angle),
+			other_city = tostring(other_city),
+		})
+		if not passage or not other or not other_map or not other_city or not other_pos then
+			ElevatorTerrainLog("linked passage incomplete; falling back to vanilla", { passage = tostring(passage), other = tostring(other) })
+			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
+		end
+
+		local before_primary = CaptureElevatorTerrain(map, pos, "PrimaryBeforeSite")
+		local before_linked = CaptureElevatorTerrain(other_map, other_pos, "LinkedBeforeSite")
+		local group = create_group("Elevator", pos, map, 2, false, true, false, params)
+		local params1 = { construction_group = group, place_stockpile = false }
+		local params2 = { construction_group = group, place_stockpile = false }
+		params1.linked_obj = params2
+		params2.linked_obj = params1
+		table.insert(group, params1)
+		table.insert(group, params2)
+		ElevatorTerrainLog("construction group created", { group = tostring(group), group_count = tostring(#group) })
+
+		-- Preserve vanilla behavior except for the final true argument. Vanilla ignored
+		-- no_block_pass here, so keep that omission to avoid changing passage/grid behavior.
+		local site1 = place_site(city, class_name, pos, angle, params1, nil, true)
+		local after_primary = CaptureElevatorTerrain(map, pos, "PrimaryAfterSite")
+		CompareElevatorTerrain(before_primary, after_primary, "Primary PlaceConstructionSite")
+		local site2 = place_site(other_city, class_name, other_pos, other_angle, params2, nil, true)
+		local after_linked = CaptureElevatorTerrain(other_map, other_pos, "LinkedAfterSite")
+		CompareElevatorTerrain(before_linked, after_linked, "Linked PlaceConstructionSite")
+
+		local is_kind = Global("IsKindOf")
+		local underground_first = type(is_kind) == "function" and SafeCall(is_kind, passage, "UndergroundPassageBase") == true
+		if underground_first then
+			if site1 and type(site1.ChangeEntity) == "function" then SafeCall(site1.ChangeEntity, site1, "ElevatorSurface") end
+			if site2 and type(site2.ChangeEntity) == "function" then SafeCall(site2.ChangeEntity, site2, "ElevatorUnderground") end
+		else
+			if site1 and type(site1.ChangeEntity) == "function" then SafeCall(site1.ChangeEntity, site1, "ElevatorUnderground") end
+			if site2 and type(site2.ChangeEntity) == "function" then SafeCall(site2.ChangeEntity, site2, "ElevatorSurface") end
+		end
+		ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite EXIT", {
+			site1 = tostring(site1), site2 = tostring(site2), group = tostring(group),
+			underground_first = tostring(underground_first), forced_no_flatten = "true",
+		})
+		return site1
+	end
+	-- Classes are method-flattened during ClassesBuilt, so changing ElevatorBase alone may not
+	-- affect the already-built Elevator class. The construction controller dispatches through
+	-- BuildingTemplates.Elevator; install the same wrapper on every distinct runtime target.
+	local original_class = class_current == stored_wrapper
+		and State.original_elevator_class_place_construction_site or class_current
+	local original_template = template_current == stored_wrapper
+		and State.original_elevator_template_place_construction_site or template_current
+	ElevatorBase.PlaceConstructionSite = wrapper
+	if type(ElevatorClass) == "table" and ElevatorClass ~= ElevatorBase then
+		ElevatorClass.PlaceConstructionSite = wrapper
+	end
+	if type(ElevatorTemplate) == "table" and ElevatorTemplate ~= ElevatorBase and ElevatorTemplate ~= ElevatorClass then
+		ElevatorTemplate.PlaceConstructionSite = wrapper
+	end
+	State.original_elevator_base_place_construction_site = original
+	State.original_elevator_class_place_construction_site = original_class
+	State.original_elevator_template_place_construction_site = original_template
+	State.elevator_class_place_construction_site_target = ElevatorClass
+	State.elevator_template_place_construction_site_target = ElevatorTemplate
+	State.elevator_base_place_construction_site_wrapper = wrapper
+	State.elevator_base_place_construction_site_version = ELEVATOR_METHOD_PATCH_VERSION
+	ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite PATCHED", {
+		original = tostring(original), class_original = tostring(original_class),
+		template_original = tostring(original_template), wrapper = tostring(wrapper),
+		base_target = tostring(ElevatorBase), class_target = tostring(ElevatorClass),
+		template_target = tostring(ElevatorTemplate), version = ELEVATOR_METHOD_PATCH_VERSION,
+	})
+	return true
 end
 
 -- The deformation: placing a rocket landing site runs the engine construction flatten
@@ -747,10 +1029,13 @@ local RocketRules = {}
 RocketRules.ResnapRocketsOnMap = ResnapRocketsOnMap
 RocketRules.OnRocketLanded = OnRocketLanded
 RocketRules.OnRocketLandAttempt = OnRocketLandAttempt
+RocketRules.CaptureElevatorTerrain = CaptureElevatorTerrain
+RocketRules.CompareElevatorTerrain = CompareElevatorTerrain
 
 function RocketRules.ApplyModBehavior()
 	if Config.FIX_ROCKET_LANDING_Z == true then PatchRocketLanding() end
 	if Config.PREVENT_ELEVATOR_FLATTEN == true then
+		PatchElevatorBasePlaceConstructionSite()
 		PatchElevatorConstructionNoFlatten()
 	end
 	if Config.PREVENT_LANDING_PAD_FLATTEN == true or Config.PREVENT_ELEVATOR_FLATTEN == true then
@@ -760,6 +1045,32 @@ end
 
 function RocketRules.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	local ElevatorBase = Engine.ClassTable("ElevatorBase")
+	local ElevatorClass = State.elevator_class_place_construction_site_target
+	local ElevatorTemplate = State.elevator_template_place_construction_site_target
+	local elevator_wrapper = State.elevator_base_place_construction_site_wrapper
+	if type(ElevatorTemplate) == "table" and ElevatorTemplate ~= ElevatorBase and ElevatorTemplate ~= ElevatorClass
+		and ElevatorTemplate.PlaceConstructionSite == elevator_wrapper
+		and type(State.original_elevator_template_place_construction_site) == "function" then
+		ElevatorTemplate.PlaceConstructionSite = State.original_elevator_template_place_construction_site
+	end
+	if type(ElevatorClass) == "table" and ElevatorClass ~= ElevatorBase
+		and ElevatorClass.PlaceConstructionSite == elevator_wrapper
+		and type(State.original_elevator_class_place_construction_site) == "function" then
+		ElevatorClass.PlaceConstructionSite = State.original_elevator_class_place_construction_site
+	end
+	if type(ElevatorBase) == "table"
+		and ElevatorBase.PlaceConstructionSite == elevator_wrapper
+		and type(State.original_elevator_base_place_construction_site) == "function" then
+		ElevatorBase.PlaceConstructionSite = State.original_elevator_base_place_construction_site
+	end
+	State.elevator_base_place_construction_site_wrapper = nil
+	State.original_elevator_base_place_construction_site = nil
+	State.original_elevator_class_place_construction_site = nil
+	State.original_elevator_template_place_construction_site = nil
+	State.elevator_class_place_construction_site_target = nil
+	State.elevator_template_place_construction_site_target = nil
+	State.elevator_base_place_construction_site_version = nil
 	if State.flatten_in_build_shape_wrapper
 		and Global("FlattenTerrainInBuildShape") == State.flatten_in_build_shape_wrapper
 		and type(State.original_flatten_in_build_shape) == "function" then
@@ -796,7 +1107,10 @@ SuperBigMap.RocketRules = RocketRules
 -- (wiping the wrapper) and re-executes this module, but Lifecycle.Enable early-returns when
 -- State.active persisted -- so module load is the reliable reinstall point. Self-verifying.
 if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
-	if Config.PREVENT_ELEVATOR_FLATTEN == true then PatchElevatorConstructionNoFlatten() end
+	if Config.PREVENT_ELEVATOR_FLATTEN == true then
+		PatchElevatorBasePlaceConstructionSite()
+		PatchElevatorConstructionNoFlatten()
+	end
 	if Config.PREVENT_LANDING_PAD_FLATTEN == true or Config.PREVENT_ELEVATOR_FLATTEN == true then
 		PatchLandingFlatten()
 	end

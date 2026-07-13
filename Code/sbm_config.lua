@@ -218,6 +218,11 @@ config.DebugEntrancePositions = false
 config.DebugOverview      = false   -- Overview: overview curtains + render-distance
 config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
+-- Exhaustive Elevator terrain-forensics trace. Logs the exact class/global patch identity,
+-- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
+-- and 13x13 before/after height grids around both Elevator footprints. This is intentionally
+-- enabled while investigating pre-expansion Elevator terrain pillars; it adds logging only.
+config.DebugElevatorTerrain = true
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
@@ -960,6 +965,7 @@ C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)
 C.DEBUG_OVERVIEW      = as_bool(config.DebugOverview)
 C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
 C.DEBUG_ROCKET        = as_bool(config.DebugRocket)
+C.DEBUG_ELEVATORTERRAIN = as_bool(config.DebugElevatorTerrain)
 C.DEBUG_HEAT          = as_bool(config.DebugHeat)
 C.DEBUG_BOUNDS        = as_bool(config.DebugBounds)
 C.DEBUG_FAKETERRAIN   = as_bool(config.DebugFakeTerrain)

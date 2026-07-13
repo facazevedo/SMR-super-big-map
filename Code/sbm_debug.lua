@@ -12,7 +12,7 @@
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
 --   Lifecycle, Generation, Sector, SectorSizing, Deposits, RmgPlacement, Stretch, Loading, LoadTime, LoadingSteps,
 --   UndergroundAccess,
---   Hover, Align, EntrancePositions, Overview, Camera, Rocket, Heat, Bounds, FakeTerrain, Validation, Zoom,
+--   Hover, Align, EntrancePositions, Overview, Camera, Rocket, ElevatorTerrain, Heat, Bounds, FakeTerrain, Validation, Zoom,
 --   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
 --
 -- DebugLog.LoadTime(step, data) is the LOAD TIMELINE channel (scope "LoadTime"): each mark prints
