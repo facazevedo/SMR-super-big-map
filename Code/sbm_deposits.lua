@@ -1413,8 +1413,9 @@ end
 -- breakthroughs, or large-cache/scenic event rewards), so every one is placed exclusively in
 -- the FINAL map's outer three-sector mountain ring. It is hidden + sector-registered so a real
 -- scan reveals it. Underground extras retain whole-map placement because there is no surface
--- mountain-edge ring there. Surface candidates must be passable and buildable, and random
--- selection is biased toward low valleys at the mountain base rather than tops or cliffs.
+-- mountain-edge ring there. Surface placement is deliberately two-stage: first choose a ring
+-- sector without considering its terrain candidates, then choose randomly among that sector's
+-- least-restrictive low-area candidates. Occupied anomaly hexes are reserved to prevent overlap.
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	map = map or Global("CurrentMap")
@@ -1505,6 +1506,8 @@ function DepositRules.TopUpAnomalies(map)
 	local edge_ctx
 	local added_markers = {}
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
+	local low_area_percent = math.max(1, math.min(100,
+		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 	-- Filled inside RunPaused and audited afterwards; keep it in this enclosing scope.
 	local ring_sector_count = 0
@@ -1519,8 +1522,10 @@ function DepositRules.TopUpAnomalies(map)
 	}
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
+		local ring_sector_pool = {}
 		local BASE_WHOLE_MAP_SAMPLES = 6000
 		local SAMPLES_PER_RING_SECTOR = 32
+		local STAGE_TWO_AREA_SAMPLES = 96
 		local MAX_POOL = 10000
 		edge_debug = surface_edge_ring and TopUpEdgeLogOn()
 		-- Build the live, index-base-independent edge context for production placement as well as
@@ -1543,6 +1548,16 @@ function DepositRules.TopUpAnomalies(map)
 				if expected_edge ~= "interior" then
 					ring_sector_count = ring_sector_count + 1
 					s.expected_edge = expected_edge
+					local sx0 = s.area_x0 or ((s.col - edge_ctx.min_col) * edge_ctx.sector_step)
+					local sy0 = s.area_y0 or ((s.row - edge_ctx.min_row) * edge_ctx.sector_step)
+					local sx1 = s.area_x1 or (sx0 + edge_ctx.sector_step)
+					local sy1 = s.area_y1 or (sy0 + edge_ctx.sector_step)
+					local center_x, center_y = (sx0 + sx1) / 2, (sy0 + sy1) / 2
+					local _, selection_side, edge_depth = PerimeterCoordinate(edge_ctx, center_x, center_y)
+					s.selection_side = selection_side
+					s.selection_layer = math.min(ring_sectors,
+						math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
+					ring_sector_pool[#ring_sector_pool + 1] = s
 					edge_stats.ring_sector_coverage[tostring(s.id)] = {
 						id = s.id, col = s.col, row = s.row, expected_edge = expected_edge,
 						planned = SAMPLES_PER_RING_SECTOR, sampled = 0, sector_match = 0,
@@ -1585,10 +1600,11 @@ function DepositRules.TopUpAnomalies(map)
 			TopUpEdgeLog("top-up target", {
 				total_before = total_current, templates = #templates, target = target, shortfall = shortfall,
 				area_factor = string.format("%.3f", area_factor), max_samples = MAX_SAMPLES,
-				max_pool = MAX_POOL, valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1,
+				max_pool = MAX_POOL, low_area_percent = low_area_percent,
 				sampling_mode = surface_edge_ring and "every_final_ring_sector_random" or "whole_map_random",
 				ring_sector_count = ring_sector_count,
 				samples_per_ring_sector = SAMPLES_PER_RING_SECTOR,
+				stage_two_samples_per_selected_sector = STAGE_TWO_AREA_SAMPLES,
 				target_ring_w = tostring(edge_ctx.ring_w), target_ring_h = tostring(edge_ctx.ring_h),
 				band_world = tostring(edge_ctx.band_world), margin_world = tostring(margin),
 			})
@@ -1623,6 +1639,7 @@ function DepositRules.TopUpAnomalies(map)
 			y0 = math.max(margin, y0)
 			return random_between(x0, x1), random_between(y0, y1), expected.expected_edge, expected
 		end
+		local terrain_api = Global("terrain")
 		for sample_n = 1, reused_pool and 0 or MAX_SAMPLES do
 			local x, y, sampled_side, expected_sector = sample_position(sample_n)
 			local sector = SectorAtPoint(map, x, y)
@@ -1632,7 +1649,8 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			local in_target_area = not surface_edge_ring or IsInFinalOuterSectorRing(map, x, y, ring_sectors)
 			local scanned = sector and SectorIsScanned(sector) or false
-			local can_receive, buildable, unobstructed, valley_score = false, false, false, 0
+			local passable, can_receive, buildable, unobstructed = false, false, false, false
+			local valley_score, flatness, terrain_z, restriction_tier = 0, 0, nil, nil
 			local coverage = expected_sector
 				and edge_stats.ring_sector_coverage[tostring(expected_sector.id)] or nil
 			if coverage then coverage.sampled = coverage.sampled + 1 end
@@ -1651,35 +1669,44 @@ function DepositRules.TopUpAnomalies(map)
 				rejection = "outside_target_final_ring"
 			else
 				local pt = point(x, y)
-				can_receive = CanReceiveDeposit(map, pt)
+				passable = PassableAt(map, pt)
+				flatness = FlatnessAt(map, pt) or 0
+				can_receive = surface_edge_ring
+					and passable and flatness >= FLATNESS_MIN or CanReceiveDeposit(map, pt)
 				buildable = not surface_edge_ring or IsBuildableAt(map, pt, true)
 				unobstructed = not surface_edge_ring or IsUnobstructedAt(map, pt, true)
-				if not can_receive then
+				if surface_edge_ring and not passable then
+					rejection = "not_passable"
+				elseif not surface_edge_ring and not can_receive then
 					rejection = "not_passable_or_too_steep"
-				elseif not buildable then
-					rejection = "not_buildable"
-				elseif not unobstructed then
+				elseif surface_edge_ring and not unobstructed then
 					rejection = "build_obstructed"
 				else
-					valley_score = surface_edge_ring and ValleyScore(map, pt) or 0
-					if surface_edge_ring and valley_score <= 0 then
-						rejection = "not_mountain_base"
-					else
-						local perimeter_u, nearest_side, edge_depth =
-							PerimeterCoordinate(edge_ctx, x, y)
-						local layer = surface_edge_ring and type(edge_ctx.sector_step) == "number"
-							and math.min(ring_sectors, math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
-							or nil
-						candidates[#candidates + 1] = {
-							x = x, y = y, valley_score = valley_score,
-							edge = candidate_edge, source_region = candidate_source_region,
-							sector_id = sector and sector.id, col = sector and sector.col,
-							row = sector and sector.row, sample_n = sample_n,
-							sampled_side = sampled_side, expected_sector_id = expected_sector and expected_sector.id,
-							perimeter_u = perimeter_u, nearest_side = nearest_side,
-							edge_depth = edge_depth, layer = layer,
-						}
+					if surface_edge_ring then
+						-- Buildability and slope are stage-two preferences. They must not remove
+						-- difficult sectors from the stage-one sector lottery.
+						restriction_tier = buildable and (can_receive and 1 or 2)
+							or (can_receive and 3 or 4)
+						if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+							local ok_h, h = pcall(terrain_api.GetHeight, map, pt)
+							if ok_h and type(h) == "number" then terrain_z = h end
+						end
 					end
+					local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
+					local layer = surface_edge_ring and type(edge_ctx.sector_step) == "number"
+						and math.min(ring_sectors, math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
+						or nil
+					candidates[#candidates + 1] = {
+						x = x, y = y, valley_score = valley_score, passable = passable,
+						flatness = flatness, buildable = buildable, unobstructed = unobstructed,
+						terrain_z = terrain_z, restriction_tier = restriction_tier,
+						edge = candidate_edge, source_region = candidate_source_region,
+						sector_id = sector and sector.id, col = sector and sector.col,
+						row = sector and sector.row, sample_n = sample_n,
+						sampled_side = sampled_side, expected_sector_id = expected_sector and expected_sector.id,
+						perimeter_u = perimeter_u, nearest_side = nearest_side,
+						edge_depth = edge_depth, layer = layer,
+					}
 				end
 			end
 			if coverage then
@@ -1738,7 +1765,7 @@ function DepositRules.TopUpAnomalies(map)
 					unobstructed = tostring(unobstructed),
 					terrain_passable = tostring(debug_passable), terrain_flatness = tostring(debug_flatness),
 					terrain_buildable = tostring(debug_buildable), terrain_type = tostring(debug_terrain_type),
-					terrain_z = tostring(debug_height),
+					terrain_z = tostring(debug_height), restriction_tier = tostring(restriction_tier),
 					valley_score = valley_score, accepted = tostring(rejection == nil),
 					perimeter_u = tostring(perimeter_u), nearest_side = tostring(nearest_side),
 					edge_depth = tostring(edge_depth),
@@ -1756,10 +1783,9 @@ function DepositRules.TopUpAnomalies(map)
 		ProfileStep("anomaly candidate pool ready", {
 			candidates = pool_final, reused = reused_pool,
 		}, map)
-		-- Keep coordinates genuinely random while guaranteeing coarse coverage. Each randomized
-		-- four-placement cycle contains every physical side. Candidates own exactly one nearest side;
-		-- each side's quota is then spread over shuffled broad bins and all three depth layers, with
-		-- explicit nearest-bin fallbacks only where terrain has no safe mountain-base candidate.
+		-- Stage one chooses sectors, not points. A randomized four-placement cycle covers every
+		-- physical side, while shuffled along-side bins and depth layers keep the whole three-sector
+		-- ring eligible. Terrain quality is deliberately ignored until after a sector has won.
 		local side_cycle = { "top", "right", "bottom", "left" }
 		local function shuffle_side_cycle()
 			for i = #side_cycle, 2, -1 do
@@ -1794,9 +1820,8 @@ function DepositRules.TopUpAnomalies(map)
 			})
 		end
 		-- Precompute the randomized side quota, then subdivide each side into that many broad
-		-- along-side bins. One random candidate is selected from every shuffled bin before a bin is
-		-- reused. Coordinates remain random; unlike the old edge-token test, a corner has exactly one
-		-- owner (nearest_side) and cannot satisfy two different side quotas.
+		-- along-side bins. One random SECTOR is selected from every shuffled bin before a bin is
+		-- reused. A corner has exactly one owner and cannot satisfy two different side quotas.
 		local placement_side_schedule = {}
 		local side_totals = { top = 0, right = 0, bottom = 0, left = 0 }
 		local side_bin_order, side_layer_order, side_occurrence = {}, {}, {}
@@ -1854,11 +1879,11 @@ function DepositRules.TopUpAnomalies(map)
 					local target_layer = side_layer_order[side][occurrence]
 					local by_layer, total = {}, 0
 					local min_along, max_along
-					for _, candidate in ipairs(candidates) do
-						if candidate.nearest_side == side
+					for _, candidate in ipairs(ring_sector_pool) do
+						if candidate.selection_side == side
 							and candidate_bin(candidate, side, bin_count) == target_bin then
 							total = total + 1
-							IncrementTally(by_layer, candidate.layer)
+							IncrementTally(by_layer, candidate.selection_layer)
 							local along = (side == "left" or side == "right") and candidate.row or candidate.col
 							min_along = min_along and math.min(min_along, along) or along
 							max_along = max_along and math.max(max_along, along) or along
@@ -1867,34 +1892,148 @@ function DepositRules.TopUpAnomalies(map)
 					TopUpEdgeLog("selection bin exhaustive inventory", {
 						side = side, occurrence = occurrence, side_quota = side_totals[side],
 						target_bin = target_bin, target_layer = target_layer,
-						candidate_count = total, candidates_by_layer = TallyString(by_layer),
+						sector_count = total, sectors_by_layer = TallyString(by_layer),
 						along_sector_span = tostring(min_along) .. ".." .. tostring(max_along),
 					})
 				end
 			end
 		end
-		local function pick_random_best(matching, choices)
-			if #matching == 0 then return nil end
-			local winner = matching[RandInt(#matching) + 1]
-			for _ = 2, math.min(choices, #matching) do
-				local challenger_i = matching[RandInt(#matching) + 1]
-				if (candidates[challenger_i].valley_score or 0)
-					> (candidates[winner].valley_score or 0) then
-					winner = challenger_i
+		local candidates_by_sector = {}
+		for _, candidate in ipairs(candidates) do
+			local key = tostring(candidate.sector_id)
+			local list = candidates_by_sector[key]
+			if not list then list = {}; candidates_by_sector[key] = list end
+			list[#list + 1] = candidate
+		end
+		local available_sectors = {}
+		for _, sector in ipairs(ring_sector_pool) do available_sectors[#available_sectors + 1] = sector end
+		local world_to_hex = Global("WorldToHex")
+		local function anomaly_hex_key(x, y)
+			if type(world_to_hex) == "function" then
+				local ok_h, q, r = pcall(world_to_hex, point(x, y))
+				if ok_h and type(q) == "number" and type(r) == "number" then
+					return tostring(q) .. ":" .. tostring(r)
 				end
 			end
-			return winner
+			return tostring(math.floor(x / math.max(1, tile))) .. ":"
+				.. tostring(math.floor(y / math.max(1, tile)))
 		end
-		local function coverage_candidate_index(side, target_bin, target_layer, choices)
+		local reserved_anomaly_hexes = {}
+		pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+			local pos = marker and ObjectPos(marker)
+			if pos and type(pos.xy) == "function" then
+				local x, y = pos:xy()
+				if type(x) == "number" and type(y) == "number" then
+					reserved_anomaly_hexes[anomaly_hex_key(x, y)] = true
+				end
+			end
+		end)
+		-- Stage two first keeps the least restrictive terrain class available in the selected
+		-- sector, then randomly chooses from the configured lowest percentage of that class. Tiers are:
+		-- 1 buildable+flat, 2 buildable+steep, 3 unbuildable+flat, 4 unbuildable+steep.
+		-- Every tier is still passable and unobstructed because those are hard safety requirements.
+		local stage_two_sample_n = MAX_SAMPLES
+		local function sample_selected_sector_area(sector, source)
+			local step = edge_ctx.sector_step
+			local x0 = math.max(margin, sector.area_x0 or ((sector.col - edge_ctx.min_col) * step))
+			local y0 = math.max(margin, sector.area_y0 or ((sector.row - edge_ctx.min_row) * step))
+			local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1 or (x0 + step))
+			local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1 or (y0 + step))
+			for area_sample = 1, STAGE_TWO_AREA_SAMPLES do
+				stage_two_sample_n = stage_two_sample_n + 1
+				local x, y = random_between(x0, x1), random_between(y0, y1)
+				local live_sector = SectorAtPoint(map, x, y)
+				local pt = point(x, y)
+				local passable = PassableAt(map, pt)
+				local unobstructed = passable and IsUnobstructedAt(map, pt, true) or false
+				local rejection
+				if not live_sector or live_sector.id ~= sector.id then rejection = "sector_mapping_mismatch"
+				elseif SectorIsScanned(live_sector) then rejection = "sector_scanned"
+				elseif not IsInFinalOuterSectorRing(map, x, y, ring_sectors) then rejection = "outside_target_final_ring"
+				elseif not passable then rejection = "not_passable"
+				elseif not unobstructed then rejection = "build_obstructed" end
+				local flatness, buildable, can_receive, terrain_z, restriction_tier
+				if not rejection then
+					flatness = FlatnessAt(map, pt) or 0
+					buildable = IsBuildableAt(map, pt, true)
+					can_receive = flatness >= FLATNESS_MIN
+					restriction_tier = buildable and (can_receive and 1 or 2)
+						or (can_receive and 3 or 4)
+					if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+						local ok_h, h = pcall(terrain_api.GetHeight, map, pt)
+						if ok_h and type(h) == "number" then terrain_z = h end
+					end
+					local candidate_edge, source_region = DescribeTopUpEdge(edge_ctx, live_sector, x, y)
+					local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
+					local candidate = {
+						x = x, y = y, passable = true, can_receive = can_receive,
+						flatness = flatness, buildable = buildable, unobstructed = true,
+						terrain_z = terrain_z, restriction_tier = restriction_tier, valley_score = 0,
+						edge = candidate_edge, source_region = source_region,
+						sector_id = live_sector.id, col = live_sector.col, row = live_sector.row,
+						sample_n = stage_two_sample_n, stage_two_sample = area_sample,
+						sampled_side = sector.expected_edge, expected_sector_id = sector.id,
+						perimeter_u = perimeter_u, nearest_side = nearest_side,
+						edge_depth = edge_depth, layer = sector.selection_layer,
+					}
+					candidates[#candidates + 1] = candidate
+					source[#source + 1] = candidate
+				end
+				if edge_debug then
+					TopUpEdgeLog("stage-two selected-sector area sample", {
+						sector = tostring(sector.id), col = tostring(sector.col), row = tostring(sector.row),
+						area_sample = area_sample, x = x, y = y, accepted = tostring(rejection == nil),
+						passable = tostring(passable), unobstructed = tostring(unobstructed),
+						buildable = tostring(buildable), flatness = tostring(flatness),
+						terrain_z = tostring(terrain_z), restriction_tier = tostring(restriction_tier),
+						rejection = tostring(rejection or "none"),
+					})
+				end
+			end
+		end
+		local function area_candidate_for_sector(sector)
+			local sector_key = tostring(sector and sector.id)
+			local source = candidates_by_sector[sector_key]
+			if not source then source = {}; candidates_by_sector[sector_key] = source end
+			-- These samples happen only after stage one has selected the sector.
+			sample_selected_sector_area(sector, source)
+			local eligible, seen = {}, {}
+			local best_tier
+			for _, candidate in ipairs(source) do
+				local key = anomaly_hex_key(candidate.x, candidate.y)
+				local tier = candidate.restriction_tier or 4
+				if not candidate.used and not seen[key] and not reserved_anomaly_hexes[key] then
+					seen[key] = true
+					if best_tier == nil or tier < best_tier then
+						best_tier, eligible = tier, { candidate }
+					elseif tier == best_tier then
+						eligible[#eligible + 1] = candidate
+					end
+				end
+			end
+			if #eligible == 0 then return nil, nil, nil, 0, 0, #source end
+			table.sort(eligible, function(a, b)
+				local az = type(a.terrain_z) == "number" and a.terrain_z or 2147483647
+				local bz = type(b.terrain_z) == "number" and b.terrain_z or 2147483647
+				if az ~= bz then return az < bz end
+				return (a.sample_n or 0) < (b.sample_n or 0)
+			end)
+			local low_count = math.max(1, math.ceil(#eligible * (low_area_percent + 0.0) / 100))
+			local winner = eligible[RandInt(low_count) + 1]
+			local key = anomaly_hex_key(winner.x, winner.y)
+			winner.valley_score = ValleyScore(map, point(winner.x, winner.y))
+			return winner, key, best_tier, low_count, #eligible, #source
+		end
+		local function coverage_sector_index(side, target_bin, target_layer)
 			local bin_count = math.max(1, side_totals[side])
 			local function collect(require_bin, require_layer, max_bin_distance)
 				local matching = {}
-				for i, candidate in ipairs(candidates) do
-					if candidate.nearest_side == side then
+				for i, candidate in ipairs(available_sectors) do
+					if candidate.selection_side == side then
 						local bin = candidate_bin(candidate, side, bin_count)
 						local bin_ok = not require_bin or bin == target_bin
 						if max_bin_distance ~= nil then bin_ok = math.abs(bin - target_bin) <= max_bin_distance end
-						local layer_ok = not require_layer or candidate.layer == target_layer
+						local layer_ok = not require_layer or candidate.selection_layer == target_layer
 						if bin_ok and layer_ok then matching[#matching + 1] = i end
 					end
 				end
@@ -1926,73 +2065,88 @@ function DepositRules.TopUpAnomalies(map)
 			if #matching == 0 then matching, scope = collect(false, false), "same_side_anywhere" end
 			if #matching == 0 then
 				local whole = {}
-				for i = 1, #candidates do whole[#whole + 1] = i end
-				matching, scope = whole, "whole_ring_no_owned_candidate"
+				for i = 1, #available_sectors do whole[#whole + 1] = i end
+				matching, scope = whole, "whole_ring_no_owned_sector"
 			end
-			local winner = pick_random_best(matching, choices)
-			local actual = winner and candidates[winner]
+			local winner = #matching > 0 and matching[RandInt(#matching) + 1] or nil
+			local actual = winner and available_sectors[winner]
 			return winner, scope, #matching, fallback_distance,
-				actual and candidate_bin(actual, side, bin_count), actual and actual.layer
+				actual and candidate_bin(actual, side, bin_count), actual and actual.selection_layer
 		end
 		for placement_n = 1, shortfall do
-			if #candidates == 0 then break end
+			if (surface_edge_ring and #available_sectors == 0)
+				or (not surface_edge_ring and #candidates == 0) then break end
 			local preferred_side = surface_edge_ring and placement_side_schedule[placement_n] or nil
 			if preferred_side then side_occurrence[preferred_side] = side_occurrence[preferred_side] + 1 end
 			local occurrence = preferred_side and side_occurrence[preferred_side] or nil
 			local target_bin = preferred_side and side_bin_order[preferred_side][occurrence] or nil
 			local target_layer = preferred_side and side_layer_order[preferred_side][occurrence] or nil
-			local choices = surface_edge_ring
-				and math.max(1, math.floor(cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1)) or 1
-			local ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer
+			local c, ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer
+			local selected_sector, reserved_key, restriction_tier, low_area_count, tier_area_count, sector_area_count
 			if surface_edge_ring then
-				ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer =
-					coverage_candidate_index(preferred_side, target_bin, target_layer, choices)
+				-- A sector is drawn first. Only afterwards do we inspect that sector's terrain.
+				-- If it has no passable, unobstructed sampled hex, log it and draw another sector;
+				-- terrain quality never influences which sector wins an individual draw.
+				while not c and #available_sectors > 0 do
+					local sector_i
+					sector_i, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer =
+						coverage_sector_index(preferred_side, target_bin, target_layer)
+					if not sector_i then break end
+					selected_sector = available_sectors[sector_i]
+					table.remove(available_sectors, sector_i)
+					c, reserved_key, restriction_tier, low_area_count, tier_area_count, sector_area_count =
+						area_candidate_for_sector(selected_sector)
+					if edge_debug then
+						TopUpEdgeLog("stage-one ring sector selected", {
+							placement = placement_n, sector = tostring(selected_sector.id),
+							col = tostring(selected_sector.col), row = tostring(selected_sector.row),
+							preferred_side = tostring(preferred_side), sector_side = tostring(selected_sector.selection_side),
+							target_bin = tostring(target_bin), target_layer = tostring(target_layer),
+							actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
+							selection_scope = tostring(selection_scope), matching_sector_count = matching_count,
+							fallback_bin_distance = tostring(fallback_distance),
+							sector_area_candidates = sector_area_count, viable = tostring(c ~= nil),
+							remaining_unselected_sectors = #available_sectors,
+						})
+					end
+				end
+				if not c then break end
+				reserved_anomaly_hexes[reserved_key] = true
+				c.used = true
 			else
 				ci, selection_scope, matching_count = RandInt(#candidates) + 1, "whole_map", #candidates
+				c = candidates[ci]
+				table.remove(candidates, ci)
+				c.used = true
 			end
-			if edge_debug then
-				local initial = candidates[ci]
-				TopUpEdgeLog("placement choice initial", {
-					placement = placement_n, choice = 1, candidate_index = ci,
-					sample_n = tostring(initial.sample_n), x = initial.x, y = initial.y,
-					sampled_side = tostring(initial.sampled_side),
-					sector = tostring(initial.sector_id), col = tostring(initial.col), row = tostring(initial.row),
-					edge = tostring(initial.edge), source_region = tostring(initial.source_region),
-					valley_score = initial.valley_score, pool_size = #candidates,
-					preferred_side = tostring(preferred_side),
-					target_bin = tostring(target_bin), target_layer = tostring(target_layer),
-					actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
-					fallback_bin_distance = tostring(fallback_distance),
-					side_quota = tostring(preferred_side and side_totals[preferred_side]),
-					candidate_perimeter_u = tostring(initial.perimeter_u),
-					nearest_side = tostring(initial.nearest_side), edge_depth = tostring(initial.edge_depth),
-					selection_scope = selection_scope, matching_side_candidates = matching_count,
-				})
-			end
-			local c = candidates[ci]
-			table.remove(candidates, ci)
-			c.used = true
 			if edge_debug then
 				IncrementTally(edge_stats.selected_by_edge, c.edge)
 				IncrementTally(edge_stats.selected_by_sector, c.sector_id)
 				IncrementTally(edge_stats.selected_by_target_side, preferred_side)
-				IncrementTally(edge_stats.selected_by_nearest_side, c.nearest_side)
+				IncrementTally(edge_stats.selected_by_nearest_side,
+					selected_sector and selected_sector.selection_side or c.nearest_side)
 				IncrementTally(edge_stats.selected_by_side_layer,
-					tostring(c.nearest_side) .. "/L" .. tostring(c.layer or "?"))
+					tostring(selected_sector and selected_sector.selection_side or c.nearest_side)
+						.. "/L" .. tostring(actual_layer or c.layer or "?"))
 				IncrementTally(edge_stats.selected_by_scope, selection_scope)
-				TopUpEdgeLog("placement candidate selected", {
+				TopUpEdgeLog("stage-two low-area candidate selected", {
 					placement = placement_n, candidate_index = ci, sample_n = tostring(c.sample_n),
 					sampled_side = tostring(c.sampled_side),
 					x = c.x, y = c.y, sector = tostring(c.sector_id), col = tostring(c.col), row = tostring(c.row),
 					edge = tostring(c.edge), source_region = tostring(c.source_region),
-					valley_score = c.valley_score, pool_remaining = #candidates,
+					valley_score = c.valley_score, terrain_z = tostring(c.terrain_z),
+					flatness = tostring(c.flatness), buildable = tostring(c.buildable),
+					restriction_tier = tostring(restriction_tier or c.restriction_tier),
+					low_area_random_pool = tostring(low_area_count), tier_area_candidates = tostring(tier_area_count),
+					sector_area_candidates = tostring(sector_area_count), reserved_hex = tostring(reserved_key),
+					pool_remaining = surface_edge_ring and #available_sectors or #candidates,
 					preferred_side = tostring(preferred_side),
 					target_bin = tostring(target_bin), target_layer = tostring(target_layer),
 					actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
 					fallback_bin_distance = tostring(fallback_distance),
 					candidate_perimeter_u = tostring(c.perimeter_u),
 					nearest_side = tostring(c.nearest_side), edge_depth = tostring(c.edge_depth),
-					selection_scope = selection_scope, matching_side_candidates = matching_count,
+					selection_scope = selection_scope, matching_sector_count = matching_count,
 				})
 			end
 			local template = templates[RandInt(#templates) + 1]
@@ -2011,6 +2165,12 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapEdgeTopUpActualBin = surface_edge_ring and actual_bin or nil
 					clone.SuperBigMapEdgeTopUpActualLayer = surface_edge_ring and actual_layer or nil
 					clone.SuperBigMapEdgeTopUpSelectionScope = surface_edge_ring and selection_scope or nil
+					clone.SuperBigMapEdgeTopUpSelectedSector = surface_edge_ring
+						and selected_sector and selected_sector.id or nil
+					clone.SuperBigMapEdgeTopUpRestrictionTier = surface_edge_ring and restriction_tier or nil
+					clone.SuperBigMapEdgeTopUpTerrainZ = surface_edge_ring and c.terrain_z or nil
+					clone.SuperBigMapEdgeTopUpLowAreaPool = surface_edge_ring and low_area_count or nil
+					clone.SuperBigMapEdgeTopUpReservedHex = surface_edge_ring and reserved_key or nil
 					added_markers[#added_markers + 1] = clone
 					local cat = AnomalyCategory(template)
 					local reward_family = AnomalyRewardFamily(template)
@@ -2207,7 +2367,7 @@ function DepositRules.TopUpAnomalies(map)
 		reused_pool = reused_pool,
 		surface_edge_ring = not IsUndergroundMap(map),
 		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
-		valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 1,
+		low_area_percent = low_area_percent,
 		source_mix = TallyString(src_by_cat),
 		added_mix = TallyString(added_by_cat),
 		source_reward_families = TallyString(src_by_reward),
@@ -2564,8 +2724,9 @@ end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every anomaly top-up must
--- be in the final outer ring; resource and effect-deposit top-ups must be outside it. The same
--- DebugTopUpEdgeDistribution switch gates the exhaustive per-marker trace.
+-- be in the final outer ring, passable, unobstructed, and on a unique anomaly hex; buildability,
+-- slope, and valley score are preference diagnostics. Resource and effect-deposit top-ups must be
+-- outside the ring. The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
@@ -2574,12 +2735,35 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	local stats = {
 		anomaly_topups = 0, resource_topups = 0, effect_topups = 0,
 		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
-		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0,
+		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
 		anomaly_not_mountain_base = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
 	}
 	local violation_count = 0
 	local trace = TopUpEdgeLogOn()
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local function audit_hex_key(x, y)
+		if type(world_to_hex) == "function" and type(point_fn) == "function" then
+			local ok_h, q, r = pcall(world_to_hex, point_fn(x, y))
+			if ok_h and type(q) == "number" and type(r) == "number" then
+				return tostring(q) .. ":" .. tostring(r)
+			end
+		end
+		return tostring(x) .. ":" .. tostring(y)
+	end
+	local occupied_anomaly_hexes = {}
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if not (marker and marker.SuperBigMapAnomalyTopUp) then
+			local pos = marker and ObjectPos(marker)
+			if pos and type(pos.xy) == "function" then
+				local x, y = pos:xy()
+				if type(x) == "number" and type(y) == "number" then
+					occupied_anomaly_hexes[audit_hex_key(x, y)] = true
+				end
+			end
+		end
+	end)
 	local function inspect(marker, family, must_be_in_ring)
 		local pos = marker and ObjectPos(marker)
 		local x, y
@@ -2587,10 +2771,19 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local has_position = type(x) == "number" and type(y) == "number"
 		local pt = has_position and pos or nil
 		local in_ring = has_position and IsInFinalOuterSectorRing(map, x, y, ring_sectors) or false
-		local reachable = has_position and CanReceiveDeposit(map, pt) or false
+		local reachable = has_position and PassableAt(map, pt) or false
 		local buildable = has_position and IsBuildableAt(map, pt, true) or false
 		local unobstructed = has_position and IsUnobstructedAt(map, pt, true) or false
 		local valley_score = has_position and ValleyScore(map, pt) or 0
+		local hex_key = has_position and audit_hex_key(x, y) or nil
+		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
+		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
+		if family == "anomaly" and not buildable then
+			stats.anomaly_unbuildable = stats.anomaly_unbuildable + 1
+		end
+		if family == "anomaly" and valley_score <= 0 then
+			stats.anomaly_not_mountain_base = stats.anomaly_not_mountain_base + 1
+		end
 		local violation
 		if not has_position then
 			stats.missing_position = stats.missing_position + 1
@@ -2600,16 +2793,13 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 			violation = "anomaly_topup_outside_final_ring"
 		elseif family == "anomaly" and not reachable then
 			stats.anomaly_unreachable = stats.anomaly_unreachable + 1
-			violation = "anomaly_topup_not_passable_or_too_steep"
-		elseif family == "anomaly" and not buildable then
-			stats.anomaly_unbuildable = stats.anomaly_unbuildable + 1
-			violation = "anomaly_topup_unbuildable"
+			violation = "anomaly_topup_not_passable"
 		elseif family == "anomaly" and not unobstructed then
 			stats.anomaly_obstructed = stats.anomaly_obstructed + 1
 			violation = "anomaly_topup_obstructed"
-		elseif family == "anomaly" and valley_score <= 0 then
-			stats.anomaly_not_mountain_base = stats.anomaly_not_mountain_base + 1
-			violation = "anomaly_topup_not_mountain_base"
+		elseif family == "anomaly" and overlap then
+			stats.anomaly_overlap = stats.anomaly_overlap + 1
+			violation = "anomaly_topup_hex_overlap"
 		elseif not must_be_in_ring and in_ring then
 			stats.non_anomaly_inside_ring = stats.non_anomaly_inside_ring + 1
 			violation = family .. "_topup_inside_reserved_ring"
@@ -2627,12 +2817,16 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 				family = family, marker = tostring(marker), class = tostring(marker and marker.class),
 				reward_family = tostring(marker and marker.SuperBigMapAnomalyTopUpRewardFamily),
 				effect_type = tostring(marker and marker.SuperBigMapEffectTopUpType),
+				selected_sector = tostring(marker and marker.SuperBigMapEdgeTopUpSelectedSector),
+				restriction_tier = tostring(marker and marker.SuperBigMapEdgeTopUpRestrictionTier),
+				low_area_pool = tostring(marker and marker.SuperBigMapEdgeTopUpLowAreaPool),
 				x = tostring(x), y = tostring(y), sector = tostring(sector and sector.id),
 				col = tostring(sector and sector.col), row = tostring(sector and sector.row),
 				must_be_in_final_ring = tostring(must_be_in_ring),
 				in_final_ring = tostring(in_ring), reachable = tostring(reachable),
 				buildable = tostring(buildable), valley_score = tostring(valley_score),
-				unobstructed = tostring(unobstructed), violation = tostring(violation or "none"),
+				unobstructed = tostring(unobstructed), hex_key = tostring(hex_key), overlap = tostring(overlap),
+				violation = tostring(violation or "none"),
 			})
 		end
 	end
@@ -2663,6 +2857,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_unreachable = stats.anomaly_unreachable,
 		anomaly_unbuildable = stats.anomaly_unbuildable,
 		anomaly_obstructed = stats.anomaly_obstructed,
+		anomaly_overlap = stats.anomaly_overlap,
 		anomaly_not_mountain_base = stats.anomaly_not_mountain_base,
 		effect_unbuildable = stats.effect_unbuildable, effect_obstructed = stats.effect_obstructed,
 		missing_position = stats.missing_position, violations = violation_count,

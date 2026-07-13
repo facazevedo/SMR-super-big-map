@@ -199,10 +199,10 @@ config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noi
 config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
--- every sampled candidate (accepted/rejected with reason), all 204 ring-sector coverage records,
--- exclusive-side/bin/layer inventories and fallbacks, a 20x20 accepted/selected/final matrix,
--- every clone result, and the final scan/reveal audit. This is intentionally very noisy and adds
--- diagnostic overhead only while enabled; use it to investigate apparent edge omissions.
+-- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
+-- records, stage-one sector draws, stage-two low-area choices, side/bin/layer fallbacks, a 20x20
+-- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
+-- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
 config.DebugTopUpEdgeDistribution = true
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
@@ -454,11 +454,11 @@ config.TopUpMoraleVistas = true
 -- markers are not moved by this routing rule.
 -- 0 restores whole-map placement with no reserved ring.
 config.TopUpAnomalyOuterRingSectors = 3
--- Surface candidates must already be passable, buildable, unobstructed mountain-base hexes
--- (surrounding terrain higher than the candidate). The selector first targets a broad side segment
--- and ring depth; within the eligible random candidates for that target, compare this many choices
--- and use the deepest valley. 1 keeps the final coordinate fully random with no extra valley bias.
-config.TopUpAnomalyValleyChoices = 1
+-- Two-stage surface placement first chooses a random outer-ring sector, independently of terrain.
+-- Inside that sector it keeps the least-restrictive viable terrain tier, sorts that tier by terrain
+-- height, and randomly chooses within this lowest percentage. 35 means the lowest 35% of the best
+-- tier. Passability, obstruction avoidance, and anomaly-hex non-overlap remain hard requirements.
+config.TopUpAnomalyLowAreaPercent = 35
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
@@ -1016,7 +1016,7 @@ C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
 C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
 C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
-C.TOPUP_ANOMALY_VALLEY_CHOICES = as_number(config.TopUpAnomalyValleyChoices, 1)
+C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
