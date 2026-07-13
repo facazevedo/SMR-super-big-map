@@ -1367,6 +1367,19 @@ local function MoveEntranceVisualsToScale(map)
 		if DebugLog then DebugLog.Info("Align", message, data) end
 	end
 	local moved, seen_objs = 0, {}
+	local function is_elevator_or_site(obj)
+		if IsKindOfSafe(obj, "ElevatorBase") then return true, "elevator" end
+		if not IsKindOfSafe(obj, "ConstructionSite") then return false end
+		local class_name = obj.building_class or obj.template_name
+		if type(obj.GetBuildingClass) == "function" then
+			local ok, value = pcall(obj.GetBuildingClass, obj)
+			if ok and type(value) == "string" then class_name = value end
+		end
+		if class_name == "Elevator" or IsKindOfSafe(obj.building_class_proto, "ElevatorBase") then
+			return true, "elevator_site"
+		end
+		return false
+	end
 	local function handle(obj, via)
 		if not obj or seen_objs[obj] then return end
 		seen_objs[obj] = true
@@ -1381,6 +1394,22 @@ local function MoveEntranceVisualsToScale(map)
 		if ox >= src_w or oy >= src_w then return end
 		local nx = math.floor(ox * scale + 0.5)
 		local ny = math.floor(oy * scale + 0.5)
+		local pair_exact = false
+		local elevator_kind = is_elevator_or_site(obj)
+		if elevator_kind then
+			local linked = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
+			if linked and type(linked.GetPos) == "function" then
+				local ok_lp, linked_pos = pcall(linked.GetPos, linked)
+				local lx, ly
+				if ok_lp then lx, ly = PointXY(linked_pos) end
+				if type(lx) == "number" and type(ly) == "number" then
+					-- The surface half already occupies its final expanded coordinate. Use that exact
+					-- XY for the underground half instead of relying on rounding the scale twice.
+					nx, ny = lx, ly
+					pair_exact = true
+				end
+			end
+		end
 		local np = point_fn(nx, ny)
 		-- Relief-aware Z (same scheme as the decor pass): reproduce the annotated pre-stretch
 		-- ground relationship, scaled, on the actual stretched terrain; fall back to a snap.
@@ -1452,15 +1481,15 @@ local function MoveEntranceVisualsToScale(map)
 			local hex_remove = Global("HexGridShapeRemoveObject")
 			local hex_add = Global("HexGridShapeAddObject")
 			local shape
-			-- ONLY ElevatorPassage buildings (the elevator snap targets): they are the one class
-			-- that NEEDS hex re-registration and is guaranteed to actually BE registered.
+			-- Entrance passages plus an Elevator/Elevator construction site created before deferred
+			-- underground expansion must carry their occupied hexes to the stretched coordinate.
 			-- luaHex.cpp asserts 'handle > 0' (uncatchable C-side) both for handle-less objects
 			-- AND when removing an object that is not currently registered in the grid -- some
 			-- Building-derived entrance indicators pass a Building+handle test yet were never
 			-- hex-registered by vanilla (crash log 16.44.48). Whitelist, don't heuristic.
 			local is_valid_fn = Global("IsValid")
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
-				and IsKindOfSafe(obj, "ElevatorPassage")
+				and (IsKindOfSafe(obj, "ElevatorPassage") or is_elevator_or_site(obj))
 				and (type(is_valid_fn) ~= "function" or is_valid_fn(obj) == true)
 				and type(obj.handle) == "number" and obj.handle > 0
 				and type(obj.GetShapePoints) == "function" then
@@ -1512,8 +1541,8 @@ local function MoveEntranceVisualsToScale(map)
 		AlignLog("entrance visual moved", {
 			via = via, class = tostring(obj.class or "?"),
 			from = tostring(ox) .. "," .. tostring(oy),
-			to = tostring(math.floor(ox * scale + 0.5)) .. "," .. tostring(math.floor(oy * scale + 0.5)),
-			ok = ok_set, rehexed = rehexed,
+			to = tostring(nx) .. "," .. tostring(ny),
+			ok = ok_set, rehexed = rehexed, paired_exact_xy = pair_exact,
 		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
@@ -1525,6 +1554,16 @@ local function MoveEntranceVisualsToScale(map)
 	-- not underground-access-classified).
 	pcall(map.MapForEach, map, "map", "SpawnsTunnelOnCityInit", function(obj)
 		handle(obj, "spawner")
+	end)
+	-- Sweep 3: a player can construct the paired Elevator while the underground is still at its
+	-- native size. The underground half (or its linked construction site) is a Building, excluded
+	-- from decoration movement and not an entrance-marker class, so move it explicitly now.
+	pcall(map.MapForEach, map, "map", "ElevatorBase", function(obj)
+		handle(obj, "pre-expansion elevator")
+	end)
+	pcall(map.MapForEach, map, "map", "ConstructionSite", function(obj)
+		local matched = is_elevator_or_site(obj)
+		if matched then handle(obj, "pre-expansion elevator site") end
 	end)
 	StretchLog("MoveEntranceVisualsToScale: DONE", { moved = moved })
 	DebugPrint(string.format("MoveEntranceVisualsToScale: moved %s entrance visuals", tostring(moved)))

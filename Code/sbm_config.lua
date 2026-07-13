@@ -287,6 +287,13 @@ config.FixRocketLandingZ = true
 -- flatten normally.
 config.PreventLandingPadFlatten = true
 
+-- Elevators are snap-only buildings: their natural Surface/Underground Passage already supplies
+-- the prepared footprint. Vanilla ElevatorBase:PlaceConstructionSite receives `no_flatten=true`
+-- but drops that argument when it creates the two linked sites, which can level the terrain to a
+-- stale pre-expansion buildable Z and create a tall pillar. Force both linked Elevator sites and
+-- any Elevator cursor/site fallback through the no-flatten path on Super Big Map maps.
+config.PreventElevatorFlatten = true
+
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
 -- the map edge / non-rendered frame -- is never trapped (the behavior fixed long ago by
@@ -1001,6 +1008,7 @@ C.SILENCE_BUILDABLE_GRID_SLOW_WARNING = as_bool(config.SilenceBuildableGridSlowW
 C.RESNAP_FRAME_OBJECTS = as_bool(config.ResnapFrameObjects)
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
 C.PREVENT_LANDING_PAD_FLATTEN = as_bool(config.PreventLandingPadFlatten)
+C.PREVENT_ELEVATOR_FLATTEN = as_bool(config.PreventElevatorFlatten)
 C.EXPANDED_MAP_EDGE_BORDER = (type(config.ExpandedMapEdgeBorder) == "number" and config.ExpandedMapEdgeBorder >= 0)
 	and math.floor(config.ExpandedMapEdgeBorder) or false
 C.CLAMP_HEAT_QUERIES = as_bool(config.ClampHeatQueriesOnExpandedMap)

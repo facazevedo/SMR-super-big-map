@@ -503,6 +503,75 @@ local function ActiveLandingConstruction()
 	return false, (type(tmpl) == "string" and ("template=" .. tmpl)) or "not landing"
 end
 
+local FlattenLog
+
+-- ElevatorBase:PlaceConstructionSite accepts `no_flatten` from the construction controller but
+-- fails to forward it to either linked PlaceConstructionSite call. Detect all forms involved in
+-- elevator placement so both the high-level site wrapper and the low-level flatten guard can
+-- enforce the snap-only building's intended no-flatten behavior.
+local function IsElevatorObject(obj)
+	if type(obj) ~= "table" then return false end
+	local is_kind = Global("IsKindOf")
+	if type(is_kind) == "function" then
+		local ok, result = pcall(is_kind, obj, "ElevatorBase")
+		if ok and result then return true end
+	end
+	local class_name = obj.building_class or obj.template_name
+	if type(obj.GetBuildingClass) == "function" then
+		local ok, value = pcall(obj.GetBuildingClass, obj)
+		if ok and type(value) == "string" then class_name = value end
+	end
+	if class_name == "Elevator" then return true end
+	local proto = obj.building_class_proto
+	if proto and type(is_kind) == "function" then
+		local ok, result = pcall(is_kind, proto, "ElevatorBase")
+		if ok and result then return true end
+	end
+	return false
+end
+
+local function ActiveElevatorConstruction()
+	local igi_fn = Global("GetInGameInterface")
+	local igi = type(igi_fn) == "function" and SafeCall(igi_fn) or nil
+	local md = igi and igi.mode_dialog
+	if type(md) ~= "table" then return false, "no mode_dialog" end
+	local tmpl = md.template
+	if tmpl == "Elevator" then return true, "template=Elevator" end
+	if type(tmpl) == "table" then
+		local is_kind = Global("IsKindOf")
+		if type(is_kind) == "function" then
+			local ok, result = pcall(is_kind, tmpl, "ElevatorBase")
+			if ok and result then return true, "template_obj" end
+		end
+	end
+	return false, "not elevator"
+end
+
+local function PatchElevatorConstructionNoFlatten()
+	local State = SuperBigMap.State or {}
+	local current = Global("PlaceConstructionSite")
+	if type(current) ~= "function" then
+		FlattenLog("elevator no-flatten patch skipped", { reason = "PlaceConstructionSite unavailable" })
+		return
+	end
+	if current == State.elevator_place_construction_site_wrapper then return end
+	State.original_place_construction_site = current
+	local original = current
+	local wrapper = function(city, class_name, pos, angle, params, no_block_pass, no_flatten)
+		local map = city and type(city.GetMap) == "function" and SafeCall(city.GetMap, city) or nil
+		if class_name == "Elevator" and IsModMap(map) and Config.PREVENT_ELEVATOR_FLATTEN == true then
+			no_flatten = true
+			FlattenLog("PlaceConstructionSite forced no_flatten for Elevator", {
+				map = tostring(map and map.name), environment = tostring(map and map.mapdata and map.mapdata.Environment),
+			})
+		end
+		return original(city, class_name, pos, angle, params, no_block_pass, no_flatten)
+	end
+	rawset(_G, "PlaceConstructionSite", wrapper)
+	State.elevator_place_construction_site_wrapper = wrapper
+	FlattenLog("PlaceConstructionSite wrapped (Elevator no-flatten)")
+end
+
 -- The deformation: placing a rocket landing site runs the engine construction flatten
 -- (global FlattenTerrainInBuildShape -> FlattenTerrainInShape), which levels the pad's
 -- footprint to the buildable z-grid. On the copied/expanded terrain that raises a tall
@@ -525,7 +594,7 @@ end
 -- unbuildable -- vanilla's own Lua reference implementation skips unbuildable hexes the
 -- same way (Construction.lua: `if z ~= UnbuildableZ then SetHeightCircle(...) end`); the
 -- C assert is debug-build strictness on the same condition. Vanilla maps never touched.
-local function FlattenLog(message, data)
+FlattenLog = function(message, data)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then DebugLog.Info("Flatten", message, data) end
 end
@@ -624,6 +693,16 @@ local function PatchLandingFlatten()
 		local site_obj = IsLandingSite(obj)
 		local landing_mode, reason = ActiveLandingConstruction()
 		local landing = site_obj or landing_mode
+		local elevator_mode, elevator_reason = ActiveElevatorConstruction()
+		local elevator = IsElevatorObject(obj) or elevator_mode
+		if elevator and mod_map and Config.PREVENT_ELEVATOR_FLATTEN == true then
+			FlattenLog("FlattenTerrainInBuildShape SKIPPED (Elevator -> preserve terrain)", {
+				obj_class = (type(obj) == "table" and obj.class) or "?",
+				via = IsElevatorObject(obj) and "obj" or "mode", mode_reason = elevator_reason,
+				map = tostring(map and map.name),
+			})
+			return
+		end
 		-- Only log when we actually SKIP (a rocket landing on a mod map). Do NOT log every
 		-- call: FlattenTerrainInBuildShape fires for every building placement, which spams.
 		if landing and mod_map and Config.PREVENT_LANDING_PAD_FLATTEN == true then
@@ -670,11 +749,11 @@ RocketRules.OnRocketLanded = OnRocketLanded
 RocketRules.OnRocketLandAttempt = OnRocketLandAttempt
 
 function RocketRules.ApplyModBehavior()
-	if Config.FIX_ROCKET_LANDING_Z ~= true then
-		return
+	if Config.FIX_ROCKET_LANDING_Z == true then PatchRocketLanding() end
+	if Config.PREVENT_ELEVATOR_FLATTEN == true then
+		PatchElevatorConstructionNoFlatten()
 	end
-	PatchRocketLanding()
-	if Config.PREVENT_LANDING_PAD_FLATTEN == true then
+	if Config.PREVENT_LANDING_PAD_FLATTEN == true or Config.PREVENT_ELEVATOR_FLATTEN == true then
 		PatchLandingFlatten()
 	end
 end
@@ -688,6 +767,13 @@ function RocketRules.RestoreVanillaBehavior()
 	end
 	State.flatten_in_build_shape_wrapper = nil
 	State.original_flatten_in_build_shape = nil
+	if State.elevator_place_construction_site_wrapper
+		and Global("PlaceConstructionSite") == State.elevator_place_construction_site_wrapper
+		and type(State.original_place_construction_site) == "function" then
+		rawset(_G, "PlaceConstructionSite", State.original_place_construction_site)
+	end
+	State.elevator_place_construction_site_wrapper = nil
+	State.original_place_construction_site = nil
 	if not rocket_land_patched then
 		return
 	end
@@ -709,7 +795,9 @@ SuperBigMap.RocketRules = RocketRules
 -- Install the flatten wrap at MODULE LOAD too: the new-game Lua reload redefines the global
 -- (wiping the wrapper) and re-executes this module, but Lifecycle.Enable early-returns when
 -- State.active persisted -- so module load is the reliable reinstall point. Self-verifying.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false and Config.FIX_ROCKET_LANDING_Z == true
-	and Config.PREVENT_LANDING_PAD_FLATTEN == true then
-	PatchLandingFlatten()
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
+	if Config.PREVENT_ELEVATOR_FLATTEN == true then PatchElevatorConstructionNoFlatten() end
+	if Config.PREVENT_LANDING_PAD_FLATTEN == true or Config.PREVENT_ELEVATOR_FLATTEN == true then
+		PatchLandingFlatten()
+	end
 end
