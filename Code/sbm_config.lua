@@ -204,7 +204,7 @@ config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each 
 -- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
-config.DebugLoadingSteps  = false
+config.DebugLoadingSteps  = true
 config.DebugHover         = false   -- Hover: overview hover-highlight mapping
 config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,

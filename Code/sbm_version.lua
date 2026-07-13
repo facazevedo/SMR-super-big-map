@@ -48,7 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 16:
--- loading profiler/timeline diagnostics are disabled by default after the performance
--- investigation; entrance-position diagnostics remain enabled for pairing verification.
-SuperBigMap.GENERATOR_PATCH_VERSION = 16
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 17:
+-- the exhaustive ordered loading profiler remains enabled for continued optimization;
+-- duplicate legacy loading and animation trace channels remain disabled.
+SuperBigMap.GENERATOR_PATCH_VERSION = 17
