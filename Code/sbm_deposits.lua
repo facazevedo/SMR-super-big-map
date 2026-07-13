@@ -1506,6 +1506,8 @@ function DepositRules.TopUpAnomalies(map)
 	local added_markers = {}
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
+	-- Filled inside RunPaused and audited afterwards; keep it in this enclosing scope.
+	local ring_sector_count = 0
 	local edge_stats = {
 		sampled_by_edge = {}, sampled_by_planned_ring_edge = {}, sampled_by_source_region = {}, accepted_by_edge = {},
 		accepted_by_sector = {}, rejected_by_reason = {}, selected_by_edge = {}, selected_by_sector = {},
@@ -1526,7 +1528,6 @@ function DepositRules.TopUpAnomalies(map)
 		-- cannot silently omit the final bottom/right runs (or any other part of the perimeter).
 		edge_ctx = surface_edge_ring and BuildTopUpEdgeDebugContext(map, ring_sectors) or nil
 		local sampling_plan = {}
-		local ring_sector_count = 0
 		local function ring_edges_for_sector(s)
 			if not (edge_ctx and s) then return "whole_map" end
 			local sides = {}
