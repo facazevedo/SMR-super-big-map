@@ -2855,12 +2855,13 @@ end
 -- success. The normal map-switch loading screen is opened BEFORE the heavy work and kept open
 -- across the eventual switch. No terrain flatten/sculpt operation is added here: entrance objects
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
-local function PatchDeferredUndergroundAccess()
+local function PatchDeferredUndergroundAccess(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then return false end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
+		StretchLog("underground access gate verified", { source = tostring(source or "?") })
 		return true
 	end
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
@@ -2881,6 +2882,14 @@ local function PatchDeferredUndergroundAccess()
 		local generator = target and target.SuperBigMapGeneratorWidthTiles
 		local expanded_target = type(desired) == "number" and type(generator) == "number"
 			and desired > generator
+		StretchLog("underground access gate: map switch requested", {
+			map_slot = tostring(map_slot), map = tostring(target and target.name),
+			environment = tostring(env), desired = tostring(desired), generator = tostring(generator),
+			expanded_target = expanded_target == true,
+			prepared = tostring(target and target.SuperBigMapUndergroundPrepared),
+			done = tostring(target and target.SuperBigMapUndergroundStretchDone),
+			pending = tostring(target and target.SuperBigMapUndergroundStretchPending),
+		})
 		if env ~= "Underground" or not cfg_bool("STRETCH_UNDERGROUND", false)
 			or not expanded_target or target.SuperBigMapUndergroundPrepared == true
 			or target.SuperBigMapUndergroundStretchDone == true then
@@ -2953,7 +2962,10 @@ local function PatchDeferredUndergroundAccess()
 	rawset(_G, "ChangeCurrentMapSlot", wrapper)
 	State.change_current_map_slot_wrapper = wrapper
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
-	DebugPrint("deferred underground first-access gate installed")
+	StretchLog("underground access gate installed", {
+		source = tostring(source or "?"), replaced = tostring(current),
+	})
+	DebugPrint("deferred underground first-access gate installed via " .. tostring(source or "module load"))
 	return true
 end
 
@@ -2976,7 +2988,7 @@ MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 function MapGeneration.ApplyModBehavior()
 	PatchRandomMapGenerator()
 	PatchPassagePairing()
-	PatchDeferredUndergroundAccess()
+	PatchDeferredUndergroundAccess("ApplyModBehavior")
 end
 
 -- Restoring only affects FUTURE generation; maps already tiled stay tiled.
@@ -3041,7 +3053,7 @@ if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
 	-- wiping any wrapper; Lifecycle.Enable early-returns since State.active persisted, so a
 	-- reinstall must not depend on it). Self-verifying, so repeat calls are no-ops.
 	PatchPassagePairing()
-	PatchDeferredUndergroundAccess()
+	PatchDeferredUndergroundAccess("module load")
 end
 
 DebugPrint("map generation module loaded")

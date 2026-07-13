@@ -858,6 +858,9 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	end
 	local gen = SuperBigMap.MapGeneration
 	local env = map and map.mapdata and map.mapdata.Environment
+	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
+		gen.PatchDeferredUndergroundAccess("PostNewMapLoaded:" .. tostring(env or "?"))
+	end
 	local config = SuperBigMap.Config or {}
 	local desired = map and map.SuperBigMapDesiredWidthTiles
 	local generator = map and map.SuperBigMapGeneratorWidthTiles
@@ -1095,6 +1098,9 @@ RegisterOnce("LoadGame", function()
 	-- and the overview grid only covers part of the map. SyncMapDataToGrids sets mapdata.Width
 	-- to match the real terrain, so it MUST run before EnsureSectorsBuilt.
 	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
+		gen.PatchDeferredUndergroundAccess("LoadGame")
+	end
 	if gen and type(gen.SyncMapDataToGrids) == "function" and current then
 		gen.SyncMapDataToGrids(current)
 	end
@@ -1131,6 +1137,9 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "CurrentMapChangeDone")
 	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
+		gen.PatchDeferredUndergroundAccess("CurrentMapChangeDone")
+	end
 	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
 		and gen.ShouldDeferStretchRebuilds(map) == true
 	Lifecycle.Apply(map, not defer_rebuild)
@@ -1204,6 +1213,12 @@ local function EnsureGeneratorHookInstalled()
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchRandomMapGenerator) == "function" then
 		gen.PatchRandomMapGenerator()
+	end
+	-- CommonLua finishes reloading after mod modules first execute and can replace global
+	-- ChangeCurrentMapSlot with vanilla afterward. Re-verify the first-access underground gate
+	-- from these later lifecycle events; the patch is identity-checked and otherwise a no-op.
+	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
+		gen.PatchDeferredUndergroundAccess("EnsureGeneratorHookInstalled")
 	end
 end
 
@@ -1400,6 +1415,9 @@ RegisterOnce("MapGenerated", function(map)
 	end
 	DiagSnapshotEvent("OnMsg.MapGenerated_BEFORE_tile", map)
 	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
+		gen.PatchDeferredUndergroundAccess("MapGenerated")
+	end
 	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
 		and gen.ShouldDeferStretchRebuilds(map) == true
 	if gen then
