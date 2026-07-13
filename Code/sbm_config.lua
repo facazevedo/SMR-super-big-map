@@ -446,11 +446,17 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
--- Surface anomaly TOP-UP extras are reserved for this many sector rows/columns along every
--- outer edge. Other top-up families avoid this ring. Vanilla-generated markers are not moved.
+-- Surface anomaly TOP-UP extras are reserved for this many sector rows/columns along every edge
+-- of the ORIGINAL generated terrain extent. This includes the former bottom/right boundaries,
+-- which lie inside the expanded map. Other top-up families avoid this ring. Vanilla-generated
+-- markers are not moved.
 -- 0 restores whole-map placement with no reserved ring.
 config.TopUpAnomalyOuterRingSectors = 3
--- For each anomaly extra, compare this many random valid ring candidates and use the one with
+-- the most higher terrain nearby. This keeps distribution random while preferring reachable
+-- low ground between mountains. 1 = no valley preference.
+-- For each anomaly extra, compare this many random valid candidates from its requested full side
+-- and use the one with the most higher terrain nearby. This keeps distribution random while
+-- preferring reachable low ground between mountains. 1 = no valley preference.
 -- the most higher terrain nearby. This keeps distribution random while preferring reachable
 -- low ground between mountains. 1 = no valley preference.
 config.TopUpAnomalyValleyChoices = 4
