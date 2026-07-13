@@ -108,10 +108,28 @@ local function Install()
 				if type(T_fn) ~= "function" or type(untranslated) ~= "function" then
 					return original_generate_rollover(self, sector, forced)
 				end
+				-- Recalculate from this exact sector on every hover. The underground buildable grid
+				-- can be finalized after MapSectors are first created, so do not reuse a stale ratio.
+				local ratio = sector.play_ratio or 0
+				local city = Engine.Global("UICity")
+				local build_ratio = Engine.Global("BuildableGridRatio")
+				local unbuildable_z = Engine.Global("buildUnbuildableZ")
+				local ok_map, map = pcall(function() return city:GetMap() end)
+				if ok_map and map and map.buildable and map.buildable.z_grid and sector.area
+					and type(build_ratio) == "function" and type(unbuildable_z) == "function" then
+					local ok_u, sentinel = pcall(unbuildable_z)
+					if ok_u then
+						local ok_r, live_ratio = pcall(build_ratio, map.buildable.z_grid, sentinel, 100, sector.area)
+						if ok_r and type(live_ratio) == "number" then
+							ratio = live_ratio
+							sector.play_ratio = live_ratio
+						end
+					end
+				end
 				local old = self.rollover_context_cache
 				self.rollover_context_cache = {
 					RolloverTitle = T_fn{4063, "Sector <u(display_name)>", sector},
-					RolloverText = T_fn{4051, "Buildable area: <em><percent(number)></em>", number = sector.play_ratio or 0},
+					RolloverText = T_fn{4051, "Buildable area: <em><percent(number)></em>", number = ratio},
 					RolloverAnchor = "smart",
 				}
 				return self.rollover_context_cache, old

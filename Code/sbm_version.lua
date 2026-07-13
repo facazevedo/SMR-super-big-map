@@ -49,7 +49,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     the underground entrance signs so the badge stays visible at every zoom.
 -- 46: underground sectors become data-only -- remove grid/veil/hover-frame rendering while
 --     retaining sector-name and buildable-area rollover data.
-SuperBigMap.SECTOR_PATCH_VERSION = 46
+-- 47: share the underground UI predicate across installers and rebuild each rollover from the
+--     exact hovered sector plus its live post-stretch buildable-grid ratio.
+SuperBigMap.SECTOR_PATCH_VERSION = 47
 -- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 24:
 -- finalize underground grids before enrichment, require entrance-connected path reachability,
 -- relocate invalid vanilla/top-up markers, and skip the now-duplicate post-switch grid rebuild.

@@ -26,6 +26,14 @@ local SECTOR_PATCH_VERSION = SuperBigMap.SECTOR_PATCH_VERSION or 21
 
 local Grid = SuperBigMap.SectorGrid
 
+-- Shared by both patch installers and the later visual callbacks. Keeping this at file scope
+-- avoids global lookup from ShowExploration_Sectors/UpdateScannedSectorVisuals.
+local function UndergroundExplorationUiOn(city)
+	if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true or not city then return false end
+	local ok, env = pcall(function() return city:GetMap().mapdata.Environment end)
+	return ok and env == "Underground"
+end
+
 local function DebugPrint(message)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -705,11 +713,6 @@ local function InstallBasicSectorPatch()
 	local orig_avail_queue = State.original_is_expl_avail_queue or Global("IsExplorationAvailable_Queue")
 	State.original_is_expl_avail_sectors = orig_avail_sectors
 	State.original_is_expl_avail_queue = orig_avail_queue
-	local function UndergroundExplorationUiOn(city)
-		if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true then return false end
-		local ok, env = pcall(function() return city:GetMap().mapdata.Environment end)
-		return ok and env == "Underground"
-	end
 	if type(orig_avail_sectors) == "function" then
 		function IsExplorationAvailable_Sectors(city)
 			if UndergroundExplorationUiOn(city) then return true end
