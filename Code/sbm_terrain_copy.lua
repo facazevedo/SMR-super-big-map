@@ -1614,6 +1614,7 @@ local function MoveEntranceVisualsToScale(map)
 	local src_w = sw_tiles * hts
 	map.SuperBigMapEntranceVisualsMoved = true
 	local DebugLog = SuperBigMap.DebugLog
+	local terrain_api = Global("terrain")
 	local function AlignLog(message, data)
 		if DebugLog then DebugLog.Info("Align", message, data) end
 	end
@@ -1682,7 +1683,6 @@ local function MoveEntranceVisualsToScale(map)
 		local placed_z = false
 		local relief = decor_relief_by_map[map]
 		local dz = relief and relief[obj]
-		local terrain_api = Global("terrain")
 		if type(dz) == "number" and type(terrain_api) == "table"
 			and type(terrain_api.GetHeight) == "function" then
 			local ok_h, h = pcall(terrain_api.GetHeight, map, np)
@@ -1835,7 +1835,87 @@ local function MoveEntranceVisualsToScale(map)
 		local matched = is_elevator_or_site(obj)
 		if matched then handle(obj, "pre-expansion elevator site") end
 	end)
-	StretchLog("MoveEntranceVisualsToScale: DONE", { moved = moved })
+	-- Vanilla deliberately moves the tunnel MARKER to a nearby unobstructed anomaly position and
+	-- creates its visible badge there (UndergroundPassageBase:OnSpawn -> marker:PlaceSign(x,y)).
+	-- That is harmless on a vanilla-sized map, but after the independent 4/3 stretch the badge can
+	-- end up tens of thousands of world units from the passage and the Elevator that snaps to it.
+	-- Preserve the gameplay marker position, but bind its visual sign to marker.spawner -- the exact
+	-- final Surface/UndergroundPassage object that owns the entrance.
+	local signs_anchored, signs_unresolved = 0, 0
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
+		local marker = sign and sign.tunnel_marker
+		local passage = marker and marker.spawner
+		local passage_pos = IsLiveGameObject(passage) and ObjectPosition(passage) or nil
+		local px, py = PointXY(passage_pos)
+		if not sign or type(sign.SetPos) ~= "function"
+			or type(px) ~= "number" or type(py) ~= "number" then
+			signs_unresolved = signs_unresolved + 1
+			AlignLog("entrance sign passage anchor unresolved", {
+				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
+			})
+			return
+		end
+		local old_pos = ObjectPosition(sign)
+		local sx, sy = PointXY(old_pos)
+		local anchor = point_fn(px, py)
+		local clearance = cfg_number("ENTRANCE_SIGN_CLEARANCE_WU", 1500, 0)
+		local rad_hexes = math.max(0, math.floor(cfg_number("ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES", 3, 0)))
+		local hex_wu = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
+			and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
+		local radius = rad_hexes * hex_wu
+		local zmax
+		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+			local offsets = { { 0, 0 } }
+			if radius > 0 then
+				local diagonal = math.floor(radius * 7 / 10)
+				offsets = {
+					{ 0, 0 }, { radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
+					{ diagonal, diagonal }, { -diagonal, diagonal },
+					{ diagonal, -diagonal }, { -diagonal, -diagonal },
+				}
+			end
+			for _, offset in ipairs(offsets) do
+				local ok_h, height = pcall(terrain_api.GetHeight, map,
+					point_fn(px + offset[1], py + offset[2]))
+				if ok_h and type(height) == "number" and (zmax == nil or height > zmax) then
+					zmax = height
+				end
+			end
+		end
+		if type(zmax) == "number" then
+			anchor = point_fn(px, py, zmax + clearance)
+		elseif type(anchor.SetTerrainZ) == "function" then
+			local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
+			if ok_z and snapped then anchor = snapped end
+		end
+		local ok_set, set_err = pcall(sign.SetPos, sign, anchor)
+		if ok_set then
+			signs_anchored = signs_anchored + 1
+			sign.SuperBigMapPassageAnchored = true
+			if cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
+				if type(sign.SetNoDepthTest) == "function" then pcall(sign.SetNoDepthTest, sign, true) end
+				if type(sign.SetVisible) == "function" then pcall(sign.SetVisible, sign, true) end
+				if type(sign.SetOpacity) == "function" then pcall(sign.SetOpacity, sign, 100) end
+			end
+		else
+			signs_unresolved = signs_unresolved + 1
+		end
+		local before_distance
+		if type(sx) == "number" and type(sy) == "number" then
+			local dx, dy = sx - px, sy - py
+			before_distance = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
+		end
+		AlignLog("entrance sign anchored to final passage", {
+			sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
+			from_x = tostring(sx), from_y = tostring(sy), to_x = px, to_y = py,
+			distance_before = tostring(before_distance), distance_after = ok_set and 0 or "unchanged",
+			terrain_max = tostring(zmax), clearance = clearance,
+			ok = tostring(ok_set), error = ok_set and "none" or tostring(set_err),
+		})
+	end)
+	StretchLog("MoveEntranceVisualsToScale: DONE", {
+		moved = moved, signs_anchored = signs_anchored, signs_unresolved = signs_unresolved,
+	})
 	DebugPrint(string.format("MoveEntranceVisualsToScale: moved %s entrance visuals", tostring(moved)))
 	return moved
 end
