@@ -1094,12 +1094,12 @@ local function PatchPassagePairing()
 						end
 					end
 				end
-				-- EXACT-HEX-FIRST SEARCH (no terrain edits). Run vanilla's own footprint-aware
-				-- placement search (FindBuildableAreaAround, against the fresh grid from
-				-- PairingSurfaceBuildableRebuild) from the underground exit's equivalent surface
-				-- hex outward. Candidate selection is by axial-hex distance, not call order: an
-				-- exact-hex result always wins; otherwise the closest buildable footprint wins.
-				-- This accounts for mountains/cliffs through the buildable grid and decorations/
+				-- EXACT-HEX-FIRST SEARCH (no terrain edits). One FindBuildableAreaAround call
+				-- invokes the engine's native HexGridFindBuildable search: it tests the equivalent
+				-- surface hex first, expands outward by hex distance, validates the complete rotated
+				-- Elevator footprint, and stops at the nearest valid placement. Do not wrap this in
+				-- another Lua ring search: each call already performs the entire outward search.
+				-- Mountains/cliffs are rejected through the buildable grid and decorations/
 				-- structures through object_hex_grid without manufacturing a terrain platform.
 				local point_fn = Global("point")
 				local find_area = Global("FindBuildableAreaAround")
@@ -1120,8 +1120,8 @@ local function PatchPassagePairing()
 				angle = (ok_ang and angle) or 0
 				local hex_grid = surface_map.object_hex_grid
 				local buildable = surface_map.buildable
-				local found_x, found_y, found_depth, found_hex_dist, found_world_dist = nil, nil, nil, nil, nil
-				local attempts = 0
+				local found_x, found_y, found_depth, found_hex_dist = nil, nil, nil, nil
+				local attempts = 1
 				local world_to_hex = Global("WorldToHex")
 				local marker_q, marker_r
 				if type(world_to_hex) == "function" then
@@ -1130,53 +1130,36 @@ local function PatchPassagePairing()
 						marker_q, marker_r = mq, mr
 					end
 				end
-				local const_tbl2 = Global("const")
-				local hexsz = (type(const_tbl2) == "table" and type(const_tbl2.HexSize) == "number"
-					and const_tbl2.HexSize > 0) and const_tbl2.HexSize or 1000
-				local ring_step = 10 * hexsz
-				local exact_hex = false
-				for ring = 0, 12 do
-					local r = ring * ring_step
-					local centers
-					if r == 0 then
-						centers = { { 0, 0 } }
-					else
-						local d = math.floor(r * 7 / 10)
-						centers = {
-							{ r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
-							{ d, d }, { -d, d }, { d, -d }, { -d, -d },
-						}
-					end
-					for _, o in ipairs(centers) do
-						attempts = attempts + 1
-						local ok_f, fx, fy, fd = pcall(find_area, hex_grid, buildable,
-							point_fn(ux + o[1], uy + o[2]), angle, espace)
-						if ok_f and type(fx) == "number" and type(fy) == "number" then
-							local wdx, wdy = fx - ux, fy - uy
-							local world_dist = wdx * wdx + wdy * wdy
-							local hex_dist
-							if marker_q and type(world_to_hex) == "function" then
-								local ok_ch, cq, cr = pcall(world_to_hex, point_fn(fx, fy))
-								if ok_ch and type(cq) == "number" and type(cr) == "number" then
-									local dq, dr = cq - marker_q, cr - marker_r
-									hex_dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
-								end
-							end
-							local better = found_x == nil
-								or (hex_dist ~= nil and (found_hex_dist == nil or hex_dist < found_hex_dist))
-								or (hex_dist == found_hex_dist and world_dist < found_world_dist)
-							if better then
-								found_x, found_y, found_depth = fx, fy, fd
-								found_hex_dist, found_world_dist = hex_dist, world_dist
-							end
-							if hex_dist == 0 then exact_hex = true break end
+				local profiler = SuperBigMap.LoadingProfiler
+				local search_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+					"entrance alignment: native nearest-footprint search", {
+						target_x = ux, target_y = uy, algorithm = "single HexGridFindBuildable",
+					}, surface_map) or false
+				local ok_f, fx, fy, fd = pcall(find_area, hex_grid, buildable,
+					point_fn(ux, uy), angle, espace)
+				local search_ok = ok_f and type(fx) == "number" and type(fy) == "number"
+				if search_token and type(profiler.End) == "function" then
+					profiler.End(search_token, {
+						found = search_ok, result_x = search_ok and fx or nil,
+						result_y = search_ok and fy or nil,
+						error = ok_f and nil or tostring(fx),
+					}, search_ok)
+				end
+				if search_ok then
+					found_x, found_y, found_depth = fx, fy, fd
+					if marker_q and type(world_to_hex) == "function" then
+						local ok_ch, cq, cr = pcall(world_to_hex, point_fn(fx, fy))
+						if ok_ch and type(cq) == "number" and type(cr) == "number" then
+							local dq, dr = cq - marker_q, cr - marker_r
+							found_hex_dist = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
 						end
 					end
-					if exact_hex then break end
 				end
+				local exact_hex = found_hex_dist == 0
 				if not found_x then
 					PairingLog("near-marker search FAILED -- vanilla placement kept", {
-						attempts = attempts, marker = tostring(ux) .. "," .. tostring(uy),
+						attempts = attempts, algorithm = "single-native-hex-search",
+						marker = tostring(ux) .. "," .. tostring(uy), error = ok_f and nil or tostring(fx),
 					})
 					return
 				end
@@ -1239,7 +1222,8 @@ local function PatchPassagePairing()
 					to = tostring(found_x) .. "," .. tostring(found_y),
 					exact_hex = exact_hex, hex_distance = tostring(found_hex_dist),
 					dist_from_marker = math.floor(math.sqrt(fdx * fdx + fdy * fdy + 0.0) + 0.5),
-					attempts = attempts, moved = ok_set, rehexed = rehexed,
+					attempts = attempts, algorithm = "single-native-hex-search",
+					moved = ok_set, rehexed = rehexed,
 				})
 			end)
 			if not ok_fix then
