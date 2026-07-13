@@ -48,7 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 15:
--- the single native entrance search now validates each candidate against its own elevation,
--- so an unsuitable first terrain level cannot force a distant vanilla fallback placement.
-SuperBigMap.GENERATOR_PATCH_VERSION = 15
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 16:
+-- loading profiler/timeline diagnostics are disabled by default after the performance
+-- investigation; entrance-position diagnostics remain enabled for pairing verification.
+SuperBigMap.GENERATOR_PATCH_VERSION = 16

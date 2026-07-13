@@ -199,12 +199,12 @@ config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noi
 config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up (TEMP: investigating landing-spot crowding / vanilla-proportion distribution)
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
-config.DebugLoading       = true    -- Loading: loading-box watch loop + "Please wait" dot animation (TEMP: investigating animation stopping)
-config.DebugLoadTime      = true    -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle) (TEMP: finding where load time goes to speed it up)
+config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
+config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
 -- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
-config.DebugLoadingSteps  = true
+config.DebugLoadingSteps  = false
 config.DebugHover         = false   -- Hover: overview hover-highlight mapping
 config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
