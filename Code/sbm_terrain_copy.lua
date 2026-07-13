@@ -1840,26 +1840,11 @@ local function MoveEntranceVisualsToScale(map)
 	-- That is harmless on a vanilla-sized map, but after the independent 4/3 stretch the badge can
 	-- end up tens of thousands of world units from the passage and the Elevator that snaps to it.
 	-- Preserve the gameplay marker position, but bind its visual sign to marker.spawner -- the exact
-	-- final Surface/UndergroundPassage object that owns the entrance. Keep the badge one or two
-	-- clear hexes OUTSIDE the future Elevator footprint so it is close without sitting on its roof.
+	-- final Surface/UndergroundPassage object that owns the entrance. Keep the badge exactly three
+	-- or four clear hexes from the entrance CENTER so it is close without sitting on its roof.
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
 	local get_unbuildable = Global("buildUnbuildableZ")
-	local get_elevator_shape = Global("GetExtendedSpawnShape")
-	local badge_footprint_radius = 0
-	if type(get_elevator_shape) == "function" then
-		local ok_shape, shape = pcall(get_elevator_shape, "Elevator")
-		if ok_shape and type(shape) == "table" then
-			for _, shape_hex in ipairs(shape) do
-				local hq, hr = PointXY(shape_hex)
-				if type(hq) == "number" and type(hr) == "number" then
-					local distance = (math.abs(hq) + math.abs(hr) + math.abs(hq + hr)) / 2
-					if distance > badge_footprint_radius then badge_footprint_radius = distance end
-				end
-			end
-		end
-	end
-	badge_footprint_radius = math.floor(badge_footprint_radius)
 	local function find_badge_side_position(sign, center_x, center_y)
 		local buildable = map.buildable
 		local hex_grid = map.object_hex_grid
@@ -1924,10 +1909,9 @@ local function MoveEntranceVisualsToScale(map)
 			end
 			return { x = x, y = y, q = q, r = r, direction_score = direction_score }
 		end
-		-- Primary requirement: one hex outside the Elevator footprint, then two. If terrain
-		-- makes every one of those sides unusable, continue outward only as a safe fallback.
-		for side_tiles = 1, 8 do
-			local radius = badge_footprint_radius + side_tiles
+		-- Primary requirement: exactly three hexes from the entrance center, then four. If
+		-- terrain makes both complete rings unusable, continue outward only as a safe fallback.
+		for radius = 3, 10 do
 			local best
 			for dq = -radius, radius do
 				for dr = -radius, radius do
@@ -1941,17 +1925,16 @@ local function MoveEntranceVisualsToScale(map)
 				end
 			end
 			if best then
-				best.side_tiles = side_tiles
-				best.footprint_radius = badge_footprint_radius
+				best.center_tiles = radius
 				best.checked = checked
 				best.rejected = rejected
-				best.fallback = side_tiles > 2
+				best.fallback = radius > 4
 				return best
 			end
 		end
 		return nil, {
-			reason = "no safe side hex within eight tiles of footprint",
-			footprint_radius = badge_footprint_radius, checked = checked, rejected = rejected,
+			reason = "no safe side hex within ten tiles of entrance center",
+			checked = checked, rejected = rejected,
 		}
 	end
 	local signs_anchored, signs_unresolved = 0, 0
@@ -1976,7 +1959,6 @@ local function MoveEntranceVisualsToScale(map)
 			AlignLog("entrance sign safe side unresolved", {
 				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
 				center_x = px, center_y = py, reason = tostring(side_error and side_error.reason),
-				footprint_radius = tostring(side_error and side_error.footprint_radius),
 				checked = tostring(side_error and side_error.checked),
 				rejected = side_error and side_error.rejected and
 					("unbuildable=" .. tostring(side_error.rejected.unbuildable)
@@ -2041,8 +2023,8 @@ local function MoveEntranceVisualsToScale(map)
 		AlignLog("entrance sign anchored to final passage", {
 			sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
 			from_x = tostring(sx), from_y = tostring(sy), passage_x = px, passage_y = py,
-			to_x = badge_x, to_y = badge_y, side_tiles = side.side_tiles,
-			footprint_radius = side.footprint_radius, fallback = tostring(side.fallback),
+			to_x = badge_x, to_y = badge_y, center_tiles = side.center_tiles,
+			fallback = tostring(side.fallback),
 			candidates_checked = side.checked,
 			distance_before = tostring(before_distance),
 			distance_after = ok_set and after_distance or "unchanged",
