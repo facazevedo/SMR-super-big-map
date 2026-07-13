@@ -1366,8 +1366,29 @@ local function MoveEntranceVisualsToScale(map)
 	local function AlignLog(message, data)
 		if DebugLog then DebugLog.Info("Align", message, data) end
 	end
+	local function ElevatorMoveLog(message, data)
+		if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
+	end
+	local is_valid_fn = Global("IsValid")
+	-- Destroyed engine objects remain Lua tables and can retain a GetPos method, but calling it
+	-- asserts in HGE::l_GetPos (Expected luaGameObject). This happens normally when Quick Build
+	-- replaces the surface construction site while its underground partner still references it.
+	local function is_live_game_object(obj)
+		if not obj then return false end
+		if type(is_valid_fn) == "function" then
+			local ok, valid = pcall(is_valid_fn, obj)
+			return ok and valid == true
+		end
+		return type(obj.GetPos) == "function"
+	end
+	local function live_object_pos(obj)
+		if not is_live_game_object(obj) or type(obj.GetPos) ~= "function" then return nil end
+		local ok, pos = pcall(obj.GetPos, obj)
+		return ok and pos or nil
+	end
 	local moved, seen_objs = 0, {}
 	local function is_elevator_or_site(obj)
+		if not is_live_game_object(obj) then return false end
 		if IsKindOfSafe(obj, "ElevatorBase") then return true, "elevator" end
 		if not IsKindOfSafe(obj, "ConstructionSite") then return false end
 		local class_name = obj.building_class or obj.template_name
@@ -1383,6 +1404,10 @@ local function MoveEntranceVisualsToScale(map)
 	local function handle(obj, via)
 		if not obj or seen_objs[obj] then return end
 		seen_objs[obj] = true
+		if not is_live_game_object(obj) then
+			ElevatorMoveLog("entrance move skipped non-live object", { via = via, obj = tostring(obj) })
+			return
+		end
 		-- Tunnel markers themselves are moved by ScaleMarkersToFull -- never twice.
 		if IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker") then return end
 		local pos = ObjectPosition(obj)
@@ -1395,18 +1420,48 @@ local function MoveEntranceVisualsToScale(map)
 		local nx = math.floor(ox * scale + 0.5)
 		local ny = math.floor(oy * scale + 0.5)
 		local pair_exact = false
-		local elevator_kind = is_elevator_or_site(obj)
+		local pair_source = "scaled_xy"
+		local elevator_kind, elevator_kind_name = is_elevator_or_site(obj)
 		if elevator_kind then
 			local linked = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
-			if linked and type(linked.GetPos) == "function" then
-				local ok_lp, linked_pos = pcall(linked.GetPos, linked)
-				local lx, ly
-				if ok_lp then lx, ly = PointXY(linked_pos) end
+			local linked_pos = live_object_pos(linked)
+			if linked_pos then
+				local lx, ly = PointXY(linked_pos)
 				if type(lx) == "number" and type(ly) == "number" then
 					-- The surface half already occupies its final expanded coordinate. Use that exact
 					-- XY for the underground half instead of relying on rounding the scale twice.
 					nx, ny = lx, ly
 					pair_exact = true
+					pair_source = "live_linked_object"
+				end
+			elseif linked then
+				ElevatorMoveLog("entrance move rejected stale linked object", {
+					via = via, kind = elevator_kind_name, obj = tostring(obj), linked = tostring(linked),
+					linked_class = tostring(linked.class or "?"), linked_get_pos = tostring(type(linked.GetPos)),
+				})
+			end
+			-- Quick Build destroys the completed surface ConstructionSite, so the underground
+			-- site's linked_obj is expected to be stale. Resolve the same pair through the nearby
+			-- natural passage: its surface counterpart survives and already has final expanded XY.
+			local env = map.mapdata and map.mapdata.Environment
+			if not pair_exact and env == "Underground" and type(map.MapFindNearest) == "function" then
+				local passage = SafeCall(map.MapFindNearest, map, pos, "map", "SurfacePassageBase", "UndergroundPassageBase")
+				local counterpart = is_live_game_object(passage) and passage.other or nil
+				local counterpart_pos = live_object_pos(counterpart)
+				local px, py = PointXY(counterpart_pos)
+				if type(px) == "number" and type(py) == "number" then
+					nx, ny = px, py
+					pair_exact = true
+					pair_source = "paired_surface_passage"
+					ElevatorMoveLog("entrance move recovered exact XY through paired passage", {
+						via = via, kind = elevator_kind_name, obj = tostring(obj), passage = tostring(passage),
+						counterpart = tostring(counterpart), x = nx, y = ny,
+					})
+				else
+					ElevatorMoveLog("entrance move paired-passage recovery unavailable", {
+						via = via, kind = elevator_kind_name, obj = tostring(obj), passage = tostring(passage),
+						counterpart = tostring(counterpart),
+					})
 				end
 			end
 		end
@@ -1487,7 +1542,6 @@ local function MoveEntranceVisualsToScale(map)
 			-- AND when removing an object that is not currently registered in the grid -- some
 			-- Building-derived entrance indicators pass a Building+handle test yet were never
 			-- hex-registered by vanilla (crash log 16.44.48). Whitelist, don't heuristic.
-			local is_valid_fn = Global("IsValid")
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
 				and (IsKindOfSafe(obj, "ElevatorPassage") or is_elevator_or_site(obj))
 				and (type(is_valid_fn) ~= "function" or is_valid_fn(obj) == true)
@@ -1542,7 +1596,7 @@ local function MoveEntranceVisualsToScale(map)
 			via = via, class = tostring(obj.class or "?"),
 			from = tostring(ox) .. "," .. tostring(oy),
 			to = tostring(nx) .. "," .. tostring(ny),
-			ok = ok_set, rehexed = rehexed, paired_exact_xy = pair_exact,
+			ok = ok_set, rehexed = rehexed, paired_exact_xy = pair_exact, pair_source = pair_source,
 		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
