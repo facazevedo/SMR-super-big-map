@@ -1031,6 +1031,17 @@ local function PatchPassagePairing()
 				local gen_t = surface_map and surface_map.SuperBigMapGeneratorWidthTiles
 				local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
 				if not expanded then return end
+				-- Establish one canonical coordinate BEFORE either map stretches. TerrainCopy records
+				-- the underground endpoint's native source X/Y and one snapped expanded target on
+				-- BOTH linked passages. Each later stretch consumes that same final X/Y; only the
+				-- surface may choose the nearest valid final footprint when the exact hex is blocked.
+				local record_pair = TerrainCopy.RecordCanonicalEntrancePair
+				local canonical_recorded = type(record_pair) == "function"
+					and SafeCall(record_pair, surface_obj, under_obj, surface_map) == true
+				PairingLog("canonical pre-expansion pair record", {
+					recorded = canonical_recorded,
+					underground_source = tostring(ux) .. "," .. tostring(uy),
+				})
 				-- SENTINEL FOOTPRINT PATCH (needle guard, runs for EVERY expanded pairing).
 				-- Picard's post-Link flatten ("flatten unbuildable") covers the FULL extended
 				-- spawn footprint; hexes at the footprint FRINGE can be unbuildable-sentinel
@@ -2605,10 +2616,9 @@ local function RunUndergroundStretchIfEnabled(map)
 				EntranceSnapshot("underground after MoveEntranceVisualsToScale", map)
 			end
 			SpikeAudit(map, "underground post-MoveEntranceVisuals")
-			-- NOTE (user decision): NO entrance placement correction of any kind. Entrances on
-			-- both maps receive exactly ONE transformation -- the stretch itself (position *
-			-- full/source via ScaleMarkersToFull + MoveEntranceVisualsToScale), the same as every
-			-- other object. Where vanilla generated a pair mismatched, it stays mismatched.
+			-- Linked passages consume the one canonical coordinate recorded by ElevatorPassage:Link.
+			-- The underground endpoint uses that exact final hex; the surface endpoint uses it when
+			-- its full footprint is buildable, otherwise it uses the nearest valid final footprint.
 			-- Grids FIRST: the density suite's placement pools require the LIVE buildable grid
 			-- (underground pools are buildable-floor-only -- without the rebuild they would
 			-- sample the stale pre-stretch grid and put enrichments out in the inaccessible
