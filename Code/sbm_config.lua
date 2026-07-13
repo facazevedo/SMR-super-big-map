@@ -196,7 +196,7 @@ config.DebugGeneration    = true    -- Generation: generator hook, frame allocat
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
-config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up (TEMP: investigating landing-spot crowding / vanilla-proportion distribution)
+config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
@@ -210,7 +210,7 @@ config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; s
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
 -- marker, spawner, and linked passage with world+hex positions, terrain/buildability data,
 -- pairwise cross-map deltas, and best matches at lifecycle and generation-event snapshots.
-config.DebugEntrancePositions = true
+config.DebugEntrancePositions = false
 config.DebugOverview      = false   -- Overview: overview curtains + render-distance
 config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
@@ -690,6 +690,18 @@ config.OptimizeStretchRevalidation = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
+-- PostNewMapLoaded runs before the stretch and would rebuild bounds/passability that the stretch
+-- immediately invalidates. Defer that full Apply exactly like the later MapGenerated hooks.
+config.OptimizePostLoadDeferredBounds = true
+-- Resource top-up builds a large validated candidate pool. Reuse its remaining candidates for
+-- anomaly/effect top-ups and register stretch-mode clones at creation time instead of rescanning.
+config.OptimizeTopUpPlacementPools = true
+-- The editor's own force-passable brush uses SetPassableBox(true) alone. Skip the preceding
+-- SetImpassableBox(false) full-frame scan while retaining the old two-write path as a fallback.
+config.OptimizeFramePassableWrites = true
+-- Wake the already-settled underground stretch thread as soon as surface finalization completes;
+-- its timeout remains in place as a fallback when no surface pipeline is active.
+config.OptimizeUndergroundWakeHandoff = true
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
@@ -1063,6 +1075,10 @@ C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredReb
 C.OPTIMIZE_STRETCH_PASSABILITY = as_bool(config.OptimizeStretchPassability)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
+C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
+C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
+C.OPTIMIZE_FRAME_PASSABLE_WRITES = as_bool(config.OptimizeFramePassableWrites)
+C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHandoff)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)

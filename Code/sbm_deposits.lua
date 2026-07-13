@@ -33,6 +33,20 @@ local function cfg()
 	return SuperBigMap.Config or {}
 end
 
+-- Stretch density-suite cache. TopUpDeposits performs the largest validated random sampling
+-- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
+-- equivalent pools. Weak map keys release abandoned-map entries automatically.
+local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
+
+local function CachedTopUpCandidates(map)
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return nil end
+	return topup_candidate_pool_by_map[map]
+end
+
+local function ClearTopUpPlacementPool(map)
+	if map then topup_candidate_pool_by_map[map] = nil end
+end
+
 local function Enabled()
 	return cfg().HIDE_CLONED_DEPOSITS_UNTIL_SCAN ~= false
 end
@@ -40,6 +54,13 @@ end
 local function Log(message, data)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then DebugLog.Info("Deposits", message, data) end
+end
+
+local function ProfileStep(message, data, map)
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("enrichment optimization: " .. tostring(message), data, map)
+	end
 end
 
 local IsKindOfSafe = Engine.IsKindOf
@@ -654,6 +675,11 @@ function DepositRules.RegisterClonedMarkers(map)
 		Log("register skipped", { reason = "underground -- proximity reveal, no sector dependence" })
 		return
 	end
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+		and tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
+		Log("register skipped", { reason = "stretch top-up clones registered at creation" })
+		return
+	end
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
@@ -993,6 +1019,8 @@ end
 -- density target (count x area_factor) is correct per BUILDABLE area too -- this census
 -- provides the measured numbers for the log. Runs AFTER RebuildBuildableGrid.
 function DepositRules.LogBuildableSectorCensus(map, label)
+	local DebugLog = SuperBigMap.DebugLog
+	if not (DebugLog and DebugLog.On and DebugLog.On("Deposits")) then return end
 	map = map or Global("CurrentMap")
 	local point = Global("point")
 	if not map or type(point) ~= "function" then return end
@@ -1111,10 +1139,11 @@ function DepositRules.TopUpDeposits(map)
 
 	local added = 0
 	local pool_final = 0
+	local registered_at_creation = 0
 	RunPaused("SuperBigMapDepositTopUp", function()
 		-- Frame candidate pool (terrain-bucketed), same as EvenOutDepositDensity: sampled tiles
 		-- OUTSIDE the source quadrant, so the added deposits fill the sparse frame.
-		local buckets, pool = {}, 0
+		local buckets, shared_candidates, pool = {}, {}, 0
 		local MAX_SAMPLES, MAX_POOL = 8000, 4000
 		for _ = 1, MAX_SAMPLES do
 			if pool >= MAX_POOL then break end
@@ -1133,19 +1162,39 @@ function DepositRules.TopUpDeposits(map)
 				if CanReceiveDeposit(map, pt) then
 					local tt = TerrainTypeAt(map, pt) or -1
 					local b = buckets[tt]; if not b then b = {}; buckets[tt] = b end
-					b[#b + 1] = { x = x, y = y }
+					local candidate = { x = x, y = y, terrain_type = tt }
+					b[#b + 1] = candidate
+					shared_candidates[#shared_candidates + 1] = candidate
 					pool = pool + 1
 				end
 			end
 		end
 		pool_final = pool
+		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+			topup_candidate_pool_by_map[map] = shared_candidates
+		end
+		ProfileStep("resource candidate pool built", { candidates = pool }, map)
 		local function take(tt)
 			local b = tt ~= nil and buckets[tt] or nil
-			if b and #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end
+			if b and #b > 0 then
+				local i = RandInt(#b) + 1
+				local c = b[i]
+				table.remove(b, i)
+				c.used = true
+				return c
+			end
 			return nil
 		end
 		local function take_any()
-			for _, b in pairs(buckets) do if #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end end
+			for _, b in pairs(buckets) do
+				if #b > 0 then
+					local i = RandInt(#b) + 1
+					local c = b[i]
+					table.remove(b, i)
+					c.used = true
+					return c
+				end
+			end
 			return nil
 		end
 
@@ -1170,6 +1219,14 @@ function DepositRules.TopUpDeposits(map)
 						end
 						pcall(clone.SetPos, clone, pt)
 					end
+					if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true and stretch_mode
+						and not IsUndergroundMap(map) then
+						local sec = SectorAtPoint(map, c.x, c.y)
+						if sec and type(sec.RegisterDeposit) == "function" then
+							pcall(sec.RegisterDeposit, sec, clone)
+							registered_at_creation = registered_at_creation + 1
+						end
+					end
 				end
 			end
 		end
@@ -1179,6 +1236,7 @@ function DepositRules.TopUpDeposits(map)
 		source_count = source_count, total_before = total_current,
 		target = target, added = added, templates = #templates,
 		map = tostring(map.name), pool = pool_final,
+		registered_at_creation = registered_at_creation,
 		source_mix = TallyString(src_by_type),
 		added_mix = TallyString(added_by_type),
 	})
@@ -1266,12 +1324,20 @@ function DepositRules.TopUpAnomalies(map)
 
 	local added = 0
 	local pool_final = 0
+	local reused_pool = false
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
 		local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 		local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
-		for _ = 1, MAX_SAMPLES do
+		local cached = not surface_edge_ring and CachedTopUpCandidates(map)
+		if cached then
+			for _, c in ipairs(cached) do
+				if not c.used then candidates[#candidates + 1] = c end
+			end
+			reused_pool = #candidates > 0
+		end
+		for _ = 1, reused_pool and 0 or MAX_SAMPLES do
 			if #candidates >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
@@ -1289,6 +1355,9 @@ function DepositRules.TopUpAnomalies(map)
 			end
 		end
 		pool_final = #candidates
+		ProfileStep("anomaly candidate pool ready", {
+			candidates = pool_final, reused = reused_pool,
+		}, map)
 		for _ = 1, shortfall do
 			if #candidates == 0 then break end
 			-- Best-of-N random choice: random across the ring, biased toward a lower
@@ -1302,6 +1371,7 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			local c = candidates[ci]
 			table.remove(candidates, ci)
+			c.used = true
 			local template = templates[RandInt(#templates) + 1]
 			local tpos = ObjectPos(template)
 			if tpos and type(tpos.xy) == "function" then
@@ -1341,6 +1411,7 @@ function DepositRules.TopUpAnomalies(map)
 		area_factor = string.format("%.3f", area_factor),
 		total_before = total_current, target = target, added = added, templates = #templates,
 		map = tostring(map.name), pool = pool_final,
+		reused_pool = reused_pool,
 		surface_edge_ring = not IsUndergroundMap(map),
 		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
 		valley_choices = cfg().TOPUP_ANOMALY_VALLEY_CHOICES or 4,
@@ -1434,10 +1505,18 @@ function DepositRules.TopUpEffectDeposits(map)
 
 	local added_by_type = {}
 	local pool_final = 0
+	local reused_pool = false
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
-		for _ = 1, MAX_SAMPLES do
+		local cached = CachedTopUpCandidates(map)
+		if cached then
+			for _, c in ipairs(cached) do
+				if not c.used then candidates[#candidates + 1] = c end
+			end
+			reused_pool = #candidates > 0
+		end
+		for _ = 1, reused_pool and 0 or MAX_SAMPLES do
 			if #candidates >= MAX_POOL then break end
 			local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
 			local sector = SectorAtPoint(map, x, y)
@@ -1449,6 +1528,9 @@ function DepositRules.TopUpEffectDeposits(map)
 			end
 		end
 		pool_final = #candidates
+		ProfileStep("effect candidate pool ready", {
+			candidates = pool_final, reused = reused_pool,
+		}, map)
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
 			local shortfall = target_by_type[deposit_type] - (current_by_type[deposit_type] or 0)
@@ -1457,6 +1539,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				local ci = RandInt(#candidates) + 1
 				local c = candidates[ci]
 				table.remove(candidates, ci)
+				c.used = true
 				local template = templates[RandInt(#templates) + 1]
 				local tpos = ObjectPos(template)
 				if tpos and type(tpos.xy) == "function" then
@@ -1489,7 +1572,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	Log("topped up effect deposits to map-size proportions (post-gen)", {
 		area_factor = string.format("%.3f", area_factor), current = TallyString(current_by_type),
 		target = TallyString(target_by_type), added = TallyString(added_by_type),
-		map = tostring(map.name), pool = pool_final,
+		map = tostring(map.name), pool = pool_final, reused_pool = reused_pool,
 	})
 end
 
@@ -1838,5 +1921,6 @@ function DepositRules.OnSectorScanned(_status, sector)
 	end
 end
 
+DepositRules.ClearTopUpPlacementPool = ClearTopUpPlacementPool
 
 SuperBigMap.DepositRules = DepositRules

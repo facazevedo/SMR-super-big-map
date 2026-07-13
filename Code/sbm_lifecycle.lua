@@ -856,7 +856,25 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 			end
 		end
 	end
-	Lifecycle.Apply(map, true)
+	local gen = SuperBigMap.MapGeneration
+	local env = map and map.mapdata and map.mapdata.Environment
+	local config = SuperBigMap.Config or {}
+	local desired = map and map.SuperBigMapDesiredWidthTiles
+	local generator = map and map.SuperBigMapGeneratorWidthTiles
+	local stretch_eligible = type(desired) == "number" and type(generator) == "number"
+		and desired > generator and tostring(config.EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
+		and (env ~= "Underground" or config.STRETCH_UNDERGROUND == true)
+	local defer_postload_bounds = config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
+		and IsModMap(map) and stretch_eligible
+	Lifecycle.Apply(map, not defer_postload_bounds)
+	if defer_postload_bounds then
+		local profiler = SuperBigMap.LoadingProfiler
+		if profiler and type(profiler.Step) == "function" then
+			profiler.Step("stretch optimization: deferred PostNewMapLoaded full bounds rebuild", {
+				environment = tostring(env),
+			}, map)
+		end
+	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "PostNewMapLoaded")
@@ -864,11 +882,13 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	-- UNDERGROUND maps take their own (minimal) stretch path -- never the surface pipeline
 	-- (sector mirror plan, relocation, density suite are surface-only). Also the TEMP
 	-- config-gated unlock of the underground map VIEW so it can be inspected from the start.
-	local env = map and map.mapdata and map.mapdata.Environment
 	if env == "Underground" then
-		local gen = SuperBigMap.MapGeneration
+		local scheduled = false
 		if gen and type(gen.RunUndergroundStretchIfEnabled) == "function" then
-			gen.RunUndergroundStretchIfEnabled(map)
+			scheduled = gen.RunUndergroundStretchIfEnabled(map) == true
+		end
+		if defer_postload_bounds and not scheduled then
+			Lifecycle.Apply(map, true)
 		end
 		-- Underground OVERVIEW mode (config UNDERGROUND_OVERVIEW_ENABLED): vanilla disallows
 		-- overview on underground maps (mapdata.IsAllowedToEnterOverview=false), which is why
@@ -924,14 +944,17 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		-- on expanded maps are 8192x8192 but mapdata often stays at the .fpk's
 		-- native size (e.g. 6144), and the renderer appears to clamp drawing to
 		-- mapdata bounds -- so the cloned quadrants never get textured.
-		local gen = SuperBigMap.MapGeneration
 		if gen and type(gen.SyncMapDataToGrids) == "function" then
 			gen.SyncMapDataToGrids(map)
 		end
 		-- Fill the L-frame by mirroring the playable edge per the sector-mirror plan
 		-- (left columns, top rows, and the corner; config-driven).
+		local scheduled = false
 		if gen and type(gen.RunSectorMirrorPlanIfEnabled) == "function" then
-			gen.RunSectorMirrorPlanIfEnabled(map)
+			scheduled = gen.RunSectorMirrorPlanIfEnabled(map) == true
+		end
+		if defer_postload_bounds and not scheduled then
+			Lifecycle.Apply(map, true)
 		end
 		-- Remove vanilla craters scattered in the non-rendered frame.
 		local fake_terrain = SuperBigMap.FakeTerrain

@@ -2213,6 +2213,7 @@ local function ForceFramePassable(map, defer_rebuild)
 	local net_pause = Global("NetPauseUpdateHash")
 	local net_resume = Global("NetResumeUpdateHash")
 	local has_set_impassable = type(editor_api.SetImpassableBox) == "function"
+	local single_write = cfg_bool("OPTIMIZE_FRAME_PASSABLE_WRITES", true)
 	local has_rebuild = type(terrain_api.RebuildPassability) == "function"
 	defer_rebuild = defer_rebuild == true
 
@@ -2221,8 +2222,9 @@ local function ForceFramePassable(map, defer_rebuild)
 
 	local ok_set = pcall(function()
 		for i = 1, #boxes do
-			-- Clear any forced-IMpassable flag first, then force passable.
-			if has_set_impassable then editor_api.SetImpassableBox(boxes[i], false) end
+			-- The engine editor's own force-passable brush performs SetPassableBox(true) alone.
+			-- Retain the older explicit impassable-clear as a config fallback.
+			if has_set_impassable and not single_write then editor_api.SetImpassableBox(boxes[i], false) end
 			editor_api.SetPassableBox(boxes[i], true)
 		end
 	end)
@@ -2241,9 +2243,9 @@ local function ForceFramePassable(map, defer_rebuild)
 		map.SuperBigMapFramePassable = true
 	end
 	DebugPrint(string.format(
-		"ForceFramePassable: source=%sx%s map=%sx%s bridge=%s set_impassable=%s rebuild=%s deferred=%s ok_set=%s ok_rebuild=%s",
+		"ForceFramePassable: source=%sx%s map=%sx%s bridge=%s set_impassable=%s single_write=%s rebuild=%s deferred=%s ok_set=%s ok_rebuild=%s",
 		tostring(source_width), tostring(source_height), tostring(map_width), tostring(map_height),
-		tostring(bridge), tostring(has_set_impassable), tostring(has_rebuild), tostring(defer_rebuild),
+		tostring(bridge), tostring(has_set_impassable), tostring(single_write), tostring(has_rebuild), tostring(defer_rebuild),
 		tostring(ok_set), tostring(ok_rebuild)))
 	return ok_set and ok_rebuild
 end

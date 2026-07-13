@@ -48,7 +48,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 45: OverviewModeDialog.ScaleSmallObjects wrapped -- re-assert no-depth-test + visible on
 --     the underground entrance signs so the badge stays visible at every zoom.
 SuperBigMap.SECTOR_PATCH_VERSION = 45
--- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 18:
--- consolidated terrain revalidation, one baked frame-passability application, and reuse of
--- the pre-stretch decoration collection remove three measured loading hot spots.
-SuperBigMap.GENERATOR_PATCH_VERSION = 18
+-- RandomMapGenerator Generate/DoGenerate patch (sbm_map_generation). Bumped to 19:
+-- defer pre-stretch bounds rebuilding, reuse top-up placement pools, use one force-passable
+-- write, and hand off directly from surface completion to the settled underground thread.
+SuperBigMap.GENERATOR_PATCH_VERSION = 19

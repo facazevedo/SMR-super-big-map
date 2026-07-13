@@ -25,8 +25,11 @@ local GENERATOR_PATCH_VERSION = SuperBigMap.GENERATOR_PATCH_VERSION or 2
 SuperBigMap.State = SuperBigMap.State or {}
 SuperBigMap.State.quadrant_pending_maps = SuperBigMap.State.quadrant_pending_maps or {}
 SuperBigMap.State.quadrant_blocked_maps = SuperBigMap.State.quadrant_blocked_maps or {}
+SuperBigMap.State.underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
+	or setmetatable({}, { __mode = "k" })
 local pending_maps = SuperBigMap.State.quadrant_pending_maps
 local blocked_maps = SuperBigMap.State.quadrant_blocked_maps
+local underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -50,6 +53,21 @@ local function SetLoadingPhase(message)
 	if type(SuperBigMap.SetLoadingPhase) == "function" then
 		pcall(SuperBigMap.SetLoadingPhase, message)
 	end
+end
+
+local function WakePendingUndergroundStretch()
+	if not cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) then return 0 end
+	local wakeup = Global("Wakeup")
+	if type(wakeup) ~= "function" then return 0 end
+	local woken = 0
+	for _, thread in pairs(underground_stretch_threads) do
+		if thread and pcall(wakeup, thread) then woken = woken + 1 end
+	end
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.Step) == "function" then
+		profiler.Step("underground readiness: surface-complete wake handoff", { woken = woken }, Global("CurrentMap"))
+	end
+	return woken
 end
 
 -- Exhaustive entrance/exit forensic snapshots (no-op unless DEBUG_ENTRANCEPOSITIONS is on).
@@ -2202,6 +2220,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						if type(deposits.LogDistributionReport) == "function" then
 							SafeCall(deposits.LogDistributionReport, map, "stretch after density suite")
 						end
+						if type(deposits.ClearTopUpPlacementPool) == "function" then
+							deposits.ClearTopUpPlacementPool(map)
+						end
 					end
 				end
 				local function now2()
@@ -2287,6 +2308,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			StretchLog("stretch branch: -> end_loading()")
 			EntranceSnapshot("surface stretch final", map)
 			end_loading()
+			WakePendingUndergroundStretch()
 			StretchLog("stretch branch: DONE")
 			return
 		end
@@ -2526,11 +2548,17 @@ local function RunUndergroundStretchIfEnabled(map)
 		pcall(SuperBigMap.ExpansionLoadingBegin)
 		SetLoadingPhase("Expanding the underground map")
 	end
-	create_thread(function()
+	local thread = create_thread(function()
 		local loading_profiler = SuperBigMap.LoadingProfiler
 		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
-		sleep(settle_ms)
+		local wait_wakeup = Global("WaitWakeup")
+		if cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) and type(wait_wakeup) == "function" then
+			wait_wakeup(settle_ms)
+		else
+			sleep(settle_ms)
+		end
+		underground_stretch_threads[map] = nil
 		if settle_token and type(loading_profiler.End) == "function" then
 			loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
 		end
@@ -2650,6 +2678,9 @@ local function RunUndergroundStretchIfEnabled(map)
 					if type(deposits.LogDistributionReport) == "function" then
 						SafeCall(deposits.LogDistributionReport, map, "underground after density suite")
 					end
+					if type(deposits.ClearTopUpPlacementPool) == "function" then
+						deposits.ClearTopUpPlacementPool(map)
+					end
 				end
 			end
 			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
@@ -2700,6 +2731,7 @@ local function RunUndergroundStretchIfEnabled(map)
 			pcall(SuperBigMap.ExpansionLoadingEnd)
 		end
 	end)
+	underground_stretch_threads[map] = thread
 	return true
 end
 
