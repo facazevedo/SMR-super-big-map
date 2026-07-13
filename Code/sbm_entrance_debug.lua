@@ -206,8 +206,6 @@ local function DescribeObject(map, obj, index, phase)
 		canonical_surface_y = tostring(obj.SuperBigMapCanonicalEntranceSurfaceY),
 		canonical_surface_exact = tostring(obj.SuperBigMapCanonicalEntranceSurfaceExact),
 		canonical_surface_hex_distance = tostring(obj.SuperBigMapCanonicalEntranceSurfaceHexDistance),
-		canonical_recorded_after_stretch = tostring(obj.SuperBigMapCanonicalEntranceRecordedAfterStretch),
-		passage_flatten_suppressed = tostring(obj.SuperBigMapSkipPassageFlatten),
 	}
 	for k, v in pairs(LinkedFacts(obj, x, y)) do data[k] = v end
 	Log("object", data)
