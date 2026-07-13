@@ -248,6 +248,7 @@ local function ReinvalidateExpandedTerrain(map)
 	end
 
 	local invalidate_box = FullMapInvalidateBox(map_width, map_height)
+	map.SuperBigMapRevalidationRebuiltGrids = false
 	DebugPrint(string.format(
 		"ReinvalidateExpandedTerrain: terrain=%sx%s mapdata=%s wu/tile=%s markers=%s bbox=%s",
 		tostring(map_width), tostring(map_height),
@@ -256,38 +257,73 @@ local function ReinvalidateExpandedTerrain(map)
 		invalidate_box and "full-map" or "none"
 	))
 
-	if type(terrain_api.InvalidateHeight) == "function" then
-		if invalidate_box then
-			SafeCall(terrain_api.InvalidateHeight, map, invalidate_box)
-		else
-			SafeCall(terrain_api.InvalidateHeight, map)
+	local profiler = SuperBigMap.LoadingProfiler
+	local function profiled_call(name, fn, ...)
+		local token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+			"terrain revalidation: " .. tostring(name), nil, map) or false
+		local results = { pcall(fn, ...) }
+		if token and type(profiler.End) == "function" then
+			profiler.End(token, { error = results[1] and nil or tostring(results[2]) }, results[1] == true)
+		end
+		return Unpack(results, 1, #results)
+	end
+
+	-- RebuildGrids is the editor's authoritative post-height-edit entry point. It already
+	-- invalidates terrain and rebuilds passability/buildable/water/object-Z state, so running
+	-- InvalidateHeight + InvalidateType + RebuildPassability immediately before it duplicates
+	-- the most expensive work. Keep the old sequence as a fail-safe fallback.
+	local consolidated = cfg_bool("OPTIMIZE_STRETCH_REVALIDATION", true)
+		and type(map.RebuildGrids) == "function" and invalidate_box
+	local consolidated_ok = false
+	if consolidated then
+		DebugPrint("ReinvalidateExpandedTerrain: consolidated map:RebuildGrids")
+		consolidated_ok = profiled_call("consolidated RebuildGrids", map.RebuildGrids,
+			map, invalidate_box) == true
+		-- Engine methods commonly return nil on success; pcall success is the signal. The helper
+		-- returns pcall's boolean first, so consolidated_ok is true even with a nil method result.
+		if consolidated_ok then
+			map.SuperBigMapRevalidationRebuiltGrids = true
+			-- Preserve the explicit vanilla border repair. It is kept outside the consolidated
+			-- call until the profiler proves RebuildGrids subsumes it on expanded terrain.
+			if type(terrain_api.FixHeightBorder) == "function" then
+				profiled_call("consolidated FixHeightBorder", terrain_api.FixHeightBorder,
+					map, invalidate_box)
+			end
 		end
 	end
-	if type(terrain_api.InvalidateType) == "function" then
-		if invalidate_box then
-			SafeCall(terrain_api.InvalidateType, map, invalidate_box)
-		else
-			SafeCall(terrain_api.InvalidateType, map)
+	if not consolidated_ok then
+		if consolidated then
+			DebugPrint("ReinvalidateExpandedTerrain: consolidated rebuild failed -- legacy fallback")
 		end
-	end
-	if type(terrain_api.RebuildPassability) == "function" then
-		if invalidate_box then
-			SafeCall(terrain_api.RebuildPassability, map, invalidate_box)
-		else
-			SafeCall(terrain_api.RebuildPassability, map)
+		if type(terrain_api.InvalidateHeight) == "function" then
+			if invalidate_box then
+				profiled_call("legacy InvalidateHeight", terrain_api.InvalidateHeight, map, invalidate_box)
+			else
+				profiled_call("legacy InvalidateHeight", terrain_api.InvalidateHeight, map)
+			end
 		end
-	end
-	-- Vanilla engine border fix.
-	if type(terrain_api.FixHeightBorder) == "function" and invalidate_box then
-		SafeCall(terrain_api.FixHeightBorder, map, invalidate_box)
-	end
-	-- High-level map-side rebuild. The editor calls this after every height
-	-- edit (XEditorRebuildGrids); it triggers a more thorough refresh than the
-	-- low-level terrain.Invalidate* calls alone, including buildable grid +
-	-- water + objects-z update. Bbox in WORLD units.
-	if type(map.RebuildGrids) == "function" and invalidate_box then
-		DebugPrint("ReinvalidateExpandedTerrain: map:RebuildGrids")
-		SafeCall(map.RebuildGrids, map, invalidate_box)
+		if type(terrain_api.InvalidateType) == "function" then
+			if invalidate_box then
+				profiled_call("legacy InvalidateType", terrain_api.InvalidateType, map, invalidate_box)
+			else
+				profiled_call("legacy InvalidateType", terrain_api.InvalidateType, map)
+			end
+		end
+		if type(terrain_api.RebuildPassability) == "function" then
+			if invalidate_box then
+				profiled_call("legacy RebuildPassability", terrain_api.RebuildPassability, map, invalidate_box)
+			else
+				profiled_call("legacy RebuildPassability", terrain_api.RebuildPassability, map)
+			end
+		end
+		if type(terrain_api.FixHeightBorder) == "function" and invalidate_box then
+			profiled_call("legacy FixHeightBorder", terrain_api.FixHeightBorder, map, invalidate_box)
+		end
+		if type(map.RebuildGrids) == "function" and invalidate_box then
+			DebugPrint("ReinvalidateExpandedTerrain: legacy map:RebuildGrids")
+			local rebuild_ok = profiled_call("legacy RebuildGrids", map.RebuildGrids, map, invalidate_box)
+			if rebuild_ok == true then map.SuperBigMapRevalidationRebuiltGrids = true end
+		end
 	end
 	-- HashGrids rolls the engine's terrain-hash, which some systems poll to
 	-- detect "terrain changed, redraw me" (e.g. clutter, decals). If present,
@@ -914,6 +950,7 @@ end
 -- intentional embedding). Weak keys: entries vanish with their objects; table dropped per map
 -- after the stretch branch (never savegame-persisted).
 local decor_relief_by_map = setmetatable({}, { __mode = "k" })
+local decor_objects_by_map = setmetatable({}, { __mode = "k" })
 
 local function AnnotateDecorRelief(map)
 	if not map or not cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true) then return 0 end
@@ -932,10 +969,16 @@ local function AnnotateDecorRelief(map)
 	sh_tiles = (type(sh_tiles) == "number" and sh_tiles > 0) and sh_tiles or sw_tiles
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	local relief = setmetatable({}, { __mode = "k" })
+	local objects = {}
 	local annotated, sampled = 0, 0
 	local DebugLog = SuperBigMap.DebugLog
 	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
+		objects[#objects + 1] = obj
+		-- Relief is consumed only by the decoration scaling pass. Avoid terrain-height calls for
+		-- buildings, markers, units, attached children, and other objects that pass never moves.
+		if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+			and (ShouldSkipObject(obj) or IsImportantSectorObject(obj)) then return end
 		if type(obj.GetParent) == "function" then
 			local ok_p, parent = pcall(obj.GetParent, obj)
 			if ok_p and parent then return end -- attached children follow their parent
@@ -959,13 +1002,19 @@ local function AnnotateDecorRelief(map)
 		end
 	end)
 	decor_relief_by_map[map] = relief
-	StretchLog("AnnotateDecorRelief: DONE", { annotated = annotated })
+	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
+		decor_objects_by_map[map] = objects
+	end
+	StretchLog("AnnotateDecorRelief: DONE", { annotated = annotated, collected = #objects })
 	DebugPrint(string.format("relief annotations: %s objects", tostring(annotated)))
 	return annotated
 end
 
 local function ClearDecorRelief(map)
-	if map then decor_relief_by_map[map] = nil end
+	if map then
+		decor_relief_by_map[map] = nil
+		decor_objects_by_map[map] = nil
+	end
 end
 
 -- STRETCH step 2 (decorations): the generator placed all its scatter/decor in the SOURCE corner
@@ -1013,12 +1062,18 @@ local function ScaleDecorationsToFull(map, debug)
 	-- Collect into a Lua list first (inline MapForEach -- avoids a forward reference to the
 	-- CollectObjectsInBox helper declared later in this file), so we mutate objects OUTSIDE the
 	-- C callback (moving/scaling inside MapForEach is unsafe).
-	local objs = {}
-	if type(map.MapForEach) == "function" then
+	local objs = cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+		and decor_objects_by_map[map] or nil
+	local reused_collection = type(objs) == "table"
+	if not reused_collection then
+		objs = {}
+	end
+	if not reused_collection and type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
 	StretchLog("ScaleDecorationsToFull: collected", {
 		count = #objs, scale_x = tostring(scale_x), scale_y = tostring(scale_y),
+		reused_pre_stretch_collection = reused_collection,
 		src_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
 		full_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
 		src_box_wu = tostring(sw_tiles * hts) .. "x" .. tostring(sh_tiles * hts),

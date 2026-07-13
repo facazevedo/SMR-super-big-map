@@ -2060,6 +2060,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			local stretch_t0 = 0
 			if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then stretch_t0 = t end end
 			local ok_stretch, n_grids = false, 0
+			local frame_passability_preapplied = false
 			local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
 				and loading_profiler.Begin("surface expansion: complete stretch pipeline", {
 					fill_mode = fill_mode, settle_ms = settle_ms,
@@ -2074,7 +2075,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					end
 					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
 						StretchLog("stretch branch: pre-applying frame passability before authoritative revalidation")
-						SafeCall(ForceFramePassable, map, true)
+						local pass_token = loading_profiler and type(loading_profiler.Begin) == "function"
+							and loading_profiler.Begin("surface passability: preapply frame overlay", nil, map) or false
+						frame_passability_preapplied = SafeCall(ForceFramePassable, map, true) == true
+						if pass_token and type(loading_profiler.End) == "function" then
+							loading_profiler.End(pass_token, {
+								applied = frame_passability_preapplied,
+							}, frame_passability_preapplied)
+						end
 					end
 					SpikeAudit(map, "surface pre-stretch")
 					SetLoadingPhase("Stretching the surface terrain")
@@ -2205,12 +2213,22 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
-				if type(rebuild_buildable) == "function" and map and map.buildable then
+				local buildable_already_rebuilt = cfg_bool("OPTIMIZE_STRETCH_REVALIDATION", true)
+					and map.SuperBigMapRevalidationRebuiltGrids == true
+				if buildable_already_rebuilt then
+					StretchLog("stretch branch: RebuildBuildableGrid already completed by consolidated revalidation -- skip duplicate")
+				elseif type(rebuild_buildable) == "function" and map and map.buildable then
 					SafeCall(rebuild_buildable, map)
 				end
 				StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
-				StretchLog("stretch branch: -> ForceFramePassable")
-				SafeCall(ForceFramePassable, map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
+				local passability_already_baked = cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true)
+					and frame_passability_preapplied and ok_stretch
+				if passability_already_baked then
+					StretchLog("stretch branch: frame passability already applied before authoritative revalidation -- skip duplicate")
+				else
+					StretchLog("stretch branch: -> ForceFramePassable")
+					SafeCall(ForceFramePassable, map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
+				end
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
@@ -2571,7 +2589,11 @@ local function RunUndergroundStretchIfEnabled(map)
 			-- the optimization avoids immediately rebuilding that identical grid a second time.
 			do
 				local rebuild_buildable = Global("RebuildBuildableGrid")
-				if type(rebuild_buildable) == "function" and map.buildable then
+				local buildable_already_rebuilt = cfg_bool("OPTIMIZE_STRETCH_REVALIDATION", true)
+					and map.SuperBigMapRevalidationRebuiltGrids == true
+				if buildable_already_rebuilt then
+					StretchLog("underground stretch: RebuildBuildableGrid already completed by consolidated revalidation -- skip duplicate")
+				elseif type(rebuild_buildable) == "function" and map.buildable then
 					SetLoadingPhase("Rebuilding the underground build grid")
 					StretchLog("underground stretch: -> RebuildBuildableGrid")
 					SafeCall(rebuild_buildable, map)

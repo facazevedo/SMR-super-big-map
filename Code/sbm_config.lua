@@ -683,6 +683,13 @@ config.OptimizeStretchDeferredRebuilds = true
 -- avoid rebuilding the same passability grid again afterward. Underground likewise keeps the
 -- revalidation performed inside StretchSourceToFull and skips its immediately repeated rebuild.
 config.OptimizeStretchPassability = true
+-- Use the engine's authoritative map:RebuildGrids once after stretching instead of first
+-- performing the same low-level height/type/passability rebuilds separately. Falls back to the
+-- legacy sequence automatically if the consolidated engine call is unavailable or fails.
+config.OptimizeStretchRevalidation = true
+-- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
+-- second full MapForEach traversal immediately after the terrain stretch.
+config.OptimizeStretchDecorTraversal = true
 
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
@@ -1054,6 +1061,8 @@ C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_PASSABILITY = as_bool(config.OptimizeStretchPassability)
+C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
+C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)
