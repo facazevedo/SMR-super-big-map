@@ -196,7 +196,13 @@ config.DebugGeneration    = true    -- Generation: generator hook, frame allocat
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
-config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+-- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
+-- Logs the complete live sector index topology, every existing anomaly marker, every sampled
+-- candidate (accepted or rejected with reason), every best-of-N valley choice, every clone result,
+-- and final per-edge/per-sector tallies. This is intentionally very noisy and adds diagnostic
+-- overhead only while enabled; use it to investigate left/top versus right/bottom edge bias.
+config.DebugTopUpEdgeDistribution = true
 config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
@@ -953,6 +959,7 @@ C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
 C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
 C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
+C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
