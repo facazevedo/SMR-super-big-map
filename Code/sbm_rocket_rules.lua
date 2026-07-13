@@ -614,6 +614,44 @@ local function CompareElevatorTerrain(before, after, label)
 	})
 end
 
+-- no_flatten protects the terrain, but PlaceConstructionSite still runs AdjustBuildPos and
+-- assigns the site's Z from the buildable grid. On an expanded surface that grid may retain
+-- the pre-stretch height (observed: buildable 20696 vs live terrain 5398), leaving the Elevator
+-- floating even though the ground no longer rises to meet it. Preserve X/Y and move only the
+-- construction-site object onto the live terrain before completion creates the final building.
+local function SnapElevatorSiteToLiveTerrain(site, map, label)
+	if type(site) ~= "table" or type(site.GetPos) ~= "function" or type(site.SetPos) ~= "function" then
+		ElevatorTerrainLog("site terrain snap skipped", {
+			label = label, site = tostring(site), reason = "site lacks GetPos/SetPos",
+		})
+		return false
+	end
+	local old_pos = SafeCall(site.GetPos, site)
+	local old_x, old_y, old_z = PositionXYZ(old_pos)
+	local snapped = old_pos and type(old_pos.SetTerrainZ) == "function" and SafeCall(old_pos.SetTerrainZ, old_pos, map) or nil
+	local new_x, new_y, terrain_z = PositionXYZ(snapped)
+	ElevatorTerrainLog("site terrain snap decision", {
+		label = label, site = tostring(site), map = tostring(map and map.name),
+		old_x = old_x, old_y = old_y, old_z = old_z,
+		terrain_x = new_x, terrain_y = new_y, terrain_z = terrain_z,
+		buildable_z = type(old_x) == "number" and BuildableZAt(map, old_x, old_y) or "?",
+		z_delta = type(old_z) == "number" and type(terrain_z) == "number" and (terrain_z - old_z) or "?",
+	})
+	if not snapped or type(terrain_z) ~= "number" then
+		ElevatorTerrainLog("site terrain snap skipped", { label = label, reason = "live terrain position unavailable" })
+		return false
+	end
+	SafeCall(site.SetPos, site, snapped)
+	local final_pos = SafeCall(site.GetPos, site)
+	local final_x, final_y, final_z = PositionXYZ(final_pos)
+	local ok = final_x == new_x and final_y == new_y and final_z == terrain_z
+	ElevatorTerrainLog(ok and "site terrain snap APPLIED" or "site terrain snap FAILED", {
+		label = label, site = tostring(site), final_x = final_x, final_y = final_y,
+		final_z = final_z, expected_z = terrain_z, exact = tostring(ok),
+	})
+	return ok, final_pos
+end
+
 -- ElevatorBase:PlaceConstructionSite accepts `no_flatten` from the construction controller but
 -- fails to forward it to either linked PlaceConstructionSite call. Detect all forms involved in
 -- elevator placement so both the high-level site wrapper and the low-level flatten guard can
@@ -688,7 +726,7 @@ end
 -- file environment. Patch the class method itself and reproduce its short vanilla implementation,
 -- changing only the two calls to explicitly pass no_flatten=true. This is the authoritative
 -- boundary and cannot be bypassed by Elevator.lua's environment.
-local ELEVATOR_METHOD_PATCH_VERSION = 1
+local ELEVATOR_METHOD_PATCH_VERSION = 2
 local function PatchElevatorBasePlaceConstructionSite()
 	local State = SuperBigMap.State or {}
 	local ElevatorBase = Engine.ClassTable("ElevatorBase")
@@ -803,10 +841,14 @@ local function PatchElevatorBasePlaceConstructionSite()
 		-- Preserve vanilla behavior except for the final true argument. Vanilla ignored
 		-- no_block_pass here, so keep that omission to avoid changing passage/grid behavior.
 		local site1 = place_site(city, class_name, pos, angle, params1, nil, true)
-		local after_primary = CaptureElevatorTerrain(map, pos, "PrimaryAfterSite")
+		SnapElevatorSiteToLiveTerrain(site1, map, "PrimarySite")
+		local primary_site_pos = site1 and type(site1.GetPos) == "function" and SafeCall(site1.GetPos, site1) or pos
+		local after_primary = CaptureElevatorTerrain(map, primary_site_pos, "PrimaryAfterSite")
 		CompareElevatorTerrain(before_primary, after_primary, "Primary PlaceConstructionSite")
 		local site2 = place_site(other_city, class_name, other_pos, other_angle, params2, nil, true)
-		local after_linked = CaptureElevatorTerrain(other_map, other_pos, "LinkedAfterSite")
+		SnapElevatorSiteToLiveTerrain(site2, other_map, "LinkedSite")
+		local linked_site_pos = site2 and type(site2.GetPos) == "function" and SafeCall(site2.GetPos, site2) or other_pos
+		local after_linked = CaptureElevatorTerrain(other_map, linked_site_pos, "LinkedAfterSite")
 		CompareElevatorTerrain(before_linked, after_linked, "Linked PlaceConstructionSite")
 
 		local is_kind = Global("IsKindOf")
