@@ -624,6 +624,24 @@ local function PatchLandingFlatten()
 		local site_obj = IsLandingSite(obj)
 		local landing_mode, reason = ActiveLandingConstruction()
 		local landing = site_obj or landing_mode
+		-- Generated surface passages are relocated only after the expanded terrain and
+		-- buildable grids exist. Their complete footprint has already passed the final
+		-- flat/buildable test, so Picard's subsequent "flatten unbuildable" call is both
+		-- redundant and unsafe: its cached buildable height can be from a different terrain
+		-- stage, producing the giant entrance mesa/pit. Suppress only explicitly marked linked
+		-- passage objects on expanded maps; normal buildings and player elevators stay vanilla.
+		if mod_map and type(obj) == "table" and obj.SuperBigMapSkipPassageFlatten == true then
+			local info = AnalyzeFlattenShape(map, shape_data, obj) or {
+				obj_class = tostring(obj.class), map = tostring(map and map.name),
+				pos = tostring(type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or "?"),
+			}
+			FlattenLog("FlattenTerrainInBuildShape SKIPPED (generated passage already validated on final terrain)", info)
+			local profiler = SuperBigMap.LoadingProfiler
+			if profiler and type(profiler.Step) == "function" then
+				profiler.Step("entrance alignment: suppressed stale-height terrain flatten", info, map)
+			end
+			return
+		end
 		-- Only log when we actually SKIP (a rocket landing on a mod map). Do NOT log every
 		-- call: FlattenTerrainInBuildShape fires for every building placement, which spams.
 		if landing and mod_map and Config.PREVENT_LANDING_PAD_FLATTEN == true then
@@ -660,7 +678,7 @@ local function PatchLandingFlatten()
 	end
 	rawset(_G, "FlattenTerrainInBuildShape", wrapper)
 	State.flatten_in_build_shape_wrapper = wrapper
-	RocketLog("FlattenTerrainInBuildShape wrapped (skip flatten for landing sites on mod maps)")
+	RocketLog("FlattenTerrainInBuildShape wrapped (landing-pad and generated-passage guards)")
 end
 
 local RocketRules = {}
@@ -670,11 +688,11 @@ RocketRules.OnRocketLanded = OnRocketLanded
 RocketRules.OnRocketLandAttempt = OnRocketLandAttempt
 
 function RocketRules.ApplyModBehavior()
-	if Config.FIX_ROCKET_LANDING_Z ~= true then
-		return
+	if Config.FIX_ROCKET_LANDING_Z == true then
+		PatchRocketLanding()
 	end
-	PatchRocketLanding()
-	if Config.PREVENT_LANDING_PAD_FLATTEN == true then
+	if Config.PREVENT_LANDING_PAD_FLATTEN == true
+		or Config.STRETCH_DETERMINISTIC_PASSAGES == true then
 		PatchLandingFlatten()
 	end
 end
@@ -709,7 +727,8 @@ SuperBigMap.RocketRules = RocketRules
 -- Install the flatten wrap at MODULE LOAD too: the new-game Lua reload redefines the global
 -- (wiping the wrapper) and re-executes this module, but Lifecycle.Enable early-returns when
 -- State.active persisted -- so module load is the reliable reinstall point. Self-verifying.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false and Config.FIX_ROCKET_LANDING_Z == true
-	and Config.PREVENT_LANDING_PAD_FLATTEN == true then
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
+	and (Config.PREVENT_LANDING_PAD_FLATTEN == true
+		or Config.STRETCH_DETERMINISTIC_PASSAGES == true) then
 	PatchLandingFlatten()
 end

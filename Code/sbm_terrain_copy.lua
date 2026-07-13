@@ -1325,18 +1325,18 @@ local function ScaleMarkersToFull(map, debug)
 		end
 	end
 	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers") end
+	map.SuperBigMapMarkersScaled = true
 	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved, reregistered = reregistered })
 	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers (%s re-registered to new sectors)",
 		tostring(moved), tostring(reregistered)))
 	return moved
 end
 
--- Canonical passage pairing. ElevatorPassage:Link records the UNDERGROUND endpoint's native
--- source coordinate on both linked objects before either map stretches. Compute the expanded
--- coordinate ONCE, snap it to one final hex, and reuse that exact X/Y on both maps. This avoids
--- independent object-position scaling/rounding drifting the pair apart. The surface endpoint is
--- still allowed to choose the nearest valid footprint after its FINAL terrain/buildable rebuild;
--- the underground endpoint always keeps the canonical hex.
+-- Canonical passage pairing. Depending on the scenario, ElevatorPassage:Link can run either
+-- before the stretch or (as observed in Picard's underground generator) after both stretch
+-- pipelines have completed. Record one underground-derived FINAL coordinate in either order:
+-- scale it once when the endpoint is still native-sized, or reuse its already-scaled coordinate
+-- directly. This prevents the late-link path from multiplying an already-final position again.
 local function RecordCanonicalEntrancePair(surface_obj, under_obj, surface_map)
 	if not (surface_obj and under_obj and surface_map) then return false end
 	local pos = ObjectPosition(under_obj)
@@ -1353,9 +1353,20 @@ local function RecordCanonicalEntrancePair(surface_obj, under_obj, surface_map)
 		return false
 	end
 	local scale = (full_tiles + 0.0) / source_tiles
-	local final_pos = point_fn(
-		math.floor(source_x * scale + 0.5),
-		math.floor(source_y * scale + 0.5))
+	local under_map = type(under_obj.GetMap) == "function" and SafeCall(under_obj.GetMap, under_obj) or nil
+	local already_scaled = under_map and (under_map.SuperBigMapEntranceVisualsMoved == true
+		or under_map.SuperBigMapMarkersScaled == true
+		or under_map.SuperBigMapRevalidationRebuiltGrids == true)
+	local final_pos
+	if already_scaled then
+		final_pos = point_fn(source_x, source_y)
+		source_x = math.floor(source_x / scale + 0.5)
+		source_y = math.floor(source_y / scale + 0.5)
+	else
+		final_pos = point_fn(
+			math.floor(source_x * scale + 0.5),
+			math.floor(source_y * scale + 0.5))
+	end
 	local snap_hex = Global("SnapWorldToHex")
 	if type(snap_hex) == "function" then
 		local ok_snap, snapped = pcall(snap_hex, final_pos)
@@ -1371,12 +1382,19 @@ local function RecordCanonicalEntrancePair(surface_obj, under_obj, surface_map)
 	end
 	surface_obj.SuperBigMapCanonicalEntranceRole = "surface"
 	under_obj.SuperBigMapCanonicalEntranceRole = "underground"
+	surface_obj.SuperBigMapCanonicalEntranceRecordedAfterStretch = already_scaled == true
+	under_obj.SuperBigMapCanonicalEntranceRecordedAfterStretch = already_scaled == true
+	if already_scaled then
+		under_obj.SuperBigMapCanonicalEntranceAppliedX = final_x
+		under_obj.SuperBigMapCanonicalEntranceAppliedY = final_y
+	end
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
-		DebugLog.Info("Pairing", "canonical entrance coordinate recorded before expansion", {
+		DebugLog.Info("Pairing", "canonical entrance coordinate recorded", {
 			source = tostring(source_x) .. "," .. tostring(source_y),
 			final = tostring(final_x) .. "," .. tostring(final_y),
 			scale = tostring(scale),
+			already_scaled = already_scaled == true,
 			surface_class = tostring(surface_obj.class or "?"),
 			underground_class = tostring(under_obj.class or "?"),
 		})
