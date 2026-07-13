@@ -205,6 +205,10 @@ config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each 
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
 config.DebugLoadingSteps  = true
+-- Exhaustive first-access trace for deferred underground expansion. Logs every HUD click,
+-- map-slot gate decision, state/geometry field, loading-screen transition, fallback path,
+-- and preparation result. Keep enabled while investigating underground access.
+config.DebugUndergroundAccess = true
 config.DebugHover         = false   -- Hover: overview hover-highlight mapping
 config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
@@ -956,6 +960,7 @@ C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
 C.DEBUG_LOADINGSTEPS  = as_bool(config.DebugLoadingSteps)
+C.DEBUG_UNDERGROUNDACCESS = as_bool(config.DebugUndergroundAccess)
 C.DEBUG_HOVER         = as_bool(config.DebugHover)
 C.DEBUG_ALIGN         = as_bool(config.DebugAlign)
 C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)

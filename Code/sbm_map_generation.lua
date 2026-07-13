@@ -27,9 +27,12 @@ SuperBigMap.State.quadrant_pending_maps = SuperBigMap.State.quadrant_pending_map
 SuperBigMap.State.quadrant_blocked_maps = SuperBigMap.State.quadrant_blocked_maps or {}
 SuperBigMap.State.underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
 	or setmetatable({}, { __mode = "k" })
+SuperBigMap.State.underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
+	or setmetatable({}, { __mode = "k" })
 local pending_maps = SuperBigMap.State.quadrant_pending_maps
 local blocked_maps = SuperBigMap.State.quadrant_blocked_maps
 local underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
+local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -129,6 +132,58 @@ local function ShouldDeferStretchRebuilds(map)
 		and type(map) == "table"
 		and (map.SuperBigMapStretchPipelinePending == true
 			or map.SuperBigMapUndergroundStretchPending == true)
+end
+
+-- Dedicated forensic channel for deferred underground first access. Unlike the broad Stretch
+-- trace, this records the complete control-flow decision at every entry point so a missing click,
+-- overwritten hook, incomplete map identity, or early-return state is unambiguous in one grep.
+local function UndergroundAccessLog(message, data, level)
+	local DebugLog = SuperBigMap.DebugLog
+	local enabled = DebugLog and type(DebugLog.On) == "function"
+		and DebugLog.On("UndergroundAccess") == true
+	if DebugLog then
+		local emit = level == "error" and DebugLog.Error
+			or level == "warn" and DebugLog.Warn or DebugLog.Info
+		if type(emit) == "function" then emit("UndergroundAccess", message, data) end
+	end
+	if enabled then
+		local profiler = SuperBigMap.LoadingProfiler
+		if profiler and type(profiler.Step) == "function" then
+			profiler.Step("underground access: " .. tostring(message), data, Global("CurrentMap"))
+		end
+	end
+end
+
+local function UndergroundAccessState(map, extra)
+	local data = {
+		map = tostring(map and map.name),
+		map_ref = tostring(map),
+		map_slot = tostring(map and map.slot),
+		environment = tostring(map and map.mapdata and map.mapdata.Environment),
+		current_map = tostring(Global("CurrentMap") and Global("CurrentMap").name),
+		current_ref = tostring(Global("CurrentMap")),
+		main_ref = tostring(Global("MainMap")),
+		underground_ref = tostring(Global("UndergroundMap")),
+		desired_width = tostring(map and map.SuperBigMapDesiredWidthTiles),
+		desired_height = tostring(map and map.SuperBigMapDesiredHeightTiles),
+		generator_width = tostring(map and map.SuperBigMapGeneratorWidthTiles),
+		generator_height = tostring(map and map.SuperBigMapGeneratorHeightTiles),
+		source_width = tostring(map and map.SuperBigMapSourceWidthTiles),
+		source_height = tostring(map and map.SuperBigMapSourceHeightTiles),
+		prepared = tostring(map and map.SuperBigMapUndergroundPrepared),
+		done = tostring(map and map.SuperBigMapUndergroundStretchDone),
+		pending = tostring(map and map.SuperBigMapUndergroundStretchPending),
+		running = tostring(map and map.SuperBigMapUndergroundStretchRunning),
+		failed = tostring(map and map.SuperBigMapUndergroundPreparationFailed),
+		failure = tostring(map and map.SuperBigMapUndergroundStretchFailed),
+		deferred_geometry = tostring(map and type(map.SuperBigMapUndergroundDeferredGeometry) == "table"),
+		stretch_underground = tostring(cfg_bool("STRETCH_UNDERGROUND", false)),
+		defer_first_access = tostring(cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)),
+	}
+	if type(extra) == "table" then
+		for key, value in pairs(extra) do data[key] = value end
+	end
+	return data
 end
 
 -- Cheap final state refresh after the stretch's authoritative grid rebuilds. Deliberately does
@@ -2560,22 +2615,40 @@ end
 -- object reference. Triggered from PostNewMapLoaded for Environment=="Underground" maps; gates on
 -- the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
 local function RunUndergroundStretchIfEnabled(map, force_now)
-	if not cfg_bool("STRETCH_UNDERGROUND", false) then return false end
+	UndergroundAccessLog("preparation function entered", UndergroundAccessState(map, {
+		force_now = tostring(force_now),
+	}))
+	if not cfg_bool("STRETCH_UNDERGROUND", false) then
+		UndergroundAccessLog("preparation rejected: underground stretch disabled", UndergroundAccessState(map), "warn")
+		return false, "underground stretch is disabled"
+	end
 	map = map or Global("CurrentMap")
-	if not map then return false end
-	RestoreDeferredUndergroundGeometry(map)
+	if not map then
+		UndergroundAccessLog("preparation rejected: target map missing", UndergroundAccessState(map), "error")
+		return false, "underground target map is missing"
+	end
+	local restored_geometry = RestoreDeferredUndergroundGeometry(map)
+	UndergroundAccessLog("deferred geometry restore checked", UndergroundAccessState(map, {
+		restored_geometry = tostring(restored_geometry),
+	}))
 	if map.SuperBigMapUndergroundPrepared == true then
 		map.SuperBigMapUndergroundStretchDone = true
 		map.SuperBigMapUndergroundStretchPending = false
+		UndergroundAccessLog("prepared flag normalized to done", UndergroundAccessState(map))
 	end
 	if map.SuperBigMapUndergroundStretchDone == true then
+		UndergroundAccessLog("preparation skipped: already complete", UndergroundAccessState(map, {
+			force_result = tostring(force_now == true),
+		}))
 		return force_now == true and true or false
 	end
 	if map.SuperBigMapUndergroundPreparationFailed == true then
+		UndergroundAccessLog("preparation rejected: previous attempt failed", UndergroundAccessState(map), "error")
 		return false, map.SuperBigMapUndergroundStretchFailed
 			or "a previous underground preparation attempt failed"
 	end
 	if map.SuperBigMapUndergroundStretchRunning == true then
+		UndergroundAccessLog("preparation rejected: another run is active", UndergroundAccessState(map), "warn")
 		if force_now == true then
 			return false, "underground expansion already running"
 		end
@@ -2584,6 +2657,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	local desired = map.SuperBigMapDesiredWidthTiles
 	local gen_t = map.SuperBigMapGeneratorWidthTiles
 	if not (type(desired) == "number" and type(gen_t) == "number" and desired > gen_t) then
+		UndergroundAccessLog("preparation rejected: target geometry is not expandable", UndergroundAccessState(map), "error")
 		StretchLog("underground stretch: not an expanded underground map -- skip", {
 			desired = tostring(desired), generator = tostring(gen_t),
 		})
@@ -2600,6 +2674,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		map.SuperBigMapUndergroundStretchFailed = nil
 		map.SuperBigMapUndergroundPreparationFailed = false
 		SaveDeferredUndergroundGeometry(map)
+		UndergroundAccessLog("preparation deferred until first access", UndergroundAccessState(map))
 		StretchLog("underground stretch: deferred until first access", {
 			desired = desired, generator = gen_t, map = tostring(map.name),
 		})
@@ -2608,11 +2683,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	local create_thread = Global("CreateRealTimeThread")
 	local sleep = Global("Sleep")
 	if force_now ~= true and (type(create_thread) ~= "function" or type(sleep) ~= "function") then
-		return false
+		UndergroundAccessLog("preparation rejected: asynchronous engine functions unavailable", UndergroundAccessState(map, {
+			create_thread = tostring(create_thread), sleep = tostring(sleep),
+		}), "error")
+		return false, "required asynchronous engine functions are unavailable"
 	end
 	map.SuperBigMapUndergroundStretchPending = true
 	map.SuperBigMapUndergroundStretchRunning = true
 	map.SuperBigMapUndergroundStretchFailed = nil
+	UndergroundAccessLog("preparation state changed to running", UndergroundAccessState(map, {
+		force_now = tostring(force_now),
+	}))
 	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
 		map.SuperBigMapStretchPipelinePending = true
 	end
@@ -2629,6 +2710,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		SetLoadingPhase("Expanding the underground map")
 	end
 	local function run_pipeline()
+		UndergroundAccessLog("complete deferred pipeline started", UndergroundAccessState(map, {
+			force_now = tostring(force_now), settle_ms = tostring(settle_ms),
+		}))
 		local loading_profiler = SuperBigMap.LoadingProfiler
 		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
@@ -2825,6 +2909,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapUndergroundPreparationFailed = true
 		end
 		map.SuperBigMapUndergroundStretchRunning = false
+		UndergroundAccessLog("complete deferred pipeline finished", UndergroundAccessState(map, {
+			ok = tostring(ok_branch), error = tostring(branch_err), first_access = tostring(force_now == true),
+		}), ok_branch and nil or "error")
 		StretchLog("underground stretch: DONE", {
 			ok = ok_branch, first_access = force_now == true,
 			error = ok_branch and nil or tostring(branch_err),
@@ -2849,6 +2936,158 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	return true
 end
 
+local function NeedsDeferredUndergroundPreparation(map)
+	if not map or not map.mapdata or map.mapdata.Environment ~= "Underground" then
+		return false, "target is not an underground map"
+	end
+	if not cfg_bool("STRETCH_UNDERGROUND", false) then
+		return false, "underground stretch is disabled"
+	end
+	RestoreDeferredUndergroundGeometry(map)
+	local desired = map.SuperBigMapDesiredWidthTiles
+	local generator = map.SuperBigMapGeneratorWidthTiles
+	if not (type(desired) == "number" and type(generator) == "number" and desired > generator) then
+		return false, "target has no deferred expandable geometry"
+	end
+	if map.SuperBigMapUndergroundPrepared == true or map.SuperBigMapUndergroundStretchDone == true then
+		return false, "target is already prepared"
+	end
+	return true, "deferred underground preparation required"
+end
+
+local function ResolveHudUndergroundTarget(button)
+	local entry = button and button.context
+	local entry_source = "button.context"
+	if entry and entry.index then
+		local map_switch = Global("MapSwitchClass")
+		if type(map_switch) == "table" and type(map_switch.GetEntries) == "function" then
+			local ok, entries = pcall(map_switch.GetEntries)
+			if ok and type(entries) == "table" then
+				entry = entries[entry.index]
+				entry_source = "MapSwitchClass.GetEntries[index]"
+			else
+				entry_source = "MapSwitchClass.GetEntries failed"
+			end
+		end
+	end
+	local target = button and button.Map or entry and entry.Map
+	return target, entry, entry_source
+end
+
+-- The generated HUD handler was observed reaching CurrentMapChangeDone without calling the
+-- replaceable global ChangeCurrentMapSlot in v478. Wrap each concrete HUD button's OnPress too,
+-- so the underground symbol has a direct, deterministic route into our gate. This chains around
+-- Project Ark's HUD wrapper and leaves surface/asteroid entries untouched.
+local function PatchDeferredUndergroundHudAccess(source)
+	local State = SuperBigMap.State
+	local hud_class = Engine.ClassTable("HUDButtonMapSwitch")
+	local current = hud_class and hud_class.Init
+	UndergroundAccessLog("HUD patch check", {
+		source = tostring(source or "?"), hud_class = tostring(hud_class),
+		current_init = tostring(current), stored_wrapper = tostring(State.underground_hud_init_wrapper),
+		patch_version = tostring(State.underground_hud_patch_version),
+	})
+	if type(current) ~= "function" then
+		UndergroundAccessLog("HUD patch unavailable: HUDButtonMapSwitch.Init missing", {
+			source = tostring(source or "?"),
+		}, "warn")
+		return false
+	end
+	if current == State.underground_hud_init_wrapper
+		and State.underground_hud_patch_version == GENERATOR_PATCH_VERSION then
+		UndergroundAccessLog("HUD patch verified", { source = tostring(source or "?") })
+		return true
+	end
+	if current == State.underground_hud_init_wrapper
+		and type(State.original_underground_hud_init) == "function" then
+		current = State.original_underground_hud_init
+		hud_class.Init = current
+		UndergroundAccessLog("HUD patch hot-reload wrapper removed", {
+			source = tostring(source or "?"), restored_init = tostring(current),
+		})
+	end
+	State.original_underground_hud_init = current
+	local wrapper = function(self, parent, context)
+		local original_init = State.original_underground_hud_init
+		local result
+		if type(original_init) == "function" then
+			result = original_init(self, parent, context)
+		end
+		local frame = self and self[1]
+		UndergroundAccessLog("HUD map-switch instance initialized", {
+			instance = tostring(self), frame = tostring(frame), context = tostring(context),
+			frame_on_press = tostring(frame and frame.OnPress), frame_map = tostring(frame and frame.Map),
+		})
+		if type(frame) ~= "table" or type(frame.OnPress) ~= "function" then
+			UndergroundAccessLog("HUD instance not wrapped: press handler unavailable", {
+				instance = tostring(self), frame = tostring(frame),
+			}, "warn")
+			return result
+		end
+		if frame.SuperBigMapUndergroundAccessPressVersion == GENERATOR_PATCH_VERSION then
+			UndergroundAccessLog("HUD instance press handler already wrapped", { frame = tostring(frame) })
+			return result
+		end
+		local original_press = frame.OnPress
+		frame.OnPress = function(button, gamepad)
+			local target, entry, entry_source = ResolveHudUndergroundTarget(button)
+			local needs_prepare, reason = NeedsDeferredUndergroundPreparation(target)
+			UndergroundAccessLog("HUD underground symbol press observed", UndergroundAccessState(target, {
+				button = tostring(button), gamepad = tostring(gamepad), entry = tostring(entry),
+				entry_source = tostring(entry_source), entry_enabled = tostring(entry and entry.Enabled),
+				button_map = tostring(button and button.Map), needs_prepare = tostring(needs_prepare),
+				decision = tostring(reason), gate_wrapper = tostring(State.change_current_map_slot_wrapper),
+				global_switch = tostring(Global("ChangeCurrentMapSlot")),
+			}))
+			if not needs_prepare then
+				return original_press(button, gamepad)
+			end
+			if button.SuperBigMapUndergroundAccessClickRunning == true then
+				UndergroundAccessLog("HUD duplicate underground press ignored while preparation is active",
+					UndergroundAccessState(target), "warn")
+				return
+			end
+			local create_thread = Global("CreateRealTimeThread")
+			if type(create_thread) ~= "function" then
+				UndergroundAccessLog("HUD interception failed: CreateRealTimeThread missing",
+					UndergroundAccessState(target), "error")
+				return original_press(button, gamepad)
+			end
+			button.SuperBigMapUndergroundAccessClickRunning = true
+			create_thread(function()
+				UndergroundAccessLog("HUD first-access thread entered", UndergroundAccessState(target, {
+					target_slot = tostring(target and target.slot),
+				}))
+				local gate = State.change_current_map_slot_wrapper
+				if type(gate) == "function" and target and target.slot then
+					gate(target.slot, true, "idChangeCurrentMapSlot")
+				else
+					UndergroundAccessLog("HUD first-access thread cannot invoke gate", UndergroundAccessState(target, {
+						gate = tostring(gate), target_slot = tostring(target and target.slot),
+					}), "error")
+				end
+				button.SuperBigMapUndergroundAccessClickRunning = false
+				UndergroundAccessLog("HUD first-access thread exited", UndergroundAccessState(target))
+			end)
+			return
+		end
+		frame.SuperBigMapUndergroundAccessPressVersion = GENERATOR_PATCH_VERSION
+		frame.SuperBigMapUndergroundAccessOriginalPress = original_press
+		UndergroundAccessLog("HUD instance press handler wrapped", {
+			frame = tostring(frame), original_press = tostring(original_press),
+			wrapped_press = tostring(frame.OnPress),
+		})
+		return result
+	end
+	hud_class.Init = wrapper
+	State.underground_hud_init_wrapper = wrapper
+	State.underground_hud_patch_version = GENERATOR_PATCH_VERSION
+	UndergroundAccessLog("HUD patch installed", {
+		source = tostring(source or "?"), replaced_init = tostring(current), wrapper = tostring(wrapper),
+	})
+	return true
+end
+
 -- FIRST-ACCESS GATE. Every vanilla HUD/object route that changes between already-loaded map
 -- slots funnels through ChangeCurrentMapSlot. Hold that one call before it emits CurrentMapChange
 -- or exposes the target map, run the complete deferred underground pipeline, and switch only on
@@ -2858,10 +3097,26 @@ end
 local function PatchDeferredUndergroundAccess(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
-	if type(current) ~= "function" then return false end
+	UndergroundAccessLog("map-slot gate patch check", {
+		source = tostring(source or "?"), current_switch = tostring(current),
+		stored_wrapper = tostring(State.change_current_map_slot_wrapper),
+		stored_original = tostring(State.original_change_current_map_slot),
+		patch_version = tostring(State.underground_access_patch_version),
+	})
+	if type(current) ~= "function" then
+		UndergroundAccessLog("map-slot gate unavailable: ChangeCurrentMapSlot missing", {
+			source = tostring(source or "?"),
+		}, "error")
+		PatchDeferredUndergroundHudAccess(source)
+		return false
+	end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
 		StretchLog("underground access gate verified", { source = tostring(source or "?") })
+		UndergroundAccessLog("map-slot gate verified", {
+			source = tostring(source or "?"), wrapper = tostring(current),
+		})
+		PatchDeferredUndergroundHudAccess(source)
 		return true
 	end
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
@@ -2869,14 +3124,27 @@ local function PatchDeferredUndergroundAccess(source)
 		and type(State.original_change_current_map_slot) == "function" then
 		current = State.original_change_current_map_slot
 		rawset(_G, "ChangeCurrentMapSlot", current)
+		UndergroundAccessLog("map-slot gate hot-reload wrapper removed", {
+			source = tostring(source or "?"), restored_switch = tostring(current),
+		})
 	end
 	State.original_change_current_map_slot = current
 	local wrapper = function(map_slot, loading_screen, loading_screen_id)
 		local original = State.original_change_current_map_slot
-		if type(original) ~= "function" then return end
+		UndergroundAccessLog("map-slot gate entered", {
+			map_slot = tostring(map_slot), loading_screen = tostring(loading_screen),
+			loading_screen_id = tostring(loading_screen_id), original_switch = tostring(original),
+			current_global_switch = tostring(Global("ChangeCurrentMapSlot")),
+		})
+		if type(original) ~= "function" then
+			UndergroundAccessLog("map-slot gate aborted: original switch missing", {
+				map_slot = tostring(map_slot),
+			}, "error")
+			return
+		end
 		local maps = Global("Maps")
 		local target = type(maps) == "table" and maps[map_slot] or nil
-		RestoreDeferredUndergroundGeometry(target)
+		local restored_geometry = RestoreDeferredUndergroundGeometry(target)
 		local env = target and target.mapdata and target.mapdata.Environment
 		local desired = target and target.SuperBigMapDesiredWidthTiles
 		local generator = target and target.SuperBigMapGeneratorWidthTiles
@@ -2890,25 +3158,42 @@ local function PatchDeferredUndergroundAccess(source)
 			done = tostring(target and target.SuperBigMapUndergroundStretchDone),
 			pending = tostring(target and target.SuperBigMapUndergroundStretchPending),
 		})
-		if env ~= "Underground" or not cfg_bool("STRETCH_UNDERGROUND", false)
-			or not expanded_target or target.SuperBigMapUndergroundPrepared == true
-			or target.SuperBigMapUndergroundStretchDone == true then
+		local needs_prepare, decision = NeedsDeferredUndergroundPreparation(target)
+		UndergroundAccessLog("map-slot target resolved", UndergroundAccessState(target, {
+			requested_slot = tostring(map_slot), maps_table = tostring(maps),
+			restored_geometry = tostring(restored_geometry), expanded_target = tostring(expanded_target),
+			needs_prepare = tostring(needs_prepare), decision = tostring(decision),
+		}))
+		if not needs_prepare then
+			UndergroundAccessLog("map-slot gate passing request to original", UndergroundAccessState(target, {
+				decision = tostring(decision), original_switch = tostring(original),
+			}))
 			return original(map_slot, loading_screen, loading_screen_id)
 		end
 
 		-- A second switch request can arrive while the first caller is preparing the map. Wait for
 		-- that authoritative run rather than launching a second one over partially changed grids.
 		if target.SuperBigMapUndergroundStretchRunning == true then
+			UndergroundAccessLog("map-slot gate waiting for active preparation", UndergroundAccessState(target))
 			local wait_msg = Global("WaitMsg")
 			if type(wait_msg) == "function" then
-				wait_msg("SuperBigMapUndergroundExpansionDone", 120000)
+				local wait_result = wait_msg("SuperBigMapUndergroundExpansionDone", 120000)
+				UndergroundAccessLog("map-slot gate active-preparation wait returned", UndergroundAccessState(target, {
+					wait_result = tostring(wait_result),
+				}))
+			else
+				UndergroundAccessLog("map-slot gate cannot wait: WaitMsg missing", UndergroundAccessState(target), "error")
 			end
 			if target.SuperBigMapUndergroundStretchDone == true then
+				UndergroundAccessLog("map-slot gate passing after active preparation completed", UndergroundAccessState(target))
 				return original(map_slot, loading_screen, loading_screen_id)
 			end
 		end
 
 		local function show_failure(reason)
+			UndergroundAccessLog("underground access failure dialog requested", UndergroundAccessState(target, {
+				error = tostring(reason),
+			}), "error")
 			StretchLog("underground access blocked: deferred preparation failed", {
 				map = tostring(target and target.name), error = tostring(reason),
 			})
@@ -2924,6 +3209,7 @@ local function PatchDeferredUndergroundAccess(source)
 
 		if target.SuperBigMapUndergroundStretchFailed
 			or target.SuperBigMapUndergroundPreparationFailed == true then
+			UndergroundAccessLog("map-slot gate blocked by saved failure state", UndergroundAccessState(target), "error")
 			show_failure(target.SuperBigMapUndergroundStretchFailed
 				or "A previous underground preparation attempt failed")
 			return false
@@ -2934,17 +3220,36 @@ local function PatchDeferredUndergroundAccess(source)
 		local open_screen = Global("LoadingScreenOpen")
 		local close_screen = Global("LoadingScreenClose")
 		local wait_render = Global("WaitRenderMode")
+		UndergroundAccessLog("map-slot gate loading-screen decision", UndergroundAccessState(target, {
+			screen_id = tostring(screen_id), screen_open_requested = tostring(screen_open),
+			open_screen = tostring(open_screen), close_screen = tostring(close_screen),
+			wait_render = tostring(wait_render),
+		}))
 		if screen_open and type(open_screen) == "function" then
+			UndergroundAccessLog("opening first-access loading screen", UndergroundAccessState(target, {
+				screen_id = tostring(screen_id),
+			}))
 			open_screen(screen_id, map_slot)
 			if type(wait_render) == "function" then wait_render("ui") end
+			UndergroundAccessLog("first-access loading screen is active", UndergroundAccessState(target, {
+				screen_id = tostring(screen_id),
+			}))
 		else
 			screen_open = false
+			UndergroundAccessLog("first-access loading screen unavailable or suppressed", UndergroundAccessState(target), "warn")
 		end
 
 		SetLoadingPhase("Preparing the underground map for first access")
+		UndergroundAccessLog("invoking complete preparation before map switch", UndergroundAccessState(target))
 		local ok, err = RunUndergroundStretchIfEnabled(target, true)
+		UndergroundAccessLog("complete preparation returned to map-slot gate", UndergroundAccessState(target, {
+			ok = tostring(ok), error = tostring(err),
+		}), ok == true and nil or "error")
 		if ok ~= true then
 			if screen_open then
+				UndergroundAccessLog("closing first-access loading screen after failure", UndergroundAccessState(target, {
+					screen_id = tostring(screen_id),
+				}))
 				if type(close_screen) == "function" then close_screen(screen_id, map_slot) end
 				if type(wait_render) == "function" then wait_render("scene") end
 			end
@@ -2955,8 +3260,19 @@ local function PatchDeferredUndergroundAccess(source)
 		SetLoadingPhase("Opening the completed underground map")
 		-- We already own the screen, so suppress the original's open/close pair and close it only
 		-- after ChangeCurrentMapSlot has switched maps and waited for scene rendering.
+		UndergroundAccessLog("calling original map switch after successful preparation", UndergroundAccessState(target, {
+			original_switch = tostring(original), suppress_original_screen = tostring(screen_open),
+		}))
 		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
+		local get_current_slot = Global("GetCurrentMapSlot")
+		local current_slot = type(get_current_slot) == "function" and SafeCall(get_current_slot) or nil
+		UndergroundAccessLog("original map switch returned", UndergroundAccessState(target, {
+			result = tostring(result), current_slot = tostring(current_slot),
+		}))
 		if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+		UndergroundAccessLog("map-slot gate completed", UndergroundAccessState(target, {
+			screen_closed = tostring(screen_open and type(close_screen) == "function"),
+		}))
 		return result
 	end
 	rawset(_G, "ChangeCurrentMapSlot", wrapper)
@@ -2965,7 +3281,81 @@ local function PatchDeferredUndergroundAccess(source)
 	StretchLog("underground access gate installed", {
 		source = tostring(source or "?"), replaced = tostring(current),
 	})
+	UndergroundAccessLog("map-slot gate installed", {
+		source = tostring(source or "?"), replaced_switch = tostring(current), wrapper = tostring(wrapper),
+	})
+	PatchDeferredUndergroundHudAccess(source)
 	DebugPrint("deferred underground first-access gate installed via " .. tostring(source or "module load"))
+	return true
+end
+
+-- Last-resort safety net for switch routes that bypass both replaceable entry points. It runs
+-- immediately after CurrentMapChangeDone in its own real-time thread, covers the already-current
+-- underground with a loading screen, and completes the exact same atomic preparation pipeline.
+-- The v478 trace proved this boundary is reached even when the generated HUD closure bypasses the
+-- global gate, so deferred work can no longer remain permanently pending and invisible.
+local function HandleDeferredUndergroundMapChange(map_slot, map)
+	local needs_prepare, decision = NeedsDeferredUndergroundPreparation(map)
+	UndergroundAccessLog("CurrentMapChangeDone fallback audit", UndergroundAccessState(map, {
+		map_slot_event = tostring(map_slot), needs_prepare = tostring(needs_prepare),
+		decision = tostring(decision), recovery_scheduled = tostring(map and underground_recovery_maps[map] == true),
+	}))
+	if not needs_prepare then return false end
+	if underground_recovery_maps[map] == true then
+		UndergroundAccessLog("CurrentMapChangeDone fallback already scheduled", UndergroundAccessState(map), "warn")
+		return true
+	end
+	local create_thread = Global("CreateRealTimeThread")
+	if type(create_thread) ~= "function" then
+		UndergroundAccessLog("CurrentMapChangeDone fallback unavailable: CreateRealTimeThread missing",
+			UndergroundAccessState(map), "error")
+		return false
+	end
+	underground_recovery_maps[map] = true
+	UndergroundAccessLog("CurrentMapChangeDone bypass confirmed; scheduling immediate preparation",
+		UndergroundAccessState(map), "warn")
+	create_thread(function()
+		local screen_id = "idSuperBigMapUndergroundFirstAccessRecovery"
+		local open_screen = Global("LoadingScreenOpen")
+		local close_screen = Global("LoadingScreenClose")
+		local wait_render = Global("WaitRenderMode")
+		local screen_open = type(open_screen) == "function"
+		UndergroundAccessLog("fallback preparation thread entered", UndergroundAccessState(map, {
+			screen_id = screen_id, screen_open_available = tostring(screen_open),
+			open_screen = tostring(open_screen), close_screen = tostring(close_screen),
+			wait_render = tostring(wait_render),
+		}))
+		if screen_open then
+			open_screen(screen_id, map_slot)
+			if type(wait_render) == "function" then wait_render("ui") end
+			UndergroundAccessLog("fallback loading screen is active", UndergroundAccessState(map, {
+				screen_id = screen_id,
+			}))
+		end
+		SetLoadingPhase("Preparing the underground map after a bypassed first-access switch")
+		local ok, err = RunUndergroundStretchIfEnabled(map, true)
+		UndergroundAccessLog("fallback complete preparation returned", UndergroundAccessState(map, {
+			ok = tostring(ok), error = tostring(err),
+		}), ok == true and nil or "error")
+		if screen_open and type(close_screen) == "function" then
+			close_screen(screen_id, map_slot)
+			if type(wait_render) == "function" then wait_render("scene") end
+		end
+		underground_recovery_maps[map] = nil
+		if ok ~= true then
+			local create_box = Global("CreateMessageBox")
+			if type(create_box) == "function" then
+				local untranslated = Global("Untranslated")
+				local wrap = type(untranslated) == "function" and untranslated or function(s) return s end
+				pcall(create_box, nil, wrap("Super Big Map"), wrap(
+					"The underground first-access route bypassed its preparation gate, and recovery failed. "
+					.. "Please check the UndergroundAccess debug log.\n\n" .. tostring(err or "Unknown error")))
+			end
+		end
+		UndergroundAccessLog("fallback preparation thread exited", UndergroundAccessState(map, {
+			ok = tostring(ok), screen_closed = tostring(screen_open and type(close_screen) == "function"),
+		}), ok == true and nil or "error")
+	end)
 	return true
 end
 
@@ -2980,6 +3370,7 @@ MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 MapGeneration.PatchPassagePairing = PatchPassagePairing
 MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
+MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
 MapGeneration.ForceFramePassable = ForceFramePassable
@@ -3034,6 +3425,15 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.change_current_map_slot_wrapper = nil
 	State.original_change_current_map_slot = nil
 	State.underground_access_patch_version = nil
+	local hud_class = Engine.ClassTable and Engine.ClassTable("HUDButtonMapSwitch")
+	if type(hud_class) == "table" and State.underground_hud_init_wrapper
+		and hud_class.Init == State.underground_hud_init_wrapper
+		and type(State.original_underground_hud_init) == "function" then
+		hud_class.Init = State.original_underground_hud_init
+	end
+	State.underground_hud_init_wrapper = nil
+	State.original_underground_hud_init = nil
+	State.underground_hud_patch_version = nil
 end
 
 SuperBigMap.MapGeneration = MapGeneration

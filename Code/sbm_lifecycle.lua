@@ -1140,6 +1140,12 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("CurrentMapChangeDone")
 	end
+	-- Safety net for engine/generated-UI switch paths that bypassed the pre-switch gate. The
+	-- handler is diagnostic on every transition and schedules the full deferred preparation only
+	-- when an unprepared expanded underground has already become current.
+	if gen and type(gen.HandleDeferredUndergroundMapChange) == "function" then
+		gen.HandleDeferredUndergroundMapChange(map_slot, map)
+	end
 	local defer_rebuild = gen and type(gen.ShouldDeferStretchRebuilds) == "function"
 		and gen.ShouldDeferStretchRebuilds(map) == true
 	Lifecycle.Apply(map, not defer_rebuild)
