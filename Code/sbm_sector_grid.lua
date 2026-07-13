@@ -50,6 +50,21 @@ do
 	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapExpanded"] == nil) then
 		register("SuperBigMapExpanded", false)
 	end
+	-- Separate persisted completion bit for the on-demand underground pipeline. The allocated
+	-- underground grid is already full-sized before it is stretched, so dimensions alone cannot
+	-- distinguish a pending source-layout map from a completed stretched one after save/load.
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapUndergroundPrepared"] == nil) then
+		register("SuperBigMapUndergroundPrepared", false)
+	end
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapUndergroundDeferredGeometry"] == nil) then
+		register("SuperBigMapUndergroundDeferredGeometry", false)
+	end
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapUndergroundPreparationFailed"] == nil) then
+		register("SuperBigMapUndergroundPreparationFailed", false)
+	end
 end
 
 local function cfg_number(key, default, min_value)

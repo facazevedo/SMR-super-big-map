@@ -126,7 +126,9 @@ end
 -- suppress full-map rebuilds whose results would immediately be discarded by that stretch.
 local function ShouldDeferStretchRebuilds(map)
 	return cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true)
-		and type(map) == "table" and map.SuperBigMapStretchPipelinePending == true
+		and type(map) == "table"
+		and (map.SuperBigMapStretchPipelinePending == true
+			or map.SuperBigMapUndergroundStretchPending == true)
 end
 
 -- Cheap final state refresh after the stretch's authoritative grid rebuilds. Deliberately does
@@ -2512,17 +2514,73 @@ local function SyncMapDataToGrids(map)
 	return true
 end
 
+-- The generation stamps used by the stretch are transient ordinary map fields. Preserve their
+-- primitive values in one MapVar while work is deferred, so saving on the surface and reloading
+-- before first underground access cannot lose the transform geometry and expose a source-layout
+-- underground. Restoring is idempotent and does not overwrite live generation stamps.
+local function RestoreDeferredUndergroundGeometry(map)
+	local g = map and map.SuperBigMapUndergroundDeferredGeometry
+	if type(g) ~= "table" then return false end
+	local fields = {
+		SuperBigMapDesiredWidthTiles = "desired_width_tiles",
+		SuperBigMapDesiredHeightTiles = "desired_height_tiles",
+		SuperBigMapGeneratorWidthTiles = "generator_width_tiles",
+		SuperBigMapGeneratorHeightTiles = "generator_height_tiles",
+		SuperBigMapSourceWidthTiles = "source_width_tiles",
+		SuperBigMapSourceHeightTiles = "source_height_tiles",
+		SuperBigMapSourceWidth = "source_width",
+		SuperBigMapSourceHeight = "source_height",
+	}
+	for field, key in pairs(fields) do
+		if map[field] == nil and type(g[key]) == "number" then map[field] = g[key] end
+	end
+	return true
+end
+
+local function SaveDeferredUndergroundGeometry(map)
+	if not map then return false end
+	map.SuperBigMapUndergroundDeferredGeometry = {
+		desired_width_tiles = map.SuperBigMapDesiredWidthTiles,
+		desired_height_tiles = map.SuperBigMapDesiredHeightTiles,
+		generator_width_tiles = map.SuperBigMapGeneratorWidthTiles,
+		generator_height_tiles = map.SuperBigMapGeneratorHeightTiles,
+		source_width_tiles = map.SuperBigMapSourceWidthTiles,
+		source_height_tiles = map.SuperBigMapSourceHeightTiles,
+		source_width = map.SuperBigMapSourceWidth,
+		source_height = map.SuperBigMapSourceHeight,
+	}
+	return true
+end
+
 -- STRETCH for the UNDERGROUND map (config STRETCH_UNDERGROUND): the same resample pipeline as the
--- surface in its minimal form -- terrain grids + decorations + markers (incl. tunnel markers), no
--- sector-grid work, no start-sector relocation, no density suite yet. Because BOTH maps receive
+-- surface in its underground form -- terrain grids + decorations + markers (incl. tunnel markers),
+-- final buildable/passability grids, and enrichment density normalization. Because BOTH maps receive
 -- the IDENTICAL x(full/source) transform, surface<->underground entrances keep corresponding: the
 -- game spawns an underground passage AT the surface passage's own x,y and links the pair by
 -- object reference. Triggered from PostNewMapLoaded for Environment=="Underground" maps; gates on
 -- the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
-local function RunUndergroundStretchIfEnabled(map)
+local function RunUndergroundStretchIfEnabled(map, force_now)
 	if not cfg_bool("STRETCH_UNDERGROUND", false) then return false end
 	map = map or Global("CurrentMap")
-	if not map or map.SuperBigMapUndergroundStretchDone == true then return false end
+	if not map then return false end
+	RestoreDeferredUndergroundGeometry(map)
+	if map.SuperBigMapUndergroundPrepared == true then
+		map.SuperBigMapUndergroundStretchDone = true
+		map.SuperBigMapUndergroundStretchPending = false
+	end
+	if map.SuperBigMapUndergroundStretchDone == true then
+		return force_now == true and true or false
+	end
+	if map.SuperBigMapUndergroundPreparationFailed == true then
+		return false, map.SuperBigMapUndergroundStretchFailed
+			or "a previous underground preparation attempt failed"
+	end
+	if map.SuperBigMapUndergroundStretchRunning == true then
+		if force_now == true then
+			return false, "underground expansion already running"
+		end
+		return true, "underground expansion already running"
+	end
 	local desired = map.SuperBigMapDesiredWidthTiles
 	local gen_t = map.SuperBigMapGeneratorWidthTiles
 	if not (type(desired) == "number" and type(gen_t) == "number" and desired > gen_t) then
@@ -2531,14 +2589,36 @@ local function RunUndergroundStretchIfEnabled(map)
 		})
 		return false
 	end
+	-- Keep vanilla underground generation eager: this function is called only AFTER vanilla has
+	-- created the underground exits, surface passages, links, and source enrichments. When enabled,
+	-- postpone just the expensive expansion/post-processing while the underground is not current.
+	-- ChangeCurrentMapSlot is wrapped below and forces this complete pipeline before access.
+	local current_map = Global("CurrentMap")
+	if force_now ~= true and cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
+		and current_map ~= map then
+		map.SuperBigMapUndergroundStretchPending = true
+		map.SuperBigMapUndergroundStretchFailed = nil
+		map.SuperBigMapUndergroundPreparationFailed = false
+		SaveDeferredUndergroundGeometry(map)
+		StretchLog("underground stretch: deferred until first access", {
+			desired = desired, generator = gen_t, map = tostring(map.name),
+		})
+		return true
+	end
 	local create_thread = Global("CreateRealTimeThread")
 	local sleep = Global("Sleep")
-	if type(create_thread) ~= "function" or type(sleep) ~= "function" then return false end
-	map.SuperBigMapUndergroundStretchDone = true
+	if force_now ~= true and (type(create_thread) ~= "function" or type(sleep) ~= "function") then
+		return false
+	end
+	map.SuperBigMapUndergroundStretchPending = true
+	map.SuperBigMapUndergroundStretchRunning = true
+	map.SuperBigMapUndergroundStretchFailed = nil
 	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
 		map.SuperBigMapStretchPipelinePending = true
 	end
-	local settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
+	-- A first-access run happens long after vanilla map generation completed, so the original
+	-- readiness settle is unnecessary. The eager startup path retains its proven settle/wakeup.
+	local settle_ms = force_now == true and 0 or math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
 	StretchLog("underground stretch: scheduled", { settle_ms = settle_ms, desired = desired, generator = gen_t })
 	-- LOADING PHASE: keep the loading box up (and the welcome popup hidden) until this
 	-- stretch too has finished -- the box previously came down when the SURFACE branch
@@ -2548,15 +2628,17 @@ local function RunUndergroundStretchIfEnabled(map)
 		pcall(SuperBigMap.ExpansionLoadingBegin)
 		SetLoadingPhase("Expanding the underground map")
 	end
-	local thread = create_thread(function()
+	local function run_pipeline()
 		local loading_profiler = SuperBigMap.LoadingProfiler
 		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
 		local wait_wakeup = Global("WaitWakeup")
-		if cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) and type(wait_wakeup) == "function" then
-			wait_wakeup(settle_ms)
-		else
-			sleep(settle_ms)
+		if settle_ms > 0 then
+			if cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) and type(wait_wakeup) == "function" then
+				wait_wakeup(settle_ms)
+			else
+				sleep(settle_ms)
+			end
 		end
 		underground_stretch_threads[map] = nil
 		if settle_token and type(loading_profiler.End) == "function" then
@@ -2583,6 +2665,9 @@ local function RunUndergroundStretchIfEnabled(map)
 			StretchLog("underground stretch: -> StretchSourceToFull")
 			local ok_s, n_grids = StretchSourceToFull(map, false)
 			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
+			if ok_s ~= true or type(n_grids) ~= "number" or n_grids < 2 then
+				error("underground terrain stretch did not complete its height/type grids")
+			end
 			SpikeAudit(map, "underground post-StretchSourceToFull")
 			if type(ScaleDecorationsToFull) == "function" then
 				SetLoadingPhase("Repositioning underground rocks and decorations")
@@ -2723,15 +2808,152 @@ local function RunUndergroundStretchIfEnabled(map)
 				profiler.Step("stretch optimization: fallback full rebuild", { phase = "underground exit" }, map)
 			end
 		end
-		StretchLog("underground stretch: DONE", { ok = ok_branch })
-		DebugPrint("underground stretch complete")
+		if ok_branch then
+			map.SuperBigMapUndergroundStretchDone = true
+			map.SuperBigMapUndergroundPrepared = true
+			map.SuperBigMapExpanded = true
+			map.SuperBigMapUndergroundDeferredGeometry = false
+			map.SuperBigMapUndergroundStretchPending = false
+			map.SuperBigMapUndergroundStretchFailed = nil
+			map.SuperBigMapUndergroundPreparationFailed = false
+		else
+			-- Never expose a half-processed underground and never retry automatically: several
+			-- stretch stages are intentionally one-way, so repeating after a partial failure could
+			-- scale terrain or objects twice. The access gate reports the failure and stays closed.
+			map.SuperBigMapUndergroundStretchPending = false
+			map.SuperBigMapUndergroundStretchFailed = tostring(branch_err or "unknown error")
+			map.SuperBigMapUndergroundPreparationFailed = true
+		end
+		map.SuperBigMapUndergroundStretchRunning = false
+		StretchLog("underground stretch: DONE", {
+			ok = ok_branch, first_access = force_now == true,
+			error = ok_branch and nil or tostring(branch_err),
+		})
+		DebugPrint(ok_branch and "underground stretch complete" or "underground stretch failed; access remains blocked")
+		local msg = Global("Msg")
+		if type(msg) == "function" then
+			pcall(msg, "SuperBigMapUndergroundExpansionDone", map, ok_branch, branch_err)
+		end
 		-- End of this loading phase (single exit point of the thread; every step above is
 		-- pcall-guarded, so this always runs).
 		if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 			pcall(SuperBigMap.ExpansionLoadingEnd)
 		end
-	end)
+		return ok_branch == true, branch_err
+	end
+	if force_now == true then
+		return run_pipeline()
+	end
+	local thread = create_thread(run_pipeline)
 	underground_stretch_threads[map] = thread
+	return true
+end
+
+-- FIRST-ACCESS GATE. Every vanilla HUD/object route that changes between already-loaded map
+-- slots funnels through ChangeCurrentMapSlot. Hold that one call before it emits CurrentMapChange
+-- or exposes the target map, run the complete deferred underground pipeline, and switch only on
+-- success. The normal map-switch loading screen is opened BEFORE the heavy work and kept open
+-- across the eventual switch. No terrain flatten/sculpt operation is added here: entrance objects
+-- are moved only by the existing post-stretch marker/visual pass against final terrain.
+local function PatchDeferredUndergroundAccess()
+	local State = SuperBigMap.State
+	local current = Global("ChangeCurrentMapSlot")
+	if type(current) ~= "function" then return false end
+	if current == State.change_current_map_slot_wrapper
+		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
+		return true
+	end
+	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
+	if current == State.change_current_map_slot_wrapper
+		and type(State.original_change_current_map_slot) == "function" then
+		current = State.original_change_current_map_slot
+		rawset(_G, "ChangeCurrentMapSlot", current)
+	end
+	State.original_change_current_map_slot = current
+	local wrapper = function(map_slot, loading_screen, loading_screen_id)
+		local original = State.original_change_current_map_slot
+		if type(original) ~= "function" then return end
+		local maps = Global("Maps")
+		local target = type(maps) == "table" and maps[map_slot] or nil
+		RestoreDeferredUndergroundGeometry(target)
+		local env = target and target.mapdata and target.mapdata.Environment
+		local desired = target and target.SuperBigMapDesiredWidthTiles
+		local generator = target and target.SuperBigMapGeneratorWidthTiles
+		local expanded_target = type(desired) == "number" and type(generator) == "number"
+			and desired > generator
+		if env ~= "Underground" or not cfg_bool("STRETCH_UNDERGROUND", false)
+			or not expanded_target or target.SuperBigMapUndergroundPrepared == true
+			or target.SuperBigMapUndergroundStretchDone == true then
+			return original(map_slot, loading_screen, loading_screen_id)
+		end
+
+		-- A second switch request can arrive while the first caller is preparing the map. Wait for
+		-- that authoritative run rather than launching a second one over partially changed grids.
+		if target.SuperBigMapUndergroundStretchRunning == true then
+			local wait_msg = Global("WaitMsg")
+			if type(wait_msg) == "function" then
+				wait_msg("SuperBigMapUndergroundExpansionDone", 120000)
+			end
+			if target.SuperBigMapUndergroundStretchDone == true then
+				return original(map_slot, loading_screen, loading_screen_id)
+			end
+		end
+
+		local function show_failure(reason)
+			StretchLog("underground access blocked: deferred preparation failed", {
+				map = tostring(target and target.name), error = tostring(reason),
+			})
+			local create_box = Global("CreateMessageBox")
+			if type(create_box) == "function" then
+				local untranslated = Global("Untranslated")
+				local wrap = type(untranslated) == "function" and untranslated or function(s) return s end
+				pcall(create_box, nil, wrap("Super Big Map"), wrap(
+					"The underground could not be prepared safely, so access remains blocked. "
+					.. "Please check the Super Big Map debug log.\n\n" .. tostring(reason or "Unknown error")))
+			end
+		end
+
+		if target.SuperBigMapUndergroundStretchFailed
+			or target.SuperBigMapUndergroundPreparationFailed == true then
+			show_failure(target.SuperBigMapUndergroundStretchFailed
+				or "A previous underground preparation attempt failed")
+			return false
+		end
+
+		local screen_id = loading_screen_id or "idChangeCurrentMapSlot"
+		local screen_open = loading_screen ~= false
+		local open_screen = Global("LoadingScreenOpen")
+		local close_screen = Global("LoadingScreenClose")
+		local wait_render = Global("WaitRenderMode")
+		if screen_open and type(open_screen) == "function" then
+			open_screen(screen_id, map_slot)
+			if type(wait_render) == "function" then wait_render("ui") end
+		else
+			screen_open = false
+		end
+
+		SetLoadingPhase("Preparing the underground map for first access")
+		local ok, err = RunUndergroundStretchIfEnabled(target, true)
+		if ok ~= true then
+			if screen_open then
+				if type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+				if type(wait_render) == "function" then wait_render("scene") end
+			end
+			show_failure(err or target.SuperBigMapUndergroundStretchFailed or "Preparation did not complete")
+			return false
+		end
+
+		SetLoadingPhase("Opening the completed underground map")
+		-- We already own the screen, so suppress the original's open/close pair and close it only
+		-- after ChangeCurrentMapSlot has switched maps and waited for scene rendering.
+		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
+		if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+		return result
+	end
+	rawset(_G, "ChangeCurrentMapSlot", wrapper)
+	State.change_current_map_slot_wrapper = wrapper
+	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
+	DebugPrint("deferred underground first-access gate installed")
 	return true
 end
 
@@ -2745,6 +2967,7 @@ MapGeneration.AttachPendingMapState = AttachPendingMapState
 MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 MapGeneration.PatchPassagePairing = PatchPassagePairing
+MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
 MapGeneration.ForceFramePassable = ForceFramePassable
@@ -2753,6 +2976,7 @@ MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 function MapGeneration.ApplyModBehavior()
 	PatchRandomMapGenerator()
 	PatchPassagePairing()
+	PatchDeferredUndergroundAccess()
 end
 
 -- Restoring only affects FUTURE generation; maps already tiled stay tiled.
@@ -2790,6 +3014,14 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	State.passage_link_wrapper = nil
 	State.original_passage_link = nil
+	if State.change_current_map_slot_wrapper
+		and Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper
+		and type(State.original_change_current_map_slot) == "function" then
+		rawset(_G, "ChangeCurrentMapSlot", State.original_change_current_map_slot)
+	end
+	State.change_current_map_slot_wrapper = nil
+	State.original_change_current_map_slot = nil
+	State.underground_access_patch_version = nil
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -2809,6 +3041,7 @@ if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
 	-- wiping any wrapper; Lifecycle.Enable early-returns since State.active persisted, so a
 	-- reinstall must not depend on it). Self-verifying, so repeat calls are no-ops.
 	PatchPassagePairing()
+	PatchDeferredUndergroundAccess()
 end
 
 DebugPrint("map generation module loaded")

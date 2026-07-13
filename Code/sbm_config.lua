@@ -584,8 +584,15 @@ config.StretchRelocateStartSector = true
 -- x(full/source) transform as the surface, so surface<->underground entrances correspond
 -- perfectly (the game spawns an underground passage AT the surface passage's own x,y and links
 -- the pair by object reference -- equal transforms on both maps preserve that correspondence).
--- No underground sector-grid or density work yet.
+-- Underground enrichment density is restored after the final buildable grid exists.
 config.StretchUnderground = true
+-- Defer ONLY the expensive underground stretch/post-processing until the player first opens
+-- the underground. Vanilla underground generation still runs during new-game loading, so its
+-- exits, surface passages, links, and original enrichments exist from the beginning. The first
+-- underground map switch is held behind the normal map loading screen until the complete atomic
+-- pipeline finishes: terrain stretch, final grids, entrance/marker movement, and all top-ups.
+-- This avoids exposing an intermediate underground with stale heights or missing resources.
+config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP (testing): unlock the underground map VIEW from the start of the game, so the stretched
 -- underground can be inspected immediately via the map switcher (vanilla unlocks it later).
 -- Turn OFF for release.
@@ -1053,6 +1060,7 @@ C.STRETCH_SCALE_MARKERS = as_bool(config.StretchScaleMarkers)
 C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
 C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = as_bool(config.StretchUnderground)
+C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNLOCK_UNDERGROUND_VIEW_AT_START = as_bool(config.UnlockUndergroundViewAtStart)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
