@@ -1331,142 +1331,6 @@ local function ScaleMarkersToFull(map, debug)
 	return moved
 end
 
--- Canonical passage pairing. ElevatorPassage:Link records the UNDERGROUND endpoint's native
--- source coordinate on both linked objects before either map stretches. Compute the expanded
--- coordinate ONCE, snap it to one final hex, and reuse that exact X/Y on both maps. This avoids
--- independent object-position scaling/rounding drifting the pair apart. The surface endpoint is
--- still allowed to choose the nearest valid footprint after its FINAL terrain/buildable rebuild;
--- the underground endpoint always keeps the canonical hex.
-local function RecordCanonicalEntrancePair(surface_obj, under_obj, surface_map)
-	if not (surface_obj and under_obj and surface_map) then return false end
-	local pos = ObjectPosition(under_obj)
-	local point_fn = Global("point")
-	if not pos or type(point_fn) ~= "function" then return false end
-	local source_x, source_y = PointXY(pos)
-	local source_tiles = surface_map.SuperBigMapSourceWidthTiles
-		or surface_map.SuperBigMapGeneratorWidthTiles
-	local full_tiles = surface_map.SuperBigMapDesiredWidthTiles
-		or (surface_map.mapdata and surface_map.mapdata.Width)
-	if not (type(source_x) == "number" and type(source_y) == "number"
-		and type(source_tiles) == "number" and source_tiles > 0
-		and type(full_tiles) == "number" and full_tiles > source_tiles) then
-		return false
-	end
-	local scale = (full_tiles + 0.0) / source_tiles
-	local final_pos = point_fn(
-		math.floor(source_x * scale + 0.5),
-		math.floor(source_y * scale + 0.5))
-	local snap_hex = Global("SnapWorldToHex")
-	if type(snap_hex) == "function" then
-		local ok_snap, snapped = pcall(snap_hex, final_pos)
-		if ok_snap and snapped then final_pos = snapped end
-	end
-	local final_x, final_y = PointXY(final_pos)
-	if type(final_x) ~= "number" or type(final_y) ~= "number" then return false end
-	for _, obj in ipairs({ surface_obj, under_obj }) do
-		obj.SuperBigMapCanonicalEntranceSourceX = source_x
-		obj.SuperBigMapCanonicalEntranceSourceY = source_y
-		obj.SuperBigMapCanonicalEntranceFinalX = final_x
-		obj.SuperBigMapCanonicalEntranceFinalY = final_y
-	end
-	surface_obj.SuperBigMapCanonicalEntranceRole = "surface"
-	under_obj.SuperBigMapCanonicalEntranceRole = "underground"
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Pairing", "canonical entrance coordinate recorded before expansion", {
-			source = tostring(source_x) .. "," .. tostring(source_y),
-			final = tostring(final_x) .. "," .. tostring(final_y),
-			scale = tostring(scale),
-			surface_class = tostring(surface_obj.class or "?"),
-			underground_class = tostring(under_obj.class or "?"),
-		})
-	end
-	return true, final_x, final_y
-end
-
--- Search outward from the canonical FINAL surface hex using the engine's native hex-grid
--- traversal. Every candidate validates the complete Elevator footprint against the final
--- buildable z-grid and object obstruction grid. Exact hex is therefore chosen whenever valid;
--- otherwise the first accepted result is the closest valid final hex.
-local function ResolveCanonicalSurfaceEntrance(map, obj, target_x, target_y)
-	local point_fn = Global("point")
-	local native_find = Global("HexGridFindBuildable")
-	local world_to_hex = Global("WorldToHex")
-	local hex_to_world = Global("HexToWorld")
-	local validate_shape = Global("ValidateEachShapeHexPos")
-	local get_unbuildable = Global("buildUnbuildableZ")
-	local get_shape = Global("GetExtendedSpawnShape")
-	local buildable = map and map.buildable
-	local hex_grid = map and map.object_hex_grid
-	if not (type(point_fn) == "function" and type(native_find) == "function"
-		and type(world_to_hex) == "function" and type(hex_to_world) == "function"
-		and type(validate_shape) == "function" and type(get_unbuildable) == "function"
-		and type(get_shape) == "function" and buildable and buildable.z_grid
-		and type(buildable.GetZ) == "function") then
-		return target_x, target_y, false, "api unavailable"
-	end
-	local ok_shape, shape = pcall(get_shape, "Elevator")
-	local ok_unbuildable, unbuildable_z = pcall(get_unbuildable)
-	local ok_target, target_q, target_r = pcall(world_to_hex, point_fn(target_x, target_y))
-	if not (ok_shape and shape and ok_unbuildable and type(unbuildable_z) == "number"
-		and ok_target and type(target_q) == "number" and type(target_r) == "number") then
-		return target_x, target_y, false, "shape/target unavailable"
-	end
-	local ok_angle, angle = pcall(obj.GetAngle, obj)
-	angle = (ok_angle and angle) or 0
-	local candidates_checked, footprint_hexes_checked = 0, 0
-	local function candidate_rejected(q, r)
-		candidates_checked = candidates_checked + 1
-		local candidate_z = false
-		local function footprint_hex_valid(x, y)
-			footprint_hexes_checked = footprint_hexes_checked + 1
-			local z = buildable:GetZ(x, y)
-			if z == unbuildable_z then return false end
-			candidate_z = candidate_z or z
-			if z ~= candidate_z then return false end
-			local obstructions = hex_grid and hex_grid:GetBuildObstructions(x, y)
-			if obstructions then
-				for _, obstruction in ipairs(obstructions) do
-					if obstruction ~= obj then return false end
-				end
-			end
-			return true
-		end
-		local candidate_pos = point_fn(hex_to_world(q, r))
-		return validate_shape(shape, candidate_pos, angle, footprint_hex_valid) ~= true
-	end
-	local profiler = SuperBigMap.LoadingProfiler
-	local token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
-		"entrance alignment: final canonical surface search", {
-			target_x = target_x, target_y = target_y,
-			algorithm = "single HexGridFindBuildable + final footprint",
-		}, map) or false
-	local ok_find, found_x, found_y, result_q, result_r = pcall(function()
-		local q, r = native_find(target_q, target_r, hex_grid,
-			buildable.z_grid, unbuildable_z, candidate_rejected)
-		if q == nil then return end
-		local x, y = hex_to_world(q, r)
-		return x, y, q, r
-	end)
-	local found = ok_find and type(found_x) == "number" and type(found_y) == "number"
-	local hex_distance
-	if found then
-		local dq, dr = result_q - target_q, result_r - target_r
-		hex_distance = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
-	end
-	if token and type(profiler.End) == "function" then
-		profiler.End(token, {
-			found = found, result_x = found and found_x or nil,
-			result_y = found and found_y or nil, hex_distance = hex_distance,
-			candidates_checked = candidates_checked,
-			footprint_hexes_checked = footprint_hexes_checked,
-			error = not ok_find and tostring(found_x) or nil,
-		}, found)
-	end
-	if found then return found_x, found_y, hex_distance == 0, hex_distance end
-	return target_x, target_y, false, ok_find and "not found" or tostring(found_x)
-end
-
 -- STRETCH step 3b (entrance VISUALS): the Align diagnostics proved the tunnel MARKERS on both
 -- maps already correspond after the stretch (both moved x1.333), but the entrances the player
 -- SEES stayed at the pre-stretch positions: the decoration pass deliberately SKIPS every
@@ -1512,39 +1376,11 @@ local function MoveEntranceVisualsToScale(map)
 		if not pos then return end
 		local ox, oy = PointXY(pos)
 		if type(ox) ~= "number" or type(oy) ~= "number" then return end
-		local canonical = type(obj.SuperBigMapCanonicalEntranceFinalX) == "number"
-			and type(obj.SuperBigMapCanonicalEntranceFinalY) == "number"
 		-- Only objects still inside the SOURCE region need moving (idempotence: an already-moved
-		-- or frame-placed object lies beyond it on at least one axis). A canonical linked passage
-		-- is the exception: vanilla's random fallback can place the surface endpoint in the frame,
-		-- but the stored underground coordinate must still override that temporary position.
-		if not canonical and (ox >= src_w or oy >= src_w) then return end
+		-- or frame-placed object lies beyond it on at least one axis).
+		if ox >= src_w or oy >= src_w then return end
 		local nx = math.floor(ox * scale + 0.5)
 		local ny = math.floor(oy * scale + 0.5)
-		if canonical then
-			nx = obj.SuperBigMapCanonicalEntranceFinalX
-			ny = obj.SuperBigMapCanonicalEntranceFinalY
-			local environment = map.mapdata and map.mapdata.Environment
-			if obj.SuperBigMapCanonicalEntranceRole == "surface" or environment == "Surface" then
-				local exact, distance_or_reason
-				nx, ny, exact, distance_or_reason = ResolveCanonicalSurfaceEntrance(map, obj, nx, ny)
-				obj.SuperBigMapCanonicalEntranceSurfaceExact = exact == true
-				obj.SuperBigMapCanonicalEntranceSurfaceHexDistance = distance_or_reason
-				if obj.other then
-					obj.other.SuperBigMapCanonicalEntranceSurfaceX = nx
-					obj.other.SuperBigMapCanonicalEntranceSurfaceY = ny
-				end
-				AlignLog("canonical final surface footprint resolved", {
-					class = tostring(obj.class or "?"),
-					canonical = tostring(obj.SuperBigMapCanonicalEntranceFinalX) .. ","
-						.. tostring(obj.SuperBigMapCanonicalEntranceFinalY),
-					resolved = tostring(nx) .. "," .. tostring(ny),
-					exact = exact == true, hex_distance = tostring(distance_or_reason),
-				})
-			end
-			obj.SuperBigMapCanonicalEntranceAppliedX = nx
-			obj.SuperBigMapCanonicalEntranceAppliedY = ny
-		end
 		local np = point_fn(nx, ny)
 		-- Relief-aware Z (same scheme as the decor pass): reproduce the annotated pre-stretch
 		-- ground relationship, scaled, on the actual stretched terrain; fall back to a snap.
@@ -1676,8 +1512,8 @@ local function MoveEntranceVisualsToScale(map)
 		AlignLog("entrance visual moved", {
 			via = via, class = tostring(obj.class or "?"),
 			from = tostring(ox) .. "," .. tostring(oy),
-			to = tostring(nx) .. "," .. tostring(ny),
-			canonical = canonical, ok = ok_set, rehexed = rehexed,
+			to = tostring(math.floor(ox * scale + 0.5)) .. "," .. tostring(math.floor(oy * scale + 0.5)),
+			ok = ok_set, rehexed = rehexed,
 		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
@@ -2606,7 +2442,6 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
-	RecordCanonicalEntrancePair = RecordCanonicalEntrancePair,
 	AuditFloatingObjects = AuditFloatingObjects,
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,

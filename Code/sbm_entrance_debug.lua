@@ -195,17 +195,6 @@ local function DescribeObject(map, obj, index, phase)
 		sector_row = sector_row, angle = tostring(angle), entity = tostring(entity),
 		is_placed = tostring(obj.is_placed), permanent = tostring(obj.permanent),
 		quadrant_clone = tostring(obj.SuperBigMapQuadrantClone), visuals_moved = tostring(obj.SuperBigMapEntranceVisualsMoved),
-		canonical_role = tostring(obj.SuperBigMapCanonicalEntranceRole),
-		canonical_source_x = tostring(obj.SuperBigMapCanonicalEntranceSourceX),
-		canonical_source_y = tostring(obj.SuperBigMapCanonicalEntranceSourceY),
-		canonical_final_x = tostring(obj.SuperBigMapCanonicalEntranceFinalX),
-		canonical_final_y = tostring(obj.SuperBigMapCanonicalEntranceFinalY),
-		canonical_applied_x = tostring(obj.SuperBigMapCanonicalEntranceAppliedX),
-		canonical_applied_y = tostring(obj.SuperBigMapCanonicalEntranceAppliedY),
-		canonical_surface_x = tostring(obj.SuperBigMapCanonicalEntranceSurfaceX),
-		canonical_surface_y = tostring(obj.SuperBigMapCanonicalEntranceSurfaceY),
-		canonical_surface_exact = tostring(obj.SuperBigMapCanonicalEntranceSurfaceExact),
-		canonical_surface_hex_distance = tostring(obj.SuperBigMapCanonicalEntranceSurfaceHexDistance),
 	}
 	for k, v in pairs(LinkedFacts(obj, x, y)) do data[k] = v end
 	Log("object", data)
