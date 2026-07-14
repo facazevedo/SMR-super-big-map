@@ -256,16 +256,6 @@ local function ExpandBarColor()
 	return 4292879835
 end
 
-local EXPAND_BAR_X = 905
-local EXPAND_BAR_Y = 2072
-local EXPAND_BAR_LENGTH = 217
-
-local function EnsureUnderlineTuneDefaults(button)
-	State.pregame_underline_x = EXPAND_BAR_X
-	State.pregame_underline_y = EXPAND_BAR_Y
-	State.pregame_underline_length = EXPAND_BAR_LENGTH
-end
-
 local function IsAlive(win)
 	return win and win.window_state ~= "destroying"
 end
@@ -282,6 +272,40 @@ local function ExpandBarState(dialog)
 		State.pregame_expand_bar = info
 	end
 	return info
+end
+
+-- Anchor the selection bar to the live action button rather than fixed screen coordinates.
+-- Other landing-screen mods can rebuild and resize the toolbar at any time, moving EXPAND MAP.
+local function PositionExpandBar(dialog, bar, button)
+	button = button or ResolveExpandButton(dialog)
+	if not button or type(bar) ~= "table" or not IsAlive(bar.holder)
+		or not IsAlive(bar.track) or not IsAlive(bar.fill) then
+		return false
+	end
+	local box = button.box
+	if not box or type(box.minx) ~= "function" or type(box.maxy) ~= "function"
+		or type(box.sizex) ~= "function" or type(bar.holder.SetBox) ~= "function" then
+		return false
+	end
+	local line_height = 8
+	local x = box:minx()
+	local y = box:maxy() - 10
+	local length = math.max(1, box:sizex())
+	State.pregame_underline_x = x
+	State.pregame_underline_y = y
+	State.pregame_underline_length = length
+	SafeCall(bar.holder.SetBox, bar.holder, x, y - 10, length, line_height + 20, "dont-move")
+	SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
+	SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
+	local geometry_sig = table.concat({ BoxText(box), tostring(x), tostring(y), tostring(length) }, "|")
+	if State.pregame_expand_bar_geometry_sig ~= geometry_sig then
+		State.pregame_expand_bar_geometry_sig = geometry_sig
+		ToggleLog("live Expand underline anchored", {
+			button_box = BoxText(box), holder_box = BoxText(bar.holder.box),
+			track_box = BoxText(bar.track.box), x = x, y = y, length = length,
+		})
+	end
+	return button
 end
 
 local function DeleteOldUnderline(dialog)
@@ -359,14 +383,27 @@ end
 -- and scanning. A one-time compatibility hook can therefore be replaced after the landing dialog
 -- opens. Reapply the public positioning helper from the live layout watcher using EXPAND MAP as
 -- its measurement anchor; this always measures the adjacent EXPAND->START gap.
-local function PositionFilterInfoBesideStart(dialog)
+local function PositionFilterInfoBesideStart(dialog, expand)
 	local fls = Global("FilterLandingSpots")
 	local info = type(fls) == "table" and fls.Info or nil
 	local position = type(info) == "table" and info.PositionInBar or nil
 	if type(position) ~= "function" then return false end
-	local expand = ResolveExpandButton(dialog)
+	expand = expand or ResolveExpandButton(dialog)
 	if not expand then return false end
 	SafeCall(position, expand)
+	local start = ResolveStartButton(dialog)
+	local eb, sb = expand.box, start and start.box
+	local gap
+	if eb and sb and type(eb.maxx) == "function" and type(sb.minx) == "function" then
+		gap = sb:minx() - eb:maxx()
+	end
+	local layout_sig = BoxText(eb) .. "|" .. BoxText(sb) .. "|" .. tostring(gap)
+	if State.pregame_filter_info_layout_sig ~= layout_sig then
+		State.pregame_filter_info_layout_sig = layout_sig
+		ToggleLog("live Filter Info re-anchor applied", {
+			expand_box = BoxText(eb), start_box = BoxText(sb), adjacent_gap = gap,
+		})
+	end
 	return true
 end
 
@@ -390,7 +427,8 @@ local function StartExpandBarWatcher()
 			if type(info) ~= "table" or not IsAlive(info.holder) then
 				break   -- bar gone (left the landing screen); ApplyExpandUnderline restarts it
 			end
-			PositionFilterInfoBesideStart(info.dialog)
+			local expand = PositionExpandBar(info.dialog, info)
+			PositionFilterInfoBesideStart(info.dialog, expand)
 			local visible = IsSelected() and LandingScreenInteractive(info.dialog)
 			for _, win in ipairs({ info.holder, info.track, info.fill }) do
 				if IsAlive(win) and type(win.SetVisible) == "function" then
@@ -411,7 +449,6 @@ ApplyExpandUnderline = function(dialog)
 		return false
 	end
 	local color = ExpandBarColor()
-	EnsureUnderlineTuneDefaults(button)
 	local bar = EnsureExpandBar(dialog, button)
 	if not bar then
 		ToggleLog("expand bar skipped: missing windows")
@@ -427,16 +464,7 @@ ApplyExpandUnderline = function(dialog)
 	else
 		bar.fill.Background = color
 	end
-	if button.box and type(button.box.minx) == "function" and type(button.box.maxy) == "function"
-		and type(button.box.sizex) == "function" and type(bar.holder.SetBox) == "function" then
-		local line_height = 8
-		local x = State.pregame_underline_x or button.box:minx()
-		local y = State.pregame_underline_y or button.box:maxy() - 10
-		local length = math.max(1, State.pregame_underline_length or button.box:sizex())
-		SafeCall(bar.holder.SetBox, bar.holder, x, y - 10, length, line_height + 20, "dont-move")
-		SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
-		SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
-	end
+	PositionExpandBar(dialog, bar, button)
 	local visible = IsSelected() and LandingScreenInteractive(dialog)
 	for _, win in ipairs({ bar.holder, bar.track, bar.fill }) do
 		if IsAlive(win) then
