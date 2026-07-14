@@ -392,44 +392,6 @@ local function LandingScreenInteractive(dialog)
 	return type(dialog.IsWithin) == "function" and dialog:IsWithin(modal) == true
 end
 
--- Filter Landing Spots rebuilds its split action button when entering filter mode, relabeling,
--- and scanning. A one-time compatibility hook can therefore be replaced after the landing dialog
--- opens. Reapply the public positioning helper from the live layout watcher using EXPAND MAP as
--- its measurement anchor; this always measures the adjacent EXPAND->START gap.
-local function PositionFilterInfoBesideStart(dialog, expand)
-	local fls = Global("FilterLandingSpots")
-	local info = type(fls) == "table" and fls.Info or nil
-	local position = type(info) == "table" and info.PositionInBar or nil
-	if type(position) ~= "function" then
-		local reason = type(fls) ~= "table" and "FilterLandingSpots global unavailable"
-			or type(info) ~= "table" and "FilterLandingSpots.Info unavailable"
-			or "FilterLandingSpots.Info.PositionInBar unavailable"
-		if State.pregame_filter_info_api_state ~= reason then
-			State.pregame_filter_info_api_state = reason
-			ToggleLog("Filter Info compatibility API unavailable", { reason = reason })
-		end
-		return false
-	end
-	State.pregame_filter_info_api_state = "available"
-	expand = expand or ResolveExpandButton(dialog)
-	if not expand then return false end
-	SafeCall(position, expand)
-	local start = ResolveStartButton(dialog)
-	local eb, sb = expand.box, start and start.box
-	local gap
-	if eb and sb and type(eb.maxx) == "function" and type(sb.minx) == "function" then
-		gap = sb:minx() - eb:maxx()
-	end
-	local layout_sig = BoxText(eb) .. "|" .. BoxText(sb) .. "|" .. tostring(gap)
-	if State.pregame_filter_info_layout_sig ~= layout_sig then
-		State.pregame_filter_info_layout_sig = layout_sig
-		ToggleLog("live Filter Info re-anchor applied", {
-			expand_box = BoxText(eb), start_box = BoxText(sb), adjacent_gap = gap,
-		})
-	end
-	return true
-end
-
 -- Keep the expand-underline bar's visibility synced to (selected AND landing screen interactive)
 -- while it exists, so it hides the instant a modal popup (Custom coordinates, etc.) covers the
 -- EXPAND MAP button and re-shows when the popup closes. Runs only during the pregame landing
@@ -450,8 +412,7 @@ local function StartExpandBarWatcher()
 			if type(info) ~= "table" or not IsAlive(info.holder) then
 				break   -- bar gone (left the landing screen); ApplyExpandUnderline restarts it
 			end
-			local expand = PositionExpandBar(info.dialog, info)
-			PositionFilterInfoBesideStart(info.dialog, expand)
+			PositionExpandBar(info.dialog, info)
 			local visible = IsSelected() and LandingScreenInteractive(info.dialog)
 			for _, win in ipairs({ info.holder, info.track, info.fill }) do
 				if IsAlive(win) and type(win.SetVisible) == "function" then
@@ -539,58 +500,6 @@ local function ReorderLandingActions(dialog)
 	SetSortKey(ActionById(dialog, "start"), "050")
 end
 
--- Filter Landing Spots positions its separate Info icon after START by measuring the gap from
--- its own action button to START. With EXPAND MAP between those actions, that measurement also
--- includes the entire Expand button and pushes Info far to the right. Keep the other mod intact,
--- but substitute our adjacent Expand button whenever its PositionInBar helper measures the gap;
--- the resulting START->Info distance then matches the normal EXPAND->START action spacing.
-local function ExpandButtonBesideFilterBar(bar)
-	local toolbar = bar and bar.parent
-	local resolve = toolbar and toolbar.ResolveId
-	if type(resolve) == "function" then
-		local ok, button = pcall(resolve, toolbar, "idsuper_big_map_expand")
-		if ok and button then return button end
-	end
-	return false
-end
-
-local function PatchFilterInfoPositioning(dialog)
-	local fls = Global("FilterLandingSpots")
-	local info = type(fls) == "table" and fls.Info or nil
-	local live = type(info) == "table" and info.PositionInBar or nil
-	if type(live) ~= "function" then return false end
-	if live == State.pregame_filter_info_position_wrapper then
-		local expand = ResolveExpandButton(dialog)
-		if expand then SafeCall(live, expand) end
-		return true
-	end
-
-	local original = live
-	local wrapper = function(bar, ...)
-		return original(ExpandButtonBesideFilterBar(bar) or bar, ...)
-	end
-	State.pregame_filter_info_position_table = info
-	State.pregame_filter_info_position_original = original
-	State.pregame_filter_info_position_wrapper = wrapper
-	info.PositionInBar = wrapper
-
-	local expand = ResolveExpandButton(dialog)
-	if expand then SafeCall(wrapper, expand) end
-	return true
-end
-
-local function RestoreFilterInfoPositioning()
-	local info = State.pregame_filter_info_position_table
-	local wrapper = State.pregame_filter_info_position_wrapper
-	if type(info) == "table" and type(wrapper) == "function"
-		and info.PositionInBar == wrapper then
-		info.PositionInBar = State.pregame_filter_info_position_original
-	end
-	State.pregame_filter_info_position_table = nil
-	State.pregame_filter_info_position_original = nil
-	State.pregame_filter_info_position_wrapper = nil
-end
-
 local function RefreshActions(host)
 	if not host or type(host.UpdateActionViews) ~= "function" then return end
 	ToggleLog("refresh actions", {
@@ -617,7 +526,6 @@ local function InstallLandingDialogAction(dialog)
 	local action_present = ActionById(dialog, "super_big_map_expand") ~= nil
 	if action_present then
 		ReorderLandingActions(dialog)
-		PatchFilterInfoPositioning(dialog)
 		RefreshActions(dialog)
 		ToggleLog("InstallLandingDialogAction: action already present -- skip", {
 			dialog = tostring(dialog.class or dialog.Id or "nil"),
@@ -676,7 +584,6 @@ local function InstallLandingDialogAction(dialog)
 
 	dialog.SuperBigMapExpandActionInstalled = true
 	ReorderLandingActions(dialog)
-	PatchFilterInfoPositioning(dialog)
 	UpdateDialogExpandActionLabel(dialog)
 	RefreshActions(dialog)
 	return true
@@ -783,7 +690,6 @@ end
 
 function PregameToggle.RestoreVanillaBehavior()
 	RestoreLandingDialog()
-	RestoreFilterInfoPositioning()
 	SetSelected(false, "restore")
 	SetStartArmed(false, "restore")
 end
