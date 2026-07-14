@@ -32,18 +32,20 @@
 --
 -- FIX (terrain-safe, reversible): the border and spacing knobs are PLACEMENT-ONLY --
 -- none of them feed gen_zone, the prefab pass, or the heightmap, so the terrain is
--- shaped exactly as it is today. Just before the generator runs on a mod-expanded
--- map we:
---   * measure gen_zone coverage the same way the generator builds it (the non-Border
---     entries of self.texture_setup over the type grid, restricted to the generated
---     span), then
+-- shaped exactly as it is today. At the late surface PlaceAnomalies boundary we:
+--   * consume the exact gen_zone/play_zone areas captured from the native generator
+--     environment before any placement layer erodes those grids, then
 --   * zero the per-layer deposit/anomaly borders (self.DepBorder*), and
 --   * scale spacing/repulse (self.*Spacing / self.*Repulse* and the shared
---     Presets.ResourcePreset.Default *Repulse*/*Spacing) by sqrt(coverage) -- area
---     scales with spacing^2, so sqrt(coverage) seats the full fixed count in the
---     coverage-fraction of area.
--- Originals are snapshotted and restored immediately after DoGenerate returns
--- (idempotent, single synchronous generation thread). Every scaled value is rounded
+--     Presets.ResourcePreset.Default *Repulse*) by the smaller of
+--     sqrt(coverage) and the known-safe scale cap. Area coverage supplies useful
+--     diagnostics, while the cap also accounts for fragmentation and sequential
+--     cross-layer erosion that a scalar coverage ratio cannot represent.
+--   * cap only self.AnomalySpacing slightly lower, because TechUnlock, Event, and
+--     FreeTech share one destructively-eroded native mask. Cross-resource anomaly
+--     repulsion and every resource-layer value retain the base placement scale.
+-- Originals are snapshotted and restored when PlaceAnomalies returns (idempotent,
+-- single synchronous generation thread). Every scaled value is rounded
 -- to a multiple of work_step (the generator asserts divisibility, L3330-3332) and
 -- floored so it never reaches 0.
 --
@@ -58,7 +60,6 @@ end
 
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
-local SafeCall = Engine.SafeCall
 
 local function cfg()
 	return SuperBigMap.Config or {}
@@ -104,24 +105,15 @@ local BORDER_PROPS = {
 	"DepBorderAnomaly", "DepBorderEffects",
 }
 
--- Per-resource deposit spacing lives on the shared ResourcePreset (read at L3373/
--- L3379), so it is scaled on the preset table and restored afterwards.
-local PRESET_SPACING_FIELDS = { "RepulseSame", "RepulseSameLayer", "RepulseAll", "ClusterSpacing" }
+-- Per-resource deposit repulsion lives on the shared ResourcePreset (read at L3379),
+-- so it is scaled on the preset table and restored afterwards. ClusterSpacing is
+-- deliberately excluded: shipped presets use raw 1/2/4/8 intra-cluster values and
+-- the native generator imposes no work_step divisibility rule on it. RoundToStep
+-- would incorrectly increase those authored values to 800.
+local PRESET_SPACING_FIELDS = { "RepulseSame", "RepulseSameLayer", "RepulseAll" }
 
 -- Active relaxation snapshot for the in-flight generation (one synchronous thread).
 local active = nil
-
--- Stride for the gen-zone coverage sample: read every Nth type-grid cell on each axis
--- instead of all of them. This is the fine terrain TYPE grid (millions of cells at
--- TypeTileSize resolution), NOT the 20x20 sector grid -- so the stride is a sub-sampling
--- rate, not a per-sector count. Coverage is a ratio, so a strided sample of hundreds of
--- thousands of cells is statistically identical to the full scan at ~1/stride^2 the work
--- (stride 5 -> ~25x fewer reads). 5 is deliberately coprime with the generator work-step
--- period (const.PrefabWorkRatio = 8) and with the power-of-two grid dimensions, so the
--- sample lattice walks all phases instead of phase-locking to any 8-periodic structure
--- (avoids aliasing bias). A full scan of the 8192-tile expanded type grid is millions of
--- per-cell C calls and dominated expanded-map load time.
-local COVERAGE_SAMPLE_STRIDE = 5
 
 local function WorkStep()
 	local const_tbl = Global("const")
@@ -178,116 +170,21 @@ local function RoundToStep(value, step)
 	return n * step
 end
 
--- Resolve the generation ("gen_zone") terrain-type indices exactly as the generator
--- does: the non-Border entries of self.texture_setup, else self.TTypeGen.
-local function GenTypeIndexSet(generator)
-	local get_idx = Global("GetTerrainTextureIndex")
-	if type(get_idx) ~= "function" then return nil end
-	local set, n = {}, 0
-	local setup = generator and generator.texture_setup
-	if type(setup) == "table" then
-		for i = 1, #setup do
-			local entry = setup[i]
-			if type(entry) == "table" and not entry.Border and entry.Texture then
-				local ok, idx = pcall(get_idx, entry.Texture)
-				if ok and type(idx) == "number" then set[idx] = true; n = n + 1 end
-			end
-		end
+-- Proc_SetupStyles creates gen_zone before terrain painting, then OnGenerateLogic receives
+-- that exact grid and its exact GridCount as env.gen_zone/env.gen_area_unscaled. The
+-- map-generation wrapper snapshots those values while they are still authoritative.
+-- Re-reading terrain types here is wrong: ApplyTerrain has already replaced the blank-map
+-- generation markers, which is why the former late sample always reported coverage 0.
+local function MeasureGenZoneCoverage(_generator, map)
+	local coverage = map and (map.SuperBigMapRmgPlayableCoverage or map.SuperBigMapRmgGenZoneCoverage)
+	if type(coverage) ~= "number" or coverage <= 0 or coverage > 1 then
+		return nil, "authoritative placement coverage was not captured"
 	end
-	if n == 0 and generator and type(generator.TTypeGen) == "string" and generator.TTypeGen ~= "" then
-		local ok, idx = pcall(get_idx, generator.TTypeGen)
-		if ok and type(idx) == "number" then set[idx] = true; n = n + 1 end
-	end
-	if n == 0 then return nil end
-	return set
-end
-
--- Measure gen_zone coverage = (gen-type cells) / (cells in the generated span). The
--- type grid spans the full allocated buffer; since every gen-type cell lies in the
--- top-left generated region, we count gen-type cells over the whole buffer and divide
--- by the generated-span cell count (gen_fraction * grid cells), giving the coverage
--- the generator effectively sees over its own work grid. Returns coverage in (0,1],
--- or nil if unavailable.
-local function MeasureGenZoneCoverage(generator, map)
-	local terrain_api = Global("terrain")
-	if type(terrain_api) ~= "table" or type(terrain_api.GetTypeGrid) ~= "function" then
-		return nil, "type-grid API unavailable"
-	end
-	local set = GenTypeIndexSet(generator)
-	if not set then return nil, "gen terrain types unresolved" end
-
-	local grid = SafeCall(terrain_api.GetTypeGrid, map)
-	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function" then
-		return nil, "type grid not readable"
-	end
-	local gw, gh = grid:size()
-	if type(gw) ~= "number" or gw <= 0 or type(gh) ~= "number" or gh <= 0 then
-		return nil, "type grid empty"
-	end
-
-	-- Count gen-type cells over the WHOLE buffer, STRIDE-SAMPLED. The generated region is
-	-- the top-left corner; the surrounding frame is non-generated (non-gen-type), so every
-	-- gen-type cell lies inside the generated span -- which lets us derive the generated-span
-	-- coverage analytically (below) instead of guessing a sub-rect. We read every Nth cell on
-	-- each axis (COVERAGE_SAMPLE_STRIDE) and scale the sampled count back up to a whole-buffer
-	-- estimate; coverage is a ratio, so this matches the full scan to within sampling noise at
-	-- ~1/stride^2 the cost.
-	local grid_cells = gw * gh
-	local stride = (type(COVERAGE_SAMPLE_STRIDE) == "number" and COVERAGE_SAMPLE_STRIDE >= 1)
-		and math.floor(COVERAGE_SAMPLE_STRIDE) or 1
-	local sampled_matches = 0
-	for y = 0, gh - 1, stride do
-		for x = 0, gw - 1, stride do
-			if set[grid:get(x, y)] then
-				sampled_matches = sampled_matches + 1
-			end
-		end
-	end
-	local sampled_cells = (math.floor((gw - 1) / stride) + 1) * (math.floor((gh - 1) / stride) + 1)
-	-- Scale the sample up to the whole-buffer gen-type count the exact scan would have
-	-- produced (sampled density * total cells). * 1.0 forces float (this runtime truncates
-	-- integer/integer division). full_content is thus an estimate; the downstream coverage
-	-- ratio is stride-independent.
-	local full_content = (sampled_cells > 0)
-		and math.floor(sampled_matches * 1.0 * grid_cells / sampled_cells + 0.5)
-		or 0
-
-	-- The type grid spans the full ALLOCATED buffer, but the generator only generated
-	-- (and the player only ever plays) the top-left generated span. play_zone/gen_zone
-	-- are evaluated over THAT span, so scale to the generated-span denominator:
-	--   gen_fraction = (generated_tiles / allocated_tiles)^2   (area ratio)
-	--   coverage     = gen-type cells / (gen_fraction * grid cells)
-	-- e.g. 6144 generated in an 8192 buffer -> gen_fraction 0.5625, so a full-buffer
-	-- 0.191 becomes ~0.34 over the generated span (and scale sqrt(0.34) ~ 0.58 instead
-	-- of the over-tight 0.437 a full-buffer measure gives). Falls back to the whole
-	-- buffer if the per-map tile markers are missing.
-	local gen_tiles = map and map.SuperBigMapGeneratorWidthTiles
-	local full_tiles = map and (map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width))
-	local gen_fraction = 1.0
-	if type(gen_tiles) == "number" and gen_tiles > 0 and type(full_tiles) == "number" and full_tiles > gen_tiles then
-		-- * 1.0 forces float: this Lua runtime truncates integer/integer division
-		-- (6144/8192 -> 0), which would zero gen_fraction and break the coverage path.
-		local r = gen_tiles * 1.0 / full_tiles
-		gen_fraction = r * r
-	end
-
-	local gen_span_cells = math.floor(gen_fraction * grid_cells + 0.5)
-	local coverage = nil
-	if gen_span_cells > 0 then
-		coverage = full_content * 1.0 / gen_span_cells
-		if coverage > 1 then coverage = 1.0 end   -- clamp (frame cells can't exceed span)
-	end
-	local coverage_full = (grid_cells > 0) and (full_content * 1.0 / grid_cells) or nil
-	return coverage, nil, {
-		grid_w = gw, grid_h = gh,
-		sample_stride = stride, sampled_cells = sampled_cells, sampled_matches = sampled_matches,
-		gen_cells = full_content, gen_span_cells = gen_span_cells,
-		gen_fraction = string.format("%.3f", gen_fraction),
-		cov_permille = (gen_span_cells > 0) and math.floor(full_content * 1000 / gen_span_cells) or -1,
-		cov_full_permille = (grid_cells > 0) and math.floor(full_content * 1000 / grid_cells) or -1,
-		coverage_full = coverage_full and string.format("%.3f", coverage_full) or "n/a",
-		gen_tiles = gen_tiles or "n/a", full_tiles = full_tiles or "n/a",
-	}
+	local info = {}
+	local source = map.SuperBigMapRmgPlayableCoverage and map.SuperBigMapRmgPlayableCoverageInfo
+		or map.SuperBigMapRmgGenZoneCoverageInfo
+	for k, v in pairs(source or {}) do info[k] = v end
+	return coverage, nil, info
 end
 
 local RmgPlacement = {}
@@ -335,7 +232,7 @@ function RmgPlacement.Begin(generator, map, options)
 	-- broadly. floor bounds how dense it can get.
 	local coverage, why, info = MeasureGenZoneCoverage(generator, map)
 	local floor = cfg().RMG_PLACEMENT_SPACING_FLOOR
-	floor = (type(floor) == "number" and floor > 0 and floor <= 1) and floor or 0.8
+	floor = (type(floor) == "number" and floor > 0 and floor <= 1) and floor or 0.6
 	local squeeze = cfg().RMG_PLACEMENT_EXTRA_SQUEEZE
 	squeeze = (type(squeeze) == "number" and squeeze > 0 and squeeze <= 1) and squeeze or 1.0
 	local fallback = cfg().RMG_PLACEMENT_FALLBACK_SCALE
@@ -350,8 +247,27 @@ function RmgPlacement.Begin(generator, map, options)
 		scale = fallback * squeeze
 		scale_basis = "fallback"
 	end
+	local calculated_scale = scale
+	-- Coverage alone overestimates capacity when the zone is fragmented and every earlier
+	-- layer destructively erases later layers through MarkDepositLayers. Cap it at the
+	-- log-proven resource-safe value; with the default floor/cap both 0.6, the applied base
+	-- scale is exactly 0.6 and the full native resource targets fit. Same-anomaly packing uses
+	-- the separate cap below. No native warning is filtered or suppressed.
+	if scale > fallback then
+		scale = fallback
+		scale_basis = scale_basis .. "+safe-cap"
+	end
 	if scale < floor then scale = floor end
 	if scale > 1 then scale = 1 end
+
+	-- Same-resource anomaly placement needs slightly more room than the base resource
+	-- scale: TechUnlock, Event, and FreeTech sequentially consume the same mask using a
+	-- 2 * AnomalySpacing exclusion radius. Keep this separate so the already-successful
+	-- resource and cross-layer searches are not disturbed. A cap (rather than a fixed
+	-- value) preserves any tighter scale required when anomaly counts are enlarged.
+	local anomaly_spacing_cap = cfg().RMG_PLACEMENT_ANOMALY_SPACING_CAP
+	anomaly_spacing_cap = (type(anomaly_spacing_cap) == "number" and anomaly_spacing_cap > 0
+		and anomaly_spacing_cap <= 1) and anomaly_spacing_cap or 0.55
 
 	local zero_borders = cfg().RMG_PLACEMENT_ZERO_BORDERS ~= false
 	local snapshot = {
@@ -425,11 +341,13 @@ function RmgPlacement.Begin(generator, map, options)
 		anom_floor = (type(anom_floor) == "number" and anom_floor > 0 and anom_floor <= 1) and anom_floor or 0.35
 		if spacing_scale < anom_floor then spacing_scale = anom_floor end
 	end
-	if spacing_scale < 0.999 then
+	local anomaly_spacing_scale = math.min(spacing_scale, anomaly_spacing_cap)
+	if spacing_scale < 0.999 or anomaly_spacing_scale < 0.999 then
 		for _, name in ipairs(SPACING_PROPS) do
 			local v = generator[name]
 			if type(v) == "number" and v > 0 then
-				local nv = RoundToStep(v * spacing_scale, step)
+				local property_scale = name == "AnomalySpacing" and anomaly_spacing_scale or spacing_scale
+				local nv = RoundToStep(v * property_scale, step)
 				if nv ~= v then
 					snapshot.props[#snapshot.props + 1] = { obj = generator, key = name, value = v }
 					generator[name] = nv
@@ -438,11 +356,10 @@ function RmgPlacement.Begin(generator, map, options)
 		end
 	end
 
-	-- 4) Per-resource deposit spacing on the shared ResourcePreset table -- OFF by default.
-	-- Resource deposits already reach their full preset counts with vanilla spacing once the
-	-- borders are zeroed, so scaling them is unnecessary deviation from vanilla. Only enable if
-	-- a map ever shows a resource-deposit shortfall. Uses the base (coverage) scale, not the
-	-- anomaly-tightened spacing_scale.
+	-- 4) Per-resource deposit spacing on the shared ResourcePreset table. Concrete is placed
+	-- after earlier layers have destructively erased their mutual repulsion masks, so borders
+	-- alone cannot restore its candidate capacity. Uses the base placement scale, not the
+	-- anomaly-count spacing scale, and every preset value is restored at ProcEnd.
 	if cfg().RMG_PLACEMENT_SCALE_DEPOSITS == true and scale < 0.999 then
 		local presets = Global("Presets")
 		local list = type(presets) == "table" and presets.ResourcePreset and presets.ResourcePreset.Default
@@ -484,14 +401,18 @@ function RmgPlacement.Begin(generator, map, options)
 			mode = snapshot.mode,
 			coverage = (type(coverage) == "number") and string.format("%.3f", coverage) or (why or "n/a"),
 			scale = string.format("%.3f", scale),
+			calculated_scale = string.format("%.3f", calculated_scale),
 			scale_basis = scale_basis,
 			anom_count_scale = string.format("%.3f", anom_scale),
-			anom_spacing_scale = string.format("%.3f", spacing_scale),
+			anom_spacing_scale = string.format("%.3f", anomaly_spacing_scale),
+			other_spacing_scale = string.format("%.3f", spacing_scale),
+			anomaly_spacing_cap = string.format("%.3f", anomaly_spacing_cap),
 			work_step = step,
 			zeroed_borders = zero_borders,
 			props_changed = #snapshot.props,
 			presets_changed = #snapshot.presets,
-			floor = floor, squeeze = squeeze,
+			floor = floor, safe_cap = fallback, squeeze = squeeze,
+			cluster_spacing_scaled = false,
 		}
 		if type(info) == "table" then
 			for k, v in pairs(info) do data[k] = v end
@@ -522,27 +443,31 @@ function RmgPlacement.End(map)
 	-- Clear only after every restoration succeeded; a caller may retry End after an error.
 	active = nil
 
-	-- OnGenerateLogic records the exact randomized category counts before this
-	-- procedure runs. Preserve those authoritative values; never substitute preset
-	-- maxima or underground counts, which would overfill randomized maps and clone
-	-- cave-specific anomaly families.
-	map = map or Global("CurrentMap")
-	if type(map) == "table" and type(snap.generator) == "table" then
-		Log("authoritative post-generation anomaly category floors", {
-			capture = tostring(map.SuperBigMapAnomalyTargetCapture),
-			complete = (map.SuperBigMapExpectedAnomalyCounts or {}).complete,
-			unlock = (map.SuperBigMapExpectedAnomalyCounts or {}).unlock,
-			sequence = (map.SuperBigMapExpectedAnomalyCounts or {}).sequence,
-		})
-	end
+	-- Diagnostics run only after the complete rollback and are protected so a logger failure
+	-- can never be mistaken for a property-restoration failure by the generator wrapper.
+	pcall(function()
+		-- OnGenerateLogic records the exact randomized category counts before this
+		-- procedure runs. Preserve those authoritative values; never substitute preset
+		-- maxima or underground counts, which would overfill randomized maps and clone
+		-- cave-specific anomaly families.
+		map = map or Global("CurrentMap")
+		if type(map) == "table" and type(snap.generator) == "table" then
+			Log("authoritative post-generation anomaly category floors", {
+				capture = tostring(map.SuperBigMapAnomalyTargetCapture),
+				complete = (map.SuperBigMapExpectedAnomalyCounts or {}).complete,
+				unlock = (map.SuperBigMapExpectedAnomalyCounts or {}).unlock,
+				sequence = (map.SuperBigMapExpectedAnomalyCounts or {}).sequence,
+			})
+		end
 
-	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("RmgPlacement") then
-		local data = RmgPlacement.CountPlacedMarkers(map)
-		local expected = RmgPlacement.ExpectedAnomalyRanges(snap.generator)
-		for k, v in pairs(expected) do data[k] = v end
-		Log("placement restored: placed vs expected", data)
-		ExhaustiveLog("native enrichment placement census after restoration", data)
-	end
+		if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("RmgPlacement") then
+			local data = RmgPlacement.CountPlacedMarkers(map)
+			local expected = RmgPlacement.ExpectedAnomalyRanges(snap.generator)
+			for k, v in pairs(expected) do data[k] = v end
+			Log("placement restored: placed vs expected", data)
+			ExhaustiveLog("native enrichment placement census after restoration", data)
+		end
+	end)
 end
 
 -- Procedure-boundary snapshot used by the exhaustive trace. Read-only and cheap enough to call

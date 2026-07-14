@@ -591,30 +591,58 @@ MapBounds.InstallLCCValidateMarkPermissive = InstallLCCValidateMarkPermissive
 MapBounds.UninstallLCCValidateMarkPermissive = UninstallLCCValidateMarkPermissive
 
 -- ---------------------------------------------------------------------------
--- "Buildable grid computing too slow!" warning silence (expanded maps only)
+-- Pre-generation buildable-grid extent optimizer (expanded maps only)
 -- ---------------------------------------------------------------------------
--- The engine builds the buildable grid at the map's real hex dimensions
--- (BuildableGrid:Build(map, map.hex_width, map.hex_height, ...), BuildableGrid.lua)
--- and prints "Buildable grid computing too slow! Took <ms>" whenever that compute
--- exceeds 1000 ms. On the 8192-tile expanded map the grid covers ~4x a vanilla map,
--- so the compute legitimately crosses that threshold every time. The warning is
--- purely informational -- no gameplay effect -- and inherent to the bigger map, so
--- we swallow ONLY that one line, ONLY while building a mod-expanded map. Vanilla maps
--- (and any other print) are untouched. Build is a synchronous, void method, so the
--- global `print` swap below cannot leak across a yield. Reversible.
-local BUILDABLE_GRID_BUILD_PATCH_VERSION = 1
-local function InstallBuildableGridSlowWarningSilence()
-	if (SuperBigMap.Config or {}).SILENCE_BUILDABLE_GRID_SLOW_WARNING == false then
-		return
+-- MapVar constructs BuildableGrid before random generation. The terrain allocation is
+-- already 8192 tiles at that point, but only the native 6144-tile source will be generated;
+-- computing buildability for the blank L-frame costs ~1.7s and triggers a real timing warning.
+-- Give that provisional loading-only object a full-sized all-unbuildable z-grid in one cheap
+-- allocation. RandomMapGenerator's ResolveBuildable pass replaces it from generated terrain,
+-- and the post-stretch pass replaces it again at the final full extent. No print function is
+-- intercepted or filtered, and the placeholder cannot authorize construction prematurely.
+local BUILDABLE_GRID_BUILD_PATCH_VERSION = 2
+local function InitialBuildableDeferralInfo(map, self)
+	local cfg = SuperBigMap.Config or {}
+	if cfg.OPTIMIZE_STRETCH_DEFERRED_REBUILDS ~= true
+		or tostring(cfg.EXPANSION_FRAME_FILL_MODE or "mirror") ~= "stretch"
+		or not map or self.z_grid then
+		return nil
 	end
+	local mapdata = map.mapdata
+	-- This optimization is valid only for the new expanded surface map whose native
+	-- generator is guaranteed to run ResolveBuildable next. Never infer eligibility from
+	-- persistent mapdata size markers: save loads and underground maps must fail open to
+	-- the native Build path.
+	if type(mapdata) ~= "table" or mapdata.Environment ~= "Surface"
+		or map.SuperBigMapQuadrantCopyPending ~= true then
+		return nil
+	end
+	local desired_w = map.SuperBigMapDesiredWidthTiles
+		or mapdata.Width
+	local desired_h = map.SuperBigMapDesiredHeightTiles
+		or mapdata.Height
+	local generator_w = map.SuperBigMapGeneratorWidthTiles
+		or mapdata.SuperBigMapOriginalWidthTiles
+	local generator_h = map.SuperBigMapGeneratorHeightTiles
+		or mapdata.SuperBigMapOriginalHeightTiles
+	if type(desired_w) ~= "number" or desired_w <= 0
+		or type(desired_h) ~= "number" or desired_h <= 0
+		or type(generator_w) ~= "number" or generator_w <= 0 or generator_w >= desired_w
+		or type(generator_h) ~= "number" or generator_h <= 0 or generator_h >= desired_h then
+		return nil
+	end
+	return generator_w, generator_h, desired_w, desired_h
+end
+
+local function InstallBuildableGridPreGenerationOptimizer()
 	local class_table_fn = Engine.ClassTable
 	if type(class_table_fn) ~= "function" then
-		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: no Engine.ClassTable")
+		DebugPrint("[Super Big Map] InstallBuildableGridPreGenerationOptimizer: no Engine.ClassTable")
 		return
 	end
 	local cls = class_table_fn("BuildableGrid")
 	if not cls or type(cls.Build) ~= "function" then
-		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: no BuildableGrid:Build")
+		DebugPrint("[Super Big Map] InstallBuildableGridPreGenerationOptimizer: no BuildableGrid:Build")
 		return
 	end
 	local State = SuperBigMap.State or {}
@@ -623,13 +651,13 @@ local function InstallBuildableGridSlowWarningSilence()
 	if State.buildable_grid_build_wrapper == nil
 		and type(legacy_original) == "function" and current ~= legacy_original
 		and IsLegacyMapBoundsFunction(current) then
-		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: migrating legacy anonymous wrapper")
+		DebugPrint("[Super Big Map] InstallBuildableGridPreGenerationOptimizer: migrating legacy wrapper")
 		current = legacy_original
 	end
 	if current == State.buildable_grid_build_wrapper
 		and State.buildable_grid_build_version == BUILDABLE_GRID_BUILD_PATCH_VERSION
 		and State.buildable_grid_build_token == MODULE_TOKEN then
-		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: live identity verified wrapper="
+		DebugPrint("[Super Big Map] InstallBuildableGridPreGenerationOptimizer: live identity verified wrapper="
 			.. tostring(current) .. " original=" .. tostring(State.original_buildable_grid_build))
 		return true
 	end
@@ -640,49 +668,47 @@ local function InstallBuildableGridSlowWarningSilence()
 	local original = current
 	rawset(_G, "BMOriginal_BuildableGrid_Build", original)
 	local wrapper
-	wrapper = function(self, map, ...)
-		-- Only filter while building a mod-expanded map; vanilla maps run untouched.
-		if (SuperBigMap.Config or {}).SILENCE_BUILDABLE_GRID_SLOW_WARNING == false
-			or not IsModMap(map) then
-			return original(self, map, ...)
-		end
-		DebugPrint("[Super Big Map] BuildableGrid:Build ENTER map=" .. tostring(map)
-			.. " live=" .. tostring(cls.Build) .. " wrapper=" .. tostring(wrapper)
-			.. " original=" .. tostring(original))
-		local saved_print = rawget(_G, "print")
-		local suppressed = 0
-		local filter
-		if type(saved_print) == "function" then
-			filter = function(first, ...)
-				if type(first) == "string"
-					and string.find(first, "Buildable grid computing too slow", 1, true) then
-					suppressed = suppressed + 1
-					return
-				end
-				return saved_print(first, ...)
+	wrapper = function(self, map, width, height, map_data, ...)
+		local gen_w, gen_h, desired_w, desired_h = InitialBuildableDeferralInfo(map, self)
+		local new_grid = Global("NewGrid")
+		if gen_w and type(new_grid) == "function"
+			and type(width) == "number" and width > 0 and type(height) == "number" and height > 0 then
+			local ok_grid, placeholder = pcall(new_grid, width, height, 16, GetUnbuildableZ())
+			if not ok_grid or not placeholder then
+				return original(self, map, width, height, map_data, ...)
 			end
-			rawset(_G, "print", filter)
+			self.z_grid = placeholder
+			map.SuperBigMapProvisionalBuildableDeferred = true
+			local debug_log = SuperBigMap.DebugLog
+			if debug_log then
+				pcall(debug_log.Info, "Bounds", "deferred provisional blank buildable-grid computation", {
+					hex_width = width, hex_height = height,
+					generator_tiles = tostring(gen_w) .. "x" .. tostring(gen_h),
+					desired_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
+					placeholder = "full-size all-unbuildable",
+				})
+			end
+			return
 		end
-		local results = Pack(pcall(original, self, map, ...))
-		if type(saved_print) == "function" then
-			rawset(_G, "print", saved_print)
+		local results = Pack(original(self, map, width, height, map_data, ...))
+		-- Reaching this point proves the native Build returned successfully and replaced
+		-- the provisional grid. If it raises, this marker deliberately remains set.
+		if map and map.SuperBigMapProvisionalBuildableDeferred == true then
+			map.SuperBigMapProvisionalBuildableDeferred = nil
 		end
-		DebugPrint("[Super Big Map] BuildableGrid:Build EXIT map=" .. tostring(map)
-			.. " ok=" .. tostring(results[1]) .. " slow_warnings_suppressed=" .. tostring(suppressed))
-		if not results[1] then error(results[2]) end
-		return Unpack(results, 2, results.n)
+		return Unpack(results, 1, results.n)
 	end
 	cls.Build = wrapper
 	State.original_buildable_grid_build = original
 	State.buildable_grid_build_wrapper = wrapper
 	State.buildable_grid_build_version = BUILDABLE_GRID_BUILD_PATCH_VERSION
 	State.buildable_grid_build_token = MODULE_TOKEN
-	DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: wrapped live="
+	DebugPrint("[Super Big Map] InstallBuildableGridPreGenerationOptimizer: wrapped live="
 		.. tostring(cls.Build) .. " wrapper=" .. tostring(wrapper) .. " original=" .. tostring(original))
 	return true
 end
 
-local function UninstallBuildableGridSlowWarningSilence()
+local function UninstallBuildableGridPreGenerationOptimizer()
 	local class_table_fn = Engine.ClassTable
 	if type(class_table_fn) ~= "function" then return end
 	local cls = class_table_fn("BuildableGrid")
@@ -698,8 +724,8 @@ local function UninstallBuildableGridSlowWarningSilence()
 	rawset(_G, "BMOriginal_BuildableGrid_Build", nil)
 end
 
-MapBounds.InstallBuildableGridSlowWarningSilence = InstallBuildableGridSlowWarningSilence
-MapBounds.UninstallBuildableGridSlowWarningSilence = UninstallBuildableGridSlowWarningSilence
+MapBounds.InstallBuildableGridPreGenerationOptimizer = InstallBuildableGridPreGenerationOptimizer
+MapBounds.UninstallBuildableGridPreGenerationOptimizer = UninstallBuildableGridPreGenerationOptimizer
 
 -- Narrow reload-safe installer used before a map is active. It touches only transparent,
 -- map-gated engine hooks; no current-map grids, pass borders, or permissive policies.
@@ -707,11 +733,7 @@ function MapBounds.ReinstallGlobalHooks()
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then return false end
 	InstallRebuildBuildableGridHook()
-	if cfg.SILENCE_BUILDABLE_GRID_SLOW_WARNING == false then
-		UninstallBuildableGridSlowWarningSilence()
-	else
-		InstallBuildableGridSlowWarningSilence()
-	end
+	InstallBuildableGridPreGenerationOptimizer()
 	return true
 end
 
@@ -738,8 +760,8 @@ function MapBounds.ApplyModBehavior()
 	-- Keep the rebuild hook: it just runs the vanilla RebuildBuildableGrid (ForceBuildable-
 	-- GridStorage inside is gated off), so the buildable grid stays accurate for the new
 	-- terrain.
-	-- Silence the engine's "Buildable grid computing too slow!" perf warning on the expanded
-	-- map (informational only; inherent to the 4x-larger grid). Vanilla maps keep the warning.
+	-- The provisional pre-generation computation is deferred above, but every authoritative
+	-- native/final build still runs normally and every engine timing warning remains visible.
 	-- If a map is already loaded when the mod enables, force a one-shot grid pass now
 	-- (no-op unless ForceBuildableGridStorage is enabled).
 	local map = Global("CurrentMap")
@@ -751,7 +773,7 @@ end
 -- Restore order is the exact reverse of install. PassBorder is also put back
 -- here so the engine's strict bounds resume when the mod is off.
 function MapBounds.RestoreVanillaBehavior()
-	UninstallBuildableGridSlowWarningSilence()
+	UninstallBuildableGridPreGenerationOptimizer()
 	UninstallLCCValidateMarkPermissive()
 	UninstallRebuildBuildableGridHook()
 	UninstallBuildableGridPermissive()

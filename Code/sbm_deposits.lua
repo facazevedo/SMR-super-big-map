@@ -1530,12 +1530,16 @@ function DepositRules.LogBuildableSectorCensus(map, label)
 end
 
 local function RecordEnrichmentTopUpAudit(map, kind, data)
-	-- The audit is transaction-local evidence for delayed native warnings. Do not attach
-	-- transient audit tables to mirror/underground maps that have no pending warning buffer.
-	local pending = type(map) == "table" and map.SuperBigMapPendingRmgPlacementWarnings or nil
-	if type(pending) ~= "table" or #pending == 0 then return end
-	map.SuperBigMapEnrichmentTopUpAudit = map.SuperBigMapEnrichmentTopUpAudit or {}
-	map.SuperBigMapEnrichmentTopUpAudit[kind] = data
+	-- Read-only diagnostics only. Native RMG warnings are never buffered or suppressed;
+	-- this reports whether the later map-size density top-up also completed.
+	pcall(function()
+		local debug_log = SuperBigMap.DebugLog
+		if not (debug_log and type(debug_log.On) == "function"
+			and debug_log.On("RmgPlacementExhaustive") == true) then return end
+		local fields = { kind = tostring(kind), map = tostring(map and map.name or "?") }
+		for k, v in pairs(data or {}) do fields[k] = v end
+		debug_log.Info("RmgPlacementExhaustive", "post-stretch enrichment density audit", fields)
+	end)
 end
 
 function DepositRules.TopUpDeposits(map)

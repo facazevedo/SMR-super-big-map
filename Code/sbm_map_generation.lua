@@ -62,94 +62,6 @@ local function PackValues(...)
 	return { n = select("#", ...), ... }
 end
 
-local function RmgRepairableWarningKind(raw_message, proc)
-	local shortage = string.find(raw_message, "Removing spacing criteria to find place for", 1, true)
-		or string.find(raw_message, "Could not find place for", 1, true)
-		or string.find(raw_message, "Failed to find a place for all", 1, true)
-		or string.find(raw_message, "No random positions found. Calculated grid weight is 0", 1, true)
-	if not shortage then return nil end
-	proc = tostring(proc or "")
-	-- The resource audit is aggregate by resource, while engine searches are layer-specific.
-	-- Only the terrain Concrete family has a matching authoritative captured target.
-	if proc == "PlaceAnomalies_FindDeposits_terr_Concrete" then
-		return "resources"
-	end
-	if proc == "PlaceAnomalies_FindAnomalies_Event"
-		or proc == "PlaceAnomalies_FindAnomalies_TechUnlock"
-		or proc == "PlaceAnomalies_FindAnomalies_FreeTech" then
-		return "anomalies"
-	end
-	return nil
-end
-
-local function BufferRmgPlacementWarning(map, printer, kind, raw_message, proc, ...)
-	map.SuperBigMapPendingRmgPlacementWarnings = map.SuperBigMapPendingRmgPlacementWarnings or {}
-	local pending = map.SuperBigMapPendingRmgPlacementWarnings
-	pending[#pending + 1] = {
-		kind = kind, raw = raw_message, proc = tostring(proc or "?"),
-		printer = printer, args = PackValues(...),
-	}
-	local debug_log = SuperBigMap.DebugLog
-	if debug_log then
-		debug_log.Info("RmgPlacementExhaustive", "native placement warning buffered pending final repair audit", {
-			kind = kind, proc = tostring(proc), raw = raw_message, buffered = #pending,
-		})
-	end
-end
-
-local function FlushRmgPlacementWarnings(map, force_replay_reason)
-	local pending = type(map) == "table" and map.SuperBigMapPendingRmgPlacementWarnings or nil
-	if type(pending) ~= "table" or #pending == 0 then
-		if type(map) == "table" then map.SuperBigMapEnrichmentTopUpAudit = nil end
-		return 0, 0
-	end
-	local audit = map.SuperBigMapEnrichmentTopUpAudit or {}
-	local anomaly_targets = map.SuperBigMapExpectedAnomalyCounts or {}
-	local anomaly_capture_valid = map.SuperBigMapAnomalyTargetCapture == "OnGenerateLogic rrand"
-		and type(anomaly_targets.sequence) == "number"
-		and type(anomaly_targets.unlock) == "number"
-		and type(anomaly_targets.complete) == "number"
-	local resource_targets = map.SuperBigMapExpectedResourceCounts or {}
-	local concrete_capture_valid = type(resource_targets.Concrete) == "number"
-	local resolved, replayed = 0, 0
-	for _, entry in ipairs(pending) do
-		local result = audit[entry.kind]
-		local target_capture_valid = entry.kind == "anomalies" and anomaly_capture_valid
-			or entry.kind == "resources" and concrete_capture_valid
-		local repaired = not force_replay_reason and type(result) == "table"
-			and target_capture_valid and result.complete == true
-			and tonumber(result.remaining_shortfall or 0) == 0
-		if repaired then
-			resolved = resolved + 1
-		else
-			replayed = replayed + 1
-			local args = entry.args or {}
-			local ok = type(entry.printer) == "function"
-				and pcall(entry.printer, Unpack(args, 1, args.n or #args))
-			if not ok then
-				local print_fn = rawget(_G, "print")
-				if type(print_fn) == "function" then print_fn(entry.raw) end
-			end
-		end
-	end
-	map.SuperBigMapPendingRmgPlacementWarnings = nil
-	local debug_log = SuperBigMap.DebugLog
-	if debug_log then
-		debug_log.Info("RmgPlacementExhaustive", "final native-warning repair audit", {
-			buffered = #pending, resolved = resolved, replayed = replayed,
-			force_replay_reason = tostring(force_replay_reason or ""),
-			resource_complete = tostring(audit.resources and audit.resources.complete),
-			resource_shortfall = tostring(audit.resources and audit.resources.remaining_shortfall),
-			anomaly_complete = tostring(audit.anomalies and audit.anomalies.complete),
-			anomaly_shortfall = tostring(audit.anomalies and audit.anomalies.remaining_shortfall),
-			anomaly_capture_valid = tostring(anomaly_capture_valid),
-			concrete_capture_valid = tostring(concrete_capture_valid),
-		})
-	end
-	map.SuperBigMapEnrichmentTopUpAudit = nil
-	return resolved, replayed
-end
-
 -- Separately gated nested loading trace. These helpers only surround calls that already happen;
 -- they do not add gameplay work, yields, waits, or ordering changes. SafeCall keeps its original
 -- error-swallowing semantics and direct calls remain direct at their call sites.
@@ -1556,7 +1468,9 @@ local function PatchRandomMapGenerator()
 			end
 			local rhelpers = env.rhelpers
 			local saved_rrand = type(rhelpers) == "table" and rhelpers[2] or nil
+			local saved_grand = type(rhelpers) == "table" and rhelpers[5] or nil
 			local saved_rm_print = env.rm_print
+			local saved_get_playable_area = env.GetPlayableArea
 			local saved_generate_resource_info = Global("GenerateResourceInfo")
 			local generate_resource_info_wrapper
 			local rolls, roll_index = {}, 0
@@ -1576,6 +1490,28 @@ local function PatchRandomMapGenerator()
 				map.SuperBigMapExpectedAnomalyCounts = {}
 				map.SuperBigMapAnomalyTargetRolls = rolls
 				map.SuperBigMapAnomalyTargetCapture = false
+				map.SuperBigMapRmgGenZoneCoverage = nil
+				map.SuperBigMapRmgGenZoneCoverageInfo = nil
+				map.SuperBigMapRmgPlayableCoverage = nil
+				map.SuperBigMapRmgPlayableCoverageInfo = nil
+				local gen_area = env.gen_area_unscaled
+				local gen_zone = env.gen_zone
+				local gw, gh
+				if gen_zone and type(gen_zone.size) == "function" then
+					local ok_size, w, h = pcall(gen_zone.size, gen_zone)
+					if ok_size then gw, gh = w, h end
+				end
+				local total = type(gw) == "number" and type(gh) == "number" and gw * gh or nil
+				if type(gen_area) == "number" and gen_area > 0 and type(total) == "number" and total > 0 then
+					local coverage = gen_area * 1.0 / total
+					map.SuperBigMapRmgGenZoneCoverage = coverage
+					map.SuperBigMapRmgGenZoneCoverageInfo = {
+						coverage_source = "env.gen_area_unscaled / env.gen_zone:size",
+						gen_cells = gen_area, gen_span_cells = total,
+						grid_w = gw, grid_h = gh,
+						cov_permille = math.floor(coverage * 1000),
+					}
+				end
 			end
 
 			local function capture_resource_info(res_info, source)
@@ -1650,60 +1586,111 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			if type(saved_rm_print) == "function" then
-				env.rm_print = function(...)
-					local debug_log = SuperBigMap.DebugLog
-					local text_parts = {}
-					for i = 1, select("#", ...) do
-						text_parts[#text_parts + 1] = tostring(select(i, ...))
-					end
-					local raw_message = table.concat(text_parts, " ")
-					local stack = State.rmg_placement_proc_stack
-					local proc = type(stack) == "table" and tostring(stack[#stack]) or "?"
-					if debug_log and type(debug_log.On) == "function"
-						and debug_log.On("RmgPlacementExhaustive") == true then
-						local args = {}
-						for i = 1, select("#", ...) do
-							local value = select(i, ...)
-							args[#args + 1] = tostring(i) .. ":" .. type(value) .. "=" .. tostring(value)
-						end
-						debug_log.Info("RmgPlacementExhaustive", "engine rm_print", {
-							argc = select("#", ...), args = table.concat(args, " | "), raw = raw_message,
-							proc = proc,
-						})
-					end
-					if type(map) == "table"
-						and select(1, ...) == "Failed to find a place for all"
-						and select(4, ...) == "deposits. Placed"
-						and select(6, ...) == "out of" then
-						local resource = select(3, ...)
-						local target = select(7, ...)
-						if type(resource) == "string" and type(target) == "number" then
-							map.SuperBigMapExpectedResourceCounts[resource] = target
-							if not map.SuperBigMapResourceTargetCapture then
-								map.SuperBigMapResourceTargetCapture = "rm_print failure args"
+			-- Proc_ResolveBuildable calls this once to turn gen_zone into the actual placement
+			-- play_zone. Capture its exact native area ratio before any resource/anomaly layer
+			-- starts destructively eroding that zone.
+			if type(saved_get_playable_area) == "function" then
+				env.GetPlayableArea = function(...)
+					local results = PackValues(saved_get_playable_area(...))
+					pcall(function()
+						local play_area = results[1]
+						local gen_area = env.gen_area_unscaled
+						if type(map) == "table" and type(play_area) == "number" and play_area > 0
+							and type(gen_area) == "number" and gen_area > 0 then
+							local coverage = play_area * 1.0 / gen_area
+							if coverage > 1 then coverage = 1 end
+							map.SuperBigMapRmgPlayableCoverage = coverage
+							map.SuperBigMapRmgPlayableCoverageInfo = {
+								coverage_source = "GetPlayableArea result / env.gen_area_unscaled",
+								play_cells = play_area, gen_cells = gen_area,
+								cov_permille = math.floor(coverage * 1000),
+							}
+							local debug_log = SuperBigMap.DebugLog
+							if debug_log and type(debug_log.On) == "function"
+								and debug_log.On("RmgPlacementExhaustive") == true then
+								debug_log.Info("RmgPlacementExhaustive", "captured native play-zone coverage", {
+									coverage = string.format("%.3f", coverage),
+									play_cells = play_area, gen_cells = gen_area,
+								})
 							end
 						end
+					end)
+					return Unpack(results, 1, results.n)
+				end
+			end
+
+			-- Exhaustive native search evidence. `grand` owns the destructive placement-zone
+			-- search; this records usable cells and requested/returned counts without changing
+			-- the grid, parameters, random state, or return tuple.
+			if type(saved_grand) == "function" then
+				rhelpers[5] = function(grid, params, ...)
+					local debug_log = SuperBigMap.DebugLog
+					local trace_ok, trace = false, false
+					if type(debug_log) == "table" and type(debug_log.On) == "function" then
+						trace_ok, trace = pcall(debug_log.On, "RmgPlacementExhaustive")
 					end
-					-- Buffer only resource and ordinary-anomaly shortage warnings that have a matching
-					-- post-stretch repair pass. They are discarded only after that category reports a
-					-- zero-shortfall final audit; otherwise the original rm_print call is replayed.
-					local expanded_surface = type(map) == "table"
-						and type(map.SuperBigMapDesiredWidthTiles) == "number"
-						and type(map.SuperBigMapGeneratorWidthTiles) == "number"
-						and map.SuperBigMapDesiredWidthTiles > map.SuperBigMapGeneratorWidthTiles
-						and type(map.mapdata) == "table" and map.mapdata.Environment ~= "Underground"
-					local kind = RmgRepairableWarningKind(raw_message, proc)
-					local repair_enabled = kind == "resources" and cfg_bool("TOPUP_RESOURCES", false)
-						or kind == "anomalies" and cfg_bool("TOPUP_ANOMALIES", false)
-					local stretch_mode = tostring((SuperBigMap.Config or {}).EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
-					if expanded_surface and stretch_mode
-						and cfg_bool("SILENCE_REPAIRED_RMG_PLACEMENT_WARNINGS", true)
-						and repair_enabled then
-						BufferRmgPlacementWarning(map, saved_rm_print, kind, raw_message, proc, ...)
-						return
+					if not trace_ok or trace ~= true or type(params) ~= "table" or params.resource == nil then
+						return saved_grand(grid, params, ...)
 					end
-					return saved_rm_print(...)
+					local grid_count = Global("GridCount")
+					local before = "n/a"
+					if type(grid_count) == "function" and grid then
+						local ok_count, n = pcall(grid_count, grid, 0, 1)
+						if ok_count then before = n end
+					end
+					local results = PackValues(saved_grand(grid, params, ...))
+					pcall(function()
+						local first = results[1]
+						local returned = type(first) == "table" and #first or 0
+						local stack = State.rmg_placement_proc_stack
+						debug_log.Info("RmgPlacementExhaustive", "native placement search", {
+							proc = type(stack) == "table" and tostring(stack[#stack]) or "?",
+							resource = tostring(params.resource), requested = tostring(params.count),
+							spacing = tostring(params.spacing), mode = tostring(params.mode),
+							positive_cells_before = before, returned = returned,
+						})
+					end)
+					return Unpack(results, 1, results.n)
+				end
+			end
+
+			if type(saved_rm_print) == "function" then
+				env.rm_print = function(...)
+					local call_args = PackValues(...)
+					-- Deliver the native message first and unchanged. Everything below is a protected,
+					-- read-only audit, so diagnostics can never hide or delay an engine warning.
+					local original_results = PackValues(saved_rm_print(...))
+					pcall(function()
+						local debug_log = SuperBigMap.DebugLog
+						if debug_log and type(debug_log.On) == "function"
+							and debug_log.On("RmgPlacementExhaustive") == true then
+							local text_parts, args = {}, {}
+							for i = 1, call_args.n do
+								local value = call_args[i]
+								text_parts[#text_parts + 1] = tostring(value)
+								args[#args + 1] = tostring(i) .. ":" .. type(value) .. "=" .. tostring(value)
+							end
+							local stack = State.rmg_placement_proc_stack
+							debug_log.Info("RmgPlacementExhaustive", "engine rm_print", {
+								argc = call_args.n, args = table.concat(args, " | "),
+								raw = table.concat(text_parts, " "),
+								proc = type(stack) == "table" and tostring(stack[#stack]) or "?",
+							})
+						end
+						if type(map) == "table"
+							and call_args[1] == "Failed to find a place for all"
+							and call_args[4] == "deposits. Placed"
+							and call_args[6] == "out of" then
+							local resource, target = call_args[3], call_args[7]
+							if type(resource) == "string" and type(target) == "number" then
+								map.SuperBigMapExpectedResourceCounts[resource] = target
+								if not map.SuperBigMapResourceTargetCapture then
+									map.SuperBigMapResourceTargetCapture = "rm_print failure args"
+								end
+							end
+						end
+					end)
+					return Unpack(original_results, 1, original_results.n)
 				end
 			end
 
@@ -1711,7 +1698,13 @@ local function PatchRandomMapGenerator()
 			if type(rhelpers) == "table" and rhelpers[2] ~= saved_rrand then
 				rhelpers[2] = saved_rrand
 			end
+			if type(rhelpers) == "table" and rhelpers[5] ~= saved_grand then
+				rhelpers[5] = saved_grand
+			end
 			if env.rm_print ~= saved_rm_print then env.rm_print = saved_rm_print end
+			if env.GetPlayableArea ~= saved_get_playable_area then
+				env.GetPlayableArea = saved_get_playable_area
+			end
 			if generate_resource_info_wrapper
 				and Global("GenerateResourceInfo") == generate_resource_info_wrapper then
 				rawset(_G, "GenerateResourceInfo", saved_generate_resource_info)
@@ -1818,10 +1811,11 @@ local function PatchRandomMapGenerator()
 				if placement and type(placement.TraceState) == "function" then
 					pcall(placement.TraceState, self, map, "ProcEnd before restoration: PlaceAnomalies")
 				end
-				State.rmg_placement_proc_active = false
 				if placement and type(placement.End) == "function" then
 					local ok, err = pcall(placement.End, map)
-					if not ok then
+					if ok then
+						State.rmg_placement_proc_active = false
+					else
 						DebugPrint("PlaceAnomalies placement repair end ERROR: " .. tostring(err))
 					end
 				end
@@ -2068,6 +2062,14 @@ local function PatchRandomMapGenerator()
 			-- span. Restored in End() below, regardless of success.
 			-- (In STRETCH mode Begin() self-skips: bit-identical generation required.)
 			local placement = SuperBigMap.RmgPlacement
+			-- Whole-DoGenerate (mirror-mode) placement begins before OnGenerateLogic can capture
+			-- this run's grids. Clear any retry residue so it deliberately uses the safe fallback
+			-- rather than stale coverage from an earlier attempt. Stretch mode captures fresh data
+			-- before its late PlaceAnomalies transaction.
+			map.SuperBigMapRmgGenZoneCoverage = nil
+			map.SuperBigMapRmgGenZoneCoverageInfo = nil
+			map.SuperBigMapRmgPlayableCoverage = nil
+			map.SuperBigMapRmgPlayableCoverageInfo = nil
 			local placement_active = placement and placement.Begin(self, map) or false
 
 			if GenRandEnabled() then
@@ -2098,12 +2100,10 @@ local function PatchRandomMapGenerator()
 			-- PAIRING_SURFACE_BUILDABLE_REBUILD). The entrance pairing runs INSIDE the
 			-- UNDERGROUND generation: vanilla searches MainMap's BUILDABLE grid around each
 			-- underground marker and falls back to a RANDOM position when the search fails.
-			-- On expanded maps the surface buildable grid is STALE at that moment (built from
-			-- the blank map; the async "Buildable grid ready" rebuild lands seconds later), so
-			-- the search sometimes fails -> random fallback -> an entrance at a different spot
-			-- per restart. Rebuilding the surface buildable grid RIGHT HERE -- synchronously,
-			-- from the fully generated surface terrain, before the underground generation --
-			-- makes the search inputs deterministic: same terrain, same grid, same marker
+			-- The mod now proves whether native surface ResolveBuildable has already replaced
+			-- the provisional grid. That exact grid is reused when current; otherwise a
+			-- synchronous correctness fallback rebuild runs before underground generation.
+			-- Both paths make the search inputs deterministic: same terrain, same grid, same marker
 			-- positions => the SAME all-buildable spot every run, vanilla's own clean flatten,
 			-- zero terrain interference from the mod. (The forced-position correction chain of
 			-- v437-v441 stays retired: forcing spots the grid calls unbuildable is what
@@ -2115,15 +2115,23 @@ local function PatchRandomMapGenerator()
 					local main_map = Global("MainMap")
 					local rebuild = Global("RebuildBuildableGrid")
 					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
-						local t0 = 0
-						local ticks = Global("GetPreciseTicks")
-						if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
-						local ok_rb, err_rb = pcall(rebuild, main_map)
-						local t1 = t0
-						if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
-						DebugPrint(string.format(
-							"surface buildable grid rebuilt before underground generation (deterministic entrance pairing): ok=%s ms=%s%s",
-							tostring(ok_rb), tostring(t1 - t0), ok_rb and "" or (" err=" .. tostring(err_rb))))
+						if main_map.SuperBigMapSurfaceBuildableCurrent == true then
+							-- The surface RandomMapGenerator has already completed ResolveBuildable
+							-- synchronously, and no surface terrain edit occurs before underground
+							-- generation. Reusing that exact grid avoids recomputing identical input.
+							DebugPrint("surface buildable grid already authoritative before underground generation; duplicate pairing rebuild skipped")
+						else
+							local t0 = 0
+							local ticks = Global("GetPreciseTicks")
+							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
+							local ok_rb, err_rb = pcall(rebuild, main_map)
+							local t1 = t0
+							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
+							if ok_rb then main_map.SuperBigMapSurfaceBuildableCurrent = true end
+							DebugPrint(string.format(
+								"surface buildable grid rebuilt before underground generation (deterministic entrance pairing): ok=%s ms=%s%s",
+								tostring(ok_rb), tostring(t1 - t0), ok_rb and "" or (" err=" .. tostring(err_rb))))
+						end
 					end
 				end
 			end
@@ -2137,12 +2145,15 @@ local function PatchRandomMapGenerator()
 					detected_height_tiles = cur_h_tiles, generator_width_tiles = gen_width_tiles,
 					generator_height_tiles = gen_height_tiles }, map) or false
 			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
-			-- A retry must never erase warnings retained by an interrupted previous attempt.
-			if map.SuperBigMapPendingRmgPlacementWarnings then
-				FlushRmgPlacementWarnings(map, "new DoGenerate began before previous final repair audit")
+			local generation_environment = (type(mapdata) == "table" and mapdata.Environment)
+				or (type(template) == "table" and template.Environment)
+			local is_surface_generation = generation_environment ~= "Underground"
+			if is_surface_generation then
+				-- ResolveBuildable inside the native generator is the first authoritative build
+				-- after the provisional loading-only placeholder. Mark it current only after the
+				-- complete native generation transaction succeeds.
+				map.SuperBigMapSurfaceBuildableCurrent = false
 			end
-			map.SuperBigMapPendingRmgPlacementWarnings = nil
-			map.SuperBigMapEnrichmentTopUpAudit = nil
 			State.rmg_placement_active_map = map
 			State.rmg_placement_proc_active = false
 			State.rmg_placement_proc_stack = {}
@@ -2158,13 +2169,31 @@ local function PatchRandomMapGenerator()
 			-- generator raised before ProcEnd, restore it here so no preset mutation
 			-- can leak into another map generation.
 			if State.rmg_placement_proc_active then
-				State.rmg_placement_proc_active = false
 				if placement and type(placement.End) == "function" then
-					pcall(placement.End, map)
+					local restore_ok, restore_err = pcall(placement.End, map)
+					if restore_ok then
+						State.rmg_placement_proc_active = false
+					else
+						DebugPrint("DoGenerate placement repair rollback ERROR: " .. tostring(restore_err))
+						results[1] = false
+						results[2] = "placement-property rollback failed: " .. tostring(restore_err)
+					end
 				end
 			end
 			State.rmg_placement_active_map = false
 			State.rmg_placement_proc_stack = nil
+			if results[1] and is_surface_generation and map.buildable and map.buildable.z_grid
+				and map.SuperBigMapProvisionalBuildableDeferred ~= true then
+				map.SuperBigMapSurfaceBuildableCurrent = true
+				map.SuperBigMapProvisionalBuildableDeferred = nil
+				local debug_log = SuperBigMap.DebugLog
+				if debug_log then
+					pcall(debug_log.Info, "Bounds", "native surface ResolveBuildable grid is authoritative", {
+						map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+						generator_tiles = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
+					})
+				end
+			end
 			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
 			if load_token and type(profiler.End) == "function" then
 				profiler.End(load_token, { result_count = #results - 1,
@@ -2200,7 +2229,6 @@ local function PatchRandomMapGenerator()
 			end
 
 			if not results[1] then
-				FlushRmgPlacementWarnings(map, "DoGenerate failed")
 				if GenRandEnabled() then
 					GenRandLog("DoGenerate FAILED (expanded)", { err = tostring(results[2]) })
 				end
@@ -2357,24 +2385,22 @@ end
 local function RunSectorMirrorPlanIfEnabled(map)
 	map = map or Global("CurrentMap")
 	if not cfg_bool("SECTOR_MIRROR_PLAN_AT_START", false) then
-		FlushRmgPlacementWarnings(map, "surface expansion plan disabled")
 		return false
 	end
 	if not map then
 		return false
 	end
 	if map.SuperBigMapSectorMirrorDone == true then
-		FlushRmgPlacementWarnings(map, "surface expansion already complete before final repair audit")
 		return false
 	end
-	-- An existing scheduled thread owns the current buffer; do not race its final audit.
-	if map.SuperBigMapSectorMirrorScheduled == true then return false end
+	-- Report an existing live schedule as success so the lifecycle caller does not run its
+	-- fallback full-map rebuild in parallel with the expansion transaction.
+	if map.SuperBigMapSectorMirrorScheduled == true then return true end
 	local create_thread = Global("CreateRealTimeThread")
 	local sleep = Global("Sleep")
 	local yield_protected_call = Global("sprocall")
 	if type(create_thread) ~= "function" or type(sleep) ~= "function"
 		or type(yield_protected_call) ~= "function" then
-		FlushRmgPlacementWarnings(map, "surface expansion scheduler unavailable")
 		return false
 	end
 	map.SuperBigMapSectorMirrorScheduled = true
@@ -2397,8 +2423,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		frame_sectors = FrameSectorProbe(map),
 	})
 	local schedule_ok, schedule_err = pcall(create_thread, function()
-		-- Protect the entire asynchronous pipeline, not only its central stretch block.
-		-- This guarantees fail-closed warning replay if readiness/setup code raises.
+		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
+		-- readiness/setup errors take the normal full-rebuild fallback.
 		local thread_ok, thread_err = yield_protected_call(function()
 		-- Loading screen: hide the welcome popup's Close button + show a loading message
 		-- while we expand, restored on completion (ExpansionLoadingBegin/End in lifecycle).
@@ -2413,11 +2439,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			SetLoadingPhase("Expanding the surface map")
 		end
 		local function end_loading()
-			-- Normal stretch completion already consumed this buffer after its final audit.
-			-- Residue here proves that the audit was bypassed, so replay every native warning.
-			if map.SuperBigMapPendingRmgPlacementWarnings then
-				FlushRmgPlacementWarnings(map, "surface expansion exited before final repair audit")
-			end
 			-- Fail-safe: if the stretch exited before its final lightweight refresh, restore the
 			-- original full rebuild path rather than leave partially refreshed map state.
 			if map.SuperBigMapStretchPipelinePending == true then
@@ -2651,6 +2672,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					SetLoadingPhase("Stretching the surface terrain")
 					StretchLog("stretch branch: -> StretchSourceToFull")
 					local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
+					-- The next call mutates terrain heights, so the native source-grid buildability
+					-- snapshot is no longer current until the explicit final rebuild below succeeds.
+					map.SuperBigMapSurfaceBuildableCurrent = false
 					ok_stretch, n_grids = StretchSourceToFull(map, false)
 					InvestigationEnd(terrain_token, { ok = ok_stretch, grids = n_grids }, ok_stretch == true)
 					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
@@ -2809,9 +2833,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							InvestigationEnd(detail_token, nil, true)
 						end
 					end
-					-- Only now do we decide whether the early native source-quadrant warnings were
-					-- genuinely repaired. Failed/incomplete category audits replay the originals.
-					FlushRmgPlacementWarnings(map)
 				end
 				local function now2()
 					if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then return t end end
@@ -2845,6 +2866,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					if not rebuild_ok then
 						error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 					end
+					map.SuperBigMapSurfaceBuildableCurrent = true
 				else
 					error("final surface RebuildBuildableGrid unavailable")
 				end
@@ -2903,7 +2925,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 			end
 			if not ok_branch then
-				FlushRmgPlacementWarnings(map, "surface stretch branch failed: " .. tostring(branch_err))
 				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })
 				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
 			end
@@ -3078,7 +3099,6 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			tostring(terrain_done), tostring(n), tostring(obj_done), tostring(n), tostring(settle_ms)))
 		end)
 		if not thread_ok then
-			FlushRmgPlacementWarnings(map, "surface expansion thread failed: " .. tostring(thread_err))
 			if map.SuperBigMapStretchPipelinePending == true then
 				local lifecycle = SuperBigMap.Lifecycle
 				if lifecycle and type(lifecycle.Apply) == "function" then
@@ -3096,11 +3116,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 	if not schedule_ok then
 		map.SuperBigMapStretchPipelinePending = false
 		map.SuperBigMapSectorMirrorScheduled = false
-		FlushRmgPlacementWarnings(map,
-			"surface expansion thread could not be scheduled: " .. tostring(schedule_err))
 		DebugPrint("RunSectorMirrorPlanIfEnabled: scheduling ERROR: " .. tostring(schedule_err))
 	end
-	return false
+	return schedule_ok == true
 end
 
 

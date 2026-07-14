@@ -210,10 +210,6 @@ config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement a
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
 config.DebugRmgPlacementExhaustive = true
--- The native source-quadrant generator can report shortages that the mandatory post-stretch
--- top-up pass repairs to the recorded target floors. Hide only those known placement-warning
--- families from the loading screen while retaining every raw argument in the exhaustive log.
-config.SilenceRepairedRmgPlacementWarnings = true
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -277,13 +273,6 @@ config.RemoveFrameCraters = true
 -- in the frame; this removes it. The genuine entrance in the rendered source quadrant is never
 -- in the frame boxes, so it is never touched. ON by default.
 config.RemoveFrameUndergroundAccess = true
-
--- Silence the engine's "Buildable grid computing too slow! Took <ms>" message on the expanded
--- map. The buildable grid is built at the real (8192-tile) map dimensions, so the compute always
--- exceeds the engine's 1000 ms warning threshold; the message is informational only and inherent
--- to the larger map. Swallowed ONLY while building a mod-expanded map; vanilla maps keep it. true
--- = hide it, false = show it.
-config.SilenceBuildableGridSlowWarning = true
 
 -- After each sector copy (test copy, column mirror, or the console helper), force
 -- any object that was ALREADY sitting in the destination region -- e.g. a mystery
@@ -686,10 +675,11 @@ config.StretchDecorTopUp = false
 -- faster but risks the grey-frame biome issue; the real fix for speed is to poll for grid-readiness
 -- rather than lower this blindly.
 config.StretchSettleMs = 5000
--- LOADING OPTIMIZATIONS (stretch mode only). When a stretch pipeline is already scheduled,
--- defer MapGenerated's full-map bounds/buildable/passability rebuild because the stretch changes
--- those grids moments later and performs the authoritative final rebuild. Non-stretch paths are
--- untouched. The final sector geometry and max-object-radius refresh still run after stretching.
+-- LOADING OPTIMIZATIONS (stretch mode only). Defer the provisional blank-map buildability
+-- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
+-- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
+-- later and performs the authoritative final rebuild. Non-stretch paths are untouched. The final
+-- sector geometry and max-object-radius refresh still run after stretching.
 config.OptimizeStretchDeferredRebuilds = true
 -- Apply the surface frame-passable overlay before the stretch's existing full revalidation and
 -- avoid rebuilding the same passability grid again afterward. Underground likewise keeps the
@@ -730,9 +720,10 @@ config.QuadrantCopyLimitGeneratorToSource = true
 -- fixed preset counts have absolute-distance spacing that cannot fit the smaller
 -- zone. Widening gen_zone would fix placement but FLATTENS terrain (gen_zone also
 -- drives prefab/terrace shaping). This fix instead relaxes ONLY the placement-side
--- knobs -- it zeroes the per-layer borders and scales spacing/repulse by
--- sqrt(gen_zone coverage) just for the generation, then restores the originals. It
--- never touches gen_zone, prefabs, or the heightmap, so the terrain is unchanged.
+-- knobs -- it zeroes the per-layer borders and scales spacing/repulse by the smaller
+-- of sqrt(native play-zone coverage) and the known-safe cap just for PlaceAnomalies,
+-- then restores the originals. It never touches gen_zone, prefabs, or the heightmap,
+-- so the terrain is unchanged.
 -- true = apply on mod-expanded maps; false = exact vanilla placement.
 config.EnableRmgPlacementFix = true
 -- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
@@ -740,29 +731,31 @@ config.EnableRmgPlacementFix = true
 -- the main lever that revives FreeTech (whose border defaults to max_border ->
 -- DepBorderSubs). true = zero them (recommended), false = leave vanilla borders.
 config.RmgPlacementZeroBorders = true
--- Floor on the spacing scale: the auto-fit never tightens spacing below this fraction
--- of vanilla. Set high (0.8) to stay AS CLOSE TO VANILLA as possible -- anomaly
--- spacing is nudged at most ~20% tighter, just enough to seat the trailing FreeTech
--- anomalies (borders-zeroed already fits ~43 of ~50; 0.8 gives comfortable margin).
--- Lower it (e.g. 0.6) only if a dense map ever shows an anomaly shortfall; raise it
--- toward 1.0 for even closer-to-vanilla spacing (with less fit margin).
-config.RmgPlacementSpacingFloor = 0.8
--- Scale per-resource DEPOSIT spacing too (shared ResourcePreset). OFF by default:
--- resource deposits already reach their full preset counts at vanilla spacing once
--- the borders are zeroed, so scaling them only makes them denser than vanilla for no
--- benefit. Turn on only if a map ever under-places resource deposits.
-config.RmgPlacementScaleDeposits = false
+-- Floor on the base resource/effect spacing scale. 0.6 is the closest observed setting
+-- that seats the full native resource set while retaining useful separation. Same-anomaly
+-- packing has its own narrowly lower cap below because those markers share one eroded mask.
+config.RmgPlacementSpacingFloor = 0.6
+-- Resource layers share the same clipped play zone and mutually erase candidates through
+-- RepulseAll. Scale their ResourcePreset distances with the measured coverage too; zeroing
+-- borders alone cannot recover cells already consumed by earlier layers (the 11/27 Concrete
+-- failure in the diagnostic run).
+config.RmgPlacementScaleDeposits = true
 -- Extra squeeze multiplier applied on top of the measured sqrt(coverage) scale
 -- (1.0 = auto only). Set below 1.0 to pack tighter than coverage predicts if a run
 -- still shows shortfall; the floor above still bounds it. Tune from the
 -- DebugRmgPlacement log's placed-vs-coverage numbers.
 config.RmgPlacementExtraSqueeze = 1.0
--- Spacing scale used when gen_zone coverage cannot be measured reliably (the type
--- grid read returns an unusable ratio). Borders-only is not enough -- the trailing
--- FreeTech anomalies still starve the subsurface zone -- so the spacing is tightened
--- by this fixed fraction instead. 0.6 = ~1.7x the candidate-cell capacity, which
--- seats the full anomaly set. Scaling never exceeds the preset target counts.
+-- Known-safe scale from the observed worst case. It is both the fallback when the exact
+-- work-grid read is unavailable and the upper cap on coverage-derived spacing: area coverage
+-- alone cannot model fragmented zones or the sequential cross-layer repulsion erosion.
 config.RmgPlacementFallbackScale = 0.6
+-- Separate upper cap for same-anomaly spacing. Ordinary TechUnlock/Event/FreeTech markers
+-- all share the native subs/Anomaly mask, and every placed marker erases a circle with radius
+-- twice AnomalySpacing from that mask. The observed 15-work-cell setting left only six slots
+-- for seven FreeTech markers after TechUnlock and Event placement. 0.55 rounds the stock
+-- 20000-unit value down to 10400 (13 work cells), cutting that destructive area by about 25%
+-- without changing resource spacing or AnomalyRepulseSubs/All. 1.0 disables this extra cap.
+config.RmgPlacementAnomalySpacingCap = 0.55
 
 -- SCALE ANOMALY COUNTS TO MAP SIZE (sbm_rmg_placement.lua). The generator places the native
 -- (Big) preset anomaly count; spread over the larger 20x20 that is well below vanilla density
@@ -773,11 +766,10 @@ config.RmgPlacementFallbackScale = 0.6
 -- game's available pool at load -- safe, they just plateau below the full scale). The gen-zone
 -- anomaly spacing is tightened to fit the higher count; RespaceAnomalies spreads them after.
 -- false = native (Big) anomaly count (leaner research for the bigger map).
--- NOTE: in STRETCH fill mode this (and the whole RmgPlacement in-generation auto-fit) is
--- SKIPPED: any preset-prop change shifts the generator's random stream, so the same map
--- coordinates produce a DIFFERENT layout than vanilla (terrain prefabs at other positions /
--- rotations). Stretch uses the POST-generation anomaly top-up pass below instead. Both paths
--- are controlled by TopUpAnomalies above.
+-- NOTE: in STRETCH fill mode only the in-generation COUNT scaling is skipped. The placement
+-- auto-fit starts later at PlaceAnomalies, after terrain/prefab generation, so it can satisfy
+-- the native source-map enrichment counts without changing terrain or prefab placement. The
+-- post-generation top-up below then supplies the additional full-map density.
 -- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies) -- the stretch-mode
 -- replacement for in-generation count scaling. After generation, clones anomaly MARKERS
 -- (categories preserved via property copy; rewards resolve at scan; breakthroughs stay
@@ -814,8 +806,8 @@ config.FlattenSkipWhenUnbuildable = true
 -- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
 -- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
 -- RE-ENABLED (2026-07-11) and tightened to preserve vertical correspondence:
--- (a) PairingSurfaceBuildableRebuild gives the pairing (and any flatten) a REAL grid -- the
---     spike crowns came from the sentinel-poisoned stale grid;
+-- (a) PairingSurfaceBuildableRebuild proves/reuses the native ResolveBuildable grid (with a
+--     synchronous rebuild fallback) -- the spike crowns came from a sentinel-poisoned grid;
 -- (b) every linked surface passage first tests the underground exit's equivalent anchor hex;
 --     if the complete Elevator footprint is not buildable there, it selects the closest
 --     buildable candidate by hex distance;
@@ -826,12 +818,10 @@ config.FlattenSkipWhenUnbuildable = true
 config.StretchDeterministicPassages = true
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
--- on expanded maps that grid is stale at that moment (async rebuild lands seconds later), so
--- the search sometimes fails at the underground marker -> vanilla's random fallback -> the
--- entrance wanders per restart. When true, the surface buildable grid is rebuilt
--- synchronously right before the underground generation, restoring vanilla's deterministic
--- search conditions: same spot every restart, vanilla's own clean flatten, no mod terrain
--- edits (unlike the retired StretchDeterministicPassages correction chain).
+-- the mod now records whether native surface ResolveBuildable already produced the authoritative
+-- grid. When true, pairing reuses that exact grid; if proof is absent it synchronously rebuilds
+-- as a correctness fallback. Both paths restore deterministic vanilla search conditions without
+-- editing terrain (unlike the retired forced-position correction chain).
 config.PairingSurfaceBuildableRebuild = true
 -- Post-generation smoothing of the ground around each entrance footprint (GridSmooth, the
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
@@ -960,7 +950,6 @@ C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
 C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
-C.SILENCE_REPAIRED_RMG_PLACEMENT_WARNINGS = as_bool(config.SilenceRepairedRmgPlacementWarnings)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
@@ -1017,7 +1006,6 @@ C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
 C.ANOMALY_EVEN_SPREAD_FACTOR = as_number(config.AnomalyEvenSpreadFactor, 0.6)
 C.REMOVE_FRAME_CRATERS = as_bool(config.RemoveFrameCraters)
 C.REMOVE_FRAME_UNDERGROUND_ACCESS = as_bool(config.RemoveFrameUndergroundAccess)
-C.SILENCE_BUILDABLE_GRID_SLOW_WARNING = as_bool(config.SilenceBuildableGridSlowWarning)
 C.RESNAP_FRAME_OBJECTS = as_bool(config.ResnapFrameObjects)
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
 C.PREVENT_LANDING_PAD_FLATTEN = as_bool(config.PreventLandingPadFlatten)
@@ -1096,10 +1084,11 @@ C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTile
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)
 C.RMG_PLACEMENT_ZERO_BORDERS = as_bool(config.RmgPlacementZeroBorders)
-C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.8)
+C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.6)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
 C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
+C.RMG_PLACEMENT_ANOMALY_SPACING_CAP = as_number(config.RmgPlacementAnomalySpacingCap, 0.55)
 C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.StretchDeterministicPassages)
