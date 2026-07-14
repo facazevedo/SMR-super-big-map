@@ -191,12 +191,12 @@ config.HideOverviewCurtains = true
 -- single scope to focus. Each flag maps to DebugLog scope "<Name>" (see sbm_debug.lua).
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
-config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugGeneration    = false   -- Generation: generator hook, frame allocation, mirror/clone plan
+config.DebugLifecycle     = true    -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
+config.DebugGeneration    = true    -- Generation: generator hook, frame allocation, mirror/clone plan
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
-config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
 -- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
@@ -204,7 +204,16 @@ config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/regist
 -- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
 -- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
 config.DebugTopUpEdgeDistribution = false
-config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
+config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
+-- Exhaustive trace for the generator's enrichment-placement transaction. Logs every
+-- ResolveBuildable/PlaceAnomalies boundary, all relaxed border/spacing values, every private
+-- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
+-- the loading-screen placement failures are being investigated; disable for release.
+config.DebugRmgPlacementExhaustive = true
+-- The native source-quadrant generator can report shortages that the mandatory post-stretch
+-- top-up pass repairs to the recorded target floors. Hide only those known placement-warning
+-- families from the loading screen while retaining every raw argument in the exhaustive log.
+config.SilenceRepairedRmgPlacementWarnings = true
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -229,13 +238,17 @@ config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; s
 config.DebugEntrancePositions = false
 config.DebugOverview      = false   -- Overview: overview curtains + render-distance
 config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
-config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
+config.DebugRocket        = true    -- Rocket: rocket landing Z-snap path
+-- Exhaustive trace for rocket/pod terrain changes. Logs patch identity and lifecycle state,
+-- construction cursor/template/rocket identity, every mod-map flatten decision, buildable-vs-
+-- live terrain Z, and the landing transaction before/after. Temporarily enabled for diagnosis.
+config.DebugRocketTerrain = true
 -- Optional Elevator terrain-forensics trace. Logs the exact class/global patch identity,
 -- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
 -- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
 config.DebugElevatorTerrain = false
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
-config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder
+config.DebugBounds        = true    -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
 config.DebugZoom          = false   -- Zoom: ZoomPlus integration (also drives ZoomPlus's own logs)
@@ -247,8 +260,8 @@ config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequ
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
 config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
-config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
-config.DebugGenRand       = false   -- GenRand: generation-determinism trace
+config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics
+config.DebugGenRand       = true    -- GenRand: generation-determinism trace
 
 -- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
 -- generation in sbm_map_generation; no per-load passability pass is needed.)
@@ -946,6 +959,8 @@ C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
 C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
 C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
+C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
+C.SILENCE_REPAIRED_RMG_PLACEMENT_WARNINGS = as_bool(config.SilenceRepairedRmgPlacementWarnings)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
@@ -958,6 +973,7 @@ C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)
 C.DEBUG_OVERVIEW      = as_bool(config.DebugOverview)
 C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
 C.DEBUG_ROCKET        = as_bool(config.DebugRocket)
+C.DEBUG_ROCKETTERRAIN = as_bool(config.DebugRocketTerrain)
 C.DEBUG_ELEVATORTERRAIN = as_bool(config.DebugElevatorTerrain)
 C.DEBUG_HEAT          = as_bool(config.DebugHeat)
 C.DEBUG_BOUNDS        = as_bool(config.DebugBounds)

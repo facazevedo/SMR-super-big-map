@@ -1529,9 +1529,19 @@ function DepositRules.LogBuildableSectorCensus(map, label)
 	})
 end
 
+local function RecordEnrichmentTopUpAudit(map, kind, data)
+	-- The audit is transaction-local evidence for delayed native warnings. Do not attach
+	-- transient audit tables to mirror/underground maps that have no pending warning buffer.
+	local pending = type(map) == "table" and map.SuperBigMapPendingRmgPlacementWarnings or nil
+	if type(pending) ~= "table" or #pending == 0 then return end
+	map.SuperBigMapEnrichmentTopUpAudit = map.SuperBigMapEnrichmentTopUpAudit or {}
+	map.SuperBigMapEnrichmentTopUpAudit[kind] = data
+end
+
 function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	map = map or Global("CurrentMap")
+	RecordEnrichmentTopUpAudit(map, "resources", { complete = false, reason = "started" })
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
 	local city = map and map.City
@@ -1630,6 +1640,10 @@ function DepositRules.TopUpDeposits(map)
 			total_current = total_current, source_count = source_count, target = target,
 			shortfall = shortfall, templates = #templates,
 			area_factor = string.format("%.3f", area_factor),
+		})
+		RecordEnrichmentTopUpAudit(map, "resources", {
+			complete = shortfall <= 0, remaining_shortfall = shortfall,
+			templates = #templates, target = target, current = total_current,
 		})
 		return
 	end
@@ -1777,6 +1791,10 @@ function DepositRules.TopUpDeposits(map)
 		remaining_shortfall = remaining_shortfall,
 		excess = excess,
 	})
+	RecordEnrichmentTopUpAudit(map, "resources", {
+		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
+		templates = #templates, target = target, current = total_current + added,
+	})
 	DepositRules.LogDistributionReport(map, "after deposit top-up")
 end
 
@@ -1799,6 +1817,7 @@ end
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	map = map or Global("CurrentMap")
+	RecordEnrichmentTopUpAudit(map, "anomalies", { complete = false, reason = "started" })
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
 	local city = map and map.City
@@ -1976,6 +1995,10 @@ function DepositRules.TopUpAnomalies(map)
 		Log("anomaly top-up: nothing to add", {
 			total_current = total_current, templates = #templates, target = target,
 			shortfall = shortfall, area_factor = string.format("%.3f", area_factor),
+		})
+		RecordEnrichmentTopUpAudit(map, "anomalies", {
+			complete = shortfall <= 0, remaining_shortfall = shortfall,
+			templates = #templates, target = target, current = total_current,
 		})
 		return
 	end
@@ -2909,6 +2932,10 @@ function DepositRules.TopUpAnomalies(map)
 		added_mix = TallyString(added_by_cat),
 		source_reward_families = TallyString(src_by_reward),
 		added_reward_families = TallyString(added_by_reward),
+	})
+	RecordEnrichmentTopUpAudit(map, "anomalies", {
+		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
+		templates = #templates, target = target, current = total_current + added,
 	})
 end
 

@@ -10,10 +10,12 @@
 -- print() in mod-owned modules.
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
---   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement, Stretch, Loading, LoadTime, LoadingSteps,
+--   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement,
+--   RmgPlacementExhaustive, Stretch, Loading, LoadTime, LoadingSteps,
 --   LoadingInvestigation,
 --   UndergroundAccess,
---   Hover, Align, EntrancePositions, Overview, Camera, Rocket, ElevatorTerrain, Heat, Bounds, FakeTerrain, Validation, Zoom,
+--   Hover, Align, EntrancePositions, Overview, Camera, Rocket, RocketTerrain, ElevatorTerrain,
+--   Heat, Bounds, FakeTerrain, Validation, Zoom,
 --   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
 --
 -- DebugLog.LoadTime(step, data) is the LOAD TIMELINE channel (scope "LoadTime"): each mark prints

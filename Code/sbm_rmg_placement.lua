@@ -73,6 +73,14 @@ local function Log(message, data)
 	if DebugLog then DebugLog.Info("RmgPlacement", message, data) end
 end
 
+local function ExhaustiveLog(message, data)
+	local DebugLog = SuperBigMap.DebugLog
+	-- Diagnostics must never interfere with the mutation/rollback transaction.
+	if DebugLog and type(DebugLog.Info) == "function" then
+		pcall(DebugLog.Info, "RmgPlacementExhaustive", message, data)
+	end
+end
+
 -- Placement-only properties scaled toward a tighter packing (absolute world
 -- distances, granularity work_step in the generator). NONE feed gen_zone/terrain.
 local SPACING_PROPS = {
@@ -287,9 +295,10 @@ local RmgPlacement = {}
 -- Begin: snapshot + relax placement knobs for the in-flight generation. Call on a
 -- mod-expanded map after the DoGenerate size overrides are in place. Mirror mode
 -- starts this around the whole DoGenerate call. Stretch mode starts it from the
--- PlaceAnomalies ProcStart boundary, after terrain/prefab generation has finished,
--- so terrain remains seed-identical while deposit/anomaly placement can use the
--- recovered zone. Returns true if a relaxation was applied (so End must be called).
+-- PlaceAnomalies ProcStart boundary, after terrain/prefab generation and ResolveBuildable have
+-- finished but before the engine builds its border/spacing-derived enrichment masks. Terrain and
+-- the native play zone stay seed-identical. Returns true if a relaxation was applied (so End must
+-- be called).
 function RmgPlacement.Begin(generator, map, options)
 	if not Enabled() then return false end
 	options = type(options) == "table" and options or {}
@@ -349,6 +358,28 @@ function RmgPlacement.Begin(generator, map, options)
 		generator = generator, props = {}, presets = {},
 		mode = stretch_mode and "stretch-place-anomalies" or "whole-generation",
 	}
+	-- Publish the rollback record before the first mutation. If any later diagnostic/property
+	-- access raises, the caller can invoke End and restore everything already captured.
+	active = snapshot
+	ExhaustiveLog("BEGIN placement transaction (before relaxation)", {
+		mode = snapshot.mode,
+		map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+		environment = tostring(map.mapdata and map.mapdata.Environment or "?"),
+		generator_tiles = tostring(map.SuperBigMapGeneratorWidthTiles),
+		desired_tiles = tostring(map.SuperBigMapDesiredWidthTiles),
+		pass_border = tostring(map.mapdata and map.mapdata.PassBorder),
+		DepBorderSurf = tostring(generator.DepBorderSurf),
+		DepBorderSubs = tostring(generator.DepBorderSubs),
+		DepBorderTerr = tostring(generator.DepBorderTerr),
+		DepBorderAnomaly = tostring(generator.DepBorderAnomaly),
+		DepBorderEffects = tostring(generator.DepBorderEffects),
+		AnomalySpacing = tostring(generator.AnomalySpacing),
+		AnomalyRepulseSubs = tostring(generator.AnomalyRepulseSubs),
+		AnomalyRepulseAll = tostring(generator.AnomalyRepulseAll),
+		EffectDepSpacing = tostring(generator.EffectDepSpacing),
+		EffectDepRepulse = tostring(generator.EffectDepRepulse),
+		EffectDepRepulseAll = tostring(generator.EffectDepRepulseAll),
+	})
 
 	-- 1) Zero per-layer placement borders on the generator instance.
 	if zero_borders then
@@ -434,7 +465,19 @@ function RmgPlacement.Begin(generator, map, options)
 		end
 	end
 
-	active = snapshot
+	for i = 1, #snapshot.props do
+		local e = snapshot.props[i]
+		ExhaustiveLog("relaxed generator property", {
+			n = i, property = tostring(e.key), before = tostring(e.value), after = tostring(e.obj[e.key]),
+		})
+	end
+	for i = 1, #snapshot.presets do
+		local e = snapshot.presets[i]
+		ExhaustiveLog("relaxed resource-preset property", {
+			n = i, preset = tostring(e.obj and (e.obj.id or e.obj.name) or "?"),
+			property = tostring(e.key), before = tostring(e.value), after = tostring(e.obj[e.key]),
+		})
+	end
 
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("RmgPlacement") then
 		local data = {
@@ -462,9 +505,12 @@ end
 -- counts so a single run shows placed-vs-expected. Always safe to call.
 function RmgPlacement.End(map)
 	local snap = active
-	active = nil
 	if not snap then return end
 
+	ExhaustiveLog("END placement transaction (before restoration)", {
+		mode = tostring(snap.mode), changed_generator_props = #snap.props,
+		changed_preset_props = #snap.presets,
+	})
 	for i = 1, #snap.props do
 		local e = snap.props[i]
 		e.obj[e.key] = e.value
@@ -473,6 +519,8 @@ function RmgPlacement.End(map)
 		local e = snap.presets[i]
 		e.obj[e.key] = e.value
 	end
+	-- Clear only after every restoration succeeded; a caller may retry End after an error.
+	active = nil
 
 	-- OnGenerateLogic records the exact randomized category counts before this
 	-- procedure runs. Preserve those authoritative values; never substitute preset
@@ -493,7 +541,31 @@ function RmgPlacement.End(map)
 		local expected = RmgPlacement.ExpectedAnomalyRanges(snap.generator)
 		for k, v in pairs(expected) do data[k] = v end
 		Log("placement restored: placed vs expected", data)
+		ExhaustiveLog("native enrichment placement census after restoration", data)
 	end
+end
+
+-- Procedure-boundary snapshot used by the exhaustive trace. Read-only and cheap enough to call
+-- at ResolveBuildable/PlaceAnomalies only; it never touches the generator or map.
+function RmgPlacement.TraceState(generator, map, phase, extra)
+	local DebugLog = SuperBigMap.DebugLog
+	if not (DebugLog and type(DebugLog.On) == "function"
+		and DebugLog.On("RmgPlacementExhaustive") == true) then
+		return false
+	end
+	local data = {
+		phase = tostring(phase or "?"), transaction_active = active ~= nil,
+		map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
+		environment = tostring(map and map.mapdata and map.mapdata.Environment or "?"),
+		pass_border = tostring(map and map.mapdata and map.mapdata.PassBorder),
+	}
+	for _, name in ipairs(BORDER_PROPS) do data[name] = tostring(generator and generator[name]) end
+	for _, name in ipairs(SPACING_PROPS) do data[name] = tostring(generator and generator[name]) end
+	if type(extra) == "table" then
+		for k, v in pairs(extra) do data[k] = v end
+	end
+	ExhaustiveLog("procedure-boundary placement state", data)
+	return true
 end
 
 -- Read the generator's preset anomaly-count targets off `self` (stable preset props;

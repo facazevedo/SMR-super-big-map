@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 29: capture the RMG's private warning arguments and exact
--- anomaly-count rolls without consuming randomness, for authoritative post-stretch targets.
-SuperBigMap.GENERATOR_PATCH_VERSION = 29
+-- (sbm_map_generation). Bumped to 30: exhaustive RMG procedure/warning tracing and
+-- audit-gated buffering of native shortages that the post-stretch top-ups repair.
+SuperBigMap.GENERATOR_PATCH_VERSION = 30

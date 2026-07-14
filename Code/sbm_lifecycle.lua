@@ -38,6 +38,11 @@ local LOAD_PROFILE_MESSAGES = {
 local function RegisterOnce(message_name, handler)
 	local State = SuperBigMap.State
 	State.registered_msgs = State.registered_msgs or {}
+	State.msg_handlers = State.msg_handlers or {}
+	-- Always replace the delegated body, even when the engine-facing wrapper was already
+	-- registered by an earlier module execution. Hot reloads then adopt orchestration changes
+	-- without stacking ChainOnMsg wrappers.
+	State.msg_handlers[message_name] = handler
 	if State.registered_msgs[message_name] then
 		return
 	end
@@ -60,7 +65,9 @@ local function RegisterOnce(message_name, handler)
 			end
 			return ...
 		end
-		return complete(handler(...))
+		local live_handler = (SuperBigMap.State.msg_handlers or {})[message_name]
+		if type(live_handler) ~= "function" then return complete() end
+		return complete(live_handler(...))
 	end)
 end
 
@@ -1382,11 +1389,43 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 	end
 end)
 
+-- These wrappers sit on engine methods/functions that ClassesBuilt and Lua reloads recreate.
+-- Reinstall them before the active-map gate: pre-game map previews and the first NewMap build
+-- already use ConstructionController/BuildableGrid, so waiting for Lifecycle.Apply is too late.
+local function ReinstallTerrainCriticalPatches(reason)
+	local cfg = SuperBigMap.Config or {}
+	if cfg.ENABLE_MOD == false then
+		NoticeLog("terrain-critical patch reinstall skipped", { reason = reason, enabled = false })
+		return false
+	end
+	-- These hooks are transparent on non-expanded maps, so keeping them installed while the
+	-- main menu is visible avoids missing the first pre-active construction/grid call.
+	local bounds = SuperBigMap.MapBounds
+	local bounds_fn = bounds and (bounds.ReinstallGlobalHooks or bounds.ApplyModBehavior)
+	local bounds_ok, bounds_result = false, "module/function unavailable"
+	if type(bounds_fn) == "function" then
+		bounds_ok, bounds_result = pcall(bounds_fn)
+	end
+	local rockets = SuperBigMap.RocketRules
+	local rockets_fn = rockets and (rockets.ReinstallGlobalHooks or rockets.ApplyModBehavior)
+	local rockets_ok, rockets_result = false, "module/function unavailable"
+	if type(rockets_fn) == "function" then
+		rockets_ok, rockets_result = pcall(rockets_fn)
+	end
+	NoticeLog("terrain-critical patch reinstall attempted", {
+		reason = reason, active = active(), bounds_ok = tostring(bounds_ok),
+		bounds_result = tostring(bounds_result), rockets_ok = tostring(rockets_ok),
+		rockets_result = tostring(rockets_result),
+	})
+	return bounds_ok and rockets_ok
+end
+
 RegisterOnce("ClassesBuilt", function()
 	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla. Re-install our hook even before a
 	-- mod map is active, so a pre-game landing-spot preview can't run vanilla DoGenerate.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled()
+	ReinstallTerrainCriticalPatches("ClassesBuilt")
 	if not active() then
 		return
 	end
@@ -1433,6 +1472,7 @@ RegisterOnce("ModsReloaded", function()
 	-- RandomMapGenerator class to vanilla; the pre-game preview can run before any map is active).
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled()
+	ReinstallTerrainCriticalPatches("ModsReloaded")
 	if not active() then
 		return
 	end
@@ -1476,6 +1516,7 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	-- any map is applied). This is the path that was overflowing GSRP into a crash.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled()
+	ReinstallTerrainCriticalPatches("ChangingMap")
 	if not active() then
 		return
 	end

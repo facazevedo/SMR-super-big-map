@@ -19,6 +19,22 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local FullHeightMin = Engine.FullHeightMin
 local FullHeightMax = Engine.FullHeightMax
+local Unpack = table.unpack or unpack
+
+local function Pack(...)
+	return { n = select("#", ...), ... }
+end
+
+-- Fresh per execution: same-version hot reloads must not retain old closures/code.
+local MODULE_TOKEN = {}
+
+local function IsLegacyMapBoundsFunction(fn)
+	local debug_api = rawget(_G, "debug")
+	if type(debug_api) ~= "table" or type(debug_api.getinfo) ~= "function" then return false end
+	local ok, info = pcall(debug_api.getinfo, fn, "S")
+	local source = ok and type(info) == "table" and tostring(info.source or "") or ""
+	return string.find(string.lower(source), "sbm_map_bounds", 1, true) ~= nil
+end
 
 -- Gated diagnostic logging for the permissive-hook installs below. These used raw output so
 -- the "[Super Big Map] Install...: wrapped ..." lines appeared in the log on every launch.
@@ -450,30 +466,66 @@ local function ForceBuildableGridStorage(map)
 	return replaced, total
 end
 
+local REBUILD_BUILDABLE_GRID_PATCH_VERSION = 1
 local function InstallRebuildBuildableGridHook()
-	local original = rawget(_G, "RebuildBuildableGrid")
-	if type(original) ~= "function" then
+	local State = SuperBigMap.State or {}
+	local current = rawget(_G, "RebuildBuildableGrid")
+	if type(current) ~= "function" then
 		DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: RebuildBuildableGrid not found")
-		return
+		return false
 	end
-	if rawget(_G, "BMOriginal_RebuildBuildableGrid") then
-		DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: already wrapped")
-		return
+	local legacy_original = rawget(_G, "BMOriginal_RebuildBuildableGrid")
+	if State.rebuild_buildable_grid_wrapper == nil
+		and type(legacy_original) == "function" and current ~= legacy_original
+		and IsLegacyMapBoundsFunction(current) then
+		DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: migrating legacy anonymous wrapper")
+		current = legacy_original
 	end
-	rawset(_G, "BMOriginal_RebuildBuildableGrid", original)
-	rawset(_G, "RebuildBuildableGrid", function(map)
-		original(map)
+	if current == State.rebuild_buildable_grid_wrapper
+		and State.rebuild_buildable_grid_version == REBUILD_BUILDABLE_GRID_PATCH_VERSION
+		and State.rebuild_buildable_grid_token == MODULE_TOKEN then
+		DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: live identity verified wrapper="
+			.. tostring(current) .. " original=" .. tostring(State.original_rebuild_buildable_grid))
+		return true
+	end
+	-- If a future patch version replaces our live wrapper, peel it before capturing the
+	-- immutable engine function. A ClassesBuilt reset instead gives us a fresh current.
+	if current == State.rebuild_buildable_grid_wrapper
+		and type(State.original_rebuild_buildable_grid) == "function" then
+		current = State.original_rebuild_buildable_grid
+	end
+	local original = current
+	local wrapper = function(map, ...)
+		local results = Pack(pcall(original, map, ...))
+		if not results[1] then error(results[2]) end
 		ForceBuildableGridStorage(map)
-	end)
-	DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: wrapped RebuildBuildableGrid")
+		return Unpack(results, 2, results.n)
+	end
+	rawset(_G, "RebuildBuildableGrid", wrapper)
+	State.original_rebuild_buildable_grid = original
+	State.rebuild_buildable_grid_wrapper = wrapper
+	State.rebuild_buildable_grid_version = REBUILD_BUILDABLE_GRID_PATCH_VERSION
+	State.rebuild_buildable_grid_token = MODULE_TOKEN
+	-- Retain the legacy slot for compatibility with saves/hot reloads that inspected it,
+	-- but never use its mere existence as proof that the wrapper is still installed.
+	rawset(_G, "BMOriginal_RebuildBuildableGrid", original)
+	DebugPrint("[Super Big Map] InstallRebuildBuildableGridHook: wrapped live="
+		.. tostring(rawget(_G, "RebuildBuildableGrid")) .. " wrapper=" .. tostring(wrapper)
+		.. " original=" .. tostring(original))
+	return true
 end
 
 local function UninstallRebuildBuildableGridHook()
-	local original = rawget(_G, "BMOriginal_RebuildBuildableGrid")
-	if type(original) == "function" then
-		rawset(_G, "RebuildBuildableGrid", original)
-		rawset(_G, "BMOriginal_RebuildBuildableGrid", nil)
+	local State = SuperBigMap.State or {}
+	if rawget(_G, "RebuildBuildableGrid") == State.rebuild_buildable_grid_wrapper
+		and type(State.original_rebuild_buildable_grid) == "function" then
+		rawset(_G, "RebuildBuildableGrid", State.original_rebuild_buildable_grid)
 	end
+	State.original_rebuild_buildable_grid = nil
+	State.rebuild_buildable_grid_wrapper = nil
+	State.rebuild_buildable_grid_version = nil
+	State.rebuild_buildable_grid_token = nil
+	rawset(_G, "BMOriginal_RebuildBuildableGrid", nil)
 end
 
 MapBounds.ForceBuildableGridStorage = ForceBuildableGridStorage
@@ -550,6 +602,7 @@ MapBounds.UninstallLCCValidateMarkPermissive = UninstallLCCValidateMarkPermissiv
 -- we swallow ONLY that one line, ONLY while building a mod-expanded map. Vanilla maps
 -- (and any other print) are untouched. Build is a synchronous, void method, so the
 -- global `print` swap below cannot leak across a yield. Reversible.
+local BUILDABLE_GRID_BUILD_PATCH_VERSION = 1
 local function InstallBuildableGridSlowWarningSilence()
 	if (SuperBigMap.Config or {}).SILENCE_BUILDABLE_GRID_SLOW_WARNING == false then
 		return
@@ -564,51 +617,103 @@ local function InstallBuildableGridSlowWarningSilence()
 		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: no BuildableGrid:Build")
 		return
 	end
-	if rawget(_G, "BMOriginal_BuildableGrid_Build") then
-		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: already wrapped")
-		return
+	local State = SuperBigMap.State or {}
+	local current = cls.Build
+	local legacy_original = rawget(_G, "BMOriginal_BuildableGrid_Build")
+	if State.buildable_grid_build_wrapper == nil
+		and type(legacy_original) == "function" and current ~= legacy_original
+		and IsLegacyMapBoundsFunction(current) then
+		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: migrating legacy anonymous wrapper")
+		current = legacy_original
 	end
-	local original = cls.Build
+	if current == State.buildable_grid_build_wrapper
+		and State.buildable_grid_build_version == BUILDABLE_GRID_BUILD_PATCH_VERSION
+		and State.buildable_grid_build_token == MODULE_TOKEN then
+		DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: live identity verified wrapper="
+			.. tostring(current) .. " original=" .. tostring(State.original_buildable_grid_build))
+		return true
+	end
+	if current == State.buildable_grid_build_wrapper
+		and type(State.original_buildable_grid_build) == "function" then
+		current = State.original_buildable_grid_build
+	end
+	local original = current
 	rawset(_G, "BMOriginal_BuildableGrid_Build", original)
-	cls.Build = function(self, map, ...)
+	local wrapper
+	wrapper = function(self, map, ...)
 		-- Only filter while building a mod-expanded map; vanilla maps run untouched.
-		if not IsModMap(map) then
+		if (SuperBigMap.Config or {}).SILENCE_BUILDABLE_GRID_SLOW_WARNING == false
+			or not IsModMap(map) then
 			return original(self, map, ...)
 		end
+		DebugPrint("[Super Big Map] BuildableGrid:Build ENTER map=" .. tostring(map)
+			.. " live=" .. tostring(cls.Build) .. " wrapper=" .. tostring(wrapper)
+			.. " original=" .. tostring(original))
 		local saved_print = rawget(_G, "print")
+		local suppressed = 0
+		local filter
 		if type(saved_print) == "function" then
-			rawset(_G, "print", function(first, ...)
+			filter = function(first, ...)
 				if type(first) == "string"
 					and string.find(first, "Buildable grid computing too slow", 1, true) then
+					suppressed = suppressed + 1
 					return
 				end
 				return saved_print(first, ...)
-			end)
+			end
+			rawset(_G, "print", filter)
 		end
-		local ok, err = pcall(original, self, map, ...)
+		local results = Pack(pcall(original, self, map, ...))
 		if type(saved_print) == "function" then
 			rawset(_G, "print", saved_print)
 		end
-		if not ok then
-			error(err)
-		end
+		DebugPrint("[Super Big Map] BuildableGrid:Build EXIT map=" .. tostring(map)
+			.. " ok=" .. tostring(results[1]) .. " slow_warnings_suppressed=" .. tostring(suppressed))
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
 	end
-	DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: wrapped BuildableGrid:Build")
+	cls.Build = wrapper
+	State.original_buildable_grid_build = original
+	State.buildable_grid_build_wrapper = wrapper
+	State.buildable_grid_build_version = BUILDABLE_GRID_BUILD_PATCH_VERSION
+	State.buildable_grid_build_token = MODULE_TOKEN
+	DebugPrint("[Super Big Map] InstallBuildableGridSlowWarningSilence: wrapped live="
+		.. tostring(cls.Build) .. " wrapper=" .. tostring(wrapper) .. " original=" .. tostring(original))
+	return true
 end
 
 local function UninstallBuildableGridSlowWarningSilence()
 	local class_table_fn = Engine.ClassTable
 	if type(class_table_fn) ~= "function" then return end
 	local cls = class_table_fn("BuildableGrid")
-	local original = rawget(_G, "BMOriginal_BuildableGrid_Build")
-	if cls and type(original) == "function" then
-		cls.Build = original
+	local State = SuperBigMap.State or {}
+	if cls and cls.Build == State.buildable_grid_build_wrapper
+		and type(State.original_buildable_grid_build) == "function" then
+		cls.Build = State.original_buildable_grid_build
 	end
+	State.original_buildable_grid_build = nil
+	State.buildable_grid_build_wrapper = nil
+	State.buildable_grid_build_version = nil
+	State.buildable_grid_build_token = nil
 	rawset(_G, "BMOriginal_BuildableGrid_Build", nil)
 end
 
 MapBounds.InstallBuildableGridSlowWarningSilence = InstallBuildableGridSlowWarningSilence
 MapBounds.UninstallBuildableGridSlowWarningSilence = UninstallBuildableGridSlowWarningSilence
+
+-- Narrow reload-safe installer used before a map is active. It touches only transparent,
+-- map-gated engine hooks; no current-map grids, pass borders, or permissive policies.
+function MapBounds.ReinstallGlobalHooks()
+	local cfg = SuperBigMap.Config or {}
+	if cfg.ENABLE_MOD == false then return false end
+	InstallRebuildBuildableGridHook()
+	if cfg.SILENCE_BUILDABLE_GRID_SLOW_WARNING == false then
+		UninstallBuildableGridSlowWarningSilence()
+	else
+		InstallBuildableGridSlowWarningSilence()
+	end
+	return true
+end
 
 -- Bounds are applied per-map by SuperBigMap.Lifecycle.Apply (driven by the map
 -- OnMsg flow); the global install step here wires up the three permissive
@@ -616,6 +721,7 @@ MapBounds.UninstallBuildableGridSlowWarningSilence = UninstallBuildableGridSlowW
 -- All three install steps are idempotent.
 function MapBounds.ApplyModBehavior()
 	local cfg = SuperBigMap.Config or {}
+	MapBounds.ReinstallGlobalHooks()
 	-- BUILD permissive (cliffs -> buildable): OFF by default. Vanilla buildability (from the
 	-- rebuilt-after-copy grid) decides, so cliffs are unbuildable and rockets can't land on
 	-- them. Re-enable via Config.PERMISSIVE_BUILD_ON_EXPANDED.
@@ -632,10 +738,8 @@ function MapBounds.ApplyModBehavior()
 	-- Keep the rebuild hook: it just runs the vanilla RebuildBuildableGrid (ForceBuildable-
 	-- GridStorage inside is gated off), so the buildable grid stays accurate for the new
 	-- terrain.
-	InstallRebuildBuildableGridHook()
 	-- Silence the engine's "Buildable grid computing too slow!" perf warning on the expanded
 	-- map (informational only; inherent to the 4x-larger grid). Vanilla maps keep the warning.
-	InstallBuildableGridSlowWarningSilence()
 	-- If a map is already loaded when the mod enables, force a one-shot grid pass now
 	-- (no-op unless ForceBuildableGridStorage is enabled).
 	local map = Global("CurrentMap")
@@ -672,3 +776,10 @@ function MapBounds.RestoreVanillaBehavior()
 end
 
 SuperBigMap.MapBounds = MapBounds
+
+-- Game Lua reloads can recreate BuildableGrid and the global rebuild function before a
+-- mod map is active. Install the transparent, map-gated wrappers at module load; lifecycle
+-- boundaries below re-verify their live identities after ClassesBuilt/ModsReloaded.
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
+	MapBounds.ReinstallGlobalHooks()
+end
