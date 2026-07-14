@@ -718,8 +718,9 @@ config.OptimizeStretchRevalidation = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
--- PostNewMapLoaded runs before the stretch and would rebuild bounds/passability that the stretch
--- immediately invalidates. Defer that full Apply exactly like the later MapGenerated hooks.
+-- NewMap would repeat the engine's just-built blank-map buildable grid, and PostNewMapLoaded would
+-- rebuild bounds/passability that the stretch immediately invalidates. Defer only the duplicate
+-- NewMap buildable pass, then defer the later full Apply exactly like the MapGenerated hooks.
 config.OptimizePostLoadDeferredBounds = true
 -- Resource top-up builds a large validated candidate pool. Reuse its remaining candidates for
 -- anomaly/effect top-ups and register stretch-mode clones at creation time instead of rescanning.
