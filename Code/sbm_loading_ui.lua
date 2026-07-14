@@ -507,26 +507,58 @@ end
 -- StdMessageDialog opens the vanilla MarsBlur layer during gameplay. Its full-screen
 -- XBlurRect normally preserves a 10-pixel frame on every side. Against the red Martian
 -- terrain those untreated strips remain saturated while the rest of the scene is blurred
--- and desaturated, which looks like a red ring around the screen. Keep the blur itself,
--- but remove only those four frame strips for this loading dialog.
+-- and desaturated, which looks like a red ring around the screen.
+local function RemoveBlurLayerEdge(blur_layer)
+	for _, blur in ipairs(blur_layer or {}) do
+		if blur and blur.BlurRadius ~= nil then
+			blur.FrameLeft = 0
+			blur.FrameTop = 0
+			blur.FrameRight = 0
+			blur.FrameBottom = 0
+			if type(blur.Invalidate) == "function" then
+				pcall(function() blur:Invalidate() end)
+			end
+			return true, blur.BlurRadius
+		end
+	end
+	return false
+end
+
+-- CreateMessageBox constructs and opens MarsBlur synchronously. Clear the frame inside
+-- MarsBlur:Init, before its first draw, instead of fixing it after CreateMessageBox returns
+-- (which allowed the red edge to flash for one rendered frame). The override exists only
+-- during this loading box's construction, so every other MarsBlur keeps vanilla behavior.
+local function CreateLoadingMessageBox(create_box, ...)
+	local mars_blur = Global("MarsBlur")
+	local original_init = type(mars_blur) == "table" and mars_blur.Init or nil
+	if type(original_init) ~= "function" then
+		return pcall(create_box, ...)
+	end
+
+	local patched_init
+	patched_init = function(self, ...)
+		original_init(self, ...)
+		RemoveBlurLayerEdge(self)
+	end
+	mars_blur.Init = patched_init
+
+	local ok, box = pcall(create_box, ...)
+	if mars_blur.Init == patched_init then
+		mars_blur.Init = original_init
+	end
+	return ok, box
+end
+
+-- Keep a post-construction fallback for engine variants that create the layer differently.
 local function RemoveLoadingBlurEdge(box)
 	for _, opener in ipairs(box or {}) do
 		if opener and opener.Layer == "MarsBlur" then
-			local blur_layer = opener.dialog
-			for _, blur in ipairs(blur_layer or {}) do
-				if blur and blur.BlurRadius ~= nil then
-					blur.FrameLeft = 0
-					blur.FrameTop = 0
-					blur.FrameRight = 0
-					blur.FrameBottom = 0
-					if type(blur.Invalidate) == "function" then
-						pcall(function() blur:Invalidate() end)
-					end
-					LoadingLog("loading blur retained with edge frame removed", {
-						blur_radius = blur.BlurRadius,
-					})
-					return true
-				end
+			local removed, blur_radius = RemoveBlurLayerEdge(opener.dialog)
+			if removed then
+				LoadingLog("loading blur retained with edge frame removed", {
+					blur_radius = blur_radius,
+				})
+				return true
 			end
 		end
 	end
@@ -557,7 +589,8 @@ local function SetWelcomeLoading(active)
 				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
 				-- text (idText, middle) = the static tagline; ok_text (footer button, bottom) =
 				-- the live status line. So the status sits at the bottom-most position.
-				local ok, box = pcall(create_box, nil, wrap(LOADING_TITLE), wrap(LOADING_BODY_TAGLINE),
+				local ok, box = CreateLoadingMessageBox(create_box, nil,
+					wrap(LOADING_TITLE), wrap(LOADING_BODY_TAGLINE),
 					wrap(current_phase_body))
 				if ok and box then
 					RemoveLoadingBlurEdge(box)
