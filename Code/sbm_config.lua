@@ -627,15 +627,15 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP (testing): unlock the underground map VIEW from the start of the game, so the stretched
 -- underground can be inspected immediately via the map switcher (vanilla unlocks it later).
 -- Turn OFF for release.
-config.UnlockUndergroundViewAtStart = true
+config.UnlockUndergroundViewAtStart = false
 -- TEMP (testing): fully reveal the underground darkness fog (hr.EnableDarknessReveal=0) whenever
 -- the underground map is viewed, so the whole stretched underground is visible without exploring.
 -- Vanilla gameplay hides it and reveals by rover proximity. Turn OFF for release.
-config.UndergroundRevealAllDarkness = true
+config.UndergroundRevealAllDarkness = false
 -- TEMP (testing): force-place + reveal ALL underground deposits/anomalies after the underground
 -- stretch, so the stretched enrichment layout can be inspected without exploring. Tunnel-entrance
 -- markers are excluded (their placement runs scripted passage sequences). Turn OFF for release.
-config.UndergroundRevealAllDeposits = true
+config.UndergroundRevealAllDeposits = false
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
