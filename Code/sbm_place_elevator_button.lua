@@ -20,6 +20,14 @@ local SafeCall = Engine.SafeCall
 
 local function cfg() return SuperBigMap.Config or {} end
 
+-- Clean up an instance created by the previous copy of this module during an in-session reload.
+-- This matters when the feature is switched off: the old button owns the only reference to its
+-- window, so the replacement module could not otherwise remove it.
+local previous_button_api = SuperBigMap.PlaceElevatorButton
+if previous_button_api and type(previous_button_api.Hide) == "function" then
+	pcall(previous_button_api.Hide)
+end
+
 local button = false
 local armed = false -- next Elevator construction site placed gets instantly completed
 
@@ -185,7 +193,10 @@ end
 local PlaceElevatorButton = {}
 
 function PlaceElevatorButton.Show()
-	if cfg().PLACE_ELEVATOR_BUTTON_ENABLED ~= true then return false end
+	if cfg().PLACE_ELEVATOR_BUTTON_ENABLED ~= true then
+		Hide()
+		return false
+	end
 	if Valid() then return true end
 	return Build()
 end

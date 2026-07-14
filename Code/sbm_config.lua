@@ -192,35 +192,35 @@ config.HideOverviewCurtains = true
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugGeneration    = true    -- Generation: generator hook, frame allocation, mirror/clone plan (TEMP: investigating "cannot expand / not 20x20")
+config.DebugGeneration    = false   -- Generation: generator hook, frame allocation, mirror/clone plan
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
-config.DebugSectorSizing  = true    -- SectorSizing: sector-count/size math (noisy; per-tag deduped) (TEMP: investigating "cannot expand / not 20x20")
-config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
+config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
 -- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
 -- records, stage-one sector draws, stage-two low-area choices, side/bin/layer fallbacks, a 20x20
 -- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
 -- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
-config.DebugTopUpEdgeDistribution = true
-config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
-config.DebugStretch       = true    -- Stretch: per-step stretch frame-fill resample trace (TEMP: investigating stuck-at-loading)
+config.DebugTopUpEdgeDistribution = false
+config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
+config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
 -- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
-config.DebugLoadingSteps  = true
+config.DebugLoadingSteps  = false
 -- Extra loading-performance investigation. Adds nested timings for the expensive terrain,
 -- decoration, marker, enrichment, audit, and finalization calls plus a descending per-session
 -- summary. Observational only: it never sleeps, yields, changes call order, or invokes extra
 -- gameplay work. It does add log/timer overhead, so disable after collecting a representative run.
-config.DebugLoadingInvestigation = true
+config.DebugLoadingInvestigation = false
 -- Exhaustive first-access trace for deferred underground expansion. Logs every HUD click,
 -- map-slot gate decision, state/geometry field, loading-screen transition, fallback path,
 -- and preparation result. Keep enabled while investigating underground access.
-config.DebugUndergroundAccess = true
+config.DebugUndergroundAccess = false
 config.DebugHover         = false   -- Hover: overview hover-highlight mapping
 config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
 -- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
@@ -234,7 +234,7 @@ config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
 -- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
 -- and 13x13 before/after height grids around both Elevator footprints. This is intentionally
 -- enabled while investigating pre-expansion Elevator terrain pillars; it adds logging only.
-config.DebugElevatorTerrain = true
+config.DebugElevatorTerrain = false
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
@@ -244,7 +244,7 @@ config.DebugZoomVanilla   = false   -- ZoomVanilla: normal-map zoom/FOV diagnost
 config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP button/underline layout diagnostics
 config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
-config.DebugInitSeq       = true    -- InitSeq: step-by-step init/expansion sequence trace (TEMP: investigating "cannot expand / not 20x20"; also dumps the live grid at WarnCannotExpand)
+config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequence trace
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
 config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
@@ -517,7 +517,7 @@ config.ScanAllButtonEnabled = false
 -- (Complete("quick_build") -- vanilla's own construct-all cheat call). Free (completion happens
 -- before any resource is requested), no tech needed (force-unlocked on press). For testing the
 -- surface<->underground entrance correspondence with player-built elevators. Turn OFF for release.
-config.PlaceElevatorButtonEnabled = true
+config.PlaceElevatorButtonEnabled = false
 
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
@@ -873,7 +873,7 @@ config.StretchAdaptiveZScale = true
 -- seeded rand), and after the stretch the expanded sectors covering the winner's x4/3 box
 -- are revealed instead (replaces the legacy start-sector relocation on this path).
 config.StretchVanillaStartSector = true
-config.DebugStartSector = true      -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace (TEMP: verifying vanilla-equivalent start)
+config.DebugStartSector = false     -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace
 -- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
 -- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
 config.AnomalyCountScaleOverride = false
