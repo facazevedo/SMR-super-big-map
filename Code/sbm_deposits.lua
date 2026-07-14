@@ -3378,6 +3378,40 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if marker and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
+	-- At first underground access no rover or drone has explored this map yet, so no enrichment
+	-- may remain placed after the geometric stretch. Vanilla can nevertheless have placed one
+	-- sector's objects earlier if its InitialExplore path was accidentally enabled. Despawn every
+	-- such object and restore its marker to the normal proximity-gated state before any relocation;
+	-- this also guarantees that moving a marker into untouched darkness cannot carry a visible
+	-- badge with it. RevealDepositsInRange will place it later through the vanilla rover/drone path.
+	local is_valid = Global("IsValid")
+	local done_object = Global("DoneObject")
+	local concrete_moves = {}
+	local unrevealed_placed = 0
+	for _, marker in ipairs(markers) do
+		local placed = marker and marker.placed_obj
+		local placed_valid = placed and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
+		if marker and (marker.is_placed == true or placed_valid) then
+			local pos = ObjectPos(marker)
+			if IsConcreteTerrainDepositMarker(marker) and pos and type(pos.xy) == "function" then
+				local px, py = pos:xy()
+				if px ~= nil then
+					-- from == to with paint_now=false clears the old visible concrete imprint;
+					-- marker placement paints it again when vanilla actually reveals this area.
+					concrete_moves[#concrete_moves + 1] = {
+						from = { x = px, y = py }, to = { x = px, y = py }, paint_now = false,
+					}
+				end
+			end
+			if placed_valid and type(done_object) == "function" then
+				pcall(done_object, placed)
+			end
+			marker.placed_obj = false
+			marker.is_placed = false
+			SetRevealedState(marker, false)
+			unrevealed_placed = unrevealed_placed + 1
+		end
+	end
 	for _, marker in ipairs(markers) do
 		local pos = ObjectPos(marker)
 		if not pos or not CanReceiveDeposit(map, pos) then
@@ -3385,8 +3419,10 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		end
 	end
 	if #invalid == 0 then
+		if #concrete_moves > 0 then MoveConcreteImprints(map, concrete_moves) end
 		local stats = {
 			checked = #markers, invalid = 0, moved = 0, unresolved = 0,
+			unrevealed_placed = unrevealed_placed,
 			seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
 			connectivity_rejected = reachable_state.rejected, connectivity_failures = reachable_state.failures,
 		}
@@ -3446,9 +3482,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return table.remove(candidates, best_i)
 	end
 
-	local is_valid = Global("IsValid")
-	local concrete_moves = {}
-	local moved, moved_placed, unresolved = 0, 0, 0
+	local moved, unresolved = 0, 0
 	local moved_by_class = {}
 	local relocation_attempts, relocation_retries = 0, 0
 	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
@@ -3537,18 +3571,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				moved = moved + 1
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				marker.SuperBigMapReachabilityRelocated = true
-				local placed = marker.placed_obj
-				local placed_valid = placed and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
-				if placed_valid and type(placed.SetPos) == "function" and pcall(placed.SetPos, placed, successful_pos) then
-					moved_placed = moved_placed + 1
-				end
-				if IsConcreteTerrainDepositMarker(marker) and old_pos and type(old_pos.xy) == "function" then
-					local tx, ty = successful_pos:xy()
-					concrete_moves[#concrete_moves + 1] = {
-						from = { x = ox, y = oy }, to = { x = tx, y = ty },
-						paint_now = marker.is_placed == true,
-					}
-				end
 			else
 				unresolved = unresolved + 1
 				Log("underground enrichment relocation unresolved", {
@@ -3561,7 +3583,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	if #concrete_moves > 0 then MoveConcreteImprints(map, concrete_moves) end
 	local stats = {
-		checked = #markers, invalid = #invalid, moved = moved, moved_placed = moved_placed,
+		checked = #markers, invalid = #invalid, moved = moved,
+		unrevealed_placed = unrevealed_placed,
 		unresolved = unresolved, candidates_built = pool_built,
 		relocation_attempts = relocation_attempts, relocation_retries = relocation_retries,
 		snapped_rejected = snapped_rejected, setpos_failed = setpos_failed,

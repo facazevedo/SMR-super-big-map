@@ -30,8 +30,16 @@ local Grid = SuperBigMap.SectorGrid
 -- avoids global lookup from ShowExploration_Sectors/UpdateScannedSectorVisuals.
 local function UndergroundExplorationUiOn(city)
 	if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true or not city then return false end
-	local ok, env = pcall(function() return city:GetMap().mapdata.Environment end)
-	return ok and env == "Underground"
+	local ok, map, env = pcall(function()
+		local current_map = city:GetMap()
+		return current_map, current_map and current_map.mapdata and current_map.mapdata.Environment
+	end)
+	-- IsExplorationAvailable_Queue is also consulted by vanilla InitSectors. Advertising the
+	-- informational underground UI before the atomic stretch is complete makes vanilla run
+	-- InitialExplore, scan a sector, and permanently place its deposits in otherwise untouched
+	-- darkness. Keep vanilla's underground=false result during initialization; the overview UI
+	-- becomes available only after the mod has finished preparing the map.
+	return ok and map and env == "Underground" and map.SuperBigMapExpanded == true
 end
 
 local function DebugPrint(message)
@@ -762,8 +770,11 @@ local function InstallBasicSectorPatch()
 	-- Environment=="Underground" (Exploration.lua:569-577), so OverviewModeDialog:SelectSector
 	-- early-outs before drawing the highlight decal or rollover (the "hover shows nothing
 	-- underground" report; the Hover logs proved sector RESOLUTION worked). Wrap both to return
-	-- true for underground cities when config UNDERGROUND_EXPLORATION_UI is on (checked live, so
-	-- flipping the config takes effect without a reload). Asteroids keep vanilla behavior.
+	-- true for fully prepared underground cities when config UNDERGROUND_EXPLORATION_UI is on
+	-- (checked live, so flipping the config takes effect without a reload). The preparation gate
+	-- is gameplay-critical: without it vanilla InitSectors performs InitialExplore merely because
+	-- the queue reports available, revealing a random underground sector. Asteroids keep vanilla
+	-- behavior.
 	local orig_avail_sectors = State.original_is_expl_avail_sectors or Global("IsExplorationAvailable_Sectors")
 	local orig_avail_queue = State.original_is_expl_avail_queue or Global("IsExplorationAvailable_Queue")
 	State.original_is_expl_avail_sectors = orig_avail_sectors

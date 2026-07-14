@@ -53,7 +53,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     exact hovered sector plus its live post-stretch buildable-grid ratio.
 -- 48: cache the completed sector lookup layout so engine hex searches do not recompute the full
 --     20x20 layout for every candidate hex and trip the infinite-loop detector.
-SuperBigMap.SECTOR_PATCH_VERSION = 48
+-- 49: defer underground exploration availability until expansion completes so vanilla
+--     InitSectors cannot perform an unintended initial underground sector scan.
+SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 25:
 -- run the global badge-overlap resolver after each surface/underground density suite so generated
 -- resource, anomaly, effect, and entrance badges cannot claim the same hex.
