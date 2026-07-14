@@ -591,14 +591,14 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		return false
 	end
 	local dw, dh = ref_w, ref_h
-	local target_fmt, target_bits = grid_format(src)
+	local target_fmt, target_bits = grid_format(ref)
+	if not target_fmt then target_fmt, target_bits = grid_format(src) end
 	local dst_ref
-	local metadata_source = "grid_ref+source_format"
-	-- Compatibility fallback: preserve the old full destination read when the engine does not
-	-- expose complete reference dimensions or the source sub-grid cannot identify its format.
-	local need_format = type(GridRepack) == "function" and type(IsComputeGrid) == "function"
-		and not target_fmt
-	if type(dw) ~= "number" or dw <= 0 or type(dh) ~= "number" or dh <= 0 or need_format then
+	local metadata_source = "grid_ref"
+	-- A nil format is valid for ordinary/hierarchical grids: the old path also saw nil from
+	-- IsComputeGrid(dst_ref) and skipped GridRepack. Read the full destination only when its
+	-- dimensions are unavailable from GetGridRef.
+	if type(dw) ~= "number" or dw <= 0 or type(dh) ~= "number" or dh <= 0 then
 		local ok_d
 		ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
 		if not ok_d or not dst_ref then
