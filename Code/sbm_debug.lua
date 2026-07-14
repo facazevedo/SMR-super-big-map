@@ -11,6 +11,7 @@
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
 --   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement, Stretch, Loading, LoadTime, LoadingSteps,
+--   LoadingInvestigation,
 --   UndergroundAccess,
 --   Hover, Align, EntrancePositions, Overview, Camera, Rocket, ElevatorTerrain, Heat, Bounds, FakeTerrain, Validation, Zoom,
 --   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
@@ -26,6 +27,7 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local PREFIX = "[Super Big Map] "
+local emission_stats = {}
 
 local function current_config()
 	return SuperBigMap.Config or {}
@@ -75,7 +77,29 @@ local function emit(level, scope, message, data)
 	if type(print_fn) ~= "function" then
 		return
 	end
+	local measure = current_config().DEBUG_LOADINGINVESTIGATION == true
+	local ticks = measure and (rawget(_G, "GetPreciseTicks") or rawget(_G, "RealTime")) or nil
+	local before = 0
+	if type(ticks) == "function" then
+		local ok, value = pcall(ticks)
+		if ok and type(value) == "number" then before = value end
+	end
 	print_fn(PREFIX .. level .. tostring(scope) .. ": " .. tostring(message) .. format_data(data))
+	if type(ticks) == "function" then
+		local ok, after = pcall(ticks)
+		if ok and type(after) == "number" then
+			local key = tostring(scope)
+			local stat = emission_stats[key]
+			if not stat then
+				stat = { calls = 0, total_ms = 0, max_ms = 0 }
+				emission_stats[key] = stat
+			end
+			local elapsed = math.max(0, after - before)
+			stat.calls = stat.calls + 1
+			stat.total_ms = stat.total_ms + elapsed
+			if elapsed > stat.max_ms then stat.max_ms = elapsed end
+		end
+	end
 end
 
 local DebugLog = {}
@@ -96,6 +120,22 @@ end
 -- expensive log data when the scope is off.
 function DebugLog.On(scope)
 	return enabled(scope)
+end
+
+function DebugLog.ResetEmissionStats()
+	emission_stats = {}
+end
+
+function DebugLog.GetEmissionStats()
+	local out = {}
+	for scope, stat in pairs(emission_stats) do
+		out[scope] = {
+			calls = stat.calls,
+			total_ms = stat.total_ms,
+			max_ms = stat.max_ms,
+		}
+	end
+	return out
 end
 
 -- Load-timeline trace: the "LoadTime" scope. Marks a named step with total ms since the first

@@ -58,6 +58,35 @@ local function SetLoadingPhase(message)
 	end
 end
 
+-- Separately gated nested loading trace. These helpers only surround calls that already happen;
+-- they do not add gameplay work, yields, waits, or ordering changes. SafeCall keeps its original
+-- error-swallowing semantics and direct calls remain direct at their call sites.
+local function InvestigationBegin(name, map, data)
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.InvestigationBegin) == "function" then
+		return profiler.InvestigationBegin(name, data, map)
+	end
+	return false
+end
+
+local function InvestigationEnd(token, data, ok)
+	local profiler = SuperBigMap.LoadingProfiler
+	if token and profiler and type(profiler.InvestigationEnd) == "function" then
+		return profiler.InvestigationEnd(token, data, ok)
+	end
+	return false
+end
+
+local function InvestigationSafeCall(name, map, fn, ...)
+	local token = InvestigationBegin(name, map)
+	local a, b, c, d = SafeCall(fn, ...)
+	InvestigationEnd(token, {
+		first_result = tostring(a),
+		second_result = tostring(b),
+	}, true)
+	return a, b, c, d
+end
+
 local function WakePendingUndergroundStretch()
 	if not cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) then return 0 end
 	local wakeup = Global("Wakeup")
@@ -2007,6 +2036,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		local waited = 0
 		local f0_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("surface readiness: wait for F0 sector", { max_wait_ms = 15000 }, map) or false
+		local f0_detail_token = InvestigationBegin("surface readiness: F0 polling window", map, {
+			max_wait_ms = 15000,
+		})
 		for _ = 1, 60 do
 			if FindSectorByName(map, "F0") then
 				break
@@ -2018,6 +2050,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			loading_profiler.End(f0_token, { waited_ms = waited,
 				f0_found = FindSectorByName(map, "F0") ~= nil }, true)
 		end
+		InvestigationEnd(f0_detail_token, {
+			requested_wait_ms = waited,
+			f0_found = FindSectorByName(map, "F0") ~= nil,
+		}, true)
 		InitSeq("RunSectorMirrorPlan: F0 wait finished", {
 			waited_ms = waited,
 			f0_found = FindSectorByName(map, "F0") ~= nil,
@@ -2039,6 +2075,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		do
 			local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
 				and loading_profiler.Begin("surface readiness: fixed settle", { settle_ms = settle_ms }, map) or false
+			local settle_detail_token = InvestigationBegin("surface readiness: fixed settle scheduling span", map, {
+				configured_ms = settle_ms,
+			})
 			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
 			local lt_on = LT and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("LoadTime")
 			if lt_on and type(map.MapForEach) == "function" then
@@ -2061,6 +2100,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			if settle_token and type(loading_profiler.End) == "function" then
 				loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
 			end
+			InvestigationEnd(settle_detail_token, { configured_ms = settle_ms }, true)
 		end
 		if map.SuperBigMapSectorMirrorDone == true then
 			InitSeq("RunSectorMirrorPlan: already done after settle -- aborting", {})
@@ -2151,25 +2191,34 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					-- each object's relationship to the PRE-stretch ground).
 					if type(AnnotateDecorRelief) == "function" then
 						StretchLog("stretch branch: -> AnnotateDecorRelief")
+						local detail_token = InvestigationBegin("surface: annotate decoration relief", map)
 						AnnotateDecorRelief(map)
+						InvestigationEnd(detail_token, nil, true)
 					end
 					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
 						StretchLog("stretch branch: pre-applying frame passability before authoritative revalidation")
 						local pass_token = loading_profiler and type(loading_profiler.Begin) == "function"
 							and loading_profiler.Begin("surface passability: preapply frame overlay", nil, map) or false
-						frame_passability_preapplied = SafeCall(ForceFramePassable, map, true) == true
+						frame_passability_preapplied = InvestigationSafeCall(
+							"surface: preapply frame passability", map, ForceFramePassable, map, true) == true
 						if pass_token and type(loading_profiler.End) == "function" then
 							loading_profiler.End(pass_token, {
 								applied = frame_passability_preapplied,
 							}, frame_passability_preapplied)
 						end
 					end
+					local spike_token = InvestigationBegin("surface: spike audit pre-stretch", map)
 					SpikeAudit(map, "surface pre-stretch")
+					InvestigationEnd(spike_token, nil, true)
 					SetLoadingPhase("Stretching the surface terrain")
 					StretchLog("stretch branch: -> StretchSourceToFull")
+					local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
 					ok_stretch, n_grids = StretchSourceToFull(map, false)
+					InvestigationEnd(terrain_token, { ok = ok_stretch, grids = n_grids }, ok_stretch == true)
 					StretchLog("stretch branch: StretchSourceToFull returned", { ok = ok_stretch, grids = n_grids })
+					spike_token = InvestigationBegin("surface: spike audit post-terrain", map)
 					SpikeAudit(map, "surface post-StretchSourceToFull")
+					InvestigationEnd(spike_token, nil, true)
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
 					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
@@ -2179,16 +2228,22 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				if type(ScaleDecorationsToFull) == "function" then
 					SetLoadingPhase("Repositioning surface rocks and decorations")
 					StretchLog("stretch branch: -> ScaleDecorationsToFull")
+					local detail_token = InvestigationBegin("surface: reposition and top up decorations", map)
 					local n_dec = ScaleDecorationsToFull(map, false)
+					InvestigationEnd(detail_token, { moved = n_dec }, true)
 					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
+					local spike_token = InvestigationBegin("surface: spike audit post-decorations", map)
 					SpikeAudit(map, "surface post-ScaleDecorations")
+					InvestigationEnd(spike_token, nil, true)
 				end
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
 				if type(ScaleMarkersToFull) == "function" then
 					SetLoadingPhase("Repositioning surface resource deposits")
 					StretchLog("stretch branch: -> ScaleMarkersToFull")
+					local detail_token = InvestigationBegin("surface: reposition enrichment markers", map)
 					local n_mark = ScaleMarkersToFull(map, false)
+					InvestigationEnd(detail_token, { moved = n_mark }, true)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 					EntranceSnapshot("surface after ScaleMarkersToFull", map)
 				end
@@ -2197,10 +2252,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				if type(MoveEntranceVisualsToScale) == "function" then
 					SetLoadingPhase("Aligning the underground entrances")
 					StretchLog("stretch branch: -> MoveEntranceVisualsToScale")
+					local detail_token = InvestigationBegin("surface: align entrance visuals", map)
 					local n_vis = MoveEntranceVisualsToScale(map)
+					InvestigationEnd(detail_token, { moved = n_vis }, true)
 					StretchLog("stretch branch: MoveEntranceVisualsToScale returned", { moved = n_vis })
 					EntranceSnapshot("surface after MoveEntranceVisualsToScale", map)
+					local spike_token = InvestigationBegin("surface: spike audit post-entrances", map)
 					SpikeAudit(map, "surface post-MoveEntranceVisuals")
+					InvestigationEnd(spike_token, nil, true)
 				end
 				-- Step 3c: FLOATER AUDIT -- objects hovering above the stretched terrain (e.g.
 				-- decor-pass-skipped rocks that kept their old Z over now-lower ground). Logs
@@ -2208,7 +2267,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				-- floaters down when STRETCH_RESNAP_FLOATERS is on.
 				if type(AuditFloatingObjects) == "function" then
 					StretchLog("stretch branch: -> AuditFloatingObjects (early)")
+					local detail_token = InvestigationBegin("surface: floating-object audit early", map)
 					local n_float = AuditFloatingObjects(map, "early")
+					InvestigationEnd(detail_token, { floaters = n_float }, true)
 					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
 				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
@@ -2223,12 +2284,15 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local sectors_mod = SuperBigMap.SectorExploration
 					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
 						StretchLog("stretch branch: -> RevealVanillaStartSectors (vanilla-equivalent start)")
-						local n_rev = SafeCall(sectors_mod.RevealVanillaStartSectors, map)
+						local n_rev = InvestigationSafeCall("surface: reveal vanilla start sector", map,
+							sectors_mod.RevealVanillaStartSectors, map)
 						StretchLog("stretch branch: RevealVanillaStartSectors returned", { scanned = n_rev })
 					end
 				elseif type(StretchRelocateStartSector) == "function" then
 					StretchLog("stretch branch: -> StretchRelocateStartSector")
+					local detail_token = InvestigationBegin("surface: relocate start sector", map)
 					local n_rel = StretchRelocateStartSector(map)
+					InvestigationEnd(detail_token, { relocated = n_rel }, true)
 					StretchLog("stretch branch: StretchRelocateStartSector returned", { relocated = n_rel })
 				end
 				-- Step 5: re-enforce scan-gating after the move (hide revealed enrichments that
@@ -2237,7 +2301,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local deposits = SuperBigMap.DepositRules
 					if deposits and type(deposits.EnforceScanGateAfterStretch) == "function" then
 						StretchLog("stretch branch: -> EnforceScanGateAfterStretch")
-						SafeCall(deposits.EnforceScanGateAfterStretch, map)
+						InvestigationSafeCall("surface: enforce scan gate", map,
+							deposits.EnforceScanGateAfterStretch, map)
 					end
 					-- Step 6: DENSITY NORMALIZATION (same suite as the mirror path, which the
 					-- stretch branch never ran -- the cause of the over-crowded start sector):
@@ -2253,7 +2318,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						SetLoadingPhase("Distributing surface resources and anomalies")
 						if type(deposits.TopUpDeposits) == "function" then
 							StretchLog("stretch branch: -> TopUpDeposits")
-							SafeCall(deposits.TopUpDeposits, map)
+							InvestigationSafeCall("surface enrichment: top up resource deposits", map,
+								deposits.TopUpDeposits, map)
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
@@ -2261,37 +2327,47 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						-- spaced too.
 						if type(deposits.TopUpAnomalies) == "function" then
 							StretchLog("stretch branch: -> TopUpAnomalies")
-							SafeCall(deposits.TopUpAnomalies, map)
+							InvestigationSafeCall("surface enrichment: top up anomalies", map,
+								deposits.TopUpAnomalies, map)
 						end
 						if type(deposits.TopUpEffectDeposits) == "function" then
 							StretchLog("stretch branch: -> TopUpEffectDeposits")
-							SafeCall(deposits.TopUpEffectDeposits, map)
+							InvestigationSafeCall("surface enrichment: top up effect markers", map,
+								deposits.TopUpEffectDeposits, map)
 						end
 						if type(deposits.RegisterClonedMarkers) == "function" then
 							StretchLog("stretch branch: -> RegisterClonedMarkers")
-							SafeCall(deposits.RegisterClonedMarkers, map)
+							InvestigationSafeCall("surface enrichment: register cloned markers", map,
+								deposits.RegisterClonedMarkers, map)
 						end
 						if type(deposits.RespaceAnomalies) == "function" then
 							StretchLog("stretch branch: -> RespaceAnomalies")
-							SafeCall(deposits.RespaceAnomalies, map)
+							InvestigationSafeCall("surface enrichment: respace anomalies", map,
+								deposits.RespaceAnomalies, map)
 						end
 						if type(deposits.EvenOutDepositDensity) == "function" then
 							StretchLog("stretch branch: -> EvenOutDepositDensity")
-							SafeCall(deposits.EvenOutDepositDensity, map)
+							InvestigationSafeCall("surface enrichment: even deposit density", map,
+								deposits.EvenOutDepositDensity, map)
 						end
 						if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 							StretchLog("stretch branch: -> ResolveBadgeMarkerOverlaps")
-							SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
+							InvestigationSafeCall("surface enrichment: resolve badge overlaps", map,
+								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
-							SafeCall(deposits.AuditSurfaceTopUpRingExclusivity, map)
+							InvestigationSafeCall("surface enrichment: audit outer-ring exclusivity", map,
+								deposits.AuditSurfaceTopUpRingExclusivity, map)
 						end
 						if type(deposits.LogDistributionReport) == "function" then
-							SafeCall(deposits.LogDistributionReport, map, "stretch after density suite")
+							InvestigationSafeCall("surface enrichment: distribution report", map,
+								deposits.LogDistributionReport, map, "stretch after density suite")
 						end
 						if type(deposits.ClearTopUpPlacementPool) == "function" then
+							local detail_token = InvestigationBegin("surface enrichment: clear placement pool", map)
 							deposits.ClearTopUpPlacementPool(map)
+							InvestigationEnd(detail_token, nil, true)
 						end
 					end
 				end
@@ -2300,7 +2376,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					return 0
 				end
 				local ft = now2()
+				local spike_token = InvestigationBegin("surface: spike audit post-density", map)
 				SpikeAudit(map, "surface post-density-suite")
+				InvestigationEnd(spike_token, nil, true)
 				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
@@ -2309,7 +2387,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				if buildable_already_rebuilt then
 					StretchLog("stretch branch: RebuildBuildableGrid already completed by consolidated revalidation -- skip duplicate")
 				elseif type(rebuild_buildable) == "function" and map and map.buildable then
-					SafeCall(rebuild_buildable, map)
+					InvestigationSafeCall("surface: rebuild buildable grid", map, rebuild_buildable, map)
 				end
 				StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
 				local passability_already_baked = cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true)
@@ -2318,14 +2396,17 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: frame passability already applied before authoritative revalidation -- skip duplicate")
 				else
 					StretchLog("stretch branch: -> ForceFramePassable")
-					SafeCall(ForceFramePassable, map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
+					InvestigationSafeCall("surface: final frame passability", map, ForceFramePassable,
+						map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
 				end
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
 				-- audit found only 7 small floaters yet big rocks still hovered on screen).
 				if type(AuditFloatingObjects) == "function" then
-					AuditFloatingObjects(map, "late")
+					local detail_token = InvestigationBegin("surface: floating-object audit late", map)
+					local late_floaters = AuditFloatingObjects(map, "late")
+					InvestigationEnd(detail_token, { floaters = late_floaters }, true)
 					local ct = Global("CreateRealTimeThread")
 					local sl = Global("Sleep")
 					if type(ct) == "function" and type(sl) == "function" then
@@ -2338,7 +2419,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				StretchLog("stretch branch: -> ResnapRocketsOnMap")
 				local rockets = SuperBigMap.RocketRules
 				if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
-					SafeCall(rockets.ResnapRocketsOnMap, map)
+					InvestigationSafeCall("surface: resnap rockets", map, rockets.ResnapRocketsOnMap, map)
 				end
 				StretchLog("TIMING: ResnapRocketsOnMap", { ms = now2() - ft })
 				StretchLog("stretch branch: finalize steps done")
@@ -2732,6 +2813,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		local loading_profiler = SuperBigMap.LoadingProfiler
 		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
+		local settle_detail_token = InvestigationBegin("underground readiness: fixed settle scheduling span", map, {
+			configured_ms = settle_ms,
+		})
 		local wait_wakeup = Global("WaitWakeup")
 		if settle_ms > 0 then
 			if cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) and type(wait_wakeup) == "function" then
@@ -2744,6 +2828,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		if settle_token and type(loading_profiler.End) == "function" then
 			loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
 		end
+		InvestigationEnd(settle_detail_token, { configured_ms = settle_ms }, true)
 		local pause_ild = Global("PauseInfiniteLoopDetection")
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
@@ -2761,47 +2846,67 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				or type(RestoreDeferredElevatorMigration) ~= "function" then
 				error("deferred Elevator migration helpers are unavailable")
 			end
+			local elevator_token = InvestigationBegin("underground: snapshot and remove deferred elevators", map)
 			elevator_migrations = BeginDeferredElevatorMigration(map)
+			InvestigationEnd(elevator_token, {
+				migrations = type(elevator_migrations) == "table" and #elevator_migrations or 0,
+			}, true)
 			StretchLog("underground stretch: deferred Elevator annotation complete", {
 				migrations = type(elevator_migrations) == "table" and #elevator_migrations or 0,
 			})
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
-			SafeCall(SyncMapDataToGrids, map)
+			InvestigationSafeCall("underground: synchronize mapdata to grids", map, SyncMapDataToGrids, map)
+			local spike_token = InvestigationBegin("underground: spike audit pre-stretch", map)
 			SpikeAudit(map, "underground pre-stretch")
+			InvestigationEnd(spike_token, nil, true)
 			-- Relief annotations BEFORE the underground terrain stretch (same as the surface).
 			if type(AnnotateDecorRelief) == "function" then
 				StretchLog("underground stretch: -> AnnotateDecorRelief")
+				local detail_token = InvestigationBegin("underground: annotate decoration relief", map)
 				AnnotateDecorRelief(map)
+				InvestigationEnd(detail_token, nil, true)
 			end
 			SetLoadingPhase("Stretching the underground terrain")
 			StretchLog("underground stretch: -> StretchSourceToFull")
+			local terrain_token = InvestigationBegin("underground: stretch all terrain grids", map)
 			local ok_s, n_grids = StretchSourceToFull(map, false)
+			InvestigationEnd(terrain_token, { ok = ok_s, grids = n_grids }, ok_s == true)
 			StretchLog("underground stretch: grids done", { ok = ok_s, grids = n_grids })
 			if ok_s ~= true or type(n_grids) ~= "number" or n_grids < 2 then
 				error("underground terrain stretch did not complete its height/type grids")
 			end
+			spike_token = InvestigationBegin("underground: spike audit post-terrain", map)
 			SpikeAudit(map, "underground post-StretchSourceToFull")
+			InvestigationEnd(spike_token, nil, true)
 			if type(ScaleDecorationsToFull) == "function" then
 				SetLoadingPhase("Repositioning underground rocks and decorations")
 				StretchLog("underground stretch: -> ScaleDecorationsToFull")
+				local detail_token = InvestigationBegin("underground: reposition and top up decorations", map)
 				local n_dec = ScaleDecorationsToFull(map, false)
+				InvestigationEnd(detail_token, { moved = n_dec }, true)
 				StretchLog("underground stretch: decorations done", { moved = n_dec })
 			end
 			if type(ScaleMarkersToFull) == "function" then
 				SetLoadingPhase("Repositioning underground resource deposits")
 				StretchLog("underground stretch: -> ScaleMarkersToFull")
+				local detail_token = InvestigationBegin("underground: reposition enrichment markers", map)
 				local n_mark = ScaleMarkersToFull(map, false)
+				InvestigationEnd(detail_token, { moved = n_mark }, true)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
 				EntranceSnapshot("underground after ScaleMarkersToFull", map)
 			end
 			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
 			if type(MoveEntranceVisualsToScale) == "function" then
 				StretchLog("underground stretch: -> MoveEntranceVisualsToScale")
+				local detail_token = InvestigationBegin("underground: align entrance visuals", map)
 				local n_vis = MoveEntranceVisualsToScale(map)
+				InvestigationEnd(detail_token, { moved = n_vis }, true)
 				StretchLog("underground stretch: entrance visuals done", { moved = n_vis })
 				EntranceSnapshot("underground after MoveEntranceVisualsToScale", map)
 			end
+			spike_token = InvestigationBegin("underground: spike audit post-entrances", map)
 			SpikeAudit(map, "underground post-MoveEntranceVisuals")
+			InvestigationEnd(spike_token, nil, true)
 			-- Natural entrance objects still receive exactly one transformation (the stretch).
 			-- The one exception is an Elevator already completed on the surface: its removed
 			-- pending underground half is rebuilt later on its live underground passage/imprint.
@@ -2818,7 +2923,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground final passability rebuild is unavailable")
 				end
 				StretchLog("underground stretch: -> final RebuildPassability")
+				local pass_token = InvestigationBegin("underground: final passability rebuild", map)
 				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				InvestigationEnd(pass_token, { error = pass_ok and nil or tostring(pass_err) }, pass_ok)
 				if not pass_ok then error("underground final passability rebuild failed: " .. tostring(pass_err)) end
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) ~= "function" then
@@ -2826,7 +2933,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				end
 				SetLoadingPhase("Rebuilding the final underground build grid")
 				StretchLog("underground stretch: -> final RebuildBuildableGrid")
+				local build_token = InvestigationBegin("underground: final buildable-grid rebuild", map)
 				local build_ok, build_err = pcall(rebuild_buildable, map)
+				InvestigationEnd(build_token, { error = build_ok and nil or tostring(build_err) }, build_ok)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
 				if #elevator_migrations > 0 then
@@ -2834,7 +2943,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					StretchLog("underground stretch: -> RestoreDeferredElevatorMigration", {
 						migrations = #elevator_migrations,
 					})
+					local detail_token = InvestigationBegin("underground: restore deferred elevators", map, {
+						migrations = #elevator_migrations,
+					})
 					local rebuilt = RestoreDeferredElevatorMigration(map, elevator_migrations, "post-buildable-grid")
+					InvestigationEnd(detail_token, { rebuilt = rebuilt }, rebuilt == #elevator_migrations)
 					if rebuilt ~= #elevator_migrations then
 						error("deferred Elevator migration rebuilt " .. tostring(rebuilt)
 							.. "/" .. tostring(#elevator_migrations) .. " counterparts")
@@ -2843,13 +2956,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
 				if type(deposits.ClearTopUpPlacementPool) == "function" then
+					local detail_token = InvestigationBegin("underground enrichment: clear pre-suite placement pool", map)
 					deposits.ClearTopUpPlacementPool(map)
+					InvestigationEnd(detail_token, nil, true)
 				end
 				if type(deposits.PrepareUndergroundReachability) ~= "function" then
 					error("underground entrance-reachability preparation is unavailable")
 				end
 				StretchLog("underground stretch: -> PrepareUndergroundReachability")
+				local reach_token = InvestigationBegin("underground enrichment: prepare reachability", map)
 				local reach_ok, reach_state = deposits.PrepareUndergroundReachability(map)
+				InvestigationEnd(reach_token, {
+					seeds = reach_state and type(reach_state.seeds) == "table" and #reach_state.seeds or 0,
+				}, reach_ok == true)
 				if reach_ok ~= true then
 					error("underground entrance connectivity could not be initialized (seeds="
 						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
@@ -2867,39 +2986,53 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local deposits = SuperBigMap.DepositRules
 				if deposits then
 					if type(deposits.LogBuildableSectorCensus) == "function" then
-						SafeCall(deposits.LogBuildableSectorCensus, map, "underground post-stretch, pre-topup")
+						InvestigationSafeCall("underground enrichment: buildable-sector census", map,
+							deposits.LogBuildableSectorCensus, map, "underground post-stretch, pre-topup")
 					end
 					if type(deposits.TopUpDeposits) == "function" then
 						SetLoadingPhase("Distributing underground resources and anomalies")
 						StretchLog("underground stretch: -> TopUpDeposits")
-						SafeCall(deposits.TopUpDeposits, map)
+						InvestigationSafeCall("underground enrichment: top up resource deposits", map,
+							deposits.TopUpDeposits, map)
 					end
 					if type(deposits.TopUpAnomalies) == "function" then
 						StretchLog("underground stretch: -> TopUpAnomalies")
-						SafeCall(deposits.TopUpAnomalies, map)
+						InvestigationSafeCall("underground enrichment: top up anomalies", map,
+							deposits.TopUpAnomalies, map)
 					end
 					if type(deposits.TopUpEffectDeposits) == "function" then
 						StretchLog("underground stretch: -> TopUpEffectDeposits")
-						SafeCall(deposits.TopUpEffectDeposits, map)
+						InvestigationSafeCall("underground enrichment: top up effect markers", map,
+							deposits.TopUpEffectDeposits, map)
 					end
 					if type(deposits.RegisterClonedMarkers) == "function" then
 						StretchLog("underground stretch: -> RegisterClonedMarkers")
-						SafeCall(deposits.RegisterClonedMarkers, map)
+						InvestigationSafeCall("underground enrichment: register cloned markers", map,
+							deposits.RegisterClonedMarkers, map)
 					end
 					if type(deposits.RespaceAnomalies) == "function" then
 						StretchLog("underground stretch: -> RespaceAnomalies")
-						SafeCall(deposits.RespaceAnomalies, map)
+						InvestigationSafeCall("underground enrichment: respace anomalies", map,
+							deposits.RespaceAnomalies, map)
 					end
 					if type(deposits.EvenOutDepositDensity) == "function" then
 						StretchLog("underground stretch: -> EvenOutDepositDensity")
-						SafeCall(deposits.EvenOutDepositDensity, map)
+						InvestigationSafeCall("underground enrichment: even deposit density", map,
+							deposits.EvenOutDepositDensity, map)
 					end
 					if type(deposits.RelocateUnreachableUndergroundEnrichments) ~= "function" then
 						error("underground enrichment reachability audit is unavailable")
 					end
 					SetLoadingPhase("Moving underground enrichments onto reachable terrain")
 					StretchLog("underground stretch: -> RelocateUnreachableUndergroundEnrichments")
+					local audit_token = InvestigationBegin("underground enrichment: relocate unreachable markers", map)
 					local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+					InvestigationEnd(audit_token, {
+						checked = audit_stats and audit_stats.checked,
+						invalid = audit_stats and audit_stats.invalid,
+						moved = audit_stats and audit_stats.moved,
+						unresolved = audit_stats and audit_stats.unresolved,
+					}, audit_ok == true)
 					StretchLog("underground enrichment reachability audit returned", {
 						ok = audit_ok, checked = audit_stats and audit_stats.checked,
 						invalid = audit_stats and audit_stats.invalid, moved = audit_stats and audit_stats.moved,
@@ -2911,13 +3044,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					end
 					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
-						SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+						InvestigationSafeCall("underground enrichment: resolve badge overlaps", map,
+							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
 					end
 					if type(deposits.LogDistributionReport) == "function" then
-						SafeCall(deposits.LogDistributionReport, map, "underground after reachable density suite")
+						InvestigationSafeCall("underground enrichment: distribution report", map,
+							deposits.LogDistributionReport, map, "underground after reachable density suite")
 					end
 					if type(deposits.ClearTopUpPlacementPool) == "function" then
+						local detail_token = InvestigationBegin("underground enrichment: clear post-suite placement pool", map)
 						deposits.ClearTopUpPlacementPool(map)
+						InvestigationEnd(detail_token, nil, true)
 					end
 				end
 			end
@@ -2932,7 +3069,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
+			spike_token = InvestigationBegin("underground: spike audit complete", map)
 			SpikeAudit(map, "underground DONE")
+			InvestigationEnd(spike_token, nil, true)
 			local main_map2 = Global("MainMap")
 			if main_map2 and main_map2 ~= map then
 				SpikeAudit(main_map2, "surface at underground-stretch DONE")

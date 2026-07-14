@@ -70,6 +70,22 @@ local function StretchLog(message, data)
 	end
 end
 
+local function InvestigationBegin(name, map, data)
+	local profiler = SuperBigMap.LoadingProfiler
+	if profiler and type(profiler.InvestigationBegin) == "function" then
+		return profiler.InvestigationBegin(name, data, map)
+	end
+	return false
+end
+
+local function InvestigationEnd(token, data, ok)
+	local profiler = SuperBigMap.LoadingProfiler
+	if token and profiler and type(profiler.InvestigationEnd) == "function" then
+		return profiler.InvestigationEnd(token, data, ok)
+	end
+	return false
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -261,7 +277,9 @@ local function ReinvalidateExpandedTerrain(map)
 	local function profiled_call(name, fn, ...)
 		local token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
 			"terrain revalidation: " .. tostring(name), nil, map) or false
+		local detail_token = InvestigationBegin("terrain revalidation: " .. tostring(name), map)
 		local results = { pcall(fn, ...) }
+		InvestigationEnd(detail_token, { error = results[1] and nil or tostring(results[2]) }, results[1] == true)
 		if token and type(profiler.End) == "function" then
 			profiler.End(token, { error = results[1] and nil or tostring(results[2]) }, results[1] == true)
 		end
@@ -889,8 +907,11 @@ local function StretchSourceToFull(map, debug)
 	local t_total = now_ms()
 	local function timed(label, fn, ...)
 		local t0 = now_ms()
+		local detail_token = InvestigationBegin("terrain grid: " .. tostring(label), map)
 		local a, b = fn(...)
-		StretchLog("TIMING: " .. label, { ms = now_ms() - t0 })
+		local elapsed = now_ms() - t0
+		InvestigationEnd(detail_token, { first_result = tostring(a), second_result = tostring(b) }, true)
+		StretchLog("TIMING: " .. label, { ms = elapsed })
 		return a, b
 	end
 
@@ -1068,9 +1089,13 @@ local function ScaleDecorationsToFull(map, debug)
 	if not reused_collection then
 		objs = {}
 	end
+	local collection_token = InvestigationBegin("decorations: collect source objects", map, {
+		reused_pre_stretch_collection = reused_collection,
+	})
 	if not reused_collection and type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
+	InvestigationEnd(collection_token, { collected = #objs, reused = reused_collection }, true)
 	StretchLog("ScaleDecorationsToFull: collected", {
 		count = #objs, scale_x = tostring(scale_x), scale_y = tostring(scale_y),
 		reused_pre_stretch_collection = reused_collection,
@@ -1111,6 +1136,9 @@ local function ScaleDecorationsToFull(map, debug)
 	-- bodies are pcall'd, so the loop cannot throw past the Resume below.
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
+	local transform_token = InvestigationBegin("decorations: reposition scale and clone objects", map, {
+		collected = #objs, pass_edits_batched = pass_batch,
+	})
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
@@ -1209,7 +1237,15 @@ local function ScaleDecorationsToFull(map, debug)
 			end)
 		end
 	end
-	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor") end
+	InvestigationEnd(transform_token, {
+		moved = moved, scaled = scaled, topped_up = topped_up,
+		skipped = skipped_skip + skipped_marker + skipped_nopos,
+	}, true)
+	if pass_batch then
+		local resume_token = InvestigationBegin("decorations: resume batched passability edits", map)
+		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
+		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
+	end
 	local elapsed_ms = 0
 	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then elapsed_ms = t - t0 end end
 	StretchLog("ScaleDecorationsToFull: DONE", {
@@ -1271,9 +1307,11 @@ local function ScaleMarkersToFull(map, debug)
 			or IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker")
 	end
 	local objs = {}
+	local collection_token = InvestigationBegin("markers: collect source objects", map)
 	if type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
+	InvestigationEnd(collection_token, { collected = #objs }, true)
 	local moved, sample_n, reregistered = 0, 0, 0
 	-- Sector marker REGISTRIES: each MapSector keeps per-sector marker lists (sector.markers.*)
 	-- that vanilla Scan reveals from. A moved marker must be re-registered from its old sector to
@@ -1284,6 +1322,9 @@ local function ScaleMarkersToFull(map, debug)
 	-- Batch passability edits around the mass marker move (same idiom/reason as the decor pass).
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
+	local move_token = InvestigationBegin("markers: reposition and reregister objects", map, {
+		collected = #objs, pass_edits_batched = pass_batch,
+	})
 	for _, obj in ipairs(objs) do
 		if obj and is_marker(obj) then
 			pcall(function()
@@ -1324,7 +1365,12 @@ local function ScaleMarkersToFull(map, debug)
 			end)
 		end
 	end
-	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers") end
+	InvestigationEnd(move_token, { moved = moved, reregistered = reregistered }, true)
+	if pass_batch then
+		local resume_token = InvestigationBegin("markers: resume batched passability edits", map)
+		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
+		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
+	end
 	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved, reregistered = reregistered })
 	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers (%s re-registered to new sectors)",
 		tostring(moved), tostring(reregistered)))
