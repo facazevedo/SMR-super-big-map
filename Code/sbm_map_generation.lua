@@ -2185,6 +2185,37 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				and loading_profiler.Begin("surface expansion: complete stretch pipeline", {
 					fill_mode = fill_mode, settle_ms = settle_ms,
 				}, map) or false
+			-- One transaction owns the frame overlay plus both mass-object moves. ForceFramePassable,
+			-- ScaleDecorationsToFull, and ScaleMarkersToFull otherwise each balance their own
+			-- Suspend/Resume pair; those early resumes flush passability repeatedly even though the
+			-- stretch already performs the authoritative RebuildGrids. Resume at the same logical
+			-- boundary as the old marker pass (before later passability queries), and repeat the call
+			-- after the protected branch as an error-path no-op so suspension is always balanced.
+			local pass_batch_reason = "SuperBigMapSurfaceStretch"
+			local pass_batch_active = false
+			if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true)
+				and type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
+				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
+				pass_batch_active = suspend_ok and suspend_result ~= false
+				StretchLog("stretch branch: combined pass-edit transaction begin", {
+					active = pass_batch_active, error = suspend_ok and nil or tostring(suspend_result),
+				})
+			end
+			local function ResumeCombinedPassEdits(source)
+				if not pass_batch_active then return true end
+				-- Clear first so an engine exception cannot cause a second, unbalanced resume attempt.
+				pass_batch_active = false
+				local detail_token = InvestigationBegin(
+					"surface: resume combined stretch passability edits", map, { source = source })
+				local resume_ok, resume_err = pcall(map.ResumePassEdits, map, pass_batch_reason)
+				InvestigationEnd(detail_token, {
+					source = source, error = resume_ok and nil or tostring(resume_err),
+				}, resume_ok)
+				StretchLog("stretch branch: combined pass-edit transaction end", {
+					source = source, ok = resume_ok, error = resume_ok and nil or tostring(resume_err),
+				})
+				return resume_ok
+			end
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
 					-- Relief annotations MUST be captured BEFORE the terrain stretch (they record
@@ -2200,7 +2231,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						local pass_token = loading_profiler and type(loading_profiler.Begin) == "function"
 							and loading_profiler.Begin("surface passability: preapply frame overlay", nil, map) or false
 						frame_passability_preapplied = InvestigationSafeCall(
-							"surface: preapply frame passability", map, ForceFramePassable, map, true) == true
+							"surface: preapply frame passability", map, ForceFramePassable,
+							map, true, pass_batch_active) == true
 						if pass_token and type(loading_profiler.End) == "function" then
 							loading_profiler.End(pass_token, {
 								applied = frame_passability_preapplied,
@@ -2229,7 +2261,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					SetLoadingPhase("Repositioning surface rocks and decorations")
 					StretchLog("stretch branch: -> ScaleDecorationsToFull")
 					local detail_token = InvestigationBegin("surface: reposition and top up decorations", map)
-					local n_dec = ScaleDecorationsToFull(map, false)
+					local n_dec = ScaleDecorationsToFull(map, false, pass_batch_active)
 					InvestigationEnd(detail_token, { moved = n_dec }, true)
 					StretchLog("stretch branch: ScaleDecorationsToFull returned", { moved = n_dec })
 					local spike_token = InvestigationBegin("surface: spike audit post-decorations", map)
@@ -2242,11 +2274,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					SetLoadingPhase("Repositioning surface resource deposits")
 					StretchLog("stretch branch: -> ScaleMarkersToFull")
 					local detail_token = InvestigationBegin("surface: reposition enrichment markers", map)
-					local n_mark = ScaleMarkersToFull(map, false)
+					local n_mark = ScaleMarkersToFull(map, false, pass_batch_active)
 					InvestigationEnd(detail_token, { moved = n_mark }, true)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 					EntranceSnapshot("surface after ScaleMarkersToFull", map)
 				end
+				ResumeCombinedPassEdits("after surface marker movement")
 				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
 				-- decor pass) with the same transform, so what the player SEES matches the markers.
 				if type(MoveEntranceVisualsToScale) == "function" then
@@ -2424,6 +2457,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				StretchLog("TIMING: ResnapRocketsOnMap", { ms = now2() - ft })
 				StretchLog("stretch branch: finalize steps done")
 			end)
+			-- Error-path cleanup. On the normal path the transaction was already resumed above.
+			ResumeCombinedPassEdits("surface stretch cleanup")
 			if stretch_token and type(loading_profiler.End) == "function" then
 				loading_profiler.End(stretch_token, {
 					grids = n_grids, stretch_ok = ok_stretch,

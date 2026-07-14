@@ -1048,8 +1048,9 @@ end
 -- rockets/mystery/underground) AND `not IsImportantSectorObject` (skips resource-deposit markers).
 -- Anomalies/effect markers are already skipped by ShouldSkipObject. The colony/landing objects stay
 -- put (ShouldSkipObject); only the scatter moves. Deposits/anomalies are a separate later pass.
--- Returns the number of decorations moved.
-local function ScaleDecorationsToFull(map, debug)
+-- Returns the number of decorations moved. When pass_edits_already_suspended is true, the
+-- caller owns the balanced ResumePassEdits after this pass and any adjacent mass edits.
+local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	StretchLog("ScaleDecorationsToFull: ENTER", { map = tostring(map and (map.name or "?")) })
 	local terrain_api_g = Global("terrain") -- for relief-aware Z placement
 	if not map then return 0 end
@@ -1135,9 +1136,11 @@ local function ScaleDecorationsToFull(map, debug)
 	-- exact Suspend/Resume idiom to batch the rebuild into ONE pass at Resume. The per-object
 	-- bodies are pcall'd, so the loop cannot throw past the Resume below.
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
-	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
+	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
+	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
 	local transform_token = InvestigationBegin("decorations: reposition scale and clone objects", map, {
 		collected = #objs, pass_edits_batched = pass_batch,
+		pass_edits_owned_by_caller = pass_edits_already_suspended == true,
 	})
 	for _, obj in ipairs(objs) do
 		if not obj then
@@ -1241,7 +1244,7 @@ local function ScaleDecorationsToFull(map, debug)
 		moved = moved, scaled = scaled, topped_up = topped_up,
 		skipped = skipped_skip + skipped_marker + skipped_nopos,
 	}, true)
-	if pass_batch then
+	if owns_pass_batch then
 		local resume_token = InvestigationBegin("decorations: resume batched passability edits", map)
 		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
 		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
@@ -1267,7 +1270,7 @@ end
 -- on the stretched terrain -- the same position * (full/source) transform as the decorations.
 -- Without this they stay clustered in the source corner. Positions only: marker SIZE is gameplay
 -- (scan radius/visuals), so scale is left untouched. Gated on config STRETCH_SCALE_MARKERS.
-local function ScaleMarkersToFull(map, debug)
+local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	StretchLog("ScaleMarkersToFull: ENTER")
 	if not map or not cfg_bool("STRETCH_SCALE_MARKERS", true) then return 0 end
 	local const_tbl = Global("const")
@@ -1321,9 +1324,11 @@ local function ScaleMarkersToFull(map, debug)
 	local get_sector = Global("GetMapSectorXY")
 	-- Batch passability edits around the mass marker move (same idiom/reason as the decor pass).
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
-	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
+	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
+	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
 	local move_token = InvestigationBegin("markers: reposition and reregister objects", map, {
 		collected = #objs, pass_edits_batched = pass_batch,
+		pass_edits_owned_by_caller = pass_edits_already_suspended == true,
 	})
 	for _, obj in ipairs(objs) do
 		if obj and is_marker(obj) then
@@ -1366,7 +1371,7 @@ local function ScaleMarkersToFull(map, debug)
 		end
 	end
 	InvestigationEnd(move_token, { moved = moved, reregistered = reregistered }, true)
-	if pass_batch then
+	if owns_pass_batch then
 		local resume_token = InvestigationBegin("markers: resume batched passability edits", map)
 		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
 		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
@@ -2901,8 +2906,9 @@ end
 -- bottom strip x[0, source_w] x y[source_h, map_h], with an optional seam bridge into the
 -- source. Mod maps only; gated on FORCE_FRAME_PASSABLE. defer_rebuild=true applies the
 -- overlay without a standalone rebuild when an immediately-following full revalidation will
--- rebuild passability once for the same final state.
-local function ForceFramePassable(map, defer_rebuild)
+-- rebuild passability once for the same final state. When pass_edits_already_suspended is true,
+-- the caller owns the balanced ResumePassEdits after the adjacent stretch/object edits.
+local function ForceFramePassable(map, defer_rebuild, pass_edits_already_suspended)
 	if not cfg_bool("FORCE_FRAME_PASSABLE", true) then
 		return false, "disabled"
 	end
@@ -2949,8 +2955,11 @@ local function ForceFramePassable(map, defer_rebuild)
 	local has_rebuild = type(terrain_api.RebuildPassability) == "function"
 	defer_rebuild = defer_rebuild == true
 
+	local owns_pass_batch = pass_edits_already_suspended ~= true
 	if type(net_pause) == "function" then SafeCall(net_pause, reason) end
-	if type(map.SuspendPassEdits) == "function" then SafeCall(map.SuspendPassEdits, map, reason) end
+	if owns_pass_batch and type(map.SuspendPassEdits) == "function" then
+		SafeCall(map.SuspendPassEdits, map, reason)
+	end
 
 	local ok_set = pcall(function()
 		for i = 1, #boxes do
@@ -2968,7 +2977,9 @@ local function ForceFramePassable(map, defer_rebuild)
 	end
 
 	-- Balanced cleanup -- ALWAYS runs, even if the apply above errored.
-	if type(map.ResumePassEdits) == "function" then SafeCall(map.ResumePassEdits, map, reason) end
+	if owns_pass_batch and type(map.ResumePassEdits) == "function" then
+		SafeCall(map.ResumePassEdits, map, reason)
+	end
 	if type(net_resume) == "function" then SafeCall(net_resume, reason) end
 
 	if ok_set and ok_rebuild then
