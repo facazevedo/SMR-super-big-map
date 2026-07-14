@@ -226,6 +226,10 @@ local function ForceVanillaPregameState(reason)
 	if curtains and type(curtains.RestoreVanillaBehavior) == "function" then
 		curtains.RestoreVanillaBehavior()
 	end
+	local elevator_btn = SuperBigMap.PlaceElevatorButton
+	if elevator_btn and type(elevator_btn.Hide) == "function" then
+		SafeCall(elevator_btn.Hide)
+	end
 	if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 		SafeCall(SuperBigMap.ExpansionLoadingEnd)
 	end
@@ -363,6 +367,12 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 			})
 		end
 		return false, "not a mod map"
+	end
+
+	-- TEMP verification button (config-gated and idempotent).
+	local elevator_btn = SuperBigMap.PlaceElevatorButton
+	if elevator_btn and type(elevator_btn.Show) == "function" then
+		elevator_btn.Show()
 	end
 
 	local bounds = SuperBigMap.MapBounds
@@ -878,6 +888,12 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	do
 		local id = tostring((map and map.mapdata and map.mapdata.id) or (map and map.name) or "")
 		if map and map.mapdata and id ~= "PreGame" then
+			-- Also expose the temporary button on a non-expanded real game map so elevator
+			-- correspondence can be compared against vanilla with the same coordinates.
+			local elevator_btn = SuperBigMap.PlaceElevatorButton
+			if elevator_btn and type(elevator_btn.Show) == "function" then
+				elevator_btn.Show()
+			end
 			local entrance_debug = SuperBigMap.EntranceDebug
 			if entrance_debug and type(entrance_debug.SnapshotAll) == "function" then
 				entrance_debug.SnapshotAll("PostNewMapLoaded:" .. id, map)

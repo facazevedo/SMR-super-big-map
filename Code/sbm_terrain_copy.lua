@@ -1718,7 +1718,7 @@ end
 -- Those lifecycle operations remain untouched; only their authority over the badge XYZ is removed.
 -- The anchor is copied onto the marker, its passage (when available), and the current sign so a
 -- replacement sign can recover the same position. Vanilla maps never receive a final anchor.
-local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 2
+local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 3
 local ENTRANCE_BADGE_MARKER_CLASSES = {
 	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
 }
@@ -1758,17 +1758,51 @@ local function EntranceBadgeAnchor(marker, sign)
 	return nil
 end
 
+local function EntranceBadgeMap(marker, sign)
+	local objects = { [1] = sign, [2] = marker, [3] = marker and marker.spawner }
+	for i = 1, 3 do
+		local obj = objects[i]
+		if obj and type(obj.GetMap) == "function" then
+			local map = SafeCall(obj.GetMap, obj)
+			if map then return map end
+		end
+	end
+	return nil
+end
+
+local function EntranceBadgeTerrainZ(marker, sign, x, y)
+	if type(x) ~= "number" or type(y) ~= "number" then return nil end
+	local map = EntranceBadgeMap(marker, sign)
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if not map or type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
+		or type(point_fn) ~= "function" then
+		return nil
+	end
+	local ok, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
+	if ok and type(z) == "number" then return z end
+	return nil
+end
+
 local function CaptureEntranceBadgePosition(marker, sign, reason)
 	if not marker or not sign then return false end
 	local pos = ObjectPosition(sign)
 	local x, y, z = PositionXYZ(pos)
 	if type(x) ~= "number" or type(y) ~= "number" then return false end
+	local terrain_z = EntranceBadgeTerrainZ(marker, sign, x, y)
+	if type(terrain_z) == "number" then z = terrain_z end
 	WriteEntranceBadgeAnchor(marker, x, y, z)
 	WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
 	WriteEntranceBadgeAnchor(sign, x, y, z)
+	local point_fn = Global("point")
+	local snapped = false
+	if type(z) == "number" and type(point_fn) == "function" and type(sign.SetPos) == "function" then
+		snapped = pcall(sign.SetPos, sign, point_fn(x, y, z))
+	end
 	EntranceBadgeLog("entrance badge starting position locked", {
 		reason = tostring(reason or "capture"), marker = tostring(marker), sign = tostring(sign),
 		passage = tostring(marker.spawner), x = x, y = y, z = tostring(z),
+		terrain_z = tostring(terrain_z), snapped = tostring(snapped),
 	})
 	return true
 end
@@ -1781,19 +1815,20 @@ local function RestoreEntranceBadgePosition(marker, sign, reason)
 	if type(point_fn) ~= "function" then return false end
 	local before = ObjectPosition(sign)
 	local bx, by, bz = PositionXYZ(before)
+	local terrain_z = EntranceBadgeTerrainZ(marker, sign, x, y)
+	if type(terrain_z) == "number" then z = terrain_z end
+	-- Update the carriers first: the SetPos lock wrapper reads this anchor while applying target.
+	WriteEntranceBadgeAnchor(marker, x, y, z)
+	WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
+	WriteEntranceBadgeAnchor(sign, x, y, z)
 	local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
 	local ok, err = pcall(sign.SetPos, sign, target)
-	if ok then
-		-- Refresh every carrier in case the reveal replaced only the sign object.
-		WriteEntranceBadgeAnchor(marker, x, y, z)
-		WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
-		WriteEntranceBadgeAnchor(sign, x, y, z)
-	end
 	EntranceBadgeLog("entrance badge position restored after refresh", {
 		reason = tostring(reason or "restore"), marker = tostring(marker), sign = tostring(sign),
 		passage = tostring(marker.spawner), anchor_source = tostring(source),
 		before_x = tostring(bx), before_y = tostring(by), before_z = tostring(bz),
-		after_x = x, after_y = y, after_z = tostring(z), moved = tostring(bx ~= x or by ~= y or bz ~= z),
+		after_x = x, after_y = y, after_z = tostring(z), terrain_z = tostring(terrain_z),
+		moved = tostring(bx ~= x or by ~= y or bz ~= z),
 		ok = tostring(ok), error = ok and "none" or tostring(err),
 	})
 	return ok
@@ -1855,7 +1890,7 @@ local function PatchEntranceBadgePosition()
 
 	-- DepositMarker:PlaceDeposit unconditionally calls placed_obj:SetPos(x, y, InvalidZ)
 	-- after SpawnDeposit returns. For an underground entrance, placed_obj is the sign that
-	-- PlaceSign just restored to its final elevated side anchor, so that base-class write moves
+	-- PlaceSign just restored to its final terrain-seated side anchor, so that base-class write moves
 	-- the badge to the marker and the later SectorScanned repair visibly moves it back. Once a
 	-- badge has a final anchor, make SetPos itself preserve that exact XYZ. Calls made while a
 	-- new sign is still being constructed remain untouched because no anchor has been copied to
@@ -1870,10 +1905,16 @@ local function PatchEntranceBadgePosition()
 	end
 	if type(sign_class) == "table" and type(current_set_pos) == "function" then
 		local set_pos_wrapper = function(sign, ...)
-			local x, y, z = EntranceBadgeAnchor(sign and sign.tunnel_marker, sign)
+			local marker = sign and sign.tunnel_marker
+			local x, y, z = EntranceBadgeAnchor(marker, sign)
 			if type(x) == "number" and type(y) == "number" then
 				local point_fn = Global("point")
 				if type(point_fn) == "function" then
+					local terrain_z = EntranceBadgeTerrainZ(marker, sign, x, y)
+					if type(terrain_z) == "number" then z = terrain_z end
+					WriteEntranceBadgeAnchor(marker, x, y, z)
+					WriteEntranceBadgeAnchor(marker and marker.spawner, x, y, z)
+					WriteEntranceBadgeAnchor(sign, x, y, z)
 					local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
 					return current_set_pos(sign, target)
 				end
@@ -2028,37 +2069,17 @@ local function MoveEntranceVisualsToScale(map)
 			local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 			if ok_z and pz then np = pz end
 		end
-		-- ENTRANCE SIGN: the badge is placed at terrain level (vanilla InvalidZ), so a nearby
-		-- terrain rise half-occludes it under the tilted overview camera (user report: sign
-		-- "half exposed"). Float it above the LOCAL terrain MAX (sampled in a small radius, so
-		-- a bump between camera and sign can't clip it) plus a clearance, guaranteeing the whole
-		-- badge is visible. Config ENTRANCE_SIGN_CLEARANCE_WU / ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES.
+		-- ENTRANCE SIGN: use the live terrain directly under the badge. Nearby relief must not
+		-- lift it; no-depth-test visibility handles camera occlusion without floating the visual.
 		if IsKindOfSafe(obj, "SurfaceUndergroundTunnelSign")
 			and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-			local clearance = cfg_number("ENTRANCE_SIGN_CLEARANCE_WU", 1500, 0)
-			local rad_hexes = math.max(0, math.floor(cfg_number("ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES", 3, 0)))
-			local hex_wu = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
-				and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
-			local r = rad_hexes * hex_wu
-			local zmax
-			local offsets = { { 0, 0 } }
-			if r > 0 then
-				local d = math.floor(r * 7 / 10)
-				offsets = {
-					{ 0, 0 }, { r, 0 }, { -r, 0 }, { 0, r }, { 0, -r },
-					{ d, d }, { -d, d }, { d, -d }, { -d, -d },
-				}
-			end
-			for _, o in ipairs(offsets) do
-				local ok_h2, h2 = pcall(terrain_api.GetHeight, map, point_fn(nx + o[1], ny + o[2]))
-				if ok_h2 and type(h2) == "number" and (zmax == nil or h2 > zmax) then zmax = h2 end
-			end
-			if type(zmax) == "number" then
-				np = point_fn(nx, ny, zmax + clearance)
+			local ok_h2, ground_z = pcall(terrain_api.GetHeight, map, point_fn(nx, ny))
+			if ok_h2 and type(ground_z) == "number" then
+				np = point_fn(nx, ny, ground_z)
 				placed_z = true
-				AlignLog("entrance sign floated above local terrain max", {
+				AlignLog("entrance sign snapped to live terrain", {
 					xy = tostring(nx) .. "," .. tostring(ny),
-					terrain_max = zmax, clearance = clearance, z = zmax + clearance,
+					terrain_z = ground_z, z = ground_z,
 				})
 			end
 		end
@@ -2313,32 +2334,13 @@ local function MoveEntranceVisualsToScale(map)
 		end
 		local badge_x, badge_y = side.x, side.y
 		local anchor = point_fn(badge_x, badge_y)
-		local clearance = cfg_number("ENTRANCE_SIGN_CLEARANCE_WU", 1500, 0)
-		local rad_hexes = math.max(0, math.floor(cfg_number("ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES", 3, 0)))
-		local hex_wu = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
-			and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
-		local radius = rad_hexes * hex_wu
-		local zmax
+		local terrain_z
 		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-			local offsets = { { 0, 0 } }
-			if radius > 0 then
-				local diagonal = math.floor(radius * 7 / 10)
-				offsets = {
-					{ 0, 0 }, { radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
-					{ diagonal, diagonal }, { -diagonal, diagonal },
-					{ diagonal, -diagonal }, { -diagonal, -diagonal },
-				}
-			end
-			for _, offset in ipairs(offsets) do
-				local ok_h, height = pcall(terrain_api.GetHeight, map,
-					point_fn(badge_x + offset[1], badge_y + offset[2]))
-				if ok_h and type(height) == "number" and (zmax == nil or height > zmax) then
-					zmax = height
-				end
-			end
+			local ok_h, height = pcall(terrain_api.GetHeight, map, point_fn(badge_x, badge_y))
+			if ok_h and type(height) == "number" then terrain_z = height end
 		end
-		if type(zmax) == "number" then
-			anchor = point_fn(badge_x, badge_y, zmax + clearance)
+		if type(terrain_z) == "number" then
+			anchor = point_fn(badge_x, badge_y, terrain_z)
 		elseif type(anchor.SetTerrainZ) == "function" then
 			local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
 			if ok_z and snapped then anchor = snapped end
@@ -2372,7 +2374,7 @@ local function MoveEntranceVisualsToScale(map)
 			candidates_checked = side.checked,
 			distance_before = tostring(before_distance),
 			distance_after = ok_set and after_distance or "unchanged",
-			terrain_max = tostring(zmax), clearance = clearance,
+			terrain_z = tostring(terrain_z),
 			ok = tostring(ok_set), error = ok_set and "none" or tostring(set_err),
 		})
 	end)

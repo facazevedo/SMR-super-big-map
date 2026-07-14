@@ -3,7 +3,7 @@ return PlaceObj('ModDef', {
 	'description', "Super Big Map\n\n3x more map. No extra fries.\n\nOn the Colony Site screen, toggle EXPAND MAP before pressing START to expand that new game from a 10 x 10 sector grid to a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on.\n\nLeave EXPAND MAP off to start normally with vanilla map size and vanilla zoom. ZoomPlus is only enabled on maps actually expanded by this mod. Expanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game with EXPAND MAP toggled on. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested on Surviving Mars Relaunched v1.0.7 on Windows 11.\n\nFeedback and bug reports: https://smr-mods-feedback.fredware.app or https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
 	'short_description', "Adds an opt-in EXPAND MAP start toggle for 20 x 20 maps.",
 	'image', "Mod/SuperBigMap/Images/final_composed.jpg",
-	'last_changes', "Major overhaul",
+	'last_changes', "Correct expanded-map generation, vanilla-like enrichment distribution, and rocket/elevator terrain placement.",
 	'ignore_files', {
 		"*.git/*",
 		".git/*",
@@ -12,7 +12,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 518,
+	'version', 519,
 	'lua_revision', 350453,
 	'saved_with_revision', 392284,
 	'code', {
@@ -37,6 +37,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_terrain_copy.lua",
 		"Code/sbm_rmg_placement.lua",
 		"Code/sbm_map_generation.lua",
+		"Code/sbm_place_elevator_button.lua",
 		"Code/sbm_deposits.lua",
 		"Code/sbm_fake_terrain.lua",
 		"Code/sbm_rocket_rules.lua",

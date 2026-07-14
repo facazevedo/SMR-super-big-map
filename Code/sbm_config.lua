@@ -191,12 +191,12 @@ config.HideOverviewCurtains = true
 -- single scope to focus. Each flag maps to DebugLog scope "<Name>" (see sbm_debug.lua).
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
-config.DebugLifecycle     = true    -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugGeneration    = true    -- Generation: generator hook, frame allocation, mirror/clone plan
+config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
+config.DebugGeneration    = false   -- Generation: generator hook, frame allocation, mirror/clone plan
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
-config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
 -- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
@@ -204,12 +204,12 @@ config.DebugDeposits      = true    -- Deposits: cloned-deposit reshuffle/regist
 -- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
 -- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
 config.DebugTopUpEdgeDistribution = false
-config.DebugRmgPlacement  = true    -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
+config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
 -- Exhaustive trace for the generator's enrichment-placement transaction. Logs every
 -- ResolveBuildable/PlaceAnomalies boundary, all relaxed border/spacing values, every private
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
-config.DebugRmgPlacementExhaustive = true
+config.DebugRmgPlacementExhaustive = false
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -234,17 +234,17 @@ config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; s
 config.DebugEntrancePositions = false
 config.DebugOverview      = false   -- Overview: overview curtains + render-distance
 config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
-config.DebugRocket        = true    -- Rocket: rocket landing Z-snap path
+config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
 -- Exhaustive trace for rocket/pod terrain changes. Logs patch identity and lifecycle state,
 -- construction cursor/template/rocket identity, every mod-map flatten decision, buildable-vs-
 -- live terrain Z, and the landing transaction before/after. Temporarily enabled for diagnosis.
-config.DebugRocketTerrain = true
+config.DebugRocketTerrain = false
 -- Optional Elevator terrain-forensics trace. Logs the exact class/global patch identity,
 -- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
 -- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
 config.DebugElevatorTerrain = false
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
-config.DebugBounds        = true    -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
+config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
 config.DebugZoom          = false   -- Zoom: ZoomPlus integration (also drives ZoomPlus's own logs)
@@ -256,8 +256,8 @@ config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequ
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
 config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
-config.DebugFlatten       = true    -- Flatten: construction-flatten diagnostics
-config.DebugGenRand       = true    -- GenRand: generation-determinism trace
+config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
+config.DebugGenRand       = false   -- GenRand: generation-determinism trace
 
 -- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
 -- generation in sbm_map_generation; no per-load passability pass is needed.)
@@ -453,9 +453,17 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
--- Every surface anomaly TOP-UP extra is reserved for this many sector rows/columns along all four
--- edges of the FINAL expanded map. These anomaly rewards cover research/technology progress,
--- metal or rare-metal discovery events, breakthroughs, and large-cache/unique-scenic events.
+-- Choose whole-map top-up positions by the live enrichment load divided by each sector's
+-- sampled eligible terrain capacity. This preserves vanilla's terrain-driven pockets and the
+-- original generated marker positions, while filling underrepresented sectors before adding
+-- more markers to already-dense ones. Surface anomaly extras keep their separate outer-ring
+-- routing below; this switch balances resources/effects and all underground top-up families.
+config.TopUpSectorBalancedPlacement = true
+-- Every eligible surface anomaly TOP-UP extra is reserved for this many sector rows/columns along
+-- all four edges of the FINAL expanded map. Eligible kinds remain exactly the previously selected
+-- standard categories: completed/free-tech rewards, technology unlocks, and event sequences
+-- (including metal/rare-metal discoveries and large-cache/unique-scenic events). Breakthroughs
+-- remain game-pool-capped and are not topped up; unique/other anomaly families are not cloned.
 -- Resource, Vista, Research Site, and Morale Vista top-ups avoid this ring. Vanilla-generated
 -- markers are not moved by this routing rule.
 -- 0 restores whole-map placement with no reserved ring.
@@ -506,6 +514,12 @@ config.ClearInitialConcreteImprint = true
 -- tiles (a leftover safety knob). The clear only runs at a concrete marker's OLD mirrored
 -- (always-unscanned, frame) position, so it never affects concrete in scanned/playable sectors.
 config.ConcreteImprintMaxTiles = 0
+
+-- TEMP verification control (sbm_place_elevator_button.lua): shows a bottom-right button that
+-- enters the normal Elevator placement cursor, force-unlocks the template, and quick-builds the
+-- next placed Elevator for free. This exists only to inspect surface/underground correspondence.
+-- Set false again before release.
+config.PlaceElevatorButtonEnabled = false
 
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
@@ -649,15 +663,9 @@ config.StretchReliefAwareDecor = true
 -- was generated on, and -- because both maps get the identical transform of natively identical
 -- coordinates -- every surface/underground entrance pair keeps corresponding vertically.
 config.StretchMoveEntranceVisuals = true
--- Entrance SIGN badge float (sbm_terrain_copy MoveEntranceVisualsToScale). The surface
--- underground-entrance badge is placed at terrain level by vanilla, so a nearby terrain rise
--- half-occludes it under the tilted overview camera. The mod floats it above the LOCAL
--- terrain maximum (sampled within the radius below) plus this clearance, so the whole badge
--- always shows. Once this initial post-expansion XYZ is established, it is locked: reveal-time
--- sign creation and overview refreshes may update appearance but cannot relocate the badge.
--- Clearance in world units; radius in hexes.
-config.EntranceSignClearanceWu = 1500
-config.EntranceSignClearanceRadiusHexes = 3
+-- Keep the underground-entrance badge seated on the live terrain directly under its side
+-- anchor. Nearby relief must not raise the badge; reveal-time sign creation and overview
+-- refreshes may update appearance but cannot change its final XY or lift it off the ground.
 -- Keep the underground-entrance badge visible at ALL zoom levels. Vanilla renders these
 -- signs depth-tested in the close/normal camera (so terrain occludes them; the badge
 -- "disappears when you come closer") and on-top only in overview. When true the mod forces
@@ -984,6 +992,7 @@ C.MIRROR_SKIP_EDGE_TOUCHING_DECOR = as_bool(config.MirrorSkipEdgeTouchingDecor)
 C.WARN_ON_CANNOT_EXPAND = as_bool(config.WarnOnCannotExpand)
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
+C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.RESHUFFLE_CLONED_DEPOSITS = as_bool(config.ReshuffleClonedDeposits)
 C.RESHUFFLE_SEARCH_RADIUS_TILES = as_number(config.ReshuffleSearchRadiusTiles, 12)
@@ -998,6 +1007,7 @@ C.TOPUP_ANOMALIES = as_bool(config.TopUpAnomalies)
 C.TOPUP_VISTAS = as_bool(config.TopUpVistas)
 C.TOPUP_RESEARCH_SITES = as_bool(config.TopUpResearchSites)
 C.TOPUP_MORALE_VISTAS = as_bool(config.TopUpMoraleVistas)
+C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
@@ -1064,8 +1074,6 @@ C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergrou
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)
-C.ENTRANCE_SIGN_CLEARANCE_WU = as_number(config.EntranceSignClearanceWu, 1500)
-C.ENTRANCE_SIGN_CLEARANCE_RADIUS_HEXES = as_number(config.EntranceSignClearanceRadiusHexes, 3)
 C.ALWAYS_SHOW_ENTRANCE_SIGN = as_bool(config.AlwaysShowEntranceSign)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
