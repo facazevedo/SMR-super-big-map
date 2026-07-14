@@ -160,7 +160,7 @@ end
 -- Re-apply the saved zoom to the live camera via the ZoomPlus integration (which now
 -- reads ZoomOption.GetMultiplier()). Safe to call any time; no-op without a camera.
 function ZoomOption.Apply()
-	if not Enabled() then return end
+	if not Enabled() or (SuperBigMap.State or {}).main_menu_vanilla == true then return end
 	local zi = SuperBigMap.ZoomPlusIntegration
 	if zi and type(zi.ApplyNormalZoom) == "function" then
 		SafeCall(zi.ApplyNormalZoom)
@@ -175,9 +175,15 @@ function ZoomOption.ApplyModBehavior()
 	ZoomOption.AppendOption()
 end
 
--- Nothing to remove from the options list on disable; with the mod disabled the
--- ZoomPlus integration restores vanilla zoom, so the slider simply stops applying.
 function ZoomOption.RestoreVanillaBehavior()
+	local opt = Global("OptionsObject")
+	if type(opt) ~= "table" or type(opt.properties) ~= "table" then return end
+	for i = #opt.properties, 1, -1 do
+		local p = opt.properties[i]
+		if type(p) == "table" and p.id == OPTION_ID then
+			table.remove(opt.properties, i)
+		end
+	end
 end
 
 -- ---------------------------------------------------------------------------------------
@@ -251,7 +257,8 @@ SuperBigMap.ZoomOption = ZoomOption
 
 -- Add the option now (OptionsObject exists once the engine has booted, which is before
 -- mod Lua runs) and re-apply the saved value when options are applied or a save loads.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
+	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	ZoomOption.AppendOption()
 	Engine.ChainOnMsg("OptionsApply", function() ZoomOption.Apply() end)
 	Engine.ChainOnMsg("LoadGame", function() ZoomOption.Apply() end)

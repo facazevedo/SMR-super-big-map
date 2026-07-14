@@ -3867,6 +3867,6 @@ DepositRules.ClearTopUpPlacementPool = ClearTopUpPlacementPool
 
 SuperBigMap.DepositRules = DepositRules
 
-if cfg().ENABLE_MOD ~= false then
+if cfg().ENABLE_MOD ~= false and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	PatchBadgeOverlapPrevention()
 end

@@ -18,6 +18,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
+local MAIN_MENU_GUARD_VERSION = 2
 
 local LOAD_PROFILE_MESSAGES = {
 	ChangingMap = true, PreNewMap = true, NewMap = true, NewMapObject = true,
@@ -218,6 +219,23 @@ local function ForceVanillaPregameState(reason)
 	if curtains and type(curtains.RestoreVanillaBehavior) == "function" then
 		curtains.RestoreVanillaBehavior()
 	end
+	for _, name in ipairs({ "ScanAllButton", "PlaceElevatorButton" }) do
+		local api = SuperBigMap[name]
+		if api and type(api.Hide) == "function" then SafeCall(api.Hide) end
+	end
+	if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
+		SafeCall(SuperBigMap.ExpansionLoadingEnd)
+	end
+
+	-- The camera-only reset above is retained as a safe fallback, but returning to the main
+	-- menu now performs the complete reverse lifecycle: sectors, bounds, generation hooks,
+	-- deposits, construction/rocket/elevator hooks, heat, zoom, and UI all return to vanilla.
+	-- The transition guards below re-enable the mod only when NewGame/LoadGame actually starts.
+	SuperBigMap.State.main_menu_vanilla = true
+	local lifecycle = SuperBigMap.Lifecycle
+	if lifecycle and type(lifecycle.Disable) == "function" then
+		SafeCall(lifecycle.Disable)
+	end
 
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -230,22 +248,29 @@ end
 local function InstallPreGameMainMenuResetGuard()
 	local State = SuperBigMap.State
 	if State.open_pregame_main_menu_reset_wrapper
-		and rawget(_G, "OpenPreGameMainMenu") == State.open_pregame_main_menu_reset_wrapper then
+		and rawget(_G, "OpenPreGameMainMenu") == State.open_pregame_main_menu_reset_wrapper
+		and State.open_pregame_main_menu_reset_version == MAIN_MENU_GUARD_VERSION then
 		return true
 	end
 	local original = rawget(_G, "OpenPreGameMainMenu")
+	if original == State.open_pregame_main_menu_reset_wrapper then
+		original = State.original_open_pregame_main_menu
+	end
 	if type(original) ~= "function" then
 		return false
 	end
-	if original ~= State.open_pregame_main_menu_reset_wrapper then
-		State.original_open_pregame_main_menu = original
-	end
+	State.original_open_pregame_main_menu = original
 	local wrapper = function(...)
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
 			DebugLog.Info("PregameToggle", "OpenPreGameMainMenu fired (returned to main menu)")
 		end
-		ForceVanillaPregameState("OpenPreGameMainMenu")
+		local lifecycle = SuperBigMap.Lifecycle
+		if lifecycle and type(lifecycle.ReturnToMainMenuVanilla) == "function" then
+			lifecycle.ReturnToMainMenuVanilla("OpenPreGameMainMenu")
+		else
+			ForceVanillaPregameState("OpenPreGameMainMenu")
+		end
 		local toggle = SuperBigMap.PregameToggle
 		if toggle and type(toggle.LogOpenState) == "function" then
 			toggle.LogOpenState("after OpenPreGameMainMenu")
@@ -253,8 +278,57 @@ local function InstallPreGameMainMenuResetGuard()
 		return State.original_open_pregame_main_menu(...)
 	end
 	State.open_pregame_main_menu_reset_wrapper = wrapper
+	State.open_pregame_main_menu_reset_version = MAIN_MENU_GUARD_VERSION
 	rawset(_G, "OpenPreGameMainMenu", wrapper)
 	return true
+end
+
+-- Full teardown on the main menu must not prevent the next game from using the mod. These
+-- lifecycle-owned wrappers stay installed while every gameplay patch is removed, then restore
+-- the complete apply phase immediately before vanilla starts or loads a game.
+local function ReactivateFromMainMenu(reason)
+	local State = SuperBigMap.State
+	if State.main_menu_vanilla ~= true then return false end
+	local lifecycle = SuperBigMap.Lifecycle
+	if not (lifecycle and type(lifecycle.Enable) == "function") then return false end
+	if SafeCall(lifecycle.Enable, true) ~= true then return false end
+	State.main_menu_vanilla = false
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Lifecycle", "left vanilla main-menu state", { reason = tostring(reason or "?") })
+	end
+	return true
+end
+
+local function InstallGameEntryGuard(global_name)
+	local State = SuperBigMap.State
+	local lower = string.lower(global_name)
+	local wrapper_key = "main_menu_" .. lower .. "_wrapper"
+	local original_key = "original_main_menu_" .. lower
+	local version_key = "main_menu_" .. lower .. "_version"
+	local current = rawget(_G, global_name)
+	if State[wrapper_key] and current == State[wrapper_key]
+		and State[version_key] == MAIN_MENU_GUARD_VERSION then
+		return true
+	end
+	if current == State[wrapper_key] then current = State[original_key] end
+	if type(current) ~= "function" then return false end
+	State[original_key] = current
+	local wrapper = function(...)
+		ReactivateFromMainMenu(global_name)
+		return State[original_key](...)
+	end
+	State[wrapper_key] = wrapper
+	State[version_key] = MAIN_MENU_GUARD_VERSION
+	rawset(_G, global_name, wrapper)
+	return true
+end
+
+local function InstallMainMenuTransitionGuards()
+	InstallPreGameMainMenuResetGuard()
+	InstallGameEntryGuard("NewGame")
+	InstallGameEntryGuard("LoadGame")
+	InstallGameEntryGuard("LoadGameFromMem")
 end
 
 local Lifecycle = {}
@@ -366,6 +440,7 @@ local APPLY_ORDER = {
 	"OverviewCamera",
 	"OverviewCurtains",
 	"OverviewRender",
+	"ZoomOption",
 	"ZoomPlusIntegration",
 	"MapBounds",
 	"FakeTerrain",
@@ -379,6 +454,7 @@ local RESTORE_ORDER = {
 	"FakeTerrain",
 	"MapBounds",
 	"ZoomPlusIntegration",
+	"ZoomOption",
 	"OverviewRender",
 	"OverviewCurtains",
 	"OverviewCamera",
@@ -440,13 +516,16 @@ local function LogSessionDiagnostics()
 	print_fn("[Super Big Map] ActiveMods: ====================================")
 end
 
-function Lifecycle.Enable()
+function Lifecycle.Enable(force_from_main_menu)
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then
 		local DebugLog = SuperBigMap.DebugLog
 		if DebugLog then
 			DebugLog.Info("Lifecycle", "enable skipped: ENABLE_MOD is false")
 		end
+		return false
+	end
+	if SuperBigMap.State.main_menu_vanilla == true and force_from_main_menu ~= true then
 		return false
 	end
 
@@ -489,7 +568,11 @@ function Lifecycle.Disable()
 	return true
 end
 
+Lifecycle.ReturnToMainMenuVanilla = ForceVanillaPregameState
+Lifecycle.ReactivateFromMainMenu = ReactivateFromMainMenu
+
 SuperBigMap.Lifecycle = Lifecycle
+InstallMainMenuTransitionGuards()
 
 -- ============================================================================
 -- The single OnMsg site. Every handler is gated on IsActive() and delegates to
@@ -1260,6 +1343,9 @@ local function EnsureGeneratorHookInstalled()
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
+	if SuperBigMap.State.main_menu_vanilla == true then
+		return
+	end
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchRandomMapGenerator) == "function" then
 		gen.PatchRandomMapGenerator()
@@ -1276,6 +1362,10 @@ local function EnsurePregameToggleInstalled(reason)
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
+	InstallMainMenuTransitionGuards()
+	if SuperBigMap.State.main_menu_vanilla == true then
+		return
+	end
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
 		local mode_fn = Global("GetInGameInterfaceMode")
@@ -1284,7 +1374,6 @@ local function EnsurePregameToggleInstalled(reason)
 			igi_mode = (type(mode_fn) == "function") and tostring(SafeCall(mode_fn)) or "?",
 		})
 	end
-	InstallPreGameMainMenuResetGuard()
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.PatchLandingDialog) == "function" then
 		toggle.PatchLandingDialog()

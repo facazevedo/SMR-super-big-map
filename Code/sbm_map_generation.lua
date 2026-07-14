@@ -3744,7 +3744,8 @@ SuperBigMap.MapGeneration = MapGeneration
 -- change, after the preview. Without the hook here, vanilla DoGenerate runs on the expanded-size
 -- grid and overflows GSRP ("GridStableRandomPosSimple: size < GSRP_MAX_SIZE"). The boot/ChangingMap
 -- re-installs still handle later class rebuilds (which reset the methods to vanilla).
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
+	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	PatchRandomMapGenerator()
 	-- Passage pairing wrap installs at module load for the same reason -- and because module
 	-- load is what re-runs after the NEW-GAME Lua reload (game files redefine the global,
