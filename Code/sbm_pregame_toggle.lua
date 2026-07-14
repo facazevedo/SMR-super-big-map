@@ -289,6 +289,9 @@ end
 
 -- Anchor the selection bar to the live action button rather than fixed screen coordinates.
 -- Other landing-screen mods can rebuild and resize the toolbar at any time, moving EXPAND MAP.
+local EXPAND_BAR_HEIGHT = 8
+local EXPAND_BAR_BOTTOM_INSET = 10
+
 local function PositionExpandBar(dialog, bar, button)
 	button = button or ResolveExpandButton(dialog)
 	if not button or type(bar) ~= "table" or not IsAlive(bar.holder)
@@ -300,16 +303,22 @@ local function PositionExpandBar(dialog, bar, button)
 		or type(box.sizex) ~= "function" or type(bar.holder.SetBox) ~= "function" then
 		return false
 	end
-	local line_height = 8
-	local x = box:minx()
-	local y = box:maxy() - 10
-	local length = math.max(1, box:sizex())
+	local allocated_width = math.max(1, box:sizex())
+	local measured_width = tonumber(button.measure_width)
+	local length = measured_width and measured_width > 0
+		and math.min(allocated_width, measured_width) or allocated_width
+	length = math.max(1, length)
+	-- Center the same intrinsic-width bar under EXPAND MAP whether Filter Landing Spots is
+	-- installed or not; only the button's live screen position is allowed to change.
+	local x = box:minx() + math.floor((allocated_width - length) / 2)
+	local y = box:maxy() - EXPAND_BAR_BOTTOM_INSET
 	State.pregame_underline_x = x
 	State.pregame_underline_y = y
 	State.pregame_underline_length = length
-	SafeCall(bar.holder.SetBox, bar.holder, x, y - 10, length, line_height + 20, "dont-move")
-	SafeCall(bar.track.SetBox, bar.track, x, y, length, line_height, "dont-move")
-	SafeCall(bar.fill.SetBox, bar.fill, x, y, length, line_height, "dont-move")
+	SafeCall(bar.holder.SetBox, bar.holder, x, y - EXPAND_BAR_BOTTOM_INSET,
+		length, EXPAND_BAR_HEIGHT + EXPAND_BAR_BOTTOM_INSET * 2, "dont-move")
+	SafeCall(bar.track.SetBox, bar.track, x, y, length, EXPAND_BAR_HEIGHT, "dont-move")
+	SafeCall(bar.fill.SetBox, bar.fill, x, y, length, EXPAND_BAR_HEIGHT, "dont-move")
 	local geometry_sig = table.concat({ BoxText(box), tostring(x), tostring(y), tostring(length) }, "|")
 	if State.pregame_expand_bar_geometry_sig ~= geometry_sig then
 		State.pregame_expand_bar_geometry_sig = geometry_sig
