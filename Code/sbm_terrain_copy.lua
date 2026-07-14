@@ -797,7 +797,10 @@ local function StretchSourceToFull(map, debug)
 
 	-- Read the full grid via get_fn, take its source corner (cells [0..scw]x[0..sch]), resample
 	-- that up to the full cell dims (all in compute-grid space so GridResample accepts it), then
-	-- write back via set_fn (+ invalidate). The 'raw' grid from get_fn is left for the engine.
+	-- write back via set_fn (+ invalidate). Extract the corner in the raw/native format BEFORE
+	-- GridToCompute so only the 6144^2 source cells are converted instead of all 8192^2 cells.
+	-- The original full-grid conversion remains the compatibility fallback. The 'raw' grid from
+	-- get_fn is left for the engine.
 	-- EVERY sub-step is StretchLog'd so a stuck/failed grid is pinpointed to the exact line.
 	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
 		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then
@@ -812,17 +815,56 @@ local function StretchSourceToFull(map, debug)
 		end
 		StretchLog("stretch_one: got source grid", { grid = label })
 		local ok_all, res = pcall(function()
-			StretchLog("stretch_one: GridToCompute...", { grid = label })
-			local full_c = GridToCompute(raw)
-			local fw, fh = full_c:size()
+			local full_c
+			local ok_size, fw, fh = pcall(function() return raw:size() end)
+			if not ok_size or type(fw) ~= "number" or type(fh) ~= "number" then
+				StretchLog("stretch_one: raw size unavailable -> full compute fallback", { grid = label })
+				full_c = GridToCompute(raw)
+				fw, fh = full_c:size()
+			end
 			StretchLog("stretch_one: full grid size", { grid = label, fw = fw, fh = fh })
 			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
 			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
-			local fmt, bits = IsComputeGrid(full_c)
-			StretchLog("stretch_one: NewComputeGrid corner", { grid = label, scw = scw, sch = sch, fmt = tostring(fmt), bits = tostring(bits) })
-			local src_sub = NewComputeGrid(scw, sch, fmt, bits)
-			StretchLog("stretch_one: copyrect corner...", { grid = label })
-			src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
+			local src_sub, native_sub
+			local extraction_path = "native_corner"
+			local corner_error
+			if not full_c and type(raw.new_instance) == "function" then
+				local ok_corner, err_corner = pcall(function()
+					native_sub = raw:new_instance(scw, sch)
+					if not native_sub or type(native_sub.copyrect) ~= "function" then
+						error("native corner grid/copyrect unavailable")
+					end
+					native_sub:copyrect(raw, box_fn(0, 0, scw, sch), point_fn(0, 0))
+					src_sub = GridToCompute(native_sub)
+					if not src_sub then error("native corner GridToCompute failed") end
+				end)
+				if not ok_corner then
+					corner_error = err_corner
+					if src_sub and src_sub ~= native_sub then free_grid(src_sub) end
+					src_sub = nil
+					free_grid(native_sub)
+					native_sub = nil
+				end
+			end
+			if not src_sub then
+				extraction_path = "full_compute_fallback"
+				StretchLog("stretch_one: GridToCompute full fallback...", {
+					grid = label, native_corner_error = tostring(corner_error),
+				})
+				full_c = full_c or GridToCompute(raw)
+				local fmt, bits = IsComputeGrid(full_c)
+				src_sub = NewComputeGrid(scw, sch, fmt, bits)
+				src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
+			end
+			if native_sub and src_sub ~= native_sub then
+				free_grid(native_sub)
+				native_sub = nil
+			end
+			local fmt, bits = IsComputeGrid(src_sub)
+			StretchLog("stretch_one: source corner ready", {
+				grid = label, scw = scw, sch = sch, fmt = tostring(fmt), bits = tostring(bits),
+				extraction_path = extraction_path,
+			})
 			StretchLog("stretch_one: GridResample...", { grid = label, to_w = fw, to_h = fh })
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
