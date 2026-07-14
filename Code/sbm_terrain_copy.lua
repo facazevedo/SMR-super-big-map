@@ -1718,7 +1718,7 @@ end
 -- Those lifecycle operations remain untouched; only their authority over the badge XYZ is removed.
 -- The anchor is copied onto the marker, its passage (when available), and the current sign so a
 -- replacement sign can recover the same position. Vanilla maps never receive a final anchor.
-local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 1
+local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 2
 local ENTRANCE_BADGE_MARKER_CLASSES = {
 	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
 }
@@ -1852,6 +1852,39 @@ local function PatchEntranceBadgePosition()
 		cls.PlaceSign = wrapper
 		installed = installed + 1
 	end
+
+	-- DepositMarker:PlaceDeposit unconditionally calls placed_obj:SetPos(x, y, InvalidZ)
+	-- after SpawnDeposit returns. For an underground entrance, placed_obj is the sign that
+	-- PlaceSign just restored to its final elevated side anchor, so that base-class write moves
+	-- the badge to the marker and the later SectorScanned repair visibly moves it back. Once a
+	-- badge has a final anchor, make SetPos itself preserve that exact XYZ. Calls made while a
+	-- new sign is still being constructed remain untouched because no anchor has been copied to
+	-- the sign yet.
+	local sign_class = Engine.ClassTable and Engine.ClassTable("SurfaceUndergroundTunnelSign")
+	local current_set_pos = type(sign_class) == "table" and sign_class.SetPos or nil
+	local previous_set_pos_wrapper = State.entrance_badge_set_pos_wrapper
+	local previous_set_pos_original = State.entrance_badge_set_pos_original
+	if current_set_pos == previous_set_pos_wrapper and type(previous_set_pos_original) == "function" then
+		-- Peel off the previous hot-reload wrapper before installing the current code.
+		current_set_pos = previous_set_pos_original
+	end
+	if type(sign_class) == "table" and type(current_set_pos) == "function" then
+		local set_pos_wrapper = function(sign, ...)
+			local x, y, z = EntranceBadgeAnchor(sign and sign.tunnel_marker, sign)
+			if type(x) == "number" and type(y) == "number" then
+				local point_fn = Global("point")
+				if type(point_fn) == "function" then
+					local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
+					return current_set_pos(sign, target)
+				end
+			end
+			return current_set_pos(sign, ...)
+		end
+		State.entrance_badge_set_pos_original = current_set_pos
+		State.entrance_badge_set_pos_wrapper = set_pos_wrapper
+		sign_class.SetPos = set_pos_wrapper
+		installed = installed + 1
+	end
 	State.entrance_badge_position_patch_version = ENTRANCE_BADGE_POSITION_PATCH_VERSION
 	EntranceBadgeLog("entrance badge position-lock patch installed", { classes = installed })
 	return installed > 0
@@ -1868,8 +1901,17 @@ local function RestoreEntranceBadgePositionPatch()
 			cls.PlaceSign = originals[class_name]
 		end
 	end
+	local sign_class = Engine.ClassTable and Engine.ClassTable("SurfaceUndergroundTunnelSign")
+	local set_pos_wrapper = State.entrance_badge_set_pos_wrapper
+	local set_pos_original = State.entrance_badge_set_pos_original
+	if type(sign_class) == "table" and sign_class.SetPos == set_pos_wrapper
+		and type(set_pos_original) == "function" then
+		sign_class.SetPos = set_pos_original
+	end
 	State.entrance_badge_place_sign_originals = nil
 	State.entrance_badge_place_sign_wrappers = nil
+	State.entrance_badge_set_pos_original = nil
+	State.entrance_badge_set_pos_wrapper = nil
 	State.entrance_badge_position_patch_version = nil
 end
 
