@@ -355,6 +355,21 @@ local function LandingScreenInteractive(dialog)
 	return type(dialog.IsWithin) == "function" and dialog:IsWithin(modal) == true
 end
 
+-- Filter Landing Spots rebuilds its split action button when entering filter mode, relabeling,
+-- and scanning. A one-time compatibility hook can therefore be replaced after the landing dialog
+-- opens. Reapply the public positioning helper from the live layout watcher using EXPAND MAP as
+-- its measurement anchor; this always measures the adjacent EXPAND->START gap.
+local function PositionFilterInfoBesideStart(dialog)
+	local fls = Global("FilterLandingSpots")
+	local info = type(fls) == "table" and fls.Info or nil
+	local position = type(info) == "table" and info.PositionInBar or nil
+	if type(position) ~= "function" then return false end
+	local expand = ResolveExpandButton(dialog)
+	if not expand then return false end
+	SafeCall(position, expand)
+	return true
+end
+
 -- Keep the expand-underline bar's visibility synced to (selected AND landing screen interactive)
 -- while it exists, so it hides the instant a modal popup (Custom coordinates, etc.) covers the
 -- EXPAND MAP button and re-shows when the popup closes. Runs only during the pregame landing
@@ -375,6 +390,7 @@ local function StartExpandBarWatcher()
 			if type(info) ~= "table" or not IsAlive(info.holder) then
 				break   -- bar gone (left the landing screen); ApplyExpandUnderline restarts it
 			end
+			PositionFilterInfoBesideStart(info.dialog)
 			local visible = IsSelected() and LandingScreenInteractive(info.dialog)
 			for _, win in ipairs({ info.holder, info.track, info.fill }) do
 				if IsAlive(win) and type(win.SetVisible) == "function" then
