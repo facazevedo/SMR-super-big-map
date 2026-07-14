@@ -528,8 +528,9 @@ end
 -- Resample one EDITOR MapGrid (colour / biome / clutter / grass) from the source region (from_box)
 -- up to the full map (to_box). These are compute-backed grids, so editor.GetGrid returns a
 -- resample-able grid directly (unlike the NATIVE height/type grids, which need the terrain API and
--- assert in GridResample). GridToCompute guards the odd case; the result is repacked to the
--- destination format before editor.SetGrid so its copyrect into storage matches. Returns success.
+-- assert in GridResample). GridToCompute guards the odd case. Destination dimensions come from
+-- GetGridRef and the source sub-grid supplies the same storage format, avoiding a discarded
+-- full-map GetGrid copy. The old full read remains as a compatibility fallback. Returns success.
 local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	local editor_api = Global("editor")
 	local GridToCompute = Global("GridToCompute")
@@ -559,10 +560,17 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	-- issuing the bad read: for a FULL-map grid the source sub-grid is ~frac of the ref; for a
 	-- SOURCE-sized grid it is ~all of it. If the source region already fills most of the grid, the
 	-- grid does not cover the full map -> skip (leaving it source-only rather than asserting).
-	local function grid_w(g)
-		if not g or type(g.size) ~= "function" then return nil end
-		local ok, w = pcall(function() return g:size() end)
-		return ok and type(w) == "number" and w or nil
+	local function grid_size(g)
+		if not g or type(g.size) ~= "function" then return nil, nil end
+		local ok, w, h = pcall(function() return g:size() end)
+		if not ok or type(w) ~= "number" or type(h) ~= "number" then return nil, nil end
+		return w, h
+	end
+	local function grid_format(g)
+		if not g or type(IsComputeGrid) ~= "function" then return nil, nil end
+		local ok, fmt, bits = pcall(IsComputeGrid, g)
+		if not ok then return nil, nil end
+		return fmt, bits
 	end
 	local frac = 1.0
 	if type(to_box.sizex) == "function" and type(from_box.sizex) == "function" then
@@ -573,7 +581,8 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		end
 	end
 	local ref = (type(editor_api.GetGridRef) == "function") and SafeCall(editor_api.GetGridRef, map, name) or nil
-	local ref_w, src_w = grid_w(ref), grid_w(src)
+	local ref_w, ref_h = grid_size(ref)
+	local src_w = grid_size(src)
 	if type(ref_w) == "number" and ref_w > 0 and type(src_w) == "number"
 		and src_w > ref_w * (frac + 1.0) / 2 then
 		StretchLog("mapgrid: NOT full-map sized -- skip (avoids full-box overflow assert)",
@@ -581,24 +590,46 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		free_grid(src)
 		return false
 	end
-	local ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
-	if not ok_d or not dst_ref then
-		free_grid(src)
-		StretchLog("mapgrid: dst ref failed -- skip", { grid = name })
-		return false
+	local dw, dh = ref_w, ref_h
+	local target_fmt, target_bits = grid_format(src)
+	local dst_ref
+	local metadata_source = "grid_ref+source_format"
+	-- Compatibility fallback: preserve the old full destination read when the engine does not
+	-- expose complete reference dimensions or the source sub-grid cannot identify its format.
+	local need_format = type(GridRepack) == "function" and type(IsComputeGrid) == "function"
+		and not target_fmt
+	if type(dw) ~= "number" or dw <= 0 or type(dh) ~= "number" or dh <= 0 or need_format then
+		local ok_d
+		ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
+		if not ok_d or not dst_ref then
+			free_grid(src)
+			StretchLog("mapgrid: destination metadata fallback failed -- skip", { grid = name })
+			return false
+		end
+		dw, dh = grid_size(dst_ref)
+		if not target_fmt then target_fmt, target_bits = grid_format(dst_ref) end
+		metadata_source = "full_destination_fallback"
 	end
 	local ok_all, res = pcall(function()
-		local dw, dh = dst_ref:size()
-		StretchLog("mapgrid: dims", { grid = name, dw = dw, dh = dh })
+		StretchLog("mapgrid: dims", {
+			grid = name, dw = dw, dh = dh, metadata_source = metadata_source,
+			target_fmt = tostring(target_fmt), target_bits = tostring(target_bits),
+		})
 		local src_c = GridToCompute(src)
 		local stretched = GridResample(src_c, dw, dh, interpolate == true)
 		local out = stretched
-		if type(GridRepack) == "function" and type(IsComputeGrid) == "function" then
-			local fmt, bits = IsComputeGrid(dst_ref)
-			if fmt then out = GridRepack(stretched, fmt, bits) end
+		local stretched_fmt, stretched_bits = grid_format(stretched)
+		local repacked = false
+		if type(GridRepack) == "function" and target_fmt
+			and (stretched_fmt ~= target_fmt or stretched_bits ~= target_bits) then
+			out = GridRepack(stretched, target_fmt, target_bits)
+			repacked = true
 		end
 		local ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
-		StretchLog("mapgrid: set done", { grid = name, ok_set = ok_set })
+		StretchLog("mapgrid: set done", {
+			grid = name, ok_set = ok_set, repacked = repacked,
+			stretched_fmt = tostring(stretched_fmt), stretched_bits = tostring(stretched_bits),
+		})
 		if src_c ~= src then free_grid(src_c) end
 		if out ~= stretched then free_grid(out) end
 		free_grid(stretched)
