@@ -177,11 +177,16 @@ local function ResolveExpandButton(dialog)
 	if type(resolve) == "function" then
 		local ok, button = pcall(resolve, toolbar, "idsuper_big_map_expand")
 		if ok and button then
-			ToggleLog("expand button resolved via toolbar", {
-				button_box = BoxText(button.box),
-				measure_width = tostring(button.measure_width),
-				measure_height = tostring(button.measure_height),
-			})
+			local sig = "toolbar|" .. BoxText(button.box) .. "|"
+				.. tostring(button.measure_width) .. "|" .. tostring(button.measure_height)
+			if State.pregame_expand_resolve_sig ~= sig then
+				State.pregame_expand_resolve_sig = sig
+				ToggleLog("expand button resolved via toolbar", {
+					button_box = BoxText(button.box),
+					measure_width = tostring(button.measure_width),
+					measure_height = tostring(button.measure_height),
+				})
+			end
 			return button
 		end
 	end
@@ -189,15 +194,23 @@ local function ResolveExpandButton(dialog)
 	if type(resolve) == "function" then
 		local ok, button = pcall(resolve, dialog, "idsuper_big_map_expand")
 		if ok and button then
-			ToggleLog("expand button resolved via dialog", {
-				button_box = BoxText(button.box),
-				measure_width = tostring(button.measure_width),
-				measure_height = tostring(button.measure_height),
-			})
+			local sig = "dialog|" .. BoxText(button.box) .. "|"
+				.. tostring(button.measure_width) .. "|" .. tostring(button.measure_height)
+			if State.pregame_expand_resolve_sig ~= sig then
+				State.pregame_expand_resolve_sig = sig
+				ToggleLog("expand button resolved via dialog", {
+					button_box = BoxText(button.box),
+					measure_width = tostring(button.measure_width),
+					measure_height = tostring(button.measure_height),
+				})
+			end
 			return button
 		end
 	end
-	ToggleLog("expand button not resolved")
+	if State.pregame_expand_resolve_sig ~= "missing" then
+		State.pregame_expand_resolve_sig = "missing"
+		ToggleLog("expand button not resolved")
+	end
 	return false
 end
 
@@ -387,7 +400,17 @@ local function PositionFilterInfoBesideStart(dialog, expand)
 	local fls = Global("FilterLandingSpots")
 	local info = type(fls) == "table" and fls.Info or nil
 	local position = type(info) == "table" and info.PositionInBar or nil
-	if type(position) ~= "function" then return false end
+	if type(position) ~= "function" then
+		local reason = type(fls) ~= "table" and "FilterLandingSpots global unavailable"
+			or type(info) ~= "table" and "FilterLandingSpots.Info unavailable"
+			or "FilterLandingSpots.Info.PositionInBar unavailable"
+		if State.pregame_filter_info_api_state ~= reason then
+			State.pregame_filter_info_api_state = reason
+			ToggleLog("Filter Info compatibility API unavailable", { reason = reason })
+		end
+		return false
+	end
+	State.pregame_filter_info_api_state = "available"
 	expand = expand or ResolveExpandButton(dialog)
 	if not expand then return false end
 	SafeCall(position, expand)
