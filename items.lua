@@ -84,10 +84,6 @@ return {
 		'CodeFileName', "Code/sbm_map_generation.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "sbm_scan_all_button",
-		'CodeFileName', "Code/sbm_scan_all_button.lua",
-	}),
-	PlaceObj('ModItemCode', {
 		'name', "sbm_deposits",
 		'CodeFileName', "Code/sbm_deposits.lua",
 	}),

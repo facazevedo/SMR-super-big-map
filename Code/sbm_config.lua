@@ -230,10 +230,9 @@ config.DebugEntrancePositions = false
 config.DebugOverview      = false   -- Overview: overview curtains + render-distance
 config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
--- Exhaustive Elevator terrain-forensics trace. Logs the exact class/global patch identity,
+-- Optional Elevator terrain-forensics trace. Logs the exact class/global patch identity,
 -- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
--- and 13x13 before/after height grids around both Elevator footprints. This is intentionally
--- enabled while investigating pre-expansion Elevator terrain pillars; it adds logging only.
+-- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
 config.DebugElevatorTerrain = false
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder
@@ -372,7 +371,7 @@ config.FramePassableBridgeTiles = 2
 --   3) CORNER A15:E19 -- source cols F..J / rows 10..14 get BOTH mirrors (180 deg)
 --                     so the corner matches both seams.
 -- Each destination's existing scatter is replaced with mirrored copies of the
--- source. Runs post-load (TestCopySectorDelayMs settle), once per map, with one
+-- source. Runs post-load (MirrorPlanSettleMs settle), once per map, with one
 -- combined refresh over the whole filled frame.
 config.SectorMirrorPlanAtStart = true
 
@@ -506,19 +505,6 @@ config.ClearInitialConcreteImprint = true
 -- (always-unscanned, frame) position, so it never affects concrete in scanned/playable sectors.
 config.ConcreteImprintMaxTiles = 0
 
--- Optional "Scan All Sectors" button (sbm_scan_all_button.lua): a bottom-right button that
--- deep-scans every sector (reveals surface/subsurface/deep deposits + anomalies). Config-gated --
--- the code ships but only appears when this is true. Handy for revealing the whole expanded map
--- (and for verifying the anomaly top-up). true = show the button, false = hide it.
-config.ScanAllButtonEnabled = false
-
--- TEMP "Place Elevator" button (sbm_place_elevator_button.lua): a bottom-right button that enters
--- the normal Elevator placement cursor and instantly completes the site on placement
--- (Complete("quick_build") -- vanilla's own construct-all cheat call). Free (completion happens
--- before any resource is requested), no tech needed (force-unlocked on press). For testing the
--- surface<->underground entrance correspondence with player-built elevators. Turn OFF for release.
-config.PlaceElevatorButtonEnabled = false
-
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
 -- (an off->on toggle), NOT on a normal launch where it was already enabled. Set false to
@@ -530,9 +516,9 @@ config.ShowRestartNotice = true
 -- so the map is fully loaded/rendered first. Copying during load reads/writes
 -- terrain that isn't finalized yet and produces garbage; the manual console copy
 -- works because it runs well after load. This delay makes the auto copy match.
-config.TestCopySectorDelayMs = 5000
+config.MirrorPlanSettleMs = 5000
 
--- Experimental 2x2 map tiling. Controlled by SuperBigMapTerrainSize above
+-- Expanded-map allocation. Controlled by SuperBigMapTerrainSize above
 -- ("expanded" enables it, "vanilla" disables it). New random surface maps are
 -- created larger, then the source quadrant is copied into the other quadrants.
 config.EnableQuadrantMapCopy = sbm_expanded_terrain
@@ -581,16 +567,13 @@ config.ExpansionFrameMode = sbm_expanded_terrain
 --                     thin join at the source->frame boundary remains to blend. Most natural, but
 --                     the hardest to make match the generator's texture/biome look.
 --
--- Any unrecognised value falls back to "mirror". IMPLEMENTATION STATUS (added incrementally):
+-- Any unrecognised value falls back to "mirror". IMPLEMENTATION STATUS:
 --   "mirror"       -- complete.
---   "stretch"      -- TERRAIN done (grids are resampled to full size); generated objects and
---                     deposits are NOT yet repositioned, so they still sit in the source corner
---                     until the object pass lands. Use it now to judge the stretched-terrain look.
+--   "stretch"      -- production path: resamples terrain grids, relocates decorations,
+--                     enrichments and entrances, then rebuilds final gameplay grids.
 --   "desymmetrize" -- not implemented yet; logs a notice and falls back to "mirror".
 --   "noise"        -- not implemented yet; logs a notice and falls back to "mirror".
 -- The map is always complete/playable whatever is selected.
--- TEMPORARY: set to "stretch" for testing the stretched-terrain look (step 1). Set back to
--- "mirror" before release (stretch does not reposition objects/deposits yet).
 config.ExpansionFrameFillMode = "stretch"
 -- STRETCH extras. ScaleMarkers moves the generated DEPOSIT / ANOMALY / EFFECT markers (and any
 -- already-spawned deposits/anomalies) to their scaled spots on the stretched terrain, exactly like
@@ -624,18 +607,6 @@ config.StretchUnderground = true
 -- pipeline finishes: terrain stretch, final grids, entrance/marker movement, and all top-ups.
 -- This avoids exposing an intermediate underground with stale heights or missing resources.
 config.DeferUndergroundExpansionUntilFirstAccess = true
--- TEMP (testing): unlock the underground map VIEW from the start of the game, so the stretched
--- underground can be inspected immediately via the map switcher (vanilla unlocks it later).
--- Turn OFF for release.
-config.UnlockUndergroundViewAtStart = false
--- TEMP (testing): fully reveal the underground darkness fog (hr.EnableDarknessReveal=0) whenever
--- the underground map is viewed, so the whole stretched underground is visible without exploring.
--- Vanilla gameplay hides it and reveals by rover proximity. Turn OFF for release.
-config.UndergroundRevealAllDarkness = false
--- TEMP (testing): force-place + reveal ALL underground deposits/anomalies after the underground
--- stretch, so the stretched enrichment layout can be inspected without exploring. Tunnel-entrance
--- markers are excluded (their placement runs scripted passage sequences). Turn OFF for release.
-config.UndergroundRevealAllDeposits = false
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -1001,15 +972,13 @@ C.DEBUG_INITSEQ       = as_bool(config.DebugInitSeq)
 C.DEBUG_CHOSENMAP     = as_bool(config.DebugChosenMap)
 
 -- Settle delay (ms) the post-load mirror plan waits after sectors exist before copying.
-C.TEST_COPY_SECTOR_DELAY_MS = as_number(config.TestCopySectorDelayMs, 5000)
+C.MIRROR_PLAN_SETTLE_MS = as_number(config.MirrorPlanSettleMs, 5000)
 C.SECTOR_MIRROR_PLAN_AT_START = as_bool(config.SectorMirrorPlanAtStart)
 C.MIRROR_DECOR_SKIP_EVERY_NTH = as_number(config.MirrorDecorSkipEveryNth, 0)
 C.MIRROR_SKIP_EDGE_TOUCHING_DECOR = as_bool(config.MirrorSkipEdgeTouchingDecor)
 C.WARN_ON_CANNOT_EXPAND = as_bool(config.WarnOnCannotExpand)
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
-C.SCAN_ALL_BUTTON_ENABLED = as_bool(config.ScanAllButtonEnabled)
-C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.RESHUFFLE_CLONED_DEPOSITS = as_bool(config.ReshuffleClonedDeposits)
 C.RESHUFFLE_SEARCH_RADIUS_TILES = as_number(config.ReshuffleSearchRadiusTiles, 12)
@@ -1088,9 +1057,6 @@ C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.StretchEnforceScanGate)
 C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
-C.UNLOCK_UNDERGROUND_VIEW_AT_START = as_bool(config.UnlockUndergroundViewAtStart)
-C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
-C.UNDERGROUND_REVEAL_ALL_DEPOSITS = as_bool(config.UndergroundRevealAllDeposits)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.StretchMoveEntranceVisuals)

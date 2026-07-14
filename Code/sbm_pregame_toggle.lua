@@ -457,6 +457,21 @@ local function SetSortKey(action, key)
 	end
 end
 
+-- Keep EXPAND MAP immediately before START in every configuration. Filter Landing Spots uses
+-- `fls_filter_landing_spots` at sort key 040; giving EXPAND its own 045 slot preserves both
+-- intended layouts:
+--   vanilla actions: BACK / CUSTOM / RANDOM / EXPAND MAP / START
+--   with Filter:     BACK / CUSTOM / RANDOM / FILTER / EXPAND MAP / START
+-- Reapply this when an existing action bar is reused because either mod may rebuild it later.
+local function ReorderLandingActions(dialog)
+	SetSortKey(ActionById(dialog, "back"), "010")
+	SetSortKey(ActionById(dialog, "custom"), "020")
+	SetSortKey(ActionById(dialog, "random"), "030")
+	SetSortKey(ActionById(dialog, "fls_filter_landing_spots"), "040")
+	SetSortKey(ActionById(dialog, "super_big_map_expand"), "045")
+	SetSortKey(ActionById(dialog, "start"), "050")
+end
+
 local function RefreshActions(host)
 	if not host or type(host.UpdateActionViews) ~= "function" then return end
 	ToggleLog("refresh actions", {
@@ -482,6 +497,8 @@ local function InstallLandingDialogAction(dialog)
 	-- is genuinely still present.
 	local action_present = ActionById(dialog, "super_big_map_expand") ~= nil
 	if action_present then
+		ReorderLandingActions(dialog)
+		RefreshActions(dialog)
 		ToggleLog("InstallLandingDialogAction: action already present -- skip", {
 			dialog = tostring(dialog.class or dialog.Id or "nil"),
 			flag = dialog.SuperBigMapExpandActionInstalled == true,
@@ -493,11 +510,6 @@ local function InstallLandingDialogAction(dialog)
 		dialog = tostring(dialog.class or dialog.Id or "nil"),
 		flag_was_set = dialog.SuperBigMapExpandActionInstalled == true,
 	})
-
-	SetSortKey(ActionById(dialog, "back"), "010")
-	SetSortKey(ActionById(dialog, "custom"), "020")
-	SetSortKey(ActionById(dialog, "random"), "030")
-	SetSortKey(ActionById(dialog, "start"), "050")
 
 	local back_action = ActionById(dialog, "back")
 	if back_action and back_action.SuperBigMapBackWrapped ~= true then
@@ -529,7 +541,7 @@ local function InstallLandingDialogAction(dialog)
 		ActionName = ExpandActionName(),
 		ActionTranslate = false,
 		ActionToolbar = "ActionBar",
-		ActionSortKey = "040",
+		ActionSortKey = "045",
 		OnAction = function(action, host)
 			SetSelected(not IsSelected(), "toggle")
 			ToggleLog("expand action clicked", {
@@ -543,6 +555,7 @@ local function InstallLandingDialogAction(dialog)
 	}, dialog, dialog.context)
 
 	dialog.SuperBigMapExpandActionInstalled = true
+	ReorderLandingActions(dialog)
 	UpdateDialogExpandActionLabel(dialog)
 	RefreshActions(dialog)
 	return true

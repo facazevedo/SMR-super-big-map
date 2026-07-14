@@ -3720,43 +3720,6 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	})
 end
 
--- TEMP inspection helper (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place and reveal every
--- deposit/anomaly on a map -- runs vanilla RevealDeposits over all unplaced markers (spawning
--- their deposits/anomalies) and flips `revealed` on every scan-gated spawned object. Used on the
--- underground map so the stretched layout can be inspected without exploring. Tunnel-entrance
--- markers are EXCLUDED: their PlaceDeposit starts scripted passage sequences, and mass-triggering
--- those would spawn entrance structures prematurely (they spawn via their normal path instead).
-function DepositRules.ForceRevealAllOnMap(map)
-	map = map or Global("CurrentMap")
-	if not map or type(map.MapForEach) ~= "function" then return end
-	local reveal_deposits = Global("RevealDeposits")
-	local markers = {}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(m)
-		if m and m.is_placed ~= true and not IsKindOfSafe(m, "SurfaceUndergroundTunnelMarker") then
-			markers[#markers + 1] = m
-		end
-	end)
-	local placed_ok = false
-	if type(reveal_deposits) == "function" and #markers > 0 then
-		placed_ok = pcall(reveal_deposits, markers)
-	end
-	local revealed = 0
-	local function reveal_class(cls)
-		pcall(map.MapForEach, map, "map", cls, function(obj)
-			if obj and IsScanGatedDeposit(obj) and obj.revealed ~= true then
-				SetRevealedState(obj, true)
-				revealed = revealed + 1
-			end
-		end)
-	end
-	reveal_class("SubsurfaceDeposit")
-	reveal_class("SubsurfaceAnomaly")
-	Log("TEMP force-revealed all deposits/anomalies on map", {
-		map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
-		markers_placed = #markers, place_ok = placed_ok, revealed_objects = revealed,
-	})
-end
-
 function DepositRules.OnSectorScanned(status, sector)
 	if not Enabled() then return end
 	if type(sector) ~= "table" then return end

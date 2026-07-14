@@ -1983,7 +1983,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 	-- STRETCH loads fast (grid resample, no sector-by-sector work), so it does not need the long
 	-- mirror-plan settle -- use a short stretch-specific settle to cut several seconds off the load.
 	local fill_mode_early = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
-	local settle_ms = math.max(0, cfg_number("TEST_COPY_SECTOR_DELAY_MS", 5000))
+	local settle_ms = math.max(0, cfg_number("MIRROR_PLAN_SETTLE_MS", 5000))
 	if fill_mode_early == "stretch" then
 		settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 800))
 		if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
@@ -3015,8 +3015,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- The x1.78 factor is correct per BUILDABLE area as well: the buildable floor
 			-- stretched by the same factor as the map (the census logs the measured numbers).
 			-- Placement pools are buildable-floor-only underground (CanReceiveDeposit), so no
-			-- enrichment lands in the inaccessible rock/void. Runs BEFORE the TEMP
-			-- ForceRevealAllOnMap so the inspection reveal also places/reveals the clones.
+			-- enrichment lands in the inaccessible rock/void.
 			do
 				local deposits = SuperBigMap.DepositRules
 				if deposits then
@@ -3091,15 +3090,6 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						deposits.ClearTopUpPlacementPool(map)
 						InvestigationEnd(detail_token, nil, true)
 					end
-				end
-			end
-			-- TEMP (config UNDERGROUND_REVEAL_ALL_DEPOSITS): force-place + reveal every
-			-- deposit/anomaly so the stretched underground layout can be inspected.
-			if cfg_bool("UNDERGROUND_REVEAL_ALL_DEPOSITS", false) then
-				local deposits = SuperBigMap.DepositRules
-				if deposits and type(deposits.ForceRevealAllOnMap) == "function" then
-					StretchLog("underground stretch: -> ForceRevealAllOnMap (TEMP)")
-					SafeCall(deposits.ForceRevealAllOnMap, map)
 				end
 			end
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its

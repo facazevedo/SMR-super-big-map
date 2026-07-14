@@ -219,10 +219,6 @@ local function ForceVanillaPregameState(reason)
 	if curtains and type(curtains.RestoreVanillaBehavior) == "function" then
 		curtains.RestoreVanillaBehavior()
 	end
-	for _, name in ipairs({ "ScanAllButton", "PlaceElevatorButton" }) do
-		local api = SuperBigMap[name]
-		if api and type(api.Hide) == "function" then SafeCall(api.Hide) end
-	end
 	if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 		SafeCall(SuperBigMap.ExpansionLoadingEnd)
 	end
@@ -360,19 +356,6 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 			})
 		end
 		return false, "not a mod map"
-	end
-
-	-- Optional bottom-right "Scan All Sectors" button on mod maps (config-gated; no-op when
-	-- SCAN_ALL_BUTTON_ENABLED is off; idempotent).
-	local scan_btn = SuperBigMap.ScanAllButton
-	if scan_btn and type(scan_btn.Show) == "function" then
-		scan_btn.Show()
-	end
-
-	-- TEMP "Place Elevator" button (config-gated; instant free elevator for entrance testing).
-	local elevator_btn = SuperBigMap.PlaceElevatorButton
-	if elevator_btn and type(elevator_btn.Show) == "function" then
-		elevator_btn.Show()
 	end
 
 	local bounds = SuperBigMap.MapBounds
@@ -885,16 +868,9 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded", map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "PostNewMapLoaded")
-	-- TEMP Place Elevator button also on NON-expanded games (user request): Lifecycle.Apply only
-	-- runs on mod maps, so show it here for any real game map (PreGame preview excluded;
-	-- config-gated + idempotent inside Show).
 	do
 		local id = tostring((map and map.mapdata and map.mapdata.id) or (map and map.name) or "")
 		if map and map.mapdata and id ~= "PreGame" then
-			local elevator_btn = SuperBigMap.PlaceElevatorButton
-			if elevator_btn and type(elevator_btn.Show) == "function" then
-				elevator_btn.Show()
-			end
 			local entrance_debug = SuperBigMap.EntranceDebug
 			if entrance_debug and type(entrance_debug.SnapshotAll) == "function" then
 				entrance_debug.SnapshotAll("PostNewMapLoaded:" .. id, map)
@@ -997,9 +973,8 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "PostNewMapLoaded")
 	end
-	-- UNDERGROUND maps take their own (minimal) stretch path -- never the surface pipeline
-	-- (sector mirror plan, relocation, density suite are surface-only). Also the TEMP
-	-- config-gated unlock of the underground map VIEW so it can be inspected from the start.
+	-- UNDERGROUND maps take their own stretch path -- never the surface pipeline
+	-- (the sector mirror plan and surface relocation are surface-only).
 	if env == "Underground" then
 		local scheduled = false
 		if gen and type(gen.RunUndergroundStretchIfEnabled) == "function" then
@@ -1021,30 +996,6 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 				if DebugLog then
 					DebugLog.Info("Lifecycle", "underground overview mode enabled (mapdata.IsAllowedToEnterOverview=true)")
 				end
-			end
-		end
-		if (SuperBigMap.Config or {}).UNLOCK_UNDERGROUND_VIEW_AT_START == true then
-			local create_thread = Global("CreateRealTimeThread")
-			local sleep = Global("Sleep")
-			if type(create_thread) == "function" and type(sleep) == "function" then
-				create_thread(function()
-					-- UIColony exists a bit after map load; poll briefly, then flip the flag the
-					-- map-switch UI reads (MapSwitchClass:IsAvailable -> underground_map_unlocked).
-					for _ = 1, 120 do
-						local colony = Global("UIColony")
-						if type(colony) == "table" then
-							if colony.underground_map_unlocked ~= true then
-								colony.underground_map_unlocked = true
-								local DebugLog = SuperBigMap.DebugLog
-								if DebugLog then
-									DebugLog.Info("Lifecycle", "TEMP: underground map view unlocked at start (config UNLOCK_UNDERGROUND_VIEW_AT_START)")
-								end
-							end
-							return
-						end
-						sleep(500)
-					end
-				end)
 			end
 		end
 		DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
@@ -1286,23 +1237,6 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		local highlight = SuperBigMap.SectorHighlight
 		if highlight and type(highlight.UpdateUndergroundOverviewVisuals) == "function" then
 			SafeCall(highlight.UpdateUndergroundOverviewVisuals, false)
-		end
-	end
-	-- TEMP (config UNDERGROUND_REVEAL_ALL_DARKNESS): fully reveal the underground's darkness fog
-	-- so the whole stretched underground can be inspected. Vanilla re-applies the fog on EVERY
-	-- map switch (RevealDarkness.lua OnMsg.CurrentMapChangeDone sets hr.EnableDarknessReveal=90
-	-- for underground maps); mod handlers run after vanilla's, so overriding to 0 here wins.
-	if (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true then
-		local env = map and map.mapdata and map.mapdata.Environment
-		if env == "Underground" then
-			local hr = Global("hr")
-			if type(hr) == "table" then
-				hr.EnableDarknessReveal = 0
-				local DebugLog = SuperBigMap.DebugLog
-				if DebugLog then
-					DebugLog.Info("Lifecycle", "TEMP: underground darkness fully revealed (config UNDERGROUND_REVEAL_ALL_DARKNESS)")
-				end
-			end
 		end
 	end
 end)
