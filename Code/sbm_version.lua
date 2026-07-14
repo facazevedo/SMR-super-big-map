@@ -56,7 +56,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 -- 49: defer underground exploration availability until expansion completes so vanilla
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
--- RandomMapGenerator Generate/DoGenerate + map-access patch (sbm_map_generation). Bumped to 25:
--- run the global badge-overlap resolver after each surface/underground density suite so generated
--- resource, anomaly, effect, and entrance badges cannot claim the same hex.
-SuperBigMap.GENERATOR_PATCH_VERSION = 25
+-- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
+-- (sbm_map_generation). Bumped to 29: capture the RMG's private warning arguments and exact
+-- anomaly-count rolls without consuming randomness, for authoritative post-stretch targets.
+SuperBigMap.GENERATOR_PATCH_VERSION = 29

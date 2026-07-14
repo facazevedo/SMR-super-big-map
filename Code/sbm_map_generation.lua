@@ -1417,7 +1417,8 @@ local function PatchRandomMapGenerator()
 		and generator_class.Generate == State.generator_generate_wrapper
 		and generator_class.DoGenerate == State.generator_do_generate_wrapper
 		and generator_class.ProcStart == State.generator_proc_start_wrapper
-		and generator_class.ProcEnd == State.generator_proc_end_wrapper then
+		and generator_class.ProcEnd == State.generator_proc_end_wrapper
+		and generator_class.OnGenerateLogic == State.generator_on_generate_logic_wrapper then
 		return true
 	end
 
@@ -1435,10 +1436,178 @@ local function PatchRandomMapGenerator()
 	if generator_class.ProcEnd ~= State.generator_proc_end_wrapper then
 		State.generator_original_proc_end = generator_class.ProcEnd
 	end
+	if generator_class.OnGenerateLogic ~= State.generator_on_generate_logic_wrapper then
+		State.generator_original_on_generate_logic = generator_class.OnGenerateLogic
+	end
 	local original_generate = State.generator_original_generate
 	local original_do_generate = State.generator_original_do_generate
 	local original_proc_start = State.generator_original_proc_start
 	local original_proc_end = State.generator_original_proc_end
+	local original_on_generate_logic = State.generator_original_on_generate_logic
+
+	-- OnGenerateLogic receives the generator's private print function and random
+	-- helpers in `env`. The RMG warnings never call global `print`, so this is the
+	-- authoritative interception point for exact per-run enrichment targets.
+	if type(original_on_generate_logic) == "function" then
+		local on_generate_logic_wrapper = function(self, env, ...)
+			if type(env) ~= "table" then
+				return original_on_generate_logic(self, env, ...)
+			end
+			local map = env.map
+			local environment = type(map) == "table" and type(map.mapdata) == "table"
+				and map.mapdata.Environment or nil
+			-- This completeness repair is deliberately surface-only. Underground
+			-- generation delegates bit-for-bit to the engine and never receives these
+			-- target floors, protecting cave-specific and rare anomaly families.
+			if State.rmg_placement_active_map ~= map or environment == "Underground" then
+				return original_on_generate_logic(self, env, ...)
+			end
+			local rhelpers = env.rhelpers
+			local saved_rrand = type(rhelpers) == "table" and rhelpers[2] or nil
+			local saved_rm_print = env.rm_print
+			local saved_generate_resource_info = Global("GenerateResourceInfo")
+			local generate_resource_info_wrapper
+			local rolls, roll_index = {}, 0
+			local roll_specs = {
+				{ key = "event_base", value = self.AnomEventCount },
+				{ key = "event_bonus", value = self.BonusCountEvent },
+				{ key = "unlock", value = self.AnomTechUnlockCount },
+				{ key = "complete_base", value = self.AnomFreeTechCount },
+				{ key = "complete_bonus", value = self.BonusCountFreeTech },
+				{ key = "breakthrough_bonus", value = self.BonusCountBreakthrough },
+			}
+
+			if type(map) == "table" then
+				map.SuperBigMapExpectedResourceCounts = {}
+				map.SuperBigMapExpectedResourceCountsByLayer = {}
+				map.SuperBigMapResourceTargetCapture = false
+				map.SuperBigMapExpectedAnomalyCounts = {}
+				map.SuperBigMapAnomalyTargetRolls = rolls
+				map.SuperBigMapAnomalyTargetCapture = false
+			end
+
+			local function capture_resource_info(res_info, source)
+				if type(map) ~= "table" or type(res_info) ~= "table" then return false end
+				local captured = 0
+				for resource, info in pairs(res_info) do
+					if type(resource) == "string" and type(info) == "table" then
+						local layers, total = {}, 0
+						for _, layer in ipairs({ "surf", "subs", "terr" }) do
+							local count = type(info[layer]) == "table" and info[layer].count or nil
+							if type(count) == "number" then
+								layers[layer] = count
+								total = total + count
+							end
+						end
+						if next(layers) then
+							map.SuperBigMapExpectedResourceCounts[resource] = total
+							map.SuperBigMapExpectedResourceCountsByLayer[resource] = layers
+							captured = captured + 1
+						end
+					end
+				end
+				if captured > 0 then
+					map.SuperBigMapResourceTargetCapture = source
+					return true
+				end
+				return false
+			end
+
+			local precomputed_res_info = self.ResInfo
+			if precomputed_res_info == nil and type(self.GetProperty) == "function" then
+				local ok, value = pcall(self.GetProperty, self, "ResInfo")
+				if ok then precomputed_res_info = value end
+			end
+			local have_resource_targets = capture_resource_info(precomputed_res_info, "generator ResInfo")
+			if not have_resource_targets and type(saved_generate_resource_info) == "function" then
+				generate_resource_info_wrapper = function(...)
+					local res_info = saved_generate_resource_info(...)
+					capture_resource_info(res_info, "GenerateResourceInfo return")
+					return res_info
+				end
+				rawset(_G, "GenerateResourceInfo", generate_resource_info_wrapper)
+			end
+
+			local function publish_anomaly_targets()
+				if type(map) ~= "table" or roll_index < #roll_specs then return end
+				map.SuperBigMapExpectedAnomalyCounts = {
+					sequence = (rolls.event_base or 0) + (rolls.event_bonus or 0),
+					unlock = rolls.unlock or 0,
+					complete = (rolls.complete_base or 0) + (rolls.complete_bonus or 0),
+				}
+				map.SuperBigMapRolledBreakthroughCount =
+					(type(self.AnomBreakthroughCount) == "number" and self.AnomBreakthroughCount or 0)
+					+ (rolls.breakthrough_bonus or 0)
+				map.SuperBigMapAnomalyTargetCapture = "OnGenerateLogic rrand"
+			end
+
+			if type(saved_rrand) == "function" then
+				rhelpers[2] = function(value, ...)
+					local result = saved_rrand(value, ...)
+					local next_index = roll_index + 1
+					local spec = roll_specs[next_index]
+					-- These are the first six rrand calls in the engine's
+					-- OnGenerateLogic (the anomaly_info constructor). Verify the
+					-- argument identity so a future engine change fails closed.
+					if spec and rawequal(value, spec.value) then
+						roll_index = next_index
+						rolls[spec.key] = result
+						publish_anomaly_targets()
+					end
+					return result
+				end
+			end
+
+			if type(saved_rm_print) == "function" then
+				env.rm_print = function(...)
+					if type(map) == "table"
+						and select(1, ...) == "Failed to find a place for all"
+						and select(4, ...) == "deposits. Placed"
+						and select(6, ...) == "out of" then
+						local resource = select(3, ...)
+						local target = select(7, ...)
+						if type(resource) == "string" and type(target) == "number" then
+							map.SuperBigMapExpectedResourceCounts[resource] = target
+							if not map.SuperBigMapResourceTargetCapture then
+								map.SuperBigMapResourceTargetCapture = "rm_print failure args"
+							end
+						end
+					end
+					return saved_rm_print(...)
+				end
+			end
+
+			local results = { pcall(original_on_generate_logic, self, env, ...) }
+			if type(rhelpers) == "table" and rhelpers[2] ~= saved_rrand then
+				rhelpers[2] = saved_rrand
+			end
+			if env.rm_print ~= saved_rm_print then env.rm_print = saved_rm_print end
+			if generate_resource_info_wrapper
+				and Global("GenerateResourceInfo") == generate_resource_info_wrapper then
+				rawset(_G, "GenerateResourceInfo", saved_generate_resource_info)
+			end
+
+			local debug_log = SuperBigMap.DebugLog
+			if debug_log and type(map) == "table" then
+				local data = {
+					anomaly_capture = tostring(map.SuperBigMapAnomalyTargetCapture),
+					resource_capture = tostring(map.SuperBigMapResourceTargetCapture),
+					rolls_captured = roll_index,
+				}
+				for kind, count in pairs(map.SuperBigMapExpectedAnomalyCounts or {}) do
+					data["anomaly_" .. tostring(kind)] = count
+				end
+				for resource, count in pairs(map.SuperBigMapExpectedResourceCounts or {}) do
+					data["resource_" .. tostring(resource)] = count
+				end
+				debug_log.Info("Generation", "captured authoritative RMG enrichment targets", data)
+			end
+			if not results[1] then error(results[2]) end
+			return Unpack(results, 2)
+		end
+		generator_class.OnGenerateLogic = on_generate_logic_wrapper
+		State.generator_on_generate_logic_wrapper = on_generate_logic_wrapper
+	end
 
 	-- GenRand instrumentation: per-proc rand-stream fingerprints (see helpers above).
 	-- ProcInvoke re-seeds the PRNG (rand_state:Set(xxhash(Seed, tag))) right BEFORE
@@ -1457,7 +1626,29 @@ local function PatchRandomMapGenerator()
 					tostring(tag), tostring(seed), tostring(GenRandLast(self)),
 					tostring(md and md.PassBorder), tostring(md and md.Width)))
 			end
-			return original_proc_start(self, tag, ...)
+			local result = original_proc_start(self, tag, ...)
+			-- Stretch-mode placement repair begins at the engine's outer
+			-- PlaceAnomalies procedure boundary. Terrain/prefab procedures have
+			-- already completed and each procedure owns an independently seeded
+			-- random stream, so this cannot move or reshape terrain features.
+			local active_map = State.rmg_placement_active_map
+			local active_environment = type(active_map) == "table"
+				and type(active_map.mapdata) == "table" and active_map.mapdata.Environment or nil
+			if tag == "PlaceAnomalies" and active_map and active_environment ~= "Underground" then
+				local placement = SuperBigMap.RmgPlacement
+				if placement and type(placement.Begin) == "function" then
+					local ok, began = pcall(placement.Begin, self,
+						State.rmg_placement_active_map, {
+							allow_stretch_placement = true,
+							preserve_native_counts = true,
+						})
+					State.rmg_placement_proc_active = ok and began == true
+					if not ok then
+						DebugPrint("PlaceAnomalies placement repair begin ERROR: " .. tostring(began))
+					end
+				end
+			end
+			return result
 		end
 		generator_class.ProcStart = proc_start_wrapper
 		State.generator_proc_start_wrapper = proc_start_wrapper
@@ -1468,7 +1659,19 @@ local function PatchRandomMapGenerator()
 				GenRandLog(string.format("ProcEnd   %-24s rand_last=%s   <-- fingerprint",
 					tostring(tag), tostring(GenRandLast(self))))
 			end
-			return original_proc_end(self, tag, ...)
+			local result = original_proc_end(self, tag, ...)
+			if tag == "PlaceAnomalies" and State.rmg_placement_proc_active then
+				local placement = SuperBigMap.RmgPlacement
+				local map = State.rmg_placement_active_map
+				State.rmg_placement_proc_active = false
+				if placement and type(placement.End) == "function" then
+					local ok, err = pcall(placement.End, map)
+					if not ok then
+						DebugPrint("PlaceAnomalies placement repair end ERROR: " .. tostring(err))
+					end
+				end
+			end
+			return result
 		end
 		generator_class.ProcEnd = proc_end_wrapper
 		State.generator_proc_end_wrapper = proc_end_wrapper
@@ -1777,7 +1980,26 @@ local function PatchRandomMapGenerator()
 					detected_height_tiles = cur_h_tiles, generator_width_tiles = gen_width_tiles,
 					generator_height_tiles = gen_height_tiles }, map) or false
 			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
+			State.rmg_placement_active_map = map
+			State.rmg_placement_proc_active = false
 			local results = { pcall(original_do_generate, self, map, ...) }
+			if next(map.SuperBigMapExpectedResourceCounts or {}) then
+				local debug_log = SuperBigMap.DebugLog
+				if debug_log then
+					debug_log.Info("Generation", "captured RMG resource target floors",
+						map.SuperBigMapExpectedResourceCounts)
+				end
+			end
+			-- ProcEnd normally restores the late stretch placement snapshot. If the
+			-- generator raised before ProcEnd, restore it here so no preset mutation
+			-- can leak into another map generation.
+			if State.rmg_placement_proc_active then
+				State.rmg_placement_proc_active = false
+				if placement and type(placement.End) == "function" then
+					pcall(placement.End, map)
+				end
+			end
+			State.rmg_placement_active_map = false
 			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
 			if load_token and type(profiler.End) == "function" then
 				profiler.End(load_token, { result_count = #results - 1,
@@ -3680,9 +3902,26 @@ function MapGeneration.RestoreVanillaBehavior()
 		if type(State.generator_original_do_generate) == "function" then
 			generator_class.DoGenerate = State.generator_original_do_generate
 		end
+		if type(State.generator_original_proc_start) == "function" then
+			generator_class.ProcStart = State.generator_original_proc_start
+		end
+		if type(State.generator_original_proc_end) == "function" then
+			generator_class.ProcEnd = State.generator_original_proc_end
+		end
+		if type(State.generator_original_on_generate_logic) == "function" then
+			generator_class.OnGenerateLogic = State.generator_original_on_generate_logic
+		end
 	end
 	State.generator_original_generate = nil
 	State.generator_original_do_generate = nil
+	State.generator_original_proc_start = nil
+	State.generator_original_proc_end = nil
+	State.generator_original_on_generate_logic = nil
+	State.generator_proc_start_wrapper = nil
+	State.generator_proc_end_wrapper = nil
+	State.generator_on_generate_logic_wrapper = nil
+	State.rmg_placement_active_map = nil
+	State.rmg_placement_proc_active = nil
 	State.generator_patch_version = nil
 	if State.spawn_passage_wrapper and Global("SpawnUndergroundPassage") == State.spawn_passage_wrapper
 		and type(State.original_spawn_passage) == "function" then

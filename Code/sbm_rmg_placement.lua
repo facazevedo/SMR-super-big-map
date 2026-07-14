@@ -80,16 +80,13 @@ local SPACING_PROPS = {
 	"EffectDepSpacing", "EffectDepRepulse", "EffectDepRepulseAll",
 }
 
--- Anomaly COUNT properties on the generator instance (consumed at gen time,
--- RandomMapGenerator.lua ~3262-3291). Scaling these up before DoGenerate makes the generator
--- place proportionally more anomalies for the bigger map, WITH correct unique rewards: the
--- generator only stamps a category (tech_action/sequence); the reward resolves at scan time,
--- and the breakthrough pool self-trims to the available set at load (City:InitBreakThroughAnomalies).
--- FreeTech/TechUnlock/Event scale freely; breakthrough plateaus at the pool (safe). Each is a
--- plain number or a {from,to} range.
+-- Scalable anomaly COUNT properties on the generator instance (consumed at gen time,
+-- RandomMapGenerator.lua ~3262-3291). FreeTech/TechUnlock/Event may scale in mirror mode;
+-- breakthroughs deliberately do not because City reserves/prunes their finite technology
+-- pool after generation. Each property is a plain number or a {from,to} range.
 local COUNT_PROPS = {
-	"AnomFreeTechCount", "AnomEventCount", "AnomTechUnlockCount", "AnomBreakthroughCount",
-	"BonusCountFreeTech", "BonusCountEvent", "BonusCountBreakthrough",
+	"AnomFreeTechCount", "AnomEventCount", "AnomTechUnlockCount",
+	"BonusCountFreeTech", "BonusCountEvent",
 }
 
 -- Per-layer placement borders eroded off play_zone (L3334/L3384). Zeroing these
@@ -287,22 +284,20 @@ end
 
 local RmgPlacement = {}
 
--- Begin: snapshot + relax placement knobs for the in-flight generation. Call ONLY on
--- a mod-expanded map, AFTER the DoGenerate size overrides are in place and BEFORE the
--- original DoGenerate runs. Returns true if a relaxation was applied (so End must be
--- called), false otherwise.
-function RmgPlacement.Begin(generator, map)
+-- Begin: snapshot + relax placement knobs for the in-flight generation. Call on a
+-- mod-expanded map after the DoGenerate size overrides are in place. Mirror mode
+-- starts this around the whole DoGenerate call. Stretch mode starts it from the
+-- PlaceAnomalies ProcStart boundary, after terrain/prefab generation has finished,
+-- so terrain remains seed-identical while deposit/anomaly placement can use the
+-- recovered zone. Returns true if a relaxation was applied (so End must be called).
+function RmgPlacement.Begin(generator, map, options)
 	if not Enabled() then return false end
-	-- STRETCH mode: NO in-generation interference at all (user-confirmed determinism
-	-- requirement). Any preset-prop change here (spacing, borders, anomaly counts) shifts the
-	-- generator's random stream, so the SAME coordinates produce a DIFFERENT map than vanilla --
-	-- observed as terrain-feature prefabs (a dried lake) at other positions/rotations and as
-	-- run-to-run non-determinism of the tunnel spawners. In stretch the generator runs at native
-	-- size with the native play zone, so the mirror-era auto-fit is unnecessary anyway; the
-	-- map-size enrichment scaling happens POST-generation instead (TopUpDeposits +
-	-- TopUpAnomalies). Mirror mode keeps the auto-fit (its shrunken play zone needs it).
-	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
-		Log("Begin skipped: stretch mode -- generator runs bit-identical to vanilla (enrichment moved post-gen)")
+	options = type(options) == "table" and options or {}
+	local stretch_mode = tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
+	-- Stretch may opt in only from the late PlaceAnomalies procedure boundary. The
+	-- normal pre-DoGenerate call still skips, preserving all terrain/prefab streams.
+	if stretch_mode and options.allow_stretch_placement ~= true then
+		Log("Begin skipped: stretch mode waits for the PlaceAnomalies procedure boundary")
 		return false
 	end
 	if active then
@@ -310,6 +305,11 @@ function RmgPlacement.Begin(generator, map)
 		return false
 	end
 	if type(generator) ~= "table" or type(map) ~= "table" then return false end
+	local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
+	if environment == "Underground" then
+		Log("Begin skipped: underground generation remains engine-native")
+		return false
+	end
 
 	local step = WorkStep()
 	if not step then
@@ -345,7 +345,10 @@ function RmgPlacement.Begin(generator, map)
 	if scale > 1 then scale = 1 end
 
 	local zero_borders = cfg().RMG_PLACEMENT_ZERO_BORDERS ~= false
-	local snapshot = { generator = generator, props = {}, presets = {} }
+	local snapshot = {
+		generator = generator, props = {}, presets = {},
+		mode = stretch_mode and "stretch-place-anomalies" or "whole-generation",
+	}
 
 	-- 1) Zero per-layer placement borders on the generator instance.
 	if zero_borders then
@@ -358,12 +361,14 @@ function RmgPlacement.Begin(generator, map)
 		end
 	end
 
-	-- 2) Anomaly COUNT scaling: place proportionally MORE anomalies so the bigger map reaches
-	-- full vanilla density for its size. Reward-safe (generator stamps a category only; reward
-	-- resolves at scan; breakthrough self-trims to the available pool at load). FreeTech/
-	-- TechUnlock/Event scale freely; breakthrough plateaus at the pool.
+	-- 2) Anomaly COUNT scaling: place proportionally MORE ordinary anomalies so the bigger map
+	-- reaches full vanilla density for its size. FreeTech/TechUnlock/Event scale freely in
+	-- mirror mode; finite breakthrough counts remain untouched.
 	local anom_scale = 1.0
-	if cfg().TOPUP_ANOMALIES == true then
+	-- Stretch already scales density with the post-generation top-up pass. At this
+	-- late boundary we repair only the native preset population; scaling counts here
+	-- would double-apply the area factor and overcrowd the source placement zone.
+	if options.preserve_native_counts ~= true and cfg().TOPUP_ANOMALIES == true then
 		local override = cfg().ANOMALY_COUNT_SCALE_OVERRIDE
 		anom_scale = (type(override) == "number" and override > 0) and override or AreaFactor(map)
 		if anom_scale > 1.0 then
@@ -433,6 +438,7 @@ function RmgPlacement.Begin(generator, map)
 
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("RmgPlacement") then
 		local data = {
+			mode = snapshot.mode,
 			coverage = (type(coverage) == "number") and string.format("%.3f", coverage) or (why or "n/a"),
 			scale = string.format("%.3f", scale),
 			scale_basis = scale_basis,
@@ -468,8 +474,22 @@ function RmgPlacement.End(map)
 		e.obj[e.key] = e.value
 	end
 
+	-- OnGenerateLogic records the exact randomized category counts before this
+	-- procedure runs. Preserve those authoritative values; never substitute preset
+	-- maxima or underground counts, which would overfill randomized maps and clone
+	-- cave-specific anomaly families.
+	map = map or Global("CurrentMap")
+	if type(map) == "table" and type(snap.generator) == "table" then
+		Log("authoritative post-generation anomaly category floors", {
+			capture = tostring(map.SuperBigMapAnomalyTargetCapture),
+			complete = (map.SuperBigMapExpectedAnomalyCounts or {}).complete,
+			unlock = (map.SuperBigMapExpectedAnomalyCounts or {}).unlock,
+			sequence = (map.SuperBigMapExpectedAnomalyCounts or {}).sequence,
+		})
+	end
+
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("RmgPlacement") then
-		local data = RmgPlacement.CountPlacedMarkers(map or Global("CurrentMap"))
+		local data = RmgPlacement.CountPlacedMarkers(map)
 		local expected = RmgPlacement.ExpectedAnomalyRanges(snap.generator)
 		for k, v in pairs(expected) do data[k] = v end
 		Log("placement restored: placed vs expected", data)

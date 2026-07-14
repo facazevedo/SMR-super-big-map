@@ -182,9 +182,12 @@ local function RunPaused(reason, fn)
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then SafeCall(pause, reason) end
-	local ok = pcall(fn)
+	local ok, err = pcall(fn)
 	if type(resume) == "function" then SafeCall(resume, reason) end
-	return ok
+	if not ok then Log("paused enrichment operation ERROR", {
+		reason = tostring(reason), error = tostring(err),
+	}) end
+	return ok, err
 end
 
 -- A tile can receive a deposit if it is passable and flat enough (not a cliff).
@@ -1579,24 +1582,49 @@ function DepositRules.TopUpDeposits(map)
 	-- full current population (every marker is generator output), so count/keep them all.
 	local stretch_mode = tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
 	local total_current, source_count = 0, 0
-	local templates = {}
+	local templates, templates_by_type = {}, {}
+	local current_by_type, src_by_type = {}, {}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
 		total_current = total_current + 1
+		local res = tostring(marker.resource or marker.class or "?")
+		current_by_type[res] = (current_by_type[res] or 0) + 1
 		local pos = ObjectPos(marker)
 		if not pos or type(pos.xy) ~= "function" then return end
 		local px, py = pos:xy()
 		if px == nil then return end
-		if stretch_mode or (px < src_w and py < src_h) then
+		if not marker.SuperBigMapResourceTopUp
+			and (stretch_mode or (px < src_w and py < src_h)) then
 			source_count = source_count + 1
 			-- All resource types are templates (incl. concrete) so the top-up mix is
 			-- proportional to the source; cloned concrete self-paints its patch on scan.
 			templates[#templates + 1] = marker
+			templates_by_type[res] = templates_by_type[res] or {}
+			templates_by_type[res][#templates_by_type[res] + 1] = marker
+			src_by_type[res] = (src_by_type[res] or 0) + 1
 		end
 	end)
 
-	local target = math.floor(source_count * area_factor + 0.5)
-	local shortfall = target - total_current
+	-- Per-resource targets normally preserve the generated mix. When the RMG reported
+	-- an explicit shortfall, use its requested native count as the floor before applying
+	-- the map area factor, so Concrete 11/27 becomes a target based on 27, not 11.
+	local target_by_type, target_keys = {}, {}
+	for res, count in pairs(src_by_type) do
+		target_by_type[res] = math.floor(count * area_factor + 0.5)
+	end
+	for res, count in pairs(map.SuperBigMapExpectedResourceCounts or {}) do
+		if type(count) == "number" and count > 0 then
+			local floor_target = math.floor(count * area_factor + 0.5)
+			target_by_type[res] = math.max(target_by_type[res] or 0, floor_target)
+		end
+	end
+	local target, shortfall = 0, 0
+	for res, count in pairs(target_by_type) do
+		target_keys[#target_keys + 1] = res
+		target = target + count
+		shortfall = shortfall + math.max(0, count - (current_by_type[res] or 0))
+	end
+	table.sort(target_keys)
 	if shortfall <= 0 or #templates == 0 then
 		Log("deposit top-up: nothing to add", {
 			total_current = total_current, source_count = source_count, target = target,
@@ -1606,13 +1634,7 @@ function DepositRules.TopUpDeposits(map)
 		return
 	end
 
-	-- Per-resource tallies: prove the added mix keeps the SOURCE (vanilla) proportions --
-	-- templates are drawn uniformly, so added/source should match per type up to sampling noise.
-	local src_by_type, added_by_type = {}, {}
-	for _, t in ipairs(templates) do
-		local res = tostring(t.resource or t.class or "?")
-		src_by_type[res] = (src_by_type[res] or 0) + 1
-	end
+	local added_by_type = {}
 
 	local added = 0
 	local pool_final = 0
@@ -1675,8 +1697,28 @@ function DepositRules.TopUpDeposits(map)
 			return nil
 		end
 
+		local function choose_needed_type()
+			local deficit_total = 0
+			for _, res in ipairs(target_keys) do
+				deficit_total = deficit_total + math.max(0,
+					(target_by_type[res] or 0) - (current_by_type[res] or 0) - (added_by_type[res] or 0))
+			end
+			if deficit_total <= 0 then return nil end
+			local pick = RandInt(deficit_total)
+			for _, res in ipairs(target_keys) do
+				local deficit = math.max(0,
+					(target_by_type[res] or 0) - (current_by_type[res] or 0) - (added_by_type[res] or 0))
+				if pick < deficit then return res end
+				pick = pick - deficit
+			end
+			return nil
+		end
+
 		for _ = 1, shortfall do
-			local template = templates[RandInt(#templates) + 1]
+			local needed_type = choose_needed_type()
+			local type_templates = needed_type and templates_by_type[needed_type] or nil
+			local template = type_templates and type_templates[RandInt(#type_templates) + 1] or nil
+			if not template then break end
 			local tpos = ObjectPos(template)
 			if tpos and type(tpos.xy) == "function" then
 				local tt = TerrainTypeAt(map, tpos) or -1
@@ -1709,14 +1751,31 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 	end)
+	local final_by_type, remaining_shortfall, excess = {}, 0, 0
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not (marker and IsResourceDepositMarker(marker)) then return end
+		local res = tostring(marker.resource or marker.class or "?")
+		final_by_type[res] = (final_by_type[res] or 0) + 1
+	end)
+	for _, res in ipairs(target_keys) do
+		local final_count = final_by_type[res] or 0
+		remaining_shortfall = remaining_shortfall
+			+ math.max(0, (target_by_type[res] or 0) - final_count)
+		excess = excess + math.max(0, final_count - (target_by_type[res] or 0))
+	end
 	Log("topped up resource deposits to map-size proportions", {
 		area_factor = string.format("%.3f", area_factor),
 		source_count = source_count, total_before = total_current,
 		target = target, added = added, templates = #templates,
 		map = tostring(map.name), pool = pool_final,
 		registered_at_creation = registered_at_creation,
+		target_capture = tostring(map.SuperBigMapResourceTargetCapture),
 		source_mix = TallyString(src_by_type),
+		target_mix = TallyString(target_by_type),
 		added_mix = TallyString(added_by_type),
+		final_mix = TallyString(final_by_type),
+		remaining_shortfall = remaining_shortfall,
+		excess = excess,
 	})
 	DepositRules.LogDistributionReport(map, "after deposit top-up")
 end
@@ -1726,9 +1785,9 @@ end
 -- scaling (sbm_rmg_placement) shifted the generator's random stream, so the same coordinates
 -- produced a DIFFERENT map than vanilla (terrain prefabs at other positions/rotations) -- the
 -- user requires bit-identical generation, so RmgPlacement.Begin is now skipped in stretch mode
--- and the scaling happens here instead. Clones existing anomaly markers: CloneObjectAtOffset's
--- CopyProperties preserves the CATEGORY (sequence / tech_action); the actual reward resolves at
--- scan time, and breakthroughs remain pool-capped by the game (City trims extras) -- the same
+-- and the scaling happens here instead. Clones existing standard anomaly markers; the actual
+-- reward resolves at scan time. Breakthrough markers are deliberately not scaled because the
+-- City reserves/prunes their finite technology pool before this pass.
 -- safety arguments as the original design. Every surface anomaly extra belongs to one of the
 -- generator's reward families (research/technology, metal discovery/event rewards,
 -- breakthroughs, or large-cache/scenic event rewards), so every one is placed exclusively in
@@ -1770,33 +1829,18 @@ function DepositRules.TopUpAnomalies(map)
 		Log("anomaly top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
 		return
 	end
-	-- Baseline = generator-output anomaly markers (non-clones); counting clones in total_current
-	-- keeps the target ABSOLUTE, so re-runs are no-ops.
-	local total_current = 0
-	local templates = {}
-	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
-		if not marker then return end
-		total_current = total_current + 1
-		if not marker.SuperBigMapQuadrantClone then
-			templates[#templates + 1] = marker
+	-- Category helpers. `kind` is stable across markers and already-spawned anomalies,
+	-- while the display category retains the marker class for diagnostics.
+	local function AnomalyKind(obj)
+		local action = obj and obj.tech_action
+		if action == "complete" or action == "unlock" or action == "breakthrough" then
+			return action
 		end
-	end)
-	local target = math.floor(#templates * area_factor + 0.5)
-	local shortfall = target - total_current
-	if shortfall <= 0 or #templates == 0 then
-		Log("anomaly top-up: nothing to add", {
-			total_current = total_current, templates = #templates, target = target,
-			shortfall = shortfall, area_factor = string.format("%.3f", area_factor),
-		})
-		return
+		if obj and obj.sequence ~= nil and obj.sequence ~= "" then return "sequence" end
+		return "other"
 	end
-	-- Per-category tallies (class + tech_action/sequence distinguish breakthrough / event /
-	-- tech-unlock / free-tech): prove the added mix keeps the source (vanilla) proportions.
 	local function AnomalyCategory(marker)
-		local cat = tostring(marker.class or "?")
-		local action = marker.tech_action or (marker.sequence and "sequence") or nil
-		if action then cat = cat .. "/" .. tostring(action) end
-		return cat
+		return tostring(marker.class or "?") .. "/" .. AnomalyKind(marker)
 	end
 	local function AnomalyRewardFamily(marker)
 		local action = marker and marker.tech_action
@@ -1812,13 +1856,130 @@ function DepositRules.TopUpAnomalies(map)
 		-- The base anomaly family is the ordinary research-points result.
 		return "research_points"
 	end
+
+	-- Markers remain as the authoritative backing records after an anomaly is spawned;
+	-- counting live SubsurfaceAnomaly objects too would double-count revealed markers.
+	-- Targets use only original generator output, while total_current includes prior
+	-- top-ups so a repeated call remains a no-op.
+	local total_current = 0
+	local templates, standard_templates, standard_templates_by_kind = {}, {}, {}
+	local current_by_kind, current_standard_by_kind = {}, {}
+	local source_by_kind, source_standard_by_kind = {}, {}
 	local src_by_cat, added_by_cat, src_by_reward, added_by_reward = {}, {}, {}, {}
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if not marker then return end
+		local kind = AnomalyKind(marker)
+		local is_standard = tostring(marker.class or "") == "SubsurfaceAnomalyMarker"
+		total_current = total_current + 1
+		current_by_kind[kind] = (current_by_kind[kind] or 0) + 1
+		if is_standard then
+			current_standard_by_kind[kind] = (current_standard_by_kind[kind] or 0) + 1
+		end
+		if not marker.SuperBigMapAnomalyTopUp and not marker.SuperBigMapQuadrantClone then
+			templates[#templates + 1] = marker
+			if is_standard then
+				standard_templates[#standard_templates + 1] = marker
+				standard_templates_by_kind[kind] = standard_templates_by_kind[kind] or {}
+				standard_templates_by_kind[kind][#standard_templates_by_kind[kind] + 1] = marker
+				source_standard_by_kind[kind] = (source_standard_by_kind[kind] or 0) + 1
+			end
+			source_by_kind[kind] = (source_by_kind[kind] or 0) + 1
+		end
+	end)
 	for _, t in ipairs(templates) do
 		local cat = AnomalyCategory(t)
 		src_by_cat[cat] = (src_by_cat[cat] or 0) + 1
 		local reward = AnomalyRewardFamily(t)
 		src_by_reward[reward] = (src_by_reward[reward] or 0) + 1
 	end
+	local target_by_kind, target_keys = {}, {}
+	local scalable_kind = { complete = true, unlock = true, sequence = true }
+	for kind, current_count in pairs(current_by_kind) do
+		-- Breakthroughs are capped and pruned by City:InitBreakThroughAnomalies;
+		-- `other` includes unique underground/cave content. Preserve both exactly.
+		if scalable_kind[kind] then
+			local standard_current = current_standard_by_kind[kind] or 0
+			local special_current = math.max(0, current_count - standard_current)
+			target_by_kind[kind] = special_current
+				+ math.floor((source_standard_by_kind[kind] or 0) * area_factor + 0.5)
+		else
+			target_by_kind[kind] = current_count
+		end
+	end
+	for kind, count in pairs(map.SuperBigMapExpectedAnomalyCounts or {}) do
+		if scalable_kind[kind] and type(count) == "number" and count >= 0 then
+			local special_current = math.max(0, (current_by_kind[kind] or 0)
+				- (current_standard_by_kind[kind] or 0))
+			local floor_target = special_current + math.floor(count * area_factor + 0.5)
+			target_by_kind[kind] = math.max(target_by_kind[kind] or 0, floor_target)
+		end
+	end
+
+	-- Build the engine-configured Event scenario pool. Prefer scenarios not already
+	-- assigned to native markers; once exhausted, reuse is allowed just as vanilla's
+	-- PlaceEventAnomalies extends a short scenario pool.
+	local event_scenarios, unused_event_scenarios = {}, {}
+	do
+		local get_properties_array = Global("GetPropertiesArray")
+		local scenarios = Global("Scenarios")
+		local list_names
+		if type(get_properties_array) == "function" and type(map.mapdata) == "table" then
+			local ok, value = pcall(get_properties_array, map.mapdata, "anomaly_sequence_list_names")
+			if ok and type(value) == "table" then list_names = value end
+		end
+		local used, seen = {}, {}
+		for _, marker in ipairs(standard_templates_by_kind.sequence or {}) do
+			if marker.sequence and marker.sequence ~= "" then
+				used[tostring(marker.sequence_list) .. "\0" .. tostring(marker.sequence)] = true
+			end
+		end
+		if type(scenarios) == "table" and type(list_names) == "table" then
+			for _, list_name in ipairs(list_names) do
+				local list = scenarios[list_name]
+				if type(list_name) == "string" and list_name ~= "" and type(list) == "table" then
+					for _, scenario in ipairs(list) do
+						local name = type(scenario) == "table" and scenario.name or nil
+						local key = name and (list_name .. "\0" .. tostring(name)) or nil
+						if key and not seen[key] then
+							seen[key] = true
+							local entry = { name = name, list = list_name }
+							event_scenarios[#event_scenarios + 1] = entry
+							if not used[key] then unused_event_scenarios[#unused_event_scenarios + 1] = entry end
+						end
+					end
+				end
+			end
+		end
+	end
+	local function take_event_scenario(template)
+		local pool = #unused_event_scenarios > 0 and unused_event_scenarios or event_scenarios
+		if #pool > 0 then
+			local i = RandInt(#pool) + 1
+			local entry = pool[i]
+			if pool == unused_event_scenarios then table.remove(pool, i) end
+			return entry.name, entry.list
+		end
+		if template and AnomalyKind(template) == "sequence"
+			and template.sequence and template.sequence ~= "" then
+			return template.sequence, template.sequence_list
+		end
+		return nil, nil
+	end
+	local target, shortfall = 0, 0
+	for kind, count in pairs(target_by_kind) do
+		target_keys[#target_keys + 1] = kind
+		target = target + count
+		shortfall = shortfall + math.max(0, count - (current_by_kind[kind] or 0))
+	end
+	table.sort(target_keys)
+	if shortfall <= 0 or #templates == 0 then
+		Log("anomaly top-up: nothing to add", {
+			total_current = total_current, templates = #templates, target = target,
+			shortfall = shortfall, area_factor = string.format("%.3f", area_factor),
+		})
+		return
+	end
+	local added_by_kind = {}
 
 	local added = 0
 	local pool_final = 0
@@ -2394,6 +2555,22 @@ function DepositRules.TopUpAnomalies(map)
 			return winner, scope, #matching, fallback_distance,
 				actual and candidate_bin(actual, side, bin_count), actual and actual.selection_layer
 		end
+		local function choose_needed_kind()
+			local deficit_total = 0
+			for _, kind in ipairs(target_keys) do
+				deficit_total = deficit_total + math.max(0,
+					(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
+			end
+			if deficit_total <= 0 then return nil end
+			local pick = RandInt(deficit_total)
+			for _, kind in ipairs(target_keys) do
+				local deficit = math.max(0,
+					(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
+				if pick < deficit then return kind end
+				pick = pick - deficit
+			end
+			return nil
+		end
 		for placement_n = 1, shortfall do
 			if (surface_edge_ring and #available_sectors == 0)
 				or (not surface_edge_ring and #candidates == 0) then break end
@@ -2470,13 +2647,35 @@ function DepositRules.TopUpAnomalies(map)
 					selection_scope = selection_scope, matching_sector_count = matching_count,
 				})
 			end
-			local template = templates[RandInt(#templates) + 1]
+			local needed_kind = choose_needed_kind()
+			local kind_templates = needed_kind and standard_templates_by_kind[needed_kind] or nil
+			-- FreeTech may have no source marker at all. Any anomaly marker is a
+			-- valid structural template; its reward category is rewritten below.
+			local fallback_templates = standard_templates
+			if #fallback_templates == 0 then break end
+			local template = kind_templates and kind_templates[RandInt(#kind_templates) + 1]
+				or fallback_templates[RandInt(#fallback_templates) + 1]
+			local event_sequence, event_sequence_list
+			if needed_kind == "sequence" then
+				event_sequence, event_sequence_list = take_event_scenario(template)
+				if not event_sequence then break end
+			end
 			local tpos = ObjectPos(template)
 			if tpos and type(tpos.xy) == "function" then
 				local tx, ty = tpos:xy()
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
 					added = added + 1
+					if needed_kind == "complete" or needed_kind == "unlock" then
+						clone.tech_action = needed_kind
+						clone.sequence = ""
+						clone.sequence_list = ""
+					elseif needed_kind == "sequence" then
+						clone.tech_action = false
+						clone.sequence = event_sequence
+						clone.sequence_list = event_sequence_list
+					end
+					added_by_kind[needed_kind] = (added_by_kind[needed_kind] or 0) + 1
 					clone.SuperBigMapAnomalyTopUp = true
 					clone.SuperBigMapEdgeTopUp = surface_edge_ring or nil
 					clone.SuperBigMapEdgeTopUpPlacement = surface_edge_ring and placement_n or nil
@@ -2493,8 +2692,8 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapEdgeTopUpLowAreaPool = surface_edge_ring and low_area_count or nil
 					clone.SuperBigMapEdgeTopUpReservedHex = surface_edge_ring and reserved_key or nil
 					added_markers[#added_markers + 1] = clone
-					local cat = AnomalyCategory(template)
-					local reward_family = AnomalyRewardFamily(template)
+					local cat = AnomalyCategory(clone)
+					local reward_family = AnomalyRewardFamily(clone)
 					clone.SuperBigMapAnomalyTopUpRewardFamily = reward_family
 					added_by_cat[cat] = (added_by_cat[cat] or 0) + 1
 					added_by_reward[reward_family] = (added_by_reward[reward_family] or 0) + 1
@@ -2681,6 +2880,18 @@ function DepositRules.TopUpAnomalies(map)
 			final_by_sector = TallyString(edge_stats.final_by_sector),
 		})
 	end
+	local final_by_kind, remaining_shortfall, excess = {}, 0, 0
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if not marker then return end
+		local kind = AnomalyKind(marker)
+		final_by_kind[kind] = (final_by_kind[kind] or 0) + 1
+	end)
+	for _, kind in ipairs(target_keys) do
+		local final_count = final_by_kind[kind] or 0
+		remaining_shortfall = remaining_shortfall
+			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
+		excess = excess + math.max(0, final_count - (target_by_kind[kind] or 0))
+	end
 	Log("topped up anomalies to map-size proportions (post-gen)", {
 		area_factor = string.format("%.3f", area_factor),
 		total_before = total_current, target = target, added = added, templates = #templates,
@@ -2689,7 +2900,12 @@ function DepositRules.TopUpAnomalies(map)
 		surface_edge_ring = not IsUndergroundMap(map),
 		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
 		low_area_percent = low_area_percent,
+		target_capture = tostring(map.SuperBigMapAnomalyTargetCapture),
 		source_mix = TallyString(src_by_cat),
+		target_kind_mix = TallyString(target_by_kind),
+		final_kind_mix = TallyString(final_by_kind),
+		remaining_shortfall = remaining_shortfall,
+		excess = excess,
 		added_mix = TallyString(added_by_cat),
 		source_reward_families = TallyString(src_by_reward),
 		added_reward_families = TallyString(added_by_reward),
