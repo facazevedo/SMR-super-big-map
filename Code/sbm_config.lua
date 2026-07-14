@@ -192,11 +192,11 @@ config.HideOverviewCurtains = true
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugGeneration    = false   -- Generation: generator hook, frame allocation, mirror/clone plan
+config.DebugGeneration    = true    -- TEMP multi-run verification: authoritative enrichment targets
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
-config.DebugDeposits      = false   -- Deposits: cloned-deposit reshuffle/register + anomaly top-up diagnostics
+config.DebugDeposits      = true    -- TEMP multi-run verification: complementary top-up totals and final mix
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
 -- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
@@ -209,7 +209,7 @@ config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement a
 -- ResolveBuildable/PlaceAnomalies boundary, all relaxed border/spacing values, every private
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
-config.DebugRmgPlacementExhaustive = false
+config.DebugRmgPlacementExhaustive = true -- TEMP multi-run verification: native vs complemented counts
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -720,20 +720,20 @@ config.QuadrantCopyForceExpandedTiles = 8192
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.QuadrantCopyLimitGeneratorToSource = true
 
--- RMG PLACEMENT AUTO-FIT (sbm_rmg_placement.lua). On an expanded map the vanilla
--- generator under-places deposits ("Failed to find a place", e.g. 13 of 23 concrete)
--- and subsurface anomalies ("grid weight is 0, Failed to find any" -> FreeTech 0),
--- because the placement zone (play_zone) is clipped to the playable terrain-type
--- region (gen_zone), each layer then erodes a DepBorder*-wide margin off it, and the
--- fixed preset counts have absolute-distance spacing that cannot fit the smaller
--- zone. Widening gen_zone would fix placement but FLATTENS terrain (gen_zone also
--- drives prefab/terrace shaping). This fix instead relaxes ONLY the placement-side
--- knobs -- it zeroes the per-layer borders and scales spacing/repulse by the smaller
--- of sqrt(native play-zone coverage) and the known-safe cap just for PlaceAnomalies,
--- then restores the originals. It never touches gen_zone, prefabs, or the heightmap,
--- so the terrain is unchanged.
--- true = apply on mod-expanded maps; false = exact vanilla placement.
-config.EnableRmgPlacementFix = true
+-- RMG PLACEMENT AUTO-FIT (legacy fallback in sbm_rmg_placement.lua). This changes native
+-- spacing/border inputs before placement. Keep it OFF so every position that vanilla can place
+-- remains bit-identical; the vanilla-first completion path below supplies only missing results.
+config.EnableRmgPlacementFix = false
+-- VANILLA-FIRST ENRICHMENT COMPLETION (sbm_map_generation.lua). The engine's `grand` helper
+-- first runs unchanged, including its normal spacing search and deterministic random stream. If
+-- it returns fewer positions than this run actually requested, SBM retains every returned
+-- position and samples only the missing complement from the ORIGINAL valid candidate grid with
+-- spacing removed. This fixes the engine fallback bug (it retries on an already-eroded clone)
+-- without changing terrain masks, requested counts, successful vanilla positions, or the native
+-- placement-search random stream.
+-- It is count-agnostic: 6/8, 8/9, 13/27, etc. all use requested - returned at runtime, and it
+-- covers resource, ordinary anomaly, and effect-deposit `find_all` searches on both maps.
+config.CompleteNativeEnrichmentShortfalls = true
 -- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
 -- during generation. This recovers the candidate cells the border erosion ate and is
 -- the main lever that revives FreeTech (whose border defaults to max_border ->
@@ -1091,6 +1091,7 @@ C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHand
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)
+C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = as_bool(config.CompleteNativeEnrichmentShortfalls)
 C.RMG_PLACEMENT_ZERO_BORDERS = as_bool(config.RmgPlacementZeroBorders)
 C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.6)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)

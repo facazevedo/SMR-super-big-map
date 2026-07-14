@@ -1460,19 +1460,35 @@ local function PatchRandomMapGenerator()
 			local map = env.map
 			local environment = type(map) == "table" and type(map.mapdata) == "table"
 				and map.mapdata.Environment or nil
-			-- This completeness repair is deliberately surface-only. Underground
-			-- generation delegates bit-for-bit to the engine and never receives these
-			-- target floors, protecting cave-specific and rare anomaly families.
-			if State.rmg_placement_active_map ~= map or environment == "Underground" then
+			-- Only expanded-map generations enter this wrapper. Underground is included so its
+			-- randomized requested resource totals survive a native placement shortfall; the
+			-- vanilla-first completion wrapper below never changes cave masks or requested counts.
+			if State.rmg_placement_active_map ~= map then
 				return original_on_generate_logic(self, env, ...)
 			end
+			local is_underground = environment == "Underground"
 			local rhelpers = env.rhelpers
 			local saved_rrand = type(rhelpers) == "table" and rhelpers[2] or nil
 			local saved_grand = type(rhelpers) == "table" and rhelpers[5] or nil
 			local saved_rm_print = env.rm_print
 			local saved_get_playable_area = env.GetPlayableArea
 			local saved_generate_resource_info = Global("GenerateResourceInfo")
+			local saved_grid_min_max = Global("GridMinMax")
 			local generate_resource_info_wrapper
+			local grid_min_max_wrapper
+			local base_play_zone_snapshot
+			-- Conservative set of positions consumed by native placement searches. NewAnomaly
+			-- erodes the shared layers even when its rolled count is already full, so retaining
+			-- every returned point mirrors the engine's own exclusion behavior. Breakthrough
+			-- points are added separately from GridMinMax below.
+			local consumed_search_positions = {}
+			local function record_consumed_position(pos)
+				if not pos then return false end
+				local ok_xy, x, y = pcall(function() return pos:xy() end)
+				if not ok_xy or x == nil or y == nil then return false end
+				consumed_search_positions[tostring(x) .. ":" .. tostring(y)] = { x = x, y = y }
+				return true
+			end
 			local rolls, roll_index = {}, 0
 			local roll_specs = {
 				{ key = "event_base", value = self.AnomEventCount },
@@ -1486,6 +1502,7 @@ local function PatchRandomMapGenerator()
 			if type(map) == "table" then
 				map.SuperBigMapExpectedResourceCounts = {}
 				map.SuperBigMapExpectedResourceCountsByLayer = {}
+				map.SuperBigMapResourceResidualShortfalls = {}
 				map.SuperBigMapResourceTargetCapture = false
 				map.SuperBigMapExpectedAnomalyCounts = {}
 				map.SuperBigMapAnomalyTargetRolls = rolls
@@ -1569,7 +1586,10 @@ local function PatchRandomMapGenerator()
 				map.SuperBigMapAnomalyTargetCapture = "OnGenerateLogic rrand"
 			end
 
-			if type(saved_rrand) == "function" then
+			-- The six-call anomaly classifier is surface-specific. Underground resource totals
+			-- are still captured authoritatively through GenerateResourceInfo below, while cave
+			-- anomaly families retain their untouched engine flow.
+			if not is_underground and type(saved_rrand) == "function" then
 				rhelpers[2] = function(value, ...)
 					local result = saved_rrand(value, ...)
 					local next_index = roll_index + 1
@@ -1594,6 +1614,11 @@ local function PatchRandomMapGenerator()
 					local results = PackValues(saved_get_playable_area(...))
 					pcall(function()
 						local play_area = results[1]
+						local play_zone = results[2]
+						if not base_play_zone_snapshot and play_zone
+							and type(play_zone.clone) == "function" then
+							base_play_zone_snapshot = play_zone:clone()
+						end
 						local gen_area = env.gen_area_unscaled
 						if type(map) == "table" and type(play_area) == "number" and play_area > 0
 							and type(gen_area) == "number" and gen_area > 0 then
@@ -1619,37 +1644,334 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			-- Exhaustive native search evidence. `grand` owns the destructive placement-zone
-			-- search; this records usable cells and requested/returned counts without changing
-			-- the grid, parameters, random state, or return tuple.
+			-- Recreate the pristine per-layer candidate zone from the native play zone. This is
+			-- used only when vanilla plus its unspaced retry exhausted the already-eroded live
+			-- layer grid completely. It retains the native terrain mask and authored layer border;
+			-- only inter-enrichment spacing is relaxed for the missing complement.
+			local function build_pristine_candidate_zone(search_layer, resource_name)
+				if not base_play_zone_snapshot or type(base_play_zone_snapshot.clone) ~= "function" then
+					return nil, "pristine_play_zone_unavailable"
+				end
+				local grid_dest = Global("GridDest")
+				local grid_mask = Global("GridMask")
+				local grid_mul_div_add = Global("GridMulDivAdd")
+				local get_terrain_texture = Global("GetTerrainTextureIndex")
+				local terrain = Global("terrain")
+				local const_tbl = Global("const")
+				if type(grid_dest) ~= "function" or type(grid_mask) ~= "function"
+					or type(terrain) ~= "table" or type(terrain.TypeTileSize) ~= "function"
+					or type(const_tbl) ~= "table" or type(const_tbl.PrefabWorkRatio) ~= "number" then
+					return nil, "pristine_zone_engine_api_unavailable"
+				end
+				local ok_tile, type_tile = pcall(terrain.TypeTileSize)
+				local work_step = ok_tile and type(type_tile) == "number"
+					and type_tile * const_tbl.PrefabWorkRatio or nil
+				if type(work_step) ~= "number" or work_step <= 0 then
+					return nil, "pristine_zone_work_step_unavailable"
+				end
+
+				local base, masked, candidate
+				local ok_build, build_err = pcall(function()
+					base = base_play_zone_snapshot:clone()
+					local source = base
+					-- Normal subsurface resources use the authored terrain-type mask. Subsurface
+					-- anomalies deliberately use the full play zone in the stock generator.
+					if search_layer == "subs" and resource_name ~= "Anomaly" then
+						if type(get_terrain_texture) ~= "function" or type(grid_mul_div_add) ~= "function"
+							or env.type_grid == nil then
+							error("subsurface terrain-mask API unavailable")
+						end
+						local texture = get_terrain_texture(self.TerrainZoneMaskSubs)
+						-- Stock GetMaskedTerrainTypeZone falls back to the unmasked play zone when
+						-- the preset leaves TerrainZoneMaskSubs empty.
+						if texture then
+							masked = grid_dest(env.type_grid)
+							grid_mask(env.type_grid, masked, texture)
+							grid_mul_div_add(masked, base, 1, 0)
+							source = masked
+						end
+					end
+
+					local border
+					if resource_name == "Anomaly" then
+						local guim = type(Global("guim")) == "number" and Global("guim") or 1000
+						local max_border = 256 * guim
+						border = self.DepBorderAnomaly and self.DepBorderAnomaly ~= max_border
+							and self.DepBorderAnomaly or self.DepBorderSubs
+					elseif resource_name == "Effects" then
+						border = self.DepBorderEffects
+					elseif search_layer == "surf" then
+						border = self.DepBorderSurf
+					elseif search_layer == "subs" then
+						border = self.DepBorderSubs
+					else
+						border = self.DepBorderTerr
+					end
+					if type(border) ~= "number" then error("layer border unavailable") end
+					candidate = grid_dest(source)
+					grid_mask(source, candidate, border / work_step + 1,
+						type(Global("max_int")) == "number" and Global("max_int") or 2147483647, 1)
+				end)
+				if base then pcall(function() base:free() end) end
+				if masked then pcall(function() masked:free() end) end
+				if not ok_build then
+					if candidate then pcall(function() candidate:free() end) end
+					return nil, "pristine_zone_build_error:" .. tostring(build_err)
+				end
+				return candidate
+			end
+
+			-- VANILLA-FIRST COMPLETION. The engine's `grand` fallback retries a partial
+			-- `find_all` search on the SAME clone already erased by the successful positions.
+			-- On fragmented terrain that can report 8/9 even though the original valid zone has
+			-- room for the missing marker. Run the native search first, preserve its complete
+			-- result and random-state consumption exactly, then add only requested-returned from
+			-- a fresh clone of the ORIGINAL candidate grid. The complement uses an independent
+			-- procedure-derived seed, so the native placement-search random stream is unchanged.
 			if type(saved_grand) == "function" then
 				rhelpers[5] = function(grid, params, ...)
+					local requested = type(params) == "table" and params.count or nil
+					local resource_label = type(params) == "table" and tostring(params.resource or "") or ""
+					local search_layer = string.match(resource_label, "^(%a+)%s")
+					if search_layer ~= "surf" and search_layer ~= "subs" and search_layer ~= "terr" then
+						search_layer = nil
+					end
+					local resource_name = string.match(resource_label, "^%a+%s+(.+)$")
+					local can_complete = cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
+						and grid ~= nil and type(params) == "table"
+						and params.mode == "find_all" and type(requested) == "number"
+						and requested > 0 and search_layer ~= nil
+
+					-- Always snapshot before the native call. The shipped helper currently clones for
+					-- count>1/find_all, but taking our own pre-call snapshot makes the completion path
+					-- independent of that implementation detail and guarantees that it sees the exact
+					-- original candidate grid on every engine version.
+					local original_snapshot
+					local completion_reason = can_complete and "native_complete" or "not_eligible"
+					if can_complete then
+						local ok_snapshot, snapshot = pcall(function() return grid:clone() end)
+						if ok_snapshot and snapshot then
+							original_snapshot = snapshot
+						else
+							can_complete = false
+							completion_reason = "pre_call_snapshot_failed"
+						end
+					end
+
+					-- Silence only the native helper's PREMATURE warning while its result is being
+					-- completed. If completion still fails, the genuine warning is emitted below and
+					-- the engine's outer requested-vs-placed warning remains active.
+					local call_params = params
+					if can_complete then
+						call_params = {}
+						for k, v in pairs(params) do call_params[k] = v end
+						call_params.disable_warnings = true
+					end
+
 					local debug_log = SuperBigMap.DebugLog
 					local trace_ok, trace = false, false
 					if type(debug_log) == "table" and type(debug_log.On) == "function" then
 						trace_ok, trace = pcall(debug_log.On, "RmgPlacementExhaustive")
 					end
-					if not trace_ok or trace ~= true or type(params) ~= "table" or params.resource == nil then
-						return saved_grand(grid, params, ...)
-					end
 					local grid_count = Global("GridCount")
 					local before = "n/a"
-					if type(grid_count) == "function" and grid then
+					if trace_ok and trace == true and type(grid_count) == "function" and grid then
 						local ok_count, n = pcall(grid_count, grid, 0, 1)
 						if ok_count then before = n end
 					end
-					local results = PackValues(saved_grand(grid, params, ...))
-					pcall(function()
-						local first = results[1]
-						local returned = type(first) == "table" and #first or 0
+
+					local results = PackValues(saved_grand(grid, call_params, ...))
+					local positions = type(results[1]) == "table" and results[1] or nil
+					local native_returned = positions and #positions or 0
+					local complemented = 0
+
+					if can_complete and native_returned < requested then
+						completion_reason = "completion_started"
+						positions = positions or {}
+						local grid_random = Global("GridStableRandomPos")
+						local work = original_snapshot
+						original_snapshot = nil
+						local seen, seen_points = {}, {}
+						local function remember(pos, erase_grid)
+							if not pos then return false end
+							local ok_xy, x, y = pcall(function() return pos:xy() end)
+							if not ok_xy or x == nil or y == nil then return false end
+							local key = tostring(x) .. ":" .. tostring(y)
+							if seen[key] then return false end
+							if erase_grid then
+								local ok_set = pcall(function() erase_grid:set(x, y, 0) end)
+								if not ok_set then return false end
+								for dx = -1, 1 do
+									for dy = -1, 1 do
+										if dx ~= 0 or dy ~= 0 then
+											pcall(function() erase_grid:set(x + dx, y + dy, 0) end)
+										end
+									end
+								end
+							end
+							seen[key] = true
+							seen_points[#seen_points + 1] = { x = x, y = y }
+							return true
+						end
+						local native_erased = true
+						for i = 1, #positions do
+							if remember(positions[i], work) ~= true then native_erased = false break end
+						end
+						if not work then
+							completion_reason = "pre_call_snapshot_missing"
+						elseif not native_erased then
+							completion_reason = "native_position_erase_failed"
+						elseif type(grid_random) ~= "function" then
+							completion_reason = "GridStableRandomPos_unavailable"
+						end
+
 						local stack = State.rmg_placement_proc_stack
-						debug_log.Info("RmgPlacementExhaustive", "native placement search", {
-							proc = type(stack) == "table" and tostring(stack[#stack]) or "?",
-							resource = tostring(params.resource), requested = tostring(params.count),
-							spacing = tostring(params.spacing), mode = tostring(params.mode),
-							positive_cells_before = before, returned = returned,
+						local proc = type(stack) == "table" and tostring(stack[#stack]) or "PlaceAnomalies"
+						local min_value = type(params.min) == "number" and params.min or 0
+						local max_value = type(params.max) == "number" and params.max
+							or (type(Global("max_int")) == "number" and Global("max_int") or 2147483647)
+						local function add_from_zone(candidate, scope)
+							local reason = "residual_shortfall"
+							-- Draw one point at a time and erase its 3x3 work-grid footprint before
+							-- drawing the next. A batched zero-spacing call can return neighboring
+							-- cells that later align to the same gameplay hex.
+							for attempt = 1, requested * 2 + 4 do
+								local remaining = requested - #positions
+								if remaining <= 0 then return "completed:" .. scope end
+								local seed_tag = table.concat({
+									"SBMEnrichmentComplement", proc, tostring(params.resource),
+									tostring(requested), scope, tostring(attempt),
+								}, ":")
+								local seed
+								if type(self.ProcSeed) == "function" then
+									local ok_seed, value = pcall(self.ProcSeed, self, seed_tag)
+									if ok_seed and type(value) == "number" then seed = value end
+								end
+								if type(seed) ~= "number" then
+									local xxhash = Global("xxhash")
+									if type(xxhash) == "function" then
+										local ok_hash, value = pcall(xxhash, self.Seed or 0, seed_tag)
+										if ok_hash and type(value) == "number" then seed = value end
+									end
+								end
+								if type(seed) ~= "number" then
+									return "independent_seed_unavailable:" .. scope
+								end
+								local ok_extra, extra = pcall(grid_random, candidate, seed, 1, 0,
+									min_value, max_value, params.weighted or false, params.mask)
+								if not ok_extra then
+									return "GridStableRandomPos_error:" .. scope .. ":" .. tostring(extra)
+								elseif type(extra) ~= "table" then
+									return "GridStableRandomPos_non_table:" .. scope .. ":" .. tostring(type(extra))
+								elseif #extra == 0 then
+									return "no_unspaced_candidate:" .. scope
+								end
+								local added_this_attempt = 0
+								for i = 1, #extra do
+									local pos = extra[i]
+									if remember(pos, candidate) then
+										positions[#positions + 1] = pos
+										complemented = complemented + 1
+										added_this_attempt = added_this_attempt + 1
+										if #positions >= requested then break end
+									end
+								end
+								if added_this_attempt == 0 then
+									return "all_complement_candidates_duplicate:" .. scope
+								end
+								reason = "residual_shortfall:" .. scope
+							end
+							return #positions >= requested and ("completed:" .. scope) or reason
+						end
+
+						if work and native_erased and type(grid_random) == "function" then
+							completion_reason = add_from_zone(work, "original")
+						end
+
+						-- A zero live grid means earlier vanilla placements consumed every location under
+						-- the authored inter-enrichment repulsion. Preserve those placements, then seat only
+						-- the missing complement on the pristine native layer mask with spacing removed.
+						if #positions < requested and native_erased and type(grid_random) == "function" then
+							local pristine, pristine_err = build_pristine_candidate_zone(search_layer, resource_name)
+							if pristine then
+								local pristine_ready = true
+								local function erase_consumed_xy(xy)
+									local exact_ok = pcall(function() pristine:set(xy.x, xy.y, 0) end)
+									-- Work-grid neighbors can align to the same gameplay hex. Removing this
+									-- minimal 3x3 footprint prevents the complementary marker from producing
+									-- the engine's "two markers aligned on the same hex" warning.
+									for dx = -1, 1 do
+										for dy = -1, 1 do
+											if dx ~= 0 or dy ~= 0 then
+												pcall(function() pristine:set(xy.x + dx, xy.y + dy, 0) end)
+											end
+										end
+									end
+									return exact_ok
+								end
+								for _, xy in pairs(consumed_search_positions) do
+									if not erase_consumed_xy(xy) then
+										pristine_ready = false
+										break
+									end
+								end
+								if pristine_ready then
+									for _, xy in ipairs(seen_points) do
+										if not erase_consumed_xy(xy) then
+											pristine_ready = false
+											break
+										end
+									end
+								end
+								if pristine_ready then
+									completion_reason = add_from_zone(pristine, "pristine_layer")
+								else
+									completion_reason = "pristine_used_position_erase_failed"
+								end
+								pcall(function() pristine:free() end)
+							else
+								completion_reason = pristine_err or "pristine_zone_unavailable"
+							end
+						end
+						if #positions >= requested then
+							if not string.find(completion_reason, "^completed:") then
+								completion_reason = "completed"
+							end
+						elseif completion_reason == "completion_started" then
+							completion_reason = "residual_shortfall"
+						end
+						if work then pcall(function() work:free() end) end
+						results[1] = positions
+						if (results.n or 0) < 1 then results.n = 1 end
+
+						-- Do not hide a real residual failure. The outer generator will also emit its
+						-- normal final "Placed X out of Y" warning after it consumes this result.
+						if #positions < requested and type(saved_rm_print) == "function" then
+							local missing = requested - #positions
+							saved_rm_print("Could not find place for", missing, "out of", requested, params.resource)
+						end
+					end
+					if original_snapshot then pcall(function() original_snapshot:free() end) end
+					local final_positions = results[1]
+					if record_consumed_position(final_positions) then
+						-- Single-point grand result.
+					elseif type(final_positions) == "table" then
+						for i = 1, #final_positions do record_consumed_position(final_positions[i]) end
+					end
+
+					if trace_ok and trace == true and type(debug_log.Info) == "function" then
+						pcall(debug_log.Info, "RmgPlacementExhaustive", "vanilla-first placement search", {
+							proc = type(State.rmg_placement_proc_stack) == "table"
+								and tostring(State.rmg_placement_proc_stack[#State.rmg_placement_proc_stack]) or "?",
+							resource = tostring(type(params) == "table" and params.resource or "?"),
+							requested = tostring(requested), spacing = tostring(type(params) == "table" and params.spacing),
+							mode = tostring(type(params) == "table" and params.mode), positive_cells_before = before,
+							native_returned = native_returned, complemented = complemented,
+							final_returned = type(results[1]) == "table" and #results[1] or native_returned,
+							completion_reason = completion_reason,
+							environment = tostring(environment),
 						})
-					end)
+					end
 					return Unpack(results, 1, results.n)
 				end
 			end
@@ -1681,17 +2003,53 @@ local function PatchRandomMapGenerator()
 							and call_args[1] == "Failed to find a place for all"
 							and call_args[4] == "deposits. Placed"
 							and call_args[6] == "out of" then
-							local resource, target = call_args[3], call_args[7]
-							if type(resource) == "string" and type(target) == "number" then
-								map.SuperBigMapExpectedResourceCounts[resource] = target
-								if not map.SuperBigMapResourceTargetCapture then
-									map.SuperBigMapResourceTargetCapture = "rm_print failure args"
+							local resource, placed, target = call_args[3], call_args[5], call_args[7]
+							local capture = map.SuperBigMapResourceTargetCapture
+							-- GenerateResourceInfo/ResInfo supplies the complete surf+subs+terr total.
+							-- A warning contains only ONE layer's target and must never overwrite it.
+							if type(resource) == "string" and type(target) == "number"
+								and (not capture or capture == "rm_print failure args") then
+								local layer_ids = { Surface = "surf", ["Sub-surface"] = "subs", Terrain = "terr" }
+								local layer = layer_ids[call_args[2]]
+								local by_layer = map.SuperBigMapExpectedResourceCountsByLayer
+								by_layer[resource] = by_layer[resource] or {}
+								if layer then by_layer[resource][layer] = target end
+								if type(placed) == "number" then
+									local residuals = map.SuperBigMapResourceResidualShortfalls
+									local key = tostring(layer or call_args[2] or "?") .. ":" .. resource
+									residuals[key] = {
+										resource = resource,
+										missing = math.max(0, target - placed),
+									}
 								end
+								local layer_floor = 0
+								for _, count in pairs(by_layer[resource]) do
+									if type(count) == "number" then layer_floor = layer_floor + count end
+								end
+								map.SuperBigMapExpectedResourceCounts[resource] = math.max(
+									map.SuperBigMapExpectedResourceCounts[resource] or 0, layer_floor, target)
+								map.SuperBigMapResourceTargetCapture = "rm_print failure args"
 							end
 						end
 					end)
 					return Unpack(original_results, 1, original_results.n)
 				end
+			end
+
+			-- Breakthrough anomalies are the sole enrichment positions selected through
+			-- GridMinMax instead of grand. Record their accepted max point so the pristine
+			-- complement cannot reuse their hex. This wrapper is read-only and tuple-exact.
+			if type(saved_grid_min_max) == "function" then
+				grid_min_max_wrapper = function(...)
+					local grid_results = PackValues(saved_grid_min_max(...))
+					local stack = State.rmg_placement_proc_stack
+					local proc = type(stack) == "table" and tostring(stack[#stack]) or ""
+					if proc == "PlaceAnomalies_FindAnomalies_Breakthrough" then
+						record_consumed_position(grid_results[4])
+					end
+					return Unpack(grid_results, 1, grid_results.n)
+				end
+				rawset(_G, "GridMinMax", grid_min_max_wrapper)
 			end
 
 			local results = { pcall(original_on_generate_logic, self, env, ...) }
@@ -1708,6 +2066,59 @@ local function PatchRandomMapGenerator()
 			if generate_resource_info_wrapper
 				and Global("GenerateResourceInfo") == generate_resource_info_wrapper then
 				rawset(_G, "GenerateResourceInfo", saved_generate_resource_info)
+			end
+			if grid_min_max_wrapper and Global("GridMinMax") == grid_min_max_wrapper then
+				rawset(_G, "GridMinMax", saved_grid_min_max)
+			end
+			if base_play_zone_snapshot then
+				pcall(function() base_play_zone_snapshot:free() end)
+				base_play_zone_snapshot = nil
+			end
+
+			-- If the engine kept GenerateResourceInfo as a lexical reference, reconstruct the
+			-- exact requested totals without replaying any random rolls: after native generation,
+			-- every successful request is represented by its marker, and each failed layer's
+			-- authoritative outer warning supplied precisely (target - placed). Therefore
+			-- native census + residual shortfalls is the original requested total for every
+			-- resource, regardless of whether the run was 8/9, 3/8, or any other values.
+			if results[1] and type(map) == "table" and type(map.MapForEach) == "function"
+				and (not map.SuperBigMapResourceTargetCapture
+					or map.SuperBigMapResourceTargetCapture == "rm_print failure args") then
+				local native_counts = {}
+				pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+					if not marker then return end
+					local is_resource = Engine.IsKindOf(marker, "SurfaceDepositMarker")
+						or Engine.IsKindOf(marker, "SubsurfaceDepositMarker")
+						or Engine.IsKindOf(marker, "TerrainDepositMarker")
+					if not is_resource then return end
+					local resource = tostring(marker.resource or marker.class or "")
+					if resource ~= "" then
+						native_counts[resource] = (native_counts[resource] or 0) + 1
+					end
+				end)
+				local residual_by_resource, residual_total = {}, 0
+				for _, entry in pairs(map.SuperBigMapResourceResidualShortfalls or {}) do
+					if type(entry) == "table" and type(entry.resource) == "string"
+						and type(entry.missing) == "number" and entry.missing > 0 then
+						residual_by_resource[entry.resource] =
+							(residual_by_resource[entry.resource] or 0) + entry.missing
+						residual_total = residual_total + entry.missing
+					end
+				end
+				for resource, count in pairs(native_counts) do
+					map.SuperBigMapExpectedResourceCounts[resource] =
+						count + (residual_by_resource[resource] or 0)
+				end
+				for resource, missing in pairs(residual_by_resource) do
+					if native_counts[resource] == nil then
+						map.SuperBigMapExpectedResourceCounts[resource] = missing
+					end
+				end
+				if next(map.SuperBigMapExpectedResourceCounts) then
+					map.SuperBigMapResourceTargetCapture = residual_total > 0
+						and "native census + authoritative RMG residuals"
+						or "native census (all requested resources placed)"
+				end
 			end
 
 			local debug_log = SuperBigMap.DebugLog
