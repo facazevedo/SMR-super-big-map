@@ -190,7 +190,7 @@ local function ResetMapAreas(map)
 	end
 end
 
-local function RebuildMapBounds(map, skip_buildable)
+local function RebuildMapBounds(map)
 	if not IsModMap(map) then
 		return
 	end
@@ -205,12 +205,11 @@ local function RebuildMapBounds(map, skip_buildable)
 		SafeCall(terrain_api.RebuildPassability, map)
 	end
 
-	-- Stretch-eligible surface NewMap loads already have the engine-built blank-map grid. Keep
-	-- the bounds/passable-height/passability work above, but allow that one identical buildable
-	-- rebuild to be skipped. The later lifecycle/generator/final revalidations retain the
-	-- authoritative grid, and all other callers keep the original full rebuild by default.
+	-- NewMap must rebuild this grid before the random-map generator runs. ResolveBuildable uses
+	-- that initialized state when constructing its native placement mask; deferring this pass
+	-- changes enrichment coordinates even when every later stretch transform is exact.
 	local rebuild_buildable = Global("RebuildBuildableGrid")
-	if not skip_buildable and type(rebuild_buildable) == "function" and map and map.buildable then
+	if type(rebuild_buildable) == "function" and map and map.buildable then
 		SafeCall(rebuild_buildable, map)
 	end
 end

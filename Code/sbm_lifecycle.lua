@@ -346,7 +346,7 @@ end
 
 -- Per-map application: bring the loaded map's bounds/sectors/overview into the
 -- mod's configured state. Safe to call repeatedly (each step is idempotent).
-function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
+function Lifecycle.Apply(map, rebuild)
 	map = ResolveLiveMap(map)
 	if not map then
 		return false
@@ -381,7 +381,7 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 		bounds.ResetMapAreas(map)
 
 		if rebuild and bounds.FullMapPlayableEnabled() then
-			bounds.RebuildMapBounds(map, skip_buildable_rebuild)
+			bounds.RebuildMapBounds(map)
 			bounds.RefreshSectors(map)
 		end
 	end
@@ -413,20 +413,6 @@ local function StretchEligibleForDeferredBounds(map)
 		and type(desired) == "number" and type(generator) == "number" and desired > generator
 		and tostring(config.EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
 		and (env ~= "Underground" or config.STRETCH_UNDERGROUND == true)
-end
-
-local function ShouldSkipNewMapBuildableRebuild(map)
-	local config = SuperBigMap.Config or {}
-	local env = map and map.mapdata and map.mapdata.Environment
-	local buildable = map and map.buildable
-	return config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
-		and config.OPTIMIZE_STRETCH_DEFERRED_REBUILDS == true
-		and config.SECTOR_MIRROR_PLAN_AT_START == true
-		and config.FULL_MAP_PLAYABLE == true
-		and config.FORCE_BUILDABLE_GRID_STORAGE ~= true
-		and env == "Surface"
-		and buildable and buildable.z_grid
-		and StretchEligibleForDeferredBounds(map)
 end
 
 -- Install order (dependencies first); restore is the exact reverse.
@@ -832,16 +818,9 @@ RegisterOnce("NewMap", function(map, mapdata)
 	end
 	DiagSnapshotEvent("OnMsg.NewMap", map)
 	if HandleModEditorMap() then return end
-	local skip_buildable_rebuild = ShouldSkipNewMapBuildableRebuild(map) == true
-	Lifecycle.Apply(map, true, skip_buildable_rebuild)
-	if skip_buildable_rebuild then
-		local profiler = SuperBigMap.LoadingProfiler
-		if profiler and type(profiler.Step) == "function" then
-			profiler.Step("stretch optimization: skipped duplicate NewMap buildable rebuild", {
-				environment = tostring(map and map.mapdata and map.mapdata.Environment),
-			}, map)
-		end
-	end
+	-- This rebuild is not redundant. RMG's later ResolveBuildable procedure consumes the grid
+	-- state established here; skipping it changes the native placement mask and enrichment layout.
+	Lifecycle.Apply(map, true)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.EnsureSectorPatch(map or mapdata, "NewMap")
