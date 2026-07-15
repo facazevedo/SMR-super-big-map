@@ -36,6 +36,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_object_clone.lua",
 		"Code/sbm_terrain_copy.lua",
 		"Code/sbm_rmg_placement.lua",
+		"Code/sbm_enrichment_spread_debug.lua",
 		"Code/sbm_map_generation.lua",
 		"Code/sbm_place_elevator_button.lua",
 		"Code/sbm_deposits.lua",
