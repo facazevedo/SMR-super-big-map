@@ -79,6 +79,13 @@ local function InitSeq(message, data)
 	end
 end
 
+local function EnrichmentSpreadSnapshot(map, phase)
+	local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+	if diagnostics and type(diagnostics.Snapshot) == "function" then
+		SafeCall(diagnostics.Snapshot, map, phase)
+	end
+end
+
 -- Map liveness / terrain size are intentionally NOT in sbm_engine (their resolution
 -- order is context-specific); kept local for map resolution + the apply log.
 local IsLiveMap = Engine.IsLiveMap
@@ -882,6 +889,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if not active() then
 		return
 	end
+	EnrichmentSpreadSnapshot(map, "PostNewMapLoaded-entry")
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded", map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "PostNewMapLoaded")
@@ -1059,6 +1067,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		})
 	end
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
+	EnrichmentSpreadSnapshot(map, "PostNewMapLoaded-complete")
 end)
 
 -- NOTE: A previous experiment hooked LandscapeCompleted to auto-repaint
@@ -1109,6 +1118,7 @@ RegisterOnce("CityInitialized", function(city)
 	-- Vanilla InitBreakThroughAnomalies runs immediately before this message. The deferred
 	-- final-terrain selector uses the flag to subtract the planetary reserve exactly once.
 	if map then map.SuperBigMapBreakthroughPruningDone = true end
+	EnrichmentSpreadSnapshot(map, "CityInitialized")
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.DiagOn) == "function" and sectors.DiagOn() then
 		print("[Super Big Map] SectorDiag: OnMsg.CityInitialized: city=" .. tostring(city)
@@ -1305,6 +1315,12 @@ local function EnsureGeneratorHookInstalled()
 	end
 	if SuperBigMap.State.main_menu_vanilla == true then
 		return
+	end
+	-- Install the read-only comparison wrapper first. The expansion wrapper then sits above it,
+	-- so the same vanilla generator boundary is observed with step 01 both off and on.
+	local comparison = SuperBigMap.EnrichmentSpreadDiagnostics
+	if comparison and type(comparison.PatchGenerator) == "function" then
+		comparison.PatchGenerator("EnsureGeneratorHookInstalled")
 	end
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchRandomMapGenerator) == "function" then
@@ -1563,6 +1579,7 @@ RegisterOnce("MapGenerated", function(map)
 	if not active() then
 		return
 	end
+	EnrichmentSpreadSnapshot(map, "MapGenerated-before-expansion-finalize")
 	DiagSnapshotEvent("OnMsg.MapGenerated_BEFORE_tile", map)
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
@@ -1605,6 +1622,7 @@ RegisterOnce("MapGenerated", function(map)
 	if fake_terrain and type(fake_terrain.RemoveFrameCraters) == "function" then
 		fake_terrain.RemoveFrameCraters(map)
 	end
+	EnrichmentSpreadSnapshot(map, "MapGenerated-complete")
 end)
 
 RegisterOnce("OverviewMode", function(enabled)

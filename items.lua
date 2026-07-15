@@ -80,6 +80,10 @@ return {
 		'CodeFileName', "Code/sbm_rmg_placement.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_enrichment_spread_debug",
+		'CodeFileName', "Code/sbm_enrichment_spread_debug.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_map_generation",
 		'CodeFileName', "Code/sbm_map_generation.lua",
 	}),

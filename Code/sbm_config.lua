@@ -217,6 +217,11 @@ config.DebugRmgAlignmentExhaustive = true -- TEMP: identify remaining same-hex m
 -- Correlated census of every resource, anomaly, and effect marker before terrain stretch,
 -- immediately after marker scaling, and after the final density suite.
 config.DebugEnrichmentPositionsExhaustive = true
+-- Mode-independent, read-only trace for comparing enrichment spread with expansion step 01 on
+-- and off. It observes the vanilla generator beneath any expansion wrapper and logs generator
+-- inputs, procedure random fingerprints, placement-helper results, final factory coordinates,
+-- and complete post-generation marker/spread censuses. Leave enabled for both comparison runs.
+config.DebugEnrichmentSpreadComparison = true
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -1057,6 +1062,7 @@ C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
 C.DEBUG_RMGALIGNMENTEXHAUSTIVE = as_bool(config.DebugRmgAlignmentExhaustive)
 C.DEBUG_ENRICHMENTPOSITIONSEXHAUSTIVE = as_bool(config.DebugEnrichmentPositionsExhaustive)
+C.DEBUG_ENRICHMENTSPREADCOMPARISON = as_bool(config.DebugEnrichmentSpreadComparison)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)

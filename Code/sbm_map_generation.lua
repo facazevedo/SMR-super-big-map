@@ -920,6 +920,13 @@ local function GenRandCensus(map, label)
 	if type(resume) == "function" then pcall(resume, "SBMGenRandCensus") end
 end
 
+local function EnrichmentSpreadBoundary(generator, map, phase, data)
+	local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+	if diagnostics and type(diagnostics.TraceGeneratorBoundary) == "function" then
+		pcall(diagnostics.TraceGeneratorBoundary, generator, map, phase, data)
+	end
+end
+
 CaptureGeneratedNativeEnrichments = function(map, label)
 	if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false) then return 0 end
 	local deposits = SuperBigMap.DepositRules
@@ -1590,8 +1597,16 @@ local function PatchRandomMapGenerator()
 				end
 				return nil, "unavailable"
 			end
+			-- The comparison observer deliberately sits beneath this wrapper. Introspect its saved
+			-- vanilla function rather than the observer closure so private GridMinMax/alignment access
+			-- remains exactly the same as it is without diagnostics.
+			local closure_environment_target = original_on_generate_logic
+			if closure_environment_target == State.enrichment_spread_on_generate_wrapper
+				and type(State.enrichment_spread_original_on_generate) == "function" then
+				closure_environment_target = State.enrichment_spread_original_on_generate
+			end
 			local generator_closure_env, generator_closure_env_source =
-				function_environment(original_on_generate_logic)
+				function_environment(closure_environment_target)
 			local function closure_global(name, fallback)
 				if type(generator_closure_env) == "table" then
 					local ok_value, value = pcall(function() return generator_closure_env[name] end)
@@ -3741,6 +3756,9 @@ local function PatchRandomMapGenerator()
 	end
 	local generate_wrapper = function(self, params)
 		params = type(params) == "table" and params or {}
+		EnrichmentSpreadBoundary(self, nil, "expansion-Generate-before-source-allocation", {
+			map_name = tostring(params.map_name), map_slot = tostring(params.map_slot),
+		})
 		local blank_map = self and self.BlankMap
 		local map_name = params.map_name or blank_map
 		if blank_map and blank_map ~= "" then
@@ -3765,6 +3783,12 @@ local function PatchRandomMapGenerator()
 		else
 			VerbosePrint("quadrant random-map generator hook skipped: no BlankMap")
 		end
+		EnrichmentSpreadBoundary(self, nil, "expansion-Generate-after-source-allocation", {
+			map_name = tostring(params.map_name), map_slot = tostring(params.map_slot),
+			pending = tostring(params.SuperBigMapQuadrantCopyPending),
+			source_width = tostring(params.SuperBigMapSourceWidth),
+			desired_width_tiles = tostring(params.SuperBigMapDesiredWidthTiles),
+		})
 
 		return original_generate(self, params)
 	end
@@ -3773,6 +3797,7 @@ local function PatchRandomMapGenerator()
 
 	if type(original_do_generate) == "function" then
 		local do_generate_wrapper = function(self, map, ...)
+			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-entry-before-source-view")
 			if not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
 				return original_do_generate(self, map, ...)
 			end
@@ -4140,6 +4165,7 @@ local function PatchRandomMapGenerator()
 					mapdata.PassBorderTiles = saved_mapdata_pbt
 				end
 			end
+			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-after-source-view-restored")
 
 			if not results[1] then
 				if GenRandEnabled() then

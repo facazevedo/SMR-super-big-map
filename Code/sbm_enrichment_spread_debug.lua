@@ -1,0 +1,952 @@
+-- Super Big Map -- mode-independent enrichment spread comparison diagnostics.
+--
+-- This module is deliberately observational. It wraps the vanilla RandomMapGenerator beneath
+-- the expansion wrapper (when expansion step 01 is enabled) and directly (when it is disabled),
+-- then forwards every call and return value unchanged. The same trace therefore exists in both
+-- modes without changing map bounds, random state, candidate selection, or marker positions.
+
+local SuperBigMap = rawget(_G, "SuperBigMap")
+if type(SuperBigMap) ~= "table" then
+	SuperBigMap = {}
+	rawset(_G, "SuperBigMap", SuperBigMap)
+end
+
+local Engine = SuperBigMap.Engine
+if type(Engine) ~= "table" then return end
+local Global = Engine.Global
+local SafeCall = Engine.SafeCall
+local Unpack = table.unpack or unpack
+local PATCH_VERSION = 1
+local SCOPE = "EnrichmentSpreadComparison"
+
+SuperBigMap.State = SuperBigMap.State or {}
+local State = SuperBigMap.State
+local runs_by_map = setmetatable({}, { __mode = "k" })
+
+local function Pack(...)
+	return { n = select("#", ...), ... }
+end
+
+local function ReturnPacked(values)
+	return Unpack(values, 1, values.n)
+end
+
+local function Enabled()
+	local debug_log = SuperBigMap.DebugLog
+	return debug_log and type(debug_log.On) == "function" and debug_log.On(SCOPE) == true
+end
+
+local function Log(message, data, level)
+	local debug_log = SuperBigMap.DebugLog
+	if not debug_log then return end
+	local fn = level == "error" and debug_log.Error
+		or (level == "warn" and debug_log.Warn or debug_log.Info)
+	if type(fn) == "function" then fn(SCOPE, message, data) end
+end
+
+local function Bool(value)
+	return value == true and "true" or "false"
+end
+
+local function MapName(map)
+	return tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?")
+end
+
+local function PointXYZ(value)
+	if value == nil then return nil end
+	local ok_xyz, x, y, z = pcall(function() return value:xyz() end)
+	if ok_xyz and type(x) == "number" and type(y) == "number" then return x, y, z end
+	local ok_xy
+	ok_xy, x, y = pcall(function() return value:xy() end)
+	if ok_xy and type(x) == "number" and type(y) == "number" then return x, y, nil end
+	return nil
+end
+
+local function ObjectPos(obj)
+	if not obj then return nil end
+	if type(obj.GetPos) == "function" then
+		local ok, pos = pcall(obj.GetPos, obj)
+		if ok and pos then return pos end
+	end
+	return obj.pos
+end
+
+local function DescribeValue(value)
+	local x, y, z = PointXYZ(value)
+	if x ~= nil then return tostring(x) .. ":" .. tostring(y) .. ":" .. tostring(z) end
+	if type(value) == "table" then
+		local parts = {}
+		for i = 1, math.min(#value, 32) do
+			parts[#parts + 1] = DescribeValue(value[i])
+		end
+		if #value > 32 then parts[#parts + 1] = "...(" .. tostring(#value) .. ")" end
+		if #parts > 0 then return "[" .. table.concat(parts, "|") .. "]" end
+	end
+	local ok_size, w, h = pcall(function() return value:size() end)
+	if ok_size and w ~= nil then return tostring(value) .. " size=" .. tostring(w) .. "x" .. tostring(h) end
+	return tostring(value)
+end
+
+local function DescribePacked(values)
+	local parts = {}
+	for i = 1, values.n do parts[i] = DescribeValue(values[i]) end
+	return table.concat(parts, " || ")
+end
+
+local function ScalarFields(value)
+	if type(value) ~= "table" then return "n/a" end
+	local keys, parts = {}, {}
+	for key, item in pairs(value) do
+		if type(item) == "string" or type(item) == "number" or type(item) == "boolean" then
+			keys[#keys + 1] = key
+		end
+	end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	for _, key in ipairs(keys) do parts[#parts + 1] = tostring(key) .. "=" .. tostring(value[key]) end
+	return #parts > 0 and table.concat(parts, ";") or "none"
+end
+
+local function FunctionEnvironment(fn)
+	local getfenv_fn = Global("getfenv")
+	if type(getfenv_fn) == "function" then
+		local ok, environment = pcall(getfenv_fn, fn)
+		if ok and type(environment) == "table" then return environment, "getfenv" end
+	end
+	local debug_lib = Global("debug")
+	if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
+		for index = 1, 64 do
+			local ok, name, value = pcall(debug_lib.getupvalue, fn, index)
+			if not ok or name == nil then break end
+			if name == "_ENV" and type(value) == "table" then return value, "debug._ENV" end
+		end
+	end
+	return nil, "unavailable"
+end
+
+local function IsKindOfSafe(obj, class_name)
+	if not obj or type(Engine.IsKindOf) ~= "function" then return false end
+	local ok, result = pcall(Engine.IsKindOf, obj, class_name)
+	return ok and result == true
+end
+
+local function RandLast(generator)
+	if not generator then return nil end
+	local rand_state = generator.rand_state or generator.RandState
+	if rand_state and type(rand_state.Last) == "function" then
+		local ok, value = pcall(rand_state.Last, rand_state)
+		if ok then return value end
+	end
+	return nil
+end
+
+local GENERATOR_FIELDS = {
+	"Seed", "Id", "BlankMap", "DepBorderSurf", "DepBorderSubs", "DepBorderTerr",
+	"DepBorderAnomaly", "DepBorderEffects", "DepositSpacing", "AnomalySpacing",
+	"EffectDepositSpacing", "AnomTechUnlockCount", "AnomEventCount", "AnomFreeTechCount",
+	"AnomBreakthroughCount", "DeepAnomBreakthroughChance", "SurfaceDeposits", "SubsurfaceDeposits",
+}
+
+local function AddGeneratorFields(out, generator)
+	for _, name in ipairs(GENERATOR_FIELDS) do
+		out["generator_" .. string.lower(name)] = tostring(generator and generator[name])
+	end
+	out.generator_rand_last = tostring(RandLast(generator))
+	local map_data_table = Global("MapData")
+	local blank = generator and generator.BlankMap
+	local template = type(map_data_table) == "table" and type(blank) == "string"
+		and map_data_table[blank] or nil
+	out.template_width_tiles = tostring(template and template.Width)
+	out.template_height_tiles = tostring(template and template.Height)
+	out.template_pass_border = tostring(template and template.PassBorder)
+end
+
+local function MapGeometry(map)
+	local geometry = {
+		map = MapName(map),
+		environment = tostring(map and map.mapdata and map.mapdata.Environment),
+		mapdata_width_tiles = tostring(map and map.mapdata and map.mapdata.Width),
+		mapdata_height_tiles = tostring(map and map.mapdata and map.mapdata.Height),
+		mapdata_pass_border = tostring(map and map.mapdata and map.mapdata.PassBorder),
+		source_x = tostring(map and map.SuperBigMapSourceX),
+		source_y = tostring(map and map.SuperBigMapSourceY),
+		source_width = tostring(map and map.SuperBigMapSourceWidth),
+		source_height = tostring(map and map.SuperBigMapSourceHeight),
+		generator_width_tiles = tostring(map and map.SuperBigMapGeneratorWidthTiles),
+		generator_height_tiles = tostring(map and map.SuperBigMapGeneratorHeightTiles),
+		desired_width_tiles = tostring(map and map.SuperBigMapDesiredWidthTiles),
+		desired_height_tiles = tostring(map and map.SuperBigMapDesiredHeightTiles),
+	}
+	if map and type(map.GetMapSize) == "function" then
+		local ok, width, height = pcall(map.GetMapSize, map)
+		if ok then
+			geometry.map_get_size_width = tostring(width)
+			geometry.map_get_size_height = tostring(height)
+		end
+	end
+	local terrain_api = Global("terrain")
+	if map and type(terrain_api) == "table" and type(terrain_api.GetMapSize) == "function" then
+		local ok, width, height = pcall(terrain_api.GetMapSize, map)
+		if ok then
+			geometry.terrain_get_size_width = tostring(width)
+			geometry.terrain_get_size_height = tostring(height)
+		end
+	end
+	return geometry
+end
+
+local function Merge(target, source)
+	for key, value in pairs(source or {}) do target[key] = value end
+	return target
+end
+
+local function EffectiveSteps()
+	local config = SuperBigMap.Config or {}
+	local parts = {}
+	for i = 1, 21 do
+		parts[i] = config.EXPANSION_ENRICHMENT_STEPS
+			and config.EXPANSION_ENRICHMENT_STEPS[i] == true and "1" or "0"
+	end
+	return table.concat(parts, "")
+end
+
+local function ModeFields()
+	local config = SuperBigMap.Config or {}
+	return {
+		step01 = Bool(config.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE),
+		step02 = Bool(config.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE),
+		step03 = Bool(config.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS),
+		effective_steps_01_to_21 = EffectiveSteps(),
+		terrain_mode = tostring(config.TERRAIN_SIZE),
+		sector_mode = tostring(config.SECTOR_GRID),
+		generator_patch = Bool(config.QUADRANT_PATCH_RANDOM_GENERATOR),
+		limit_generator_to_source = Bool(config.QUADRANT_LIMIT_GENERATOR_TO_SOURCE),
+		preserve_vanilla_pass_border = Bool(config.STRETCH_VANILLA_EXACT_PASSBORDER),
+		rmg_placement_fix = Bool(config.ENABLE_RMG_PLACEMENT_FIX),
+		native_collision_repair = Bool(config.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR),
+		native_shortfall_completion = Bool(config.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS),
+	}
+end
+
+local function ComparisonRegion(map)
+	local const_tbl = Global("const")
+	local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or 100
+	local origin_x = tonumber(map and map.SuperBigMapSourceX) or 0
+	local origin_y = tonumber(map and map.SuperBigMapSourceY) or 0
+	local width = tonumber(map and map.SuperBigMapGeneratorWidth)
+		or tonumber(map and map.SuperBigMapSourceWidth)
+	local height = tonumber(map and map.SuperBigMapGeneratorHeight)
+		or tonumber(map and map.SuperBigMapSourceHeight)
+	if not width then
+		local tiles = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
+			or tonumber(map and map.SuperBigMapSourceWidthTiles)
+		if tiles then width = tiles * tile end
+	end
+	if not height then
+		local tiles = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
+			or tonumber(map and map.SuperBigMapSourceHeightTiles)
+		if tiles then height = tiles * tile end
+	end
+	if (not width or not height) and map and type(map.GetMapSize) == "function" then
+		local ok, map_width, map_height = pcall(map.GetMapSize, map)
+		if ok then width, height = width or map_width, height or map_height end
+	end
+	return origin_x, origin_y, tonumber(width) or 0, tonumber(height) or 0
+end
+
+local function ClassName(value)
+	if value == nil then return "nil" end
+	local name = tostring(value)
+	pcall(function() name = tostring(value.class or value.__name or value.ClassName or value) end)
+	return name
+end
+
+local function MarkerFamily(marker)
+	if IsKindOfSafe(marker, "SubsurfaceAnomalyMarker") then
+		return "anomaly", tostring(marker.sequence or marker.tech_action or marker.scenario or "ordinary")
+	end
+	if IsKindOfSafe(marker, "EffectDepositMarker") then
+		return "effect", tostring(marker.deposit_type or marker.effect or marker.resource or "effect")
+	end
+	if IsKindOfSafe(marker, "SurfaceDepositMarker")
+		or IsKindOfSafe(marker, "SubsurfaceDepositMarker")
+		or IsKindOfSafe(marker, "TerrainDepositMarker") then
+		return "resource", tostring(marker.resource or marker.deposit_type or "unknown")
+	end
+	return "other", tostring(marker.resource or marker.deposit_type or marker.sequence or "unknown")
+end
+
+local MARKER_FIELDS = {
+	"resource", "deposit_type", "tech_action", "sequence", "sequence_list", "scenario",
+	"depth_layer", "grade", "max_amount", "density", "density2", "prefab", "is_placed",
+}
+
+local function MarkerFields(marker)
+	local parts = {}
+	for _, name in ipairs(MARKER_FIELDS) do
+		local value
+		pcall(function() value = marker[name] end)
+		if value ~= nil then parts[#parts + 1] = name .. "=" .. tostring(value) end
+	end
+	return #parts > 0 and table.concat(parts, ";") or "none"
+end
+
+local function PositionIdentity(pos)
+	local x, y, z = PointXYZ(pos)
+	local q, r, hash
+	local world_to_hex = Global("WorldToHex")
+	if pos and type(world_to_hex) == "function" then
+		local ok, hq, hr = pcall(world_to_hex, pos)
+		if ok then q, r = hq, hr end
+	end
+	local xxhash = Global("xxhash")
+	if pos and type(xxhash) == "function" then
+		local ok, value = pcall(xxhash, pos)
+		if ok then hash = value end
+	end
+	return x, y, z, q, r, hash
+end
+
+local function SectorName(map, x, y)
+	local get_sector = Global("GetMapSectorXY")
+	local city = map and map.City
+	if not city or type(get_sector) ~= "function" or x == nil then return "unavailable" end
+	local ok, sector = pcall(get_sector, city, x, y)
+	if not ok or not sector then return "none" end
+	return tostring(sector.display_name or sector.id or sector.name or sector)
+end
+
+local function TallyText(tally)
+	local keys, parts = {}, {}
+	for key in pairs(tally) do keys[#keys + 1] = key end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	for _, key in ipairs(keys) do parts[#parts + 1] = tostring(key) .. ":" .. tostring(tally[key]) end
+	return #parts > 0 and table.concat(parts, ";") or "none"
+end
+
+local function Snapshot(map, phase)
+	if not Enabled() then return 0 end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		Log("SNAPSHOT_SKIPPED", { phase = tostring(phase), reason = "map/MapForEach unavailable" }, "warn")
+		return 0
+	end
+	local origin_x, origin_y, region_width, region_height = ComparisonRegion(map)
+	local records = {}
+	local ok_scan, scan_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		local pos = ObjectPos(marker)
+		local x, y, z, q, r, hash = PositionIdentity(pos)
+		local family, subtype = MarkerFamily(marker)
+		local inside = type(x) == "number" and type(y) == "number" and region_width > 0 and region_height > 0
+			and x >= origin_x and x < origin_x + region_width
+			and y >= origin_y and y < origin_y + region_height
+		local col, row = 0, 0
+		if inside then
+			col = math.max(1, math.min(10, math.floor((x - origin_x) * 10 / region_width) + 1))
+			row = math.max(1, math.min(10, math.floor((y - origin_y) * 10 / region_height) + 1))
+		end
+		records[#records + 1] = {
+			marker = marker, class = ClassName(marker), family = family, subtype = subtype,
+			x = x, y = y, z = z, q = q, r = r, hash = hash, inside = inside,
+			cell = inside and (string.format("%02d,%02d", col, row)) or "outside",
+			sector = SectorName(map, x, y), fields = MarkerFields(marker),
+			handle = tostring(marker.handle or marker),
+		}
+	end)
+	if not ok_scan then
+		Log("SNAPSHOT_SCAN_ERROR", { phase = tostring(phase), map = MapName(map), error = tostring(scan_error) }, "error")
+		return 0
+	end
+	table.sort(records, function(a, b)
+		local ak = table.concat({ a.family, a.subtype, a.class, tostring(a.x), tostring(a.y), a.handle }, "|")
+		local bk = table.concat({ b.family, b.subtype, b.class, tostring(b.x), tostring(b.y), b.handle }, "|")
+		return ak < bk
+	end)
+
+	local family_counts, subtype_counts, class_counts, sector_counts = {}, {}, {}, {}
+	local grid_counts, grid_families = {}, {}
+	local coordinate_counts, hash_counts = {}, {}
+	local inside_count, outside_count = 0, 0
+	local min_x, min_y, max_x, max_y, sum_x, sum_y = nil, nil, nil, nil, 0, 0
+	for _, record in ipairs(records) do
+		family_counts[record.family] = (family_counts[record.family] or 0) + 1
+		local subtype_key = record.family .. "/" .. record.subtype
+		subtype_counts[subtype_key] = (subtype_counts[subtype_key] or 0) + 1
+		class_counts[record.class] = (class_counts[record.class] or 0) + 1
+		sector_counts[record.sector] = (sector_counts[record.sector] or 0) + 1
+		grid_counts[record.cell] = (grid_counts[record.cell] or 0) + 1
+		grid_families[record.cell] = grid_families[record.cell] or {}
+		grid_families[record.cell][record.family] = (grid_families[record.cell][record.family] or 0) + 1
+		if record.inside then inside_count = inside_count + 1 else outside_count = outside_count + 1 end
+		if type(record.x) == "number" and type(record.y) == "number" then
+			min_x = min_x and math.min(min_x, record.x) or record.x
+			min_y = min_y and math.min(min_y, record.y) or record.y
+			max_x = max_x and math.max(max_x, record.x) or record.x
+			max_y = max_y and math.max(max_y, record.y) or record.y
+			sum_x, sum_y = sum_x + record.x, sum_y + record.y
+			local key = tostring(record.x) .. ":" .. tostring(record.y)
+			coordinate_counts[key] = (coordinate_counts[key] or 0) + 1
+		end
+		if record.hash ~= nil then hash_counts[tostring(record.hash)] = (hash_counts[tostring(record.hash)] or 0) + 1 end
+	end
+
+	local pair_count, nearest_sum, nearest_count, global_min = 0, 0, 0, nil
+	for i = 1, #records do
+		local current = records[i]
+		local nearest, nearest_index, nearest_same, nearest_same_index
+		if type(current.x) == "number" and type(current.y) == "number" then
+			for j = 1, #records do
+				if i ~= j and type(records[j].x) == "number" and type(records[j].y) == "number" then
+					local dx, dy = current.x - records[j].x, current.y - records[j].y
+					local distance = math.sqrt(dx * dx + dy * dy + 0.0)
+					if not nearest or distance < nearest then nearest, nearest_index = distance, j end
+					if current.family == records[j].family and (not nearest_same or distance < nearest_same) then
+						nearest_same, nearest_same_index = distance, j
+					end
+					if j > i then
+						pair_count = pair_count + 1
+						global_min = global_min and math.min(global_min, distance) or distance
+					end
+				end
+			end
+		end
+		current.nearest = nearest
+		current.nearest_index = nearest_index
+		current.nearest_same = nearest_same
+		current.nearest_same_index = nearest_same_index
+		if nearest then nearest_sum, nearest_count = nearest_sum + nearest, nearest_count + 1 end
+	end
+
+	local signature_parts = {}
+	for _, record in ipairs(records) do
+		signature_parts[#signature_parts + 1] = table.concat({
+			record.family, record.subtype, record.class, tostring(record.x), tostring(record.y),
+			tostring(record.z), tostring(record.q), tostring(record.r), tostring(record.hash),
+		}, "|")
+	end
+	local signature_text = table.concat(signature_parts, "\n")
+	local signature_hash = "unavailable"
+	local xxhash = Global("xxhash")
+	if type(xxhash) == "function" then
+		local ok, value = pcall(xxhash, signature_text)
+		if ok then signature_hash = tostring(value) end
+	end
+	local duplicate_coordinates, duplicate_hashes = 0, 0
+	for _, count in pairs(coordinate_counts) do if count > 1 then duplicate_coordinates = duplicate_coordinates + count - 1 end end
+	for _, count in pairs(hash_counts) do if count > 1 then duplicate_hashes = duplicate_hashes + count - 1 end end
+
+	local begin = Merge(ModeFields(), MapGeometry(map))
+	Merge(begin, {
+		phase = tostring(phase), markers = #records,
+		comparison_origin_x = origin_x, comparison_origin_y = origin_y,
+		comparison_width = region_width, comparison_height = region_height,
+		inside_comparison_region = inside_count, outside_comparison_region = outside_count,
+	})
+	Log("SNAPSHOT_BEGIN", begin)
+	for index, record in ipairs(records) do
+		local nearest_record = record.nearest_index and records[record.nearest_index] or nil
+		local nearest_same_record = record.nearest_same_index and records[record.nearest_same_index] or nil
+		Log("MARKER", {
+			phase = tostring(phase), index = index, class = record.class,
+			family = record.family, subtype = record.subtype, fields = record.fields,
+			x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
+			q = tostring(record.q), r = tostring(record.r), hash = tostring(record.hash),
+			handle = record.handle, inside = Bool(record.inside), cell_10x10 = record.cell,
+			sector = record.sector,
+			normalized_x_permille = record.inside and math.floor((record.x - origin_x) * 1000 / region_width + 0.5) or "outside",
+			normalized_y_permille = record.inside and math.floor((record.y - origin_y) * 1000 / region_height + 0.5) or "outside",
+			nearest_index = tostring(record.nearest_index), nearest_distance = tostring(record.nearest),
+			nearest_family = tostring(nearest_record and nearest_record.family),
+			nearest_class = tostring(nearest_record and nearest_record.class),
+			nearest_same_index = tostring(record.nearest_same_index),
+			nearest_same_distance = tostring(record.nearest_same),
+			nearest_same_class = tostring(nearest_same_record and nearest_same_record.class),
+		})
+	end
+	for row = 1, 10 do
+		for col = 1, 10 do
+			local cell = string.format("%02d,%02d", col, row)
+			Log("GRID_CELL", {
+				phase = tostring(phase), cell_10x10 = cell, count = grid_counts[cell] or 0,
+				families = TallyText(grid_families[cell] or {}),
+			})
+		end
+	end
+	Log("SNAPSHOT_END", {
+		phase = tostring(phase), map = MapName(map), markers = #records, pairs = pair_count,
+		inside_comparison_region = inside_count, outside_comparison_region = outside_count,
+		family_counts = TallyText(family_counts), subtype_counts = TallyText(subtype_counts),
+		class_counts = TallyText(class_counts), sector_counts = TallyText(sector_counts),
+		min_x = tostring(min_x), min_y = tostring(min_y), max_x = tostring(max_x), max_y = tostring(max_y),
+		centroid_x = #records > 0 and tostring(sum_x / #records) or "n/a",
+		centroid_y = #records > 0 and tostring(sum_y / #records) or "n/a",
+		global_min_pair_distance = tostring(global_min),
+		average_nearest_distance = nearest_count > 0 and tostring(nearest_sum / nearest_count) or "n/a",
+		duplicate_coordinates = duplicate_coordinates, duplicate_hashes = duplicate_hashes,
+		signature_hash = signature_hash, signature_bytes = #signature_text,
+	})
+	return #records
+end
+
+local function NewRun(generator, source)
+	State.enrichment_spread_comparison_sequence = (State.enrichment_spread_comparison_sequence or 0) + 1
+	local run = {
+		id = State.enrichment_spread_comparison_sequence,
+		source = tostring(source), generator = generator,
+		proc_stack = {}, proc_calls = 0, factory_calls = 0, warning_calls = 0,
+		rrand_calls = 0, grand_calls = 0, playable_area_calls = 0,
+		grid_min_max_calls = 0, hex_align_calls = 0, resource_info_calls = 0,
+		factory_duplicate_calls = 0, factory_hashes = {}, factory_coordinates = {},
+		factory_hexes = {},
+	}
+	return run
+end
+
+local function RunForMap(map, generator)
+	local run = map and runs_by_map[map] or nil
+	if not run then
+		run = State.enrichment_spread_active_generate_run or NewRun(generator, "implicit")
+		if map then runs_by_map[map] = run end
+	end
+	return run
+end
+
+local function RunFields(run, map)
+	local fields = Merge(ModeFields(), MapGeometry(map))
+	fields.run_id = run and run.id or "?"
+	fields.run_source = run and run.source or "?"
+	return fields
+end
+
+local function CurrentProc(run)
+	return run and run.proc_stack[#run.proc_stack] or "outside-proc"
+end
+
+local function LogNestedPoints(run, call_kind, call_index, value, result_index, path, seen)
+	local x, y, z = PointXYZ(value)
+	if x ~= nil then
+		Log("HELPER_RESULT_POSITION", {
+			run_id = run.id, proc = CurrentProc(run), helper = call_kind,
+			call_index = call_index, result_index = result_index, path = path,
+			x = x, y = y, z = tostring(z),
+		})
+		return
+	end
+	if type(value) ~= "table" then return end
+	seen = seen or {}
+	if seen[value] then return end
+	seen[value] = true
+	for i = 1, #value do
+		LogNestedPoints(run, call_kind, call_index, value[i], result_index,
+			path .. "[" .. tostring(i) .. "]", seen)
+	end
+end
+
+local Diagnostics = {}
+Diagnostics.Snapshot = Snapshot
+
+function Diagnostics.TraceGeneratorBoundary(generator, map, phase, extra)
+	if not Enabled() then return false end
+	local run = map and RunForMap(map, generator) or State.enrichment_spread_active_generate_run
+	local fields = run and RunFields(run, map) or Merge(ModeFields(), MapGeometry(map))
+	fields.run_id = run and run.id or "pending"
+	fields.phase = tostring(phase)
+	AddGeneratorFields(fields, generator)
+	Merge(fields, extra)
+	Log("GENERATOR_BOUNDARY", fields)
+	return true
+end
+
+function Diagnostics.PatchGenerator(reason)
+	if not Enabled() then return false end
+	local generator_class = Global("RandomMapGenerator")
+	if type(generator_class) ~= "table" or type(generator_class.Generate) ~= "function" then
+		Log("PATCH_WAITING", { reason = tostring(reason), generator_class = tostring(generator_class) })
+		return false
+	end
+
+	local function installed_here_or_below(method_name, wrapper_key, mapgen_wrapper_key, mapgen_original_key)
+		local current = generator_class[method_name]
+		local wrapper = State[wrapper_key]
+		if current == wrapper then return true end
+		return current == State[mapgen_wrapper_key] and State[mapgen_original_key] == wrapper
+	end
+	if State.enrichment_spread_patch_version == PATCH_VERSION
+		and installed_here_or_below("Generate", "enrichment_spread_generate_wrapper", "generator_generate_wrapper", "generator_original_generate")
+		and installed_here_or_below("DoGenerate", "enrichment_spread_do_generate_wrapper", "generator_do_generate_wrapper", "generator_original_do_generate")
+		and installed_here_or_below("ProcStart", "enrichment_spread_proc_start_wrapper", "generator_proc_start_wrapper", "generator_original_proc_start")
+		and installed_here_or_below("ProcEnd", "enrichment_spread_proc_end_wrapper", "generator_proc_end_wrapper", "generator_original_proc_end")
+		and installed_here_or_below("OnGenerateLogic", "enrichment_spread_on_generate_wrapper", "generator_on_generate_logic_wrapper", "generator_original_on_generate_logic") then
+		return true
+	end
+
+	local function capture_original(method_name, wrapper_key, original_key, mapgen_wrapper_key, mapgen_original_key)
+		local current = generator_class[method_name]
+		-- On a hot reload, the previous expansion wrapper may still be live when this earlier-loaded
+		-- module executes. Peel both known wrapper layers in either order and observe their saved
+		-- vanilla/underlying function; the freshly loaded expansion module will then reinstall above
+		-- this observer exactly once. The bounded loop also handles expansion -> observer -> vanilla.
+		for _ = 1, 4 do
+			local previous = current
+			if current == State[wrapper_key] and type(State[original_key]) == "function" then
+				current = State[original_key]
+			elseif current == State[mapgen_wrapper_key]
+				and type(State[mapgen_original_key]) == "function" then
+				current = State[mapgen_original_key]
+			end
+			if current == previous then break end
+		end
+		if type(current) == "function" then State[original_key] = current end
+		return State[original_key]
+	end
+	local original_generate = capture_original("Generate", "enrichment_spread_generate_wrapper",
+		"enrichment_spread_original_generate", "generator_generate_wrapper", "generator_original_generate")
+	local original_do_generate = capture_original("DoGenerate", "enrichment_spread_do_generate_wrapper",
+		"enrichment_spread_original_do_generate", "generator_do_generate_wrapper", "generator_original_do_generate")
+	local original_proc_start = capture_original("ProcStart", "enrichment_spread_proc_start_wrapper",
+		"enrichment_spread_original_proc_start", "generator_proc_start_wrapper", "generator_original_proc_start")
+	local original_proc_end = capture_original("ProcEnd", "enrichment_spread_proc_end_wrapper",
+		"enrichment_spread_original_proc_end", "generator_proc_end_wrapper", "generator_original_proc_end")
+	local original_on_generate = capture_original("OnGenerateLogic", "enrichment_spread_on_generate_wrapper",
+		"enrichment_spread_original_on_generate", "generator_on_generate_logic_wrapper", "generator_original_on_generate_logic")
+	if type(original_generate) ~= "function" or type(original_do_generate) ~= "function"
+		or type(original_proc_start) ~= "function" or type(original_proc_end) ~= "function"
+		or type(original_on_generate) ~= "function" then
+		Log("PATCH_INCOMPLETE", { reason = tostring(reason) }, "warn")
+		return false
+	end
+
+	local generate_wrapper = function(generator, params, ...)
+		local run = NewRun(generator, "Generate")
+		local previous = State.enrichment_spread_active_generate_run
+		State.enrichment_spread_active_generate_run = run
+		local fields = RunFields(run, nil)
+		fields.params = DescribeValue(params)
+		fields.params_fields = ScalarFields(params)
+		AddGeneratorFields(fields, generator)
+		Log("GENERATE_BEGIN", fields)
+		Log("PROCESS_MAP", {
+			run_id = run.id,
+			sequence = "01-config-and-template | 02-expanded-allocation-boundary | 03-generator-source-view | "
+				.. "04-procedure-boundary-and-random-fingerprint | 05-rrand-grand-GridMinMax-selection | "
+				.. "06-HexGetNearestCenter-final-alignment | 07-GenMarkerObj-factory | "
+				.. "08-post-DoGenerate-native-census | 09-PostNewMapLoaded-census | "
+				.. "10-CityInitialized-census | 11-MapGenerated-before-and-after-finalize",
+		})
+		local results = Pack(pcall(original_generate, generator, params, ...))
+		State.enrichment_spread_active_generate_run = previous
+		Log("GENERATE_END", {
+			run_id = run.id, ok = Bool(results[1]), error = results[1] and "none" or tostring(results[2]),
+			proc_calls = run.proc_calls, factory_calls = run.factory_calls,
+			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
+			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
+			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
+			resource_info_calls = run.resource_info_calls,
+			factory_duplicate_calls = run.factory_duplicate_calls,
+		})
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
+	end
+
+	local do_generate_wrapper = function(generator, map, ...)
+		local run = RunForMap(map, generator)
+		local previous = State.enrichment_spread_active_do_generate_run
+		State.enrichment_spread_active_do_generate_run = run
+		local fields = RunFields(run, map)
+		AddGeneratorFields(fields, generator)
+		Log("DO_GENERATE_BEGIN", fields)
+		local results = Pack(pcall(original_do_generate, generator, map, ...))
+		if results[1] then Snapshot(map, "post-vanilla-DoGenerate") end
+		Log("DO_GENERATE_END", {
+			run_id = run.id, map = MapName(map), ok = Bool(results[1]),
+			error = results[1] and "none" or tostring(results[2]),
+			proc_calls = run.proc_calls, factory_calls = run.factory_calls,
+			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
+			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
+			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
+			resource_info_calls = run.resource_info_calls,
+			factory_duplicate_calls = run.factory_duplicate_calls,
+			final_rand_last = tostring(RandLast(generator)),
+		})
+		State.enrichment_spread_active_do_generate_run = previous
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
+	end
+
+	local proc_start_wrapper = function(generator, tag, ...)
+		local run = State.enrichment_spread_active_do_generate_run
+		local args = Pack(...)
+		local rand_before = RandLast(generator)
+		if run then
+			run.proc_calls = run.proc_calls + 1
+			run.proc_stack[#run.proc_stack + 1] = tostring(tag)
+		end
+		local results = Pack(original_proc_start(generator, tag, ...))
+		if run then
+			local fields = RunFields(run, nil)
+			fields.proc_index = run.proc_calls
+			fields.tag = tostring(tag)
+			fields.args = DescribePacked(args)
+			fields.results = DescribePacked(results)
+			fields.rand_before = tostring(rand_before)
+			fields.rand_after = tostring(RandLast(generator))
+			Log("PROC_BEGIN", fields)
+		end
+		return ReturnPacked(results)
+	end
+
+	local proc_end_wrapper = function(generator, tag, ...)
+		local run = State.enrichment_spread_active_do_generate_run
+		local args = Pack(...)
+		local rand_before = RandLast(generator)
+		local results = Pack(original_proc_end(generator, tag, ...))
+		if run then
+			Log("PROC_END", {
+				run_id = run.id, proc_index = run.proc_calls, tag = tostring(tag),
+				args = DescribePacked(args), results = DescribePacked(results),
+				rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+			})
+			run.proc_stack[#run.proc_stack] = nil
+		end
+		return ReturnPacked(results)
+	end
+
+	local on_generate_wrapper = function(generator, env, ...)
+		if type(env) ~= "table" then return original_on_generate(generator, env, ...) end
+		local map = env.map
+		local run = RunForMap(map, generator)
+		local rhelpers = env.rhelpers
+		local saved_rrand = type(rhelpers) == "table" and rhelpers[2] or nil
+		local saved_grand = type(rhelpers) == "table" and rhelpers[5] or nil
+		local saved_rm_print = env.rm_print
+		local saved_factory = env.GenMarkerObj
+		local saved_playable = env.GetPlayableArea
+		local closure_env, closure_env_source = FunctionEnvironment(original_on_generate)
+		local saved_grid_min_max, saved_hex_align, saved_resource_info
+		if type(closure_env) == "table" then
+			pcall(function()
+				saved_grid_min_max = closure_env.GridMinMax
+				saved_hex_align = closure_env.HexGetNearestCenter
+				saved_resource_info = closure_env.GenerateResourceInfo
+			end)
+		end
+		Log("ON_GENERATE_LOGIC_BEGIN", Merge(RunFields(run, map), {
+			rrand_type = type(saved_rrand), grand_type = type(saved_grand),
+			rm_print_type = type(saved_rm_print), factory_type = type(saved_factory),
+			playable_area_type = type(saved_playable), closure_environment = closure_env_source,
+			grid_min_max_type = type(saved_grid_min_max), hex_align_type = type(saved_hex_align),
+			resource_info_type = type(saved_resource_info),
+		}))
+
+		local rrand_wrapper, grand_wrapper, rm_print_wrapper, factory_wrapper, playable_wrapper
+		local grid_min_max_wrapper, hex_align_wrapper, resource_info_wrapper
+		if type(saved_rrand) == "function" then
+			rrand_wrapper = function(...)
+				local args = Pack(...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_rrand(...))
+				run.rrand_calls = run.rrand_calls + 1
+				Log("RRAND", {
+					run_id = run.id, proc = CurrentProc(run), call_index = run.rrand_calls,
+					args = DescribePacked(args), results = DescribePacked(results),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				return ReturnPacked(results)
+			end
+			rhelpers[2] = rrand_wrapper
+		end
+		if type(saved_grand) == "function" then
+			grand_wrapper = function(...)
+				local args = Pack(...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_grand(...))
+				run.grand_calls = run.grand_calls + 1
+				local call_index = run.grand_calls
+				Log("GRAND", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					args = DescribePacked(args), results = DescribePacked(results),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				for i = 1, results.n do
+					LogNestedPoints(run, "grand", call_index, results[i], i, "result", {})
+				end
+				return ReturnPacked(results)
+			end
+			rhelpers[5] = grand_wrapper
+		end
+		if type(saved_rm_print) == "function" then
+			rm_print_wrapper = function(...)
+				run.warning_calls = run.warning_calls + 1
+				Log("RMG_PRINT", {
+					run_id = run.id, proc = CurrentProc(run), call_index = run.warning_calls,
+					args = DescribePacked(Pack(...)),
+				})
+				return saved_rm_print(...)
+			end
+			env.rm_print = rm_print_wrapper
+		end
+		if type(saved_playable) == "function" then
+			playable_wrapper = function(...)
+				local args = Pack(...)
+				local results = Pack(saved_playable(...))
+				run.playable_area_calls = run.playable_area_calls + 1
+				Log("PLAYABLE_AREA", {
+					run_id = run.id, proc = CurrentProc(run), call_index = run.playable_area_calls,
+					args = DescribePacked(args), results = DescribePacked(results),
+				})
+				return ReturnPacked(results)
+			end
+			env.GetPlayableArea = playable_wrapper
+		end
+		if type(saved_factory) == "function" then
+			factory_wrapper = function(marker_map, classdef, map_pos, lua_obj, debug_id, ...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_factory(marker_map, classdef, map_pos, lua_obj, debug_id, ...))
+				run.factory_calls = run.factory_calls + 1
+				local obj = results[1]
+				local x, y, z, q, r, hash = PositionIdentity(map_pos)
+				local actual_pos = ObjectPos(obj)
+				local actual_x, actual_y, actual_z, actual_q, actual_r, actual_hash = PositionIdentity(actual_pos)
+				local selected_hash = actual_hash ~= nil and actual_hash or hash
+				local coordinate_key = actual_x ~= nil and (tostring(actual_x) .. ":" .. tostring(actual_y))
+					or (x ~= nil and (tostring(x) .. ":" .. tostring(y)) or nil)
+				local hex_key = actual_q ~= nil and (tostring(actual_q) .. ":" .. tostring(actual_r))
+					or (q ~= nil and (tostring(q) .. ":" .. tostring(r)) or nil)
+				local duplicate_hash_of = selected_hash ~= nil and run.factory_hashes[tostring(selected_hash)] or nil
+				local duplicate_coordinate_of = coordinate_key and run.factory_coordinates[coordinate_key] or nil
+				local duplicate_hex_of = hex_key and run.factory_hexes[hex_key] or nil
+				if duplicate_hash_of or duplicate_coordinate_of or duplicate_hex_of then
+					run.factory_duplicate_calls = run.factory_duplicate_calls + 1
+				end
+				if selected_hash ~= nil then run.factory_hashes[tostring(selected_hash)] = run.factory_calls end
+				if coordinate_key then run.factory_coordinates[coordinate_key] = run.factory_calls end
+				if hex_key then run.factory_hexes[hex_key] = run.factory_calls end
+				local origin_x, origin_y, width, height = ComparisonRegion(marker_map or map)
+				local final_x, final_y = actual_x or x, actual_y or y
+				local inside = type(final_x) == "number" and type(final_y) == "number" and width > 0 and height > 0
+					and final_x >= origin_x and final_x < origin_x + width
+					and final_y >= origin_y and final_y < origin_y + height
+				local family, subtype = MarkerFamily(obj or lua_obj)
+				Log("FACTORY", {
+					run_id = run.id, proc = CurrentProc(run), factory_index = run.factory_calls,
+					declared_class = ClassName(classdef), object_class = ClassName(obj),
+					family = family, subtype = subtype, debug_id = tostring(debug_id),
+					requested_x = tostring(x), requested_y = tostring(y), requested_z = tostring(z),
+					requested_q = tostring(q), requested_r = tostring(r), requested_hash = tostring(hash),
+					object_x = tostring(actual_x), object_y = tostring(actual_y), object_z = tostring(actual_z),
+					object_q = tostring(actual_q), object_r = tostring(actual_r), object_hash = tostring(actual_hash),
+					object_position_differs = Bool(actual_x ~= nil and (actual_x ~= x or actual_y ~= y or actual_z ~= z)),
+					inside_comparison_region = Bool(inside),
+					duplicate_hash_of_factory_index = tostring(duplicate_hash_of),
+					duplicate_coordinate_of_factory_index = tostring(duplicate_coordinate_of),
+					duplicate_hex_of_factory_index = tostring(duplicate_hex_of),
+					marker_fields = MarkerFields(obj or lua_obj or {}), lua_obj = tostring(lua_obj),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				return ReturnPacked(results)
+			end
+			env.GenMarkerObj = factory_wrapper
+		end
+		if type(closure_env) == "table" and type(saved_grid_min_max) == "function" then
+			grid_min_max_wrapper = function(...)
+				local args = Pack(...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_grid_min_max(...))
+				run.grid_min_max_calls = run.grid_min_max_calls + 1
+				local call_index = run.grid_min_max_calls
+				Log("GRID_MIN_MAX", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					args = DescribePacked(args), results = DescribePacked(results),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				for i = 1, results.n do
+					LogNestedPoints(run, "GridMinMax", call_index, results[i], i, "result", {})
+				end
+				return ReturnPacked(results)
+			end
+			local installed = pcall(function() closure_env.GridMinMax = grid_min_max_wrapper end)
+			if not installed then grid_min_max_wrapper = nil end
+		end
+		if type(closure_env) == "table" and type(saved_hex_align) == "function" then
+			hex_align_wrapper = function(...)
+				local args = Pack(...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_hex_align(...))
+				run.hex_align_calls = run.hex_align_calls + 1
+				Log("HEX_ALIGN", {
+					run_id = run.id, proc = CurrentProc(run), call_index = run.hex_align_calls,
+					args = DescribePacked(args), results = DescribePacked(results),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				return ReturnPacked(results)
+			end
+			local installed = pcall(function() closure_env.HexGetNearestCenter = hex_align_wrapper end)
+			if not installed then hex_align_wrapper = nil end
+		end
+		if type(closure_env) == "table" and type(saved_resource_info) == "function" then
+			resource_info_wrapper = function(...)
+				local args = Pack(...)
+				local rand_before = RandLast(generator)
+				local results = Pack(saved_resource_info(...))
+				run.resource_info_calls = run.resource_info_calls + 1
+				Log("RESOURCE_INFO", {
+					run_id = run.id, proc = CurrentProc(run), call_index = run.resource_info_calls,
+					args = DescribePacked(args), results = DescribePacked(results),
+					result_1_fields = ScalarFields(results[1]),
+					rand_before = tostring(rand_before), rand_after = tostring(RandLast(generator)),
+				})
+				return ReturnPacked(results)
+			end
+			local installed = pcall(function() closure_env.GenerateResourceInfo = resource_info_wrapper end)
+			if not installed then resource_info_wrapper = nil end
+		end
+
+		local results = Pack(pcall(original_on_generate, generator, env, ...))
+		if type(rhelpers) == "table" then
+			if rrand_wrapper and rhelpers[2] == rrand_wrapper then rhelpers[2] = saved_rrand end
+			if grand_wrapper and rhelpers[5] == grand_wrapper then rhelpers[5] = saved_grand end
+		end
+		if rm_print_wrapper and env.rm_print == rm_print_wrapper then env.rm_print = saved_rm_print end
+		if factory_wrapper and env.GenMarkerObj == factory_wrapper then env.GenMarkerObj = saved_factory end
+		if playable_wrapper and env.GetPlayableArea == playable_wrapper then env.GetPlayableArea = saved_playable end
+		if type(closure_env) == "table" then
+			if grid_min_max_wrapper and closure_env.GridMinMax == grid_min_max_wrapper then
+				pcall(function() closure_env.GridMinMax = saved_grid_min_max end)
+			end
+			if hex_align_wrapper and closure_env.HexGetNearestCenter == hex_align_wrapper then
+				pcall(function() closure_env.HexGetNearestCenter = saved_hex_align end)
+			end
+			if resource_info_wrapper and closure_env.GenerateResourceInfo == resource_info_wrapper then
+				pcall(function() closure_env.GenerateResourceInfo = saved_resource_info end)
+			end
+		end
+		Log("ON_GENERATE_LOGIC_END", {
+			run_id = run.id, map = MapName(map), ok = Bool(results[1]),
+			error = results[1] and "none" or tostring(results[2]),
+			factory_calls = run.factory_calls, warning_calls = run.warning_calls,
+			rrand_calls = run.rrand_calls, grand_calls = run.grand_calls,
+			playable_area_calls = run.playable_area_calls,
+			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
+			resource_info_calls = run.resource_info_calls,
+			factory_duplicate_calls = run.factory_duplicate_calls,
+		})
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
+	end
+
+	State.enrichment_spread_generate_wrapper = generate_wrapper
+	State.enrichment_spread_do_generate_wrapper = do_generate_wrapper
+	State.enrichment_spread_proc_start_wrapper = proc_start_wrapper
+	State.enrichment_spread_proc_end_wrapper = proc_end_wrapper
+	State.enrichment_spread_on_generate_wrapper = on_generate_wrapper
+	generator_class.Generate = generate_wrapper
+	generator_class.DoGenerate = do_generate_wrapper
+	generator_class.ProcStart = proc_start_wrapper
+	generator_class.ProcEnd = proc_end_wrapper
+	generator_class.OnGenerateLogic = on_generate_wrapper
+	State.enrichment_spread_patch_version = PATCH_VERSION
+	Log("PATCH_INSTALLED", { reason = tostring(reason or "module-load"), version = PATCH_VERSION })
+	return true
+end
+
+SuperBigMap.EnrichmentSpreadDiagnostics = Diagnostics
+Diagnostics.PatchGenerator("module-load")

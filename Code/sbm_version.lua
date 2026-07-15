@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 47: retain the original fine-grained expansion controls while
--- expanding its former first stage into source capture, transform, and additional-generation gates.
-SuperBigMap.GENERATOR_PATCH_VERSION = 47
+-- (sbm_map_generation). Bumped to 48: add a read-only generator/factory/spread comparison layer
+-- beneath the expansion wrapper so step-01-on and pure-vanilla runs expose identical trace points.
+SuperBigMap.GENERATOR_PATCH_VERSION = 48

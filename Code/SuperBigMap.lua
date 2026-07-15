@@ -18,6 +18,8 @@ if DebugLog then
 		enabled = Config.ENABLE_MOD ~= false,
 		terrain = Config.TERRAIN_SIZE,
 		grid = Config.SECTOR_GRID,
+		expansion_step_01 = Config.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true,
+		enrichment_spread_comparison = Config.DEBUG_ENRICHMENTSPREADCOMPARISON == true,
 	})
 end
 

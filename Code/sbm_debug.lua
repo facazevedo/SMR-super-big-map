@@ -12,6 +12,7 @@
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
 --   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement,
 --   RmgPlacementExhaustive, RmgAlignmentExhaustive, EnrichmentPositionsExhaustive,
+--   EnrichmentSpreadComparison,
 --   Stretch, Loading, LoadTime, LoadingSteps,
 --   LoadingInvestigation,
 --   UndergroundAccess,
