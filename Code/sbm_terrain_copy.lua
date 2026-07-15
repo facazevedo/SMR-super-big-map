@@ -1350,6 +1350,8 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
 	local box_fn = Global("box")
 	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
 	if type(box_fn) ~= "function" or type(point_fn) ~= "function" then return 0 end
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
 	local sh_tiles = map.SuperBigMapSourceHeightTiles or map.SuperBigMapGeneratorHeightTiles
@@ -1367,6 +1369,8 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	end
 	local scale_x = (full_tw + 0.0) / sw_tiles
 	local scale_y = (full_th + 0.0) / sh_tiles
+	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
+	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	local function is_marker(obj)
 		return IsImportantSectorObject(obj) -- resource deposit markers (surface/subsurface/terrain)
@@ -1410,11 +1414,42 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 				if not pos then return end
 				local ox, oy = PointXY(pos)
 				if type(ox) ~= "number" or type(oy) ~= "number" then return end
-				local oz
-				pcall(function() oz = pos:z() end)
-				local nx, ny = math.floor(ox * scale_x + 0.5), math.floor(oy * scale_y + 0.5)
+				local capture_owner = obj
+				if type(capture_owner.SuperBigMapNativeSourceX) ~= "number"
+					and type(obj.marker) == "table"
+					and type(obj.marker.SuperBigMapNativeSourceX) == "number" then
+					capture_owner = obj.marker
+				end
+				local source_x = type(capture_owner.SuperBigMapNativeSourceX) == "number"
+					and capture_owner.SuperBigMapNativeSourceX or ox
+				local source_y = type(capture_owner.SuperBigMapNativeSourceY) == "number"
+					and capture_owner.SuperBigMapNativeSourceY or oy
+				local oz = type(capture_owner.SuperBigMapNativeSourceZ) == "number"
+					and capture_owner.SuperBigMapNativeSourceZ or nil
+				if oz == nil then pcall(function() oz = pos:z() end) end
+				local raw_nx = math.floor(source_origin_x
+					+ (source_x - source_origin_x) * scale_x + 0.5)
+				local raw_ny = math.floor(source_origin_y
+					+ (source_y - source_origin_y) * scale_y + 0.5)
+				local nx, ny = raw_nx, raw_ny
+				local captured_native = type(capture_owner.SuperBigMapNativeSourceX) == "number"
+					and type(capture_owner.SuperBigMapNativeSourceY) == "number"
+				if captured_native and type(world_to_hex) == "function"
+					and type(hex_to_world) == "function" then
+					local ok_h, q, r = pcall(world_to_hex, point_fn(raw_nx, raw_ny))
+					if ok_h and type(q) == "number" and type(r) == "number" then
+						local ok_w, aligned_x, aligned_y = pcall(hex_to_world, q, r)
+						if ok_w and type(aligned_x) == "number" and type(aligned_y) == "number" then
+							nx, ny = aligned_x, aligned_y
+						end
+					end
+					capture_owner.SuperBigMapRawStretchedX = raw_nx
+					capture_owner.SuperBigMapRawStretchedY = raw_ny
+					capture_owner.SuperBigMapExpectedStretchedX = nx
+					capture_owner.SuperBigMapExpectedStretchedY = ny
+				end
 				local np = type(oz) == "number" and point_fn(nx, ny, oz) or point_fn(nx, ny)
-				if cfg_bool("EXPANSION_STEP_08_RESNAP_ENRICHMENT_Z", true)
+				if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true)
 					and type(np.SetTerrainZ) == "function" then
 					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 					if ok_z and pz then np = pz end
@@ -1439,8 +1474,11 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 						local nx2, ny2 = PointXY(np)
 						StretchLog("marker sample", {
 							n = sample_n, class = tostring(obj.class),
+							source_xy = tostring(source_x) .. "," .. tostring(source_y),
 							old_xy = tostring(ox) .. "," .. tostring(oy),
+							raw_scaled_xy = tostring(raw_nx) .. "," .. tostring(raw_ny),
 							new_xy = tostring(nx2) .. "," .. tostring(ny2),
+							captured_native = tostring(captured_native),
 						})
 					end
 				end
@@ -1849,7 +1887,7 @@ local function RestoreEntranceBadgePositions(map, reason)
 end
 
 local function PatchEntranceBadgePosition()
-	if not cfg_bool("EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN", false) then return false end
+	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	local State = SuperBigMap.State or {}
 	SuperBigMap.State = State
 	State.entrance_badge_place_sign_originals = State.entrance_badge_place_sign_originals or {}

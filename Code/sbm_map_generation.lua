@@ -735,6 +735,8 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	return true
 end
 
+local CaptureGeneratedNativeEnrichments
+
 -- Finalize an expanded map after generation (NOT a 2x2 tiler despite the legacy
 -- "quadrant" markers): attach the pending source/generator markers, settle the engine,
 -- and re-apply bounds/sectors. The frame is filled by the sector-mirror plan.
@@ -794,6 +796,7 @@ local function FinalizeExpandedMap(map)
 
 	map.SuperBigMapQuadrantCopyPending = false
 	pending_maps[map.name or false] = nil
+	CaptureGeneratedNativeEnrichments(map, "FinalizeExpandedMap")
 	DebugPrint(string.format("expanded map finalized: %s (%s x %s)",
 		tostring(map.name), tostring(map_width), tostring(map_height)))
 
@@ -915,6 +918,18 @@ local function GenRandCensus(map, label)
 	end
 	GenRandLog("census end", { label = tostring(label), map = tostring(map.name) })
 	if type(resume) == "function" then pcall(resume, "SBMGenRandCensus") end
+end
+
+CaptureGeneratedNativeEnrichments = function(map, label)
+	if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false) then return 0 end
+	local deposits = SuperBigMap.DepositRules
+	if deposits and type(deposits.CaptureNativeEnrichmentPositions) == "function" then
+		local ok, count = pcall(deposits.CaptureNativeEnrichmentPositions, map, label)
+		if ok then return count or 0 end
+		DebugPrint("native enrichment capture ERROR: " .. tostring(count))
+	end
+	if map then map.SuperBigMapNativeEnrichmentCapturePending = true end
+	return 0
 end
 
 -- Snapshot of every size/border input the generator derives placement from.
@@ -3838,6 +3853,7 @@ local function PatchRandomMapGenerator()
 						error(results[2])
 					end
 					GenRandCensus(map, "post-gen NATIVE")
+					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
 					return Unpack(results, 2)
 				end
 				local profiler = SuperBigMap.LoadingProfiler
@@ -3845,9 +3861,9 @@ local function PatchRandomMapGenerator()
 					"RandomMapGenerator.DoGenerate native body",
 					{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
 						detected_height_tiles = cur_h_tiles }, map) or false
-				if not load_token then return original_do_generate(self, map, ...) end
 				local function complete(...)
-					profiler.End(load_token, { result_count = select("#", ...) }, true)
+					if load_token then profiler.End(load_token, { result_count = select("#", ...) }, true) end
+					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
 					return ...
 				end
 				return complete(original_do_generate(self, map, ...))
@@ -4256,6 +4272,7 @@ local function PatchRandomMapGenerator()
 				end
 			end
 			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
+			CaptureGeneratedNativeEnrichments(map, "DoGenerate expanded source complete")
 			-- Spike audits (DEBUG_SPIKES): the generated map, and -- after the UNDERGROUND
 			-- generation, which is when the passage pairing touches MainMap -- the surface too.
 			SpikeAudit(map, "post-gen " .. tostring(self.BlankMap))
@@ -4575,7 +4592,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							map, "surface before stretch", true)
 					end
 					SetLoadingPhase("Stretching the surface terrain")
-					if cfg_bool("EXPANSION_STEP_06_STRETCH_TERRAIN", true) then
+					if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
 						StretchLog("stretch branch: -> StretchSourceToFull")
 						local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
 						-- The next call mutates terrain heights, so the native source-grid buildability
@@ -4589,7 +4606,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						InvestigationEnd(spike_token, nil, true)
 					else
 						ok_stretch, n_grids = true, 0
-						StretchLog("stretch branch: terrain stretch skipped (expansion step 06 disabled)")
+						StretchLog("stretch branch: terrain stretch skipped (expansion step 02 disabled)")
 					end
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
@@ -4625,6 +4642,16 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						InvestigationSafeCall("surface enrichment positions: after stretch", map,
 							position_deposits.LogEnrichmentPositionCensus,
 							map, "surface after marker stretch before topups", false)
+					end
+					if position_deposits
+						and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
+						StretchLog("stretch branch: -> VerifyNativeEnrichmentTransform")
+						local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
+							map, "surface after marker transform")
+						if verified ~= true then
+							error("native surface enrichment transformation verification failed (mismatches="
+								.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
+						end
 					end
 				end
 				ResumeCombinedPassEdits("after surface marker movement")
@@ -4771,7 +4798,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				local spike_token = InvestigationBegin("surface: spike audit post-density", map)
 				SpikeAudit(map, "surface post-density-suite")
 				InvestigationEnd(spike_token, nil, true)
-				if cfg_bool("EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS", true) then
+				if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
 				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
@@ -4812,7 +4839,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				else
-					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 10 disabled)")
+					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 02 disabled)")
 				end
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
@@ -5315,7 +5342,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			SetLoadingPhase("Stretching the underground terrain")
 			local ok_s, n_grids = true, 0
-			if cfg_bool("EXPANSION_STEP_06_STRETCH_TERRAIN", true) then
+			if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
 				StretchLog("underground stretch: -> StretchSourceToFull")
 				local terrain_token = InvestigationBegin("underground: stretch all terrain grids", map)
 				ok_s, n_grids = StretchSourceToFull(map, false)
@@ -5325,7 +5352,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground terrain stretch did not complete its height/type grids")
 				end
 			else
-				StretchLog("underground stretch: terrain stretch skipped (expansion step 06 disabled)")
+				StretchLog("underground stretch: terrain stretch skipped (expansion step 02 disabled)")
 			end
 			spike_token = InvestigationBegin("underground: spike audit post-terrain", map)
 			SpikeAudit(map, "underground post-StretchSourceToFull")
@@ -5354,6 +5381,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						position_deposits.LogEnrichmentPositionCensus,
 						map, "underground after marker stretch before topups", false)
 				end
+				if position_deposits
+					and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
+					StretchLog("underground stretch: -> VerifyNativeEnrichmentTransform")
+					local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
+						map, "underground after marker transform")
+					if verified ~= true then
+						error("native underground enrichment transformation verification failed (mismatches="
+							.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
+					end
+				end
 			end
 			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
 			if type(MoveEntranceVisualsToScale) == "function" then
@@ -5376,7 +5413,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- CurrentMapChangeDone -- too late. Correctness wins here: synchronously rebuild final
 			-- passability and buildability, invalidate every cached pool, and seed connectivity from
 			-- the real underground entrances before any enrichment is accepted or moved.
-			if cfg_bool("EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS", true) then
+			if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
 				local terrain_api2 = Global("terrain")
 				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
@@ -5434,7 +5471,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
 				end
 			else
-				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 10 disabled)")
+				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 02 disabled)")
 			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
 			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
@@ -5808,7 +5845,7 @@ end
 -- across the eventual switch. No terrain flatten/sculpt operation is added here: entrance objects
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
 local function PatchDeferredUndergroundAccess(source)
-	if not cfg_bool("EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN", false) then return false end
+	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	UndergroundAccessLog("map-slot gate patch check", {
@@ -6097,24 +6134,21 @@ MapGeneration.ForceFramePassable = ForceFramePassable
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 
 function MapGeneration.ApplyModBehavior()
-	local allocate_expanded = cfg_bool("EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN", false)
-	local generate_source = cfg_bool("EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE", false)
-	if not allocate_expanded then
-		-- Remove every expansion-only wrapper first. Step 02 can then reinstall only the
-		-- generator wrapper, which is a native-size no-op when no expanded target exists.
+	local generate_source = cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+	local transform_source = cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false)
+	if not generate_source then
 		MapGeneration.RestoreVanillaBehavior()
-		if generate_source then
-			PatchRandomMapGenerator()
-			return true
-		end
 		return false
 	end
-	-- The Generate wrapper owns step 01 allocation; its DoGenerate branch independently
-	-- obeys step 02 when deciding whether to expose the native source-size view.
+	-- Remove any stage-02 wrappers left by an in-session config reload, then install the
+	-- exact-vanilla generation wrapper owned by stage 01.
+	if not transform_source then MapGeneration.RestoreVanillaBehavior() end
 	PatchRandomMapGenerator()
-	PatchPassagePairing()
-	PatchEntranceBadgePosition()
-	PatchDeferredUndergroundAccess("ApplyModBehavior")
+	if transform_source then
+		PatchPassagePairing()
+		PatchEntranceBadgePosition()
+		PatchDeferredUndergroundAccess("ApplyModBehavior")
+	end
 	return true
 end
 
@@ -6202,15 +6236,13 @@ SuperBigMap.MapGeneration = MapGeneration
 -- grid and overflows GSRP ("GridStableRandomPosSimple: size < GSRP_MAX_SIZE"). The boot/ChangingMap
 -- re-installs still handle later class rebuilds (which reset the methods to vanilla).
 local module_config = SuperBigMap.Config or {}
-local module_allocate_expanded = module_config.EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN == true
-local module_generate_source = module_config.EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE == true
+local module_generate_source = module_config.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true
+local module_transform_source = module_config.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE == true
 if module_config.ENABLE_MOD ~= false
-	and (module_allocate_expanded or module_generate_source)
+	and module_generate_source
 	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	PatchRandomMapGenerator()
-	if module_allocate_expanded then
-		-- These wrappers support the expanded allocation and are not part of native-source
-		-- generation. Keep them absent when only step 02 is enabled on a vanilla allocation.
+	if module_transform_source then
 		PatchPassagePairing()
 		PatchEntranceBadgePosition()
 		PatchDeferredUndergroundAccess("module load")

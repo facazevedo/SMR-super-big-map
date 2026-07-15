@@ -544,57 +544,19 @@ config.MirrorPlanSettleMs = 5000
 -- ============================================================================
 -- CORRECTED ENRICHMENT EXPANSION PIPELINE -- INDIVIDUAL STEP SWITCHES
 -- ============================================================================
--- These switches are the configuration contract for the 20-stage corrected expansion
--- algorithm. Keep all true for the complete pipeline. They are intentionally independent so
--- a diagnostic run can stop one stage from executing and show exactly where coordinates,
--- density, or repulsion first diverge. Some stages depend on earlier stages; disabling a
--- prerequisite is an expert diagnostic mode and may intentionally leave the generated map
--- incomplete. No disabled stage may silently fall back to (0,0) or bypass candidate validation.
+-- These three switches are the complete corrected expansion pipeline. Each switch owns one
+-- coherent transaction; no internal correction is exposed as a separate optional stage.
+-- Disabling all three restores pure vanilla allocation, generation, and placement behavior.
 --
--- 01: Allocate the final expanded terrain and sector-grid storage before random generation.
--- False resolves terrain/grid settings to vanilla regardless of the primary settings above.
--- Enabling this without step 02 intentionally exposes the oversized allocation to vanilla RMG
--- and may hit the engine's stable-position size limit; that combination is diagnostic only.
-config.ExpansionStep01AllocateExpandedTerrain = true
--- 02: Run the random generator through the native source-size view and vanilla random stream.
--- This depends on step 01 for an expanded target; with step 01 off it is a native-size no-op.
-config.ExpansionStep02GenerateVanillaSource = true
--- 03: Preserve vanilla enrichment borders, counts, spacing, and repulsion during generation.
-config.ExpansionStep03PreserveVanillaEnrichmentRules = true
--- 04: Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
-config.ExpansionStep04RejectInvalidNativeCandidates = false
--- 05: Capture every native enrichment coordinate and target shortfall before stretching.
-config.ExpansionStep05CapturePreStretchEnrichments = true
--- 06: Stretch the generated source terrain grids to the full expanded allocation.
-config.ExpansionStep06StretchTerrain = false
--- 07: Scale every native enrichment's X/Y coordinate by the exact terrain scale.
-config.ExpansionStep07ScaleNativeEnrichmentXY = false
--- 08: Re-snap scaled enrichments to the final live terrain height without changing X/Y.
-config.ExpansionStep08ResnapEnrichmentZ = false
--- 09: Verify each native post-stretch coordinate against its captured scaled coordinate.
-config.ExpansionStep09VerifyNativeScale = false
--- 10: Rebuild final passability and buildability before selecting any added enrichment.
-config.ExpansionStep10RebuildGameplayGrids = false
--- 11: Build the shared coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
-config.ExpansionStep11BuildEnrichmentOccupancy = false
--- 12: Calculate resource, effect, ordinary-anomaly, and breakthrough additions/shortfalls.
-config.ExpansionStep12CalculateEnrichmentAdditions = false
--- 13: Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
-config.ExpansionStep13ValidateEnrichmentCandidates = false
--- 14: Restrict each family to its configured region (including the anomaly outer ring).
-config.ExpansionStep14ApplyCategoryRegions = false
--- 15: Run the family selector (randomized vanilla placement or breakthrough farthest-point).
-config.ExpansionStep15SelectCategoryCandidates = false
--- 16: Reserve every accepted world coordinate and aligned hex before selecting the next marker.
-config.ExpansionStep16ReserveCandidatePositions = false
--- 17: Perform final alignment and revalidate the aligned coordinate/hex before construction.
-config.ExpansionStep17AlignAndRevalidateCandidates = false
--- 18: Construct enrichment markers only after their final candidate passes every enabled rule.
-config.ExpansionStep18CreateEnrichmentMarkers = false
--- 19: Register surface markers with sectors and configure underground proximity reveal.
-config.ExpansionStep19RegisterAndRevealMarkers = false
--- 20: Audit final counts, coordinates, hexes, repulsion, ring routing, and breakthrough spread.
-config.ExpansionStep20AuditFinalEnrichments = false
+-- 01: Allocate the expanded destination, generate the source through an exact vanilla-sized
+-- view, and capture every original enrichment coordinate before any geometric transformation.
+config.ExpansionStep01GenerateAndCaptureVanillaSource = true
+-- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
+-- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
+config.ExpansionStep02StretchAndTransformVanillaSource = false
+-- 03: Generate only the additional enrichments required by the increased area, treating every
+-- transformed native enrichment as an immutable repulsion obstacle, then register and audit them.
+config.ExpansionStep03GenerateAdditionalEnrichments = false
 
 -- Expanded-map allocation. Controlled by SuperBigMapTerrainSize above
 -- ("expanded" enables it, "vanilla" disables it). New random surface maps are
@@ -782,25 +744,10 @@ config.QuadrantCopyForceExpandedTiles = 8192
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.QuadrantCopyLimitGeneratorToSource = true
 
--- RMG PLACEMENT AUTO-FIT (legacy fallback in sbm_rmg_placement.lua). This changes native
--- spacing/border inputs before placement. Keep it OFF so every position that vanilla can place
--- remains bit-identical; the vanilla-first completion path below supplies only missing results.
-config.EnableRmgPlacementFix = false
--- VANILLA-FIRST ENRICHMENT COMPLETION (sbm_map_generation.lua). The engine's `grand` helper
--- first runs unchanged, including its normal spacing search and deterministic random stream. If
--- it returns fewer positions than this run actually requested, SBM retains every returned
--- position and samples only the missing complement from the ORIGINAL valid candidate grid with
--- spacing removed. This fixes the engine fallback bug (it retries on an already-eroded clone)
--- without changing terrain masks, requested counts, successful vanilla positions, or the native
--- placement-search random stream.
--- It is count-agnostic: 6/8, 8/9, 13/27, etc. all use requested - returned at runtime, and it
--- covers resource, ordinary anomaly, and effect-deposit `find_all` searches on both maps.
-config.CompleteNativeEnrichmentShortfalls = true
--- Reject any repeated raw coordinate or repeated final aligned hex before it reaches a marker
--- factory. Ordinary enrichments retain vanilla's randomized spacing-aware `grand/find_all`
--- selection and retry rules. Breakthroughs use their separate farthest-point recovery because
--- the stock private GridMinMax path can return an exhausted (0,0) result.
-config.EnableNativeAlignedHexCollisionRepair = true
+-- Legacy RMG placement tuning retained for forensic code paths. The corrected three-stage
+-- pipeline hard-disables the auto-fit, native-shortfall completion, and native-candidate repair
+-- activation flags so stage 01 remains an exact vanilla generation pass.
+-- The dormant tuning values below have no effect while the legacy activation flags are disabled.
 -- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
 -- during generation. This recovers the candidate cells the border erosion ate and is
 -- the main lever that revives FreeTech (whose border defaults to max_border ->
@@ -1002,15 +949,21 @@ end
 
 local C = {}
 
+local expansion_step_01 = as_bool(config.ExpansionStep01GenerateAndCaptureVanillaSource)
+local expansion_step_02 = expansion_step_01
+	and as_bool(config.ExpansionStep02StretchAndTransformVanillaSource)
+local expansion_step_03 = expansion_step_02
+	and as_bool(config.ExpansionStep03GenerateAdditionalEnrichments)
+
 -- Lifecycle / master
 C.ENABLE_MOD = true
 
 -- Map size + sector grid (master settings)
-C.TERRAIN_SIZE = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.TERRAIN_SIZE = expansion_step_01
 	and config.SuperBigMapTerrainSize or "vanilla"
-C.SECTOR_GRID = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.SECTOR_GRID = expansion_step_01
 	and config.SuperBigMapSectorGrid or "vanilla"
-C.FULL_MAP_PLAYABLE = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.FULL_MAP_PLAYABLE = expansion_step_01
 	and as_bool(config.SuperBigMapFullMapPlayable)
 
 -- Debug logging: master + per-scope (see sbm_debug.lua). Logger reads C.DEBUG_<SCOPE>.
@@ -1058,7 +1011,7 @@ C.DEBUG_CHOSENMAP     = as_bool(config.DebugChosenMap)
 
 -- Settle delay (ms) the post-load mirror plan waits after sectors exist before copying.
 C.MIRROR_PLAN_SETTLE_MS = as_number(config.MirrorPlanSettleMs, 5000)
-C.SECTOR_MIRROR_PLAN_AT_START = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.SECTOR_MIRROR_PLAN_AT_START = expansion_step_02
 	and as_bool(config.SectorMirrorPlanAtStart)
 C.MIRROR_DECOR_SKIP_EVERY_NTH = as_number(config.MirrorDecorSkipEveryNth, 0)
 C.MIRROR_SKIP_EDGE_TOUCHING_DECOR = as_bool(config.MirrorSkipEdgeTouchingDecor)
@@ -1072,20 +1025,20 @@ C.RESHUFFLE_SEARCH_RADIUS_TILES = as_number(config.ReshuffleSearchRadiusTiles, 1
 C.CLEAR_INITIAL_CONCRETE_IMPRINT = as_bool(config.ClearInitialConcreteImprint)
 C.CONCRETE_IMPRINT_MAX_TILES = as_number(config.ConcreteImprintMaxTiles, 0)
 C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
-C.RESPACE_ANOMALIES_TO_VANILLA = as_bool(config.ExpansionStep15SelectCategoryCandidates)
+C.RESPACE_ANOMALIES_TO_VANILLA = expansion_step_03
 	and as_bool(config.RespaceAnomaliesToVanilla)
-C.EVEN_OUT_DEPOSIT_DENSITY = as_bool(config.ExpansionStep15SelectCategoryCandidates)
+C.EVEN_OUT_DEPOSIT_DENSITY = expansion_step_03
 	and as_bool(config.EvenOutDepositDensity)
 C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
-C.TOPUP_RESOURCES = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
+C.TOPUP_RESOURCES = expansion_step_03
 	and as_bool(config.TopUpResources)
-C.TOPUP_ANOMALIES = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
+C.TOPUP_ANOMALIES = expansion_step_03
 	and as_bool(config.TopUpAnomalies)
-C.TOPUP_VISTAS = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
+C.TOPUP_VISTAS = expansion_step_03
 	and as_bool(config.TopUpVistas)
-C.TOPUP_RESEARCH_SITES = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
+C.TOPUP_RESEARCH_SITES = expansion_step_03
 	and as_bool(config.TopUpResearchSites)
-C.TOPUP_MORALE_VISTAS = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
+C.TOPUP_MORALE_VISTAS = expansion_step_03
 	and as_bool(config.TopUpMoraleVistas)
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
@@ -1138,71 +1091,40 @@ C.OVERVIEW_FOV_4_3 = as_number(config.OverviewFovX4_3, 3400)
 C.OVERVIEW_FAR_Z = as_number(config.OverviewFarZ, 12000000)
 C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
 
--- Corrected enrichment expansion pipeline: individual stage switches.
-C.EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
-C.EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE = as_bool(config.ExpansionStep02GenerateVanillaSource)
-C.EXPANSION_STEP_03_PRESERVE_VANILLA_ENRICHMENT_RULES = as_bool(config.ExpansionStep03PreserveVanillaEnrichmentRules)
-C.EXPANSION_STEP_04_REJECT_INVALID_NATIVE_CANDIDATES = as_bool(config.ExpansionStep04RejectInvalidNativeCandidates)
-C.EXPANSION_STEP_05_CAPTURE_PRE_STRETCH_ENRICHMENTS = as_bool(config.ExpansionStep05CapturePreStretchEnrichments)
-C.EXPANSION_STEP_06_STRETCH_TERRAIN = as_bool(config.ExpansionStep06StretchTerrain)
-C.EXPANSION_STEP_07_SCALE_NATIVE_ENRICHMENT_XY = as_bool(config.ExpansionStep07ScaleNativeEnrichmentXY)
-C.EXPANSION_STEP_08_RESNAP_ENRICHMENT_Z = as_bool(config.ExpansionStep08ResnapEnrichmentZ)
-C.EXPANSION_STEP_09_VERIFY_NATIVE_SCALE = as_bool(config.ExpansionStep09VerifyNativeScale)
-C.EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS = as_bool(config.ExpansionStep10RebuildGameplayGrids)
-C.EXPANSION_STEP_11_BUILD_ENRICHMENT_OCCUPANCY = as_bool(config.ExpansionStep11BuildEnrichmentOccupancy)
-C.EXPANSION_STEP_12_CALCULATE_ENRICHMENT_ADDITIONS = as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
-C.EXPANSION_STEP_13_VALIDATE_ENRICHMENT_CANDIDATES = as_bool(config.ExpansionStep13ValidateEnrichmentCandidates)
-C.EXPANSION_STEP_14_APPLY_CATEGORY_REGIONS = as_bool(config.ExpansionStep14ApplyCategoryRegions)
-C.EXPANSION_STEP_15_SELECT_CATEGORY_CANDIDATES = as_bool(config.ExpansionStep15SelectCategoryCandidates)
-C.EXPANSION_STEP_16_RESERVE_CANDIDATE_POSITIONS = as_bool(config.ExpansionStep16ReserveCandidatePositions)
-C.EXPANSION_STEP_17_ALIGN_AND_REVALIDATE_CANDIDATES = as_bool(config.ExpansionStep17AlignAndRevalidateCandidates)
-C.EXPANSION_STEP_18_CREATE_ENRICHMENT_MARKERS = as_bool(config.ExpansionStep18CreateEnrichmentMarkers)
-C.EXPANSION_STEP_19_REGISTER_AND_REVEAL_MARKERS = as_bool(config.ExpansionStep19RegisterAndRevealMarkers)
-C.EXPANSION_STEP_20_AUDIT_FINAL_ENRICHMENTS = as_bool(config.ExpansionStep20AuditFinalEnrichments)
+-- Corrected enrichment expansion pipeline: three coherent stage switches.
+C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
+	expansion_step_01
+C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
+	expansion_step_02
+C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS =
+	expansion_step_03
 C.EXPANSION_ENRICHMENT_STEPS = {
-	C.EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN,
-	C.EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE,
-	C.EXPANSION_STEP_03_PRESERVE_VANILLA_ENRICHMENT_RULES,
-	C.EXPANSION_STEP_04_REJECT_INVALID_NATIVE_CANDIDATES,
-	C.EXPANSION_STEP_05_CAPTURE_PRE_STRETCH_ENRICHMENTS,
-	C.EXPANSION_STEP_06_STRETCH_TERRAIN,
-	C.EXPANSION_STEP_07_SCALE_NATIVE_ENRICHMENT_XY,
-	C.EXPANSION_STEP_08_RESNAP_ENRICHMENT_Z,
-	C.EXPANSION_STEP_09_VERIFY_NATIVE_SCALE,
-	C.EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS,
-	C.EXPANSION_STEP_11_BUILD_ENRICHMENT_OCCUPANCY,
-	C.EXPANSION_STEP_12_CALCULATE_ENRICHMENT_ADDITIONS,
-	C.EXPANSION_STEP_13_VALIDATE_ENRICHMENT_CANDIDATES,
-	C.EXPANSION_STEP_14_APPLY_CATEGORY_REGIONS,
-	C.EXPANSION_STEP_15_SELECT_CATEGORY_CANDIDATES,
-	C.EXPANSION_STEP_16_RESERVE_CANDIDATE_POSITIONS,
-	C.EXPANSION_STEP_17_ALIGN_AND_REVALIDATE_CANDIDATES,
-	C.EXPANSION_STEP_18_CREATE_ENRICHMENT_MARKERS,
-	C.EXPANSION_STEP_19_REGISTER_AND_REVEAL_MARKERS,
-	C.EXPANSION_STEP_20_AUDIT_FINAL_ENRICHMENTS,
+	C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE,
+	C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE,
+	C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS,
 }
 
 -- Map generation (quadrant tiling)
-C.ENABLE_QUADRANT_MAP_COPY = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.ENABLE_QUADRANT_MAP_COPY = expansion_step_01
 	and as_bool(config.EnableQuadrantMapCopy)
 C.QUADRANT_COPY_SCALE = as_number(config.QuadrantCopyScale, 2)
 C.QUADRANT_MAX_TERRAIN_TILES = as_number(config.QuadrantCopyMaxTerrainTiles, 8192)
 C.QUADRANT_MAX_RANDOM_GENERATOR_TILES = as_number(config.QuadrantCopyMaxRandomGeneratorTiles, 6144)
 C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererNodeTileAlignment, 2048)
-C.EXPANSION_FRAME_MODE = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.EXPANSION_FRAME_MODE = expansion_step_01
 	and as_bool(config.ExpansionFrameMode)
 C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
-C.STRETCH_SCALE_MARKERS = as_bool(config.ExpansionStep07ScaleNativeEnrichmentXY)
+C.STRETCH_SCALE_MARKERS = expansion_step_02
 	and as_bool(config.StretchScaleMarkers)
-C.STRETCH_ENFORCE_SCAN_GATE = as_bool(config.ExpansionStep19RegisterAndRevealMarkers)
+C.STRETCH_ENFORCE_SCAN_GATE = expansion_step_02
 	and as_bool(config.StretchEnforceScanGate)
 C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
-C.STRETCH_UNDERGROUND = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.STRETCH_UNDERGROUND = expansion_step_01
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
-C.STRETCH_MOVE_ENTRANCE_VISUALS = as_bool(config.ExpansionStep07ScaleNativeEnrichmentXY)
+C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_02
 	and as_bool(config.StretchMoveEntranceVisuals)
 C.ALWAYS_SHOW_ENTRANCE_SIGN = as_bool(config.AlwaysShowEntranceSign)
 C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
@@ -1219,35 +1141,29 @@ C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_FRAME_PASSABLE_WRITES = as_bool(config.OptimizeFramePassableWrites)
 C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHandoff)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
-C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.ExpansionStep02GenerateVanillaSource)
+C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.QuadrantCopyLimitGeneratorToSource)
-C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.ExpansionStep02GenerateVanillaSource)
-	and (as_bool(config.EnableRmgPlacementFix)
-		or not as_bool(config.ExpansionStep03PreserveVanillaEnrichmentRules))
-C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS =
-	as_bool(config.ExpansionStep12CalculateEnrichmentAdditions)
-	and as_bool(config.CompleteNativeEnrichmentShortfalls)
-C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR =
-	as_bool(config.ExpansionStep04RejectInvalidNativeCandidates)
-	and as_bool(config.EnableNativeAlignedHexCollisionRepair)
+C.ENABLE_RMG_PLACEMENT_FIX = false
+C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = false
+C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR = false
 C.RMG_PLACEMENT_ZERO_BORDERS = as_bool(config.RmgPlacementZeroBorders)
 C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.6)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
 C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
 C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
 C.RMG_PLACEMENT_ANOMALY_SPACING_CAP = as_number(config.RmgPlacementAnomalySpacingCap, 0.55)
-C.STRETCH_VANILLA_EXACT_PASSBORDER = as_bool(config.ExpansionStep03PreserveVanillaEnrichmentRules)
+C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_01
 	and as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
-C.STRETCH_DETERMINISTIC_PASSAGES = as_bool(config.ExpansionStep07ScaleNativeEnrichmentXY)
+C.STRETCH_DETERMINISTIC_PASSAGES = expansion_step_02
 	and as_bool(config.StretchDeterministicPassages)
-C.PAIRING_SURFACE_BUILDABLE_REBUILD = as_bool(config.ExpansionStep10RebuildGameplayGrids)
+C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_02
 	and as_bool(config.PairingSurfaceBuildableRebuild)
-C.PASSAGE_PAD_SMOOTHING = as_bool(config.ExpansionStep10RebuildGameplayGrids)
+C.PASSAGE_PAD_SMOOTHING = expansion_step_02
 	and as_bool(config.PassagePadSmoothing)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
-C.STRETCH_VANILLA_START_SECTOR = as_bool(config.ExpansionStep19RegisterAndRevealMarkers)
+C.STRETCH_VANILLA_START_SECTOR = expansion_step_02
 	and as_bool(config.StretchVanillaStartSector)
 C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
@@ -1257,13 +1173,12 @@ C.QUADRANT_MAIN_MAP_ONLY = as_bool(config.QuadrantCopyMainMapOnly)
 C.QUADRANT_SURFACE_ONLY = as_bool(config.QuadrantCopySurfaceOnly)
 C.QUADRANT_RANDOM_MAPS_ONLY = as_bool(config.QuadrantCopyRandomMapsOnly)
 C.QUADRANT_PATCH_RANDOM_GENERATOR =
-	(as_bool(config.ExpansionStep01AllocateExpandedTerrain)
-		or as_bool(config.ExpansionStep02GenerateVanillaSource))
+	expansion_step_01
 	and as_bool(config.QuadrantCopyPatchRandomGenerator)
 C.QUADRANT_COPY_ENUM_FLAGS = as_bool(config.QuadrantCopyEnumFlags)
 
 -- Sectors (grid layout + exploration)
-C.ENABLE_VANILLA_SIZED_SECTORS = as_bool(config.ExpansionStep01AllocateExpandedTerrain)
+C.ENABLE_VANILLA_SIZED_SECTORS = expansion_step_01
 	and as_bool(config.EnableVanillaSizedSectors)
 C.SECTOR_UNIFORM_GRID = as_bool(config.VanillaSectorUniformGrid)
 C.SECTOR_USE_SOURCE_QUADRANT = as_bool(config.VanillaSectorUseSourceQuadrant)

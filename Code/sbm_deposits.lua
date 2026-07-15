@@ -39,16 +39,14 @@ local function ExpansionStepEnabled(step)
 end
 
 local function ExpansionAdditionStagesReady(label)
-	for step = 10, 18 do
-		if not ExpansionStepEnabled(step) then
-			local DebugLog = SuperBigMap.DebugLog
-			if DebugLog then
-				DebugLog.Info("Deposits", "enrichment addition pipeline stopped at disabled step", {
-					pipeline = tostring(label or "?"), step = step,
-				})
-			end
-			return false
+	if not ExpansionStepEnabled(3) then
+		local DebugLog = SuperBigMap.DebugLog
+		if DebugLog then
+			DebugLog.Info("Deposits", "additional-enrichment stage disabled", {
+				pipeline = tostring(label or "?"), step = 3,
+			})
 		end
+		return false
 	end
 	return true
 end
@@ -769,7 +767,12 @@ local function PatchBadgeOverlapPrevention()
 	local wrapper = function(marker, ...)
 		local sector, x, y, obstructed, moved = original(marker, ...)
 		local map = marker and type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) or nil
-		if BadgeSpacingEnabledOnMap(map) and IsBadgeMarker(marker)
+		local additional = marker and (marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+			or marker.SuperBigMapBreakthroughRepair == true
+			or marker.SuperBigMapQuadrantClone == true)
+		if additional and BadgeSpacingEnabledOnMap(map) and IsBadgeMarker(marker)
 			and type(x) == "number" and type(y) == "number" then
 			local world_to_hex = Global("WorldToHex")
 			local point_fn = Global("point")
@@ -826,13 +829,20 @@ local function RestoreBadgeOverlapPrevention()
 end
 
 function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
-	if not ExpansionStepEnabled(17) then return 0 end
+	if not ExpansionStepEnabled(3) then return 0 end
 	map = map or Global("CurrentMap")
 	if not BadgeSpacingEnabledOnMap(map) or type(map.MapForEach) ~= "function" then return 0, 0 end
 	local markers = {}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if marker and IsBadgeMarker(marker) then markers[#markers + 1] = marker end
 	end)
+	local function is_additional(marker)
+		return marker and (marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+			or marker.SuperBigMapBreakthroughRepair == true
+			or marker.SuperBigMapQuadrantClone == true)
+	end
 	-- Start with fixed live badges. Unplaced markers are then claimed one at a time; the first
 	-- claimant stays and only a later collision is moved.
 	local occupied = {}
@@ -847,11 +857,13 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 	pcall(map.MapForEach, map, "map", "SubsurfaceDeposit", reserve_standalone)
 	pcall(map.MapForEach, map, "map", "TerrainDeposit", reserve_standalone)
 	for _, marker in ipairs(markers) do
-		if marker.is_placed == true then reserve_object(marker) end
+		-- Native transformed markers are immutable stage-03 obstacles. Reserve their hexes before
+		-- inspecting additions so only an added marker can ever be displaced by this pass.
+		if marker.is_placed == true or not is_additional(marker) then reserve_object(marker) end
 	end
 	local moved, unresolved = 0, 0
 	for _, marker in ipairs(markers) do
-		if marker.is_placed ~= true then
+		if is_additional(marker) and marker.is_placed ~= true then
 			local pos = ObjectPos(marker)
 			local x, y
 			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
@@ -905,6 +917,10 @@ function DepositRules.BadgeHexOccupied(occupied, q, r)
 end
 
 function DepositRules.ApplyModBehavior()
+	if not ExpansionStepEnabled(3) then
+		RestoreBadgeOverlapPrevention()
+		return false
+	end
 	return PatchBadgeOverlapPrevention()
 end
 
@@ -1298,8 +1314,8 @@ end
 -- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
-	if not ExpansionStepEnabled(19) then
-		Log("register skipped", { reason = "expansion step 19 disabled" })
+	if not ExpansionStepEnabled(3) then
+		Log("register skipped", { reason = "expansion step 03 disabled" })
 		return
 	end
 	map = map or Global("CurrentMap")
@@ -1574,21 +1590,84 @@ local function PairRepulsionRadius(a, b)
 	return a.repulse_same + b.repulse_same
 end
 
+-- Stage 01 invariant: capture the generator's native enrichment coordinates exactly once,
+-- independently of diagnostic logging. Stage 02 transforms from these immutable coordinates,
+-- never from a position that another post-generation callback may already have changed.
+function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
+	if not ExpansionStepEnabled(1) then return 0 end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then return 0 end
+	if map.SuperBigMapNativeEnrichmentCaptureDone == true then
+		return tonumber(map.SuperBigMapNativeEnrichmentCaptureCount) or 0
+	end
+	local xxhash = Global("xxhash")
+	local captured = 0
+	local capture_ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker)
+			or marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+			or marker.SuperBigMapBreakthroughRepair == true
+			or marker.SuperBigMapQuadrantClone == true then return end
+		local pos = ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then return end
+		local x, y = pos:xy()
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		local z, position_hash
+		if type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		if type(xxhash) == "function" then
+			local ok_hash, value = pcall(xxhash, pos)
+			if ok_hash then position_hash = value end
+		end
+		marker.SuperBigMapNativeSourceX = x
+		marker.SuperBigMapNativeSourceY = y
+		marker.SuperBigMapNativeSourceZ = z
+		marker.SuperBigMapNativeSourceHash = position_hash
+		-- Retain the original diagnostic field names for existing log-analysis tooling.
+		marker.SuperBigMapDebugPreStretchX = x
+		marker.SuperBigMapDebugPreStretchY = y
+		marker.SuperBigMapDebugPreStretchZ = z
+		marker.SuperBigMapDebugPreStretchHash = position_hash
+		captured = captured + 1
+	end)
+	if not capture_ok then
+		map.SuperBigMapNativeEnrichmentCapturePending = true
+		error("native enrichment coordinate capture failed: " .. tostring(capture_error))
+	end
+	map.SuperBigMapNativeEnrichmentCaptureDone = true
+	map.SuperBigMapNativeEnrichmentCapturePending = false
+	map.SuperBigMapNativeEnrichmentCaptureCount = captured
+	Log("captured native enrichment coordinates", {
+		map = tostring(map.name), reason = tostring(reason or "stage 01"), captured = captured,
+	})
+	return captured
+end
+
 function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)
 	local phase_text = tostring(phase or "")
-	local controlling_step = capture_pre_stretch == true and 5
-		or (string.find(phase_text, "final", 1, true) and 20 or 9)
+	local controlling_step = capture_pre_stretch == true and 1
+		or (string.find(phase_text, "final", 1, true) and 3 or 2)
 	if not ExpansionStepEnabled(controlling_step) then return 0 end
+	map = map or Global("CurrentMap")
+	if capture_pre_stretch == true then
+		DepositRules.CaptureNativeEnrichmentPositions(map, phase)
+	end
 	local DebugLog = SuperBigMap.DebugLog
 	if not (DebugLog and type(DebugLog.On) == "function"
 		and DebugLog.On("EnrichmentPositionsExhaustive") == true) then return 0 end
-	map = map or Global("CurrentMap")
 	if not map or type(map.MapForEach) ~= "function" then return 0 end
 	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local point_fn = Global("point")
 	local xxhash = Global("xxhash")
 	local map_w, map_h = MapWorldSize(map)
 	local source_w = tonumber(map.SuperBigMapSourceWidth) or 0
 	local source_h = tonumber(map.SuperBigMapSourceHeight) or 0
+	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
+	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
 	local generator_tiles = tonumber(map.SuperBigMapGeneratorWidthTiles)
 	local desired_tiles = tonumber(map.SuperBigMapDesiredWidthTiles)
 	local scale = generator_tiles and generator_tiles > 0 and desired_tiles
@@ -1632,25 +1711,31 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 			local ok_hash, value = pcall(xxhash, pos)
 			if ok_hash then position_hash = value end
 		end
-		if capture_pre_stretch == true then
-			marker.SuperBigMapDebugPreStretchX = x
-			marker.SuperBigMapDebugPreStretchY = y
-			marker.SuperBigMapDebugPreStretchZ = z
-			marker.SuperBigMapDebugPreStretchHash = position_hash
-		end
 		local pre_x, pre_y, pre_z, pre_hash
 		-- A cloned top-up can inherit debug fields from its template. They describe the template,
 		-- not the clone, so expose the correlation only for the original native handle.
 		if origin == "native_generated" then
-			pre_x = marker.SuperBigMapDebugPreStretchX
-			pre_y = marker.SuperBigMapDebugPreStretchY
-			pre_z = marker.SuperBigMapDebugPreStretchZ
-			pre_hash = marker.SuperBigMapDebugPreStretchHash
+			pre_x = marker.SuperBigMapNativeSourceX or marker.SuperBigMapDebugPreStretchX
+			pre_y = marker.SuperBigMapNativeSourceY or marker.SuperBigMapDebugPreStretchY
+			pre_z = marker.SuperBigMapNativeSourceZ or marker.SuperBigMapDebugPreStretchZ
+			pre_hash = marker.SuperBigMapNativeSourceHash or marker.SuperBigMapDebugPreStretchHash
 		end
-		local expected_x = type(pre_x) == "number" and scale
-			and math.floor(pre_x * scale + 0.5) or nil
-		local expected_y = type(pre_y) == "number" and scale
-			and math.floor(pre_y * scale + 0.5) or nil
+		local raw_expected_x = type(pre_x) == "number" and scale
+			and math.floor(source_origin_x + (pre_x - source_origin_x) * scale + 0.5) or nil
+		local raw_expected_y = type(pre_y) == "number" and scale
+			and math.floor(source_origin_y + (pre_y - source_origin_y) * scale + 0.5) or nil
+		local expected_x, expected_y = raw_expected_x, raw_expected_y
+		if type(raw_expected_x) == "number" and type(raw_expected_y) == "number"
+			and type(point_fn) == "function" and type(world_to_hex) == "function"
+			and type(hex_to_world) == "function" then
+			local ok_h, eq, er = pcall(world_to_hex, point_fn(raw_expected_x, raw_expected_y))
+			if ok_h and type(eq) == "number" and type(er) == "number" then
+				local ok_w, ex, ey = pcall(hex_to_world, eq, er)
+				if ok_w and type(ex) == "number" and type(ey) == "number" then
+					expected_x, expected_y = ex, ey
+				end
+			end
+		end
 		local q, r
 		if type(world_to_hex) == "function" then
 			local ok_hex, hq, hr = pcall(world_to_hex, pos)
@@ -1662,6 +1747,7 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 			position_hash = position_hash, profile = profile, origin = origin,
 			subtype = marker_subtype(marker, profile), sector = sector,
 			pre_x = pre_x, pre_y = pre_y, pre_z = pre_z, pre_hash = pre_hash,
+			raw_expected_x = raw_expected_x, raw_expected_y = raw_expected_y,
 			expected_x = expected_x, expected_y = expected_y,
 		}
 	end)
@@ -1775,6 +1861,7 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)),
 			pre_stretch_x = tostring(entry.pre_x), pre_stretch_y = tostring(entry.pre_y),
 			pre_stretch_z = tostring(entry.pre_z), pre_stretch_hash = tostring(entry.pre_hash),
+			raw_scaled_x = tostring(entry.raw_expected_x), raw_scaled_y = tostring(entry.raw_expected_y),
 			expected_stretched_x = tostring(entry.expected_x), expected_stretched_y = tostring(entry.expected_y),
 			stretch_delta_x = tostring(entry.expected_x and (entry.x - entry.expected_x)),
 			stretch_delta_y = tostring(entry.expected_y and (entry.y - entry.expected_y)),
@@ -1808,6 +1895,107 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 		duplicate_hex = duplicate_hex, all_pair_repulsion_violations = repulsion_violations,
 	})
 	return #entries
+end
+
+-- Stage 02 invariant: every native marker must finish at the hex-aligned proportional
+-- transformation of the immutable stage-01 coordinate and at that final terrain height.
+-- This audit is behavior-independent: exhaustive logging only adds per-marker detail.
+function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
+	if not ExpansionStepEnabled(2) then return true, { checked = 0, mismatches = 0 } end
+	map = map or Global("CurrentMap")
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	if not map or type(map.MapForEach) ~= "function" or type(point_fn) ~= "function"
+		or type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function" then
+		return false, { checked = 0, mismatches = 0, error = "map/hex APIs unavailable" }
+	end
+	local source_tiles = tonumber(map.SuperBigMapSourceWidthTiles)
+		or tonumber(map.SuperBigMapGeneratorWidthTiles)
+	local source_height_tiles = tonumber(map.SuperBigMapSourceHeightTiles)
+		or tonumber(map.SuperBigMapGeneratorHeightTiles)
+	local desired_tiles = tonumber(map.SuperBigMapDesiredWidthTiles)
+	local desired_height_tiles = tonumber(map.SuperBigMapDesiredHeightTiles)
+	if not source_tiles or source_tiles <= 0 or not source_height_tiles or source_height_tiles <= 0
+		or not desired_tiles or not desired_height_tiles then
+		return false, { checked = 0, mismatches = 0, error = "source/final dimensions unavailable" }
+	end
+	local scale_x = (desired_tiles + 0.0) / source_tiles
+	local scale_y = (desired_height_tiles + 0.0) / source_height_tiles
+	local origin_x = tonumber(map.SuperBigMapSourceX) or 0
+	local origin_y = tonumber(map.SuperBigMapSourceY) or 0
+	local stats = { checked = 0, missing_capture = 0, xy_mismatches = 0, z_mismatches = 0, mismatches = 0 }
+	local DebugLog = SuperBigMap.DebugLog
+	local verify_ok, verify_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker)
+			or marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+			or marker.SuperBigMapBreakthroughRepair == true
+			or marker.SuperBigMapQuadrantClone == true then return end
+		stats.checked = stats.checked + 1
+		local source_x = marker.SuperBigMapNativeSourceX
+		local source_y = marker.SuperBigMapNativeSourceY
+		if type(source_x) ~= "number" or type(source_y) ~= "number" then
+			stats.missing_capture = stats.missing_capture + 1
+			stats.mismatches = stats.mismatches + 1
+			return
+		end
+		local raw_x = math.floor(origin_x + (source_x - origin_x) * scale_x + 0.5)
+		local raw_y = math.floor(origin_y + (source_y - origin_y) * scale_y + 0.5)
+		local ok_h, q, r = pcall(world_to_hex, point_fn(raw_x, raw_y))
+		local ok_w, expected_x, expected_y = false, nil, nil
+		if ok_h and type(q) == "number" and type(r) == "number" then
+			ok_w, expected_x, expected_y = pcall(hex_to_world, q, r)
+		end
+		local pos = ObjectPos(marker)
+		local actual_x, actual_y
+		if pos and type(pos.xy) == "function" then actual_x, actual_y = pos:xy() end
+		local xy_ok = ok_w and type(expected_x) == "number" and type(expected_y) == "number"
+			and actual_x == expected_x and actual_y == expected_y
+		local expected_z, actual_z
+		if ok_w and type(expected_x) == "number" and type(expected_y) == "number" then
+			local expected_point = point_fn(expected_x, expected_y)
+			if type(expected_point.SetTerrainZ) == "function" then
+				local ok_z, terrain_point = pcall(expected_point.SetTerrainZ, expected_point, map)
+				if ok_z and terrain_point and type(terrain_point.z) == "function" then
+					local ok_ez, value = pcall(terrain_point.z, terrain_point)
+					if ok_ez then expected_z = value end
+				end
+			end
+		end
+		if pos and type(pos.z) == "function" then
+			local ok_az, value = pcall(pos.z, pos)
+			if ok_az then actual_z = value end
+		end
+		local z_ok = expected_z ~= nil and actual_z == expected_z
+		if not xy_ok then stats.xy_mismatches = stats.xy_mismatches + 1 end
+		if not z_ok then stats.z_mismatches = stats.z_mismatches + 1 end
+		if not xy_ok or not z_ok then
+			stats.mismatches = stats.mismatches + 1
+			if DebugLog then
+				DebugLog.Error("Deposits", "native enrichment transform mismatch", {
+					reason = tostring(reason or "stage 02"), marker = tostring(marker),
+					class = tostring(marker.class), source_x = source_x, source_y = source_y,
+					raw_x = raw_x, raw_y = raw_y, expected_x = tostring(expected_x),
+					expected_y = tostring(expected_y), actual_x = tostring(actual_x),
+					actual_y = tostring(actual_y), expected_z = tostring(expected_z), actual_z = tostring(actual_z),
+				})
+			end
+		end
+	end)
+	if not verify_ok then
+		stats.mismatches = stats.mismatches + 1
+		stats.error = tostring(verify_error)
+	end
+	map.SuperBigMapNativeTransformVerified = stats.mismatches == 0
+	map.SuperBigMapNativeTransformStats = stats
+	Log("verified native enrichment transformation", {
+		map = tostring(map.name), reason = tostring(reason or "stage 02"), checked = stats.checked,
+		missing_capture = stats.missing_capture, xy_mismatches = stats.xy_mismatches,
+		z_mismatches = stats.z_mismatches, mismatches = stats.mismatches,
+	})
+	return stats.mismatches == 0, stats
 end
 
 
@@ -4290,7 +4478,7 @@ end
 -- slope, and valley score are preference diagnostics. Resource and effect-deposit top-ups must be
 -- outside the ring. The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
-	if not ExpansionStepEnabled(20) then return true end
+	if not ExpansionStepEnabled(3) then return true end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
@@ -4602,12 +4790,11 @@ function DepositRules.PrepareUndergroundReachability(map)
 	return state and state.available == true, state
 end
 
--- Final correctness audit for every resource/anomaly/effect marker, regardless of whether it
--- came from vanilla generation, geometric stretch movement, or a top-up clone. Any marker that
--- is not on the final buildable grid or is not connected by the rover path grid to at least one
--- real underground entrance is moved to the nearest of several random reachable candidates.
+-- Final correctness audit for stage-03 additions only. Native stage-01 markers are immutable
+-- after their verified stage-02 transform and therefore serve only as occupancy/repulsion input.
+-- An added marker that is not reachable is moved to a validated reachable candidate.
 function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
-	if not ExpansionStepEnabled(10) or not ExpansionStepEnabled(13) then
+	if not ExpansionStepEnabled(3) then
 		return true, { checked = 0, invalid = 0, moved = 0, unresolved = 0 }
 	end
 	if not IsUndergroundMap(map) then return true, { checked = 0, moved = 0, unresolved = 0 } end
@@ -4621,7 +4808,12 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	local markers, invalid = {}, {}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if marker and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
+		local additional = marker and (marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+			or marker.SuperBigMapBreakthroughRepair == true
+			or marker.SuperBigMapQuadrantClone == true)
+		if additional and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
 	-- At first underground access no rover or drone has explored this map yet, so no enrichment
 	-- may remain placed after the geometric stretch. Vanilla can nevertheless have placed one
@@ -4860,7 +5052,7 @@ DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 --   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
 --      what moved in), plus a reveal of any hidden scan-gated objects inside it.
 function DepositRules.EnforceScanGateAfterStretch(map)
-	if not ExpansionStepEnabled(19) then return end
+	if not ExpansionStepEnabled(2) then return end
 	if cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
 	map = map or Global("CurrentMap")
 	local city = map and map.City
