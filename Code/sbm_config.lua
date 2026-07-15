@@ -214,6 +214,9 @@ config.DebugRmgPlacementExhaustive = true -- TEMP multi-run verification: native
 -- sandbox-safe marker-factory path still records actual post-snap hashes/classes/subtypes and
 -- correlates collisions with the complete predicted raw-candidate stream. Never moves markers.
 config.DebugRmgAlignmentExhaustive = true -- TEMP: identify remaining same-hex marker pairs
+-- Correlated census of every resource, anomaly, and effect marker before terrain stretch,
+-- immediately after marker scaling, and after the final density suite.
+config.DebugEnrichmentPositionsExhaustive = true
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -968,6 +971,7 @@ C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
 C.DEBUG_RMGALIGNMENTEXHAUSTIVE = as_bool(config.DebugRmgAlignmentExhaustive)
+C.DEBUG_ENRICHMENTPOSITIONSEXHAUSTIVE = as_bool(config.DebugEnrichmentPositionsExhaustive)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
