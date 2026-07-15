@@ -57,7 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 42: add a sandbox-safe, read-only GenMarkerObj trace that audits
--- every actual post-snap alignable marker and correlates duplicate final hashes with the complete
--- raw-candidate prediction stream even when getfenv/debug access is unavailable.
-SuperBigMap.GENERATOR_PATCH_VERSION = 42
+-- (sbm_map_generation). Bumped to 43: capture the exact authored resource/anomaly/effect
+-- repulsion profiles used by post-generation enrichment additions.
+SuperBigMap.GENERATOR_PATCH_VERSION = 43

@@ -1847,6 +1847,40 @@ local function PatchRandomMapGenerator()
 			if type(map) == "table" then
 				map.SuperBigMapExpectedResourceCounts = {}
 				map.SuperBigMapExpectedResourceCountsByLayer = {}
+				-- Snapshot the authored generator/preset distances before the late
+				-- PlaceAnomalies placement transaction can temporarily relax them. The
+				-- post-generation density additions use this to reproduce stock
+				-- MarkDepositLayers pairwise repulsion on the final expanded terrain.
+				map.SuperBigMapVanillaRepulsionProfiles = {
+					Anomaly = {
+						repulse_same = self.AnomalySpacing,
+						repulse_layer = self.AnomalyRepulseSubs,
+						repulse_all = self.AnomalyRepulseAll,
+					},
+					Effects = {
+						repulse_same = self.EffectDepSpacing,
+						repulse_layer = self.EffectDepRepulse,
+						repulse_all = self.EffectDepRepulseAll,
+					},
+					resources = {},
+					resource_presets = {},
+				}
+				local presets = closure_global("Presets", Global("Presets"))
+				local preset_list = type(presets) == "table" and presets.ResourcePreset
+					and presets.ResourcePreset.Default or nil
+				if type(preset_list) == "table" then
+					for _, preset in pairs(preset_list) do
+						if type(preset) == "table" and preset.id ~= nil then
+							map.SuperBigMapVanillaRepulsionProfiles.resource_presets[preset.id] = {
+								preset = preset.id,
+								repulse_same = preset.RepulseSame,
+								repulse_layer = preset.RepulseSameLayer,
+								repulse_all = preset.RepulseAll,
+							}
+						end
+					end
+				end
+				map.SuperBigMapResourcePresetByResource = {}
 				map.SuperBigMapResourceResidualShortfalls = {}
 				map.SuperBigMapResourceTargetCapture = false
 				map.SuperBigMapExpectedAnomalyCounts = {}
@@ -1879,8 +1913,36 @@ local function PatchRandomMapGenerator()
 			local function capture_resource_info(res_info, source)
 				if type(map) ~= "table" or type(res_info) ~= "table" then return false end
 				local captured = 0
+				local profiles = map.SuperBigMapVanillaRepulsionProfiles
+				local presets = closure_global("Presets", Global("Presets"))
+				local preset_list = type(presets) == "table" and presets.ResourcePreset
+					and presets.ResourcePreset.Default or nil
+				local function find_preset(id)
+					local captured_presets = type(profiles) == "table" and profiles.resource_presets
+					local captured = type(captured_presets) == "table" and captured_presets[id] or nil
+					if type(captured) == "table" then return captured end
+					if type(preset_list) ~= "table" or id == nil then return nil end
+					for _, preset in pairs(preset_list) do
+						if type(preset) == "table" and preset.id == id then return preset end
+					end
+					return nil
+				end
 				for resource, info in pairs(res_info) do
 					if type(resource) == "string" and type(info) == "table" then
+						local preset_name = info.preset_name
+						if preset_name ~= nil then
+							map.SuperBigMapResourcePresetByResource[resource] = preset_name
+							local preset = find_preset(preset_name)
+							if preset and type(profiles) == "table"
+								and type(profiles.resources) == "table" then
+								profiles.resources[resource] = {
+									preset = preset_name,
+									repulse_same = preset.repulse_same or preset.RepulseSame,
+									repulse_layer = preset.repulse_layer or preset.RepulseSameLayer,
+									repulse_all = preset.repulse_all or preset.RepulseAll,
+								}
+							end
+						end
 						local layers, total = {}, 0
 						for _, layer in ipairs({ "surf", "subs", "terr" }) do
 							local count = type(info[layer]) == "table" and info[layer].count or nil
@@ -4720,6 +4782,11 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							InvestigationSafeCall("surface enrichment: repair breakthrough selection", map,
 								deposits.RepairBreakthroughAnomalies, map)
 						end
+						if type(deposits.AuditTopUpVanillaRepulsion) == "function" then
+							StretchLog("stretch branch: -> AuditTopUpVanillaRepulsion")
+							InvestigationSafeCall("surface enrichment: audit vanilla top-up repulsion", map,
+								deposits.AuditTopUpVanillaRepulsion, map)
+						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
 							InvestigationSafeCall("surface enrichment: audit outer-ring exclusivity", map,
@@ -5453,6 +5520,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
 						InvestigationSafeCall("underground enrichment: resolve badge overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+					end
+					if type(deposits.AuditTopUpVanillaRepulsion) == "function" then
+						StretchLog("underground stretch: -> AuditTopUpVanillaRepulsion")
+						InvestigationSafeCall("underground enrichment: audit vanilla top-up repulsion", map,
+							deposits.AuditTopUpVanillaRepulsion, map)
 					end
 					if type(deposits.LogDistributionReport) == "function" then
 						InvestigationSafeCall("underground enrichment: distribution report", map,

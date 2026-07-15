@@ -539,6 +539,196 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label)
 	return { Take = take, Commit = commit, Remaining = function() return remaining end, Stats = stats }
 end
 
+-- Stock RandomMapGenerator.MarkDepositLayers applies a pairwise exclusion radius to every
+-- enrichment family: same resource/type uses both RepulseSame values, different resources on
+-- the same layer use both RepulseSameLayer values, and different layers use both RepulseAll
+-- values. The density top-ups run after those native masks are gone, so reproduce that exact
+-- rule in world coordinates before accepting any post-generation candidate.
+local function ResourceDepositLayer(marker)
+	if marker ~= nil and IsKindOfSafe(marker, "SurfaceDepositMarker") then return "surf" end
+	if marker ~= nil and IsKindOfSafe(marker, "SubsurfaceDepositMarker") then return "subs" end
+	if marker ~= nil and IsKindOfSafe(marker, "TerrainDepositMarker") then return "terr" end
+	return nil
+end
+
+local function RepulsionValuesAreValid(values)
+	return type(values) == "table"
+		and type(values.repulse_same) == "number" and values.repulse_same >= 0
+		and type(values.repulse_layer) == "number" and values.repulse_layer >= 0
+		and type(values.repulse_all) == "number" and values.repulse_all >= 0
+end
+
+local function FindResourceRepulsionValues(map, resource)
+	local captured = map and map.SuperBigMapVanillaRepulsionProfiles
+	local values = type(captured) == "table" and type(captured.resources) == "table"
+		and captured.resources[resource] or nil
+	if RepulsionValuesAreValid(values) then return values end
+
+	-- Compatibility fallback for maps generated before the capture field existed or for a
+	-- custom resource added after GenerateResourceInfo. Resolve the preset selected by this
+	-- generator, then read the restored authored values from Presets.
+	local generator = map and map.RandomMapGenObject
+	local preset_id = map and type(map.SuperBigMapResourcePresetByResource) == "table"
+		and map.SuperBigMapResourcePresetByResource[resource] or nil
+	if (preset_id == nil or preset_id == "") and type(generator) == "table" then
+		preset_id = generator["ResPreset_" .. tostring(resource)]
+	end
+	local presets = Global("Presets")
+	local list = type(presets) == "table" and presets.ResourcePreset
+		and presets.ResourcePreset.Default or nil
+	if type(list) == "table" and preset_id ~= nil and preset_id ~= "" then
+		for _, preset in pairs(list) do
+			if type(preset) == "table" and preset.id == preset_id then
+				values = {
+					preset = preset_id,
+					repulse_same = preset.RepulseSame,
+					repulse_layer = preset.RepulseSameLayer,
+					repulse_all = preset.RepulseAll,
+				}
+				if RepulsionValuesAreValid(values) then return values end
+			end
+		end
+	end
+	return nil
+end
+
+local function GeneratorFamilyRepulsionValues(map, family)
+	local captured = map and map.SuperBigMapVanillaRepulsionProfiles
+	local values = type(captured) == "table" and captured[family] or nil
+	if RepulsionValuesAreValid(values) then return values end
+	local generator = map and map.RandomMapGenObject
+	if type(generator) ~= "table" then return nil end
+	if family == "Anomaly" then
+		values = {
+			repulse_same = generator.AnomalySpacing,
+			repulse_layer = generator.AnomalyRepulseSubs,
+			repulse_all = generator.AnomalyRepulseAll,
+		}
+	elseif family == "Effects" then
+		values = {
+			repulse_same = generator.EffectDepSpacing,
+			repulse_layer = generator.EffectDepRepulse,
+			repulse_all = generator.EffectDepRepulseAll,
+		}
+	end
+	return RepulsionValuesAreValid(values) and values or nil
+end
+
+local function VanillaRepulsionProfileForMarker(map, marker)
+	local layer, resource, values
+	if IsResourceDepositMarker(marker) then
+		layer = ResourceDepositLayer(marker)
+		resource = marker and marker.resource
+		values = type(resource) == "string" and FindResourceRepulsionValues(map, resource) or nil
+	elseif IsAnomalyMarker(marker) then
+		layer, resource = "subs", "Anomaly"
+		values = GeneratorFamilyRepulsionValues(map, resource)
+	elseif marker ~= nil and IsKindOfSafe(marker, "EffectDepositMarker") then
+		layer, resource = "surf", "Effects"
+		values = GeneratorFamilyRepulsionValues(map, resource)
+	end
+	if not layer or not resource or not RepulsionValuesAreValid(values) then return nil end
+	return {
+		layer = layer, resource = tostring(resource), preset = values.preset,
+		repulse_same = values.repulse_same,
+		repulse_layer = values.repulse_layer,
+		repulse_all = values.repulse_all,
+	}
+end
+
+local function PairRepulsionRadius(a, b)
+	if not a or not b then return nil end
+	if a.layer ~= b.layer then return a.repulse_all + b.repulse_all end
+	if a.resource ~= b.resource then return a.repulse_layer + b.repulse_layer end
+	return a.repulse_same + b.repulse_same
+end
+
+local function NewVanillaRepulsionValidator(map, label)
+	local entries = {}
+	local profile_descriptions = {}
+	local function record_profile(profile)
+		if not profile then return end
+		local key = tostring(profile.layer) .. "/" .. tostring(profile.resource)
+		profile_descriptions[key] = key
+			.. "=" .. tostring(profile.repulse_same)
+			.. "," .. tostring(profile.repulse_layer)
+			.. "," .. tostring(profile.repulse_all)
+	end
+	local checks, rejections, accepted, committed, missing_profiles = 0, 0, 0, 0, 0
+	if map and type(map.MapForEach) == "function" then
+		pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+			if not IsEnrichmentMarker(marker) then return end
+			local pos = ObjectPos(marker)
+			local profile = VanillaRepulsionProfileForMarker(map, marker)
+			if pos and type(pos.xy) == "function" and profile then
+				record_profile(profile)
+				local x, y = pos:xy()
+				if type(x) == "number" and type(y) == "number" then
+					entries[#entries + 1] = { x = x, y = y, profile = profile, marker = marker }
+				else
+					missing_profiles = missing_profiles + 1
+				end
+			else
+				missing_profiles = missing_profiles + 1
+			end
+		end)
+	end
+	local initial_entries = #entries
+	local blocking_missing_profiles = missing_profiles
+
+	local function can_place(candidate, profile)
+		local x, y = candidate and candidate.x, candidate and candidate.y
+		record_profile(profile)
+		if type(x) ~= "number" or type(y) ~= "number" or not profile then
+			missing_profiles = missing_profiles + 1
+			rejections = rejections + 1
+			return false, "profile_or_coordinate_unavailable"
+		end
+		if blocking_missing_profiles > 0 then
+			rejections = rejections + 1
+			return false, "existing_repulsion_profile_unavailable"
+		end
+		for _, existing in ipairs(entries) do
+			checks = checks + 1
+			local radius = PairRepulsionRadius(profile, existing.profile)
+			local dx, dy = x - existing.x, y - existing.y
+			local distance_sq = dx * dx + dy * dy
+			-- GridCircleSet also consumes its center when a preset radius is zero.
+			if (radius == 0 and distance_sq == 0)
+				or (type(radius) == "number" and radius > 0 and distance_sq <= radius * radius) then
+				rejections = rejections + 1
+				return false, "vanilla_repulsion", radius, existing
+			end
+		end
+		accepted = accepted + 1
+		return true
+	end
+
+	local function commit(candidate, profile, marker)
+		local x, y = candidate and candidate.x, candidate and candidate.y
+		if type(x) ~= "number" or type(y) ~= "number" or not profile then return false end
+		entries[#entries + 1] = { x = x, y = y, profile = profile, marker = marker }
+		record_profile(profile)
+		committed = committed + 1
+		return true
+	end
+
+	local function stats()
+		local profile_keys, profiles = {}, {}
+		for key in pairs(profile_descriptions) do profile_keys[#profile_keys + 1] = key end
+		table.sort(profile_keys)
+		for _, key in ipairs(profile_keys) do profiles[#profiles + 1] = profile_descriptions[key] end
+		return {
+			label = tostring(label or "top-up"), initial_entries = initial_entries,
+			final_entries = #entries, checks = checks, rejections = rejections,
+			accepted = accepted, committed = committed, missing_profiles = missing_profiles,
+			profiles = table.concat(profiles, ";"),
+		}
+	end
+
+	return { CanPlace = can_place, Commit = commit, Stats = stats }
+end
+
 -- How much higher the surrounding terrain is than this already-flat/buildable candidate.
 -- Best-of-N random selection uses this only as a preference, keeping placement random while
 -- favoring low pockets between mountains over isolated mountaintops.
@@ -2195,6 +2385,7 @@ function DepositRules.TopUpDeposits(map)
 	local pool_final = 0
 	local registered_at_creation = 0
 	local placement_stats
+	local repulsion_stats
 	local placement_attempts, clone_failures, terrain_fallbacks = 0, 0, 0
 	RunPaused("SuperBigMapDepositTopUp", function()
 		-- Shared validated pool. Selection preserves terrain type while preferring sectors with
@@ -2231,6 +2422,7 @@ function DepositRules.TopUpDeposits(map)
 		end
 		ProfileStep("resource candidate pool built", { candidates = pool }, map)
 		local selector = NewSectorBalancedCandidateSelector(map, shared_candidates, "resources")
+		local repulsion = NewVanillaRepulsionValidator(map, "resources")
 		local function take(tt)
 			return selector.Take(tt)
 		end
@@ -2266,10 +2458,16 @@ function DepositRules.TopUpDeposits(map)
 			local tpos = ObjectPos(template)
 			if tpos and type(tpos.xy) == "function" then
 				local tt = TerrainTypeAt(map, tpos) or -1
-				local c = take(tt)
-				if not c then
-					c = take_any()
-					if c then terrain_fallbacks = terrain_fallbacks + 1 end
+				local profile = VanillaRepulsionProfileForMarker(map, template)
+				local c
+				while not c and selector.Remaining() > 0 do
+					local candidate = take(tt)
+					if not candidate then
+						candidate = take_any()
+						if candidate then terrain_fallbacks = terrain_fallbacks + 1 end
+					end
+					if not candidate then break end
+					if repulsion.CanPlace(candidate, profile) then c = candidate end
 				end
 				if not c then break end   -- pool exhausted
 				local tx, ty = tpos:xy()
@@ -2288,6 +2486,7 @@ function DepositRules.TopUpDeposits(map)
 						end
 						pcall(clone.SetPos, clone, pt)
 					end
+					repulsion.Commit(c, profile, clone)
 					if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true and stretch_mode
 						and not IsUndergroundMap(map) then
 						local sec = SectorAtPoint(map, c.x, c.y)
@@ -2307,6 +2506,7 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 		placement_stats = selector.Stats()
+		repulsion_stats = repulsion.Stats()
 	end)
 	local final_by_type, remaining_shortfall, excess = {}, 0, 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
@@ -2342,6 +2542,11 @@ function DepositRules.TopUpDeposits(map)
 		selected = placement_stats and placement_stats.selected,
 		remaining_candidates = placement_stats and placement_stats.remaining_candidates,
 		max_additions_to_one_sector = placement_stats and placement_stats.max_additions_to_one_sector,
+		vanilla_repulsion_checks = repulsion_stats and repulsion_stats.checks,
+		vanilla_repulsion_rejections = repulsion_stats and repulsion_stats.rejections,
+		vanilla_repulsion_committed = repulsion_stats and repulsion_stats.committed,
+		vanilla_repulsion_missing_profiles = repulsion_stats and repulsion_stats.missing_profiles,
+		vanilla_repulsion_profiles = repulsion_stats and repulsion_stats.profiles,
 	})
 	RecordEnrichmentTopUpAudit(map, "resources", {
 		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
@@ -2567,6 +2772,7 @@ function DepositRules.TopUpAnomalies(map)
 	local edge_ctx
 	local added_markers = {}
 	local whole_map_placement_stats
+	local repulsion_stats
 	local placement_attempts, clone_failures = 0, 0
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	local low_area_percent = math.max(1, math.min(100,
@@ -2584,6 +2790,9 @@ function DepositRules.TopUpAnomalies(map)
 		selected_by_side_layer = {}, final_by_side_layer = {},
 	}
 	RunPaused("SuperBigMapAnomalyTopUp", function()
+		local repulsion = NewVanillaRepulsionValidator(map, "ordinary anomalies")
+		local anomaly_repulsion_profile = VanillaRepulsionProfileForMarker(map,
+			standard_templates[1] or templates[1])
 		local candidates = {}
 		local ring_sector_pool = {}
 		local BASE_WHOLE_MAP_SAMPLES = 6000
@@ -3070,7 +3279,8 @@ function DepositRules.TopUpAnomalies(map)
 			for _, candidate in ipairs(source) do
 				local key = anomaly_hex_key(candidate.x, candidate.y)
 				local tier = candidate.restriction_tier or 4
-				if not candidate.used and not seen[key] and not reserved_anomaly_hexes[key] then
+				if not candidate.used and not seen[key] and not reserved_anomaly_hexes[key]
+					and repulsion.CanPlace(candidate, anomaly_repulsion_profile) then
 					seen[key] = true
 					if best_tier == nil or tier < best_tier then
 						best_tier, eligible = tier, { candidate }
@@ -3201,7 +3411,12 @@ function DepositRules.TopUpAnomalies(map)
 			else
 				matching_count = whole_map_selector.Remaining()
 				selection_scope = "capacity_balanced_whole_map"
-				c = whole_map_selector.Take()
+				while not c and whole_map_selector.Remaining() > 0 do
+					local candidate = whole_map_selector.Take()
+					if candidate and repulsion.CanPlace(candidate, anomaly_repulsion_profile) then
+						c = candidate
+					end
+				end
 				if not c then break end
 			end
 			if edge_debug then
@@ -3299,6 +3514,7 @@ function DepositRules.TopUpAnomalies(map)
 						end
 						pcall(clone.SetPos, clone, pt)
 					end
+					repulsion.Commit(c, anomaly_repulsion_profile, clone)
 					-- ProcessClone resets is_placed only for RESOURCE markers; anomaly-marker
 					-- clones must be reset here (a start-sector template may already be placed).
 					clone.is_placed = false
@@ -3350,6 +3566,7 @@ function DepositRules.TopUpAnomalies(map)
 			end
 		end
 		if whole_map_selector then whole_map_placement_stats = whole_map_selector.Stats() end
+		repulsion_stats = repulsion.Stats()
 	end)
 	if edge_debug then
 		for n, clone in ipairs(added_markers) do
@@ -3520,6 +3737,11 @@ function DepositRules.TopUpAnomalies(map)
 			and whole_map_placement_stats.remaining_candidates,
 		max_additions_to_one_sector = whole_map_placement_stats
 			and whole_map_placement_stats.max_additions_to_one_sector,
+		vanilla_repulsion_checks = repulsion_stats and repulsion_stats.checks,
+		vanilla_repulsion_rejections = repulsion_stats and repulsion_stats.rejections,
+		vanilla_repulsion_committed = repulsion_stats and repulsion_stats.committed,
+		vanilla_repulsion_missing_profiles = repulsion_stats and repulsion_stats.missing_profiles,
+		vanilla_repulsion_profiles = repulsion_stats and repulsion_stats.profiles,
 	})
 	RecordEnrichmentTopUpAudit(map, "anomalies", {
 		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
@@ -3789,8 +4011,10 @@ function DepositRules.TopUpEffectDeposits(map)
 	local pool_final = 0
 	local reused_pool = false
 	local placement_stats
+	local repulsion_stats
 	local placement_attempts, clone_failures = 0, 0
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
+		local repulsion = NewVanillaRepulsionValidator(map, "effects")
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
 		local target_pool = math.min(MAX_POOL, math.max(512, total_shortfall * 32))
@@ -3840,6 +4064,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		local selector = NewSectorBalancedCandidateSelector(map, candidates, "effects")
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
+			local effect_repulsion_profile = VanillaRepulsionProfileForMarker(map, templates[1])
 			local shortfall = math.max(0,
 				target_by_type[deposit_type] - (current_by_type[deposit_type] or 0))
 			-- Continue after a failed clone. Take consumes one candidate, so this loop is
@@ -3847,7 +4072,13 @@ function DepositRules.TopUpEffectDeposits(map)
 			while (added_by_type[deposit_type] or 0) < shortfall do
 				if selector.Remaining() == 0 then break end
 				placement_attempts = placement_attempts + 1
-				local c = selector.Take()
+				local c
+				while not c and selector.Remaining() > 0 do
+					local candidate = selector.Take()
+					if candidate and repulsion.CanPlace(candidate, effect_repulsion_profile) then
+						c = candidate
+					end
+				end
 				if not c then break end
 				local template = templates[RandInt(#templates) + 1]
 				local tpos = ObjectPos(template)
@@ -3867,6 +4098,7 @@ function DepositRules.TopUpEffectDeposits(map)
 							end
 							pcall(clone.SetPos, clone, pt)
 						end
+						repulsion.Commit(c, effect_repulsion_profile, clone)
 						clone.is_placed = false
 						clone.placed_obj = false
 						SetRevealedState(clone, false)
@@ -3885,6 +4117,7 @@ function DepositRules.TopUpEffectDeposits(map)
 			end
 		end
 		placement_stats = selector.Stats()
+		repulsion_stats = repulsion.Stats()
 	end)
 	local final_by_type, remaining_shortfall, excess, final_total = {}, 0, 0, 0
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
@@ -3912,11 +4145,89 @@ function DepositRules.TopUpEffectDeposits(map)
 		selected = placement_stats and placement_stats.selected,
 		remaining_candidates = placement_stats and placement_stats.remaining_candidates,
 		max_additions_to_one_sector = placement_stats and placement_stats.max_additions_to_one_sector,
+		vanilla_repulsion_checks = repulsion_stats and repulsion_stats.checks,
+		vanilla_repulsion_rejections = repulsion_stats and repulsion_stats.rejections,
+		vanilla_repulsion_committed = repulsion_stats and repulsion_stats.committed,
+		vanilla_repulsion_missing_profiles = repulsion_stats and repulsion_stats.missing_profiles,
+		vanilla_repulsion_profiles = repulsion_stats and repulsion_stats.profiles,
 	})
 	RecordEnrichmentTopUpAudit(map, "effects", {
 		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
 		target = TallyString(target_by_type), current = final_total,
 	})
+end
+
+-- Final proof that every non-breakthrough marker added by the density suite still satisfies
+-- stock MarkDepositLayers repulsion after cloning, terrain-Z alignment, registration, and badge
+-- overlap resolution. Repaired breakthroughs are audited by their dedicated stronger selector.
+function DepositRules.AuditTopUpVanillaRepulsion(map)
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then return false end
+	local entries, topups = {}, 0
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		local is_topup = marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+		if is_topup then topups = topups + 1 end
+		local pos = ObjectPos(marker)
+		local x, y
+		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+		entries[#entries + 1] = {
+			marker = marker, x = x, y = y, topup = is_topup,
+			repaired_breakthrough = marker.SuperBigMapBreakthroughRepair == true,
+			profile = VanillaRepulsionProfileForMarker(map, marker),
+		}
+	end)
+
+	local pairs_checked, violations, missing_profiles = 0, 0, 0
+	local closest_margin
+	local examples = {}
+	for i = 1, #entries - 1 do
+		local a = entries[i]
+		for j = i + 1, #entries do
+			local b = entries[j]
+			if (a.topup or b.topup) and not a.repaired_breakthrough and not b.repaired_breakthrough then
+				pairs_checked = pairs_checked + 1
+				if type(a.x) ~= "number" or type(a.y) ~= "number"
+					or type(b.x) ~= "number" or type(b.y) ~= "number"
+					or not a.profile or not b.profile then
+					missing_profiles = missing_profiles + 1
+					violations = violations + 1
+				elseif a.marker ~= b.marker then
+					local radius = PairRepulsionRadius(a.profile, b.profile)
+					local dx, dy = a.x - b.x, a.y - b.y
+					local distance_sq = dx * dx + dy * dy
+					local distance = math.sqrt(distance_sq)
+					local margin = distance - radius
+					closest_margin = closest_margin and math.min(closest_margin, margin) or margin
+					local collision = (radius == 0 and distance_sq == 0)
+						or (radius > 0 and distance_sq <= radius * radius)
+					if collision then
+						violations = violations + 1
+						if #examples < 8 then
+							examples[#examples + 1] = table.concat({
+								tostring(a.marker.class), tostring(a.profile.layer), tostring(a.profile.resource),
+								tostring(b.marker.class), tostring(b.profile.layer), tostring(b.profile.resource),
+								"distance=" .. tostring(math.floor(distance + 0.5)),
+								"required=" .. tostring(radius),
+							}, "/")
+						end
+					end
+				end
+			end
+		end
+	end
+	local stats = {
+		map = tostring(map.name), topups = topups, enrichments = #entries,
+		pairs_checked = pairs_checked, violations = violations,
+		missing_profiles = missing_profiles,
+		closest_clearance = closest_margin and math.floor(closest_margin + 0.5) or nil,
+		examples = #examples > 0 and table.concat(examples, " | ") or "none",
+	}
+	Log("vanilla top-up repulsion audit", stats)
+	if violations > 0 then Log("vanilla top-up repulsion violation", stats) end
+	return violations == 0, stats
 end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
