@@ -11,7 +11,7 @@
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
 --   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement,
---   RmgPlacementExhaustive, Stretch, Loading, LoadTime, LoadingSteps,
+--   RmgPlacementExhaustive, RmgAlignmentExhaustive, Stretch, Loading, LoadTime, LoadingSteps,
 --   LoadingInvestigation,
 --   UndergroundAccess,
 --   Hover, Align, EntrancePositions, Overview, Camera, Rocket, RocketTerrain, ElevatorTerrain,

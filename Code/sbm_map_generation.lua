@@ -1472,22 +1472,301 @@ local function PatchRandomMapGenerator()
 			local saved_grand = type(rhelpers) == "table" and rhelpers[5] or nil
 			local saved_rm_print = env.rm_print
 			local saved_get_playable_area = env.GetPlayableArea
+			local saved_gen_marker_obj = env.GenMarkerObj
+			local saved_proc_invoke = env.ProcInvoke
 			local saved_generate_resource_info = Global("GenerateResourceInfo")
 			local saved_grid_min_max = Global("GridMinMax")
+			local saved_hex_get_nearest_center = Global("HexGetNearestCenter")
 			local generate_resource_info_wrapper
 			local grid_min_max_wrapper
+			local grid_min_max_installed_in_closure = false
+			local grid_min_max_closure_had_raw = false
+			local grid_min_max_closure_raw
+			local hex_get_nearest_center_wrapper
+			local hex_hook_installed_in_closure = false
+			local hex_closure_had_raw = false
+			local hex_closure_raw
+			local gen_marker_obj_wrapper
+			local proc_invoke_wrapper
+			local feature_deposit_context
+			local deposit_layer_filter_restores = {}
 			local base_play_zone_snapshot
+			local alignment_debug_log = SuperBigMap.DebugLog
+			local alignment_trace_enabled = false
+			if type(alignment_debug_log) == "table" and type(alignment_debug_log.On) == "function" then
+				local ok_trace, trace = pcall(alignment_debug_log.On, "RmgAlignmentExhaustive")
+				alignment_trace_enabled = ok_trace and trace == true
+			end
+			local function AlignmentTrace(message, data)
+				if alignment_trace_enabled and type(alignment_debug_log.Info) == "function" then
+					pcall(alignment_debug_log.Info, "RmgAlignmentExhaustive", message, data)
+				end
+			end
+			local function point_xyz(pos)
+				if not pos then return nil end
+				local ok_xyz, x, y, z = pcall(function() return pos:xyz() end)
+				if ok_xyz and x ~= nil and y ~= nil then return x, y, z end
+				local ok_xy
+				ok_xy, x, y = pcall(function() return pos:xy() end)
+				if ok_xy and x ~= nil and y ~= nil then return x, y, nil end
+				return nil
+			end
+			local function xy_key(pos)
+				local x, y = point_xyz(pos)
+				return x ~= nil and y ~= nil and (tostring(x) .. ":" .. tostring(y)) or nil
+			end
+			local function origin_desc(origin)
+				if type(origin) ~= "table" then return tostring(origin or "unknown") end
+				return table.concat({
+					"proc=" .. tostring(origin.proc or "?"),
+					"resource=" .. tostring(origin.resource or "?"),
+					"index=" .. tostring(origin.index or "?"),
+					"shape=" .. tostring(origin.shape or "?"),
+					"source=" .. tostring(origin.source or "?"),
+					"aligns=" .. tostring(origin.aligns),
+					"role=" .. tostring(origin.role or "?"),
+				}, ";")
+			end
+			local alignment_trace = {
+				calls = 0, duplicate_calls = 0, duplicate_hexes = 0,
+				candidate_collisions = 0, warning_count = 0,
+				markers_on_duplicate_hexes = 0, unknown_origins = 0,
+				hash_failures = 0, breakthrough_calls = 0,
+				breakthrough_collisions = 0, breakthrough_replacements = 0,
+				breakthrough_retained_collisions = 0,
+				breakthrough_partial_quota_calls = 0,
+				by_hash = {}, duplicate_hashes = {}, by_aligned_xy = {},
+			}
+			local candidate_origins_by_world_xy = {}
+			local aligned_origin_by_hash = {}
+			local consumed_aligned_hexes = {}
+			local debug_lib = Global("debug")
+			local getfenv_fn = Global("getfenv")
+			local function function_environment(fn)
+				if type(fn) ~= "function" then return nil, "not_a_function" end
+				-- The mod sandbox exposes Lua 5.1 function environments even when the
+				-- debug upvalue API is stripped. This table is the authoritative global
+				-- lookup environment used by the compiled RandomMapGenerator closure.
+				if type(getfenv_fn) == "function" then
+					local ok_env, value = pcall(getfenv_fn, fn)
+					if ok_env and type(value) == "table" then return value, "getfenv" end
+				end
+				if type(debug_lib) == "table" and type(debug_lib.getfenv) == "function" then
+					local ok_env, value = pcall(debug_lib.getfenv, fn)
+					if ok_env and type(value) == "table" then return value, "debug.getfenv" end
+				end
+				if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
+					for i = 1, 64 do
+						local ok_up, name, value = pcall(debug_lib.getupvalue, fn, i)
+						if not ok_up or name == nil then break end
+						if name == "_ENV" and type(value) == "table" then
+							return value, "debug.getupvalue:_ENV"
+						end
+					end
+				end
+				return nil, "unavailable"
+			end
+			local generator_closure_env, generator_closure_env_source =
+				function_environment(original_on_generate_logic)
+			local function closure_global(name, fallback)
+				if type(generator_closure_env) == "table" then
+					local ok_value, value = pcall(function() return generator_closure_env[name] end)
+					if ok_value and value ~= nil then return value end
+				end
+				return fallback
+			end
+			local const_tbl = Global("const")
+			local complement_work_step = type(const_tbl) == "table"
+				and type(const_tbl.TypeTileSize) == "number"
+				and type(const_tbl.PrefabWorkRatio) == "number"
+				and const_tbl.TypeTileSize * const_tbl.PrefabWorkRatio or nil
+			-- Use the same closure environment as stock OnGenerateLogic. The compiled game
+			-- function owns a private _ENV, so _G may expose a different function identity.
+			local hex_get_nearest_center = closure_global("HexGetNearestCenter", saved_hex_get_nearest_center)
+			local alignment_hash = closure_global("xxhash", Global("xxhash"))
+			saved_grid_min_max = closure_global("GridMinMax", saved_grid_min_max)
+			local closure_world_to_hex = closure_global("WorldToHex", Global("WorldToHex"))
+			local closure_metatable
+			pcall(function() closure_metatable = getmetatable(generator_closure_env) end)
+			AlignmentTrace("runtime function-environment capability", {
+				environment_source = tostring(generator_closure_env_source),
+				environment = tostring(generator_closure_env),
+				environment_metatable = tostring(closure_metatable),
+				environment_is_global = generator_closure_env == _G,
+				getfenv_type = type(getfenv_fn),
+				debug_type = type(debug_lib),
+				debug_getfenv_type = type(debug_lib) == "table" and type(debug_lib.getfenv) or "n/a",
+				debug_getupvalue_type = type(debug_lib) == "table" and type(debug_lib.getupvalue) or "n/a",
+				hex_private = tostring(hex_get_nearest_center),
+				hex_global = tostring(saved_hex_get_nearest_center),
+				hash_private = tostring(alignment_hash),
+				grid_min_max_private = tostring(saved_grid_min_max),
+			})
+			local function aligned_hex_key(pos)
+				if not pos or type(complement_work_step) ~= "number" or complement_work_step <= 0
+					or type(hex_get_nearest_center) ~= "function" or type(alignment_hash) ~= "function" then
+					return nil
+				end
+				local ok_align, aligned = pcall(function()
+					return hex_get_nearest_center(pos * complement_work_step)
+				end)
+				local aligned_x, aligned_y = point_xyz(aligned)
+				if not ok_align or not aligned or aligned_x == nil or aligned_y == nil then return nil end
+				local ok_hash, hash = pcall(alignment_hash, aligned)
+				if not ok_hash or hash == nil then return nil end
+				-- Match the engine's exact collision identity in Proc_PlaceAnomalies_AlignToHexGrid.
+				return tostring(hash)
+			end
 			-- Conservative set of positions consumed by native placement searches. NewAnomaly
 			-- erodes the shared layers even when its rolled count is already full, so retaining
 			-- every returned point mirrors the engine's own exclusion behavior. Breakthrough
 			-- points are added separately from GridMinMax below.
 			local consumed_search_positions = {}
-			local function record_consumed_position(pos)
+			local function record_consumed_position(pos, occupies_aligned_hex, origin)
 				if not pos then return false end
-				local ok_xy, x, y = pcall(function() return pos:xy() end)
-				if not ok_xy or x == nil or y == nil then return false end
+				local x, y = point_xyz(pos)
+				if x == nil or y == nil then return false end
 				consumed_search_positions[tostring(x) .. ":" .. tostring(y)] = { x = x, y = y }
+				local world_key
+				if alignment_trace_enabled and type(complement_work_step) == "number" then
+					local ok_world, world_pos = pcall(function() return pos * complement_work_step end)
+					world_key = ok_world and xy_key(world_pos) or nil
+				end
+				if world_key then
+					local origins = candidate_origins_by_world_xy[world_key]
+					if not origins then
+						origins = {}
+						candidate_origins_by_world_xy[world_key] = origins
+					end
+					origins[#origins + 1] = origin or { proc = "unknown", resource = "unknown" }
+				end
+				if occupies_aligned_hex then
+					local hex_key = aligned_hex_key(pos)
+					if hex_key then
+						if alignment_trace_enabled then
+							local existing = aligned_origin_by_hash[hex_key]
+							if existing then
+								alignment_trace.candidate_collisions = alignment_trace.candidate_collisions + 1
+								AlignmentTrace("candidate census already contains aligned hex", {
+									hash = hex_key, work_x = x, work_y = y,
+									existing = origin_desc(existing), incoming = origin_desc(origin),
+								})
+							end
+							-- Mirror the engine's predecessor update for third-and-later collisions.
+							aligned_origin_by_hash[hex_key] = origin or {
+								proc = "unknown", resource = "unknown", index = "?", shape = "?",
+							}
+						end
+						consumed_aligned_hexes[hex_key] = true
+					end
+				end
 				return true
+			end
+
+			-- Read-only audit at the exact engine function lookup used by final alignment.
+			-- Unlike debug.getupvalue, getfenv is available in the retail mod sandbox, so a
+			-- temporary raw entry in the generator's own environment observes the real
+			-- HexGetNearestCenter call. The original function is called once and unchanged.
+			local function audit_final_hex_alignment(map_pos, aligned)
+				alignment_trace.calls = alignment_trace.calls + 1
+				local index = alignment_trace.calls
+				local raw_x, raw_y, raw_z = point_xyz(map_pos)
+				local aligned_x, aligned_y, aligned_z = point_xyz(aligned)
+				local raw_key, aligned_key = xy_key(map_pos), xy_key(aligned)
+				local ok_hash, native_hash = false, nil
+				if type(alignment_hash) == "function" then
+					ok_hash, native_hash = pcall(alignment_hash, aligned)
+				end
+				if not ok_hash or native_hash == nil then
+					alignment_trace.hash_failures = alignment_trace.hash_failures + 1
+				end
+				local hash_key = ok_hash and native_hash ~= nil and native_hash
+					or ("unavailable:" .. tostring(index))
+				local hash_text = tostring(hash_key)
+				local q, r
+				if type(closure_world_to_hex) == "function" then
+					local ok_hex, hq, hr = pcall(closure_world_to_hex, aligned)
+					if ok_hex then q, r = hq, hr end
+				end
+				local origins = raw_key and candidate_origins_by_world_xy[raw_key] or nil
+				local origin_parts = {}
+				for i = 1, #(origins or {}) do
+					origin_parts[#origin_parts + 1] = origin_desc(origins[i])
+				end
+				local origin_text = #origin_parts > 0
+					and table.concat(origin_parts, " || ") or "unknown"
+				if #origin_parts == 0 then
+					alignment_trace.unknown_origins = alignment_trace.unknown_origins + 1
+				end
+				local previous = alignment_trace.by_hash[hash_key]
+				local record = {
+					index = index, hash = hash_key,
+					raw_x = raw_x, raw_y = raw_y, raw_z = raw_z,
+					aligned_x = aligned_x, aligned_y = aligned_y, aligned_z = aligned_z,
+					aligned_key = aligned_key, q = q, r = r, origin = origin_text,
+				}
+				if previous then
+					alignment_trace.duplicate_calls = alignment_trace.duplicate_calls + 1
+					if not alignment_trace.duplicate_hashes[hash_key] then
+						alignment_trace.duplicate_hashes[hash_key] = true
+						alignment_trace.duplicate_hexes = alignment_trace.duplicate_hexes + 1
+					end
+					AlignmentTrace("AUTHORITATIVE duplicate aligned hex via private environment", {
+						hash = hash_text, q = tostring(q), r = tostring(r),
+						first_index = previous.index, incoming_index = index,
+						first_raw = tostring(previous.raw_x) .. ":" .. tostring(previous.raw_y),
+						incoming_raw = tostring(raw_x) .. ":" .. tostring(raw_y),
+						first_aligned = tostring(previous.aligned_x) .. ":" .. tostring(previous.aligned_y),
+						incoming_aligned = tostring(aligned_x) .. ":" .. tostring(aligned_y),
+						same_aligned_xy = previous.aligned_key == aligned_key,
+						first_origin = previous.origin, incoming_origin = origin_text,
+					})
+				end
+				alignment_trace.by_hash[hash_key] = record
+				local aligned_calls = aligned_key and alignment_trace.by_aligned_xy[aligned_key] or nil
+				if aligned_key and not aligned_calls then
+					aligned_calls = {}
+					alignment_trace.by_aligned_xy[aligned_key] = aligned_calls
+				end
+				if aligned_calls then aligned_calls[#aligned_calls + 1] = record end
+				AlignmentTrace("final alignment input via private environment", {
+					index = index, hash = hash_text,
+					duplicate_of = previous and previous.index or "none",
+					raw_work_x = type(raw_x) == "number" and type(complement_work_step) == "number"
+						and raw_x / complement_work_step or "n/a",
+					raw_work_y = type(raw_y) == "number" and type(complement_work_step) == "number"
+						and raw_y / complement_work_step or "n/a",
+					raw_world = tostring(raw_x) .. ":" .. tostring(raw_y) .. ":" .. tostring(raw_z),
+					aligned_world = tostring(aligned_x) .. ":" .. tostring(aligned_y) .. ":" .. tostring(aligned_z),
+					q = tostring(q), r = tostring(r), origin = origin_text,
+					census_origin = origin_desc(aligned_origin_by_hash[hash_text]),
+				})
+			end
+			if alignment_trace_enabled and type(generator_closure_env) == "table"
+				and type(hex_get_nearest_center) == "function" then
+				hex_get_nearest_center_wrapper = function(pos, ...)
+					local hex_results = PackValues(hex_get_nearest_center(pos, ...))
+					local stack = State.rmg_placement_proc_stack
+					local proc = type(stack) == "table" and tostring(stack[#stack]) or ""
+					if proc == "PlaceAnomalies_AlignToHexGrid" then
+						pcall(audit_final_hex_alignment, pos, hex_results[1])
+					end
+					return Unpack(hex_results, 1, hex_results.n)
+				end
+				hex_closure_raw = rawget(generator_closure_env, "HexGetNearestCenter")
+				hex_closure_had_raw = hex_closure_raw ~= nil
+				local ok_install = pcall(rawset, generator_closure_env,
+					"HexGetNearestCenter", hex_get_nearest_center_wrapper)
+				hex_hook_installed_in_closure = ok_install
+					and rawget(generator_closure_env, "HexGetNearestCenter")
+						== hex_get_nearest_center_wrapper
+				AlignmentTrace("private-environment final Hex hook", {
+					installed = hex_hook_installed_in_closure,
+					environment_source = tostring(generator_closure_env_source),
+					had_raw_entry = hex_closure_had_raw,
+					original = tostring(hex_get_nearest_center),
+					wrapper = tostring(hex_get_nearest_center_wrapper),
+				})
 			end
 			local rolls, roll_index = {}, 0
 			local roll_specs = {
@@ -1725,7 +2004,8 @@ local function PatchRandomMapGenerator()
 			-- `find_all` search on the SAME clone already erased by the successful positions.
 			-- On fragmented terrain that can report 8/9 even though the original valid zone has
 			-- room for the missing marker. Run the native search first, preserve its complete
-			-- result and random-state consumption exactly, then add only requested-returned from
+			-- valid result and random-state consumption, then replace only a native point that would
+			-- align onto an already occupied gameplay hex and add requested-returned from
 			-- a fresh clone of the ORIGINAL candidate grid. The complement uses an independent
 			-- procedure-derived seed, so the native placement-search random stream is unchanged.
 			if type(saved_grand) == "function" then
@@ -1737,16 +2017,72 @@ local function PatchRandomMapGenerator()
 						search_layer = nil
 					end
 					local resource_name = string.match(resource_label, "^%a+%s+(.+)$")
+					local stack = State.rmg_placement_proc_stack
+					local proc = type(stack) == "table" and tostring(stack[#stack]) or "PlaceAnomalies"
+					local scalar_feature_context
+					if proc == "PlaceAnomalies_FindFeatures_Deposits" and resource_label == "" then
+						scalar_feature_context = feature_deposit_context
+						feature_deposit_context = nil
+						if type(scalar_feature_context) == "table" then
+							search_layer = scalar_feature_context.layer
+							resource_name = scalar_feature_context.resource
+							resource_label = tostring(search_layer) .. " " .. tostring(resource_name)
+						end
+					end
+					-- Only these selector results become entries in vanilla's `to_align` list.
+					-- Surface resource deposits and cluster centers deliberately remain unaligned.
+					local result_aligns_to_hex = search_layer == "subs" or search_layer == "terr"
+						or resource_name == "Effects"
+						or proc == "PlaceAnomalies_FindFeatures_Anomalies"
+						or proc == "PlaceAnomalies_FindFeatures_EffectDeposits"
+					local aligned_record_limit
+					if resource_name == "Anomaly" and type(requested) == "number" then
+						local function range_upper(range)
+							local ok, value = pcall(function() return range and range.to end)
+							return ok and type(value) == "number" and value or nil
+						end
+						local anomaly_kind = string.match(proc, "PlaceAnomalies_FindAnomalies_(%w+)$")
+						local expected_key, max_count
+						if anomaly_kind == "TechUnlock" then
+							expected_key, max_count = "unlock", range_upper(self.AnomTechUnlockCount)
+						elseif anomaly_kind == "Event" then
+							expected_key = "sequence"
+							local base, bonus = range_upper(self.AnomEventCount), range_upper(self.BonusCountEvent)
+							if base and bonus then max_count = base + bonus end
+						elseif anomaly_kind == "FreeTech" then
+							expected_key = "complete"
+							local base, bonus = range_upper(self.AnomFreeTechCount), range_upper(self.BonusCountFreeTech)
+							if base and bonus then max_count = base + bonus end
+						end
+						local expected = expected_key and type(map) == "table"
+							and type(map.SuperBigMapExpectedAnomalyCounts) == "table"
+							and map.SuperBigMapExpectedAnomalyCounts[expected_key] or nil
+						if type(expected) == "number" and type(max_count) == "number" then
+							local already_placed = math.max(0, max_count - requested)
+							aligned_record_limit = math.max(0, math.min(requested, expected - already_placed))
+						end
+					end
+					local alignment_api_ready = type(complement_work_step) == "number"
+						and complement_work_step > 0
+						and type(hex_get_nearest_center) == "function"
+						and type(alignment_hash) == "function"
 					local can_complete = cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
 						and grid ~= nil and type(params) == "table"
 						and params.mode == "find_all" and type(requested) == "number"
 						and requested > 0 and search_layer ~= nil
+						and (not result_aligns_to_hex or alignment_api_ready)
+					local scalar_spacing = type(params) == "table" and (params.spacing or 0) or 0
+					local can_repair_scalar_alignment =
+						cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
+						and result_aligns_to_hex
+						and grid ~= nil and type(params) == "table" and requested == nil
+						and scalar_spacing == 0 and alignment_api_ready
 
 					-- Always snapshot before the native call. The shipped helper currently clones for
 					-- count>1/find_all, but taking our own pre-call snapshot makes the completion path
 					-- independent of that implementation detail and guarantees that it sees the exact
 					-- original candidate grid on every engine version.
-					local original_snapshot
+					local original_snapshot, scalar_snapshot
 					local completion_reason = can_complete and "native_complete" or "not_eligible"
 					if can_complete then
 						local ok_snapshot, snapshot = pcall(function() return grid:clone() end)
@@ -1755,6 +2091,14 @@ local function PatchRandomMapGenerator()
 						else
 							can_complete = false
 							completion_reason = "pre_call_snapshot_failed"
+						end
+					end
+					if can_repair_scalar_alignment then
+						local ok_snapshot, snapshot = pcall(function() return grid:clone() end)
+						if ok_snapshot and snapshot then
+							scalar_snapshot = snapshot
+						else
+							can_repair_scalar_alignment = false
 						end
 					end
 
@@ -1781,23 +2125,403 @@ local function PatchRandomMapGenerator()
 					end
 
 					local results = PackValues(saved_grand(grid, call_params, ...))
-					local positions = type(results[1]) == "table" and results[1] or nil
+					-- A scalar engine point may be userdata or table-backed depending on the build.
+					-- Probe the point API before treating a table as a list and applying `#`/ipairs.
+					local native_first_is_point = xy_key(results[1]) ~= nil
+					local positions = not native_first_is_point and type(results[1]) == "table"
+						and results[1] or nil
 					local native_returned = positions and #positions or 0
+					local native_usable = native_returned
+					local native_aligned_collisions = 0
+					local native_aligned_replacements = 0
+					local native_aligned_retained = 0
+					local native_aligned_local_rejections = 0
+					local native_aligned_global_fallbacks = 0
+					local native_replacement_slots = {}
+					local scalar_aligned_replacements = 0
+					local scalar_repair_reason = can_repair_scalar_alignment
+						and "native_scalar_unique" or "not_eligible"
+					if can_repair_scalar_alignment and native_first_is_point then
+						local native_point = results[1]
+						local native_hex = aligned_hex_key(native_point)
+						if native_hex and consumed_aligned_hexes[native_hex] then
+							scalar_repair_reason = "collision_detected"
+							local grid_random = closure_global("GridStableRandomPos", Global("GridStableRandomPos"))
+							local proc_seed
+							if type(self.ProcSeed) == "function" then
+								local ok_seed, value = pcall(self.ProcSeed, self, proc)
+								if ok_seed then proc_seed = value end
+							end
+							local native_x, native_y = point_xyz(native_point)
+							local min_value = type(params.min) == "number" and params.min or 0
+							local max_value = type(params.max) == "number" and params.max
+								or (type(closure_global("max_int", Global("max_int"))) == "number"
+									and closure_global("max_int", Global("max_int")) or 2147483647)
+							local ok_native_original, native_original_value = pcall(function()
+								return scalar_snapshot and scalar_snapshot:get(native_point)
+							end)
+							local attempt = 0
+							while scalar_snapshot and type(grid_random) == "function" and proc_seed ~= nil
+								and ok_native_original and type(native_original_value) == "number"
+								and native_x ~= nil and native_y ~= nil and attempt < 4096 do
+								attempt = attempt + 1
+								local ok_retry_seed, retry_seed = pcall(alignment_hash,
+									proc_seed, "SBMScalarAlignedReplacement", proc,
+									tostring(native_x), tostring(native_y), attempt)
+								if not ok_retry_seed or retry_seed == nil then
+									scalar_repair_reason = "replacement_seed_unavailable"
+									break
+								end
+								local ok_draw, extra = pcall(grid_random, scalar_snapshot, retry_seed,
+									1, 0, min_value, max_value, params.weighted or false, params.mask)
+								local candidate = ok_draw and type(extra) == "table" and extra[1] or nil
+								if not candidate then
+									scalar_repair_reason = ok_draw and "replacement_grid_exhausted"
+										or ("replacement_draw_error:" .. tostring(extra))
+									break
+								end
+								local candidate_x, candidate_y = point_xyz(candidate)
+								local candidate_hex = aligned_hex_key(candidate)
+								local candidate_key = candidate_x ~= nil and candidate_y ~= nil
+									and (tostring(candidate_x) .. ":" .. tostring(candidate_y)) or nil
+								local ok_live, live_value = pcall(function() return grid:get(candidate) end)
+								local conflict = not candidate_hex or consumed_aligned_hexes[candidate_hex]
+									or (candidate_key and consumed_search_positions[candidate_key])
+									or not ok_live or type(live_value) ~= "number" or live_value <= 0
+								if not conflict then
+									-- Scalar GridStableRandomPos mutates the live selected cell even at
+									-- zero spacing. Transfer that one-cell mutation transactionally so the
+									-- discarded native point is restored and only its replacement is consumed.
+									local ok_native_live, native_live_value = pcall(function()
+										return grid:get(native_point)
+									end)
+									local transfer_ok = ok_native_live and type(native_live_value) == "number"
+									if transfer_ok then
+										transfer_ok = pcall(function()
+											grid:set(native_x, native_y, native_original_value)
+											grid:set(candidate_x, candidate_y, min_value)
+										end)
+									end
+									local ok_native_verify, native_verify = pcall(function()
+										return grid:get(native_point)
+									end)
+									local ok_candidate_verify, candidate_verify = pcall(function()
+										return grid:get(candidate)
+									end)
+									transfer_ok = transfer_ok and ok_native_verify and ok_candidate_verify
+										and native_verify == native_original_value
+										and candidate_verify == min_value
+									if transfer_ok then
+										results[1] = candidate
+										scalar_aligned_replacements = 1
+										scalar_repair_reason = "collision_replaced"
+										break
+									end
+									-- A partial setter failure must leave the native call exactly as it was.
+									if ok_native_live and type(native_live_value) == "number" then
+										pcall(function() grid:set(native_x, native_y, native_live_value) end)
+									end
+									if ok_live and type(live_value) == "number" then
+										pcall(function() grid:set(candidate_x, candidate_y, live_value) end)
+									end
+									scalar_repair_reason = "live_grid_transfer_failed"
+									break
+								end
+								if candidate_x == nil or candidate_y == nil
+									or not pcall(function() scalar_snapshot:set(candidate_x, candidate_y, 0) end) then
+									scalar_repair_reason = "replacement_candidate_retire_failed"
+									break
+								end
+							end
+							if attempt >= 4096 and scalar_aligned_replacements == 0 then
+								scalar_repair_reason = "replacement_attempt_budget_exhausted"
+							elseif not ok_native_original or type(native_original_value) ~= "number" then
+								scalar_repair_reason = "native_pre_call_value_unavailable"
+							end
+							if scalar_aligned_replacements == 0 and scalar_repair_reason == "collision_detected" then
+								scalar_repair_reason = "replacement_api_unavailable"
+							end
+						end
+					end
+					if scalar_snapshot then
+						pcall(function() scalar_snapshot:free() end)
+						scalar_snapshot = nil
+					end
+					-- Validate only entries that stock will append to `to_align`. Anomaly searches
+					-- return a rolled-count prefix followed by an erosion-only tail; replacing in
+					-- the exact native slot preserves that boundary, list order, downstream RNG
+					-- assignment, and the returned count. A failed repair keeps the original point
+					-- so the genuine engine warning remains visible. requested==1 is left native
+					-- because stock mutates its live spacing footprint instead of a private clone.
+					local aligned_prefix_count = 0
+					if resource_name == "Anomaly" then
+						if type(aligned_record_limit) == "number" then
+							aligned_prefix_count = math.max(0,
+								math.min(#(positions or {}), aligned_record_limit))
+						end
+					elseif result_aligns_to_hex then
+						aligned_prefix_count = #(positions or {})
+					end
+					local alignment_repair_snapshot
+					if can_complete and result_aligns_to_hex and requested > 1 and positions
+						and aligned_prefix_count > 0 and original_snapshot then
+						local ok_repair_clone, snapshot = pcall(function()
+							return original_snapshot:clone()
+						end)
+						if ok_repair_clone then alignment_repair_snapshot = snapshot end
+					end
+					local function repair_native_aligned_slots()
+						local repair_work = alignment_repair_snapshot
+						alignment_repair_snapshot = nil
+						if not repair_work then return end
+						local repair_ready = true
+						if repair_ready then
+							-- The replacement draw must not return any original native entry, including
+							-- an anomaly's erosion-only tail.
+							for i = 1, #positions do
+								local px, py = point_xyz(positions[i])
+								if px == nil or py == nil
+									or not pcall(function() repair_work:set(px, py, 0) end) then
+									repair_ready = false
+									break
+								end
+							end
+						end
+						local grid_random = closure_global("GridStableRandomPos",
+							Global("GridStableRandomPos"))
+						local grid_circle_set = closure_global("GridCircleSet", Global("GridCircleSet"))
+						-- Preclassify the full final aligned prefix before drawing replacements.
+						-- This reserves every valid later native/complement hex so an earlier repair
+						-- cannot steal it and manufacture a second collision downstream.
+						local collision_slots, reserved_hexes, classified_hexes = {}, {}, {}
+						for hash in pairs(consumed_aligned_hexes) do classified_hexes[hash] = true end
+						local final_aligned_count = resource_name == "Anomaly"
+							and (type(aligned_record_limit) == "number"
+								and math.min(#positions, aligned_record_limit) or 0)
+							or #positions
+						for i = 1, final_aligned_count do
+							local hash = aligned_hex_key(positions[i])
+							if hash and classified_hexes[hash] then
+								collision_slots[i] = true
+							elseif hash then
+								classified_hexes[hash] = true
+								reserved_hexes[hash] = true
+							end
+						end
+						local native_spacing = type(params.spacing) == "number"
+							and math.max(0, params.spacing) or 0
+						-- Reconstruct the spacing exclusions that vanilla applied inside grand's
+						-- temporary find_all clone. Collision slots are intentionally omitted because
+						-- they are the later candidates being moved; every retained candidate keeps its
+						-- original exclusion radius.
+						if repair_ready and native_spacing > 0 then
+							if type(grid_circle_set) ~= "function" then
+								repair_ready = false
+							else
+								for i = 1, final_aligned_count do
+									if not collision_slots[i] then
+										local ok_spacing = pcall(grid_circle_set, repair_work, 0,
+											positions[i], native_spacing)
+										if not ok_spacing then
+											repair_ready = false
+											break
+										end
+									end
+								end
+							end
+						end
+						-- Keep a pristine full-zone fallback before the locality-biased draw consumes
+						-- candidates. The first phase redraws into the original sector or one of its
+						-- eight neighbours; if that 3x3 region has no valid unique snapped hex, the
+						-- second phase may use any still-valid vanilla candidate so counts are preserved.
+						local global_repair_work
+						if repair_ready then
+							local ok_global, clone = pcall(function() return repair_work:clone() end)
+							if ok_global then
+								global_repair_work = clone
+							else
+								repair_ready = false
+							end
+						end
+						local min_value = type(params.min) == "number" and params.min or 0
+						local max_value = type(params.max) == "number" and params.max
+							or (type(closure_global("max_int", Global("max_int"))) == "number"
+								and closure_global("max_int", Global("max_int")) or 2147483647)
+						local grid_width, grid_height
+						local ok_grid_size, size_x, size_y = pcall(function()
+							return repair_work:size()
+						end)
+						if ok_grid_size and type(size_x) == "number" and size_x > 0 then
+							grid_width = size_x
+							grid_height = type(size_y) == "number" and size_y > 0 and size_y or size_x
+						end
+						local function sector_index(value, extent)
+							if type(value) ~= "number" or type(extent) ~= "number" or extent <= 0 then
+								return nil
+							end
+							return math.max(0, math.min(9, math.floor(value * 10 / extent)))
+						end
+						for i = 1, aligned_prefix_count do
+							local native_pos = positions[i]
+							local native_hex = aligned_hex_key(native_pos)
+							local collision = collision_slots[i] == true
+							if collision then
+								native_aligned_collisions = native_aligned_collisions + 1
+								local replacement, replacement_scope
+								if repair_ready and type(grid_random) == "function" then
+									local nx, ny = point_xyz(native_pos)
+									local native_sector_x = sector_index(nx, grid_width)
+									local native_sector_y = sector_index(ny, grid_height)
+									local function draw_replacement(draw_grid, scope, attempts, require_neighbour)
+										if not draw_grid then return nil end
+										for attempt = 1, attempts do
+										local seed
+										if type(self.ProcSeed) == "function" then
+											local ok_seed, proc_seed = pcall(self.ProcSeed, self,
+												proc .. ":SBMAlignedSlot:" .. tostring(i))
+											if ok_seed then
+												local ok_hash, hashed = pcall(alignment_hash, proc_seed,
+													"SBMNativeAlignedReplacement", scope, tostring(nx),
+													tostring(ny), attempt)
+												if ok_hash then seed = hashed end
+											end
+										end
+										if type(seed) ~= "number" then return nil end
+										local ok_draw, extra = pcall(grid_random, draw_grid, seed,
+											1, 0, min_value, max_value, params.weighted or false, params.mask)
+										local candidate = ok_draw and type(extra) == "table" and extra[1] or nil
+										if not candidate then return nil end
+										local cx, cy = point_xyz(candidate)
+										local candidate_key = cx ~= nil and cy ~= nil
+											and (tostring(cx) .. ":" .. tostring(cy)) or nil
+										local candidate_hex = aligned_hex_key(candidate)
+										local candidate_sector_x = sector_index(cx, grid_width)
+										local candidate_sector_y = sector_index(cy, grid_height)
+										local within_neighbourhood = native_sector_x ~= nil
+											and native_sector_y ~= nil and candidate_sector_x ~= nil
+											and candidate_sector_y ~= nil
+											and math.abs(candidate_sector_x - native_sector_x) <= 1
+											and math.abs(candidate_sector_y - native_sector_y) <= 1
+										local ok_live, live_value = pcall(function()
+											return grid:get(candidate)
+										end)
+										local candidate_conflict = not candidate_hex
+											or consumed_aligned_hexes[candidate_hex]
+											or reserved_hexes[candidate_hex]
+											or (candidate_key and consumed_search_positions[candidate_key])
+											or not ok_live or type(live_value) ~= "number" or live_value <= 0
+										if not candidate_conflict and (not require_neighbour or within_neighbourhood) then
+											return candidate
+										elseif not candidate_conflict and require_neighbour then
+											native_aligned_local_rejections =
+												native_aligned_local_rejections + 1
+										end
+										if cx == nil or cy == nil
+											or not pcall(function() draw_grid:set(cx, cy, 0) end) then
+											return nil
+										end
+										end
+										return nil
+									end
+									if native_sector_x ~= nil and native_sector_y ~= nil then
+										replacement = draw_replacement(repair_work,
+											"same_or_neighbor_sector", 1024, true)
+										if replacement then replacement_scope = "same_or_neighbor_sector" end
+									end
+									if not replacement then
+										native_aligned_global_fallbacks = native_aligned_global_fallbacks + 1
+										replacement = draw_replacement(global_repair_work,
+											"full_valid_zone", 4096, false)
+										if replacement then replacement_scope = "full_valid_zone" end
+									end
+								end
+								if replacement then
+									positions[i] = replacement
+									native_replacement_slots[i] = true
+									native_hex = aligned_hex_key(replacement)
+									if native_hex then reserved_hexes[native_hex] = true end
+									native_aligned_replacements = native_aligned_replacements + 1
+									if native_spacing > 0 then
+										local local_masked = pcall(grid_circle_set, repair_work, 0,
+											replacement, native_spacing)
+										local global_masked = pcall(grid_circle_set, global_repair_work, 0,
+											replacement, native_spacing)
+										if not local_masked or not global_masked then repair_ready = false end
+									end
+									AlignmentTrace("native aligned collision replaced before final snap", {
+										proc = proc, resource = resource_label, index = i,
+										original_hash = tostring(aligned_hex_key(native_pos)),
+										replacement_hash = tostring(native_hex),
+										scope = tostring(replacement_scope), spacing = native_spacing,
+									})
+								else
+									native_aligned_retained = native_aligned_retained + 1
+								end
+							end
+						end
+						if global_repair_work then pcall(function() global_repair_work:free() end) end
+						if repair_work then pcall(function() repair_work:free() end) end
+						results[1] = positions
+					end
 					local complemented = 0
+					local live_zone_seeded = 0
+					local aligned_hex_rejections = 0
 
-					if can_complete and native_returned < requested then
+					if can_complete and native_usable < requested then
 						completion_reason = "completion_started"
 						positions = positions or {}
-						local grid_random = Global("GridStableRandomPos")
+						local grid_random = closure_global("GridStableRandomPos",
+							Global("GridStableRandomPos"))
 						local work = original_snapshot
 						original_snapshot = nil
 						local seen, seen_points = {}, {}
-						local function remember(pos, erase_grid)
+						local seen_aligned_hexes = {}
+						local function remember(pos, erase_grid, seed_live_zone,
+							enforce_unique_hex, track_aligned_hex, seed_value_source)
 							if not pos then return false end
+							if track_aligned_hex == nil then track_aligned_hex = enforce_unique_hex end
 							local ok_xy, x, y = pcall(function() return pos:xy() end)
 							if not ok_xy or x == nil or y == nil then return false end
 							local key = tostring(x) .. ":" .. tostring(y)
 							if seen[key] then return false end
+							local hex_key = aligned_hex_key(pos)
+							if enforce_unique_hex and not hex_key then return false end
+							if enforce_unique_hex
+								and (consumed_aligned_hexes[hex_key] or seen_aligned_hexes[hex_key]) then
+								-- The engine aligns all deposit/anomaly work-grid points afterward with
+								-- HexGetNearestCenter(pos * work_step). Distinct, nonadjacent work cells
+								-- can therefore become the same gameplay hex; remove this rejected cell
+								-- from the private candidate grid and draw another independent candidate.
+								if not erase_grid then return false end
+								local retired = pcall(function() erase_grid:set(x, y, 0) end)
+								if not retired then return false end
+								local ok_retired_value, retired_value = pcall(function()
+									return erase_grid:get(x, y)
+								end)
+								if not ok_retired_value or type(retired_value) ~= "number"
+									or retired_value > 0 then return false end
+								for dx = -1, 1 do
+									for dy = -1, 1 do
+										if dx ~= 0 or dy ~= 0 then
+											pcall(function() erase_grid:set(x + dx, y + dy, 0) end)
+										end
+									end
+								end
+								aligned_hex_rejections = aligned_hex_rejections + 1
+								return false
+							end
+							local seed_value
+							if seed_live_zone then
+								-- SearchDepositLayer validates every returned point against its live
+								-- resource zone before NewDep/NewAnomaly applies repulsion. A point
+								-- recovered from the pristine native layer mask is outside that already-
+								-- eroded zone by definition, so preserve its positive candidate value and
+								-- restore only this selected cell to the live zone before returning it.
+								local source = seed_value_source or erase_grid
+								local ok_value, value = pcall(function() return source:get(pos) end)
+								if not ok_value or type(value) ~= "number" or value <= 0 then return false end
+								seed_value = value
+							end
 							if erase_grid then
 								local ok_set = pcall(function() erase_grid:set(x, y, 0) end)
 								if not ok_set then return false end
@@ -1809,13 +2533,33 @@ local function PatchRandomMapGenerator()
 									end
 								end
 							end
+							if seed_live_zone then
+								local ok_previous, previous = pcall(function() return grid:get(pos) end)
+								local ok_seed = pcall(function() grid:set(x, y, seed_value) end)
+								local ok_verify, live_value = pcall(function() return grid:get(pos) end)
+								if not ok_seed or not ok_verify or type(live_value) ~= "number" or live_value <= 0 then
+									if ok_previous and type(previous) == "number" then
+										pcall(function() grid:set(x, y, previous) end)
+									end
+									return false
+								end
+								live_zone_seeded = live_zone_seeded + 1
+							end
 							seen[key] = true
+							if hex_key and track_aligned_hex then seen_aligned_hexes[hex_key] = true end
 							seen_points[#seen_points + 1] = { x = x, y = y }
 							return true
 						end
 						local native_erased = true
 						for i = 1, #positions do
-							if remember(positions[i], work) ~= true then native_erased = false break end
+							local occupies_hex = result_aligns_to_hex
+								and (resource_name ~= "Anomaly"
+									or (type(aligned_record_limit) == "number"
+										and i <= aligned_record_limit))
+							if remember(positions[i], work, false, false, occupies_hex) ~= true then
+								native_erased = false
+								break
+							end
 						end
 						if not work then
 							completion_reason = "pre_call_snapshot_missing"
@@ -1825,17 +2569,17 @@ local function PatchRandomMapGenerator()
 							completion_reason = "GridStableRandomPos_unavailable"
 						end
 
-						local stack = State.rmg_placement_proc_stack
-						local proc = type(stack) == "table" and tostring(stack[#stack]) or "PlaceAnomalies"
 						local min_value = type(params.min) == "number" and params.min or 0
 						local max_value = type(params.max) == "number" and params.max
 							or (type(Global("max_int")) == "number" and Global("max_int") or 2147483647)
-						local function add_from_zone(candidate, scope)
+						local function add_from_zone(candidate, scope, seed_value_source)
 							local reason = "residual_shortfall"
-							-- Draw one point at a time and erase its 3x3 work-grid footprint before
-							-- drawing the next. A batched zero-spacing call can return neighboring
-							-- cells that later align to the same gameplay hex.
-							for attempt = 1, requested * 2 + 4 do
+							-- Draw one point at a time, retire its local work-grid footprint, and
+							-- validate its exact aligned gameplay hex before accepting it. A batched
+							-- zero-spacing call can return cells that later align to the same hex.
+							local attempt = 0
+							while #positions < requested and attempt < 4096 do
+								attempt = attempt + 1
 								local remaining = requested - #positions
 								if remaining <= 0 then return "completed:" .. scope end
 								local seed_tag = table.concat({
@@ -1867,9 +2611,16 @@ local function PatchRandomMapGenerator()
 									return "no_unspaced_candidate:" .. scope
 								end
 								local added_this_attempt = 0
+								local aligned_rejections_before = aligned_hex_rejections
 								for i = 1, #extra do
 									local pos = extra[i]
-									if remember(pos, candidate) then
+									local next_index = #positions + 1
+									local occupies_hex = result_aligns_to_hex
+										and (resource_name ~= "Anomaly"
+											or (type(aligned_record_limit) == "number"
+												and next_index <= aligned_record_limit))
+									if remember(pos, candidate, scope == "pristine_layer",
+										occupies_hex, occupies_hex, seed_value_source) then
 										positions[#positions + 1] = pos
 										complemented = complemented + 1
 										added_this_attempt = added_this_attempt + 1
@@ -1877,9 +2628,19 @@ local function PatchRandomMapGenerator()
 									end
 								end
 								if added_this_attempt == 0 then
-									return "all_complement_candidates_duplicate:" .. scope
+									if aligned_hex_rejections > aligned_rejections_before then
+										-- The rejected hex footprint was retired from `candidate`; keep
+										-- drawing instead of turning a correctable collision into a shortfall.
+										reason = "residual_shortfall_after_aligned_hex_rejection:" .. scope
+									else
+										return "all_complement_candidates_duplicate:" .. scope
+									end
+								else
+									reason = "residual_shortfall:" .. scope
 								end
-								reason = "residual_shortfall:" .. scope
+							end
+							if #positions < requested and attempt >= 4096 then
+								return "candidate_attempt_budget_exhausted:" .. scope
 							end
 							return #positions >= requested and ("completed:" .. scope) or reason
 						end
@@ -1897,9 +2658,9 @@ local function PatchRandomMapGenerator()
 								local pristine_ready = true
 								local function erase_consumed_xy(xy)
 									local exact_ok = pcall(function() pristine:set(xy.x, xy.y, 0) end)
-									-- Work-grid neighbors can align to the same gameplay hex. Removing this
-									-- minimal 3x3 footprint prevents the complementary marker from producing
-									-- the engine's "two markers aligned on the same hex" warning.
+									-- Retire the immediate work-grid neighborhood as a cheap first pass. The
+									-- exact HexGetNearestCenter identity check in `remember` remains the
+									-- authoritative guard against aligned-hex collisions.
 									for dx = -1, 1 do
 										for dy = -1, 1 do
 											if dx ~= 0 or dy ~= 0 then
@@ -1924,7 +2685,19 @@ local function PatchRandomMapGenerator()
 									end
 								end
 								if pristine_ready then
-									completion_reason = add_from_zone(pristine, "pristine_layer")
+									-- GridStableRandomPos may mutate its draw grid before returning the
+									-- selected cell. Preserve the positive pre-draw value used to seed only
+									-- the accepted live-zone cell for SearchDepositLayer validation.
+									local ok_seed_source, seed_source = pcall(function()
+										return pristine:clone()
+									end)
+									if ok_seed_source and seed_source then
+										completion_reason = add_from_zone(pristine,
+											"pristine_layer", seed_source)
+										pcall(function() seed_source:free() end)
+									else
+										completion_reason = "pristine_seed_snapshot_failed"
+									end
 								else
 									completion_reason = "pristine_used_position_erase_failed"
 								end
@@ -1951,23 +2724,79 @@ local function PatchRandomMapGenerator()
 							saved_rm_print("Could not find place for", missing, "out of", requested, params.resource)
 						end
 					end
+					-- Authoritative target completion has first claim on scarce candidates. Only
+					-- after the true requested count is filled do same-hex native slots consume an
+					-- independent replacement candidate; unresolved slots retain the native point.
+					local repair_ok, repair_err = pcall(repair_native_aligned_slots)
+					if not repair_ok then
+						AlignmentTrace("native aligned-slot repair failed closed", {
+							proc = proc, error = tostring(repair_err),
+						})
+					end
+					if alignment_repair_snapshot then
+						pcall(function() alignment_repair_snapshot:free() end)
+						alignment_repair_snapshot = nil
+					end
 					if original_snapshot then pcall(function() original_snapshot:free() end) end
 					local final_positions = results[1]
-					if record_consumed_position(final_positions) then
+					local single_occupies_hex = result_aligns_to_hex
+					local origin_resource = resource_label ~= "" and resource_label or "?"
+					local single_point_returned = record_consumed_position(final_positions,
+						single_occupies_hex, {
+							proc = proc, resource = origin_resource, index = 1,
+							shape = "single_point", source = scalar_aligned_replacements > 0
+								and "replacement" or "native", aligns = single_occupies_hex,
+							role = single_occupies_hex and "aligned" or "nonaligning_or_unclassified",
+						})
+					local result_shape
+					if single_point_returned then
+						result_shape = "single_point"
 						-- Single-point grand result.
 					elseif type(final_positions) == "table" then
-						for i = 1, #final_positions do record_consumed_position(final_positions[i]) end
+						result_shape = "list"
+						for i = 1, #final_positions do
+							local occupies_hex = result_aligns_to_hex
+								and (resource_name ~= "Anomaly"
+									or (type(aligned_record_limit) == "number"
+										and i <= aligned_record_limit))
+							record_consumed_position(final_positions[i], occupies_hex, {
+								proc = proc, resource = origin_resource, index = i, shape = "list",
+								source = native_replacement_slots[i] and "replacement"
+									or (i <= native_usable and "native" or "complement"),
+								aligns = occupies_hex,
+								role = occupies_hex and "aligned"
+									or (resource_name == "Anomaly" and "erosion_tail"
+										or "nonaligning_or_unclassified"),
+							})
+						end
+					elseif final_positions == nil then
+						result_shape = "nil"
+					else
+						result_shape = type(final_positions)
 					end
 
 					if trace_ok and trace == true and type(debug_log.Info) == "function" then
 						pcall(debug_log.Info, "RmgPlacementExhaustive", "vanilla-first placement search", {
-							proc = type(State.rmg_placement_proc_stack) == "table"
-								and tostring(State.rmg_placement_proc_stack[#State.rmg_placement_proc_stack]) or "?",
+							proc = proc,
 							resource = tostring(type(params) == "table" and params.resource or "?"),
 							requested = tostring(requested), spacing = tostring(type(params) == "table" and params.spacing),
 							mode = tostring(type(params) == "table" and params.mode), positive_cells_before = before,
-							native_returned = native_returned, complemented = complemented,
-							final_returned = type(results[1]) == "table" and #results[1] or native_returned,
+							native_returned = native_returned, native_usable = native_usable,
+							native_aligned_collisions = native_aligned_collisions,
+							native_aligned_replacements = native_aligned_replacements,
+							native_aligned_retained = native_aligned_retained,
+							native_aligned_local_rejections = native_aligned_local_rejections,
+							native_aligned_global_fallbacks = native_aligned_global_fallbacks,
+							scalar_aligned_replacements = scalar_aligned_replacements,
+							scalar_repair_reason = scalar_repair_reason,
+							complemented = complemented,
+							live_zone_seeded = live_zone_seeded,
+							aligned_hex_rejections = aligned_hex_rejections,
+							aligned_record_limit = tostring(aligned_record_limit),
+							result_shape = result_shape,
+							single_point_returned = single_point_returned,
+							final_returned = single_point_returned and 1
+								or (type(results[1]) == "table" and #results[1] or native_returned),
 							completion_reason = completion_reason,
 							environment = tostring(environment),
 						})
@@ -1977,13 +2806,16 @@ local function PatchRandomMapGenerator()
 			end
 
 			if type(saved_rm_print) == "function" then
-				env.rm_print = function(...)
-					local call_args = PackValues(...)
-					-- Deliver the native message first and unchanged. Everything below is a protected,
-					-- read-only audit, so diagnostics can never hide or delay an engine warning.
-					local original_results = PackValues(saved_rm_print(...))
-					pcall(function()
-						local debug_log = SuperBigMap.DebugLog
+					env.rm_print = function(...)
+						local call_args = PackValues(...)
+						-- Deliver the native message first and unchanged. Everything below is a protected,
+						-- read-only audit, so diagnostics can never hide or delay an engine warning.
+						local original_results = PackValues(saved_rm_print(...))
+						pcall(function()
+							if call_args.n == 1 and call_args[1] == "Two markers aligned on the same hex!" then
+								alignment_trace.warning_count = alignment_trace.warning_count + 1
+							end
+							local debug_log = SuperBigMap.DebugLog
 						if debug_log and type(debug_log.On) == "function"
 							and debug_log.On("RmgPlacementExhaustive") == true then
 							local text_parts, args = {}, {}
@@ -2037,22 +2869,387 @@ local function PatchRandomMapGenerator()
 			end
 
 			-- Breakthrough anomalies are the sole enrichment positions selected through
-			-- GridMinMax instead of grand. Record their accepted max point so the pristine
-			-- complement cannot reuse their hex. This wrapper is read-only and tuple-exact.
+			-- GridMinMax instead of grand. The stock procedure calls it for every maximum
+			-- quota slot even when the rolled quota is smaller, so only a fully rolled quota
+			-- makes every returned maximum authoritative. In that safe case, replace a
+			-- same-hex maximum with the next maximum from a private clone. The stock call and
+			-- random stream remain untouched, and the requested anomaly count is unchanged.
 			if type(saved_grid_min_max) == "function" then
 				grid_min_max_wrapper = function(...)
+					local call_args = PackValues(...)
 					local grid_results = PackValues(saved_grid_min_max(...))
 					local stack = State.rmg_placement_proc_stack
 					local proc = type(stack) == "table" and tostring(stack[#stack]) or ""
-					if proc == "PlaceAnomalies_FindAnomalies_Breakthrough" then
-						record_consumed_position(grid_results[4])
+					local exact_breakthrough_call =
+						proc == "PlaceAnomalies_FindAnomalies_Breakthrough"
+						and call_args.n == 3 and call_args[2] == 1 and call_args[3] == true
+					if exact_breakthrough_call then
+						alignment_trace.breakthrough_calls = alignment_trace.breakthrough_calls + 1
+						local candidate = grid_results[4]
+						local candidate_hex = aligned_hex_key(candidate)
+						local collision = candidate_hex and consumed_aligned_hexes[candidate_hex] or false
+						local bonus_to
+						pcall(function() bonus_to = self.BonusCountBreakthrough.to end)
+						local full_quota = cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
+							and not is_underground
+							and roll_index == #roll_specs
+							and type(self.AnomBreakthroughCount) == "number"
+							and type(rolls.breakthrough_bonus) == "number"
+							and type(bonus_to) == "number"
+							and self.AnomBreakthroughCount + rolls.breakthrough_bonus
+								== self.AnomBreakthroughCount + bonus_to
+						local repair_reason = collision and "collision_detected" or "native_unique"
+
+						if collision then
+							alignment_trace.breakthrough_collisions =
+								alignment_trace.breakthrough_collisions + 1
+						end
+						if collision and full_quota and call_args[1] ~= nil then
+							local ok_clone, work = pcall(function() return call_args[1]:clone() end)
+							if ok_clone and work then
+								local retry = grid_results
+								for attempt = 1, 4096 do
+									local rejected = retry[4]
+									local reject_x, reject_y = point_xyz(rejected)
+									if reject_x == nil or reject_y == nil then
+										repair_reason = "candidate_coordinates_unavailable"
+										break
+									end
+									local ok_retire = pcall(function() work:set(reject_x, reject_y, 0) end)
+									if not ok_retire then
+										repair_reason = "candidate_retire_failed"
+										break
+									end
+									local next_results
+									local ok_next, next_err = pcall(function()
+										next_results = PackValues(saved_grid_min_max(
+											work, Unpack(call_args, 2, call_args.n)))
+									end)
+									if not ok_next then
+										repair_reason = "next_max_error:" .. tostring(next_err)
+										break
+									end
+									local next_max, next_candidate = next_results[2], next_results[4]
+									if type(next_max) ~= "number" or next_max <= 0 or not next_candidate then
+										repair_reason = "next_max_exhausted"
+										break
+									end
+									local next_hex = aligned_hex_key(next_candidate)
+									if not next_hex then
+										repair_reason = "next_max_alignment_unavailable"
+										break
+									elseif not consumed_aligned_hexes[next_hex] then
+										-- Change only the maximum pair consumed by the breakthrough proc. The
+										-- native minimum pair and tuple shape remain byte-for-byte equivalent.
+										grid_results[2] = next_max
+										grid_results[4] = next_candidate
+										candidate = next_candidate
+										candidate_hex = next_hex
+										collision = false
+										repair_reason = "collision_replaced"
+										alignment_trace.breakthrough_replacements =
+											alignment_trace.breakthrough_replacements + 1
+										break
+									end
+									retry = next_results
+									repair_reason = "next_max_still_collides"
+								end
+								pcall(function() work:free() end)
+							else
+								repair_reason = "candidate_clone_failed"
+							end
+						elseif collision and not full_quota then
+							alignment_trace.breakthrough_partial_quota_calls =
+								alignment_trace.breakthrough_partial_quota_calls + 1
+							repair_reason = "partial_quota_fail_closed"
+						end
+
+						-- With a full quota every loop iteration reaches NewAnomaly. Partial-quota
+						-- iterations include an indistinguishable erosion-only tail, so do not claim
+						-- occupancy for them; the final closure audit will still expose any warning.
+						if full_quota and candidate then
+							record_consumed_position(candidate, true, {
+								proc = proc, resource = "subs Anomaly/Breakthrough",
+								index = alignment_trace.breakthrough_calls,
+								shape = "single_point", source = repair_reason == "collision_replaced"
+									and "replacement" or "native",
+								aligns = true, role = "aligned",
+							})
+						elseif candidate then
+							record_consumed_position(candidate, false, {
+								proc = proc, resource = "subs Anomaly/Breakthrough",
+								index = alignment_trace.breakthrough_calls,
+								shape = "single_point", source = "native",
+								aligns = false, role = "accepted_or_erosion_tail_unknown",
+							})
+						end
+						if collision then
+							alignment_trace.breakthrough_retained_collisions =
+								alignment_trace.breakthrough_retained_collisions + 1
+						end
+						AlignmentTrace("breakthrough maximum audit", {
+							call = alignment_trace.breakthrough_calls,
+							full_quota = full_quota, rolled_bonus = tostring(rolls.breakthrough_bonus),
+							bonus_max = tostring(bonus_to), hash = tostring(candidate_hex),
+							collision_retained = collision, repair_reason = repair_reason,
+						})
 					end
 					return Unpack(grid_results, 1, grid_results.n)
 				end
-				rawset(_G, "GridMinMax", grid_min_max_wrapper)
+				-- Stock OnGenerateLogic resolves GridMinMax through its private `_ENV`. Install
+				-- there first and remember the exact raw entry so cleanup restores proxy lookup.
+				if type(generator_closure_env) == "table" then
+					grid_min_max_closure_raw = rawget(generator_closure_env, "GridMinMax")
+					grid_min_max_closure_had_raw = grid_min_max_closure_raw ~= nil
+					local ok_install = pcall(rawset, generator_closure_env,
+						"GridMinMax", grid_min_max_wrapper)
+					grid_min_max_installed_in_closure = ok_install
+						and rawget(generator_closure_env, "GridMinMax") == grid_min_max_wrapper
+				end
+				if not grid_min_max_installed_in_closure then
+					AlignmentTrace("breakthrough GridMinMax hook unavailable", {
+						closure_env = tostring(generator_closure_env),
+						resolved_function = tostring(saved_grid_min_max),
+					})
+				end
+			end
+
+			-- Authoritative read-only audit of the engine's FINAL alignment loop. The compiled
+			-- RMG closure owns a private `_ENV`, so changing `_G.HexGetNearestCenter` cannot see
+			-- this call. ProcInvoke gives us the actual local alignment closure and its named
+			-- `to_align`/`work_step` upvalues; inspect the engine-populated `info.align_pos` only
+			-- AFTER the original function runs. No alignment is recomputed or mutated here.
+			if alignment_trace_enabled and not hex_hook_installed_in_closure
+				and type(saved_proc_invoke) == "function" then
+				proc_invoke_wrapper = function(tag, func, randless)
+					if tag ~= "PlaceAnomalies_AlignToHexGrid" or type(func) ~= "function" then
+						return saved_proc_invoke(tag, func, randless)
+					end
+					local closure_env, to_align, closure_work_step
+					local upvalue_names = {}
+					if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
+						for i = 1, 64 do
+							local ok_up, name, value = pcall(debug_lib.getupvalue, func, i)
+							if not ok_up or name == nil then break end
+							upvalue_names[#upvalue_names + 1] = tostring(name)
+							if name == "_ENV" then closure_env = value
+							elseif name == "to_align" then to_align = value
+							elseif name == "work_step" then closure_work_step = value end
+						end
+					end
+					local closure_hash, closure_world_to_hex
+					if type(closure_env) == "table" then
+						pcall(function()
+							closure_hash = closure_env.xxhash
+							closure_world_to_hex = closure_env.WorldToHex
+						end)
+					end
+					AlignmentTrace("alignment closure preflight", {
+						upvalues = table.concat(upvalue_names, ","),
+						to_align_count = type(to_align) == "table" and #to_align or "unavailable",
+						work_step = tostring(closure_work_step),
+						hash_function = tostring(closure_hash),
+						world_to_hex = tostring(closure_world_to_hex),
+					})
+					local proc_results = PackValues(saved_proc_invoke(tag, func, randless))
+					pcall(function()
+							if type(to_align) ~= "table" or type(closure_work_step) ~= "number" then
+								AlignmentTrace("alignment closure audit unavailable", {
+									to_align = tostring(to_align), work_step = tostring(closure_work_step),
+								})
+								return
+							end
+							for index, info in ipairs(to_align) do
+								alignment_trace.calls = alignment_trace.calls + 1
+								local map_pos = info and info.pos and info.pos * closure_work_step or nil
+								local aligned = info and info.align_pos or nil
+								local raw_x, raw_y, raw_z = point_xyz(map_pos)
+								local aligned_x, aligned_y, aligned_z = point_xyz(aligned)
+								local raw_key, aligned_key = xy_key(map_pos), xy_key(aligned)
+								local ok_hash, native_hash = false, nil
+								if type(closure_hash) == "function" then
+									ok_hash, native_hash = pcall(closure_hash, aligned)
+								end
+								if not ok_hash or native_hash == nil then
+									alignment_trace.hash_failures = alignment_trace.hash_failures + 1
+								end
+								local hash_key = ok_hash and native_hash ~= nil and native_hash
+									or ("unavailable:" .. tostring(index))
+								local hash_text = tostring(hash_key)
+								local q, r
+								if type(closure_world_to_hex) == "function" then
+									local ok_hex, hq, hr = pcall(closure_world_to_hex, aligned)
+									if ok_hex then q, r = hq, hr end
+								end
+								local origins = raw_key and candidate_origins_by_world_xy[raw_key] or nil
+								local origin_parts = {}
+								for i = 1, #(origins or {}) do
+									origin_parts[#origin_parts + 1] = origin_desc(origins[i])
+								end
+								local origin_text = #origin_parts > 0
+									and table.concat(origin_parts, " || ") or "unknown"
+								if #origin_parts == 0 then
+									alignment_trace.unknown_origins = alignment_trace.unknown_origins + 1
+								end
+								local previous = alignment_trace.by_hash[hash_key]
+								local record = {
+									index = index, hash = hash_key,
+									raw_x = raw_x, raw_y = raw_y, raw_z = raw_z,
+									aligned_x = aligned_x, aligned_y = aligned_y, aligned_z = aligned_z,
+									aligned_key = aligned_key, q = q, r = r, origin = origin_text,
+								}
+								if previous then
+									alignment_trace.duplicate_calls = alignment_trace.duplicate_calls + 1
+									if not alignment_trace.duplicate_hashes[hash_key] then
+										alignment_trace.duplicate_hashes[hash_key] = true
+										alignment_trace.duplicate_hexes = alignment_trace.duplicate_hexes + 1
+									end
+									AlignmentTrace("AUTHORITATIVE duplicate aligned hex", {
+										hash = hash_text, q = tostring(q), r = tostring(r),
+										first_index = previous.index, incoming_index = index,
+										first_raw = tostring(previous.raw_x) .. ":" .. tostring(previous.raw_y),
+										incoming_raw = tostring(raw_x) .. ":" .. tostring(raw_y),
+										first_aligned = tostring(previous.aligned_x) .. ":" .. tostring(previous.aligned_y),
+										incoming_aligned = tostring(aligned_x) .. ":" .. tostring(aligned_y),
+										same_aligned_xy = previous.aligned_key == aligned_key,
+										first_origin = previous.origin, incoming_origin = origin_text,
+										incoming_layer = tostring(info.layer), incoming_resource = tostring(info.res),
+										incoming_scenario = tostring(info.scenario),
+									})
+								end
+								alignment_trace.by_hash[hash_key] = record
+								local aligned_calls = aligned_key and alignment_trace.by_aligned_xy[aligned_key] or nil
+								if aligned_key and not aligned_calls then
+									aligned_calls = {}
+									alignment_trace.by_aligned_xy[aligned_key] = aligned_calls
+								end
+								if aligned_calls then aligned_calls[#aligned_calls + 1] = record end
+								AlignmentTrace("final alignment input", {
+									index = index, hash = hash_text,
+									duplicate_of = previous and previous.index or "none",
+									raw_work_x = type(raw_x) == "number" and raw_x / closure_work_step or "n/a",
+									raw_work_y = type(raw_y) == "number" and raw_y / closure_work_step or "n/a",
+									raw_world = tostring(raw_x) .. ":" .. tostring(raw_y) .. ":" .. tostring(raw_z),
+									aligned_world = tostring(aligned_x) .. ":" .. tostring(aligned_y) .. ":" .. tostring(aligned_z),
+									q = tostring(q), r = tostring(r), origin = origin_text,
+									info_layer = tostring(info.layer), info_resource = tostring(info.res),
+									info_scenario = tostring(info.scenario),
+									census_origin = origin_desc(aligned_origin_by_hash[hash_text]),
+								})
+							end
+					end)
+					return Unpack(proc_results, 1, proc_results.n)
+				end
+				env.ProcInvoke = proc_invoke_wrapper
+			end
+
+			-- Classify the real marker objects subsequently created on a duplicated aligned
+			-- position. This is also read-only: the original factory is called exactly once with
+			-- the original tuple, and its return tuple is forwarded unchanged.
+			if alignment_trace_enabled and type(saved_gen_marker_obj) == "function" then
+				local function is_aligned_marker_class(name)
+					name = tostring(name or "")
+					return string.find(name, "SubsurfaceDepositMarker", 1, true) ~= nil
+						or string.find(name, "TerrainDepositMarker", 1, true) ~= nil
+						or string.find(name, "SubsurfaceAnomalyMarker", 1, true) ~= nil
+						or string.find(name, "EffectDepositMarker", 1, true) ~= nil
+				end
+				gen_marker_obj_wrapper = function(marker_map, classdef, map_pos, lua_obj, debug_id, ...)
+					local marker_results = PackValues(saved_gen_marker_obj(
+						marker_map, classdef, map_pos, lua_obj, debug_id, ...))
+					pcall(function()
+						local aligned_key = xy_key(map_pos)
+						local calls = aligned_key and alignment_trace.by_aligned_xy[aligned_key] or nil
+						local duplicate = false
+						local call_indices, hashes = {}, {}
+						for i = 1, #(calls or {}) do
+							call_indices[#call_indices + 1] = tostring(calls[i].index)
+							hashes[#hashes + 1] = tostring(calls[i].hash)
+							if alignment_trace.duplicate_hashes[calls[i].hash] then duplicate = true end
+						end
+						if duplicate then
+							local class_name = tostring(classdef)
+							pcall(function()
+								class_name = tostring(classdef.class or classdef.__name or classdef.ClassName or classdef)
+							end)
+							local obj = marker_results[1]
+							local object_class, handle = "?", "?"
+							pcall(function()
+								object_class = tostring(obj.class or obj.__class or obj)
+								handle = tostring(obj.handle)
+							end)
+							local alignable_class = is_aligned_marker_class(class_name)
+								or is_aligned_marker_class(object_class)
+							if alignable_class then
+								alignment_trace.markers_on_duplicate_hexes =
+									alignment_trace.markers_on_duplicate_hexes + 1
+							end
+							AlignmentTrace(alignable_class
+								and "materialized marker on duplicate aligned hex"
+								or "non-aligning generated object shares duplicate aligned coordinate", {
+								aligned_xy = tostring(aligned_key), calls = table.concat(call_indices, ","),
+								hashes = table.concat(hashes, ","), class = class_name,
+								alignable_class = alignable_class,
+								object_class = object_class, handle = handle, debug_id = tostring(debug_id),
+								resource = type(lua_obj) == "table" and tostring(lua_obj.resource) or "?",
+								deposit_type = type(lua_obj) == "table" and tostring(lua_obj.deposit_type) or "?",
+								tech_action = type(lua_obj) == "table" and tostring(lua_obj.tech_action) or "?",
+								sequence = type(lua_obj) == "table" and tostring(lua_obj.sequence) or "?",
+							})
+						end
+					end)
+					return Unpack(marker_results, 1, marker_results.n)
+				end
+				env.GenMarkerObj = gen_marker_obj_wrapper
+			end
+
+			-- Feature deposit scalar `grand` calls carry only {min,max}; their layer/resource
+			-- lives in the immediately preceding DepositLayers[layer].filter(res) call. Capture
+			-- that exact stock context so subsurface/terrain feature deposits enter the aligned
+			-- census while surface cluster centers remain deliberately unaligned.
+			local deposit_layers = closure_global("DepositLayers", Global("DepositLayers"))
+			if type(deposit_layers) == "table" then
+				local seen_layers = {}
+				for key, layer_info in pairs(deposit_layers) do
+					if type(layer_info) == "table" and not seen_layers[layer_info]
+						and type(layer_info.filter) == "function" then
+						seen_layers[layer_info] = true
+						local original_filter = layer_info.filter
+						local layer_id = tostring(layer_info.id or key)
+						local filter_wrapper = function(...)
+							local call_args = PackValues(...)
+							local filter_results = PackValues(original_filter(...))
+							local stack = State.rmg_placement_proc_stack
+							local proc = type(stack) == "table" and tostring(stack[#stack]) or ""
+							if proc == "PlaceAnomalies_FindFeatures_Deposits" then
+								feature_deposit_context = nil
+								if filter_results[1] then
+									feature_deposit_context = {
+										layer = layer_id, resource = tostring(call_args[1] or "?"),
+									}
+								end
+							end
+							return Unpack(filter_results, 1, filter_results.n)
+						end
+						layer_info.filter = filter_wrapper
+						deposit_layer_filter_restores[#deposit_layer_filter_restores + 1] = {
+							layer = layer_info, original = original_filter, wrapper = filter_wrapper,
+						}
+					end
+				end
 			end
 
 			local results = { pcall(original_on_generate_logic, self, env, ...) }
+			for i = #deposit_layer_filter_restores, 1, -1 do
+				local restore = deposit_layer_filter_restores[i]
+				if restore.layer.filter == restore.wrapper then restore.layer.filter = restore.original end
+			end
+			if gen_marker_obj_wrapper and env.GenMarkerObj == gen_marker_obj_wrapper then
+				env.GenMarkerObj = saved_gen_marker_obj
+			end
+			if proc_invoke_wrapper and env.ProcInvoke == proc_invoke_wrapper then
+				env.ProcInvoke = saved_proc_invoke
+			end
 			if type(rhelpers) == "table" and rhelpers[2] ~= saved_rrand then
 				rhelpers[2] = saved_rrand
 			end
@@ -2067,12 +3264,57 @@ local function PatchRandomMapGenerator()
 				and Global("GenerateResourceInfo") == generate_resource_info_wrapper then
 				rawset(_G, "GenerateResourceInfo", saved_generate_resource_info)
 			end
-			if grid_min_max_wrapper and Global("GridMinMax") == grid_min_max_wrapper then
-				rawset(_G, "GridMinMax", saved_grid_min_max)
+			if grid_min_max_installed_in_closure and type(generator_closure_env) == "table"
+				and rawget(generator_closure_env, "GridMinMax") == grid_min_max_wrapper then
+				rawset(generator_closure_env, "GridMinMax",
+					grid_min_max_closure_had_raw and grid_min_max_closure_raw or nil)
+			end
+			if hex_hook_installed_in_closure and type(generator_closure_env) == "table"
+				and rawget(generator_closure_env, "HexGetNearestCenter")
+					== hex_get_nearest_center_wrapper then
+				rawset(generator_closure_env, "HexGetNearestCenter",
+					hex_closure_had_raw and hex_closure_raw or nil)
 			end
 			if base_play_zone_snapshot then
 				pcall(function() base_play_zone_snapshot:free() end)
 				base_play_zone_snapshot = nil
+			end
+			if alignment_trace_enabled then
+				local duplicate_hashes = {}
+				for hash in pairs(alignment_trace.duplicate_hashes) do
+					duplicate_hashes[#duplicate_hashes + 1] = tostring(hash)
+				end
+				table.sort(duplicate_hashes)
+				local generator_debugging = self.debugging and true or false
+				local warning_match = alignment_trace.hash_failures > 0
+					and "indeterminate_hash_failure"
+					or (not generator_debugging and "indeterminate_engine_debugging_off"
+						or tostring(alignment_trace.warning_count == alignment_trace.duplicate_calls))
+				AlignmentTrace("authoritative final-alignment summary", {
+					map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
+					environment = tostring(environment), alignment_calls = alignment_trace.calls,
+					environment_source = tostring(generator_closure_env_source),
+					hex_hook_installed = hex_hook_installed_in_closure,
+					grid_min_max_hook_installed = grid_min_max_installed_in_closure,
+					duplicate_calls = alignment_trace.duplicate_calls,
+					duplicate_hexes = alignment_trace.duplicate_hexes,
+					duplicate_hashes = table.concat(duplicate_hashes, ","),
+					engine_warnings = alignment_trace.warning_count,
+					generator_debugging = generator_debugging,
+					warning_match = warning_match,
+					hash_failures = alignment_trace.hash_failures,
+					candidate_census_collisions = alignment_trace.candidate_collisions,
+					breakthrough_calls = alignment_trace.breakthrough_calls,
+					breakthrough_collisions = alignment_trace.breakthrough_collisions,
+					breakthrough_replacements = alignment_trace.breakthrough_replacements,
+					breakthrough_retained_collisions =
+						alignment_trace.breakthrough_retained_collisions,
+					breakthrough_partial_quota_calls =
+						alignment_trace.breakthrough_partial_quota_calls,
+					markers_on_duplicate_hexes = alignment_trace.markers_on_duplicate_hexes,
+					unknown_origins = alignment_trace.unknown_origins,
+					generation_ok = results[1] == true,
+				})
 			end
 
 			-- If the engine kept GenerateResourceInfo as a lexical reference, reconstruct the

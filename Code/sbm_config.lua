@@ -210,6 +210,10 @@ config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement a
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
 config.DebugRmgPlacementExhaustive = true -- TEMP multi-run verification: native vs complemented counts
+-- Authoritative trace of every marker entering the engine's final hex-alignment loop. Records
+-- raw/aligned coordinates, exact engine hash collisions, and the marker classes materialized on
+-- collided hexes. Read-only and separately gated so it can be removed after this investigation.
+config.DebugRmgAlignmentExhaustive = true -- TEMP: identify remaining same-hex marker pairs
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
@@ -958,6 +962,7 @@ C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
 C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
 C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
+C.DEBUG_RMGALIGNMENTEXHAUSTIVE = as_bool(config.DebugRmgAlignmentExhaustive)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)

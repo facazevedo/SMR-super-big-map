@@ -57,7 +57,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 35: activate the Lua-pattern-safe enrichment gate and complete
--- zero-live-grid deficits from a pristine native layer mask, with vanilla mask fallback and a
--- conservative consumed-hex census covering grand and breakthrough selections.
-SuperBigMap.GENERATOR_PATCH_VERSION = 35
+-- (sbm_map_generation). Bumped to 41: resolve the generator's private Lua 5.1 environment through
+-- getfenv, test every alignable candidate with the engine's exact hex snap/hash before acceptance,
+-- and redraw a later collision locally (with a full valid-zone fallback) without hiding warnings.
+SuperBigMap.GENERATOR_PATCH_VERSION = 41
