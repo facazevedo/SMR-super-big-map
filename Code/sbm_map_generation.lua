@@ -1525,6 +1525,8 @@ local function PatchRandomMapGenerator()
 					"source=" .. tostring(origin.source or "?"),
 					"aligns=" .. tostring(origin.aligns),
 					"role=" .. tostring(origin.role or "?"),
+					"layer=" .. tostring(origin.layer or "?"),
+					"grid=" .. tostring(origin.grid or "?"),
 				}, ";")
 			end
 			local alignment_trace = {
@@ -1535,9 +1537,16 @@ local function PatchRandomMapGenerator()
 				breakthrough_collisions = 0, breakthrough_replacements = 0,
 				breakthrough_retained_collisions = 0,
 				breakthrough_partial_quota_calls = 0,
+				factory_calls = 0, factory_duplicate_calls = 0,
+				factory_duplicate_hexes = 0, factory_hash_failures = 0,
+				factory_unmatched_candidates = 0,
 				by_hash = {}, duplicate_hashes = {}, by_aligned_xy = {},
+				factory_by_hash = {}, factory_duplicate_hashes = {},
 			}
 			local candidate_origins_by_world_xy = {}
+			local candidate_predictions_by_hash = {}
+			local candidate_predictions_by_aligned_xy = {}
+			local candidate_trace_sequence = 0
 			local aligned_origin_by_hash = {}
 			local consumed_aligned_hexes = {}
 			local debug_lib = Global("debug")
@@ -1602,7 +1611,7 @@ local function PatchRandomMapGenerator()
 				hash_private = tostring(alignment_hash),
 				grid_min_max_private = tostring(saved_grid_min_max),
 			})
-			local function aligned_hex_key(pos)
+			local function predict_alignment(pos)
 				if not pos or type(complement_work_step) ~= "number" or complement_work_step <= 0
 					or type(hex_get_nearest_center) ~= "function" or type(alignment_hash) ~= "function" then
 					return nil
@@ -1614,8 +1623,20 @@ local function PatchRandomMapGenerator()
 				if not ok_align or not aligned or aligned_x == nil or aligned_y == nil then return nil end
 				local ok_hash, hash = pcall(alignment_hash, aligned)
 				if not ok_hash or hash == nil then return nil end
-				-- Match the engine's exact collision identity in Proc_PlaceAnomalies_AlignToHexGrid.
-				return tostring(hash)
+				local aligned_z
+				aligned_x, aligned_y, aligned_z = point_xyz(aligned)
+				local q, r
+				if type(closure_world_to_hex) == "function" then
+					local ok_hex, hq, hr = pcall(closure_world_to_hex, aligned)
+					if ok_hex then q, r = hq, hr end
+				end
+				-- Match the engine's collision identity whenever the global functions exposed to
+				-- the mod sandbox are the same ones used by the private RMG closure. The marker-
+				-- factory audit below independently verifies the actual post-snap result.
+				return tostring(hash), aligned, aligned_x, aligned_y, aligned_z, q, r
+			end
+			local function aligned_hex_key(pos)
+				return predict_alignment(pos)
 			end
 			-- Conservative set of positions consumed by native placement searches. NewAnomaly
 			-- erodes the shared layers even when its rolled count is already full, so retaining
@@ -1639,6 +1660,51 @@ local function PatchRandomMapGenerator()
 						candidate_origins_by_world_xy[world_key] = origins
 					end
 					origins[#origins + 1] = origin or { proc = "unknown", resource = "unknown" }
+				end
+				if alignment_trace_enabled then
+					candidate_trace_sequence = candidate_trace_sequence + 1
+					local predicted_hash, predicted_pos, predicted_x, predicted_y, predicted_z, q, r =
+						predict_alignment(pos)
+					local predicted_xy = predicted_pos and xy_key(predicted_pos) or nil
+					local candidate_record = {
+						index = candidate_trace_sequence,
+						raw_work_x = x, raw_work_y = y,
+						raw_world_key = world_key,
+						predicted_hash = predicted_hash,
+						predicted_x = predicted_x, predicted_y = predicted_y,
+						predicted_z = predicted_z, predicted_xy = predicted_xy,
+						q = q, r = r,
+						declared_aligns = occupies_aligned_hex == true,
+						origin = origin or { proc = "unknown", resource = "unknown" },
+						origin_text = origin_desc(origin),
+					}
+					if predicted_hash then
+						local predictions = candidate_predictions_by_hash[predicted_hash]
+						if not predictions then
+							predictions = {}
+							candidate_predictions_by_hash[predicted_hash] = predictions
+						end
+						predictions[#predictions + 1] = candidate_record
+					end
+					if predicted_xy then
+						local predictions = candidate_predictions_by_aligned_xy[predicted_xy]
+						if not predictions then
+							predictions = {}
+							candidate_predictions_by_aligned_xy[predicted_xy] = predictions
+						end
+						predictions[#predictions + 1] = candidate_record
+					end
+					AlignmentTrace("sandbox-safe candidate prediction", {
+						candidate_index = candidate_record.index,
+						raw_work_x = x, raw_work_y = y,
+						raw_world = tostring(world_key),
+						predicted_hash = tostring(predicted_hash),
+						predicted_aligned = tostring(predicted_x) .. ":" .. tostring(predicted_y)
+							.. ":" .. tostring(predicted_z),
+						q = tostring(q), r = tostring(r),
+						declared_aligns = occupies_aligned_hex == true,
+						origin = candidate_record.origin_text,
+					})
 				end
 				if occupies_aligned_hex then
 					local hex_key = aligned_hex_key(pos)
@@ -2066,6 +2132,8 @@ local function PatchRandomMapGenerator()
 						and complement_work_step > 0
 						and type(hex_get_nearest_center) == "function"
 						and type(alignment_hash) == "function"
+					local collision_repair_enabled =
+						cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false)
 					local can_complete = cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
 						and grid ~= nil and type(params) == "table"
 						and params.mode == "find_all" and type(requested) == "number"
@@ -2073,7 +2141,8 @@ local function PatchRandomMapGenerator()
 						and (not result_aligns_to_hex or alignment_api_ready)
 					local scalar_spacing = type(params) == "table" and (params.spacing or 0) or 0
 					local can_repair_scalar_alignment =
-						cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
+						collision_repair_enabled
+						and cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
 						and result_aligns_to_hex
 						and grid ~= nil and type(params) == "table" and requested == nil
 						and scalar_spacing == 0 and alignment_api_ready
@@ -2263,7 +2332,8 @@ local function PatchRandomMapGenerator()
 						aligned_prefix_count = #(positions or {})
 					end
 					local alignment_repair_snapshot
-					if can_complete and result_aligns_to_hex and requested > 1 and positions
+					if collision_repair_enabled and can_complete and result_aligns_to_hex
+						and requested > 1 and positions
 						and aligned_prefix_count > 0 and original_snapshot then
 						local ok_repair_clone, snapshot = pcall(function()
 							return original_snapshot:clone()
@@ -2747,6 +2817,7 @@ local function PatchRandomMapGenerator()
 							shape = "single_point", source = scalar_aligned_replacements > 0
 								and "replacement" or "native", aligns = single_occupies_hex,
 							role = single_occupies_hex and "aligned" or "nonaligning_or_unclassified",
+							layer = tostring(search_layer), grid = tostring(grid),
 						})
 					local result_shape
 					if single_point_returned then
@@ -2767,6 +2838,7 @@ local function PatchRandomMapGenerator()
 								role = occupies_hex and "aligned"
 									or (resource_name == "Anomaly" and "erosion_tail"
 										or "nonaligning_or_unclassified"),
+								layer = tostring(search_layer), grid = tostring(grid),
 							})
 						end
 					elseif final_positions == nil then
@@ -2890,7 +2962,8 @@ local function PatchRandomMapGenerator()
 						local collision = candidate_hex and consumed_aligned_hexes[candidate_hex] or false
 						local bonus_to
 						pcall(function() bonus_to = self.BonusCountBreakthrough.to end)
-						local full_quota = cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
+						local full_quota = cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false)
+							and cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
 							and not is_underground
 							and roll_index == #roll_specs
 							and type(self.AnomBreakthroughCount) == "number"
@@ -3143,9 +3216,12 @@ local function PatchRandomMapGenerator()
 				env.ProcInvoke = proc_invoke_wrapper
 			end
 
-			-- Classify the real marker objects subsequently created on a duplicated aligned
-			-- position. This is also read-only: the original factory is called exactly once with
-			-- the original tuple, and its return tuple is forwarded unchanged.
+			-- Sandbox-safe authoritative observation point. GenMarkerObj receives the FINAL
+			-- post-snap position after the private alignment closure has run, and is supplied
+			-- directly through env even when getfenv/debug APIs are stripped. Audit every
+			-- alignable marker independently of the private-hook trace, correlate its actual
+			-- final hash/coordinate with every predicted raw candidate, and never mutate input,
+			-- output, warning state, or marker position. The original factory is called once.
 			if alignment_trace_enabled and type(saved_gen_marker_obj) == "function" then
 				local function is_aligned_marker_class(name)
 					name = tostring(name or "")
@@ -3154,49 +3230,154 @@ local function PatchRandomMapGenerator()
 						or string.find(name, "SubsurfaceAnomalyMarker", 1, true) ~= nil
 						or string.find(name, "EffectDepositMarker", 1, true) ~= nil
 				end
+				local function class_name(value)
+					local name = tostring(value)
+					pcall(function()
+						name = tostring(value.class or value.__name or value.ClassName or value)
+					end)
+					return name
+				end
+				local marker_field_names = {
+					"resource", "deposit_type", "tech_action", "sequence", "sequence_list",
+					"depth_layer", "grade", "max_amount", "density", "density2", "prefab",
+				}
+				local function marker_fields(value)
+					if type(value) ~= "table" then return "type=" .. type(value) .. ";value=" .. tostring(value) end
+					local parts = {}
+					for i = 1, #marker_field_names do
+						local key = marker_field_names[i]
+						local field = value[key]
+						if field ~= nil then
+							parts[#parts + 1] = key .. "=" .. tostring(field)
+						end
+					end
+					return #parts > 0 and table.concat(parts, ";") or "no_known_fields"
+				end
+				local function candidate_matches_text(matches)
+					local parts = {}
+					for i = 1, #(matches or {}) do
+						local candidate = matches[i]
+						parts[#parts + 1] = table.concat({
+							"candidate=" .. tostring(candidate.index),
+							"raw_work=" .. tostring(candidate.raw_work_x) .. ":" .. tostring(candidate.raw_work_y),
+							"raw_world=" .. tostring(candidate.raw_world_key),
+							"predicted=" .. tostring(candidate.predicted_x) .. ":" .. tostring(candidate.predicted_y),
+							"hash=" .. tostring(candidate.predicted_hash),
+							"declared_aligns=" .. tostring(candidate.declared_aligns),
+							candidate.origin_text,
+						}, ";")
+					end
+					return #parts > 0 and table.concat(parts, " || ") or "none"
+				end
 				gen_marker_obj_wrapper = function(marker_map, classdef, map_pos, lua_obj, debug_id, ...)
 					local marker_results = PackValues(saved_gen_marker_obj(
 						marker_map, classdef, map_pos, lua_obj, debug_id, ...))
 					pcall(function()
+						local declared_class = class_name(classdef)
+						local obj = marker_results[1]
+						local object_class = class_name(obj)
+						local alignable_class = is_aligned_marker_class(declared_class)
+							or is_aligned_marker_class(object_class)
+						if not alignable_class then return end
+
+						alignment_trace.factory_calls = alignment_trace.factory_calls + 1
+						local factory_index = alignment_trace.factory_calls
+						local aligned_x, aligned_y, aligned_z = point_xyz(map_pos)
 						local aligned_key = xy_key(map_pos)
-						local calls = aligned_key and alignment_trace.by_aligned_xy[aligned_key] or nil
-						local duplicate = false
-						local call_indices, hashes = {}, {}
-						for i = 1, #(calls or {}) do
-							call_indices[#call_indices + 1] = tostring(calls[i].index)
-							hashes[#hashes + 1] = tostring(calls[i].hash)
-							if alignment_trace.duplicate_hashes[calls[i].hash] then duplicate = true end
+						local ok_hash, actual_hash = false, nil
+						if type(alignment_hash) == "function" then
+							ok_hash, actual_hash = pcall(alignment_hash, map_pos)
 						end
-						if duplicate then
-							local class_name = tostring(classdef)
-							pcall(function()
-								class_name = tostring(classdef.class or classdef.__name or classdef.ClassName or classdef)
-							end)
-							local obj = marker_results[1]
-							local object_class, handle = "?", "?"
-							pcall(function()
-								object_class = tostring(obj.class or obj.__class or obj)
-								handle = tostring(obj.handle)
-							end)
-							local alignable_class = is_aligned_marker_class(class_name)
-								or is_aligned_marker_class(object_class)
-							if alignable_class then
-								alignment_trace.markers_on_duplicate_hexes =
-									alignment_trace.markers_on_duplicate_hexes + 1
+						if not ok_hash or actual_hash == nil then
+							alignment_trace.factory_hash_failures = alignment_trace.factory_hash_failures + 1
+						end
+						local actual_hash_key = ok_hash and actual_hash ~= nil and tostring(actual_hash) or nil
+						local factory_key = actual_hash_key or (aligned_key and ("xy:" .. aligned_key))
+							or ("unavailable:" .. tostring(factory_index))
+						local predictions = actual_hash_key and candidate_predictions_by_hash[actual_hash_key] or nil
+						local match_source = predictions and "predicted_hash" or "none"
+						if not predictions and aligned_key then
+							predictions = candidate_predictions_by_aligned_xy[aligned_key]
+							if predictions then match_source = "predicted_aligned_xy" end
+						end
+						if not predictions or #predictions == 0 then
+							alignment_trace.factory_unmatched_candidates =
+								alignment_trace.factory_unmatched_candidates + 1
+						end
+						local declared_matches, unclassified_matches = 0, 0
+						for i = 1, #(predictions or {}) do
+							if predictions[i].declared_aligns then
+								declared_matches = declared_matches + 1
+							else
+								unclassified_matches = unclassified_matches + 1
 							end
-							AlignmentTrace(alignable_class
-								and "materialized marker on duplicate aligned hex"
-								or "non-aligning generated object shares duplicate aligned coordinate", {
-								aligned_xy = tostring(aligned_key), calls = table.concat(call_indices, ","),
-								hashes = table.concat(hashes, ","), class = class_name,
-								alignable_class = alignable_class,
-								object_class = object_class, handle = handle, debug_id = tostring(debug_id),
-								resource = type(lua_obj) == "table" and tostring(lua_obj.resource) or "?",
-								deposit_type = type(lua_obj) == "table" and tostring(lua_obj.deposit_type) or "?",
-								tech_action = type(lua_obj) == "table" and tostring(lua_obj.tech_action) or "?",
-								sequence = type(lua_obj) == "table" and tostring(lua_obj.sequence) or "?",
+						end
+						local stack = State.rmg_placement_proc_stack
+						local proc = type(stack) == "table" and tostring(stack[#stack]) or "?"
+						local q, r
+						if type(closure_world_to_hex) == "function" then
+							local ok_hex, hq, hr = pcall(closure_world_to_hex, map_pos)
+							if ok_hex then q, r = hq, hr end
+						end
+						local handle = "?"
+						pcall(function() handle = tostring(obj.handle) end)
+						local record = {
+							index = factory_index, hash = factory_key, actual_hash = actual_hash_key,
+							aligned_key = aligned_key, aligned_x = aligned_x, aligned_y = aligned_y,
+							aligned_z = aligned_z, q = q, r = r, proc = proc,
+							declared_class = declared_class, object_class = object_class,
+							handle = handle, debug_id = tostring(debug_id),
+							marker_fields = marker_fields(lua_obj), lua_obj = tostring(lua_obj),
+							candidate_matches = candidate_matches_text(predictions),
+							candidate_match_count = #(predictions or {}), match_source = match_source,
+							declared_matches = declared_matches,
+							unclassified_matches = unclassified_matches,
+						}
+						local previous = alignment_trace.factory_by_hash[factory_key]
+						if previous then
+							alignment_trace.factory_duplicate_calls =
+								alignment_trace.factory_duplicate_calls + 1
+							alignment_trace.markers_on_duplicate_hexes =
+								alignment_trace.markers_on_duplicate_hexes + 1
+							if not alignment_trace.factory_duplicate_hashes[factory_key] then
+								alignment_trace.factory_duplicate_hashes[factory_key] = true
+								alignment_trace.factory_duplicate_hexes =
+									alignment_trace.factory_duplicate_hexes + 1
+							end
+							AlignmentTrace("SANDBOX-SAFE duplicate final marker hex", {
+								hash = tostring(actual_hash_key), aligned_xy = tostring(aligned_key),
+								q = tostring(q), r = tostring(r), same_aligned_xy = previous.aligned_key == aligned_key,
+								first_index = previous.index, incoming_index = factory_index,
+								first_class = previous.declared_class, incoming_class = declared_class,
+								first_object_class = previous.object_class, incoming_object_class = object_class,
+								first_proc = previous.proc, incoming_proc = proc,
+								first_debug_id = previous.debug_id, incoming_debug_id = tostring(debug_id),
+								first_fields = previous.marker_fields, incoming_fields = record.marker_fields,
+								first_candidate_matches = previous.candidate_matches,
+								incoming_candidate_matches = record.candidate_matches,
+								first_match_source = previous.match_source, incoming_match_source = match_source,
+								first_declared_matches = previous.declared_matches,
+								incoming_declared_matches = declared_matches,
+								first_unclassified_matches = previous.unclassified_matches,
+								incoming_unclassified_matches = unclassified_matches,
 							})
 						end
+						alignment_trace.factory_by_hash[factory_key] = record
+						AlignmentTrace("sandbox-safe final marker factory observation", {
+							factory_index = factory_index, duplicate_of = previous and previous.index or "none",
+							hash = tostring(actual_hash_key), aligned_xy = tostring(aligned_key),
+							aligned_world = tostring(aligned_x) .. ":" .. tostring(aligned_y)
+								.. ":" .. tostring(aligned_z),
+							q = tostring(q), r = tostring(r), proc = proc,
+							declared_class = declared_class, object_class = object_class,
+							handle = handle, debug_id = tostring(debug_id),
+							marker_fields = record.marker_fields, lua_obj = tostring(lua_obj),
+							candidate_match_count = record.candidate_match_count,
+							candidate_match_source = match_source,
+							declared_candidate_matches = declared_matches,
+							unclassified_candidate_matches = unclassified_matches,
+							candidate_matches = record.candidate_matches,
+						})
 					end)
 					return Unpack(marker_results, 1, marker_results.n)
 				end
@@ -3285,6 +3466,11 @@ local function PatchRandomMapGenerator()
 					duplicate_hashes[#duplicate_hashes + 1] = tostring(hash)
 				end
 				table.sort(duplicate_hashes)
+				local factory_duplicate_hashes = {}
+				for hash in pairs(alignment_trace.factory_duplicate_hashes) do
+					factory_duplicate_hashes[#factory_duplicate_hashes + 1] = tostring(hash)
+				end
+				table.sort(factory_duplicate_hashes)
 				local generator_debugging = self.debugging and true or false
 				local warning_match = alignment_trace.hash_failures > 0
 					and "indeterminate_hash_failure"
@@ -3296,6 +3482,8 @@ local function PatchRandomMapGenerator()
 					environment_source = tostring(generator_closure_env_source),
 					hex_hook_installed = hex_hook_installed_in_closure,
 					grid_min_max_hook_installed = grid_min_max_installed_in_closure,
+					collision_repair_enabled =
+						cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false),
 					duplicate_calls = alignment_trace.duplicate_calls,
 					duplicate_hexes = alignment_trace.duplicate_hexes,
 					duplicate_hashes = table.concat(duplicate_hashes, ","),
@@ -3313,6 +3501,24 @@ local function PatchRandomMapGenerator()
 						alignment_trace.breakthrough_partial_quota_calls,
 					markers_on_duplicate_hexes = alignment_trace.markers_on_duplicate_hexes,
 					unknown_origins = alignment_trace.unknown_origins,
+					generation_ok = results[1] == true,
+				})
+				AlignmentTrace("sandbox-safe marker-factory summary", {
+					map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
+					environment = tostring(environment),
+					factory_calls = alignment_trace.factory_calls,
+					factory_duplicate_calls = alignment_trace.factory_duplicate_calls,
+					factory_duplicate_hexes = alignment_trace.factory_duplicate_hexes,
+					factory_duplicate_hashes = table.concat(factory_duplicate_hashes, ","),
+					factory_hash_failures = alignment_trace.factory_hash_failures,
+					factory_unmatched_candidates = alignment_trace.factory_unmatched_candidates,
+					candidate_predictions = candidate_trace_sequence,
+					engine_warnings = alignment_trace.warning_count,
+					warning_match = tostring(alignment_trace.warning_count
+						== alignment_trace.factory_duplicate_calls),
+					private_alignment_hook_available = hex_hook_installed_in_closure,
+					collision_repair_enabled =
+						cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false),
 					generation_ok = results[1] == true,
 				})
 			end

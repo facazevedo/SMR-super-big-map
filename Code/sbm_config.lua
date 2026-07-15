@@ -210,9 +210,9 @@ config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement a
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
 config.DebugRmgPlacementExhaustive = true -- TEMP multi-run verification: native vs complemented counts
--- Authoritative trace of every marker entering the engine's final hex-alignment loop. Records
--- raw/aligned coordinates, exact engine hash collisions, and the marker classes materialized on
--- collided hexes. Read-only and separately gated so it can be removed after this investigation.
+-- Exhaustive read-only alignment trace. When the private generator closure is inaccessible, the
+-- sandbox-safe marker-factory path still records actual post-snap hashes/classes/subtypes and
+-- correlates collisions with the complete predicted raw-candidate stream. Never moves markers.
 config.DebugRmgAlignmentExhaustive = true -- TEMP: identify remaining same-hex marker pairs
 config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
@@ -738,6 +738,10 @@ config.EnableRmgPlacementFix = false
 -- It is count-agnostic: 6/8, 8/9, 13/27, etc. all use requested - returned at runtime, and it
 -- covers resource, ordinary anomaly, and effect-deposit `find_all` searches on both maps.
 config.CompleteNativeEnrichmentShortfalls = true
+-- Native same-hex collision repair is independently gated so diagnostic runs can observe the
+-- untouched engine result. Keep false while DebugRmgAlignmentExhaustive is identifying the three
+-- remaining collision pairs; the trace never suppresses the stock warning.
+config.EnableNativeAlignedHexCollisionRepair = false -- TEMP read-only diagnostic pass
 -- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
 -- during generation. This recovers the candidate cells the border erosion ate and is
 -- the main lever that revives FreeTech (whose border defaults to max_border ->
@@ -1097,6 +1101,8 @@ C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTile
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = as_bool(config.QuadrantCopyLimitGeneratorToSource)
 C.ENABLE_RMG_PLACEMENT_FIX = as_bool(config.EnableRmgPlacementFix)
 C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = as_bool(config.CompleteNativeEnrichmentShortfalls)
+C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR =
+	as_bool(config.EnableNativeAlignedHexCollisionRepair)
 C.RMG_PLACEMENT_ZERO_BORDERS = as_bool(config.RmgPlacementZeroBorders)
 C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.6)
 C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
