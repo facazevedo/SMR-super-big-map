@@ -39,7 +39,7 @@ local function ExpansionStepEnabled(step)
 end
 
 local function ExpansionAdditionStagesReady(label)
-	for step = 9, 17 do
+	for step = 10, 18 do
 		if not ExpansionStepEnabled(step) then
 			local DebugLog = SuperBigMap.DebugLog
 			if DebugLog then
@@ -826,7 +826,7 @@ local function RestoreBadgeOverlapPrevention()
 end
 
 function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
-	if not ExpansionStepEnabled(16) then return 0 end
+	if not ExpansionStepEnabled(17) then return 0 end
 	map = map or Global("CurrentMap")
 	if not BadgeSpacingEnabledOnMap(map) or type(map.MapForEach) ~= "function" then return 0, 0 end
 	local markers = {}
@@ -1298,8 +1298,8 @@ end
 -- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
-	if not ExpansionStepEnabled(18) then
-		Log("register skipped", { reason = "expansion step 18 disabled" })
+	if not ExpansionStepEnabled(19) then
+		Log("register skipped", { reason = "expansion step 19 disabled" })
 		return
 	end
 	map = map or Global("CurrentMap")
@@ -1576,8 +1576,8 @@ end
 
 function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)
 	local phase_text = tostring(phase or "")
-	local controlling_step = capture_pre_stretch == true and 4
-		or (string.find(phase_text, "final", 1, true) and 19 or 8)
+	local controlling_step = capture_pre_stretch == true and 5
+		or (string.find(phase_text, "final", 1, true) and 20 or 9)
 	if not ExpansionStepEnabled(controlling_step) then return 0 end
 	local DebugLog = SuperBigMap.DebugLog
 	if not (DebugLog and type(DebugLog.On) == "function"
@@ -4290,7 +4290,7 @@ end
 -- slope, and valley score are preference diagnostics. Resource and effect-deposit top-ups must be
 -- outside the ring. The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
-	if not ExpansionStepEnabled(19) then return true end
+	if not ExpansionStepEnabled(20) then return true end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
@@ -4607,7 +4607,7 @@ end
 -- is not on the final buildable grid or is not connected by the rover path grid to at least one
 -- real underground entrance is moved to the nearest of several random reachable candidates.
 function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
-	if not ExpansionStepEnabled(9) or not ExpansionStepEnabled(12) then
+	if not ExpansionStepEnabled(10) or not ExpansionStepEnabled(13) then
 		return true, { checked = 0, invalid = 0, moved = 0, unresolved = 0 }
 	end
 	if not IsUndergroundMap(map) then return true, { checked = 0, moved = 0, unresolved = 0 } end
@@ -4860,7 +4860,7 @@ DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 --   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
 --      what moved in), plus a reveal of any hidden scan-gated objects inside it.
 function DepositRules.EnforceScanGateAfterStretch(map)
-	if not ExpansionStepEnabled(18) then return end
+	if not ExpansionStepEnabled(19) then return end
 	if cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
 	map = map or Global("CurrentMap")
 	local city = map and map.City

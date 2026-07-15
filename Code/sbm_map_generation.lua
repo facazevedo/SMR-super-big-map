@@ -4575,7 +4575,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							map, "surface before stretch", true)
 					end
 					SetLoadingPhase("Stretching the surface terrain")
-					if cfg_bool("EXPANSION_STEP_05_STRETCH_TERRAIN", true) then
+					if cfg_bool("EXPANSION_STEP_06_STRETCH_TERRAIN", true) then
 						StretchLog("stretch branch: -> StretchSourceToFull")
 						local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
 						-- The next call mutates terrain heights, so the native source-grid buildability
@@ -4589,7 +4589,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						InvestigationEnd(spike_token, nil, true)
 					else
 						ok_stretch, n_grids = true, 0
-						StretchLog("stretch branch: terrain stretch skipped (expansion step 05 disabled)")
+						StretchLog("stretch branch: terrain stretch skipped (expansion step 06 disabled)")
 					end
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
@@ -4771,7 +4771,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				local spike_token = InvestigationBegin("surface: spike audit post-density", map)
 				SpikeAudit(map, "surface post-density-suite")
 				InvestigationEnd(spike_token, nil, true)
-				if cfg_bool("EXPANSION_STEP_09_REBUILD_GAMEPLAY_GRIDS", true) then
+				if cfg_bool("EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
@@ -4812,7 +4812,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				else
-					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 09 disabled)")
+					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 10 disabled)")
 				end
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
@@ -5315,7 +5315,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			SetLoadingPhase("Stretching the underground terrain")
 			local ok_s, n_grids = true, 0
-			if cfg_bool("EXPANSION_STEP_05_STRETCH_TERRAIN", true) then
+			if cfg_bool("EXPANSION_STEP_06_STRETCH_TERRAIN", true) then
 				StretchLog("underground stretch: -> StretchSourceToFull")
 				local terrain_token = InvestigationBegin("underground: stretch all terrain grids", map)
 				ok_s, n_grids = StretchSourceToFull(map, false)
@@ -5325,7 +5325,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground terrain stretch did not complete its height/type grids")
 				end
 			else
-				StretchLog("underground stretch: terrain stretch skipped (expansion step 05 disabled)")
+				StretchLog("underground stretch: terrain stretch skipped (expansion step 06 disabled)")
 			end
 			spike_token = InvestigationBegin("underground: spike audit post-terrain", map)
 			SpikeAudit(map, "underground post-StretchSourceToFull")
@@ -5376,7 +5376,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- CurrentMapChangeDone -- too late. Correctness wins here: synchronously rebuild final
 			-- passability and buildability, invalidate every cached pool, and seed connectivity from
 			-- the real underground entrances before any enrichment is accepted or moved.
-			if cfg_bool("EXPANSION_STEP_09_REBUILD_GAMEPLAY_GRIDS", true) then
+			if cfg_bool("EXPANSION_STEP_10_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
 				local terrain_api2 = Global("terrain")
 				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
@@ -5434,7 +5434,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
 				end
 			else
-				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 09 disabled)")
+				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 10 disabled)")
 			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
 			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
@@ -5808,7 +5808,7 @@ end
 -- across the eventual switch. No terrain flatten/sculpt operation is added here: entrance objects
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
 local function PatchDeferredUndergroundAccess(source)
-	if not cfg_bool("EXPANSION_STEP_01_GENERATE_VANILLA_SOURCE", false) then return false end
+	if not cfg_bool("EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN", false) then return false end
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	UndergroundAccessLog("map-slot gate patch check", {
@@ -6097,10 +6097,20 @@ MapGeneration.ForceFramePassable = ForceFramePassable
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 
 function MapGeneration.ApplyModBehavior()
-	if not cfg_bool("EXPANSION_STEP_01_GENERATE_VANILLA_SOURCE", false) then
+	local allocate_expanded = cfg_bool("EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN", false)
+	local generate_source = cfg_bool("EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE", false)
+	if not allocate_expanded then
+		-- Remove every expansion-only wrapper first. Step 02 can then reinstall only the
+		-- generator wrapper, which is a native-size no-op when no expanded target exists.
 		MapGeneration.RestoreVanillaBehavior()
+		if generate_source then
+			PatchRandomMapGenerator()
+			return true
+		end
 		return false
 	end
+	-- The Generate wrapper owns step 01 allocation; its DoGenerate branch independently
+	-- obeys step 02 when deciding whether to expose the native source-size view.
 	PatchRandomMapGenerator()
 	PatchPassagePairing()
 	PatchEntranceBadgePosition()
@@ -6191,17 +6201,20 @@ SuperBigMap.MapGeneration = MapGeneration
 -- change, after the preview. Without the hook here, vanilla DoGenerate runs on the expanded-size
 -- grid and overflows GSRP ("GridStableRandomPosSimple: size < GSRP_MAX_SIZE"). The boot/ChangingMap
 -- re-installs still handle later class rebuilds (which reset the methods to vanilla).
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
-	and (SuperBigMap.Config or {}).EXPANSION_STEP_01_GENERATE_VANILLA_SOURCE == true
+local module_config = SuperBigMap.Config or {}
+local module_allocate_expanded = module_config.EXPANSION_STEP_01_ALLOCATE_EXPANDED_TERRAIN == true
+local module_generate_source = module_config.EXPANSION_STEP_02_GENERATE_VANILLA_SOURCE == true
+if module_config.ENABLE_MOD ~= false
+	and (module_allocate_expanded or module_generate_source)
 	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	PatchRandomMapGenerator()
-	-- Passage pairing wrap installs at module load for the same reason -- and because module
-	-- load is what re-runs after the NEW-GAME Lua reload (game files redefine the global,
-	-- wiping any wrapper; Lifecycle.Enable early-returns since State.active persisted, so a
-	-- reinstall must not depend on it). Self-verifying, so repeat calls are no-ops.
-	PatchPassagePairing()
-	PatchEntranceBadgePosition()
-	PatchDeferredUndergroundAccess("module load")
+	if module_allocate_expanded then
+		-- These wrappers support the expanded allocation and are not part of native-source
+		-- generation. Keep them absent when only step 02 is enabled on a vanilla allocation.
+		PatchPassagePairing()
+		PatchEntranceBadgePosition()
+		PatchDeferredUndergroundAccess("module load")
+	end
 end
 
 DebugPrint("map generation module loaded")
