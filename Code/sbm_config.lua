@@ -554,13 +554,13 @@ config.MirrorPlanSettleMs = 5000
 -- 01: Generate the native source terrain and enrichments with the vanilla random stream.
 -- This is the allocation gate: false resolves terrain/grid settings to vanilla and installs no
 -- expansion generator hooks, regardless of the primary "expanded" settings above.
-config.ExpansionStep01GenerateVanillaSource = false
+config.ExpansionStep01GenerateVanillaSource = true
 -- 02: Preserve vanilla enrichment borders, counts, spacing, and repulsion during generation.
-config.ExpansionStep02PreserveVanillaEnrichmentRules = false
+config.ExpansionStep02PreserveVanillaEnrichmentRules = true
 -- 03: Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
-config.ExpansionStep03RejectInvalidNativeCandidates = false
+config.ExpansionStep03RejectInvalidNativeCandidates = true
 -- 04: Capture every native enrichment coordinate and target shortfall before stretching.
-config.ExpansionStep04CapturePreStretchEnrichments = false
+config.ExpansionStep04CapturePreStretchEnrichments = true
 -- 05: Stretch the generated source terrain grids to the full expanded allocation.
 config.ExpansionStep05StretchTerrain = false
 -- 06: Scale every native enrichment's X/Y coordinate by the exact terrain scale.
