@@ -552,7 +552,7 @@ config.MirrorPlanSettleMs = 5000
 --
 -- 01: Allocate the expanded destination, generate the source through an exact vanilla-sized
 -- view, and capture every original enrichment coordinate before any geometric transformation.
-config.ExpansionStep01GenerateAndCaptureVanillaSource = true
+config.ExpansionStep01GenerateAndCaptureVanillaSource = false
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
 config.ExpansionStep02StretchAndTransformVanillaSource = false
