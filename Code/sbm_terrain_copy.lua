@@ -1449,7 +1449,7 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 					capture_owner.SuperBigMapExpectedStretchedY = ny
 				end
 				local np = type(oz) == "number" and point_fn(nx, ny, oz) or point_fn(nx, ny)
-				if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true)
+				if cfg_bool("EXPANSION_STEP_09_RESNAP_ENRICHMENT_Z", true)
 					and type(np.SetTerrainZ) == "function" then
 					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
 					if ok_z and pz then np = pz end
@@ -1887,7 +1887,7 @@ local function RestoreEntranceBadgePositions(map, reason)
 end
 
 local function PatchEntranceBadgePosition()
-	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
+	if not cfg_bool("EXPANSION_STEP_08_SCALE_NATIVE_ENRICHMENT_XY", false) then return false end
 	local State = SuperBigMap.State or {}
 	SuperBigMap.State = State
 	State.entrance_badge_place_sign_originals = State.entrance_badge_place_sign_originals or {}

@@ -4592,7 +4592,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							map, "surface before stretch", true)
 					end
 					SetLoadingPhase("Stretching the surface terrain")
-					if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
+					if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 						StretchLog("stretch branch: -> StretchSourceToFull")
 						local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
 						-- The next call mutates terrain heights, so the native source-grid buildability
@@ -4606,7 +4606,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 						InvestigationEnd(spike_token, nil, true)
 					else
 						ok_stretch, n_grids = true, 0
-						StretchLog("stretch branch: terrain stretch skipped (expansion step 02 disabled)")
+						StretchLog("stretch branch: terrain stretch skipped (expansion step 07 disabled)")
 					end
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
@@ -4798,7 +4798,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				local spike_token = InvestigationBegin("surface: spike audit post-density", map)
 				SpikeAudit(map, "surface post-density-suite")
 				InvestigationEnd(spike_token, nil, true)
-				if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
+				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Rebuilding the surface build grid")
 				StretchLog("stretch branch: -> RebuildBuildableGrid")
 				local rebuild_buildable = Global("RebuildBuildableGrid")
@@ -4839,7 +4839,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 				end
 				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
 				else
-					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 02 disabled)")
+					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 11 disabled)")
 				end
 				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
 				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
@@ -5342,7 +5342,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			SetLoadingPhase("Stretching the underground terrain")
 			local ok_s, n_grids = true, 0
-			if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
+			if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 				StretchLog("underground stretch: -> StretchSourceToFull")
 				local terrain_token = InvestigationBegin("underground: stretch all terrain grids", map)
 				ok_s, n_grids = StretchSourceToFull(map, false)
@@ -5352,7 +5352,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground terrain stretch did not complete its height/type grids")
 				end
 			else
-				StretchLog("underground stretch: terrain stretch skipped (expansion step 02 disabled)")
+				StretchLog("underground stretch: terrain stretch skipped (expansion step 07 disabled)")
 			end
 			spike_token = InvestigationBegin("underground: spike audit post-terrain", map)
 			SpikeAudit(map, "underground post-StretchSourceToFull")
@@ -5413,7 +5413,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- CurrentMapChangeDone -- too late. Correctness wins here: synchronously rebuild final
 			-- passability and buildability, invalidate every cached pool, and seed connectivity from
 			-- the real underground entrances before any enrichment is accepted or moved.
-			if cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", true) then
+			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
 				local terrain_api2 = Global("terrain")
 				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
@@ -5471,7 +5471,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
 				end
 			else
-				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 02 disabled)")
+				StretchLog("underground stretch: gameplay-grid rebuild skipped (expansion step 11 disabled)")
 			end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
 			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
