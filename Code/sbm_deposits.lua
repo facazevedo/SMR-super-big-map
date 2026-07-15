@@ -33,6 +33,26 @@ local function cfg()
 	return SuperBigMap.Config or {}
 end
 
+local function ExpansionStepEnabled(step)
+	local steps = cfg().EXPANSION_ENRICHMENT_STEPS
+	return type(steps) == "table" and steps[step] == true
+end
+
+local function ExpansionAdditionStagesReady(label)
+	for step = 9, 17 do
+		if not ExpansionStepEnabled(step) then
+			local DebugLog = SuperBigMap.DebugLog
+			if DebugLog then
+				DebugLog.Info("Deposits", "enrichment addition pipeline stopped at disabled step", {
+					pipeline = tostring(label or "?"), step = step,
+				})
+			end
+			return false
+		end
+	end
+	return true
+end
+
 -- Stretch density-suite cache. TopUpDeposits performs the largest validated random sampling
 -- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
 -- equivalent pools. Weak map keys release abandoned-map entries automatically.
@@ -806,6 +826,7 @@ local function RestoreBadgeOverlapPrevention()
 end
 
 function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
+	if not ExpansionStepEnabled(16) then return 0 end
 	map = map or Global("CurrentMap")
 	if not BadgeSpacingEnabledOnMap(map) or type(map.MapForEach) ~= "function" then return 0, 0 end
 	local markers = {}
@@ -1277,6 +1298,10 @@ end
 -- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
+	if not ExpansionStepEnabled(18) then
+		Log("register skipped", { reason = "expansion step 18 disabled" })
+		return
+	end
 	map = map or Global("CurrentMap")
 	if IsUndergroundMap(map) then
 		Log("register skipped", { reason = "underground -- proximity reveal, no sector dependence" })
@@ -1550,6 +1575,10 @@ local function PairRepulsionRadius(a, b)
 end
 
 function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)
+	local phase_text = tostring(phase or "")
+	local controlling_step = capture_pre_stretch == true and 4
+		or (string.find(phase_text, "final", 1, true) and 19 or 8)
+	if not ExpansionStepEnabled(controlling_step) then return 0 end
 	local DebugLog = SuperBigMap.DebugLog
 	if not (DebugLog and type(DebugLog.On) == "function"
 		and DebugLog.On("EnrichmentPositionsExhaustive") == true) then return 0 end
@@ -2135,6 +2164,7 @@ end
 -- candidates must satisfy the anomaly layer's full same-family repulsion distance, then the
 -- farthest point from resource deposits and already-selected breakthroughs wins each round.
 function DepositRules.RepairBreakthroughAnomalies(map)
+	if not ExpansionAdditionStagesReady("breakthrough repair") then return true end
 	map = map or Global("CurrentMap")
 	if cfg().ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR ~= true
 		or not map or IsUndergroundMap(map)
@@ -2413,6 +2443,7 @@ end
 
 function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
+	if not ExpansionAdditionStagesReady("resource top-up") then return end
 	map = map or Global("CurrentMap")
 	RecordEnrichmentTopUpAudit(map, "resources", { complete = false, reason = "started" })
 	local point = Global("point")
@@ -2702,6 +2733,7 @@ end
 -- least-restrictive low-area candidates. Occupied anomaly hexes are reserved to prevent overlap.
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
+	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
 	map = map or Global("CurrentMap")
 	RecordEnrichmentTopUpAudit(map, "anomalies", { complete = false, reason = "started" })
 	local point = Global("point")
@@ -4047,6 +4079,7 @@ local function EffectDepositTopUpEnabled(deposit_type)
 end
 
 function DepositRules.TopUpEffectDeposits(map)
+	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
 	RecordEnrichmentTopUpAudit(map, "effects", { complete = false, reason = "started" })
 	local point = Global("point")
@@ -4257,6 +4290,7 @@ end
 -- slope, and valley score are preference diagnostics. Resource and effect-deposit top-ups must be
 -- outside the ring. The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
+	if not ExpansionStepEnabled(19) then return true end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
@@ -4573,6 +4607,9 @@ end
 -- is not on the final buildable grid or is not connected by the rover path grid to at least one
 -- real underground entrance is moved to the nearest of several random reachable candidates.
 function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
+	if not ExpansionStepEnabled(9) or not ExpansionStepEnabled(12) then
+		return true, { checked = 0, invalid = 0, moved = 0, unresolved = 0 }
+	end
 	if not IsUndergroundMap(map) then return true, { checked = 0, moved = 0, unresolved = 0 } end
 	local point = Global("point")
 	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" then
@@ -4823,6 +4860,7 @@ DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 --   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
 --      what moved in), plus a reveal of any hidden scan-gated objects inside it.
 function DepositRules.EnforceScanGateAfterStretch(map)
+	if not ExpansionStepEnabled(18) then return end
 	if cfg().STRETCH_ENFORCE_SCAN_GATE ~= true then return end
 	map = map or Global("CurrentMap")
 	local city = map and map.City
