@@ -738,10 +738,11 @@ config.EnableRmgPlacementFix = false
 -- It is count-agnostic: 6/8, 8/9, 13/27, etc. all use requested - returned at runtime, and it
 -- covers resource, ordinary anomaly, and effect-deposit `find_all` searches on both maps.
 config.CompleteNativeEnrichmentShortfalls = true
--- Native same-hex collision repair is independently gated so diagnostic runs can observe the
--- untouched engine result. Keep false while DebugRmgAlignmentExhaustive is identifying the three
--- remaining collision pairs; the trace never suppresses the stock warning.
-config.EnableNativeAlignedHexCollisionRepair = false -- TEMP read-only diagnostic pass
+-- Reject any repeated raw coordinate or repeated final aligned hex before it reaches a marker
+-- factory. Ordinary enrichments retain vanilla's randomized spacing-aware `grand/find_all`
+-- selection and retry rules. Breakthroughs use their separate farthest-point recovery because
+-- the stock private GridMinMax path can return an exhausted (0,0) result.
+config.EnableNativeAlignedHexCollisionRepair = true
 -- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
 -- during generation. This recovers the candidate cells the border erosion ate and is
 -- the main lever that revives FreeTech (whose border defaults to max_border ->

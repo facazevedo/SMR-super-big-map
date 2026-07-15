@@ -2940,13 +2940,16 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
+			local replace_breakthrough_selector = not is_underground
+				and cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false)
+
 			-- Breakthrough anomalies are the sole enrichment positions selected through
 			-- GridMinMax instead of grand. The stock procedure calls it for every maximum
 			-- quota slot even when the rolled quota is smaller, so only a fully rolled quota
 			-- makes every returned maximum authoritative. In that safe case, replace a
 			-- same-hex maximum with the next maximum from a private clone. The stock call and
 			-- random stream remain untouched, and the requested anomaly count is unchanged.
-			if type(saved_grid_min_max) == "function" then
+			if type(saved_grid_min_max) == "function" and not replace_breakthrough_selector then
 				grid_min_max_wrapper = function(...)
 					local call_args = PackValues(...)
 					local grid_results = PackValues(saved_grid_min_max(...))
@@ -3087,14 +3090,49 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
+			-- The stock breakthrough filler resolves GridMinMax through an inaccessible private
+			-- environment. Once that grid is exhausted it can return (0,0) as if it were valid,
+			-- so bypass that one procedure before NewAnomaly and rebuild its requested complement
+			-- on the final expanded terrain. All other anomaly/resource/effect procedures retain
+			-- their native selection functions and are protected by the general duplicate guard.
 			-- Authoritative read-only audit of the engine's FINAL alignment loop. The compiled
 			-- RMG closure owns a private `_ENV`, so changing `_G.HexGetNearestCenter` cannot see
 			-- this call. ProcInvoke gives us the actual local alignment closure and its named
 			-- `to_align`/`work_step` upvalues; inspect the engine-populated `info.align_pos` only
 			-- AFTER the original function runs. No alignment is recomputed or mutated here.
-			if alignment_trace_enabled and not hex_hook_installed_in_closure
-				and type(saved_proc_invoke) == "function" then
+			if type(saved_proc_invoke) == "function"
+				and (replace_breakthrough_selector
+					or (alignment_trace_enabled and not hex_hook_installed_in_closure)) then
 				proc_invoke_wrapper = function(tag, func, randless)
+					if replace_breakthrough_selector
+						and tag == "PlaceAnomalies_FindAnomalies_Breakthrough" then
+						local target = type(map.SuperBigMapRolledBreakthroughCount) == "number"
+							and map.SuperBigMapRolledBreakthroughCount
+							or ((type(self.AnomBreakthroughCount) == "number"
+								and self.AnomBreakthroughCount or 0)
+								+ (type(rolls.breakthrough_bonus) == "number"
+									and rolls.breakthrough_bonus or 0))
+						target = math.max(0, math.floor(target))
+						map.SuperBigMapBreakthroughRepairTarget = target
+						map.SuperBigMapBreakthroughAnomalySpacing = self.AnomalySpacing
+						map.SuperBigMapBreakthroughDeepChance = self.DeepAnomBreakthroughChance
+						map.SuperBigMapBreakthroughRepairPending = target > 0
+						map.SuperBigMapBreakthroughSelector = "post_generation_vanilla_farthest"
+						AlignmentTrace("bypassed exhausted private breakthrough selector", {
+							target = target, spacing = tostring(self.AnomalySpacing),
+							procedure = tag,
+						})
+						local debug_log = SuperBigMap.DebugLog
+						if debug_log and type(debug_log.Info) == "function" then
+							pcall(debug_log.Info, "Deposits",
+								"deferred breakthrough selection to final expanded terrain", {
+									target = target, spacing = tostring(self.AnomalySpacing),
+								})
+						end
+						-- Keep the native ProcInvoke seed/procedure boundary. Its private function is
+						-- the only skipped work, so later procedure random streams remain independent.
+						return saved_proc_invoke(tag, function() end, randless)
+					end
 					if tag ~= "PlaceAnomalies_AlignToHexGrid" or type(func) ~= "function" then
 						return saved_proc_invoke(tag, func, randless)
 					end
@@ -4677,6 +4715,11 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							InvestigationSafeCall("surface enrichment: resolve badge overlaps", map,
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
+						if type(deposits.RepairBreakthroughAnomalies) == "function" then
+							StretchLog("stretch branch: -> RepairBreakthroughAnomalies")
+							InvestigationSafeCall("surface enrichment: repair breakthrough selection", map,
+								deposits.RepairBreakthroughAnomalies, map)
+						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
 							InvestigationSafeCall("surface enrichment: audit outer-ring exclusivity", map,
@@ -4913,6 +4956,9 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			end
 			if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 				SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "mirror density suite")
+			end
+			if type(deposits.RepairBreakthroughAnomalies) == "function" then
+				SafeCall(deposits.RepairBreakthroughAnomalies, map)
 			end
 		end
 

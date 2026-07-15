@@ -1105,9 +1105,12 @@ RegisterOnce("CityInitialized", function(city)
 	if not active() then
 		return
 	end
+	local map = city and type(city.GetMap) == "function" and city:GetMap() or false
+	-- Vanilla InitBreakThroughAnomalies runs immediately before this message. The deferred
+	-- final-terrain selector uses the flag to subtract the planetary reserve exactly once.
+	if map then map.SuperBigMapBreakthroughPruningDone = true end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.DiagOn) == "function" and sectors.DiagOn() then
-		local map = city and type(city.GetMap) == "function" and city:GetMap() or false
 		print("[Super Big Map] SectorDiag: OnMsg.CityInitialized: city=" .. tostring(city)
 			.. " map=" .. tostring(map and map.name or "?")
 			.. " | " .. sectors.DescribeCityState(city))
