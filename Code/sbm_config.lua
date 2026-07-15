@@ -558,7 +558,7 @@ config.ExpansionStep01GenerateVanillaSource = true
 -- 02: Preserve vanilla enrichment borders, counts, spacing, and repulsion during generation.
 config.ExpansionStep02PreserveVanillaEnrichmentRules = true
 -- 03: Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
-config.ExpansionStep03RejectInvalidNativeCandidates = true
+config.ExpansionStep03RejectInvalidNativeCandidates = false
 -- 04: Capture every native enrichment coordinate and target shortfall before stretching.
 config.ExpansionStep04CapturePreStretchEnrichments = true
 -- 05: Stretch the generated source terrain grids to the full expanded allocation.
