@@ -1640,6 +1640,242 @@ function DepositRules.LogDistributionReport(map, phase)
 	})
 end
 
+-- Exhaustive marker-by-marker position trace used to correlate the native layout before the
+-- stretch with the same live objects immediately after the x/y transform and with the complete
+-- final population after top-ups. This is intentionally separate from the compact distribution
+-- report: every line is self-contained and carries enough identity/geometry data to diff runs.
+function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)
+	local DebugLog = SuperBigMap.DebugLog
+	if not (DebugLog and type(DebugLog.On) == "function"
+		and DebugLog.On("EnrichmentPositionsExhaustive") == true) then return 0 end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then return 0 end
+	local world_to_hex = Global("WorldToHex")
+	local xxhash = Global("xxhash")
+	local map_w, map_h = MapWorldSize(map)
+	local source_w = tonumber(map.SuperBigMapSourceWidth) or 0
+	local source_h = tonumber(map.SuperBigMapSourceHeight) or 0
+	local generator_tiles = tonumber(map.SuperBigMapGeneratorWidthTiles)
+	local desired_tiles = tonumber(map.SuperBigMapDesiredWidthTiles)
+	local scale = generator_tiles and generator_tiles > 0 and desired_tiles
+		and (desired_tiles + 0.0) / generator_tiles or nil
+
+	local function marker_origin(marker)
+		if marker.SuperBigMapBreakthroughRepair == true then return "breakthrough_repair" end
+		if marker.SuperBigMapResourceTopUp == true then return "resource_topup" end
+		if marker.SuperBigMapAnomalyTopUp == true then return "ordinary_anomaly_topup" end
+		if marker.SuperBigMapEffectTopUp == true then return "effect_topup" end
+		if marker.SuperBigMapQuadrantClone == true then return "mirror_clone" end
+		return "native_generated"
+	end
+
+	local function marker_subtype(marker, profile)
+		if profile and profile.resource == "Anomaly" then
+			if marker.tech_action and marker.tech_action ~= "" then return tostring(marker.tech_action) end
+			if marker.sequence and marker.sequence ~= "" then return "sequence:" .. tostring(marker.sequence) end
+			return "ordinary"
+		end
+		if profile and profile.resource == "Effects" then return tostring(marker.deposit_type or "?") end
+		return tostring(marker.resource or marker.class or "?")
+	end
+
+	local entries = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		local pos = ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then return end
+		local x, y = pos:xy()
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		local z
+		if type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		local profile = VanillaRepulsionProfileForMarker(map, marker)
+		local origin = marker_origin(marker)
+		local position_hash
+		if type(xxhash) == "function" then
+			local ok_hash, value = pcall(xxhash, pos)
+			if ok_hash then position_hash = value end
+		end
+		if capture_pre_stretch == true then
+			marker.SuperBigMapDebugPreStretchX = x
+			marker.SuperBigMapDebugPreStretchY = y
+			marker.SuperBigMapDebugPreStretchZ = z
+			marker.SuperBigMapDebugPreStretchHash = position_hash
+		end
+		local pre_x, pre_y, pre_z, pre_hash
+		-- A cloned top-up can inherit debug fields from its template. They describe the template,
+		-- not the clone, so expose the correlation only for the original native handle.
+		if origin == "native_generated" then
+			pre_x = marker.SuperBigMapDebugPreStretchX
+			pre_y = marker.SuperBigMapDebugPreStretchY
+			pre_z = marker.SuperBigMapDebugPreStretchZ
+			pre_hash = marker.SuperBigMapDebugPreStretchHash
+		end
+		local expected_x = type(pre_x) == "number" and scale
+			and math.floor(pre_x * scale + 0.5) or nil
+		local expected_y = type(pre_y) == "number" and scale
+			and math.floor(pre_y * scale + 0.5) or nil
+		local q, r
+		if type(world_to_hex) == "function" then
+			local ok_hex, hq, hr = pcall(world_to_hex, pos)
+			if ok_hex then q, r = hq, hr end
+		end
+		local sector = SectorAtPoint(map, x, y)
+		entries[#entries + 1] = {
+			marker = marker, pos = pos, x = x, y = y, z = z, q = q, r = r,
+			position_hash = position_hash, profile = profile, origin = origin,
+			subtype = marker_subtype(marker, profile), sector = sector,
+			pre_x = pre_x, pre_y = pre_y, pre_z = pre_z, pre_hash = pre_hash,
+			expected_x = expected_x, expected_y = expected_y,
+		}
+	end)
+
+	table.sort(entries, function(a, b)
+		local ar, br = tonumber(a.sector and a.sector.row) or 9999,
+			tonumber(b.sector and b.sector.row) or 9999
+		if ar ~= br then return ar < br end
+		local ac, bc = tonumber(a.sector and a.sector.col) or 9999,
+			tonumber(b.sector and b.sector.col) or 9999
+		if ac ~= bc then return ac < bc end
+		if a.y ~= b.y then return a.y < b.y end
+		if a.x ~= b.x then return a.x < b.x end
+		return tostring(a.marker.handle or a.marker) < tostring(b.marker.handle or b.marker)
+	end)
+
+	local by_origin, by_sector, by_family = {}, {}, {}
+	local world_counts, hex_counts = {}, {}
+	local repulsion_violations = 0
+	for _, entry in ipairs(entries) do
+		by_origin[entry.origin] = (by_origin[entry.origin] or 0) + 1
+		local sector_name = tostring(entry.sector
+			and (entry.sector.display_name or entry.sector.id) or "offgrid")
+		by_sector[sector_name] = (by_sector[sector_name] or 0) + 1
+		local family = entry.profile and (entry.profile.layer .. "/" .. entry.profile.resource) or "unknown"
+		by_family[family] = (by_family[family] or 0) + 1
+		local world_key = tostring(entry.x) .. ":" .. tostring(entry.y)
+		world_counts[world_key] = (world_counts[world_key] or 0) + 1
+		if type(entry.q) == "number" and type(entry.r) == "number" then
+			local hex_key = tostring(entry.q) .. ":" .. tostring(entry.r)
+			hex_counts[hex_key] = (hex_counts[hex_key] or 0) + 1
+		end
+	end
+	for i = 1, #entries - 1 do
+		local a = entries[i]
+		for j = i + 1, #entries do
+			local b = entries[j]
+			if a.profile and b.profile then
+				local radius = PairRepulsionRadius(a.profile, b.profile)
+				local dx, dy = a.x - b.x, a.y - b.y
+				local distance_sq = dx * dx + dy * dy
+				if (radius == 0 and distance_sq == 0)
+					or (radius > 0 and distance_sq <= radius * radius) then
+					repulsion_violations = repulsion_violations + 1
+				end
+			end
+		end
+	end
+
+	local function tally_string(tally)
+		local keys, parts = {}, {}
+		for key in pairs(tally) do keys[#keys + 1] = key end
+		table.sort(keys)
+		for _, key in ipairs(keys) do parts[#parts + 1] = tostring(key) .. "=" .. tostring(tally[key]) end
+		return table.concat(parts, " ")
+	end
+	local duplicate_world, duplicate_hex = 0, 0
+	for _, count in pairs(world_counts) do if count > 1 then duplicate_world = duplicate_world + count - 1 end end
+	for _, count in pairs(hex_counts) do if count > 1 then duplicate_hex = duplicate_hex + count - 1 end end
+	DebugLog.Info("EnrichmentPositionsExhaustive", "BEGIN enrichment marker position census", {
+		phase = tostring(phase), map = tostring(map.name), environment = tostring(map.mapdata and map.mapdata.Environment),
+		markers = #entries, capture_pre_stretch = tostring(capture_pre_stretch == true),
+		stretch_scale = tostring(scale), map_w = tostring(map_w), map_h = tostring(map_h),
+		by_origin = tally_string(by_origin), by_family = tally_string(by_family),
+	})
+
+	for index, entry in ipairs(entries) do
+		local nearest, nearest_distance
+		local nearest_same, nearest_same_distance
+		local tightest, tightest_distance, tightest_required, tightest_clearance
+		for other_index, other in ipairs(entries) do
+			if other_index ~= index then
+				local dx, dy = entry.x - other.x, entry.y - other.y
+				local distance = math.sqrt(dx * dx + dy * dy)
+				if nearest_distance == nil or distance < nearest_distance then
+					nearest, nearest_distance = other, distance
+				end
+				if entry.profile and other.profile
+					and entry.profile.layer == other.profile.layer
+					and entry.profile.resource == other.profile.resource
+					and (nearest_same_distance == nil or distance < nearest_same_distance) then
+					nearest_same, nearest_same_distance = other, distance
+				end
+				if entry.profile and other.profile then
+					local required = PairRepulsionRadius(entry.profile, other.profile)
+					local clearance = distance - required
+					if tightest_clearance == nil or clearance < tightest_clearance then
+						tightest, tightest_distance, tightest_required, tightest_clearance =
+							other, distance, required, clearance
+					end
+				end
+			end
+		end
+		local sector = entry.sector
+		local nearest_profile = nearest and nearest.profile
+		local same_profile = nearest_same and nearest_same.profile
+		local tight_profile = tightest and tightest.profile
+		DebugLog.Info("EnrichmentPositionsExhaustive", "enrichment marker position", {
+			phase = tostring(phase), index = index, handle = tostring(entry.marker.handle or entry.marker),
+			class = tostring(entry.marker.class), origin = entry.origin,
+			layer = tostring(entry.profile and entry.profile.layer),
+			family = tostring(entry.profile and entry.profile.resource), subtype = entry.subtype,
+			x = entry.x, y = entry.y, z = tostring(entry.z), position_hash = tostring(entry.position_hash),
+			q = tostring(entry.q), r = tostring(entry.r), hex = tostring(entry.q) .. ":" .. tostring(entry.r),
+			sector = tostring(sector and (sector.display_name or sector.id)), sector_id = tostring(sector and sector.id),
+			sector_col = tostring(sector and sector.col), sector_row = tostring(sector and sector.row),
+			sector_status = tostring(sector and sector.status),
+			in_source_region = tostring(source_w > 0 and source_h > 0
+				and entry.x < source_w and entry.y < source_h),
+			in_outer_ring = tostring(IsInFinalOuterSectorRing(map, entry.x, entry.y,
+				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)),
+			pre_stretch_x = tostring(entry.pre_x), pre_stretch_y = tostring(entry.pre_y),
+			pre_stretch_z = tostring(entry.pre_z), pre_stretch_hash = tostring(entry.pre_hash),
+			expected_stretched_x = tostring(entry.expected_x), expected_stretched_y = tostring(entry.expected_y),
+			stretch_delta_x = tostring(entry.expected_x and (entry.x - entry.expected_x)),
+			stretch_delta_y = tostring(entry.expected_y and (entry.y - entry.expected_y)),
+			repulse_same = tostring(entry.profile and entry.profile.repulse_same),
+			repulse_layer = tostring(entry.profile and entry.profile.repulse_layer),
+			repulse_all = tostring(entry.profile and entry.profile.repulse_all),
+			is_placed = tostring(entry.marker.is_placed), revealed = tostring(entry.marker.revealed),
+			depth_layer = tostring(entry.marker.depth_layer), tech_action = tostring(entry.marker.tech_action),
+			sequence = tostring(entry.marker.sequence), deposit_type = tostring(entry.marker.deposit_type),
+			nearest_handle = tostring(nearest and (nearest.marker.handle or nearest.marker)),
+			nearest_class = tostring(nearest and nearest.marker.class),
+			nearest_origin = tostring(nearest and nearest.origin),
+			nearest_family = tostring(nearest_profile and (nearest_profile.layer .. "/" .. nearest_profile.resource)),
+			nearest_x = tostring(nearest and nearest.x), nearest_y = tostring(nearest and nearest.y),
+			nearest_distance = tostring(nearest_distance),
+			nearest_same_handle = tostring(nearest_same and (nearest_same.marker.handle or nearest_same.marker)),
+			nearest_same_family = tostring(same_profile and (same_profile.layer .. "/" .. same_profile.resource)),
+			nearest_same_distance = tostring(nearest_same_distance),
+			tightest_repulsion_handle = tostring(tightest and (tightest.marker.handle or tightest.marker)),
+			tightest_repulsion_family = tostring(tight_profile and (tight_profile.layer .. "/" .. tight_profile.resource)),
+			tightest_repulsion_distance = tostring(tightest_distance),
+			tightest_repulsion_required = tostring(tightest_required),
+			tightest_repulsion_clearance = tostring(tightest_clearance),
+			tightest_repulsion_violation = tostring(type(tightest_clearance) == "number" and tightest_clearance <= 0),
+		})
+	end
+	DebugLog.Info("EnrichmentPositionsExhaustive", "END enrichment marker position census", {
+		phase = tostring(phase), map = tostring(map.name), markers = #entries,
+		by_origin = tally_string(by_origin), by_family = tally_string(by_family),
+		by_sector = tally_string(by_sector), duplicate_world = duplicate_world,
+		duplicate_hex = duplicate_hex, all_pair_repulsion_violations = repulsion_violations,
+	})
+	return #entries
+end
+
 function DepositRules.RespaceAnomalies(map)
 	if cfg().RESPACE_ANOMALIES_TO_VANILLA ~= true then return end
 	-- STRETCH mode: skip (user decision 2026-07-12). This pass repairs the MIRROR path's

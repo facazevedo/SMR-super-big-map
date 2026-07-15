@@ -4628,6 +4628,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local spike_token = InvestigationBegin("surface: spike audit pre-stretch", map)
 					SpikeAudit(map, "surface pre-stretch")
 					InvestigationEnd(spike_token, nil, true)
+					local position_deposits = SuperBigMap.DepositRules
+					if position_deposits
+						and type(position_deposits.LogEnrichmentPositionCensus) == "function" then
+						StretchLog("stretch branch: -> enrichment position census BEFORE stretch")
+						InvestigationSafeCall("surface enrichment positions: before stretch", map,
+							position_deposits.LogEnrichmentPositionCensus,
+							map, "surface before stretch", true)
+					end
 					SetLoadingPhase("Stretching the surface terrain")
 					StretchLog("stretch branch: -> StretchSourceToFull")
 					local terrain_token = InvestigationBegin("surface: stretch all terrain grids", map)
@@ -4667,6 +4675,14 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					InvestigationEnd(detail_token, { moved = n_mark }, true)
 					StretchLog("stretch branch: ScaleMarkersToFull returned", { moved = n_mark })
 					EntranceSnapshot("surface after ScaleMarkersToFull", map)
+					local position_deposits = SuperBigMap.DepositRules
+					if position_deposits
+						and type(position_deposits.LogEnrichmentPositionCensus) == "function" then
+						StretchLog("stretch branch: -> enrichment position census AFTER stretch")
+						InvestigationSafeCall("surface enrichment positions: after stretch", map,
+							position_deposits.LogEnrichmentPositionCensus,
+							map, "surface after marker stretch before topups", false)
+					end
 				end
 				ResumeCombinedPassEdits("after surface marker movement")
 				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
@@ -4781,6 +4797,12 @@ local function RunSectorMirrorPlanIfEnabled(map)
 							StretchLog("stretch branch: -> RepairBreakthroughAnomalies")
 							InvestigationSafeCall("surface enrichment: repair breakthrough selection", map,
 								deposits.RepairBreakthroughAnomalies, map)
+						end
+						if type(deposits.LogEnrichmentPositionCensus) == "function" then
+							StretchLog("stretch branch: -> final enrichment position census")
+							InvestigationSafeCall("surface enrichment positions: final after density suite", map,
+								deposits.LogEnrichmentPositionCensus,
+								map, "surface final after topups and breakthroughs", false)
 						end
 						if type(deposits.AuditTopUpVanillaRepulsion) == "function" then
 							StretchLog("stretch branch: -> AuditTopUpVanillaRepulsion")
@@ -5341,6 +5363,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				AnnotateDecorRelief(map)
 				InvestigationEnd(detail_token, nil, true)
 			end
+			local position_deposits = SuperBigMap.DepositRules
+			if position_deposits
+				and type(position_deposits.LogEnrichmentPositionCensus) == "function" then
+				StretchLog("underground stretch: -> enrichment position census BEFORE stretch")
+				InvestigationSafeCall("underground enrichment positions: before stretch", map,
+					position_deposits.LogEnrichmentPositionCensus,
+					map, "underground before stretch", true)
+			end
 			SetLoadingPhase("Stretching the underground terrain")
 			StretchLog("underground stretch: -> StretchSourceToFull")
 			local terrain_token = InvestigationBegin("underground: stretch all terrain grids", map)
@@ -5369,6 +5399,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				InvestigationEnd(detail_token, { moved = n_mark }, true)
 				StretchLog("underground stretch: markers done", { moved = n_mark })
 				EntranceSnapshot("underground after ScaleMarkersToFull", map)
+				local position_deposits = SuperBigMap.DepositRules
+				if position_deposits
+					and type(position_deposits.LogEnrichmentPositionCensus) == "function" then
+					StretchLog("underground stretch: -> enrichment position census AFTER stretch")
+					InvestigationSafeCall("underground enrichment positions: after stretch", map,
+						position_deposits.LogEnrichmentPositionCensus,
+						map, "underground after marker stretch before topups", false)
+				end
 			end
 			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
 			if type(MoveEntranceVisualsToScale) == "function" then
@@ -5520,6 +5558,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
 						InvestigationSafeCall("underground enrichment: resolve badge overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+					end
+					if type(deposits.LogEnrichmentPositionCensus) == "function" then
+						StretchLog("underground stretch: -> final enrichment position census")
+						InvestigationSafeCall("underground enrichment positions: final after density suite", map,
+							deposits.LogEnrichmentPositionCensus,
+							map, "underground final after topups", false)
 					end
 					if type(deposits.AuditTopUpVanillaRepulsion) == "function" then
 						StretchLog("underground stretch: -> AuditTopUpVanillaRepulsion")
