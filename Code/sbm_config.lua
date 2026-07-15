@@ -552,43 +552,43 @@ config.MirrorPlanSettleMs = 5000
 -- incomplete. No disabled stage may silently fall back to (0,0) or bypass candidate validation.
 --
 -- 01: Generate the native source terrain and enrichments with the vanilla random stream.
-config.ExpansionStep01GenerateVanillaSource = true
+config.ExpansionStep01GenerateVanillaSource = false
 -- 02: Preserve vanilla enrichment borders, counts, spacing, and repulsion during generation.
-config.ExpansionStep02PreserveVanillaEnrichmentRules = true
+config.ExpansionStep02PreserveVanillaEnrichmentRules = false
 -- 03: Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
-config.ExpansionStep03RejectInvalidNativeCandidates = true
+config.ExpansionStep03RejectInvalidNativeCandidates = false
 -- 04: Capture every native enrichment coordinate and target shortfall before stretching.
-config.ExpansionStep04CapturePreStretchEnrichments = true
+config.ExpansionStep04CapturePreStretchEnrichments = false
 -- 05: Stretch the generated source terrain grids to the full expanded allocation.
-config.ExpansionStep05StretchTerrain = true
+config.ExpansionStep05StretchTerrain = false
 -- 06: Scale every native enrichment's X/Y coordinate by the exact terrain scale.
-config.ExpansionStep06ScaleNativeEnrichmentXY = true
+config.ExpansionStep06ScaleNativeEnrichmentXY = false
 -- 07: Re-snap scaled enrichments to the final live terrain height without changing X/Y.
-config.ExpansionStep07ResnapEnrichmentZ = true
+config.ExpansionStep07ResnapEnrichmentZ = false
 -- 08: Verify each native post-stretch coordinate against its captured scaled coordinate.
-config.ExpansionStep08VerifyNativeScale = true
+config.ExpansionStep08VerifyNativeScale = false
 -- 09: Rebuild final passability and buildability before selecting any added enrichment.
-config.ExpansionStep09RebuildGameplayGrids = true
+config.ExpansionStep09RebuildGameplayGrids = false
 -- 10: Build the shared coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
-config.ExpansionStep10BuildEnrichmentOccupancy = true
+config.ExpansionStep10BuildEnrichmentOccupancy = false
 -- 11: Calculate resource, effect, ordinary-anomaly, and breakthrough additions/shortfalls.
-config.ExpansionStep11CalculateEnrichmentAdditions = true
+config.ExpansionStep11CalculateEnrichmentAdditions = false
 -- 12: Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
-config.ExpansionStep12ValidateEnrichmentCandidates = true
+config.ExpansionStep12ValidateEnrichmentCandidates = false
 -- 13: Restrict each family to its configured region (including the anomaly outer ring).
-config.ExpansionStep13ApplyCategoryRegions = true
+config.ExpansionStep13ApplyCategoryRegions = false
 -- 14: Run the family selector (randomized vanilla placement or breakthrough farthest-point).
-config.ExpansionStep14SelectCategoryCandidates = true
+config.ExpansionStep14SelectCategoryCandidates = false
 -- 15: Reserve every accepted world coordinate and aligned hex before selecting the next marker.
-config.ExpansionStep15ReserveCandidatePositions = true
+config.ExpansionStep15ReserveCandidatePositions = false
 -- 16: Perform final alignment and revalidate the aligned coordinate/hex before construction.
-config.ExpansionStep16AlignAndRevalidateCandidates = true
+config.ExpansionStep16AlignAndRevalidateCandidates = false
 -- 17: Construct enrichment markers only after their final candidate passes every enabled rule.
-config.ExpansionStep17CreateEnrichmentMarkers = true
+config.ExpansionStep17CreateEnrichmentMarkers = false
 -- 18: Register surface markers with sectors and configure underground proximity reveal.
-config.ExpansionStep18RegisterAndRevealMarkers = true
+config.ExpansionStep18RegisterAndRevealMarkers = false
 -- 19: Audit final counts, coordinates, hexes, repulsion, ring routing, and breakthrough spread.
-config.ExpansionStep19AuditFinalEnrichments = true
+config.ExpansionStep19AuditFinalEnrichments = false
 
 -- Expanded-map allocation. Controlled by SuperBigMapTerrainSize above
 -- ("expanded" enables it, "vanilla" disables it). New random surface maps are
