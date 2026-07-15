@@ -541,6 +541,55 @@ config.ShowRestartNotice = true
 -- works because it runs well after load. This delay makes the auto copy match.
 config.MirrorPlanSettleMs = 5000
 
+-- ============================================================================
+-- CORRECTED ENRICHMENT EXPANSION PIPELINE -- INDIVIDUAL STEP SWITCHES
+-- ============================================================================
+-- These switches are the configuration contract for the 19-stage corrected expansion
+-- algorithm. Keep all true for the complete pipeline. They are intentionally independent so
+-- a diagnostic run can stop one stage from executing and show exactly where coordinates,
+-- density, or repulsion first diverge. Some stages depend on earlier stages; disabling a
+-- prerequisite is an expert diagnostic mode and may intentionally leave the generated map
+-- incomplete. No disabled stage may silently fall back to (0,0) or bypass candidate validation.
+--
+-- 01: Generate the native source terrain and enrichments with the vanilla random stream.
+config.ExpansionStep01GenerateVanillaSource = true
+-- 02: Preserve vanilla enrichment borders, counts, spacing, and repulsion during generation.
+config.ExpansionStep02PreserveVanillaEnrichmentRules = true
+-- 03: Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
+config.ExpansionStep03RejectInvalidNativeCandidates = true
+-- 04: Capture every native enrichment coordinate and target shortfall before stretching.
+config.ExpansionStep04CapturePreStretchEnrichments = true
+-- 05: Stretch the generated source terrain grids to the full expanded allocation.
+config.ExpansionStep05StretchTerrain = true
+-- 06: Scale every native enrichment's X/Y coordinate by the exact terrain scale.
+config.ExpansionStep06ScaleNativeEnrichmentXY = true
+-- 07: Re-snap scaled enrichments to the final live terrain height without changing X/Y.
+config.ExpansionStep07ResnapEnrichmentZ = true
+-- 08: Verify each native post-stretch coordinate against its captured scaled coordinate.
+config.ExpansionStep08VerifyNativeScale = true
+-- 09: Rebuild final passability and buildability before selecting any added enrichment.
+config.ExpansionStep09RebuildGameplayGrids = true
+-- 10: Build the shared coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
+config.ExpansionStep10BuildEnrichmentOccupancy = true
+-- 11: Calculate resource, effect, ordinary-anomaly, and breakthrough additions/shortfalls.
+config.ExpansionStep11CalculateEnrichmentAdditions = true
+-- 12: Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
+config.ExpansionStep12ValidateEnrichmentCandidates = true
+-- 13: Restrict each family to its configured region (including the anomaly outer ring).
+config.ExpansionStep13ApplyCategoryRegions = true
+-- 14: Run the family selector (randomized vanilla placement or breakthrough farthest-point).
+config.ExpansionStep14SelectCategoryCandidates = true
+-- 15: Reserve every accepted world coordinate and aligned hex before selecting the next marker.
+config.ExpansionStep15ReserveCandidatePositions = true
+-- 16: Perform final alignment and revalidate the aligned coordinate/hex before construction.
+config.ExpansionStep16AlignAndRevalidateCandidates = true
+-- 17: Construct enrichment markers only after their final candidate passes every enabled rule.
+config.ExpansionStep17CreateEnrichmentMarkers = true
+-- 18: Register surface markers with sectors and configure underground proximity reveal.
+config.ExpansionStep18RegisterAndRevealMarkers = true
+-- 19: Audit final counts, coordinates, hexes, repulsion, ring routing, and breakthrough spread.
+config.ExpansionStep19AuditFinalEnrichments = true
+
 -- Expanded-map allocation. Controlled by SuperBigMapTerrainSize above
 -- ("expanded" enables it, "vanilla" disables it). New random surface maps are
 -- created larger, then the source quadrant is copied into the other quadrants.
@@ -1071,6 +1120,48 @@ C.OVERVIEW_FOV_16_9 = as_number(config.OverviewFovX16_9, 3600)
 C.OVERVIEW_FOV_4_3 = as_number(config.OverviewFovX4_3, 3400)
 C.OVERVIEW_FAR_Z = as_number(config.OverviewFarZ, 12000000)
 C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
+
+-- Corrected enrichment expansion pipeline: individual stage switches.
+C.EXPANSION_STEP_01_GENERATE_VANILLA_SOURCE = as_bool(config.ExpansionStep01GenerateVanillaSource)
+C.EXPANSION_STEP_02_PRESERVE_VANILLA_ENRICHMENT_RULES = as_bool(config.ExpansionStep02PreserveVanillaEnrichmentRules)
+C.EXPANSION_STEP_03_REJECT_INVALID_NATIVE_CANDIDATES = as_bool(config.ExpansionStep03RejectInvalidNativeCandidates)
+C.EXPANSION_STEP_04_CAPTURE_PRE_STRETCH_ENRICHMENTS = as_bool(config.ExpansionStep04CapturePreStretchEnrichments)
+C.EXPANSION_STEP_05_STRETCH_TERRAIN = as_bool(config.ExpansionStep05StretchTerrain)
+C.EXPANSION_STEP_06_SCALE_NATIVE_ENRICHMENT_XY = as_bool(config.ExpansionStep06ScaleNativeEnrichmentXY)
+C.EXPANSION_STEP_07_RESNAP_ENRICHMENT_Z = as_bool(config.ExpansionStep07ResnapEnrichmentZ)
+C.EXPANSION_STEP_08_VERIFY_NATIVE_SCALE = as_bool(config.ExpansionStep08VerifyNativeScale)
+C.EXPANSION_STEP_09_REBUILD_GAMEPLAY_GRIDS = as_bool(config.ExpansionStep09RebuildGameplayGrids)
+C.EXPANSION_STEP_10_BUILD_ENRICHMENT_OCCUPANCY = as_bool(config.ExpansionStep10BuildEnrichmentOccupancy)
+C.EXPANSION_STEP_11_CALCULATE_ENRICHMENT_ADDITIONS = as_bool(config.ExpansionStep11CalculateEnrichmentAdditions)
+C.EXPANSION_STEP_12_VALIDATE_ENRICHMENT_CANDIDATES = as_bool(config.ExpansionStep12ValidateEnrichmentCandidates)
+C.EXPANSION_STEP_13_APPLY_CATEGORY_REGIONS = as_bool(config.ExpansionStep13ApplyCategoryRegions)
+C.EXPANSION_STEP_14_SELECT_CATEGORY_CANDIDATES = as_bool(config.ExpansionStep14SelectCategoryCandidates)
+C.EXPANSION_STEP_15_RESERVE_CANDIDATE_POSITIONS = as_bool(config.ExpansionStep15ReserveCandidatePositions)
+C.EXPANSION_STEP_16_ALIGN_AND_REVALIDATE_CANDIDATES = as_bool(config.ExpansionStep16AlignAndRevalidateCandidates)
+C.EXPANSION_STEP_17_CREATE_ENRICHMENT_MARKERS = as_bool(config.ExpansionStep17CreateEnrichmentMarkers)
+C.EXPANSION_STEP_18_REGISTER_AND_REVEAL_MARKERS = as_bool(config.ExpansionStep18RegisterAndRevealMarkers)
+C.EXPANSION_STEP_19_AUDIT_FINAL_ENRICHMENTS = as_bool(config.ExpansionStep19AuditFinalEnrichments)
+C.EXPANSION_ENRICHMENT_STEPS = {
+	C.EXPANSION_STEP_01_GENERATE_VANILLA_SOURCE,
+	C.EXPANSION_STEP_02_PRESERVE_VANILLA_ENRICHMENT_RULES,
+	C.EXPANSION_STEP_03_REJECT_INVALID_NATIVE_CANDIDATES,
+	C.EXPANSION_STEP_04_CAPTURE_PRE_STRETCH_ENRICHMENTS,
+	C.EXPANSION_STEP_05_STRETCH_TERRAIN,
+	C.EXPANSION_STEP_06_SCALE_NATIVE_ENRICHMENT_XY,
+	C.EXPANSION_STEP_07_RESNAP_ENRICHMENT_Z,
+	C.EXPANSION_STEP_08_VERIFY_NATIVE_SCALE,
+	C.EXPANSION_STEP_09_REBUILD_GAMEPLAY_GRIDS,
+	C.EXPANSION_STEP_10_BUILD_ENRICHMENT_OCCUPANCY,
+	C.EXPANSION_STEP_11_CALCULATE_ENRICHMENT_ADDITIONS,
+	C.EXPANSION_STEP_12_VALIDATE_ENRICHMENT_CANDIDATES,
+	C.EXPANSION_STEP_13_APPLY_CATEGORY_REGIONS,
+	C.EXPANSION_STEP_14_SELECT_CATEGORY_CANDIDATES,
+	C.EXPANSION_STEP_15_RESERVE_CANDIDATE_POSITIONS,
+	C.EXPANSION_STEP_16_ALIGN_AND_REVALIDATE_CANDIDATES,
+	C.EXPANSION_STEP_17_CREATE_ENRICHMENT_MARKERS,
+	C.EXPANSION_STEP_18_REGISTER_AND_REVEAL_MARKERS,
+	C.EXPANSION_STEP_19_AUDIT_FINAL_ENRICHMENTS,
+}
 
 -- Map generation (quadrant tiling)
 C.ENABLE_QUADRANT_MAP_COPY = as_bool(config.EnableQuadrantMapCopy)
