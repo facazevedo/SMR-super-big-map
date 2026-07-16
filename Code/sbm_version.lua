@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 65: normalize MapGet's valid nil result to an empty object set
--- when snapshotting a newly allocated native source map before generation.
-SuperBigMap.GENERATOR_PATCH_VERSION = 65
+-- (sbm_map_generation). Bumped to 66: generate once on the final map and use an empty native
+-- backing only to obtain engine-exact source height samples, with no generated-object migration.
+SuperBigMap.GENERATOR_PATCH_VERSION = 66

@@ -5847,7 +5847,7 @@ local function PatchRandomMapGenerator()
 				or (type(template) == "table" and template.Environment)
 			local is_surface_generation = generation_environment ~= "Underground"
 
-			-- VANILLA HEIGHT-MAP VIEW BRIDGE. Proc_InitPlayZone is the one native generator
+			-- VANILLA HEIGHT-MAP VIEW + NATIVE SAMPLER BRIDGE. Proc_InitPlayZone is the one native generator
 			-- path which bypasses every size view above: it grows its terrace height grid from
 			-- terrain.HeightMapSize(map), which still exposes the real 8192 backing allocation.
 			-- That changes the terrain sampled later by ResolveBuildable even though GetMapSize,
@@ -5857,8 +5857,13 @@ local function PatchRandomMapGenerator()
 			-- A vanilla 6144 SetHeightGrid cannot be allowed to replace the 8192 destination,
 			-- so intercept that one write, copy it into the top-left of the existing full grid,
 			-- and pass a full-sized options table to the real setter. Both native functions are
-			-- restored immediately after DoGenerate, including its error path.
+			-- restored immediately after DoGenerate, including its error path. When the sampler option
+			-- is enabled, source-sized GetHeightGrid reads are executed by the engine against an empty
+			-- 6144 backing containing a fresh top-left copy of the destination terrain. This preserves
+			-- native sampling exactly without moving generation or any generated object off the final map.
 			local height_bridge = false
+			local height_sampler = false
+			local height_sampler_slot = false
 			local original_terrain_height_map_size = terrain_api and terrain_api.HeightMapSize
 			local original_terrain_set_height_grid = terrain_api and terrain_api.SetHeightGrid
 			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
@@ -5868,6 +5873,8 @@ local function PatchRandomMapGenerator()
 				and type(original_terrain_get_height_grid) == "function"
 				and cur_w_tiles > gen_width_tiles and cur_h_tiles > gen_height_tiles then
 				local grid_to_compute = Global("GridToCompute")
+				local new_compute_grid = Global("NewComputeGrid")
+				local is_compute_grid = Global("IsComputeGrid")
 				local box_fn = Global("box")
 				local point_fn = Global("point")
 				if type(grid_to_compute) == "function" and type(box_fn) == "function"
@@ -5876,10 +5883,60 @@ local function PatchRandomMapGenerator()
 					height_bridge = {
 						height_size_calls = 0,
 						set_calls = 0,
+						get_calls = 0,
+						sampled_reads = 0,
+						sampler_syncs = 0,
+						sampler_sync_ms = 0,
 						bridged_writes = 0,
 						raw_width = raw_ok and raw_width or "ERROR",
 						raw_height = raw_ok and (raw_height or raw_width) or "ERROR",
 					}
+
+					if cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false) then
+						if type(new_compute_grid) ~= "function" or type(is_compute_grid) ~= "function" then
+							error("native height sampler compute-grid API unavailable")
+						end
+						local change_map_in_slot = Global("ChangeMapInSlot")
+						local maps = Global("Maps")
+						height_sampler_slot = FindTemporarySourceSlot(map.slot)
+						if type(change_map_in_slot) ~= "function" or type(maps) ~= "table" or not height_sampler_slot then
+							error("native height sampler map-slot API unavailable")
+						end
+						local original_pass_border = tonumber(mapdata and mapdata.SuperBigMapOriginalPassBorder)
+							or tonumber(template and template.SuperBigMapOriginalPassBorder)
+							or tonumber(template and template.PassBorder) or 0
+						local sampler_mapdata = NewNativeSourceMapData(template or mapdata,
+							gen_width_tiles, gen_height_tiles, original_pass_border)
+						local sampler_instance = {
+							mapdata = sampler_mapdata,
+							RandomMapGenObject = self,
+							SuperBigMapVanillaSourceMigration = true,
+						}
+						local allocation_started = MigrationTicks()
+						local allocation_error = change_map_in_slot(height_sampler_slot,
+							self.BlankMap, sampler_instance)
+						height_bridge.sampler_allocation_ms = MigrationTicks() - allocation_started
+						if allocation_error then
+							error("native height sampler ChangeMapInSlot failed: " .. tostring(allocation_error))
+						end
+						height_sampler = maps[height_sampler_slot]
+						if not height_sampler then error("native height sampler map was not created") end
+						local sampler_width, sampler_height = original_terrain_height_map_size(height_sampler)
+						sampler_height = sampler_height or sampler_width
+						height_bridge.sampler_width = sampler_width
+						height_bridge.sampler_height = sampler_height
+						if sampler_width ~= gen_width_tiles or sampler_height ~= gen_height_tiles then
+							error(string.format("native height sampler has wrong backing: %sx%s expected %sx%s",
+								tostring(sampler_width), tostring(sampler_height),
+								tostring(gen_width_tiles), tostring(gen_height_tiles)))
+						end
+						BackingPromotionLog("NATIVE_HEIGHT_SAMPLER_ALLOCATED", {
+							slot = height_sampler_slot,
+							backing = tostring(sampler_width) .. "x" .. tostring(sampler_height),
+							allocation_ms = height_bridge.sampler_allocation_ms,
+							pass_border = original_pass_border,
+						})
+					end
 
 					terrain_api.HeightMapSize = function(target)
 						if target == map or (target == nil and Global("CurrentMap") == map) then
@@ -5887,6 +5944,60 @@ local function PatchRandomMapGenerator()
 							return gen_width_tiles, gen_height_tiles
 						end
 						return original_terrain_height_map_size(target)
+					end
+
+					local function SyncNativeHeightSampler()
+						if not height_sampler then return false end
+						local sync_started = MigrationTicks()
+						local raw_full, compute_full, compute_source
+						local sync_ok, sync_error = pcall(function()
+							raw_full = original_terrain_get_height_grid(map)
+							compute_full = grid_to_compute(raw_full)
+							local full_width, full_height = compute_full:size()
+							full_height = full_height or full_width
+							if full_width < gen_width_tiles or full_height < gen_height_tiles then
+								error(string.format("expanded source terrain unavailable: %sx%s expected at least %sx%s",
+									tostring(full_width), tostring(full_height),
+									tostring(gen_width_tiles), tostring(gen_height_tiles)))
+							end
+							local format, bits = is_compute_grid(compute_full)
+							compute_source = new_compute_grid(gen_width_tiles, gen_height_tiles, format, bits)
+							if not compute_source then error("native height sampler source-grid allocation failed") end
+							compute_source:copyrect(compute_full,
+								box_fn(0, 0, gen_width_tiles, gen_height_tiles), point_fn(0, 0))
+							local set_error = original_terrain_set_height_grid(height_sampler, compute_source)
+							if set_error then error("native height sampler SetHeightGrid: " .. tostring(set_error)) end
+						end)
+						if compute_source then pcall(function() if type(compute_source.free) == "function" then compute_source:free() end end) end
+						if compute_full and compute_full ~= raw_full then
+							pcall(function() if type(compute_full.free) == "function" then compute_full:free() end end)
+						end
+						local elapsed = MigrationTicks() - sync_started
+						height_bridge.sampler_sync_ms = height_bridge.sampler_sync_ms + elapsed
+						if not sync_ok then
+							height_bridge.sampler_error = tostring(sync_error)
+							error("native height sampler sync failed: " .. tostring(sync_error))
+						end
+						height_bridge.sampler_syncs = height_bridge.sampler_syncs + 1
+						BackingPromotionLog("NATIVE_HEIGHT_SAMPLER_SYNC", {
+							sync = height_bridge.sampler_syncs,
+							elapsed_ms = elapsed,
+							total_sync_ms = height_bridge.sampler_sync_ms,
+							source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
+						})
+						return true
+					end
+
+					terrain_api.GetHeightGrid = function(target, output_grid, ...)
+						height_bridge.get_calls = height_bridge.get_calls + 1
+						local destination_read = target == map
+							or (target == nil and Global("CurrentMap") == map)
+						if height_sampler and destination_read and output_grid ~= nil then
+							SyncNativeHeightSampler()
+							height_bridge.sampled_reads = height_bridge.sampled_reads + 1
+							return original_terrain_get_height_grid(height_sampler, output_grid, ...)
+						end
+						return original_terrain_get_height_grid(target, output_grid, ...)
 					end
 
 					terrain_api.SetHeightGrid = function(target, spec, ...)
@@ -5990,18 +6101,48 @@ local function PatchRandomMapGenerator()
 				map.hex_height = saved_map_hex_height
 			end
 			if height_bridge then
+				if results[1] and height_sampler and height_bridge.sampled_reads < 1 then
+					results[1] = false
+					results[2] = "native height sampler completed without servicing a source-grid read"
+				end
 				terrain_api.HeightMapSize = original_terrain_height_map_size
 				terrain_api.SetHeightGrid = original_terrain_set_height_grid
+				terrain_api.GetHeightGrid = original_terrain_get_height_grid
+				if height_sampler_slot then
+					local change_map_in_slot = Global("ChangeMapInSlot")
+					local maps = Global("Maps")
+					local unload_started = MigrationTicks()
+					local unload_ok, unload_error = true, nil
+					if type(change_map_in_slot) == "function" and type(maps) == "table"
+						and maps[height_sampler_slot] then
+						unload_ok, unload_error = pcall(change_map_in_slot, height_sampler_slot, "")
+					end
+					height_bridge.sampler_unload_ms = MigrationTicks() - unload_started
+					if not unload_ok and results[1] then
+						results[1] = false
+						results[2] = "native height sampler unload failed: " .. tostring(unload_error)
+					end
+					height_sampler = false
+				end
 				DebugPrint(string.format(
-					"vanilla height-grid bridge restored: height_size_calls=%s set_calls=%s bridged_writes=%s source=%sx%s backing=%sx%s error=%s",
-					tostring(height_bridge.height_size_calls), tostring(height_bridge.set_calls),
-					tostring(height_bridge.bridged_writes), tostring(height_bridge.source_width),
+					"vanilla height-grid bridge restored: height_size_calls=%s get_calls=%s sampled_reads=%s set_calls=%s bridged_writes=%s sampler_syncs=%s sampler_ms=%s source=%sx%s backing=%sx%s error=%s",
+					tostring(height_bridge.height_size_calls), tostring(height_bridge.get_calls),
+					tostring(height_bridge.sampled_reads), tostring(height_bridge.set_calls),
+					tostring(height_bridge.bridged_writes), tostring(height_bridge.sampler_syncs),
+					tostring(height_bridge.sampler_sync_ms), tostring(height_bridge.source_width),
 					tostring(height_bridge.source_height), tostring(height_bridge.full_width),
 					tostring(height_bridge.full_height), tostring(height_bridge.error)))
 				EnrichmentSpreadBoundary(self, map, "height-grid-bridge-restored", {
 					height_size_calls = tostring(height_bridge.height_size_calls),
+					get_calls = tostring(height_bridge.get_calls),
+					sampled_reads = tostring(height_bridge.sampled_reads),
 					set_calls = tostring(height_bridge.set_calls),
 					bridged_writes = tostring(height_bridge.bridged_writes),
+					sampler_syncs = tostring(height_bridge.sampler_syncs),
+					sampler_sync_ms = tostring(height_bridge.sampler_sync_ms),
+					sampler_allocation_ms = tostring(height_bridge.sampler_allocation_ms),
+					sampler_unload_ms = tostring(height_bridge.sampler_unload_ms),
+					sampler_error = tostring(height_bridge.sampler_error),
 					source = tostring(height_bridge.source_width) .. "x" .. tostring(height_bridge.source_height),
 					backing = tostring(height_bridge.full_width) .. "x" .. tostring(height_bridge.full_height),
 					error = tostring(height_bridge.error),

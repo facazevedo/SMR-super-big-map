@@ -558,10 +558,13 @@ config.MirrorPlanSettleMs = 5000
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
 config.ExpansionStep01GenerateAndCaptureVanillaSource = true
--- Run the single native RandomMapGenerator body on a temporary vanilla-sized terrain backing,
--- then copy its terrain and transfer its generated objects into the already allocated expanded
--- destination. This avoids both the expanded-backing sampling defect and a second generation pass.
-config.GenerateVanillaSourceOnTemporaryBacking = true
+-- Retired experiment: generating on a temporary map made the source exact, but migrating ~20,000
+-- generated objects added roughly 53 seconds and was not suitable for normal loading.
+config.GenerateVanillaSourceOnTemporaryBacking = false
+-- Keep generation and every generated object directly on the final expanded map. A temporary
+-- empty native-sized terrain exists only as an engine sampler for source-view height-grid reads;
+-- it never runs RandomMapGenerate and never receives or transfers generated objects.
+config.UseNativeHeightSamplerBacking = true
 -- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
 -- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
 -- replacement rather than an in-place terrain setter.
@@ -1195,6 +1198,8 @@ C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
 	expansion_step_01
 C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
 	and as_bool(config.GenerateVanillaSourceOnTemporaryBacking)
+C.USE_NATIVE_HEIGHT_SAMPLER_BACKING = expansion_step_01
+	and as_bool(config.UseNativeHeightSamplerBacking)
 C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
 	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
 C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
