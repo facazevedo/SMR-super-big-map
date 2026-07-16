@@ -105,7 +105,16 @@ end
 local function EntranceSnapshot(phase, map)
 	local debug_mod = SuperBigMap.EntranceDebug
 	if debug_mod and type(debug_mod.SnapshotAll) == "function" then
-		pcall(debug_mod.SnapshotAll, phase, map)
+		local token = InvestigationBegin("diagnostic: entrance snapshot", map, {
+			phase = tostring(phase), work_class = "diagnostic-only",
+			can_disable_without_gameplay_change = true,
+		})
+		local ok, result = pcall(debug_mod.SnapshotAll, phase, map)
+		InvestigationEnd(token, {
+			phase = tostring(phase), result = tostring(result),
+			work_class = "diagnostic-only",
+			can_disable_without_gameplay_change = true,
+		}, ok)
 	end
 end
 
@@ -902,6 +911,10 @@ end
 local function GenRandCensus(map, label)
 	if not GenRandEnabled() then return end
 	if not map or type(map.MapForEach) ~= "function" then return end
+	local profile_token = InvestigationBegin("diagnostic: generator object census", map, {
+		label = tostring(label), work_class = "diagnostic-only",
+		can_disable_without_gameplay_change = true,
+	})
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMGenRandCensus") end
@@ -952,12 +965,24 @@ local function GenRandCensus(map, label)
 	end
 	GenRandLog("census end", { label = tostring(label), map = tostring(map.name) })
 	if type(resume) == "function" then pcall(resume, "SBMGenRandCensus") end
+	InvestigationEnd(profile_token, {
+		label = tostring(label), classes = #classes, objects = total,
+		work_class = "diagnostic-only", can_disable_without_gameplay_change = true,
+	}, swept_ok == true)
 end
 
 local function EnrichmentSpreadBoundary(generator, map, phase, data)
 	local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
 	if diagnostics and type(diagnostics.TraceGeneratorBoundary) == "function" then
-		pcall(diagnostics.TraceGeneratorBoundary, generator, map, phase, data)
+		local token = InvestigationBegin("diagnostic: generator boundary", map, {
+			phase = tostring(phase), work_class = "diagnostic-only",
+			can_disable_without_gameplay_change = true,
+		})
+		local ok, result = pcall(diagnostics.TraceGeneratorBoundary, generator, map, phase, data)
+		InvestigationEnd(token, {
+			phase = tostring(phase), result = tostring(result),
+			work_class = "diagnostic-only", can_disable_without_gameplay_change = true,
+		}, ok)
 	end
 end
 
@@ -965,7 +990,14 @@ CaptureGeneratedNativeEnrichments = function(map, label)
 	if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false) then return 0 end
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.CaptureNativeEnrichmentPositions) == "function" then
+		local token = InvestigationBegin("diagnostic: native enrichment coordinate capture", map, {
+			label = tostring(label), work_class = "correctness-verification",
+		})
 		local ok, count = pcall(deposits.CaptureNativeEnrichmentPositions, map, label)
+		InvestigationEnd(token, {
+			label = tostring(label), count = ok and tostring(count) or "error",
+			work_class = "correctness-verification",
+		}, ok)
 		if ok then return count or 0 end
 		DebugPrint("native enrichment capture ERROR: " .. tostring(count))
 	end
@@ -1340,6 +1372,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		pass_border = pass_border,
 		current_switch_mode = silent_switch_available and "engine-silent" or "public-fallback",
 	}
+	local migration_profile_token = InvestigationBegin(
+		"temporary vanilla source: complete generation and migration", destination, {
+			source_tiles = stats.source_tiles, destination_tiles = stats.destination_tiles,
+			work_class = "expansion-correctness",
+		})
 	BackingPromotionLog("TEMP_SOURCE_MIGRATION_BEGIN", stats)
 	SetLoadingPhase("Generating the exact vanilla source terrain...")
 	local source
@@ -1352,12 +1389,21 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local results
 	SuperBigMap.State.vanilla_source_migration_active = true
 	local ok, migration_error = pcall(function()
+		local allocation_profile_token = InvestigationBegin(
+			"temporary vanilla source: allocate native backing", destination, {
+				source_slot = source_slot, source_tiles = stats.source_tiles,
+				work_class = "map-allocation",
+			})
 		local allocation_started = MigrationTicks()
 		local allocation_error = change_map_in_slot(source_slot, blank_map, source_instance)
 		if allocation_error then error("temporary source ChangeMapInSlot: " .. tostring(allocation_error)) end
 		source = maps[source_slot]
 		if not source then error("temporary source map was not created") end
 		stats.source_allocation_ms = MigrationTicks() - allocation_started
+		InvestigationEnd(allocation_profile_token, {
+			elapsed_ms = stats.source_allocation_ms, source_slot = source_slot,
+			work_class = "map-allocation",
+		}, true)
 		local terrain_api = Global("terrain")
 		local actual_width, actual_height
 		if type(terrain_api) == "table" and type(terrain_api.HeightMapSize) == "function" then
@@ -1374,20 +1420,36 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			error(string.format("temporary source backing is not native-sized: got %sx%s expected %sx%s",
 				tostring(actual_width), tostring(actual_height), tostring(source_width), tostring(source_height)))
 		end
+		local baseline_profile_token = InvestigationBegin(
+			"temporary vanilla source: enumerate infrastructure baselines", destination, {
+				work_class = "object-enumeration",
+			})
 		source_baseline, stats.source_baseline_objects = SnapshotMapObjectSet(source)
 		local destination_objects, destination_object_error = MapObjects(destination)
 		if not destination_objects then
 			error("could not snapshot destination infrastructure: " .. tostring(destination_object_error))
 		end
 		stats.destination_infrastructure_objects = #destination_objects
+		InvestigationEnd(baseline_profile_token, {
+			source_objects = stats.source_baseline_objects,
+			destination_objects = stats.destination_infrastructure_objects,
+			work_class = "object-enumeration",
+		}, true)
 		BackingPromotionLog("TEMP_SOURCE_OBJECT_BASELINES", {
 			source = stats.source_baseline_objects,
 			destination = stats.destination_infrastructure_objects,
 		})
 
+		local switch_source_profile_token = InvestigationBegin(
+			"temporary vanilla source: switch generator context to native backing", source, {
+				source_slot = source_slot, work_class = "map-context-switch",
+			})
 		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
 		if source.City ~= nil then rawset(_G, "MainCity", source.City) end
+		InvestigationEnd(switch_source_profile_token, {
+			source_slot = source_slot, work_class = "map-context-switch",
+		}, true)
 		-- RandomMapGenerator:GetMapSize reads MapData[self.BlankMap] directly rather than the
 		-- supplied map. Keep that last generator input native-sized for exactly this transaction;
 		-- the destination's engine backing remains expanded and its template is restored before
@@ -1402,6 +1464,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				template.PassBorderTiles = math.floor(pass_border / tile)
 			end
 		end
+		local native_generation_profile_token = InvestigationBegin(
+			"temporary vanilla source: vanilla RandomMapGenerator body", source, {
+				blank = tostring(blank_map), seed = tostring(generator and generator.Seed),
+				work_class = "vanilla-generator",
+			})
 		local generation_started = MigrationTicks()
 		BackingPromotionLog("TEMP_SOURCE_GENERATION_BEGIN", {
 			slot = source_slot, backing = tostring(actual_width) .. "x" .. tostring(actual_height),
@@ -1414,6 +1481,14 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(update_radius) == "function" then update_radius(source) end
 		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
 		stats.source_generation_ms = MigrationTicks() - generation_started
+		InvestigationEnd(native_generation_profile_token, {
+			elapsed_ms = stats.source_generation_ms, blank = tostring(blank_map),
+			work_class = "vanilla-generator",
+		}, true)
+		local capture_profile_token = InvestigationBegin(
+			"temporary vanilla source: capture enrichment records", source, {
+				work_class = "correctness-capture",
+			})
 		stats.source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
 		local deposits = SuperBigMap.DepositRules
@@ -1426,6 +1501,12 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		stats.source_enrichment_record_count = native_enrichment_record_stats.count
 		stats.source_enrichment_record_signature = native_enrichment_record_stats.signature
 		stats.source_enrichment_record_classes = native_enrichment_record_stats.class_counts_text
+		InvestigationEnd(capture_profile_token, {
+			coordinates = stats.source_generated_enrichments,
+			records = stats.source_enrichment_record_count,
+			signature = stats.source_enrichment_record_signature,
+			work_class = "correctness-capture",
+		}, true)
 		if stats.source_enrichment_record_count ~= stats.source_generated_enrichments then
 			error(string.format("native enrichment coordinate/value capture mismatch: coordinates=%s records=%s",
 				tostring(stats.source_generated_enrichments),
@@ -1442,6 +1523,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		-- vanilla backing at this boundary. Preserve an immutable forensic summary before switching
 		-- maps; no source buildable grid is ever paired with the expanded terrain. The destination
 		-- receives a separate final gameplay rebuild only after terrain and objects are migrated.
+		local source_forensics_profile_token = InvestigationBegin(
+			"diagnostic: temporary source native pipeline forensics", source, {
+				work_class = "diagnostic-only", can_disable_without_gameplay_change = true,
+			})
 		local source_buildable = source.buildable
 		local source_buildable_grid = source_buildable and source_buildable.z_grid
 		local source_buildable_width, source_buildable_height =
@@ -1504,6 +1589,12 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				hash = stats.source_buildable_hash,
 			})
 		end
+		InvestigationEnd(source_forensics_profile_token, {
+			buildable_grid_size = stats.source_buildable_grid,
+			buildable_hash = stats.source_buildable_hash,
+			trace_ok = tostring(stats.source_buildable_trace_ok),
+			work_class = "diagnostic-only", can_disable_without_gameplay_change = true,
+		}, true)
 		BackingPromotionLog("TEMP_SOURCE_GENERATION_END", {
 			elapsed_ms = stats.source_generation_ms,
 			map_lowest_z = tostring(source.MapLowestZ), map_highest_z = tostring(source.MapHighestZ),
@@ -1515,18 +1606,53 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		rawset(_G, "MainMap", saved_main_map)
 		rawset(_G, "MainCity", saved_main_city)
 		RestoreGeneratorTemplate()
+		local switch_destination_profile_token = InvestigationBegin(
+			"temporary vanilla source: restore expanded destination context", destination, {
+				destination_slot = destination_slot, work_class = "map-context-switch",
+			})
 		SwitchGeneratorCurrentSlot(destination_slot)
+		InvestigationEnd(switch_destination_profile_token, {
+			destination_slot = destination_slot, work_class = "map-context-switch",
+		}, true)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
+		local terrain_profile_token = InvestigationBegin(
+			"temporary vanilla source: copy terrain into expanded destination", destination, {
+				work_class = "terrain-grid-copy",
+			})
 		CopyMigratedTerrain(source, destination, stats)
+		InvestigationEnd(terrain_profile_token, {
+			elapsed_ms = stats.terrain_copy_ms, work_class = "terrain-grid-copy",
+		}, true)
 		CopyGeneratedMapState(source, destination)
 		if type(deposits.StageNativeEnrichmentRecords) ~= "function" then
 			error("native enrichment staging API unavailable")
 		end
+		local staging_profile_token = InvestigationBegin(
+			"temporary vanilla source: stage enrichment value records", destination, {
+				records = stats.source_enrichment_record_count,
+				work_class = "correctness-capture",
+			})
 		local staged, stage_error = deposits.StageNativeEnrichmentRecords(destination,
 			native_enrichment_records, "temporary vanilla backing migrated to destination")
+		InvestigationEnd(staging_profile_token, {
+			records = stats.source_enrichment_record_count,
+			work_class = "correctness-capture",
+		}, staged == true)
 		if staged ~= true then error("native enrichment staging failed: " .. tostring(stage_error)) end
+		local transfer_profile_token = InvestigationBegin(
+			"temporary vanilla source: transfer generated object graph", destination, {
+				work_class = "object-migration",
+			})
 		TransferGeneratedObjects(source, destination, stats, source_baseline,
 			native_enrichment_excluded)
+		InvestigationEnd(transfer_profile_token, {
+			elapsed_ms = stats.object_transfer_ms,
+			enumerated = stats.source_objects_enumerated,
+			generated = stats.source_generated_objects,
+			roots = stats.source_root_objects,
+			transferred = stats.source_objects_transferred,
+			work_class = "object-migration",
+		}, true)
 		BackingPromotionLog("TEMP_SOURCE_ENRICHMENT_RECORDS_STAGED", {
 			count = stats.source_enrichment_record_count,
 			signature = stats.source_enrichment_record_signature,
@@ -1538,6 +1664,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		-- temporary-map references instead of allowing a later map generation to consume stale pads.
 		SuperBigMap.State.sbm_entrance_pads = nil
 
+		local rebuild_profile_token = InvestigationBegin(
+			"temporary vanilla source: rebuild expanded destination gameplay grids", destination, {
+				work_class = "gameplay-grid-rebuild",
+			})
 		local rebuild_started = MigrationTicks()
 		local box_fn = Global("box")
 		local map_width, map_height = destination:GetMapSize()
@@ -1547,6 +1677,14 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		destination:RebuildGrids(box_fn(0, 0, map_width, map_height))
 		destination.SuperBigMapSurfaceBuildableCurrent = true
 		stats.destination_rebuild_ms = MigrationTicks() - rebuild_started
+		InvestigationEnd(rebuild_profile_token, {
+			elapsed_ms = stats.destination_rebuild_ms,
+			work_class = "gameplay-grid-rebuild",
+		}, true)
+		local destination_verify_profile_token = InvestigationBegin(
+			"temporary vanilla source: verify expanded destination buildable grid", destination, {
+				work_class = "correctness-verification",
+			})
 		local destination_buildable = destination.buildable
 		local destination_buildable_grid = destination_buildable and destination_buildable.z_grid
 		local destination_buildable_width, destination_buildable_height =
@@ -1570,6 +1708,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			used_for_native_generation = false,
 			purpose = "final-expanded-gameplay-only",
 		})
+		InvestigationEnd(destination_verify_profile_token, {
+			buildable_grid_size = stats.destination_buildable_grid,
+			buildable_hash = stats.destination_buildable_hash,
+			work_class = "correctness-verification",
+		}, true)
 	end)
 
 	-- Always restore the real surface as current and release the temporary slot. This also keeps
@@ -1578,18 +1721,38 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	rawset(_G, "MainCity", saved_main_city)
 	RestoreGeneratorTemplate()
 	if get_current_slot() ~= destination_slot then
+		local recovery_switch_profile_token = InvestigationBegin(
+			"temporary vanilla source: recover expanded destination context", destination, {
+				destination_slot = destination_slot, work_class = "map-context-switch",
+			})
 		pcall(SwitchGeneratorCurrentSlot, destination_slot)
+		InvestigationEnd(recovery_switch_profile_token, {
+			destination_slot = destination_slot, work_class = "map-context-switch",
+		}, true)
 	end
 	if maps[source_slot] then
+		local unload_profile_token = InvestigationBegin(
+			"temporary vanilla source: unload native backing", destination, {
+				source_slot = source_slot, work_class = "map-unload",
+			})
 		local unload_started = MigrationTicks()
 		local unload_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
 		stats.source_unload_ms = MigrationTicks() - unload_started
+		InvestigationEnd(unload_profile_token, {
+			elapsed_ms = stats.source_unload_ms, source_slot = source_slot,
+			work_class = "map-unload",
+		}, unload_ok)
 		if not unload_ok and ok then
 			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
 		end
 	end
 	if ok and native_enrichment_records then
 		local deposits = SuperBigMap.DepositRules
+		local verify_profile_token = InvestigationBegin(
+			"temporary vanilla source: verify staged enrichment records after unload", destination, {
+				expected_records = stats.source_enrichment_record_count,
+				work_class = "correctness-verification",
+			})
 		local verify_call_ok, records_ok, record_verify_stats = pcall(
 			deposits.VerifyStagedNativeEnrichmentRecords, destination,
 			stats.source_enrichment_record_count, stats.source_enrichment_record_signature,
@@ -1597,6 +1760,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		stats.post_unload_enrichment_records_ok = verify_call_ok and records_ok == true
 		stats.post_unload_enrichment_record_count = record_verify_stats and record_verify_stats.count
 		stats.post_unload_enrichment_record_signature = record_verify_stats and record_verify_stats.signature
+		InvestigationEnd(verify_profile_token, {
+			records = stats.post_unload_enrichment_record_count,
+			expected_records = stats.source_enrichment_record_count,
+			work_class = "correctness-verification",
+		}, stats.post_unload_enrichment_records_ok)
 		BackingPromotionLog("TEMP_SOURCE_ENRICHMENT_RECORDS_VERIFIED_POST_UNLOAD", {
 			ok = stats.post_unload_enrichment_records_ok,
 			count = tostring(stats.post_unload_enrichment_record_count),
@@ -1622,6 +1790,17 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	stats.total_ms = MigrationTicks() - started
 	stats.ok = ok
 	stats.error = ok and "none" or tostring(migration_error)
+	InvestigationEnd(migration_profile_token, {
+		total_ms = stats.total_ms,
+		source_generation_ms = stats.source_generation_ms,
+		source_allocation_ms = stats.source_allocation_ms,
+		terrain_copy_ms = stats.terrain_copy_ms,
+		object_transfer_ms = stats.object_transfer_ms,
+		destination_rebuild_ms = stats.destination_rebuild_ms,
+		source_unload_ms = stats.source_unload_ms,
+		work_class = "expansion-correctness",
+		error = stats.error,
+	}, ok)
 	destination.SuperBigMapVanillaSourceMigrationStats = stats
 	if ok then
 		BackingPromotionLog("TEMP_SOURCE_MIGRATION_END", stats)
@@ -6102,6 +6281,18 @@ local function PatchRandomMapGenerator()
 	-- last value the proc consumed -- its stream fingerprint.
 	if type(original_proc_start) == "function" then
 		local proc_start_wrapper = function(self, tag, ...)
+			local active_map = State.rmg_placement_active_map or Global("CurrentMap")
+			local profiler = SuperBigMap.LoadingProfiler
+			local profile_token = profiler and type(profiler.Begin) == "function"
+				and profiler.Begin("vanilla generator procedure: " .. tostring(tag), {
+					tag = tostring(tag), blank = tostring(self and self.BlankMap),
+					rand_last_at_entry = tostring(GenRandLast(self)),
+					work_class = "vanilla-generator",
+				}, active_map) or false
+			State.loading_proc_profile_stack = State.loading_proc_profile_stack or {}
+			State.loading_proc_profile_stack[#State.loading_proc_profile_stack + 1] = {
+				tag = tag, token = profile_token, map = active_map,
+			}
 			if GenRandEnabled() then
 				local seed = "n/a"
 				if type(self.ProcSeed) == "function" then
@@ -6120,7 +6311,7 @@ local function PatchRandomMapGenerator()
 			-- boundary, immediately before that procedure builds every border/spacing-derived
 			-- candidate mask. ResolveBuildable is traced separately to prove the native play-zone
 			-- inputs without changing them. Per-procedure random streams remain untouched.
-			local active_map = State.rmg_placement_active_map
+			active_map = State.rmg_placement_active_map or active_map
 			local active_environment = type(active_map) == "table"
 				and type(active_map.mapdata) == "table" and active_map.mapdata.Environment or nil
 			local placement = SuperBigMap.RmgPlacement
@@ -6186,6 +6377,25 @@ local function PatchRandomMapGenerator()
 			end
 			local stack = State.rmg_placement_proc_stack
 			if type(stack) == "table" then stack[#stack] = nil end
+			local profile_stack = State.loading_proc_profile_stack
+			local profile_entry
+			if type(profile_stack) == "table" then
+				for i = #profile_stack, 1, -1 do
+					if profile_stack[i].tag == tag then
+						profile_entry = table.remove(profile_stack, i)
+						break
+					end
+				end
+			end
+			local profiler = SuperBigMap.LoadingProfiler
+			if profile_entry and profile_entry.token and profiler
+				and type(profiler.End) == "function" then
+				profiler.End(profile_entry.token, {
+					tag = tostring(tag), blank = tostring(self and self.BlankMap),
+					rand_last_at_exit = tostring(GenRandLast(self)),
+					work_class = "vanilla-generator",
+				}, true)
+			end
 			return result
 		end
 		generator_class.ProcEnd = proc_end_wrapper
@@ -6234,6 +6444,7 @@ local function PatchRandomMapGenerator()
 
 	if type(original_do_generate) == "function" then
 		local do_generate_wrapper = function(self, map, ...)
+			State.loading_proc_profile_stack = {}
 			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-entry-before-source-view")
 			if not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
 				return original_do_generate(self, map, ...)
@@ -7695,8 +7906,17 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 					if position_deposits
 						and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
 						StretchLog("stretch branch: -> VerifyNativeEnrichmentTransform")
+						local verify_token = InvestigationBegin(
+							"surface enrichment: verify native proportional transform", map, {
+								work_class = "correctness-verification",
+							})
 						local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
 							map, "surface after marker transform")
+						InvestigationEnd(verify_token, {
+							checked = verify_stats and verify_stats.checked,
+							mismatches = verify_stats and verify_stats.mismatches,
+							work_class = "correctness-verification",
+						}, verified == true)
 						if verified ~= true then
 							error("native surface enrichment transformation verification failed (mismatches="
 								.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
@@ -8484,8 +8704,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if position_deposits
 					and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
 					StretchLog("underground stretch: -> VerifyNativeEnrichmentTransform")
+					local verify_token = InvestigationBegin(
+						"underground enrichment: verify native proportional transform", map, {
+							work_class = "correctness-verification",
+						})
 					local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
 						map, "underground after marker transform")
+					InvestigationEnd(verify_token, {
+						checked = verify_stats and verify_stats.checked,
+						mismatches = verify_stats and verify_stats.mismatches,
+						work_class = "correctness-verification",
+					}, verified == true)
 					if verified ~= true then
 						error("native underground enrichment transformation verification failed (mismatches="
 							.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")

@@ -196,13 +196,32 @@ local function RebuildMapBounds(map, skip_buildable)
 	end
 
 	local terrain_api = Global("terrain")
+	local profiler = SuperBigMap.LoadingProfiler
+	local rebuild_token = profiler and type(profiler.InvestigationBegin) == "function"
+		and profiler.InvestigationBegin("bounds: rebuild passability and buildable grids", {
+			skip_buildable = tostring(skip_buildable), work_class = "gameplay-grid-rebuild",
+		}, map) or false
 
 	if terrain_api and type(terrain_api.SetPassableHeight) == "function" then
+		local token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin("bounds: set passable height range", {
+				work_class = "passability-grid",
+			}, map) or false
 		SafeCall(terrain_api.SetPassableHeight, map, FullHeightMin(), FullHeightMax())
+		if token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(token, { work_class = "passability-grid" }, true)
+		end
 	end
 
 	if terrain_api and type(terrain_api.RebuildPassability) == "function" then
+		local token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin("bounds: rebuild passability grid", {
+				work_class = "passability-grid",
+			}, map) or false
 		SafeCall(terrain_api.RebuildPassability, map)
+		if token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(token, { work_class = "passability-grid" }, true)
+		end
 	end
 
 	-- Stretch-eligible surface NewMap loads already have the engine-built blank-map grid. Keep
@@ -211,7 +230,19 @@ local function RebuildMapBounds(map, skip_buildable)
 	-- authoritative grid, and all other callers keep the original full rebuild by default.
 	local rebuild_buildable = Global("RebuildBuildableGrid")
 	if not skip_buildable and type(rebuild_buildable) == "function" and map and map.buildable then
+		local token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin("bounds: rebuild buildable grid", {
+				work_class = "buildable-grid",
+			}, map) or false
 		SafeCall(rebuild_buildable, map)
+		if token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(token, { work_class = "buildable-grid" }, true)
+		end
+	end
+	if rebuild_token and type(profiler.InvestigationEnd) == "function" then
+		profiler.InvestigationEnd(rebuild_token, {
+			skip_buildable = tostring(skip_buildable), work_class = "gameplay-grid-rebuild",
+		}, true)
 	end
 end
 
@@ -239,6 +270,11 @@ local function RefreshSectors(map)
 	local build_ratio = Global("BuildableGridRatio")
 
 	local DebugLog = SuperBigMap.DebugLog
+	local profiler = SuperBigMap.LoadingProfiler
+	local refresh_token = profiler and type(profiler.InvestigationBegin) == "function"
+		and profiler.InvestigationBegin("bounds: refresh all sector areas ratios and decals", {
+			sector_count = sector_count, work_class = "sector-refresh",
+		}, map) or false
 	if DebugLog and type(DebugLog.InitSeq) == "function" then
 		DebugLog.InitSeq("RefreshSectors: re-fitting sector boxes", {
 			sector_count = sector_count,
@@ -270,6 +306,12 @@ local function RefreshSectors(map)
 
 	if type(city.InitMapArea) == "function" then
 		SafeCall(city.InitMapArea, city)
+	end
+	if refresh_token and type(profiler.InvestigationEnd) == "function" then
+		profiler.InvestigationEnd(refresh_token, {
+			sector_count = sector_count, sectors_visited = sector_count * sector_count,
+			work_class = "sector-refresh",
+		}, true)
 	end
 end
 

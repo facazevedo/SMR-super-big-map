@@ -82,7 +82,20 @@ end
 local function EnrichmentSpreadSnapshot(map, phase)
 	local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
 	if diagnostics and type(diagnostics.Snapshot) == "function" then
-		SafeCall(diagnostics.Snapshot, map, phase)
+		local profiler = SuperBigMap.LoadingProfiler
+		local token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin("diagnostic: enrichment spread lifecycle snapshot", {
+				phase = tostring(phase), work_class = "diagnostic-only",
+				can_disable_without_gameplay_change = true,
+			}, map) or false
+		local result = SafeCall(diagnostics.Snapshot, map, phase)
+		if token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(token, {
+				phase = tostring(phase), result = tostring(result),
+				work_class = "diagnostic-only",
+				can_disable_without_gameplay_change = true,
+			}, true)
+		end
 	end
 end
 
@@ -358,11 +371,26 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	if not map then
 		return false
 	end
+	local profiler = SuperBigMap.LoadingProfiler
+	local apply_token = profiler and type(profiler.InvestigationBegin) == "function"
+		and profiler.InvestigationBegin("lifecycle: apply map bounds sectors and overview", {
+			rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
+			work_class = "lifecycle-state",
+		}, map) or false
 
 	-- Keep the global overview patches installed (idempotent) so they are ready
 	-- for when a mod map loads -- but they are internally gated to mod maps, so on
 	-- a non-mod map they stay vanilla.
+	local overview_patch_token = profiler and type(profiler.InvestigationBegin) == "function"
+		and profiler.InvestigationBegin("lifecycle: apply global overview patches", {
+			work_class = "idempotent-patch-install",
+		}, map) or false
 	ApplyOverviewPatches()
+	if overview_patch_token and type(profiler.InvestigationEnd) == "function" then
+		profiler.InvestigationEnd(overview_patch_token, {
+			work_class = "idempotent-patch-install",
+		}, true)
+	end
 
 	-- New-game-only / mod-map-only gate: do NO per-map work (bounds, sector refit,
 	-- overview reshaping) on vanilla maps or old saves not started with the mod.
@@ -372,6 +400,11 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 			DebugLog.Info("Lifecycle", "skipped: not a mod map (vanilla/non-mod save)", {
 				map = tostring(map.name or (map.mapdata and map.mapdata.id) or "map"),
 			})
+		end
+		if apply_token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(apply_token, {
+				skipped = true, reason = "not a mod map", work_class = "lifecycle-state",
+			}, true)
 		end
 		return false, "not a mod map"
 	end
@@ -384,6 +417,11 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
+		local bounds_token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin("lifecycle: reset and optionally rebuild map bounds", {
+				rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
+				work_class = "bounds-and-gameplay-grids",
+			}, map) or false
 		bounds.ResetMapDataBounds(map, map.mapdata)
 		bounds.ResetMapAreas(map)
 
@@ -391,8 +429,18 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 			bounds.RebuildMapBounds(map, skip_buildable_rebuild)
 			bounds.RefreshSectors(map)
 		end
+		if bounds_token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(bounds_token, {
+				rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
+				work_class = "bounds-and-gameplay-grids",
+			}, true)
+		end
 	end
 
+	local presentation_token = profiler and type(profiler.InvestigationBegin) == "function"
+		and profiler.InvestigationBegin("lifecycle: refresh overview render and camera", {
+			work_class = "presentation-refresh",
+		}, map) or false
 	local render = SuperBigMap.OverviewRender
 	if render then
 		render.Apply(Global("IsOverviewMode") and IsOverviewMode())
@@ -401,6 +449,11 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	if camera then
 		camera.ResetOverviewCamera(map, 0)
 	end
+	if presentation_token and type(profiler.InvestigationEnd) == "function" then
+		profiler.InvestigationEnd(presentation_token, {
+			work_class = "presentation-refresh",
+		}, true)
+	end
 
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -408,6 +461,12 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 		DebugLog.Info("Lifecycle", "playable bounds reset to full terrain", { width = width, height = height })
 	end
 
+	if apply_token and type(profiler.InvestigationEnd) == "function" then
+		profiler.InvestigationEnd(apply_token, {
+			rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
+			work_class = "lifecycle-state",
+		}, true)
+	end
 	return true
 end
 

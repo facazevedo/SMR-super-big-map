@@ -224,18 +224,18 @@ config.DebugEnrichmentPositionsExhaustive = true
 -- inputs, procedure random fingerprints, placement-helper results, final factory coordinates,
 -- and complete post-generation marker/spread censuses. Leave enabled for both comparison runs.
 config.DebugEnrichmentSpreadComparison = true
-config.DebugStretch       = false   -- Stretch: per-step stretch frame-fill resample trace
+config.DebugStretch       = true    -- TEMP loading investigation: per-step stretch/frame-fill timings
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
-config.DebugLoadTime      = false   -- LoadTime: end-to-end load TIMELINE (each phase with total+delta ms, incl. samples during the stretch settle)
+config.DebugLoadTime      = true    -- TEMP loading investigation: end-to-end cumulative/delta timeline
 -- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
-config.DebugLoadingSteps  = false
+config.DebugLoadingSteps  = true
 -- Extra loading-performance investigation. Adds nested timings for the expensive terrain,
 -- decoration, marker, enrichment, audit, and finalization calls plus a descending per-session
 -- summary. Observational only: it never sleeps, yields, changes call order, or invokes extra
 -- gameplay work. It does add log/timer overhead, so disable after collecting a representative run.
-config.DebugLoadingInvestigation = false
+config.DebugLoadingInvestigation = true
 -- Exhaustive first-access trace for deferred underground expansion. Logs every HUD click,
 -- map-slot gate decision, state/geometry field, loading-screen transition, fallback path,
 -- and preparation result. Keep enabled while investigating underground access.

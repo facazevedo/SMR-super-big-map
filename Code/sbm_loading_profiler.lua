@@ -22,7 +22,10 @@ local state = {
 	investigation_last_at = 0,
 	investigation_depth = 0,
 	investigation_totals = {},
+	investigation_classes = {},
 	investigation_stack = {},
+	lua_memory_start_kb = 0,
+	lua_memory_peak_kb = 0,
 }
 
 local function StepsEnabled()
@@ -67,6 +70,17 @@ local function AddMap(out, map)
 	out.expanded = tostring(map.SuperBigMapExpanded)
 end
 
+local function AddRuntime(out)
+	local collect = rawget(_G, "collectgarbage")
+	if type(collect) ~= "function" then return end
+	local ok, value = pcall(collect, "count")
+	if not ok or type(value) ~= "number" then return end
+	if value > state.lua_memory_peak_kb then state.lua_memory_peak_kb = value end
+	out.lua_memory_kb = math.floor(value + 0.5)
+	out.lua_memory_delta_kb = math.floor(value - state.lua_memory_start_kb + 0.5)
+	out.lua_memory_peak_kb = math.floor(state.lua_memory_peak_kb + 0.5)
+end
+
 local function Emit(event, name, data, map, at)
 	if not StepsEnabled() then return false end
 	at = at or Now()
@@ -79,6 +93,7 @@ local function Emit(event, name, data, map, at)
 	out.since_previous_ms = at - state.last_at
 	out.depth = state.depth
 	AddMap(out, map)
+	AddRuntime(out)
 	state.last_at = at
 	local log = SuperBigMap.DebugLog
 	if log then log.Info("LoadingSteps", tostring(name), out) end
@@ -97,6 +112,7 @@ local function EmitInvestigation(event, name, data, map, at)
 	out.since_previous_ms = at - state.investigation_last_at
 	out.depth = state.investigation_depth
 	AddMap(out, map)
+	AddRuntime(out)
 	state.investigation_last_at = at
 	local log = SuperBigMap.DebugLog
 	if log then log.Info("LoadingInvestigation", tostring(name), out) end
@@ -132,7 +148,20 @@ function Profiler.Start(reason, data, map)
 	state.investigation_last_at = at
 	state.investigation_depth = 0
 	state.investigation_totals = {}
+	state.investigation_classes = {}
 	state.investigation_stack = {}
+	state.lua_memory_start_kb = 0
+	state.lua_memory_peak_kb = 0
+	do
+		local collect = rawget(_G, "collectgarbage")
+		if type(collect) == "function" then
+			local ok, value = pcall(collect, "count")
+			if ok and type(value) == "number" then
+				state.lua_memory_start_kb = value
+				state.lua_memory_peak_kb = value
+			end
+		end
+	end
 	local log = SuperBigMap.DebugLog
 	if InvestigationEnabled() and log and type(log.ResetEmissionStats) == "function" then
 		log.ResetEmissionStats()
@@ -192,6 +221,24 @@ function Profiler.InvestigationEnd(token, data, ok)
 	total.exclusive_ms = total.exclusive_ms + exclusive
 	if duration > total.max_ms then total.max_ms = duration end
 	if ok == false then total.errors = total.errors + 1 end
+	local work_class = tostring(out.work_class or "unclassified")
+	local classes = state.investigation_classes
+	local class_total = classes[work_class]
+	if not class_total then
+		class_total = {
+			calls = 0, total_ms = 0, exclusive_ms = 0, max_ms = 0, errors = 0,
+			can_disable_without_gameplay_change = true,
+		}
+		classes[work_class] = class_total
+	end
+	class_total.calls = class_total.calls + 1
+	class_total.total_ms = class_total.total_ms + duration
+	class_total.exclusive_ms = class_total.exclusive_ms + exclusive
+	if duration > class_total.max_ms then class_total.max_ms = duration end
+	if ok == false then class_total.errors = class_total.errors + 1 end
+	if out.can_disable_without_gameplay_change ~= true then
+		class_total.can_disable_without_gameplay_change = false
+	end
 	return EmitInvestigation(ok == false and "ERROR" or "END", token.name, out, token.map, at)
 end
 
@@ -238,6 +285,10 @@ end
 
 function Profiler.Stop(reason, data, map)
 	if not state.active or not Enabled() then return false end
+	local end_data = Copy(data)
+	end_data.session_duration_ms = Now() - state.started_at
+	end_data.lua_memory_start_kb = math.floor(state.lua_memory_start_kb + 0.5)
+	end_data.lua_memory_peak_kb = math.floor(state.lua_memory_peak_kb + 0.5)
 	if InvestigationEnabled() then
 		local log = SuperBigMap.DebugLog
 		local log_stats = log and type(log.GetEmissionStats) == "function"
@@ -258,6 +309,44 @@ function Profiler.Stop(reason, data, map)
 				max_print_ms = item.stat.max_ms,
 			}, map)
 		end
+		local class_hints = {
+			["diagnostic-only"] = "disable exhaustive diagnostic scopes after the representative trace",
+			["vanilla-generator"] = "inspect the slowest vanilla procedure and wrapper-exclusive time separately",
+			["gameplay-grid-rebuild"] = "look for repeated rebuilds over unchanged terrain and merge only proven duplicates",
+			["buildable-grid"] = "compare hashes and callers to identify duplicate buildable-grid rebuilds",
+			["passability-grid"] = "compare callers to identify duplicate passability rebuilds",
+			["terrain-grid-copy"] = "look for repeated grid conversions or copies that can be fused",
+			["object-enumeration"] = "reuse an already collected immutable object list where ownership permits",
+			["object-migration"] = "batch transfers and eliminate repeat source/destination traversals",
+			["map-allocation"] = "separate unavoidable backing creation from initialization work before considering reuse",
+			["map-unload"] = "measure whether temporary-map teardown dominates before considering backing reuse",
+			["map-context-switch"] = "deduplicate context switches only if the same ownership and message suppression remain intact",
+			["expansion-correctness"] = "inspect its named child stages; do not remove the exact-vanilla transaction",
+			["correctness-capture"] = "combine immutable coordinate and value-record capture into one traversal if dominant",
+			["correctness-verification"] = "reuse capture signatures or combine verification traversals if dominant",
+			["sector-refresh"] = "deduplicate sector ratio/decal refreshes when inputs are unchanged",
+			["presentation-refresh"] = "deduplicate idempotent camera/render refreshes after finalization",
+		}
+		local class_ranked = {}
+		for name, total in pairs(state.investigation_classes) do
+			class_ranked[#class_ranked + 1] = { name = name, total = total }
+		end
+		table.sort(class_ranked, function(a, b)
+			if a.total.exclusive_ms == b.total.exclusive_ms then return a.name < b.name end
+			return a.total.exclusive_ms > b.total.exclusive_ms
+		end)
+		for rank, item in ipairs(class_ranked) do
+			EmitInvestigation("CLASS SUMMARY", item.name, {
+				rank = rank,
+				calls = item.total.calls,
+				inclusive_total_ms = item.total.total_ms,
+				exclusive_total_ms = item.total.exclusive_ms,
+				max_ms = item.total.max_ms,
+				errors = item.total.errors,
+				can_disable_without_gameplay_change = item.total.can_disable_without_gameplay_change,
+				optimization_hint = class_hints[item.name] or "inspect the named hotspot summary before changing behavior",
+			}, map)
+		end
 		local ranked = {}
 		for name, total in pairs(state.investigation_totals) do
 			ranked[#ranked + 1] = { name = name, total = total }
@@ -276,13 +365,14 @@ function Profiler.Stop(reason, data, map)
 				errors = item.total.errors,
 			}, map)
 		end
-		EmitInvestigation("SESSION END", reason or "loading complete", data, map)
+		EmitInvestigation("SESSION END", reason or "loading complete", end_data, map)
 	end
-	Emit("SESSION END", reason or "loading complete", data, map)
+	Emit("SESSION END", reason or "loading complete", end_data, map)
 	state.active = false
 	state.depth = 0
 	state.investigation_depth = 0
 	state.investigation_stack = {}
+	state.investigation_classes = {}
 	return true
 end
 

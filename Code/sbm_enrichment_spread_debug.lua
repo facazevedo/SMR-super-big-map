@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 8
+local PATCH_VERSION = 9
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -1212,6 +1212,43 @@ local function BuildableState(run, map, phase, extra)
 	end
 	return true
 end
+
+-- Time the diagnostic algorithms themselves separately from the vanilla call they observe. This
+-- is essential during loading investigations: full-grid hashing, bitmap emission, and marker
+-- censuses are intentionally exhaustive but are not gameplay work and can be disabled later
+-- without changing the generated map. The wrapper adds no calls, yields, or ordering changes.
+local function TimedDiagnostic(name, fn, map_resolver, label_index)
+	return function(...)
+		local args = Pack(...)
+		local map = map_resolver and map_resolver(args) or nil
+		local label = tostring(args[label_index] or "?")
+		local profiler = SuperBigMap.LoadingProfiler
+		local token = profiler and type(profiler.InvestigationBegin) == "function"
+			and profiler.InvestigationBegin(name, {
+				label = label, work_class = "diagnostic-only",
+				can_disable_without_gameplay_change = true,
+			}, map) or false
+		local results = Pack(fn(Unpack(args, 1, args.n)))
+		if token and type(profiler.InvestigationEnd) == "function" then
+			profiler.InvestigationEnd(token, {
+				label = label, work_class = "diagnostic-only",
+				can_disable_without_gameplay_change = true,
+			}, true)
+		end
+		return Unpack(results, 1, results.n)
+	end
+end
+
+Snapshot = TimedDiagnostic("diagnostic algorithm: enrichment spread snapshot", Snapshot,
+	function(args) return args[1] end, 2)
+GridAudit = TimedDiagnostic("diagnostic algorithm: sampled grid audit", GridAudit,
+	function(args) return args[1] and args[1].map end, 2)
+GridFullAudit = TimedDiagnostic("diagnostic algorithm: full grid audit", GridFullAudit,
+	function(args) return args[1] and args[1].map end, 2)
+GridPredicateBitmapAudit = TimedDiagnostic("diagnostic algorithm: grid predicate bitmap audit",
+	GridPredicateBitmapAudit, function(args) return args[1] and args[1].map end, 2)
+BuildableState = TimedDiagnostic("diagnostic algorithm: buildable-state audit", BuildableState,
+	function(args) return args[2] end, 3)
 
 local function LogRelevantEnvironment(run, env)
 	local names = {}
