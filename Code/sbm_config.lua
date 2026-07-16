@@ -558,10 +558,10 @@ config.MirrorPlanSettleMs = 5000
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
 config.ExpansionStep01GenerateAndCaptureVanillaSource = true
--- Experimental exact-source backing mode. The active map remains a real vanilla allocation
--- through RandomMapGenerator; only after native source generation completes are the captured
--- terrain grids promoted in place to the expanded destination dimensions.
-config.DeferExpandedBackingUntilAfterVanillaSource = true
+-- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
+-- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
+-- replacement rather than an in-place terrain setter.
+config.DeferExpandedBackingUntilAfterVanillaSource = false
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
 config.ExpansionStep02StretchAndTransformVanillaSource = false
