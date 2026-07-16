@@ -394,6 +394,10 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapGeneratorHeight = nil
 	map.SuperBigMapGeneratorWidthTiles = nil
 	map.SuperBigMapGeneratorHeightTiles = nil
+	map.SuperBigMapExpandedWorldWidth = nil
+	map.SuperBigMapExpandedWorldHeight = nil
+	map.SuperBigMapExpandedHexWidth = nil
+	map.SuperBigMapExpandedHexHeight = nil
 	return true
 end
 
@@ -1627,6 +1631,9 @@ local function PatchRandomMapGenerator()
 			local closure_world_to_hex = closure_global("WorldToHex", Global("WorldToHex"))
 			local closure_grid_dest = closure_global("GridDest", Global("GridDest"))
 			local closure_grid_not = closure_global("GridNot", Global("GridNot"))
+			local closure_new_grid = closure_global("NewGrid", Global("NewGrid"))
+			local closure_mask_buildable_grid =
+				closure_global("MaskBuildableGrid", Global("MaskBuildableGrid"))
 			local closure_build_unbuildable_z = closure_global("buildUnbuildableZ", Global("buildUnbuildableZ"))
 			local closure_metatable
 			pcall(function() closure_metatable = getmetatable(generator_closure_env) end)
@@ -1984,21 +1991,15 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			-- Proc_ResolveBuildable rebuilds map.buildable at the source-sized 615x710 view, but
-			-- native MaskBuildableGrid still projects that correct grid through the expanded
-			-- terrain allocation. The result is deterministic but wrong: the exact vanilla height,
-			-- gen_zone, random stream, and rebuilt buildable grid produce 45,260 candidate cells
-			-- instead of vanilla's 107,293. MaskBuildableGrid is a private native lookup which the
-			-- mod sandbox cannot hook, while GetPlayableArea is deliberately exported through env.
-			-- Reconstruct only that invalid mask here from vanilla's two inputs. The native
-			-- MaskBuildableGrid implementation maps each mask cell through the terrain extent,
-			-- converts the resulting world point to axial hex coordinates, and addresses the
-			-- packed buildable grid at q + trunc(r / 2), r. BuildableGrid:GetZ uses Lua's r / 2;
-			-- for odd rows that crosses the integer boundary differently and left 79 mask cells
-			-- (two final playable cells) unlike vanilla. Mirror the native integer storage lookup
-			-- exactly here rather than compensating for its output or targeting a known cell count.
-			-- The repaired mask is passed into the original GetPlayableArea; terrain evaluation and
-			-- every later operation remain vanilla. Step 01 off never enters this branch.
+			-- Proc_ResolveBuildable rebuilds map.buildable at the source-sized view, but native
+			-- MaskBuildableGrid derives its cell-to-world step from the real expanded Terrain
+			-- backing. Lua-facing Map size overrides cannot change that native field. Recreate the
+			-- vanilla transaction without approximating it: enlarge the temporary work mask by the
+			-- exact expanded/source ratio, pad the source buildable grid to the real expanded hex
+			-- dimensions, invoke native MaskBuildableGrid, then crop the source work rectangle.
+			-- For every source cell, native now evaluates the same world coordinate, same hex, and
+			-- same buildable value it would on a genuinely vanilla allocation. No expected count,
+			-- checksum, seed, or compensating coordinate participates in the algorithm.
 			local function source_mask_log(message, data, level)
 				local debug_log = SuperBigMap.DebugLog
 				if not debug_log then return end
@@ -2027,8 +2028,9 @@ local function PatchRandomMapGenerator()
 				local buildable = map and map.buildable
 				local z_grid = buildable and buildable.z_grid
 				if not gen_zone or not incoming_mask or not buildable or not z_grid
-					or type(buildable.GetZ) ~= "function"
-					or type(z_grid.get) ~= "function"
+					or type(z_grid.get) ~= "function" or type(z_grid.set) ~= "function"
+					or type(closure_new_grid) ~= "function"
+					or type(closure_mask_buildable_grid) ~= "function"
 					or type(closure_world_to_hex) ~= "function"
 					or type(closure_grid_dest) ~= "function"
 					or type(closure_grid_not) ~= "function"
@@ -2060,9 +2062,27 @@ local function PatchRandomMapGenerator()
 					or tonumber(map.SuperBigMapSourceWidth)
 				local source_world_h = tonumber(map.SuperBigMapGeneratorHeight)
 					or tonumber(map.SuperBigMapSourceHeight)
-				if not source_world_w or not source_world_h
-					or source_world_w <= 0 or source_world_h <= 0 then
-					return nil, "source-world-size-unavailable"
+				local expanded_world_w = tonumber(map.SuperBigMapExpandedWorldWidth)
+				local expanded_world_h = tonumber(map.SuperBigMapExpandedWorldHeight)
+				local expanded_hex_w = tonumber(map.SuperBigMapExpandedHexWidth)
+				local expanded_hex_h = tonumber(map.SuperBigMapExpandedHexHeight)
+				if not source_world_w or not source_world_h or not expanded_world_w or not expanded_world_h
+					or not expanded_hex_w or not expanded_hex_h
+					or source_world_w <= 0 or source_world_h <= 0
+					or expanded_world_w <= source_world_w or expanded_world_h <= source_world_h
+					or expanded_hex_w < build_w or expanded_hex_h < build_h then
+					return nil, "bridge-dimensions-unavailable"
+				end
+				local virtual_w_numerator = grid_w * expanded_world_w
+				local virtual_h_numerator = grid_h * expanded_world_h
+				if virtual_w_numerator % source_world_w ~= 0
+					or virtual_h_numerator % source_world_h ~= 0 then
+					return nil, "nonintegral-work-grid-ratio"
+				end
+				local virtual_w = virtual_w_numerator / source_world_w
+				local virtual_h = virtual_h_numerator / source_world_h
+				if virtual_w < grid_w or virtual_h < grid_h then
+					return nil, "invalid-virtual-work-grid"
 				end
 
 				local unbuildable_z = 2 ^ 16 - 1
@@ -2080,18 +2100,41 @@ local function PatchRandomMapGenerator()
 					return nil, "GridNot-failed:" .. tostring(not_err)
 				end
 
+				local virtual_mask, virtual_z
+				local ok_virtual_mask, virtual_mask_or_err = pcall(
+					closure_new_grid, virtual_w, virtual_h, 16, 1)
+				if ok_virtual_mask then virtual_mask = virtual_mask_or_err end
+				local ok_virtual_z, virtual_z_or_err = pcall(
+					closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+				if ok_virtual_z then virtual_z = virtual_z_or_err end
+				if not virtual_mask or not virtual_z then
+					pcall(function() repaired:free() end)
+					if virtual_mask then pcall(function() virtual_mask:free() end) end
+					if virtual_z then pcall(function() virtual_z:free() end) end
+					return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
+						.. ";z=" .. tostring(virtual_z_or_err)
+				end
+
 				local stats = {
+					algorithm = "native MaskBuildableGrid on ratio-derived virtual source grid",
 					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
+					virtual_grid = tostring(virtual_w) .. "x" .. tostring(virtual_h),
 					buildable = tostring(build_w) .. "x" .. tostring(build_h),
+					virtual_buildable = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
+					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
 					work_step = complement_work_step, unbuildable_z = unbuildable_z,
 					gen_cells = 0, outside_gen_cells = 0,
-					buildable_cells = 0, unbuildable_cells = 0, nil_buildable_cells = 0,
-					odd_hex_row_lookups = 0, getz_storage_disagreements = 0,
+					direct_buildable_cells = 0, direct_unbuildable_cells = 0,
+					direct_nil_buildable_cells = 0,
 					repaired_zeros = 0, repaired_ones = 0,
 					incoming_zeros = 0, incoming_ones = 0,
 					changed_cells = 0, incoming_zero_to_one = 0, incoming_one_to_zero = 0,
+					direct_native_differences = 0, direct_zero_native_one = 0,
+					direct_one_native_zero = 0, difference_bbox = "none",
+					checksum_a = 0, checksum_b = 0,
 				}
+				source_mask_log("SOURCE_MASK_NATIVE_BRIDGE_BEGIN", stats)
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
 				local ticks = Global("GetPreciseTicks")
@@ -2100,63 +2143,113 @@ local function PatchRandomMapGenerator()
 					local ok_ticks, value = pcall(ticks)
 					if ok_ticks and type(value) == "number" then started = value end
 				end
-				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskRepair") end
-				local ok_scan, scan_err = pcall(function()
-					local function trunc_div2(value)
-						if value >= 0 then return math.floor(value / 2) end
-						return math.ceil(value / 2)
-					end
+				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskNativeBridge") end
+				local ok_bridge, bridge_err = pcall(function()
+					-- The new grids are initialized invalid/unbuildable. Copy only the source
+					-- rectangles; the padding safely represents terrain outside the source view.
 					for y = 0, grid_h - 1 do
-						-- Native MaskBuildableGrid uses integer floor(cell * terrain_extent /
-						-- mask_extent), not an inferred work-step or a cell-centre offset.
+						for x = 0, grid_w - 1 do
+							virtual_mask:set(x, y, repaired:get(x, y))
+						end
+					end
+					for y = 0, build_h - 1 do
+						for x = 0, build_w - 1 do
+							virtual_z:set(x, y, z_grid:get(x, y))
+						end
+					end
+					closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
+					for y = 0, grid_h - 1 do
+						for x = 0, grid_w - 1 do
+							repaired:set(x, y, virtual_mask:get(x, y))
+						end
+					end
+				end)
+				pcall(function() virtual_mask:free() end)
+				pcall(function() virtual_z:free() end)
+				if not ok_bridge then
+					if type(resume) == "function" then pcall(resume, "SBMSourceBuildableMaskNativeBridge") end
+					pcall(function() repaired:free() end)
+					return nil, "native-bridge-failed:" .. tostring(bridge_err)
+				end
+
+				local differences = {}
+				local min_dx, min_dy, max_dx, max_dy
+				local MOD = 2147483647
+				local ok_scan, scan_err = pcall(function()
+					local index = 0
+					for y = 0, grid_h - 1 do
 						local world_y = source_y + math.floor(y * source_world_h / grid_h)
 						for x = 0, grid_w - 1 do
-							local repaired_value = repaired:get(x, y)
-							if repaired_value == 0 then
+							index = index + 1
+							local native_value = repaired:get(x, y)
+							local incoming_value = incoming_mask:get(x, y)
+							local gen_value = gen_zone:get(x, y)
+							local direct_value = gen_value == 0 and 1 or 0
+							local q, r, storage_x, build_z
+							if direct_value == 0 then
 								stats.gen_cells = stats.gen_cells + 1
 								local world_x = source_x + math.floor(x * source_world_w / grid_w)
-								local q, r = closure_world_to_hex(world_x, world_y)
-								local storage_x = q + trunc_div2(r)
-								local build_z = z_grid:get(storage_x, r)
-								if r % 2 ~= 0 then stats.odd_hex_row_lookups = stats.odd_hex_row_lookups + 1 end
-								if buildable:GetZ(q, r) ~= build_z then
-									stats.getz_storage_disagreements = stats.getz_storage_disagreements + 1
-								end
+								q, r = closure_world_to_hex(world_x, world_y)
+								storage_x = q + (r >= 0 and math.floor(r / 2) or math.ceil(r / 2))
+								build_z = z_grid:get(storage_x, r)
 								if build_z == nil then
-									stats.nil_buildable_cells = stats.nil_buildable_cells + 1
-									repaired:set(x, y, 1)
-									repaired_value = 1
+									stats.direct_nil_buildable_cells = stats.direct_nil_buildable_cells + 1
+									direct_value = 1
 								elseif build_z == unbuildable_z then
-									stats.unbuildable_cells = stats.unbuildable_cells + 1
-									repaired:set(x, y, 1)
-									repaired_value = 1
+									stats.direct_unbuildable_cells = stats.direct_unbuildable_cells + 1
+									direct_value = 1
 								else
-									stats.buildable_cells = stats.buildable_cells + 1
+									stats.direct_buildable_cells = stats.direct_buildable_cells + 1
 								end
 							else
 								stats.outside_gen_cells = stats.outside_gen_cells + 1
 							end
 
-							local incoming_value = incoming_mask:get(x, y)
 							if incoming_value == 0 then stats.incoming_zeros = stats.incoming_zeros + 1
 							else stats.incoming_ones = stats.incoming_ones + 1 end
-							if repaired_value == 0 then stats.repaired_zeros = stats.repaired_zeros + 1
+							if native_value == 0 then stats.repaired_zeros = stats.repaired_zeros + 1
 							else stats.repaired_ones = stats.repaired_ones + 1 end
-							if incoming_value ~= repaired_value then
+							if incoming_value ~= native_value then
 								stats.changed_cells = stats.changed_cells + 1
-								if incoming_value == 0 and repaired_value == 1 then
+								if incoming_value == 0 and native_value == 1 then
 									stats.incoming_zero_to_one = stats.incoming_zero_to_one + 1
-								elseif incoming_value == 1 and repaired_value == 0 then
+								elseif incoming_value == 1 and native_value == 0 then
 									stats.incoming_one_to_zero = stats.incoming_one_to_zero + 1
 								end
 							end
+							if direct_value ~= native_value then
+								stats.direct_native_differences = stats.direct_native_differences + 1
+								if direct_value == 0 then stats.direct_zero_native_one = stats.direct_zero_native_one + 1
+								else stats.direct_one_native_zero = stats.direct_one_native_zero + 1 end
+								min_dx = min_dx and math.min(min_dx, x) or x
+								min_dy = min_dy and math.min(min_dy, y) or y
+								max_dx = max_dx and math.max(max_dx, x) or x
+								max_dy = max_dy and math.max(max_dy, y) or y
+								if #differences < 128 then
+									differences[#differences + 1] = {
+										index = stats.direct_native_differences, x = x, y = y,
+										direct = direct_value, native = native_value,
+										world_x = source_x + math.floor(x * source_world_w / grid_w),
+										world_y = world_y, q = tostring(q), r = tostring(r),
+										storage_x = tostring(storage_x), build_z = tostring(build_z),
+									}
+								end
+							end
+							local normalized = native_value * 1000
+							stats.checksum_a = (stats.checksum_a * 65599 + normalized + index * 97) % MOD
+							stats.checksum_b = (stats.checksum_b
+								+ (normalized % MOD) * ((index % 104729) * 2 + 1)) % MOD
 						end
 					end
 				end)
-				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableMaskRepair") end
+				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableMaskNativeBridge") end
 				if not ok_scan then
 					pcall(function() repaired:free() end)
-					return nil, "scan-failed:" .. tostring(scan_err)
+					return nil, "bridge-audit-failed:" .. tostring(scan_err)
+				end
+				if min_dx then
+					stats.difference_bbox = tostring(min_dx) .. ":" .. tostring(min_dy)
+						.. "-" .. tostring(max_dx) .. ":" .. tostring(max_dy)
 				end
 				local finished = started
 				if type(ticks) == "function" then
@@ -2164,8 +2257,12 @@ local function PatchRandomMapGenerator()
 					if ok_ticks and type(value) == "number" then finished = value end
 				end
 				stats.ms = finished - started
-				stats.algorithm = "native MaskBuildableGrid coordinates + z_grid:get(q + trunc(r/2), r)"
+				stats.logged_differences = #differences
+				for _, difference in ipairs(differences) do
+					source_mask_log("SOURCE_MASK_DIRECT_NATIVE_DIFFERENCE", difference)
+				end
 				map.SuperBigMapSourceBuildableMaskRepair = stats
+				source_mask_log("SOURCE_MASK_NATIVE_BRIDGE_END", stats)
 				source_mask_log("SOURCE_MASK_REPAIR", stats)
 				return repaired, nil
 			end
@@ -4176,6 +4273,13 @@ local function PatchRandomMapGenerator()
 						source_hex_width = source_hex_width, source_hex_height = source_hex_height,
 						expanded_hex_width = saved_map_hex_width, expanded_hex_height = saved_map_hex_height,
 					}
+					-- Retain the real backing dimensions while the Lua-facing Map fields present the
+					-- source view. The source-mask bridge uses these values to make the native mask
+					-- sampler's cell-to-world step identical to a genuinely vanilla allocation.
+					map.SuperBigMapExpandedWorldWidth = saved_map_width
+					map.SuperBigMapExpandedWorldHeight = saved_map_height
+					map.SuperBigMapExpandedHexWidth = saved_map_hex_width
+					map.SuperBigMapExpandedHexHeight = saved_map_hex_height
 					map.Width = gen_world_w
 					map.Height = gen_world_h
 					map.hex_width = source_hex_width
