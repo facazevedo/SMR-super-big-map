@@ -786,6 +786,11 @@ config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.QuadrantCopyLimitGeneratorToSource = true
+-- Proc_InitPlayZone bypasses terrain.GetMapSize and grows its terrace grid from the real
+-- backing terrain via terrain.HeightMapSize. During the exact vanilla-sized source window,
+-- temporarily report the source size there too, then copy the resulting source height grid
+-- into the expanded backing grid so vanilla never sees 8192 and the destination stays 8192.
+config.QuadrantCopyBridgeVanillaHeightGrid = true
 
 -- Legacy RMG placement tuning retained for diagnostic steps 04-05. With the current defaults,
 -- step 04 preserves exact vanilla placement and step 05 remains off. Native shortfall completion
@@ -1260,6 +1265,8 @@ C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHand
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.QuadrantCopyLimitGeneratorToSource)
+C.QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
+	and as_bool(config.QuadrantCopyBridgeVanillaHeightGrid)
 C.ENABLE_RMG_PLACEMENT_FIX = expansion_step_01
 	and not expansion_step_04
 C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = false

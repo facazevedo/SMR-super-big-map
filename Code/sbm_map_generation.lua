@@ -4086,6 +4086,130 @@ local function PatchRandomMapGenerator()
 			local generation_environment = (type(mapdata) == "table" and mapdata.Environment)
 				or (type(template) == "table" and template.Environment)
 			local is_surface_generation = generation_environment ~= "Underground"
+
+			-- VANILLA HEIGHT-MAP VIEW BRIDGE. Proc_InitPlayZone is the one native generator
+			-- path which bypasses every size view above: it grows its terrace height grid from
+			-- terrain.HeightMapSize(map), which still exposes the real 8192 backing allocation.
+			-- That changes the terrain sampled later by ResolveBuildable even though GetMapSize,
+			-- MapData, PassBorder, seed, and rand stream all match a 6144 vanilla run. During the
+			-- native source transaction, make this final size read agree with the source view.
+			--
+			-- A vanilla 6144 SetHeightGrid cannot be allowed to replace the 8192 destination,
+			-- so intercept that one write, copy it into the top-left of the existing full grid,
+			-- and pass a full-sized options table to the real setter. Both native functions are
+			-- restored immediately after DoGenerate, including its error path.
+			local height_bridge = false
+			local original_terrain_height_map_size = terrain_api and terrain_api.HeightMapSize
+			local original_terrain_set_height_grid = terrain_api and terrain_api.SetHeightGrid
+			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
+			if is_surface_generation and cfg_bool("QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID", true)
+				and type(original_terrain_height_map_size) == "function"
+				and type(original_terrain_set_height_grid) == "function"
+				and type(original_terrain_get_height_grid) == "function"
+				and cur_w_tiles > gen_width_tiles and cur_h_tiles > gen_height_tiles then
+				local grid_to_compute = Global("GridToCompute")
+				local box_fn = Global("box")
+				local point_fn = Global("point")
+				if type(grid_to_compute) == "function" and type(box_fn) == "function"
+					and type(point_fn) == "function" then
+					local raw_ok, raw_width, raw_height = pcall(original_terrain_height_map_size, map)
+					height_bridge = {
+						height_size_calls = 0,
+						set_calls = 0,
+						bridged_writes = 0,
+						raw_width = raw_ok and raw_width or "ERROR",
+						raw_height = raw_ok and (raw_height or raw_width) or "ERROR",
+					}
+
+					terrain_api.HeightMapSize = function(target)
+						if target == map or (target == nil and Global("CurrentMap") == map) then
+							height_bridge.height_size_calls = height_bridge.height_size_calls + 1
+							return gen_width_tiles, gen_height_tiles
+						end
+						return original_terrain_height_map_size(target)
+					end
+
+					terrain_api.SetHeightGrid = function(target, spec, ...)
+						height_bridge.set_calls = height_bridge.set_calls + 1
+						if target ~= map and not (target == nil and Global("CurrentMap") == map) then
+							return original_terrain_set_height_grid(target, spec, ...)
+						end
+
+						local source = type(spec) == "table" and spec.height_grid or spec
+						local size_ok, source_width, source_height = pcall(function()
+							return source:size()
+						end)
+						source_height = source_height or source_width
+						-- Only the exact Proc_InitPlayZone source-grid write is bridged. Any other
+						-- setter call keeps its native semantics and is recorded in the trace.
+						if not size_ok or source_width ~= gen_width_tiles or source_height ~= gen_height_tiles then
+							EnrichmentSpreadBoundary(self, map, "height-grid-bridge-pass-through", {
+								source_width = tostring(source_width), source_height = tostring(source_height),
+								size_ok = tostring(size_ok), spec_type = tostring(type(spec)),
+							})
+							return original_terrain_set_height_grid(target, spec, ...)
+						end
+
+						local raw_full, compute_full
+						local setter_results
+						local setter_extra = PackValues(...)
+						local bridge_ok, bridge_err = pcall(function()
+							raw_full = original_terrain_get_height_grid(map)
+							compute_full = grid_to_compute(raw_full)
+							local full_width, full_height = compute_full:size()
+							full_height = full_height or full_width
+							if type(full_width) ~= "number" or type(full_height) ~= "number"
+								or full_width <= source_width or full_height <= source_height then
+								error(string.format(
+									"expanded height backing unavailable: source=%sx%s backing=%sx%s",
+									tostring(source_width), tostring(source_height),
+									tostring(full_width), tostring(full_height)))
+							end
+							compute_full:copyrect(source,
+								box_fn(0, 0, source_width, source_height), point_fn(0, 0))
+
+							local bridged_spec = compute_full
+							if type(spec) == "table" and spec.height_grid == source then
+								bridged_spec = {}
+								for key, value in pairs(spec) do bridged_spec[key] = value end
+								bridged_spec.height_grid = compute_full
+							end
+							setter_results = PackValues(original_terrain_set_height_grid(target, bridged_spec,
+								Unpack(setter_extra, 1, setter_extra.n)))
+							height_bridge.bridged_writes = height_bridge.bridged_writes + 1
+							height_bridge.source_width = source_width
+							height_bridge.source_height = source_height
+							height_bridge.full_width = full_width
+							height_bridge.full_height = full_height
+						end)
+						if compute_full and compute_full ~= raw_full then
+							pcall(function() if type(compute_full.free) == "function" then compute_full:free() end end)
+						end
+						if not bridge_ok then
+							height_bridge.error = tostring(bridge_err)
+							error("vanilla height-grid bridge failed: " .. tostring(bridge_err))
+						end
+						EnrichmentSpreadBoundary(self, map, "height-grid-bridge-write", {
+							source = tostring(source_width) .. "x" .. tostring(source_height),
+							backing = tostring(height_bridge.full_width) .. "x" .. tostring(height_bridge.full_height),
+							bridged_writes = tostring(height_bridge.bridged_writes),
+						})
+						return Unpack(setter_results, 1, setter_results.n)
+					end
+
+					DebugPrint(string.format(
+						"vanilla height-grid bridge installed: backing=%sx%s source=%sx%s",
+						tostring(height_bridge.raw_width), tostring(height_bridge.raw_height),
+						tostring(gen_width_tiles), tostring(gen_height_tiles)))
+					EnrichmentSpreadBoundary(self, map, "height-grid-bridge-installed", {
+						backing_width = tostring(height_bridge.raw_width),
+						backing_height = tostring(height_bridge.raw_height),
+						source_width = tostring(gen_width_tiles), source_height = tostring(gen_height_tiles),
+					})
+				else
+					DebugPrint("vanilla height-grid bridge skipped: compute/copy API unavailable")
+				end
+			end
 			if is_surface_generation then
 				-- ResolveBuildable inside the native generator is the first authoritative build
 				-- after the provisional loading-only placeholder. Mark it current only after the
@@ -4096,6 +4220,24 @@ local function PatchRandomMapGenerator()
 			State.rmg_placement_proc_active = false
 			State.rmg_placement_proc_stack = {}
 			local results = { pcall(original_do_generate, self, map, ...) }
+			if height_bridge then
+				terrain_api.HeightMapSize = original_terrain_height_map_size
+				terrain_api.SetHeightGrid = original_terrain_set_height_grid
+				DebugPrint(string.format(
+					"vanilla height-grid bridge restored: height_size_calls=%s set_calls=%s bridged_writes=%s source=%sx%s backing=%sx%s error=%s",
+					tostring(height_bridge.height_size_calls), tostring(height_bridge.set_calls),
+					tostring(height_bridge.bridged_writes), tostring(height_bridge.source_width),
+					tostring(height_bridge.source_height), tostring(height_bridge.full_width),
+					tostring(height_bridge.full_height), tostring(height_bridge.error)))
+				EnrichmentSpreadBoundary(self, map, "height-grid-bridge-restored", {
+					height_size_calls = tostring(height_bridge.height_size_calls),
+					set_calls = tostring(height_bridge.set_calls),
+					bridged_writes = tostring(height_bridge.bridged_writes),
+					source = tostring(height_bridge.source_width) .. "x" .. tostring(height_bridge.source_height),
+					backing = tostring(height_bridge.full_width) .. "x" .. tostring(height_bridge.full_height),
+					error = tostring(height_bridge.error),
+				})
+			end
 			if next(map.SuperBigMapExpectedResourceCounts or {}) then
 				local debug_log = SuperBigMap.DebugLog
 				if debug_log then
