@@ -1381,10 +1381,81 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(update_radius) == "function" then update_radius(source) end
 		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
 		stats.source_generation_ms = MigrationTicks() - generation_started
-		CaptureGeneratedNativeEnrichments(source, "temporary vanilla backing generation complete")
+		stats.source_generated_enrichments = CaptureGeneratedNativeEnrichments(
+			source, "temporary vanilla backing generation complete")
+
+		-- The complete buildable/playable/enrichment transaction has already finished on the true
+		-- vanilla backing at this boundary. Preserve an immutable forensic summary before switching
+		-- maps; no source buildable grid is ever paired with the expanded terrain. The destination
+		-- receives a separate final gameplay rebuild only after terrain and objects are migrated.
+		local source_buildable = source.buildable
+		local source_buildable_grid = source_buildable and source_buildable.z_grid
+		local source_buildable_width, source_buildable_height =
+			MigrationGridSize(source_buildable_grid)
+		local source_buildable_hash
+		local xxhash_fn = Global("xxhash")
+		if source_buildable_grid and type(xxhash_fn) == "function" then
+			local ok_hash, value = pcall(xxhash_fn, source_buildable_grid)
+			if ok_hash then source_buildable_hash = value end
+		end
+		local source_world_width, source_world_height
+		if type(source.GetMapSize) == "function" then
+			local ok_size, width, height = pcall(source.GetMapSize, source)
+			if ok_size then source_world_width, source_world_height = width, height end
+		end
+		stats.source_buildable_grid = tostring(source_buildable_width)
+			.. "x" .. tostring(source_buildable_height)
+		stats.source_buildable_hash = tostring(source_buildable_hash)
+		stats.source_world = tostring(source_world_width) .. "x" .. tostring(source_world_height)
+		BackingPromotionLog("TEMP_SOURCE_NATIVE_PIPELINE_CAPTURED", {
+			source_slot = source_slot,
+			source_world = stats.source_world,
+			source_tiles = stats.source_tiles,
+			buildable = tostring(source_buildable),
+			buildable_grid = tostring(source_buildable_grid),
+			buildable_grid_size = stats.source_buildable_grid,
+			buildable_hash = stats.source_buildable_hash,
+			generated_enrichments = stats.source_generated_enrichments,
+			map_lowest_z = tostring(source.MapLowestZ),
+			map_highest_z = tostring(source.MapHighestZ),
+			native_pipeline_complete = true,
+			destination_not_yet_touched = true,
+			next_stage = "terrain-and-object-migration",
+		})
+		EnrichmentSpreadBoundary(generator, source,
+			"temporary-vanilla-native-pipeline-captured", {
+				source_slot = tostring(source_slot),
+				source_world = stats.source_world,
+				buildable_grid_size = stats.source_buildable_grid,
+				buildable_hash = stats.source_buildable_hash,
+				generated_enrichments = tostring(stats.source_generated_enrichments),
+			})
+		local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+		if source_buildable_grid and diagnostics
+			and type(diagnostics.TraceGridForensics) == "function" then
+			local trace_ok, trace_result = pcall(diagnostics.TraceGridForensics,
+				source, "TEMP_SOURCE_CAPTURED_PROCESSED_BUILDABLE",
+				source_buildable_grid, "buildable", {
+					stage = "after-complete-native-source-before-destination-migration",
+					source_slot = source_slot,
+					buildable_hash = stats.source_buildable_hash,
+				})
+			stats.source_buildable_trace_ok = trace_ok and trace_result ~= false
+			stats.source_buildable_trace_error = stats.source_buildable_trace_ok
+				and "none" or tostring(trace_result)
+			BackingPromotionLog("TEMP_SOURCE_NATIVE_BUILDABLE_TRACE", {
+				ok = stats.source_buildable_trace_ok,
+				error = stats.source_buildable_trace_error,
+				grid_size = stats.source_buildable_grid,
+				hash = stats.source_buildable_hash,
+			})
+		end
 		BackingPromotionLog("TEMP_SOURCE_GENERATION_END", {
 			elapsed_ms = stats.source_generation_ms,
 			map_lowest_z = tostring(source.MapLowestZ), map_highest_z = tostring(source.MapHighestZ),
+			buildable_grid_size = stats.source_buildable_grid,
+			buildable_hash = stats.source_buildable_hash,
+			generated_enrichments = stats.source_generated_enrichments,
 		})
 
 		rawset(_G, "MainMap", saved_main_map)
@@ -1410,10 +1481,28 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		destination:RebuildGrids(box_fn(0, 0, map_width, map_height))
 		destination.SuperBigMapSurfaceBuildableCurrent = true
 		stats.destination_rebuild_ms = MigrationTicks() - rebuild_started
+		local destination_buildable = destination.buildable
+		local destination_buildable_grid = destination_buildable and destination_buildable.z_grid
+		local destination_buildable_width, destination_buildable_height =
+			MigrationGridSize(destination_buildable_grid)
+		local destination_buildable_hash
+		if destination_buildable_grid and type(xxhash_fn) == "function" then
+			local ok_hash, value = pcall(xxhash_fn, destination_buildable_grid)
+			if ok_hash then destination_buildable_hash = value end
+		end
+		stats.destination_buildable_grid = tostring(destination_buildable_width)
+			.. "x" .. tostring(destination_buildable_height)
+		stats.destination_buildable_hash = tostring(destination_buildable_hash)
 		BackingPromotionLog("TEMP_SOURCE_DESTINATION_REBUILT", {
 			world_size = tostring(map_width) .. "x" .. tostring(map_height),
 			elapsed_ms = stats.destination_rebuild_ms,
 			buildable = tostring(destination.buildable),
+			buildable_grid = tostring(destination_buildable_grid),
+			buildable_grid_size = stats.destination_buildable_grid,
+			buildable_hash = stats.destination_buildable_hash,
+			source_buildable_hash = stats.source_buildable_hash,
+			used_for_native_generation = false,
+			purpose = "final-expanded-gameplay-only",
 		})
 	end)
 

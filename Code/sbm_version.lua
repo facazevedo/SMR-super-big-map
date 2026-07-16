@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 74: synchronize complete collision-proxy game flags before
--- native source buildable-grid initialization; remove the ineffective cache refresh experiment.
-SuperBigMap.GENERATOR_PATCH_VERSION = 74
+-- (sbm_map_generation). Bumped to 75: run the complete native generation/buildable/playable
+-- transaction once on a true vanilla backing, then migrate into the expanded destination.
+SuperBigMap.GENERATOR_PATCH_VERSION = 75

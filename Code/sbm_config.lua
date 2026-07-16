@@ -558,22 +558,23 @@ config.MirrorPlanSettleMs = 5000
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
 config.ExpansionStep01GenerateAndCaptureVanillaSource = true
--- Retired experiment: generating on a temporary map made the source exact, but migrating ~20,000
--- generated objects added roughly 53 seconds and was not suitable for normal loading.
-config.GenerateVanillaSourceOnTemporaryBacking = false
--- Keep generation and every generated object directly on the final expanded map. Mirror source
--- terrain into an empty vanilla-sized native backing only for engine calls whose coordinate scaling
--- ignores Lua-visible dimensions (height sampling, buildable construction, and MaskBuildableGrid).
--- The sampler never runs RandomMapGenerate and never receives or transfers generated objects.
-config.UseNativeHeightSamplerBacking = true
+-- Run the single native RandomMapGenerator transaction on a real vanilla-sized temporary map.
+-- InitBuildableGrid, ProcessBuildableGrid, MaskBuildableGrid, GetPlayableArea, and native enrichment
+-- placement therefore all consume the same backing and object state as pure vanilla. Only after that
+-- transaction finishes are its terrain and generated objects migrated into the expanded destination.
+config.GenerateVanillaSourceOnTemporaryBacking = true
+-- Disabled while the exact temporary-source transaction is active. The sampler path remains as a
+-- diagnostic fallback, but copying terrain/collision state into a blank map cannot reproduce every
+-- engine-private map index observed by InitBuildableGrid.
+config.UseNativeHeightSamplerBacking = false
 -- Mirror only collision-bearing source objects as lightweight entity proxies while the native
 -- sampler builds its raw hex grid. This supplies InitBuildableGrid's non-terrain input without
 -- running a second RandomMapGenerate or migrating gameplay objects.
-config.UseNativeSamplerCollisionMirror = true
+config.UseNativeSamplerCollisionMirror = false
 -- Use the contributing object's real class for each temporary collision proxy. This preserves
 -- class-specific entity state and auto-attached collision surfaces; the sampler map is unloaded
 -- immediately after generation, so no proxy becomes a gameplay object.
-config.UseExactClassNativeSamplerCollisionProxies = true
+config.UseExactClassNativeSamplerCollisionProxies = false
 -- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
 -- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
 -- replacement rather than an in-place terrain setter.
