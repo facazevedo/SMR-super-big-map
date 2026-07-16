@@ -333,7 +333,7 @@ config.ConcreteImprintMaxTiles = 0
 -- enters the normal Elevator placement cursor, force-unlocks the template, and quick-builds the
 -- next placed Elevator for free. This exists only to inspect surface/underground correspondence.
 -- Set false again before release.
-config.PlaceElevatorButtonEnabled = false
+config.PlaceElevatorButtonEnabled = true
 
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
@@ -463,6 +463,10 @@ config.StretchUnderground = true
 -- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
 -- recorded at startup, so deferral does not change which wonder belongs to each marker.
 config.DeferUndergroundExpansionUntilFirstAccess = true
+-- TEMP (testing): fully reveal the underground darkness fog whenever that map is viewed.
+-- RevealDarkness.lua normally restores hr.EnableDarknessReveal=90 on every underground map
+-- switch; the lifecycle hook overrides it to 0 after the switch. Set false again for release.
+config.UndergroundRevealAllDarkness = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -929,6 +933,7 @@ C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
+C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08

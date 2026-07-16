@@ -1314,6 +1314,25 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 			SafeCall(highlight.UpdateUndergroundOverviewVisuals, false)
 		end
 	end
+	-- TEMP test view: vanilla re-applies the darkness-reveal shader on every underground map
+	-- switch. Override it only after vanilla has completed the switch so the whole stretched
+	-- underground can be inspected without rover exploration.
+	if (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true then
+		local environment = map and map.mapdata and map.mapdata.Environment
+		if environment == "Underground" then
+			local hr = Global("hr")
+			if type(hr) == "table" then
+				hr.EnableDarknessReveal = 0
+				local DebugLog = SuperBigMap.DebugLog
+				if DebugLog then
+					DebugLog.Info("Lifecycle", "TEMP: underground darkness fully revealed", {
+						map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+						enable_darkness_reveal = tostring(hr.EnableDarknessReveal),
+					})
+				end
+			end
+		end
+	end
 end)
 
 -- Authoritative, class-agnostic rocket-landing hook: the RocketLanded message fires for
