@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 62: keep temporary-backing migration state on the shared
--- SuperBigMap.State table so strict-global builds never resolve an out-of-scope State alias.
-SuperBigMap.GENERATOR_PATCH_VERSION = 62
+-- (sbm_map_generation). Bumped to 63: switch the temporary generator backing through the silent
+-- engine slot API so internal migration never drives overview, selection, or ZoomPlus UI.
+SuperBigMap.GENERATOR_PATCH_VERSION = 63

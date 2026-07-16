@@ -1240,11 +1240,27 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	end
 	local change_map_in_slot = Global("ChangeMapInSlot")
 	local change_current_slot = Global("ChangeCurrentMapSlot")
+	local set_current_map = Global("SetCurrentMap")
+	local engine_set_current_slot = Global("EngineSetCurrentMapSlot")
 	local get_current_slot = Global("GetCurrentMapSlot")
 	local maps = Global("Maps")
-	if type(change_map_in_slot) ~= "function" or type(change_current_slot) ~= "function"
+	local silent_switch_available = type(set_current_map) == "function"
+		and type(engine_set_current_slot) == "function"
+	if type(change_map_in_slot) ~= "function"
+		or (not silent_switch_available and type(change_current_slot) ~= "function")
 		or type(get_current_slot) ~= "function" or type(maps) ~= "table" then
 		error("temporary source migration map-slot API unavailable")
+	end
+	local function SwitchGeneratorCurrentSlot(slot)
+		if silent_switch_available then
+			local target = maps[slot]
+			if not target then error("temporary source migration switch target is unavailable: " .. tostring(slot)) end
+			set_current_map(target)
+			engine_set_current_slot(slot)
+			return true
+		end
+		change_current_slot(slot, false)
+		return true
 	end
 	local destination_slot = destination.slot or get_current_slot()
 	local source_slot = FindTemporarySourceSlot(destination_slot)
@@ -1281,6 +1297,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		source_tiles = tostring(source_width) .. "x" .. tostring(source_height),
 		destination_tiles = tostring(desired_width) .. "x" .. tostring(desired_height),
 		pass_border = pass_border,
+		current_switch_mode = silent_switch_available and "engine-silent" or "public-fallback",
 	}
 	BackingPromotionLog("TEMP_SOURCE_MIGRATION_BEGIN", stats)
 	SetLoadingPhase("Generating the exact vanilla source terrain...")
@@ -1313,7 +1330,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				tostring(actual_width), tostring(actual_height), tostring(source_width), tostring(source_height)))
 		end
 
-		change_current_slot(source_slot, false)
+		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
 		if source.City ~= nil then rawset(_G, "MainCity", source.City) end
 		-- RandomMapGenerator:GetMapSize reads MapData[self.BlankMap] directly rather than the
@@ -1351,7 +1368,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		rawset(_G, "MainMap", saved_main_map)
 		rawset(_G, "MainCity", saved_main_city)
 		RestoreGeneratorTemplate()
-		change_current_slot(destination_slot, false)
+		SwitchGeneratorCurrentSlot(destination_slot)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
 		ClearDestinationObjects(destination, stats)
 		CopyMigratedTerrain(source, destination, stats)
@@ -1385,7 +1402,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	rawset(_G, "MainCity", saved_main_city)
 	RestoreGeneratorTemplate()
 	if get_current_slot() ~= destination_slot then
-		pcall(change_current_slot, destination_slot, false)
+		pcall(SwitchGeneratorCurrentSlot, destination_slot)
 	end
 	if maps[source_slot] then
 		local unload_started = MigrationTicks()

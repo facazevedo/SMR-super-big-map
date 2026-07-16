@@ -1638,6 +1638,9 @@ RegisterOnce("MapGenerated", function(map)
 end)
 
 RegisterOnce("OverviewMode", function(enabled)
+	if SuperBigMap.State and SuperBigMap.State.vanilla_source_migration_active == true then
+		return
+	end
 	if editor_active() then
 		EditorCamLog("OverviewMode handler skipped (editor)", { enabled = enabled == true })
 		return
@@ -1750,6 +1753,9 @@ RegisterOnce("CameraTransitionStart", function(eye, lookat, time)
 end)
 
 RegisterOnce("CameraTransitionEnd", function()
+	if SuperBigMap.State and SuperBigMap.State.vanilla_source_migration_active == true then
+		return
+	end
 	if editor_active() then
 		EditorCamLog("CameraTransitionEnd skipped (editor)", CameraSnapshot())
 		return
