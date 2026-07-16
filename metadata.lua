@@ -1,9 +1,9 @@
 return PlaceObj('ModDef', {
 	'title', "Super Big Map",
-	'description', "Super Big Map\n\n3x more map. No extra fries.\n\nNew random maps use a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on. The native vanilla terrain is generated once and proportionally stretched across the expanded destination; no terrain mirroring or alternate expansion mode is used.\n\nExpanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game after enabling the mod. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested on Surviving Mars Relaunched v1.0.7 on Windows 11.\n\nFeedback and bug reports: https://smr-mods-feedback.fredware.app or https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
-	'short_description', "Expands new random maps to a stretch-generated 20 x 20 layout.",
+	'description', "Super Big Map\n\n3x more map. No extra fries.\n\nOn the Colony Site screen, toggle EXPAND MAP before pressing START. Expanded new games use a 20 x 20 sector grid, giving you 300 additional sectors to explore and build on. The native vanilla terrain is generated once and proportionally stretched across the expanded destination; no terrain mirroring or alternate expansion mode is used. Leave EXPAND MAP off for purely vanilla map generation.\n\nExpanded-map zoom can be changed in Game Options -> Options -> Display -> Max Zoom Level.\n\nRequirements and Compatibility:\n\nYou must start a new game with EXPAND MAP enabled. Existing saves will not be expanded.\nInitial loading takes longer because the expanded map requires more processing.\nDo not use other zoom mods. SBM includes its own zoom settings for expanded maps.\n\n[IMPORTANT]: Quit and restart the game after enabling this mod to clear cached data.\nTested on Surviving Mars Relaunched v1.0.7 on Windows 11.\n\nFeedback and bug reports: https://smr-mods-feedback.fredware.app or https://github.com/facazevedo/surviving-mars-relaunched-mods/issues",
+	'short_description', "Adds an opt-in stretch-generated 20 x 20 map expansion.",
 	'image', "Mod/SuperBigMap/Images/final_composed.jpg",
-	'last_changes', "Consolidate terrain expansion and sectors around the single stretch-only 20 x 20 pipeline.",
+	'last_changes', "Restore the EXPAND MAP start toggle for the stretch-only 20 x 20 pipeline.",
 	'ignore_files', {
 		"*.git/*",
 		".git/*",
@@ -12,7 +12,7 @@ return PlaceObj('ModDef', {
 	},
 	'id', "SuperBigMap",
 	'author', "fredware",
-	'version', 520,
+	'version', 521,
 	'lua_revision', 350453,
 	'saved_with_revision', 392284,
 	'code', {
@@ -22,6 +22,7 @@ return PlaceObj('ModDef', {
 		"Code/sbm_engine.lua",
 		"Code/sbm_loading_profiler.lua",
 		"Code/sbm_entrance_debug.lua",
+		"Code/sbm_pregame_toggle.lua",
 		"Code/ZoomPlus.lua",
 		"Code/sbm_overview_camera.lua",
 		"Code/sbm_overview_curtains.lua",

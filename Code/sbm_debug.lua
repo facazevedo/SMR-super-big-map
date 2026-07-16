@@ -18,7 +18,7 @@
 --   UndergroundAccess,
 --   Hover, Align, EntrancePositions, Overview, Camera, Rocket, RocketTerrain, ElevatorTerrain,
 --   Heat, Bounds, Validation, Zoom,
---   ZoomVanilla, RestartNotice, EditorCamera, InitSeq.
+--   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
 --
 -- DebugLog.LoadTime(step, data) is the LOAD TIMELINE channel (scope "LoadTime"): each mark prints
 -- total=+Xms (since the first mark this session) and delta=+Yms (since the previous mark), so one

@@ -59,6 +59,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     full-destination grid.
 SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 81: consolidate allocation/finalization around the sole
--- stretch pipeline and remove legacy frame-fill/mirror dispatch.
-SuperBigMap.GENERATOR_PATCH_VERSION = 81
+-- (sbm_map_generation). Bumped to 82: restore the landing-screen opt-in gate while keeping
+-- stretch as the sole expansion implementation.
+SuperBigMap.GENERATOR_PATCH_VERSION = 82

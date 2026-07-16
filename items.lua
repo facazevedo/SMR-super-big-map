@@ -24,6 +24,10 @@ return {
 		'CodeFileName', "Code/sbm_entrance_debug.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_pregame_toggle",
+		'CodeFileName', "Code/sbm_pregame_toggle.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "ZoomPlus",
 		'CodeFileName', "Code/ZoomPlus.lua",
 	}),

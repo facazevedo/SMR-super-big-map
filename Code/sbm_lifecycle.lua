@@ -18,7 +18,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local MAIN_MENU_GUARD_VERSION = 3
+local MAIN_MENU_GUARD_VERSION = 4
 
 local LOAD_PROFILE_MESSAGES = {
 	ChangingMap = true, PreNewMap = true, NewMap = true, NewMapObject = true,
@@ -214,6 +214,10 @@ local function ApplyOverviewPatches()
 end
 
 local function ForceVanillaMainMenuState(reason)
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.ResetForVanillaSession) == "function" then
+		SafeCall(toggle.ResetForVanillaSession, tostring(reason or "vanilla_reset"))
+	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom and type(zoom.RestoreVanillaBehavior) == "function" then
 		zoom.RestoreVanillaBehavior()
@@ -283,6 +287,10 @@ local function InstallPreGameMainMenuResetGuard()
 			lifecycle.ReturnToMainMenuVanilla("OpenPreGameMainMenu")
 		else
 			ForceVanillaMainMenuState("OpenPreGameMainMenu")
+		end
+		local toggle = SuperBigMap.PregameToggle
+		if toggle and type(toggle.LogOpenState) == "function" then
+			toggle.LogOpenState("after OpenPreGameMainMenu")
 		end
 		return State.original_open_pregame_main_menu(...)
 	end
@@ -478,6 +486,7 @@ end
 
 -- Install order (dependencies first); restore is the exact reverse.
 local APPLY_ORDER = {
+	"PregameToggle",
 	"MapGeneration",
 	"DepositRules",
 	"SectorGrid",
@@ -507,6 +516,7 @@ local RESTORE_ORDER = {
 	"SectorGrid",
 	"DepositRules",
 	"MapGeneration",
+	"PregameToggle",
 }
 
 local function run_phase(order, method)
@@ -1363,18 +1373,28 @@ local function EnsureGeneratorHookInstalled()
 	end
 end
 
-local function EnsureMainMenuGuardsInstalled(reason)
+local function EnsurePregameToggleInstalled(reason)
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
 	InstallMainMenuTransitionGuards()
+	if SuperBigMap.State.main_menu_vanilla == true then
+		return
+	end
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.PatchLandingDialog) == "function" then
+		toggle.PatchLandingDialog()
+	end
+	if toggle and type(toggle.LogOpenState) == "function" then
+		toggle.LogOpenState("after EnsurePregameToggleInstalled(" .. tostring(reason or "?") .. ")")
+	end
 end
 
 RegisterOnce("ClassesPostprocess", function()
 	-- Install the generator hook regardless of active() so it is ready before any pre-game
 	-- landing-spot preview generates a map (prevents the GSRP overflow crash).
 	EnsureGeneratorHookInstalled()
-	EnsureMainMenuGuardsInstalled()
+	EnsurePregameToggleInstalled("ClassesPostprocess")
 	if not active() then
 		return
 	end
@@ -1399,7 +1419,7 @@ RegisterOnce("DataLoaded", function()
 	-- Ensure the generator hook is in place before any pre-game generation (independent of
 	-- active()); DataLoaded fires at boot before the landing-spot screen.
 	EnsureGeneratorHookInstalled()
-	EnsureMainMenuGuardsInstalled()
+	EnsurePregameToggleInstalled("DataLoaded")
 	if not active() then
 		return
 	end
@@ -1470,7 +1490,7 @@ RegisterOnce("ClassesBuilt", function()
 	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla. Re-install our hook even before a
 	-- mod map is active, so a pre-game landing-spot preview can't run vanilla DoGenerate.
 	EnsureGeneratorHookInstalled()
-	EnsureMainMenuGuardsInstalled()
+	EnsurePregameToggleInstalled("ClassesBuilt")
 	ReinstallTerrainCriticalPatches("ClassesBuilt")
 	if not active() then
 		return
@@ -1517,7 +1537,7 @@ RegisterOnce("ModsReloaded", function()
 	-- Re-install the generator hook on reload regardless of active() (a mod reload resets the
 	-- RandomMapGenerator class to vanilla; the pre-game preview can run before any map is active).
 	EnsureGeneratorHookInstalled()
-	EnsureMainMenuGuardsInstalled()
+	EnsurePregameToggleInstalled("ModsReloaded")
 	ReinstallTerrainCriticalPatches("ModsReloaded")
 	if not active() then
 		return
@@ -1561,7 +1581,7 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	-- mod isn't active() yet (landing-spot previews regenerate without ClassesBuilt and before
 	-- any map is applied). This is the path that was overflowing GSRP into a crash.
 	EnsureGeneratorHookInstalled()
-	EnsureMainMenuGuardsInstalled()
+	EnsurePregameToggleInstalled("ChangingMap")
 	ReinstallTerrainCriticalPatches("ChangingMap")
 	if not active() then
 		return

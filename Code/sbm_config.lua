@@ -118,6 +118,7 @@ config.HideOverviewCurtains = true
 config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
 
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
+config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP action, state, and underline diagnostics
 config.DebugGeneration    = true    -- TEMP multi-run verification: authoritative enrichment targets
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 -- Lightweight aggregate timings for the temporary source -> expanded destination object handoff.
@@ -766,6 +767,7 @@ C.FULL_MAP_PLAYABLE = expansion_step_01
 -- Debug logging: master + per-scope (see sbm_debug.lua). Logger reads C.DEBUG_<SCOPE>.
 C.DEBUG_LOGS          = as_bool(config.EnableDiagnosticLogs)   -- master: enables every scope
 C.DEBUG_LIFECYCLE     = as_bool(config.DebugLifecycle)
+C.DEBUG_PREGAMETOGGLE = as_bool(config.DebugPregameToggle)
 C.DEBUG_GENERATION    = as_bool(config.DebugGeneration)
 C.DEBUG_MIGRATIONPERFORMANCE = as_bool(config.DebugMigrationPerformance)
 C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)

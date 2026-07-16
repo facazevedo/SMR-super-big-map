@@ -39,6 +39,11 @@ local function InModEditor()
 end
 
 local function ShouldUseModZoom()
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.ShouldUseModZoom) == "function" then
+		local ok, result = pcall(toggle.ShouldUseModZoom, Global("CurrentMap"))
+		return ok and result == true
+	end
 	local grid = SuperBigMap.SectorGrid
 	if grid and type(grid.IsModMap) == "function" then
 		local ok, result = pcall(grid.IsModMap, Global("CurrentMap"))

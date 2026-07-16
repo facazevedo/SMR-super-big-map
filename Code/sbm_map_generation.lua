@@ -386,6 +386,17 @@ local function ClearPreparedMapInstance(map)
 	return true
 end
 
+-- The landing-screen toggle chooses whether the single stretch pipeline runs for
+-- this new game. It does not select between expansion implementations.
+local function ShouldExpandNewMap()
+	local toggle = SuperBigMap.PregameToggle
+	if toggle and type(toggle.ShouldExpandNewMap) == "function" then
+		local ok, result = pcall(toggle.ShouldExpandNewMap)
+		return ok and result == true
+	end
+	return false
+end
+
 local function RestorePreparedMapData(map_name, mapdata)
 	if type(mapdata) ~= "table" then
 		return false
@@ -521,6 +532,14 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 		RestorePreparedMapData(map_name, mapdata)
 		ClearPreparedMapInstance(map_instance)
 		VerbosePrint("stretch allocation skipped for PreGame preview")
+		return false
+	end
+	if not ShouldExpandNewMap() then
+		RestorePreparedMapData(map_name, mapdata)
+		ClearPreparedMapInstance(map_instance)
+		VerbosePrint(string.format(
+			"stretch allocation skipped for %s via %s: EXPAND MAP is off",
+			tostring(map_name), tostring(source or "ChangingMap")))
 		return false
 	end
 
