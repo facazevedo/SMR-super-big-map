@@ -786,9 +786,10 @@ config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.QuadrantCopyLimitGeneratorToSource = true
--- RebuildBuildableGrid bypasses every map-size view and sizes its native grid directly from
--- map.hex_width/map.hex_height. Temporarily scale those fields to the vanilla source extent
--- during native generation, then restore and rebuild the full expanded gameplay grid afterward.
+-- RebuildBuildableGrid and MaskBuildableGrid bypass the normal map-size views: they consume
+-- the cached map.Width/map.Height and map.hex_width/map.hex_height fields. Temporarily present
+-- all four as one vanilla-sized source view during native generation, then restore them and
+-- rebuild the full expanded gameplay grid afterward.
 config.QuadrantCopyLimitBuildableGridToSource = true
 -- Proc_InitPlayZone bypasses terrain.GetMapSize and grows its terrace grid from the real
 -- backing terrain via terrain.HeightMapSize. During the exact vanilla-sized source window,

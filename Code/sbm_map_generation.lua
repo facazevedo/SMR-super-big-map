@@ -3911,9 +3911,11 @@ local function PatchRandomMapGenerator()
 			local saved_template_h = template and template.Height
 			local saved_mapdata_w = type(mapdata) == "table" and mapdata.Width or nil
 			local saved_mapdata_h = type(mapdata) == "table" and mapdata.Height or nil
+			local saved_map_width = map and map.Width
+			local saved_map_height = map and map.Height
 			local saved_map_hex_width = map and map.hex_width
 			local saved_map_hex_height = map and map.hex_height
-			local hex_grid_source_view = false
+			local buildable_source_view = false
 
 			map.GetMapSize = function(target)
 				if target == map then
@@ -3941,15 +3943,18 @@ local function PatchRandomMapGenerator()
 				mapdata.Height = gen_height_tiles
 			end
 
-			-- SOURCE-SIZED BUILDABLE VIEW. Vanilla RebuildBuildableGrid does not consult
+			-- ATOMIC SOURCE-SIZED MAP/BUILDABLE VIEW. Vanilla RebuildBuildableGrid does not consult
 			-- map:GetMapSize, terrain.GetMapSize, or MapData.Width when choosing its grid
 			-- dimensions; it directly passes map.hex_width/map.hex_height into BuildableGrid:Build.
-			-- On the expanded allocation those remain 820x946, so MaskBuildableGrid projects an
-			-- expanded buildable grid into the otherwise vanilla-identical 768x768 invalid mask.
-			-- Scale only these two fields for the native transaction (8192 -> 6144 gives the exact
-			-- vanilla 820x946 -> 615x710), restore them immediately afterward, and rebuild the real
-			-- expanded gameplay grid only after marker placement and metadata restoration.
+			-- MaskBuildableGrid then consumes the Map object natively and can still project that grid
+			-- through the cached map.Width/map.Height MapVars, which were initialized from the expanded
+			-- allocation. Present all four cached extents as one vanilla-sized transaction (8192 ->
+			-- 6144 gives world 819200 -> 614400 and hex 820x946 -> 615x710), restore all four
+			-- immediately afterward even when native generation fails, and only then rebuild the real
+			-- expanded gameplay grid.
 			if cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
+				and type(saved_map_width) == "number" and saved_map_width > 0
+				and type(saved_map_height) == "number" and saved_map_height > 0
 				and type(saved_map_hex_width) == "number" and saved_map_hex_width > 0
 				and type(saved_map_hex_height) == "number" and saved_map_hex_height > 0
 				and cur_w_tiles > 0 and cur_h_tiles > 0 then
@@ -3957,24 +3962,49 @@ local function PatchRandomMapGenerator()
 					math.floor((saved_map_hex_width * gen_width_tiles + 0.0) / cur_w_tiles + 0.5))
 				local source_hex_height = math.max(1,
 					math.floor((saved_map_hex_height * gen_height_tiles + 0.0) / cur_h_tiles + 0.5))
-				if source_hex_width < saved_map_hex_width or source_hex_height < saved_map_hex_height then
-					hex_grid_source_view = {
-						source_width = source_hex_width, source_height = source_hex_height,
-						expanded_width = saved_map_hex_width, expanded_height = saved_map_hex_height,
+				local source_fits_expanded = gen_world_w <= saved_map_width and gen_world_h <= saved_map_height
+					and source_hex_width <= saved_map_hex_width and source_hex_height <= saved_map_hex_height
+				local source_is_smaller = gen_world_w < saved_map_width or gen_world_h < saved_map_height
+					or source_hex_width < saved_map_hex_width or source_hex_height < saved_map_hex_height
+				if source_fits_expanded and source_is_smaller then
+					buildable_source_view = {
+						source_world_width = gen_world_w, source_world_height = gen_world_h,
+						expanded_world_width = saved_map_width, expanded_world_height = saved_map_height,
+						source_hex_width = source_hex_width, source_hex_height = source_hex_height,
+						expanded_hex_width = saved_map_hex_width, expanded_hex_height = saved_map_hex_height,
 					}
+					map.Width = gen_world_w
+					map.Height = gen_world_h
 					map.hex_width = source_hex_width
 					map.hex_height = source_hex_height
 					DebugPrint(string.format(
-						"vanilla buildable hex-grid view installed: %sx%s -> %sx%s (tiles %sx%s -> %sx%s)",
+						"vanilla cached map/buildable view installed: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; tiles %sx%s -> %sx%s",
+						tostring(saved_map_width), tostring(saved_map_height),
+						tostring(gen_world_w), tostring(gen_world_h),
 						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
 						tostring(source_hex_width), tostring(source_hex_height),
 						tostring(cur_w_tiles), tostring(cur_h_tiles),
 						tostring(gen_width_tiles), tostring(gen_height_tiles)))
-					EnrichmentSpreadBoundary(self, map, "buildable-hex-grid-source-view-installed", {
+					EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-installed", {
+						expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
+						source_world = tostring(gen_world_w) .. "x" .. tostring(gen_world_h),
 						expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
 						source_hex = tostring(source_hex_width) .. "x" .. tostring(source_hex_height),
 					})
+				else
+					DebugPrint(string.format(
+						"vanilla cached map/buildable view skipped: source does not fit or is not smaller; world %sx%s -> %sx%s; hex %sx%s -> %sx%s",
+						tostring(saved_map_width), tostring(saved_map_height),
+						tostring(gen_world_w), tostring(gen_world_h),
+						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+						tostring(source_hex_width), tostring(source_hex_height)))
 				end
+			elseif cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
+				DebugPrint(string.format(
+					"vanilla cached map/buildable view unavailable: world=%sx%s hex=%sx%s tiles=%sx%s",
+					tostring(saved_map_width), tostring(saved_map_height),
+					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+					tostring(cur_w_tiles), tostring(cur_h_tiles)))
 			end
 
 			DebugPrint(string.format(
@@ -4259,6 +4289,15 @@ local function PatchRandomMapGenerator()
 			State.rmg_placement_proc_active = false
 			State.rmg_placement_proc_stack = {}
 			local results = { pcall(original_do_generate, self, map, ...) }
+			-- Restore the cached MapVars before any diagnostic or bridge cleanup can run. The
+			-- pcall above covers both the successful and failing native-generation paths, so an
+			-- engine/Lua failure cannot leave the live expanded map reporting source dimensions.
+			if buildable_source_view then
+				map.Width = saved_map_width
+				map.Height = saved_map_height
+				map.hex_width = saved_map_hex_width
+				map.hex_height = saved_map_hex_height
+			end
 			if height_bridge then
 				terrain_api.HeightMapSize = original_terrain_height_map_size
 				terrain_api.SetHeightGrid = original_terrain_set_height_grid
@@ -4277,15 +4316,18 @@ local function PatchRandomMapGenerator()
 					error = tostring(height_bridge.error),
 				})
 			end
-			if hex_grid_source_view then
-				map.hex_width = saved_map_hex_width
-				map.hex_height = saved_map_hex_height
+			if buildable_source_view then
 				DebugPrint(string.format(
-					"vanilla buildable hex-grid view restored after native placement: %sx%s -> %sx%s",
-					tostring(hex_grid_source_view.source_width), tostring(hex_grid_source_view.source_height),
-					tostring(saved_map_hex_width), tostring(saved_map_hex_height)))
-				EnrichmentSpreadBoundary(self, map, "buildable-hex-grid-source-view-restored", {
-					source_hex = tostring(hex_grid_source_view.source_width) .. "x" .. tostring(hex_grid_source_view.source_height),
+					"vanilla cached map/buildable view restored after native placement: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; generation_ok=%s",
+					tostring(buildable_source_view.source_world_width), tostring(buildable_source_view.source_world_height),
+					tostring(saved_map_width), tostring(saved_map_height),
+					tostring(buildable_source_view.source_hex_width), tostring(buildable_source_view.source_hex_height),
+					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+					tostring(results[1] == true)))
+				EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-restored", {
+					source_world = tostring(buildable_source_view.source_world_width) .. "x" .. tostring(buildable_source_view.source_world_height),
+					expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
+					source_hex = tostring(buildable_source_view.source_hex_width) .. "x" .. tostring(buildable_source_view.source_hex_height),
 					expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
 					generation_ok = tostring(results[1] == true),
 				})
@@ -4314,7 +4356,7 @@ local function PatchRandomMapGenerator()
 			end
 			State.rmg_placement_active_map = false
 			State.rmg_placement_proc_stack = nil
-			if results[1] and is_surface_generation and not hex_grid_source_view
+			if results[1] and is_surface_generation and not buildable_source_view
 				and map.buildable and map.buildable.z_grid
 				and map.SuperBigMapProvisionalBuildableDeferred ~= true then
 				map.SuperBigMapSurfaceBuildableCurrent = true
@@ -4365,7 +4407,7 @@ local function PatchRandomMapGenerator()
 			-- Enrichments are final now, so replace it with the authoritative expanded 820x946 grid
 			-- only after map dimensions and the full-map PassBorder have been restored. This rebuild
 			-- cannot influence the already-completed vanilla candidate/repulsion transaction.
-			if results[1] and is_surface_generation and hex_grid_source_view then
+			if results[1] and is_surface_generation and buildable_source_view then
 				local rebuild = Global("RebuildBuildableGrid")
 				local ticks = Global("GetPreciseTicks")
 				local t0 = 0
