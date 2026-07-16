@@ -458,10 +458,10 @@ config.StretchRelocateStartSector = true
 config.StretchUnderground = true
 -- Keep the two vanilla passage pairs and Elevator snap anchors eager, but postpone buried-wonder
 -- construction plus the expensive underground stretch/post-processing until first access. The
--- generator consumes and records vanilla's wonder shuffle at startup, so deferral does not change
--- which wonder belongs to each marker. The first underground map switch is held behind the normal
--- loading screen until the complete atomic pipeline finishes: terrain stretch, final-coordinate
--- wonder creation, grids, entrance/marker movement, and all top-ups.
+-- underground passage's child SurfaceTunnelMarker is also postponed because its vanilla spawn
+-- requires the final buildable and object grids to have matching dimensions; the linked passage
+-- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
+-- recorded at startup, so deferral does not change which wonder belongs to each marker.
 config.DeferUndergroundExpansionUntilFirstAccess = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with

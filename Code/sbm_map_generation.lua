@@ -210,6 +210,9 @@ local function UndergroundAccessState(map, extra)
 		deferred_wonders_pending = tostring(map and map.SuperBigMapDeferredUndergroundWondersPending),
 		deferred_wonders_planned = tostring(map and map.SuperBigMapDeferredUndergroundWonderCount),
 		deferred_wonders_spawned = tostring(map and map.SuperBigMapDeferredUndergroundWondersSpawned),
+		deferred_tunnel_spawns_pending = tostring(map and map.SuperBigMapDeferredTunnelSpawnsPending),
+		deferred_tunnel_spawns_planned = tostring(map and map.SuperBigMapDeferredTunnelSpawnCount),
+		deferred_tunnel_spawns_created = tostring(map and map.SuperBigMapDeferredTunnelSpawnsCreated),
 		stretch_underground = tostring(cfg_bool("STRETCH_UNDERGROUND", false)),
 		defer_first_access = tostring(cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)),
 	}
@@ -384,6 +387,10 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWondersDone = nil
 	map.SuperBigMapDeferredUndergroundWonderCount = nil
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
+	map.SuperBigMapDeferredTunnelSpawnsPending = nil
+	map.SuperBigMapDeferredTunnelSpawnsDone = nil
+	map.SuperBigMapDeferredTunnelSpawnCount = nil
+	map.SuperBigMapDeferredTunnelSpawnsCreated = nil
 	map.SuperBigMapGeneratorWidth = nil
 	map.SuperBigMapGeneratorHeight = nil
 	map.SuperBigMapGeneratorWidthTiles = nil
@@ -2919,7 +2926,134 @@ local function MaterializeDeferredUndergroundWonders(map)
 	return spawned == #planned, spawned
 end
 
+-- SurfacePassage is the underground half of a natural Elevator anchor. Its inherited
+-- SpawnsOnCityInit:Spawn creates the SurfaceTunnelMarker and immediately calls
+-- FindUnobstructedDepositPos, which requires the BuildableGrid and object hex grid to have
+-- identical dimensions. During deferred expansion CityInitialized sees a 6144 buildable grid and
+-- an 8192 object grid, so spawning the marker then asserts in HexGridFindBuildable. Keep the linked
+-- passage object eager (Elevator snapping depends on it), but defer only this child marker until the
+-- first-access pipeline has stretched the terrain and rebuilt both final grids.
+local function IsDeferredUndergroundTunnelSpawn(spawner)
+	if not spawner or type(spawner.GetMap) ~= "function" then return false end
+	local ok_map, map = pcall(spawner.GetMap, spawner)
+	if not ok_map or type(map) ~= "table" or type(map.mapdata) ~= "table"
+		or map.mapdata.Environment ~= "Underground" then
+		return false
+	end
+	local desired = map.SuperBigMapDesiredWidthTiles
+	local generated = map.SuperBigMapGeneratorWidthTiles
+	return cfg_bool("STRETCH_UNDERGROUND", false)
+		and type(desired) == "number" and type(generated) == "number" and desired > generated
+		and map.SuperBigMapUndergroundPrepared ~= true
+		and spawner.SuperBigMapDeferredTunnelSpawnDone ~= true,
+		map
+end
+
+local function PatchDeferredUndergroundTunnelSpawn()
+	local State = SuperBigMap.State
+	local passage_class = Engine.ClassTable and Engine.ClassTable("SurfacePassage")
+	if type(passage_class) ~= "table" then
+		PairingLog("deferred underground tunnel-spawn patch waiting: SurfacePassage class unavailable")
+		return false
+	end
+	local current = passage_class.Spawn
+	if current == State.deferred_tunnel_spawn_wrapper then return true end
+	if type(current) ~= "function" then
+		PairingLog("deferred underground tunnel-spawn patch waiting: Spawn unavailable")
+		return false
+	end
+	State.original_surface_passage_spawn = current
+	local wrapper = function(self, ...)
+		local should_defer, map = IsDeferredUndergroundTunnelSpawn(self)
+		if should_defer then
+			local newly_pending = self.SuperBigMapDeferredTunnelSpawnPending ~= true
+			self.SuperBigMapDeferredTunnelSpawnPending = true
+			map.SuperBigMapDeferredTunnelSpawnsPending = true
+			if newly_pending then
+				map.SuperBigMapDeferredTunnelSpawnCount =
+					(type(map.SuperBigMapDeferredTunnelSpawnCount) == "number"
+						and map.SuperBigMapDeferredTunnelSpawnCount or 0) + 1
+			end
+			PairingLog("deferred underground SurfaceTunnelMarker spawn until final grids", {
+				map = tostring(map.name), passage = tostring(self), pos = tostring(self:GetPos()),
+				desired_tiles = map.SuperBigMapDesiredWidthTiles,
+				generator_tiles = map.SuperBigMapGeneratorWidthTiles,
+				pending_count = map.SuperBigMapDeferredTunnelSpawnCount,
+			})
+			UndergroundAccessLog("underground tunnel marker spawn deferred at CityInitialized",
+				UndergroundAccessState(map, {
+					passage = tostring(self), passage_pos = tostring(self:GetPos()),
+					pending_count = map.SuperBigMapDeferredTunnelSpawnCount,
+				}))
+			return
+		end
+		local original = State.original_surface_passage_spawn
+		return original(self, ...)
+	end
+	passage_class.Spawn = wrapper
+	State.deferred_tunnel_spawn_wrapper = wrapper
+	PairingLog("SurfacePassage:Spawn wrapped for deferred grid compatibility")
+	return true
+end
+
+local function MaterializeDeferredUndergroundTunnelSpawns(map)
+	local State = SuperBigMap.State
+	local original = State.original_surface_passage_spawn
+	if type(original) ~= "function" then
+		return false, "original SurfacePassage:Spawn is unavailable"
+	end
+	local passages = ArtefactMapGet(map, "SurfacePassage")
+	local pending = {}
+	for _, passage in ipairs(passages) do
+		if passage.SuperBigMapDeferredTunnelSpawnPending == true
+			and passage.SuperBigMapDeferredTunnelSpawnDone ~= true then
+			pending[#pending + 1] = passage
+		end
+	end
+	if map.SuperBigMapDeferredTunnelSpawnsPending ~= true and #pending == 0 then
+		return true, 0
+	end
+	if #pending == 0 then
+		return false, "tunnel marker spawn is pending but no deferred SurfacePassage survives"
+	end
+	local before = ArtefactMapGet(map, "SurfaceTunnelMarker")
+	local spawned = 0
+	for _, passage in ipairs(pending) do
+		local ok, err = pcall(original, passage)
+		if not ok then
+			return false, "SurfacePassage marker spawn failed: " .. tostring(err)
+		end
+		local matched = false
+		for _, marker in ipairs(ArtefactMapGet(map, "SurfaceTunnelMarker")) do
+			if marker.spawner == passage then matched = true break end
+		end
+		if not matched then
+			return false, "SurfacePassage marker spawn returned without a linked SurfaceTunnelMarker"
+		end
+		passage.SuperBigMapDeferredTunnelSpawnPending = false
+		passage.SuperBigMapDeferredTunnelSpawnDone = true
+		spawned = spawned + 1
+	end
+	local after = ArtefactMapGet(map, "SurfaceTunnelMarker")
+	map.SuperBigMapDeferredTunnelSpawnsPending = false
+	map.SuperBigMapDeferredTunnelSpawnsDone = true
+	map.SuperBigMapDeferredTunnelSpawnsCreated = spawned
+	PairingLog("deferred underground SurfaceTunnelMarker spawns completed", {
+		passages = #passages, pending = #pending, spawned = spawned,
+		markers_before = #before, markers_after = #after,
+	})
+	UndergroundAccessLog("deferred underground tunnel markers materialized on final grids",
+		UndergroundAccessState(map, {
+			pending = #pending, spawned = spawned,
+			markers_before = #before, markers_after = #after,
+		}))
+	return spawned == #pending, spawned
+end
+
 local function PatchRandomMapGenerator()
+	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
+	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
+	PatchDeferredUndergroundTunnelSpawn()
 	if not cfg_bool("PATCH_RANDOM_MAP_GENERATOR", true) then
 		VerbosePrint("stretch random-map generator hook disabled")
 		return false
@@ -8998,6 +9132,27 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. "/" .. tostring(#elevator_migrations) .. " counterparts")
 					end
 				end
+				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
+				-- buildable grid disagreed with the expanded object grid. Both final grids are now
+				-- authoritative, so create and verify the deferred tunnel markers before entrance
+				-- reachability uses them as seeds.
+				SetLoadingPhase("Activating underground passage markers")
+				StretchLog("underground stretch: -> MaterializeDeferredUndergroundTunnelSpawns", {
+					planned = map.SuperBigMapDeferredTunnelSpawnCount,
+				})
+				local tunnel_token = InvestigationBegin(
+					"underground: materialize deferred passage markers on final grids", map, {
+						planned = map.SuperBigMapDeferredTunnelSpawnCount,
+					})
+				local tunnel_ok, tunnel_result = MaterializeDeferredUndergroundTunnelSpawns(map)
+				InvestigationEnd(tunnel_token, {
+					result = tostring(tunnel_result),
+					created = map.SuperBigMapDeferredTunnelSpawnsCreated,
+				}, tunnel_ok == true)
+				if tunnel_ok ~= true then
+					error("deferred underground passage-marker activation failed: "
+						.. tostring(tunnel_result))
+				end
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
 				if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -9784,6 +9939,14 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	State.passage_link_wrapper = nil
 	State.original_passage_link = nil
+	local surface_passage_class = Engine.ClassTable and Engine.ClassTable("SurfacePassage")
+	if type(surface_passage_class) == "table" and State.deferred_tunnel_spawn_wrapper
+		and surface_passage_class.Spawn == State.deferred_tunnel_spawn_wrapper
+		and type(State.original_surface_passage_spawn) == "function" then
+		surface_passage_class.Spawn = State.original_surface_passage_spawn
+	end
+	State.deferred_tunnel_spawn_wrapper = nil
+	State.original_surface_passage_spawn = nil
 	if State.change_current_map_slot_wrapper
 		and Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then
