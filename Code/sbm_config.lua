@@ -555,9 +555,13 @@ config.MirrorPlanSettleMs = 5000
 -- A detailed switch can only run when its owning high-level stage is enabled. Disabling all
 -- switches restores pure vanilla allocation, generation, and placement behavior.
 --
--- 01: Allocate the expanded destination, generate the source through an exact vanilla-sized
--- view, and capture every original enrichment coordinate before any geometric transformation.
+-- 01: Generate and capture the source on a true vanilla backing, then promote its captured
+-- terrain into the expanded destination before any geometric transformation.
 config.ExpansionStep01GenerateAndCaptureVanillaSource = true
+-- Experimental exact-source backing mode. The active map remains a real vanilla allocation
+-- through RandomMapGenerator; only after native source generation completes are the captured
+-- terrain grids promoted in place to the expanded destination dimensions.
+config.DeferExpandedBackingUntilAfterVanillaSource = true
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
 config.ExpansionStep02StretchAndTransformVanillaSource = false
@@ -1185,6 +1189,8 @@ C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
 -- independently switchable diagnostics from the original 19-stage contract.
 C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
 	expansion_step_01
+C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
+	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
 C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
 	expansion_step_02
 C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS =

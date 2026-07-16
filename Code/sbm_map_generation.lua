@@ -398,6 +398,8 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapExpandedWorldHeight = nil
 	map.SuperBigMapExpandedHexWidth = nil
 	map.SuperBigMapExpandedHexHeight = nil
+	map.SuperBigMapDeferredBackingPromotion = nil
+	map.SuperBigMapBackingPromotionComplete = nil
 	return true
 end
 
@@ -462,6 +464,7 @@ local function AttachPendingMapState(map)
 	map.SuperBigMapGeneratorHeight = pending.generator_height
 	map.SuperBigMapGeneratorWidthTiles = pending.generator_width_tiles
 	map.SuperBigMapGeneratorHeightTiles = pending.generator_height_tiles
+	map.SuperBigMapDeferredBackingPromotion = pending.deferred_backing == true
 
 	VerbosePrint(string.format(
 		"attached pending 2x2 quadrant copy to %s (source %s x %s world, %s x %s tiles)",
@@ -632,14 +635,23 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		DebugPrint("quadrant prepare failed: source quadrant would be empty")
 		return false
 	end
+	local deferred_backing = cfg_bool("DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE", false)
+		and mapdata.Environment == "Surface"
 
 	mapdata.SuperBigMapOriginalWidthTiles = original_width
 	mapdata.SuperBigMapOriginalHeightTiles = original_height
 	mapdata.SuperBigMapQuadrantCopyScale = scale
 	mapdata.SuperBigMapQuadrantSourceWidthTiles = source_width_tiles
 	mapdata.SuperBigMapQuadrantSourceHeightTiles = source_height_tiles
-	mapdata.Width = desired_width
-	mapdata.Height = desired_height
+	if deferred_backing then
+		-- Keep ChangeMap on a genuine vanilla backing. The desired dimensions remain in the
+		-- pending record and are promoted only after native source generation has completed.
+		mapdata.Width = original_width
+		mapdata.Height = original_height
+	else
+		mapdata.Width = desired_width
+		mapdata.Height = desired_height
+	end
 
 	-- The engine bakes a symmetric impassable border of mapdata.PassBorder into
 	-- the passability grid at map-build time (the property help reads "requires a
@@ -659,7 +671,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	-- the outer strip don't crash Heat_Get. EXPANDED_MAP_EDGE_BORDER can set a positive
 	-- impassable ring instead (rounded UP to a const.MapPatchSize multiple, required by the
 	-- engine: l_EngineChangeMap asserts nPassBorder % MAP_PATCH == 0). 0 is always valid.
-	do
+	if not deferred_backing then
 		local const_tbl = Global("const")
 		local patch = (type(const_tbl) == "table" and type(const_tbl.MapPatchSize) == "number" and const_tbl.MapPatchSize > 0)
 			and const_tbl.MapPatchSize or nil
@@ -684,6 +696,9 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 			end
 		end
 	end
+	if deferred_backing and mapdata.SuperBigMapOriginalPassBorder == nil then
+		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
+	end
 
 	-- The rendered original is always corner-anchored at (0,0); the flat frame is
 	-- the L on the two far sides. The source origin is therefore always 0,0 (kept
@@ -706,6 +721,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		generator_height_tiles = generator_height_tiles or source_height_tiles,
 		desired_width = desired_width,
 		desired_height = desired_height,
+		deferred_backing = deferred_backing,
 	}
 	StorePendingMap(map_name, pending)
 
@@ -724,9 +740,10 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	map_instance.SuperBigMapGeneratorHeight = pending.generator_height
 	map_instance.SuperBigMapGeneratorWidthTiles = pending.generator_width_tiles
 	map_instance.SuperBigMapGeneratorHeightTiles = pending.generator_height_tiles
+	map_instance.SuperBigMapDeferredBackingPromotion = deferred_backing
 
 	DebugPrint(string.format(
-		"prepared %s for 2x2 quadrant copy via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles)",
+		"prepared %s for 2x2 quadrant copy via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles; deferred_backing=%s)",
 		tostring(map_name),
 		tostring(source or "ChangingMap"),
 		tostring(original_width),
@@ -734,7 +751,8 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		tostring(desired_width),
 		tostring(desired_height),
 		tostring(source_width_tiles),
-		tostring(source_height_tiles)
+		tostring(source_height_tiles),
+		tostring(deferred_backing)
 	))
 	return true
 end
@@ -941,6 +959,255 @@ CaptureGeneratedNativeEnrichments = function(map, label)
 	end
 	if map then map.SuperBigMapNativeEnrichmentCapturePending = true end
 	return 0
+end
+
+local function BackingPromotionLog(message, data, level)
+	local debug_log = SuperBigMap.DebugLog
+	if not debug_log then return end
+	local fn = level == "error" and debug_log.Error
+		or (level == "warn" and debug_log.Warn or debug_log.Info)
+	if type(fn) == "function" then pcall(fn, "EnrichmentSpreadComparison", message, data) end
+end
+
+-- Promote a genuinely vanilla-generated surface map to the deferred expanded destination without
+-- replaying RandomMapGenerator. This deliberately exercises the engine's terrain setters as the
+-- backing-resize boundary. If they cannot resize a live map, the transaction fails closed and the
+-- diagnostics preserve every observed pre/post dimension; no source marker or generator result is
+-- silently accepted as expanded.
+local function PromoteDeferredExpandedBacking(map, reason)
+	if not map or map.SuperBigMapDeferredBackingPromotion ~= true then return true, "not-required" end
+	if map.SuperBigMapBackingPromotionComplete == true then return true, "already-complete" end
+	local mapdata = map.mapdata
+	local terrain_api = Global("terrain")
+	local grid_to_compute = Global("GridToCompute")
+	local new_compute_grid = Global("NewComputeGrid")
+	local is_compute_grid = Global("IsComputeGrid")
+	local grid_fill = Global("GridFill")
+	local grid_min_max = Global("GridMinMax")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	local hex_to_world = Global("HexToWorld")
+	local const_tbl = Global("const")
+	local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
+	local desired_w = tonumber(map.SuperBigMapDesiredWidthTiles)
+	local desired_h = tonumber(map.SuperBigMapDesiredHeightTiles)
+	local source_w = tonumber(map.SuperBigMapGeneratorWidthTiles)
+	local source_h = tonumber(map.SuperBigMapGeneratorHeightTiles)
+	if type(mapdata) ~= "table" or type(terrain_api) ~= "table"
+		or type(terrain_api.GetHeightGrid) ~= "function"
+		or type(terrain_api.SetHeightGrid) ~= "function"
+		or type(terrain_api.GetTypeGrid) ~= "function"
+		or type(terrain_api.SetTypeGrid) ~= "function"
+		or type(grid_to_compute) ~= "function" or type(new_compute_grid) ~= "function"
+		or type(is_compute_grid) ~= "function" or type(grid_fill) ~= "function"
+		or type(box_fn) ~= "function" or type(point_fn) ~= "function"
+		or type(hex_to_world) ~= "function" or not tile or tile <= 0
+		or not desired_w or not desired_h or not source_w or not source_h
+		or desired_w <= source_w or desired_h <= source_h then
+		return false, "required-promotion-api-or-dimensions-unavailable"
+	end
+
+	local ticks = Global("GetPreciseTicks") or Global("RealTime")
+	local function now()
+		if type(ticks) == "function" then
+			local ok, value = pcall(ticks)
+			if ok and type(value) == "number" then return value end
+		end
+		return 0
+	end
+	local function grid_size(grid)
+		local ok, width, height = pcall(function() return grid:size() end)
+		if not ok then return nil, nil end
+		return width, height or width
+	end
+	local function grid_summary(grid)
+		local width, height = grid_size(grid)
+		local summary = { grid = tostring(grid), width = tostring(width), height = tostring(height) }
+		if width and height and type(grid.get) == "function" then
+			local probes = {
+				{ 0, 0 }, { math.floor((width - 1) / 2), math.floor((height - 1) / 2) },
+				{ width - 1, height - 1 },
+			}
+			local values = {}
+			for i = 1, #probes do
+				local x, y = probes[i][1], probes[i][2]
+				local ok_value, value = pcall(grid.get, grid, x, y)
+				values[#values + 1] = tostring(x) .. ":" .. tostring(y) .. "="
+					.. tostring(ok_value and value or "ERROR")
+			end
+			summary.probes = table.concat(values, ",")
+		end
+		if type(grid_min_max) == "function" then
+			local ok_range, minimum, maximum = pcall(grid_min_max, grid)
+			if ok_range then summary.minimum, summary.maximum = minimum, maximum end
+		end
+		return summary
+	end
+
+	local started = now()
+	local stats = {
+		reason = tostring(reason), map = tostring(map.name),
+		source_tiles = tostring(source_w) .. "x" .. tostring(source_h),
+		destination_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
+		mapdata_before = tostring(mapdata.Width) .. "x" .. tostring(mapdata.Height),
+		map_fields_before = tostring(map.Width) .. "x" .. tostring(map.Height),
+		hex_fields_before = tostring(map.hex_width) .. "x" .. tostring(map.hex_height),
+		pass_border_before = tostring(mapdata.PassBorder),
+	}
+	pcall(function()
+		local width, height = map:GetMapSize()
+		stats.map_get_size_before = tostring(width) .. "x" .. tostring(height)
+	end)
+	if type(terrain_api.HeightMapSize) == "function" then
+		local ok, width, height = pcall(terrain_api.HeightMapSize, map)
+		if ok then stats.height_size_before = tostring(width) .. "x" .. tostring(height or width) end
+	end
+	if type(terrain_api.TypeMapSize) == "function" then
+		local ok, width, height = pcall(terrain_api.TypeMapSize, map)
+		if ok then stats.type_size_before = tostring(width) .. "x" .. tostring(height or width) end
+	end
+	BackingPromotionLog("DEFERRED_BACKING_PROMOTION_BEGIN", stats)
+
+	local height_raw, height_compute, height_target
+	local type_raw, type_compute, type_target
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMDeferredBackingPromotion") end
+	local promotion_ok, promotion_err = pcall(function()
+		height_raw = terrain_api.GetHeightGrid(map)
+		type_raw = terrain_api.GetTypeGrid(map)
+		if not height_raw or not type_raw then error("source-terrain-grid-capture-failed") end
+		local height_source_w, height_source_h = grid_size(height_raw)
+		local type_source_w, type_source_h = grid_size(type_raw)
+		if height_source_w ~= source_w or height_source_h ~= source_h
+			or not type_source_w or not type_source_h then
+			error(string.format("unexpected-source-grid-size:height=%sx%s type=%sx%s expected=%sx%s",
+				tostring(height_source_w), tostring(height_source_h),
+				tostring(type_source_w), tostring(type_source_h), tostring(source_w), tostring(source_h)))
+		end
+		stats.height_source = grid_summary(height_raw)
+		stats.type_source = grid_summary(type_raw)
+		BackingPromotionLog("DEFERRED_BACKING_SOURCE_CAPTURED", {
+			height_width = height_source_w, height_height = height_source_h,
+			type_width = type_source_w, type_height = type_source_h,
+			height_probes = stats.height_source.probes, type_probes = stats.type_source.probes,
+			height_minimum = tostring(stats.height_source.minimum),
+			height_maximum = tostring(stats.height_source.maximum),
+			type_minimum = tostring(stats.type_source.minimum),
+			type_maximum = tostring(stats.type_source.maximum),
+		})
+
+		height_compute = grid_to_compute(height_raw)
+		type_compute = grid_to_compute(type_raw)
+		if not height_compute or not type_compute then error("GridToCompute-failed") end
+		local height_fmt, height_bits = is_compute_grid(height_compute)
+		local type_fmt, type_bits = is_compute_grid(type_compute)
+		local type_target_w = math.max(1, math.floor(type_source_w * desired_w / source_w + 0.5))
+		local type_target_h = math.max(1, math.floor(type_source_h * desired_h / source_h + 0.5))
+		height_target = new_compute_grid(desired_w, desired_h, height_fmt, height_bits)
+		type_target = new_compute_grid(type_target_w, type_target_h, type_fmt, type_bits)
+		if not height_target or not type_target then error("destination-grid-allocation-failed") end
+		local height_fill = height_compute:get(0, 0)
+		local type_fill = type_compute:get(0, 0)
+		grid_fill(height_target, height_fill)
+		grid_fill(type_target, type_fill)
+		height_target:copyrect(height_compute,
+			box_fn(0, 0, height_source_w, height_source_h), point_fn(0, 0))
+		type_target:copyrect(type_compute,
+			box_fn(0, 0, type_source_w, type_source_h), point_fn(0, 0))
+		BackingPromotionLog("DEFERRED_BACKING_DESTINATION_PREPARED", {
+			height_target = tostring(desired_w) .. "x" .. tostring(desired_h),
+			type_target = tostring(type_target_w) .. "x" .. tostring(type_target_h),
+			height_format = tostring(height_fmt) .. ":" .. tostring(height_bits),
+			type_format = tostring(type_fmt) .. ":" .. tostring(type_bits),
+			height_fill = tostring(height_fill), type_fill = tostring(type_fill),
+		})
+
+		local desired_world_w, desired_world_h = desired_w * tile, desired_h * tile
+		local hx0, hy0 = hex_to_world(0, 0)
+		local hx1 = select(1, hex_to_world(1, 0))
+		local _, hy1 = hex_to_world(0, 1)
+		local hex_step_x, hex_step_y = math.abs(hx1 - hx0), math.abs(hy1 - hy0)
+		if hex_step_x <= 0 or hex_step_y <= 0 then error("hex-step-unavailable") end
+		local desired_hex_w = math.ceil(desired_world_w / hex_step_x)
+		local desired_hex_h = math.ceil(desired_world_h / hex_step_y)
+		stats.destination_world = tostring(desired_world_w) .. "x" .. tostring(desired_world_h)
+		stats.destination_hex = tostring(desired_hex_w) .. "x" .. tostring(desired_hex_h)
+
+		mapdata.Width, mapdata.Height = desired_w, desired_h
+		local edge_border = 0
+		local patch = type(const_tbl) == "table" and tonumber(const_tbl.MapPatchSize) or nil
+		local requested_border = cfg_number("EXPANDED_MAP_EDGE_BORDER", -1)
+		if requested_border > 0 and patch and patch > 0 then
+			edge_border = math.floor((requested_border + patch - 1) / patch) * patch
+		end
+		mapdata.PassBorder = edge_border
+		if type(mapdata.PassBorderTiles) == "number" then
+			mapdata.PassBorderTiles = math.floor(edge_border / tile)
+		end
+		map.Width, map.Height = desired_world_w, desired_world_h
+		map.hex_width, map.hex_height = desired_hex_w, desired_hex_h
+		map.SuperBigMapExpandedWorldWidth = desired_world_w
+		map.SuperBigMapExpandedWorldHeight = desired_world_h
+		map.SuperBigMapExpandedHexWidth = desired_hex_w
+		map.SuperBigMapExpandedHexHeight = desired_hex_h
+
+		local height_set_started = now()
+		local height_set_error = terrain_api.SetHeightGrid(map, height_target)
+		stats.height_set_ms = now() - height_set_started
+		stats.height_set_error = tostring(height_set_error)
+		if height_set_error then error("SetHeightGrid:" .. tostring(height_set_error)) end
+		local type_set_started = now()
+		local type_set_error = terrain_api.SetTypeGrid(map, type_target)
+		stats.type_set_ms = now() - type_set_started
+		stats.type_set_error = tostring(type_set_error)
+		if type_set_error then error("SetTypeGrid:" .. tostring(type_set_error)) end
+
+		local height_after_w, height_after_h
+		if type(terrain_api.HeightMapSize) == "function" then
+			height_after_w, height_after_h = terrain_api.HeightMapSize(map)
+			height_after_h = height_after_h or height_after_w
+		end
+		local type_after_w, type_after_h
+		if type(terrain_api.TypeMapSize) == "function" then
+			type_after_w, type_after_h = terrain_api.TypeMapSize(map)
+			type_after_h = type_after_h or type_after_w
+		end
+		stats.height_size_after = tostring(height_after_w) .. "x" .. tostring(height_after_h)
+		stats.type_size_after = tostring(type_after_w) .. "x" .. tostring(type_after_h)
+		local map_size_w, map_size_h
+		pcall(function() map_size_w, map_size_h = map:GetMapSize() end)
+		stats.map_get_size_after = tostring(map_size_w) .. "x" .. tostring(map_size_h)
+		if height_after_w ~= desired_w or height_after_h ~= desired_h
+			or type_after_w ~= type_target_w or type_after_h ~= type_target_h
+			or map_size_w ~= desired_world_w or map_size_h ~= desired_world_h then
+			error("live-backing-did-not-resize-to-destination")
+		end
+
+		local invalidate_box = box_fn(0, 0, desired_world_w, desired_world_h)
+		if type(map.RebuildGrids) == "function" then map:RebuildGrids(invalidate_box) end
+		map.SuperBigMapDeferredBackingPromotion = false
+		map.SuperBigMapBackingPromotionComplete = true
+		map.SuperBigMapBackingPromotionStats = stats
+	end)
+	if type(resume) == "function" then pcall(resume, "SBMDeferredBackingPromotion") end
+	local function free_grid(grid, raw)
+		if grid and grid ~= raw then pcall(function() if type(grid.free) == "function" then grid:free() end end) end
+	end
+	free_grid(height_target, height_raw)
+	free_grid(type_target, type_raw)
+	free_grid(height_compute, height_raw)
+	free_grid(type_compute, type_raw)
+	stats.total_ms = now() - started
+	stats.ok = promotion_ok
+	stats.error = promotion_ok and "none" or tostring(promotion_err)
+	map.SuperBigMapBackingPromotionStats = stats
+	if not promotion_ok then
+		BackingPromotionLog("DEFERRED_BACKING_PROMOTION_FAILED", stats, "error")
+		return false, tostring(promotion_err)
+	end
+	BackingPromotionLog("DEFERRED_BACKING_PROMOTION_END", stats)
+	return true, "promoted"
 end
 
 -- Snapshot of every size/border input the generator derives placement from.
@@ -2121,6 +2388,7 @@ local function PatchRandomMapGenerator()
 			local function rebuild_source_buildable_grid(target_map)
 				if is_underground
 					or target_map ~= map
+					or map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 					or not cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
@@ -2461,6 +2729,7 @@ local function PatchRandomMapGenerator()
 
 			local function rebuild_source_invalid_mask(incoming_mask)
 				if is_underground
+					or map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 					or not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
@@ -4278,6 +4547,7 @@ local function PatchRandomMapGenerator()
 			local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
 			local generator_h = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
 			local rebuild_buildable_grid_required = not is_underground
+				and map.SuperBigMapDeferredBackingPromotion ~= true
 				and cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 				and cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and desired_w and desired_h and generator_w and generator_h
@@ -4793,6 +5063,11 @@ local function PatchRandomMapGenerator()
 					end
 					GenRandCensus(map, "post-gen NATIVE")
 					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
+					local promoted, promotion_reason = PromoteDeferredExpandedBacking(map,
+						"DoGenerate native complete")
+					if not promoted then
+						error("deferred expanded backing promotion failed: " .. tostring(promotion_reason))
+					end
 					return Unpack(results, 2)
 				end
 				local profiler = SuperBigMap.LoadingProfiler
@@ -4803,6 +5078,11 @@ local function PatchRandomMapGenerator()
 				local function complete(...)
 					if load_token then profiler.End(load_token, { result_count = select("#", ...) }, true) end
 					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
+					local promoted, promotion_reason = PromoteDeferredExpandedBacking(map,
+						"DoGenerate native complete")
+					if not promoted then
+						error("deferred expanded backing promotion failed: " .. tostring(promotion_reason))
+					end
 					return ...
 				end
 				return complete(original_do_generate(self, map, ...))
