@@ -2864,6 +2864,282 @@ local function PatchRandomMapGenerator()
 				return stats
 			end
 
+			local function source_collision_call(obj, method, ...)
+				local fn = obj and obj[method]
+				if type(fn) ~= "function" then return nil, "unavailable" end
+				local ok, value, value2 = pcall(fn, obj, ...)
+				if not ok then return nil, tostring(value) end
+				return value, nil, value2
+			end
+
+			local function source_collision_counts_text(counts)
+				local keys = {}
+				for key in pairs(counts) do keys[#keys + 1] = key end
+				table.sort(keys)
+				local parts = {}
+				for i = 1, #keys do
+					parts[i] = tostring(keys[i]) .. ":" .. tostring(counts[keys[i]])
+				end
+				return #parts > 0 and table.concat(parts, ";") or "none"
+			end
+
+			local function source_collision_hash_text(hash, text)
+				local MOD = 2147483647
+				text = tostring(text or "")
+				for i = 1, #text do hash = (hash * 65599 + string.byte(text, i)) % MOD end
+				return hash
+			end
+
+			-- InitBuildableGrid consumes every efCollision object's collision surface, but the native
+			-- sampler initially owns only the blank-map object set. Capture every relevant transform so
+			-- the next run can prove whether object state is the remaining source of grid divergence.
+			local function source_collision_manifest(target_map, label, area, enum_flags, ignore_game_flags)
+				local records = {}
+				local stats = {
+					label = tostring(label), map = tostring(target_map), area = tostring(area),
+					enum_flags = enum_flags, ignore_game_flags = ignore_game_flags,
+					queried = 0, eligible = 0, ignored_game_flags = 0,
+					missing_entity = 0, missing_position = 0, checksum = 0,
+					geometry_checksum = 0,
+				}
+				local class_counts, entity_counts = {}, {}
+				if not target_map or type(target_map.MapForEach) ~= "function" then
+					stats.ok = false
+					stats.error = "MapForEach-unavailable"
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats, "error")
+					return records, stats
+				end
+				source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_BEGIN", stats)
+				local ok_scan, scan_error = pcall(target_map.MapForEach, target_map,
+					area, "CObject", enum_flags, function(obj)
+						stats.queried = stats.queried + 1
+						local game_flags = source_collision_call(obj, "GetGameFlags")
+						local ignored_flags = source_collision_call(obj, "GetGameFlags", ignore_game_flags)
+						local enum_value = source_collision_call(obj, "GetEnumFlags")
+						local entity = source_collision_call(obj, "GetEntity")
+						local state = source_collision_call(obj, "GetState")
+						local pos = source_collision_call(obj, "GetVisualPos")
+						if not pos then pos = source_collision_call(obj, "GetPos") end
+						local x, y, z = point_xyz(pos)
+						local axis = source_collision_call(obj, "GetVisualAxis")
+						if not axis then axis = source_collision_call(obj, "GetAxis") end
+						local angle = source_collision_call(obj, "GetVisualAngle")
+						if angle == nil then angle = source_collision_call(obj, "GetAngle") end
+						local scale = source_collision_call(obj, "GetVisualScale")
+						if scale == nil then scale = source_collision_call(obj, "GetScale") end
+						local mirrored = source_collision_call(obj, "GetMirrored")
+						local radius = source_collision_call(obj, "GetRadius")
+						local parent = source_collision_call(obj, "GetParent")
+						local class_name = tostring(obj and obj.class or "?")
+						entity = tostring(entity or "")
+						local ignored = type(ignored_flags) == "number" and ignored_flags ~= 0
+						local eligible = not ignored and entity ~= "" and x ~= nil and y ~= nil
+						if ignored then stats.ignored_game_flags = stats.ignored_game_flags + 1 end
+						if entity == "" then stats.missing_entity = stats.missing_entity + 1 end
+						if x == nil or y == nil then stats.missing_position = stats.missing_position + 1 end
+						if eligible then stats.eligible = stats.eligible + 1 end
+						class_counts[class_name] = (class_counts[class_name] or 0) + 1
+						entity_counts[entity ~= "" and entity or "<none>"] =
+							(entity_counts[entity ~= "" and entity or "<none>"] or 0) + 1
+						records[#records + 1] = {
+							obj = obj, class = class_name, entity = entity, state = state,
+							pos = pos, x = x, y = y, z = z, axis = axis, angle = angle,
+							scale = scale, mirrored = mirrored, radius = radius,
+							parent = parent, enum_flags = enum_value, game_flags = game_flags,
+							ignored_flags = ignored_flags, ignored = ignored, eligible = eligible,
+						}
+					end)
+				table.sort(records, function(a, b)
+					local ak = table.concat({ a.entity, tostring(a.x), tostring(a.y),
+						tostring(a.z), tostring(a.axis), tostring(a.angle), tostring(a.scale),
+						tostring(a.state), tostring(a.mirrored), a.class }, "|")
+					local bk = table.concat({ b.entity, tostring(b.x), tostring(b.y),
+						tostring(b.z), tostring(b.axis), tostring(b.angle), tostring(b.scale),
+						tostring(b.state), tostring(b.mirrored), b.class }, "|")
+					return ak < bk
+				end)
+				for i = 1, #records do
+					local record = records[i]
+					local signature = table.concat({ record.class, record.entity,
+						tostring(record.x), tostring(record.y), tostring(record.z), tostring(record.axis),
+						tostring(record.angle), tostring(record.scale), tostring(record.state),
+						tostring(record.mirrored), tostring(record.enum_flags),
+						tostring(record.game_flags), tostring(record.ignored) }, "|")
+					stats.checksum = source_collision_hash_text(stats.checksum, signature)
+					local geometry_signature = table.concat({ record.entity,
+						tostring(record.x), tostring(record.y), tostring(record.z), tostring(record.axis),
+						tostring(record.angle), tostring(record.scale), tostring(record.state),
+						tostring(record.mirrored), tostring(record.ignored) }, "|")
+					if record.eligible then
+						stats.geometry_checksum = source_collision_hash_text(
+							stats.geometry_checksum, geometry_signature)
+					end
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_OBJECT", {
+						label = stats.label, index = i, object = tostring(record.obj),
+						class = record.class, entity = record.entity, state = tostring(record.state),
+						x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
+						axis = tostring(record.axis), angle = tostring(record.angle),
+						scale = tostring(record.scale), mirrored = tostring(record.mirrored),
+						radius = tostring(record.radius), parent = tostring(record.parent),
+						enum_flags = tostring(record.enum_flags), game_flags = tostring(record.game_flags),
+						ignored_flags = tostring(record.ignored_flags), ignored = record.ignored,
+						eligible = record.eligible,
+					})
+				end
+				stats.ok = ok_scan
+				stats.error = ok_scan and "none" or tostring(scan_error)
+				stats.classes = source_collision_counts_text(class_counts)
+				stats.entities = source_collision_counts_text(entity_counts)
+				source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats,
+					ok_scan and nil or "error")
+				return records, stats
+			end
+
+			local function source_collision_proxy_cleanup(context)
+				if type(context) ~= "table" or context.cleaned then return true end
+				context.cleaned = true
+				local done_object = Global("DoneObject")
+				local cleanup_ok, cleanup_error = true, nil
+				for i = #context.proxies, 1, -1 do
+					local proxy = context.proxies[i]
+					if type(done_object) == "function" then
+						local ok, err = pcall(done_object, proxy)
+						if not ok then cleanup_ok, cleanup_error = false, err end
+					end
+				end
+				if context.suspended and context.sampler
+					and type(context.sampler.ResumePassEdits) == "function" then
+					local ok, err = pcall(context.sampler.ResumePassEdits, context.sampler,
+						"SBMNativeSamplerCollisionMirror")
+					if not ok then cleanup_ok, cleanup_error = false, err end
+				end
+				context.stats.cleanup_ok = cleanup_ok
+				context.stats.cleanup_error = cleanup_ok and "none" or tostring(cleanup_error)
+				context.stats.proxies_destroyed = #context.proxies
+				source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats,
+					cleanup_ok and nil or "error")
+				return cleanup_ok, cleanup_error
+			end
+
+			local function source_collision_proxy_install(destination, sampler, area,
+				enum_flags, ignore_game_flags)
+				local destination_records, destination_stats = source_collision_manifest(
+					destination, "destination-source-region", area, enum_flags, ignore_game_flags)
+				local sampler_records, sampler_stats = source_collision_manifest(
+					sampler, "sampler-before-mirror", area, enum_flags, ignore_game_flags)
+				local context = {
+					sampler = sampler, proxies = {}, disabled = {}, suspended = false,
+					stats = {
+						destination_queried = destination_stats.queried,
+						destination_eligible = destination_stats.eligible,
+						destination_checksum = destination_stats.checksum,
+						sampler_queried = sampler_stats.queried,
+						sampler_eligible = sampler_stats.eligible,
+						sampler_checksum = sampler_stats.checksum,
+						proxies_created = 0, proxy_failures = 0, no_entity = 0,
+						sampler_colliders_disabled = 0,
+					},
+				}
+				if not destination_stats.ok or not sampler_stats.ok then
+					return context, "collision-census-failed"
+				end
+				local g_classes = closure_global("g_Classes", Global("g_Classes"))
+				local proxy_class = type(g_classes) == "table"
+					and (g_classes.EntityChangeKeepsFlags or g_classes.Shapeshifter) or nil
+				if type(proxy_class) ~= "table" or type(proxy_class.new) ~= "function" then
+					return context, "collision-proxy-class-unavailable"
+				end
+				if type(sampler.SuspendPassEdits) == "function" then
+					local ok = pcall(sampler.SuspendPassEdits, sampler, "SBMNativeSamplerCollisionMirror")
+					context.suspended = ok
+				end
+				for i = 1, #sampler_records do
+					local record = sampler_records[i]
+					if record.obj and type(record.obj.ClearEnumFlags) == "function" then
+						local ok = pcall(record.obj.ClearEnumFlags, record.obj, enum_flags)
+						if ok then
+							context.disabled[#context.disabled + 1] = record.obj
+							context.stats.sampler_colliders_disabled =
+								context.stats.sampler_colliders_disabled + 1
+						end
+					end
+				end
+				for i = 1, #destination_records do
+					local record = destination_records[i]
+					if record.eligible then
+						local proxy
+						local ok_proxy, proxy_error = pcall(function()
+							proxy = proxy_class:new(nil, sampler)
+							if not proxy then error("new-returned-nil") end
+							if type(proxy.ChangeEntity) ~= "function" then error("ChangeEntity-unavailable") end
+							proxy:ChangeEntity(record.entity)
+							if record.state ~= nil and type(proxy.SetState) == "function" then
+								pcall(proxy.SetState, proxy, record.state)
+							end
+							if record.axis and type(proxy.SetAxisAngle) == "function"
+								and type(record.angle) == "number" then
+								proxy:SetAxisAngle(record.axis, record.angle)
+							elseif type(record.angle) == "number" and type(proxy.SetAngle) == "function" then
+								proxy:SetAngle(record.angle)
+							end
+							if type(record.scale) == "number" and type(proxy.SetScale) == "function" then
+								proxy:SetScale(record.scale)
+							end
+							if record.mirrored ~= nil and type(proxy.SetMirrored) == "function" then
+								proxy:SetMirrored(record.mirrored == true)
+							end
+							if type(proxy.GetEnumFlags) == "function"
+								and type(proxy.ClearEnumFlags) == "function" then
+								local flags = proxy:GetEnumFlags()
+								if type(flags) == "number" and flags ~= 0 then proxy:ClearEnumFlags(flags) end
+							end
+							if type(proxy.SetEnumFlags) ~= "function" then error("SetEnumFlags-unavailable") end
+							proxy:SetEnumFlags(enum_flags)
+							if type(proxy.SetPos) ~= "function" then error("SetPos-unavailable") end
+							proxy:SetPos(record.pos)
+						end)
+						if ok_proxy then
+							context.proxies[#context.proxies + 1] = proxy
+							context.stats.proxies_created = context.stats.proxies_created + 1
+							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXY", {
+								index = i, proxy = tostring(proxy), source = tostring(record.obj),
+								class = record.class, entity = record.entity,
+								x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
+								axis = tostring(record.axis), angle = tostring(record.angle),
+								scale = tostring(record.scale), state = tostring(record.state),
+							})
+						else
+							context.stats.proxy_failures = context.stats.proxy_failures + 1
+							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXY_FAILED", {
+								index = i, source = tostring(record.obj), class = record.class,
+								entity = record.entity, error = tostring(proxy_error),
+							}, "error")
+							local done_object = Global("DoneObject")
+							if proxy and type(done_object) == "function" then pcall(done_object, proxy) end
+						end
+					end
+				end
+				local _, sampler_after_stats = source_collision_manifest(
+					sampler, "sampler-after-mirror", area, enum_flags, ignore_game_flags)
+				context.stats.sampler_after_queried = sampler_after_stats.queried
+				context.stats.sampler_after_eligible = sampler_after_stats.eligible
+				context.stats.sampler_after_checksum = sampler_after_stats.checksum
+				context.stats.destination_geometry_checksum = destination_stats.geometry_checksum
+				context.stats.sampler_after_geometry_checksum = sampler_after_stats.geometry_checksum
+				context.stats.geometry_match = destination_stats.geometry_checksum
+					== sampler_after_stats.geometry_checksum
+				context.stats.exact_proxy_count = context.stats.proxies_created
+					== context.stats.destination_eligible
+					and sampler_after_stats.eligible == context.stats.destination_eligible
+				source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats,
+					context.stats.exact_proxy_count and context.stats.geometry_match and nil or "error")
+				if not context.stats.exact_proxy_count or not context.stats.geometry_match
+					or context.stats.proxy_failures > 0 then
+					return context, "collision-proxy-coverage-incomplete"
+				end
+				return context, nil
+			end
+
 			-- The stock Proc_ResolveBuildable calls MaskBuildableGrid before GetPlayableArea. Keep the
 			-- sampler's exact source grid in this transaction-local variable, while exposing a separately
 			-- padded grid whose dimensions match the destination backing to that unavoidable stock call.
@@ -3062,7 +3338,8 @@ local function PatchRandomMapGenerator()
 				source_mask_log("SOURCE_BUILDABLE_BRIDGE_BEGIN", stats)
 
 				local capacity_raw, source_raw, source_processed, destination_safe_processed
-				local direct_raw, direct_processed
+				local direct_raw, direct_processed, sampler_unmirrored_raw
+				local collision_context
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableRawGridBridge") end
@@ -3076,8 +3353,14 @@ local function PatchRandomMapGenerator()
 						direct_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 						direct_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					end
+					if use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_MIRROR", true) then
+						sampler_unmirrored_raw = closure_new_grid(
+							source_hex_w, source_hex_h, 16, unbuildable_z)
+					end
 					if not capacity_raw or not source_raw or not source_processed
-						or (diagnostics_enabled and (not direct_raw or not direct_processed)) then
+						or (diagnostics_enabled and (not direct_raw or not direct_processed))
+						or (use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_MIRROR", true)
+							and not sampler_unmirrored_raw) then
 						error("grid-allocation-failed")
 					end
 					stats.allocate_ms = now() - started
@@ -3142,12 +3425,68 @@ local function PatchRandomMapGenerator()
 						terrain_get_size_function = tostring(terrain_get_size),
 					})
 					local init_started = now()
+					if use_native_sampler and sampler_unmirrored_raw then
+						local unmirrored_started = now()
+						init_params.buildable_grid = sampler_unmirrored_raw
+						closure_init_buildable_grid(build_map, init_params)
+						stats.sampler_unmirrored_init_ms = now() - unmirrored_started
+						source_mask_log("SOURCE_BUILDABLE_SAMPLER_UNMIRRORED_INIT_END", stats)
+						source_buildable_trace("SOURCE_BUILDABLE_RAW_SAMPLER_UNMIRRORED",
+							sampler_unmirrored_raw, "buildable", stats)
+						local box_fn = closure_global("box", Global("box"))
+						if type(box_fn) ~= "function" then error("collision-mirror-box-unavailable") end
+						local source_area = box_fn(0, 0, source_world_w, source_world_h)
+						local mirror_started = now()
+						local mirror_error
+						collision_context, mirror_error = source_collision_proxy_install(
+							map, build_map, source_area, init_params.enum_flags,
+							init_params.ignore_game_flags)
+						stats.collision_mirror_install_ms = now() - mirror_started
+						stats.collision_mirror_error = tostring(mirror_error or "none")
+						if mirror_error then
+							local mirror_stats = collision_context and collision_context.stats or {}
+							source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_PARTIAL", {
+								error = tostring(mirror_error),
+								destination_eligible = tostring(mirror_stats.destination_eligible),
+								proxies_created = tostring(mirror_stats.proxies_created),
+								proxy_failures = tostring(mirror_stats.proxy_failures),
+								geometry_match = tostring(mirror_stats.geometry_match),
+							}, "warn")
+							if (tonumber(mirror_stats.destination_eligible) or 0) > 0
+								and (tonumber(mirror_stats.proxies_created) or 0) == 0 then
+								error("native sampler collision mirror: " .. tostring(mirror_error))
+							end
+						end
+					end
 					init_params.buildable_grid = capacity_raw
+					local primary_init_started = now()
 					closure_init_buildable_grid(build_map, init_params)
+					stats.primary_init_ms = now() - primary_init_started
 					stats.init_ms = now() - init_started
+					if collision_context then
+						local cleanup_ok, cleanup_error = source_collision_proxy_cleanup(collision_context)
+						collision_context = nil
+						if not cleanup_ok then
+							error("native sampler collision cleanup: " .. tostring(cleanup_error))
+						end
+					end
 					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_END", stats)
 					source_buildable_trace("SOURCE_BUILDABLE_RAW_CAPACITY_SOURCE_VIEW",
 						capacity_raw, "buildable", stats)
+					if sampler_unmirrored_raw then
+						local comparison = source_buildable_compare(
+							"sampler-collision-mirrored-vs-sampler-unmirrored-raw",
+							capacity_raw, sampler_unmirrored_raw,
+							source_hex_w, source_hex_h, unbuildable_z, {
+								stage = "raw", primary = "native-source-sampler-collision-mirrored",
+								shadow = "native-source-sampler-unmirrored",
+							})
+						stats.collision_mirror_exact_differences = comparison.exact_differences
+						stats.collision_mirror_classification_differences =
+							comparison.classification_differences
+						stats.collision_mirror_buildable_added = comparison.a_buildable_only
+						stats.collision_mirror_buildable_removed = comparison.b_buildable_only
+					end
 
 					local crop_started = now()
 					for y = 0, source_hex_h - 1 do
@@ -3272,6 +3611,14 @@ local function PatchRandomMapGenerator()
 							or "BuildableGrid.z_grid",
 					})
 				end)
+				if collision_context then
+					local cleanup_ok, cleanup_error = source_collision_proxy_cleanup(collision_context)
+					collision_context = nil
+					if bridge_ok and not cleanup_ok then
+						bridge_ok = false
+						bridge_err = "native sampler collision cleanup: " .. tostring(cleanup_error)
+					end
+				end
 				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableRawGridBridge") end
 				if capacity_raw then pcall(function() capacity_raw:free() end) end
 				if source_raw then pcall(function() source_raw:free() end) end
@@ -3281,6 +3628,9 @@ local function PatchRandomMapGenerator()
 				end
 				if direct_raw then pcall(function() direct_raw:free() end) end
 				if direct_processed then pcall(function() direct_processed:free() end) end
+				if sampler_unmirrored_raw then
+					pcall(function() sampler_unmirrored_raw:free() end)
+				end
 				stats.total_ms = now() - started
 				stats.ok = bridge_ok
 				stats.error = bridge_ok and "none" or tostring(bridge_err)

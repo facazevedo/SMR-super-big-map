@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 68: keep a destination-sized safety buildable grid for the
--- unavoidable stock mask call while routing the authoritative mask through the native sampler.
-SuperBigMap.GENERATOR_PATCH_VERSION = 68
+-- (sbm_map_generation). Bumped to 69: mirror source-region collision entities into the native
+-- sampler for InitBuildableGrid and log all contributing object/native-grid differences.
+SuperBigMap.GENERATOR_PATCH_VERSION = 69

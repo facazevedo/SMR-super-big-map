@@ -566,6 +566,10 @@ config.GenerateVanillaSourceOnTemporaryBacking = false
 -- ignores Lua-visible dimensions (height sampling, buildable construction, and MaskBuildableGrid).
 -- The sampler never runs RandomMapGenerate and never receives or transfers generated objects.
 config.UseNativeHeightSamplerBacking = true
+-- Mirror only collision-bearing source objects as lightweight entity proxies while the native
+-- sampler builds its raw hex grid. This supplies InitBuildableGrid's non-terrain input without
+-- running a second RandomMapGenerate or migrating gameplay objects.
+config.UseNativeSamplerCollisionMirror = true
 -- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
 -- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
 -- replacement rather than an in-place terrain setter.
@@ -1201,6 +1205,8 @@ C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
 	and as_bool(config.GenerateVanillaSourceOnTemporaryBacking)
 C.USE_NATIVE_HEIGHT_SAMPLER_BACKING = expansion_step_01
 	and as_bool(config.UseNativeHeightSamplerBacking)
+C.USE_NATIVE_SAMPLER_COLLISION_MIRROR = C.USE_NATIVE_HEIGHT_SAMPLER_BACKING
+	and as_bool(config.UseNativeSamplerCollisionMirror)
 C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
 	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
 C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
