@@ -3058,6 +3058,7 @@ local function PatchRandomMapGenerator()
 						sampler_checksum = sampler_stats.checksum,
 						proxies_created = 0, proxy_failures = 0, no_entity = 0,
 						exact_class_proxies = 0, generic_class_proxies = 0,
+						game_flags_synced = 0, game_flag_mismatches_before = 0,
 						sampler_colliders_disabled = 0,
 					},
 				}
@@ -3095,6 +3096,8 @@ local function PatchRandomMapGenerator()
 						local using_exact_class = type(record_proxy_class) == "table"
 							and type(record_proxy_class.new) == "function"
 						local proxy_class = using_exact_class and record_proxy_class or generic_proxy_class
+						local proxy_game_flags_before, proxy_game_flags_after
+						local proxy_game_flags_added, proxy_game_flags_removed = 0, 0
 						local ok_proxy, proxy_error = pcall(function()
 							proxy = proxy_class:new(nil, sampler)
 							if not proxy then error("new-returned-nil") end
@@ -3118,17 +3121,48 @@ local function PatchRandomMapGenerator()
 							if record.mirrored ~= nil and type(proxy.SetMirrored) == "function" then
 								proxy:SetMirrored(record.mirrored == true)
 							end
-							-- Never clear the complete flag word: it contains engine-owned efAlive,
-							-- which is immutable while the proxy exists. Extra default flags are harmless
-							-- because InitBuildableGrid queries specifically for efCollision.
+							-- Never clear the complete enum word: it contains engine-owned efAlive,
+							-- which is immutable while the proxy exists. InitBuildableGrid queries
+							-- specifically for efCollision, so setting that bit is sufficient.
 							if type(proxy.SetEnumFlags) ~= "function" then error("SetEnumFlags-unavailable") end
 							proxy:SetEnumFlags(enum_flags)
+							-- Exact-class construction and CopyProperties preserve collision geometry,
+							-- but not game flags. Synchronize the full live source mask generically; no
+							-- flag value, class, coordinate, or expected output participates.
+							if type(record.game_flags) == "number" then
+								if type(proxy.GetGameFlags) ~= "function"
+									or type(proxy.SetGameFlags) ~= "function"
+									or type(proxy.ClearGameFlags) ~= "function" then
+									error("game-flag-sync-unavailable")
+								end
+								proxy_game_flags_before = proxy:GetGameFlags()
+								proxy_game_flags_added = record.game_flags & (~proxy_game_flags_before)
+								proxy_game_flags_removed = proxy_game_flags_before & (~record.game_flags)
+								if proxy_game_flags_removed ~= 0 then
+									proxy:ClearGameFlags(proxy_game_flags_removed)
+								end
+								if proxy_game_flags_added ~= 0 then
+									proxy:SetGameFlags(proxy_game_flags_added)
+								end
+								proxy_game_flags_after = proxy:GetGameFlags()
+								if proxy_game_flags_after ~= record.game_flags then
+									error(string.format("game-flag-sync-mismatch:%s!=%s",
+										tostring(proxy_game_flags_after), tostring(record.game_flags)))
+								end
+							end
 							if type(proxy.SetPos) ~= "function" then error("SetPos-unavailable") end
 							proxy:SetPos(record.pos)
 						end)
 						if ok_proxy then
 							context.proxies[#context.proxies + 1] = proxy
 							context.stats.proxies_created = context.stats.proxies_created + 1
+							if type(record.game_flags) == "number" then
+								context.stats.game_flags_synced = context.stats.game_flags_synced + 1
+								if proxy_game_flags_before ~= record.game_flags then
+									context.stats.game_flag_mismatches_before =
+										context.stats.game_flag_mismatches_before + 1
+								end
+							end
 							if using_exact_class then
 								context.stats.exact_class_proxies = context.stats.exact_class_proxies + 1
 							else
@@ -3142,6 +3176,11 @@ local function PatchRandomMapGenerator()
 								x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
 								axis = tostring(record.axis), angle = tostring(record.angle),
 								scale = tostring(record.scale), state = tostring(record.state),
+								source_game_flags = tostring(record.game_flags),
+								proxy_game_flags_before = tostring(proxy_game_flags_before),
+								proxy_game_flags_after = tostring(proxy_game_flags_after),
+								game_flags_added = tostring(proxy_game_flags_added),
+								game_flags_removed = tostring(proxy_game_flags_removed),
 							})
 						else
 							context.stats.proxy_failures = context.stats.proxy_failures + 1
@@ -3160,6 +3199,8 @@ local function PatchRandomMapGenerator()
 				context.stats.sampler_after_queried = sampler_after_stats.queried
 				context.stats.sampler_after_eligible = sampler_after_stats.eligible
 				context.stats.sampler_after_checksum = sampler_after_stats.checksum
+				context.stats.state_match = destination_stats.checksum
+					== sampler_after_stats.checksum
 				context.stats.destination_geometry_checksum = destination_stats.geometry_checksum
 				context.stats.sampler_after_geometry_checksum = sampler_after_stats.geometry_checksum
 				context.stats.geometry_match = destination_stats.geometry_checksum
@@ -3167,13 +3208,14 @@ local function PatchRandomMapGenerator()
 				context.stats.exact_proxy_count = context.stats.proxies_created
 					== context.stats.destination_eligible
 					and sampler_after_stats.eligible == context.stats.destination_eligible
-				if context.stats.exact_proxy_count and context.stats.geometry_match then
+				if context.stats.exact_proxy_count and context.stats.geometry_match
+					and context.stats.state_match then
 					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats)
 				else
 					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats, "error")
 				end
 				if not context.stats.exact_proxy_count or not context.stats.geometry_match
-					or context.stats.proxy_failures > 0 then
+					or not context.stats.state_match or context.stats.proxy_failures > 0 then
 					return context, "collision-proxy-coverage-incomplete"
 				end
 				return context, nil
@@ -6416,9 +6458,6 @@ local function PatchRandomMapGenerator()
 			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
 			local original_terrain_set_type_grid = terrain_api and terrain_api.SetTypeGrid
 			local original_terrain_get_type_grid = terrain_api and terrain_api.GetTypeGrid
-			local original_terrain_invalidate_height = terrain_api and terrain_api.InvalidateHeight
-			local original_terrain_invalidate_type = terrain_api and terrain_api.InvalidateType
-			local original_terrain_rebuild_passability = terrain_api and terrain_api.RebuildPassability
 			map.SuperBigMapNativeSourceSampler = nil
 			map.SuperBigMapSyncNativeSourceSampler = nil
 			map.SuperBigMapNativeSourceSamplerSyncState = nil
@@ -6552,74 +6591,6 @@ local function PatchRandomMapGenerator()
 							end
 							height_bridge.type_full_width = type_full_width
 							height_bridge.type_full_height = type_full_height
-
-							-- SetHeightGrid/SetTypeGrid make the exported grids identical, but vanilla
-							-- performs a second, essential state transition after terrain rasterization:
-							-- invalidate live height/type surfaces and rebuild terrain passability before
-							-- BuildableGrid:Build. Replaying that native sequence on the true 6144 sampler
-							-- derives every cache from the current scenario; no expected count, hash, seed,
-							-- coordinate, or compensating buildable cell participates in the correction.
-							if type(original_terrain_invalidate_height) ~= "function"
-								or type(original_terrain_invalidate_type) ~= "function"
-								or type(original_terrain_rebuild_passability) ~= "function" then
-								error("native source sampler terrain-cache API unavailable")
-							end
-							local cache_started = MigrationTicks()
-							local xxhash_fn = Global("xxhash")
-							local before_height_hash, before_type_hash
-							if type(xxhash_fn) == "function" then
-								before_height_hash = xxhash_fn(original_terrain_get_height_grid(height_sampler))
-								before_type_hash = xxhash_fn(original_terrain_get_type_grid(height_sampler))
-							end
-							local invalidate_height_ok, invalidate_height_result =
-								pcall(original_terrain_invalidate_height, height_sampler)
-							if not invalidate_height_ok then
-								error("native source sampler InvalidateHeight: "
-									.. tostring(invalidate_height_result))
-							end
-							local invalidate_type_ok, invalidate_type_result =
-								pcall(original_terrain_invalidate_type, height_sampler)
-							if not invalidate_type_ok then
-								error("native source sampler InvalidateType: "
-									.. tostring(invalidate_type_result))
-							end
-							local passability_ok, passability_result =
-								pcall(original_terrain_rebuild_passability, height_sampler)
-							if not passability_ok then
-								error("native source sampler RebuildPassability: "
-									.. tostring(passability_result))
-							end
-							local after_height_hash, after_type_hash
-							if type(xxhash_fn) == "function" then
-								after_height_hash = xxhash_fn(original_terrain_get_height_grid(height_sampler))
-								after_type_hash = xxhash_fn(original_terrain_get_type_grid(height_sampler))
-							end
-							height_bridge.terrain_cache_refreshes =
-								(tonumber(height_bridge.terrain_cache_refreshes) or 0) + 1
-							local cache_elapsed = MigrationTicks() - cache_started
-							height_bridge.terrain_cache_refresh_ms =
-								(tonumber(height_bridge.terrain_cache_refresh_ms) or 0) + cache_elapsed
-							height_bridge.terrain_cache_height_hash_match = before_height_hash == nil
-								or before_height_hash == after_height_hash
-							height_bridge.terrain_cache_type_hash_match = before_type_hash == nil
-								or before_type_hash == after_type_hash
-							BackingPromotionLog("NATIVE_SOURCE_TERRAIN_CACHE_REFRESH", {
-								refresh = height_bridge.terrain_cache_refreshes,
-								reason = tostring(reason), elapsed_ms = cache_elapsed,
-								total_ms = height_bridge.terrain_cache_refresh_ms,
-								invalidate_height_ok = invalidate_height_ok,
-								invalidate_height_result = tostring(invalidate_height_result),
-								invalidate_type_ok = invalidate_type_ok,
-								invalidate_type_result = tostring(invalidate_type_result),
-								passability_ok = passability_ok,
-								passability_result = tostring(passability_result),
-								before_height_hash = tostring(before_height_hash),
-								after_height_hash = tostring(after_height_hash),
-								height_hash_match = height_bridge.terrain_cache_height_hash_match,
-								before_type_hash = tostring(before_type_hash),
-								after_type_hash = tostring(after_type_hash),
-								type_hash_match = height_bridge.terrain_cache_type_hash_match,
-							})
 
 							-- Compare the exact fine-resolution terrain consumed by InitBuildableGrid,
 							-- not only the later 768x768 playable-height derivative. The Step-01-off
