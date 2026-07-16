@@ -2154,6 +2154,14 @@ local function PatchRandomMapGenerator()
 					checksum_a = 0, checksum_b = 0,
 				}
 				source_mask_log("SOURCE_MASK_NATIVE_BRIDGE_BEGIN", stats)
+				local spread_diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+				if spread_diagnostics and type(spread_diagnostics.TraceGridForensics) == "function" then
+					pcall(spread_diagnostics.TraceGridForensics, map,
+						"SOURCE_MASK_BRIDGE_SOURCE_BUILDABLE", z_grid, "buildable", {
+							bridge_grid = stats.grid, bridge_buildable = stats.buildable,
+							source_world = stats.source_world, expanded_world = stats.expanded_world,
+						})
+				end
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
 				local ticks = Global("GetPreciseTicks")
@@ -2295,6 +2303,13 @@ local function PatchRandomMapGenerator()
 					local repaired_mask, repair_reason = rebuild_source_invalid_mask(args[3])
 					if repaired_mask then
 						args[3] = repaired_mask
+						local spread_diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+						if spread_diagnostics and type(spread_diagnostics.TraceGridForensics) == "function" then
+							pcall(spread_diagnostics.TraceGridForensics, map,
+								"SOURCE_MASK_REPAIRED_PLAYABLE_INPUT", repaired_mask, "zero", {
+									repair_reason = "native-bridge", pass_border = tostring(args[2]),
+								})
+						end
 					elseif repair_reason ~= "mode-not-eligible" and repair_reason ~= "map-not-expanded" then
 						source_mask_log("SOURCE_MASK_REPAIR_SKIPPED", {
 							map = tostring(map and map.name), reason = tostring(repair_reason),

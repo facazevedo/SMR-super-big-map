@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 5
+local PATCH_VERSION = 6
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -678,6 +678,7 @@ local function GridFullAudit(run, label, grid, extra, options)
 			minimum = nil, maximum = nil, sum = 0,
 			zero_min_x = nil, zero_min_y = nil, zero_max_x = nil, zero_max_y = nil,
 			nonzero_min_x = nil, nonzero_min_y = nil, nonzero_max_x = nil, nonzero_max_y = nil,
+			changed_min_x = nil, changed_min_y = nil, changed_max_x = nil, changed_max_y = nil,
 			blocks = {}, histogram = options.histogram == true and {} or nil,
 			values = options.capture_values == true and {} or nil,
 			changed = 0, unchanged = 0, zero_to_one = 0, one_to_zero = 0,
@@ -752,6 +753,10 @@ local function GridFullAudit(run, label, grid, extra, options)
 					else
 						result.changed = result.changed + 1
 						block.changed = block.changed + 1
+						result.changed_min_x = result.changed_min_x == nil and x or math.min(result.changed_min_x, x)
+						result.changed_min_y = result.changed_min_y == nil and y or math.min(result.changed_min_y, y)
+						result.changed_max_x = result.changed_max_x == nil and x or math.max(result.changed_max_x, x)
+						result.changed_max_y = result.changed_max_y == nil and y or math.max(result.changed_max_y, y)
 						if before == 0 and value == 1 then
 							result.zero_to_one = result.zero_to_one + 1
 							block.zero_to_one = block.zero_to_one + 1
@@ -793,6 +798,8 @@ local function GridFullAudit(run, label, grid, extra, options)
 			stats.zero_max_x, stats.zero_max_y),
 		nonzero_bbox = bbox(stats.nonzero_min_x, stats.nonzero_min_y,
 			stats.nonzero_max_x, stats.nonzero_max_y),
+		changed_bbox = bbox(stats.changed_min_x, stats.changed_min_y,
+			stats.changed_max_x, stats.changed_max_y),
 		changed_cells = stats.changed, unchanged_cells = stats.unchanged,
 		zero_to_one = stats.zero_to_one, one_to_zero = stats.one_to_zero,
 		ms = elapsed,
@@ -864,6 +871,97 @@ local function GridFullAudit(run, label, grid, extra, options)
 	return stats
 end
 
+-- Lossless spatial dump for a binary classification derived from a native grid. Each row is
+-- encoded as hexadecimal bits (four x-cells per digit, most-significant bit first). Unlike the
+-- aggregate/full-grid hashes above, two logs can therefore be decoded and differenced later to
+-- recover every mismatching coordinate without retaining engine grid userdata between runs.
+local function GridPredicateBitmapAudit(run, label, grid, predicate_name, predicate, extra)
+	if not Enabled() then return nil end
+	local ok_size, width, height = pcall(function() return grid:size() end)
+	height = height or width
+	local get_type = "unavailable"
+	pcall(function() get_type = type(grid.get) end)
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width <= 0 or height <= 0 or get_type ~= "function" or type(predicate) ~= "function" then
+		Log("GRID_PREDICATE_BITMAP_UNAVAILABLE", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			predicate = tostring(predicate_name), grid = tostring(grid), size_ok = Bool(ok_size),
+			width = tostring(width), height = tostring(height), get_type = get_type,
+			predicate_type = type(predicate),
+		}, extra), "warn")
+		return nil
+	end
+
+	Log("GRID_PREDICATE_BITMAP_BEGIN", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		predicate = tostring(predicate_name), grid = tostring(grid), width = width, height = height,
+		cells = width * height, encoding = "hex-msb-first-4-x-cells-per-digit",
+		valid_bits_last_digit = width % 4 == 0 and 4 or width % 4,
+	}, extra))
+
+	local MOD = 2147483647
+	local hex_digits = "0123456789ABCDEF"
+	local checksum_a, checksum_b, active_cells = 0, 0, 0
+	local ok_scan, scan_error = pcall(function()
+		local index = 0
+		for y = 0, height - 1 do
+			local digits = {}
+			local nibble, nibble_bits, row_active = 0, 0, 0
+			local row_checksum_a, row_checksum_b = 0, 0
+			for x = 0, width - 1 do
+				index = index + 1
+				local value = grid:get(x, y)
+				local active = predicate(value, x, y) == true
+				local bit = active and 1 or 0
+				if active then
+					active_cells = active_cells + 1
+					row_active = row_active + 1
+				end
+				nibble = nibble * 2 + bit
+				nibble_bits = nibble_bits + 1
+				checksum_a = (checksum_a * 65599 + bit + index * 97) % MOD
+				checksum_b = (checksum_b + bit * ((index % 104729) * 2 + 1)) % MOD
+				row_checksum_a = (row_checksum_a * 65599 + bit + (x + 1) * 97) % MOD
+				row_checksum_b = (row_checksum_b + bit * (((x + 1) % 104729) * 2 + 1)) % MOD
+				if nibble_bits == 4 then
+					digits[#digits + 1] = string.sub(hex_digits, nibble + 1, nibble + 1)
+					nibble, nibble_bits = 0, 0
+				end
+			end
+			if nibble_bits > 0 then
+				nibble = nibble * (2 ^ (4 - nibble_bits))
+				digits[#digits + 1] = string.sub(hex_digits, nibble + 1, nibble + 1)
+			end
+			Log("GRID_PREDICATE_BITMAP_ROW", {
+				run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+				predicate = tostring(predicate_name), y = y, active_cells = row_active,
+				row_checksum_a = row_checksum_a, row_checksum_b = row_checksum_b,
+				hex_bits = table.concat(digits),
+			})
+		end
+	end)
+	if not ok_scan then
+		Log("GRID_PREDICATE_BITMAP_FAILED", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			predicate = tostring(predicate_name), error = tostring(scan_error),
+		}, extra), "warn")
+		return nil
+	end
+	local stats = {
+		label = tostring(label), predicate = tostring(predicate_name), width = width, height = height,
+		cells = width * height, active_cells = active_cells,
+		inactive_cells = width * height - active_cells,
+		checksum_a = checksum_a, checksum_b = checksum_b,
+	}
+	Log("GRID_PREDICATE_BITMAP_END", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		predicate = tostring(predicate_name), width = width, height = height, cells = width * height,
+		active_cells = active_cells, inactive_cells = width * height - active_cells,
+		checksum_a = checksum_a, checksum_b = checksum_b,
+	}, extra))
+	return stats
+end
+
 local function NativeMapExtentFields(map, z_grid, mask)
 	local buildable = map and map.buildable
 	local fields = {
@@ -912,13 +1010,40 @@ local function BuildableState(run, map, phase, extra)
 	Log("BUILDABLE_STATE", fields)
 	if z_grid then
 		local label = tostring(phase):gsub("[^%w]+", "_"):upper()
-		GridAudit(run, "BUILDABLE_STATE_" .. label, z_grid, {
+		local audit_extra = {
 			phase = tostring(phase), buildable = tostring(buildable),
 			map_width_field = tostring(map and map.Width),
 			map_height_field = tostring(map and map.Height),
 			map_hex_width_field = tostring(map and map.hex_width),
 			map_hex_height_field = tostring(map and map.hex_height),
-		})
+		}
+		GridAudit(run, "BUILDABLE_STATE_" .. label, z_grid, audit_extra)
+		-- These are the two sides of the native ResolveBuildable transaction. Exhaustively hash
+		-- the value grid and emit a lossless buildable/not-buildable bitmap at both boundaries.
+		if phase == "proc-start-before-ResolveBuildable"
+			or phase == "proc-end-before-ResolveBuildable-hook" then
+			local full_options = { histogram = true, log_blocks = true }
+			if phase == "proc-start-before-ResolveBuildable" then
+				full_options.capture_values = true
+			elseif run and run.resolve_buildable_before then
+				local before = run.resolve_buildable_before
+				local ok_size, width, height = pcall(function() return z_grid:size() end)
+				height = height or width
+				if ok_size and width == before.width and height == before.height then
+					full_options.compare = before
+				end
+			end
+			local full_stats = GridFullAudit(run, "BUILDABLE_FORENSIC_FULL_" .. label,
+				z_grid, audit_extra, full_options)
+			if phase == "proc-start-before-ResolveBuildable" and run then
+				run.resolve_buildable_before = full_stats
+			elseif phase == "proc-end-before-ResolveBuildable-hook" and run then
+				if run.resolve_buildable_before then run.resolve_buildable_before.values = nil end
+				run.resolve_buildable_before = nil
+			end
+			GridPredicateBitmapAudit(run, "BUILDABLE_FORENSIC_BITMAP_" .. label, z_grid,
+				"value~=65535", function(value) return value ~= 65535 end, audit_extra)
+		end
 	end
 	return true
 end
@@ -974,6 +1099,38 @@ end
 local Diagnostics = {}
 Diagnostics.Snapshot = Snapshot
 Diagnostics.TraceBuildableState = BuildableState
+
+-- Public bridge for the expansion wrapper to expose grids which only exist inside its private
+-- source-sized transaction (notably the repaired mask after it replaces the generator argument).
+-- The classification name is intentionally finite so callers cannot inject behavior into this
+-- observational module.
+function Diagnostics.TraceGridForensics(map, label, grid, classification, extra)
+	if not Enabled() then return false end
+	local run = map and RunForMap(map) or State.enrichment_spread_active_do_generate_run
+	local predicate_name, predicate
+	if classification == "zero" then
+		predicate_name = "value==0"
+		predicate = function(value) return value == 0 end
+	elseif classification == "nonzero" then
+		predicate_name = "value~=0"
+		predicate = function(value) return value ~= 0 end
+	elseif classification == "buildable" then
+		predicate_name = "value~=65535"
+		predicate = function(value) return value ~= 65535 end
+	else
+		Log("GRID_FORENSICS_CLASSIFICATION_UNSUPPORTED", {
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			classification = tostring(classification),
+		}, "warn")
+		return false
+	end
+	GridFullAudit(run, tostring(label) .. "_FULL", grid, extra, {
+		histogram = true, log_blocks = true,
+	})
+	GridPredicateBitmapAudit(run, tostring(label) .. "_BITMAP", grid,
+		predicate_name, predicate, extra)
+	return true
+end
 
 function Diagnostics.TraceGeneratorBoundary(generator, map, phase, extra)
 	if not Enabled() then return false end
@@ -1182,6 +1339,12 @@ function Diagnostics.PatchGenerator(reason)
 					"MASK_BUILDABLE_Z_GRID_" .. tostring(call_index), z_grid, extra, {
 						histogram = false, log_blocks = true,
 					})
+				GridPredicateBitmapAudit(run,
+					"MASK_BUILDABLE_Z_GRID_BITMAP_" .. tostring(call_index), z_grid,
+					"value~=65535", function(value) return value ~= 65535 end, extra)
+				GridPredicateBitmapAudit(run,
+					"MASK_BUILDABLE_INVALID_BEFORE_BITMAP_" .. tostring(call_index), invalid_mask,
+					"value==0", function(value) return value == 0 end, extra)
 				local mask_results = Pack(pcall(original_mask_buildable,
 					target_map, z_grid, invalid_mask, ...))
 				local after
@@ -1190,6 +1353,9 @@ function Diagnostics.PatchGenerator(reason)
 						"MASK_BUILDABLE_INVALID_AFTER_" .. tostring(call_index), invalid_mask, extra, {
 							histogram = true, compare = before, log_blocks = true,
 						})
+					GridPredicateBitmapAudit(run,
+						"MASK_BUILDABLE_INVALID_AFTER_BITMAP_" .. tostring(call_index), invalid_mask,
+						"value==0", function(value) return value == 0 end, extra)
 				end
 				if before then before.values = nil end
 				Log("MASK_BUILDABLE_END", Merge({
@@ -1336,6 +1502,13 @@ function Diagnostics.PatchGenerator(reason)
 		GridAudit(run, "ON_GENERATE_INPUT_GEN_ZONE", env.gen_zone, {
 			gen_area_unscaled = tostring(env.gen_area_unscaled),
 		})
+		GridFullAudit(run, "ON_GENERATE_INPUT_GEN_ZONE_FULL", env.gen_zone, {
+			gen_area_unscaled = tostring(env.gen_area_unscaled),
+		}, { histogram = true, log_blocks = true })
+		GridPredicateBitmapAudit(run, "ON_GENERATE_INPUT_GEN_ZONE_BITMAP", env.gen_zone,
+			"value~=0", function(value) return value ~= 0 end, {
+				gen_area_unscaled = tostring(env.gen_area_unscaled),
+			})
 		GridAudit(run, "ON_GENERATE_INPUT_PLAY_ZONE", env.play_zone)
 		GridAudit(run, "ON_GENERATE_INPUT_TYPE_GRID", env.type_grid)
 		GridAudit(run, "ON_GENERATE_INPUT_BUILDABLE", map and map.buildable and map.buildable.z_grid)
@@ -1363,6 +1536,12 @@ function Diagnostics.PatchGenerator(reason)
 					"MASK_BUILDABLE_Z_GRID_" .. tostring(call_index), z_grid, extra, {
 						histogram = false, log_blocks = true,
 					})
+				GridPredicateBitmapAudit(run,
+					"MASK_BUILDABLE_Z_GRID_BITMAP_" .. tostring(call_index), z_grid,
+					"value~=65535", function(value) return value ~= 65535 end, extra)
+				GridPredicateBitmapAudit(run,
+					"MASK_BUILDABLE_INVALID_BEFORE_BITMAP_" .. tostring(call_index), invalid_mask,
+					"value==0", function(value) return value == 0 end, extra)
 				local mask_results = Pack(pcall(saved_env_mask_buildable,
 					target_map, z_grid, invalid_mask, ...))
 				local after
@@ -1371,6 +1550,9 @@ function Diagnostics.PatchGenerator(reason)
 						"MASK_BUILDABLE_INVALID_AFTER_" .. tostring(call_index), invalid_mask, extra, {
 							histogram = true, compare = before, log_blocks = true,
 						})
+					GridPredicateBitmapAudit(run,
+						"MASK_BUILDABLE_INVALID_AFTER_BITMAP_" .. tostring(call_index), invalid_mask,
+						"value==0", function(value) return value == 0 end, extra)
 				end
 				if before then before.values = nil end
 				BuildableState(run, target_map, "env-MaskBuildableGrid-after-" .. tostring(call_index), extra)
@@ -1486,6 +1668,9 @@ function Diagnostics.PatchGenerator(reason)
 					"PLAYABLE_INVALID_FULL_" .. tostring(call_index), args[3], full_extra, {
 						histogram = true, log_blocks = true,
 					})
+				GridPredicateBitmapAudit(run,
+					"PLAYABLE_INVALID_BITMAP_" .. tostring(call_index), args[3],
+					"value==0", function(value) return value == 0 end, full_extra)
 				Log("PLAYABLE_AREA_NATIVE_BEGIN", {
 					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
 					args = DescribePacked(args), pass_border = tostring(args[2]),
@@ -1505,6 +1690,11 @@ function Diagnostics.PatchGenerator(reason)
 					}, full_extra), {
 						histogram = true, log_blocks = true,
 					})
+				GridPredicateBitmapAudit(run,
+					"PLAYABLE_RESULT_BITMAP_" .. tostring(call_index), results[2],
+					"value~=0", function(value) return value ~= 0 end, Merge({
+						playable_cells = tostring(results[1]),
+					}, full_extra))
 				local pass_border = tonumber(args[2]) or 0
 				local work_step = tonumber(env.work_step) or 0
 				local border_cells = work_step > 0 and math.floor(pass_border / work_step + 0.5) or 0
