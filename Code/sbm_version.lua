@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 56: bridge source buildability through native raw-grid
--- initialization, a source crop/border, and native connected-area processing.
-SuperBigMap.GENERATOR_PATCH_VERSION = 56
+-- (sbm_map_generation). Bumped to 57: intercept the public BuildableGrid.Build dispatch so
+-- the source raw-grid bridge works when retail Lua hides the generator function environment.
+SuperBigMap.GENERATOR_PATCH_VERSION = 57

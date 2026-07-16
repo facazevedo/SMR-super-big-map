@@ -1642,7 +1642,9 @@ local function PatchRandomMapGenerator()
 			local closure_process_buildable_grid = closure_global("ProcessBuildableGrid", Global("ProcessBuildableGrid"))
 			local closure_hex_to_world = closure_global("HexToWorld", Global("HexToWorld"))
 			local closure_storage_to_hex = closure_global("StorageToHex", Global("StorageToHex"))
-			local saved_rebuild_buildable_grid = closure_global("RebuildBuildableGrid", Global("RebuildBuildableGrid"))
+			local buildable_grid_class = closure_global("BuildableGrid", Global("BuildableGrid"))
+			local saved_buildable_grid_build = type(buildable_grid_class) == "table"
+				and buildable_grid_class.Build or nil
 			local rebuild_buildable_grid_wrapper
 			local rebuild_buildable_grid_installed = false
 			local rebuild_buildable_grid_had_raw = false
@@ -4174,9 +4176,11 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			-- Install the raw-grid bridge at the exact stock global lookup used by
-			-- Proc_ResolveBuildable. This is deliberately scoped to this synchronous
-			-- OnGenerateLogic call and restored immediately afterward, including errors.
+			-- Stock Proc_ResolveBuildable calls private RebuildBuildableGrid, which then dynamically
+			-- dispatches map.buildable:Build. Retail builds expose no getfenv/debug API, so the private
+			-- global lookup cannot be replaced reliably. Intercept the public BuildableGrid method one
+			-- call lower instead. The hook is scoped to this synchronous OnGenerateLogic transaction and
+			-- restored immediately afterward, including errors.
 			local desired_w = tonumber(map and map.SuperBigMapDesiredWidthTiles)
 			local desired_h = tonumber(map and map.SuperBigMapDesiredHeightTiles)
 			local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
@@ -4186,11 +4190,16 @@ local function PatchRandomMapGenerator()
 				and cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and desired_w and desired_h and generator_w and generator_h
 				and desired_w > generator_w and desired_h > generator_h
-			rebuild_buildable_grid_wrapper = function(target_map, ...)
+			rebuild_buildable_grid_wrapper = function(buildable, target_map, width, height, map_data, ...)
 				rebuild_buildable_grid_calls = rebuild_buildable_grid_calls + 1
 				source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_BEGIN", {
 					call = rebuild_buildable_grid_calls,
+					buildable = tostring(buildable),
 					target = tostring(target_map), target_is_generation_map = target_map == map,
+					target_buildable_matches = target_map and target_map.buildable == buildable,
+					requested_hex = tostring(width) .. "x" .. tostring(height),
+					requested_mapdata_tiles = tostring(map_data and map_data.Width)
+						.. "x" .. tostring(map_data and map_data.Height),
 					target_world = tostring(target_map and target_map.Width)
 						.. "x" .. tostring(target_map and target_map.Height),
 					target_hex = tostring(target_map and target_map.hex_width)
@@ -4211,10 +4220,11 @@ local function PatchRandomMapGenerator()
 				if bridge_reason == "mode-not-eligible" or bridge_reason == "map-not-expanded" then
 					source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_FALLBACK", {
 						call = rebuild_buildable_grid_calls, reason = tostring(bridge_reason),
-						native = tostring(saved_rebuild_buildable_grid),
+						native = tostring(saved_buildable_grid_build),
 					}, "warn")
-					if type(saved_rebuild_buildable_grid) == "function" then
-						return saved_rebuild_buildable_grid(target_map, ...)
+					if type(saved_buildable_grid_build) == "function" then
+						return saved_buildable_grid_build(buildable, target_map,
+							width, height, map_data, ...)
 					end
 				end
 				local failure = "source buildable raw-grid bridge failed before vanilla mask/playable "
@@ -4226,15 +4236,14 @@ local function PatchRandomMapGenerator()
 				error(failure)
 			end
 
-			if rebuild_buildable_grid_required and type(generator_closure_env) == "table"
-				and type(saved_rebuild_buildable_grid) == "function" then
-				rebuild_buildable_grid_raw = rawget(generator_closure_env, "RebuildBuildableGrid")
+			if rebuild_buildable_grid_required and type(buildable_grid_class) == "table"
+				and type(saved_buildable_grid_build) == "function" then
+				rebuild_buildable_grid_raw = rawget(buildable_grid_class, "Build")
 				rebuild_buildable_grid_had_raw = rebuild_buildable_grid_raw ~= nil
-				local ok_install = pcall(rawset, generator_closure_env,
-					"RebuildBuildableGrid", rebuild_buildable_grid_wrapper)
+				local ok_install = pcall(rawset, buildable_grid_class,
+					"Build", rebuild_buildable_grid_wrapper)
 				rebuild_buildable_grid_installed = ok_install
-					and rawget(generator_closure_env, "RebuildBuildableGrid")
-						== rebuild_buildable_grid_wrapper
+					and rawget(buildable_grid_class, "Build") == rebuild_buildable_grid_wrapper
 			end
 			source_mask_log("SOURCE_BUILDABLE_BRIDGE_HOOK_DECISION", {
 				required = rebuild_buildable_grid_required and true or false,
@@ -4242,9 +4251,11 @@ local function PatchRandomMapGenerator()
 				surface = not is_underground,
 				desired_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
 				generator_tiles = tostring(generator_w) .. "x" .. tostring(generator_h),
+				hook_target = "BuildableGrid.Build",
+				buildable_grid_class = tostring(buildable_grid_class),
 				environment = tostring(generator_closure_env),
 				environment_source = tostring(generator_closure_env_source),
-				native = tostring(saved_rebuild_buildable_grid),
+				native = tostring(saved_buildable_grid_build),
 				previous_raw = tostring(rebuild_buildable_grid_raw),
 				previous_had_raw = rebuild_buildable_grid_had_raw,
 			}, rebuild_buildable_grid_required and not rebuild_buildable_grid_installed
@@ -4260,13 +4271,13 @@ local function PatchRandomMapGenerator()
 
 			local rebuild_restore_ok = true
 			local rebuild_restore_reason = "not-installed"
-			if rebuild_buildable_grid_installed and type(generator_closure_env) == "table" then
-				local current = rawget(generator_closure_env, "RebuildBuildableGrid")
+			if rebuild_buildable_grid_installed and type(buildable_grid_class) == "table" then
+				local current = rawget(buildable_grid_class, "Build")
 				if current == rebuild_buildable_grid_wrapper then
-					local ok_restore = pcall(rawset, generator_closure_env, "RebuildBuildableGrid",
+					local ok_restore = pcall(rawset, buildable_grid_class, "Build",
 						rebuild_buildable_grid_had_raw and rebuild_buildable_grid_raw or nil)
-					rebuild_restore_ok = ok_restore and rawget(generator_closure_env,
-						"RebuildBuildableGrid") == (rebuild_buildable_grid_had_raw
+					rebuild_restore_ok = ok_restore and rawget(buildable_grid_class,
+						"Build") == (rebuild_buildable_grid_had_raw
 						and rebuild_buildable_grid_raw or nil)
 					rebuild_restore_reason = rebuild_restore_ok and "restored" or "restore-write-failed"
 				else
@@ -4279,12 +4290,21 @@ local function PatchRandomMapGenerator()
 				restored = rebuild_restore_ok,
 				reason = rebuild_restore_reason,
 				calls = rebuild_buildable_grid_calls,
+				observed = rebuild_buildable_grid_calls > 0,
 				generation_ok = results[1] == true,
 				generation_error = results[1] and "none" or tostring(results[2]),
 			}, rebuild_restore_ok and nil or "error")
 			if not rebuild_restore_ok and results[1] then
 				results = { false, "source buildable raw-grid bridge cleanup failed: "
 					.. tostring(rebuild_restore_reason) }
+			elseif rebuild_buildable_grid_required and results[1]
+				and rebuild_buildable_grid_calls == 0 then
+				source_mask_log("SOURCE_BUILDABLE_BRIDGE_HOOK_NOT_OBSERVED", {
+					hook_target = "BuildableGrid.Build", installed = rebuild_buildable_grid_installed,
+					class = tostring(buildable_grid_class), native = tostring(saved_buildable_grid_build),
+				}, "error")
+				results = { false, "source buildable raw-grid bridge was installed but never called; "
+					.. "refusing to accept a non-vanilla comparison" }
 			end
 			for i = #deposit_layer_filter_restores, 1, -1 do
 				local restore = deposit_layer_filter_restores[i]
