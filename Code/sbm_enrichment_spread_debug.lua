@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 7
+local PATCH_VERSION = 8
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -1618,6 +1618,53 @@ function Diagnostics.PatchGenerator(reason)
 		local args = Pack(...)
 		local rand_before = RandLast(generator)
 		if run and tag == "ResolveBuildable" then
+			-- Pure vanilla does not invoke the Lua-visible RebuildBuildableGrid closure, but
+			-- ProcStart(ResolveBuildable) is observed in every surface run after the final
+			-- 6144x6144 terrain exists and immediately before ResolveBuildable consumes the
+			-- already initialized native buildable data. Capture the live height/type backing
+			-- here. Step-01-on continues to emit the same label from the synchronized sampler
+			-- immediately before its native InitBuildableGrid call.
+			local step01_on = (SuperBigMap.Config or {})
+				.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true
+			local target_map = run.map
+			local environment = target_map and target_map.mapdata
+				and target_map.mapdata.Environment
+			if not step01_on and environment ~= "Underground"
+				and not run.fine_terrain_buildable_input_audited then
+				run.fine_terrain_buildable_input_audited = true
+				local terrain_api = Global("terrain")
+				local get_height = type(terrain_api) == "table" and terrain_api.GetHeightGrid
+				local get_type = type(terrain_api) == "table" and terrain_api.GetTypeGrid
+				local ok_height, height_grid = false, nil
+				local ok_type, type_grid = false, nil
+				if type(get_height) == "function" then
+					ok_height, height_grid = pcall(get_height, target_map)
+				end
+				if type(get_type) == "function" then
+					ok_type, type_grid = pcall(get_type, target_map)
+				end
+				if ok_height and height_grid and ok_type and type_grid then
+					local trace_ok, trace_result = pcall(Diagnostics.TraceFineTerrainForensics,
+						target_map, "FINE_TERRAIN_BUILDABLE_INPUT", height_grid, type_grid, {
+							mode = "step01-off", stage = "proc-start-before-ResolveBuildable",
+							input_map = MapName(target_map), rand_before = tostring(rand_before),
+						}, { blocks_x = 24, blocks_y = 24 })
+					if not trace_ok then
+						Log("FINE_TERRAIN_BUILDABLE_INPUT_FAILED", {
+							run_id = run.id, proc = CurrentProc(run), mode = "step01-off",
+							stage = "proc-start-before-ResolveBuildable",
+							error = tostring(trace_result),
+						}, "warn")
+					end
+				else
+					Log("FINE_TERRAIN_BUILDABLE_INPUT_UNAVAILABLE", {
+						run_id = run.id, proc = CurrentProc(run), mode = "step01-off",
+						stage = "proc-start-before-ResolveBuildable",
+						height_ok = Bool(ok_height), type_ok = Bool(ok_type),
+						height_error = tostring(height_grid), type_error = tostring(type_grid),
+					}, "warn")
+				end
+			end
 			BuildableState(run, run.map, "proc-start-before-ResolveBuildable", {
 				rand_before = tostring(rand_before),
 			})
