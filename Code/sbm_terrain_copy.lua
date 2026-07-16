@@ -1392,7 +1392,7 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
 	InvestigationEnd(collection_token, { collected = #objs }, true)
-	local moved, sample_n, reregistered = 0, 0, 0
+	local moved, sample_n, reregistered, skipped_recreated = 0, 0, 0, 0
 	-- Sector marker REGISTRIES: each MapSector keeps per-sector marker lists (sector.markers.*)
 	-- that vanilla Scan reveals from. A moved marker must be re-registered from its old sector to
 	-- its new one, or scanning the new sector misses it (and scanning the old one reveals a marker
@@ -1410,6 +1410,13 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	for _, obj in ipairs(objs) do
 		if obj and is_marker(obj) then
 			pcall(function()
+				-- Temporary-source enrichments are recreated directly at their final scaled hex after
+				-- terrain stretching. Do not apply the proportional transform a second time; the same
+				-- pass must still move entrance markers and any already-spawned live deposits.
+				if obj.SuperBigMapNativeRecreatedAtFinal == true then
+					skipped_recreated = skipped_recreated + 1
+					return
+				end
 				local pos = ObjectPosition(obj)
 				if not pos then return end
 				local ox, oy = PointXY(pos)
@@ -1485,13 +1492,19 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 			end)
 		end
 	end
-	InvestigationEnd(move_token, { moved = moved, reregistered = reregistered }, true)
+	InvestigationEnd(move_token, {
+		moved = moved, reregistered = reregistered,
+		skipped_recreated_at_final = skipped_recreated,
+	}, true)
 	if owns_pass_batch then
 		local resume_token = InvestigationBegin("markers: resume batched passability edits", map)
 		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
 		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
 	end
-	StretchLog("ScaleMarkersToFull: DONE", { scanned = #objs, moved = moved, reregistered = reregistered })
+	StretchLog("ScaleMarkersToFull: DONE", {
+		scanned = #objs, moved = moved, reregistered = reregistered,
+		skipped_recreated_at_final = skipped_recreated,
+	})
 	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers (%s re-registered to new sectors)",
 		tostring(moved), tostring(reregistered)))
 	return moved

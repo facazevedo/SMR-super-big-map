@@ -583,7 +583,7 @@ config.UseExactClassNativeSamplerCollisionProxies = false
 config.DeferExpandedBackingUntilAfterVanillaSource = false
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
-config.ExpansionStep02StretchAndTransformVanillaSource = false
+config.ExpansionStep02StretchAndTransformVanillaSource = true
 -- 03: Generate only the additional enrichments required by the increased area, treating every
 -- transformed native enrichment as an immutable repulsion obstacle, then register and audit them.
 config.ExpansionStep03GenerateAdditionalEnrichments = false
@@ -594,15 +594,15 @@ config.ExpansionStep05RejectInvalidNativeCandidates = false
 -- 06 (former 04): Capture every native enrichment coordinate and target shortfall before stretching.
 config.ExpansionStep06CapturePreStretchEnrichments = true
 -- 07 (former 05): Stretch the generated source terrain grids to the full expanded allocation.
-config.ExpansionStep07StretchTerrain = false
+config.ExpansionStep07StretchTerrain = true
 -- 08 (former 06): Scale every native enrichment's X/Y coordinate by the exact terrain scale.
-config.ExpansionStep08ScaleNativeEnrichmentXY = false
+config.ExpansionStep08ScaleNativeEnrichmentXY = true
 -- 09 (former 07): Re-snap scaled enrichments to the final live terrain height without changing X/Y.
-config.ExpansionStep09ResnapEnrichmentZ = false
+config.ExpansionStep09ResnapEnrichmentZ = true
 -- 10 (former 08): Verify each native post-stretch coordinate against its captured scaled coordinate.
-config.ExpansionStep10VerifyNativeScale = false
+config.ExpansionStep10VerifyNativeScale = true
 -- 11 (former 09): Rebuild final passability and buildability before selecting added enrichment.
-config.ExpansionStep11RebuildGameplayGrids = false
+config.ExpansionStep11RebuildGameplayGrids = true
 -- 12 (former 10): Build the coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
 config.ExpansionStep12BuildEnrichmentOccupancy = false
 -- 13 (former 11): Calculate resource, effect, ordinary-anomaly, and breakthrough additions.

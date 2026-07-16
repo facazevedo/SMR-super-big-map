@@ -70,6 +70,11 @@ local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
 local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
+-- Stage 01 cannot keep the generated marker OBJECTS alive: they belong to the temporary vanilla
+-- map slot and are destroyed when that slot is unloaded. Retain an independent value-only record
+-- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
+-- map keys ensure an abandoned generation cannot leak the (potentially large) property snapshots.
+local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k" })
 
 local function CachedTopUpCandidates(map)
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return nil end
@@ -399,6 +404,15 @@ local function IsEnrichmentMarker(obj)
 	return IsResourceDepositMarker(obj)
 		or IsAnomalyMarker(obj)
 		or IsKindOfSafe(obj, "EffectDepositMarker")
+end
+
+local function IsNativeEnrichmentMarker(marker)
+	return IsEnrichmentMarker(marker)
+		and marker.SuperBigMapResourceTopUp ~= true
+		and marker.SuperBigMapAnomalyTopUp ~= true
+		and marker.SuperBigMapEffectTopUp ~= true
+		and marker.SuperBigMapBreakthroughRepair ~= true
+		and marker.SuperBigMapQuadrantClone ~= true
 end
 
 -- True for the N-sector-wide perimeter ring of the FINAL expanded map. This is the reserved
@@ -1608,18 +1622,19 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	if not ExpansionStepEnabled(1) or not ExpansionStepEnabled(6) then return 0 end
 	map = map or Global("CurrentMap")
 	if not map or type(map.MapForEach) ~= "function" then return 0 end
+	local pending_records = pending_native_enrichment_records_by_map[map]
+	if type(pending_records) == "table" then
+		-- The live source objects are intentionally absent between stages 01 and 02. Do not let an
+		-- intervening FinalizeExpandedMap census overwrite the durable source count with zero.
+		return #pending_records
+	end
 	if map.SuperBigMapNativeEnrichmentCaptureDone == true then
 		return tonumber(map.SuperBigMapNativeEnrichmentCaptureCount) or 0
 	end
 	local xxhash = Global("xxhash")
 	local captured = 0
 	local capture_ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if not IsEnrichmentMarker(marker)
-			or marker.SuperBigMapResourceTopUp == true
-			or marker.SuperBigMapAnomalyTopUp == true
-			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapBreakthroughRepair == true
-			or marker.SuperBigMapQuadrantClone == true then return end
+		if not IsNativeEnrichmentMarker(marker) then return end
 		local pos = ObjectPos(marker)
 		if not (pos and type(pos.xy) == "function") then return end
 		local x, y = pos:xy()
@@ -1655,6 +1670,588 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 		map = tostring(map.name), reason = tostring(reason or "stage 01"), captured = captured,
 	})
 	return captured
+end
+
+local function CloneNativePropertyValue(marker, value, prop_meta)
+	if type(marker.ClonePropertyValue) == "function" then
+		local ok, cloned = pcall(marker.ClonePropertyValue, marker, value, prop_meta)
+		if ok then return cloned end
+	end
+	if type(value) ~= "table" then return value end
+	local copy = table.copy
+	if type(copy) == "function" then
+		local ok, cloned = pcall(copy, value, "deep")
+		if ok then return cloned end
+	end
+	local seen = {}
+	local function clone_plain(input)
+		if type(input) ~= "table" then return input end
+		if seen[input] then return seen[input] end
+		local output = {}
+		seen[input] = output
+		for key, item in pairs(input) do output[clone_plain(key)] = clone_plain(item) end
+		return output
+	end
+	return clone_plain(value)
+end
+
+local function NativePropertyIsPortable(prop_meta)
+	if type(prop_meta) ~= "table" then return false end
+	local id = prop_meta.id
+	if id == nil or id == "Deposit" or tostring(id):sub(1, 4) == "dbg_" then return false end
+	-- Object/grid references belong to the temporary map; debug/read-only/dont-save values are
+	-- derived runtime state. Reconstruct only constructor-safe gameplay properties.
+	if prop_meta.developer or prop_meta.read_only or prop_meta.dont_save
+		or prop_meta.editor == "object" or prop_meta.editor == "grid" then return false end
+	return true
+end
+
+local function CaptureNativeMarkerProperties(marker)
+	local values, ids = {}, {}
+	if type(marker.GetProperties) ~= "function" or type(marker.GetProperty) ~= "function" then
+		return values, ids
+	end
+	local ok_props, properties = pcall(marker.GetProperties, marker)
+	if not ok_props or type(properties) ~= "table" then return values, ids end
+	for i = 1, #properties do
+		local prop_meta = properties[i]
+		if NativePropertyIsPortable(prop_meta) then
+			local id = prop_meta.id
+			local ok_value, value = pcall(marker.GetProperty, marker, id)
+			if ok_value and value ~= nil then
+				values[id] = CloneNativePropertyValue(marker, value, prop_meta)
+				ids[#ids + 1] = tostring(id)
+			end
+		end
+	end
+	table.sort(ids)
+	return values, ids
+end
+
+local function NativeRecordSignature(records)
+	local tokens = {}
+	local stable_properties = {
+		"resource", "max_amount", "grade", "depth_layer", "entity_variant",
+		"deposit_type", "tech_action", "sequence", "sequence_list", "granted_resource",
+		"granted_amount", "display_name", "description",
+	}
+	for i = 1, #records do
+		local record = records[i]
+		local props = record.properties or {}
+		local token = {
+			tostring(record.class), tostring(record.source_x), tostring(record.source_y),
+			tostring(record.source_z),
+		}
+		for j = 1, #stable_properties do
+			local id = stable_properties[j]
+			token[#token + 1] = id .. "=" .. tostring(props[id])
+		end
+		tokens[#tokens + 1] = table.concat(token, ":")
+	end
+	local material = table.concat(tokens, "|")
+	local xxhash = Global("xxhash")
+	if type(xxhash) == "function" then
+		local ok, value = pcall(xxhash, material)
+		if ok then return tostring(value) end
+	end
+	return material
+end
+
+local function NativeClassCountsText(counts)
+	local classes = {}
+	for class in pairs(counts or {}) do classes[#classes + 1] = class end
+	table.sort(classes)
+	local parts = {}
+	for i = 1, #classes do
+		local class = classes[i]
+		parts[#parts + 1] = tostring(class) .. "=" .. tostring(counts[class])
+	end
+	return table.concat(parts, ",")
+end
+
+-- Capture a map-independent constructor record for every native enrichment. The returned object
+-- set is consumed by the temporary-map migration so these objects are not entrusted to
+-- TransferToMap; their value records survive the source-slot unload instead.
+function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
+	if not ExpansionStepEnabled(1) or not ExpansionStepEnabled(6) then
+		return {}, {}, { count = 0, signature = "disabled", class_counts = {} }
+	end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		error("native enrichment record capture map API unavailable")
+	end
+	DepositRules.CaptureNativeEnrichmentPositions(map, reason)
+	local records, excluded, class_counts = {}, {}, {}
+	local missing_positions = 0
+	local ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsNativeEnrichmentMarker(marker) then return end
+		excluded[marker] = true
+		local pos = ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then
+			missing_positions = missing_positions + 1
+			return
+		end
+		local x, y = pos:xy()
+		if type(x) ~= "number" or type(y) ~= "number" then
+			missing_positions = missing_positions + 1
+			return
+		end
+		local z
+		if type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		local properties, property_ids = CaptureNativeMarkerProperties(marker)
+		local record = {
+			class = tostring(marker.class), source_x = x, source_y = y, source_z = z,
+			source_hash = marker.SuperBigMapNativeSourceHash,
+			properties = properties, property_ids = property_ids,
+		}
+		if type(marker.GetAngle) == "function" then
+			local ok_angle, value = pcall(marker.GetAngle, marker)
+			if ok_angle then record.angle = value end
+		end
+		if type(marker.GetScale) == "function" then
+			local ok_scale, value = pcall(marker.GetScale, marker)
+			if ok_scale then record.scale = value end
+		end
+		if type(marker.GetCollectionIndex) == "function" then
+			local ok_collection, value = pcall(marker.GetCollectionIndex, marker)
+			if ok_collection then record.collection_index = value end
+		end
+		records[#records + 1] = record
+		class_counts[record.class] = (class_counts[record.class] or 0) + 1
+	end)
+	if not ok then error("native enrichment record capture failed: " .. tostring(capture_error)) end
+	if missing_positions > 0 then
+		error("native enrichment record capture found " .. tostring(missing_positions) .. " markers without coordinates")
+	end
+	table.sort(records, function(a, b)
+		if a.source_x ~= b.source_x then return a.source_x < b.source_x end
+		if a.source_y ~= b.source_y then return a.source_y < b.source_y end
+		if a.class ~= b.class then return a.class < b.class end
+		return tostring(a.source_z) < tostring(b.source_z)
+	end)
+	for i = 1, #records do records[i].index = i end
+	local stats = {
+		count = #records, signature = NativeRecordSignature(records),
+		class_counts = class_counts, class_counts_text = NativeClassCountsText(class_counts),
+	}
+	local DebugLog = SuperBigMap.DebugLog
+	local exhaustive = DebugLog and type(DebugLog.On) == "function"
+		and DebugLog.On("EnrichmentPositionsExhaustive") == true
+	if exhaustive then
+		for i = 1, #records do
+			local record = records[i]
+			DebugLog.Info("EnrichmentPositionsExhaustive", "native enrichment value record captured", {
+				reason = tostring(reason), index = i, class = record.class,
+				source_x = record.source_x, source_y = record.source_y,
+				source_z = tostring(record.source_z), source_hash = tostring(record.source_hash),
+				property_count = #record.property_ids,
+				property_ids = table.concat(record.property_ids, ","),
+			})
+		end
+	end
+	Log("captured native enrichment value records", {
+		map = tostring(map.name), reason = tostring(reason), count = stats.count,
+		signature = stats.signature, class_counts = stats.class_counts_text,
+	})
+	return records, excluded, stats
+end
+
+function DepositRules.StageNativeEnrichmentRecords(map, records, reason)
+	if not map or type(records) ~= "table" then return false, "map/records unavailable" end
+	pending_native_enrichment_records_by_map[map] = records
+	map.SuperBigMapNativeEnrichmentCaptureDone = false
+	map.SuperBigMapNativeEnrichmentCapturePending = true
+	map.SuperBigMapNativeEnrichmentCaptureCount = #records
+	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
+	Log("staged native enrichment records for post-stretch recreation", {
+		map = tostring(map.name), reason = tostring(reason), count = #records,
+		signature = map.SuperBigMapNativeEnrichmentRecordSignature,
+	})
+	return true
+end
+
+function DepositRules.HasStagedNativeEnrichmentRecords(map)
+	local records = map and pending_native_enrichment_records_by_map[map]
+	return type(records) == "table", type(records) == "table" and #records or 0
+end
+
+function DepositRules.ClearStagedNativeEnrichmentRecords(map, reason)
+	if map then pending_native_enrichment_records_by_map[map] = nil end
+	Log("cleared staged native enrichment records", {
+		map = tostring(map and map.name), reason = tostring(reason),
+	})
+end
+
+function DepositRules.VerifyStagedNativeEnrichmentRecords(map, expected_count, expected_signature, reason)
+	local records = map and pending_native_enrichment_records_by_map[map]
+	local count = type(records) == "table" and #records or -1
+	local signature = type(records) == "table" and NativeRecordSignature(records) or "missing"
+	local ok = count == tonumber(expected_count) and tostring(signature) == tostring(expected_signature)
+	local stats = {
+		count = count, expected_count = tonumber(expected_count), signature = signature,
+		expected_signature = tostring(expected_signature), reason = tostring(reason),
+	}
+	Log("verified staged native enrichment records", {
+		map = tostring(map and map.name), reason = tostring(reason), ok = ok,
+		count = count, expected_count = tostring(expected_count), signature = signature,
+		expected_signature = tostring(expected_signature),
+	})
+	return ok, stats
+end
+
+local function NativePropertyValuesEqual(actual, expected)
+	if actual == expected then return true end
+	if type(actual) == "table" and type(expected) == "table"
+		and type(table.equal_values) == "function" then
+		local ok, equal = pcall(table.equal_values, actual, expected, -1)
+		if ok then return equal == true end
+	end
+	return false
+end
+
+local function NativeRecordFinalPoint(map, record)
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" then return nil, "point/hex API unavailable" end
+	local source_w = tonumber(map.SuperBigMapSourceWidthTiles)
+		or tonumber(map.SuperBigMapGeneratorWidthTiles)
+	local source_h = tonumber(map.SuperBigMapSourceHeightTiles)
+		or tonumber(map.SuperBigMapGeneratorHeightTiles)
+	local final_w = tonumber(map.SuperBigMapDesiredWidthTiles)
+	local final_h = tonumber(map.SuperBigMapDesiredHeightTiles)
+	if not source_w or source_w <= 0 or not source_h or source_h <= 0
+		or not final_w or final_w <= 0 or not final_h or final_h <= 0 then
+		return nil, "source/final dimensions unavailable"
+	end
+	local origin_x = tonumber(map.SuperBigMapSourceX) or 0
+	local origin_y = tonumber(map.SuperBigMapSourceY) or 0
+	local scale_x = (final_w + 0.0) / source_w
+	local scale_y = (final_h + 0.0) / source_h
+	local raw_x = math.floor(origin_x + (record.source_x - origin_x) * scale_x + 0.5)
+	local raw_y = math.floor(origin_y + (record.source_y - origin_y) * scale_y + 0.5)
+	local ok_hex, q, r = pcall(world_to_hex, point_fn(raw_x, raw_y))
+	if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then
+		return nil, "WorldToHex failed"
+	end
+	local ok_world, x, y = pcall(hex_to_world, q, r)
+	if not ok_world or type(x) ~= "number" or type(y) ~= "number" then
+		return nil, "HexToWorld failed"
+	end
+	local final_point = point_fn(x, y)
+	if type(final_point.SetTerrainZ) ~= "function" then return nil, "SetTerrainZ unavailable" end
+	local ok_z, terrain_point = pcall(final_point.SetTerrainZ, final_point, map)
+	if not ok_z or not terrain_point then return nil, "SetTerrainZ failed: " .. tostring(terrain_point) end
+	return terrain_point, nil, {
+		raw_x = raw_x, raw_y = raw_y, x = x, y = y,
+		q = q, r = r, scale_x = scale_x, scale_y = scale_y,
+	}
+end
+
+local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
+	local city = map and map.City
+	local get_sector = Global("GetMapSectorXY")
+	if not city or type(get_sector) ~= "function" then return true, false, false end
+	local x, y = pos:xy()
+	local ok_sector, sector = pcall(get_sector, city, x, y)
+	if not ok_sector or not sector or type(sector.RegisterDeposit) ~= "function" then
+		return false, "final sector unavailable"
+	end
+	local ok_register, register_error = pcall(sector.RegisterDeposit, sector, marker)
+	if not ok_register then return false, register_error end
+	local revealed = false
+	if SectorIsScanned(sector) then
+		local reveal_deposits = Global("RevealDeposits")
+		if type(reveal_deposits) ~= "function" then return false, "RevealDeposits unavailable" end
+		local ok_reveal, reveal_error = pcall(reveal_deposits, { marker })
+		if not ok_reveal then return false, reveal_error end
+		revealed = true
+	end
+	return true, true, revealed
+end
+
+local function UnregisterNativeMarker(map, marker)
+	local city = map and map.City
+	local get_sector = Global("GetMapSectorXY")
+	local pos = ObjectPos(marker)
+	if not city or type(get_sector) ~= "function" or not pos or type(pos.xy) ~= "function" then return end
+	local x, y = pos:xy()
+	local ok, sector = pcall(get_sector, city, x, y)
+	if ok and sector and type(sector.UnregisterDeposit) == "function" then
+		pcall(sector.UnregisterDeposit, sector, marker)
+	end
+end
+
+function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
+	map = map or Global("CurrentMap")
+	records = records or (map and pending_native_enrichment_records_by_map[map])
+	local stats = {
+		expected = type(records) == "table" and #records or 0, actual = 0,
+		missing = 0, duplicates = 0, class_mismatches = 0, source_mismatches = 0,
+		xy_mismatches = 0, z_mismatches = 0, property_mismatches = 0,
+		coordinate_collisions = 0, registration_mismatches = 0,
+		scanned_state_mismatches = 0, object_state_mismatches = 0,
+	}
+	if not map or type(map.MapForEach) ~= "function" or type(records) ~= "table" then
+		stats.error = "map/records unavailable"
+		stats.mismatches = 1
+		return false, stats
+	end
+	local by_index = {}
+	local enum_ok, enum_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		local index = tonumber(marker.SuperBigMapNativeRecordIndex)
+		if index then
+			stats.actual = stats.actual + 1
+			if by_index[index] then
+				stats.duplicates = stats.duplicates + 1
+			else
+				by_index[index] = marker
+			end
+		end
+	end)
+	if not enum_ok then stats.error = tostring(enum_error) end
+	local DebugLog = SuperBigMap.DebugLog
+	local coordinate_owners = {}
+	local city = map.City
+	local get_sector = Global("GetMapSectorXY")
+	for i = 1, #records do
+		local record = records[i]
+		local marker = by_index[i]
+		if not marker then
+			stats.missing = stats.missing + 1
+		else
+			if tostring(marker.class) ~= tostring(record.class) then
+				stats.class_mismatches = stats.class_mismatches + 1
+			end
+			if marker.SuperBigMapNativeSourceX ~= record.source_x
+				or marker.SuperBigMapNativeSourceY ~= record.source_y
+				or marker.SuperBigMapNativeSourceZ ~= record.source_z then
+				stats.source_mismatches = stats.source_mismatches + 1
+			end
+			if type(record.angle) == "number" and type(marker.GetAngle) == "function" then
+				local ok_angle, value = pcall(marker.GetAngle, marker)
+				if not ok_angle or value ~= record.angle then
+					stats.object_state_mismatches = stats.object_state_mismatches + 1
+				end
+			end
+			if type(record.scale) == "number" and type(marker.GetScale) == "function" then
+				local ok_scale, value = pcall(marker.GetScale, marker)
+				if not ok_scale or value ~= record.scale then
+					stats.object_state_mismatches = stats.object_state_mismatches + 1
+				end
+			end
+			if type(record.collection_index) == "number"
+				and type(marker.GetCollectionIndex) == "function" then
+				local ok_collection, value = pcall(marker.GetCollectionIndex, marker)
+				if not ok_collection or value ~= record.collection_index then
+					stats.object_state_mismatches = stats.object_state_mismatches + 1
+				end
+			end
+			local expected, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			local actual = ObjectPos(marker)
+			local expected_x, expected_y, expected_z, actual_x, actual_y, actual_z
+			if expected and type(expected.xy) == "function" then expected_x, expected_y = expected:xy() end
+			if expected and type(expected.z) == "function" then expected_z = expected:z() end
+			if actual and type(actual.xy) == "function" then actual_x, actual_y = actual:xy() end
+			if actual and type(actual.z) == "function" then actual_z = actual:z() end
+			if type(actual_x) == "number" and type(actual_y) == "number" then
+				local coordinate_key = tostring(actual_x) .. ":" .. tostring(actual_y)
+				if coordinate_owners[coordinate_key] then
+					stats.coordinate_collisions = stats.coordinate_collisions + 1
+				else
+					coordinate_owners[coordinate_key] = i
+				end
+				if city and type(get_sector) == "function" then
+					local ok_sector, sector = pcall(get_sector, city, actual_x, actual_y)
+					local registered = false
+					if ok_sector and sector and type(sector.GetDepositList) == "function" then
+						local ok_list, list = pcall(sector.GetDepositList, sector, marker)
+						registered = ok_list and type(list) == "table" and list[marker] == true
+					end
+					if not registered then stats.registration_mismatches = stats.registration_mismatches + 1 end
+					if ok_sector and sector and SectorIsScanned(sector) and marker.is_placed ~= true then
+						stats.scanned_state_mismatches = stats.scanned_state_mismatches + 1
+					end
+				end
+			end
+			if not expected or actual_x ~= expected_x or actual_y ~= expected_y then
+				stats.xy_mismatches = stats.xy_mismatches + 1
+			end
+			if not expected or actual_z ~= expected_z then stats.z_mismatches = stats.z_mismatches + 1 end
+			if type(marker.GetProperty) == "function" then
+				for id, expected_value in pairs(record.properties or {}) do
+					local ok_value, actual_value = pcall(marker.GetProperty, marker, id)
+					if not ok_value or not NativePropertyValuesEqual(actual_value, expected_value) then
+						stats.property_mismatches = stats.property_mismatches + 1
+					end
+				end
+			end
+			if DebugLog and type(DebugLog.On) == "function"
+				and DebugLog.On("EnrichmentPositionsExhaustive") == true then
+				DebugLog.Info("EnrichmentPositionsExhaustive", "recreated native enrichment verified", {
+					reason = tostring(reason), index = i, class = tostring(marker.class),
+					source_x = record.source_x, source_y = record.source_y,
+					raw_x = tostring(geometry and geometry.raw_x), raw_y = tostring(geometry and geometry.raw_y),
+					expected_x = tostring(expected_x), expected_y = tostring(expected_y),
+					expected_z = tostring(expected_z), actual_x = tostring(actual_x),
+					actual_y = tostring(actual_y), actual_z = tostring(actual_z),
+					transform_error = tostring(transform_error),
+				})
+			end
+		end
+	end
+	stats.mismatches = (enum_ok and 0 or 1) + stats.missing + stats.duplicates
+		+ stats.class_mismatches + stats.source_mismatches + stats.xy_mismatches
+		+ stats.z_mismatches + stats.property_mismatches + stats.coordinate_collisions
+		+ stats.registration_mismatches + stats.scanned_state_mismatches
+		+ stats.object_state_mismatches
+	if stats.actual ~= stats.expected then stats.mismatches = stats.mismatches + 1 end
+	local verified = stats.mismatches == 0
+	map.SuperBigMapNativeTransformVerified = verified
+	map.SuperBigMapNativeTransformStats = stats
+	Log("verified recreated native enrichments", {
+		map = tostring(map.name), reason = tostring(reason), verified = verified,
+		expected = stats.expected, actual = stats.actual, missing = stats.missing,
+		duplicates = stats.duplicates, class_mismatches = stats.class_mismatches,
+		source_mismatches = stats.source_mismatches, xy_mismatches = stats.xy_mismatches,
+		z_mismatches = stats.z_mismatches, property_mismatches = stats.property_mismatches,
+		coordinate_collisions = stats.coordinate_collisions,
+		registration_mismatches = stats.registration_mismatches,
+		scanned_state_mismatches = stats.scanned_state_mismatches,
+		object_state_mismatches = stats.object_state_mismatches,
+		mismatches = stats.mismatches,
+	})
+	return verified, stats
+end
+
+-- Stage 02: after the terrain grid is stretched, reconstruct every source enrichment directly at
+-- its final proportional hex. This avoids both TransferToMap ownership loss and any second random
+-- selection. Constructor properties are supplied before Init (required by anomaly sequence checks).
+function DepositRules.RecreateStagedNativeEnrichments(map, reason)
+	map = map or Global("CurrentMap")
+	local records = map and pending_native_enrichment_records_by_map[map]
+	if type(records) ~= "table" then return false, { error = "no staged records", created = 0 } end
+	if not ExpansionStepEnabled(2) or not ExpansionStepEnabled(8)
+		or not ExpansionStepEnabled(9) then
+		return false, { error = "expansion stage 02/08/09 disabled", created = 0, expected = #records }
+	end
+	local place_object_in = Global("PlaceObjectIn")
+	local done_object = Global("DoneObject")
+	if type(place_object_in) ~= "function" then
+		return false, { error = "PlaceObjectIn unavailable", created = 0, expected = #records }
+	end
+	local created = {}
+	local stats = { expected = #records, created = 0, registered = 0, revealed_in_scanned_sectors = 0 }
+	local is_valid = Global("IsValid")
+	local function cleanup_created()
+		for i = #created, 1, -1 do
+			local marker = created[i]
+			UnregisterNativeMarker(map, marker)
+			local placed_obj = marker and marker.placed_obj
+			if placed_obj and type(done_object) == "function"
+				and (type(is_valid) ~= "function" or is_valid(placed_obj)) then
+				pcall(done_object, placed_obj)
+			end
+			if marker and type(done_object) == "function"
+				and (type(is_valid) ~= "function" or is_valid(marker)) then
+				pcall(done_object, marker)
+			end
+		end
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	local exhaustive = DebugLog and type(DebugLog.On) == "function"
+		and DebugLog.On("EnrichmentPositionsExhaustive") == true
+	local ok, recreate_error = pcall(function()
+		for i = 1, #records do
+			local record = records[i]
+			local final_point, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			if not final_point then error("record " .. tostring(i) .. ": " .. tostring(transform_error)) end
+			local constructor_properties = {}
+			for id, value in pairs(record.properties or {}) do constructor_properties[id] = value end
+			local marker = place_object_in(record.class, map, constructor_properties)
+			if not marker then error("record " .. tostring(i) .. ": constructor returned nil") end
+			created[#created + 1] = marker
+			if type(marker.SetPos) ~= "function" then error("record " .. tostring(i) .. ": SetPos unavailable") end
+			marker:SetPos(final_point)
+			if type(record.angle) == "number" and type(marker.SetAngle) == "function" then
+				marker:SetAngle(record.angle)
+			end
+			if type(record.scale) == "number" and type(marker.SetScale) == "function" then
+				marker:SetScale(record.scale)
+			end
+			if type(record.collection_index) == "number"
+				and type(marker.SetCollectionIndex) == "function" then
+				marker:SetCollectionIndex(record.collection_index)
+			end
+			marker.SuperBigMapNativeSourceX = record.source_x
+			marker.SuperBigMapNativeSourceY = record.source_y
+			marker.SuperBigMapNativeSourceZ = record.source_z
+			marker.SuperBigMapNativeSourceHash = record.source_hash
+			marker.SuperBigMapDebugPreStretchX = record.source_x
+			marker.SuperBigMapDebugPreStretchY = record.source_y
+			marker.SuperBigMapDebugPreStretchZ = record.source_z
+			marker.SuperBigMapDebugPreStretchHash = record.source_hash
+			marker.SuperBigMapRawStretchedX = geometry.raw_x
+			marker.SuperBigMapRawStretchedY = geometry.raw_y
+			marker.SuperBigMapExpectedStretchedX = geometry.x
+			marker.SuperBigMapExpectedStretchedY = geometry.y
+			marker.SuperBigMapNativeRecordIndex = i
+			marker.SuperBigMapNativeRecreatedAtFinal = true
+			local registered_ok, registered, revealed =
+				RegisterNativeMarkerWithFinalSector(map, marker, final_point)
+			if not registered_ok then error("record " .. tostring(i) .. ": " .. tostring(registered)) end
+			if registered == true then stats.registered = stats.registered + 1 end
+			if revealed == true then stats.revealed_in_scanned_sectors =
+				stats.revealed_in_scanned_sectors + 1 end
+			stats.created = stats.created + 1
+			if exhaustive then
+				local x, y = final_point:xy()
+				local z = type(final_point.z) == "function" and final_point:z() or nil
+				DebugLog.Info("EnrichmentPositionsExhaustive", "native enrichment recreated after stretch", {
+					reason = tostring(reason), index = i, class = record.class,
+					source_x = record.source_x, source_y = record.source_y,
+					source_z = tostring(record.source_z), raw_x = geometry.raw_x, raw_y = geometry.raw_y,
+					final_x = x, final_y = y, final_z = tostring(z), q = geometry.q, r = geometry.r,
+					scale_x = tostring(geometry.scale_x), scale_y = tostring(geometry.scale_y),
+					property_count = #record.property_ids,
+					property_ids = table.concat(record.property_ids, ","), registered = tostring(registered),
+					revealed_in_scanned_sector = tostring(revealed),
+				})
+			end
+		end
+	end)
+	if not ok then
+		stats.error = tostring(recreate_error)
+		cleanup_created()
+		Log("native enrichment recreation failed", {
+			map = tostring(map and map.name), reason = tostring(reason), expected = #records,
+			created = stats.created, error = stats.error,
+		})
+		return false, stats
+	end
+	local verified, verify_stats = DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
+	stats.verify = verify_stats
+	if not verified then
+		stats.error = "post-recreation verification failed"
+		cleanup_created()
+		return false, stats
+	end
+	pending_native_enrichment_records_by_map[map] = nil
+	map.SuperBigMapNativeEnrichmentCaptureDone = true
+	map.SuperBigMapNativeEnrichmentCapturePending = false
+	map.SuperBigMapNativeEnrichmentCaptureCount = #records
+	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
+	map.SuperBigMapNativeEnrichmentRecreatedCount = #records
+	Log("recreated staged native enrichments after terrain stretch", {
+		map = tostring(map.name), reason = tostring(reason), created = stats.created,
+		registered = stats.registered, revealed_in_scanned_sectors = stats.revealed_in_scanned_sectors,
+		signature = map.SuperBigMapNativeEnrichmentRecordSignature,
+	})
+	return true, stats
 end
 
 function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)

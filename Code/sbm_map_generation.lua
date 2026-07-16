@@ -1100,29 +1100,46 @@ local function SnapshotMapObjectSet(map)
 	return set, #objects
 end
 
-local function TransferGeneratedObjects(source, destination, stats, source_baseline)
+local function TransferGeneratedObjects(source, destination, stats, source_baseline, excluded_objects)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local is_valid = Global("IsValid")
 	local started = MigrationTicks()
 	local roots, seen_roots = {}, {}
-	local generated_enumerated = 0
+	local generated_enumerated, generated_excluded = 0, 0
+	local function belongs_to_excluded_root(obj)
+		local current, depth = obj, 0
+		while current and depth < 64 do
+			if excluded_objects and excluded_objects[current] then return true end
+			if type(current.GetParent) ~= "function" then break end
+			local parent = SafeCall(current.GetParent, current)
+			local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
+			if not parent_valid or (source_baseline and source_baseline[parent]) then break end
+			current = parent
+			depth = depth + 1
+		end
+		return false
+	end
 	for i = 1, #objects do
 		local root = objects[i]
 		local valid = type(is_valid) ~= "function" or is_valid(root)
 		if valid and not (source_baseline and source_baseline[root]) then
 			generated_enumerated = generated_enumerated + 1
-			local parent_depth = 0
-			while type(root.GetParent) == "function" and parent_depth < 64 do
-				local parent = SafeCall(root.GetParent, root)
-				local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
-				if not parent_valid or (source_baseline and source_baseline[parent]) then break end
-				root = parent
-				parent_depth = parent_depth + 1
-			end
-			if not seen_roots[root] then
-				seen_roots[root] = true
-				roots[#roots + 1] = root
+			if belongs_to_excluded_root(root) then
+				generated_excluded = generated_excluded + 1
+			else
+				local parent_depth = 0
+				while type(root.GetParent) == "function" and parent_depth < 64 do
+					local parent = SafeCall(root.GetParent, root)
+					local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
+					if not parent_valid or (source_baseline and source_baseline[parent]) then break end
+					root = parent
+					parent_depth = parent_depth + 1
+				end
+				if not seen_roots[root] then
+					seen_roots[root] = true
+					roots[#roots + 1] = root
+				end
 			end
 		end
 	end
@@ -1153,26 +1170,33 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 	end
 	local remaining_objects, remaining_error = MapObjects(source)
 	if not remaining_objects then error("could not audit source after object transfer: " .. tostring(remaining_error)) end
-	local remaining_generated = 0
+	local remaining_generated, remaining_excluded = 0, 0
 	for i = 1, #remaining_objects do
 		if not (source_baseline and source_baseline[remaining_objects[i]]) then
-			remaining_generated = remaining_generated + 1
+			if belongs_to_excluded_root(remaining_objects[i]) then
+				remaining_excluded = remaining_excluded + 1
+			else
+				remaining_generated = remaining_generated + 1
+			end
 		end
 	end
 	stats.source_objects_enumerated = #objects
 	stats.source_baseline_objects = stats.source_baseline_objects or 0
 	stats.source_generated_objects = generated_enumerated
+	stats.source_generated_objects_excluded = generated_excluded
 	stats.source_root_objects = #roots
 	stats.source_objects_transferred = transferred
-	stats.source_attached_objects = math.max(0, generated_enumerated - #roots)
+	stats.source_attached_objects = math.max(0, generated_enumerated - generated_excluded - #roots)
 	stats.source_object_transfer_failures = failed
 	stats.source_generated_objects_remaining = remaining_generated
+	stats.source_excluded_objects_remaining = remaining_excluded
 	stats.object_transfer_ms = MigrationTicks() - started
 	BackingPromotionLog("TEMP_SOURCE_OBJECTS_TRANSFERRED", {
-		enumerated = #objects, generated = generated_enumerated,
+		enumerated = #objects, generated = generated_enumerated, excluded = generated_excluded,
 		roots = #roots, transferred = transferred,
 		attached = stats.source_attached_objects, failed = failed,
 		baseline = stats.source_baseline_objects, remaining_generated = remaining_generated,
+		remaining_excluded = remaining_excluded,
 		failure_samples = table.concat(failures, " | "), elapsed_ms = stats.object_transfer_ms,
 	})
 	if failed > 0 or remaining_generated > 0 then
@@ -1314,6 +1338,9 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	SetLoadingPhase("Generating the exact vanilla source terrain...")
 	local source
 	local source_baseline
+	local native_enrichment_records
+	local native_enrichment_excluded
+	local native_enrichment_record_stats
 	local saved_main_map = Global("MainMap")
 	local saved_main_city = Global("MainCity")
 	local results
@@ -1383,6 +1410,27 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		stats.source_generation_ms = MigrationTicks() - generation_started
 		stats.source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
+		local deposits = SuperBigMap.DepositRules
+		if not deposits or type(deposits.CaptureNativeEnrichmentRecords) ~= "function" then
+			error("native enrichment value-record capture API unavailable")
+		end
+		native_enrichment_records, native_enrichment_excluded, native_enrichment_record_stats =
+			deposits.CaptureNativeEnrichmentRecords(
+				source, "temporary vanilla backing generation complete")
+		stats.source_enrichment_record_count = native_enrichment_record_stats.count
+		stats.source_enrichment_record_signature = native_enrichment_record_stats.signature
+		stats.source_enrichment_record_classes = native_enrichment_record_stats.class_counts_text
+		if stats.source_enrichment_record_count ~= stats.source_generated_enrichments then
+			error(string.format("native enrichment coordinate/value capture mismatch: coordinates=%s records=%s",
+				tostring(stats.source_generated_enrichments),
+				tostring(stats.source_enrichment_record_count)))
+		end
+		BackingPromotionLog("TEMP_SOURCE_ENRICHMENT_RECORDS_CAPTURED", {
+			count = stats.source_enrichment_record_count,
+			signature = stats.source_enrichment_record_signature,
+			classes = stats.source_enrichment_record_classes,
+			independent_of_source_objects = true,
+		})
 
 		-- The complete buildable/playable/enrichment transaction has already finished on the true
 		-- vanilla backing at this boundary. Preserve an immutable forensic summary before switching
@@ -1465,8 +1513,20 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
 		CopyMigratedTerrain(source, destination, stats)
 		CopyGeneratedMapState(source, destination)
-		TransferGeneratedObjects(source, destination, stats, source_baseline)
-		CaptureGeneratedNativeEnrichments(destination, "temporary vanilla backing migrated to destination")
+		if type(deposits.StageNativeEnrichmentRecords) ~= "function" then
+			error("native enrichment staging API unavailable")
+		end
+		local staged, stage_error = deposits.StageNativeEnrichmentRecords(destination,
+			native_enrichment_records, "temporary vanilla backing migrated to destination")
+		if staged ~= true then error("native enrichment staging failed: " .. tostring(stage_error)) end
+		TransferGeneratedObjects(source, destination, stats, source_baseline,
+			native_enrichment_excluded)
+		BackingPromotionLog("TEMP_SOURCE_ENRICHMENT_RECORDS_STAGED", {
+			count = stats.source_enrichment_record_count,
+			signature = stats.source_enrichment_record_signature,
+			source_marker_objects_excluded = stats.source_generated_objects_excluded,
+			destination_live_markers_expected_before_stage02 = 0,
+		})
 		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
 		-- This path deliberately preserves the vanilla-generated height field, so discard their
 		-- temporary-map references instead of allowing a later map generation to consume stale pads.
@@ -1520,6 +1580,36 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		stats.source_unload_ms = MigrationTicks() - unload_started
 		if not unload_ok and ok then
 			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
+		end
+	end
+	if ok and native_enrichment_records then
+		local deposits = SuperBigMap.DepositRules
+		local verify_call_ok, records_ok, record_verify_stats = pcall(
+			deposits.VerifyStagedNativeEnrichmentRecords, destination,
+			stats.source_enrichment_record_count, stats.source_enrichment_record_signature,
+			"after temporary source slot unload")
+		stats.post_unload_enrichment_records_ok = verify_call_ok and records_ok == true
+		stats.post_unload_enrichment_record_count = record_verify_stats and record_verify_stats.count
+		stats.post_unload_enrichment_record_signature = record_verify_stats and record_verify_stats.signature
+		BackingPromotionLog("TEMP_SOURCE_ENRICHMENT_RECORDS_VERIFIED_POST_UNLOAD", {
+			ok = stats.post_unload_enrichment_records_ok,
+			count = tostring(stats.post_unload_enrichment_record_count),
+			expected_count = tostring(stats.source_enrichment_record_count),
+			signature = tostring(stats.post_unload_enrichment_record_signature),
+			expected_signature = tostring(stats.source_enrichment_record_signature),
+			error = verify_call_ok and "none" or tostring(records_ok),
+		})
+		if not stats.post_unload_enrichment_records_ok then
+			ok = false
+			migration_error = "native enrichment records did not survive source unload: "
+				.. tostring(verify_call_ok and record_verify_stats and record_verify_stats.reason or records_ok)
+		end
+	end
+	if not ok then
+		local deposits = SuperBigMap.DepositRules
+		if deposits and type(deposits.ClearStagedNativeEnrichmentRecords) == "function" then
+			pcall(deposits.ClearStagedNativeEnrichmentRecords, destination,
+				"temporary source migration failed")
 		end
 	end
 	SuperBigMap.State.vanilla_source_migration_active = false
@@ -7538,6 +7628,17 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
 					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
 				end
+				-- The source map's enrichment OBJECTS were deliberately not transferred: their owning map
+				-- slot has been unloaded. Stage 01 retained constructor-safe value records instead.
+				-- Recreate them only now, after final terrain resampling, so every marker is born on its
+				-- exact proportional hex and reads Z from the final destination terrain.
+				local position_deposits = SuperBigMap.DepositRules
+				local has_staged_records, staged_record_count = false, 0
+				if position_deposits
+					and type(position_deposits.HasStagedNativeEnrichmentRecords) == "function" then
+					has_staged_records, staged_record_count =
+						position_deposits.HasStagedNativeEnrichmentRecords(map)
+				end
 				-- Step 2: reposition + scale the generated decorations onto the stretched terrain
 				-- (must run AFTER the height stretch so SetTerrainZ reads the new surface).
 				if type(ScaleDecorationsToFull) == "function" then
@@ -7550,6 +7651,44 @@ local function RunSectorMirrorPlanIfEnabled(map)
 					local spike_token = InvestigationBegin("surface: spike audit post-decorations", map)
 					SpikeAudit(map, "surface post-ScaleDecorations")
 					InvestigationEnd(spike_token, nil, true)
+				end
+				if has_staged_records then
+					if ok_stretch ~= true then
+						error("cannot recreate staged native enrichments before a successful terrain stretch")
+					end
+					if type(position_deposits.RecreateStagedNativeEnrichments) ~= "function" then
+						error("staged native enrichment recreation API unavailable")
+					end
+					SetLoadingPhase("Restoring the vanilla resources and anomalies")
+					StretchLog("stretch branch: -> RecreateStagedNativeEnrichments", {
+						records = staged_record_count,
+					})
+					local recreate_token = InvestigationBegin(
+						"surface: recreate native enrichments after terrain and decoration stretch", map,
+						{ records = staged_record_count })
+					local recreated, recreate_stats = position_deposits.RecreateStagedNativeEnrichments(
+						map, "surface after terrain and decoration stretch")
+					InvestigationEnd(recreate_token, {
+						created = recreate_stats and recreate_stats.created,
+						registered = recreate_stats and recreate_stats.registered,
+						revealed_in_scanned_sectors = recreate_stats
+							and recreate_stats.revealed_in_scanned_sectors,
+						error = recreate_stats and recreate_stats.error,
+					}, recreated == true)
+					BackingPromotionLog("TEMP_SOURCE_ENRICHMENTS_RECREATED_AFTER_STRETCH", {
+						ok = recreated == true, expected = staged_record_count,
+						created = recreate_stats and recreate_stats.created,
+						registered = recreate_stats and recreate_stats.registered,
+						revealed_in_scanned_sectors = recreate_stats
+							and recreate_stats.revealed_in_scanned_sectors,
+						verify_mismatches = recreate_stats and recreate_stats.verify
+							and recreate_stats.verify.mismatches,
+						error = recreate_stats and recreate_stats.error or "none",
+					})
+					if recreated ~= true then
+						error("native enrichment recreation after stretch failed: "
+							.. tostring(recreate_stats and recreate_stats.error or "unknown"))
+					end
 				end
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
