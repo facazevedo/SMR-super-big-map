@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 1
+local PATCH_VERSION = 2
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -521,6 +521,98 @@ local function CurrentProc(run)
 	return run and run.proc_stack[#run.proc_stack] or "outside-proc"
 end
 
+-- Read-only forensic fingerprint for the grids which determine enrichment placement. A full
+-- dump would add millions of log lines, so each audit records the authoritative dimensions and
+-- GridMinMax plus a fixed 17x17 spatial lattice. The two independent rolling checksums and the
+-- explicit rows make Step-01-off/on comparisons deterministic while preserving the layout of
+-- the sampled values. An optional region lets the expanded 8192 backing and its 6144 source
+-- corner be fingerprinted separately without copying or resampling either grid.
+local function GridAudit(run, label, grid, extra, region)
+	if not Enabled() then return false end
+	local ok_size, width, height = pcall(function() return grid:size() end)
+	height = height or width
+	local get_type = "unavailable"
+	pcall(function() get_type = type(grid.get) end)
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width <= 0 or height <= 0 or get_type ~= "function" then
+		Log("GRID_AUDIT_UNAVAILABLE", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			grid = tostring(grid), size_ok = Bool(ok_size), width = tostring(width),
+			height = tostring(height), get_type = get_type,
+		}, extra), "warn")
+		return false
+	end
+
+	local x0, y0, x1, y1 = 0, 0, width - 1, height - 1
+	if type(region) == "table" then
+		x0 = math.max(0, math.min(width - 1, math.floor(tonumber(region.x0) or 0)))
+		y0 = math.max(0, math.min(height - 1, math.floor(tonumber(region.y0) or 0)))
+		x1 = math.max(x0, math.min(width - 1, math.floor(tonumber(region.x1) or (width - 1))))
+		y1 = math.max(y0, math.min(height - 1, math.floor(tonumber(region.y1) or (height - 1))))
+	end
+
+	local full_min, full_max = "not-requested", "not-requested"
+	if x0 == 0 and y0 == 0 and x1 == width - 1 and y1 == height - 1 then
+		local grid_min_max = Global("GridMinMax")
+		if type(grid_min_max) == "function" then
+			local ok_mm, lo, hi = pcall(grid_min_max, grid)
+			if ok_mm then full_min, full_max = tostring(lo), tostring(hi)
+			else full_min, full_max = "ERROR", tostring(lo) end
+		end
+	end
+
+	local SAMPLE_SIDE, MOD = 17, 2147483647
+	local xs = {}
+	for ix = 0, SAMPLE_SIDE - 1 do
+		xs[#xs + 1] = math.floor(x0 + (x1 - x0) * ix / (SAMPLE_SIDE - 1) + 0.5)
+	end
+	local begin_fields = Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		grid = tostring(grid), width = width, height = height,
+		region = tostring(x0) .. ":" .. tostring(y0) .. "-" .. tostring(x1) .. ":" .. tostring(y1),
+		full_min = full_min, full_max = full_max, sample_side = SAMPLE_SIDE,
+		x_coordinates = table.concat(xs, ","),
+	}, extra)
+	Log("GRID_AUDIT_BEGIN", begin_fields)
+
+	local checksum_a, checksum_b, sample_index = 0, 0, 0
+	local sample_min, sample_max, numeric, zeros, ones, non_numeric = nil, nil, 0, 0, 0, 0
+	for iy = 0, SAMPLE_SIDE - 1 do
+		local y = math.floor(y0 + (y1 - y0) * iy / (SAMPLE_SIDE - 1) + 0.5)
+		local row = {}
+		for ix = 1, #xs do
+			local x = xs[ix]
+			local ok_get, value = pcall(grid.get, grid, x, y)
+			sample_index = sample_index + 1
+			if ok_get and type(value) == "number" then
+				numeric = numeric + 1
+				sample_min = sample_min == nil and value or math.min(sample_min, value)
+				sample_max = sample_max == nil and value or math.max(sample_max, value)
+				if value == 0 then zeros = zeros + 1 elseif value == 1 then ones = ones + 1 end
+				local normalized = math.floor(value * 1000 + (value >= 0 and 0.5 or -0.5))
+				checksum_a = (checksum_a * 65599 + normalized + sample_index * 97) % MOD
+				checksum_b = (checksum_b + (normalized % MOD) * (sample_index * 2 + 1)) % MOD
+				row[#row + 1] = tostring(value)
+			else
+				non_numeric = non_numeric + 1
+				checksum_a = (checksum_a * 65599 + sample_index * 97) % MOD
+				row[#row + 1] = ok_get and tostring(value) or "ERROR"
+			end
+		end
+		Log("GRID_AUDIT_ROW", {
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			row_index = iy + 1, y = y, values = table.concat(row, ","),
+		})
+	end
+	Log("GRID_AUDIT_END", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		checksum_a = checksum_a, checksum_b = checksum_b, numeric_samples = numeric,
+		non_numeric_samples = non_numeric, zero_samples = zeros, one_samples = ones,
+		sample_min = tostring(sample_min), sample_max = tostring(sample_max),
+	}, extra))
+	return true
+end
+
 local function LogNestedPoints(run, call_kind, call_index, value, result_index, path, seen)
 	local x, y, z = PointXYZ(value)
 	if x ~= nil then
@@ -654,7 +746,78 @@ function Diagnostics.PatchGenerator(reason)
 		local fields = RunFields(run, map)
 		AddGeneratorFields(fields, generator)
 		Log("DO_GENERATE_BEGIN", fields)
+
+		-- Observe the exact terrain input used by vanilla. Expanded allocation happens before
+		-- this wrapper, so a Step-01-on run exposes the real 8192 backing while Step-01-off
+		-- exposes vanilla's 6144 grid. Audit both the complete backing and the nominal source
+		-- corner, then trace every native sampled read (InitPlayZone and ResolveBuildable).
+		local terrain_api = Global("terrain")
+		local original_get_height_grid = type(terrain_api) == "table" and terrain_api.GetHeightGrid
+		local get_height_wrapper = false
+		run.height_grid_get_calls = 0
+		if type(original_get_height_grid) == "function" then
+			local ok_backing, backing = pcall(original_get_height_grid, map)
+			if ok_backing and backing then
+				GridAudit(run, "DO_GENERATE_INPUT_BACKING_FULL", backing, {
+					mode = (SuperBigMap.Config or {}).EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE
+						and "step01-on" or "step01-off",
+				})
+				local ok_bs, backing_width, backing_height = pcall(function() return backing:size() end)
+				backing_height = backing_height or backing_width
+				local source_width = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
+					or tonumber(map and map.SuperBigMapSourceWidthTiles)
+					or tonumber(map and map.mapdata and map.mapdata.Width)
+				local source_height = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
+					or tonumber(map and map.SuperBigMapSourceHeightTiles)
+					or tonumber(map and map.mapdata and map.mapdata.Height)
+				if ok_bs and type(source_width) == "number" and type(source_height) == "number"
+					and (source_width < backing_width or source_height < backing_height) then
+					GridAudit(run, "DO_GENERATE_INPUT_SOURCE_CORNER", backing, {
+						source_width = source_width, source_height = source_height,
+					}, { x0 = 0, y0 = 0, x1 = source_width - 1, y1 = source_height - 1 })
+				end
+			else
+				Log("HEIGHT_GRID_BACKING_READ_FAILED", {
+					run_id = run.id, map = MapName(map), error = tostring(backing),
+				}, "warn")
+			end
+			GridAudit(run, "DO_GENERATE_BUILDABLE_BEFORE", map and map.buildable and map.buildable.z_grid)
+
+			get_height_wrapper = function(target, ...)
+				local args = Pack(...)
+				run.height_grid_get_calls = run.height_grid_get_calls + 1
+				local call_index = run.height_grid_get_calls
+				Log("HEIGHT_GRID_GET_BEGIN", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					target_map = MapName(target), args = DescribePacked(args),
+					map_geometry = ScalarFields(MapGeometry(target)),
+				})
+				local results = Pack(pcall(original_get_height_grid, target, ...))
+				local destination = args[1]
+				local grid = destination
+				local ok_dest = pcall(function() return destination:size() end)
+				if not ok_dest then grid = results[2] end
+				if results[1] then
+					GridAudit(run, "HEIGHT_GRID_GET_RESULT_" .. tostring(call_index), grid, {
+						call_index = call_index, get_args = DescribePacked(args),
+					})
+				end
+				Log("HEIGHT_GRID_GET_END", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					ok = Bool(results[1]), error = results[1] and "none" or tostring(results[2]),
+					results = results[1] and DescribePacked({ n = results.n - 1,
+						Unpack(results, 2, results.n) }) or "error",
+				})
+				if not results[1] then error(results[2]) end
+				return Unpack(results, 2, results.n)
+			end
+			terrain_api.GetHeightGrid = get_height_wrapper
+		end
 		local results = Pack(pcall(original_do_generate, generator, map, ...))
+		if get_height_wrapper and terrain_api.GetHeightGrid == get_height_wrapper then
+			terrain_api.GetHeightGrid = original_get_height_grid
+		end
+		GridAudit(run, "DO_GENERATE_BUILDABLE_AFTER", map and map.buildable and map.buildable.z_grid)
 		if results[1] then Snapshot(map, "post-vanilla-DoGenerate") end
 		Log("DO_GENERATE_END", {
 			run_id = run.id, map = MapName(map), ok = Bool(results[1]),
@@ -665,6 +828,7 @@ function Diagnostics.PatchGenerator(reason)
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
+			height_grid_get_calls = run.height_grid_get_calls,
 			final_rand_last = tostring(RandLast(generator)),
 		})
 		State.enrichment_spread_active_do_generate_run = previous
@@ -735,7 +899,14 @@ function Diagnostics.PatchGenerator(reason)
 			playable_area_type = type(saved_playable), closure_environment = closure_env_source,
 			grid_min_max_type = type(saved_grid_min_max), hex_align_type = type(saved_hex_align),
 			resource_info_type = type(saved_resource_info),
+			gen_area_unscaled = tostring(env.gen_area_unscaled),
 		}))
+		GridAudit(run, "ON_GENERATE_INPUT_GEN_ZONE", env.gen_zone, {
+			gen_area_unscaled = tostring(env.gen_area_unscaled),
+		})
+		GridAudit(run, "ON_GENERATE_INPUT_PLAY_ZONE", env.play_zone)
+		GridAudit(run, "ON_GENERATE_INPUT_TYPE_GRID", env.type_grid)
+		GridAudit(run, "ON_GENERATE_INPUT_BUILDABLE", map and map.buildable and map.buildable.z_grid)
 
 		local rrand_wrapper, grand_wrapper, rm_print_wrapper, factory_wrapper, playable_wrapper
 		local grid_min_max_wrapper, hex_align_wrapper, resource_info_wrapper
@@ -789,8 +960,18 @@ function Diagnostics.PatchGenerator(reason)
 				local args = Pack(...)
 				local results = Pack(saved_playable(...))
 				run.playable_area_calls = run.playable_area_calls + 1
+				local call_index = run.playable_area_calls
+				GridAudit(run, "PLAYABLE_HEIGHT_GRID_" .. tostring(call_index), args[1], {
+					call_index = call_index, pass_border = tostring(args[2]),
+				})
+				GridAudit(run, "PLAYABLE_INVALID_MASK_" .. tostring(call_index), args[3], {
+					call_index = call_index, pass_border = tostring(args[2]),
+				})
+				GridAudit(run, "PLAYABLE_RESULT_ZONE_" .. tostring(call_index), results[2], {
+					call_index = call_index, playable_cells = tostring(results[1]),
+				})
 				Log("PLAYABLE_AREA", {
-					run_id = run.id, proc = CurrentProc(run), call_index = run.playable_area_calls,
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
 					args = DescribePacked(args), results = DescribePacked(results),
 				})
 				return ReturnPacked(results)
