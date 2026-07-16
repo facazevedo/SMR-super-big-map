@@ -1084,39 +1084,31 @@ local function MapObjects(map)
 	return objects
 end
 
-local function ClearDestinationObjects(destination, stats)
-	local objects, err = MapObjects(destination)
-	if not objects then error("could not enumerate destination objects: " .. tostring(err)) end
-	local is_valid = Global("IsValid")
-	local done_object = Global("DoneObject")
-	if type(done_object) ~= "function" then error("DoneObject unavailable") end
-	local removed = 0
-	for i = #objects, 1, -1 do
-		local obj = objects[i]
-		local valid = type(is_valid) ~= "function" or is_valid(obj)
-		if valid then
-			done_object(obj)
-			removed = removed + 1
-		end
-	end
-	stats.destination_blank_objects_removed = removed
+local function SnapshotMapObjectSet(map)
+	local objects, err = MapObjects(map)
+	if not objects then error("could not snapshot map objects: " .. tostring(err)) end
+	local set = {}
+	for i = 1, #objects do set[objects[i]] = true end
+	return set, #objects
 end
 
-local function TransferGeneratedObjects(source, destination, stats)
+local function TransferGeneratedObjects(source, destination, stats, source_baseline)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local is_valid = Global("IsValid")
 	local started = MigrationTicks()
 	local roots, seen_roots = {}, {}
+	local generated_enumerated = 0
 	for i = 1, #objects do
 		local root = objects[i]
 		local valid = type(is_valid) ~= "function" or is_valid(root)
-		if valid then
+		if valid and not (source_baseline and source_baseline[root]) then
+			generated_enumerated = generated_enumerated + 1
 			local parent_depth = 0
 			while type(root.GetParent) == "function" and parent_depth < 64 do
 				local parent = SafeCall(root.GetParent, root)
 				local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
-				if not parent_valid then break end
+				if not parent_valid or (source_baseline and source_baseline[parent]) then break end
 				root = parent
 				parent_depth = parent_depth + 1
 			end
@@ -1136,13 +1128,11 @@ local function TransferGeneratedObjects(source, destination, stats)
 				failed = failed + 1
 				if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
 			else
-				local pos = type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or nil
-				local ok, transfer_error = pcall(obj.TransferToMap, obj, destination, pos)
-				local landed = ok
-				if landed and type(obj.GetMap) == "function" then
-					landed = SafeCall(obj.GetMap, obj) == destination
-				end
-				if landed then
+				-- TransferToMap preserves the current position when no replacement position is supplied
+				-- (the vanilla rocket/unit call sites use this form). Avoid GetPos + GetMap around every
+				-- object; one post-batch source audit below verifies the complete transaction instead.
+				local ok, transfer_error = pcall(obj.TransferToMap, obj, destination)
+				if ok then
 					transferred = transferred + 1
 				else
 					failed = failed + 1
@@ -1153,20 +1143,33 @@ local function TransferGeneratedObjects(source, destination, stats)
 			end
 		end
 	end
+	local remaining_objects, remaining_error = MapObjects(source)
+	if not remaining_objects then error("could not audit source after object transfer: " .. tostring(remaining_error)) end
+	local remaining_generated = 0
+	for i = 1, #remaining_objects do
+		if not (source_baseline and source_baseline[remaining_objects[i]]) then
+			remaining_generated = remaining_generated + 1
+		end
+	end
 	stats.source_objects_enumerated = #objects
+	stats.source_baseline_objects = stats.source_baseline_objects or 0
+	stats.source_generated_objects = generated_enumerated
 	stats.source_root_objects = #roots
 	stats.source_objects_transferred = transferred
-	stats.source_attached_objects = math.max(0, #objects - #roots)
+	stats.source_attached_objects = math.max(0, generated_enumerated - #roots)
 	stats.source_object_transfer_failures = failed
+	stats.source_generated_objects_remaining = remaining_generated
 	stats.object_transfer_ms = MigrationTicks() - started
 	BackingPromotionLog("TEMP_SOURCE_OBJECTS_TRANSFERRED", {
-		enumerated = #objects, roots = #roots, transferred = transferred,
+		enumerated = #objects, generated = generated_enumerated,
+		roots = #roots, transferred = transferred,
 		attached = stats.source_attached_objects, failed = failed,
+		baseline = stats.source_baseline_objects, remaining_generated = remaining_generated,
 		failure_samples = table.concat(failures, " | "), elapsed_ms = stats.object_transfer_ms,
 	})
-	if failed > 0 then
+	if failed > 0 or remaining_generated > 0 then
 		error(string.format("temporary source object migration failed for %d objects: %s",
-			failed, table.concat(failures, " | ")))
+			failed + remaining_generated, table.concat(failures, " | ")))
 	end
 end
 
@@ -1302,6 +1305,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	BackingPromotionLog("TEMP_SOURCE_MIGRATION_BEGIN", stats)
 	SetLoadingPhase("Generating the exact vanilla source terrain...")
 	local source
+	local source_baseline
 	local saved_main_map = Global("MainMap")
 	local saved_main_city = Global("MainCity")
 	local results
@@ -1329,6 +1333,16 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			error(string.format("temporary source backing is not native-sized: got %sx%s expected %sx%s",
 				tostring(actual_width), tostring(actual_height), tostring(source_width), tostring(source_height)))
 		end
+		source_baseline, stats.source_baseline_objects = SnapshotMapObjectSet(source)
+		local destination_objects, destination_object_error = MapObjects(destination)
+		if not destination_objects then
+			error("could not snapshot destination infrastructure: " .. tostring(destination_object_error))
+		end
+		stats.destination_infrastructure_objects = #destination_objects
+		BackingPromotionLog("TEMP_SOURCE_OBJECT_BASELINES", {
+			source = stats.source_baseline_objects,
+			destination = stats.destination_infrastructure_objects,
+		})
 
 		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
@@ -1370,10 +1384,9 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		RestoreGeneratorTemplate()
 		SwitchGeneratorCurrentSlot(destination_slot)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
-		ClearDestinationObjects(destination, stats)
 		CopyMigratedTerrain(source, destination, stats)
 		CopyGeneratedMapState(source, destination)
-		TransferGeneratedObjects(source, destination, stats)
+		TransferGeneratedObjects(source, destination, stats, source_baseline)
 		CaptureGeneratedNativeEnrichments(destination, "temporary vanilla backing migrated to destination")
 		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
 		-- This path deliberately preserves the vanilla-generated height field, so discard their
@@ -1417,8 +1430,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	stats.ok = ok
 	stats.error = ok and "none" or tostring(migration_error)
 	destination.SuperBigMapVanillaSourceMigrationStats = stats
-	BackingPromotionLog(ok and "TEMP_SOURCE_MIGRATION_END" or "TEMP_SOURCE_MIGRATION_FAILED",
-		stats, ok and nil or "error")
+	if ok then
+		BackingPromotionLog("TEMP_SOURCE_MIGRATION_END", stats)
+	else
+		BackingPromotionLog("TEMP_SOURCE_MIGRATION_FAILED", stats, "error")
+	end
 	if not ok then error("temporary vanilla source migration failed: " .. tostring(migration_error)) end
 	SetLoadingPhase("Finishing the expanded map...")
 	return true, results
