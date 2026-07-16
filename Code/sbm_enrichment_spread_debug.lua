@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 6
+local PATCH_VERSION = 7
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -626,6 +626,171 @@ local function GridAudit(run, label, grid, extra, region)
 	return true
 end
 
+-- Exact-content terrain input fingerprint at the native height/type resolution. The engine's
+-- xxhash implementation has explicit grid support and processes the backing in native code, so
+-- this can cover the complete 6144x6144 source without a 37-million-cell Lua loop. A normalized
+-- 24x24 block matrix makes fingerprints comparable when one run exposes a native terrain grid
+-- and another exposes a compute grid, and localizes a mismatch to a 256x256 source-tile block.
+-- Every source cell participates in exactly one block hash; no sampling or gameplay mutation is
+-- involved. GridMinMax is used only on the normalized compute blocks (never on native terrain
+-- storage, whose unsupported type previously raised an engine asset error).
+local function FineTerrainGridFingerprint(run, label, grid, source_width, source_height, extra, options)
+	if not Enabled() then return nil end
+	options = type(options) == "table" and options or {}
+	local xxhash_fn = Global("xxhash")
+	local grid_to_compute = Global("GridToCompute")
+	local grid_min_max = Global("GridMinMax")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	local ticks = Global("GetPreciseTicks")
+	if type(xxhash_fn) ~= "function" or type(grid_to_compute) ~= "function"
+		or type(box_fn) ~= "function" or type(point_fn) ~= "function" then
+		Log("FINE_TERRAIN_GRID_UNAVAILABLE", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			grid = tostring(grid), xxhash_type = type(xxhash_fn),
+			grid_to_compute_type = type(grid_to_compute), box_type = type(box_fn),
+			point_type = type(point_fn),
+		}, extra), "warn")
+		return nil
+	end
+
+	local ok_size, input_width, input_height = pcall(function() return grid:size() end)
+	input_height = input_height or input_width
+	source_width = math.floor(tonumber(source_width) or tonumber(input_width) or 0)
+	source_height = math.floor(tonumber(source_height) or tonumber(input_height) or 0)
+	if not ok_size or type(input_width) ~= "number" or type(input_height) ~= "number"
+		or source_width <= 0 or source_height <= 0
+		or input_width < source_width or input_height < source_height then
+		Log("FINE_TERRAIN_GRID_UNAVAILABLE", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			grid = tostring(grid), size_ok = Bool(ok_size), input_width = tostring(input_width),
+			input_height = tostring(input_height), source_width = source_width,
+			source_height = source_height, reason = "invalid-source-region",
+		}, extra), "warn")
+		return nil
+	end
+
+	local blocks_x = math.max(1, math.min(source_width,
+		math.floor(tonumber(options.blocks_x) or 24)))
+	local blocks_y = math.max(1, math.min(source_height,
+		math.floor(tonumber(options.blocks_y) or 24)))
+	local x_ranges = {}
+	for bx = 0, blocks_x - 1 do
+		local x0 = math.floor(bx * source_width / blocks_x)
+		local x1 = math.floor((bx + 1) * source_width / blocks_x) - 1
+		x_ranges[#x_ranges + 1] = tostring(x0) .. "-" .. tostring(x1)
+	end
+	local input_bits = "unavailable"
+	pcall(function() input_bits = grid:bits() end)
+	local started = 0
+	if type(ticks) == "function" then
+		local ok_ticks, value = pcall(ticks)
+		if ok_ticks and type(value) == "number" then started = value end
+	end
+	Log("FINE_TERRAIN_GRID_BEGIN", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		grid = tostring(grid), input_width = input_width, input_height = input_height,
+		source_width = source_width, source_height = source_height,
+		source_cells = source_width * source_height, input_bits = tostring(input_bits),
+		blocks_x = blocks_x, blocks_y = blocks_y, x_ranges = table.concat(x_ranges, ","),
+		algorithm = "native-xxhash-plus-normalized-block-xxhash-v1",
+	}, extra))
+
+	local temporary_native, temporary_compute
+	local ok_hash, stats = pcall(function()
+		local result = {
+			label = tostring(label), input_width = input_width, input_height = input_height,
+			source_width = source_width, source_height = source_height,
+			blocks_x = blocks_x, blocks_y = blocks_y,
+			native_hash_a = xxhash_fn(grid),
+			native_hash_b = xxhash_fn("SBM_FINE_TERRAIN_NATIVE_V1", grid),
+			normalized_hash_a = 0, normalized_hash_b = 0,
+			minimum = nil, maximum = nil,
+		}
+		for by = 0, blocks_y - 1 do
+			local y0 = math.floor(by * source_height / blocks_y)
+			local y1 = math.floor((by + 1) * source_height / blocks_y)
+			local row_hash_a, row_hash_b, row_minimums, row_maximums = {}, {}, {}, {}
+			for bx = 0, blocks_x - 1 do
+				local x0 = math.floor(bx * source_width / blocks_x)
+				local x1 = math.floor((bx + 1) * source_width / blocks_x)
+				local block_width, block_height = x1 - x0, y1 - y0
+				if type(grid.new_instance) ~= "function" then
+					error("grid:new_instance unavailable")
+				end
+				temporary_native = grid:new_instance(block_width, block_height)
+				if not temporary_native or type(temporary_native.copyrect) ~= "function" then
+					error("native block allocation/copy unavailable")
+				end
+				temporary_native:copyrect(grid, box_fn(x0, y0, x1, y1), point_fn(0, 0))
+				temporary_compute = grid_to_compute(temporary_native)
+				if not temporary_compute then error("block GridToCompute failed") end
+				local block_hash_a = xxhash_fn(temporary_compute)
+				local block_hash_b = xxhash_fn("SBM_FINE_TERRAIN_BLOCK_V1", temporary_compute)
+				local block_min, block_max = nil, nil
+				if type(grid_min_max) == "function" then
+					local ok_minmax, minimum, maximum = pcall(grid_min_max, temporary_compute)
+					if ok_minmax then block_min, block_max = minimum, maximum end
+				end
+				result.minimum = block_min ~= nil and (result.minimum == nil
+					and block_min or math.min(result.minimum, block_min)) or result.minimum
+				result.maximum = block_max ~= nil and (result.maximum == nil
+					and block_max or math.max(result.maximum, block_max)) or result.maximum
+				result.normalized_hash_a = xxhash_fn(result.normalized_hash_a,
+					bx, by, block_width, block_height, block_hash_a)
+				result.normalized_hash_b = xxhash_fn(result.normalized_hash_b,
+					bx, by, block_width, block_height, block_hash_b)
+				row_hash_a[#row_hash_a + 1] = tostring(block_hash_a)
+				row_hash_b[#row_hash_b + 1] = tostring(block_hash_b)
+				row_minimums[#row_minimums + 1] = tostring(block_min)
+				row_maximums[#row_maximums + 1] = tostring(block_max)
+				if temporary_compute ~= temporary_native then
+					pcall(function() temporary_compute:free() end)
+				end
+				temporary_compute = nil
+				pcall(function() temporary_native:free() end)
+				temporary_native = nil
+			end
+			Log("FINE_TERRAIN_BLOCK_ROW", Merge({
+				run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+				block_row = by + 1, y_range = tostring(y0) .. "-" .. tostring(y1 - 1),
+				hashes_a = table.concat(row_hash_a, ","),
+				hashes_b = table.concat(row_hash_b, ","),
+				minimums = table.concat(row_minimums, ","),
+				maximums = table.concat(row_maximums, ","),
+			}, extra))
+		end
+		return result
+	end)
+	if temporary_compute and temporary_compute ~= temporary_native then
+		pcall(function() temporary_compute:free() end)
+	end
+	if temporary_native then pcall(function() temporary_native:free() end) end
+	local elapsed = 0
+	if type(ticks) == "function" then
+		local ok_ticks, value = pcall(ticks)
+		if ok_ticks and type(value) == "number" then elapsed = value - started end
+	end
+	if not ok_hash then
+		Log("FINE_TERRAIN_GRID_FAILED", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			error = tostring(stats), ms = elapsed,
+		}, extra), "warn")
+		return nil
+	end
+	stats.ms = elapsed
+	Log("FINE_TERRAIN_GRID_END", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		input_width = input_width, input_height = input_height,
+		source_width = source_width, source_height = source_height,
+		native_hash_a = tostring(stats.native_hash_a), native_hash_b = tostring(stats.native_hash_b),
+		normalized_hash_a = tostring(stats.normalized_hash_a),
+		normalized_hash_b = tostring(stats.normalized_hash_b),
+		minimum = tostring(stats.minimum), maximum = tostring(stats.maximum), ms = elapsed,
+	}, extra))
+	return stats
+end
+
 -- Exhaustive usable-area forensic scan. Unlike GridAudit's fixed lattice this reads every cell,
 -- so its checksums and counts detect even a one-cell difference. A compact 24x24 block matrix
 -- preserves the spatial distribution without emitting one line per cell. When compare.values is
@@ -1100,6 +1265,50 @@ local Diagnostics = {}
 Diagnostics.Snapshot = Snapshot
 Diagnostics.TraceBuildableState = BuildableState
 
+-- Public read-only bridge for the map-generation sampler. Both comparison modes call this with
+-- the actual height/type grids that InitBuildableGrid is about to observe and the same label, so
+-- their normalized whole-source and block fingerprints can be compared directly across logs.
+function Diagnostics.TraceFineTerrainForensics(map, label, height_grid, type_grid, extra, options)
+	if not Enabled() then return false end
+	options = type(options) == "table" and options or {}
+	local run = map and RunForMap(map) or State.enrichment_spread_active_do_generate_run
+	local source_width = math.floor(tonumber(options.source_width)
+		or tonumber(map and map.SuperBigMapGeneratorWidthTiles)
+		or tonumber(map and map.SuperBigMapSourceWidthTiles)
+		or tonumber(map and map.mapdata and map.mapdata.Width) or 0)
+	local source_height = math.floor(tonumber(options.source_height)
+		or tonumber(map and map.SuperBigMapGeneratorHeightTiles)
+		or tonumber(map and map.SuperBigMapSourceHeightTiles)
+		or tonumber(map and map.mapdata and map.mapdata.Height) or 0)
+	local fields = Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		map = MapName(map), source_width = source_width, source_height = source_height,
+		height_grid = tostring(height_grid), type_grid = tostring(type_grid),
+		blocks_x = tostring(options.blocks_x or 24), blocks_y = tostring(options.blocks_y or 24),
+	}, extra)
+	Log("FINE_TERRAIN_PAIR_BEGIN", fields)
+	local height_stats = FineTerrainGridFingerprint(run, tostring(label) .. "_HEIGHT",
+		height_grid, source_width, source_height, extra, options)
+	local type_stats = FineTerrainGridFingerprint(run, tostring(label) .. "_TYPE",
+		type_grid, source_width, source_height, extra, options)
+	local result = {
+		height = height_stats, terrain_type = type_stats,
+		ok = height_stats ~= nil and type_stats ~= nil,
+	}
+	Log("FINE_TERRAIN_PAIR_END", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		map = MapName(map), source_width = source_width, source_height = source_height,
+		height_ok = Bool(height_stats ~= nil), type_ok = Bool(type_stats ~= nil),
+		height_normalized_hash_a = tostring(height_stats and height_stats.normalized_hash_a),
+		height_normalized_hash_b = tostring(height_stats and height_stats.normalized_hash_b),
+		type_normalized_hash_a = tostring(type_stats and type_stats.normalized_hash_a),
+		type_normalized_hash_b = tostring(type_stats and type_stats.normalized_hash_b),
+		height_ms = tostring(height_stats and height_stats.ms),
+		type_ms = tostring(type_stats and type_stats.ms),
+	}, extra))
+	return result
+end
+
 -- Public bridge for the expansion wrapper to expose grids which only exist inside its private
 -- source-sized transaction (notably the repaired mask after it replaces the generator argument).
 -- The classification name is intentionally finite so callers cannot inject behavior into this
@@ -1258,6 +1467,7 @@ function Diagnostics.PatchGenerator(reason)
 		-- corner, then trace every native sampled read (InitPlayZone and ResolveBuildable).
 		local terrain_api = Global("terrain")
 		local original_get_height_grid = type(terrain_api) == "table" and terrain_api.GetHeightGrid
+		local original_get_type_grid = type(terrain_api) == "table" and terrain_api.GetTypeGrid
 		local get_height_wrapper = false
 		local original_mask_buildable = Global("MaskBuildableGrid")
 		local mask_buildable_wrapper = false
@@ -1579,6 +1789,46 @@ function Diagnostics.PatchGenerator(reason)
 				local target_map = args[1] or map
 				run.rebuild_buildable_calls = run.rebuild_buildable_calls + 1
 				local call_index = run.rebuild_buildable_calls
+				-- In pure vanilla mode this is the last observable boundary before stock
+				-- RebuildBuildableGrid samples the native terrain. Step-01-on records the same
+				-- label from the temporary native sampler immediately after its terrain sync.
+				local step01_on = (SuperBigMap.Config or {})
+					.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true
+				local environment = target_map and target_map.mapdata
+					and target_map.mapdata.Environment
+				if not step01_on and environment ~= "Underground"
+					and not run.fine_terrain_buildable_input_audited then
+					run.fine_terrain_buildable_input_audited = true
+					local ok_height, height_grid = false, nil
+					if type(original_get_height_grid) == "function" then
+						ok_height, height_grid = pcall(original_get_height_grid, target_map)
+					end
+					local ok_type, type_grid = false, nil
+					if type(original_get_type_grid) == "function" then
+						ok_type, type_grid = pcall(original_get_type_grid, target_map)
+					end
+					if ok_height and height_grid and ok_type and type_grid then
+						local trace_ok, trace_result = pcall(Diagnostics.TraceFineTerrainForensics,
+							target_map,
+							"FINE_TERRAIN_BUILDABLE_INPUT", height_grid, type_grid, {
+								mode = "step01-off", hook = "generator-env-RebuildBuildableGrid",
+								call_index = call_index, input_map = MapName(target_map),
+							}, { blocks_x = 24, blocks_y = 24 })
+						if not trace_ok then
+							Log("FINE_TERRAIN_BUILDABLE_INPUT_FAILED", {
+								run_id = run.id, proc = CurrentProc(run), mode = "step01-off",
+								call_index = call_index, error = tostring(trace_result),
+							}, "warn")
+						end
+					else
+						Log("FINE_TERRAIN_BUILDABLE_INPUT_UNAVAILABLE", {
+							run_id = run.id, proc = CurrentProc(run), mode = "step01-off",
+							call_index = call_index, height_ok = Bool(ok_height),
+							type_ok = Bool(ok_type), height_error = tostring(height_grid),
+							type_error = tostring(type_grid),
+						}, "warn")
+					end
+				end
 				BuildableState(run, target_map, "env-RebuildBuildableGrid-before-" .. tostring(call_index), {
 					call_index = call_index, hook = "generator-env", args = DescribePacked(args),
 				})

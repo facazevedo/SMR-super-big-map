@@ -6549,6 +6549,54 @@ local function PatchRandomMapGenerator()
 							end
 							height_bridge.type_full_width = type_full_width
 							height_bridge.type_full_height = type_full_height
+
+							-- Compare the exact fine-resolution terrain consumed by InitBuildableGrid,
+							-- not only the later 768x768 playable-height derivative. The Step-01-off
+							-- vanilla boundary emits the same label. Native grid hashes plus normalized
+							-- 24x24 block hashes cover every source height/type cell and localize any
+							-- divergence without a tens-of-millions-of-cells Lua scan.
+							if tostring(reason) == "buildable-grid"
+								and not height_bridge.fine_terrain_buildable_input_audited then
+								height_bridge.fine_terrain_buildable_input_audited = true
+								local fine_started = MigrationTicks()
+								local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+								local fine_ok, fine_result = pcall(function()
+									if not diagnostics
+										or type(diagnostics.TraceFineTerrainForensics) ~= "function" then
+										error("fine-terrain-diagnostics-unavailable")
+									end
+									local sampler_height_grid = original_terrain_get_height_grid(height_sampler)
+									local sampler_type_grid = original_terrain_get_type_grid(height_sampler)
+									return diagnostics.TraceFineTerrainForensics(map,
+										"FINE_TERRAIN_BUILDABLE_INPUT",
+										sampler_height_grid, sampler_type_grid, {
+											mode = "step01-on", stage = "sampler-after-sync-before-buildable",
+											sampler = tostring(height_sampler), destination = tostring(map),
+											sync_reason = tostring(reason),
+										}, {
+											source_width = gen_width_tiles, source_height = gen_height_tiles,
+											blocks_x = 24, blocks_y = 24,
+										})
+								end)
+								height_bridge.fine_terrain_audit_ms = MigrationTicks() - fine_started
+								height_bridge.fine_terrain_audit_ok = fine_ok
+									and type(fine_result) == "table" and fine_result.ok == true
+								height_bridge.fine_terrain_audit_error = height_bridge.fine_terrain_audit_ok
+									and "none" or tostring(fine_result)
+								BackingPromotionLog("NATIVE_SOURCE_FINE_TERRAIN_AUDIT", {
+									ok = height_bridge.fine_terrain_audit_ok,
+									error = height_bridge.fine_terrain_audit_error,
+									ms = height_bridge.fine_terrain_audit_ms,
+									height_hash_a = tostring(fine_ok and fine_result and fine_result.height
+										and fine_result.height.normalized_hash_a),
+									height_hash_b = tostring(fine_ok and fine_result and fine_result.height
+										and fine_result.height.normalized_hash_b),
+									type_hash_a = tostring(fine_ok and fine_result and fine_result.terrain_type
+										and fine_result.terrain_type.normalized_hash_a),
+									type_hash_b = tostring(fine_ok and fine_result and fine_result.terrain_type
+										and fine_result.terrain_type.normalized_hash_b),
+								})
+							end
 						end)
 						if compute_source then pcall(function() if type(compute_source.free) == "function" then compute_source:free() end end) end
 						if compute_full and compute_full ~= raw_full then
