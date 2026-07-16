@@ -164,7 +164,7 @@ config.OverviewExitPanTime = 250
 -- Larger zoom distance values put the overview camera farther away.
 config.OverviewZoomDistancePercent = 140
 config.OverviewCameraXYPercent = 28
-config.OverviewDistanceMultiplier =120
+config.OverviewDistanceMultiplier = 2.5
 config.OverviewMinHeightPercent = 140
 -- Screen-space overview framing nudges, also percent of terrain size.
 -- Positive horizontal moves the overview focus right; negative moves it left.
@@ -195,7 +195,7 @@ config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore,
 config.DebugGeneration    = true    -- TEMP multi-run verification: authoritative enrichment targets
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
-config.DebugSectorSizing  = false   -- SectorSizing: sector-count/size math (noisy; per-tag deduped)
+config.DebugSectorSizing  = true    -- TEMP camera verification: stable 20x20 layout geometry
 config.DebugDeposits      = true    -- TEMP multi-run verification: complementary top-up totals and final mix
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
@@ -244,8 +244,8 @@ config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; s
 -- marker, spawner, and linked passage with world+hex positions, terrain/buildability data,
 -- pairwise cross-map deltas, and best matches at lifecycle and generation-event snapshots.
 config.DebugEntrancePositions = false
-config.DebugOverview      = false   -- Overview: overview curtains + render-distance
-config.DebugCamera        = false   -- Camera: overview-camera state samples through transitions
+config.DebugOverview      = true    -- TEMP camera verification: overview curtains + render-distance
+config.DebugCamera        = true    -- TEMP camera verification: destination-bound framing and transitions
 config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
 -- Exhaustive trace for rocket/pod terrain changes. Logs patch identity and lifecycle state,
 -- construction cursor/template/rocket identity, every mod-map flatten decision, buildable-vs-
@@ -259,7 +259,7 @@ config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
 config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
-config.DebugZoom          = false   -- Zoom: ZoomPlus integration (also drives ZoomPlus's own logs)
+config.DebugZoom          = true    -- TEMP camera verification: live zoom limits and ZoomPlus state
 config.DebugZoomVanilla   = false   -- ZoomVanilla: normal-map zoom/FOV diagnostics
 config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP button/underline layout diagnostics
 config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path

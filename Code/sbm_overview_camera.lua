@@ -103,18 +103,27 @@ local exit_takeover_token = 0
 -- order is context-specific); each consumer keeps its own copy.
 local IsLiveMap = Engine.IsLiveMap
 
+local function IsTemporaryVanillaSource(map)
+	return map and map.SuperBigMapVanillaSourceMigration == true
+end
+
+local function CameraMigrationActive()
+	local state = SuperBigMap.State
+	return type(state) == "table" and state.vanilla_source_migration_active == true
+end
+
 local function ResolveLiveMap(map)
-	if IsLiveMap(map) then
+	if IsLiveMap(map) and not IsTemporaryVanillaSource(map) then
 		return map
 	end
 
 	map = Global("CurrentMap")
-	if IsLiveMap(map) then
+	if IsLiveMap(map) and not IsTemporaryVanillaSource(map) then
 		return map
 	end
 
 	map = Global("MainMap")
-	if IsLiveMap(map) then
+	if IsLiveMap(map) and not IsTemporaryVanillaSource(map) then
 		return map
 	end
 
@@ -134,6 +143,76 @@ local function IsModMap(map)
 end
 
 local TerrainSize = Engine.TerrainSize
+
+-- Camera geometry must not depend on the transient map backing that happens to be
+-- public while random generation is running. The destination's desired tile size
+-- is the same stable geometry used to build the expanded sector grid. Convert it
+-- with the engine tile size; fall back to the live terrain for old expanded saves
+-- that predate the desired-size marker.
+local function StableCameraTerrainSize(map)
+	local live_width, live_height = TerrainSize(map)
+	local mapdata = map and map.mapdata
+	local width_tiles = map and tonumber(map.SuperBigMapDesiredWidthTiles)
+	local height_tiles = map and tonumber(map.SuperBigMapDesiredHeightTiles)
+	local source = "desired"
+	if not width_tiles or width_tiles <= 0 or not height_tiles or height_tiles <= 0 then
+		width_tiles = mapdata and tonumber(mapdata.Width)
+		height_tiles = mapdata and tonumber(mapdata.Height)
+		source = "mapdata"
+	end
+	local const_tbl = Global("const")
+	local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
+	if width_tiles and width_tiles > 0 and height_tiles and height_tiles > 0
+		and tile and tile > 0 then
+		return width_tiles * tile, height_tiles * tile, source, live_width, live_height
+	end
+	return live_width, live_height, "live", live_width, live_height
+end
+
+local function CameraDestinationStatus(map, require_finalized)
+	if CameraMigrationActive() then
+		return false, "vanilla-source-migration-active"
+	end
+	if IsTemporaryVanillaSource(map) then
+		return false, "temporary-vanilla-source"
+	end
+	if not IsLiveMap(map) then
+		return false, "map-not-live"
+	end
+	if Global("CurrentMap") ~= map then
+		return false, "map-not-current"
+	end
+	if not IsModMap(map) then
+		return false, "not-mod-map"
+	end
+	if require_finalized and map.SuperBigMapQuadrantCopyPending == true then
+		return false, "expanded-destination-pending"
+	end
+	return true, "ready"
+end
+
+local function CameraMapDiag(map, extra)
+	local width, height, geometry_source, live_width, live_height = StableCameraTerrainSize(map)
+	local data = extra or {}
+	data.map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?")
+	data.map_ref = tostring(map)
+	data.current_ref = tostring(Global("CurrentMap"))
+	data.main_ref = tostring(Global("MainMap"))
+	data.geometry_source = geometry_source
+	data.camera_width = width
+	data.camera_height = height
+	data.live_width = live_width
+	data.live_height = live_height
+	data.desired_width_tiles = map and map.SuperBigMapDesiredWidthTiles
+	data.desired_height_tiles = map and map.SuperBigMapDesiredHeightTiles
+	data.generator_width_tiles = map and map.SuperBigMapGeneratorWidthTiles
+	data.generator_height_tiles = map and map.SuperBigMapGeneratorHeightTiles
+	data.pending = map and map.SuperBigMapQuadrantCopyPending == true
+	data.expanded = map and map.SuperBigMapExpanded == true
+	data.temporary_source = IsTemporaryVanillaSource(map)
+	data.migration_active = CameraMigrationActive()
+	return data
+end
 
 local function cfg_number(key, default)
 	local value = Config[key]
@@ -218,6 +297,14 @@ local function PatchOverviewFov()
 	if type(const) ~= "table" or type(const.Camera) ~= "table" then
 		return
 	end
+	-- The exact-vanilla source transaction temporarily publishes a non-destination
+	-- map. Keep the shared FOV vanilla until the expanded destination is restored.
+	if CameraMigrationActive() or IsTemporaryVanillaSource(Global("CurrentMap")) then
+		if type(RestoreOverviewFovVanilla) == "function" then
+			RestoreOverviewFovVanilla()
+		end
+		return
+	end
 
 	-- Only widen the overview FOV on maps THIS mod expanded. On a vanilla / non-EXPAND
 	-- map keep the stock FOV (restore it if a prior mod map widened the shared const).
@@ -261,6 +348,12 @@ local function PatchOverviewCamera()
 	original_calc_overview_camera_pos = Global("CalcOverviewCameraPos")
 
 	_G.CalcOverviewCameraPos = function(angle, map)
+		-- Vanilla must own every camera calculation while its temporary source map is
+		-- public. Resolving that source to MainMap here would feed expanded geometry
+		-- into a vanilla-map camera call and recreate the stale startup framing.
+		if CameraMigrationActive() or IsTemporaryVanillaSource(map) then
+			return original_calc_overview_camera_pos(angle, map)
+		end
 		local resolved = ResolveLiveMap(map)
 		-- Non-mod map: hand back the engine's vanilla framing untouched (do not even
 		-- override the view angle), so overview is exactly vanilla there.
@@ -274,11 +367,18 @@ local function PatchOverviewCamera()
 			return pos, lookat
 		end
 
-		local width, height = TerrainSize(map)
+		local width, height, geometry_source, live_width, live_height = StableCameraTerrainSize(map)
 		local size = math.max(width or 0, height or 0)
 		if size <= 0 then
 			return pos, lookat
 		end
+		OverviewDiag("CalcOverviewCameraPos geometry", CameraMapDiag(map, {
+			geometry_source = geometry_source,
+			live_width = live_width,
+			live_height = live_height,
+			angle = angle,
+			size = size,
+		}))
 
 		local point_fn = Global("point")
 		if type(point_fn) == "function" then
@@ -375,9 +475,18 @@ end
 local function ResetOverviewCamera(map, transition_time, source)
 	local DebugLog = SuperBigMap.DebugLog
 	source = source or "?"
+	map = ResolveLiveMap(map)
+	local destination_ready, destination_reason = CameraDestinationStatus(map, true)
+	if not destination_ready then
+		OverviewDiag("ResetOverviewCamera skipped", CameraMapDiag(map, {
+			source = source,
+			reason = destination_reason,
+		}))
+		return false
+	end
 	if type(Global("CalcOverviewCameraPos")) ~= "function" then
 		OverviewDiag("ResetOverviewCamera skipped", { source = source, reason = "no CalcOverviewCameraPos" })
-		return
+		return false
 	end
 
 	local get_interface = Global("GetInGameInterface")
@@ -387,13 +496,13 @@ local function ResetOverviewCamera(map, transition_time, source)
 		if DebugLog then
 			DebugLog.Info("Overview", "ResetOverviewCamera skipped", { reason = "no igi/cameraRTS" })
 		end
-		return
+		return false
 	end
 	if type(igi.IsInMode) ~= "function" or not SafeCall(igi.IsInMode, igi, "overview") then
 		if DebugLog then
 			DebugLog.Info("Overview", "ResetOverviewCamera skipped", { reason = "not in overview mode" })
 		end
-		return
+		return false
 	end
 
 	local dialog = igi.mode_dialog
@@ -481,7 +590,9 @@ local function ResetOverviewCamera(map, transition_time, source)
 				overview_angle = dialog and dialog.overview_angle,
 			})
 		end
+		return true
 	end
+	return false
 end
 
 -- Put the vanilla overview FOV back (the widened value is a global const, so it
@@ -509,16 +620,33 @@ function RestoreOverviewFovVanilla()
 	end
 end
 
-local function RefreshOverviewCamera(source)
+local function RefreshOverviewCamera(source, expected_map)
 	source = source or "RefreshOverviewCamera"
 	local curtains = SuperBigMap.OverviewCurtains
 	local render = SuperBigMap.OverviewRender
+	local map = ResolveLiveMap(expected_map or Global("CurrentMap"))
+	if expected_map and map ~= expected_map then
+		OverviewDiag("RefreshOverviewCamera skipped", CameraMapDiag(map, {
+			source = source,
+			reason = "destination-identity-changed",
+			expected_ref = tostring(expected_map),
+		}))
+		return false
+	end
+	local destination_ready, destination_reason = CameraDestinationStatus(map, true)
+	if not destination_ready and destination_reason ~= "not-mod-map" then
+		OverviewDiag("RefreshOverviewCamera skipped", CameraMapDiag(map, {
+			source = source,
+			reason = destination_reason,
+		}))
+		return false
+	end
 
 	-- Non-mod map: keep overview vanilla. Undo the FOV widen and the far render
 	-- distance, and do NOT reframe the camera or hide curtains. (The persistent
 	-- CalcOverviewCameraPos / curtain stubs are themselves gated on IsModMap, so
 	-- they pass through to vanilla too.)
-	if not IsModMap(ResolveLiveMap(Global("CurrentMap"))) then
+	if not destination_ready then
 		RestoreOverviewFovVanilla()
 		if render then
 			render.Apply(false)
@@ -549,15 +677,16 @@ local function RefreshOverviewCamera(source)
 	if curtains then
 		curtains.HideOverviewCurtains()
 	end
-	ResetOverviewCamera(Global("CurrentMap"), 0, source)
-	return true
+	return ResetOverviewCamera(map, 0, source) == true
 end
 
-local function ScheduleOverviewCameraRefresh()
+local function ScheduleOverviewCameraRefresh(expected_map, schedule_source)
 	local create_thread = Global("CreateRealTimeThread")
 	if type(create_thread) ~= "function" then
 		return false
 	end
+	expected_map = ResolveLiveMap(expected_map or Global("CurrentMap"))
+	schedule_source = schedule_source or "overview-entry"
 
 	overview_reset_token = overview_reset_token + 1
 	local token = overview_reset_token
@@ -570,7 +699,8 @@ local function ScheduleOverviewCameraRefresh()
 		-- our snap and the view stays too close until the next manual camera move.
 		-- The first overview entry of a session sets up the overview dialog and runs
 		-- a slower transition, so the tail extends well past it.
-		local delays = { 0, 100, 350, 700, 1200, 1800, 2500 }
+		local delays = { 0, 100, 350, 700, 1200, 1800, 2500, 4000, 6000 }
+		local elapsed = 0
 
 		for i = 1, #delays do
 			if token ~= overview_reset_token then
@@ -578,17 +708,33 @@ local function ScheduleOverviewCameraRefresh()
 			end
 
 			local delay = delays[i]
-			if delay > 0 and type(sleep) == "function" then
-				sleep(delay)
+			local wait = delay - elapsed
+			if wait > 0 and type(sleep) == "function" then
+				sleep(wait)
 			end
+			elapsed = delay
 
 			if token ~= overview_reset_token then
 				return
 			end
-			OverviewDiag("schedule re-apply tick", { index = i, delay = delay, state = LiveCameraState() })
-			RefreshOverviewCamera("schedule#" .. tostring(i) .. "@" .. tostring(delay) .. "ms")
+			local ready, reason = CameraDestinationStatus(expected_map, true)
+			OverviewDiag("schedule re-apply tick", CameraMapDiag(expected_map, {
+				index = i,
+				delay = delay,
+				source = schedule_source,
+				ready = ready,
+				reason = reason,
+				state = LiveCameraState(),
+			}))
+			if ready then
+				RefreshOverviewCamera(schedule_source .. "#" .. tostring(i)
+					.. "@" .. tostring(delay) .. "ms", expected_map)
+			end
 		end
-		OverviewDiag("schedule re-apply done", { ticks = #delays })
+		OverviewDiag("schedule re-apply done", CameraMapDiag(expected_map, {
+			ticks = #delays,
+			source = schedule_source,
+		}))
 	end)
 	return true
 end
@@ -600,6 +746,23 @@ OverviewCamera.PatchOverviewCamera = PatchOverviewCamera
 OverviewCamera.ResetOverviewCamera = ResetOverviewCamera
 OverviewCamera.RefreshOverviewCamera = RefreshOverviewCamera
 OverviewCamera.ScheduleOverviewCameraRefresh = ScheduleOverviewCameraRefresh
+
+-- Explicit handoff from map generation/lifecycle. Temporary-source generation can
+-- consume the startup OverviewMode event, so this destination-bound retry series is
+-- the authoritative post-generation camera entry point.
+function OverviewCamera.ReframeFinalizedDestination(map, source)
+	map = ResolveLiveMap(map)
+	local ready, reason = CameraDestinationStatus(map, true)
+	OverviewDiag("destination reframe requested", CameraMapDiag(map, {
+		source = source or "?",
+		ready = ready,
+		reason = reason,
+	}))
+	if not ready then
+		return false
+	end
+	return ScheduleOverviewCameraRefresh(map, "destination-finalized:" .. tostring(source or "?"))
+end
 
 -- Invalidate any pending scheduled refresh (called when leaving overview mode).
 function OverviewCamera.CancelScheduledRefresh()

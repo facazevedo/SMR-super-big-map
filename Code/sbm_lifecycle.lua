@@ -1134,6 +1134,10 @@ RegisterOnce("CityInitialized", function(city)
 			.. " map=" .. tostring(map and map.name or "?")
 			.. " | " .. sectors.DescribeCityState(city))
 	end
+	local camera = SuperBigMap.OverviewCamera
+	if camera and type(camera.ReframeFinalizedDestination) == "function" then
+		camera.ReframeFinalizedDestination(map, "CityInitialized")
+	end
 end)
 
 -- Defensive guard against a vanilla crash exposed by upgrading the mod's
@@ -1633,6 +1637,14 @@ RegisterOnce("MapGenerated", function(map)
 	local fake_terrain = SuperBigMap.FakeTerrain
 	if fake_terrain and type(fake_terrain.RemoveFrameCraters) == "function" then
 		fake_terrain.RemoveFrameCraters(map)
+	end
+	-- The startup OverviewMode message may have fired while exact-vanilla source
+	-- generation owned CurrentMap. Reframe explicitly now that the expanded map and
+	-- its complete sector grid are finalized; retries cover the UI opening slightly
+	-- after MapGenerated.
+	local camera = SuperBigMap.OverviewCamera
+	if camera and type(camera.ReframeFinalizedDestination) == "function" then
+		camera.ReframeFinalizedDestination(map, "MapGenerated-after-sectors")
 	end
 	EnrichmentSpreadSnapshot(map, "MapGenerated-complete")
 end)
