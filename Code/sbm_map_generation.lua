@@ -1990,12 +1990,15 @@ local function PatchRandomMapGenerator()
 			-- gen_zone, random stream, and rebuilt buildable grid produce 45,260 candidate cells
 			-- instead of vanilla's 107,293. MaskBuildableGrid is a private native lookup which the
 			-- mod sandbox cannot hook, while GetPlayableArea is deliberately exported through env.
-			-- Reconstruct only that invalid mask here from vanilla's two inputs:
-			--   invalid = NOT gen_zone OR buildable:GetPosZ(work_cell * work_step) == UnbuildableZ
-			-- This is the same point convention vanilla uses for placement (gpos * work_step) and
-			-- the asteroid generator uses to verify MaskBuildableGrid. The repaired mask is passed
-			-- into the original GetPlayableArea; terrain evaluation and every later operation remain
-			-- vanilla. Step 01 off never enters this branch.
+			-- Reconstruct only that invalid mask here from vanilla's two inputs. The native
+			-- MaskBuildableGrid implementation maps each mask cell through the terrain extent,
+			-- converts the resulting world point to axial hex coordinates, and addresses the
+			-- packed buildable grid at q + trunc(r / 2), r. BuildableGrid:GetZ uses Lua's r / 2;
+			-- for odd rows that crosses the integer boundary differently and left 79 mask cells
+			-- (two final playable cells) unlike vanilla. Mirror the native integer storage lookup
+			-- exactly here rather than compensating for its output or targeting a known cell count.
+			-- The repaired mask is passed into the original GetPlayableArea; terrain evaluation and
+			-- every later operation remain vanilla. Step 01 off never enters this branch.
 			local function source_mask_log(message, data, level)
 				local debug_log = SuperBigMap.DebugLog
 				if not debug_log then return end
@@ -2025,6 +2028,7 @@ local function PatchRandomMapGenerator()
 				local z_grid = buildable and buildable.z_grid
 				if not gen_zone or not incoming_mask or not buildable or not z_grid
 					or type(buildable.GetZ) ~= "function"
+					or type(z_grid.get) ~= "function"
 					or type(closure_world_to_hex) ~= "function"
 					or type(closure_grid_dest) ~= "function"
 					or type(closure_grid_not) ~= "function"
@@ -2052,6 +2056,14 @@ local function PatchRandomMapGenerator()
 				if source_x ~= 0 or source_y ~= 0 then
 					return nil, "nonzero-source-origin-unsupported"
 				end
+				local source_world_w = tonumber(map.SuperBigMapGeneratorWidth)
+					or tonumber(map.SuperBigMapSourceWidth)
+				local source_world_h = tonumber(map.SuperBigMapGeneratorHeight)
+					or tonumber(map.SuperBigMapSourceHeight)
+				if not source_world_w or not source_world_h
+					or source_world_w <= 0 or source_world_h <= 0 then
+					return nil, "source-world-size-unavailable"
+				end
 
 				local unbuildable_z = 2 ^ 16 - 1
 				if type(closure_build_unbuildable_z) == "function" then
@@ -2071,9 +2083,11 @@ local function PatchRandomMapGenerator()
 				local stats = {
 					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
 					buildable = tostring(build_w) .. "x" .. tostring(build_h),
+					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 					work_step = complement_work_step, unbuildable_z = unbuildable_z,
 					gen_cells = 0, outside_gen_cells = 0,
 					buildable_cells = 0, unbuildable_cells = 0, nil_buildable_cells = 0,
+					odd_hex_row_lookups = 0, getz_storage_disagreements = 0,
 					repaired_zeros = 0, repaired_ones = 0,
 					incoming_zeros = 0, incoming_ones = 0,
 					changed_cells = 0, incoming_zero_to_one = 0, incoming_one_to_zero = 0,
@@ -2088,15 +2102,26 @@ local function PatchRandomMapGenerator()
 				end
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskRepair") end
 				local ok_scan, scan_err = pcall(function()
+					local function trunc_div2(value)
+						if value >= 0 then return math.floor(value / 2) end
+						return math.ceil(value / 2)
+					end
 					for y = 0, grid_h - 1 do
-						local world_y = source_y + y * complement_work_step
+						-- Native MaskBuildableGrid uses integer floor(cell * terrain_extent /
+						-- mask_extent), not an inferred work-step or a cell-centre offset.
+						local world_y = source_y + math.floor(y * source_world_h / grid_h)
 						for x = 0, grid_w - 1 do
 							local repaired_value = repaired:get(x, y)
 							if repaired_value == 0 then
 								stats.gen_cells = stats.gen_cells + 1
-								local world_x = source_x + x * complement_work_step
+								local world_x = source_x + math.floor(x * source_world_w / grid_w)
 								local q, r = closure_world_to_hex(world_x, world_y)
-								local build_z = buildable:GetZ(q, r)
+								local storage_x = q + trunc_div2(r)
+								local build_z = z_grid:get(storage_x, r)
+								if r % 2 ~= 0 then stats.odd_hex_row_lookups = stats.odd_hex_row_lookups + 1 end
+								if buildable:GetZ(q, r) ~= build_z then
+									stats.getz_storage_disagreements = stats.getz_storage_disagreements + 1
+								end
 								if build_z == nil then
 									stats.nil_buildable_cells = stats.nil_buildable_cells + 1
 									repaired:set(x, y, 1)
@@ -2139,7 +2164,7 @@ local function PatchRandomMapGenerator()
 					if ok_ticks and type(value) == "number" then finished = value end
 				end
 				stats.ms = finished - started
-				stats.algorithm = "NOT gen_zone + source BuildableGrid:GetZ(WorldToHex(work_cell * work_step))"
+				stats.algorithm = "native MaskBuildableGrid coordinates + z_grid:get(q + trunc(r/2), r)"
 				map.SuperBigMapSourceBuildableMaskRepair = stats
 				source_mask_log("SOURCE_MASK_REPAIR", stats)
 				return repaired, nil
