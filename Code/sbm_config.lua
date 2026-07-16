@@ -387,7 +387,7 @@ config.FramePassableBridgeTiles = 2
 --   3) CORNER A15:E19 -- source cols F..J / rows 10..14 get BOTH mirrors (180 deg)
 --                     so the corner matches both seams.
 -- Each destination's existing scatter is replaced with mirrored copies of the
--- source. Runs post-load (MirrorPlanSettleMs settle), once per map, with one
+-- source. Runs after the engine reports native map generation complete, once per map, with one
 -- combined refresh over the whole filled frame.
 config.SectorMirrorPlanAtStart = true
 
@@ -541,12 +541,6 @@ config.PlaceElevatorButtonEnabled = false
 -- silence it entirely. The notice also offers a persistent local "Don't show again"
 -- action stored in LocalStorage.
 config.ShowRestartNotice = true
-
--- Settle delay (ms) the auto copy waits AFTER the sectors exist before copying,
--- so the map is fully loaded/rendered first. Copying during load reads/writes
--- terrain that isn't finalized yet and produces garbage; the manual console copy
--- works because it runs well after load. This delay makes the auto copy match.
-config.MirrorPlanSettleMs = 5000
 
 -- ============================================================================
 -- CORRECTED ENRICHMENT EXPANSION PIPELINE -- INDIVIDUAL STEP SWITCHES
@@ -765,14 +759,6 @@ config.AlwaysShowEntranceSign = true
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
 config.StretchDecorTopUp = false
--- Settle delay (ms) before the STRETCH fill runs. It must be long enough that ALL terrain grids
--- have been resized to the full expanded map before we resample them -- in particular BiomeGrid
--- gets resized LATE, and if the stretch runs before it is full-size the frame keeps the default
--- biome and renders GREY (and the size guard in sbm_terrain_copy skips it). 5000ms is the proven
--- value (matches the a8474a8 build where the whole map stretched correctly). A shorter value loads
--- faster but risks the grey-frame biome issue; the real fix for speed is to poll for grid-readiness
--- rather than lower this blindly.
-config.StretchSettleMs = 5000
 -- LOADING OPTIMIZATIONS (stretch mode only). Defer the provisional blank-map buildability
 -- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
 -- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
@@ -800,10 +786,6 @@ config.OptimizeTopUpPlacementPools = true
 -- The editor's own force-passable brush uses SetPassableBox(true) alone. Skip the preceding
 -- SetImpassableBox(false) full-frame scan while retaining the old two-write path as a fallback.
 config.OptimizeFramePassableWrites = true
--- Wake the already-settled underground stretch thread as soon as surface finalization completes;
--- its timeout remains in place as a fallback when no surface pipeline is active.
-config.OptimizeUndergroundWakeHandoff = true
-
 -- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
 config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
@@ -1122,8 +1104,6 @@ C.DEBUG_EDITORCAMERA  = as_bool(config.DebugEditorCamera)
 C.DEBUG_INITSEQ       = as_bool(config.DebugInitSeq)
 C.DEBUG_CHOSENMAP     = as_bool(config.DebugChosenMap)
 
--- Settle delay (ms) the post-load mirror plan waits after sectors exist before copying.
-C.MIRROR_PLAN_SETTLE_MS = as_number(config.MirrorPlanSettleMs, 5000)
 C.SECTOR_MIRROR_PLAN_AT_START = expansion_step_07
 	and as_bool(config.SectorMirrorPlanAtStart)
 C.MIRROR_DECOR_SKIP_EVERY_NTH = as_number(config.MirrorDecorSkipEveryNth, 0)
@@ -1291,7 +1271,6 @@ C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
-C.STRETCH_SETTLE_MS = as_number(config.StretchSettleMs, 800)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_PASSABILITY = as_bool(config.OptimizeStretchPassability)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
@@ -1299,7 +1278,6 @@ C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversa
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_FRAME_PASSABLE_WRITES = as_bool(config.OptimizeFramePassableWrites)
-C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHandoff)
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.QuadrantCopyLimitGeneratorToSource)

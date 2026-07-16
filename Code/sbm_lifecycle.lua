@@ -1060,7 +1060,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		-- (left columns, top rows, and the corner; config-driven).
 		local scheduled = false
 		if gen and type(gen.RunSectorMirrorPlanIfEnabled) == "function" then
-			scheduled = gen.RunSectorMirrorPlanIfEnabled(map) == true
+			scheduled = gen.RunSectorMirrorPlanIfEnabled(map, "PostNewMapLoaded") == true
 		end
 		if defer_postload_bounds and not scheduled then
 			Lifecycle.Apply(map, true)
@@ -1129,6 +1129,13 @@ RegisterOnce("CityInitialized", function(city)
 	if map then map.SuperBigMapBreakthroughPruningDone = true end
 	EnrichmentSpreadSnapshot(map, "CityInitialized")
 	local sectors = SuperBigMap.SectorExploration
+	if sectors and map and type(sectors.EnsureSectorsBuilt) == "function" then
+		sectors.EnsureSectorsBuilt(map, "CityInitialized-readiness-fallback")
+	end
+	local gen = SuperBigMap.MapGeneration
+	if gen and map and type(gen.NotifyGenerationMilestone) == "function" then
+		gen.NotifyGenerationMilestone(map, "CityInitialized", "CityInitialized-after-sectors")
+	end
 	if sectors and type(sectors.DiagOn) == "function" and sectors.DiagOn() then
 		print("[Super Big Map] SectorDiag: OnMsg.CityInitialized: city=" .. tostring(city)
 			.. " map=" .. tostring(map and map.name or "?")
@@ -1645,6 +1652,9 @@ RegisterOnce("MapGenerated", function(map)
 	local camera = SuperBigMap.OverviewCamera
 	if camera and type(camera.ReframeFinalizedDestination) == "function" then
 		camera.ReframeFinalizedDestination(map, "MapGenerated-after-sectors")
+	end
+	if gen and type(gen.NotifyGenerationMilestone) == "function" then
+		gen.NotifyGenerationMilestone(map, "MapGenerated", "MapGenerated-handler-complete")
 	end
 	EnrichmentSpreadSnapshot(map, "MapGenerated-complete")
 end)

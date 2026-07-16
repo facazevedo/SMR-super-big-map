@@ -25,13 +25,10 @@ local GENERATOR_PATCH_VERSION = SuperBigMap.GENERATOR_PATCH_VERSION or 2
 SuperBigMap.State = SuperBigMap.State or {}
 SuperBigMap.State.quadrant_pending_maps = SuperBigMap.State.quadrant_pending_maps or {}
 SuperBigMap.State.quadrant_blocked_maps = SuperBigMap.State.quadrant_blocked_maps or {}
-SuperBigMap.State.underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
-	or setmetatable({}, { __mode = "k" })
 SuperBigMap.State.underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 	or setmetatable({}, { __mode = "k" })
 local pending_maps = SuperBigMap.State.quadrant_pending_maps
 local blocked_maps = SuperBigMap.State.quadrant_blocked_maps
-local underground_stretch_threads = SuperBigMap.State.underground_stretch_threads
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
@@ -91,19 +88,17 @@ local function InvestigationSafeCall(name, map, fn, ...)
 	return a, b, c, d
 end
 
-local function WakePendingUndergroundStretch()
-	if not cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) then return 0 end
-	local wakeup = Global("Wakeup")
-	if type(wakeup) ~= "function" then return 0 end
-	local woken = 0
-	for _, thread in pairs(underground_stretch_threads) do
-		if thread and pcall(wakeup, thread) then woken = woken + 1 end
-	end
+local function SignalExpansionReadinessChanged(map, reason)
+	local msg = Global("Msg")
+	local signaled = type(msg) == "function" and pcall(msg,
+		"SuperBigMapExpansionReadinessChanged", map, reason) == true
 	local profiler = SuperBigMap.LoadingProfiler
 	if profiler and type(profiler.Step) == "function" then
-		profiler.Step("underground readiness: surface-complete wake handoff", { woken = woken }, Global("CurrentMap"))
+		profiler.Step("expansion readiness: state changed", {
+			reason = tostring(reason), signaled = signaled,
+		}, map or Global("CurrentMap"))
 	end
-	return woken
+	return signaled
 end
 
 -- Exhaustive entrance/exit forensic snapshots (no-op unless DEBUG_ENTRANCEPOSITIONS is on).
@@ -380,6 +375,11 @@ local function ClearPreparedMapInstance(map)
 		return false
 	end
 	map.SuperBigMapQuadrantCopyPending = nil
+	map.SuperBigMapNativeGenerationComplete = nil
+	map.SuperBigMapNativeGenerationCompleteSource = nil
+	map.SuperBigMapCityInitializationComplete = nil
+	map.SuperBigMapSectorMirrorAwaitingReadiness = nil
+	map.SuperBigMapSectorMirrorReadinessLogKey = nil
 	map.SuperBigMapSourceWidth = nil
 	map.SuperBigMapSourceHeight = nil
 	map.SuperBigMapSourceX = nil
@@ -456,6 +456,9 @@ local function AttachPendingMapState(map)
 	end
 
 	map.SuperBigMapQuadrantCopyPending = true
+	map.SuperBigMapNativeGenerationComplete = nil
+	map.SuperBigMapNativeGenerationCompleteSource = nil
+	map.SuperBigMapCityInitializationComplete = nil
 	map.SuperBigMapSourceWidth = pending.source_width
 	map.SuperBigMapSourceHeight = pending.source_height
 	map.SuperBigMapSourceX = pending.source_x or 0
@@ -732,6 +735,9 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	StorePendingMap(map_name, pending)
 
 	map_instance.SuperBigMapQuadrantCopyPending = true
+	map_instance.SuperBigMapNativeGenerationComplete = nil
+	map_instance.SuperBigMapNativeGenerationCompleteSource = nil
+	map_instance.SuperBigMapCityInitializationComplete = nil
 	map_instance.SuperBigMapSourceWidth = pending.source_width
 	map_instance.SuperBigMapSourceHeight = pending.source_height
 	map_instance.SuperBigMapSourceX = source_x
@@ -7312,12 +7318,37 @@ end
 -- Config-driven L-frame fill: at game start, run the three block copies (fast
 -- path: one grid flip per block instead of one per sector). Gated on a full 20x20
 -- terrain grid. Yields inside the object loops; ONE combined refresh at the end.
-local function RunSectorMirrorPlanIfEnabled(map)
+local function SurfaceExpansionReadiness(map)
+	if map.SuperBigMapNativeGenerationComplete ~= true then
+		return false, "native generation has not completed"
+	end
+	if map.SuperBigMapCityInitializationComplete ~= true then
+		return false, "city initialization and enrichment placement have not completed"
+	end
+	if map.SuperBigMapQuadrantCopyPending == true then
+		return false, "expanded destination finalization is still pending"
+	end
+	if not FindSectorByName(map, "F0") then
+		return false, "final sector grid does not contain F0"
+	end
+	return true, "native generation and destination finalization complete"
+end
+
+local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 	map = map or Global("CurrentMap")
 	if not cfg_bool("SECTOR_MIRROR_PLAN_AT_START", false) then
 		return false
 	end
 	if not map then
+		return false
+	end
+	-- SuperBigMapExpanded is persisted per map. A loaded save has no new MapGenerated or
+	-- CityInitialized transaction to wait for, and its expansion must never be repeated.
+	if map.SuperBigMapExpanded == true and map.SuperBigMapQuadrantCopyPending ~= true then
+		map.SuperBigMapSectorMirrorDone = true
+		map.SuperBigMapSectorMirrorAwaitingReadiness = false
+		map.SuperBigMapStretchPipelinePending = false
+		SignalExpansionReadinessChanged(map, "persisted surface expansion already complete")
 		return false
 	end
 	if map.SuperBigMapSectorMirrorDone == true then
@@ -7326,30 +7357,51 @@ local function RunSectorMirrorPlanIfEnabled(map)
 	-- Report an existing live schedule as success so the lifecycle caller does not run its
 	-- fallback full-map rebuild in parallel with the expansion transaction.
 	if map.SuperBigMapSectorMirrorScheduled == true then return true end
+	local fill_mode_early = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
+	if fill_mode_early == "stretch" and cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
+		map.SuperBigMapStretchPipelinePending = true
+	end
+	local ready, readiness = SurfaceExpansionReadiness(map)
+	if not ready then
+		map.SuperBigMapSectorMirrorAwaitingReadiness = true
+		local wait_key = tostring(readiness_source) .. ":" .. tostring(readiness)
+		if map.SuperBigMapSectorMirrorReadinessLogKey ~= wait_key then
+			map.SuperBigMapSectorMirrorReadinessLogKey = wait_key
+			StretchLog("RunSectorMirrorPlan: waiting for readiness event", {
+				source = tostring(readiness_source), reason = readiness,
+				native_complete = tostring(map.SuperBigMapNativeGenerationComplete),
+				city_complete = tostring(map.SuperBigMapCityInitializationComplete),
+				finalization_pending = tostring(map.SuperBigMapQuadrantCopyPending),
+				f0_found = FindSectorByName(map, "F0") ~= nil,
+			})
+			InitSeq("RunSectorMirrorPlan: deferred until generation-complete event", {
+				source = tostring(readiness_source), reason = readiness,
+				frame_sectors = FrameSectorProbe(map),
+			})
+		end
+		-- This is an accepted deferred schedule. The lifecycle caller must not run the
+		-- full-map fallback while MapGenerated/CityInitialized can satisfy the gate.
+		return true
+	end
 	local create_thread = Global("CreateRealTimeThread")
-	local sleep = Global("Sleep")
 	local yield_protected_call = Global("sprocall")
-	if type(create_thread) ~= "function" or type(sleep) ~= "function"
-		or type(yield_protected_call) ~= "function" then
+	if type(create_thread) ~= "function" or type(yield_protected_call) ~= "function" then
+		map.SuperBigMapStretchPipelinePending = false
 		return false
 	end
+	map.SuperBigMapSectorMirrorAwaitingReadiness = false
+	map.SuperBigMapSectorMirrorReadinessLogKey = nil
 	map.SuperBigMapSectorMirrorScheduled = true
-	-- STRETCH loads fast (grid resample, no sector-by-sector work), so it does not need the long
-	-- mirror-plan settle -- use a short stretch-specific settle to cut several seconds off the load.
-	local fill_mode_early = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
-	local settle_ms = math.max(0, cfg_number("MIRROR_PLAN_SETTLE_MS", 5000))
-	if fill_mode_early == "stretch" then
-		settle_ms = math.max(0, cfg_number("STRETCH_SETTLE_MS", 800))
-		if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
-			map.SuperBigMapStretchPipelinePending = true
-		end
-	end
-	StretchLog("RunSectorMirrorPlan: scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
+	StretchLog("RunSectorMirrorPlan: readiness satisfied; scheduled", {
+		mode = fill_mode_early, source = tostring(readiness_source), readiness = readiness,
+	})
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
-		SuperBigMap.DebugLog.LoadTime("expansion plan scheduled", { mode = fill_mode_early, settle_ms = settle_ms })
+		SuperBigMap.DebugLog.LoadTime("expansion plan scheduled", {
+			mode = fill_mode_early, readiness_source = tostring(readiness_source), readiness = readiness,
+		})
 	end
-	InitSeq("RunSectorMirrorPlan: scheduled (waiting for F0 + settle)", {
-		settle_ms = settle_ms,
+	InitSeq("RunSectorMirrorPlan: scheduled from readiness event", {
+		readiness_source = tostring(readiness_source), readiness = readiness,
 		frame_sectors = FrameSectorProbe(map),
 	})
 	local schedule_ok, schedule_err = pcall(create_thread, function()
@@ -7358,8 +7410,8 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		local thread_ok, thread_err = yield_protected_call(function()
 		-- Loading screen: hide the welcome popup's Close button + show a loading message
 		-- while we expand, restored on completion (ExpansionLoadingBegin/End in lifecycle).
-		-- Begin EARLY (before the F0 wait + settle) so the player can't dismiss the welcome
-		-- and start playing mid-expansion. Gated to real mod maps (not the PreGame preview).
+		-- Begin as soon as the native generation-complete gate opens so the player cannot
+		-- start playing mid-expansion. Gated to real mod maps (not the PreGame preview).
 		local lc_name = tostring(map.name or (map.mapdata and map.mapdata.id) or "")
 		local lc_grid = SuperBigMap.SectorGrid
 		local lc_mod_map = type(lc_grid) == "table" and type(lc_grid.IsModMap) == "function"
@@ -7390,81 +7442,13 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			end
 		end
 		local loading_profiler = SuperBigMap.LoadingProfiler
-		local waited = 0
-		local f0_token = loading_profiler and type(loading_profiler.Begin) == "function"
-			and loading_profiler.Begin("surface readiness: wait for F0 sector", { max_wait_ms = 15000 }, map) or false
-		local f0_detail_token = InvestigationBegin("surface readiness: F0 polling window", map, {
-			max_wait_ms = 15000,
-		})
-		for _ = 1, 60 do
-			if FindSectorByName(map, "F0") then
-				break
-			end
-			sleep(250)
-			waited = waited + 250
-		end
-		if f0_token and type(loading_profiler.End) == "function" then
-			loading_profiler.End(f0_token, { waited_ms = waited,
-				f0_found = FindSectorByName(map, "F0") ~= nil }, true)
-		end
-		InvestigationEnd(f0_detail_token, {
-			requested_wait_ms = waited,
-			f0_found = FindSectorByName(map, "F0") ~= nil,
-		}, true)
-		InitSeq("RunSectorMirrorPlan: F0 wait finished", {
-			waited_ms = waited,
-			f0_found = FindSectorByName(map, "F0") ~= nil,
-		})
-		if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
-			SuperBigMap.DebugLog.LoadTime("F0 sector ready", { waited_ms = waited })
-		end
-		-- MUST wait the full settle before stretching: the map keeps loading AFTER PostNewMapLoaded
-		-- (terrain data fills + ~7500 decorations get placed over the next few seconds). A
-		-- readiness poll on BiomeGrid's SIZE fires far too early (size is allocated up front, data
-		-- is not) -- stretching a half-loaded map gives the grey/incomplete result with almost no
-		-- decorations and a bloated reinvalidate. The fixed settle is the reliable "map fully
-		-- loaded" wait; tune StretchSettleMs if needed, but it must cover the async object placement.
-		--
-		-- LOAD-TIMELINE SAMPLING (DEBUG_LOADTIME): while waiting, sample the map's object count
-		-- every 500ms. The full settle is ALWAYS waited (measurement only, no behavior change);
-		-- the samples show exactly when object placement completes, so the settle can later be
-		-- shortened to a data-backed value instead of another guess.
-		do
-			local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
-				and loading_profiler.Begin("surface readiness: fixed settle", { settle_ms = settle_ms }, map) or false
-			local settle_detail_token = InvestigationBegin("surface readiness: fixed settle scheduling span", map, {
-				configured_ms = settle_ms,
-			})
-			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
-			local lt_on = LT and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("LoadTime")
-			if lt_on and type(map.MapForEach) == "function" then
-				local function count_objects()
-					local n = 0
-					pcall(map.MapForEach, map, "map", "CObject", function() n = n + 1 end)
-					return n
-				end
-				LT("settle begin", { settle_ms = settle_ms, objects = count_objects() })
-				local waited, step = 0, 500
-				while waited < settle_ms do
-					sleep(step)
-					waited = waited + step
-					LT("settle sample", { waited_ms = waited, objects = count_objects() })
-				end
-				LT("settle done")
-			else
-				sleep(settle_ms)
-			end
-			if settle_token and type(loading_profiler.End) == "function" then
-				loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
-			end
-			InvestigationEnd(settle_detail_token, { configured_ms = settle_ms }, true)
-		end
 		if map.SuperBigMapSectorMirrorDone == true then
-			InitSeq("RunSectorMirrorPlan: already done after settle -- aborting", {})
+			InitSeq("RunSectorMirrorPlan: already done before transaction -- aborting", {})
 			end_loading()
 			return
 		end
-		InitSeq("RunSectorMirrorPlan: settle done, about to check 20x20 fit", {
+		InitSeq("RunSectorMirrorPlan: readiness gate passed, about to check 20x20 fit", {
+			readiness_source = tostring(readiness_source),
 			frame_sectors = FrameSectorProbe(map),
 		})
 		-- Only maps the mod ACTUALLY expanded are candidates. Skip SILENTLY (no
@@ -7540,7 +7524,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			local frame_passability_preapplied = false
 			local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
 				and loading_profiler.Begin("surface expansion: complete stretch pipeline", {
-					fill_mode = fill_mode, settle_ms = settle_ms,
+					fill_mode = fill_mode, readiness_source = tostring(readiness_source),
 				}, map) or false
 			-- One transaction owns the frame overlay plus both mass-object moves. ForceFramePassable,
 			-- ScaleDecorationsToFull, and ScaleMarkersToFull otherwise each balance their own
@@ -7967,7 +7951,7 @@ local function RunSectorMirrorPlanIfEnabled(map)
 			StretchLog("stretch branch: -> end_loading()")
 			EntranceSnapshot("surface stretch final", map)
 			end_loading()
-			WakePendingUndergroundStretch()
+			SignalExpansionReadinessChanged(map, "surface stretch complete")
 			StretchLog("stretch branch: DONE")
 			return
 		end
@@ -8122,9 +8106,10 @@ local function RunSectorMirrorPlanIfEnabled(map)
 		-- Expansion fully done (terrain + objects): restore the welcome
 		-- popup's Close button + original text so the player can dismiss it and play.
 		end_loading()
+		SignalExpansionReadinessChanged(map, "surface mirror complete")
 		DebugPrint(string.format(
-			"RunSectorMirrorPlanIfEnabled: completed terrain=%s/%s objects=%s/%s blocks (settle=%sms)",
-			tostring(terrain_done), tostring(n), tostring(obj_done), tostring(n), tostring(settle_ms)))
+			"RunSectorMirrorPlanIfEnabled: completed terrain=%s/%s objects=%s/%s blocks (readiness=%s)",
+			tostring(terrain_done), tostring(n), tostring(obj_done), tostring(n), tostring(readiness_source)))
 		end)
 		if not thread_ok then
 			if map.SuperBigMapStretchPipelinePending == true then
@@ -8242,6 +8227,34 @@ end
 -- game spawns an underground passage AT the surface passage's own x,y and links the pair by
 -- object reference. Triggered from PostNewMapLoaded for Environment=="Underground" maps; gates on
 -- the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
+local function UndergroundExpansionReadiness(map)
+	if map.SuperBigMapNativeGenerationComplete ~= true then
+		return false, "underground native generation has not completed"
+	end
+	if map.SuperBigMapCityInitializationComplete ~= true then
+		return false, "underground city initialization has not completed"
+	end
+	local surface = Global("MainMap")
+	if type(surface) ~= "table" or surface == map then
+		return true, "native generation complete; no surface dependency"
+	end
+	if not cfg_bool("SECTOR_MIRROR_PLAN_AT_START", false) then
+		return true, "native generation complete; surface expansion disabled"
+	end
+	local grid = SuperBigMap.SectorGrid
+	if type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(surface) ~= true then
+		return true, "native generation complete; surface is not a mod map"
+	end
+	if surface.SuperBigMapSectorMirrorDone == true
+		or (surface.SuperBigMapExpanded == true
+			and surface.SuperBigMapQuadrantCopyPending ~= true
+			and surface.SuperBigMapStretchPipelinePending ~= true) then
+		return true, "native generation and surface expansion complete"
+	end
+	return false, "surface expansion transaction has not completed"
+end
+
 local function RunUndergroundStretchIfEnabled(map, force_now)
 	UndergroundAccessLog("preparation function entered", UndergroundAccessState(map, {
 		force_now = tostring(force_now),
@@ -8259,6 +8272,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	UndergroundAccessLog("deferred geometry restore checked", UndergroundAccessState(map, {
 		restored_geometry = tostring(restored_geometry),
 	}))
+	if map.SuperBigMapExpanded == true and map.SuperBigMapQuadrantCopyPending ~= true then
+		map.SuperBigMapUndergroundPrepared = true
+		map.SuperBigMapUndergroundStretchDone = true
+		map.SuperBigMapUndergroundStretchPending = false
+		UndergroundAccessLog("persisted expanded flag normalized to prepared", UndergroundAccessState(map))
+	end
 	if map.SuperBigMapUndergroundPrepared == true then
 		map.SuperBigMapUndergroundStretchDone = true
 		map.SuperBigMapUndergroundStretchPending = false
@@ -8309,10 +8328,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		return true
 	end
 	local create_thread = Global("CreateRealTimeThread")
-	local sleep = Global("Sleep")
-	if force_now ~= true and (type(create_thread) ~= "function" or type(sleep) ~= "function") then
+	local wait_msg = Global("WaitMsg")
+	local ready_now, readiness_now = UndergroundExpansionReadiness(map)
+	if force_now == true and not ready_now then
+		UndergroundAccessLog("preparation rejected: readiness gate is closed", UndergroundAccessState(map, {
+			readiness = readiness_now,
+		}), "error")
+		return false, readiness_now
+	end
+	if force_now ~= true and (type(create_thread) ~= "function"
+		or (not ready_now and type(wait_msg) ~= "function")) then
 		UndergroundAccessLog("preparation rejected: asynchronous engine functions unavailable", UndergroundAccessState(map, {
-			create_thread = tostring(create_thread), sleep = tostring(sleep),
+			create_thread = tostring(create_thread), wait_msg = tostring(wait_msg),
+			readiness = readiness_now,
 		}), "error")
 		return false, "required asynchronous engine functions are unavailable"
 	end
@@ -8325,47 +8353,54 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
 		map.SuperBigMapStretchPipelinePending = true
 	end
-	-- A first-access run happens long after vanilla map generation completed, so the original
-	-- readiness settle is unnecessary. The eager startup path retains its proven settle/wakeup.
-	local settle_ms = force_now == true and 0 or math.max(0, cfg_number("STRETCH_SETTLE_MS", 5000))
-	StretchLog("underground stretch: scheduled", { settle_ms = settle_ms, desired = desired, generator = gen_t })
-	-- LOADING PHASE: keep the loading box up (and the welcome popup hidden) until this
-	-- stretch too has finished -- the box previously came down when the SURFACE branch
-	-- finished, leaving the welcome popup visible but unclickable while this thread still
-	-- blocked the game (reference-counted; see sbm_loading_ui).
-	if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
-		pcall(SuperBigMap.ExpansionLoadingBegin)
-		SetLoadingPhase("Expanding the underground map")
-	end
+	StretchLog("underground stretch: scheduled on readiness gate", {
+		readiness = readiness_now, ready = ready_now,
+		desired = desired, generator = gen_t,
+	})
 	local function run_pipeline()
 		UndergroundAccessLog("complete deferred pipeline started", UndergroundAccessState(map, {
-			force_now = tostring(force_now), settle_ms = tostring(settle_ms),
+			force_now = tostring(force_now), readiness = readiness_now,
 		}))
 		local loading_profiler = SuperBigMap.LoadingProfiler
-		local settle_token = loading_profiler and type(loading_profiler.Begin) == "function"
-			and loading_profiler.Begin("underground readiness: fixed settle", { settle_ms = settle_ms }, map) or false
-		local settle_detail_token = InvestigationBegin("underground readiness: fixed settle scheduling span", map, {
-			configured_ms = settle_ms,
+		local readiness_token = loading_profiler and type(loading_profiler.Begin) == "function"
+			and loading_profiler.Begin("underground readiness: event barrier", {
+				initial_ready = ready_now, initial_reason = readiness_now,
+			}, map) or false
+		local readiness_detail_token = InvestigationBegin("underground readiness: event barrier", map, {
+			initial_ready = ready_now, initial_reason = readiness_now,
 		})
-		local wait_wakeup = Global("WaitWakeup")
-		if settle_ms > 0 then
-			if cfg_bool("OPTIMIZE_UNDERGROUND_WAKE_HANDOFF", true) and type(wait_wakeup) == "function" then
-				wait_wakeup(settle_ms)
-			else
-				sleep(settle_ms)
+		local ready, readiness = UndergroundExpansionReadiness(map)
+		local last_reason = false
+		while not ready do
+			if readiness ~= last_reason then
+				last_reason = readiness
+				UndergroundAccessLog("waiting for expansion readiness event", UndergroundAccessState(map, {
+					readiness = readiness,
+				}))
+				StretchLog("underground readiness: waiting", { reason = readiness })
 			end
+			wait_msg("SuperBigMapExpansionReadinessChanged")
+			ready, readiness = UndergroundExpansionReadiness(map)
 		end
-		underground_stretch_threads[map] = nil
-		if settle_token and type(loading_profiler.End) == "function" then
-			loading_profiler.End(settle_token, { configured_ms = settle_ms }, true)
+		if readiness_token and type(loading_profiler.End) == "function" then
+			loading_profiler.End(readiness_token, { readiness = readiness }, true)
 		end
-		InvestigationEnd(settle_detail_token, { configured_ms = settle_ms }, true)
+		InvestigationEnd(readiness_detail_token, { readiness = readiness }, true)
+		UndergroundAccessLog("expansion readiness gate opened", UndergroundAccessState(map, {
+			readiness = readiness,
+		}))
+		-- LOADING PHASE starts only after dependencies are ready; waiting for engine events must
+		-- never hold the player behind a timing-dependent loading screen.
+		if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
+			pcall(SuperBigMap.ExpansionLoadingBegin)
+			SetLoadingPhase("Expanding the underground map")
+		end
 		local pause_ild = Global("PauseInfiniteLoopDetection")
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
 		local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
 			and loading_profiler.Begin("underground expansion: complete stretch pipeline", {
-				settle_ms = settle_ms, desired_tiles = desired, generator_tiles = gen_t,
+				readiness = readiness, desired_tiles = desired, generator_tiles = gen_t,
 			}, map) or false
 		local elevator_migrations = {}
 		local ok_branch, branch_err = pcall(function()
@@ -8713,8 +8748,49 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	if force_now == true then
 		return run_pipeline()
 	end
-	local thread = create_thread(run_pipeline)
-	underground_stretch_threads[map] = thread
+	create_thread(run_pipeline)
+	return true
+end
+
+-- Persistent readiness handoff used by lifecycle completion events. PostNewMapLoaded may run
+-- while the random generator is still filling terrain and objects, so it may only register a
+-- deferred request. Both milestones are required: MapGenerated proves native terrain/object
+-- generation returned; CityInitialized proves exploration and breakthrough placement returned.
+local function NotifyGenerationMilestone(map, milestone, source)
+	if type(map) ~= "table" then return false end
+	if milestone == "MapGenerated" then
+		map.SuperBigMapNativeGenerationComplete = true
+		map.SuperBigMapNativeGenerationCompleteSource = tostring(source or milestone)
+	elseif milestone == "CityInitialized" then
+		map.SuperBigMapCityInitializationComplete = true
+	else
+		return false
+	end
+	DebugPrint(string.format(
+		"expansion readiness: milestone=%s map=%s source=%s env=%s native=%s city=%s pending=%s f0=%s",
+		tostring(milestone),
+		tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+		tostring(source or milestone),
+		tostring(map.mapdata and map.mapdata.Environment),
+		tostring(map.SuperBigMapNativeGenerationComplete),
+		tostring(map.SuperBigMapCityInitializationComplete),
+		tostring(map.SuperBigMapQuadrantCopyPending),
+		tostring(FindSectorByName(map, "F0") ~= nil)))
+	SignalExpansionReadinessChanged(map, tostring(milestone) .. ": " .. tostring(source or milestone))
+
+	local env = map.mapdata and map.mapdata.Environment
+	if env == "Surface" then
+		local grid = SuperBigMap.SectorGrid
+		local is_mod_map = type(grid) == "table" and type(grid.IsModMap) == "function"
+			and grid.IsModMap(map) == true
+		if is_mod_map and map.SuperBigMapVanillaSourceMigration ~= true then
+			return RunSectorMirrorPlanIfEnabled(map, source)
+		end
+		return true
+	end
+	if env == "Underground" then
+		return RunUndergroundStretchIfEnabled(map)
+	end
 	return true
 end
 
@@ -9195,6 +9271,7 @@ MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
+MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
 MapGeneration.ForceFramePassable = ForceFramePassable
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 

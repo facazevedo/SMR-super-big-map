@@ -57,7 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 77: retain native enrichments as value records across the
--- temporary source unload, recreate them on the stretched destination, and keep transformed Pos
--- out of the ordinary property-equality audit.
-SuperBigMap.GENERATOR_PATCH_VERSION = 77
+-- (sbm_map_generation). Bumped to 78: replace surface/underground wall-clock settle delays with
+-- persistent native-generation, finalization, sector-grid, and surface-completion readiness gates.
+SuperBigMap.GENERATOR_PATCH_VERSION = 78
