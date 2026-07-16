@@ -1,7 +1,6 @@
 -- Super Big Map -- heat-grid query safety on expanded maps.
 --
--- The expanded map keeps PassBorder = 0 so the WHOLE map (including the non-rendered
--- L-frame) is passable -- a rover unloaded from a rocket that landed near the edge/frame
+-- The expanded map keeps PassBorder = 0 so the whole stretched destination is available -- a rover unloaded from a rocket that landed near the edge
 -- must not be trapped. But the engine's heat grid only covers
 -- [const.HeatGridBorder, size - const.HeatGridBorder]; when a unit stands in the outer
 -- strip, Heat_Get asserts (HGE::Heat_Get: pGrid->inside). Rather than block movement with

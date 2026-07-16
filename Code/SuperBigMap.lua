@@ -16,8 +16,8 @@ local DebugLog = SuperBigMap.DebugLog
 if DebugLog then
 	DebugLog.Info("Lifecycle", "Super Big Map loaded", {
 		enabled = Config.ENABLE_MOD ~= false,
-		terrain = Config.TERRAIN_SIZE,
-		grid = Config.SECTOR_GRID,
+		layout = "stretch-expanded",
+		sector_grid = "expanded-corner-anchored",
 		expansion_step_01 = Config.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true,
 		enrichment_spread_comparison = Config.DEBUG_ENRICHMENTSPREADCOMPARISON == true,
 	})

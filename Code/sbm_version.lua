@@ -55,8 +55,10 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     20x20 layout for every candidate hex and trip the infinite-loop detector.
 -- 49: defer underground exploration availability until expansion completes so vanilla
 --     InitSectors cannot perform an unintended initial underground sector scan.
-SuperBigMap.SECTOR_PATCH_VERSION = 49
+-- 50: remove alternate sector layouts; expanded maps now always use the corner-anchored
+--     full-destination grid.
+SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 80: disable the completed heavyweight forensic trace and add
--- lightweight per-class timing for the exact generated-object migration bottleneck.
-SuperBigMap.GENERATOR_PATCH_VERSION = 80
+-- (sbm_map_generation). Bumped to 81: consolidate allocation/finalization around the sole
+-- stretch pipeline and remove legacy frame-fill/mirror dispatch.
+SuperBigMap.GENERATOR_PATCH_VERSION = 81

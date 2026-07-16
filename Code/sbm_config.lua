@@ -10,91 +10,15 @@
 local config = {}
 
 -- ============================================================================
--- MAIN SETTINGS: map size and sector grid
+-- MAIN LAYOUT
 -- ============================================================================
--- These two values are the primary controls for the mod. The detailed flags in
--- the "Experimental ..." sections below are DERIVED from them, so in normal use
--- you only edit these two lines. Set BOTH to "vanilla" for plain, unmodified
--- vanilla Surviving Mars behaviour.
---
--- config.SuperBigMapTerrainSize -- how large the playable terrain is:
---     "vanilla"   Vanilla map size (4096 mapdata tiles). The game builds and
---                 renders its normal terrain.
---     "expanded"  20x20 frame expansion. The mod allocates an 8192-tile mapdata,
---                 lets the random generator produce the native source terrain,
---                 then fills the added L-shaped frame by mirroring terrain and
---                 objects from the source edge blocks.
---                 Applies to random Surface maps only; everything else (e.g.
---                 underground breakthroughs) stays vanilla.
---
--- config.SuperBigMapSectorGrid -- how the overview "sector tiles" (the lettered
---                                scan grid you see in overview) are laid out.
---                                Sectors are always vanilla-sized (~40960 world
---                                units, never changes); the options differ in
---                                count and grid offset:
---     "vanilla"                 Vanilla: a 10 x 10 grid over the bordered PLAYABLE
---                               area only -- the map's outer border is left out of
---                               the grid, exactly like the unmodified game. The mod
---                               does not touch sectors or bounds.
---     "expanded"                Clean grid from the map corner (0,0): as many full
---                               vanilla-sized sectors as the terrain holds, no
---                               partials. The whole terrain is made playable.
---                               RECOMMENDED: this matches the engine's own overview/
---                               selection grid (anchored at the map corner), so
---                               the hover highlight lines up with the sectors and
---                               you can click them precisely.
---     "expanded_with_vanilla_grid"
---                               Same vanilla-sized sectors, but the grid is shifted
---                               to the ORIGINAL map's grid offset (vanilla
---                               PassBorder) so the lines match where vanilla drew
---                               them. Partial edge sectors are DROPPED -- only full
---                               vanilla-sized sectors are kept; a margin remains
---                               between the outermost sector and the map edge.
---                               CAVEAT: the engine's hover-highlight is hard-
---                               anchored at the map corner and cannot be moved from
---                               Lua, so with this option the selection highlight
---                               does NOT line up with the shifted grid (you can't
---                               reliably click a sector). Use only if you care about
---                               the grid lines' position over clicking.
---
--- IMPORTANT: switching to (or between) "expanded" terrain only takes effect on
--- a NEW GAME. Loading an existing save keeps the map data that was generated
--- at save time; the terrain expansion has to happen during map generation, so
--- the bigger 20x20 expanded map will not appear on a save that was started without
--- it (or with a different terrain setting). To see "expanded" terrain, start a
--- new game after editing this file.
---
--- The five combinations (resulting grid counts assume vanilla=4096-tile terrain
--- and expanded=8192-tile terrain at 100 wu/tile, vanilla sector=40960 wu):
---     "vanilla"  + "vanilla"                    truly vanilla: 10x10 over the
---                                               bordered playable area. Mod is a
---                                               complete no-op.
---     "vanilla"  + "expanded_with_vanilla_grid" vanilla terrain, vanilla offset,
---                                               drop partials -> ~9x9 inside the
---                                               vanilla map. Whole terrain made
---                                               playable.
---     "vanilla"  + "expanded"                   vanilla terrain, grid from (0,0)
---                                               spanning whole map -> 10x10 with
---                                               whole terrain playable.
---     "expanded" + "expanded_with_vanilla_grid" expanded terrain, vanilla offset,
---                                               drop partials -> 19x19 inside the
---                                               8192-tile map. Vanilla-aligned
---                                               grid lines but selection offset.
---     "expanded" + "expanded"                   expanded terrain, grid from (0,0)
---                                               -> 20x20. Clean grid, working
---                                               selection. (Default.)
+-- The mod has one supported layout: generate a native vanilla source, stretch it
+-- over an 8192-tile destination, and build the corner-anchored expanded sector grid.
+-- There are no mirror/noise/frame-fill or alternate sector-layout modes.
+-- Disabling the mod restores vanilla behavior; changing expansion geometry requires
+-- a new game because terrain allocation happens during random-map generation.
 -- ============================================================================
-config.SuperBigMapTerrainSize = "expanded"
-config.SuperBigMapSectorGrid = "expanded"
-
--- Derived from the two settings above (edit the settings, not these helpers).
-local sbm_expanded_terrain = config.SuperBigMapTerrainSize == "expanded"
-local sbm_align_vanilla_grid = config.SuperBigMapSectorGrid == "expanded_with_vanilla_grid"
-local sbm_expanded_grid = config.SuperBigMapSectorGrid == "expanded" or sbm_align_vanilla_grid
--- Enlarge the playable area to the full terrain (border included) whenever the
--- terrain or the sector grid is expanded; "vanilla" + "vanilla" leaves the
--- vanilla border untouched. Read by SuperBigMap.lua.
-config.SuperBigMapFullMapPlayable = sbm_expanded_terrain or sbm_expanded_grid
+config.SuperBigMapFullMapPlayable = true
 
 -- Normal camera zoom. ZoomPlus applies:
 -- LookatDistZoomOut = original.LookatDistZoomOut * ZoomPlusLookatDistZoomOutMultiplier.
@@ -262,11 +186,9 @@ config.DebugRocketTerrain = false
 config.DebugElevatorTerrain = false
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
-config.DebugFakeTerrain   = false   -- FakeTerrain: frame crater cleanup
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
 config.DebugZoom          = true    -- TEMP camera verification: live zoom limits and ZoomPlus state
 config.DebugZoomVanilla   = false   -- ZoomVanilla: normal-map zoom/FOV diagnostics
-config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP button/underline layout diagnostics
 config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path
 config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequence trace
@@ -275,32 +197,6 @@ config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice a
 config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
 config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
 config.DebugGenRand       = false   -- GenRand: generation-determinism trace
-
--- (The non-rendered frame is made passable by zeroing mapdata.PassBorder before
--- generation in sbm_map_generation; no per-load passability pass is needed.)
-
--- Remove the vanilla DecCrater decals that the random-map decor pass scatters
--- across the NON-RENDERED frame (everything beyond the playable source quadrant).
--- Craters inside the rendered/playable area are vanilla and left untouched.
-config.RemoveFrameCraters = true
-
--- Safety double-check after the L-frame clone: delete any underground entrance (tunnel/passage
--- access) left in the cloned frame. The dest-clear protects underground-access objects from
--- deletion, so a generator-placed entrance that landed outside the source quadrant can survive
--- in the frame; this removes it. The genuine entrance in the rendered source quadrant is never
--- in the frame boxes, so it is never touched. ON by default.
-config.RemoveFrameUndergroundAccess = true
-
--- After each sector copy (test copy, column mirror, or the console helper), force
--- any object that was ALREADY sitting in the destination region -- e.g. a mystery
--- "pile of stone" / anomaly a story event dropped into the frame -- onto the
--- freshly copied surface: its Z is re-snapped to the new terrain height, since the
--- ground under it just changed. If the spot is now occupied by another
--- non-interacting object (a decoration / rock that does not attach to it), the
--- object is nudged to the nearest clear, destlockable point nearby so the two do
--- not intersect. Objects the copy itself just placed (the faithful source replica)
--- and live units are left untouched.
-config.ResnapFrameObjects = true
 
 --- Re-snap a landing rocket onto the live (expanded) terrain surface. On a mod map
 --- the copied frame region's height was changed after the engine first resolved
@@ -364,59 +260,9 @@ config.PermissiveBuildOnExpanded = false
 -- Allow the LANDSCAPING tools (terraform / flatten / level) to operate across the WHOLE
 -- expanded terrain. ENABLED: this is separate from buildability -- vanilla lets you landscape
 -- unbuildable terrain to MAKE it buildable, and that must keep working on the expanded area
--- (otherwise the landscape tool fails "out of bounds" outside the original quadrant). It does
+-- (otherwise the landscape tool fails "out of bounds" across the added destination area). It does
 -- NOT make anything buildable on its own; it only lets the player reshape the new terrain.
 config.AllowLandscapingOnExpanded = true
-
--- Force the expanded L-frame region PASSABLE after the terrain copy (editor.SetPassableBox
--- + RebuildPassability), regardless of the copied terrain's slope. Ported from the original
--- working fix (commit 9e940f8): a rover unloaded from a rocket that lands in the frame is
--- otherwise trapped where the copied (e.g. cliff) terrain reads impassable -- the
--- "rocket/rover stuck / deforms the ground to land" problem. PassBorder=0 removes the baked
--- edge ring; this removes the slope-based impassability inside the frame. Mod maps only.
-config.ForceFramePassable = true
--- Extra pass-tiles forced passable INTO the rendered source area so the seam between the
--- original map and the frame is crossable (0 = frame only).
-config.FramePassableBridgeTiles = 2
-
-
-
--- SECTOR-MIRROR PLAN (at game start): fill the L-shaped non-rendered frame by
--- reflecting the playable edge into it, terrain AND objects. Three groups:
---   1) LEFT frame  -- source cols F,G,H,I,J mirror (vertical) onto cols E,D,C,B,A,
---                     rows 0..14;
---   2) TOP frame   -- source rows 14,13,12,11,10 mirror (horizontal) onto rows
---                     15,16,17,18,19, cols F..T;
---   3) CORNER A15:E19 -- source cols F..J / rows 10..14 get BOTH mirrors (180 deg)
---                     so the corner matches both seams.
--- Each destination's existing scatter is replaced with mirrored copies of the
--- source. Runs after the engine reports native map generation complete, once per map, with one
--- combined refresh over the whole filled frame.
-config.SectorMirrorPlanAtStart = true
-
--- Per-block DECOR clone thinning: SKIP cloning every Nth decorative source object
--- (rocks, decals, terrain prefabs, etc.) to cut the cost of filling a decor-dense
--- map (the slow part is ~thousands of PlaceObject calls, not the grid copy).
---   0 = skip nothing → clone all decor (default)
---   1 = skip every decor object → clone none (every position is a multiple of 1) ✓
---   2 = skip every 2nd (~50% fewer)
---   3 = every 3rd, etc.
--- A LOWER N skips MORE (1 skips all). Resource deposits and anomalies are ALWAYS
--- cloned (never skipped), so gameplay objects are preserved regardless of N.
-config.MirrorDecorSkipEveryNth = 1
-
--- Skip cloning any DECORATION whose bounding sphere crosses the source block's
--- edge: its mirrored copy would straddle the seam / map edge and overhang (the
--- same broken-looking half-floating rock the post-load decor cleanup removes).
--- Resource deposits and anomalies are still cloned even if edge-touching. true =
--- skip edge-touching decor (default); false = clone it anyway.
-config.MirrorSkipEdgeTouchingDecor = true
-
--- When the sector-mirror plan is enabled but the map did NOT generate as a full
--- 20x20 sector grid (so the frame can't be properly expanded/mirrored), pop up a
--- modal "this map can't be properly expanded" message (OK to dismiss). The reason
--- is always written to the log regardless; this flag only controls the popup.
-config.WarnOnCannotExpand = true
 
 -- When an OLD save that was NOT started with Super Big Map is loaded, show a
 -- one-time (per load) modal explaining that the expanded map only applies to games
@@ -426,44 +272,12 @@ config.WarnOnCannotExpand = true
 config.WarnOldSaveNeedsNewGame = true
 
 
--- Hide cloned subsurface deposits/anomalies until their (expanded/frame) sector is scanned.
--- The expansion mirror-copies the starting sector's already-revealed deposits into the
--- unscanned frame; without this they would be visible before scanning. ON by default.
--- (Resource deposits are always copied by cloning their invisible MARKERS -- which spawn the
--- real deposit on scan -- never the spawned objects; anomalies/effect deposits are not copied.)
+-- Hide added or proportionally relocated scan-gated enrichments until their final
+-- expanded sector is scanned.
 config.HideClonedDepositsUntilScan = true
--- Reshuffle each cloned deposit onto nearby terrain that best matches the terrain its SOURCE
--- deposit sat on (same terrain type + similar flatness, must be passable). The copy places
--- deposit OBJECTS by translation while the terrain is mirrored, so a deposit can land off its
--- matching ground; this re-seats it. For concrete, the copied regolith patch is moved with
--- the marker only when the final sector is already scanned; unscanned sectors stay hidden.
-config.ReshuffleClonedDeposits = true
--- Keep reshuffled deposits at least this many tiles away from the map's outer border (no
+-- Keep added deposits at least this many tiles away from the map's outer border (no
 -- deposit is placed within this margin of the edge).
 config.DepositEdgeMarginTiles = 4
-
--- ANOMALY RE-SPACING (sbm_deposits.lua RespaceAnomalies). On an expanded map the generator is
--- forced to pack anomalies ~20% tighter than vanilla so the full set (incl. all FreeTech) fits
--- the shrunken placement zone. When this is true, a post-generation pass spreads the UNREVEALED
--- anomaly markers back out to an even, vanilla-like spacing across the whole playable map
--- (unregister from the old sector -> move -> register in the new sector; scanning still reveals
--- them normally). Live anomalies in the already-scanned start sector are left untouched. Deposits
--- are NOT touched by this. true = re-space anomalies (recommended for vanilla-like spread).
--- EVEN OUT DEPOSIT DENSITY (sbm_deposits.lua EvenOutDepositDensity). The generator packs the
--- full preset deposit count into the shrunken gen-zone (see RMG PLACEMENT AUTO-FIT), so the
--- source region -- including the scanned START/landing sector -- ends up several times denser
--- than vanilla while the mirrored frame is sparse. When true, a post-generation pass caps each
--- sector at MaxResourceDepositsPerSector and relocates the surplus onto terrain-matched frame
--- tiles: it thins the source (start sector included -- surplus there is despawned and re-hidden
--- so it re-spawns vanilla-style when its new frame sector is scanned) and fills the frame. Total
--- count is unchanged; only the distribution is evened to vanilla-like proportions. false = leave
--- the packed source distribution.
-config.EvenOutDepositDensity = true
--- Per-sector resource-deposit cap the even-out pass thins down to. Vanilla start sectors carry
--- only a couple of deposits; 3 keeps a small starting cluster while spreading the rest across the
--- map. Lower = sparser (closer to vanilla), higher = keep more in place. Tune from the
--- DebugDeposits DISTRIBUTION report (start-sector count vs average).
-config.MaxResourceDepositsPerSector = 3
 -- ENRICHMENT TOP-UP SWITCHES. Each expanded-map population can be controlled independently.
 config.TopUpResources = true
 config.TopUpAnomalies = true
@@ -493,33 +307,16 @@ config.TopUpAnomalyLowAreaPercent = 35
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
--- deposits are cloned onto terrain-matched frame tiles until the total reaches
--- source_count * area_factor (vanilla density x the bigger area); the clones are hidden until
--- their sector is scanned, and the even-out pass then spreads everything. All resource types
+-- deposits are cloned onto validated final-terrain coordinates until the total reaches
+-- source_count * area_factor (vanilla density x the bigger area); clones are hidden until
+-- their sector is scanned. All resource types
 -- scale proportionally, including concrete (a cloned concrete marker paints its own regolith
 -- patch on scan). false = native (Big) deposit count.
 -- Override the deposit target scale. false = auto (area factor); a number forces that multiplier.
 config.DepositCountScaleOverride = false
 
-config.RespaceAnomaliesToVanilla = true
--- Also thin the SCANNED start sector's REVEALED anomalies. RespaceAnomalies normally keeps
--- placed/revealed anomalies fixed; on an expanded map that leaves the landing sector denser than
--- vanilla (the generator packed them there). When true, revealed start-sector anomalies are
--- despawned + re-hidden and respaced out evenly with the rest, so the landing spot matches
--- vanilla anomaly density (they re-appear when their new sector is scanned). false = keep them.
-config.EvenOutStartSectorAnomalies = true
--- How spread out the re-spaced anomalies are: the minimum distance between anomalies is
--- factor * sqrt(playable_area / anomaly_count). Lower = tighter (closer to the original packed
--- look), higher = more spread. 0.6 gives an even, vanilla-like fill that always fits; raise
--- toward 1.0 for a sparser feel. Tune from the DebugDeposits "respaced anomaly markers" log.
-config.AnomalyEvenSpreadFactor = 0.6
--- How far (in tiles) the reshuffle search looks around the clone for a better-matching spot.
-config.ReshuffleSearchRadiusTiles = 12
--- When a cloned CONCRETE (TerrainDeposit) marker is reshuffled to a new spot, clear the copied
--- Regolith/Regolith_02 terrain patch from its original mirrored position. If the marker's final
--- sector is already scanned, paint the same regolith shape at the final position; if it is still
--- unexplored, leave the final position clean and let vanilla paint the concrete patch when the
--- sector scans. Only regolith tiles are touched.
+-- When stretch-time scan gating hides a placed concrete marker, or underground
+-- reachability relocates it, clear the obsolete Regolith/Regolith_02 imprint.
 config.ClearInitialConcreteImprint = true
 -- Max type-grid tiles the concrete-imprint flood fill will clear per blob. Regolith /
 -- Regolith_02 are used ONLY as the concrete-deposit texture (confirmed in the game files:
@@ -528,8 +325,7 @@ config.ClearInitialConcreteImprint = true
 -- bounded by non-regolith terrain -- the fill always stops at the patch edge, and there is no
 -- natural regolith to protect. So there's no reason to cap by size: 0 = NO size limit (clear
 -- the whole patch regardless of size; recommended). A positive value caps the fill at that many
--- tiles (a leftover safety knob). The clear only runs at a concrete marker's OLD mirrored
--- (always-unscanned, frame) position, so it never affects concrete in scanned/playable sectors.
+-- tiles.
 config.ConcreteImprintMaxTiles = 0
 
 -- TEMP verification control (sbm_place_elevator_button.lua): shows a bottom-right button that
@@ -566,10 +362,10 @@ config.GenerateVanillaSourceOnTemporaryBacking = true
 -- diagnostic fallback, but copying terrain/collision state into a blank map cannot reproduce every
 -- engine-private map index observed by InitBuildableGrid.
 config.UseNativeHeightSamplerBacking = false
--- Mirror only collision-bearing source objects as lightweight entity proxies while the native
+-- Recreate only collision-bearing source objects as lightweight entity proxies while the native
 -- sampler builds its raw hex grid. This supplies InitBuildableGrid's non-terrain input without
 -- running a second RandomMapGenerate or migrating gameplay objects.
-config.UseNativeSamplerCollisionMirror = false
+config.UseNativeSamplerCollisionProxies = false
 -- Use the contributing object's real class for each temporary collision proxy. This preserves
 -- class-specific entity state and auto-attached collision surfaces; the sampler map is unloaded
 -- immediately after generation, so no proxy becomes a gameplay object.
@@ -621,63 +417,19 @@ config.ExpansionStep20RegisterAndRevealMarkers = false
 -- 21 (former 19): Audit counts, coordinates, hexes, repulsion, regions, and breakthrough spread.
 config.ExpansionStep21AuditFinalEnrichments = false
 
--- Expanded-map allocation. Controlled by SuperBigMapTerrainSize above
--- ("expanded" enables it, "vanilla" disables it). New random surface maps are
--- created larger, then the source quadrant is copied into the other quadrants.
-config.EnableQuadrantMapCopy = sbm_expanded_terrain
-config.QuadrantCopyScale = 2
+-- Stretch-only expanded-map allocation. A native source is generated once and
+-- proportionally resampled over this destination; no terrain is tiled or mirrored.
 -- HARD ENGINE CAP: the terrain may not exceed 8192 tiles on either axis --
 -- confirmed by the C++ assert geTerrain.cpp(231): m_mapdata.nWidth <= 8192 &
 -- m_mapdata.nHeight <= 8192 (a 10240 allocation aborts map load). 8192 tiles =
 -- 20x20 vanilla sectors is therefore the absolute maximum map size; do not raise.
-config.QuadrantCopyMaxTerrainTiles = 8192
+config.ExpandedTerrainTiles = 8192
 -- The random map generator's stable-position helper asserts around 8192
 -- terrain tiles, while the renderer rejects some intermediate sizes. 6144 is
 -- the largest renderer-safe random blank map size confirmed so far. (The
 -- generator runs at the native size, NOT the allocation, so leave this at 6144.)
-config.QuadrantCopyMaxRandomGeneratorTiles = 6144
-config.QuadrantCopyRendererNodeTileAlignment = 2048
--- FRAME EXPANSION MODE (the only supported expansion geometry). Keep the FULL native
--- generated map as the "original" (e.g. a Big map's native 6144 tiles = 15x15 sectors),
--- allocate a larger 8192-tile (20x20) mapdata, and leave the extra 5-sector-wide L-shaped
--- frame around the original FLAT (uniform height, default texture). The generator runs once
--- at the native size and fills from the origin; nothing is cloned or duplicated. The frame is
--- then filled by mirroring the playable edge (the sector-mirror plan). The rendered original
--- is corner-anchored at (0,0); the flat frame forms an L on the right + bottom in world coords.
-config.ExpansionFrameMode = sbm_expanded_terrain
-
--- FRAME FILL MODE -- how the L-shaped FRAME of new sectors (everything beyond the native
--- generated source, i.e. the outer band of the 20x20 map) gets its terrain. The native source
--- is ALWAYS produced by the vanilla map generator; only the surrounding frame is built by the
--- method chosen here. Flip this string to compare approaches to the source<->frame junction:
---
---   "mirror"       -- (default, original) reflect the source's edge blocks outward to fill the
---                     frame. Fast and uses real generated terrain, but the reflection is
---                     SYMMETRIC across the seam, so it shows a straight central crease and
---                     doubled / abrupt walls (the artifact we are trying to get rid of).
---
---   "desymmetrize" -- mirror as above, then WARP the frame so it is no longer a perfect
---                     reflection. Breaks the dead-straight crease and the mirror symmetry, but
---                     the terrain is still derived from the reflected source (a compromise).
---
---   "stretch"      -- NO frame at all: resample (stretch) the whole generated source to fill the
---                     full 20x20 allocation. Perfectly seamless -- one continuous terrain of real
---                     generator output -- but every feature ends up ~33% larger ("zoomed"),
---                     rather than genuinely new terrain.
---
---   "noise"        -- synthesize the frame with fractal noise that CONTINUES the source edge
---                     outward (no reflection). Adds genuinely new, non-symmetric terrain; only a
---                     thin join at the source->frame boundary remains to blend. Most natural, but
---                     the hardest to make match the generator's texture/biome look.
---
--- Any unrecognised value falls back to "mirror". IMPLEMENTATION STATUS:
---   "mirror"       -- complete.
---   "stretch"      -- production path: resamples terrain grids, relocates decorations,
---                     enrichments and entrances, then rebuilds final gameplay grids.
---   "desymmetrize" -- not implemented yet; logs a notice and falls back to "mirror".
---   "noise"        -- not implemented yet; logs a notice and falls back to "mirror".
--- The map is always complete/playable whatever is selected.
-config.ExpansionFrameFillMode = "stretch"
+config.RandomGeneratorMaxTiles = 6144
+config.RendererNodeTileAlignment = 2048
 -- STRETCH extras. ScaleMarkers moves the generated DEPOSIT / ANOMALY / EFFECT markers (and any
 -- already-spawned deposits/anomalies) to their scaled spots on the stretched terrain, exactly like
 -- the decorations -- without it they stay clustered in the source corner. DecorTopUp restores the
@@ -762,16 +514,12 @@ config.AlwaysShowEntranceSign = true
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
 config.StretchDecorTopUp = false
--- LOADING OPTIMIZATIONS (stretch mode only). Defer the provisional blank-map buildability
+-- LOADING OPTIMIZATIONS. Defer the provisional blank-map buildability
 -- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
 -- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
 -- later and performs the authoritative final rebuild. Non-stretch paths are untouched. The final
 -- sector geometry and max-object-radius refresh still run after stretching.
 config.OptimizeStretchDeferredRebuilds = true
--- Apply the surface frame-passable overlay before the stretch's existing full revalidation and
--- avoid rebuilding the same passability grid again afterward. Underground likewise keeps the
--- revalidation performed inside StretchSourceToFull and skips its immediately repeated rebuild.
-config.OptimizeStretchPassability = true
 -- Use the engine's authoritative map:RebuildGrids once after stretching instead of first
 -- performing the same low-level height/type/passability rebuilds separately. Falls back to the
 -- legacy sequence automatically if the consolidated engine call is unavailable or fails.
@@ -786,24 +534,19 @@ config.OptimizePostLoadDeferredBounds = true
 -- Resource top-up builds a large validated candidate pool. Reuse its remaining candidates for
 -- anomaly/effect top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
--- The editor's own force-passable brush uses SetPassableBox(true) alone. Skip the preceding
--- SetImpassableBox(false) full-frame scan while retaining the old two-write path as a fallback.
-config.OptimizeFramePassableWrites = true
--- Forced allocation = the 8192-tile hard cap (see QuadrantCopyMaxTerrainTiles).
-config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
-config.QuadrantCopyLimitGeneratorToSource = true
+config.LimitGeneratorToSource = true
 -- RebuildBuildableGrid and MaskBuildableGrid bypass the normal map-size views: they consume
 -- the cached map.Width/map.Height and map.hex_width/map.hex_height fields. Temporarily present
 -- all four as one vanilla-sized source view during native generation, then restore them and
 -- rebuild the full expanded gameplay grid afterward.
-config.QuadrantCopyLimitBuildableGridToSource = true
+config.LimitBuildableGridToSource = true
 -- Proc_InitPlayZone bypasses terrain.GetMapSize and grows its terrace grid from the real
 -- backing terrain via terrain.HeightMapSize. During the exact vanilla-sized source window,
 -- temporarily report the source size there too, then copy the resulting source height grid
 -- into the expanded backing grid so vanilla never sees 8192 and the destination stays 8192.
-config.QuadrantCopyBridgeVanillaHeightGrid = true
+config.BridgeVanillaHeightGrid = true
 
 -- Legacy RMG placement tuning retained for diagnostic steps 04-05. With the current defaults,
 -- step 04 preserves exact vanilla placement and step 05 remains off. Native shortfall completion
@@ -846,7 +589,7 @@ config.RmgPlacementAnomalySpacingCap = 0.55
 -- ((desired/generated tiles)^2 ~= 1.78) before generation, so the generator places
 -- proportionally more anomalies WITH correct unique rewards (breakthroughs self-trim to the
 -- game's available pool at load -- safe, they just plateau below the full scale). The gen-zone
--- anomaly spacing is tightened to fit the higher count; RespaceAnomalies spreads them after.
+-- anomaly additions are generated only after the native markers have been transformed.
 -- false = native (Big) anomaly count (leaner research for the bigger map).
 -- NOTE: in STRETCH fill mode only the in-generation COUNT scaling is skipped. The placement
 -- auto-fit starts later at PlaceAnomalies, after terrain/prefab generation, so it can satisfy
@@ -937,44 +680,11 @@ config.AnomalyCountScaleOverride = false
 -- (below the normal RmgPlacementSpacingFloor, since more anomalies must fit). Raise toward the
 -- normal floor if a run over-packs; lower if the RmgPlacement log shows placement shortfall.
 config.AnomalyCountSpacingFloor = 0.35
-config.QuadrantCopyMainMapOnly = true
-config.QuadrantCopySurfaceOnly = true
-config.QuadrantCopyRandomMapsOnly = true
-config.QuadrantCopyPatchRandomGenerator = true
--- Copy engine enum flags (collision etc.) onto each mirrored clone (used by the live
--- object-clone helper that the frame mirror plan calls).
-config.QuadrantCopyEnumFlags = false
-
--- Experimental sector (overview-grid) layout, used whenever SuperBigMapSectorGrid
--- is "expanded" or "expanded_with_vanilla_grid". The mod divides the whole map
--- into vanilla-sized sectors; ResolveSectorCount feeds both the built grid and
--- const.SectorCount from the same value, so they always match. When
--- SuperBigMapSectorGrid is "vanilla" the whole patch stays out of the way
--- (EnableVanillaSizedSectors = false) and the game builds its normal 10 x 10
--- playable-area grid.
-config.EnableVanillaSizedSectors = sbm_expanded_grid
-config.VanillaSectorUniformGrid = true
-config.VanillaSectorUseSourceQuadrant = true
-config.VanillaSectorSurfaceOnly = true
--- The expanded grid covers the whole loaded map, so it is not restricted to maps
--- that were terrain-expanded.
-config.VanillaSectorExpandedOnly = false
--- No fixed number: the count auto-derives so each sector matches the vanilla
--- sector footprint (see ResolveSectorCount in sbm_sectors.lua).
-config.VanillaSectorForcedCount = false
--- "expanded_with_vanilla_grid": anchor the grid to the original map's border
--- offset (partial edge sectors) instead of a clean division from the corner.
-config.VanillaSectorAlignToVanillaGrid = sbm_align_vanilla_grid
--- Optional manual anchor (world units) for the aligned grid. false = derive it
--- from the original map's PassBorder. Set a number to override if needed.
-config.VanillaSectorGridAnchor = false
-config.VanillaSectorBaseMapTiles = 4096
-config.VanillaSectorBaseCount = 10
-config.VanillaSectorMinCount = 10
-config.VanillaSectorMaxCount = 40
-config.VanillaSectorFastInitialReveal = true
-config.VanillaSectorProgressColumnInterval = 2
-config.VanillaSectorInitialRevealProgressInterval = 50
+-- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
+-- complete expanded terrain. Only progress cadence remains configurable here.
+config.SectorFastInitialReveal = true
+config.SectorProgressColumnInterval = 2
+config.SectorInitialRevealProgressInterval = 50
 
 -- ============================================================================
 -- Typed config view: SuperBigMap.Config
@@ -995,13 +705,6 @@ end
 
 local function as_number(value, default)
 	if type(value) == "number" then
-		return value
-	end
-	return default
-end
-
-local function as_string(value, default)
-	if type(value) == "string" and value ~= "" then
 		return value
 	end
 	return default
@@ -1055,11 +758,8 @@ local expansion_step_21 = expansion_step_03
 -- Lifecycle / master
 C.ENABLE_MOD = true
 
--- Map size + sector grid (master settings)
-C.TERRAIN_SIZE = expansion_step_01
-	and config.SuperBigMapTerrainSize or "vanilla"
-C.SECTOR_GRID = expansion_step_01
-	and config.SuperBigMapSectorGrid or "vanilla"
+-- The only supported mod layout is stretch-expanded terrain with a corner-anchored
+-- expanded sector grid. Expansion step 01 remains the diagnostic master gate.
 C.FULL_MAP_PLAYABLE = expansion_step_01
 	and as_bool(config.SuperBigMapFullMapPlayable)
 
@@ -1098,35 +798,22 @@ C.DEBUG_ROCKETTERRAIN = as_bool(config.DebugRocketTerrain)
 C.DEBUG_ELEVATORTERRAIN = as_bool(config.DebugElevatorTerrain)
 C.DEBUG_HEAT          = as_bool(config.DebugHeat)
 C.DEBUG_BOUNDS        = as_bool(config.DebugBounds)
-C.DEBUG_FAKETERRAIN   = as_bool(config.DebugFakeTerrain)
 C.DEBUG_VALIDATION    = as_bool(config.DebugValidation)
 C.DEBUG_ZOOM          = as_bool(config.DebugZoom)
 C.DEBUG_ZOOMVANILLA   = as_bool(config.DebugZoomVanilla)
-C.DEBUG_PREGAMETOGGLE = as_bool(config.DebugPregameToggle)
 C.DEBUG_RESTARTNOTICE = as_bool(config.DebugRestartNotice)
 C.DEBUG_EDITORCAMERA  = as_bool(config.DebugEditorCamera)
 C.DEBUG_INITSEQ       = as_bool(config.DebugInitSeq)
 C.DEBUG_CHOSENMAP     = as_bool(config.DebugChosenMap)
 
-C.SECTOR_MIRROR_PLAN_AT_START = expansion_step_07
-	and as_bool(config.SectorMirrorPlanAtStart)
-C.MIRROR_DECOR_SKIP_EVERY_NTH = as_number(config.MirrorDecorSkipEveryNth, 0)
-C.MIRROR_SKIP_EDGE_TOUCHING_DECOR = as_bool(config.MirrorSkipEdgeTouchingDecor)
-C.WARN_ON_CANNOT_EXPAND = as_bool(config.WarnOnCannotExpand)
+C.SURFACE_STRETCH_AT_START = expansion_step_07
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
 C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
-C.RESHUFFLE_CLONED_DEPOSITS = as_bool(config.ReshuffleClonedDeposits)
-C.RESHUFFLE_SEARCH_RADIUS_TILES = as_number(config.ReshuffleSearchRadiusTiles, 12)
 C.CLEAR_INITIAL_CONCRETE_IMPRINT = as_bool(config.ClearInitialConcreteImprint)
 C.CONCRETE_IMPRINT_MAX_TILES = as_number(config.ConcreteImprintMaxTiles, 0)
 C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
-C.RESPACE_ANOMALIES_TO_VANILLA = expansion_step_16
-	and as_bool(config.RespaceAnomaliesToVanilla)
-C.EVEN_OUT_DEPOSIT_DENSITY = expansion_step_16
-	and as_bool(config.EvenOutDepositDensity)
-C.MAX_RESOURCE_DEPOSITS_PER_SECTOR = as_number(config.MaxResourceDepositsPerSector, 3)
 C.TOPUP_RESOURCES = expansion_step_13
 	and as_bool(config.TopUpResources)
 C.TOPUP_ANOMALIES = expansion_step_13
@@ -1142,11 +829,6 @@ C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSecto
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
-C.EVEN_OUT_START_SECTOR_ANOMALIES = as_bool(config.EvenOutStartSectorAnomalies)
-C.ANOMALY_EVEN_SPREAD_FACTOR = as_number(config.AnomalyEvenSpreadFactor, 0.6)
-C.REMOVE_FRAME_CRATERS = as_bool(config.RemoveFrameCraters)
-C.REMOVE_FRAME_UNDERGROUND_ACCESS = as_bool(config.RemoveFrameUndergroundAccess)
-C.RESNAP_FRAME_OBJECTS = as_bool(config.ResnapFrameObjects)
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
 C.PREVENT_LANDING_PAD_FLATTEN = as_bool(config.PreventLandingPadFlatten)
 C.PREVENT_ELEVATOR_FLATTEN = as_bool(config.PreventElevatorFlatten)
@@ -1156,8 +838,6 @@ C.CLAMP_HEAT_QUERIES = as_bool(config.ClampHeatQueriesOnExpandedMap)
 C.FORCE_BUILDABLE_GRID_STORAGE = as_bool(config.ForceBuildableGridStorage)
 C.PERMISSIVE_BUILD_ON_EXPANDED = as_bool(config.PermissiveBuildOnExpanded)
 C.ALLOW_LANDSCAPING_ON_EXPANDED = as_bool(config.AllowLandscapingOnExpanded)
-C.FORCE_FRAME_PASSABLE = as_bool(config.ForceFramePassable)
-C.FRAME_PASSABLE_BRIDGE_TILES = as_number(config.FramePassableBridgeTiles, 2)
 
 -- ZoomPlus integration
 C.ENABLE_NORMAL_ZOOM_PLUS = as_bool(config.EnableNormalZoomPlus)
@@ -1196,9 +876,9 @@ C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
 	and as_bool(config.GenerateVanillaSourceOnTemporaryBacking)
 C.USE_NATIVE_HEIGHT_SAMPLER_BACKING = expansion_step_01
 	and as_bool(config.UseNativeHeightSamplerBacking)
-C.USE_NATIVE_SAMPLER_COLLISION_MIRROR = C.USE_NATIVE_HEIGHT_SAMPLER_BACKING
-	and as_bool(config.UseNativeSamplerCollisionMirror)
-C.USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES = C.USE_NATIVE_SAMPLER_COLLISION_MIRROR
+C.USE_NATIVE_SAMPLER_COLLISION_PROXIES = C.USE_NATIVE_HEIGHT_SAMPLER_BACKING
+	and as_bool(config.UseNativeSamplerCollisionProxies)
+C.USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES = C.USE_NATIVE_SAMPLER_COLLISION_PROXIES
 	and as_bool(config.UseExactClassNativeSamplerCollisionProxies)
 C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
 	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
@@ -1248,16 +928,11 @@ C.EXPANSION_ENRICHMENT_STEPS = {
 	C.EXPANSION_STEP_21_AUDIT_FINAL_ENRICHMENTS,
 }
 
--- Map generation (quadrant tiling)
-C.ENABLE_QUADRANT_MAP_COPY = expansion_step_01
-	and as_bool(config.EnableQuadrantMapCopy)
-C.QUADRANT_COPY_SCALE = as_number(config.QuadrantCopyScale, 2)
-C.QUADRANT_MAX_TERRAIN_TILES = as_number(config.QuadrantCopyMaxTerrainTiles, 8192)
-C.QUADRANT_MAX_RANDOM_GENERATOR_TILES = as_number(config.QuadrantCopyMaxRandomGeneratorTiles, 6144)
-C.QUADRANT_RENDERER_NODE_TILE_ALIGNMENT = as_number(config.QuadrantCopyRendererNodeTileAlignment, 2048)
-C.EXPANSION_FRAME_MODE = expansion_step_01
-	and as_bool(config.ExpansionFrameMode)
-C.EXPANSION_FRAME_FILL_MODE = as_string(config.ExpansionFrameFillMode, "mirror")
+-- Stretch-only terrain allocation and generation bridge.
+C.ENABLE_TERRAIN_EXPANSION = expansion_step_01
+C.EXPANDED_TERRAIN_TILES = as_number(config.ExpandedTerrainTiles, 8192)
+C.MAX_RANDOM_GENERATOR_TILES = as_number(config.RandomGeneratorMaxTiles, 6144)
+C.RENDERER_NODE_TILE_ALIGNMENT = as_number(config.RendererNodeTileAlignment, 2048)
 C.STRETCH_SCALE_MARKERS = expansion_step_08
 	and as_bool(config.StretchScaleMarkers)
 C.STRETCH_ENFORCE_SCAN_GATE = expansion_step_20
@@ -1276,19 +951,16 @@ C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
-C.OPTIMIZE_STRETCH_PASSABILITY = as_bool(config.OptimizeStretchPassability)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
-C.OPTIMIZE_FRAME_PASSABLE_WRITES = as_bool(config.OptimizeFramePassableWrites)
-C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
-C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
-	and as_bool(config.QuadrantCopyLimitGeneratorToSource)
-C.QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01
-	and as_bool(config.QuadrantCopyLimitBuildableGridToSource)
-C.QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
-	and as_bool(config.QuadrantCopyBridgeVanillaHeightGrid)
+C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
+	and as_bool(config.LimitGeneratorToSource)
+C.LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01
+	and as_bool(config.LimitBuildableGridToSource)
+C.BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
+	and as_bool(config.BridgeVanillaHeightGrid)
 C.ENABLE_RMG_PLACEMENT_FIX = expansion_step_01
 	and not expansion_step_04
 C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = false
@@ -1316,30 +988,12 @@ C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
 C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
 	and config.AnomalyCountScaleOverride or false
 C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)
-C.QUADRANT_MAIN_MAP_ONLY = as_bool(config.QuadrantCopyMainMapOnly)
-C.QUADRANT_SURFACE_ONLY = as_bool(config.QuadrantCopySurfaceOnly)
-C.QUADRANT_RANDOM_MAPS_ONLY = as_bool(config.QuadrantCopyRandomMapsOnly)
-C.QUADRANT_PATCH_RANDOM_GENERATOR =
-	expansion_step_01
-	and as_bool(config.QuadrantCopyPatchRandomGenerator)
-C.QUADRANT_COPY_ENUM_FLAGS = as_bool(config.QuadrantCopyEnumFlags)
+C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
--- Sectors (grid layout + exploration)
-C.ENABLE_VANILLA_SIZED_SECTORS = expansion_step_01
-	and as_bool(config.EnableVanillaSizedSectors)
-C.SECTOR_UNIFORM_GRID = as_bool(config.VanillaSectorUniformGrid)
-C.SECTOR_USE_SOURCE_QUADRANT = as_bool(config.VanillaSectorUseSourceQuadrant)
-C.SECTOR_SURFACE_ONLY = as_bool(config.VanillaSectorSurfaceOnly)
-C.SECTOR_EXPANDED_ONLY = as_bool(config.VanillaSectorExpandedOnly)
-C.SECTOR_FORCED_COUNT = config.VanillaSectorForcedCount -- number, or false
-C.SECTOR_ALIGN_TO_VANILLA_GRID = as_bool(config.VanillaSectorAlignToVanillaGrid)
-C.SECTOR_GRID_ANCHOR = config.VanillaSectorGridAnchor -- number, or false
-C.SECTOR_BASE_MAP_TILES = as_number(config.VanillaSectorBaseMapTiles, 4096)
-C.SECTOR_BASE_COUNT = as_number(config.VanillaSectorBaseCount, 10)
-C.SECTOR_MIN_COUNT = as_number(config.VanillaSectorMinCount, 10)
-C.SECTOR_MAX_COUNT = as_number(config.VanillaSectorMaxCount, 40)
-C.SECTOR_FAST_INITIAL_REVEAL = as_bool(config.VanillaSectorFastInitialReveal)
-C.SECTOR_PROGRESS_COLUMN_INTERVAL = as_number(config.VanillaSectorProgressColumnInterval, 2)
-C.SECTOR_INITIAL_REVEAL_PROGRESS_INTERVAL = as_number(config.VanillaSectorInitialRevealProgressInterval, 50)
+-- Fixed expanded sector layout + exploration progress controls.
+C.ENABLE_EXPANDED_SECTORS = expansion_step_01
+C.SECTOR_FAST_INITIAL_REVEAL = as_bool(config.SectorFastInitialReveal)
+C.SECTOR_PROGRESS_COLUMN_INTERVAL = as_number(config.SectorProgressColumnInterval, 2)
+C.SECTOR_INITIAL_REVEAL_PROGRESS_INTERVAL = as_number(config.SectorInitialRevealProgressInterval, 50)
 
 SuperBigMap.Config = C

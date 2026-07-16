@@ -398,7 +398,7 @@ end
 
 -- After the map is expanded, the terrain height under an ALREADY-LANDED rocket can have
 -- changed: the first colony rocket lands on the NATIVE terrain before the async expansion
--- copy runs, then the copy mirrors new ground (sometimes a hill) under it, leaving the
+-- terrain stretch runs, moving new ground (sometimes a hill) under it, leaving the
 -- rocket floating / buried "on a mountain". The LandOnMars wrap cannot fix this (it ran
 -- before the copy, when the Z was correct). So after expansion completes we re-snap every
 -- landed, non-pad rocket (and its landing site) on the map to the live terrain Z. Future

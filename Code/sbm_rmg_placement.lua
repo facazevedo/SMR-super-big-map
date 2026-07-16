@@ -90,7 +90,7 @@ local SPACING_PROPS = {
 }
 
 -- Scalable anomaly COUNT properties on the generator instance (consumed at gen time,
--- RandomMapGenerator.lua ~3262-3291). FreeTech/TechUnlock/Event may scale in mirror mode;
+-- RandomMapGenerator.lua ~3262-3291). FreeTech/TechUnlock/Event additions are post-stretch;
 -- breakthroughs deliberately do not because City reserves/prunes their finite technology
 -- pool after generation. Each property is a plain number or a {from,to} range.
 local COUNT_PROPS = {
@@ -190,8 +190,7 @@ end
 local RmgPlacement = {}
 
 -- Begin: snapshot + relax placement knobs for the in-flight generation. Call on a
--- mod-expanded map after the DoGenerate size overrides are in place. Mirror mode
--- starts this around the whole DoGenerate call. Stretch mode starts it from the
+-- mod-expanded map after the DoGenerate size overrides are in place. The stretch pipeline starts it from the
 -- PlaceAnomalies ProcStart boundary, after terrain/prefab generation and ResolveBuildable have
 -- finished but before the engine builds its border/spacing-derived enrichment masks. Terrain and
 -- the native play zone stay seed-identical. Returns true if a relaxation was applied (so End must
@@ -199,10 +198,9 @@ local RmgPlacement = {}
 function RmgPlacement.Begin(generator, map, options)
 	if not Enabled() then return false end
 	options = type(options) == "table" and options or {}
-	local stretch_mode = tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
-	-- Stretch may opt in only from the late PlaceAnomalies procedure boundary. The
+	-- The stretch pipeline may opt in only from the late PlaceAnomalies procedure boundary. The
 	-- normal pre-DoGenerate call still skips, preserving all terrain/prefab streams.
-	if stretch_mode and options.allow_stretch_placement ~= true then
+	if options.allow_stretch_placement ~= true then
 		Log("Begin skipped: stretch mode waits for the PlaceAnomalies procedure boundary")
 		return false
 	end
@@ -272,7 +270,7 @@ function RmgPlacement.Begin(generator, map, options)
 	local zero_borders = cfg().RMG_PLACEMENT_ZERO_BORDERS ~= false
 	local snapshot = {
 		generator = generator, props = {}, presets = {},
-		mode = stretch_mode and "stretch-place-anomalies" or "whole-generation",
+		mode = "stretch-place-anomalies",
 	}
 	-- Publish the rollback record before the first mutation. If any later diagnostic/property
 	-- access raises, the caller can invoke End and restore everything already captured.
@@ -310,7 +308,7 @@ function RmgPlacement.Begin(generator, map, options)
 
 	-- 2) Anomaly COUNT scaling: place proportionally MORE ordinary anomalies so the bigger map
 	-- reaches full vanilla density for its size. FreeTech/TechUnlock/Event scale freely in
-	-- mirror mode; finite breakthrough counts remain untouched.
+	-- the temporary source view; finite breakthrough counts remain untouched.
 	local anom_scale = 1.0
 	-- Stretch already scales density with the post-generation top-up pass. At this
 	-- late boundary we repair only the native preset population; scaling counts here
@@ -333,7 +331,7 @@ function RmgPlacement.Begin(generator, map, options)
 	-- 3) Spacing for the anomaly/effect layers. Base is the coverage-driven `scale`; when the
 	-- anomaly COUNT was scaled up, the same gen-zone must hold ~anom_scale x more anomalies, so
 	-- tighten spacing by an extra 1/sqrt(anom_scale) (area ~ spacing^2), floored at a lower
-	-- dedicated minimum so they fit. RespaceAnomalies later spreads them evenly across the map.
+	-- dedicated minimum so native placement completes without invalid origins.
 	local spacing_scale = scale
 	if anom_scale > 1.0 then
 		spacing_scale = scale / math.sqrt(anom_scale)

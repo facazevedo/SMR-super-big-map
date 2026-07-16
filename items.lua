@@ -24,10 +24,6 @@ return {
 		'CodeFileName', "Code/sbm_entrance_debug.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "sbm_pregame_toggle",
-		'CodeFileName', "Code/sbm_pregame_toggle.lua",
-	}),
-	PlaceObj('ModItemCode', {
 		'name', "ZoomPlus",
 		'CodeFileName', "Code/ZoomPlus.lua",
 	}),
@@ -94,10 +90,6 @@ return {
 	PlaceObj('ModItemCode', {
 		'name', "sbm_deposits",
 		'CodeFileName', "Code/sbm_deposits.lua",
-	}),
-	PlaceObj('ModItemCode', {
-		'name', "sbm_fake_terrain",
-		'CodeFileName', "Code/sbm_fake_terrain.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_rocket_rules",

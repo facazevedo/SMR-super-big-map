@@ -987,10 +987,10 @@ local function VanillaStartPick(city, map)
 	return { winners = winners }
 end
 
--- Wrap Exploration:InitialExplore: on expanded STRETCH surface maps, skip vanilla's own
+-- Wrap Exploration:InitialExplore: on expanded surface maps, skip vanilla's own
 -- 20x20 reveal entirely; compute the vanilla pick and defer the reveal to post-stretch
--- (RevealVanillaStartSectors, called from the stretch branch instead of the legacy
--- relocation). Everything else (vanilla maps, mirror mode, failures) runs the original.
+-- (RevealVanillaStartSectors, called from the stretch pipeline). Everything else runs
+-- the original.
 local function PatchInitialExplore()
 	if (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR ~= true then return false end
 	local State = SuperBigMap.State
@@ -1011,9 +1011,8 @@ local function PatchInitialExplore()
 		local desired = map and map.SuperBigMapDesiredWidthTiles
 		local gen_t = map and map.SuperBigMapGeneratorWidthTiles
 		local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
-		local stretch = tostring((SuperBigMap.Config or {}).EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
 		local env = map and map.mapdata and map.mapdata.Environment
-		if not (expanded and stretch and env == "Surface"
+		if not (expanded and env == "Surface"
 			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
 			-- VALIDATION MODE on VANILLA surface maps (DEBUG_STARTSECTOR): run the same
 			-- reconstruction ANALYSIS (no scanning, no deferral, own rand stream -- zero
@@ -1195,7 +1194,7 @@ local function InstallSectorPatch()
 		highlight.Install()
 	end
 
-	if not cfg_bool("ENABLE_VANILLA_SIZED_SECTORS", true) then
+	if not cfg_bool("ENABLE_EXPANDED_SECTORS", true) then
 		DebugPrint("sector full patch disabled")
 		return false
 	end
@@ -1332,14 +1331,8 @@ local function InstallSectorPatch()
 		local last_row = last_col > 0 and #self.MapSectors[last_col] or 0
 		assert(last_col > 0 and last_row > 0)
 
-		-- When FullMapPlayable is on, the engine's playable MapArea must cover the
-		-- whole terrain -- not just the sector bounding box. With
-		-- "expanded_with_vanilla_grid" the sectors start at the vanilla offset
-		-- (e.g. 20480), so the sector-bounded MapArea excludes the edge strips,
-		-- and tools that gate on MapArea (flatten/landscape, building placement)
-		-- report "out of bounds" near and beyond the leftmost / topmost sector
-		-- edge even though PassBorder is 0. Expanding MapArea here matches what
-		-- sbm_map_bounds does for PassBorder and PlayArea: full terrain.
+		-- With FullMapPlayable on, the engine's playable MapArea covers the whole
+		-- terrain. This matches sbm_map_bounds for PassBorder and PlayArea.
 		local map = self:GetMap()
 		local bounds = SuperBigMap.MapBounds
 		local full_map = bounds and type(bounds.FullMapPlayableEnabled) == "function" and bounds.FullMapPlayableEnabled()
@@ -1654,10 +1647,8 @@ local function restore_global(name, saved)
 	end
 end
 
--- Recreate any MISSING per-sector overview decals (SectorUnexplored/SectorScanned).
--- The L-frame terrain mirror clears objects in the frame destination boxes; with the
--- decal classes now exempt from that deletion this should find nothing, but it is a
--- cheap safety net: for any sector whose .decal was destroyed, vanilla
+-- Recreate any missing per-sector overview decals (SectorUnexplored/SectorScanned).
+-- For any sector whose .decal was destroyed, vanilla
 -- MapSector:UpdateDecal places a fresh one (sectors with a valid decal are skipped,
 -- so the core grid is not churned). Returns the number of decals recreated.
 local function RefreshSectorDecals(city)

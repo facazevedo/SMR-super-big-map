@@ -1,15 +1,14 @@
--- Super Big Map -- 20x20 frame map expansion.
+-- Super Big Map -- stretch-only 20x20 map expansion.
 --
--- For eligible random Surface maps this allocates an 8192-tile terrain, has the
--- random map generator produce the native source terrain, then fills the added
--- L-shaped frame by mirroring source edge blocks. The RandomMapGenerator.Generate/
--- DoGenerate hook and the frame-fill pass share pending-map state, so they live
--- together here.
+-- For eligible random maps this allocates an 8192-tile destination, generates one
+-- native vanilla source, then proportionally stretches its terrain and generated
+-- content over the destination. The RandomMapGenerator.Generate/DoGenerate hook
+-- and stretch pass share pending-map state, so they live together here.
 --
 -- Generic engine helpers come from sbm_engine. This module keeps ONLY a gen-time
 -- TerrainSize and the infinite-loop-pause guard local, because their behavior is
 -- context-specific to map generation -- e.g. DoGenerate temporarily overrides
--- terrain.GetMapSize so the generator only fills the source quadrant, and the gen-time
+-- terrain.GetMapSize so the generator only sees the native source view, and the gen-time
 -- size must read mapdata.Width x HeightTileSize (assert-free), not map:GetMapSize.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -23,12 +22,12 @@ local GENERATOR_PATCH_VERSION = SuperBigMap.GENERATOR_PATCH_VERSION or 2
 -- Pending/blocked per-map state shared across this module's hooks (kept in the
 -- shared State table rather than _G globals).
 SuperBigMap.State = SuperBigMap.State or {}
-SuperBigMap.State.quadrant_pending_maps = SuperBigMap.State.quadrant_pending_maps or {}
-SuperBigMap.State.quadrant_blocked_maps = SuperBigMap.State.quadrant_blocked_maps or {}
+SuperBigMap.State.expansion_pending_maps = SuperBigMap.State.expansion_pending_maps or {}
+SuperBigMap.State.expansion_blocked_maps = SuperBigMap.State.expansion_blocked_maps or {}
 SuperBigMap.State.underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 	or setmetatable({}, { __mode = "k" })
-local pending_maps = SuperBigMap.State.quadrant_pending_maps
-local blocked_maps = SuperBigMap.State.quadrant_blocked_maps
+local pending_maps = SuperBigMap.State.expansion_pending_maps
+local blocked_maps = SuperBigMap.State.expansion_blocked_maps
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
@@ -133,14 +132,6 @@ local function cfg_number(key, default, min_value)
 	return default
 end
 
-local function cfg_string(key, default)
-	local value = (SuperBigMap.Config or {})[key]
-	if type(value) == "string" and value ~= "" then
-		return value
-	end
-	return default
-end
-
 local function DebugPrint(text)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -148,7 +139,7 @@ local function DebugPrint(text)
 	end
 end
 
--- Per-step trace for the STRETCH frame-fill orchestration (gated on Config.DEBUG_STRETCH).
+-- Per-step trace for stretch orchestration (gated on Config.DEBUG_STRETCH).
 -- Pairs with the same-scope logging in sbm_terrain_copy so the whole path is traceable end to
 -- end when diagnosing a stuck-at-loading. Temporary diagnostic scope; only the flag is flipped.
 local function StretchLog(message, data)
@@ -319,23 +310,16 @@ local function PointXY(pos)
 end
 
 
--- Terrain/grid copy + object cloning live in sbm_terrain_copy / sbm_object_clone,
+-- Terrain stretching + object transforms live in sbm_terrain_copy / sbm_object_clone,
 -- loaded before this module. Bind the helpers called below (and re-exported through
 -- MapGeneration for the lifecycle) to their original local names; assert presence so
 -- a load-order mistake fails LOUDLY at startup, not as a deferred nil-call in gen.
 local TerrainCopy = SuperBigMap.TerrainCopy
 assert(type(TerrainCopy) == "table",
 	"sbm_map_generation: SuperBigMap.TerrainCopy missing -- load sbm_terrain_copy before this file")
-local SECTOR_MIRROR_BLOCKS = TerrainCopy.SECTOR_MIRROR_BLOCKS
 local SectorBoundary = TerrainCopy.SectorBoundary
 local FindSectorByName = TerrainCopy.FindSectorByName
-local SectorMirrorBlocksFit = TerrainCopy.SectorMirrorBlocksFit
-local CopySectorBlock = TerrainCopy.CopySectorBlock
-local FrameSectorProbe = TerrainCopy.FrameSectorProbe
-local WarnCannotExpand = TerrainCopy.WarnCannotExpand
-local ForceFramePassable = TerrainCopy.ForceFramePassable
 local ReinvalidateExpandedTerrain = TerrainCopy.ReinvalidateExpandedTerrain
-local RemoveFrameUndergroundAccess = TerrainCopy.RemoveFrameUndergroundAccess
 local StretchSourceToFull = TerrainCopy.StretchSourceToFull
 local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
@@ -351,11 +335,8 @@ local AuditFloatingObjects = TerrainCopy.AuditFloatingObjects
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 local SpikeAudit = TerrainCopy.SpikeAudit or function() end
-assert(type(SECTOR_MIRROR_BLOCKS) == "table" and type(CopySectorBlock) == "function"
-	and type(SectorMirrorBlocksFit) == "function" and type(ForceFramePassable) == "function"
-	and type(ReinvalidateExpandedTerrain) == "function" and type(RemoveFrameUndergroundAccess) == "function"
-	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function"
-	and type(FrameSectorProbe) == "function" and type(WarnCannotExpand) == "function",
+assert(type(ReinvalidateExpandedTerrain) == "function"
+	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function",
 	"sbm_map_generation: required TerrainCopy helpers missing (check sbm_terrain_copy exports)")
 
 local function StorePendingMap(map_name, pending)
@@ -370,25 +351,18 @@ local function ClearPendingMap(map_name)
 	end
 end
 
-local function ShouldExpandNewMap()
-	local toggle = SuperBigMap.PregameToggle
-	if toggle and type(toggle.ShouldExpandNewMap) == "function" then
-		local ok, result = pcall(toggle.ShouldExpandNewMap)
-		return ok and result == true
-	end
-	return false
-end
-
 local function ClearPreparedMapInstance(map)
 	if type(map) ~= "table" then
 		return false
 	end
-	map.SuperBigMapQuadrantCopyPending = nil
+	map.SuperBigMapExpansionPending = nil
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
 	map.SuperBigMapCityInitializationComplete = nil
-	map.SuperBigMapSectorMirrorAwaitingReadiness = nil
-	map.SuperBigMapSectorMirrorReadinessLogKey = nil
+	map.SuperBigMapSurfaceStretchDone = nil
+	map.SuperBigMapSurfaceStretchScheduled = nil
+	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
+	map.SuperBigMapSurfaceStretchReadinessLogKey = nil
 	map.SuperBigMapSourceWidth = nil
 	map.SuperBigMapSourceHeight = nil
 	map.SuperBigMapSourceX = nil
@@ -435,9 +409,8 @@ local function RestorePreparedMapData(map_name, mapdata)
 	end
 	mapdata.SuperBigMapOriginalWidthTiles = nil
 	mapdata.SuperBigMapOriginalHeightTiles = nil
-	mapdata.SuperBigMapQuadrantCopyScale = nil
-	mapdata.SuperBigMapQuadrantSourceWidthTiles = nil
-	mapdata.SuperBigMapQuadrantSourceHeightTiles = nil
+	mapdata.SuperBigMapSourceWidthTiles = nil
+	mapdata.SuperBigMapSourceHeightTiles = nil
 	mapdata.SuperBigMapOriginalPassBorder = nil
 	ClearPendingMap(map_name)
 	return true
@@ -464,7 +437,7 @@ local function AttachPendingMapState(map)
 		return false
 	end
 
-	map.SuperBigMapQuadrantCopyPending = true
+	map.SuperBigMapExpansionPending = true
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
 	map.SuperBigMapCityInitializationComplete = nil
@@ -485,7 +458,7 @@ local function AttachPendingMapState(map)
 	map.SuperBigMapDeferredBackingPromotion = pending.deferred_backing == true
 
 	VerbosePrint(string.format(
-		"attached pending 2x2 quadrant copy to %s (source %s x %s world, %s x %s tiles)",
+		"attached pending stretch expansion to %s (source %s x %s world, %s x %s tiles)",
 		tostring(map.name),
 		tostring(pending.source_width),
 		tostring(pending.source_height),
@@ -496,7 +469,7 @@ local function AttachPendingMapState(map)
 end
 
 local function IsEligibleMapData(map_slot, mapdata, map_instance)
-	if not cfg_bool("ENABLE_QUADRANT_MAP_COPY", false) then
+	if not cfg_bool("ENABLE_TERRAIN_EXPANSION", false) then
 		return false, "feature disabled"
 	end
 
@@ -507,11 +480,11 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 	local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
 		and type(mapdata) == "table" and mapdata.Environment == "Underground"
 
-	if cfg_bool("QUADRANT_MAIN_MAP_ONLY", true) and map_slot ~= 1 and not underground_ok then
+	if map_slot ~= 1 and not underground_ok then
 		return false, "not the main map slot"
 	end
 
-	if cfg_bool("QUADRANT_RANDOM_MAPS_ONLY", true) and not (map_instance and map_instance.RandomMapGenObject) then
+	if not (map_instance and map_instance.RandomMapGenObject) then
 		return false, "not a random map generation"
 	end
 
@@ -519,7 +492,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 		return false, "missing terrain mapdata"
 	end
 
-	if cfg_bool("QUADRANT_SURFACE_ONLY", true) and mapdata.Environment ~= "Surface" and not underground_ok then
+	if mapdata.Environment ~= "Surface" and not underground_ok then
 		return false, "not a surface map"
 	end
 
@@ -534,7 +507,7 @@ local function IsEligibleMapData(map_slot, mapdata, map_instance)
 	return true
 end
 
-local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, source)
+local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, source)
 	map_instance = type(map_instance) == "table" and map_instance or {}
 	local mapdata = map_instance.mapdata
 	local map_data_table = Global("MapData")
@@ -542,22 +515,19 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		mapdata = map_data_table[map_name or false]
 		map_instance.mapdata = mapdata
 	end
-
-	if not ShouldExpandNewMap() then
+	-- Keep the landing-site preview lightweight and vanilla-sized. Every real random
+	-- map created after New Game uses the stretch-only expanded allocation below.
+	if tostring(map_name or "") == "PreGame" then
 		RestorePreparedMapData(map_name, mapdata)
 		ClearPreparedMapInstance(map_instance)
-		VerbosePrint(string.format(
-			"quadrant prepare skipped for %s via %s: EXPAND MAP toggle is off",
-			tostring(map_name),
-			tostring(source or "ChangingMap")
-		))
+		VerbosePrint("stretch allocation skipped for PreGame preview")
 		return false
 	end
 
 	local ok, reason = IsEligibleMapData(map_slot, mapdata, map_instance)
 	if not ok then
 		VerbosePrint(string.format(
-			"quadrant prepare skipped for %s via %s: %s",
+			"stretch allocation skipped for %s via %s: %s",
 			tostring(map_name),
 			tostring(source or "ChangingMap"),
 			tostring(reason)
@@ -565,56 +535,21 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		return false
 	end
 
-	local scale = math.floor(cfg_number("QUADRANT_COPY_SCALE", 2, 2))
-	if scale ~= 2 then
-		scale = 2
-	end
-
 	local original_width = mapdata.SuperBigMapOriginalWidthTiles or mapdata.Width
 	local original_height = mapdata.SuperBigMapOriginalHeightTiles or mapdata.Height
-	local requested_width = original_width * scale
-	local requested_height = original_height * scale
-	local max_terrain_tiles = math.floor(cfg_number("QUADRANT_MAX_TERRAIN_TILES", 8192, 1))
-	local max_random_tiles = math.floor(cfg_number("QUADRANT_MAX_RANDOM_GENERATOR_TILES", 6144, 1))
-	local renderer_align = math.floor(cfg_number("QUADRANT_RENDERER_NODE_TILE_ALIGNMENT", 2048, 1))
-	local max_tiles = math.min(max_terrain_tiles, max_random_tiles)
-	local desired_width = AlignDown(math.min(requested_width, max_tiles), renderer_align)
-	local desired_height = AlignDown(math.min(requested_height, max_tiles), renderer_align)
-	desired_width = AlignDown(desired_width, scale)
-	desired_height = AlignDown(desired_height, scale)
+	local expanded_tiles = math.floor(cfg_number("EXPANDED_TERRAIN_TILES", 8192, 1))
+	local renderer_align = math.floor(cfg_number("RENDERER_NODE_TILE_ALIGNMENT", 2048, 1))
+	local desired_width = AlignDown(expanded_tiles, renderer_align)
+	local desired_height = AlignDown(expanded_tiles, renderer_align)
 	local source_width_tiles = original_width
 	local source_height_tiles = original_height
-	local generator_width_tiles = false
-	local generator_height_tiles = false
+	local generator_width_tiles = original_width
+	local generator_height_tiles = original_height
 	local height_tile_size = Global("const") and const.HeightTileSize or 1
-
-	local frame_mode = cfg_bool("EXPANSION_FRAME_MODE", false)
-
-	if frame_mode then
-		-- FRAME EXPANSION: keep the FULL native map as the original. The
-		-- generator runs ONCE at the native size (original_width, e.g. 6144 =
-		-- 15x15 sectors) and fills the map from the origin. We allocate a larger
-		-- mapdata (forced expanded tiles, e.g. 8192 = 20x20) so a flat
-		-- L-shaped frame of new sectors surrounds the original. Nothing is
-		-- cloned or duplicated -- generator source == full original; the frame
-		-- (beyond original_width) stays at the engine's default flat height +
-		-- texture. The 2x2 source-cap math below is intentionally skipped.
-		local forced_tiles = math.floor(cfg_number("QUADRANT_FORCE_EXPANDED_TILES", 8192, 1))
-		desired_width = AlignDown(math.min(forced_tiles, max_terrain_tiles), renderer_align)
-		desired_height = AlignDown(math.min(forced_tiles, max_terrain_tiles), renderer_align)
-		generator_width_tiles = original_width
-		generator_height_tiles = original_height
-		source_width_tiles = original_width
-		source_height_tiles = original_height
-		DebugPrint(string.format(
-			"frame expansion for %s: mapdata %s x %s tiles, full native original %s x %s tiles, flat L-frame around it",
-			tostring(map_name),
-			tostring(desired_width),
-			tostring(desired_height),
-			tostring(original_width),
-			tostring(original_height)
-		))
-	end
+	DebugPrint(string.format(
+		"stretch allocation for %s: destination %s x %s tiles, native source %s x %s tiles",
+		tostring(map_name), tostring(desired_width), tostring(desired_height),
+		tostring(original_width), tostring(original_height)))
 
 	if desired_width <= original_width or desired_height <= original_height then
 		mapdata.Width = original_width
@@ -632,25 +567,8 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		return false
 	end
 
-	-- 2x2 source cap: only applies to the tiling hack, NOT frame mode (frame
-	-- mode deliberately keeps source == full native original).
-	if not frame_mode and (desired_width < requested_width or desired_height < requested_height) then
-		source_width_tiles = math.floor(desired_width / scale)
-		source_height_tiles = math.floor(desired_height / scale)
-		DebugPrint(string.format(
-			"mapgen cap applied for %s: requested %s x %s tiles, using %s x %s tiles with %s x %s source quadrants",
-			tostring(map_name),
-			tostring(requested_width),
-			tostring(requested_height),
-			tostring(desired_width),
-			tostring(desired_height),
-			tostring(source_width_tiles),
-			tostring(source_height_tiles)
-		))
-	end
-
 	if source_width_tiles <= 0 or source_height_tiles <= 0 then
-		DebugPrint("quadrant prepare failed: source quadrant would be empty")
+		DebugPrint("stretch allocation failed: source terrain would be empty")
 		return false
 	end
 	local deferred_backing = cfg_bool("DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE", false)
@@ -658,9 +576,8 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 
 	mapdata.SuperBigMapOriginalWidthTiles = original_width
 	mapdata.SuperBigMapOriginalHeightTiles = original_height
-	mapdata.SuperBigMapQuadrantCopyScale = scale
-	mapdata.SuperBigMapQuadrantSourceWidthTiles = source_width_tiles
-	mapdata.SuperBigMapQuadrantSourceHeightTiles = source_height_tiles
+	mapdata.SuperBigMapSourceWidthTiles = source_width_tiles
+	mapdata.SuperBigMapSourceHeightTiles = source_height_tiles
 	if deferred_backing then
 		-- Keep ChangeMap on a genuine vanilla backing. The desired dimensions remain in the
 		-- pending record and are promoted only after native source generation has completed.
@@ -674,16 +591,12 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	-- The engine bakes a symmetric impassable border of mapdata.PassBorder into
 	-- the passability grid at map-build time (the property help reads "requires a
 	-- map restart to take effect"). On the expanded map that leaves a thick
-	-- impassable ring around the whole playable area -- the entire L-shaped frame
-	-- edge -- which traps rovers (e.g. one unloaded from a rocket that landed in
-	-- the frame; confirmed via a passability grid-scan: OriginalPassBorder=102400
-	-- == a 1024-tile ring). FullMapPlayable wants the WHOLE expanded map passable,
-	-- so zero PassBorder HERE, before generation builds passability, so no border
+	-- impassable ring around the whole playable area. FullMapPlayable wants the
+	-- whole expanded terrain available, so zero PassBorder HERE, before generation
+	-- builds passability, so no border
 	-- is baked. The true original is preserved for restore (sbm_map_bounds's
 	-- ResetMapDataBounds only captures SuperBigMapOriginalPassBorder when it is nil).
-	-- Zero PassBorder so the WHOLE expanded map (incl. the non-rendered L-frame) is
-	-- passable -- otherwise the engine bakes a ~1024-tile impassable ring and a rover
-	-- unloaded from a rocket that landed near the edge/frame is trapped. The engine's
+	-- Otherwise the engine bakes a ~1024-tile impassable ring. The engine's
 	-- gameplay grids (heat, etc.) only cover [HeatGridBorder, size-HeatGridBorder], but we
 	-- keep the map passable and instead CLAMP the heat query (sbm_heat_safety) so units in
 	-- the outer strip don't crash Heat_Get. EXPANDED_MAP_EDGE_BORDER can set a positive
@@ -706,7 +619,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 				mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
 			end
 			DebugPrint(string.format(
-				"frame expansion: PassBorder %s -> %s (full passability; heat queries clamped)",
+				"stretch expansion: PassBorder %s -> %s (full-map access; heat queries clamped)",
 				tostring(mapdata.PassBorder), tostring(safe_border)))
 			mapdata.PassBorder = safe_border
 			if type(mapdata.PassBorderTiles) == "number" then
@@ -718,10 +631,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
 	end
 
-	-- The rendered original is always corner-anchored at (0,0); the flat frame is
-	-- the L on the two far sides. The source origin is therefore always 0,0 (kept
-	-- as explicit fields so the shape-agnostic frame-crater detection in
-	-- sbm_fake_terrain keeps reading a defined origin).
+	-- The vanilla source view and the proportional stretch share origin (0,0).
 	local source_x, source_y = 0, 0
 
 	local pending = {
@@ -729,21 +639,21 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 		source_height = source_height_tiles * height_tile_size,
 		source_x = source_x,
 		source_y = source_y,
-		generator_width = (generator_width_tiles or source_width_tiles) * height_tile_size,
-		generator_height = (generator_height_tiles or source_height_tiles) * height_tile_size,
+		generator_width = generator_width_tiles * height_tile_size,
+		generator_height = generator_height_tiles * height_tile_size,
 		original_width = original_width,
 		original_height = original_height,
 		source_width_tiles = source_width_tiles,
 		source_height_tiles = source_height_tiles,
-		generator_width_tiles = generator_width_tiles or source_width_tiles,
-		generator_height_tiles = generator_height_tiles or source_height_tiles,
+		generator_width_tiles = generator_width_tiles,
+		generator_height_tiles = generator_height_tiles,
 		desired_width = desired_width,
 		desired_height = desired_height,
 		deferred_backing = deferred_backing,
 	}
 	StorePendingMap(map_name, pending)
 
-	map_instance.SuperBigMapQuadrantCopyPending = true
+	map_instance.SuperBigMapExpansionPending = true
 	map_instance.SuperBigMapNativeGenerationComplete = nil
 	map_instance.SuperBigMapNativeGenerationCompleteSource = nil
 	map_instance.SuperBigMapCityInitializationComplete = nil
@@ -764,7 +674,7 @@ local function PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, s
 	map_instance.SuperBigMapDeferredBackingPromotion = deferred_backing
 
 	DebugPrint(string.format(
-		"prepared %s for 2x2 quadrant copy via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles; deferred_backing=%s)",
+		"prepared %s for stretch expansion via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles; deferred_backing=%s)",
 		tostring(map_name),
 		tostring(source or "ChangingMap"),
 		tostring(original_width),
@@ -780,16 +690,15 @@ end
 
 local CaptureGeneratedNativeEnrichments
 
--- Finalize an expanded map after generation (NOT a 2x2 tiler despite the legacy
--- "quadrant" markers): attach the pending source/generator markers, settle the engine,
--- and re-apply bounds/sectors. The frame is filled by the sector-mirror plan.
+-- Finalize the expanded destination after native source generation: attach the
+-- source/destination geometry, settle the engine, and re-apply bounds/sectors.
 local function FinalizeExpandedMap(map)
-	if map and not map.SuperBigMapQuadrantCopyPending then
+	if map and not map.SuperBigMapExpansionPending then
 		AttachPendingMapState(map)
 	end
 
-	if not map or not map.SuperBigMapQuadrantCopyPending then
-		VerbosePrint("quadrant tile skipped: no pending expanded map")
+	if not map or not map.SuperBigMapExpansionPending then
+		VerbosePrint("expanded-map finalization skipped: no pending destination")
 		return false
 	end
 
@@ -797,12 +706,12 @@ local function FinalizeExpandedMap(map)
 	local source_width = map.SuperBigMapSourceWidth or math.floor((map_width or 0) / 2)
 	local source_height = map.SuperBigMapSourceHeight or math.floor((map_height or 0) / 2)
 	if not map_width or not map_height or source_width <= 0 or source_height <= 0 then
-		DebugPrint("quadrant tile failed: invalid terrain/source size")
+		DebugPrint("expanded-map finalization failed: invalid terrain/source size")
 		return false
 	end
 	if map_width <= source_width or map_height <= source_height then
 		DebugPrint(string.format(
-			"quadrant tile skipped: map was not expanded before load (%s x %s, source %s x %s)",
+			"expanded-map finalization skipped: destination is not larger than source (%s x %s, source %s x %s)",
 			tostring(map_width),
 			tostring(map_height),
 			tostring(source_width),
@@ -811,10 +720,9 @@ local function FinalizeExpandedMap(map)
 		return false
 	end
 
-	-- Settle the engine after the generator produced the source quadrant: refresh the
-	-- terrain hash + max object radius, re-apply the full-map bounds/sector fit, and clear
-	-- the pending flag. The non-rendered L-frame is filled separately by the sector-mirror
-	-- plan (RunSectorMirrorPlanIfEnabled); nothing is tiled here.
+	-- Settle the engine after source generation: refresh the terrain hash and object
+	-- radius, re-apply the full-map bounds/sector fit, and clear the allocation flag.
+	-- The surface stretch runs after the generation/city readiness milestones.
 	local terrain_api = Global("terrain")
 	if terrain_api and type(terrain_api.HashGrids) == "function" and map.mapdata then
 		map.mapdata.terrain_hash = SafeCall(terrain_api.HashGrids, map) or map.mapdata.terrain_hash
@@ -837,7 +745,7 @@ local function FinalizeExpandedMap(map)
 		end
 	end
 
-	map.SuperBigMapQuadrantCopyPending = false
+	map.SuperBigMapExpansionPending = false
 	pending_maps[map.name or false] = nil
 	CaptureGeneratedNativeEnrichments(map, "FinalizeExpandedMap")
 	DebugPrint(string.format("expanded map finalized: %s (%s x %s)",
@@ -846,7 +754,7 @@ local function FinalizeExpandedMap(map)
 	return true
 end
 
-local function PrintQuadrantDebug()
+local function PrintExpansionDebug()
 	local current_map = Global("CurrentMap")
 	local map_width, map_height = TerrainSize(current_map)
 	local mapdata = current_map and current_map.mapdata
@@ -854,16 +762,15 @@ local function PrintQuadrantDebug()
 	local map_name = type(get_map_name) == "function" and SafeCall(get_map_name) or current_map and current_map.name
 
 	DebugPrint(string.format(
-		"quadrant debug: enabled=%s, random-only=%s, current=%s, terrain=%s x %s, mapdata=%s x %s, env=%s, pending=%s, source=%s x %s",
-		tostring(cfg_bool("ENABLE_QUADRANT_MAP_COPY", false)),
-		tostring(cfg_bool("QUADRANT_RANDOM_MAPS_ONLY", true)),
+		"expansion debug: enabled=%s, current=%s, terrain=%s x %s, mapdata=%s x %s, env=%s, pending=%s, source=%s x %s",
+		tostring(cfg_bool("ENABLE_TERRAIN_EXPANSION", false)),
 		tostring(map_name),
 		tostring(map_width),
 		tostring(map_height),
 		tostring(mapdata and mapdata.Width),
 		tostring(mapdata and mapdata.Height),
 		tostring(mapdata and mapdata.Environment),
-		tostring(current_map and current_map.SuperBigMapQuadrantCopyPending),
+		tostring(current_map and current_map.SuperBigMapExpansionPending),
 		tostring(current_map and current_map.SuperBigMapSourceWidth),
 		tostring(current_map and current_map.SuperBigMapSourceHeight)
 	))
@@ -1382,7 +1289,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 		or not destination or not destination.mapdata
 		or destination.mapdata.Environment ~= "Surface"
-		or destination.SuperBigMapQuadrantCopyPending ~= true then
+		or destination.SuperBigMapExpansionPending ~= true then
 		return false
 	end
 	local source_width = tonumber(destination.SuperBigMapGeneratorWidthTiles)
@@ -2620,14 +2527,14 @@ local function PatchPassagePairing()
 end
 
 local function PatchRandomMapGenerator()
-	if not cfg_bool("QUADRANT_PATCH_RANDOM_GENERATOR", true) then
-		VerbosePrint("quadrant random-map generator hook disabled")
+	if not cfg_bool("PATCH_RANDOM_MAP_GENERATOR", true) then
+		VerbosePrint("stretch random-map generator hook disabled")
 		return false
 	end
 
 	local generator_class = Global("RandomMapGenerator")
 	if type(generator_class) ~= "table" or type(generator_class.Generate) ~= "function" then
-		VerbosePrint("quadrant random-map generator hook waiting for class")
+		VerbosePrint("stretch random-map generator hook waiting for class")
 		return false
 	end
 
@@ -3472,16 +3379,16 @@ local function PatchRandomMapGenerator()
 				if context.suspended and context.sampler
 					and type(context.sampler.ResumePassEdits) == "function" then
 					local ok, err = pcall(context.sampler.ResumePassEdits, context.sampler,
-						"SBMNativeSamplerCollisionMirror")
+						"SBMNativeSamplerCollisionProxies")
 					if not ok then cleanup_ok, cleanup_error = false, err end
 				end
 				context.stats.cleanup_ok = cleanup_ok
 				context.stats.cleanup_error = cleanup_ok and "none" or tostring(cleanup_error)
 				context.stats.proxies_destroyed = #context.proxies
 				if cleanup_ok then
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats)
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_CLEANUP", context.stats)
 				else
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats, "error")
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_CLEANUP", context.stats, "error")
 				end
 				return cleanup_ok, cleanup_error
 			end
@@ -3492,7 +3399,7 @@ local function PatchRandomMapGenerator()
 					destination, "destination-source-region", area, enum_flags,
 					ignore_game_flags, surface_types)
 				local sampler_records, sampler_stats = source_collision_manifest(
-					sampler, "sampler-before-mirror", area, enum_flags,
+					sampler, "sampler-before-collision-proxies", area, enum_flags,
 					ignore_game_flags, surface_types)
 				local context = {
 					sampler = sampler, proxies = {}, disabled = {}, suspended = false,
@@ -3520,7 +3427,7 @@ local function PatchRandomMapGenerator()
 				end
 				local exact_classes = cfg_bool("USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES", true)
 				if type(sampler.SuspendPassEdits) == "function" then
-					local ok = pcall(sampler.SuspendPassEdits, sampler, "SBMNativeSamplerCollisionMirror")
+					local ok = pcall(sampler.SuspendPassEdits, sampler, "SBMNativeSamplerCollisionProxies")
 					context.suspended = ok
 				end
 				for i = 1, #sampler_records do
@@ -3641,7 +3548,7 @@ local function PatchRandomMapGenerator()
 					end
 				end
 				local _, sampler_after_stats = source_collision_manifest(
-					sampler, "sampler-after-mirror", area, enum_flags,
+					sampler, "sampler-after-collision-proxies", area, enum_flags,
 					ignore_game_flags, surface_types)
 				context.stats.sampler_after_queried = sampler_after_stats.queried
 				context.stats.sampler_after_eligible = sampler_after_stats.eligible
@@ -3657,9 +3564,9 @@ local function PatchRandomMapGenerator()
 					and sampler_after_stats.eligible == context.stats.destination_eligible
 				if context.stats.exact_proxy_count and context.stats.geometry_match
 					and context.stats.state_match then
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats)
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_INSTALLED", context.stats)
 				else
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats, "error")
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_INSTALLED", context.stats, "error")
 				end
 				if not context.stats.exact_proxy_count or not context.stats.geometry_match
 					or not context.stats.state_match or context.stats.proxy_failures > 0 then
@@ -3677,7 +3584,7 @@ local function PatchRandomMapGenerator()
 					or target_map ~= map
 					or map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
-					or not cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
+					or not cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
 				end
 				local desired_w = tonumber(map.SuperBigMapDesiredWidthTiles)
@@ -3866,7 +3773,7 @@ local function PatchRandomMapGenerator()
 				source_mask_log("SOURCE_BUILDABLE_BRIDGE_BEGIN", stats)
 
 				local capacity_raw, source_raw, source_processed, destination_safe_processed
-				local direct_raw, direct_processed, sampler_unmirrored_raw
+				local direct_raw, direct_processed, sampler_without_collision_proxies_raw
 				local collision_context
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
@@ -3881,14 +3788,14 @@ local function PatchRandomMapGenerator()
 						direct_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 						direct_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					end
-					if use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_MIRROR", true) then
-						sampler_unmirrored_raw = closure_new_grid(
+					if use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_PROXIES", true) then
+						sampler_without_collision_proxies_raw = closure_new_grid(
 							source_hex_w, source_hex_h, 16, unbuildable_z)
 					end
 					if not capacity_raw or not source_raw or not source_processed
 						or (diagnostics_enabled and (not direct_raw or not direct_processed))
-						or (use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_MIRROR", true)
-							and not sampler_unmirrored_raw) then
+						or (use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_PROXIES", true)
+							and not sampler_without_collision_proxies_raw) then
 						error("grid-allocation-failed")
 					end
 					stats.allocate_ms = now() - started
@@ -3953,36 +3860,36 @@ local function PatchRandomMapGenerator()
 						terrain_get_size_function = tostring(terrain_get_size),
 					})
 					local init_started = now()
-					if use_native_sampler and sampler_unmirrored_raw then
-						local unmirrored_started = now()
-						init_params.buildable_grid = sampler_unmirrored_raw
+					if use_native_sampler and sampler_without_collision_proxies_raw then
+						local without_collision_proxies_started = now()
+						init_params.buildable_grid = sampler_without_collision_proxies_raw
 						closure_init_buildable_grid(build_map, init_params)
-						stats.sampler_unmirrored_init_ms = now() - unmirrored_started
-						source_mask_log("SOURCE_BUILDABLE_SAMPLER_UNMIRRORED_INIT_END", stats)
-						source_buildable_trace("SOURCE_BUILDABLE_RAW_SAMPLER_UNMIRRORED",
-							sampler_unmirrored_raw, "buildable", stats)
+						stats.sampler_without_collision_proxies_init_ms = now() - without_collision_proxies_started
+						source_mask_log("SOURCE_BUILDABLE_SAMPLER_WITHOUT_COLLISION_PROXIES_INIT_END", stats)
+						source_buildable_trace("SOURCE_BUILDABLE_RAW_SAMPLER_WITHOUT_COLLISION_PROXIES",
+							sampler_without_collision_proxies_raw, "buildable", stats)
 						local box_fn = closure_global("box", Global("box"))
-						if type(box_fn) ~= "function" then error("collision-mirror-box-unavailable") end
+						if type(box_fn) ~= "function" then error("collision-proxy-box-unavailable") end
 						local source_area = box_fn(0, 0, source_world_w, source_world_h)
-						local mirror_started = now()
-						local mirror_error
-						collision_context, mirror_error = source_collision_proxy_install(
+						local proxy_started = now()
+						local proxy_error
+						collision_context, proxy_error = source_collision_proxy_install(
 							map, build_map, source_area, init_params.enum_flags,
 							init_params.ignore_game_flags, init_params.surface_types)
-						stats.collision_mirror_install_ms = now() - mirror_started
-						stats.collision_mirror_error = tostring(mirror_error or "none")
-						if mirror_error then
-							local mirror_stats = collision_context and collision_context.stats or {}
-							source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_PARTIAL", {
-								error = tostring(mirror_error),
-								destination_eligible = tostring(mirror_stats.destination_eligible),
-								proxies_created = tostring(mirror_stats.proxies_created),
-								proxy_failures = tostring(mirror_stats.proxy_failures),
-								geometry_match = tostring(mirror_stats.geometry_match),
+						stats.collision_proxy_install_ms = now() - proxy_started
+						stats.collision_proxy_error = tostring(proxy_error or "none")
+						if proxy_error then
+							local proxy_stats = collision_context and collision_context.stats or {}
+							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_PARTIAL", {
+								error = tostring(proxy_error),
+								destination_eligible = tostring(proxy_stats.destination_eligible),
+								proxies_created = tostring(proxy_stats.proxies_created),
+								proxy_failures = tostring(proxy_stats.proxy_failures),
+								geometry_match = tostring(proxy_stats.geometry_match),
 							}, "warn")
-							if (tonumber(mirror_stats.destination_eligible) or 0) > 0
-								and (tonumber(mirror_stats.proxies_created) or 0) == 0 then
-								error("native sampler collision mirror: " .. tostring(mirror_error))
+							if (tonumber(proxy_stats.destination_eligible) or 0) > 0
+								and (tonumber(proxy_stats.proxies_created) or 0) == 0 then
+								error("native sampler collision proxies: " .. tostring(proxy_error))
 							end
 						end
 					end
@@ -4001,19 +3908,19 @@ local function PatchRandomMapGenerator()
 					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_END", stats)
 					source_buildable_trace("SOURCE_BUILDABLE_RAW_CAPACITY_SOURCE_VIEW",
 						capacity_raw, "buildable", stats)
-					if sampler_unmirrored_raw then
+					if sampler_without_collision_proxies_raw then
 						local comparison = source_buildable_compare(
-							"sampler-collision-mirrored-vs-sampler-unmirrored-raw",
-							capacity_raw, sampler_unmirrored_raw,
+							"sampler-with-collision-proxies-vs-without-collision-proxies-raw",
+							capacity_raw, sampler_without_collision_proxies_raw,
 							source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "raw", primary = "native-source-sampler-collision-mirrored",
-								shadow = "native-source-sampler-unmirrored",
+								stage = "raw", primary = "native-source-sampler-with-collision-proxies",
+								shadow = "native-source-sampler-without-collision-proxies",
 							})
-						stats.collision_mirror_exact_differences = comparison.exact_differences
-						stats.collision_mirror_classification_differences =
+						stats.collision_proxy_exact_differences = comparison.exact_differences
+						stats.collision_proxy_classification_differences =
 							comparison.classification_differences
-						stats.collision_mirror_buildable_added = comparison.a_buildable_only
-						stats.collision_mirror_buildable_removed = comparison.b_buildable_only
+						stats.collision_proxy_buildable_added = comparison.a_buildable_only
+						stats.collision_proxy_buildable_removed = comparison.b_buildable_only
 					end
 
 					local crop_started = now()
@@ -4156,8 +4063,8 @@ local function PatchRandomMapGenerator()
 				end
 				if direct_raw then pcall(function() direct_raw:free() end) end
 				if direct_processed then pcall(function() direct_processed:free() end) end
-				if sampler_unmirrored_raw then
-					pcall(function() sampler_unmirrored_raw:free() end)
+				if sampler_without_collision_proxies_raw then
+					pcall(function() sampler_without_collision_proxies_raw:free() end)
 				end
 				stats.total_ms = now() - started
 				stats.ok = bridge_ok
@@ -4175,7 +4082,7 @@ local function PatchRandomMapGenerator()
 				if is_underground
 					or map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
-					or not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
+					or not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
 				end
 				local desired_w = tonumber(map and map.SuperBigMapDesiredWidthTiles)
@@ -6044,7 +5951,7 @@ local function PatchRandomMapGenerator()
 			local rebuild_buildable_grid_required = not is_underground
 				and map.SuperBigMapDeferredBackingPromotion ~= true
 				and cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
-				and cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
+				and cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and desired_w and desired_h and generator_w and generator_h
 				and desired_w > generator_w and desired_h > generator_h
 			rebuild_buildable_grid_wrapper = function(buildable, target_map, width, height, map_data, ...)
@@ -6498,11 +6405,11 @@ local function PatchRandomMapGenerator()
 				mapdata = mapdata,
 				RandomMapGenObject = self,
 			}
-			PrepareMapDataForQuadrantCopy(params.map_slot or 1, map_name, instance, "RandomMapGenerator.Generate")
+			PrepareMapDataForExpansion(params.map_slot or 1, map_name, instance, "RandomMapGenerator.Generate")
 			if params.map_slot then
 				params.mapdata = params.mapdata or instance.mapdata
 				params.RandomMapGenObject = params.RandomMapGenObject or self
-				params.SuperBigMapQuadrantCopyPending = instance.SuperBigMapQuadrantCopyPending
+				params.SuperBigMapExpansionPending = instance.SuperBigMapExpansionPending
 				params.SuperBigMapSourceWidth = instance.SuperBigMapSourceWidth
 				params.SuperBigMapSourceHeight = instance.SuperBigMapSourceHeight
 				params.SuperBigMapOriginalWidthTiles = instance.SuperBigMapOriginalWidthTiles
@@ -6511,11 +6418,11 @@ local function PatchRandomMapGenerator()
 				params.SuperBigMapDesiredHeightTiles = instance.SuperBigMapDesiredHeightTiles
 			end
 		else
-			VerbosePrint("quadrant random-map generator hook skipped: no BlankMap")
+			VerbosePrint("stretch random-map generator hook skipped: no BlankMap")
 		end
 		EnrichmentSpreadBoundary(self, nil, "expansion-Generate-after-source-allocation", {
 			map_name = tostring(params.map_name), map_slot = tostring(params.map_slot),
-			pending = tostring(params.SuperBigMapQuadrantCopyPending),
+			pending = tostring(params.SuperBigMapExpansionPending),
 			source_width = tostring(params.SuperBigMapSourceWidth),
 			desired_width_tiles = tostring(params.SuperBigMapDesiredWidthTiles),
 		})
@@ -6529,13 +6436,13 @@ local function PatchRandomMapGenerator()
 		local do_generate_wrapper = function(self, map, ...)
 			State.loading_proc_profile_stack = {}
 			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-entry-before-source-view")
-			if not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
+			if not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 				return original_do_generate(self, map, ...)
 			end
 
 			local height_tile_size = (Global("const") and type(const.HeightTileSize) == "number" and const.HeightTileSize > 0)
 				and const.HeightTileSize or 1
-			local max_random_tiles = math.floor(cfg_number("QUADRANT_MAX_RANDOM_GENERATOR_TILES", 6144, 1))
+			local max_random_tiles = math.floor(cfg_number("MAX_RANDOM_GENERATOR_TILES", 6144, 1))
 
 			-- The vanilla generator sizes its working grids from the map's tile
 			-- count and asserts (GridStableRandomPosSimple: size < GSRP_MAX_SIZE)
@@ -6704,7 +6611,7 @@ local function PatchRandomMapGenerator()
 			-- 6144 gives world 819200 -> 614400 and hex 820x946 -> 615x710), restore all four
 			-- immediately afterward even when native generation fails, and only then rebuild the real
 			-- expanded gameplay grid.
-			if cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
+			if cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and type(saved_map_width) == "number" and saved_map_width > 0
 				and type(saved_map_height) == "number" and saved_map_height > 0
 				and type(saved_map_hex_width) == "number" and saved_map_hex_width > 0
@@ -6758,7 +6665,7 @@ local function PatchRandomMapGenerator()
 						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
 						tostring(source_hex_width), tostring(source_hex_height)))
 				end
-			elseif cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
+			elseif cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
 				DebugPrint(string.format(
 					"vanilla cached map/buildable view unavailable: world=%sx%s hex=%sx%s tiles=%sx%s",
 					tostring(saved_map_width), tostring(saved_map_height),
@@ -6784,8 +6691,8 @@ local function PatchRandomMapGenerator()
 			map.SuperBigMapGeneratorWidthTiles = map.SuperBigMapGeneratorWidthTiles or gen_width_tiles
 			map.SuperBigMapGeneratorHeightTiles = map.SuperBigMapGeneratorHeightTiles or gen_height_tiles
 
-			-- VANILLA-EXACT PLAY ZONE: PrepareMapDataForQuadrantCopy zeroed mapdata.PassBorder
-			-- BEFORE ChangeMap so the engine bakes full passability (frame reachable). But the
+			-- VANILLA-EXACT PLAY ZONE: PrepareMapDataForExpansion zeroed mapdata.PassBorder
+			-- BEFORE ChangeMap so the engine bakes full-destination passability. But the
 			-- generator ALSO reads map.mapdata.PassBorder to compute its play zone
 			-- (RandomMapGenerator GetPlayableArea x2, BiomeFiller POI frame) -- with 0 instead
 			-- of the native ~1024-tile border the play zone is BIGGER than vanilla, the
@@ -6828,7 +6735,7 @@ local function PatchRandomMapGenerator()
 			-- span. Restored in End() below, regardless of success.
 			-- (In STRETCH mode Begin() self-skips: bit-identical generation required.)
 			local placement = SuperBigMap.RmgPlacement
-			-- Whole-DoGenerate (mirror-mode) placement begins before OnGenerateLogic can capture
+			-- Whole-DoGenerate placement begins before OnGenerateLogic can capture
 			-- this run's grids. Clear any retry residue so it deliberately uses the safe fallback
 			-- rather than stale coverage from an earlier attempt. Stretch mode captures fresh data
 			-- before its late PlaceAnomalies transaction.
@@ -6940,7 +6847,7 @@ local function PatchRandomMapGenerator()
 			map.SuperBigMapNativeSourceSampler = nil
 			map.SuperBigMapSyncNativeSourceSampler = nil
 			map.SuperBigMapNativeSourceSamplerSyncState = nil
-			if is_surface_generation and cfg_bool("QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID", true)
+			if is_surface_generation and cfg_bool("BRIDGE_VANILLA_HEIGHT_GRID", true)
 				and type(original_terrain_height_map_size) == "function"
 				and type(original_terrain_set_height_grid) == "function"
 				and type(original_terrain_get_height_grid) == "function"
@@ -7604,14 +7511,12 @@ local function PatchRandomMapGenerator()
 		State.generator_do_generate_wrapper = do_generate_wrapper
 	end
 	State.generator_patch_version = GENERATOR_PATCH_VERSION
-	DebugPrint("quadrant random-map generator hook installed")
+	DebugPrint("stretch random-map generator hook installed")
 	return true
 end
 
 
--- Config-driven L-frame fill: at game start, run the three block copies (fast
--- path: one grid flip per block instead of one per sector). Gated on a full 20x20
--- terrain grid. Yields inside the object loops; ONE combined refresh at the end.
+-- Stretch-only surface expansion readiness gate.
 local function SurfaceExpansionReadiness(map)
 	if map.SuperBigMapNativeGenerationComplete ~= true then
 		return false, "native generation has not completed"
@@ -7619,7 +7524,7 @@ local function SurfaceExpansionReadiness(map)
 	if map.SuperBigMapCityInitializationComplete ~= true then
 		return false, "city initialization and enrichment placement have not completed"
 	end
-	if map.SuperBigMapQuadrantCopyPending == true then
+	if map.SuperBigMapExpansionPending == true then
 		return false, "expanded destination finalization is still pending"
 	end
 	if not FindSectorByName(map, "F0") then
@@ -7628,9 +7533,9 @@ local function SurfaceExpansionReadiness(map)
 	return true, "native generation and destination finalization complete"
 end
 
-local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
+local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	map = map or Global("CurrentMap")
-	if not cfg_bool("SECTOR_MIRROR_PLAN_AT_START", false) then
+	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
 		return false
 	end
 	if not map then
@@ -7638,39 +7543,37 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 	end
 	-- SuperBigMapExpanded is persisted per map. A loaded save has no new MapGenerated or
 	-- CityInitialized transaction to wait for, and its expansion must never be repeated.
-	if map.SuperBigMapExpanded == true and map.SuperBigMapQuadrantCopyPending ~= true then
-		map.SuperBigMapSectorMirrorDone = true
-		map.SuperBigMapSectorMirrorAwaitingReadiness = false
+	if map.SuperBigMapExpanded == true and map.SuperBigMapExpansionPending ~= true then
+		map.SuperBigMapSurfaceStretchDone = true
+		map.SuperBigMapSurfaceStretchAwaitingReadiness = false
 		map.SuperBigMapStretchPipelinePending = false
 		SignalExpansionReadinessChanged(map, "persisted surface expansion already complete")
 		return false
 	end
-	if map.SuperBigMapSectorMirrorDone == true then
+	if map.SuperBigMapSurfaceStretchDone == true then
 		return false
 	end
 	-- Report an existing live schedule as success so the lifecycle caller does not run its
 	-- fallback full-map rebuild in parallel with the expansion transaction.
-	if map.SuperBigMapSectorMirrorScheduled == true then return true end
-	local fill_mode_early = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
-	if fill_mode_early == "stretch" and cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
+	if map.SuperBigMapSurfaceStretchScheduled == true then return true end
+	if cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true) then
 		map.SuperBigMapStretchPipelinePending = true
 	end
 	local ready, readiness = SurfaceExpansionReadiness(map)
 	if not ready then
-		map.SuperBigMapSectorMirrorAwaitingReadiness = true
+		map.SuperBigMapSurfaceStretchAwaitingReadiness = true
 		local wait_key = tostring(readiness_source) .. ":" .. tostring(readiness)
-		if map.SuperBigMapSectorMirrorReadinessLogKey ~= wait_key then
-			map.SuperBigMapSectorMirrorReadinessLogKey = wait_key
-			StretchLog("RunSectorMirrorPlan: waiting for readiness event", {
+		if map.SuperBigMapSurfaceStretchReadinessLogKey ~= wait_key then
+			map.SuperBigMapSurfaceStretchReadinessLogKey = wait_key
+			StretchLog("RunSurfaceStretchPlan: waiting for readiness event", {
 				source = tostring(readiness_source), reason = readiness,
 				native_complete = tostring(map.SuperBigMapNativeGenerationComplete),
 				city_complete = tostring(map.SuperBigMapCityInitializationComplete),
-				finalization_pending = tostring(map.SuperBigMapQuadrantCopyPending),
+				finalization_pending = tostring(map.SuperBigMapExpansionPending),
 				f0_found = FindSectorByName(map, "F0") ~= nil,
 			})
-			InitSeq("RunSectorMirrorPlan: deferred until generation-complete event", {
+			InitSeq("RunSurfaceStretchPlan: deferred until generation-complete event", {
 				source = tostring(readiness_source), reason = readiness,
-				frame_sectors = FrameSectorProbe(map),
 			})
 		end
 		-- This is an accepted deferred schedule. The lifecycle caller must not run the
@@ -7683,20 +7586,19 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 		map.SuperBigMapStretchPipelinePending = false
 		return false
 	end
-	map.SuperBigMapSectorMirrorAwaitingReadiness = false
-	map.SuperBigMapSectorMirrorReadinessLogKey = nil
-	map.SuperBigMapSectorMirrorScheduled = true
-	StretchLog("RunSectorMirrorPlan: readiness satisfied; scheduled", {
-		mode = fill_mode_early, source = tostring(readiness_source), readiness = readiness,
+	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
+	map.SuperBigMapSurfaceStretchReadinessLogKey = nil
+	map.SuperBigMapSurfaceStretchScheduled = true
+	StretchLog("RunSurfaceStretchPlan: readiness satisfied; scheduled", {
+		source = tostring(readiness_source), readiness = readiness,
 	})
 	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
 		SuperBigMap.DebugLog.LoadTime("expansion plan scheduled", {
-			mode = fill_mode_early, readiness_source = tostring(readiness_source), readiness = readiness,
+			readiness_source = tostring(readiness_source), readiness = readiness,
 		})
 	end
-	InitSeq("RunSectorMirrorPlan: scheduled from readiness event", {
+	InitSeq("RunSurfaceStretchPlan: scheduled from readiness event", {
 		readiness_source = tostring(readiness_source), readiness = readiness,
-		frame_sectors = FrameSectorProbe(map),
 	})
 	local schedule_ok, schedule_err = pcall(create_thread, function()
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
@@ -7736,14 +7638,13 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 			end
 		end
 		local loading_profiler = SuperBigMap.LoadingProfiler
-		if map.SuperBigMapSectorMirrorDone == true then
-			InitSeq("RunSectorMirrorPlan: already done before transaction -- aborting", {})
+		if map.SuperBigMapSurfaceStretchDone == true then
+			InitSeq("RunSurfaceStretchPlan: already done before transaction -- aborting", {})
 			end_loading()
 			return
 		end
-		InitSeq("RunSectorMirrorPlan: readiness gate passed, about to check 20x20 fit", {
+		InitSeq("RunSurfaceStretchPlan: readiness gate passed", {
 			readiness_source = tostring(readiness_source),
-			frame_sectors = FrameSectorProbe(map),
 		})
 		-- Only maps the mod ACTUALLY expanded are candidates. Skip SILENTLY (no
 		-- "cannot expand" popup) for:
@@ -7751,7 +7652,7 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 		--     carries no expansion -- this is what fired the warning BEFORE a scenario
 		--     was even chosen), and
 		--   * any non-mod map (IsModMap == false) -- the same authoritative gate
-		--     Lifecycle.Apply uses, so the mirror plan can never disagree with it and
+		--     Lifecycle.Apply uses, so the stretch plan can never disagree with it and
 		--     run on a map Apply already skipped.
 		-- The looser UseCustomSectorsForMap check is kept as an additional silent skip.
 		local map_name = tostring(map.name or (map.mapdata and map.mapdata.id) or "")
@@ -7760,11 +7661,11 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 		local custom_ok = not (type(grid) == "table" and type(grid.UseCustomSectorsForMap) == "function")
 			or grid.UseCustomSectorsForMap(map)
 		if map_name == "PreGame" or not is_mod_map or not custom_ok then
-			map.SuperBigMapSectorMirrorDone = true
+			map.SuperBigMapSurfaceStretchDone = true
 			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: skipped SILENTLY -- not a real expanded scenario (map=%s is_mod_map=%s custom_ok=%s); no warning",
+				"RunSurfaceStretchIfEnabled: skipped SILENTLY -- not a real expanded scenario (map=%s is_mod_map=%s custom_ok=%s); no warning",
 				map_name, tostring(is_mod_map), tostring(custom_ok)))
-			InitSeq("RunSectorMirrorPlan: skipped (not a real expanded scenario)", {
+			InitSeq("RunSurfaceStretchPlan: skipped (not a real expanded scenario)", {
 				map = map_name,
 				is_mod_map = is_mod_map,
 				custom_ok = custom_ok,
@@ -7774,25 +7675,17 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 		end
 		local map_w, map_h = TerrainSize(map)
 		if type(map_w) ~= "number" or map_w <= 0 or type(map_h) ~= "number" or map_h <= 0 then
-			map.SuperBigMapSectorMirrorDone = true
-			DebugPrint("RunSectorMirrorPlanIfEnabled: skipped -- terrain size unavailable")
+			map.SuperBigMapSurfaceStretchDone = true
+			DebugPrint("RunSurfaceStretchIfEnabled: skipped -- terrain size unavailable")
 			end_loading()
-			WarnCannotExpand(map, "terrain size unavailable")
 			return
 		end
 
-		-- FRAME FILL MODE dispatch (config EXPANSION_FRAME_FILL_MODE, see sbm_config.lua). Chosen
-		-- HERE, BEFORE the mirror-block fit check, because non-mirror modes do NOT use the named
-		-- mirror sectors: "stretch" works purely on the terrain grids by world coordinates, so it
-		-- must never be gated by (or warn via) SectorMirrorBlocksFit.
-		local fill_mode = cfg_string("EXPANSION_FRAME_FILL_MODE", "mirror")
-
-		-- STRETCH: resample the generated source to fill the whole 20x20 (no frame, no mirror
-		-- seam) -- one continuous terrain, features ~1.33x larger. STEP 1 = TERRAIN ONLY: the
+		-- Resample the generated source to fill the whole destination as one continuous terrain.
+		-- STEP 1 = TERRAIN ONLY: the
 		-- generated objects/deposits are NOT yet repositioned, so they stay clustered in the
-		-- source corner until the object pass lands. Finalize (buildable/passability/rockets) and
-		-- return -- the mirror block phases below are skipped entirely for this mode.
-		if fill_mode == "stretch" then
+		-- source corner until the object pass lands.
+		do
 			-- FAIL-SAFE: run the whole stretch + finalize inside pcall so that if ANY step throws,
 			-- the expansion thread does not die before end_loading() -- that is what leaves the
 			-- loading box stuck on screen forever. Whatever happens, we mark the map done and close
@@ -7815,21 +7708,15 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 			local stretch_t0 = 0
 			if type(stretch_ticks) == "function" then local ok, t = pcall(stretch_ticks); if ok and type(t) == "number" then stretch_t0 = t end end
 			local ok_stretch, n_grids = false, 0
-			local frame_passability_preapplied = false
 			local stretch_token = loading_profiler and type(loading_profiler.Begin) == "function"
 				and loading_profiler.Begin("surface expansion: complete stretch pipeline", {
-					fill_mode = fill_mode, readiness_source = tostring(readiness_source),
+					readiness_source = tostring(readiness_source),
 				}, map) or false
-			-- One transaction owns the frame overlay plus both mass-object moves. ForceFramePassable,
-			-- ScaleDecorationsToFull, and ScaleMarkersToFull otherwise each balance their own
-			-- Suspend/Resume pair; those early resumes flush passability repeatedly even though the
-			-- stretch already performs the authoritative RebuildGrids. Resume at the same logical
-			-- boundary as the old marker pass (before later passability queries), and repeat the call
-			-- after the protected branch as an error-path no-op so suspension is always balanced.
+			-- One transaction owns both mass-object moves so intermediate edits do not flush
+			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
 			local pass_batch_active = false
-			if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true)
-				and type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
+			if type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function" then
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
 				StretchLog("stretch branch: combined pass-edit transaction begin", {
@@ -7861,19 +7748,6 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 						AnnotateDecorRelief(map)
 						InvestigationEnd(detail_token, nil, true)
 					end
-					if cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true) then
-						StretchLog("stretch branch: pre-applying frame passability before authoritative revalidation")
-						local pass_token = loading_profiler and type(loading_profiler.Begin) == "function"
-							and loading_profiler.Begin("surface passability: preapply frame overlay", nil, map) or false
-						frame_passability_preapplied = InvestigationSafeCall(
-							"surface: preapply frame passability", map, ForceFramePassable,
-							map, true, pass_batch_active) == true
-						if pass_token and type(loading_profiler.End) == "function" then
-							loading_profiler.End(pass_token, {
-								applied = frame_passability_preapplied,
-							}, frame_passability_preapplied)
-						end
-					end
 					local spike_token = InvestigationBegin("surface: spike audit pre-stretch", map)
 					SpikeAudit(map, "surface pre-stretch")
 					InvestigationEnd(spike_token, nil, true)
@@ -7904,7 +7778,7 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 					end
 				else
 					StretchLog("stretch branch: StretchSourceToFull MISSING")
-					DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
+					DebugPrint("RunSurfaceStretchIfEnabled: STRETCH unavailable (TerrainCopy.StretchSourceToFull missing) -- terrain left as generated")
 				end
 				-- The source map's enrichment OBJECTS were deliberately not transferred: their owning map
 				-- slot has been unloaded. Stage 01 retained constructor-safe value records instead.
@@ -8064,14 +7938,10 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 						InvestigationSafeCall("surface: enforce scan gate", map,
 							deposits.EnforceScanGateAfterStretch, map)
 					end
-					-- Step 6: DENSITY NORMALIZATION (same suite as the mirror path, which the
-					-- stretch branch never ran -- the cause of the over-crowded start sector):
+					-- Step 6: DENSITY NORMALIZATION after proportional marker movement:
 					--   TopUpDeposits     raise the TOTAL to vanilla density x area (~1.78x),
 					--                     stretch-aware baseline (all markers are generator output);
 					--   RegisterCloned    register the top-up clones with their sectors;
-					--   RespaceAnomalies  thin/respace the start sector's revealed anomalies;
-					--   EvenOutDeposit    cap per-sector density (vanilla-like) and relocate the
-					--                     surplus into sparse unscanned sectors.
 					-- Net effect: proportionally MORE enrichments for the 20x20, at vanilla
 					-- per-sector density -- no crowding.
 					if deposits then
@@ -8083,8 +7953,7 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
-						-- layouts diverge from vanilla). BEFORE RespaceAnomalies so clones get
-						-- spaced too.
+						-- layouts diverge from vanilla).
 						if type(deposits.TopUpAnomalies) == "function" then
 							StretchLog("stretch branch: -> TopUpAnomalies")
 							InvestigationSafeCall("surface enrichment: top up anomalies", map,
@@ -8099,16 +7968,6 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 							StretchLog("stretch branch: -> RegisterClonedMarkers")
 							InvestigationSafeCall("surface enrichment: register cloned markers", map,
 								deposits.RegisterClonedMarkers, map)
-						end
-						if type(deposits.RespaceAnomalies) == "function" then
-							StretchLog("stretch branch: -> RespaceAnomalies")
-							InvestigationSafeCall("surface enrichment: respace anomalies", map,
-								deposits.RespaceAnomalies, map)
-						end
-						if type(deposits.EvenOutDepositDensity) == "function" then
-							StretchLog("stretch branch: -> EvenOutDepositDensity")
-							InvestigationSafeCall("surface enrichment: even deposit density", map,
-								deposits.EvenOutDepositDensity, map)
 						end
 						if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 							StretchLog("stretch branch: -> ResolveBadgeMarkerOverlaps")
@@ -8151,51 +8010,39 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 				SpikeAudit(map, "surface post-density-suite")
 				InvestigationEnd(spike_token, nil, true)
 				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
-				SetLoadingPhase("Rebuilding the surface build grid")
-				StretchLog("stretch branch: -> RebuildBuildableGrid")
-				local rebuild_buildable = Global("RebuildBuildableGrid")
-				-- map:RebuildGrids may return immediately after scheduling work; pcall success does NOT
-				-- prove the buildable z-grid was synchronously rebuilt. The stale-grid regression produced
-				-- landing pillars when this explicit pass was skipped, so correctness requires this one
-				-- authoritative synchronous rebuild after all terrain-height edits.
-				if type(rebuild_buildable) == "function" and map and map.buildable then
-					local rebuild_token = InvestigationBegin("surface: rebuild buildable grid", map)
-					local rebuild_ok, rebuild_err = pcall(rebuild_buildable, map)
-					InvestigationEnd(rebuild_token, {
-						ok = tostring(rebuild_ok), error = rebuild_ok and "" or tostring(rebuild_err),
-					}, rebuild_ok)
-					local debug_log = SuperBigMap.DebugLog
-					if debug_log then
-						debug_log.Info("RocketTerrain", "explicit final surface buildable-grid rebuild", {
-							map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
-							consolidated_flag = tostring(map.SuperBigMapRevalidationRebuiltGrids),
+					SetLoadingPhase("Rebuilding the surface build grid")
+					StretchLog("stretch branch: -> RebuildBuildableGrid")
+					local rebuild_buildable = Global("RebuildBuildableGrid")
+					-- map:RebuildGrids may return immediately after scheduling work; pcall success does NOT
+					-- prove the buildable z-grid was synchronously rebuilt. The stale-grid regression produced
+					-- landing pillars when this explicit pass was skipped, so correctness requires this one
+					-- authoritative synchronous rebuild after all terrain-height edits.
+					if type(rebuild_buildable) == "function" and map and map.buildable then
+						local rebuild_token = InvestigationBegin("surface: rebuild buildable grid", map)
+						local rebuild_ok, rebuild_err = pcall(rebuild_buildable, map)
+						InvestigationEnd(rebuild_token, {
 							ok = tostring(rebuild_ok), error = rebuild_ok and "" or tostring(rebuild_err),
-						})
+						}, rebuild_ok)
+						local debug_log = SuperBigMap.DebugLog
+						if debug_log then
+							debug_log.Info("RocketTerrain", "explicit final surface buildable-grid rebuild", {
+								map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+								consolidated_flag = tostring(map.SuperBigMapRevalidationRebuiltGrids),
+								ok = tostring(rebuild_ok), error = rebuild_ok and "" or tostring(rebuild_err),
+							})
+						end
+						if not rebuild_ok then
+							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
+						end
+						map.SuperBigMapSurfaceBuildableCurrent = true
+					else
+						error("final surface RebuildBuildableGrid unavailable")
 					end
-					if not rebuild_ok then
-						error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
-					end
-					map.SuperBigMapSurfaceBuildableCurrent = true
-				else
-					error("final surface RebuildBuildableGrid unavailable")
-				end
-				StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
-				local passability_already_baked = cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true)
-					and frame_passability_preapplied and ok_stretch
-				if passability_already_baked then
-					StretchLog("stretch branch: frame passability already applied before authoritative revalidation -- skip duplicate")
-				else
-					StretchLog("stretch branch: -> ForceFramePassable")
-					InvestigationSafeCall("surface: final frame passability", map, ForceFramePassable,
-						map, cfg_bool("OPTIMIZE_STRETCH_PASSABILITY", true))
-				end
-				StretchLog("TIMING: ForceFramePassable", { ms = now2() - ft }); ft = now2()
+					StretchLog("TIMING: RebuildBuildableGrid", { ms = now2() - ft }); ft = now2()
 				else
 					StretchLog("stretch branch: gameplay-grid rebuild skipped (expansion step 11 disabled)")
 				end
-				-- LATE + POST floater audits: catch floaters created AFTER the early audit --
-				-- suspects: ForceFramePassable just above, or vanilla post-load passes (the early
-				-- audit found only 7 small floaters yet big rocks still hovered on screen).
+				-- LATE + POST floater audits catch objects changed by later post-load passes.
 				if type(AuditFloatingObjects) == "function" then
 					local detail_token = InvestigationBegin("surface: floating-object audit late", map)
 					local late_floaters = AuditFloatingObjects(map, "late")
@@ -8238,19 +8085,21 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 			end
 			if not ok_branch then
 				StretchLog("stretch branch: EXCEPTION -- map left as generated, closing loading box", { err = tostring(branch_err) })
-				DebugPrint("RunSectorMirrorPlanIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
+				DebugPrint("RunSurfaceStretchIfEnabled: STRETCH branch ERROR: " .. tostring(branch_err))
 			end
 			if ok_branch and map.SuperBigMapStretchPipelinePending == true then
 				FinalizeDeferredStretchState(map, "surface")
 			end
 			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
 			-- never hangs on the loading screen.
-			map.SuperBigMapSectorMirrorDone = true
+			map.SuperBigMapSurfaceStretchDone = true
 			map.SuperBigMapExpanded = true
 			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: STRETCH mode complete (terrain only) branch_ok=%s stretch_ok=%s grids=%s -- objects NOT yet repositioned",
+				"RunSurfaceStretchIfEnabled: stretch pipeline complete branch_ok=%s stretch_ok=%s grids=%s",
 				tostring(ok_branch), tostring(ok_stretch), tostring(n_grids)))
-			InitSeq("RunSectorMirrorPlan: stretch complete (terrain only)", { branch_ok = ok_branch, ok = ok_stretch, grids = n_grids })
+			InitSeq("RunSurfaceStretchPlan: pipeline complete", {
+				branch_ok = ok_branch, ok = ok_stretch, grids = n_grids,
+			})
 			StretchLog("stretch branch: -> end_loading()")
 			EntranceSnapshot("surface stretch final", map)
 			end_loading()
@@ -8259,160 +8108,6 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 			return
 		end
 
-		if fill_mode ~= "mirror" then
-			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: frame-fill mode '%s' not yet implemented -- falling back to 'mirror'",
-				tostring(fill_mode)))
-			InitSeq("RunSectorMirrorPlan: frame-fill mode fallback", { requested = fill_mode, used = "mirror" })
-			fill_mode = "mirror"
-		end
-
-		-- MIRROR (and any not-yet-implemented mode that falls back to it) needs the full 20x20
-		-- sector grid to reflect edge blocks into the named frame sectors:
-		local fits, why = SectorMirrorBlocksFit(map, map_w, map_h)
-		if not fits then
-			map.SuperBigMapSectorMirrorDone = true
-			DebugPrint(string.format(
-				"RunSectorMirrorPlanIfEnabled: skipped -- not a full 20x20 terrain grid (%s)", tostring(why)))
-			end_loading()
-			WarnCannotExpand(map, why)
-			return
-		end
-		local terrain_api = Global("terrain")
-		local box_fn = Global("box")
-		local n = #SECTOR_MIRROR_BLOCKS
-
-		-- PHASE 1 -- TERRAIN: copy every block's grids first, then render the mirrored
-		-- ground immediately (cheap Invalidate, no full rebuild), so the player sees the
-		-- expanded landscape before the slow object cloning.
-		local terrain_done = 0
-		local ux1, uy1, ux2, uy2 -- union of destination boxes
-		for _, b in ipairs(SECTOR_MIRROR_BLOCKS) do
-			local ok, bx1, by1, bx2, by2 = CopySectorBlock(map, b.src_a, b.src_b, b.dst_a, b.dst_b, b.mx, b.my, true, b.label, "terrain")
-			if ok then
-				terrain_done = terrain_done + 1
-				ux1 = ux1 and math.min(ux1, bx1) or bx1
-				uy1 = uy1 and math.min(uy1, by1) or by1
-				ux2 = ux2 and math.max(ux2, bx2) or bx2
-				uy2 = uy2 and math.max(uy2, by2) or by2
-			end
-			sleep(1)
-		end
-		if type(box_fn) == "function" and ux1 and type(terrain_api) == "table" then
-			local rbox = box_fn(ux1, uy1, ux2, uy2)
-			if type(terrain_api.InvalidateHeight) == "function" then SafeCall(terrain_api.InvalidateHeight, map, rbox) end
-			if type(terrain_api.InvalidateType) == "function" then SafeCall(terrain_api.InvalidateType, map, rbox) end
-			if type(terrain_api.HashGrids) == "function" then SafeCall(terrain_api.HashGrids, map) end
-		end
-
-		-- PHASE 2 -- OBJECTS: delete/clone/resnap each block's scatter (the slow part,
-		-- yields throughout), then ONE heavy rebuild so the placed objects' passability
-		-- and Z settle.
-		local obj_done = 0
-		for _, b in ipairs(SECTOR_MIRROR_BLOCKS) do
-			if CopySectorBlock(map, b.src_a, b.src_b, b.dst_a, b.dst_b, b.mx, b.my, true, b.label, "objects") then
-				obj_done = obj_done + 1
-			end
-			sleep(1)
-		end
-		if type(box_fn) == "function" and ux1 and type(terrain_api) == "table" then
-			local rbox = box_fn(ux1, uy1, ux2, uy2)
-			if type(terrain_api.RebuildPassability) == "function" then SafeCall(terrain_api.RebuildPassability, map, rbox) end
-			if type(map.RebuildGrids) == "function" then SafeCall(map.RebuildGrids, map, rbox) end
-			if type(terrain_api.HashGrids) == "function" then SafeCall(terrain_api.HashGrids, map) end
-		end
-
-		-- Safety: a generator-placed underground entrance outside the source quadrant is shielded
-		-- from the per-block dest-clear (ShouldSkipObject protects underground access), so it can
-		-- linger in the cloned frame. Sweep it now that all object cloning/deletion is done.
-		RemoveFrameUndergroundAccess(map)
-
-		-- The dest-clear phase ran on the frame; recreate any sector decals that were
-		-- caught in those boxes so the L-frame's overview grid stays visible. (With the
-		-- decal classes exempt from deletion this should recreate 0; kept as a safety
-		-- net in case any frame decal was lost.)
-		local sectors = SuperBigMap.SectorExploration
-		if sectors and type(sectors.RefreshSectorDecals) == "function" then
-			SafeCall(sectors.RefreshSectorDecals, map.City)
-		end
-
-		-- Deposits: scatter the cloned resource-deposit markers across the expanded area onto
-		-- similar terrain (reshuffle), THEN register each with the frame sector it ends up in,
-		-- so scanning that sector spawns the deposit (and paints concrete) the vanilla way.
-		local deposits = SuperBigMap.DepositRules
-		if deposits then
-			if type(deposits.ReshuffleClonedMarkers) == "function" then
-				SafeCall(deposits.ReshuffleClonedMarkers, map)
-			end
-			-- Top up resource deposits to the expanded map's full vanilla density (clone extra
-			-- source markers into the frame) BEFORE registration, so the added clones get
-			-- registered and then spread by the even-out pass below.
-			if type(deposits.TopUpDeposits) == "function" then
-				SafeCall(deposits.TopUpDeposits, map)
-			end
-			if type(deposits.RegisterClonedMarkers) == "function" then
-				SafeCall(deposits.RegisterClonedMarkers, map)
-				end
-			-- Re-space anomalies to vanilla-like even spacing now that the full map exists
-			-- (generation packs them tighter so all FreeTech fit; this spreads them back out).
-			if type(deposits.RespaceAnomalies) == "function" then
-				SafeCall(deposits.RespaceAnomalies, map)
-			end
-			-- Even out RESOURCE-deposit density: the generator crams the full preset count into
-			-- the shrunken gen-zone, so the source (incl. the start sector) is far denser than
-			-- vanilla. This caps per-sector density and moves the surplus into the sparse frame.
-			if type(deposits.EvenOutDepositDensity) == "function" then
-				SafeCall(deposits.EvenOutDepositDensity, map)
-			end
-			if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
-				SafeCall(deposits.ResolveBadgeMarkerOverlaps, map, "mirror density suite")
-			end
-			if type(deposits.RepairBreakthroughAnomalies) == "function" then
-				SafeCall(deposits.RepairBreakthroughAnomalies, map)
-			end
-		end
-
-		-- Rebuild the BUILDABLE z-grid now that the copy finalized the
-		-- terrain heights. It was built from the PRE-copy terrain, so it's stale (e.g. holds
-		-- 21262 where the copied ground is now 7832). The construction terrain-flatten that
-		-- runs when a rocket landing site is placed levels the pad TO the z-grid value, so a
-		-- stale grid carves a PILLAR (or hole). Rebuilding it to match the current terrain
-		-- makes that flatten a no-op -> no deformation. (RebuildBuildableGrid is the wrapped
-		-- global; ForceBuildableGridStorage is disabled, so this just recomputes from terrain.)
-		do
-			local rebuild_buildable = Global("RebuildBuildableGrid")
-			if type(rebuild_buildable) == "function" and map and map.buildable then
-				SafeCall(rebuild_buildable, map)
-				DebugPrint("RunSectorMirrorPlan: rebuilt buildable z-grid to match copied terrain")
-			end
-		end
-
-		-- Force the freshly-copied L-frame PASSABLE so a rover from a rocket landing in it
-		-- isn't trapped where the copied (cliff) terrain reads impassable (the original
-		-- 9e940f8 fix). Runs now that the frame terrain + passability grids are built.
-		ForceFramePassable(map)
-
-		-- The terrain under any rocket that landed BEFORE this copy (e.g. the first colony
-		-- rocket, which lands during load) just changed. Re-snap landed rockets onto the
-		-- new surface so they don't end up floating / on a copied hill.
-		local rockets = SuperBigMap.RocketRules
-		if rockets and type(rockets.ResnapRocketsOnMap) == "function" then
-			SafeCall(rockets.ResnapRocketsOnMap, map)
-		end
-
-		map.SuperBigMapSectorMirrorDone = true
-		-- Persisted marker (a MapVar, declared in sbm_sector_grid): records that THIS map was
-		-- expanded by the mod, so IsModMap recognises it after a save/load (the transient/preset
-		-- markers don't survive a save). Without it a reloaded mod save warns "started without
-		-- Super Big Map" and the mod stays inert on an already-expanded map.
-		map.SuperBigMapExpanded = true
-		-- Expansion fully done (terrain + objects): restore the welcome
-		-- popup's Close button + original text so the player can dismiss it and play.
-		end_loading()
-		SignalExpansionReadinessChanged(map, "surface mirror complete")
-		DebugPrint(string.format(
-			"RunSectorMirrorPlanIfEnabled: completed terrain=%s/%s objects=%s/%s blocks (readiness=%s)",
-			tostring(terrain_done), tostring(n), tostring(obj_done), tostring(n), tostring(readiness_source)))
 		end)
 		if not thread_ok then
 			if map.SuperBigMapStretchPipelinePending == true then
@@ -8422,8 +8117,8 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 				end
 			end
 			map.SuperBigMapStretchPipelinePending = false
-			map.SuperBigMapSectorMirrorScheduled = false
-			DebugPrint("RunSectorMirrorPlanIfEnabled: expansion thread ERROR: " .. tostring(thread_err))
+			map.SuperBigMapSurfaceStretchScheduled = false
+			DebugPrint("RunSurfaceStretchIfEnabled: expansion thread ERROR: " .. tostring(thread_err))
 			if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 				pcall(SuperBigMap.ExpansionLoadingEnd)
 			end
@@ -8431,8 +8126,8 @@ local function RunSectorMirrorPlanIfEnabled(map, readiness_source)
 	end)
 	if not schedule_ok then
 		map.SuperBigMapStretchPipelinePending = false
-		map.SuperBigMapSectorMirrorScheduled = false
-		DebugPrint("RunSectorMirrorPlanIfEnabled: scheduling ERROR: " .. tostring(schedule_err))
+		map.SuperBigMapSurfaceStretchScheduled = false
+		DebugPrint("RunSurfaceStretchIfEnabled: scheduling ERROR: " .. tostring(schedule_err))
 	end
 	return schedule_ok == true
 end
@@ -8541,7 +8236,7 @@ local function UndergroundExpansionReadiness(map)
 	if type(surface) ~= "table" or surface == map then
 		return true, "native generation complete; no surface dependency"
 	end
-	if not cfg_bool("SECTOR_MIRROR_PLAN_AT_START", false) then
+	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
 		return true, "native generation complete; surface expansion disabled"
 	end
 	local grid = SuperBigMap.SectorGrid
@@ -8549,9 +8244,9 @@ local function UndergroundExpansionReadiness(map)
 		and grid.IsModMap(surface) ~= true then
 		return true, "native generation complete; surface is not a mod map"
 	end
-	if surface.SuperBigMapSectorMirrorDone == true
+	if surface.SuperBigMapSurfaceStretchDone == true
 		or (surface.SuperBigMapExpanded == true
-			and surface.SuperBigMapQuadrantCopyPending ~= true
+			and surface.SuperBigMapExpansionPending ~= true
 			and surface.SuperBigMapStretchPipelinePending ~= true) then
 		return true, "native generation and surface expansion complete"
 	end
@@ -8575,7 +8270,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	UndergroundAccessLog("deferred geometry restore checked", UndergroundAccessState(map, {
 		restored_geometry = tostring(restored_geometry),
 	}))
-	if map.SuperBigMapExpanded == true and map.SuperBigMapQuadrantCopyPending ~= true then
+	if map.SuperBigMapExpanded == true and map.SuperBigMapExpansionPending ~= true then
 		map.SuperBigMapUndergroundPrepared = true
 		map.SuperBigMapUndergroundStretchDone = true
 		map.SuperBigMapUndergroundStretchPending = false
@@ -8920,16 +8615,6 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						InvestigationSafeCall("underground enrichment: register cloned markers", map,
 							deposits.RegisterClonedMarkers, map)
 					end
-					if type(deposits.RespaceAnomalies) == "function" then
-						StretchLog("underground stretch: -> RespaceAnomalies")
-						InvestigationSafeCall("underground enrichment: respace anomalies", map,
-							deposits.RespaceAnomalies, map)
-					end
-					if type(deposits.EvenOutDepositDensity) == "function" then
-						StretchLog("underground stretch: -> EvenOutDepositDensity")
-						InvestigationSafeCall("underground enrichment: even deposit density", map,
-							deposits.EvenOutDepositDensity, map)
-					end
 					if type(deposits.RelocateUnreachableUndergroundEnrichments) ~= "function" then
 						error("underground enrichment reachability audit is unavailable")
 					end
@@ -9086,7 +8771,7 @@ local function NotifyGenerationMilestone(map, milestone, source)
 		tostring(map.mapdata and map.mapdata.Environment),
 		tostring(map.SuperBigMapNativeGenerationComplete),
 		tostring(map.SuperBigMapCityInitializationComplete),
-		tostring(map.SuperBigMapQuadrantCopyPending),
+		tostring(map.SuperBigMapExpansionPending),
 		tostring(FindSectorByName(map, "F0") ~= nil)))
 	SignalExpansionReadinessChanged(map, tostring(milestone) .. ": " .. tostring(source or milestone))
 
@@ -9096,7 +8781,7 @@ local function NotifyGenerationMilestone(map, milestone, source)
 		local is_mod_map = type(grid) == "table" and type(grid.IsModMap) == "function"
 			and grid.IsModMap(map) == true
 		if is_mod_map and map.SuperBigMapVanillaSourceMigration ~= true then
-			return RunSectorMirrorPlanIfEnabled(map, source)
+			return RunSurfaceStretchIfEnabled(map, source)
 		end
 		return true
 	end
@@ -9572,9 +9257,9 @@ local MapGeneration = {}
 MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled
 MapGeneration.ShouldDeferStretchRebuilds = ShouldDeferStretchRebuilds
 MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
-MapGeneration.PrintQuadrantDebug = PrintQuadrantDebug
+MapGeneration.PrintExpansionDebug = PrintExpansionDebug
 MapGeneration.AttachPendingMapState = AttachPendingMapState
-MapGeneration.PrepareMapDataForQuadrantCopy = PrepareMapDataForQuadrantCopy
+MapGeneration.PrepareMapDataForExpansion = PrepareMapDataForExpansion
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 MapGeneration.PatchPassagePairing = PatchPassagePairing
 MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
@@ -9582,9 +9267,8 @@ MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
-MapGeneration.RunSectorMirrorPlanIfEnabled = RunSectorMirrorPlanIfEnabled
+MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
-MapGeneration.ForceFramePassable = ForceFramePassable
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 
 function MapGeneration.ApplyModBehavior()
@@ -9606,7 +9290,7 @@ function MapGeneration.ApplyModBehavior()
 	return true
 end
 
--- Restoring only affects FUTURE generation; maps already tiled stay tiled.
+-- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
 	local generator_class = Global("RandomMapGenerator")

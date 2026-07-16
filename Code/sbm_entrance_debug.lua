@@ -194,7 +194,7 @@ local function DescribeObject(map, obj, index, phase)
 		unbuildable_sentinel = tostring(sentinel), sector = sector, sector_col = sector_col,
 		sector_row = sector_row, angle = tostring(angle), entity = tostring(entity),
 		is_placed = tostring(obj.is_placed), permanent = tostring(obj.permanent),
-		quadrant_clone = tostring(obj.SuperBigMapQuadrantClone), visuals_moved = tostring(obj.SuperBigMapEntranceVisualsMoved),
+		enrichment_clone = tostring(obj.SuperBigMapEnrichmentClone), visuals_moved = tostring(obj.SuperBigMapEntranceVisualsMoved),
 	}
 	for k, v in pairs(LinkedFacts(obj, x, y)) do data[k] = v end
 	Log("object", data)

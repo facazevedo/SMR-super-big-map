@@ -116,8 +116,7 @@ end
 -- PassBorder gates the engine's placement bounds (flatten tool, building
 -- placement, etc.): anything outside [PassBorder, width-PassBorder] is "out
 -- of bounds". When FullMapPlayable is on we want the WHOLE terrain to be
--- flatten-able and buildable, including the new edge sectors (e.g. columns
--- A/B in the "expanded_with_vanilla_grid" layout), so PassBorder is forced
+-- flatten-able and buildable, including the new edge sectors, so PassBorder is forced
 -- to 0. We deliberately do NOT clobber mapdata.playable_height_range /
 -- visible_height_range -- vanilla landscape code reads .from / .to off those
 -- tables to build the bbox z-component, and clearing them causes the native
@@ -140,8 +139,7 @@ local function ResetMapDataBounds(map, mapdata)
 		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
 	end
 
-	-- Default PassBorder = 0 so the WHOLE expanded map is passable (a rover from an
-	-- edge/frame landing is never trapped). The engine's gameplay grids (heat, etc.) only
+	-- Default PassBorder = 0 so the whole expanded map is available. The engine's gameplay grids (heat, etc.) only
 	-- cover [HeatGridBorder, size-HeatGridBorder], but we keep the map passable and CLAMP
 	-- the heat query (sbm_heat_safety) rather than wall it off. A positive
 	-- Config.EXPANDED_MAP_EDGE_BORDER instead sets an impassable ring (MapPatch-aligned).
@@ -637,17 +635,15 @@ MapBounds.UninstallLCCValidateMarkPermissive = UninstallLCCValidateMarkPermissiv
 -- ---------------------------------------------------------------------------
 -- MapVar constructs BuildableGrid before random generation. The terrain allocation is
 -- already 8192 tiles at that point, but only the native 6144-tile source will be generated;
--- computing buildability for the blank L-frame costs ~1.7s and triggers a real timing warning.
+-- computing buildability for the provisional destination costs ~1.7s and triggers a real timing warning.
 -- Give that provisional loading-only object a full-sized all-unbuildable z-grid in one cheap
 -- allocation. RandomMapGenerator's ResolveBuildable pass replaces it from generated terrain,
 -- and the post-stretch pass replaces it again at the final full extent. No print function is
 -- intercepted or filtered, and the placeholder cannot authorize construction prematurely.
-local BUILDABLE_GRID_BUILD_PATCH_VERSION = 2
+local BUILDABLE_GRID_BUILD_PATCH_VERSION = 3
 local function InitialBuildableDeferralInfo(map, self)
 	local cfg = SuperBigMap.Config or {}
-	if cfg.OPTIMIZE_STRETCH_DEFERRED_REBUILDS ~= true
-		or tostring(cfg.EXPANSION_FRAME_FILL_MODE or "mirror") ~= "stretch"
-		or not map or self.z_grid then
+	if cfg.OPTIMIZE_STRETCH_DEFERRED_REBUILDS ~= true or not map or self.z_grid then
 		return nil
 	end
 	local mapdata = map.mapdata
@@ -656,7 +652,7 @@ local function InitialBuildableDeferralInfo(map, self)
 	-- persistent mapdata size markers: save loads and underground maps must fail open to
 	-- the native Build path.
 	if type(mapdata) ~= "table" or mapdata.Environment ~= "Surface"
-		or map.SuperBigMapQuadrantCopyPending ~= true then
+		or map.SuperBigMapExpansionPending ~= true then
 		return nil
 	end
 	local desired_w = map.SuperBigMapDesiredWidthTiles
@@ -786,15 +782,15 @@ end
 function MapBounds.ApplyModBehavior()
 	local cfg = SuperBigMap.Config or {}
 	MapBounds.ReinstallGlobalHooks()
-	-- BUILD permissive (cliffs -> buildable): OFF by default. Vanilla buildability (from the
-	-- rebuilt-after-copy grid) decides, so cliffs are unbuildable and rockets can't land on
+	-- BUILD permissive (cliffs -> buildable): OFF by default. Vanilla buildability from the
+	-- final stretched grid decides, so cliffs are unbuildable and rockets can't land on
 	-- them. Re-enable via Config.PERMISSIVE_BUILD_ON_EXPANDED.
 	if cfg.PERMISSIVE_BUILD_ON_EXPANDED == true then
 		InstallBuildableGridPermissive()
 	end
 	-- LANDSCAPING permissive (terraform across the expanded terrain): ON by default. Separate
 	-- from buildability -- vanilla lets you landscape unbuildable ground to make it buildable,
-	-- so the landscape tool must keep working past the original quadrant. Disable via
+	-- so the landscape tool must keep working across the full destination. Disable via
 	-- Config.ALLOW_LANDSCAPING_ON_EXPANDED = false.
 	if cfg.ALLOW_LANDSCAPING_ON_EXPANDED ~= false then
 		InstallLCCValidateMarkPermissive()

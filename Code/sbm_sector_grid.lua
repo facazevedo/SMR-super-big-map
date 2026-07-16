@@ -1,9 +1,8 @@
 -- Super Big Map -- sector grid math (no engine patching).
 --
--- Pure query/computation layer for the overview "sector tiles": where the grid
--- sits, how many sectors there are, and each sector's box / name. Sectors are
--- always vanilla-sized (SectorTargetSize, ~40960 world units); only the count and
--- offset vary by Config.SECTOR_GRID. ResolveSectorCount is the single source of the
+-- Pure query/computation layer for the overview "sector tiles": how many sectors
+-- there are and each sector's box/name. Expanded maps always use one corner-anchored
+-- grid of vanilla-sized sectors (~40960 world units). ResolveSectorCount is the single source of the
 -- count, fed to both the built grid and const.SectorCount so they cannot disagree.
 -- The patching that consumes these (the exploration + highlight modules) lives
 -- elsewhere; this module installs nothing global except (via ConfigureGlobalSectorCount)
@@ -67,18 +66,6 @@ do
 	end
 end
 
-local function cfg_number(key, default, min_value)
-	local value = (SuperBigMap.Config or {})[key]
-	if type(value) == "number" and (min_value == nil or value >= min_value) then
-		return value
-	end
-	return default
-end
-
-local function cfg_value(key)
-	return (SuperBigMap.Config or {})[key]
-end
-
 -- Gated sector-SIZING diagnostics, de-duplicated per tag so frequently-called
 -- functions (TerrainSize, ResolveSectorLayout via the cursor) don't spam -- a line
 -- prints only when its message changes. Controlled by config.DebugSectorSizing.
@@ -136,38 +123,6 @@ local function MapTileWorldSize(map)
 	return 100
 end
 
-local function OriginalWidthTiles(map)
-	local mapdata = MapData(map)
-	if cfg_bool("SECTOR_USE_SOURCE_QUADRANT", true) then
-		local source = map and map.SuperBigMapSourceWidthTiles
-		if type(source) == "number" and source > 0 then
-			return source
-		end
-
-		source = mapdata and mapdata.SuperBigMapQuadrantSourceWidthTiles
-		if type(source) == "number" and source > 0 then
-			return source
-		end
-
-		source = map and map.SuperBigMapGeneratorWidthTiles
-		if type(source) == "number" and source > 0 then
-			return source
-		end
-	end
-
-	local value = map and map.SuperBigMapOriginalWidthTiles
-	if type(value) == "number" and value > 0 then
-		return value
-	end
-
-	value = mapdata and mapdata.SuperBigMapOriginalWidthTiles
-	if type(value) == "number" and value > 0 then
-		return value
-	end
-
-	return cfg_number("SECTOR_BASE_MAP_TILES", 4096, 1)
-end
-
 -- The TRUE vanilla sector footprint, in world units. It must never change with
 -- map expansion: every sector always stays the size of a vanilla sector.
 -- Verified against a full-resolution vanilla sector dump
@@ -175,17 +130,10 @@ end
 -- which equals vanilla map tiles * vanilla-tile-world-size / vanilla sector
 -- count (4096 * 100 / 10 = 40960).
 --
--- This is a CONSTANT derived from the fixed vanilla baseline (SECTOR_BASE_MAP_
--- TILES = 4096, SECTOR_BASE_COUNT = 10), NOT from the current map's source
--- quadrant size. Earlier this used OriginalWidthTiles(map), which returns the
--- generated source size -- fine in 2x2 mode (source = 4096 = 10 sectors -> 40960)
--- but WRONG in frame-expansion mode where the source is the full native map
--- (e.g. 6144 = 15 sectors -> 6144/10 = 61440 oversized sectors, giving a 13x13
--- grid instead of 20x20). The vanilla sector footprint never depends on how big
--- the generated region is, so we always use the fixed 4096/10 baseline.
+-- This is a constant derived from the fixed vanilla baseline: 4096 tiles / 10 sectors.
 local function SectorTargetSize(map)
-	local base_tiles = math.floor(cfg_number("SECTOR_BASE_MAP_TILES", 4096, 1))
-	local base_count = math.floor(cfg_number("SECTOR_BASE_COUNT", 10, 1))
+	local base_tiles = 4096
+	local base_count = 10
 	local const_tbl = Global("const")
 	local height_tile = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
 		and const_tbl.HeightTileSize
@@ -202,17 +150,17 @@ local function HasExpandedSectorSource(map)
 	return map and map.SuperBigMapSourceWidthTiles
 		or map and map.SuperBigMapGeneratorWidthTiles
 		or map and map.SuperBigMapDesiredWidthTiles
-		or mapdata and mapdata.SuperBigMapQuadrantSourceWidthTiles
+		or mapdata and mapdata.SuperBigMapSourceWidthTiles
 end
 
 -- Single mod-wide predicate: "did THIS mod generate/expand this map?". True for a
 -- new game being generated now (the transient map.SuperBigMap* markers are set in
--- PrepareMapDataForQuadrantCopy before NewMap fires) AND for a save that was
+-- PrepareMapDataForExpansion before NewMap fires) AND for a save that was
 -- started with the mod active (the mapdata.SuperBigMap* markers persist in the
 -- save). False for a vanilla map / an old save started without the mod -- so every
 -- per-map mod behavior (bounds reset, custom sector grid, overview reshaping) gates
 -- on this and stays completely inert on non-mod maps. The persisted-marker checks
--- (mapdata.SuperBigMapQuadrantSourceWidthTiles / SuperBigMapOriginalWidthTiles)
+-- (mapdata.SuperBigMapSourceWidthTiles / SuperBigMapOriginalWidthTiles)
 -- are what survive a save/load, so they are the authoritative save-type signal.
 local function IsModMap(map)
 	if not map then
@@ -259,12 +207,12 @@ local function IsModMap(map)
 end
 
 local function CustomSectorStatus(map)
-	if not cfg_bool("ENABLE_VANILLA_SIZED_SECTORS", true) or not map then
-		return false, not map and "no map" or "disabled"
+	if not cfg_bool("ENABLE_EXPANDED_SECTORS", true) or not map then
+		return false, not map and "no map" or "expansion disabled"
 	end
 
 	local mapdata = MapData(map)
-	if cfg_bool("SECTOR_SURFACE_ONLY", true) and mapdata and mapdata.Environment ~= "Surface" then
+	if mapdata and mapdata.Environment ~= "Surface" then
 		-- Expanded UNDERGROUND maps get the 20x20 custom grid too when the underground stretch is
 		-- enabled (config STRETCH_UNDERGROUND): same layout math, driven by the same mapdata
 		-- markers (SuperBigMapOriginalWidthTiles set by the prepare step). Without this exemption
@@ -282,13 +230,6 @@ local function CustomSectorStatus(map)
 		return false, "not a Super Big Map-expanded map"
 	end
 
-	local has_expanded_marker = HasExpandedSectorSource(map)
-		or map.SuperBigMapExpanded == true
-		or (mapdata and type(mapdata.SuperBigMapOriginalWidthTiles) == "number" and mapdata.SuperBigMapOriginalWidthTiles > 0)
-	if cfg_bool("SECTOR_EXPANDED_ONLY", true) and not has_expanded_marker then
-		return false, "not expanded/no source"
-	end
-
 	return true, "ok"
 end
 
@@ -297,40 +238,12 @@ local function UseCustomSectorsForMap(map)
 end
 
 local function SectorCountBounds()
-	local min_count = math.floor(cfg_number("SECTOR_MIN_COUNT", 10, 1))
-	local max_count = math.floor(cfg_number("SECTOR_MAX_COUNT", 40, 1))
-	if max_count < min_count then
-		max_count = min_count
-	end
-	return min_count, max_count
+	return 10, 40
 end
 
--- The grid offset (world units) for the current map: the vanilla-grid alignment
--- offset for "expanded_with_vanilla_grid", else 0. Computed deterministically here
--- (NOT read from mapdata.PassBorder, which the engine and other code reset at
--- various times) so the BUILT grid and the cursor->sector lookup always use the
--- exact same value. If they ever disagree, the hover highlight drifts off the
--- sectors (e.g. sectors built at offset 20480 but the cursor mapped from 0).
+-- Expanded sectors are always anchored at the terrain origin.
 local function GridBorder(map)
-	if not UseCustomSectorsForMap(map) then
-		return 0
-	end
-	if not cfg_bool("SECTOR_ALIGN_TO_VANILLA_GRID", false) then
-		return 0
-	end
-	local target = SectorTargetSize(map)
-	if target <= 0 then
-		return 0
-	end
-	local mapdata = MapData(map)
-	local anchor = cfg_value("SECTOR_GRID_ANCHOR")
-	if type(anchor) ~= "number" then
-		anchor = mapdata and mapdata.SuperBigMapOriginalPassBorder
-	end
-	if type(anchor) ~= "number" then
-		return 0
-	end
-	return anchor % target
+	return 0
 end
 
 -- Stable terrain size in WORLD UNITS = mapdata tile count x the fixed engine tile
@@ -362,19 +275,9 @@ local function StableTerrainSize(map)
 	return wt * tile, ht * tile
 end
 
--- Resolves the full sector grid for a map. Sectors are always vanilla-sized
--- (SectorTargetSize), laid out from GridBorder(map). Two layout modes:
---   * Stretch-to-fit (default, "expanded"): count = round(usable / target), each
---     sector slightly stretched so step = usable/count and the grid fills the
---     usable area exactly with no remainder.
---   * Drop partials ("expanded_with_vanilla_grid"): count = floor(usable / target),
---     step = exactly target. The grid covers count*target world units inside the
---     usable area; whatever doesn't fit (the partial sectors at the far edge) is
---     left as a margin and not included as a sector.
--- For "expanded_with_vanilla_grid" the vanilla-PassBorder offset puts the grid
--- on the vanilla lines; because the same offset feeds both the build and the
--- cursor lookup, the hover highlight tracks the grid. SECTOR_FORCED_COUNT, if
--- set, overrides the count.
+-- Resolves the one supported expanded grid: corner anchored, count derived from
+-- the vanilla sector footprint, and stretched by any fractional remainder so the
+-- grid covers the complete destination exactly.
 local function ResolveSectorLayout(map)
 	local width, height = TerrainSize(map)
 	-- Prefer the stable mapdata-derived terrain size over the live read so the grid is
@@ -389,48 +292,19 @@ local function ResolveSectorLayout(map)
 	local target = SectorTargetSize(map)
 	local usable_width = math.max(1, width - 2 * border)
 	local usable_height = math.max(1, height - 2 * border)
-	local uniform = cfg_bool("SECTOR_UNIFORM_GRID", true)
-	local drop_partials = cfg_bool("SECTOR_ALIGN_TO_VANILLA_GRID", false)
 	local min_count, max_count = SectorCountBounds()
-
-	local forced = cfg_value("SECTOR_FORCED_COUNT")
-	forced = (type(forced) == "number" and forced > 0) and ClampNumber(math.floor(forced), min_count, max_count) or nil
-
-	local count_x = forced
-	local count_y = forced
-	if not count_x then
-		if drop_partials then
-			count_x = ClampNumber(math.floor(usable_width / target), min_count, max_count)
-			count_y = ClampNumber(math.floor(usable_height / target), min_count, max_count)
-		else
-			count_x = ClampNumber(uniform and Round(usable_width / target) or math.ceil(usable_width / target), min_count, max_count)
-			count_y = ClampNumber(uniform and Round(usable_height / target) or math.ceil(usable_height / target), min_count, max_count)
-		end
-	end
-
-	-- step_x/step_y is the world-unit pitch between adjacent sectors. With
-	-- drop-partials it is exactly the vanilla sector size; with stretch-to-fit
-	-- it is usable/count so the grid spans the whole usable area.
-	local step_x, step_y
-	if drop_partials then
-		step_x = target
-		step_y = target
-	elseif uniform then
-		step_x = usable_width / count_x
-		step_y = usable_height / count_y
-	else
-		step_x = target
-		step_y = target
-	end
+	local count_x = ClampNumber(Round(usable_width / target), min_count, max_count)
+	local count_y = ClampNumber(Round(usable_height / target), min_count, max_count)
+	local step_x = usable_width / count_x
+	local step_y = usable_height / count_y
 
 	SizingDiag("ResolveSectorLayout", string.format(
-		"ResolveSectorLayout: terrain=%sx%s usable=%sx%s target=%s border=%s -> count=%sx%s step=%sx%s (uniform=%s drop_partials=%s) [step*count=%sx%s]",
+		"ResolveSectorLayout: terrain=%sx%s usable=%sx%s target=%s border=%s -> count=%sx%s step=%sx%s [step*count=%sx%s]",
 		tostring(Round(width)), tostring(Round(height)),
 		tostring(Round(usable_width)), tostring(Round(usable_height)),
 		tostring(target), tostring(Round(border)),
 		tostring(count_x), tostring(count_y),
 		tostring(Round(step_x)), tostring(Round(step_y)),
-		tostring(uniform), tostring(drop_partials),
 		tostring(Round(step_x * count_x)), tostring(Round(step_y * count_y))))
 
 	return {
@@ -441,8 +315,7 @@ local function ResolveSectorLayout(map)
 		target = target,
 		step_x = step_x,
 		step_y = step_y,
-		uniform = uniform,
-		drop_partials = drop_partials,
+		uniform = true,
 		usable_width = usable_width,
 		usable_height = usable_height,
 		width = width,
@@ -495,12 +368,16 @@ local function SourceWidthTiles(map)
 		return value
 	end
 
-	value = mapdata and mapdata.SuperBigMapQuadrantSourceWidthTiles
+	value = mapdata and mapdata.SuperBigMapSourceWidthTiles
 	if type(value) == "number" and value > 0 then
 		return value
 	end
 
-	return OriginalWidthTiles(map)
+	value = map and map.SuperBigMapOriginalWidthTiles
+	if type(value) == "number" and value > 0 then
+		return value
+	end
+	return mapdata and mapdata.SuperBigMapOriginalWidthTiles or 4096
 end
 
 local function BoolText(value)
@@ -619,17 +496,8 @@ end
 local function SectorBounds(layout, col, row)
 	local x1 = layout.border + Round((col - 1) * layout.step_x)
 	local y1 = layout.border + Round((row - 1) * layout.step_y)
-	local x2, y2
-	if layout.drop_partials then
-		-- Each sector is exactly step (= vanilla sector size). The far edge
-		-- stops at count*step + border, leaving a margin up to the map edge --
-		-- the partial sectors are intentionally NOT included.
-		x2 = layout.border + Round(col * layout.step_x)
-		y2 = layout.border + Round(row * layout.step_y)
-	else
-		x2 = col < layout.count_x and layout.border + Round(col * layout.step_x) or layout.border + layout.usable_width
-		y2 = row < layout.count_y and layout.border + Round(row * layout.step_y) or layout.border + layout.usable_height
-	end
+	local x2 = col < layout.count_x and layout.border + Round(col * layout.step_x) or layout.border + layout.usable_width
+	local y2 = row < layout.count_y and layout.border + Round(row * layout.step_y) or layout.border + layout.usable_height
 
 	return x1, y1, math.max(x1 + 1, x2), math.max(y1 + 1, y2)
 end

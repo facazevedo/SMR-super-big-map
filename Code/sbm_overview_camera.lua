@@ -189,7 +189,7 @@ local function CameraDestinationStatus(map, require_finalized)
 	if not IsModMap(map) then
 		return false, "not-mod-map"
 	end
-	if require_finalized and map.SuperBigMapQuadrantCopyPending == true then
+	if require_finalized and map.SuperBigMapExpansionPending == true then
 		return false, "expanded-destination-pending"
 	end
 	return true, "ready"
@@ -211,7 +211,7 @@ local function CameraMapDiag(map, extra)
 	data.desired_height_tiles = map and map.SuperBigMapDesiredHeightTiles
 	data.generator_width_tiles = map and map.SuperBigMapGeneratorWidthTiles
 	data.generator_height_tiles = map and map.SuperBigMapGeneratorHeightTiles
-	data.pending = map and map.SuperBigMapQuadrantCopyPending == true
+	data.pending = map and map.SuperBigMapExpansionPending == true
 	data.expanded = map and map.SuperBigMapExpanded == true
 	data.temporary_source = IsTemporaryVanillaSource(map)
 	data.migration_active = CameraMigrationActive()

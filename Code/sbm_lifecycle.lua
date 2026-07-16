@@ -4,7 +4,7 @@
 -- every domain's behavior (ApplyModBehavior) and applies it to the current map;
 -- Disable restores vanilla (RestoreVanillaBehavior) in reverse order. ALL OnMsg
 -- handlers live here, registered once and gated on IsActive(), each delegating to the
--- domain modules in the order the originals ran (e.g. tile quadrants before building
+-- domain modules in the order the originals ran (e.g. expand terrain before building
 -- sectors on MapGenerated). No engine patching lives here -- only orchestration.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -18,7 +18,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local MAIN_MENU_GUARD_VERSION = 2
+local MAIN_MENU_GUARD_VERSION = 3
 
 local LOAD_PROFILE_MESSAGES = {
 	ChangingMap = true, PreNewMap = true, NewMap = true, NewMapObject = true,
@@ -213,21 +213,7 @@ local function ApplyOverviewPatches()
 	end
 end
 
-local function ForceVanillaPregameState(reason)
-	local toggle = SuperBigMap.PregameToggle
-	if toggle then
-		if type(toggle.ResetForVanillaSession) == "function" then
-			SafeCall(toggle.ResetForVanillaSession, tostring(reason or "vanilla_reset"))
-		else
-			if type(toggle.SetSelected) == "function" then
-				SafeCall(toggle.SetSelected, false, tostring(reason or "vanilla_reset"))
-			end
-			if type(toggle.SetStartArmed) == "function" then
-				SafeCall(toggle.SetStartArmed, false, tostring(reason or "vanilla_reset"))
-			end
-		end
-	end
-
+local function ForceVanillaMainMenuState(reason)
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom and type(zoom.RestoreVanillaBehavior) == "function" then
 		zoom.RestoreVanillaBehavior()
@@ -289,18 +275,14 @@ local function InstallPreGameMainMenuResetGuard()
 	State.original_open_pregame_main_menu = original
 	local wrapper = function(...)
 		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
-			DebugLog.Info("PregameToggle", "OpenPreGameMainMenu fired (returned to main menu)")
+		if DebugLog then
+			DebugLog.Info("Lifecycle", "OpenPreGameMainMenu fired (returned to main menu)")
 		end
 		local lifecycle = SuperBigMap.Lifecycle
 		if lifecycle and type(lifecycle.ReturnToMainMenuVanilla) == "function" then
 			lifecycle.ReturnToMainMenuVanilla("OpenPreGameMainMenu")
 		else
-			ForceVanillaPregameState("OpenPreGameMainMenu")
-		end
-		local toggle = SuperBigMap.PregameToggle
-		if toggle and type(toggle.LogOpenState) == "function" then
-			toggle.LogOpenState("after OpenPreGameMainMenu")
+			ForceVanillaMainMenuState("OpenPreGameMainMenu")
 		end
 		return State.original_open_pregame_main_menu(...)
 	end
@@ -477,7 +459,6 @@ local function StretchEligibleForDeferredBounds(map)
 	local generator = map and map.SuperBigMapGeneratorWidthTiles
 	return IsModMap(map)
 		and type(desired) == "number" and type(generator) == "number" and desired > generator
-		and tostring(config.EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
 		and (env ~= "Underground" or config.STRETCH_UNDERGROUND == true)
 end
 
@@ -487,7 +468,7 @@ local function ShouldSkipNewMapBuildableRebuild(map)
 	local buildable = map and map.buildable
 	return config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
 		and config.OPTIMIZE_STRETCH_DEFERRED_REBUILDS == true
-		and config.SECTOR_MIRROR_PLAN_AT_START == true
+		and config.SURFACE_STRETCH_AT_START == true
 		and config.FULL_MAP_PLAYABLE == true
 		and config.FORCE_BUILDABLE_GRID_STORAGE ~= true
 		and env == "Surface"
@@ -497,7 +478,6 @@ end
 
 -- Install order (dependencies first); restore is the exact reverse.
 local APPLY_ORDER = {
-	"PregameToggle",
 	"MapGeneration",
 	"DepositRules",
 	"SectorGrid",
@@ -509,7 +489,6 @@ local APPLY_ORDER = {
 	"ZoomOption",
 	"ZoomPlusIntegration",
 	"MapBounds",
-	"FakeTerrain",
 	"RocketRules",
 	"HeatSafety",
 }
@@ -517,7 +496,6 @@ local APPLY_ORDER = {
 local RESTORE_ORDER = {
 	"HeatSafety",
 	"RocketRules",
-	"FakeTerrain",
 	"MapBounds",
 	"ZoomPlusIntegration",
 	"ZoomOption",
@@ -529,7 +507,6 @@ local RESTORE_ORDER = {
 	"SectorGrid",
 	"DepositRules",
 	"MapGeneration",
-	"PregameToggle",
 }
 
 local function run_phase(order, method)
@@ -634,7 +611,7 @@ function Lifecycle.Disable()
 	return true
 end
 
-Lifecycle.ReturnToMainMenuVanilla = ForceVanillaPregameState
+Lifecycle.ReturnToMainMenuVanilla = ForceVanillaMainMenuState
 Lifecycle.ReactivateFromMainMenu = ReactivateFromMainMenu
 
 SuperBigMap.Lifecycle = Lifecycle
@@ -1072,8 +1049,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "PostNewMapLoaded")
 	end
-	-- UNDERGROUND maps take their own stretch path -- never the surface pipeline
-	-- (the sector mirror plan and surface relocation are surface-only).
+	-- Underground maps take their own stretch path, never the surface pipeline.
 	if env == "Underground" then
 		local scheduled = false
 		if gen and type(gen.RunUndergroundStretchIfEnabled) == "function" then
@@ -1101,33 +1077,24 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		return
 	end
 
-	-- Expansion-completion work (grid sync, re-invalidate, frame copy/mirror, crater
-	-- cleanup) runs ONLY on a real mod-expanded scenario. The "PreGame" mission-setup
-	-- preview and any non-mod map are skipped entirely -- this is what stops the
-	-- "not a 20x20 terrain" warning (and any frame work) from firing during setup,
-	-- before a scenario is even chosen.
+	-- Expansion-completion work runs only on a real mod-expanded scenario. The
+	-- PreGame preview and non-mod maps are skipped entirely.
 	if IsModMap(map) then
 		-- Sync mapdata.Width/Height to the actual terrain grid size BEFORE the
 		-- invalidate so the renderer's bounds extend to the full grid. The grids
 		-- on expanded maps are 8192x8192 but mapdata often stays at the .fpk's
 		-- native size (e.g. 6144), and the renderer appears to clamp drawing to
-		-- mapdata bounds -- so the cloned quadrants never get textured.
+		-- mapdata bounds, so the expanded edge is fully rendered.
 		if gen and type(gen.SyncMapDataToGrids) == "function" then
 			gen.SyncMapDataToGrids(map)
 		end
-		-- Fill the L-frame by mirroring the playable edge per the sector-mirror plan
-		-- (left columns, top rows, and the corner; config-driven).
+		-- Run the single supported proportional surface stretch.
 		local scheduled = false
-		if gen and type(gen.RunSectorMirrorPlanIfEnabled) == "function" then
-			scheduled = gen.RunSectorMirrorPlanIfEnabled(map, "PostNewMapLoaded") == true
+		if gen and type(gen.RunSurfaceStretchIfEnabled) == "function" then
+			scheduled = gen.RunSurfaceStretchIfEnabled(map, "PostNewMapLoaded") == true
 		end
 		if defer_postload_bounds and not scheduled then
 			Lifecycle.Apply(map, true)
-		end
-		-- Remove vanilla craters scattered in the non-rendered frame.
-		local fake_terrain = SuperBigMap.FakeTerrain
-		if fake_terrain and type(fake_terrain.RemoveFrameCraters) == "function" then
-			fake_terrain.RemoveFrameCraters(map)
 		end
 	else
 		InitSeq("PostNewMapLoaded: expansion-completion skipped (not a mod map)", {
@@ -1137,13 +1104,6 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
 	EnrichmentSpreadSnapshot(map, "PostNewMapLoaded-complete")
 end)
-
--- NOTE: A previous experiment hooked LandscapeCompleted to auto-repaint
--- "fake ground" objects inside the edited bbox. That hook ran unconditionally
--- whenever the mod was active and dropped stray sand-tinted objects at the
--- render boundary after any flatten/smooth/terrace edit. It has been removed
--- in favor of the explicit, button-driven fake-terrain system (see
--- sbm_fake_terrain.lua). Do not re-add an always-on landscape repaint hook.
 
 -- Engine fires MapSectorsReady at the END of Exploration:InitExploration (after
 -- InitSectors + InitMapArea + InitialExplore). If our patched InitSectors never
@@ -1292,21 +1252,11 @@ RegisterOnce("LoadGame", function()
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and current then
 		sectors.EnsureSectorsBuilt(current, "LoadGame")
 	end
-	-- Re-invalidate so the cloned quadrants get textures painted on. The save preserves the
+	-- Re-invalidate so the expanded terrain gets textures painted on. The save preserves the
 	-- type/height grid data but the renderer may not stream textures into the expanded area
 	-- until explicitly invalidated.
 	if gen and type(gen.ReinvalidateExpandedTerrain) == "function" and current then
 		gen.ReinvalidateExpandedTerrain(current)
-	end
-	-- Re-force the expanded frame passable on load (the forced-passability overlay is not
-	-- necessarily saved, so reapply every load) -- keeps rovers from being trapped on the
-	-- copied frame terrain.
-	if gen and type(gen.ForceFramePassable) == "function" and current then
-		gen.ForceFramePassable(current)
-	end
-	local fake_terrain = SuperBigMap.FakeTerrain
-	if fake_terrain and type(fake_terrain.RemoveFrameCraters) == "function" and current then
-		fake_terrain.RemoveFrameCraters(current)
 	end
 end)
 
@@ -1413,36 +1363,18 @@ local function EnsureGeneratorHookInstalled()
 	end
 end
 
-local function EnsurePregameToggleInstalled(reason)
+local function EnsureMainMenuGuardsInstalled(reason)
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
 	InstallMainMenuTransitionGuards()
-	if SuperBigMap.State.main_menu_vanilla == true then
-		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and DebugLog.On and DebugLog.On("PregameToggle") then
-		local mode_fn = Global("GetInGameInterfaceMode")
-		DebugLog.Info("PregameToggle", "EnsurePregameToggleInstalled", {
-			reason = tostring(reason or "?"),
-			igi_mode = (type(mode_fn) == "function") and tostring(SafeCall(mode_fn)) or "?",
-		})
-	end
-	local toggle = SuperBigMap.PregameToggle
-	if toggle and type(toggle.PatchLandingDialog) == "function" then
-		toggle.PatchLandingDialog()
-	end
-	if toggle and type(toggle.LogOpenState) == "function" then
-		toggle.LogOpenState("after EnsurePregameToggleInstalled(" .. tostring(reason or "?") .. ")")
-	end
 end
 
 RegisterOnce("ClassesPostprocess", function()
 	-- Install the generator hook regardless of active() so it is ready before any pre-game
 	-- landing-spot preview generates a map (prevents the GSRP overflow crash).
 	EnsureGeneratorHookInstalled()
-	EnsurePregameToggleInstalled()
+	EnsureMainMenuGuardsInstalled()
 	if not active() then
 		return
 	end
@@ -1467,7 +1399,7 @@ RegisterOnce("DataLoaded", function()
 	-- Ensure the generator hook is in place before any pre-game generation (independent of
 	-- active()); DataLoaded fires at boot before the landing-spot screen.
 	EnsureGeneratorHookInstalled()
-	EnsurePregameToggleInstalled()
+	EnsureMainMenuGuardsInstalled()
 	if not active() then
 		return
 	end
@@ -1538,7 +1470,7 @@ RegisterOnce("ClassesBuilt", function()
 	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla. Re-install our hook even before a
 	-- mod map is active, so a pre-game landing-spot preview can't run vanilla DoGenerate.
 	EnsureGeneratorHookInstalled()
-	EnsurePregameToggleInstalled()
+	EnsureMainMenuGuardsInstalled()
 	ReinstallTerrainCriticalPatches("ClassesBuilt")
 	if not active() then
 		return
@@ -1585,7 +1517,7 @@ RegisterOnce("ModsReloaded", function()
 	-- Re-install the generator hook on reload regardless of active() (a mod reload resets the
 	-- RandomMapGenerator class to vanilla; the pre-game preview can run before any map is active).
 	EnsureGeneratorHookInstalled()
-	EnsurePregameToggleInstalled()
+	EnsureMainMenuGuardsInstalled()
 	ReinstallTerrainCriticalPatches("ModsReloaded")
 	if not active() then
 		return
@@ -1629,7 +1561,7 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	-- mod isn't active() yet (landing-spot previews regenerate without ClassesBuilt and before
 	-- any map is applied). This is the path that was overflowing GSRP into a crash.
 	EnsureGeneratorHookInstalled()
-	EnsurePregameToggleInstalled()
+	EnsureMainMenuGuardsInstalled()
 	ReinstallTerrainCriticalPatches("ChangingMap")
 	if not active() then
 		return
@@ -1639,7 +1571,7 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	end
 	local gen = SuperBigMap.MapGeneration
 	if gen then
-		gen.PrepareMapDataForQuadrantCopy(map_slot, map_name, map_instance, "ChangingMap")
+		gen.PrepareMapDataForExpansion(map_slot, map_name, map_instance, "ChangingMap")
 	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
@@ -1681,12 +1613,10 @@ RegisterOnce("MapGenerated", function(map)
 		end
 		DiagSnapshotEvent("OnMsg.MapGenerated_AFTER_ensure_built", map)
 	end
-	-- Final terrain re-invalidate AFTER quadrant copy + sector rebuild.
+	-- Final terrain re-invalidate after source generation and sector rebuild.
 	-- PostNewMapLoaded fires BEFORE MapGenerated, so the earlier invalidate ran
 	-- when the type grid was still uniform 17 from initial map allocation.
-	-- This second pass runs after the quadrant copy has populated the cloned
-	-- areas with real texture indices, giving the renderer the chance to pick
-	-- them up.
+	-- This second pass runs after generated texture data is available.
 	if gen then
 		if type(gen.SyncMapDataToGrids) == "function" then
 			gen.SyncMapDataToGrids(map)
@@ -1699,10 +1629,6 @@ RegisterOnce("MapGenerated", function(map)
 				profiler.Step("stretch optimization: deferred MapGenerated terrain revalidation", nil, map)
 			end
 		end
-	end
-	local fake_terrain = SuperBigMap.FakeTerrain
-	if fake_terrain and type(fake_terrain.RemoveFrameCraters) == "function" then
-		fake_terrain.RemoveFrameCraters(map)
 	end
 	-- The startup OverviewMode message may have fired while exact-vanilla source
 	-- generation owned CurrentMap. Reframe explicitly now that the expanded map and

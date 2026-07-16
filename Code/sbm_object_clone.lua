@@ -1,11 +1,7 @@
--- Super Big Map -- object classification & cloning for the L-frame expansion.
+-- Super Big Map -- object classification and enrichment cloning.
 --
--- Pure object-side helpers used by the sector-block copy: which objects may be
--- cloned (ShouldSkipObject and the underground-access / mystery / deposit-marker
--- classifiers), how a clone's transform and mirror orientation are copied, and the
--- per-object spawn. NO terrain/grid logic and NO dependency on the other generation
--- modules -- self-contained so it can load first and sbm_terrain_copy can bind these
--- helpers at load time. Generic primitives come from sbm_engine.
+-- Pure object-side helpers used by the stretch decoration pass and enrichment
+-- top-ups. No terrain/grid logic and no terrain-expansion mode dispatch lives here.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -19,14 +15,6 @@ local SafeCall = Engine.SafeCall
 local TryCall = Engine.TryCall
 local IsKindOfSafe = Engine.IsKindOf
 local ObjectPosition = Engine.ObjectPos
-
-local function cfg_bool(key, default)
-	local value = (SuperBigMap.Config or {})[key]
-	if type(value) == "boolean" then
-		return value
-	end
-	return default
-end
 
 local function DebugPrint(text)
 	local DebugLog = SuperBigMap.DebugLog
@@ -42,20 +30,6 @@ local function VerbosePrint(text)
 	end
 end
 
-local function PointXY(pos)
-	if not pos then
-		return false
-	end
-	if type(pos.xy) == "function" then
-		local x, y = SafeCall(pos.xy, pos)
-		return x, y
-	end
-	if type(pos.x) == "number" and type(pos.y) == "number" then
-		return pos.x, pos.y
-	end
-	return false
-end
-
 local skip_clone_classes = {
 	City = true,
 	MapSector = true,
@@ -63,10 +37,8 @@ local skip_clone_classes = {
 	RevealedMapSector = true,
 	-- The overview sector-grid visuals are decal objects placed per-sector by
 	-- MapSector:UpdateDecal() (PlaceObjectIn "SectorUnexplored"/"SectorScanned").
-	-- They sit INSIDE the L-frame destination boxes, so without these entries
-	-- CopySectorBlock's dest-clear phase destroys them and the frame's overview grid
-	-- disappears (the sectors stay scannable -- only the decals were deleted). They
-	-- are a UI overlay, never terrain scatter, so they must never be cloned/deleted.
+	-- They are UI overlays, never terrain scatter, so stretch/top-up object
+	-- classification must never treat them as cloneable decorations.
 	SectorUnexplored = true,
 	SectorScanned = true,
 }
@@ -110,7 +82,7 @@ local underground_access_name_patterns = {
 
 -- Anything related to a MYSTERY (Black Cubes -- incl. the "mysterious pile of
 -- stone" -- Marsgate, and any mystery-named class/controller) must never be
--- cloned, deleted, or tiled: leave the player's mystery content completely alone.
+-- cloned or repositioned: leave the player's mystery content completely alone.
 local mystery_name_patterns = { "BlackCube", "Marsgate", "Mystery" }
 local mystery_kinds = {
 	"MysteryBase",
@@ -231,7 +203,7 @@ local function ShouldSkipObject(obj)
 		return true
 	end
 
-	if obj.SuperBigMapQuadrantClone then
+	if obj.SuperBigMapEnrichmentClone then
 		return true
 	end
 
@@ -282,22 +254,6 @@ local function IsImportantSectorObject(obj)
 	return IsResourceDepositMarker(obj)
 end
 
--- True if the object's bounding sphere (world center +/- GetRadius) is fully inside
--- the world box [x1,y1..x2,y2]. Used to skip cloning decor that straddles the
--- source-block edge -- its mirrored copy would overhang the seam / map edge.
-local function ObjectInsideBox(obj, x1, y1, x2, y2)
-	local pos = ObjectPosition(obj)
-	if not pos then return false end
-	local cx, cy = PointXY(pos)
-	if type(cx) ~= "number" or type(cy) ~= "number" then return false end
-	local r = 0
-	if type(obj.GetRadius) == "function" then
-		local ok, rad = pcall(obj.GetRadius, obj)
-		if ok and type(rad) == "number" and rad > 0 then r = rad end
-	end
-	return (cx - r) >= x1 and (cx + r) <= x2 and (cy - r) >= y1 and (cy + r) <= y2
-end
-
 local function CopyObjectTransform(source, clone, offset)
 	local pos = ObjectPosition(source)
 	if pos and type(clone.SetPos) == "function" then
@@ -339,12 +295,6 @@ local function CopyObjectTransform(source, clone, offset)
 		end
 	end
 
-	if cfg_bool("QUADRANT_COPY_ENUM_FLAGS", false) and type(source.GetEnumFlags) == "function" and type(clone.SetEnumFlags) == "function" then
-		local flags = SafeCall(source.GetEnumFlags, source)
-		if type(flags) == "number" and flags ~= 0 then
-			SafeCall(clone.SetEnumFlags, clone, flags)
-		end
-	end
 end
 
 local function CloneObjectAtOffset(map, source, offset)
@@ -363,9 +313,9 @@ local function CloneObjectAtOffset(map, source, offset)
 		SafeCall(clone.CopyProperties, clone, source)
 	end
 
-	clone.SuperBigMapQuadrantClone = true
+	clone.SuperBigMapEnrichmentClone = true
 	CopyObjectTransform(source, clone, offset)
-	-- Deposit handling on the clone: scan-gate visibility (hide until the frame sector is
+	-- Deposit handling on the clone: scan-gate visibility (hide until its sector is
 	-- scanned) + optional reshuffle onto terrain matching the source. No-op for non-deposits.
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.ProcessClone) == "function" then
@@ -374,40 +324,7 @@ local function CloneObjectAtOffset(map, source, offset)
 	return clone
 end
 
--- Apply a clone's mirror orientation so it matches the grid flips: toggle the
--- Mirrored mesh flag on an ODD number of reflections, and reflect the yaw per axis
--- (mirror_x: 180-a, mirror_y: -a, both: 180+a). Angle is in minutes (circle=21600).
--- Shared by the per-sector (CopySectorTerrain) and block (CopySectorBlock) copies.
-local function ApplyMirrorOrientation(obj, clone, mirror_x, mirror_y)
-	if not (mirror_x or mirror_y) then return end
-	if type(obj.GetAngle) == "function" and type(clone.SetAngle) == "function" then
-		local ok_a, a = pcall(obj.GetAngle, obj)
-		if ok_a and type(a) == "number" then
-			a = a % 21600
-			local na
-			if mirror_x and mirror_y then
-				na = (a + 10800) % 21600
-			elseif mirror_x then
-				na = (10800 - a) % 21600
-			else
-				na = (21600 - a) % 21600
-			end
-			pcall(clone.SetAngle, clone, na)
-		end
-	end
-	local odd = (mirror_x and not mirror_y) or (mirror_y and not mirror_x)
-	if odd and type(clone.SetMirrored) == "function" then
-		local src_mirrored = false
-		if type(obj.GetMirrored) == "function" then
-			local ok_m, m = pcall(obj.GetMirrored, obj)
-			src_mirrored = ok_m and m == true
-		end
-		pcall(clone.SetMirrored, clone, not src_mirrored)
-	end
-end
-
--- Public API: classifiers + clone helpers consumed by sbm_terrain_copy (and the
--- runtime deposit hook). Object-side only; terrain/grid copy lives in sbm_terrain_copy.
+-- Public API consumed by the stretch and enrichment modules.
 local ObjectClone = {
 	IsMysteryRelatedObject = IsMysteryRelatedObject,
 	MatchUndergroundAccessName = MatchUndergroundAccessName,
@@ -416,9 +333,7 @@ local ObjectClone = {
 	IsResourceDepositMarker = IsResourceDepositMarker,
 	ShouldSkipObject = ShouldSkipObject,
 	IsImportantSectorObject = IsImportantSectorObject,
-	ObjectInsideBox = ObjectInsideBox,
 	CopyObjectTransform = CopyObjectTransform,
 	CloneObjectAtOffset = CloneObjectAtOffset,
-	ApplyMirrorOrientation = ApplyMirrorOrientation,
 }
 SuperBigMap.ObjectClone = ObjectClone

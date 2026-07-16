@@ -1,23 +1,8 @@
--- Super Big Map -- cloned-deposit visibility (scan-gated).
+-- Super Big Map -- stretch enrichment placement and scan gating.
 --
--- PROBLEM: in SMR a sector's resource deposits do not exist at map-gen -- the sector holds
--- MARKERS and the real deposit object is spawned only when the sector is SCANNED
--- (Exploration.lua RevealDeposits, via marker:PlaceDeposit). The colony's starting sector is
--- auto-revealed, so its subsurface deposits/anomalies ARE live objects. When the expansion
--- mirror-copies the source quadrant, those revealed deposits get cloned into the (unscanned)
--- L-frame sectors -- so the player can see them before scanning. Vanilla subsurface deposits
--- are an ExplorableObject whose visibility follows a `revealed` flag (SubsurfaceDeposit.lua
--- PickVisibilityState); the clone copied revealed=true, so it shows.
---
--- FIX: when a deposit clone is created, if it is an ExplorableObject (SubsurfaceDeposit /
--- SubsurfaceAnomaly), force revealed=false and re-pick its visibility -> hidden. Then, on the
--- SectorScanned message, reveal the clones that lie inside the scanned sector's area. This
--- mirrors vanilla scan-gating for the copied deposits without touching the marker system.
---
--- Surface deposits (SurfaceDeposit / TerrainDepositConcrete) are not scan-gated here: vanilla
--- shows them always. Concrete carries a painted regolith terrain texture; the copy mirrors that
--- patch to each clone's initial position. When reshuffle moves a concrete marker, the old patch
--- is cleared immediately; the new patch is painted only if the final sector is already scanned.
+-- Native markers are recreated at their proportional post-stretch coordinates and additions are
+-- generated only for the extra area. This module preserves vanilla scan gating, validates final
+-- placement, and manages concrete imprints when a transformed marker must be hidden or moved.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -160,19 +145,6 @@ local function SetRevealedState(obj, revealed)
 	if type(obj.PickVisibilityState) == "function" then
 		SafeCall(obj.PickVisibilityState, obj)
 	end
-end
-
--- ---------------------------------------------------------------------------------------
--- Reshuffle: move a cloned deposit onto nearby terrain that best matches the terrain its
--- SOURCE deposit sat on. The expansion copies the terrain (incl. the concrete "yellow"
--- patch, which is terrain type Regolith_02) but places the deposit OBJECT by translation,
--- so a deposit can end up off its matching ground / off its concrete patch. Searching for
--- the nearest spot whose terrain TYPE (and flatness) matches the source re-seats it. For moved
--- concrete markers, the copied regolith patch is cleared from the initial mirrored position and
--- only repainted at the final position when that sector is already scanned.
--- ---------------------------------------------------------------------------------------
-local function ReshuffleEnabled()
-	return cfg().RESHUFFLE_CLONED_DEPOSITS == true
 end
 
 local ObjectPos = Engine.ObjectPos
@@ -412,7 +384,7 @@ local function IsNativeEnrichmentMarker(marker)
 		and marker.SuperBigMapAnomalyTopUp ~= true
 		and marker.SuperBigMapEffectTopUp ~= true
 		and marker.SuperBigMapBreakthroughRepair ~= true
-		and marker.SuperBigMapQuadrantClone ~= true
+		and marker.SuperBigMapEnrichmentClone ~= true
 end
 
 -- True for the N-sector-wide perimeter ring of the FINAL expanded map. This is the reserved
@@ -796,7 +768,7 @@ local function PatchBadgeOverlapPrevention()
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
 			or marker.SuperBigMapBreakthroughRepair == true
-			or marker.SuperBigMapQuadrantClone == true)
+			or marker.SuperBigMapEnrichmentClone == true)
 		if additional and BadgeSpacingEnabledOnMap(map) and IsBadgeMarker(marker)
 			and type(x) == "number" and type(y) == "number" then
 			local world_to_hex = Global("WorldToHex")
@@ -866,7 +838,7 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
 			or marker.SuperBigMapBreakthroughRepair == true
-			or marker.SuperBigMapQuadrantClone == true)
+			or marker.SuperBigMapEnrichmentClone == true)
 	end
 	-- Start with fixed live badges. Unplaced markers are then claimed one at a time; the first
 	-- claimant stays and only a later collision is moved.
@@ -961,10 +933,8 @@ function DepositRules.HideClone(obj)
 	Log("hid cloned deposit until scan", { class = obj.class })
 end
 
--- Per-clone handling at clone time: just clear is_placed so a cloned RESOURCE deposit marker
--- will spawn its deposit (and paint concrete) when the frame sector is scanned (the source
--- marker may already be placed in a revealed starting sector). Reshuffle + registration are
--- done in dedicated passes AFTER all markers are cloned (see ReshuffleClonedMarkers).
+-- Per-clone handling: clear is_placed so an added RESOURCE marker follows normal
+-- scan-time spawning and concrete painting.
 function DepositRules.ProcessClone(_map, _source, clone)
 	if IsResourceDepositMarker(clone) then
 		clone.is_placed = false
@@ -974,22 +944,9 @@ function DepositRules.ProcessClone(_map, _source, clone)
 	end
 end
 
--- ---------------------------------------------------------------------------------------
--- Concrete imprint moving.
--- The terrain copy mirrors the source quadrant's terrain TYPE grid, so every source concrete
--- patch (terrain types Regolith / Regolith_02 -- the yellow "concrete" texture) is duplicated
--- at the cloned marker's INITIAL (mirrored) position. Reshuffle then moves the concrete marker
--- elsewhere, so this pass moves that copied patch too: it flood-fills the contiguous regolith
--- blob on the type grid, clears the original cells to the dominant surrounding non-regolith
--- terrain type, and writes the same Regolith/Regolith_02 shape around the marker's final
--- position only when that final sector is already scanned. Unscanned sectors stay visually
--- clean until vanilla RevealDeposits calls TerrainDepositMarker:PlaceDeposit on scan.
--- Confirmed engine APIs (from the local game files, read-only): terrain.GetTypeGrid/SetTypeGrid
--- return/accept an editable type grid with :size()/:get(x,y)/:set(x,y,v) (same grid the mod
--- tiles in sbm_map_generation TileGrid); GetTerrainTextureIndex resolves a terrain type to its
--- grid index; terrain.InvalidateType refreshes the rendered texture.
--- MUST run inside the caller's PauseInfiniteLoopDetection scope (the flood fill is a hot loop).
--- ---------------------------------------------------------------------------------------
+-- Keep concrete terrain imprints consistent when stretch-time scan gating or
+-- underground reachability moves/hides a concrete marker. Runs inside the caller's
+-- bounded paused-ILD transaction because the type-grid flood fill is a hot loop.
 local function MoveConcreteImprints(map, moves)
 	if cfg().CLEAR_INITIAL_CONCRETE_IMPRINT ~= true then return end
 	if type(moves) ~= "table" or #moves == 0 then return end
@@ -1196,145 +1153,8 @@ local function MoveConcreteImprints(map, moves)
 	})
 end
 
--- Reshuffle pass: scatter the cloned resource-deposit markers across the expanded area onto
--- terrain SIMILAR to where each currently sits, instead of leaving them at the mirrored spot.
--- Build a pool of valid deposit tiles once (passable + flat enough), excluding the original
--- quadrant and a 2-tile margin from the map's outer edge; bucket the pool by terrain type;
--- then move each marker to a RANDOM tile from its own terrain-type bucket (removed so two
--- markers never share a tile). Runs BEFORE registration so markers register to their new sector.
-function DepositRules.ReshuffleClonedMarkers(map)
-	DepositRules.LogDistributionReport(map, "pre-reshuffle (post-generation + clone)")
-	if not ReshuffleEnabled() then return end
-	map = map or Global("CurrentMap")
-	local point = Global("point")
-	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" then return end
-	local map_w, map_h, tile = MapWorldSize(map)
-	if not map_w or not tile then return end
-	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
-	local margin = margin_tiles * tile
-	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
-	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
-	local lo_x, span_x = margin, (map_w - 2 * margin)
-	local lo_y, span_y = margin, (map_h - 2 * margin)
-	if span_x <= 0 or span_y <= 0 then return end
-
-	local moved, considered = 0, 0
-	local min_edge_tiles = false   -- diagnostic: closest any moved marker got to a map edge
-	local concrete_moves = {}   -- moved concrete marker positions, used to move the terrain imprint
-	RunPaused("SuperBigMapDepositReshuffle", function()
-		-- 1) build the candidate pool (sampled), bucketed by terrain type.
-		local buckets = {}
-		local pool = 0
-		local MAX_SAMPLES, MAX_POOL = 6000, 3000
-		for _ = 1, MAX_SAMPLES do
-			if pool >= MAX_POOL then break end
-			local x = lo_x + RandInt(span_x)
-			local y = lo_y + RandInt(span_y)
-			-- Spread across the whole UNSCANNED map (source + frame), not just the frame: this
-			-- avoids piling markers into the frame L-strip (one region ending far denser). Hidden
-			-- markers still never land in the scanned start sector (they'd never reveal there).
-			local sector = SectorAtPoint(map, x, y)
-			if sector and not SectorIsScanned(sector) then
-				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt) then
-					local tt = TerrainTypeAt(map, pt) or -1
-					local b = buckets[tt]
-					if not b then b = {}; buckets[tt] = b end
-					b[#b + 1] = { x = x, y = y }
-					pool = pool + 1
-				end
-			end
-		end
-
-		-- Take + remove a random tile from a bucket (nil if empty).
-		local function take(tt)
-			local b = tt ~= nil and buckets[tt] or nil
-			if b and #b > 0 then
-				local idx = RandInt(#b) + 1
-				local c = b[idx]
-				table.remove(b, idx)
-				return c
-			end
-			return nil
-		end
-		-- Take from ANY non-empty bucket (fallback when no same-type tile is left). Every pool
-		-- tile already respects the edge margin, so this still keeps deposits off the border.
-		local function take_any()
-			for tt, b in pairs(buckets) do
-				if #b > 0 then return take(tt) end
-			end
-			return nil
-		end
-
-		-- 2) move each cloned marker to a random tile of its own terrain type (else any valid
-		-- tile). ALL pool tiles are >= margin from the edge, so no deposit ends up on the border.
-		-- A resource marker is relocated if it's a quadrant clone OR if it (clone or vanilla
-		-- original) currently sits within the edge margin. The original scenario quadrant lands
-		-- in a map corner, so vanilla deposits near the original edge would otherwise hug the
-		-- expanded map's outer border; this guarantees NO resource deposit -- cloned or original
-		-- -- ends up within margin_tiles of the outer edge.
-		pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-			if marker and IsResourceDepositMarker(marker) then
-				local pos = ObjectPos(marker)
-				local px, py
-				if pos and type(pos.xy) == "function" then px, py = pos:xy() end
-				local within_margin = px ~= nil and
-					(px < margin or py < margin or px > (map_w - margin) or py > (map_h - margin))
-				if not (marker.SuperBigMapQuadrantClone or within_margin) then return end
-				considered = considered + 1
-				local tt = pos and (TerrainTypeAt(map, pos) or -1) or nil
-				local c = take(tt) or take_any()
-				if c then
-					local is_concrete = pos and type(pos.xy) == "function" and IsConcreteTerrainDepositMarker(marker)
-					local ix, iy
-					if is_concrete then
-						ix, iy = pos:xy()
-					end
-					local pt = point(c.x, c.y)
-					if type(pt.SetTerrainZ) == "function" then
-						local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
-						if ok and snapped then pt = snapped end
-					end
-					if type(marker.SetPos) == "function" then
-						local ok = pcall(marker.SetPos, marker, pt)
-						if ok then
-							moved = moved + 1
-								-- diagnostic: closest any relocated marker got to a map edge (tiles).
-								local edge_world = math.min(c.x, c.y, map_w - c.x, map_h - c.y)
-								local edge_tiles = (tile > 0) and (edge_world / tile) or edge_world
-								if not min_edge_tiles or edge_tiles < min_edge_tiles then min_edge_tiles = edge_tiles end
-							if is_concrete then
-								local tx, ty = c.x, c.y
-								if type(pt.xy) == "function" then
-									tx, ty = pt:xy()
-								end
-								local sector = SectorAtPoint(map, tx, ty)
-								concrete_moves[#concrete_moves + 1] = {
-									from = { x = ix, y = iy },
-									to = { x = tx, y = ty },
-									paint_now = SectorIsScanned(sector),
-								}
-							end
-						end
-					end
-				end
-			end
-		end)
-
-		-- Move concrete regolith imprints with reshuffled concrete markers
-		-- (inside this same paused scope -- the flood fill is a hot loop).
-		MoveConcreteImprints(map, concrete_moves)
-	end)
-	Log("reshuffled cloned deposit markers", {
-		moved = moved,
-		considered = considered,
-		margin_tiles = margin_tiles,
-		min_edge_tiles = min_edge_tiles or "n/a",   -- should be >= margin_tiles for every relocated marker
-	})
-end
-
--- After the expansion copy, register every cloned RESOURCE deposit marker with the map sector
--- it now sits in, so scanning that frame sector spawns the deposit (vanilla RevealDeposits
+-- Register added RESOURCE markers with their final map sectors so scanning them spawns
+-- the deposit (vanilla RevealDeposits
 -- reads sector.markers, which is populated by sector:RegisterDeposit). Idempotent.
 -- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
@@ -1348,8 +1168,7 @@ function DepositRules.RegisterClonedMarkers(map)
 		Log("register skipped", { reason = "underground -- proximity reveal, no sector dependence" })
 		return
 	end
-	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-		and tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
 		Log("register skipped", { reason = "stretch top-up clones registered at creation" })
 		return
 	end
@@ -1361,7 +1180,7 @@ function DepositRules.RegisterClonedMarkers(map)
 	end
 	local count = 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if marker and marker.SuperBigMapQuadrantClone and IsResourceDepositMarker(marker) then
+		if marker and marker.SuperBigMapEnrichmentClone and IsResourceDepositMarker(marker) then
 			local pos = ObjectPos(marker)
 			if pos and type(pos.xy) == "function" then
 				local x, y = pos:xy()
@@ -1377,34 +1196,9 @@ function DepositRules.RegisterClonedMarkers(map)
 end
 
 -- ---------------------------------------------------------------------------------------
--- Anomaly re-spacing (post-generation): on an expanded map the generator is forced to pack
--- anomalies ~20% tighter than vanilla so the full set (incl. all FreeTech) fits the shrunken
--- placement zone. Once the full 20x20 map is up there is room to spread them back out, so this
--- pass relocates the UNREVEALED anomaly markers to an even, vanilla-like spacing across the
--- whole playable map.
---
--- Safe because a subsurface anomaly marker spawns its anomaly only when its sector is scanned
--- (DepositMarker:PlaceDeposit); moving an unrevealed marker is fine. Scanning reveals anomalies
--- by iterating the sector's REGISTERED marker list (Exploration.lua MapSector:Scan ->
--- RevealDeposits over sector.markers.subsurface/deep), NOT by area -- so each moved marker is
--- UnregisterDeposit'd from its old sector and RegisterDeposit'd into the new one. Anomalies in
--- an already-scanned (start) sector, or already placed/revealed, are left untouched (live).
---
--- The minimum distance is derived from the anomaly count and the placeable area so the result
--- is an even spread that always fits (ANOMALY_EVEN_SPREAD_FACTOR tunes how spread). Gated by
--- RESPACE_ANOMALIES_TO_VANILLA. Idempotent enough to re-run (it just re-spaces again).
-local function IsSubsurfaceAnomalyMarker(obj)
-	return obj ~= nil and IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
-end
-
 -- Exhaustive distribution diagnostic (gated by DebugDeposits): bucket every enrichment marker
--- exactly once by family and sector, then report totals + which sectors are dense. This
--- is the evidence for "the landing spot is over-crowded on expanded maps": the SCANNED
--- (start) sector's marker count vs the per-sector average shows the overpacking, and the
--- top-density sectors reveal where the generator concentrated placement. Vanilla spreads the
--- preset count over the whole playable area; the expansion packs the same count into the
--- shrunken gen-zone (see sbm_rmg_placement borders-zeroed + spacing scale), and the scanned
--- start sector's markers are never thinned (respace/reshuffle skip revealed sectors).
+-- exactly once by family and sector, then compare the proportionally transformed
+-- native-source region with the additional outer destination region.
 function DepositRules.LogDistributionReport(map, phase)
 	local DebugLog = SuperBigMap.DebugLog
 	if not (DebugLog and DebugLog.On and DebugLog.On("Deposits")) then return end
@@ -1414,7 +1208,7 @@ function DepositRules.LogDistributionReport(map, phase)
 	local map_w, map_h = MapWorldSize(map)
 	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
 	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
-	local region_source, region_frame = 0, 0   -- markers inside the source quadrant vs the frame L
+	local region_source, region_outer = 0, 0
 
 	local per_sector, order = {}, {}
 	local function bucket(kind, marker)
@@ -1425,7 +1219,7 @@ function DepositRules.LogDistributionReport(map, phase)
 		if src_w > 0 and src_h > 0 and px < src_w and py < src_h then
 			region_source = region_source + 1
 		else
-			region_frame = region_frame + 1
+			region_outer = region_outer + 1
 		end
 		local sector = SectorAtPoint(map, px, py)
 		local name = tostring((type(sector) == "table" and (sector.display_name or sector.id)) or "offgrid")
@@ -1504,15 +1298,15 @@ function DepositRules.LogDistributionReport(map, phase)
 	-- sector coverage separately.
 	local src_area = src_w * src_h
 	local total_area = (map_w or 0) * (map_h or 0)
-	local frame_area = total_area - src_area
+	local outer_area = total_area - src_area
 	local dens_source = (src_area > 0) and (region_source * 1000000.0 / src_area) or 0
-	local dens_frame = (frame_area > 0) and (region_frame * 1000000.0 / frame_area) or 0
-	Log("DISTRIBUTION [" .. tostring(phase) .. "] region density (frame L vs source quadrant, markers/Mwu^2)", {
+	local dens_outer = (outer_area > 0) and (region_outer * 1000000.0 / outer_area) or 0
+	Log("DISTRIBUTION [" .. tostring(phase) .. "] region density (outer destination vs native source extent, markers/Mwu^2)", {
 		source_markers = region_source,
-		frame_markers = region_frame,
+		outer_markers = region_outer,
 		density_source = string.format("%.3f", dens_source),
-		density_frame = string.format("%.3f", dens_frame),
-		frame_over_source_ratio = (dens_source > 0) and string.format("%.2f", dens_frame / dens_source) or "n/a",
+		density_outer = string.format("%.3f", dens_outer),
+		outer_over_source_ratio = (dens_source > 0) and string.format("%.2f", dens_outer / dens_source) or "n/a",
 	})
 end
 
@@ -2294,7 +2088,7 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 		if marker.SuperBigMapResourceTopUp == true then return "resource_topup" end
 		if marker.SuperBigMapAnomalyTopUp == true then return "ordinary_anomaly_topup" end
 		if marker.SuperBigMapEffectTopUp == true then return "effect_topup" end
-		if marker.SuperBigMapQuadrantClone == true then return "mirror_clone" end
+		if marker.SuperBigMapEnrichmentClone == true then return "enrichment_clone" end
 		return "native_generated"
 	end
 
@@ -2550,7 +2344,7 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
 			or marker.SuperBigMapBreakthroughRepair == true
-			or marker.SuperBigMapQuadrantClone == true then return end
+			or marker.SuperBigMapEnrichmentClone == true then return end
 		stats.checked = stats.checked + 1
 		local source_x = marker.SuperBigMapNativeSourceX
 		local source_y = marker.SuperBigMapNativeSourceY
@@ -2617,183 +2411,6 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 end
 
 
-function DepositRules.RespaceAnomalies(map)
-	if cfg().RESPACE_ANOMALIES_TO_VANILLA ~= true then return end
-	-- STRETCH mode: skip (user decision 2026-07-12). This pass repairs the MIRROR path's
-	-- crammed distribution; in stretch the vanilla layout x4/3 is already vanilla-like, so
-	-- respacing only moved VANILLA anomalies away from their vanilla-equivalent positions.
-	-- The distribution model is now: vanilla markers exactly at scaled positions, only the
-	-- top-up extras placed pseudo-randomly.
-	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
-		Log("anomaly respace skipped (stretch mode: vanilla markers stay at scaled positions)")
-		return
-	end
-	map = map or Global("CurrentMap")
-	local point = Global("point")
-	local city = map and map.City
-	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" or not city then
-		Log("anomaly respace skipped", { reason = "map/city/point unavailable" })
-		return
-	end
-	local map_w, map_h, tile = MapWorldSize(map)
-	if not map_w or not map_h or not tile or tile <= 0 then
-		Log("anomaly respace skipped", { reason = "map size unavailable" })
-		return
-	end
-	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
-	local margin = margin_tiles * tile
-	local lo_x, span_x = margin, (map_w - 2 * margin)
-	local lo_y, span_y = margin, (map_h - 2 * margin)
-	if span_x <= 0 or span_y <= 0 then
-		Log("anomaly respace skipped", { reason = "placeable span <= 0" })
-		return
-	end
-
-	local moved, considered, kept, unplaced = 0, 0, 0, 0
-	local min_dist_used = 0
-	RunPaused("SuperBigMapAnomalyRespace", function()
-		-- Candidate pool: valid (passable + flat) tiles sampled across the full map minus margin.
-		local pool = {}
-		local MAX_SAMPLES, MAX_POOL = 8000, 4000
-		for _ = 1, MAX_SAMPLES do
-			if #pool >= MAX_POOL then break end
-			local x = lo_x + RandInt(span_x)
-			local y = lo_y + RandInt(span_y)
-			local pt = point(x, y)
-			if CanReceiveDeposit(map, pt) then
-				pool[#pool + 1] = { x = x, y = y }
-			end
-		end
-
-		-- Pass 1: classify every anomaly marker. Live ones (placed, or in a scanned/start sector)
-		-- are KEPT in place and only seed the spacing list so moved ones avoid them.
-		local placed = {}
-		local to_move = {}
-		local move_revealed = cfg().EVEN_OUT_START_SECTOR_ANOMALIES ~= false
-		pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
-			if not IsSubsurfaceAnomalyMarker(marker) then return end
-			local pos = ObjectPos(marker)
-			local px, py
-			if pos and type(pos.xy) == "function" then px, py = pos:xy() end
-			if px == nil then return end
-			local sector = SectorAtPoint(map, px, py)
-			local revealed = marker.is_placed == true or SectorIsScanned(sector)
-			if marker.tech_action == "breakthrough" then
-				-- Breakthroughs have their own vanilla farthest-point selector. They are rare and
-				-- must remain fixed; ordinary anomalies still use them as spacing anchors.
-				placed[#placed + 1] = { x = px, y = py }
-				kept = kept + 1
-			elseif revealed and not move_revealed then
-				-- Keep live/revealed anomalies fixed (vanilla behavior); they seed the spacing.
-				placed[#placed + 1] = { x = px, y = py }
-				kept = kept + 1
-			else
-				-- Move it. `was_revealed` items are despawned + re-hidden in Pass 2 so a
-				-- start-sector anomaly re-spawns vanilla-style when its new sector is scanned.
-				to_move[#to_move + 1] = { marker = marker, px = px, py = py, sector = sector, was_revealed = revealed }
-			end
-		end)
-
-		-- Even-spread minimum distance: factor * sqrt(placeable_area / total). <=1 factor keeps it
-		-- fitting by construction; the pass degrades gracefully (leaves a marker put) if a tile
-		-- far enough can't be found.
-		local total = #to_move + #placed
-		local factor = cfg().ANOMALY_EVEN_SPREAD_FACTOR
-		factor = (type(factor) == "number" and factor > 0 and factor <= 1.5) and factor or 0.6
-		local min_dist = (total > 0) and (factor * math.sqrt((span_x * span_y) / total)) or tile
-		if min_dist < tile then min_dist = tile end
-		min_dist_used = min_dist
-		local min_dist_sq = min_dist * min_dist
-
-		local function too_close(x, y)
-			for i = 1, #placed do
-				local p = placed[i]
-				local dx, dy = x - p.x, y - p.y
-				if dx * dx + dy * dy < min_dist_sq then return true end
-			end
-			return false
-		end
-
-		-- Pass 2: relocate each movable marker to a pool tile >= min_dist from everything placed.
-		for _, item in ipairs(to_move) do
-			considered = considered + 1
-			local marker = item.marker
-			local chosen, chosen_idx, attempts = nil, nil, 0
-			while #pool > 0 and attempts < 32 do
-				attempts = attempts + 1
-				local idx = RandInt(#pool) + 1
-				local c = pool[idx]
-				if not too_close(c.x, c.y) then chosen, chosen_idx = c, idx; break end
-			end
-			if chosen then
-				table.remove(pool, chosen_idx)
-				local pt = point(chosen.x, chosen.y)
-				if type(pt.SetTerrainZ) == "function" then
-					local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
-					if ok and snapped then pt = snapped end
-				end
-				local nx, ny = chosen.x, chosen.y
-				if type(pt.xy) == "function" then nx, ny = pt:xy() end
-				-- Unregister from old sector, move, register into the new sector.
-				if item.sector and type(item.sector.UnregisterDeposit) == "function" then
-					pcall(item.sector.UnregisterDeposit, item.sector, marker)
-				end
-				-- Revealed (start-sector) anomaly: despawn its spawned object and reset to unplaced
-				-- + hidden, so it re-spawns vanilla-style when its new (frame) sector is scanned.
-				if item.was_revealed then
-					local IsValid = Global("IsValid")
-					local DoneObject = Global("DoneObject")
-					if IsValid and IsValid(marker.placed_obj) and DoneObject then pcall(DoneObject, marker.placed_obj) end
-					marker.placed_obj = false
-					marker.is_placed = false
-					SetRevealedState(marker, false)
-				end
-				local ok_move = type(marker.SetPos) == "function" and pcall(marker.SetPos, marker, pt)
-				if ok_move then
-					moved = moved + 1
-					placed[#placed + 1] = { x = nx, y = ny }
-					local new_sector = SectorAtPoint(map, nx, ny)
-					if new_sector and type(new_sector.RegisterDeposit) == "function" then
-						pcall(new_sector.RegisterDeposit, new_sector, marker)
-					elseif item.sector and type(item.sector.RegisterDeposit) == "function" then
-						pcall(item.sector.RegisterDeposit, item.sector, marker) -- no new sector: undo
-					end
-				else
-					unplaced = unplaced + 1
-					if item.sector and type(item.sector.RegisterDeposit) == "function" then
-						pcall(item.sector.RegisterDeposit, item.sector, marker) -- move failed: undo
-					end
-					placed[#placed + 1] = { x = item.px, y = item.py }
-				end
-			else
-				unplaced = unplaced + 1
-				placed[#placed + 1] = { x = item.px, y = item.py } -- left in place
-			end
-		end
-	end)
-	Log("respaced anomaly markers to vanilla-like spacing", {
-		moved = moved,
-		considered = considered,
-		kept_live = kept,
-		left_in_place = unplaced,
-		min_dist_tiles = (tile > 0) and string.format("%.1f", min_dist_used / tile) or "n/a",
-		spread_factor = cfg().ANOMALY_EVEN_SPREAD_FACTOR or 0.6,
-		margin_tiles = margin_tiles,
-	})
-	DepositRules.LogDistributionReport(map, "final (post-respace)")
-end
-
--- Top up RESOURCE deposits to full vanilla density for the expanded map's SIZE. The generator
--- places the native (Big) preset count; spread over the larger 20x20 that is below vanilla
--- density. This clones additional source resource-deposit markers onto terrain-matched FRAME
--- tiles until the total reaches source_count * area_factor (vanilla density x the bigger area).
--- Clones are hidden markers (CloneObjectAtOffset -> ProcessClone sets is_placed=false) that spawn
--- when their frame sector is scanned; RegisterClonedMarkers (run right after) registers them, and
--- EvenOutDepositDensity then spreads everything to even per-sector density. ALL resource types
--- are topped up proportionally, including concrete (TerrainDeposit) -- a cloned concrete marker
--- paints its own regolith patch when its frame sector is scanned (TerrainDepositMarker:SpawnDeposit
--- generates the terrain patch), so no manual imprint is needed. Gated by TOPUP_RESOURCES.
--- "Water=5 Metals=3 ..." -- sorted flat tally string for the top-up proportion logs.
 local function TallyString(tbl)
 	local keys = {}
 	for k in pairs(tbl) do keys[#keys + 1] = k end
@@ -3267,8 +2884,6 @@ function DepositRules.TopUpDeposits(map)
 	end
 	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
 	local margin = margin_tiles * tile
-	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
-	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
 	local lo_x, span_x = margin, (map_w - 2 * margin)
 	local lo_y, span_y = margin, (map_h - 2 * margin)
 	if span_x <= 0 or span_y <= 0 then
@@ -3294,13 +2909,9 @@ function DepositRules.TopUpDeposits(map)
 		return
 	end
 
-	-- Count current resource markers (total) and the ones inside the source quadrant (the
-	-- generated density baseline); collect non-concrete source markers as clone templates.
-	-- STRETCH mode: ScaleMarkersToFull has already spread the generated markers over the WHOLE
-	-- map, so the source-quadrant test no longer identifies the generated baseline (it would
-	-- undercount by ~1/area_factor and make the top-up a no-op). In stretch the baseline IS the
-	-- full current population (every marker is generator output), so count/keep them all.
-	local stretch_mode = tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch"
+	-- Count current resource markers and collect native markers as clone templates.
+	-- After stretching, the baseline is the full current population: every non-top-up marker
+	-- came from the one native source and was transformed proportionally.
 	local total_current, source_count = 0, 0
 	local templates, templates_by_type = {}, {}
 	local current_by_type, src_by_type = {}, {}
@@ -3309,12 +2920,7 @@ function DepositRules.TopUpDeposits(map)
 		total_current = total_current + 1
 		local res = tostring(marker.resource or marker.class or "?")
 		current_by_type[res] = (current_by_type[res] or 0) + 1
-		local pos = ObjectPos(marker)
-		if not pos or type(pos.xy) ~= "function" then return end
-		local px, py = pos:xy()
-		if px == nil then return end
-		if not marker.SuperBigMapResourceTopUp
-			and (stretch_mode or (px < src_w and py < src_h)) then
+		if not marker.SuperBigMapResourceTopUp then
 			source_count = source_count + 1
 			-- All resource types are templates (incl. concrete) so the top-up mix is
 			-- proportional to the source; cloned concrete self-paints its patch on scan.
@@ -3374,9 +2980,9 @@ function DepositRules.TopUpDeposits(map)
 			if pool >= MAX_POOL then break end
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
-			-- Spread across the whole UNSCANNED map (rendered source AND mirrored frame),
+			-- Spread across the whole unscanned expanded destination,
 			-- excluding only the scanned start sector: this keeps relocated/added markers from
-			-- piling into the frame L-strip (which made one region far denser than the rest), and
+			-- piling into one outer band, and
 			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
 			-- The final map's outer perimeter is reserved for qualifying anomaly top-up extras.
 			local sector = SectorAtPoint(map, x, y)
@@ -3457,7 +3063,7 @@ function DepositRules.TopUpDeposits(map)
 						end
 						pcall(clone.SetPos, clone, pt)
 					end
-					if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true and stretch_mode
+					if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 						and not IsUndergroundMap(map) then
 						local sec = SectorAtPoint(map, c.x, c.y)
 						if sec and type(sec.RegisterDeposit) == "function" then
@@ -3618,7 +3224,7 @@ function DepositRules.TopUpAnomalies(map)
 		if is_standard then
 			current_standard_by_kind[kind] = (current_standard_by_kind[kind] or 0) + 1
 		end
-		if not marker.SuperBigMapAnomalyTopUp and not marker.SuperBigMapQuadrantClone then
+		if not marker.SuperBigMapAnomalyTopUp and not marker.SuperBigMapEnrichmentClone then
 			templates[#templates + 1] = marker
 			if is_standard then
 				standard_templates[#standard_templates + 1] = marker
@@ -3815,7 +3421,7 @@ function DepositRules.TopUpAnomalies(map)
 				local observed_ring = edge ~= "interior"
 				TopUpEdgeLog("existing anomaly marker", {
 					n = marker_n, marker = tostring(marker), class = tostring(marker.class),
-					category = AnomalyCategory(marker), clone = tostring(marker.SuperBigMapQuadrantClone == true),
+					category = AnomalyCategory(marker), clone = tostring(marker.SuperBigMapEnrichmentClone == true),
 					x = mx, y = my, sector = tostring(sector and sector.id),
 					col = tostring(sector and sector.col), row = tostring(sector and sector.row),
 					status = tostring(sector and sector.status), edge = edge, source_region = source_region,
@@ -4926,7 +4532,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		local deposit_type = tostring(marker.deposit_type or "")
 		if deposit_type == "" or not EffectDepositTopUpEnabled(deposit_type) then return end
 		current_by_type[deposit_type] = (current_by_type[deposit_type] or 0) + 1
-		if not marker.SuperBigMapQuadrantClone then
+		if not marker.SuperBigMapEnrichmentClone then
 			local list = templates_by_type[deposit_type]
 			if not list then list = {}; templates_by_type[deposit_type] = list end
 			list[#list + 1] = marker
@@ -5237,169 +4843,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	return violation_count == 0, stats
 end
 
--- Even out RESOURCE-deposit density to vanilla-like proportions. The generator packs the full
--- preset count into the shrunken gen-zone (see sbm_rmg_placement), so the source region --
--- including the scanned START sector -- is several times denser than vanilla while the mirrored
--- frame is sparse. This caps each sector at MAX_RESOURCE_DEPOSITS_PER_SECTOR and relocates the
--- surplus onto terrain-matched frame tiles (outside the source quadrant), thinning the source
--- and filling the frame -- total count unchanged, distribution evened. Surplus taken out of an
--- already-scanned sector (the start sector) is DESPAWNED + reset to unplaced + hidden, so it
--- re-spawns vanilla-style only when its new frame sector is scanned. Runs after the
--- clone/reshuffle/respace passes. Gated by EVEN_OUT_DEPOSIT_DENSITY.
-function DepositRules.EvenOutDepositDensity(map)
-	if cfg().EVEN_OUT_DEPOSIT_DENSITY ~= true then return end
-	-- STRETCH mode: skip (user decision 2026-07-12, same rationale as RespaceAnomalies):
-	-- the vanilla deposit distribution x4/3 is already vanilla density per area; capping and
-	-- relocating surplus only moved VANILLA deposits away from their scaled positions.
-	if tostring(cfg().EXPANSION_FRAME_FILL_MODE or "mirror") == "stretch" then
-		Log("deposit even-out skipped (stretch mode: vanilla markers stay at scaled positions)")
-		return
-	end
-	map = map or Global("CurrentMap")
-	local point = Global("point")
-	local city = map and map.City
-	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function" or not city then
-		Log("even-out skipped", { reason = "map/city/point unavailable" })
-		return
-	end
-	local map_w, map_h, tile = MapWorldSize(map)
-	if not map_w or not tile or tile <= 0 then
-		Log("even-out skipped", { reason = "map size unavailable" })
-		return
-	end
-	local cap = math.max(1, math.floor(cfg().MAX_RESOURCE_DEPOSITS_PER_SECTOR or 3))
-	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
-	local margin = margin_tiles * tile
-	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
-	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
-	local lo_x, span_x = margin, (map_w - 2 * margin)
-	local lo_y, span_y = margin, (map_h - 2 * margin)
-	if span_x <= 0 or span_y <= 0 then
-		Log("even-out skipped", { reason = "placeable span <= 0" })
-		return
-	end
-
-	local moved, over_sectors, concrete_moves = 0, 0, {}
-	local DoneObject = Global("DoneObject")
-	local IsValid = Global("IsValid")
-	RunPaused("SuperBigMapEvenOut", function()
-		-- Frame candidate pool (terrain-bucketed), same shape as the reshuffle: sampled tiles
-		-- OUTSIDE the source quadrant, so surplus source deposits move into the sparse frame.
-		local buckets, pool = {}, 0
-		local MAX_SAMPLES, MAX_POOL = 6000, 3000
-		for _ = 1, MAX_SAMPLES do
-			if pool >= MAX_POOL then break end
-			local x = lo_x + RandInt(span_x)
-			local y = lo_y + RandInt(span_y)
-			-- Spread across the whole UNSCANNED map (rendered source AND mirrored frame),
-			-- excluding only the scanned start sector: this keeps relocated/added markers from
-			-- piling into the frame L-strip (which made one region far denser than the rest), and
-			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
-			local sector = SectorAtPoint(map, x, y)
-			if sector and not SectorIsScanned(sector) then
-				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt) then
-					local tt = TerrainTypeAt(map, pt) or -1
-					local b = buckets[tt]; if not b then b = {}; buckets[tt] = b end
-					b[#b + 1] = { x = x, y = y }
-					pool = pool + 1
-				end
-			end
-		end
-		local function take(tt)
-			local b = tt ~= nil and buckets[tt] or nil
-			if b and #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end
-			return nil
-		end
-		local function take_any()
-			for _, b in pairs(buckets) do if #b > 0 then local i = RandInt(#b) + 1; local c = b[i]; table.remove(b, i); return c end end
-			return nil
-		end
-
-		-- Bucket resource-deposit markers by the sector they sit in.
-		local by_sector = {}
-		pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-			if not (marker and IsResourceDepositMarker(marker)) then return end
-			local pos = ObjectPos(marker)
-			if not pos or type(pos.xy) ~= "function" then return end
-			local px, py = pos:xy()
-			if px == nil then return end
-			local sector = SectorAtPoint(map, px, py)
-			if not sector then return end
-			local rec = by_sector[sector]
-			if not rec then rec = {}; by_sector[sector] = rec end
-			rec[#rec + 1] = { marker = marker, px = px, py = py, pos = pos }
-		end)
-
-		-- Thin each over-cap sector: relocate the surplus markers into the frame pool.
-		for sector, list in pairs(by_sector) do
-			local n = #list
-			if n > cap then
-				over_sectors = over_sectors + 1
-				for i = cap + 1, n do
-					local item = list[i]
-					local marker = item.marker
-					local tt = TerrainTypeAt(map, item.pos) or -1
-					local c = take(tt) or take_any()
-					if c then
-						local pt = point(c.x, c.y)
-						if type(pt.SetTerrainZ) == "function" then
-							local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
-							if ok and snapped then pt = snapped end
-						end
-						local is_concrete = IsConcreteTerrainDepositMarker(marker)
-						if type(sector.UnregisterDeposit) == "function" then
-							pcall(sector.UnregisterDeposit, sector, marker)
-						end
-						-- Surplus taken from an already-placed/revealed sector (the start sector):
-						-- despawn the visible deposit and reset to unplaced so it re-spawns hidden
-						-- when its new (frame) sector is scanned -- matching vanilla fog-of-war.
-						if marker.is_placed == true then
-							if IsValid and IsValid(marker.placed_obj) and DoneObject then
-								pcall(DoneObject, marker.placed_obj)
-							end
-							marker.placed_obj = false
-							marker.is_placed = false
-						end
-						SetRevealedState(marker, false)
-						local ok_move = type(marker.SetPos) == "function" and pcall(marker.SetPos, marker, pt)
-						if ok_move then
-							moved = moved + 1
-							local nx, ny = c.x, c.y
-							if type(pt.xy) == "function" then nx, ny = pt:xy() end
-							local new_sector = SectorAtPoint(map, nx, ny)
-							if new_sector and type(new_sector.RegisterDeposit) == "function" then
-								pcall(new_sector.RegisterDeposit, new_sector, marker)
-							elseif type(sector.RegisterDeposit) == "function" then
-								pcall(sector.RegisterDeposit, sector, marker)
-							end
-							if is_concrete then
-								concrete_moves[#concrete_moves + 1] = {
-									from = { x = item.px, y = item.py },
-									to = { x = nx, y = ny },
-									paint_now = SectorIsScanned(new_sector),
-								}
-							end
-						elseif type(sector.RegisterDeposit) == "function" then
-							pcall(sector.RegisterDeposit, sector, marker) -- move failed: undo
-						end
-					end
-				end
-			end
-		end
-		MoveConcreteImprints(map, concrete_moves)
-	end)
-	Log("evened out resource-deposit density", {
-		cap_per_sector = cap,
-		over_cap_sectors = over_sectors,
-		markers_moved = moved,
-	})
-	DepositRules.LogDistributionReport(map, "after even-out")
-end
-
--- Rebuild the entrance-seeded connectivity cache after the caller has synchronously finalized
--- underground passability/buildability. This is intentionally separate from lazy candidate
--- checks so the pipeline can fail closed before creating any extra enrichments.
 function DepositRules.PrepareUndergroundReachability(map)
 	if not IsUndergroundMap(map) then return true end
 	topup_candidate_pool_by_map[map] = nil
@@ -5432,7 +4875,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
 			or marker.SuperBigMapBreakthroughRepair == true
-			or marker.SuperBigMapQuadrantClone == true)
+			or marker.SuperBigMapEnrichmentClone == true)
 		if additional and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
 	-- At first underground access no rover or drone has explored this map yet, so no enrichment
@@ -5667,7 +5110,7 @@ DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 -- scanned" report). Conversely, markers that moved INTO the already-scanned start sector never
 -- got their scan-time placement. Fix both:
 --   A) any revealed scan-gated deposit/anomaly now sitting in an UNSCANNED sector is hidden and
---      flagged SuperBigMapQuadrantClone, so the existing OnSectorScanned reveal shows it when its
+--      flagged SuperBigMapEnrichmentClone, so the existing OnSectorScanned reveal shows it when its
 --      sector is actually scanned;
 --   B) every SCANNED sector gets vanilla's own RevealDeposits over its markers (places/reveals
 --      what moved in), plus a reveal of any hidden scan-gated objects inside it.
@@ -5695,7 +5138,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 			if ok_s and sector and not SectorIsScanned(sector) then
 				SetRevealedState(obj, false)
 				-- Flag so the existing OnSectorScanned reveal path shows it on a real scan.
-				obj.SuperBigMapQuadrantClone = true
+				obj.SuperBigMapEnrichmentClone = true
 				hidden = hidden + 1
 			end
 		end)
@@ -5706,7 +5149,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	-- ones are the start sector's -- which the stretch moved into unscanned sectors (visible
 	-- deposit icons + painted regolith, the "concrete still visible" report). Despawn the spawned
 	-- object and reset its marker to unplaced/hidden so it re-spawns vanilla-style when its new
-	-- sector is really scanned (same pattern as EvenOutDepositDensity's start-sector surplus), and
+	-- sector is really scanned, and
 	-- clear the concrete regolith imprint at the unscanned position (PlaceDeposit repaints it on
 	-- scan). MoveConcreteImprints' flood fill runs inside the stretch branch's paused-ILD scope.
 	local IsValid = Global("IsValid")
@@ -5864,14 +5307,14 @@ function DepositRules.OnSectorScanned(status, sector)
 	end
 	local revealed = 0
 	pcall(map.MapForEach, map, area, "SubsurfaceDeposit", function(obj)
-		if obj and obj.SuperBigMapQuadrantClone and IsScanGatedDeposit(obj) then
+		if obj and obj.SuperBigMapEnrichmentClone and IsScanGatedDeposit(obj) then
 			SetRevealedState(obj, true)
 			revealed = revealed + 1
 		end
 	end)
 	-- SubsurfaceAnomaly is not a SubsurfaceDeposit subclass; sweep it too.
 	pcall(map.MapForEach, map, area, "SubsurfaceAnomaly", function(obj)
-		if obj and obj.SuperBigMapQuadrantClone and IsScanGatedDeposit(obj) then
+		if obj and obj.SuperBigMapEnrichmentClone and IsScanGatedDeposit(obj) then
 			SetRevealedState(obj, true)
 			revealed = revealed + 1
 		end
