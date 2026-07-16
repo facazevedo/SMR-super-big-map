@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 4
+local PATCH_VERSION = 5
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -104,6 +104,24 @@ local function ScalarFields(value)
 	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
 	for _, key in ipairs(keys) do parts[#parts + 1] = tostring(key) .. "=" .. tostring(value[key]) end
 	return #parts > 0 and table.concat(parts, ";") or "none"
+end
+
+local function MemberTypes(value)
+	if type(value) ~= "table" then return "not-table" end
+	local members = {}
+	local ok, err = pcall(function()
+		for key, item in pairs(value) do
+			members[#members + 1] = tostring(key) .. ":" .. type(item)
+		end
+	end)
+	if not ok then return "ERROR:" .. tostring(err) end
+	table.sort(members)
+	if #members > 256 then
+		local total = #members
+		for index = #members, 257, -1 do members[index] = nil end
+		members[#members + 1] = "...(total=" .. tostring(total) .. ")"
+	end
+	return #members > 0 and table.concat(members, ";") or "none"
 end
 
 local function FunctionEnvironment(fn)
@@ -495,6 +513,7 @@ local function NewRun(generator, source)
 		proc_stack = {}, proc_calls = 0, factory_calls = 0, warning_calls = 0,
 		rrand_calls = 0, grand_calls = 0, playable_area_calls = 0,
 		mask_buildable_calls = 0,
+		rebuild_buildable_calls = 0,
 		grid_min_max_calls = 0, hex_align_calls = 0, resource_info_calls = 0,
 		factory_duplicate_calls = 0, factory_hashes = {}, factory_coordinates = {},
 		factory_hexes = {},
@@ -508,6 +527,7 @@ local function RunForMap(map, generator)
 		run = State.enrichment_spread_active_generate_run or NewRun(generator, "implicit")
 		if map then runs_by_map[map] = run end
 	end
+	if map then run.map = map end
 	return run
 end
 
@@ -845,6 +865,7 @@ local function GridFullAudit(run, label, grid, extra, options)
 end
 
 local function NativeMapExtentFields(map, z_grid, mask)
+	local buildable = map and map.buildable
 	local fields = {
 		map = MapName(map), map_width_field = tostring(map and map.Width),
 		map_height_field = tostring(map and map.Height),
@@ -854,6 +875,14 @@ local function NativeMapExtentFields(map, z_grid, mask)
 		mapdata_height_tiles = tostring(map and map.mapdata and map.mapdata.Height),
 		mapdata_pass_border = tostring(map and map.mapdata and map.mapdata.PassBorder),
 		z_grid = DescribeValue(z_grid), mask_grid = DescribeValue(mask),
+		buildable = tostring(buildable), buildable_type = type(buildable),
+		buildable_class = tostring(buildable and buildable.class),
+		buildable_scalars = ScalarFields(buildable),
+		buildable_members = MemberTypes(buildable),
+		buildable_z_grid = DescribeValue(buildable and buildable.z_grid),
+		map_get_buildable_grid_type = tostring(map and type(map.GetBuildableGrid)),
+		global_rebuild_buildable_grid = tostring(Global("RebuildBuildableGrid")),
+		global_mask_buildable_grid = tostring(Global("MaskBuildableGrid")),
 	}
 	if map and type(map.GetMapSize) == "function" then
 		local ok, width, height = pcall(map.GetMapSize, map)
@@ -869,6 +898,57 @@ local function NativeMapExtentFields(map, z_grid, mask)
 		if ok then fields.terrain_height_map_size = tostring(width) .. "x" .. tostring(height or width) end
 	end
 	return fields
+end
+
+local function BuildableState(run, map, phase, extra)
+	if not Enabled() then return false end
+	local buildable = map and map.buildable
+	local z_grid = buildable and buildable.z_grid
+	local fields = NativeMapExtentFields(map, z_grid, nil)
+	fields.run_id = run and run.id or "?"
+	fields.proc = CurrentProc(run)
+	fields.phase = tostring(phase)
+	Merge(fields, extra)
+	Log("BUILDABLE_STATE", fields)
+	if z_grid then
+		local label = tostring(phase):gsub("[^%w]+", "_"):upper()
+		GridAudit(run, "BUILDABLE_STATE_" .. label, z_grid, {
+			phase = tostring(phase), buildable = tostring(buildable),
+			map_width_field = tostring(map and map.Width),
+			map_height_field = tostring(map and map.Height),
+			map_hex_width_field = tostring(map and map.hex_width),
+			map_hex_height_field = tostring(map and map.hex_height),
+		})
+	end
+	return true
+end
+
+local function LogRelevantEnvironment(run, env)
+	local names = {}
+	for name in pairs(env or {}) do
+		local lower = string.lower(tostring(name))
+		if string.find(lower, "build", 1, true) or string.find(lower, "mask", 1, true)
+			or string.find(lower, "playable", 1, true) or string.find(lower, "grid", 1, true)
+			or string.find(lower, "zone", 1, true) then
+			names[#names + 1] = name
+		end
+	end
+	table.sort(names, function(a, b) return tostring(a) < tostring(b) end)
+	Log("GENERATOR_ENV_RELEVANT_BEGIN", {
+		run_id = run and run.id or "?", proc = CurrentProc(run), symbols = #names,
+		env = tostring(env), env_members = MemberTypes(env),
+	})
+	for index, name in ipairs(names) do
+		local value = env[name]
+		Log("GENERATOR_ENV_RELEVANT_SYMBOL", {
+			run_id = run and run.id or "?", proc = CurrentProc(run), index = index,
+			name = tostring(name), value_type = type(value), value = DescribeValue(value),
+			scalars = ScalarFields(value), members = MemberTypes(value),
+		})
+	end
+	Log("GENERATOR_ENV_RELEVANT_END", {
+		run_id = run and run.id or "?", proc = CurrentProc(run), symbols = #names,
+	})
 end
 
 local function LogNestedPoints(run, call_kind, call_index, value, result_index, path, seen)
@@ -893,6 +973,7 @@ end
 
 local Diagnostics = {}
 Diagnostics.Snapshot = Snapshot
+Diagnostics.TraceBuildableState = BuildableState
 
 function Diagnostics.TraceGeneratorBoundary(generator, map, phase, extra)
 	if not Enabled() then return false end
@@ -903,6 +984,11 @@ function Diagnostics.TraceGeneratorBoundary(generator, map, phase, extra)
 	AddGeneratorFields(fields, generator)
 	Merge(fields, extra)
 	Log("GENERATOR_BOUNDARY", fields)
+	if map and map.buildable then
+		BuildableState(run, map, "generator-boundary-" .. tostring(phase), {
+			boundary_phase = tostring(phase), generator = tostring(generator),
+		})
+	end
 	return true
 end
 
@@ -991,6 +1077,7 @@ function Diagnostics.PatchGenerator(reason)
 			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
 			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
 			mask_buildable_calls = run.mask_buildable_calls,
+			rebuild_buildable_calls = run.rebuild_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
@@ -1006,6 +1093,7 @@ function Diagnostics.PatchGenerator(reason)
 		local fields = RunFields(run, map)
 		AddGeneratorFields(fields, generator)
 		Log("DO_GENERATE_BEGIN", fields)
+		BuildableState(run, map, "do-generate-wrapper-entry")
 
 		-- Observe the exact terrain input used by vanilla. Expanded allocation happens before
 		-- this wrapper, so a Step-01-on run exposes the real 8192 backing while Step-01-off
@@ -1127,6 +1215,7 @@ function Diagnostics.PatchGenerator(reason)
 		if get_height_wrapper and terrain_api.GetHeightGrid == get_height_wrapper then
 			terrain_api.GetHeightGrid = original_get_height_grid
 		end
+		BuildableState(run, map, "do-generate-wrapper-after-native")
 		GridAudit(run, "DO_GENERATE_BUILDABLE_AFTER", map and map.buildable and map.buildable.z_grid)
 		if results[1] then Snapshot(map, "post-vanilla-DoGenerate") end
 		Log("DO_GENERATE_END", {
@@ -1136,6 +1225,7 @@ function Diagnostics.PatchGenerator(reason)
 			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
 			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
 			mask_buildable_calls = run.mask_buildable_calls,
+			rebuild_buildable_calls = run.rebuild_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
@@ -1151,11 +1241,21 @@ function Diagnostics.PatchGenerator(reason)
 		local run = State.enrichment_spread_active_do_generate_run
 		local args = Pack(...)
 		local rand_before = RandLast(generator)
+		if run and tag == "ResolveBuildable" then
+			BuildableState(run, run.map, "proc-start-before-ResolveBuildable", {
+				rand_before = tostring(rand_before),
+			})
+		end
 		if run then
 			run.proc_calls = run.proc_calls + 1
 			run.proc_stack[#run.proc_stack + 1] = tostring(tag)
 		end
 		local results = Pack(original_proc_start(generator, tag, ...))
+		if run and tag == "ResolveBuildable" then
+			BuildableState(run, run.map, "proc-start-after-ResolveBuildable-hook", {
+				rand_after = tostring(RandLast(generator)),
+			})
+		end
 		if run then
 			local fields = RunFields(run, nil)
 			fields.proc_index = run.proc_calls
@@ -1173,7 +1273,17 @@ function Diagnostics.PatchGenerator(reason)
 		local run = State.enrichment_spread_active_do_generate_run
 		local args = Pack(...)
 		local rand_before = RandLast(generator)
+		if run and tag == "ResolveBuildable" then
+			BuildableState(run, run.map, "proc-end-before-ResolveBuildable-hook", {
+				rand_before = tostring(rand_before),
+			})
+		end
 		local results = Pack(original_proc_end(generator, tag, ...))
+		if run and tag == "ResolveBuildable" then
+			BuildableState(run, run.map, "proc-end-after-ResolveBuildable-hook", {
+				rand_after = tostring(RandLast(generator)),
+			})
+		end
 		if run then
 			Log("PROC_END", {
 				run_id = run.id, proc_index = run.proc_calls, tag = tostring(tag),
@@ -1195,6 +1305,8 @@ function Diagnostics.PatchGenerator(reason)
 		local saved_rm_print = env.rm_print
 		local saved_factory = env.GenMarkerObj
 		local saved_playable = env.GetPlayableArea
+		local saved_env_mask_buildable = env.MaskBuildableGrid
+		local saved_env_rebuild_buildable = env.RebuildBuildableGrid
 		local closure_env, closure_env_source = FunctionEnvironment(original_on_generate)
 		local saved_grid_min_max, saved_hex_align, saved_resource_info
 		if type(closure_env) == "table" then
@@ -1208,10 +1320,19 @@ function Diagnostics.PatchGenerator(reason)
 			rrand_type = type(saved_rrand), grand_type = type(saved_grand),
 			rm_print_type = type(saved_rm_print), factory_type = type(saved_factory),
 			playable_area_type = type(saved_playable), closure_environment = closure_env_source,
+			env_mask_buildable_type = type(saved_env_mask_buildable),
+			env_mask_buildable = tostring(saved_env_mask_buildable),
+			env_rebuild_buildable_type = type(saved_env_rebuild_buildable),
+			env_rebuild_buildable = tostring(saved_env_rebuild_buildable),
 			grid_min_max_type = type(saved_grid_min_max), hex_align_type = type(saved_hex_align),
 			resource_info_type = type(saved_resource_info),
 			gen_area_unscaled = tostring(env.gen_area_unscaled),
 		}))
+		LogRelevantEnvironment(run, env)
+		BuildableState(run, map, "on-generate-logic-entry", {
+			env_mask_buildable = tostring(saved_env_mask_buildable),
+			env_rebuild_buildable = tostring(saved_env_rebuild_buildable),
+		})
 		GridAudit(run, "ON_GENERATE_INPUT_GEN_ZONE", env.gen_zone, {
 			gen_area_unscaled = tostring(env.gen_area_unscaled),
 		})
@@ -1220,7 +1341,83 @@ function Diagnostics.PatchGenerator(reason)
 		GridAudit(run, "ON_GENERATE_INPUT_BUILDABLE", map and map.buildable and map.buildable.z_grid)
 
 		local rrand_wrapper, grand_wrapper, rm_print_wrapper, factory_wrapper, playable_wrapper
+		local env_mask_buildable_wrapper, env_rebuild_buildable_wrapper
 		local grid_min_max_wrapper, hex_align_wrapper, resource_info_wrapper
+		if type(saved_env_mask_buildable) == "function" then
+			env_mask_buildable_wrapper = function(target_map, z_grid, invalid_mask, ...)
+				run.mask_buildable_calls = run.mask_buildable_calls + 1
+				local call_index = run.mask_buildable_calls
+				local extra = NativeMapExtentFields(target_map, z_grid, invalid_mask)
+				extra.call_index = call_index
+				extra.hook = "generator-env"
+				extra.arguments_after_mask = DescribePacked(Pack(...))
+				BuildableState(run, target_map, "env-MaskBuildableGrid-before-" .. tostring(call_index), extra)
+				Log("MASK_BUILDABLE_BEGIN", Merge({
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+				}, extra))
+				local before = GridFullAudit(run,
+					"MASK_BUILDABLE_INVALID_BEFORE_" .. tostring(call_index), invalid_mask, extra, {
+						histogram = true, capture_values = true, log_blocks = true,
+					})
+				GridFullAudit(run,
+					"MASK_BUILDABLE_Z_GRID_" .. tostring(call_index), z_grid, extra, {
+						histogram = false, log_blocks = true,
+					})
+				local mask_results = Pack(pcall(saved_env_mask_buildable,
+					target_map, z_grid, invalid_mask, ...))
+				local after
+				if mask_results[1] then
+					after = GridFullAudit(run,
+						"MASK_BUILDABLE_INVALID_AFTER_" .. tostring(call_index), invalid_mask, extra, {
+							histogram = true, compare = before, log_blocks = true,
+						})
+				end
+				if before then before.values = nil end
+				BuildableState(run, target_map, "env-MaskBuildableGrid-after-" .. tostring(call_index), extra)
+				Log("MASK_BUILDABLE_END", Merge({
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					ok = Bool(mask_results[1]),
+					error = mask_results[1] and "none" or tostring(mask_results[2]),
+					before_zeros = tostring(before and before.zeros),
+					before_ones = tostring(before and before.ones),
+					after_zeros = tostring(after and after.zeros),
+					after_ones = tostring(after and after.ones),
+					changed_cells = tostring(after and after.changed),
+					zero_to_one = tostring(after and after.zero_to_one),
+					one_to_zero = tostring(after and after.one_to_zero),
+				}, extra))
+				if not mask_results[1] then error(mask_results[2]) end
+				return Unpack(mask_results, 2, mask_results.n)
+			end
+			env.MaskBuildableGrid = env_mask_buildable_wrapper
+		end
+		if type(saved_env_rebuild_buildable) == "function" then
+			env_rebuild_buildable_wrapper = function(...)
+				local args = Pack(...)
+				local target_map = args[1] or map
+				run.rebuild_buildable_calls = run.rebuild_buildable_calls + 1
+				local call_index = run.rebuild_buildable_calls
+				BuildableState(run, target_map, "env-RebuildBuildableGrid-before-" .. tostring(call_index), {
+					call_index = call_index, hook = "generator-env", args = DescribePacked(args),
+				})
+				local rebuild_results = Pack(pcall(saved_env_rebuild_buildable, ...))
+				BuildableState(run, target_map, "env-RebuildBuildableGrid-after-" .. tostring(call_index), {
+					call_index = call_index, hook = "generator-env", ok = Bool(rebuild_results[1]),
+					error = rebuild_results[1] and "none" or tostring(rebuild_results[2]),
+				})
+				Log("REBUILD_BUILDABLE", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					hook = "generator-env", args = DescribePacked(args),
+					ok = Bool(rebuild_results[1]),
+					error = rebuild_results[1] and "none" or tostring(rebuild_results[2]),
+					results = rebuild_results[1] and DescribePacked({ n = rebuild_results.n - 1,
+						Unpack(rebuild_results, 2, rebuild_results.n) }) or "error",
+				})
+				if not rebuild_results[1] then error(rebuild_results[2]) end
+				return Unpack(rebuild_results, 2, rebuild_results.n)
+			end
+			env.RebuildBuildableGrid = env_rebuild_buildable_wrapper
+		end
 		if type(saved_rrand) == "function" then
 			rrand_wrapper = function(...)
 				local args = Pack(...)
@@ -1456,6 +1653,12 @@ function Diagnostics.PatchGenerator(reason)
 		if rm_print_wrapper and env.rm_print == rm_print_wrapper then env.rm_print = saved_rm_print end
 		if factory_wrapper and env.GenMarkerObj == factory_wrapper then env.GenMarkerObj = saved_factory end
 		if playable_wrapper and env.GetPlayableArea == playable_wrapper then env.GetPlayableArea = saved_playable end
+		if env_mask_buildable_wrapper and env.MaskBuildableGrid == env_mask_buildable_wrapper then
+			env.MaskBuildableGrid = saved_env_mask_buildable
+		end
+		if env_rebuild_buildable_wrapper and env.RebuildBuildableGrid == env_rebuild_buildable_wrapper then
+			env.RebuildBuildableGrid = saved_env_rebuild_buildable
+		end
 		if type(closure_env) == "table" then
 			if grid_min_max_wrapper and closure_env.GridMinMax == grid_min_max_wrapper then
 				pcall(function() closure_env.GridMinMax = saved_grid_min_max end)
@@ -1474,6 +1677,7 @@ function Diagnostics.PatchGenerator(reason)
 			rrand_calls = run.rrand_calls, grand_calls = run.grand_calls,
 			playable_area_calls = run.playable_area_calls,
 			mask_buildable_calls = run.mask_buildable_calls,
+			rebuild_buildable_calls = run.rebuild_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
