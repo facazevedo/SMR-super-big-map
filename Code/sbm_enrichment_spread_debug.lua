@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 2
+local PATCH_VERSION = 3
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -522,11 +522,13 @@ local function CurrentProc(run)
 end
 
 -- Read-only forensic fingerprint for the grids which determine enrichment placement. A full
--- dump would add millions of log lines, so each audit records the authoritative dimensions and
--- GridMinMax plus a fixed 17x17 spatial lattice. The two independent rolling checksums and the
+-- dump would add millions of log lines, so each audit records the authoritative dimensions plus
+-- a fixed 17x17 spatial lattice. The two independent rolling checksums and the
 -- explicit rows make Step-01-off/on comparisons deterministic while preserving the layout of
 -- the sampled values. An optional region lets the expanded 8192 backing and its 6144 source
 -- corner be fingerprinted separately without copying or resampling either grid.
+-- Deliberately never call GridMinMax here: native terrain storage grids support size/get but
+-- trigger the engine-level "Grid Type Not Supported" asset error in GridMinMax even under pcall.
 local function GridAudit(run, label, grid, extra, region)
 	if not Enabled() then return false end
 	local ok_size, width, height = pcall(function() return grid:size() end)
@@ -551,16 +553,6 @@ local function GridAudit(run, label, grid, extra, region)
 		y1 = math.max(y0, math.min(height - 1, math.floor(tonumber(region.y1) or (height - 1))))
 	end
 
-	local full_min, full_max = "not-requested", "not-requested"
-	if x0 == 0 and y0 == 0 and x1 == width - 1 and y1 == height - 1 then
-		local grid_min_max = Global("GridMinMax")
-		if type(grid_min_max) == "function" then
-			local ok_mm, lo, hi = pcall(grid_min_max, grid)
-			if ok_mm then full_min, full_max = tostring(lo), tostring(hi)
-			else full_min, full_max = "ERROR", tostring(lo) end
-		end
-	end
-
 	local SAMPLE_SIDE, MOD = 17, 2147483647
 	local xs = {}
 	for ix = 0, SAMPLE_SIDE - 1 do
@@ -570,7 +562,7 @@ local function GridAudit(run, label, grid, extra, region)
 		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
 		grid = tostring(grid), width = width, height = height,
 		region = tostring(x0) .. ":" .. tostring(y0) .. "-" .. tostring(x1) .. ":" .. tostring(y1),
-		full_min = full_min, full_max = full_max, sample_side = SAMPLE_SIDE,
+		full_min_max = "omitted-native-grid-safe", sample_side = SAMPLE_SIDE,
 		x_coordinates = table.concat(xs, ","),
 	}, extra)
 	Log("GRID_AUDIT_BEGIN", begin_fields)
