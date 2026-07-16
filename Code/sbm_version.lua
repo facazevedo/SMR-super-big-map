@@ -59,6 +59,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     full-destination grid.
 SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 83: batch temporary-source object transfers on both maps so
--- passability/spatial edits flush once instead of once per generated decoration.
-SuperBigMap.GENERATOR_PATCH_VERSION = 83
+-- (sbm_map_generation). Bumped to 84: create and verify underground passage/Elevator anchors at
+-- startup while deferring assigned buried wonders to the first underground access pipeline.
+SuperBigMap.GENERATOR_PATCH_VERSION = 84

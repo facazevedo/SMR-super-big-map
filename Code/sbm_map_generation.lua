@@ -205,6 +205,11 @@ local function UndergroundAccessState(map, extra)
 		failed = tostring(map and map.SuperBigMapUndergroundPreparationFailed),
 		failure = tostring(map and map.SuperBigMapUndergroundStretchFailed),
 		deferred_geometry = tostring(map and type(map.SuperBigMapUndergroundDeferredGeometry) == "table"),
+		passage_bootstrap = tostring(map and map.SuperBigMapPassageBootstrapComplete),
+		passage_bootstrap_count = tostring(map and map.SuperBigMapPassageBootstrapCount),
+		deferred_wonders_pending = tostring(map and map.SuperBigMapDeferredUndergroundWondersPending),
+		deferred_wonders_planned = tostring(map and map.SuperBigMapDeferredUndergroundWonderCount),
+		deferred_wonders_spawned = tostring(map and map.SuperBigMapDeferredUndergroundWondersSpawned),
 		stretch_underground = tostring(cfg_bool("STRETCH_UNDERGROUND", false)),
 		defer_first_access = tostring(cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)),
 	}
@@ -373,6 +378,12 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapSourceHeightTiles = nil
 	map.SuperBigMapDesiredWidthTiles = nil
 	map.SuperBigMapDesiredHeightTiles = nil
+	map.SuperBigMapPassageBootstrapComplete = nil
+	map.SuperBigMapPassageBootstrapCount = nil
+	map.SuperBigMapDeferredUndergroundWondersPending = nil
+	map.SuperBigMapDeferredUndergroundWondersDone = nil
+	map.SuperBigMapDeferredUndergroundWonderCount = nil
+	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
 	map.SuperBigMapGeneratorWidth = nil
 	map.SuperBigMapGeneratorHeight = nil
 	map.SuperBigMapGeneratorWidthTiles = nil
@@ -2603,6 +2614,311 @@ local function PatchPassagePairing()
 	return true
 end
 
+-- The underground generator's stock PlaceArtefacts procedure combines two unrelated jobs:
+-- spawning every buried wonder and creating the two linked surface/underground passage anchors.
+-- The former is expensive (the final ResumePassEdits dominates the measured procedure), while the
+-- latter must exist before the player can place an Elevator.  Expanded maps therefore execute this
+-- source-equivalent passage half during generation and retain the wonder markers, with their
+-- already-shuffled vanilla class assignments, for first underground access.
+local function ArtefactTicks()
+	local ticks = Global("GetPreciseTicks") or Global("RealTime")
+	if type(ticks) ~= "function" then return 0 end
+	local ok, value = pcall(ticks)
+	return ok and type(value) == "number" and value or 0
+end
+
+local function ArtefactMapGet(map, class_name)
+	if not map or type(map.MapGet) ~= "function" then return {} end
+	local ok, objects = pcall(map.MapGet, map, "map", class_name)
+	return ok and type(objects) == "table" and objects or {}
+end
+
+local function ArtefactApplyMarkerProperties(object, marker)
+	local const_tbl = Global("const")
+	local pos = marker:GetPos()
+	if pos and type(pos.SetInvalidZ) == "function" then pos = pos:SetInvalidZ() end
+	object:SetPos(pos)
+	object:SetMirrored(marker:GetMirrored())
+	object:SetAxis(marker:GetAxis())
+	object:SetAngle(marker:GetAngle())
+	object:SetScale(marker:GetScale())
+	object:SetColorModifier(marker:GetColorModifier())
+	if type(const_tbl) == "table" and const_tbl.gofPermanent then
+		object:SetGameFlags(const_tbl.gofPermanent)
+	end
+end
+
+local function ArtefactSpawnMarkerBuilding(marker, class_name, map)
+	local place_building = Global("PlaceBuildingIn")
+	local building = place_building(class_name, map)
+	ArtefactApplyMarkerProperties(building, marker)
+	return building
+end
+
+local function ArtefactClearObstructions(object, obj_prefab_marker, landscape_pos, shape)
+	local clear = Global("ClearObstructions")
+	local flatten_shape = shape
+	if not flatten_shape and type(object.GetFlattenShape) == "function" then
+		flatten_shape = object:GetFlattenShape()
+	end
+	return clear(object:GetMap(), object:GetPos(), object:GetAngle(), obj_prefab_marker,
+		landscape_pos, flatten_shape)
+end
+
+local function DeferredArtefactPreflight(map)
+	local required = {
+		PlaceBuildingIn = Global("PlaceBuildingIn"),
+		SpawnUndergroundPassage = Global("SpawnUndergroundPassage"),
+		ClearObstructions = Global("ClearObstructions"),
+		GetExtendedSpawnShape = Global("GetExtendedSpawnShape"),
+		FlattenTerrainInBuildShape = Global("FlattenTerrainInBuildShape"),
+		HexShapeForEach = Global("HexShapeForEach"),
+		HexToWorld = Global("HexToWorld"),
+		WorldToHex = Global("WorldToHex"),
+		buildUnbuildableZ = Global("buildUnbuildableZ"),
+		DoneObject = Global("DoneObject"),
+		point = Global("point"),
+		RGB = Global("RGB"),
+	}
+	for name, fn in pairs(required) do
+		if type(fn) ~= "function" then return false, name .. " is unavailable" end
+	end
+	if not map or type(map.MapGet) ~= "function"
+		or type(map.SuspendPassEdits) ~= "function" or type(map.ResumePassEdits) ~= "function"
+		or type(map.buildable) ~= "table" or type(map.buildable.GetZ) ~= "function" then
+		return false, "underground map grids or passage-edit methods are unavailable"
+	end
+	return true
+end
+
+local function VerifyBootstrapPassages(map, passages, expected)
+	local surface_map = Global("MainMap")
+	local linked, position_pairs, placement_valid = 0, 0, 0
+	for _, underground_passage in ipairs(passages or {}) do
+		local surface_passage = underground_passage and underground_passage.other
+		if surface_passage and surface_passage.other == underground_passage
+			and type(surface_passage.GetMap) == "function"
+			and type(underground_passage.GetMap) == "function"
+			and surface_passage:GetMap() == surface_map
+			and underground_passage:GetMap() == map then
+			linked = linked + 1
+			local spos = surface_passage:GetPos()
+			local upos = underground_passage:GetPos()
+			local sx, sy = PointXY(spos)
+			local ux, uy = PointXY(upos)
+			if sx == ux and sy == uy then position_pairs = position_pairs + 1 end
+			local ok_valid, valid = pcall(underground_passage.IsValidPlacement, underground_passage)
+			if ok_valid and valid == true then placement_valid = placement_valid + 1 end
+		end
+	end
+	PairingLog("passage bootstrap verification", {
+		expected = expected, created = #(passages or {}), linked = linked,
+		position_pairs = position_pairs, placement_valid = placement_valid,
+		surface_anchors = #ArtefactMapGet(surface_map, "UndergroundPassage"),
+		underground_anchors = #ArtefactMapGet(map, "SurfacePassage"),
+	})
+	return #(passages or {}) == expected and linked == expected and placement_valid == expected
+end
+
+local function BootstrapPassagesAndDeferWonders(env)
+	local map = env and env.map
+	local ready, reason = DeferredArtefactPreflight(map)
+	if not ready then return false, reason end
+	local surface_map = Global("MainMap")
+	if type(surface_map) ~= "table" or surface_map == map
+		or type(surface_map.mapdata) ~= "table" or surface_map.mapdata.Environment ~= "Surface" then
+		return false, "surface map is unavailable"
+	end
+	local rhelpers = env.rhelpers
+	local rand = type(rhelpers) == "table" and rhelpers[1]
+	if type(rand) ~= "function" then return false, "vanilla random helper is unavailable" end
+	local table_lib = Global("table") or table
+	if type(table_lib) ~= "table" or type(table_lib.shuffle) ~= "function" then
+		return false, "table.shuffle is unavailable"
+	end
+
+	local wonder_markers = ArtefactMapGet(map, "BuriedWonderMarker")
+	local passage_markers = ArtefactMapGet(map, "SurfacePassageMarker")
+	local desired_passages = 2
+	PairingLog("passage-only artefact bootstrap preflight", {
+		map = tostring(map.name), wonder_markers = #wonder_markers,
+		passage_markers = #passage_markers, desired_passages = desired_passages,
+		main_map = tostring(surface_map.name),
+	})
+	if #passage_markers < desired_passages then
+		return false, "only " .. tostring(#passage_markers)
+			.. " SurfacePassageMarker objects exist; need " .. tostring(desired_passages)
+	end
+
+	-- Consume the PlaceArtefacts PRNG exactly as vanilla does: wonder-class shuffle first,
+	-- passage-marker shuffle second. Only construction is deferred; all assignments are fixed now.
+	local const_tbl = Global("const")
+	if type(const_tbl) ~= "table" or type(const_tbl.RandomMap) ~= "table"
+		or type(const_tbl.RandomMap.UndergroundPassagesMinDistance) ~= "number" then
+		return false, "const.RandomMap.UndergroundPassagesMinDistance is unavailable"
+	end
+	local wonder_classes = {}
+	for i, class_name in ipairs(type(const_tbl) == "table" and const_tbl.BuriedWonders or {}) do
+		wonder_classes[i] = class_name
+	end
+	if #wonder_markers > 0 and #wonder_classes == 0 then
+		return false, "const.BuriedWonders is unavailable"
+	end
+	if #wonder_markers > 0 then
+		table_lib.shuffle(wonder_classes, rand)
+		for index, marker in ipairs(wonder_markers) do
+			marker.SuperBigMapDeferredWonderClass = wonder_classes[1 + ((index - 1) % #wonder_classes)]
+			marker.SuperBigMapDeferredWonderIndex = index
+		end
+	end
+	table_lib.shuffle(passage_markers, rand)
+
+	local spawn_surface_anchor = Global("SpawnUndergroundPassage")
+	local get_shape = Global("GetExtendedSpawnShape")
+	local flatten = Global("FlattenTerrainInBuildShape")
+	local for_each_hex = Global("HexShapeForEach")
+	local hex_to_world = Global("HexToWorld")
+	local world_to_hex = Global("WorldToHex")
+	local unbuildable_z = Global("buildUnbuildableZ")()
+	local done_object = Global("DoneObject")
+	local successful = {}
+	local t0 = ArtefactTicks()
+	map:SuspendPassEdits("SuperBigMap_PassageBootstrap")
+	local ok, err = pcall(function()
+		while #successful < desired_passages and #passage_markers > 0 do
+			local marker = table.remove(passage_markers)
+			local surface_anchor, surface_shape = spawn_surface_anchor(surface_map,
+				marker:GetPos(), marker:GetAngle(), const_tbl.RandomMap.UndergroundPassagesMinDistance,
+				successful)
+			if surface_anchor then
+				ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
+					surface_anchor:GetPos(), surface_shape)
+				local underground_anchor = ArtefactSpawnMarkerBuilding(marker, "SurfacePassage", map)
+				underground_anchor:Link(surface_anchor)
+				successful[#successful + 1] = underground_anchor
+
+				local shape = get_shape("Elevator")
+				local landscape_pos
+				if map.buildable:GetZ(world_to_hex(underground_anchor)) == unbuildable_z then
+					local closest_2d2
+					for_each_hex(shape, underground_anchor, function(q, r, idx)
+						local hex = shape[idx]
+						local hex_center = Global("point")(hex_to_world(q, r))
+						local build_z = map.buildable:GetZ(q, r)
+						if build_z ~= unbuildable_z then
+							local hx, hy = hex:xy()
+							local dist2 = hx * hx + hy * hy
+							if not landscape_pos or dist2 < closest_2d2 then
+								landscape_pos, closest_2d2 = hex_center, dist2
+							end
+						end
+					end)
+				end
+				ArtefactClearObstructions(underground_anchor, map.obj_prefab_marker, landscape_pos, shape)
+				flatten(shape, surface_anchor, "flatten unbuildable")
+				if underground_anchor:IsValidPlacement() then
+					done_object(marker)
+				else
+					marker.editor_text_color = Global("RGB")(255, 0, 0)
+				end
+			end
+		end
+		for _, marker in ipairs(passage_markers) do done_object(marker) end
+	end)
+	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
+	if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
+	if not resume_ok then error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err)) end
+	if not VerifyBootstrapPassages(map, successful, desired_passages) then
+		error("passage bootstrap did not create two valid linked Elevator anchors")
+	end
+
+	map.SuperBigMapDeferredUndergroundWondersPending = #wonder_markers > 0
+	map.SuperBigMapDeferredUndergroundWondersDone = #wonder_markers == 0
+	map.SuperBigMapDeferredUndergroundWonderCount = #wonder_markers
+	map.SuperBigMapPassageBootstrapComplete = true
+	map.SuperBigMapPassageBootstrapCount = #successful
+	local elapsed = ArtefactTicks() - t0
+	PairingLog("passage-only artefact bootstrap complete", {
+		passages = #successful, wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
+	})
+	UndergroundAccessLog("startup passage bootstrap complete; wonders deferred", UndergroundAccessState(map, {
+		passages = #successful, wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
+	}))
+	return true, {
+		passages = #successful, wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
+	}
+end
+
+local function FlattenDeferredWonder(wonder)
+	local get_enclosed = Global("GetEnclosedShape")
+	local shrink = Global("ShrinkShape")
+	local get_outline = Global("GetEntityOutlineShape")
+	local for_each_hex = Global("HexShapeForEach")
+	local flatten = Global("FlattenTerrainInShape")
+	local unbuildable = Global("buildUnbuildableZ")()
+	local map = wonder:GetMap()
+	local shape = get_enclosed(wonder:GetEntity())
+	if #shape == 0 then shape = shrink(get_outline(wonder:GetEntity()), 2) end
+	local buildable_z
+	for_each_hex(shape, wonder, function(q, r)
+		local z = map.buildable:GetZ(q, r)
+		if z ~= unbuildable then buildable_z = z return true end
+	end)
+	if buildable_z then
+		flatten(shape, wonder, map.buildable.z_grid, map.object_hex_grid,
+			Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, buildable_z)
+		ArtefactClearObstructions(wonder, map.obj_prefab_marker, nil, shape)
+	end
+end
+
+local function MaterializeDeferredUndergroundWonders(map)
+	local markers = ArtefactMapGet(map, "BuriedWonderMarker")
+	local planned = {}
+	for _, marker in ipairs(markers) do
+		if type(marker.SuperBigMapDeferredWonderClass) == "string"
+			and marker.SuperBigMapDeferredWonderClass ~= "" then
+			planned[#planned + 1] = marker
+		end
+	end
+	if map.SuperBigMapDeferredUndergroundWondersPending ~= true and #planned == 0 then
+		return true, 0
+	end
+	if #planned == 0 then
+		return false, "deferred wonder plan is pending but no assigned BuriedWonderMarker survives"
+	end
+	local required = {
+		Global("PlaceBuildingIn"), Global("GetEnclosedShape"), Global("ShrinkShape"),
+		Global("GetEntityOutlineShape"), Global("HexShapeForEach"),
+		Global("FlattenTerrainInShape"), Global("buildUnbuildableZ"), Global("DoneObject"),
+	}
+	for _, fn in ipairs(required) do
+		if type(fn) ~= "function" then return false, "deferred wonder helper is unavailable" end
+	end
+	local t0 = ArtefactTicks()
+	local spawned = 0
+	map:SuspendPassEdits("SuperBigMap_DeferredUndergroundWonders")
+	local ok, err = pcall(function()
+		for _, marker in ipairs(planned) do
+			local wonder = ArtefactSpawnMarkerBuilding(marker,
+				marker.SuperBigMapDeferredWonderClass, map)
+			FlattenDeferredWonder(wonder)
+			Global("DoneObject")(marker)
+			spawned = spawned + 1
+		end
+	end)
+	local resume_ok, resume_err = pcall(map.ResumePassEdits, map,
+		"SuperBigMap_DeferredUndergroundWonders")
+	if not ok then return false, tostring(err) end
+	if not resume_ok then return false, "ResumePassEdits failed: " .. tostring(resume_err) end
+	map.SuperBigMapDeferredUndergroundWondersPending = false
+	map.SuperBigMapDeferredUndergroundWondersDone = true
+	map.SuperBigMapDeferredUndergroundWondersSpawned = spawned
+	UndergroundAccessLog("deferred underground wonders materialized", UndergroundAccessState(map, {
+		planned = #planned, spawned = spawned, elapsed_ms = ArtefactTicks() - t0,
+	}))
+	return spawned == #planned, spawned
+end
+
 local function PatchRandomMapGenerator()
 	if not cfg_bool("PATCH_RANDOM_MAP_GENERATOR", true) then
 		VerbosePrint("stretch random-map generator hook disabled")
@@ -2670,6 +2986,9 @@ local function PatchRandomMapGenerator()
 				return original_on_generate_logic(self, env, ...)
 			end
 			local is_underground = environment == "Underground"
+			local defer_underground_artefacts = is_underground
+				and cfg_bool("STRETCH_UNDERGROUND", false)
+				and cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
 			local rhelpers = env.rhelpers
 			local saved_rrand = type(rhelpers) == "table" and rhelpers[2] or nil
 			local saved_grand = type(rhelpers) == "table" and rhelpers[5] or nil
@@ -5659,9 +5978,32 @@ local function PatchRandomMapGenerator()
 			-- `to_align`/`work_step` upvalues; inspect the engine-populated `info.align_pos` only
 			-- AFTER the original function runs. No alignment is recomputed or mutated here.
 			if type(saved_proc_invoke) == "function"
-				and (replace_breakthrough_selector
+				and (defer_underground_artefacts
+					or replace_breakthrough_selector
 					or (alignment_trace_enabled and not hex_hook_installed_in_closure)) then
 				proc_invoke_wrapper = function(tag, func, randless)
+					if defer_underground_artefacts and tag == "PlaceArtefacts" then
+						return saved_proc_invoke(tag, function()
+							local bootstrap_ok, details = BootstrapPassagesAndDeferWonders(env)
+							if bootstrap_ok ~= true then
+								PairingLog("passage-only bootstrap unavailable; executing stock PlaceArtefacts", {
+									reason = tostring(details), map = tostring(map and map.name),
+								})
+								UndergroundAccessLog("passage-only bootstrap unavailable; stock artefacts retained",
+									UndergroundAccessState(map, { reason = tostring(details) }), "warn")
+								local stock_results = PackValues(func())
+								local stock_passages = ArtefactMapGet(map, "SurfacePassage")
+								if not VerifyBootstrapPassages(map, stock_passages, 2) then
+									error("stock PlaceArtefacts did not create two valid linked Elevator anchors after "
+										.. tostring(details))
+								end
+								map.SuperBigMapPassageBootstrapComplete = true
+								map.SuperBigMapPassageBootstrapCount = #stock_passages
+								return Unpack(stock_results, 1, stock_results.n)
+							end
+							return details
+						end, randless)
+					end
 					if replace_breakthrough_selector
 						and tag == "PlaceAnomalies_FindAnomalies_Breakthrough" then
 						local target = type(map.SuperBigMapRolledBreakthroughCount) == "number"
@@ -8385,10 +8727,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		})
 		return false
 	end
-	-- Keep vanilla underground generation eager: this function is called only AFTER vanilla has
-	-- created the underground exits, surface passages, links, and source enrichments. When enabled,
-	-- postpone just the expensive expansion/post-processing while the underground is not current.
-	-- ChangeCurrentMapSlot is wrapped below and forces this complete pipeline before access.
+	-- The source terrain, enrichments, and two linked passage anchors are eager. Buried-wonder
+	-- construction and the expensive expansion/post-processing are postponed while the underground
+	-- is not current. ChangeCurrentMapSlot is wrapped below and forces the complete pipeline before
+	-- access; Elevator placement remains available meanwhile through the verified surface anchors.
 	local current_map = Global("CurrentMap")
 	if force_now ~= true and cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
 		and current_map ~= map then
@@ -8574,6 +8916,28 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						error("native underground enrichment transformation verification failed (mismatches="
 							.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
 					end
+				end
+			end
+			-- The vanilla wonder-class shuffle was consumed and recorded during generation, but
+			-- construction was intentionally postponed. The markers have now received the same
+			-- proportional transform as the terrain, so materialize each assigned wonder at its final
+			-- location before the authoritative passability/buildability rebuilds below.
+			do
+				SetLoadingPhase("Creating underground wonders")
+				StretchLog("underground stretch: -> MaterializeDeferredUndergroundWonders", {
+					planned = map.SuperBigMapDeferredUndergroundWonderCount,
+				})
+				local wonder_token = InvestigationBegin(
+					"underground: materialize deferred vanilla wonders", map, {
+						planned = map.SuperBigMapDeferredUndergroundWonderCount,
+					})
+				local wonder_ok, wonder_result = MaterializeDeferredUndergroundWonders(map)
+				InvestigationEnd(wonder_token, {
+					result = tostring(wonder_result),
+					spawned = map.SuperBigMapDeferredUndergroundWondersSpawned,
+				}, wonder_ok == true)
+				if wonder_ok ~= true then
+					error("deferred underground wonder materialization failed: " .. tostring(wonder_result))
 				end
 			end
 			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).

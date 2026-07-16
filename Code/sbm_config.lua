@@ -195,7 +195,7 @@ config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
 config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequence trace
 config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
 config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
-config.DebugPairing       = false   -- Pairing: legacy entrance pairing/pad trace
+config.DebugPairing       = true    -- Pairing: startup passage bootstrap/link/position trace
 config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
 config.DebugGenRand       = false   -- GenRand: generation-determinism trace
 
@@ -456,12 +456,12 @@ config.StretchRelocateStartSector = true
 -- the pair by object reference -- equal transforms on both maps preserve that correspondence).
 -- Underground enrichment density is restored after the final buildable grid exists.
 config.StretchUnderground = true
--- Defer ONLY the expensive underground stretch/post-processing until the player first opens
--- the underground. Vanilla underground generation still runs during new-game loading, so its
--- exits, surface passages, links, and original enrichments exist from the beginning. The first
--- underground map switch is held behind the normal map loading screen until the complete atomic
--- pipeline finishes: terrain stretch, final grids, entrance/marker movement, and all top-ups.
--- This avoids exposing an intermediate underground with stale heights or missing resources.
+-- Keep the two vanilla passage pairs and Elevator snap anchors eager, but postpone buried-wonder
+-- construction plus the expensive underground stretch/post-processing until first access. The
+-- generator consumes and records vanilla's wonder shuffle at startup, so deferral does not change
+-- which wonder belongs to each marker. The first underground map switch is held behind the normal
+-- loading screen until the complete atomic pipeline finishes: terrain stretch, final-coordinate
+-- wonder creation, grids, entrance/marker movement, and all top-ups.
 config.DeferUndergroundExpansionUntilFirstAccess = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with

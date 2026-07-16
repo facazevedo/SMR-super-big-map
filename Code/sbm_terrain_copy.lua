@@ -1244,6 +1244,9 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 			-- feature it was generated on. The visible structures follow in
 			-- MoveEntranceVisualsToScale (STRETCH_MOVE_ENTRANCE_VISUALS).
 			or IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker")
+			-- PlaceArtefacts keeps these markers alive when underground wonders are deferred.
+			-- They must receive the identical transform before the assigned wonder is materialized.
+			or IsKindOfSafe(obj, "BuriedWonderMarker")
 	end
 	local objs = {}
 	local collection_token = InvestigationBegin("markers: collect source objects", map)
