@@ -2917,6 +2917,27 @@ local function PatchRandomMapGenerator()
 					local ok_z, value = pcall(closure_build_unbuildable_z)
 					if ok_z and type(value) == "number" then unbuildable_z = value end
 				end
+				local native_sampler = map.SuperBigMapNativeSourceSampler
+				local use_native_sampler = native_sampler ~= nil
+					and cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false)
+				local sync_native_sampler = map.SuperBigMapSyncNativeSourceSampler
+				if use_native_sampler then
+					if type(sync_native_sampler) ~= "function" then
+						return nil, "native-source-sampler-sync-unavailable"
+					end
+					local ok_sync, sync_error = pcall(sync_native_sampler, "buildable-grid")
+					if not ok_sync then
+						return nil, "native-source-sampler-sync-failed:" .. tostring(sync_error)
+					end
+					local sync_state = map.SuperBigMapNativeSourceSamplerSyncState
+					source_mask_log("SOURCE_BUILDABLE_SAMPLER_SYNCED", {
+						sampler = tostring(native_sampler), destination = tostring(map),
+						syncs = tostring(sync_state and sync_state.sampler_syncs),
+						last_reason = tostring(sync_state and sync_state.last_sync_reason),
+						total_sync_ms = tostring(sync_state and sync_state.sampler_sync_ms),
+					})
+				end
+				local build_map = use_native_sampler and native_sampler or map
 				local map_data = map.mapdata
 				if type(map_data) ~= "table" then return nil, "mapdata-unavailable" end
 				local pass_border = tonumber(map_data.PassBorder) or 0
@@ -2996,7 +3017,13 @@ local function PatchRandomMapGenerator()
 					diagnostics_enabled = ok_enabled and enabled == true
 				end
 				local stats = {
-					algorithm = "native InitBuildableGrid into full backing capacity under exact source view -> source crop -> native ProcessBuildableGrid",
+					algorithm = use_native_sampler
+						and "native InitBuildableGrid on real source-sized sampler -> native ProcessBuildableGrid"
+						or "native InitBuildableGrid into full backing capacity under exact source view -> source crop -> native ProcessBuildableGrid",
+					backing_mode = use_native_sampler and "native-source-sampler" or "expanded-capacity",
+					build_map = tostring(build_map), destination_map = tostring(map),
+					sampler_syncs = tostring(map.SuperBigMapNativeSourceSamplerSyncState
+						and map.SuperBigMapNativeSourceSamplerSyncState.sampler_syncs),
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
 					source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
@@ -3017,8 +3044,10 @@ local function PatchRandomMapGenerator()
 					process_maxdelta = process_params.maxdelta,
 					process_minarea = process_params.minarea,
 					logical_view = "source",
-					output_capacity = "expanded",
-					border_mode = "native InitBuildableGrid under source view",
+					output_capacity = use_native_sampler and "native-source" or "expanded",
+					border_mode = use_native_sampler
+						and "native source backing and native source view"
+						or "native InitBuildableGrid under source view",
 					diagnostic_shadow = diagnostics_enabled,
 					old_grid = tostring(buildable.z_grid), old_grid_size = "unavailable",
 				}
@@ -3034,7 +3063,9 @@ local function PatchRandomMapGenerator()
 				local resume = Global("ResumeInfiniteLoopDetection")
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableRawGridBridge") end
 				local bridge_ok, bridge_err = pcall(function()
-					capacity_raw = closure_new_grid(expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+					local capacity_hex_w = use_native_sampler and source_hex_w or expanded_hex_w
+					local capacity_hex_h = use_native_sampler and source_hex_h or expanded_hex_h
+					capacity_raw = closure_new_grid(capacity_hex_w, capacity_hex_h, 16, unbuildable_z)
 					source_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					source_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					if diagnostics_enabled then
@@ -3050,20 +3081,22 @@ local function PatchRandomMapGenerator()
 					-- The entire point of this bridge is the asymmetric transaction below: native output
 					-- capacity matches the real backing, but every logical dimension stays source-sized.
 					-- Assert that contract before entering native code and never rewrite these fields.
-					local source_view_width, source_view_height = map.Width, map.Height
-					local source_view_hex_width, source_view_hex_height = map.hex_width, map.hex_height
-					local source_view_data_width, source_view_data_height = map_data.Width, map_data.Height
-					local map_get_size = map.GetMapSize
+					local build_map_data = build_map.mapdata or map_data
+					local source_view_width, source_view_height = build_map.Width, build_map.Height
+					local source_view_hex_width, source_view_hex_height = build_map.hex_width, build_map.hex_height
+					local source_view_data_width, source_view_data_height =
+						build_map_data.Width, build_map_data.Height
+					local map_get_size = build_map.GetMapSize
 					local terrain_api = closure_global("terrain", Global("terrain"))
 					local terrain_get_size = type(terrain_api) == "table"
 						and terrain_api.GetMapSize or nil
 					local observed_map_w, observed_map_h, observed_terrain_w, observed_terrain_h
 					if type(map_get_size) == "function" then
-						local ok_size, width, height = pcall(map_get_size, map)
+						local ok_size, width, height = pcall(map_get_size, build_map)
 						if ok_size then observed_map_w, observed_map_h = width, height end
 					end
 					if type(terrain_get_size) == "function" then
-						local ok_size, width, height = pcall(terrain_get_size, map)
+						local ok_size, width, height = pcall(terrain_get_size, build_map)
 						if ok_size then observed_terrain_w, observed_terrain_h = width, height end
 					end
 					local source_view_exact = source_view_width == source_world_w
@@ -3084,7 +3117,9 @@ local function PatchRandomMapGenerator()
 						required_source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 						required_source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
 						required_source_tiles = tostring(generator_w) .. "x" .. tostring(generator_h),
-						output_capacity = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
+						output_capacity = tostring(capacity_hex_w) .. "x" .. tostring(capacity_hex_h),
+						backing_mode = stats.backing_mode,
+						build_map = tostring(build_map), destination_map = tostring(map),
 					}
 					if source_view_exact then
 						source_mask_log("SOURCE_BUILDABLE_LOGICAL_VIEW_AUDIT", view_audit)
@@ -3096,14 +3131,15 @@ local function PatchRandomMapGenerator()
 					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_BEGIN", {
 						logical_view = "source", logical_world = stats.source_world,
 						logical_hex = stats.source_hex,
-						output_capacity_hex = stats.expanded_hex,
+						output_capacity_hex = tostring(capacity_hex_w) .. "x" .. tostring(capacity_hex_h),
 						output_grid = tostring(capacity_raw), pass_border = pass_border,
+						backing_mode = stats.backing_mode, build_map = tostring(build_map),
 						map_get_size_function = tostring(map_get_size),
 						terrain_get_size_function = tostring(terrain_get_size),
 					})
 					local init_started = now()
 					init_params.buildable_grid = capacity_raw
-					closure_init_buildable_grid(map, init_params)
+					closure_init_buildable_grid(build_map, init_params)
 					stats.init_ms = now() - init_started
 					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_END", stats)
 					source_buildable_trace("SOURCE_BUILDABLE_RAW_CAPACITY_SOURCE_VIEW",
@@ -3123,6 +3159,9 @@ local function PatchRandomMapGenerator()
 					if diagnostics_enabled then
 						local shadow_init_started = now()
 						init_params.buildable_grid = direct_raw
+						-- Keep the old expanded-backing calculation as a diagnostic shadow. This
+						-- comparison isolates native-backing effects without allowing the shadow
+						-- to influence the live generator result.
 						closure_init_buildable_grid(map, init_params)
 						stats.shadow_init_ms = now() - shadow_init_started
 						source_mask_log("SOURCE_BUILDABLE_DIRECT_SOURCE_SHADOW_INIT_END", stats)
@@ -3131,8 +3170,10 @@ local function PatchRandomMapGenerator()
 						local comparison = source_buildable_compare(
 							"capacity-source-view-crop-vs-direct-source-sized-raw",
 							source_raw, direct_raw, source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "raw", primary = "full-capacity-source-view-crop",
-								shadow = "direct-source-sized-native",
+								stage = "raw", primary = use_native_sampler
+									and "native-source-sampler" or "full-capacity-source-view-crop",
+								shadow = use_native_sampler
+									and "expanded-backing-source-sized" or "direct-source-sized-native",
 							})
 						stats.raw_exact_differences = comparison.exact_differences
 						stats.raw_classification_differences = comparison.classification_differences
@@ -3169,8 +3210,10 @@ local function PatchRandomMapGenerator()
 							"capacity-source-view-crop-vs-direct-source-sized-processed",
 							source_processed, direct_processed,
 							source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "processed", primary = "full-capacity-source-view-crop",
-								shadow = "direct-source-sized-native",
+								stage = "processed", primary = use_native_sampler
+									and "native-source-sampler" or "full-capacity-source-view-crop",
+								shadow = use_native_sampler
+									and "expanded-backing-source-sized" or "direct-source-sized-native",
 							})
 						stats.processed_exact_differences = comparison.exact_differences
 						stats.processed_classification_differences = comparison.classification_differences
@@ -3262,6 +3305,9 @@ local function PatchRandomMapGenerator()
 					or tonumber(map.SuperBigMapSourceWidth)
 				local source_world_h = tonumber(map.SuperBigMapGeneratorHeight)
 					or tonumber(map.SuperBigMapSourceHeight)
+				local native_sampler = map.SuperBigMapNativeSourceSampler
+				local use_native_sampler = native_sampler ~= nil
+					and cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false)
 				local expanded_world_w = tonumber(map.SuperBigMapExpandedWorldWidth)
 				local expanded_world_h = tonumber(map.SuperBigMapExpandedWorldHeight)
 				local expanded_hex_w = tonumber(map.SuperBigMapExpandedHexWidth)
@@ -3305,35 +3351,67 @@ local function PatchRandomMapGenerator()
 					return nil, "GridNot-failed:" .. tostring(not_err)
 				end
 
-				local virtual_mask, virtual_z
-				local ok_virtual_mask, virtual_mask_or_err = pcall(
-					closure_new_compute_grid, virtual_w, virtual_h, mask_format, mask_bits)
-				if ok_virtual_mask then virtual_mask = virtual_mask_or_err end
-				local ok_virtual_z, virtual_z_or_err = pcall(
-					closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
-				if ok_virtual_z then virtual_z = virtual_z_or_err end
-				if not virtual_mask or not virtual_z then
-					pcall(function() repaired:free() end)
-					if virtual_mask then pcall(function() virtual_mask:free() end) end
-					if virtual_z then pcall(function() virtual_z:free() end) end
-					return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
-						.. ";z=" .. tostring(virtual_z_or_err)
+				local sampler_width, sampler_height
+				if use_native_sampler then
+					local get_size = native_sampler.GetMapSize
+					if type(get_size) ~= "function" then
+						pcall(function() repaired:free() end)
+						return nil, "native-source-sampler-map-size-unavailable"
+					end
+					local ok_size, width, height = pcall(get_size, native_sampler)
+					sampler_width, sampler_height = width, height or width
+					if not ok_size or sampler_width ~= source_world_w or sampler_height ~= source_world_h then
+						pcall(function() repaired:free() end)
+						return nil, string.format("native-source-sampler-size-mismatch:%sx%s expected %sx%s",
+							tostring(sampler_width), tostring(sampler_height),
+							tostring(source_world_w), tostring(source_world_h))
+					end
 				end
-				local ok_fill, fill_err = pcall(closure_grid_fill, virtual_mask, 1)
-				if not ok_fill then
-					pcall(function() repaired:free() end)
-					pcall(function() virtual_mask:free() end)
-					pcall(function() virtual_z:free() end)
-					return nil, "virtual-mask-fill-failed:" .. tostring(fill_err)
+
+				local virtual_mask, virtual_z
+				if not use_native_sampler then
+					local ok_virtual_mask, virtual_mask_or_err = pcall(
+						closure_new_compute_grid, virtual_w, virtual_h, mask_format, mask_bits)
+					if ok_virtual_mask then virtual_mask = virtual_mask_or_err end
+					local ok_virtual_z, virtual_z_or_err = pcall(
+						closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+					if ok_virtual_z then virtual_z = virtual_z_or_err end
+					if not virtual_mask or not virtual_z then
+						pcall(function() repaired:free() end)
+						if virtual_mask then pcall(function() virtual_mask:free() end) end
+						if virtual_z then pcall(function() virtual_z:free() end) end
+						return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
+							.. ";z=" .. tostring(virtual_z_or_err)
+					end
+					local ok_fill, fill_err = pcall(closure_grid_fill, virtual_mask, 1)
+					if not ok_fill then
+						pcall(function() repaired:free() end)
+						pcall(function() virtual_mask:free() end)
+						pcall(function() virtual_z:free() end)
+						return nil, "virtual-mask-fill-failed:" .. tostring(fill_err)
+					end
 				end
 
 				local stats = {
-					algorithm = "native MaskBuildableGrid on ratio-derived virtual source grid",
+					algorithm = use_native_sampler
+						and "native MaskBuildableGrid on real source-sized sampler"
+						or "native MaskBuildableGrid on ratio-derived virtual source grid",
+					backing_mode = use_native_sampler and "native-source-sampler" or "expanded-virtual",
+					mask_map = tostring(use_native_sampler and native_sampler or map),
+					destination_map = tostring(map),
+					sampler_syncs = tostring(map.SuperBigMapNativeSourceSamplerSyncState
+						and map.SuperBigMapNativeSourceSamplerSyncState.sampler_syncs),
+					sampler_last_sync_reason = tostring(map.SuperBigMapNativeSourceSamplerSyncState
+						and map.SuperBigMapNativeSourceSamplerSyncState.last_sync_reason),
 					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
-					virtual_grid = tostring(virtual_w) .. "x" .. tostring(virtual_h),
+					virtual_grid = use_native_sampler and "bypassed"
+						or (tostring(virtual_w) .. "x" .. tostring(virtual_h)),
 					virtual_mask_format = tostring(mask_format) .. tostring(mask_bits),
 					buildable = tostring(build_w) .. "x" .. tostring(build_h),
-					virtual_buildable = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
+					virtual_buildable = use_native_sampler and "bypassed"
+						or (tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h)),
+					sampler_world = use_native_sampler
+						and (tostring(sampler_width) .. "x" .. tostring(sampler_height)) or "none",
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
 					work_step = complement_work_step, unbuildable_z = unbuildable_z,
@@ -3366,27 +3444,42 @@ local function PatchRandomMapGenerator()
 				end
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskNativeBridge") end
 				local ok_bridge, bridge_err = pcall(function()
-					-- The new grids are initialized invalid/unbuildable. Copy only the source
-					-- rectangles; the padding safely represents terrain outside the source view.
-					for y = 0, grid_h - 1 do
-						for x = 0, grid_w - 1 do
-							virtual_mask:set(x, y, repaired:get(x, y))
+					if use_native_sampler then
+						source_mask_log("SOURCE_MASK_SAMPLER_CALL_BEGIN", {
+							map = tostring(native_sampler), destination = tostring(map),
+							map_world = tostring(sampler_width) .. "x" .. tostring(sampler_height),
+							buildable = tostring(build_w) .. "x" .. tostring(build_h),
+							mask = tostring(grid_w) .. "x" .. tostring(grid_h),
+							unbuildable_z = unbuildable_z,
+						})
+						closure_mask_buildable_grid(native_sampler, z_grid, repaired, unbuildable_z)
+						source_mask_log("SOURCE_MASK_SAMPLER_CALL_END", {
+							map = tostring(native_sampler), result_grid = tostring(repaired),
+							algorithm = stats.algorithm,
+						})
+					else
+						-- The fallback grids are initialized invalid/unbuildable. Copy only the
+						-- source rectangles; their padding represents terrain outside the view.
+						for y = 0, grid_h - 1 do
+							for x = 0, grid_w - 1 do
+								virtual_mask:set(x, y, repaired:get(x, y))
+							end
 						end
-					end
-					for y = 0, build_h - 1 do
-						for x = 0, build_w - 1 do
-							virtual_z:set(x, y, z_grid:get(x, y))
+						for y = 0, build_h - 1 do
+							for x = 0, build_w - 1 do
+								virtual_z:set(x, y, z_grid:get(x, y))
+							end
 						end
-					end
-					closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
-					for y = 0, grid_h - 1 do
-						for x = 0, grid_w - 1 do
-							repaired:set(x, y, virtual_mask:get(x, y))
+						closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
+						for y = 0, grid_h - 1 do
+							for x = 0, grid_w - 1 do
+								repaired:set(x, y, virtual_mask:get(x, y))
+							end
 						end
 					end
 				end)
-				pcall(function() virtual_mask:free() end)
-				pcall(function() virtual_z:free() end)
+				if virtual_mask then pcall(function() virtual_mask:free() end) end
+				if virtual_z then pcall(function() virtual_z:free() end) end
 				if not ok_bridge then
 					if type(resume) == "function" then pcall(resume, "SBMSourceBuildableMaskNativeBridge") end
 					pcall(function() repaired:free() end)
@@ -5867,6 +5960,11 @@ local function PatchRandomMapGenerator()
 			local original_terrain_height_map_size = terrain_api and terrain_api.HeightMapSize
 			local original_terrain_set_height_grid = terrain_api and terrain_api.SetHeightGrid
 			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
+			local original_terrain_set_type_grid = terrain_api and terrain_api.SetTypeGrid
+			local original_terrain_get_type_grid = terrain_api and terrain_api.GetTypeGrid
+			map.SuperBigMapNativeSourceSampler = nil
+			map.SuperBigMapSyncNativeSourceSampler = nil
+			map.SuperBigMapNativeSourceSamplerSyncState = nil
 			if is_surface_generation and cfg_bool("QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID", true)
 				and type(original_terrain_height_map_size) == "function"
 				and type(original_terrain_set_height_grid) == "function"
@@ -5895,6 +5993,10 @@ local function PatchRandomMapGenerator()
 					if cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false) then
 						if type(new_compute_grid) ~= "function" or type(is_compute_grid) ~= "function" then
 							error("native height sampler compute-grid API unavailable")
+						end
+						if type(original_terrain_get_type_grid) ~= "function"
+							or type(original_terrain_set_type_grid) ~= "function" then
+							error("native source sampler type-grid API unavailable")
 						end
 						local change_map_in_slot = Global("ChangeMapInSlot")
 						local maps = Global("Maps")
@@ -5946,10 +6048,11 @@ local function PatchRandomMapGenerator()
 						return original_terrain_height_map_size(target)
 					end
 
-					local function SyncNativeHeightSampler()
+					local function SyncNativeHeightSampler(reason)
 						if not height_sampler then return false end
 						local sync_started = MigrationTicks()
 						local raw_full, compute_full, compute_source
+						local type_raw_full, type_compute_full, type_compute_source
 						local sync_ok, sync_error = pcall(function()
 							raw_full = original_terrain_get_height_grid(map)
 							compute_full = grid_to_compute(raw_full)
@@ -5967,10 +6070,41 @@ local function PatchRandomMapGenerator()
 								box_fn(0, 0, gen_width_tiles, gen_height_tiles), point_fn(0, 0))
 							local set_error = original_terrain_set_height_grid(height_sampler, compute_source)
 							if set_error then error("native height sampler SetHeightGrid: " .. tostring(set_error)) end
+
+							type_raw_full = original_terrain_get_type_grid(map)
+							type_compute_full = grid_to_compute(type_raw_full)
+							local type_full_width, type_full_height = type_compute_full:size()
+							type_full_height = type_full_height or type_full_width
+							if type_full_width < gen_width_tiles or type_full_height < gen_height_tiles then
+								error(string.format("expanded source type terrain unavailable: %sx%s expected at least %sx%s",
+									tostring(type_full_width), tostring(type_full_height),
+									tostring(gen_width_tiles), tostring(gen_height_tiles)))
+							end
+							local type_format, type_bits = is_compute_grid(type_compute_full)
+							type_compute_source = new_compute_grid(gen_width_tiles, gen_height_tiles,
+								type_format, type_bits)
+							if not type_compute_source then
+								error("native source sampler type-grid allocation failed")
+							end
+							type_compute_source:copyrect(type_compute_full,
+								box_fn(0, 0, gen_width_tiles, gen_height_tiles), point_fn(0, 0))
+							local type_set_error = original_terrain_set_type_grid(height_sampler,
+								type_compute_source)
+							if type_set_error then
+								error("native source sampler SetTypeGrid: " .. tostring(type_set_error))
+							end
+							height_bridge.type_full_width = type_full_width
+							height_bridge.type_full_height = type_full_height
 						end)
 						if compute_source then pcall(function() if type(compute_source.free) == "function" then compute_source:free() end end) end
 						if compute_full and compute_full ~= raw_full then
 							pcall(function() if type(compute_full.free) == "function" then compute_full:free() end end)
+						end
+						if type_compute_source then
+							pcall(function() if type(type_compute_source.free) == "function" then type_compute_source:free() end end)
+						end
+						if type_compute_full and type_compute_full ~= type_raw_full then
+							pcall(function() if type(type_compute_full.free) == "function" then type_compute_full:free() end end)
 						end
 						local elapsed = MigrationTicks() - sync_started
 						height_bridge.sampler_sync_ms = height_bridge.sampler_sync_ms + elapsed
@@ -5979,13 +6113,31 @@ local function PatchRandomMapGenerator()
 							error("native height sampler sync failed: " .. tostring(sync_error))
 						end
 						height_bridge.sampler_syncs = height_bridge.sampler_syncs + 1
+						height_bridge.last_sync_reason = tostring(reason or "unspecified")
 						BackingPromotionLog("NATIVE_HEIGHT_SAMPLER_SYNC", {
 							sync = height_bridge.sampler_syncs,
+							reason = height_bridge.last_sync_reason,
 							elapsed_ms = elapsed,
 							total_sync_ms = height_bridge.sampler_sync_ms,
-							source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
+							height_source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
+							type_source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
+							type_backing = tostring(height_bridge.type_full_width)
+								.. "x" .. tostring(height_bridge.type_full_height),
 						})
 						return true
+					end
+
+					if height_sampler then
+						map.SuperBigMapNativeSourceSampler = height_sampler
+						map.SuperBigMapSyncNativeSourceSampler = SyncNativeHeightSampler
+						map.SuperBigMapNativeSourceSamplerSyncState = height_bridge
+						BackingPromotionLog("NATIVE_SOURCE_SAMPLER_BRIDGE_PUBLISHED", {
+							sampler = tostring(height_sampler), destination = tostring(map),
+							slot = height_sampler_slot,
+							height_backing = tostring(height_bridge.sampler_width)
+								.. "x" .. tostring(height_bridge.sampler_height),
+							buildable_and_mask = true,
+						})
 					end
 
 					terrain_api.GetHeightGrid = function(target, output_grid, ...)
@@ -5993,7 +6145,7 @@ local function PatchRandomMapGenerator()
 						local destination_read = target == map
 							or (target == nil and Global("CurrentMap") == map)
 						if height_sampler and destination_read and output_grid ~= nil then
-							SyncNativeHeightSampler()
+							SyncNativeHeightSampler("GetHeightGrid-output")
 							height_bridge.sampled_reads = height_bridge.sampled_reads + 1
 							return original_terrain_get_height_grid(height_sampler, output_grid, ...)
 						end
@@ -6108,6 +6260,9 @@ local function PatchRandomMapGenerator()
 				terrain_api.HeightMapSize = original_terrain_height_map_size
 				terrain_api.SetHeightGrid = original_terrain_set_height_grid
 				terrain_api.GetHeightGrid = original_terrain_get_height_grid
+				map.SuperBigMapNativeSourceSampler = nil
+				map.SuperBigMapSyncNativeSourceSampler = nil
+				map.SuperBigMapNativeSourceSamplerSyncState = nil
 				if height_sampler_slot then
 					local change_map_in_slot = Global("ChangeMapInSlot")
 					local maps = Global("Maps")

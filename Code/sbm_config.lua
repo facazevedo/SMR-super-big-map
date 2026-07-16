@@ -561,9 +561,10 @@ config.ExpansionStep01GenerateAndCaptureVanillaSource = true
 -- Retired experiment: generating on a temporary map made the source exact, but migrating ~20,000
 -- generated objects added roughly 53 seconds and was not suitable for normal loading.
 config.GenerateVanillaSourceOnTemporaryBacking = false
--- Keep generation and every generated object directly on the final expanded map. A temporary
--- empty native-sized terrain exists only as an engine sampler for source-view height-grid reads;
--- it never runs RandomMapGenerate and never receives or transfers generated objects.
+-- Keep generation and every generated object directly on the final expanded map. Mirror source
+-- terrain into an empty vanilla-sized native backing only for engine calls whose coordinate scaling
+-- ignores Lua-visible dimensions (height sampling, buildable construction, and MaskBuildableGrid).
+-- The sampler never runs RandomMapGenerate and never receives or transfers generated objects.
 config.UseNativeHeightSamplerBacking = true
 -- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
 -- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
