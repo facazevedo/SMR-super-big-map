@@ -1288,7 +1288,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local saved_main_map = Global("MainMap")
 	local saved_main_city = Global("MainCity")
 	local results
-	State.vanilla_source_migration_active = true
+	SuperBigMap.State.vanilla_source_migration_active = true
 	local ok, migration_error = pcall(function()
 		local allocation_started = MigrationTicks()
 		local allocation_error = change_map_in_slot(source_slot, blank_map, source_instance)
@@ -1361,7 +1361,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
 		-- This path deliberately preserves the vanilla-generated height field, so discard their
 		-- temporary-map references instead of allowing a later map generation to consume stale pads.
-		State.sbm_entrance_pads = nil
+		SuperBigMap.State.sbm_entrance_pads = nil
 
 		local rebuild_started = MigrationTicks()
 		local box_fn = Global("box")
@@ -1395,7 +1395,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
 		end
 	end
-	State.vanilla_source_migration_active = false
+	SuperBigMap.State.vanilla_source_migration_active = false
 	stats.total_ms = MigrationTicks() - started
 	stats.ok = ok
 	stats.error = ok and "none" or tostring(migration_error)
