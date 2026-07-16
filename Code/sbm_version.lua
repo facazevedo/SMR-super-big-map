@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 79: add exhaustive observational loading timings for every
--- vanilla generator procedure, temporary-backing migration stage, diagnostic audit, and stretch.
-SuperBigMap.GENERATOR_PATCH_VERSION = 79
+-- (sbm_map_generation). Bumped to 80: disable the completed heavyweight forensic trace and add
+-- lightweight per-class timing for the exact generated-object migration bottleneck.
+SuperBigMap.GENERATOR_PATCH_VERSION = 80

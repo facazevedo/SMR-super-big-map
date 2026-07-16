@@ -10,7 +10,7 @@
 -- print() in mod-owned modules.
 --
 -- Scopes in use (each has a matching DEBUG_<SCOPE> flag in sbm_config.lua):
---   Lifecycle, Generation, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement,
+--   Lifecycle, Generation, MigrationPerformance, Sector, SectorSizing, Deposits, TopUpEdgeDistribution, RmgPlacement,
 --   RmgPlacementExhaustive, RmgAlignmentExhaustive, EnrichmentPositionsExhaustive,
 --   EnrichmentSpreadComparison,
 --   Stretch, Loading, LoadTime, LoadingSteps,

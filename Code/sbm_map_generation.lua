@@ -1143,6 +1143,11 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local is_valid = Global("IsValid")
 	local started = MigrationTicks()
+	local debug_log = SuperBigMap.DebugLog
+	local migration_perf_on = debug_log and type(debug_log.On) == "function"
+		and debug_log.On("MigrationPerformance") == true
+	local per_class = migration_perf_on and {} or false
+	local slowest = migration_perf_on and {} or false
 	local roots, seen_roots = {}, {}
 	local generated_enumerated, generated_excluded = 0, 0
 	local function belongs_to_excluded_root(obj)
@@ -1181,12 +1186,17 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 			end
 		end
 	end
+	local roots_ready_at = MigrationTicks()
 	local transferred, failed = 0, 0
 	local failures = {}
+	local transfer_calls_started = MigrationTicks()
 	for i = 1, #roots do
 		local obj = roots[i]
 		local valid = type(is_valid) ~= "function" or is_valid(obj)
 		if valid then
+			local class = tostring(obj.class or "?")
+			local call_started = migration_perf_on and MigrationTicks() or 0
+			local transfer_ok = false
 			if type(obj.TransferToMap) ~= "function" then
 				failed = failed + 1
 				if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
@@ -1196,6 +1206,7 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 				-- object; one post-batch source audit below verifies the complete transaction instead.
 				local ok, transfer_error = pcall(obj.TransferToMap, obj, destination)
 				if ok then
+					transfer_ok = true
 					transferred = transferred + 1
 				else
 					failed = failed + 1
@@ -1204,8 +1215,37 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 					end
 				end
 			end
+			if migration_perf_on then
+				local elapsed = MigrationTicks() - call_started
+				local class_stats = per_class[class]
+				if not class_stats then
+					class_stats = { calls = 0, total_ms = 0, max_ms = 0, failures = 0 }
+					per_class[class] = class_stats
+				end
+				class_stats.calls = class_stats.calls + 1
+				class_stats.total_ms = class_stats.total_ms + elapsed
+				if elapsed > class_stats.max_ms then class_stats.max_ms = elapsed end
+				if not transfer_ok then
+					class_stats.failures = class_stats.failures + 1
+				end
+				local record = {
+					class = class, elapsed_ms = elapsed,
+					handle = tostring(obj.handle), index = i,
+				}
+				local inserted = false
+				for rank = 1, #slowest do
+					if elapsed > slowest[rank].elapsed_ms then
+						table.insert(slowest, rank, record)
+						inserted = true
+						break
+					end
+				end
+				if not inserted and #slowest < 20 then slowest[#slowest + 1] = record end
+				if #slowest > 20 then table.remove(slowest) end
+			end
 		end
 	end
+	local transfer_calls_finished = MigrationTicks()
 	local remaining_objects, remaining_error = MapObjects(source)
 	if not remaining_objects then error("could not audit source after object transfer: " .. tostring(remaining_error)) end
 	local remaining_generated, remaining_excluded = 0, 0
@@ -1228,7 +1268,47 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 	stats.source_object_transfer_failures = failed
 	stats.source_generated_objects_remaining = remaining_generated
 	stats.source_excluded_objects_remaining = remaining_excluded
+	stats.object_root_collection_ms = roots_ready_at - started
+	stats.object_transfer_calls_ms = transfer_calls_finished - transfer_calls_started
+	stats.object_post_transfer_audit_ms = MigrationTicks() - transfer_calls_finished
 	stats.object_transfer_ms = MigrationTicks() - started
+	if migration_perf_on then
+		local class_rows = {}
+		for class, class_stats in pairs(per_class) do
+			class_rows[#class_rows + 1] = { class = class, stats = class_stats }
+		end
+		table.sort(class_rows, function(a, b)
+			if a.stats.total_ms == b.stats.total_ms then return a.class < b.class end
+			return a.stats.total_ms > b.stats.total_ms
+		end)
+		debug_log.Info("MigrationPerformance", "generated-object transfer summary", {
+			enumerated = #objects, generated = generated_enumerated, excluded = generated_excluded,
+			roots = #roots, transferred = transferred, failed = failed,
+			root_collection_ms = stats.object_root_collection_ms,
+			transfer_calls_ms = stats.object_transfer_calls_ms,
+			post_transfer_audit_ms = stats.object_post_transfer_audit_ms,
+			total_ms = stats.object_transfer_ms,
+			objects_per_second = stats.object_transfer_calls_ms > 0
+				and math.floor(transferred * 100000 / stats.object_transfer_calls_ms + 0.5) / 100 or "n/a",
+			classes = #class_rows,
+		})
+		for rank, row in ipairs(class_rows) do
+			local class_stats = row.stats
+			debug_log.Info("MigrationPerformance", "generated-object transfer class", {
+				rank = rank, class = row.class, calls = class_stats.calls,
+				total_ms = class_stats.total_ms, max_ms = class_stats.max_ms,
+				average_ms = class_stats.calls > 0
+					and math.floor(class_stats.total_ms * 100 / class_stats.calls + 0.5) / 100 or 0,
+				failures = class_stats.failures,
+			})
+		end
+		for rank, record in ipairs(slowest) do
+			debug_log.Info("MigrationPerformance", "slow generated-object transfer", {
+				rank = rank, class = record.class, elapsed_ms = record.elapsed_ms,
+				handle = record.handle, source_index = record.index,
+			})
+		end
+	end
 	BackingPromotionLog("TEMP_SOURCE_OBJECTS_TRANSFERRED", {
 		enumerated = #objects, generated = generated_enumerated, excluded = generated_excluded,
 		roots = #roots, transferred = transferred,
@@ -1236,6 +1316,9 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 		baseline = stats.source_baseline_objects, remaining_generated = remaining_generated,
 		remaining_excluded = remaining_excluded,
 		failure_samples = table.concat(failures, " | "), elapsed_ms = stats.object_transfer_ms,
+		root_collection_ms = stats.object_root_collection_ms,
+		transfer_calls_ms = stats.object_transfer_calls_ms,
+		post_transfer_audit_ms = stats.object_post_transfer_audit_ms,
 	})
 	if failed > 0 or remaining_generated > 0 then
 		error(string.format("temporary source object migration failed for %d objects: %s",

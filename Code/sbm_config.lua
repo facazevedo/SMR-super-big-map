@@ -196,6 +196,9 @@ config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below als
 config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
 config.DebugGeneration    = true    -- TEMP multi-run verification: authoritative enrichment targets
 config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
+-- Lightweight aggregate timings for the temporary source -> expanded destination object handoff.
+-- Records per-class counts/totals and the slowest individual transfers without changing order.
+config.DebugMigrationPerformance = true
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = true    -- TEMP camera verification: stable 20x20 layout geometry
 config.DebugDeposits      = true    -- TEMP multi-run verification: complementary top-up totals and final mix
@@ -211,22 +214,22 @@ config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement a
 -- ResolveBuildable/PlaceAnomalies boundary, all relaxed border/spacing values, every private
 -- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
 -- the loading-screen placement failures are being investigated; disable for release.
-config.DebugRmgPlacementExhaustive = true -- TEMP multi-run verification: native vs complemented counts
+config.DebugRmgPlacementExhaustive = false
 -- Exhaustive read-only alignment trace. When the private generator closure is inaccessible, the
 -- sandbox-safe marker-factory path still records actual post-snap hashes/classes/subtypes and
 -- correlates collisions with the complete predicted raw-candidate stream. Never moves markers.
-config.DebugRmgAlignmentExhaustive = true -- TEMP: identify remaining same-hex marker pairs
+config.DebugRmgAlignmentExhaustive = false
 -- Correlated census of every resource, anomaly, and effect marker before terrain stretch,
 -- immediately after marker scaling, and after the final density suite.
-config.DebugEnrichmentPositionsExhaustive = true
+config.DebugEnrichmentPositionsExhaustive = false
 -- Mode-independent, read-only trace for comparing enrichment spread with expansion step 01 on
 -- and off. It observes the vanilla generator beneath any expansion wrapper and logs generator
 -- inputs, procedure random fingerprints, placement-helper results, final factory coordinates,
 -- and complete post-generation marker/spread censuses. Leave enabled for both comparison runs.
-config.DebugEnrichmentSpreadComparison = true
-config.DebugStretch       = true    -- TEMP loading investigation: per-step stretch/frame-fill timings
+config.DebugEnrichmentSpreadComparison = false
+config.DebugStretch       = false
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
-config.DebugLoadTime      = true    -- TEMP loading investigation: end-to-end cumulative/delta timeline
+config.DebugLoadTime      = false
 -- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
 -- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
 -- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
@@ -235,7 +238,7 @@ config.DebugLoadingSteps  = true
 -- decoration, marker, enrichment, audit, and finalization calls plus a descending per-session
 -- summary. Observational only: it never sleeps, yields, changes call order, or invokes extra
 -- gameplay work. It does add log/timer overhead, so disable after collecting a representative run.
-config.DebugLoadingInvestigation = true
+config.DebugLoadingInvestigation = false
 -- Exhaustive first-access trace for deferred underground expansion. Logs every HUD click,
 -- map-slot gate decision, state/geometry field, loading-screen transition, fallback path,
 -- and preparation result. Keep enabled while investigating underground access.
@@ -1064,6 +1067,7 @@ C.FULL_MAP_PLAYABLE = expansion_step_01
 C.DEBUG_LOGS          = as_bool(config.EnableDiagnosticLogs)   -- master: enables every scope
 C.DEBUG_LIFECYCLE     = as_bool(config.DebugLifecycle)
 C.DEBUG_GENERATION    = as_bool(config.DebugGeneration)
+C.DEBUG_MIGRATIONPERFORMANCE = as_bool(config.DebugMigrationPerformance)
 C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)
 C.DEBUG_FLATTEN       = as_bool(config.DebugFlatten)
 C.DEBUG_PAIRING       = as_bool(config.DebugPairing)
