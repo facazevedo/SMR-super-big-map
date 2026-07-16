@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 60: disable unsupported live terrain-grid resizing after the
--- engine proved SetHeightGrid/SetTypeGrid require dimensions matching the current map backing.
-SuperBigMap.GENERATOR_PATCH_VERSION = 60
+-- (sbm_map_generation). Bumped to 61: run source generation once on a temporary native backing,
+-- then migrate its terrain and generated objects into the preallocated expanded destination.
+SuperBigMap.GENERATOR_PATCH_VERSION = 61

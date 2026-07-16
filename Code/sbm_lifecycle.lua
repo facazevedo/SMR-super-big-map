@@ -822,6 +822,9 @@ RegisterOnce("PreNewMap", function(map, mapdata)
 	if not active() then
 		return
 	end
+	if map and map.SuperBigMapVanillaSourceMigration == true then
+		return
+	end
 	DiagSnapshotEvent("OnMsg.PreNewMap", map)
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
@@ -835,6 +838,9 @@ end)
 
 RegisterOnce("NewMap", function(map, mapdata)
 	if not active() then
+		return
+	end
+	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
 	DiagSnapshotEvent("OnMsg.NewMap", map)
@@ -857,6 +863,9 @@ end)
 
 RegisterOnce("NewMapLoaded", function(map, mapdata)
 	if not active() then
+		return
+	end
+	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
 	DiagSnapshotEvent("OnMsg.NewMapLoaded", map)
@@ -1553,6 +1562,9 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	EnsurePregameToggleInstalled()
 	ReinstallTerrainCriticalPatches("ChangingMap")
 	if not active() then
+		return
+	end
+	if map_instance and map_instance.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
 	local gen = SuperBigMap.MapGeneration

@@ -558,6 +558,10 @@ config.MirrorPlanSettleMs = 5000
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
 config.ExpansionStep01GenerateAndCaptureVanillaSource = true
+-- Run the single native RandomMapGenerator body on a temporary vanilla-sized terrain backing,
+-- then copy its terrain and transfer its generated objects into the already allocated expanded
+-- destination. This avoids both the expanded-backing sampling defect and a second generation pass.
+config.GenerateVanillaSourceOnTemporaryBacking = true
 -- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
 -- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
 -- replacement rather than an in-place terrain setter.
@@ -1189,6 +1193,8 @@ C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
 -- independently switchable diagnostics from the original 19-stage contract.
 C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
 	expansion_step_01
+C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
+	and as_bool(config.GenerateVanillaSourceOnTemporaryBacking)
 C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
 	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
 C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =

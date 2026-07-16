@@ -443,6 +443,12 @@ local function AttachPendingMapState(map)
 	if not map then
 		return false
 	end
+	-- The temporary source map deliberately shares the destination's BlankMap name, but must
+	-- never inherit the name-keyed expanded pending record. Its native backing is the exact
+	-- vanilla generator view and is discarded immediately after migration.
+	if map.SuperBigMapVanillaSourceMigration == true then
+		return false
+	end
 
 	local pending = pending_maps[map.name or false]
 	if not pending then
@@ -967,6 +973,438 @@ local function BackingPromotionLog(message, data, level)
 	local fn = level == "error" and debug_log.Error
 		or (level == "warn" and debug_log.Warn or debug_log.Info)
 	if type(fn) == "function" then pcall(fn, "EnrichmentSpreadComparison", message, data) end
+end
+
+local function MigrationTicks()
+	local ticks = Global("GetPreciseTicks") or Global("RealTime")
+	if type(ticks) == "function" then
+		local ok, value = pcall(ticks)
+		if ok and type(value) == "number" then return value end
+	end
+	return 0
+end
+
+local function MigrationGridSize(grid)
+	if not grid or type(grid.size) ~= "function" then return nil, nil end
+	local ok, width, height = pcall(grid.size, grid)
+	if not ok then return nil, nil end
+	return width, height or width
+end
+
+local function FreeMigrationGrid(grid, raw)
+	if grid and grid ~= raw and type(grid.free) == "function" then
+		pcall(grid.free, grid)
+	end
+end
+
+-- Copy the generated native terrain into the already allocated expanded backing. Unlike the
+-- retired live-promotion experiment, both setter inputs are derived from the destination's own
+-- grids, so their dimensions necessarily match the destination terrain and satisfy the engine's
+-- SetHeightGrid/SetTypeGrid invariant.
+local function CopyMigratedTerrain(source, destination, stats)
+	local terrain_api = Global("terrain")
+	local grid_to_compute = Global("GridToCompute")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	if type(terrain_api) ~= "table"
+		or type(terrain_api.GetHeightGrid) ~= "function"
+		or type(terrain_api.SetHeightGrid) ~= "function"
+		or type(terrain_api.GetTypeGrid) ~= "function"
+		or type(terrain_api.SetTypeGrid) ~= "function"
+		or type(grid_to_compute) ~= "function"
+		or type(box_fn) ~= "function" or type(point_fn) ~= "function" then
+		error("temporary source migration terrain API unavailable")
+	end
+
+	local started = MigrationTicks()
+	local source_height_raw = terrain_api.GetHeightGrid(source)
+	local destination_height_raw = terrain_api.GetHeightGrid(destination)
+	local source_type_raw = terrain_api.GetTypeGrid(source)
+	local destination_type_raw = terrain_api.GetTypeGrid(destination)
+	if not source_height_raw or not destination_height_raw or not source_type_raw or not destination_type_raw then
+		error("temporary source migration could not capture all terrain grids")
+	end
+
+	local shw, shh = MigrationGridSize(source_height_raw)
+	local dhw, dhh = MigrationGridSize(destination_height_raw)
+	local stw, sth = MigrationGridSize(source_type_raw)
+	local dtw, dth = MigrationGridSize(destination_type_raw)
+	stats.source_height_grid = tostring(shw) .. "x" .. tostring(shh)
+	stats.destination_height_grid = tostring(dhw) .. "x" .. tostring(dhh)
+	stats.source_type_grid = tostring(stw) .. "x" .. tostring(sth)
+	stats.destination_type_grid = tostring(dtw) .. "x" .. tostring(dth)
+	if not shw or not shh or not dhw or not dhh or shw > dhw or shh > dhh
+		or not stw or not sth or not dtw or not dth or stw > dtw or sth > dth then
+		error(string.format("temporary source grid dimensions do not fit destination: height %sx%s -> %sx%s; type %sx%s -> %sx%s",
+			tostring(shw), tostring(shh), tostring(dhw), tostring(dhh),
+			tostring(stw), tostring(sth), tostring(dtw), tostring(dth)))
+	end
+
+	local source_height = grid_to_compute(source_height_raw)
+	local destination_height = grid_to_compute(destination_height_raw)
+	local source_type = grid_to_compute(source_type_raw)
+	local destination_type = grid_to_compute(destination_type_raw)
+	if not source_height or not destination_height or not source_type or not destination_type then
+		FreeMigrationGrid(source_height, source_height_raw)
+		FreeMigrationGrid(destination_height, destination_height_raw)
+		FreeMigrationGrid(source_type, source_type_raw)
+		FreeMigrationGrid(destination_type, destination_type_raw)
+		error("temporary source GridToCompute conversion failed")
+	end
+
+	local ok, err = pcall(function()
+		destination_height:copyrect(source_height, box_fn(0, 0, shw, shh), point_fn(0, 0))
+		destination_type:copyrect(source_type, box_fn(0, 0, stw, sth), point_fn(0, 0))
+		local height_error = terrain_api.SetHeightGrid(destination, destination_height)
+		if height_error then error("SetHeightGrid: " .. tostring(height_error)) end
+		local type_error = terrain_api.SetTypeGrid(destination, destination_type)
+		if type_error then error("SetTypeGrid: " .. tostring(type_error)) end
+	end)
+	FreeMigrationGrid(source_height, source_height_raw)
+	FreeMigrationGrid(destination_height, destination_height_raw)
+	FreeMigrationGrid(source_type, source_type_raw)
+	FreeMigrationGrid(destination_type, destination_type_raw)
+	if not ok then error(err) end
+	stats.terrain_copy_ms = MigrationTicks() - started
+	BackingPromotionLog("TEMP_SOURCE_TERRAIN_COPIED", {
+		source_height = stats.source_height_grid,
+		destination_height = stats.destination_height_grid,
+		source_type = stats.source_type_grid,
+		destination_type = stats.destination_type_grid,
+		elapsed_ms = stats.terrain_copy_ms,
+	})
+end
+
+local function MapObjects(map)
+	if not map or type(map.MapGet) ~= "function" then return nil, "MapGet unavailable" end
+	local ok, objects = pcall(map.MapGet, map, "map")
+	if not ok or type(objects) ~= "table" then
+		return nil, ok and "MapGet returned no table" or tostring(objects)
+	end
+	return objects
+end
+
+local function ClearDestinationObjects(destination, stats)
+	local objects, err = MapObjects(destination)
+	if not objects then error("could not enumerate destination objects: " .. tostring(err)) end
+	local is_valid = Global("IsValid")
+	local done_object = Global("DoneObject")
+	if type(done_object) ~= "function" then error("DoneObject unavailable") end
+	local removed = 0
+	for i = #objects, 1, -1 do
+		local obj = objects[i]
+		local valid = type(is_valid) ~= "function" or is_valid(obj)
+		if valid then
+			done_object(obj)
+			removed = removed + 1
+		end
+	end
+	stats.destination_blank_objects_removed = removed
+end
+
+local function TransferGeneratedObjects(source, destination, stats)
+	local objects, err = MapObjects(source)
+	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
+	local is_valid = Global("IsValid")
+	local started = MigrationTicks()
+	local roots, seen_roots = {}, {}
+	for i = 1, #objects do
+		local root = objects[i]
+		local valid = type(is_valid) ~= "function" or is_valid(root)
+		if valid then
+			local parent_depth = 0
+			while type(root.GetParent) == "function" and parent_depth < 64 do
+				local parent = SafeCall(root.GetParent, root)
+				local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
+				if not parent_valid then break end
+				root = parent
+				parent_depth = parent_depth + 1
+			end
+			if not seen_roots[root] then
+				seen_roots[root] = true
+				roots[#roots + 1] = root
+			end
+		end
+	end
+	local transferred, failed = 0, 0
+	local failures = {}
+	for i = 1, #roots do
+		local obj = roots[i]
+		local valid = type(is_valid) ~= "function" or is_valid(obj)
+		if valid then
+			if type(obj.TransferToMap) ~= "function" then
+				failed = failed + 1
+				if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
+			else
+				local pos = type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or nil
+				local ok, transfer_error = pcall(obj.TransferToMap, obj, destination, pos)
+				local landed = ok
+				if landed and type(obj.GetMap) == "function" then
+					landed = SafeCall(obj.GetMap, obj) == destination
+				end
+				if landed then
+					transferred = transferred + 1
+				else
+					failed = failed + 1
+					if #failures < 8 then
+						failures[#failures + 1] = tostring(obj.class) .. ":" .. tostring(transfer_error or "wrong destination")
+					end
+				end
+			end
+		end
+	end
+	stats.source_objects_enumerated = #objects
+	stats.source_root_objects = #roots
+	stats.source_objects_transferred = transferred
+	stats.source_attached_objects = math.max(0, #objects - #roots)
+	stats.source_object_transfer_failures = failed
+	stats.object_transfer_ms = MigrationTicks() - started
+	BackingPromotionLog("TEMP_SOURCE_OBJECTS_TRANSFERRED", {
+		enumerated = #objects, roots = #roots, transferred = transferred,
+		attached = stats.source_attached_objects, failed = failed,
+		failure_samples = table.concat(failures, " | "), elapsed_ms = stats.object_transfer_ms,
+	})
+	if failed > 0 then
+		error(string.format("temporary source object migration failed for %d objects: %s",
+			failed, table.concat(failures, " | ")))
+	end
+end
+
+local function FindTemporarySourceSlot(destination_slot)
+	local maps = Global("Maps")
+	local engine_config = Global("config")
+	local max_slots = type(engine_config) == "table" and tonumber(engine_config.MapSlots) or 0
+	max_slots = math.max(2, math.floor(max_slots or 0))
+	for slot = max_slots, 2, -1 do
+		if slot ~= destination_slot and type(maps) == "table" and maps[slot] == nil then
+			return slot
+		end
+	end
+	return nil
+end
+
+local function NewNativeSourceMapData(template, source_width, source_height, pass_border)
+	local data = {}
+	for key, value in pairs(template or {}) do
+		if type(key) ~= "string" or not string.match(key, "^SuperBigMap") then
+			data[key] = value
+		end
+	end
+	data.Width = source_width
+	data.Height = source_height
+	data.PassBorder = pass_border
+	local const_tbl = Global("const")
+	local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
+	if type(data.PassBorderTiles) == "number" and tile and tile > 0 then
+		data.PassBorderTiles = math.floor(pass_border / tile)
+	end
+	local preset = Global("MapDataPreset")
+	if type(preset) == "table" and type(preset.new) == "function" then
+		return preset:new(data)
+	end
+	return data
+end
+
+local function CopyGeneratedMapState(source, destination)
+	destination.obj_prefab_marker = source.obj_prefab_marker
+	destination.MapLowestZ = source.MapLowestZ
+	destination.MapHighestZ = source.MapHighestZ
+	for key, value in pairs(source) do
+		if type(key) == "string" and string.match(key, "^SuperBigMap")
+			and key ~= "SuperBigMapVanillaSourceMigration"
+			and destination[key] == nil then
+			destination[key] = value
+		end
+	end
+end
+
+-- Execute RandomMapGenerator exactly once on a real native backing, while retaining the already
+-- allocated expanded map as the final destination. The temporary map never emits MapGenerated,
+-- never runs the mod lifecycle, and is unloaded immediately after terrain/object migration.
+local function GenerateOnTemporaryVanillaBacking(generator, destination, original_do_generate, ...)
+	if not cfg_bool("GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING", false)
+		or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+		or not destination or not destination.mapdata
+		or destination.mapdata.Environment ~= "Surface"
+		or destination.SuperBigMapQuadrantCopyPending ~= true then
+		return false
+	end
+	local source_width = tonumber(destination.SuperBigMapGeneratorWidthTiles)
+	local source_height = tonumber(destination.SuperBigMapGeneratorHeightTiles)
+	local desired_width = tonumber(destination.SuperBigMapDesiredWidthTiles)
+	local desired_height = tonumber(destination.SuperBigMapDesiredHeightTiles)
+	if not source_width or not source_height or not desired_width or not desired_height
+		or source_width <= 0 or source_height <= 0
+		or desired_width <= source_width or desired_height <= source_height then
+		return false
+	end
+	local change_map_in_slot = Global("ChangeMapInSlot")
+	local change_current_slot = Global("ChangeCurrentMapSlot")
+	local get_current_slot = Global("GetCurrentMapSlot")
+	local maps = Global("Maps")
+	if type(change_map_in_slot) ~= "function" or type(change_current_slot) ~= "function"
+		or type(get_current_slot) ~= "function" or type(maps) ~= "table" then
+		error("temporary source migration map-slot API unavailable")
+	end
+	local destination_slot = destination.slot or get_current_slot()
+	local source_slot = FindTemporarySourceSlot(destination_slot)
+	if not source_slot then error("temporary source migration has no free map slot") end
+	local map_data_table = Global("MapData")
+	local blank_map = generator and generator.BlankMap
+	local template = type(map_data_table) == "table" and map_data_table[blank_map or false] or destination.mapdata
+	local pass_border = tonumber(destination.mapdata.SuperBigMapOriginalPassBorder)
+		or tonumber(template and template.SuperBigMapOriginalPassBorder)
+		or tonumber(template and template.PassBorder) or 0
+	local source_mapdata = NewNativeSourceMapData(template, source_width, source_height, pass_border)
+	local call_args = PackValues(...)
+	local saved_template_width = template and template.Width
+	local saved_template_height = template and template.Height
+	local saved_template_pass_border = template and template.PassBorder
+	local saved_template_pass_border_tiles = template and template.PassBorderTiles
+	local function RestoreGeneratorTemplate()
+		if not template then return end
+		template.Width = saved_template_width
+		template.Height = saved_template_height
+		template.PassBorder = saved_template_pass_border
+		template.PassBorderTiles = saved_template_pass_border_tiles
+	end
+	local source_instance = {
+		mapdata = source_mapdata,
+		RandomMapGenObject = generator,
+		SuperBigMapVanillaSourceMigration = true,
+	}
+
+	local started = MigrationTicks()
+	local stats = {
+		map = tostring(destination.name), source_slot = source_slot,
+		destination_slot = destination_slot,
+		source_tiles = tostring(source_width) .. "x" .. tostring(source_height),
+		destination_tiles = tostring(desired_width) .. "x" .. tostring(desired_height),
+		pass_border = pass_border,
+	}
+	BackingPromotionLog("TEMP_SOURCE_MIGRATION_BEGIN", stats)
+	SetLoadingPhase("Generating the exact vanilla source terrain...")
+	local source
+	local saved_main_map = Global("MainMap")
+	local saved_main_city = Global("MainCity")
+	local results
+	State.vanilla_source_migration_active = true
+	local ok, migration_error = pcall(function()
+		local allocation_started = MigrationTicks()
+		local allocation_error = change_map_in_slot(source_slot, blank_map, source_instance)
+		if allocation_error then error("temporary source ChangeMapInSlot: " .. tostring(allocation_error)) end
+		source = maps[source_slot]
+		if not source then error("temporary source map was not created") end
+		stats.source_allocation_ms = MigrationTicks() - allocation_started
+		local terrain_api = Global("terrain")
+		local actual_width, actual_height
+		if type(terrain_api) == "table" and type(terrain_api.HeightMapSize) == "function" then
+			actual_width, actual_height = terrain_api.HeightMapSize(source)
+			actual_height = actual_height or actual_width
+		end
+		BackingPromotionLog("TEMP_SOURCE_MAP_ALLOCATED", {
+			slot = source_slot, elapsed_ms = stats.source_allocation_ms,
+			mapdata = tostring(source.mapdata and source.mapdata.Width) .. "x" .. tostring(source.mapdata and source.mapdata.Height),
+			height_backing = tostring(actual_width) .. "x" .. tostring(actual_height),
+			pass_border = tostring(source.mapdata and source.mapdata.PassBorder),
+		})
+		if actual_width ~= source_width or actual_height ~= source_height then
+			error(string.format("temporary source backing is not native-sized: got %sx%s expected %sx%s",
+				tostring(actual_width), tostring(actual_height), tostring(source_width), tostring(source_height)))
+		end
+
+		change_current_slot(source_slot, false)
+		rawset(_G, "MainMap", source)
+		if source.City ~= nil then rawset(_G, "MainCity", source.City) end
+		-- RandomMapGenerator:GetMapSize reads MapData[self.BlankMap] directly rather than the
+		-- supplied map. Keep that last generator input native-sized for exactly this transaction;
+		-- the destination's engine backing remains expanded and its template is restored before
+		-- any destination work resumes.
+		if template then
+			template.Width = source_width
+			template.Height = source_height
+			template.PassBorder = pass_border
+			local const_tbl = Global("const")
+			local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
+			if type(template.PassBorderTiles) == "number" and tile and tile > 0 then
+				template.PassBorderTiles = math.floor(pass_border / tile)
+			end
+		end
+		local generation_started = MigrationTicks()
+		BackingPromotionLog("TEMP_SOURCE_GENERATION_BEGIN", {
+			slot = source_slot, backing = tostring(actual_width) .. "x" .. tostring(actual_height),
+			pass_border = tostring(source.mapdata.PassBorder), seed = tostring(generator and generator.Seed),
+		})
+		if type(source.SuspendPassEdits) == "function" then source:SuspendPassEdits("SuperBigMapVanillaSourceMigration") end
+		results = PackValues(original_do_generate(generator, source,
+			Unpack(call_args, 1, call_args.n)))
+		local update_radius = Global("UpdateMapMaxObjRadius")
+		if type(update_radius) == "function" then update_radius(source) end
+		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
+		stats.source_generation_ms = MigrationTicks() - generation_started
+		CaptureGeneratedNativeEnrichments(source, "temporary vanilla backing generation complete")
+		BackingPromotionLog("TEMP_SOURCE_GENERATION_END", {
+			elapsed_ms = stats.source_generation_ms,
+			map_lowest_z = tostring(source.MapLowestZ), map_highest_z = tostring(source.MapHighestZ),
+		})
+
+		rawset(_G, "MainMap", saved_main_map)
+		rawset(_G, "MainCity", saved_main_city)
+		RestoreGeneratorTemplate()
+		change_current_slot(destination_slot, false)
+		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
+		ClearDestinationObjects(destination, stats)
+		CopyMigratedTerrain(source, destination, stats)
+		CopyGeneratedMapState(source, destination)
+		TransferGeneratedObjects(source, destination, stats)
+		CaptureGeneratedNativeEnrichments(destination, "temporary vanilla backing migrated to destination")
+		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
+		-- This path deliberately preserves the vanilla-generated height field, so discard their
+		-- temporary-map references instead of allowing a later map generation to consume stale pads.
+		State.sbm_entrance_pads = nil
+
+		local rebuild_started = MigrationTicks()
+		local box_fn = Global("box")
+		local map_width, map_height = destination:GetMapSize()
+		if type(destination.RebuildGrids) ~= "function" or type(box_fn) ~= "function" then
+			error("destination RebuildGrids API unavailable")
+		end
+		destination:RebuildGrids(box_fn(0, 0, map_width, map_height))
+		destination.SuperBigMapSurfaceBuildableCurrent = true
+		stats.destination_rebuild_ms = MigrationTicks() - rebuild_started
+		BackingPromotionLog("TEMP_SOURCE_DESTINATION_REBUILT", {
+			world_size = tostring(map_width) .. "x" .. tostring(map_height),
+			elapsed_ms = stats.destination_rebuild_ms,
+			buildable = tostring(destination.buildable),
+		})
+	end)
+
+	-- Always restore the real surface as current and release the temporary slot. This also keeps
+	-- the slot available for the vanilla additional-map/underground phase that follows Generate.
+	rawset(_G, "MainMap", saved_main_map)
+	rawset(_G, "MainCity", saved_main_city)
+	RestoreGeneratorTemplate()
+	if get_current_slot() ~= destination_slot then
+		pcall(change_current_slot, destination_slot, false)
+	end
+	if maps[source_slot] then
+		local unload_started = MigrationTicks()
+		local unload_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
+		stats.source_unload_ms = MigrationTicks() - unload_started
+		if not unload_ok and ok then
+			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
+		end
+	end
+	State.vanilla_source_migration_active = false
+	stats.total_ms = MigrationTicks() - started
+	stats.ok = ok
+	stats.error = ok and "none" or tostring(migration_error)
+	destination.SuperBigMapVanillaSourceMigrationStats = stats
+	BackingPromotionLog(ok and "TEMP_SOURCE_MIGRATION_END" or "TEMP_SOURCE_MIGRATION_FAILED",
+		stats, ok and nil or "error")
+	if not ok then error("temporary vanilla source migration failed: " .. tostring(migration_error)) end
+	SetLoadingPhase("Finishing the expanded map...")
+	return true, results
 end
 
 -- Promote a genuinely vanilla-generated surface map to the deferred expanded destination without
@@ -5086,6 +5524,17 @@ local function PatchRandomMapGenerator()
 					return ...
 				end
 				return complete(original_do_generate(self, map, ...))
+			end
+
+			-- Exact-source path: keep this already allocated expanded map as the destination, but
+			-- execute the generator body once on a separate native-sized backing. The helper copies
+			-- terrain, transfers the generated objects, rebuilds only the final destination grids,
+			-- unloads the temporary slot, and returns the original DoGenerate result tuple.
+			local migrated, migrated_results = GenerateOnTemporaryVanillaBacking(
+				self, map, original_do_generate, ...)
+			if migrated then
+				GenRandCensus(map, "post-gen TEMP-NATIVE migrated destination")
+				return Unpack(migrated_results, 1, migrated_results.n)
 			end
 
 			-- Cap to the per-map generator markers if present, else the max.
