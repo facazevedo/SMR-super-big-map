@@ -1632,6 +1632,9 @@ local function PatchRandomMapGenerator()
 			local closure_grid_dest = closure_global("GridDest", Global("GridDest"))
 			local closure_grid_not = closure_global("GridNot", Global("GridNot"))
 			local closure_new_grid = closure_global("NewGrid", Global("NewGrid"))
+			local closure_new_compute_grid = closure_global("NewComputeGrid", Global("NewComputeGrid"))
+			local closure_is_compute_grid = closure_global("IsComputeGrid", Global("IsComputeGrid"))
+			local closure_grid_fill = closure_global("GridFill", Global("GridFill"))
 			local closure_mask_buildable_grid =
 				closure_global("MaskBuildableGrid", Global("MaskBuildableGrid"))
 			local closure_build_unbuildable_z = closure_global("buildUnbuildableZ", Global("buildUnbuildableZ"))
@@ -2030,6 +2033,9 @@ local function PatchRandomMapGenerator()
 				if not gen_zone or not incoming_mask or not buildable or not z_grid
 					or type(z_grid.get) ~= "function" or type(z_grid.set) ~= "function"
 					or type(closure_new_grid) ~= "function"
+					or type(closure_new_compute_grid) ~= "function"
+					or type(closure_is_compute_grid) ~= "function"
+					or type(closure_grid_fill) ~= "function"
 					or type(closure_mask_buildable_grid) ~= "function"
 					or type(closure_world_to_hex) ~= "function"
 					or type(closure_grid_dest) ~= "function"
@@ -2084,6 +2090,11 @@ local function PatchRandomMapGenerator()
 				if virtual_w < grid_w or virtual_h < grid_h then
 					return nil, "invalid-virtual-work-grid"
 				end
+				local ok_compute, mask_format, mask_bits = pcall(closure_is_compute_grid, gen_zone)
+				if not ok_compute or string.upper(tostring(mask_format)) ~= "U" or mask_bits ~= 16 then
+					return nil, "source-mask-compute-format-unexpected:"
+						.. tostring(mask_format) .. ":" .. tostring(mask_bits)
+				end
 
 				local unbuildable_z = 2 ^ 16 - 1
 				if type(closure_build_unbuildable_z) == "function" then
@@ -2102,7 +2113,7 @@ local function PatchRandomMapGenerator()
 
 				local virtual_mask, virtual_z
 				local ok_virtual_mask, virtual_mask_or_err = pcall(
-					closure_new_grid, virtual_w, virtual_h, 16, 1)
+					closure_new_compute_grid, virtual_w, virtual_h, mask_format, mask_bits)
 				if ok_virtual_mask then virtual_mask = virtual_mask_or_err end
 				local ok_virtual_z, virtual_z_or_err = pcall(
 					closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
@@ -2114,11 +2125,19 @@ local function PatchRandomMapGenerator()
 					return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
 						.. ";z=" .. tostring(virtual_z_or_err)
 				end
+				local ok_fill, fill_err = pcall(closure_grid_fill, virtual_mask, 1)
+				if not ok_fill then
+					pcall(function() repaired:free() end)
+					pcall(function() virtual_mask:free() end)
+					pcall(function() virtual_z:free() end)
+					return nil, "virtual-mask-fill-failed:" .. tostring(fill_err)
+				end
 
 				local stats = {
 					algorithm = "native MaskBuildableGrid on ratio-derived virtual source grid",
 					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
 					virtual_grid = tostring(virtual_w) .. "x" .. tostring(virtual_h),
+					virtual_mask_format = tostring(mask_format) .. tostring(mask_bits),
 					buildable = tostring(build_w) .. "x" .. tostring(build_h),
 					virtual_buildable = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
