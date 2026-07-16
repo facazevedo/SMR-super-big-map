@@ -2864,6 +2864,10 @@ local function PatchRandomMapGenerator()
 				return stats
 			end
 
+			-- The stock Proc_ResolveBuildable calls MaskBuildableGrid before GetPlayableArea. Keep the
+			-- sampler's exact source grid in this transaction-local variable, while exposing a separately
+			-- padded grid whose dimensions match the destination backing to that unavoidable stock call.
+			local sampler_source_buildable_grid
 			local function rebuild_source_buildable_grid(target_map)
 				if is_underground
 					or target_map ~= map
@@ -3057,7 +3061,7 @@ local function PatchRandomMapGenerator()
 				end)
 				source_mask_log("SOURCE_BUILDABLE_BRIDGE_BEGIN", stats)
 
-				local capacity_raw, source_raw, source_processed
+				local capacity_raw, source_raw, source_processed, destination_safe_processed
 				local direct_raw, direct_processed
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
@@ -3223,18 +3227,58 @@ local function PatchRandomMapGenerator()
 					end
 
 					local replaced_grid = buildable.z_grid
-					buildable.z_grid = source_processed
+					if use_native_sampler then
+						if sampler_source_buildable_grid then
+							error("native source buildable grid already retained in this transaction")
+						end
+						destination_safe_processed = closure_new_grid(
+							expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+						if not destination_safe_processed then
+							error("destination-safe buildable grid allocation failed")
+						end
+						local pad_started = now()
+						for y = 0, source_hex_h - 1 do
+							for x = 0, source_hex_w - 1 do
+								destination_safe_processed:set(x, y, source_processed:get(x, y))
+							end
+						end
+						stats.destination_safe_pad_ms = now() - pad_started
+						stats.stock_mask_grid = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h)
+						stats.sampler_mask_grid = tostring(source_hex_w) .. "x" .. tostring(source_hex_h)
+						buildable.z_grid = destination_safe_processed
+						destination_safe_processed = nil -- ownership transferred to BuildableGrid.z_grid
+						sampler_source_buildable_grid = source_processed
+						source_processed = nil -- retained until OnGenerateLogic completes
+						source_mask_log("SOURCE_BUILDABLE_STOCK_MASK_SAFETY_GRID", {
+							destination_map = tostring(map), stock_grid = tostring(buildable.z_grid),
+							stock_grid_size = stats.stock_mask_grid,
+							sampler_grid = tostring(sampler_source_buildable_grid),
+							sampler_grid_size = stats.sampler_mask_grid,
+							padding = "unbuildable", pad_ms = stats.destination_safe_pad_ms,
+						})
+					else
+						buildable.z_grid = source_processed
+						source_processed = nil -- ownership transferred to the live BuildableGrid
+					end
 					source_mask_log("SOURCE_BUILDABLE_GRID_TRANSFER", {
 						old_grid = tostring(replaced_grid), new_grid = tostring(buildable.z_grid),
+						source_grid = tostring(sampler_source_buildable_grid),
 						source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
-						ownership = "BuildableGrid.z_grid",
+						live_hex = use_native_sampler
+							and (tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h))
+							or (tostring(source_hex_w) .. "x" .. tostring(source_hex_h)),
+						ownership = use_native_sampler
+							and "BuildableGrid.z_grid=destination-safe;transaction=source"
+							or "BuildableGrid.z_grid",
 					})
-					source_processed = nil -- ownership transferred to the live BuildableGrid
 				end)
 				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableRawGridBridge") end
 				if capacity_raw then pcall(function() capacity_raw:free() end) end
 				if source_raw then pcall(function() source_raw:free() end) end
 				if source_processed then pcall(function() source_processed:free() end) end
+				if destination_safe_processed then
+					pcall(function() destination_safe_processed:free() end)
+				end
 				if direct_raw then pcall(function() direct_raw:free() end) end
 				if direct_processed then pcall(function() direct_processed:free() end) end
 				stats.total_ms = now() - started
@@ -3266,7 +3310,8 @@ local function PatchRandomMapGenerator()
 				end
 				local gen_zone = env.gen_zone
 				local buildable = map and map.buildable
-				local z_grid = buildable and buildable.z_grid
+				local stock_z_grid = buildable and buildable.z_grid
+				local z_grid = sampler_source_buildable_grid or stock_z_grid
 				if not gen_zone or not incoming_mask or not buildable or not z_grid
 					or type(z_grid.get) ~= "function" or type(z_grid.set) ~= "function"
 					or type(closure_new_grid) ~= "function"
@@ -5202,6 +5247,26 @@ local function PatchRandomMapGenerator()
 			else
 				results = { pcall(original_on_generate_logic, self, env, ...) }
 			end
+
+			local retained_source_cleanup = {
+				grid = tostring(sampler_source_buildable_grid), present = sampler_source_buildable_grid ~= nil,
+				generation_ok = results[1] == true,
+			}
+			if sampler_source_buildable_grid then
+				local retained = sampler_source_buildable_grid
+				sampler_source_buildable_grid = nil
+				local ok_free, free_error = pcall(function() retained:free() end)
+				retained_source_cleanup.freed = ok_free
+				retained_source_cleanup.error = ok_free and "none" or tostring(free_error)
+				if not ok_free and results[1] then
+					results = { false, "native source buildable cleanup failed: " .. tostring(free_error) }
+				end
+			else
+				retained_source_cleanup.freed = false
+				retained_source_cleanup.error = "not-present"
+			end
+			source_mask_log("SOURCE_BUILDABLE_RETAINED_GRID_CLEANUP", retained_source_cleanup,
+				retained_source_cleanup.present and not retained_source_cleanup.freed and "error" or nil)
 
 			local rebuild_restore_ok = true
 			local rebuild_restore_reason = "not-installed"
