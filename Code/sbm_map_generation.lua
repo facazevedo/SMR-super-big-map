@@ -6416,6 +6416,9 @@ local function PatchRandomMapGenerator()
 			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
 			local original_terrain_set_type_grid = terrain_api and terrain_api.SetTypeGrid
 			local original_terrain_get_type_grid = terrain_api and terrain_api.GetTypeGrid
+			local original_terrain_invalidate_height = terrain_api and terrain_api.InvalidateHeight
+			local original_terrain_invalidate_type = terrain_api and terrain_api.InvalidateType
+			local original_terrain_rebuild_passability = terrain_api and terrain_api.RebuildPassability
 			map.SuperBigMapNativeSourceSampler = nil
 			map.SuperBigMapSyncNativeSourceSampler = nil
 			map.SuperBigMapNativeSourceSamplerSyncState = nil
@@ -6549,6 +6552,74 @@ local function PatchRandomMapGenerator()
 							end
 							height_bridge.type_full_width = type_full_width
 							height_bridge.type_full_height = type_full_height
+
+							-- SetHeightGrid/SetTypeGrid make the exported grids identical, but vanilla
+							-- performs a second, essential state transition after terrain rasterization:
+							-- invalidate live height/type surfaces and rebuild terrain passability before
+							-- BuildableGrid:Build. Replaying that native sequence on the true 6144 sampler
+							-- derives every cache from the current scenario; no expected count, hash, seed,
+							-- coordinate, or compensating buildable cell participates in the correction.
+							if type(original_terrain_invalidate_height) ~= "function"
+								or type(original_terrain_invalidate_type) ~= "function"
+								or type(original_terrain_rebuild_passability) ~= "function" then
+								error("native source sampler terrain-cache API unavailable")
+							end
+							local cache_started = MigrationTicks()
+							local xxhash_fn = Global("xxhash")
+							local before_height_hash, before_type_hash
+							if type(xxhash_fn) == "function" then
+								before_height_hash = xxhash_fn(original_terrain_get_height_grid(height_sampler))
+								before_type_hash = xxhash_fn(original_terrain_get_type_grid(height_sampler))
+							end
+							local invalidate_height_ok, invalidate_height_result =
+								pcall(original_terrain_invalidate_height, height_sampler)
+							if not invalidate_height_ok then
+								error("native source sampler InvalidateHeight: "
+									.. tostring(invalidate_height_result))
+							end
+							local invalidate_type_ok, invalidate_type_result =
+								pcall(original_terrain_invalidate_type, height_sampler)
+							if not invalidate_type_ok then
+								error("native source sampler InvalidateType: "
+									.. tostring(invalidate_type_result))
+							end
+							local passability_ok, passability_result =
+								pcall(original_terrain_rebuild_passability, height_sampler)
+							if not passability_ok then
+								error("native source sampler RebuildPassability: "
+									.. tostring(passability_result))
+							end
+							local after_height_hash, after_type_hash
+							if type(xxhash_fn) == "function" then
+								after_height_hash = xxhash_fn(original_terrain_get_height_grid(height_sampler))
+								after_type_hash = xxhash_fn(original_terrain_get_type_grid(height_sampler))
+							end
+							height_bridge.terrain_cache_refreshes =
+								(tonumber(height_bridge.terrain_cache_refreshes) or 0) + 1
+							local cache_elapsed = MigrationTicks() - cache_started
+							height_bridge.terrain_cache_refresh_ms =
+								(tonumber(height_bridge.terrain_cache_refresh_ms) or 0) + cache_elapsed
+							height_bridge.terrain_cache_height_hash_match = before_height_hash == nil
+								or before_height_hash == after_height_hash
+							height_bridge.terrain_cache_type_hash_match = before_type_hash == nil
+								or before_type_hash == after_type_hash
+							BackingPromotionLog("NATIVE_SOURCE_TERRAIN_CACHE_REFRESH", {
+								refresh = height_bridge.terrain_cache_refreshes,
+								reason = tostring(reason), elapsed_ms = cache_elapsed,
+								total_ms = height_bridge.terrain_cache_refresh_ms,
+								invalidate_height_ok = invalidate_height_ok,
+								invalidate_height_result = tostring(invalidate_height_result),
+								invalidate_type_ok = invalidate_type_ok,
+								invalidate_type_result = tostring(invalidate_type_result),
+								passability_ok = passability_ok,
+								passability_result = tostring(passability_result),
+								before_height_hash = tostring(before_height_hash),
+								after_height_hash = tostring(after_height_hash),
+								height_hash_match = height_bridge.terrain_cache_height_hash_match,
+								before_type_hash = tostring(before_type_hash),
+								after_type_hash = tostring(after_type_hash),
+								type_hash_match = height_bridge.terrain_cache_type_hash_match,
+							})
 
 							-- Compare the exact fine-resolution terrain consumed by InitBuildableGrid,
 							-- not only the later 768x768 playable-height derivative. The Step-01-off

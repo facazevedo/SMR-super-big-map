@@ -557,7 +557,7 @@ config.MirrorPlanSettleMs = 5000
 --
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
-config.ExpansionStep01GenerateAndCaptureVanillaSource = false
+config.ExpansionStep01GenerateAndCaptureVanillaSource = true
 -- Retired experiment: generating on a temporary map made the source exact, but migrating ~20,000
 -- generated objects added roughly 53 seconds and was not suitable for normal loading.
 config.GenerateVanillaSourceOnTemporaryBacking = false
