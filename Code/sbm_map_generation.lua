@@ -2990,8 +2990,11 @@ local function PatchRandomMapGenerator()
 				stats.error = ok_scan and "none" or tostring(scan_error)
 				stats.classes = source_collision_counts_text(class_counts)
 				stats.entities = source_collision_counts_text(entity_counts)
-				source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats,
-					ok_scan and nil or "error")
+				if ok_scan then
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats)
+				else
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats, "error")
+				end
 				return records, stats
 			end
 
@@ -3016,8 +3019,11 @@ local function PatchRandomMapGenerator()
 				context.stats.cleanup_ok = cleanup_ok
 				context.stats.cleanup_error = cleanup_ok and "none" or tostring(cleanup_error)
 				context.stats.proxies_destroyed = #context.proxies
-				source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats,
-					cleanup_ok and nil or "error")
+				if cleanup_ok then
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats)
+				else
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_CLEANUP", context.stats, "error")
+				end
 				return cleanup_ok, cleanup_error
 			end
 
@@ -3088,11 +3094,9 @@ local function PatchRandomMapGenerator()
 							if record.mirrored ~= nil and type(proxy.SetMirrored) == "function" then
 								proxy:SetMirrored(record.mirrored == true)
 							end
-							if type(proxy.GetEnumFlags) == "function"
-								and type(proxy.ClearEnumFlags) == "function" then
-								local flags = proxy:GetEnumFlags()
-								if type(flags) == "number" and flags ~= 0 then proxy:ClearEnumFlags(flags) end
-							end
+							-- Never clear the complete flag word: it contains engine-owned efAlive,
+							-- which is immutable while the proxy exists. Extra default flags are harmless
+							-- because InitBuildableGrid queries specifically for efCollision.
 							if type(proxy.SetEnumFlags) ~= "function" then error("SetEnumFlags-unavailable") end
 							proxy:SetEnumFlags(enum_flags)
 							if type(proxy.SetPos) ~= "function" then error("SetPos-unavailable") end
@@ -3131,8 +3135,11 @@ local function PatchRandomMapGenerator()
 				context.stats.exact_proxy_count = context.stats.proxies_created
 					== context.stats.destination_eligible
 					and sampler_after_stats.eligible == context.stats.destination_eligible
-				source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats,
-					context.stats.exact_proxy_count and context.stats.geometry_match and nil or "error")
+				if context.stats.exact_proxy_count and context.stats.geometry_match then
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats)
+				else
+					source_mask_log("SOURCE_BUILDABLE_COLLISION_MIRROR_INSTALLED", context.stats, "error")
+				end
 				if not context.stats.exact_proxy_count or not context.stats.geometry_match
 					or context.stats.proxy_failures > 0 then
 					return context, "collision-proxy-coverage-incomplete"
