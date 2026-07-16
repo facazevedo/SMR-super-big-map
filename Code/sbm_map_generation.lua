@@ -2893,11 +2893,13 @@ local function PatchRandomMapGenerator()
 			-- InitBuildableGrid consumes every efCollision object's collision surface, but the native
 			-- sampler initially owns only the blank-map object set. Capture every relevant transform so
 			-- the next run can prove whether object state is the remaining source of grid divergence.
-			local function source_collision_manifest(target_map, label, area, enum_flags, ignore_game_flags)
+			local function source_collision_manifest(target_map, label, area, enum_flags,
+				ignore_game_flags, surface_types)
 				local records = {}
 				local stats = {
 					label = tostring(label), map = tostring(target_map), area = tostring(area),
 					enum_flags = enum_flags, ignore_game_flags = ignore_game_flags,
+					surface_types = surface_types,
 					queried = 0, eligible = 0, ignored_game_flags = 0,
 					missing_entity = 0, missing_position = 0, checksum = 0,
 					geometry_checksum = 0,
@@ -2930,6 +2932,9 @@ local function PatchRandomMapGenerator()
 						local mirrored = source_collision_call(obj, "GetMirrored")
 						local radius = source_collision_call(obj, "GetRadius")
 						local parent = source_collision_call(obj, "GetParent")
+						local collision_bbox, _, matched_surfaces = source_collision_call(
+							obj, "GetSurfacesBBox", surface_types, 0)
+						local entity_bbox = source_collision_call(obj, "GetEntityBBox")
 						local class_name = tostring(obj and obj.class or "?")
 						entity = tostring(entity or "")
 						local ignored = type(ignored_flags) == "number" and ignored_flags ~= 0
@@ -2947,6 +2952,8 @@ local function PatchRandomMapGenerator()
 							scale = scale, mirrored = mirrored, radius = radius,
 							parent = parent, enum_flags = enum_value, game_flags = game_flags,
 							ignored_flags = ignored_flags, ignored = ignored, eligible = eligible,
+							collision_bbox = collision_bbox, matched_surfaces = matched_surfaces,
+							entity_bbox = entity_bbox,
 						}
 					end)
 				table.sort(records, function(a, b)
@@ -2969,7 +2976,9 @@ local function PatchRandomMapGenerator()
 					local geometry_signature = table.concat({ record.entity,
 						tostring(record.x), tostring(record.y), tostring(record.z), tostring(record.axis),
 						tostring(record.angle), tostring(record.scale), tostring(record.state),
-						tostring(record.mirrored), tostring(record.ignored) }, "|")
+						tostring(record.mirrored), tostring(record.collision_bbox),
+						tostring(record.matched_surfaces), tostring(record.entity_bbox),
+						tostring(record.ignored) }, "|")
 					if record.eligible then
 						stats.geometry_checksum = source_collision_hash_text(
 							stats.geometry_checksum, geometry_signature)
@@ -2981,6 +2990,9 @@ local function PatchRandomMapGenerator()
 						axis = tostring(record.axis), angle = tostring(record.angle),
 						scale = tostring(record.scale), mirrored = tostring(record.mirrored),
 						radius = tostring(record.radius), parent = tostring(record.parent),
+						collision_bbox = tostring(record.collision_bbox),
+						matched_surfaces = tostring(record.matched_surfaces),
+						entity_bbox = tostring(record.entity_bbox),
 						enum_flags = tostring(record.enum_flags), game_flags = tostring(record.game_flags),
 						ignored_flags = tostring(record.ignored_flags), ignored = record.ignored,
 						eligible = record.eligible,
@@ -3028,11 +3040,13 @@ local function PatchRandomMapGenerator()
 			end
 
 			local function source_collision_proxy_install(destination, sampler, area,
-				enum_flags, ignore_game_flags)
+				enum_flags, ignore_game_flags, surface_types)
 				local destination_records, destination_stats = source_collision_manifest(
-					destination, "destination-source-region", area, enum_flags, ignore_game_flags)
+					destination, "destination-source-region", area, enum_flags,
+					ignore_game_flags, surface_types)
 				local sampler_records, sampler_stats = source_collision_manifest(
-					sampler, "sampler-before-mirror", area, enum_flags, ignore_game_flags)
+					sampler, "sampler-before-mirror", area, enum_flags,
+					ignore_game_flags, surface_types)
 				local context = {
 					sampler = sampler, proxies = {}, disabled = {}, suspended = false,
 					stats = {
@@ -3043,6 +3057,7 @@ local function PatchRandomMapGenerator()
 						sampler_eligible = sampler_stats.eligible,
 						sampler_checksum = sampler_stats.checksum,
 						proxies_created = 0, proxy_failures = 0, no_entity = 0,
+						exact_class_proxies = 0, generic_class_proxies = 0,
 						sampler_colliders_disabled = 0,
 					},
 				}
@@ -3050,11 +3065,12 @@ local function PatchRandomMapGenerator()
 					return context, "collision-census-failed"
 				end
 				local g_classes = closure_global("g_Classes", Global("g_Classes"))
-				local proxy_class = type(g_classes) == "table"
+				local generic_proxy_class = type(g_classes) == "table"
 					and (g_classes.EntityChangeKeepsFlags or g_classes.Shapeshifter) or nil
-				if type(proxy_class) ~= "table" or type(proxy_class.new) ~= "function" then
+				if type(generic_proxy_class) ~= "table" or type(generic_proxy_class.new) ~= "function" then
 					return context, "collision-proxy-class-unavailable"
 				end
+				local exact_classes = cfg_bool("USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES", true)
 				if type(sampler.SuspendPassEdits) == "function" then
 					local ok = pcall(sampler.SuspendPassEdits, sampler, "SBMNativeSamplerCollisionMirror")
 					context.suspended = ok
@@ -3074,9 +3090,17 @@ local function PatchRandomMapGenerator()
 					local record = destination_records[i]
 					if record.eligible then
 						local proxy
+						local record_proxy_class = exact_classes and type(g_classes) == "table"
+							and g_classes[record.class] or nil
+						local using_exact_class = type(record_proxy_class) == "table"
+							and type(record_proxy_class.new) == "function"
+						local proxy_class = using_exact_class and record_proxy_class or generic_proxy_class
 						local ok_proxy, proxy_error = pcall(function()
 							proxy = proxy_class:new(nil, sampler)
 							if not proxy then error("new-returned-nil") end
+							if type(proxy.CopyProperties) == "function" then
+								pcall(proxy.CopyProperties, proxy, record.obj)
+							end
 							if type(proxy.ChangeEntity) ~= "function" then error("ChangeEntity-unavailable") end
 							proxy:ChangeEntity(record.entity)
 							if record.state ~= nil and type(proxy.SetState) == "function" then
@@ -3105,9 +3129,16 @@ local function PatchRandomMapGenerator()
 						if ok_proxy then
 							context.proxies[#context.proxies + 1] = proxy
 							context.stats.proxies_created = context.stats.proxies_created + 1
+							if using_exact_class then
+								context.stats.exact_class_proxies = context.stats.exact_class_proxies + 1
+							else
+								context.stats.generic_class_proxies = context.stats.generic_class_proxies + 1
+							end
 							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXY", {
 								index = i, proxy = tostring(proxy), source = tostring(record.obj),
 								class = record.class, entity = record.entity,
+								proxy_class = tostring(proxy and proxy.class),
+								exact_class = using_exact_class,
 								x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
 								axis = tostring(record.axis), angle = tostring(record.angle),
 								scale = tostring(record.scale), state = tostring(record.state),
@@ -3124,7 +3155,8 @@ local function PatchRandomMapGenerator()
 					end
 				end
 				local _, sampler_after_stats = source_collision_manifest(
-					sampler, "sampler-after-mirror", area, enum_flags, ignore_game_flags)
+					sampler, "sampler-after-mirror", area, enum_flags,
+					ignore_game_flags, surface_types)
 				context.stats.sampler_after_queried = sampler_after_stats.queried
 				context.stats.sampler_after_eligible = sampler_after_stats.eligible
 				context.stats.sampler_after_checksum = sampler_after_stats.checksum
@@ -3447,7 +3479,7 @@ local function PatchRandomMapGenerator()
 						local mirror_error
 						collision_context, mirror_error = source_collision_proxy_install(
 							map, build_map, source_area, init_params.enum_flags,
-							init_params.ignore_game_flags)
+							init_params.ignore_game_flags, init_params.surface_types)
 						stats.collision_mirror_install_ms = now() - mirror_started
 						stats.collision_mirror_error = tostring(mirror_error or "none")
 						if mirror_error then

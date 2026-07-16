@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 70: preserve the engine-owned efAlive flag on temporary
--- collision proxies while adding efCollision for the sampler buildable transaction.
-SuperBigMap.GENERATOR_PATCH_VERSION = 70
+-- (sbm_map_generation). Bumped to 71: use exact-class temporary collision proxies and audit
+-- native collision-surface bounds to eliminate generic-proxy buildable edge differences.
+SuperBigMap.GENERATOR_PATCH_VERSION = 71
