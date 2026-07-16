@@ -59,6 +59,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     full-destination grid.
 SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 82: restore the landing-screen opt-in gate while keeping
--- stretch as the sole expansion implementation.
-SuperBigMap.GENERATOR_PATCH_VERSION = 82
+-- (sbm_map_generation). Bumped to 83: batch temporary-source object transfers on both maps so
+-- passability/spatial edits flush once instead of once per generated decoration.
+SuperBigMap.GENERATOR_PATCH_VERSION = 83

@@ -1115,63 +1115,112 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 	local roots_ready_at = MigrationTicks()
 	local transferred, failed = 0, 0
 	local failures = {}
+	-- TransferToMap removes the object from one map and inserts it into the other. With live
+	-- pass edits, the engine updates spatial/passability state for every one of the ~20k decor
+	-- roots individually. Batch both sides exactly like the later stretch mass-move transaction;
+	-- ResumePassEdits performs one consolidated flush per map, and the authoritative destination
+	-- RebuildGrids below still runs unchanged. If either API is absent or rejects suspension, that
+	-- side transparently keeps the old per-object behavior.
+	local pass_batch_reason = "SuperBigMapTemporarySourceObjectTransfer"
+	local source_pass_batch, destination_pass_batch = false, false
+	local function SuspendTransferPassEdits(map, role)
+		if not map or type(map.SuspendPassEdits) ~= "function"
+			or type(map.ResumePassEdits) ~= "function" then
+			return false, "api unavailable"
+		end
+		local ok, result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
+		local active = ok and result ~= false
+		if migration_perf_on then
+			debug_log.Info("MigrationPerformance", "generated-object transfer pass batch begin", {
+				role = role, active = active, error = ok and "none" or tostring(result),
+			})
+		end
+		return active, ok and nil or result
+	end
+	source_pass_batch = SuspendTransferPassEdits(source, "source")
+	destination_pass_batch = SuspendTransferPassEdits(destination, "destination")
 	local transfer_calls_started = MigrationTicks()
-	for i = 1, #roots do
-		local obj = roots[i]
-		local valid = type(is_valid) ~= "function" or is_valid(obj)
-		if valid then
-			local class = tostring(obj.class or "?")
-			local call_started = migration_perf_on and MigrationTicks() or 0
-			local transfer_ok = false
-			if type(obj.TransferToMap) ~= "function" then
-				failed = failed + 1
-				if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
-			else
-				-- TransferToMap preserves the current position when no replacement position is supplied
-				-- (the vanilla rocket/unit call sites use this form). Avoid GetPos + GetMap around every
-				-- object; one post-batch source audit below verifies the complete transaction instead.
-				local ok, transfer_error = pcall(obj.TransferToMap, obj, destination)
-				if ok then
-					transfer_ok = true
-					transferred = transferred + 1
-				else
+	local transfer_loop_ok, transfer_loop_error = pcall(function()
+		for i = 1, #roots do
+			local obj = roots[i]
+			local valid = type(is_valid) ~= "function" or is_valid(obj)
+			if valid then
+				local class = tostring(obj.class or "?")
+				local call_started = migration_perf_on and MigrationTicks() or 0
+				local transfer_ok = false
+				if type(obj.TransferToMap) ~= "function" then
 					failed = failed + 1
-					if #failures < 8 then
-						failures[#failures + 1] = tostring(obj.class) .. ":" .. tostring(transfer_error or "wrong destination")
+					if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
+				else
+					-- TransferToMap preserves the current position when no replacement position is supplied
+					-- (the vanilla rocket/unit call sites use this form). Avoid GetPos + GetMap around every
+					-- object; one post-batch source audit below verifies the complete transaction instead.
+					local ok, transfer_error = pcall(obj.TransferToMap, obj, destination)
+					if ok then
+						transfer_ok = true
+						transferred = transferred + 1
+					else
+						failed = failed + 1
+						if #failures < 8 then
+							failures[#failures + 1] = tostring(obj.class) .. ":" .. tostring(transfer_error or "wrong destination")
+						end
 					end
 				end
-			end
-			if migration_perf_on then
-				local elapsed = MigrationTicks() - call_started
-				local class_stats = per_class[class]
-				if not class_stats then
-					class_stats = { calls = 0, total_ms = 0, max_ms = 0, failures = 0 }
-					per_class[class] = class_stats
-				end
-				class_stats.calls = class_stats.calls + 1
-				class_stats.total_ms = class_stats.total_ms + elapsed
-				if elapsed > class_stats.max_ms then class_stats.max_ms = elapsed end
-				if not transfer_ok then
-					class_stats.failures = class_stats.failures + 1
-				end
-				local record = {
-					class = class, elapsed_ms = elapsed,
-					handle = tostring(obj.handle), index = i,
-				}
-				local inserted = false
-				for rank = 1, #slowest do
-					if elapsed > slowest[rank].elapsed_ms then
-						table.insert(slowest, rank, record)
-						inserted = true
-						break
+				if migration_perf_on then
+					local elapsed = MigrationTicks() - call_started
+					local class_stats = per_class[class]
+					if not class_stats then
+						class_stats = { calls = 0, total_ms = 0, max_ms = 0, failures = 0 }
+						per_class[class] = class_stats
 					end
+					class_stats.calls = class_stats.calls + 1
+					class_stats.total_ms = class_stats.total_ms + elapsed
+					if elapsed > class_stats.max_ms then class_stats.max_ms = elapsed end
+					if not transfer_ok then
+						class_stats.failures = class_stats.failures + 1
+					end
+					local record = {
+						class = class, elapsed_ms = elapsed,
+						handle = tostring(obj.handle), index = i,
+					}
+					local inserted = false
+					for rank = 1, #slowest do
+						if elapsed > slowest[rank].elapsed_ms then
+							table.insert(slowest, rank, record)
+							inserted = true
+							break
+						end
+					end
+					if not inserted and #slowest < 20 then slowest[#slowest + 1] = record end
+					if #slowest > 20 then table.remove(slowest) end
 				end
-				if not inserted and #slowest < 20 then slowest[#slowest + 1] = record end
-				if #slowest > 20 then table.remove(slowest) end
 			end
 		end
-	end
+	end)
 	local transfer_calls_finished = MigrationTicks()
+	local resume_started = transfer_calls_finished
+	local resume_failures = {}
+	local function ResumeTransferPassEdits(map, role, active)
+		if not active then return true end
+		local ok, result = pcall(map.ResumePassEdits, map, pass_batch_reason)
+		if not ok then resume_failures[#resume_failures + 1] = role .. ":" .. tostring(result) end
+		if migration_perf_on then
+			debug_log.Info("MigrationPerformance", "generated-object transfer pass batch end", {
+				role = role, ok = ok, error = ok and "none" or tostring(result),
+			})
+		end
+		return ok
+	end
+	-- Reverse order of acquisition. Cleanup happens even if an unexpected Lua error escaped the loop.
+	ResumeTransferPassEdits(destination, "destination", destination_pass_batch)
+	ResumeTransferPassEdits(source, "source", source_pass_batch)
+	local pass_resume_finished = MigrationTicks()
+	if not transfer_loop_ok then
+		error("temporary source object transfer loop failed: " .. tostring(transfer_loop_error))
+	end
+	if #resume_failures > 0 then
+		error("temporary source object transfer pass-batch cleanup failed: " .. table.concat(resume_failures, " | "))
+	end
 	local remaining_objects, remaining_error = MapObjects(source)
 	if not remaining_objects then error("could not audit source after object transfer: " .. tostring(remaining_error)) end
 	local remaining_generated, remaining_excluded = 0, 0
@@ -1196,7 +1245,10 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 	stats.source_excluded_objects_remaining = remaining_excluded
 	stats.object_root_collection_ms = roots_ready_at - started
 	stats.object_transfer_calls_ms = transfer_calls_finished - transfer_calls_started
-	stats.object_post_transfer_audit_ms = MigrationTicks() - transfer_calls_finished
+	stats.object_pass_resume_ms = pass_resume_finished - resume_started
+	stats.object_source_pass_batch = source_pass_batch
+	stats.object_destination_pass_batch = destination_pass_batch
+	stats.object_post_transfer_audit_ms = MigrationTicks() - pass_resume_finished
 	stats.object_transfer_ms = MigrationTicks() - started
 	if migration_perf_on then
 		local class_rows = {}
@@ -1212,6 +1264,9 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 			roots = #roots, transferred = transferred, failed = failed,
 			root_collection_ms = stats.object_root_collection_ms,
 			transfer_calls_ms = stats.object_transfer_calls_ms,
+			pass_resume_ms = stats.object_pass_resume_ms,
+			source_pass_batch = stats.object_source_pass_batch,
+			destination_pass_batch = stats.object_destination_pass_batch,
 			post_transfer_audit_ms = stats.object_post_transfer_audit_ms,
 			total_ms = stats.object_transfer_ms,
 			objects_per_second = stats.object_transfer_calls_ms > 0
@@ -1244,6 +1299,9 @@ local function TransferGeneratedObjects(source, destination, stats, source_basel
 		failure_samples = table.concat(failures, " | "), elapsed_ms = stats.object_transfer_ms,
 		root_collection_ms = stats.object_root_collection_ms,
 		transfer_calls_ms = stats.object_transfer_calls_ms,
+		pass_resume_ms = stats.object_pass_resume_ms,
+		source_pass_batch = stats.object_source_pass_batch,
+		destination_pass_batch = stats.object_destination_pass_batch,
 		post_transfer_audit_ms = stats.object_post_transfer_audit_ms,
 	})
 	if failed > 0 or remaining_generated > 0 then
