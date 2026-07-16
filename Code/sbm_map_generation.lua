@@ -1638,6 +1638,16 @@ local function PatchRandomMapGenerator()
 			local closure_mask_buildable_grid =
 				closure_global("MaskBuildableGrid", Global("MaskBuildableGrid"))
 			local closure_build_unbuildable_z = closure_global("buildUnbuildableZ", Global("buildUnbuildableZ"))
+			local closure_init_buildable_grid = closure_global("InitBuildableGrid", Global("InitBuildableGrid"))
+			local closure_process_buildable_grid = closure_global("ProcessBuildableGrid", Global("ProcessBuildableGrid"))
+			local closure_hex_to_world = closure_global("HexToWorld", Global("HexToWorld"))
+			local closure_storage_to_hex = closure_global("StorageToHex", Global("StorageToHex"))
+			local saved_rebuild_buildable_grid = closure_global("RebuildBuildableGrid", Global("RebuildBuildableGrid"))
+			local rebuild_buildable_grid_wrapper
+			local rebuild_buildable_grid_installed = false
+			local rebuild_buildable_grid_had_raw = false
+			local rebuild_buildable_grid_raw
+			local rebuild_buildable_grid_calls = 0
 			local closure_metatable
 			pcall(function() closure_metatable = getmetatable(generator_closure_env) end)
 			AlignmentTrace("runtime function-environment capability", {
@@ -2011,6 +2021,348 @@ local function PatchRandomMapGenerator()
 				if type(fn) == "function" then
 					pcall(fn, "EnrichmentSpreadComparison", message, data)
 				end
+			end
+
+			-- SOURCE BUILDABLE RAW-GRID BRIDGE. BuildableGrid:Build is a two-stage vanilla
+			-- transaction: InitBuildableGrid samples terrain/collision state into a raw hex grid,
+			-- then ProcessBuildableGrid classifies connected areas. On an expanded allocation the
+			-- native initializer can see the real expanded backing even while Lua-facing map fields
+			-- expose only the source. Running the complete build on the source-sized output can miss the
+			-- source's right/bottom PassBorder and lets expanded connected regions affect interior
+			-- classification. Sample the real backing into its natural full hex grid, crop the raw
+			-- source rectangle, impose the source-world border, and only then run vanilla processing.
+			-- Every dimension and threshold comes from the live map/vanilla globals; no expected cell
+			-- count, checksum, seed, preset, or compensating coordinate participates in the result.
+			local function source_buildable_trace(label, grid, classification, extra)
+				local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
+				if diagnostics and type(diagnostics.TraceGridForensics) == "function" then
+					local ok, traced = pcall(diagnostics.TraceGridForensics,
+						map, label, grid, classification, extra)
+					source_mask_log("SOURCE_BUILDABLE_TRACE_STATUS", {
+						label = tostring(label), classification = tostring(classification),
+						ok = ok, traced = tostring(traced), grid = tostring(grid),
+					}, ok and nil or "error")
+				else
+					source_mask_log("SOURCE_BUILDABLE_TRACE_STATUS", {
+						label = tostring(label), classification = tostring(classification),
+						ok = false, traced = "diagnostics-unavailable", grid = tostring(grid),
+					}, "warn")
+				end
+			end
+
+			local function rebuild_source_buildable_grid(target_map)
+				if is_underground
+					or target_map ~= map
+					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+					or not cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
+					return nil, "mode-not-eligible"
+				end
+				local desired_w = tonumber(map.SuperBigMapDesiredWidthTiles)
+				local desired_h = tonumber(map.SuperBigMapDesiredHeightTiles)
+				local generator_w = tonumber(map.SuperBigMapGeneratorWidthTiles)
+				local generator_h = tonumber(map.SuperBigMapGeneratorHeightTiles)
+				if not desired_w or not desired_h or not generator_w or not generator_h
+					or desired_w <= generator_w or desired_h <= generator_h then
+					return nil, "map-not-expanded"
+				end
+
+				local source_world_w = tonumber(map.SuperBigMapGeneratorWidth)
+					or tonumber(map.SuperBigMapSourceWidth)
+				local source_world_h = tonumber(map.SuperBigMapGeneratorHeight)
+					or tonumber(map.SuperBigMapSourceHeight)
+				local expanded_world_w = tonumber(map.SuperBigMapExpandedWorldWidth)
+				local expanded_world_h = tonumber(map.SuperBigMapExpandedWorldHeight)
+				local expanded_hex_w = tonumber(map.SuperBigMapExpandedHexWidth)
+				local expanded_hex_h = tonumber(map.SuperBigMapExpandedHexHeight)
+				local source_hex_w = tonumber(map.hex_width)
+				local source_hex_h = tonumber(map.hex_height)
+				local source_x = tonumber(map.SuperBigMapSourceX) or 0
+				local source_y = tonumber(map.SuperBigMapSourceY) or 0
+				if source_x ~= 0 or source_y ~= 0 then
+					return nil, "nonzero-source-origin-unsupported"
+				end
+				if not source_world_w or not source_world_h or not expanded_world_w or not expanded_world_h
+					or not expanded_hex_w or not expanded_hex_h or not source_hex_w or not source_hex_h
+					or source_world_w <= 0 or source_world_h <= 0
+					or source_hex_w <= 0 or source_hex_h <= 0
+					or expanded_world_w <= source_world_w or expanded_world_h <= source_world_h
+					or expanded_hex_w < source_hex_w or expanded_hex_h < source_hex_h then
+					return nil, "bridge-dimensions-unavailable"
+				end
+				if type(closure_new_grid) ~= "function"
+					or type(closure_init_buildable_grid) ~= "function"
+					or type(closure_process_buildable_grid) ~= "function"
+					or type(closure_hex_to_world) ~= "function"
+					or type(closure_storage_to_hex) ~= "function" then
+					return nil, "required-api-unavailable"
+				end
+
+				local unbuildable_z = 2 ^ 16 - 1
+				if type(closure_build_unbuildable_z) == "function" then
+					local ok_z, value = pcall(closure_build_unbuildable_z)
+					if ok_z and type(value) == "number" then unbuildable_z = value end
+				end
+				local map_data = map.mapdata
+				if type(map_data) ~= "table" then return nil, "mapdata-unavailable" end
+				local pass_border = tonumber(map_data.PassBorder) or 0
+				local guim = tonumber(closure_global("guim", Global("guim"))) or 1000
+				local range = map_data.visible_height_range
+				local range_from, range_to
+				pcall(function()
+					range_from = range and tonumber(range.from)
+					range_to = range and tonumber(range.to)
+				end)
+				local init_params = {
+					unbuildable_z = unbuildable_z,
+					flat_threshold = closure_global("g_NCF_FlatThreshold", Global("g_NCF_FlatThreshold")),
+					max_surface_height = closure_global("g_NCF_MaxSurfaceHeight", Global("g_NCF_MaxSurfaceHeight")),
+					max_surface_error = closure_global("g_NCF_MaxSurfaceError", Global("g_NCF_MaxSurfaceError")),
+					surface_types = closure_global("g_NCF_SurfaceTypes", Global("g_NCF_SurfaceTypes")),
+					enum_flags = closure_global("g_NCF_EnumFlags", Global("g_NCF_EnumFlags")),
+					ignore_game_flags = closure_global("g_NCF_IgnoreGameFlags", Global("g_NCF_IgnoreGameFlags")),
+					map_border = pass_border,
+					map_min_height = range_from and range_from * guim or 0,
+					map_max_height = range_to and range_to * guim or unbuildable_z,
+				}
+				local process_params = {
+					unbuildable_z = unbuildable_z,
+					minsize = closure_global("g_NCF_FlatThresholdAreaMin", Global("g_NCF_FlatThresholdAreaMin")),
+					maxsize = closure_global("g_NCF_FlatThresholdAreaMax", Global("g_NCF_FlatThresholdAreaMax")),
+					mindelta = closure_global("g_NCF_FlatThresholdAreaMinHeightDelta",
+						Global("g_NCF_FlatThresholdAreaMinHeightDelta")),
+					maxdelta = closure_global("g_NCF_FlatThresholdAreaMaxHeightDelta",
+						Global("g_NCF_FlatThresholdAreaMaxHeightDelta")),
+					minarea = closure_global("g_NCF_MinArea", Global("g_NCF_MinArea")),
+				}
+				local required_init_params = {
+					"unbuildable_z", "flat_threshold", "max_surface_height", "max_surface_error",
+					"surface_types", "enum_flags", "ignore_game_flags", "map_border",
+					"map_min_height", "map_max_height",
+				}
+				for i = 1, #required_init_params do
+					local name = required_init_params[i]
+					if type(init_params[name]) ~= "number" then
+						return nil, "init-parameter-unavailable:" .. tostring(name)
+					end
+				end
+				local required_process_params = {
+					"unbuildable_z", "minsize", "maxsize", "mindelta", "maxdelta", "minarea",
+				}
+				for i = 1, #required_process_params do
+					local name = required_process_params[i]
+					if type(process_params[name]) ~= "number" then
+						return nil, "process-parameter-unavailable:" .. tostring(name)
+					end
+				end
+
+				local buildable = map.buildable
+				if not buildable then
+					local buildable_class = closure_global("BuildableGrid", Global("BuildableGrid"))
+					if type(buildable_class) == "table" and type(buildable_class.new) == "function" then
+						local ok_new, value = pcall(buildable_class.new, buildable_class)
+						if ok_new then buildable = value; map.buildable = value end
+					end
+				end
+				if not buildable then return nil, "buildable-object-unavailable" end
+
+				local ticks = Global("GetPreciseTicks")
+				local function now()
+					if type(ticks) == "function" then
+						local ok, value = pcall(ticks)
+						if ok and type(value) == "number" then return value end
+					end
+					return 0
+				end
+				local started = now()
+				local stats = {
+					algorithm = "native full-backing InitBuildableGrid -> raw source crop/border -> native ProcessBuildableGrid",
+					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
+					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
+					source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
+					expanded_hex = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
+					source_origin = tostring(source_x) .. ":" .. tostring(source_y),
+					pass_border = pass_border, unbuildable_z = unbuildable_z,
+					flat_threshold = init_params.flat_threshold,
+					max_surface_height = init_params.max_surface_height,
+					max_surface_error = init_params.max_surface_error,
+					surface_types = init_params.surface_types,
+					enum_flags = init_params.enum_flags,
+					ignore_game_flags = init_params.ignore_game_flags,
+					map_min_height = init_params.map_min_height,
+					map_max_height = init_params.map_max_height,
+					process_minsize = process_params.minsize,
+					process_maxsize = process_params.maxsize,
+					process_mindelta = process_params.mindelta,
+					process_maxdelta = process_params.maxdelta,
+					process_minarea = process_params.minarea,
+					old_grid = tostring(buildable.z_grid), old_grid_size = "unavailable",
+					border_newly_blocked = 0, border_already_blocked = 0,
+					border_left = 0, border_top = 0, border_right = 0, border_bottom = 0,
+					border_bbox = "none",
+				}
+				pcall(function()
+					local width, height = buildable.z_grid:size()
+					stats.old_grid_size = tostring(width) .. "x" .. tostring(height or width)
+				end)
+				source_mask_log("SOURCE_BUILDABLE_BRIDGE_BEGIN", stats)
+
+				local virtual_raw, source_raw, source_processed
+				local pause = Global("PauseInfiniteLoopDetection")
+				local resume = Global("ResumeInfiniteLoopDetection")
+				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableRawGridBridge") end
+				local bridge_ok, bridge_err = pcall(function()
+					virtual_raw = closure_new_grid(expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+					source_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
+					source_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
+					if not virtual_raw or not source_raw or not source_processed then
+						error("grid-allocation-failed")
+					end
+					stats.allocate_ms = now() - started
+
+					-- Native initialization must see its real backing extents. Restore the source view
+					-- immediately afterward, before any generator code or processing can observe it.
+					local saved_width, saved_height = map.Width, map.Height
+					local saved_hex_width, saved_hex_height = map.hex_width, map.hex_height
+					local saved_data_width, saved_data_height = map_data.Width, map_data.Height
+					local saved_map_get_size = map.GetMapSize
+					local terrain_api = closure_global("terrain", Global("terrain"))
+					local saved_terrain_get_size = type(terrain_api) == "table"
+						and terrain_api.GetMapSize or nil
+					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_BEGIN", {
+						from_world = tostring(saved_width) .. "x" .. tostring(saved_height),
+						to_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
+						from_hex = tostring(saved_hex_width) .. "x" .. tostring(saved_hex_height),
+						to_hex = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
+						from_mapdata_tiles = tostring(saved_data_width) .. "x" .. tostring(saved_data_height),
+						to_mapdata_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
+						output_grid = tostring(virtual_raw), pass_border = pass_border,
+						map_get_size = tostring(saved_map_get_size),
+						terrain_get_size = tostring(saved_terrain_get_size),
+					})
+					local init_started = now()
+					local init_ok, init_err = pcall(function()
+						map.Width, map.Height = expanded_world_w, expanded_world_h
+						map.hex_width, map.hex_height = expanded_hex_w, expanded_hex_h
+						map_data.Width, map_data.Height = desired_w, desired_h
+						map.GetMapSize = function(query_map)
+							if query_map == map then return expanded_world_w, expanded_world_h end
+							if type(saved_map_get_size) == "function" then
+								return saved_map_get_size(query_map)
+							end
+							return expanded_world_w, expanded_world_h
+						end
+						if type(terrain_api) == "table" and type(saved_terrain_get_size) == "function" then
+							terrain_api.GetMapSize = function(query_map)
+								if query_map == map or (query_map == nil and Global("CurrentMap") == map) then
+									return expanded_world_w, expanded_world_h
+								end
+								return saved_terrain_get_size(query_map)
+							end
+						end
+						init_params.buildable_grid = virtual_raw
+						closure_init_buildable_grid(map, init_params)
+					end)
+					map.GetMapSize = saved_map_get_size
+					if type(terrain_api) == "table" and type(saved_terrain_get_size) == "function" then
+						terrain_api.GetMapSize = saved_terrain_get_size
+					end
+					map.Width, map.Height = saved_width, saved_height
+					map.hex_width, map.hex_height = saved_hex_width, saved_hex_height
+					map_data.Width, map_data.Height = saved_data_width, saved_data_height
+					if not init_ok then error("InitBuildableGrid-failed:" .. tostring(init_err)) end
+					stats.init_ms = now() - init_started
+					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_END", stats)
+					source_buildable_trace("SOURCE_BUILDABLE_RAW_VIRTUAL", virtual_raw, "buildable", stats)
+
+					local crop_started = now()
+					for y = 0, source_hex_h - 1 do
+						for x = 0, source_hex_w - 1 do
+							source_raw:set(x, y, virtual_raw:get(x, y))
+						end
+					end
+					stats.crop_ms = now() - crop_started
+					source_mask_log("SOURCE_BUILDABLE_RAW_CROP_END", stats)
+					source_buildable_trace("SOURCE_BUILDABLE_RAW_CROPPED_BEFORE_BORDER",
+						source_raw, "buildable", stats)
+
+					local border_started = now()
+					local min_bx, min_by, max_bx, max_by
+					local right_limit = source_x + source_world_w - pass_border
+					local bottom_limit = source_y + source_world_h - pass_border
+					for r = 0, source_hex_h - 1 do
+						for storage_x = 0, source_hex_w - 1 do
+							local q, hex_r = closure_storage_to_hex(storage_x, r)
+							local world_x, world_y = closure_hex_to_world(q, hex_r)
+							local left = world_x < source_x + pass_border
+							local top = world_y < source_y + pass_border
+							local right = world_x >= right_limit
+							local bottom = world_y >= bottom_limit
+							if left or top or right or bottom then
+								if left then stats.border_left = stats.border_left + 1 end
+								if top then stats.border_top = stats.border_top + 1 end
+								if right then stats.border_right = stats.border_right + 1 end
+								if bottom then stats.border_bottom = stats.border_bottom + 1 end
+								if source_raw:get(storage_x, r) ~= unbuildable_z then
+									stats.border_newly_blocked = stats.border_newly_blocked + 1
+									min_bx = min_bx and math.min(min_bx, storage_x) or storage_x
+									min_by = min_by and math.min(min_by, r) or r
+									max_bx = max_bx and math.max(max_bx, storage_x) or storage_x
+									max_by = max_by and math.max(max_by, r) or r
+									source_raw:set(storage_x, r, unbuildable_z)
+								else
+									stats.border_already_blocked = stats.border_already_blocked + 1
+								end
+							end
+						end
+					end
+					if min_bx then
+						stats.border_bbox = tostring(min_bx) .. ":" .. tostring(min_by)
+							.. "-" .. tostring(max_bx) .. ":" .. tostring(max_by)
+					end
+					stats.border_ms = now() - border_started
+					source_mask_log("SOURCE_BUILDABLE_SOURCE_BORDER_END", stats)
+					source_buildable_trace("SOURCE_BUILDABLE_RAW_CROPPED_AFTER_BORDER",
+						source_raw, "buildable", stats)
+
+					local process_started = now()
+					process_params.buildable_grid = source_raw
+					process_params.buildable_z = source_processed
+					source_mask_log("SOURCE_BUILDABLE_NATIVE_PROCESS_BEGIN", {
+						input_grid = tostring(source_raw), output_grid = tostring(source_processed),
+						source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
+						minsize = process_params.minsize, maxsize = process_params.maxsize,
+						mindelta = process_params.mindelta, maxdelta = process_params.maxdelta,
+						minarea = process_params.minarea, unbuildable_z = unbuildable_z,
+					})
+					closure_process_buildable_grid(process_params)
+					stats.process_ms = now() - process_started
+					source_mask_log("SOURCE_BUILDABLE_NATIVE_PROCESS_END", stats)
+					source_buildable_trace("SOURCE_BUILDABLE_PROCESSED_SOURCE",
+						source_processed, "buildable", stats)
+
+					local replaced_grid = buildable.z_grid
+					buildable.z_grid = source_processed
+					source_mask_log("SOURCE_BUILDABLE_GRID_TRANSFER", {
+						old_grid = tostring(replaced_grid), new_grid = tostring(buildable.z_grid),
+						source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
+						ownership = "BuildableGrid.z_grid",
+					})
+					source_processed = nil -- ownership transferred to the live BuildableGrid
+				end)
+				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableRawGridBridge") end
+				if virtual_raw then pcall(function() virtual_raw:free() end) end
+				if source_raw then pcall(function() source_raw:free() end) end
+				if source_processed then pcall(function() source_processed:free() end) end
+				stats.total_ms = now() - started
+				stats.ok = bridge_ok
+				stats.error = bridge_ok and "none" or tostring(bridge_err)
+				map.SuperBigMapSourceBuildableGridBridge = stats
+				if not bridge_ok then
+					source_mask_log("SOURCE_BUILDABLE_BRIDGE_FAILED", stats, "error")
+					return nil, "source-buildable-bridge-failed:" .. tostring(bridge_err)
+				end
+				source_mask_log("SOURCE_BUILDABLE_BRIDGE_END", stats)
+				return true, nil
 			end
 
 			local function rebuild_source_invalid_mask(incoming_mask)
@@ -3822,7 +4174,118 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			local results = { pcall(original_on_generate_logic, self, env, ...) }
+			-- Install the raw-grid bridge at the exact stock global lookup used by
+			-- Proc_ResolveBuildable. This is deliberately scoped to this synchronous
+			-- OnGenerateLogic call and restored immediately afterward, including errors.
+			local desired_w = tonumber(map and map.SuperBigMapDesiredWidthTiles)
+			local desired_h = tonumber(map and map.SuperBigMapDesiredHeightTiles)
+			local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
+			local generator_h = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
+			local rebuild_buildable_grid_required = not is_underground
+				and cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+				and cfg_bool("QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
+				and desired_w and desired_h and generator_w and generator_h
+				and desired_w > generator_w and desired_h > generator_h
+			rebuild_buildable_grid_wrapper = function(target_map, ...)
+				rebuild_buildable_grid_calls = rebuild_buildable_grid_calls + 1
+				source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_BEGIN", {
+					call = rebuild_buildable_grid_calls,
+					target = tostring(target_map), target_is_generation_map = target_map == map,
+					target_world = tostring(target_map and target_map.Width)
+						.. "x" .. tostring(target_map and target_map.Height),
+					target_hex = tostring(target_map and target_map.hex_width)
+						.. "x" .. tostring(target_map and target_map.hex_height),
+					target_mapdata_tiles = tostring(target_map and target_map.mapdata
+						and target_map.mapdata.Width) .. "x" .. tostring(target_map
+						and target_map.mapdata and target_map.mapdata.Height),
+				})
+				local bridge_ok, bridge_reason = rebuild_source_buildable_grid(target_map)
+				if bridge_ok then
+					source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_END", {
+						call = rebuild_buildable_grid_calls, result = "bridged",
+						grid = tostring(target_map and target_map.buildable
+							and target_map.buildable.z_grid),
+					})
+					return
+				end
+				if bridge_reason == "mode-not-eligible" or bridge_reason == "map-not-expanded" then
+					source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_FALLBACK", {
+						call = rebuild_buildable_grid_calls, reason = tostring(bridge_reason),
+						native = tostring(saved_rebuild_buildable_grid),
+					}, "warn")
+					if type(saved_rebuild_buildable_grid) == "function" then
+						return saved_rebuild_buildable_grid(target_map, ...)
+					end
+				end
+				local failure = "source buildable raw-grid bridge failed before vanilla mask/playable "
+					.. "resolution: " .. tostring(bridge_reason)
+				source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_ABORT", {
+					call = rebuild_buildable_grid_calls, reason = tostring(bridge_reason),
+					failure = failure,
+				}, "error")
+				error(failure)
+			end
+
+			if rebuild_buildable_grid_required and type(generator_closure_env) == "table"
+				and type(saved_rebuild_buildable_grid) == "function" then
+				rebuild_buildable_grid_raw = rawget(generator_closure_env, "RebuildBuildableGrid")
+				rebuild_buildable_grid_had_raw = rebuild_buildable_grid_raw ~= nil
+				local ok_install = pcall(rawset, generator_closure_env,
+					"RebuildBuildableGrid", rebuild_buildable_grid_wrapper)
+				rebuild_buildable_grid_installed = ok_install
+					and rawget(generator_closure_env, "RebuildBuildableGrid")
+						== rebuild_buildable_grid_wrapper
+			end
+			source_mask_log("SOURCE_BUILDABLE_BRIDGE_HOOK_DECISION", {
+				required = rebuild_buildable_grid_required and true or false,
+				installed = rebuild_buildable_grid_installed,
+				surface = not is_underground,
+				desired_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
+				generator_tiles = tostring(generator_w) .. "x" .. tostring(generator_h),
+				environment = tostring(generator_closure_env),
+				environment_source = tostring(generator_closure_env_source),
+				native = tostring(saved_rebuild_buildable_grid),
+				previous_raw = tostring(rebuild_buildable_grid_raw),
+				previous_had_raw = rebuild_buildable_grid_had_raw,
+			}, rebuild_buildable_grid_required and not rebuild_buildable_grid_installed
+				and "error" or nil)
+
+			local results
+			if rebuild_buildable_grid_required and not rebuild_buildable_grid_installed then
+				results = { false, "source buildable raw-grid bridge hook unavailable; refusing "
+					.. "to generate a non-vanilla comparison" }
+			else
+				results = { pcall(original_on_generate_logic, self, env, ...) }
+			end
+
+			local rebuild_restore_ok = true
+			local rebuild_restore_reason = "not-installed"
+			if rebuild_buildable_grid_installed and type(generator_closure_env) == "table" then
+				local current = rawget(generator_closure_env, "RebuildBuildableGrid")
+				if current == rebuild_buildable_grid_wrapper then
+					local ok_restore = pcall(rawset, generator_closure_env, "RebuildBuildableGrid",
+						rebuild_buildable_grid_had_raw and rebuild_buildable_grid_raw or nil)
+					rebuild_restore_ok = ok_restore and rawget(generator_closure_env,
+						"RebuildBuildableGrid") == (rebuild_buildable_grid_had_raw
+						and rebuild_buildable_grid_raw or nil)
+					rebuild_restore_reason = rebuild_restore_ok and "restored" or "restore-write-failed"
+				else
+					rebuild_restore_ok = false
+					rebuild_restore_reason = "hook-replaced-during-generation:" .. tostring(current)
+				end
+			end
+			source_mask_log("SOURCE_BUILDABLE_BRIDGE_HOOK_RESTORE", {
+				installed = rebuild_buildable_grid_installed,
+				restored = rebuild_restore_ok,
+				reason = rebuild_restore_reason,
+				calls = rebuild_buildable_grid_calls,
+				generation_ok = results[1] == true,
+				generation_error = results[1] and "none" or tostring(results[2]),
+			}, rebuild_restore_ok and nil or "error")
+			if not rebuild_restore_ok and results[1] then
+				results = { false, "source buildable raw-grid bridge cleanup failed: "
+					.. tostring(rebuild_restore_reason) }
+			end
 			for i = #deposit_layer_filter_restores, 1, -1 do
 				local restore = deposit_layer_filter_restores[i]
 				if restore.layer.filter == restore.wrapper then restore.layer.filter = restore.original end
