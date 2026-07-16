@@ -1698,9 +1698,12 @@ end
 local function NativePropertyIsPortable(prop_meta)
 	if type(prop_meta) ~= "table" then return false end
 	local id = prop_meta.id
-	if id == nil or id == "Deposit" or tostring(id):sub(1, 4) == "dbg_" then return false end
+	if id == nil or id == "Deposit" or id == "Pos"
+		or tostring(id):sub(1, 4) == "dbg_" then return false end
 	-- Object/grid references belong to the temporary map; debug/read-only/dont-save values are
-	-- derived runtime state. Reconstruct only constructor-safe gameplay properties.
+	-- derived runtime state. Pos is captured separately as immutable source coordinates and must be
+	-- transformed, not copied or compared as an ordinary property. Reconstruct only constructor-safe
+	-- gameplay properties.
 	if prop_meta.developer or prop_meta.read_only or prop_meta.dont_save
 		or prop_meta.editor == "object" or prop_meta.editor == "grid" then return false end
 	return true
@@ -2082,14 +2085,17 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 				stats.xy_mismatches = stats.xy_mismatches + 1
 			end
 			if not expected or actual_z ~= expected_z then stats.z_mismatches = stats.z_mismatches + 1 end
+			local property_mismatch_ids = {}
 			if type(marker.GetProperty) == "function" then
 				for id, expected_value in pairs(record.properties or {}) do
 					local ok_value, actual_value = pcall(marker.GetProperty, marker, id)
 					if not ok_value or not NativePropertyValuesEqual(actual_value, expected_value) then
 						stats.property_mismatches = stats.property_mismatches + 1
+						property_mismatch_ids[#property_mismatch_ids + 1] = tostring(id)
 					end
 				end
 			end
+			table.sort(property_mismatch_ids)
 			if DebugLog and type(DebugLog.On) == "function"
 				and DebugLog.On("EnrichmentPositionsExhaustive") == true then
 				DebugLog.Info("EnrichmentPositionsExhaustive", "recreated native enrichment verified", {
@@ -2099,6 +2105,8 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 					expected_x = tostring(expected_x), expected_y = tostring(expected_y),
 					expected_z = tostring(expected_z), actual_x = tostring(actual_x),
 					actual_y = tostring(actual_y), actual_z = tostring(actual_z),
+					property_mismatch_count = #property_mismatch_ids,
+					property_mismatch_ids = table.concat(property_mismatch_ids, ","),
 					transform_error = tostring(transform_error),
 				})
 			end
