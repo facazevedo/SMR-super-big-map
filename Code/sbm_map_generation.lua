@@ -2214,46 +2214,22 @@ local function PatchPassagePairing()
 			PairingLog("-> vanilla path (map not stamped as expanded)")
 			return original(map, pos, angle, min_dist, passages)
 		end
-		local snap_hex = Global("SnapWorldToHex")
-		local snap_angle = Global("SnapWorldToHexAngle")
-		local get_shape = Global("GetExtendedSpawnShape")
-		local place_building = Global("PlaceBuildingIn")
-		local flatten = Global("FlattenTerrainInBuildShape")
-		local const_tbl = Global("const")
-		if type(snap_hex) ~= "function" or type(place_building) ~= "function" then
-			PairingLog("-> vanilla path (helpers missing)", {
-				snap_hex = tostring(type(snap_hex)), place_building = tostring(type(place_building)),
-			})
-			return original(map, pos, angle, min_dist, passages)
+		-- Never manufacture a passage pad at the underground marker coordinate. The old
+		-- deterministic wrapper bypassed FindPassageSpawnPos and flattened an arbitrary
+		-- surface footprint; when that coordinate was not naturally buildable, the two stock
+		-- passage flattens turned the footprint into a terrain column. Run the stock selector
+		-- against the authoritative surface grid instead. It validates the complete Elevator
+		-- footprint before PlaceBuildingIn and is therefore the only safe source of a flatten Z.
+		local passage, shape = original(map, pos, angle, min_dist, passages)
+		if passage then
+			-- The later Link hook predates exact-source generation. Mark a stock-selected anchor
+			-- so that hook cannot relocate it away from the already validated footprint.
+			passage.SuperBigMapVanillaPassageSelection = true
 		end
-		local position = snap_hex(pos)
-		if type(snap_angle) == "function" then
-			local ok_a, a = pcall(snap_angle, angle)
-			if ok_a and a then angle = a end
-		end
-		if type(map.SnapToTerrain) == "function" then
-			local ok_s, snapped = pcall(map.SnapToTerrain, map, position)
-			if ok_s and snapped then position = snapped end
-		end
-		local shape = type(get_shape) == "function" and get_shape("Elevator") or nil
-		local ok_p, passage = pcall(place_building, "UndergroundPassage", map)
-		if not ok_p or not passage then
-			PairingLog("-> vanilla path (PlaceBuildingIn failed)", { err = tostring(passage) })
-			return original(map, pos, angle, min_dist, passages)
-		end
-		pcall(passage.SetPos, passage, position)
-		pcall(passage.SetAngle, passage, angle)
-		if type(const_tbl) == "table" and const_tbl.gofPermanent and type(passage.SetGameFlags) == "function" then
-			pcall(passage.SetGameFlags, passage, const_tbl.gofPermanent)
-		end
-		-- Same pad sculpting vanilla does at this point ("flatten unbuildable" mode).
-		if shape and type(flatten) == "function" then
-			pcall(flatten, shape, passage, "flatten unbuildable")
-		end
-		PairingLog("-> DETERMINISTIC placement done", { position = tostring(position) })
-		DebugPrint(string.format(
-			"deterministic passage pairing: surface UndergroundPassage at %s (= underground marker pos, no search/random)",
-			tostring(position)))
+		local selected_pos = passage and type(passage.GetPos) == "function" and passage:GetPos() or nil
+		PairingLog("-> vanilla footprint selection on expanded surface", {
+			marker = tostring(pos), selected = tostring(selected_pos), found = passage ~= nil,
+		})
 		return passage, shape
 	end
 	rawset(_G, "SpawnUndergroundPassage", wrapper)
@@ -2347,6 +2323,13 @@ local function PatchPassagePairing()
 				local gen_t = surface_map and surface_map.SuperBigMapGeneratorWidthTiles
 				local expanded = type(desired) == "number" and type(gen_t) == "number" and desired > gen_t
 				if not expanded then return end
+				if surface_obj.SuperBigMapVanillaPassageSelection == true then
+					PairingLog("link correction skipped: vanilla already validated the surface footprint", {
+						surface_pos = tostring(sx) .. "," .. tostring(sy),
+						underground_pos = tostring(ux) .. "," .. tostring(uy),
+					})
+					return
+				end
 				-- SENTINEL FOOTPRINT PATCH (needle guard, runs for EVERY expanded pairing).
 				-- Picard's post-Link flatten ("flatten unbuildable") covers the FULL extended
 				-- spawn footprint; hexes at the footprint FRINGE can be unbuildable-sentinel
@@ -2798,6 +2781,28 @@ local function BootstrapPassagesAndDeferWonders(env)
 				marker:GetPos(), marker:GetAngle(), const_tbl.RandomMap.UndergroundPassagesMinDistance,
 				successful)
 			if surface_anchor then
+				local selected_pos = surface_anchor:GetPos()
+				local marker_pos = marker:GetPos()
+				local mx, my = PointXY(marker_pos)
+				local sx, sy = PointXY(selected_pos)
+				local selected_build_z, selected_terrain_z
+				local ok_hex, sq, sr = pcall(world_to_hex, selected_pos)
+				if ok_hex and type(sq) == "number" then
+					local ok_bz, bz = pcall(surface_map.buildable.GetZ, surface_map.buildable, sq, sr)
+					if ok_bz then selected_build_z = bz end
+				end
+				local terrain_api = Global("terrain")
+				if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+					local ok_tz, tz = pcall(terrain_api.GetHeight, surface_map, selected_pos)
+					if ok_tz then selected_terrain_z = tz end
+				end
+				local dx, dy = sx - mx, sy - my
+				PairingLog("vanilla surface passage footprint accepted", {
+					marker = tostring(marker_pos), selected = tostring(selected_pos),
+					distance_from_marker = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5),
+					buildable_q = tostring(sq), buildable_r = tostring(sr),
+					buildable_z = tostring(selected_build_z), terrain_z = tostring(selected_terrain_z),
+				})
 				ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
 					surface_anchor:GetPos(), surface_shape)
 				local underground_anchor = ArtefactSpawnMarkerBuilding(marker, "SurfacePassage", map)

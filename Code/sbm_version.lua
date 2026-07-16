@@ -59,6 +59,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     full-destination grid.
 SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 85: keep the linked SurfacePassage eager but defer its child
--- SurfaceTunnelMarker until the expanded underground buildable/object grids are compatible.
-SuperBigMap.GENERATOR_PATCH_VERSION = 85
+-- (sbm_map_generation). Bumped to 86: restore vanilla complete-footprint selection for eager
+-- surface passage anchors and prevent the legacy link hook from relocating validated anchors.
+SuperBigMap.GENERATOR_PATCH_VERSION = 86

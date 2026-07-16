@@ -623,25 +623,12 @@ config.StretchVanillaExactPassBorder = true
 -- the same way. Root cause was stale height ranges after the 3D stretch (see
 -- ScaleHeightRanges); this guard keeps any residual case from crashing.
 config.FlattenSkipWhenUnbuildable = true
--- DETERMINISTIC PASSAGE PAIRING (sbm_map_generation PatchPassagePairing). Vanilla spawns
--- each SURFACE underground-entrance by searching the surface buildable grid around the
--- underground marker's position, falling back to a RANDOM passable position when the search
--- fails. On expanded maps that search races the async buildable-grid build and the stretch,
--- so an entrance could land somewhere DIFFERENT every restart (sometimes on mountains).
--- When true, expanded maps place the surface passage exactly at the underground marker's
--- position (hex+terrain snapped, obstructions cleared by the caller as usual) -- fully
--- deterministic and correspondence-preserving. Vanilla-size maps always run the original.
--- RE-ENABLED (2026-07-11) and tightened to preserve vertical correspondence:
--- (a) PairingSurfaceBuildableRebuild proves/reuses the native ResolveBuildable grid (with a
---     synchronous rebuild fallback) -- the spike crowns came from a sentinel-poisoned grid;
--- (b) every linked surface passage first tests the underground exit's equivalent anchor hex;
---     if the complete Elevator footprint is not buildable there, it selects the closest
---     buildable candidate by hex distance;
--- (c) the pad repairs are footprint-sized everywhere (v441's leftover ring came from the
---     abandoned-spot repair still using a hardcoded small circle).
--- Net: every surface entrance occupies the same hex as its underground exit whenever that
--- complete surface footprint is buildable; otherwise it occupies the closest buildable hex.
-config.StretchDeterministicPassages = true
+-- LEGACY PASSAGE RELOCATION (sbm_map_generation PatchPassagePairing). Keep this off: forcing
+-- a surface entrance toward an underground marker bypasses vanilla's complete-footprint
+-- validation and can make the stock flatten extrude an unbuildable footprint into a terrain
+-- column. The exact-source path now runs vanilla FindPassageSpawnPos against the authoritative
+-- surface buildable grid, then proportionally moves each independently selected endpoint.
+config.StretchDeterministicPassages = false
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
 -- the mod now records whether native surface ResolveBuildable already produced the authoritative
