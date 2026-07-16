@@ -1078,8 +1078,16 @@ end
 local function MapObjects(map)
 	if not map or type(map.MapGet) ~= "function" then return nil, "MapGet unavailable" end
 	local ok, objects = pcall(map.MapGet, map, "map")
-	if not ok or type(objects) ~= "table" then
-		return nil, ok and "MapGet returned no table" or tostring(objects)
+	if not ok then
+		return nil, tostring(objects)
+	end
+	-- The native MapGet contract returns nil when the query has no matches. A freshly loaded
+	-- temporary blank map can legitimately contain zero enumerable map objects before generation.
+	if objects == nil then
+		return {}
+	end
+	if type(objects) ~= "table" then
+		return nil, "MapGet returned " .. type(objects)
 	end
 	return objects
 end
