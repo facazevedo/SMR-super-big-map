@@ -57,7 +57,9 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 -- 50: remove alternate sector layouts; expanded maps now always use the corner-anchored
 --     full-destination grid.
-SuperBigMap.SECTOR_PATCH_VERSION = 50
+-- 51: initialize migrated entrance passages and badges synchronously for the first overview;
+--     replace the ScaleSmallObjects duration guess with lifecycle completion events.
+SuperBigMap.SECTOR_PATCH_VERSION = 51
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
 -- (sbm_map_generation). Bumped to 87: synchronously rebuild the live surface passage-selection
 -- grid after temporary-source migration instead of trusting the generic destination-ready flag.

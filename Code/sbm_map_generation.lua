@@ -8666,6 +8666,20 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					InvestigationSafeCall("surface: resnap rockets", map, rockets.ResnapRocketsOnMap, map)
 				end
 				StretchLog("TIMING: ResnapRocketsOnMap", { ms = now2() - ft })
+				-- The first overview can begin before temporary-source objects are migrated.
+				-- Initialize the final passage and badge synchronously now that their final
+				-- positions exist; otherwise vanilla first sees them on the next zoom event.
+				local highlight = SuperBigMap.SectorHighlight
+				if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
+					local ready_ok, ready_stats = highlight.EnsureEntranceVisualsReady(
+						map, nil, "surface stretch complete")
+					StretchLog("stretch branch: entrance visuals initialized", {
+						ok = tostring(ready_ok),
+						badges = ready_stats and ready_stats.badges or "?",
+						passages = ready_stats and ready_stats.passages or "?",
+						failed_calls = ready_stats and ready_stats.failed_calls or "?",
+					})
+				end
 				StretchLog("stretch branch: finalize steps done")
 			end)
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.

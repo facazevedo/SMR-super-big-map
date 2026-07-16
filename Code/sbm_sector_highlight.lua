@@ -25,6 +25,105 @@ local function DebugPrint(message)
 	end
 end
 
+-- Vanilla initializes deposit/sign visibility only for the objects that exist when
+-- OverviewModeDialog:ScaleSmallObjects runs. The stretch pipeline migrates the
+-- underground entrance after the first overview has already started, so both the
+-- newly arrived badge and the physical passage miss that initialization until the
+-- next camera transition. Apply the final state directly from engine constants;
+-- this is synchronous, idempotent, and does not depend on a machine-speed timer.
+local function EnsureEntranceVisualsReady(map, overview_active, reason)
+	map = map or Engine.Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		return false, { reason = "map unavailable" }
+	end
+	if overview_active == nil then
+		local is_overview = Engine.Global("IsOverviewMode")
+		local ok, value = false, false
+		if type(is_overview) == "function" then ok, value = pcall(is_overview) end
+		overview_active = ok == true and value == true
+	end
+
+	local is_valid = Engine.Global("IsValid")
+	local const_tbl = Engine.Global("const")
+	local overview_scale = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraScaleUp
+	local overview_opacity = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraOpacityUp
+	local always_show_sign = (SuperBigMap.Config or {}).ALWAYS_SHOW_ENTRANCE_SIGN ~= false
+	local seen = {}
+	local stats = {
+		badges = 0,
+		passages = 0,
+		failed_calls = 0,
+		overview = overview_active == true,
+	}
+
+	local function valid(obj)
+		return obj and (type(is_valid) ~= "function" or is_valid(obj) == true)
+	end
+	local function invoke(obj, method, value)
+		local fn = obj and obj[method]
+		if type(fn) ~= "function" then return false end
+		local ok = pcall(fn, obj, value)
+		if not ok then stats.failed_calls = stats.failed_calls + 1 end
+		return ok
+	end
+	local function prepare_badge(sign)
+		if seen[sign] or not valid(sign) then return end
+		seen[sign] = true
+		stats.badges = stats.badges + 1
+		if overview_active == true then
+			if type(overview_scale) == "number" then invoke(sign, "SetScale", overview_scale) end
+			if type(overview_opacity) == "number" then invoke(sign, "SetOpacity", overview_opacity) end
+			invoke(sign, "SetNoDepthTest", true)
+			invoke(sign, "SetVisible", true)
+		elseif always_show_sign then
+			-- Keep the normal-camera scale chosen by vanilla, but retain the mod option that
+			-- prevents the terrain from hiding the entrance badge at close zoom.
+			invoke(sign, "SetNoDepthTest", true)
+			invoke(sign, "SetVisible", true)
+			invoke(sign, "SetOpacity", 100)
+		end
+	end
+	local function prepare_passage(obj)
+		if seen[obj] or not valid(obj) then return end
+		seen[obj] = true
+		stats.passages = stats.passages + 1
+		-- Temporary-source migration can preserve a hidden enum state. Physical
+		-- entrance objects are real map content and must be visible in every camera mode.
+		invoke(obj, "SetVisible", true)
+		invoke(obj, "SetOpacity", 100)
+	end
+
+	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", prepare_badge)
+	for _, class_name in ipairs({
+		"UndergroundPassageBase",
+		"SurfacePassageBase",
+		"SurfacePassageRocks",
+		"UndergroundPassageRocks",
+	}) do
+		pcall(map.MapForEach, map, "map", class_name, prepare_passage)
+	end
+
+	local terrain_copy = SuperBigMap.TerrainCopy
+	if terrain_copy and type(terrain_copy.RestoreEntranceBadgePositions) == "function" then
+		Engine.SafeCall(terrain_copy.RestoreEntranceBadgePositions, map,
+			"entrance visual readiness: " .. tostring(reason or "unspecified"))
+	end
+	local DebugLog = SuperBigMap.DebugLog
+	if DebugLog then
+		DebugLog.Info("Overview", "entrance visuals ready", {
+			map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
+			reason = tostring(reason or "unspecified"),
+			overview = tostring(stats.overview),
+			badges = stats.badges,
+			passages = stats.passages,
+			failed_calls = stats.failed_calls,
+			overview_scale = tostring(overview_scale),
+			overview_opacity = tostring(overview_opacity),
+		})
+	end
+	return stats.failed_calls == 0, stats
+end
+
 local function Install()
 	local State = SuperBigMap.State
 	if State.overview_highlight_patch_version == SECTOR_PATCH_VERSION then
@@ -432,45 +531,18 @@ local function Install()
 		return r1, r2
 	end
 
-	-- ENTRANCE SIGN always visible: vanilla ScaleSmallObjects (run on overview camera
-	-- transitions) sets the SurfaceUndergroundTunnelSign depth-tested in the close/normal
-	-- camera (disableZ=false), so terrain occludes the ground badge and it "disappears when
-	-- you come closer" (user report). Wrap it so that AFTER its animation thread finishes we
-	-- re-assert no-depth-test + visible on every tunnel sign, keeping the entrance badge on
-	-- top at all zooms. (MoveEntranceVisualsToScale already sets this at placement for the
-	-- never-entered-overview case.) State-verified so a reload reinstalls cleanly.
+	-- Preserve the vanilla animation. The lifecycle's CameraTransitionEnd handler applies
+	-- the persistent close-camera badge option once the engine reports completion, avoiding
+	-- the old transition-duration + 60 ms guess. On overview entry, initialize immediately
+	-- as well so a late-migrated entrance never waits for a second zoom event.
 	if type(overview_class.ScaleSmallObjects) == "function"
 		and overview_class.ScaleSmallObjects ~= State.scale_small_objects_wrapper then
 		State.original_scale_small_objects = overview_class.ScaleSmallObjects
-		local function ReassertEntranceSigns(map, delay_ms)
-			if not map or type(map.CreateRealTimeThread) ~= "function" then return end
-			map:CreateRealTimeThread(function()
-				local sleep = Engine.Global("Sleep")
-				if type(sleep) == "function" and type(delay_ms) == "number" and delay_ms > 0 then
-					sleep(delay_ms)
-				end
-				local is_valid_fn = Engine.Global("IsValid")
-				local signs = map:MapGet(true, "SurfaceUndergroundTunnelSign") or {}
-				for _, s in ipairs(signs) do
-					if type(is_valid_fn) ~= "function" or is_valid_fn(s) then
-						if type(s.SetNoDepthTest) == "function" then pcall(s.SetNoDepthTest, s, true) end
-						if type(s.SetVisible) == "function" then pcall(s.SetVisible, s, true) end
-						if type(s.SetOpacity) == "function" then pcall(s.SetOpacity, s, 100) end
-					end
-				end
-				local terrain_copy = SuperBigMap.TerrainCopy
-				if terrain_copy and type(terrain_copy.RestoreEntranceBadgePositions) == "function" then
-					Engine.SafeCall(terrain_copy.RestoreEntranceBadgePositions, map,
-						"OverviewModeDialog.ScaleSmallObjects")
-				end
-			end)
-		end
 		local wrapper = function(self, time, direction, ...)
 			local r = State.original_scale_small_objects(self, time, direction, ...)
-			if (SuperBigMap.Config or {}).ALWAYS_SHOW_ENTRANCE_SIGN ~= false then
-				-- Re-assert after the original's transition thread (length = time) completes.
-				local map = Engine.Global("CurrentMap")
-				ReassertEntranceSigns(map, (type(time) == "number" and time or 0) + 60)
+			if direction == "up" then
+				EnsureEntranceVisualsReady(Engine.Global("CurrentMap"), true,
+					"OverviewModeDialog.ScaleSmallObjects(up)")
 			end
 			return r
 		end
@@ -487,6 +559,7 @@ end
 local SectorHighlight = {}
 
 SectorHighlight.Install = Install
+SectorHighlight.EnsureEntranceVisualsReady = EnsureEntranceVisualsReady
 
 function SectorHighlight.ApplyModBehavior()
 	Install()

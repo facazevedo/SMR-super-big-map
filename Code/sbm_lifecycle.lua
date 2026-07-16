@@ -1307,6 +1307,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
 	end
+	local entrance_highlight = SuperBigMap.SectorHighlight
+	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
+		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")
+	end
 	-- Clear any legacy underground overview decals on a map switch.
 	do
 		local highlight = SuperBigMap.SectorHighlight
@@ -1669,6 +1673,10 @@ RegisterOnce("MapGenerated", function(map)
 			end
 		end
 	end
+	local entrance_highlight = SuperBigMap.SectorHighlight
+	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
+		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "MapGenerated-finalized")
+	end
 	-- The startup OverviewMode message may have fired while exact-vanilla source
 	-- generation owned CurrentMap. Reframe explicitly now that the expanded map and
 	-- its complete sector grid are finalized; retries cover the UI opening slightly
@@ -1702,6 +1710,9 @@ RegisterOnce("OverviewMode", function(enabled)
 	local highlight = SuperBigMap.SectorHighlight
 	if highlight and type(highlight.UpdateUndergroundOverviewVisuals) == "function" then
 		SafeCall(highlight.UpdateUndergroundOverviewVisuals, enabled == true)
+	end
+	if enabled and highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
+		SafeCall(highlight.EnsureEntranceVisualsReady, Global("CurrentMap"), true, "OverviewMode(true)")
 	end
 	local camera = SuperBigMap.OverviewCamera
 	if enabled then
@@ -1823,6 +1834,11 @@ RegisterOnce("CameraTransitionEnd", function()
 	end
 	local is_overview = Global("IsOverviewMode")
 	local overview_active = type(is_overview) == "function" and SafeCall(is_overview) == true
+	local highlight = SuperBigMap.SectorHighlight
+	if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
+		SafeCall(highlight.EnsureEntranceVisualsReady, Global("CurrentMap"), overview_active,
+			"CameraTransitionEnd")
+	end
 	if overview_active ~= true then
 		local sectors = SuperBigMap.SectorExploration
 		if sectors and type(sectors.HideSectorVisuals) == "function" then
