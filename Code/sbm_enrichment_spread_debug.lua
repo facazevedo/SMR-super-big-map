@@ -16,7 +16,7 @@ if type(Engine) ~= "table" then return end
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Unpack = table.unpack or unpack
-local PATCH_VERSION = 3
+local PATCH_VERSION = 4
 local SCOPE = "EnrichmentSpreadComparison"
 
 SuperBigMap.State = SuperBigMap.State or {}
@@ -494,6 +494,7 @@ local function NewRun(generator, source)
 		source = tostring(source), generator = generator,
 		proc_stack = {}, proc_calls = 0, factory_calls = 0, warning_calls = 0,
 		rrand_calls = 0, grand_calls = 0, playable_area_calls = 0,
+		mask_buildable_calls = 0,
 		grid_min_max_calls = 0, hex_align_calls = 0, resource_info_calls = 0,
 		factory_duplicate_calls = 0, factory_hashes = {}, factory_coordinates = {},
 		factory_hexes = {},
@@ -605,6 +606,271 @@ local function GridAudit(run, label, grid, extra, region)
 	return true
 end
 
+-- Exhaustive usable-area forensic scan. Unlike GridAudit's fixed lattice this reads every cell,
+-- so its checksums and counts detect even a one-cell difference. A compact 24x24 block matrix
+-- preserves the spatial distribution without emitting one line per cell. When compare.values is
+-- supplied, the scan also records exact before->after transitions made by a native grid operation.
+local function GridFullAudit(run, label, grid, extra, options)
+	if not Enabled() then return nil end
+	options = type(options) == "table" and options or {}
+	local ok_size, width, height = pcall(function() return grid:size() end)
+	height = height or width
+	local get_type = "unavailable"
+	pcall(function() get_type = type(grid.get) end)
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width <= 0 or height <= 0 or get_type ~= "function" then
+		Log("GRID_FULL_AUDIT_UNAVAILABLE", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			grid = tostring(grid), size_ok = Bool(ok_size), width = tostring(width),
+			height = tostring(height), get_type = get_type,
+		}, extra), "warn")
+		return nil
+	end
+
+	local blocks_x = math.max(1, math.min(width, math.floor(tonumber(options.blocks_x) or 24)))
+	local blocks_y = math.max(1, math.min(height, math.floor(tonumber(options.blocks_y) or 24)))
+	local x_ranges = {}
+	for bx = 0, blocks_x - 1 do
+		local first = math.floor(bx * width / blocks_x)
+		local last = math.floor((bx + 1) * width / blocks_x) - 1
+		x_ranges[#x_ranges + 1] = tostring(first) .. "-" .. tostring(last)
+	end
+	Log("GRID_FULL_AUDIT_BEGIN", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		grid = tostring(grid), width = width, height = height, cells = width * height,
+		blocks_x = blocks_x, blocks_y = blocks_y, x_ranges = table.concat(x_ranges, ","),
+		capture_values = Bool(options.capture_values == true),
+		compare_label = tostring(options.compare and options.compare.label),
+	}, extra))
+
+	local ticks = Global("GetPreciseTicks")
+	local started = 0
+	if type(ticks) == "function" then
+		local ok_ticks, value = pcall(ticks)
+		if ok_ticks and type(value) == "number" then started = value end
+	end
+	local MOD = 2147483647
+	local ok_scan, stats = pcall(function()
+		local result = {
+			label = tostring(label), width = width, height = height, cells = width * height,
+			checksum_a = 0, checksum_b = 0, numeric = 0,
+			zeros = 0, ones = 0, nonzero = 0, negative = 0,
+			minimum = nil, maximum = nil, sum = 0,
+			zero_min_x = nil, zero_min_y = nil, zero_max_x = nil, zero_max_y = nil,
+			nonzero_min_x = nil, nonzero_min_y = nil, nonzero_max_x = nil, nonzero_max_y = nil,
+			blocks = {}, histogram = options.histogram == true and {} or nil,
+			values = options.capture_values == true and {} or nil,
+			changed = 0, unchanged = 0, zero_to_one = 0, one_to_zero = 0,
+			transitions = options.compare and {} or nil,
+		}
+		for by = 1, blocks_y do
+			result.blocks[by] = {}
+			for bx = 1, blocks_x do
+				result.blocks[by][bx] = {
+					cells = 0, zeros = 0, ones = 0, nonzero = 0, sum = 0,
+					minimum = nil, maximum = nil, changed = 0,
+					zero_to_one = 0, one_to_zero = 0,
+				}
+			end
+		end
+		local compare_values = options.compare and options.compare.values
+		if options.compare and type(compare_values) ~= "table" then
+			error("comparison values unavailable for " .. tostring(options.compare.label))
+		end
+		local index = 0
+		for y = 0, height - 1 do
+			local by = math.min(blocks_y, math.floor(y * blocks_y / height) + 1)
+			for x = 0, width - 1 do
+				index = index + 1
+				local value = grid:get(x, y)
+				if type(value) ~= "number" then
+					error("non-numeric cell at " .. tostring(x) .. ":" .. tostring(y)
+						.. " value=" .. tostring(value))
+				end
+				local bx = math.min(blocks_x, math.floor(x * blocks_x / width) + 1)
+				local block = result.blocks[by][bx]
+				result.numeric = result.numeric + 1
+				result.minimum = result.minimum == nil and value or math.min(result.minimum, value)
+				result.maximum = result.maximum == nil and value or math.max(result.maximum, value)
+				result.sum = result.sum + value
+				block.cells = block.cells + 1
+				block.sum = block.sum + value
+				block.minimum = block.minimum == nil and value or math.min(block.minimum, value)
+				block.maximum = block.maximum == nil and value or math.max(block.maximum, value)
+				if value == 0 then
+					result.zeros = result.zeros + 1
+					block.zeros = block.zeros + 1
+					result.zero_min_x = result.zero_min_x == nil and x or math.min(result.zero_min_x, x)
+					result.zero_min_y = result.zero_min_y == nil and y or math.min(result.zero_min_y, y)
+					result.zero_max_x = result.zero_max_x == nil and x or math.max(result.zero_max_x, x)
+					result.zero_max_y = result.zero_max_y == nil and y or math.max(result.zero_max_y, y)
+				else
+					result.nonzero = result.nonzero + 1
+					block.nonzero = block.nonzero + 1
+					result.nonzero_min_x = result.nonzero_min_x == nil and x or math.min(result.nonzero_min_x, x)
+					result.nonzero_min_y = result.nonzero_min_y == nil and y or math.min(result.nonzero_min_y, y)
+					result.nonzero_max_x = result.nonzero_max_x == nil and x or math.max(result.nonzero_max_x, x)
+					result.nonzero_max_y = result.nonzero_max_y == nil and y or math.max(result.nonzero_max_y, y)
+				end
+				if value == 1 then
+					result.ones = result.ones + 1
+					block.ones = block.ones + 1
+				elseif value < 0 then
+					result.negative = result.negative + 1
+				end
+				if result.histogram then result.histogram[value] = (result.histogram[value] or 0) + 1 end
+				if result.values then result.values[index] = value end
+				local normalized = math.floor(value * 1000 + (value >= 0 and 0.5 or -0.5))
+				result.checksum_a = (result.checksum_a * 65599 + normalized + index * 97) % MOD
+				local normalized_mod = normalized % MOD
+				result.checksum_b = (result.checksum_b
+					+ normalized_mod * ((index % 104729) * 2 + 1)) % MOD
+				if compare_values then
+					local before = compare_values[index]
+					if before == value then
+						result.unchanged = result.unchanged + 1
+					else
+						result.changed = result.changed + 1
+						block.changed = block.changed + 1
+						if before == 0 and value == 1 then
+							result.zero_to_one = result.zero_to_one + 1
+							block.zero_to_one = block.zero_to_one + 1
+						elseif before == 1 and value == 0 then
+							result.one_to_zero = result.one_to_zero + 1
+							block.one_to_zero = block.one_to_zero + 1
+						end
+						local transition = tostring(before) .. ">" .. tostring(value)
+						result.transitions[transition] = (result.transitions[transition] or 0) + 1
+					end
+				end
+			end
+		end
+		return result
+	end)
+	if not ok_scan then
+		Log("GRID_FULL_AUDIT_FAILED", Merge({
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			error = tostring(stats),
+		}, extra), "warn")
+		return nil
+	end
+	local elapsed = 0
+	if type(ticks) == "function" then
+		local ok_ticks, value = pcall(ticks)
+		if ok_ticks and type(value) == "number" then elapsed = value - started end
+	end
+	local function bbox(min_x, min_y, max_x, max_y)
+		if min_x == nil then return "none" end
+		return tostring(min_x) .. ":" .. tostring(min_y) .. "-" .. tostring(max_x) .. ":" .. tostring(max_y)
+	end
+	Log("GRID_FULL_AUDIT_SUMMARY", Merge({
+		run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+		width = width, height = height, cells = stats.cells, numeric_cells = stats.numeric,
+		checksum_a = stats.checksum_a, checksum_b = stats.checksum_b,
+		zeros = stats.zeros, ones = stats.ones, nonzero = stats.nonzero,
+		negative = stats.negative, minimum = tostring(stats.minimum), maximum = tostring(stats.maximum),
+		sum = tostring(stats.sum), zero_bbox = bbox(stats.zero_min_x, stats.zero_min_y,
+			stats.zero_max_x, stats.zero_max_y),
+		nonzero_bbox = bbox(stats.nonzero_min_x, stats.nonzero_min_y,
+			stats.nonzero_max_x, stats.nonzero_max_y),
+		changed_cells = stats.changed, unchanged_cells = stats.unchanged,
+		zero_to_one = stats.zero_to_one, one_to_zero = stats.one_to_zero,
+		ms = elapsed,
+	}, extra))
+
+	if stats.histogram then
+		local entries = {}
+		for value, count in pairs(stats.histogram) do entries[#entries + 1] = { value = value, count = count } end
+		table.sort(entries, function(a, b)
+			if a.count ~= b.count then return a.count > b.count end
+			return a.value < b.value
+		end)
+		local parts = {}
+		for i = 1, math.min(#entries, 128) do
+			parts[#parts + 1] = tostring(entries[i].value) .. ":" .. tostring(entries[i].count)
+		end
+		Log("GRID_FULL_HISTOGRAM", {
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			distinct_values = #entries, entries_by_count = table.concat(parts, ";"),
+			truncated = Bool(#entries > #parts),
+		})
+	end
+	if stats.transitions then
+		local keys, parts = {}, {}
+		for transition in pairs(stats.transitions) do keys[#keys + 1] = transition end
+		table.sort(keys)
+		for _, transition in ipairs(keys) do
+			parts[#parts + 1] = transition .. ":" .. tostring(stats.transitions[transition])
+		end
+		Log("GRID_FULL_TRANSITIONS", {
+			run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+			compare_label = tostring(options.compare and options.compare.label),
+			changed_cells = stats.changed, unchanged_cells = stats.unchanged,
+			transitions = #parts > 0 and table.concat(parts, ";") or "none",
+		})
+	end
+
+	if options.log_blocks ~= false then
+		for by = 1, blocks_y do
+			local cells, zeros, ones, nonzero, averages, minimums, maximums = {}, {}, {}, {}, {}, {}, {}
+			local changed, zero_to_one, one_to_zero = {}, {}, {}
+			for bx = 1, blocks_x do
+				local block = stats.blocks[by][bx]
+				cells[#cells + 1] = tostring(block.cells)
+				zeros[#zeros + 1] = tostring(block.zeros)
+				ones[#ones + 1] = tostring(block.ones)
+				nonzero[#nonzero + 1] = tostring(block.nonzero)
+				averages[#averages + 1] = block.cells > 0 and string.format("%.3f", block.sum / block.cells) or "nil"
+				minimums[#minimums + 1] = tostring(block.minimum)
+				maximums[#maximums + 1] = tostring(block.maximum)
+				changed[#changed + 1] = tostring(block.changed)
+				zero_to_one[#zero_to_one + 1] = tostring(block.zero_to_one)
+				one_to_zero[#one_to_zero + 1] = tostring(block.one_to_zero)
+			end
+			local y0 = math.floor((by - 1) * height / blocks_y)
+			local y1 = math.floor(by * height / blocks_y) - 1
+			Log("GRID_FULL_BLOCK_ROW", {
+				run_id = run and run.id or "?", proc = CurrentProc(run), label = tostring(label),
+				block_row = by, y_range = tostring(y0) .. "-" .. tostring(y1),
+				cells = table.concat(cells, ","), zeros = table.concat(zeros, ","),
+				ones = table.concat(ones, ","), nonzero = table.concat(nonzero, ","),
+				averages = table.concat(averages, ","), minimums = table.concat(minimums, ","),
+				maximums = table.concat(maximums, ","),
+				changed = table.concat(changed, ","), zero_to_one = table.concat(zero_to_one, ","),
+				one_to_zero = table.concat(one_to_zero, ","),
+			})
+		end
+	end
+	return stats
+end
+
+local function NativeMapExtentFields(map, z_grid, mask)
+	local fields = {
+		map = MapName(map), map_width_field = tostring(map and map.Width),
+		map_height_field = tostring(map and map.Height),
+		map_hex_width_field = tostring(map and map.hex_width),
+		map_hex_height_field = tostring(map and map.hex_height),
+		mapdata_width_tiles = tostring(map and map.mapdata and map.mapdata.Width),
+		mapdata_height_tiles = tostring(map and map.mapdata and map.mapdata.Height),
+		mapdata_pass_border = tostring(map and map.mapdata and map.mapdata.PassBorder),
+		z_grid = DescribeValue(z_grid), mask_grid = DescribeValue(mask),
+	}
+	if map and type(map.GetMapSize) == "function" then
+		local ok, width, height = pcall(map.GetMapSize, map)
+		if ok then fields.map_get_size = tostring(width) .. "x" .. tostring(height) end
+	end
+	local terrain_api = Global("terrain")
+	if type(terrain_api) == "table" and type(terrain_api.GetMapSize) == "function" then
+		local ok, width, height = pcall(terrain_api.GetMapSize, map)
+		if ok then fields.terrain_get_map_size = tostring(width) .. "x" .. tostring(height) end
+	end
+	if type(terrain_api) == "table" and type(terrain_api.HeightMapSize) == "function" then
+		local ok, width, height = pcall(terrain_api.HeightMapSize, map)
+		if ok then fields.terrain_height_map_size = tostring(width) .. "x" .. tostring(height or width) end
+	end
+	return fields
+end
+
 local function LogNestedPoints(run, call_kind, call_index, value, result_index, path, seen)
 	local x, y, z = PointXYZ(value)
 	if x ~= nil then
@@ -711,10 +977,11 @@ function Diagnostics.PatchGenerator(reason)
 		Log("PROCESS_MAP", {
 			run_id = run.id,
 			sequence = "01-config-and-template | 02-expanded-allocation-boundary | 03-generator-source-view | "
-				.. "04-procedure-boundary-and-random-fingerprint | 05-rrand-grand-GridMinMax-selection | "
-				.. "06-HexGetNearestCenter-final-alignment | 07-GenMarkerObj-factory | "
-				.. "08-post-DoGenerate-native-census | 09-PostNewMapLoaded-census | "
-				.. "10-CityInitialized-census | 11-MapGenerated-before-and-after-finalize",
+				.. "04-full-MaskBuildableGrid-before-after-census | 05-full-GetPlayableArea-accounting | "
+				.. "06-procedure-boundary-and-random-fingerprint | 07-rrand-grand-GridMinMax-selection | "
+				.. "08-HexGetNearestCenter-final-alignment | 09-GenMarkerObj-factory | "
+				.. "10-post-DoGenerate-native-census | 11-PostNewMapLoaded-census | "
+				.. "12-CityInitialized-census | 13-MapGenerated-before-and-after-finalize",
 		})
 		local results = Pack(pcall(original_generate, generator, params, ...))
 		State.enrichment_spread_active_generate_run = previous
@@ -723,6 +990,7 @@ function Diagnostics.PatchGenerator(reason)
 			proc_calls = run.proc_calls, factory_calls = run.factory_calls,
 			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
 			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
+			mask_buildable_calls = run.mask_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
@@ -746,7 +1014,10 @@ function Diagnostics.PatchGenerator(reason)
 		local terrain_api = Global("terrain")
 		local original_get_height_grid = type(terrain_api) == "table" and terrain_api.GetHeightGrid
 		local get_height_wrapper = false
+		local original_mask_buildable = Global("MaskBuildableGrid")
+		local mask_buildable_wrapper = false
 		run.height_grid_get_calls = 0
+		run.mask_buildable_calls = 0
 		if type(original_get_height_grid) == "function" then
 			local ok_backing, backing = pcall(original_get_height_grid, map)
 			if ok_backing and backing then
@@ -805,7 +1076,54 @@ function Diagnostics.PatchGenerator(reason)
 			end
 			terrain_api.GetHeightGrid = get_height_wrapper
 		end
+		if type(original_mask_buildable) == "function" then
+			mask_buildable_wrapper = function(target_map, z_grid, invalid_mask, ...)
+				run.mask_buildable_calls = run.mask_buildable_calls + 1
+				local call_index = run.mask_buildable_calls
+				local extra = NativeMapExtentFields(target_map, z_grid, invalid_mask)
+				extra.call_index = call_index
+				extra.arguments_after_mask = DescribePacked(Pack(...))
+				Log("MASK_BUILDABLE_BEGIN", Merge({
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+				}, extra))
+				local before = GridFullAudit(run,
+					"MASK_BUILDABLE_INVALID_BEFORE_" .. tostring(call_index), invalid_mask, extra, {
+						histogram = true, capture_values = true, log_blocks = true,
+					})
+				GridFullAudit(run,
+					"MASK_BUILDABLE_Z_GRID_" .. tostring(call_index), z_grid, extra, {
+						histogram = false, log_blocks = true,
+					})
+				local mask_results = Pack(pcall(original_mask_buildable,
+					target_map, z_grid, invalid_mask, ...))
+				local after
+				if mask_results[1] then
+					after = GridFullAudit(run,
+						"MASK_BUILDABLE_INVALID_AFTER_" .. tostring(call_index), invalid_mask, extra, {
+							histogram = true, compare = before, log_blocks = true,
+						})
+				end
+				if before then before.values = nil end
+				Log("MASK_BUILDABLE_END", Merge({
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					ok = Bool(mask_results[1]), error = mask_results[1] and "none" or tostring(mask_results[2]),
+					before_zeros = tostring(before and before.zeros),
+					before_ones = tostring(before and before.ones),
+					after_zeros = tostring(after and after.zeros),
+					after_ones = tostring(after and after.ones),
+					changed_cells = tostring(after and after.changed),
+					zero_to_one = tostring(after and after.zero_to_one),
+					one_to_zero = tostring(after and after.one_to_zero),
+				}, extra))
+				if not mask_results[1] then error(mask_results[2]) end
+				return Unpack(mask_results, 2, mask_results.n)
+			end
+			rawset(_G, "MaskBuildableGrid", mask_buildable_wrapper)
+		end
 		local results = Pack(pcall(original_do_generate, generator, map, ...))
+		if mask_buildable_wrapper and Global("MaskBuildableGrid") == mask_buildable_wrapper then
+			rawset(_G, "MaskBuildableGrid", original_mask_buildable)
+		end
 		if get_height_wrapper and terrain_api.GetHeightGrid == get_height_wrapper then
 			terrain_api.GetHeightGrid = original_get_height_grid
 		end
@@ -817,6 +1135,7 @@ function Diagnostics.PatchGenerator(reason)
 			proc_calls = run.proc_calls, factory_calls = run.factory_calls,
 			warning_calls = run.warning_calls, rrand_calls = run.rrand_calls,
 			grand_calls = run.grand_calls, playable_area_calls = run.playable_area_calls,
+			mask_buildable_calls = run.mask_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
@@ -950,7 +1269,6 @@ function Diagnostics.PatchGenerator(reason)
 		if type(saved_playable) == "function" then
 			playable_wrapper = function(...)
 				local args = Pack(...)
-				local results = Pack(saved_playable(...))
 				run.playable_area_calls = run.playable_area_calls + 1
 				local call_index = run.playable_area_calls
 				GridAudit(run, "PLAYABLE_HEIGHT_GRID_" .. tostring(call_index), args[1], {
@@ -959,8 +1277,65 @@ function Diagnostics.PatchGenerator(reason)
 				GridAudit(run, "PLAYABLE_INVALID_MASK_" .. tostring(call_index), args[3], {
 					call_index = call_index, pass_border = tostring(args[2]),
 				})
+				local full_extra = {
+					call_index = call_index, pass_border = tostring(args[2]),
+					work_step = tostring(env.work_step), map = MapName(map),
+				}
+				local height_stats = GridFullAudit(run,
+					"PLAYABLE_HEIGHT_FULL_" .. tostring(call_index), args[1], full_extra, {
+						histogram = false, log_blocks = true,
+					})
+				local invalid_stats = GridFullAudit(run,
+					"PLAYABLE_INVALID_FULL_" .. tostring(call_index), args[3], full_extra, {
+						histogram = true, log_blocks = true,
+					})
+				Log("PLAYABLE_AREA_NATIVE_BEGIN", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					args = DescribePacked(args), pass_border = tostring(args[2]),
+					work_step = tostring(env.work_step), map_geometry = ScalarFields(MapGeometry(map)),
+					invalid_zero_cells = tostring(invalid_stats and invalid_stats.zeros),
+					invalid_one_cells = tostring(invalid_stats and invalid_stats.ones),
+					height_checksum = height_stats and (tostring(height_stats.checksum_a)
+						.. ":" .. tostring(height_stats.checksum_b)) or "unavailable",
+				})
+				local results = Pack(saved_playable(...))
 				GridAudit(run, "PLAYABLE_RESULT_ZONE_" .. tostring(call_index), results[2], {
 					call_index = call_index, playable_cells = tostring(results[1]),
+				})
+				local result_stats = GridFullAudit(run,
+					"PLAYABLE_RESULT_FULL_" .. tostring(call_index), results[2], Merge({
+						playable_cells = tostring(results[1]),
+					}, full_extra), {
+						histogram = true, log_blocks = true,
+					})
+				local pass_border = tonumber(args[2]) or 0
+				local work_step = tonumber(env.work_step) or 0
+				local border_cells = work_step > 0 and math.floor(pass_border / work_step + 0.5) or 0
+				local inside_border_width = height_stats
+					and math.max(0, height_stats.width - 2 * border_cells) or 0
+				local inside_border_height = height_stats
+					and math.max(0, height_stats.height - 2 * border_cells) or 0
+				local reported_usable = tonumber(results[1])
+				local result_nonzero = result_stats and result_stats.nonzero
+				local invalid_zero = invalid_stats and invalid_stats.zeros
+				Log("PLAYABLE_AREA_ACCOUNTING", {
+					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
+					pass_border_world = pass_border, work_step = work_step,
+					border_cells = border_cells,
+					inside_border_width = inside_border_width,
+					inside_border_height = inside_border_height,
+					inside_border_cells = inside_border_width * inside_border_height,
+					invalid_zero_cells = tostring(invalid_zero),
+					invalid_one_cells = tostring(invalid_stats and invalid_stats.ones),
+					reported_usable_cells = tostring(reported_usable),
+					result_nonzero_cells = tostring(result_nonzero),
+					result_zero_cells = tostring(result_stats and result_stats.zeros),
+					reported_minus_result_nonzero = tostring(reported_usable and result_nonzero
+						and (reported_usable - result_nonzero) or nil),
+					invalid_zero_minus_reported = tostring(invalid_zero and reported_usable
+						and (invalid_zero - reported_usable) or nil),
+					usable_fraction_of_invalid_zero = invalid_zero and invalid_zero > 0 and reported_usable
+						and string.format("%.9f", reported_usable / invalid_zero) or "n/a",
 				})
 				Log("PLAYABLE_AREA", {
 					run_id = run.id, proc = CurrentProc(run), call_index = call_index,
@@ -1098,6 +1473,7 @@ function Diagnostics.PatchGenerator(reason)
 			factory_calls = run.factory_calls, warning_calls = run.warning_calls,
 			rrand_calls = run.rrand_calls, grand_calls = run.grand_calls,
 			playable_area_calls = run.playable_area_calls,
+			mask_buildable_calls = run.mask_buildable_calls,
 			grid_min_max_calls = run.grid_min_max_calls, hex_align_calls = run.hex_align_calls,
 			resource_info_calls = run.resource_info_calls,
 			factory_duplicate_calls = run.factory_duplicate_calls,
