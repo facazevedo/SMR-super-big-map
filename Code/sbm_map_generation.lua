@@ -1625,6 +1625,9 @@ local function PatchRandomMapGenerator()
 			local alignment_hash = closure_global("xxhash", Global("xxhash"))
 			saved_grid_min_max = closure_global("GridMinMax", saved_grid_min_max)
 			local closure_world_to_hex = closure_global("WorldToHex", Global("WorldToHex"))
+			local closure_grid_dest = closure_global("GridDest", Global("GridDest"))
+			local closure_grid_not = closure_global("GridNot", Global("GridNot"))
+			local closure_build_unbuildable_z = closure_global("buildUnbuildableZ", Global("buildUnbuildableZ"))
 			local closure_metatable
 			pcall(function() closure_metatable = getmetatable(generator_closure_env) end)
 			AlignmentTrace("runtime function-environment capability", {
@@ -1981,12 +1984,187 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
+			-- Proc_ResolveBuildable rebuilds map.buildable at the source-sized 615x710 view, but
+			-- native MaskBuildableGrid still projects that correct grid through the expanded
+			-- terrain allocation. The result is deterministic but wrong: the exact vanilla height,
+			-- gen_zone, random stream, and rebuilt buildable grid produce 45,260 candidate cells
+			-- instead of vanilla's 107,293. MaskBuildableGrid is a private native lookup which the
+			-- mod sandbox cannot hook, while GetPlayableArea is deliberately exported through env.
+			-- Reconstruct only that invalid mask here from vanilla's two inputs:
+			--   invalid = NOT gen_zone OR buildable:GetPosZ(work_cell * work_step) == UnbuildableZ
+			-- This is the same point convention vanilla uses for placement (gpos * work_step) and
+			-- the asteroid generator uses to verify MaskBuildableGrid. The repaired mask is passed
+			-- into the original GetPlayableArea; terrain evaluation and every later operation remain
+			-- vanilla. Step 01 off never enters this branch.
+			local function source_mask_log(message, data, level)
+				local debug_log = SuperBigMap.DebugLog
+				if not debug_log then return end
+				local fn = level == "error" and debug_log.Error
+					or (level == "warn" and debug_log.Warn or debug_log.Info)
+				if type(fn) == "function" then
+					pcall(fn, "EnrichmentSpreadComparison", message, data)
+				end
+			end
+
+			local function rebuild_source_invalid_mask(incoming_mask)
+				if is_underground
+					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+					or not cfg_bool("QUADRANT_LIMIT_GENERATOR_TO_SOURCE", true) then
+					return nil, "mode-not-eligible"
+				end
+				local desired_w = tonumber(map and map.SuperBigMapDesiredWidthTiles)
+				local desired_h = tonumber(map and map.SuperBigMapDesiredHeightTiles)
+				local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
+				local generator_h = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
+				if not desired_w or not desired_h or not generator_w or not generator_h
+					or desired_w <= generator_w or desired_h <= generator_h then
+					return nil, "map-not-expanded"
+				end
+				local gen_zone = env.gen_zone
+				local buildable = map and map.buildable
+				local z_grid = buildable and buildable.z_grid
+				if not gen_zone or not incoming_mask or not buildable or not z_grid
+					or type(buildable.GetZ) ~= "function"
+					or type(closure_world_to_hex) ~= "function"
+					or type(closure_grid_dest) ~= "function"
+					or type(closure_grid_not) ~= "function"
+					or type(complement_work_step) ~= "number" or complement_work_step <= 0 then
+					return nil, "required-api-unavailable"
+				end
+
+				local ok_gen, grid_w, grid_h = pcall(gen_zone.size, gen_zone)
+				grid_h = grid_h or grid_w
+				local ok_mask, mask_w, mask_h = pcall(incoming_mask.size, incoming_mask)
+				mask_h = mask_h or mask_w
+				local ok_build, build_w, build_h = pcall(z_grid.size, z_grid)
+				build_h = build_h or build_w
+				if not ok_gen or not ok_mask or not ok_build
+					or type(grid_w) ~= "number" or type(grid_h) ~= "number"
+					or grid_w <= 0 or grid_h <= 0 or mask_w ~= grid_w or mask_h ~= grid_h then
+					return nil, "grid-size-mismatch"
+				end
+				if type(map.hex_width) == "number" and type(map.hex_height) == "number"
+					and (build_w ~= map.hex_width or build_h ~= map.hex_height) then
+					return nil, "buildable-not-source-sized"
+				end
+				local source_x = tonumber(map.SuperBigMapSourceX) or 0
+				local source_y = tonumber(map.SuperBigMapSourceY) or 0
+				if source_x ~= 0 or source_y ~= 0 then
+					return nil, "nonzero-source-origin-unsupported"
+				end
+
+				local unbuildable_z = 2 ^ 16 - 1
+				if type(closure_build_unbuildable_z) == "function" then
+					local ok_z, value = pcall(closure_build_unbuildable_z)
+					if ok_z and type(value) == "number" then unbuildable_z = value end
+				end
+				local ok_create, repaired = pcall(closure_grid_dest, gen_zone)
+				if not ok_create or not repaired then
+					return nil, "GridDest-failed:" .. tostring(repaired)
+				end
+				local ok_not, not_err = pcall(closure_grid_not, gen_zone, repaired)
+				if not ok_not then
+					pcall(function() repaired:free() end)
+					return nil, "GridNot-failed:" .. tostring(not_err)
+				end
+
+				local stats = {
+					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
+					buildable = tostring(build_w) .. "x" .. tostring(build_h),
+					work_step = complement_work_step, unbuildable_z = unbuildable_z,
+					gen_cells = 0, outside_gen_cells = 0,
+					buildable_cells = 0, unbuildable_cells = 0, nil_buildable_cells = 0,
+					repaired_zeros = 0, repaired_ones = 0,
+					incoming_zeros = 0, incoming_ones = 0,
+					changed_cells = 0, incoming_zero_to_one = 0, incoming_one_to_zero = 0,
+				}
+				local pause = Global("PauseInfiniteLoopDetection")
+				local resume = Global("ResumeInfiniteLoopDetection")
+				local ticks = Global("GetPreciseTicks")
+				local started = 0
+				if type(ticks) == "function" then
+					local ok_ticks, value = pcall(ticks)
+					if ok_ticks and type(value) == "number" then started = value end
+				end
+				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskRepair") end
+				local ok_scan, scan_err = pcall(function()
+					for y = 0, grid_h - 1 do
+						local world_y = source_y + y * complement_work_step
+						for x = 0, grid_w - 1 do
+							local repaired_value = repaired:get(x, y)
+							if repaired_value == 0 then
+								stats.gen_cells = stats.gen_cells + 1
+								local world_x = source_x + x * complement_work_step
+								local q, r = closure_world_to_hex(world_x, world_y)
+								local build_z = buildable:GetZ(q, r)
+								if build_z == nil then
+									stats.nil_buildable_cells = stats.nil_buildable_cells + 1
+									repaired:set(x, y, 1)
+									repaired_value = 1
+								elseif build_z == unbuildable_z then
+									stats.unbuildable_cells = stats.unbuildable_cells + 1
+									repaired:set(x, y, 1)
+									repaired_value = 1
+								else
+									stats.buildable_cells = stats.buildable_cells + 1
+								end
+							else
+								stats.outside_gen_cells = stats.outside_gen_cells + 1
+							end
+
+							local incoming_value = incoming_mask:get(x, y)
+							if incoming_value == 0 then stats.incoming_zeros = stats.incoming_zeros + 1
+							else stats.incoming_ones = stats.incoming_ones + 1 end
+							if repaired_value == 0 then stats.repaired_zeros = stats.repaired_zeros + 1
+							else stats.repaired_ones = stats.repaired_ones + 1 end
+							if incoming_value ~= repaired_value then
+								stats.changed_cells = stats.changed_cells + 1
+								if incoming_value == 0 and repaired_value == 1 then
+									stats.incoming_zero_to_one = stats.incoming_zero_to_one + 1
+								elseif incoming_value == 1 and repaired_value == 0 then
+									stats.incoming_one_to_zero = stats.incoming_one_to_zero + 1
+								end
+							end
+						end
+					end
+				end)
+				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableMaskRepair") end
+				if not ok_scan then
+					pcall(function() repaired:free() end)
+					return nil, "scan-failed:" .. tostring(scan_err)
+				end
+				local finished = started
+				if type(ticks) == "function" then
+					local ok_ticks, value = pcall(ticks)
+					if ok_ticks and type(value) == "number" then finished = value end
+				end
+				stats.ms = finished - started
+				stats.algorithm = "NOT gen_zone + source BuildableGrid:GetZ(WorldToHex(work_cell * work_step))"
+				map.SuperBigMapSourceBuildableMaskRepair = stats
+				source_mask_log("SOURCE_MASK_REPAIR", stats)
+				return repaired, nil
+			end
+
 			-- Proc_ResolveBuildable calls this once to turn gen_zone into the actual placement
 			-- play_zone. Capture its exact native area ratio before any resource/anomaly layer
 			-- starts destructively eroding that zone.
 			if type(saved_get_playable_area) == "function" then
 				env.GetPlayableArea = function(...)
-					local results = PackValues(saved_get_playable_area(...))
+					local args = PackValues(...)
+					local repaired_mask, repair_reason = rebuild_source_invalid_mask(args[3])
+					if repaired_mask then
+						args[3] = repaired_mask
+					elseif repair_reason ~= "mode-not-eligible" and repair_reason ~= "map-not-expanded" then
+						source_mask_log("SOURCE_MASK_REPAIR_SKIPPED", {
+							map = tostring(map and map.name), reason = tostring(repair_reason),
+						}, "warn")
+					end
+					local results
+					local ok_playable, playable_err = pcall(function()
+						results = PackValues(saved_get_playable_area(Unpack(args, 1, args.n)))
+					end)
+					if repaired_mask then pcall(function() repaired_mask:free() end) end
+					if not ok_playable then error(playable_err) end
 					pcall(function()
 						local play_area = results[1]
 						local play_zone = results[2]
