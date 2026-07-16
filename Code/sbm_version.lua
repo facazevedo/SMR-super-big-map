@@ -57,6 +57,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     InitSectors cannot perform an unintended initial underground sector scan.
 SuperBigMap.SECTOR_PATCH_VERSION = 49
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 49: close the native HeightMapSize leak during the vanilla
--- source view and bridge its source-sized height write into the expanded backing grid.
-SuperBigMap.GENERATOR_PATCH_VERSION = 49
+-- (sbm_map_generation). Bumped to 50: give native ResolveBuildable a source-sized hex-grid
+-- view during vanilla enrichment placement, then rebuild the expanded gameplay grid afterward.
+SuperBigMap.GENERATOR_PATCH_VERSION = 50

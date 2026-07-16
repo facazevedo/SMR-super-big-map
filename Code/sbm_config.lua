@@ -557,7 +557,7 @@ config.MirrorPlanSettleMs = 5000
 --
 -- 01: Allocate the expanded destination, generate the source through an exact vanilla-sized
 -- view, and capture every original enrichment coordinate before any geometric transformation.
-config.ExpansionStep01GenerateAndCaptureVanillaSource = false
+config.ExpansionStep01GenerateAndCaptureVanillaSource = true
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
 config.ExpansionStep02StretchAndTransformVanillaSource = false
@@ -786,6 +786,10 @@ config.QuadrantCopyForceExpandedTiles = 8192
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.QuadrantCopyLimitGeneratorToSource = true
+-- RebuildBuildableGrid bypasses every map-size view and sizes its native grid directly from
+-- map.hex_width/map.hex_height. Temporarily scale those fields to the vanilla source extent
+-- during native generation, then restore and rebuild the full expanded gameplay grid afterward.
+config.QuadrantCopyLimitBuildableGridToSource = true
 -- Proc_InitPlayZone bypasses terrain.GetMapSize and grows its terrace grid from the real
 -- backing terrain via terrain.HeightMapSize. During the exact vanilla-sized source window,
 -- temporarily report the source size there too, then copy the resulting source height grid
@@ -1265,6 +1269,8 @@ C.OPTIMIZE_UNDERGROUND_WAKE_HANDOFF = as_bool(config.OptimizeUndergroundWakeHand
 C.QUADRANT_FORCE_EXPANDED_TILES = as_number(config.QuadrantCopyForceExpandedTiles, 8192)
 C.QUADRANT_LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.QuadrantCopyLimitGeneratorToSource)
+C.QUADRANT_LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01
+	and as_bool(config.QuadrantCopyLimitBuildableGridToSource)
 C.QUADRANT_BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
 	and as_bool(config.QuadrantCopyBridgeVanillaHeightGrid)
 C.ENABLE_RMG_PLACEMENT_FIX = expansion_step_01
