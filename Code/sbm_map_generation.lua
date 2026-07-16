@@ -2772,11 +2772,13 @@ local function BootstrapPassagesAndDeferWonders(env)
 	local unbuildable_z = Global("buildUnbuildableZ")()
 	local done_object = Global("DoneObject")
 	local successful = {}
+	local attempted = 0
 	local t0 = ArtefactTicks()
 	map:SuspendPassEdits("SuperBigMap_PassageBootstrap")
 	local ok, err = pcall(function()
 		while #successful < desired_passages and #passage_markers > 0 do
 			local marker = table.remove(passage_markers)
+			attempted = attempted + 1
 			local surface_anchor, surface_shape = spawn_surface_anchor(surface_map,
 				marker:GetPos(), marker:GetAngle(), const_tbl.RandomMap.UndergroundPassagesMinDistance,
 				successful)
@@ -2833,6 +2835,31 @@ local function BootstrapPassagesAndDeferWonders(env)
 				else
 					marker.editor_text_color = Global("RGB")(255, 0, 0)
 				end
+			else
+				local marker_pos = marker:GetPos()
+				local grid_w, grid_h = MigrationGridSize(surface_map.buildable
+					and surface_map.buildable.z_grid)
+				local ok_hex, mq, mr = pcall(world_to_hex, marker_pos)
+				local marker_build_z, marker_terrain_z
+				if ok_hex and type(mq) == "number" then
+					local ok_bz, bz = pcall(surface_map.buildable.GetZ,
+						surface_map.buildable, mq, mr)
+					if ok_bz then marker_build_z = bz end
+				end
+				local terrain_api = Global("terrain")
+				if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+					local ok_tz, tz = pcall(terrain_api.GetHeight, surface_map, marker_pos)
+					if ok_tz then marker_terrain_z = tz end
+				end
+				PairingLog("vanilla surface passage footprint search rejected marker", {
+					attempt = attempted, marker = tostring(marker_pos),
+					marker_q = tostring(mq), marker_r = tostring(mr),
+					marker_buildable_z = tostring(marker_build_z),
+					marker_terrain_z = tostring(marker_terrain_z),
+					buildable_grid = tostring(grid_w) .. "x" .. tostring(grid_h),
+					map_hex = tostring(surface_map.hex_width) .. "x" .. tostring(surface_map.hex_height),
+					map_world = tostring(surface_map.Width) .. "x" .. tostring(surface_map.Height),
+				})
 			end
 		end
 		for _, marker in ipairs(passage_markers) do done_object(marker) end
@@ -2851,7 +2878,8 @@ local function BootstrapPassagesAndDeferWonders(env)
 	map.SuperBigMapPassageBootstrapCount = #successful
 	local elapsed = ArtefactTicks() - t0
 	PairingLog("passage-only artefact bootstrap complete", {
-		passages = #successful, wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
+		passages = #successful, attempted_markers = attempted,
+		wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
 	})
 	UndergroundAccessLog("startup passage bootstrap complete; wonders deferred", UndergroundAccessState(map, {
 		passages = #successful, wonders_deferred = #wonder_markers, elapsed_ms = elapsed,
@@ -7328,17 +7356,13 @@ local function PatchRandomMapGenerator()
 			end
 
 			-- DETERMINISTIC ENTRANCE PAIRING, the no-terrain-touching way (config
-			-- PAIRING_SURFACE_BUILDABLE_REBUILD). The entrance pairing runs INSIDE the
-			-- UNDERGROUND generation: vanilla searches MainMap's BUILDABLE grid around each
-			-- underground marker and falls back to a RANDOM position when the search fails.
-			-- The mod now proves whether native surface ResolveBuildable has already replaced
-			-- the provisional grid. That exact grid is reused when current; otherwise a
-			-- synchronous correctness fallback rebuild runs before underground generation.
-			-- Both paths make the search inputs deterministic: same terrain, same grid, same marker
-			-- positions => the SAME all-buildable spot every run, vanilla's own clean flatten,
-			-- zero terrain interference from the mod. (The forced-position correction chain of
-			-- v437-v441 stays retired: forcing spots the grid calls unbuildable is what
-			-- produced the spike artifacts.)
+			-- PAIRING_SURFACE_BUILDABLE_REBUILD). Passage selection runs during underground
+			-- generation but searches MainMap's surface grids. A generic RebuildGrids completion
+			-- flag is not sufficient here: after temporary-source migration it described a usable
+			-- gameplay grid, yet vanilla FindPassageSpawnPos rejected both passage markers. Build
+			-- the surface Z grid once, synchronously, immediately before passage selection, against
+			-- the live surface map dimensions and object grid. Vanilla then selects a complete
+			-- naturally buildable Elevator footprint; the mod never manufactures a terrain pad.
 			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
 				local env = (type(mapdata) == "table" and mapdata.Environment)
 					or (template and template.Environment)
@@ -7346,22 +7370,44 @@ local function PatchRandomMapGenerator()
 					local main_map = Global("MainMap")
 					local rebuild = Global("RebuildBuildableGrid")
 					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
-						if main_map.SuperBigMapSurfaceBuildableCurrent == true then
-							-- The surface RandomMapGenerator has already completed ResolveBuildable
-							-- synchronously, and no surface terrain edit occurs before underground
-							-- generation. Reusing that exact grid avoids recomputing identical input.
-							DebugPrint("surface buildable grid already authoritative before underground generation; duplicate pairing rebuild skipped")
+						if main_map.SuperBigMapSurfaceBuildablePairingReady == true then
+							PairingLog("dedicated surface pairing-grid rebuild already complete", {
+								map = tostring(main_map.name),
+							})
 						else
+							local before_w, before_h = MigrationGridSize(main_map.buildable.z_grid)
 							local t0 = 0
 							local ticks = Global("GetPreciseTicks")
 							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
+							PairingLog("dedicated surface pairing-grid rebuild begin", {
+								map = tostring(main_map.name),
+								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
+								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
+								map_world = tostring(main_map.Width) .. "x" .. tostring(main_map.Height),
+								mapdata = tostring(main_map.mapdata and main_map.mapdata.Width)
+									.. "x" .. tostring(main_map.mapdata and main_map.mapdata.Height),
+								generic_current_flag = tostring(main_map.SuperBigMapSurfaceBuildableCurrent),
+							})
 							local ok_rb, err_rb = pcall(rebuild, main_map)
 							local t1 = t0
 							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
-							if ok_rb then main_map.SuperBigMapSurfaceBuildableCurrent = true end
+							local after_w, after_h = MigrationGridSize(main_map.buildable.z_grid)
+							PairingLog("dedicated surface pairing-grid rebuild end", {
+								map = tostring(main_map.name), ok = ok_rb,
+								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
+								after_grid = tostring(after_w) .. "x" .. tostring(after_h),
+								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
+								ms = t1 - t0, error = ok_rb and nil or tostring(err_rb),
+							})
+							if not ok_rb then
+								error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
+							end
+							main_map.SuperBigMapSurfaceBuildableCurrent = true
+							main_map.SuperBigMapSurfaceBuildablePairingReady = true
 							DebugPrint(string.format(
-								"surface buildable grid rebuilt before underground generation (deterministic entrance pairing): ok=%s ms=%s%s",
-								tostring(ok_rb), tostring(t1 - t0), ok_rb and "" or (" err=" .. tostring(err_rb))))
+								"surface buildable grid rebuilt immediately before passage selection: grid=%sx%s map_hex=%sx%s ms=%s",
+								tostring(after_w), tostring(after_h), tostring(main_map.hex_width),
+								tostring(main_map.hex_height), tostring(t1 - t0)))
 						end
 					end
 				end

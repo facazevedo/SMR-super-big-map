@@ -630,11 +630,10 @@ config.FlattenSkipWhenUnbuildable = true
 -- surface buildable grid, then proportionally moves each independently selected endpoint.
 config.StretchDeterministicPassages = false
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
--- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation;
--- the mod now records whether native surface ResolveBuildable already produced the authoritative
--- grid. When true, pairing reuses that exact grid; if proof is absent it synchronously rebuilds
--- as a correctness fallback. Both paths restore deterministic vanilla search conditions without
--- editing terrain (unlike the retired forced-position correction chain).
+-- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation.
+-- When true, the surface Z grid is synchronously rebuilt once immediately before that search;
+-- generic migration/RebuildGrids completion flags are deliberately not reused as proof. This
+-- restores vanilla's complete-footprint selection without editing terrain.
 config.PairingSurfaceBuildableRebuild = true
 -- Post-generation smoothing of the ground around each entrance footprint (GridSmooth, the
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint

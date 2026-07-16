@@ -59,6 +59,6 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     full-destination grid.
 SuperBigMap.SECTOR_PATCH_VERSION = 50
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 86: restore vanilla complete-footprint selection for eager
--- surface passage anchors and prevent the legacy link hook from relocating validated anchors.
-SuperBigMap.GENERATOR_PATCH_VERSION = 86
+-- (sbm_map_generation). Bumped to 87: synchronously rebuild the live surface passage-selection
+-- grid after temporary-source migration instead of trusting the generic destination-ready flag.
+SuperBigMap.GENERATOR_PATCH_VERSION = 87
