@@ -63,6 +63,10 @@ local function LiveCameraState()
 			end
 		end
 	end
+	local camera_api = Global("camera")
+	if type(camera_api) == "table" and type(camera_api.GetFovX) == "function" then
+		state.fov_x = SafeCall(camera_api.GetFovX)
+	end
 	return state
 end
 
@@ -235,6 +239,46 @@ local OVERVIEW_FOV_4_3 = cfg_number("OVERVIEW_FOV_4_3", 3400)
 local overview_camera_patched = false
 local original_calc_overview_camera_pos = false
 local overview_reset_token = 0
+
+-- Vanilla applies the overview FOV to the live renderer only when
+-- OverviewModeDialog:StoreView runs. Exact-vanilla source generation switches maps
+-- after that call, which can restore the normal lens even though our overview consts
+-- still say 3600/3400. Re-apply the lens together with every destination reframe.
+-- This preserves the camera profile from 626ddb8: normal max zoom 900%, overview
+-- distance 140% of terrain, overview horizontal FOV 60 degrees at 16:9.
+local function ApplyLiveOverviewFov(transition_time, source)
+	local camera_api = Global("camera")
+	local const_tbl = Global("const")
+	if type(camera_api) ~= "table" or type(camera_api.SetAutoFovX) ~= "function"
+		or type(const_tbl) ~= "table" or type(const_tbl.Camera) ~= "table" then
+		OverviewDiag("live overview FOV skipped", {
+			source = source or "?",
+			reason = "camera API or const.Camera unavailable",
+		})
+		return false
+	end
+	local before = type(camera_api.GetFovX) == "function" and SafeCall(camera_api.GetFovX) or nil
+	local fov_4_3 = tonumber(const_tbl.Camera.OverviewFovX_4_3) or OVERVIEW_FOV_4_3
+	local fov_16_9 = tonumber(const_tbl.Camera.OverviewFovX_16_9) or OVERVIEW_FOV_16_9
+	local ok, err = pcall(camera_api.SetAutoFovX, 1, transition_time or 0,
+		fov_4_3, 4, 3, fov_16_9, 16, 9)
+	local after = type(camera_api.GetFovX) == "function" and SafeCall(camera_api.GetFovX) or nil
+	local zoom_option = SuperBigMap.ZoomOption
+	local max_zoom_percent = zoom_option and type(zoom_option.GetPercent) == "function"
+		and SafeCall(zoom_option.GetPercent) or nil
+	OverviewDiag("live overview FOV applied", {
+		source = source or "?",
+		ok = ok,
+		error = ok and nil or tostring(err),
+		fov_before = before,
+		fov_after = after,
+		fov_4_3 = fov_4_3,
+		fov_16_9 = fov_16_9,
+		normal_max_zoom_percent = max_zoom_percent,
+		overview_distance_percent = OVERVIEW_ZOOM_DISTANCE_PERCENT,
+	})
+	return ok
+end
 
 local function ApplyOverviewNudge(pos, lookat, size)
 	if OVERVIEW_NUDGE_HORIZONTAL_PERCENT == 0 and OVERVIEW_NUDGE_VERTICAL_PERCENT == 0 then
@@ -557,6 +601,7 @@ local function ResetOverviewCamera(map, transition_time, source)
 		-- Raise the live far-zoom limit first so the engine doesn't clamp the far
 		-- overview eye on the first entry (see EnsureOverviewZoomOutLimit).
 		EnsureOverviewZoomOutLimit(camera)
+		ApplyLiveOverviewFov(transition_time or 0, source)
 		SafeCall(camera.SetCamera, pos, lookat, transition_time or 0)
 		if OverviewDiagOn() then
 			local after = LiveCameraState()

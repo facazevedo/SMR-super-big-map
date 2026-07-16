@@ -162,6 +162,8 @@ config.OverviewExitPanTime = 250
 -- Overview camera distance and field of view.
 -- Percent values scale from the loaded terrain size.
 -- Larger zoom distance values put the overview camera farther away.
+-- Reference profile from 626ddb8: Max Zoom Level 900% controls normal selection
+-- zoom; overview itself uses 140% terrain distance with a 60-degree 16:9 FOV.
 config.OverviewZoomDistancePercent = 140
 config.OverviewCameraXYPercent = 28
 config.OverviewDistanceMultiplier = 2.5
