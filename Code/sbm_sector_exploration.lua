@@ -885,8 +885,10 @@ local function VanillaStartPick(city, map)
 		return string.char(string.byte("A") + 10 - col) .. (row - 1)
 	end
 	local eligible = {}
+	local virtual_grid = {}
 	local diag = {}
 	for col = 1, VN do
+		virtual_grid[col] = {}
 		local x = border + (col - 1) * tile
 		for row = 1, VN do
 			local y = border + (row - 1) * tile
@@ -896,6 +898,7 @@ local function VanillaStartPick(city, map)
 				markers = { surface = {} },
 				play_ratio = 0, avg_heat = max_heat,
 			}
+			virtual_grid[col][row] = sec
 			if buildable and buildable.z_grid then
 				local ok_r, r = pcall(ratio_fn, buildable.z_grid, unbuildable, 100, area)
 				if ok_r and type(r) == "number" then sec.play_ratio = r end
@@ -916,48 +919,46 @@ local function VanillaStartPick(city, map)
 			if has_surface and row > 1 and row < VN and col > 1 and col < VN then
 				eligible[#eligible + 1] = sec
 				eligible[sec] = true
-				-- Vanilla's exact qty math (CanPlaceDeposit-gated GetEstimatedAmount /
-				-- max_amount, deposit resources only) so both runs' candidate tables are
-				-- directly comparable line by line.
-				local qty_m, qty_c = 0, 0
-				pcall(function()
-					local group = Global("GroupResourceIds")
-					local dep_res = group and group.DepositResources or {}
-					local is_kind = Global("IsKindOf")
-					for _, m in ipairs(sec.markers.surface) do
-						local res = m.resource
-						if res and dep_res[res] then
-							local ok_cp, spawn = pcall(m.CanPlaceDeposit, m)
-							if ok_cp and spawn then
-								local amount
-								if type(is_kind) == "function" and is_kind(m, "SurfaceDepositMarker")
-									and type(m.GetEstimatedAmount) == "function" then
-									local ok_a, a = pcall(m.GetEstimatedAmount, m)
-									amount = ok_a and a or 0
-								else
-									amount = m.max_amount or 0
-								end
-								if res == "Metals" then qty_m = qty_m + amount end
-								if res == "Concrete" then qty_c = qty_c + amount end
-							end
-						end
-					end
-				end)
-				diag[#diag + 1] = string.format("%s(m=%d M=%d C=%d pr=%d heat=%d w=%d)",
-					sec.id, #sec.markers.surface, qty_m, qty_c, sec.play_ratio, sec.avg_heat,
-					math.floor(sec.play_ratio * sec.avg_heat / max_heat))
 			end
 		end
 	end
 	if #eligible == 0 then return nil, "no eligible virtual sectors" end
+
+	-- CanPlaceDeposit requires the owning city's vanilla exploration geometry even though the
+	-- temporary source never reaches InitSectors/InitMapArea. Install the exact transient 10x10
+	-- view for both diagnostics and vanilla InitialReveal, then restore the city and global count.
+	local saved_map_area = city.MapArea
+	local saved_map_sectors = city.MapSectors
+	local saved_sector_count = type(const_tbl) == "table" and const_tbl.SectorCount or nil
+	city.MapArea = box_fn(border, border, border + VN * tile, border + VN * tile)
+	city.MapSectors = virtual_grid
+	if type(const_tbl) == "table" then const_tbl.SectorCount = VN end
+	DebugPrint(string.format("native start temporary exploration view installed: grid=%dx%d area=%d,%d-%d,%d",
+		VN, VN, border, border, border + VN * tile, border + VN * tile))
+
+	-- Keep diagnostics side-effect-free and cheap. Vanilla's actual InitialReveal below performs
+	-- the authoritative CanPlaceDeposit-gated resource calculation once.
+	for i = 1, #eligible do
+		local sec = eligible[i]
+		diag[#diag + 1] = string.format("%s(m=%d pr=%d heat=%d w=%d)",
+			sec.id, #sec.markers.surface, sec.play_ratio, sec.avg_heat,
+			math.floor(sec.play_ratio * sec.avg_heat / max_heat))
+	end
 	StartLog("virtual vanilla sectors built", {
 		eligible = #eligible, tile = tile, border = border, orient = orient,
 		candidates = table.concat(diag, " "),
 	})
 	-- Same seeded stream vanilla's InitialExplore would create.
 	local ok_rand, _, trand = pcall(city.CreateMapRand, city, "Exploration")
+	local ok_pick, revealed
+	if ok_rand and type(trand) == "function" then
+		ok_pick, revealed = pcall(initial_reveal, eligible, trand)
+	end
+	city.MapArea = saved_map_area
+	city.MapSectors = saved_map_sectors
+	if type(const_tbl) == "table" then const_tbl.SectorCount = saved_sector_count or VN end
+	DebugPrint("native start temporary exploration view restored")
 	if not (ok_rand and type(trand) == "function") then return nil, "trand unavailable" end
-	local ok_pick, revealed = pcall(initial_reveal, eligible, trand)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
