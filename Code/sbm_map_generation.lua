@@ -4642,8 +4642,7 @@ local function PatchRandomMapGenerator()
 			end
 
 			local function rebuild_source_invalid_mask(incoming_mask)
-				if is_underground
-					or map.SuperBigMapDeferredBackingPromotion == true
+				if map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 					or not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
@@ -4990,6 +4989,14 @@ local function PatchRandomMapGenerator()
 									repair_reason = "native-bridge", pass_border = tostring(args[2]),
 								})
 						end
+					elseif sampler_source_buildable_grid then
+						source_mask_log("SOURCE_MASK_REPAIR_REQUIRED_BUT_FAILED", {
+							map = tostring(map and map.name), environment = tostring(environment),
+							reason = tostring(repair_reason),
+							authoritative_grid = tostring(sampler_source_buildable_grid),
+							stock_grid = tostring(map and map.buildable and map.buildable.z_grid),
+						}, "error")
+						error("source playable-mask repair failed: " .. tostring(repair_reason))
 					elseif repair_reason ~= "mode-not-eligible" and repair_reason ~= "map-not-expanded" then
 						source_mask_log("SOURCE_MASK_REPAIR_SKIPPED", {
 							map = tostring(map and map.name), reason = tostring(repair_reason),
@@ -6534,8 +6541,7 @@ local function PatchRandomMapGenerator()
 			local desired_h = tonumber(map and map.SuperBigMapDesiredHeightTiles)
 			local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
 			local generator_h = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
-			local rebuild_buildable_grid_required = not is_underground
-				and map.SuperBigMapDeferredBackingPromotion ~= true
+			local rebuild_buildable_grid_required = map.SuperBigMapDeferredBackingPromotion ~= true
 				and cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 				and cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and desired_w and desired_h and generator_w and generator_h
@@ -6558,6 +6564,84 @@ local function PatchRandomMapGenerator()
 						and target_map.mapdata.Width) .. "x" .. tostring(target_map
 						and target_map.mapdata and target_map.mapdata.Height),
 				})
+				-- Surface generation now normally runs on a true vanilla-sized temporary map.
+				-- Deferred underground generation still runs once on the final expanded backing,
+				-- while its Lua-visible fields present the vanilla source extent. The stock
+				-- ResolveBuildable sequence builds a source-sized z-grid and immediately passes it
+				-- to native MaskBuildableGrid. Native code addresses the real backing extent, not
+				-- the Lua view, so that mixed 615x710 / 820x946 transaction can read out of bounds.
+				--
+				-- Keep the exact source grid for the authoritative GetPlayableArea mask repair,
+				-- but give the unavoidable stock mask call a backing-sized grid padded with
+				-- UnbuildableZ. This changes no source value and adds no playable cell.
+				if is_underground and target_map == map then
+					if type(saved_buildable_grid_build) ~= "function"
+						or type(closure_new_grid) ~= "function" then
+						error("underground stock-mask safety APIs unavailable")
+					end
+					if sampler_source_buildable_grid then
+						error("underground source buildable grid already retained")
+					end
+					saved_buildable_grid_build(buildable, target_map, width, height, map_data, ...)
+					local source_grid = buildable and buildable.z_grid
+					local source_w, source_h
+					if source_grid and type(source_grid.size) == "function" then
+						local ok_size, grid_w, grid_h = pcall(source_grid.size, source_grid)
+						if ok_size then source_w, source_h = grid_w, grid_h or grid_w end
+					end
+					local expected_source_w = tonumber(map.hex_width)
+					local expected_source_h = tonumber(map.hex_height)
+					local expanded_w = tonumber(map.SuperBigMapExpandedHexWidth)
+					local expanded_h = tonumber(map.SuperBigMapExpandedHexHeight)
+					local invariant = {
+						map = tostring(map), environment = tostring(environment),
+						requested = tostring(width) .. "x" .. tostring(height),
+						source_grid = tostring(source_w) .. "x" .. tostring(source_h),
+						expected_source = tostring(expected_source_w) .. "x" .. tostring(expected_source_h),
+						expanded_backing = tostring(expanded_w) .. "x" .. tostring(expanded_h),
+						map_world_view = tostring(map.Width) .. "x" .. tostring(map.Height),
+						mapdata_view = tostring(map_data and map_data.Width)
+							.. "x" .. tostring(map_data and map_data.Height),
+					}
+					local dimensions_valid = source_grid ~= nil
+						and type(source_w) == "number" and type(source_h) == "number"
+						and source_w == expected_source_w and source_h == expected_source_h
+						and type(expanded_w) == "number" and type(expanded_h) == "number"
+						and expanded_w >= source_w and expanded_h >= source_h
+						and (expanded_w > source_w or expanded_h > source_h)
+					if not dimensions_valid then
+						source_mask_log("UNDERGROUND_STOCK_MASK_INVARIANT_FAILED", invariant, "error")
+						error("underground stock-mask dimension invariant failed")
+					end
+					local unbuildable_z = 2 ^ 16 - 1
+					if type(closure_build_unbuildable_z) == "function" then
+						local ok_z, value = pcall(closure_build_unbuildable_z)
+						if ok_z and type(value) == "number" then unbuildable_z = value end
+					end
+					local padded = closure_new_grid(expanded_w, expanded_h, 16, unbuildable_z)
+					if not padded or type(padded.set) ~= "function" or type(source_grid.get) ~= "function" then
+						if padded then pcall(function() padded:free() end) end
+						error("underground stock-mask safety grid allocation failed")
+					end
+					local ticks = Global("GetPreciseTicks")
+					local pad_started = type(ticks) == "function" and ticks() or 0
+					for y = 0, source_h - 1 do
+						for x = 0, source_w - 1 do
+							padded:set(x, y, source_grid:get(x, y))
+						end
+					end
+					local pad_finished = type(ticks) == "function" and ticks() or pad_started
+					sampler_source_buildable_grid = source_grid
+					buildable.z_grid = padded
+					invariant.stock_grid = tostring(expanded_w) .. "x" .. tostring(expanded_h)
+					invariant.authoritative_grid = tostring(source_w) .. "x" .. tostring(source_h)
+					invariant.padding = "UnbuildableZ"
+					invariant.unbuildable_z = unbuildable_z
+					invariant.pad_ms = pad_finished - pad_started
+					invariant.safe = true
+					source_mask_log("UNDERGROUND_STOCK_MASK_SAFETY_GRID_READY", invariant)
+					return
+				end
 				local bridge_ok, bridge_reason = rebuild_source_buildable_grid(target_map)
 				if bridge_ok then
 					source_mask_log("SOURCE_BUILDABLE_BRIDGE_CALL_END", {

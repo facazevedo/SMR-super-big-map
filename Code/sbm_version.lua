@@ -61,6 +61,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     replace the ScaleSmallObjects duration guess with lifecycle completion events.
 SuperBigMap.SECTOR_PATCH_VERSION = 51
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 87: synchronously rebuild the live surface passage-selection
--- grid after temporary-source migration instead of trusting the generic destination-ready flag.
-SuperBigMap.GENERATOR_PATCH_VERSION = 87
+-- (sbm_map_generation). Bumped to 88: protect deferred underground ResolveBuildable by giving
+-- stock MaskBuildableGrid a backing-sized padded grid while retaining the exact source grid for
+-- the authoritative source-coordinate playable-mask repair.
+SuperBigMap.GENERATOR_PATCH_VERSION = 88
