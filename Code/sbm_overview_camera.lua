@@ -238,6 +238,7 @@ local OVERVIEW_FOV_4_3 = cfg_number("OVERVIEW_FOV_4_3", 3400)
 
 local overview_camera_patched = false
 local original_calc_overview_camera_pos = false
+local overview_camera_wrapper = false
 local overview_reset_token = 0
 
 -- Vanilla applies the overview FOV to the live renderer only when
@@ -385,13 +386,31 @@ local function PatchOverviewFov()
 end
 
 local function PatchOverviewCamera()
-	if overview_camera_patched or type(Global("CalcOverviewCameraPos")) ~= "function" then
-		return
+	local current = Global("CalcOverviewCameraPos")
+	if current == overview_camera_wrapper and type(current) == "function" then
+		overview_camera_patched = true
+		return true
+	end
+	if type(current) ~= "function" then
+		OverviewDiag("CalcOverviewCameraPos hook unavailable", {
+			current = tostring(current),
+			patched_flag = overview_camera_patched,
+			wrapper = tostring(overview_camera_wrapper),
+		})
+		return false
 	end
 
-	original_calc_overview_camera_pos = Global("CalcOverviewCameraPos")
+	-- The underground DLC reloads part of the game Lua while the first underground
+	-- map is becoming current. That reload can replace the global calculator without
+	-- reloading this module, leaving overview_camera_patched=true while our wrapper is
+	-- no longer installed. Treat function identity as authoritative and wrap the new
+	-- environment-specific vanilla calculator immediately.
+	local displaced = overview_camera_patched == true and overview_camera_wrapper ~= false
+	local previous_original = original_calc_overview_camera_pos
+	original_calc_overview_camera_pos = current
 
-	_G.CalcOverviewCameraPos = function(angle, map)
+	local wrapper
+	wrapper = function(angle, map)
 		-- Vanilla must own every camera calculation while its temporary source map is
 		-- public. Resolving that source to MainMap here would feed expanded geometry
 		-- into a vanilla-map camera call and recreate the stale startup framing.
@@ -408,8 +427,16 @@ local function PatchOverviewCamera()
 		local pos, lookat = original_calc_overview_camera_pos(angle, map)
 		map = resolved
 		if not pos or not lookat or not map then
+			OverviewDiag("CalcOverviewCameraPos vanilla result unavailable", CameraMapDiag(map, {
+				angle = angle,
+				original = tostring(original_calc_overview_camera_pos),
+				pos = tostring(pos),
+				lookat = tostring(lookat),
+			}))
 			return pos, lookat
 		end
+		local raw_pos_x, raw_pos_y, raw_pos_z = PointXYZ(pos)
+		local raw_lookat_x, raw_lookat_y, raw_lookat_z = PointXYZ(lookat)
 
 		local width, height, geometry_source, live_width, live_height = StableCameraTerrainSize(map)
 		local size = math.max(width or 0, height or 0)
@@ -443,6 +470,29 @@ local function PatchOverviewCamera()
 				lookat = center
 				pos = center + point_fn(new_dx, new_dy, new_z)
 				pos, lookat = ApplyOverviewNudge(pos, lookat, size)
+				local final_pos_x, final_pos_y, final_pos_z = PointXYZ(pos)
+				local final_lookat_x, final_lookat_y, final_lookat_z = PointXYZ(lookat)
+				OverviewDiag("CalcOverviewCameraPos normalized vanilla result", CameraMapDiag(map, {
+					angle = angle,
+					original = tostring(original_calc_overview_camera_pos),
+					raw_pos_x = raw_pos_x,
+					raw_pos_y = raw_pos_y,
+					raw_pos_z = raw_pos_z,
+					raw_lookat_x = raw_lookat_x,
+					raw_lookat_y = raw_lookat_y,
+					raw_lookat_z = raw_lookat_z,
+					raw_offset_x = dx,
+					raw_offset_y = dy,
+					raw_xy_length = xy_len,
+					target_xy_distance = xy_dist,
+					target_z_distance = new_z,
+					final_pos_x = final_pos_x,
+					final_pos_y = final_pos_y,
+					final_pos_z = final_pos_z,
+					final_lookat_x = final_lookat_x,
+					final_lookat_y = final_lookat_y,
+					final_lookat_z = final_lookat_z,
+				}))
 				return pos, lookat
 			end
 		end
@@ -460,7 +510,20 @@ local function PatchOverviewCamera()
 		return pos, lookat
 	end
 
+	overview_camera_wrapper = wrapper
+	_G.CalcOverviewCameraPos = wrapper
 	overview_camera_patched = true
+	OverviewDiag(displaced and "CalcOverviewCameraPos hook displaced and reinstalled"
+		or "CalcOverviewCameraPos hook installed", {
+		current_before = tostring(current),
+		previous_original = tostring(previous_original),
+		original = tostring(original_calc_overview_camera_pos),
+		wrapper = tostring(overview_camera_wrapper),
+		current_after = tostring(Global("CalcOverviewCameraPos")),
+		displaced = displaced,
+		map = tostring((Global("CurrentMap") or {}).name or Global("CurrentMap")),
+	})
+	return true
 end
 
 -- Before the overview SetCamera, raise the LIVE camera's LookatDistZoomOut to the
@@ -528,7 +591,12 @@ local function ResetOverviewCamera(map, transition_time, source)
 		}))
 		return false
 	end
-	if type(Global("CalcOverviewCameraPos")) ~= "function" then
+	-- Verify the hook at the final call boundary as well as in RefreshOverviewCamera.
+	-- Direct lifecycle callers can reach ResetOverviewCamera, and the underground
+	-- environment reload may replace the global between scheduled refresh ticks.
+	PatchOverviewCamera()
+	local calc_overview = Global("CalcOverviewCameraPos")
+	if type(calc_overview) ~= "function" then
 		OverviewDiag("ResetOverviewCamera skipped", { source = source, reason = "no CalcOverviewCameraPos" })
 		return false
 	end
@@ -585,7 +653,7 @@ local function ResetOverviewCamera(map, transition_time, source)
 	if dialog and type(OVERVIEW_VIEW_ANGLE_DEGREES) == "number" then
 		dialog.overview_angle = angle
 	end
-	local pos, lookat = CalcOverviewCameraPos(angle, map)
+	local pos, lookat = calc_overview(angle, map)
 	if pos and lookat then
 		-- Snapshot the live camera state BEFORE our SetCamera: this is what reveals
 		-- whether a camera transition is in flight (the enter transition that
@@ -596,6 +664,12 @@ local function ResetOverviewCamera(map, transition_time, source)
 			before.req_pos_z = SafeCall(pos.z, pos)
 			before.angle = angle
 			before.transition_time = transition_time or 0
+			before.calc_overview = tostring(calc_overview)
+			before.calc_global = tostring(Global("CalcOverviewCameraPos"))
+			before.calc_wrapper = tostring(overview_camera_wrapper)
+			before.calc_original = tostring(original_calc_overview_camera_pos)
+			before.hook_matches = calc_overview == overview_camera_wrapper
+			before.map = tostring(map and map.name or map)
 			OverviewDiag("ResetOverviewCamera BEFORE SetCamera", before)
 		end
 		-- Raise the live far-zoom limit first so the engine doesn't clamp the far
@@ -900,10 +974,21 @@ function OverviewCamera.ApplyModBehavior()
 end
 
 function OverviewCamera.RestoreVanillaBehavior()
-	if overview_camera_patched and original_calc_overview_camera_pos then
+	-- Restore only if our wrapper still owns the global. If an environment reload or
+	-- another system has replaced it, writing the stale original back would clobber
+	-- that newer owner.
+	if overview_camera_patched and original_calc_overview_camera_pos
+		and Global("CalcOverviewCameraPos") == overview_camera_wrapper then
 		_G.CalcOverviewCameraPos = original_calc_overview_camera_pos
+	elseif overview_camera_patched then
+		OverviewDiag("CalcOverviewCameraPos restore skipped because hook was displaced", {
+			current = tostring(Global("CalcOverviewCameraPos")),
+			wrapper = tostring(overview_camera_wrapper),
+			original = tostring(original_calc_overview_camera_pos),
+		})
 	end
 	original_calc_overview_camera_pos = false
+	overview_camera_wrapper = false
 	overview_camera_patched = false
 
 	local const = Global("const")
