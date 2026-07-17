@@ -81,4 +81,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- Bumped to 96: add the exact vanilla fast path and full shared-preset/session teardown.
 -- Bumped to 97: validate the singular vanilla-selected start reveal independently from the
 -- larger stretched-equivalent candidate count.
-SuperBigMap.GENERATOR_PATCH_VERSION = 97
+-- Bumped to 98: restore deferred underground Elevators only after their map becomes current;
+-- guard and audit asynchronous native supply-fragment overlay copies across the switch.
+SuperBigMap.GENERATOR_PATCH_VERSION = 98

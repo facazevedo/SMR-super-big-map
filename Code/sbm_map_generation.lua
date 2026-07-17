@@ -26,9 +26,14 @@ SuperBigMap.State.expansion_pending_maps = SuperBigMap.State.expansion_pending_m
 SuperBigMap.State.expansion_blocked_maps = SuperBigMap.State.expansion_blocked_maps or {}
 SuperBigMap.State.underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 	or setmetatable({}, { __mode = "k" })
+SuperBigMap.State.pending_underground_elevator_restores =
+	SuperBigMap.State.pending_underground_elevator_restores
+	or setmetatable({}, { __mode = "k" })
 local pending_maps = SuperBigMap.State.expansion_pending_maps
 local blocked_maps = SuperBigMap.State.expansion_blocked_maps
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
+local pending_underground_elevator_restores =
+	SuperBigMap.State.pending_underground_elevator_restores
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -1497,6 +1502,130 @@ local function NewNativeSourceMapData(template, source_width, source_height, pas
 		return preset:new(data)
 	end
 	return data
+end
+
+local function SupplyGridDimensions(grid)
+	if not grid or type(grid.size) ~= "function" then return nil, nil end
+	local ok, width, height = pcall(grid.size, grid)
+	if not ok or type(width) ~= "number" then return nil, nil end
+	return width, type(height) == "number" and height or width
+end
+
+-- SupplyGridConnections and OverlaySupplyGrid are MapVars. Creating an object for a non-current
+-- map can therefore connect it through the CURRENT map's supply grids. The deferred underground
+-- pipeline used to rebuild Elevator counterparts before ChangeCurrentMapSlot, while the surface
+-- was still current; vanilla then queued CopySupplyFragmentToOverlayGrid in a game-time thread and
+-- executed it after the switch against a different-sized MapVar pair. Log every boundary involved
+-- in that hand-off so future map sizes/scenarios are diagnosable without relying on a native assert.
+local function SupplyGridSnapshot(label, expected_map)
+	local connections = Global("SupplyGridConnections")
+	local overlay = Global("OverlaySupplyGrid")
+	local object_grid = Global("ObjectGrid")
+	local ew, eh = SupplyGridDimensions(type(connections) == "table" and connections.electricity)
+	local ww, wh = SupplyGridDimensions(type(connections) == "table" and connections.water)
+	local ow, oh = SupplyGridDimensions(overlay)
+	local gw, gh = SupplyGridDimensions(object_grid)
+	local current = Global("CurrentMap")
+	local data = {
+		label = tostring(label), expected_map = tostring(expected_map and expected_map.name),
+		expected_ref = tostring(expected_map), current_map = tostring(current and current.name),
+		current_ref = tostring(current), context_matches = tostring(current == expected_map),
+		hex_width = tostring(Global("HexMapWidth")), hex_height = tostring(Global("HexMapHeight")),
+		electricity = tostring(ew) .. "x" .. tostring(eh),
+		water = tostring(ww) .. "x" .. tostring(wh),
+		overlay = tostring(ow) .. "x" .. tostring(oh),
+		object_grid = tostring(gw) .. "x" .. tostring(gh),
+		desired_tiles = tostring(expected_map and expected_map.SuperBigMapDesiredWidthTiles),
+		generator_tiles = tostring(expected_map and expected_map.SuperBigMapGeneratorWidthTiles),
+	}
+	local debug_log = SuperBigMap.DebugLog
+	if debug_log and type(debug_log.Info) == "function" then
+		debug_log.Info("Generation", "supply-grid context audit", data)
+	end
+	return data, ow, oh, ew, eh, ww, wh
+end
+
+local function IsExpandedSupplyContext(map)
+	if type(map) ~= "table" then return false end
+	local desired = map.SuperBigMapDesiredWidthTiles
+	local generator = map.SuperBigMapGeneratorWidthTiles
+	return map.SuperBigMapExpanded == true
+		or (type(desired) == "number" and type(generator) == "number" and desired > generator)
+end
+
+-- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
+-- overlay and connection grids disagree. Keep vanilla untouched for normal maps, but fail closed
+-- on an expanded map if a future lifecycle regression presents incompatible MapVars. The ordering
+-- correction below should make this guard a no-op; its log is the forensic backstop.
+local function PatchSupplyGridOverlayCopyGuard(source)
+	local State = SuperBigMap.State
+	local current = Global("CopySupplyFragmentToOverlayGrid")
+	if current == State.supply_grid_overlay_copy_wrapper
+		and State.supply_grid_overlay_copy_patch_version == GENERATOR_PATCH_VERSION then
+		return true
+	end
+	if current == State.supply_grid_overlay_copy_wrapper
+		and type(State.original_supply_grid_overlay_copy) == "function" then
+		current = State.original_supply_grid_overlay_copy
+		rawset(_G, "CopySupplyFragmentToOverlayGrid", current)
+	end
+	if type(current) ~= "function" then
+		UndergroundAccessLog("supply-grid overlay guard unavailable", {
+			source = tostring(source), copy_function = tostring(current),
+		}, "warn")
+		return false
+	end
+	State.original_supply_grid_overlay_copy = current
+	local captured_original = current
+	local wrapper = function(overlay, connection_grid, fragment, ...)
+		local map = Global("CurrentMap")
+		if IsExpandedSupplyContext(map) then
+			local ow, oh = SupplyGridDimensions(overlay)
+			local cw, ch = SupplyGridDimensions(connection_grid)
+			if not ow or not oh or not cw or not ch or ow ~= cw or oh ~= ch then
+				local debug_log = SuperBigMap.DebugLog
+				if debug_log and type(debug_log.Error) == "function" then
+					debug_log.Error("Generation",
+						"blocked incompatible native supply-fragment overlay copy", {
+						map = tostring(map and map.name), map_ref = tostring(map),
+						overlay = tostring(ow) .. "x" .. tostring(oh),
+						connection = tostring(cw) .. "x" .. tostring(ch),
+						fragment = tostring(fragment), source = tostring(source),
+					})
+				end
+				return false
+			end
+		end
+		return captured_original(overlay, connection_grid, fragment, ...)
+	end
+	rawset(_G, "CopySupplyFragmentToOverlayGrid", wrapper)
+	State.supply_grid_overlay_copy_wrapper = wrapper
+	State.supply_grid_overlay_copy_patch_version = GENERATOR_PATCH_VERSION
+	UndergroundAccessLog("supply-grid overlay guard installed", {
+		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
+	})
+	return true
+end
+
+local function FinalizePendingUndergroundElevators(map, reason)
+	local records = map and pending_underground_elevator_restores[map]
+	if type(records) ~= "table" or #records == 0 then return true, 0 end
+	SupplyGridSnapshot("before current-map underground Elevator restoration", map)
+	if Global("CurrentMap") ~= map then
+		return false, "underground map is not current during deferred Elevator restoration"
+	end
+	local ok, rebuilt = pcall(RestoreDeferredElevatorMigration, map, records,
+		reason or "after underground map switch")
+	SupplyGridSnapshot("after current-map underground Elevator restoration", map)
+	if not ok then return false, tostring(rebuilt) end
+	if rebuilt ~= #records then
+		return false, "rebuilt " .. tostring(rebuilt) .. " of " .. tostring(#records)
+	end
+	pending_underground_elevator_restores[map] = nil
+	map.SuperBigMapDeferredElevatorRestorePending = nil
+	UndergroundAccessLog("current-map underground Elevator restoration complete",
+		UndergroundAccessState(map, { rebuilt = rebuilt, reason = tostring(reason) }))
+	return true, rebuilt
 end
 
 local function CopyGeneratedMapState(source, destination)
@@ -9356,18 +9485,26 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
 				if #elevator_migrations > 0 then
-					SetLoadingPhase("Rebuilding underground Elevator counterparts")
-					StretchLog("underground stretch: -> RestoreDeferredElevatorMigration", {
-						migrations = #elevator_migrations,
-					})
-					local detail_token = InvestigationBegin("underground: restore deferred elevators", map, {
-						migrations = #elevator_migrations,
-					})
-					local rebuilt = RestoreDeferredElevatorMigration(map, elevator_migrations, "post-buildable-grid")
-					InvestigationEnd(detail_token, { rebuilt = rebuilt }, rebuilt == #elevator_migrations)
-					if rebuilt ~= #elevator_migrations then
-						error("deferred Elevator migration rebuilt " .. tostring(rebuilt)
-							.. "/" .. tostring(#elevator_migrations) .. " counterparts")
+					-- Supply-grid globals are MapVars. When first access is intercepted BEFORE the map
+					-- switch, constructing an underground Elevator here binds its supply fragments to the
+					-- still-current surface context and leaves an asynchronous native overlay copy queued
+					-- across the switch. Queue the records and reconstruct only after the original switch
+					-- has made the underground authoritative. Bypassed/recovery paths already run with the
+					-- underground current and can restore synchronously.
+					if Global("CurrentMap") ~= map then
+						pending_underground_elevator_restores[map] = elevator_migrations
+						map.SuperBigMapDeferredElevatorRestorePending = #elevator_migrations
+						SupplyGridSnapshot("queued underground Elevator restoration before map switch", map)
+						StretchLog("underground stretch: deferred Elevator restoration queued for current-map context", {
+							migrations = #elevator_migrations,
+						})
+					else
+						SetLoadingPhase("Rebuilding underground Elevator counterparts")
+						pending_underground_elevator_restores[map] = elevator_migrations
+						map.SuperBigMapDeferredElevatorRestorePending = #elevator_migrations
+						local restored_ok, restored_result = FinalizePendingUndergroundElevators(
+							map, "post-buildable-grid current-map recovery")
+						if restored_ok ~= true then error(tostring(restored_result)) end
 					end
 				end
 				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
@@ -9553,6 +9690,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		if not ok_branch and type(elevator_migrations) == "table" and #elevator_migrations > 0 then
 			-- Do not strand the player without the removed underground half if a later stretch stage
 			-- fails. Rebuild any record not already restored on the map's current live terrain.
+			pending_underground_elevator_restores[map] = nil
+			map.SuperBigMapDeferredElevatorRestorePending = nil
 			local recovery_ok, recovery_err = pcall(RestoreDeferredElevatorMigration, map,
 				elevator_migrations, "pipeline-failure-recovery")
 			StretchLog("underground stretch: deferred Elevator failure recovery", {
@@ -9871,6 +10010,7 @@ end
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
 local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
+	PatchSupplyGridOverlayCopyGuard(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	UndergroundAccessLog("map-slot gate patch check", {
@@ -10048,6 +10188,19 @@ local function PatchDeferredUndergroundAccess(source)
 		UndergroundAccessLog("original map switch returned", UndergroundAccessState(target, {
 			result = tostring(result), current_slot = tostring(current_slot),
 		}))
+		SetLoadingPhase("Rebuilding underground Elevator supply connections")
+		local restored_ok, restored_result =
+			FinalizePendingUndergroundElevators(target, "after original underground map switch")
+		if restored_ok ~= true then
+			target.SuperBigMapUndergroundPreparationFailed = true
+			target.SuperBigMapUndergroundStretchFailed = tostring(restored_result)
+			UndergroundAccessLog("post-switch underground Elevator restoration failed",
+				UndergroundAccessState(target, { error = tostring(restored_result) }), "error")
+			if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+			show_failure("Underground Elevator restoration failed after the map switch: "
+				.. tostring(restored_result))
+			return false
+		end
 		if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
 		UndergroundAccessLog("map-slot gate completed", UndergroundAccessState(target, {
 			screen_closed = tostring(screen_open and type(close_screen) == "function"),
@@ -10267,8 +10420,19 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.original_underground_hud_init = nil
 	State.underground_hud_patch_version = nil
 	State.underground_hud_init_depth = nil
+	if State.supply_grid_overlay_copy_wrapper
+		and Global("CopySupplyFragmentToOverlayGrid") == State.supply_grid_overlay_copy_wrapper
+		and type(State.original_supply_grid_overlay_copy) == "function" then
+		rawset(_G, "CopySupplyFragmentToOverlayGrid", State.original_supply_grid_overlay_copy)
+	end
+	State.supply_grid_overlay_copy_wrapper = nil
+	State.original_supply_grid_overlay_copy = nil
+	State.supply_grid_overlay_copy_patch_version = nil
 	for key in pairs(blocked_maps) do blocked_maps[key] = nil end
 	for key in pairs(underground_recovery_maps) do underground_recovery_maps[key] = nil end
+	for key in pairs(pending_underground_elevator_restores) do
+		pending_underground_elevator_restores[key] = nil
+	end
 	RestoreEntranceBadgePositionPatch()
 end
 
