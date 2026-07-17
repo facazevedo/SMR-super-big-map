@@ -552,8 +552,9 @@ config.BridgeVanillaHeightGrid = true
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
 -- enabled effect types up to their source count x area factor. The three per-type switches above
--- let each family be controlled separately. Surface extras are randomly distributed outside the
--- anomaly-only outer ring and require passable, flat, buildable, unobstructed terrain.
+-- let each family be controlled separately. Every resource, anomaly, and effect top-up on both
+-- maps requires passable, flat, buildable, vanilla-unobstructed terrain. Surface resources and
+-- effects are randomly distributed outside the anomaly-only outer ring.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI

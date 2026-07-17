@@ -55,6 +55,9 @@ local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
 local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
+-- Aggregate proof that all top-up families passed through the same vanilla obstruction gate.
+-- Keeping counters avoids per-sample log spam while still exposing native/fallback/rejection use.
+local obstruction_check_stats_by_map = setmetatable({}, { __mode = "k" })
 -- Stage 01 cannot keep the generated marker OBJECTS alive: they belong to the temporary vanilla
 -- map slot and are destroyed when that slot is unloaded. Retain an independent value-only record
 -- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
@@ -221,17 +224,72 @@ local function IsBuildableAt(map, pt, strict)
 end
 
 local function IsUnobstructedAt(map, pt, strict)
+	if not map or not pt then return strict ~= true end
+	local stats = obstruction_check_stats_by_map[map]
+	if not stats then
+		stats = { checks = 0, native = 0, native_rejected = 0, native_errors = 0,
+			fallback = 0, fallback_rejected = 0, fallback_errors = 0, unavailable = 0 }
+		obstruction_check_stats_by_map[map] = stats
+	end
+	stats.checks = stats.checks + 1
 	local hex_grid = map and map.object_hex_grid
 	local world_to_hex = Global("WorldToHex")
-	if not (hex_grid and type(hex_grid.GetBuildObstructions) == "function"
+	if not hex_grid then
+		stats.unavailable = stats.unavailable + 1
+		return strict ~= true
+	end
+
+	-- Match DepositMarker:FindUnobstructedDepositPos before falling back to a center-hex query.
+	-- The native helper checks the complete vanilla deposit obstruction radius, not merely the hex
+	-- containing the marker coordinate.
+	local is_deposit_obstructed = Global("IsDepositObstructed")
+	local const_tbl = Global("const")
+	local radius = type(const_tbl) == "table" and tonumber(const_tbl.DepositObstructMaxRadius) or nil
+	if type(is_deposit_obstructed) == "function" and type(radius) == "number"
+		and type(pt.xy) == "function" then
+		local x, y = pt:xy()
+		if type(x) == "number" and type(y) == "number" then
+			local ok_native, obstructed = pcall(is_deposit_obstructed, hex_grid, x, y, radius)
+			if ok_native then
+				stats.native = stats.native + 1
+				if obstructed then stats.native_rejected = stats.native_rejected + 1 end
+				return not obstructed
+			end
+			stats.native_errors = stats.native_errors + 1
+		end
+	end
+
+	if not (type(hex_grid.GetBuildObstructions) == "function"
 		and type(world_to_hex) == "function") then
+		stats.unavailable = stats.unavailable + 1
 		return strict ~= true
 	end
 	local ok_h, q, r = pcall(world_to_hex, pt)
-	if not ok_h or type(q) ~= "number" or type(r) ~= "number" then return strict ~= true end
+	if not ok_h or type(q) ~= "number" or type(r) ~= "number" then
+		stats.fallback_errors = stats.fallback_errors + 1
+		return strict ~= true
+	end
 	local ok_o, obstructions = pcall(hex_grid.GetBuildObstructions, hex_grid, q, r)
-	if not ok_o then return strict ~= true end
+	if not ok_o then
+		stats.fallback_errors = stats.fallback_errors + 1
+		return strict ~= true
+	end
+	stats.fallback = stats.fallback + 1
+	if obstructions and #obstructions > 0 then
+		stats.fallback_rejected = stats.fallback_rejected + 1
+	end
 	return not obstructions or #obstructions == 0
+end
+
+local function LogObstructionAudit(map, label)
+	local stats = obstruction_check_stats_by_map[map] or {}
+	Log("top-up vanilla obstruction audit", {
+		map = tostring(map and map.name), label = tostring(label),
+		checks = stats.checks or 0, native = stats.native or 0,
+		native_rejected = stats.native_rejected or 0, native_errors = stats.native_errors or 0,
+		fallback = stats.fallback or 0, fallback_rejected = stats.fallback_rejected or 0,
+		fallback_errors = stats.fallback_errors or 0, unavailable = stats.unavailable or 0,
+	})
 end
 
 local function BuildUndergroundReachability(map)
@@ -339,7 +397,7 @@ local function IsReachableFromUndergroundEntrance(map, pt)
 	return reachable
 end
 
-local function CanReceiveDeposit(map, pt)
+local function CanReceiveDepositTerrain(map, pt)
 	-- Top-ups use one terrain rule on both maps: passable, nearly horizontal, and accepted by the
 	-- engine's authoritative buildable grid. Mountain membership is irrelevant; a flat mountain
 	-- shelf is valid, while a passable slope is not. Native vanilla markers never pass through this
@@ -359,6 +417,13 @@ local function CanReceiveDeposit(map, pt)
 		if not IsReachableFromUndergroundEntrance(map, pt) then return false end
 	end
 	return true
+end
+
+local function CanReceiveDeposit(map, pt)
+	-- Vanilla DepositMarker placement does not accept an obstructed coordinate: it searches for a
+	-- replacement through FindUnobstructedDepositPos. Top-up candidates are final coordinates, so
+	-- reject the same obstruction before cloning rather than relying on a later reveal-time move.
+	return CanReceiveDepositTerrain(map, pt) and IsUnobstructedAt(map, pt, true)
 end
 
 local function SectorAtPoint(map, x, y)
@@ -604,7 +669,7 @@ local DepositRules = {}
 -- unrevealed markers reserve their future badge hex too. Adjacent hexes are allowed; only an
 -- identical hex is a collision.
 -- ---------------------------------------------------------------------------------------
-local BADGE_SPACING_PATCH_VERSION = 1
+local BADGE_SPACING_PATCH_VERSION = 2
 local BADGE_SEARCH_MAX_RADIUS = 64
 
 local function BadgeSpacingEnabledOnMap(map)
@@ -2585,6 +2650,7 @@ function DepositRules.TopUpDeposits(map)
 		Log("deposit top-up skipped", { reason = "map/city/point/clone unavailable" })
 		return
 	end
+	obstruction_check_stats_by_map[map] = nil
 	local map_w, map_h, tile = MapWorldSize(map)
 	if not map_w or not tile or tile <= 0 then
 		Log("deposit top-up skipped", { reason = "map size unavailable" })
@@ -3200,12 +3266,13 @@ function DepositRules.TopUpAnomalies(map)
 				local pt = point(x, y)
 				passable = PassableAt(map, pt)
 				flatness = FlatnessAt(map, pt) or 0
-				can_receive = CanReceiveDeposit(map, pt)
+				local terrain_allowed = CanReceiveDepositTerrain(map, pt)
+				unobstructed = terrain_allowed and IsUnobstructedAt(map, pt, true) or false
+				can_receive = terrain_allowed and unobstructed
 				buildable = IsBuildableAt(map, pt, true)
-				unobstructed = not surface_edge_ring or IsUnobstructedAt(map, pt, true)
-				if not can_receive then
+				if not terrain_allowed then
 					rejection = "not_flat_buildable_terrain"
-				elseif surface_edge_ring and not unobstructed then
+				elseif not unobstructed then
 					rejection = "build_obstructed"
 				else
 					if surface_edge_ring then
@@ -3475,13 +3542,14 @@ function DepositRules.TopUpAnomalies(map)
 				local passable = PassableAt(map, pt)
 				local flatness = FlatnessAt(map, pt) or 0
 				local buildable = IsBuildableAt(map, pt, true)
-				local can_receive = CanReceiveDeposit(map, pt)
-				local unobstructed = can_receive and IsUnobstructedAt(map, pt, true) or false
+				local terrain_allowed = CanReceiveDepositTerrain(map, pt)
+				local unobstructed = terrain_allowed and IsUnobstructedAt(map, pt, true) or false
+				local can_receive = terrain_allowed and unobstructed
 				local rejection
 				if not live_sector or live_sector.id ~= sector.id then rejection = "sector_mapping_mismatch"
 				elseif SectorIsScanned(live_sector) then rejection = "sector_scanned"
 				elseif not IsInFinalOuterSectorRing(map, x, y, ring_sectors) then rejection = "outside_target_final_ring"
-				elseif not can_receive then rejection = "not_flat_buildable_terrain"
+				elseif not terrain_allowed then rejection = "not_flat_buildable_terrain"
 				elseif not unobstructed then rejection = "build_obstructed" end
 				local terrain_z, restriction_tier
 				if not rejection then
@@ -4263,9 +4331,7 @@ function DepositRules.TopUpEffectDeposits(map)
 					local reserved_ring = not IsUndergroundMap(map)
 						and IsInFinalOuterSectorRing(map, c.x, c.y,
 							cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)
-					if not reserved_ring and CanReceiveDeposit(map, pt)
-						and (IsUndergroundMap(map) or (IsBuildableAt(map, pt, true)
-							and IsUnobstructedAt(map, pt, true))) then
+					if not reserved_ring and CanReceiveDeposit(map, pt) then
 						candidates[#candidates + 1] = c
 					end
 				end
@@ -4283,9 +4349,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)
 			if sector and (IsUndergroundMap(map) or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt)
-					and (IsUndergroundMap(map) or (IsBuildableAt(map, pt, true)
-						and IsUnobstructedAt(map, pt, true))) then
+				if CanReceiveDeposit(map, pt) then
 					candidates[#candidates + 1] = {
 						x = x, y = y, terrain_type = TerrainTypeAt(map, pt) or -1,
 						sector = sector, sector_id = sector.id,
@@ -4381,8 +4445,8 @@ end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
--- passable, flat, engine-buildable terrain. Anomaly top-ups must additionally be in the final outer
--- ring, unobstructed, and on unique hexes; resources and effects must remain outside that ring.
+-- passable, flat, engine-buildable, unobstructed terrain. Anomaly top-ups must additionally be in
+-- the final outer ring and on unique hexes; resources and effects must remain outside that ring.
 -- The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
@@ -4394,7 +4458,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_topups = 0, resource_topups = 0, effect_topups = 0,
 		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
-		anomaly_not_mountain_base = 0,
+		anomaly_not_mountain_base = 0, resource_obstructed = 0,
 		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
 	}
@@ -4431,7 +4495,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local pt = has_position and pos or nil
 		local in_ring = has_position and IsInFinalOuterSectorRing(map, x, y, ring_sectors) or false
 		local reachable = has_position and PassableAt(map, pt) or false
-		local even_terrain = has_position and CanReceiveDeposit(map, pt) or false
+		local even_terrain = has_position and CanReceiveDepositTerrain(map, pt) or false
 		local flatness = has_position and FlatnessAt(map, pt) or 0
 		local buildable = has_position and IsBuildableAt(map, pt, true) or false
 		local unobstructed = has_position and IsUnobstructedAt(map, pt, true) or false
@@ -4462,9 +4526,10 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		elseif family == "anomaly" and not reachable then
 			stats.anomaly_unreachable = stats.anomaly_unreachable + 1
 			violation = "anomaly_topup_not_passable"
-		elseif family == "anomaly" and not unobstructed then
-			stats.anomaly_obstructed = stats.anomaly_obstructed + 1
-			violation = "anomaly_topup_obstructed"
+		elseif not unobstructed then
+			local obstruction_key = family .. "_obstructed"
+			stats[obstruction_key] = (stats[obstruction_key] or 0) + 1
+			violation = family .. "_topup_obstructed"
 		elseif family == "anomaly" and overlap then
 			stats.anomaly_overlap = stats.anomaly_overlap + 1
 			violation = "anomaly_topup_hex_overlap"
@@ -4474,9 +4539,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		elseif family == "effect" and not buildable then
 			stats.effect_unbuildable = stats.effect_unbuildable + 1
 			violation = "effect_topup_unbuildable"
-		elseif family == "effect" and not unobstructed then
-			stats.effect_obstructed = stats.effect_obstructed + 1
-			violation = "effect_topup_obstructed"
 		end
 		if violation then violation_count = violation_count + 1 end
 		if trace then
@@ -4519,6 +4581,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		end
 	end)
 	stats.violations = violation_count
+	LogObstructionAudit(map, "surface final after all enrichment top-ups")
 	TopUpEdgeLog("FINAL top-up ring exclusivity audit", {
 		map = tostring(map.name), ring_sectors = ring_sectors,
 		anomaly_topups = stats.anomaly_topups, resource_topups = stats.resource_topups,
@@ -4527,6 +4590,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_unreachable = stats.anomaly_unreachable,
 		anomaly_unbuildable = stats.anomaly_unbuildable,
 		anomaly_obstructed = stats.anomaly_obstructed,
+		resource_obstructed = stats.resource_obstructed,
 		anomaly_overlap = stats.anomaly_overlap,
 		anomaly_not_mountain_base = stats.anomaly_not_mountain_base,
 		topup_uneven = stats.topup_uneven, resource_uneven = stats.resource_uneven,
@@ -4623,6 +4687,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
 			connectivity_rejected = reachable_state.rejected, connectivity_failures = reachable_state.failures,
 		}
+		LogObstructionAudit(map, "underground top-up reachability audit, no relocation needed")
 		Log("underground enrichment reachability audit complete", stats)
 		ProfileStep("underground enrichment reachability audit complete", stats, map)
 		return true, stats
@@ -4722,7 +4787,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
 				if not CanReceiveDeposit(map, new_pos) then
 					snapped_rejected = snapped_rejected + 1
-					last_reason = "terrain-snapped candidate not reachable/buildable"
+					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
 					Log("underground enrichment relocation candidate rejected", {
 						attempt = attempts, candidate_x = c.x, candidate_y = c.y,
 						class = class, index = invalid_i, old_x = ox, old_y = oy,
@@ -4753,7 +4818,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 							})
 						else
 							postmove_rejected = postmove_rejected + 1
-							last_reason = actual_pos and "actual marker position not reachable/buildable" or "actual marker position unavailable"
+							last_reason = actual_pos and "actual marker position not reachable/buildable/unobstructed" or "actual marker position unavailable"
 							Log("underground enrichment relocation candidate rejected", {
 								actual_x = ax, actual_y = ay, attempt = attempts,
 								candidate_x = c.x, candidate_y = c.y, class = class,
@@ -4792,6 +4857,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		connectivity_failures = reachable_state.failures,
 		moved_by_class = TallyString(moved_by_class),
 	}
+	LogObstructionAudit(map, "underground final after top-up relocation")
 	Log("underground enrichment reachability audit complete", stats)
 	ProfileStep("underground enrichment reachability audit complete", stats, map)
 	return unresolved == 0, stats
