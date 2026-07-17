@@ -148,6 +148,9 @@ local function SetRevealedState(obj, revealed)
 end
 
 local ObjectPos = Engine.ObjectPos
+-- Forward declaration: underground staging is defined before the sector-registration helpers but
+-- executes only after the module has finished loading.
+local UnregisterNativeMarker
 
 local function TerrainTypeAt(map, pt)
 	local t = Global("terrain")
@@ -196,8 +199,11 @@ local function RunPaused(reason, fn)
 	return ok, err
 end
 
--- A tile can receive a deposit if it is passable and flat enough (not a cliff).
-local FLATNESS_MIN = 3700   -- normal.z (of 4096); ~ below this is too steep
+local function TopUpFlatnessMinimum()
+	local value = tonumber(cfg().TOPUP_MINIMUM_TERRAIN_NORMAL_Z) or 4080
+	return math.max(0, math.min(4096, value))
+end
+
 local function IsBuildableAt(map, pt, strict)
 	local buildable = map and map.buildable
 	local world_to_hex = Global("WorldToHex")
@@ -334,7 +340,13 @@ local function IsReachableFromUndergroundEntrance(map, pt)
 end
 
 local function CanReceiveDeposit(map, pt)
-	if not (PassableAt(map, pt) and (FlatnessAt(map, pt) or 0) >= FLATNESS_MIN) then
+	-- Top-ups use one terrain rule on both maps: passable, nearly horizontal, and accepted by the
+	-- engine's authoritative buildable grid. Mountain membership is irrelevant; a flat mountain
+	-- shelf is valid, while a passable slope is not. Native vanilla markers never pass through this
+	-- validator and remain at their exact proportional coordinates.
+	if not PassableAt(map, pt)
+		or (FlatnessAt(map, pt) or 0) < TopUpFlatnessMinimum()
+		or not IsBuildableAt(map, pt, true) then
 		return false
 	end
 	-- UNDERGROUND: only the cavern floor is real accessible terrain; the surrounding rock/
@@ -342,10 +354,8 @@ local function CanReceiveDeposit(map, pt)
 	-- zeroes PassBorder, and the void is uniformly flat) -- which put topped-up anomalies
 	-- out in the black inaccessible area. Require the hex to be BUILDABLE (the game's own
 	-- accessibility measure: hills/rock/void are unbuildable, the floor is buildable), so
-	-- every top-up/respace/even-out pool samples only the playable floor. Surface pools are
-	-- unchanged (vanilla surface deposits legitimately sit on rough terrain).
+	-- every top-up/respace/even-out pool samples only the playable floor.
 	if IsUndergroundMap(map) then
-		if not IsBuildableAt(map, pt, true) then return false end
 		if not IsReachableFromUndergroundEntrance(map, pt) then return false end
 	end
 	return true
@@ -676,9 +686,6 @@ local function BadgeCandidateAllowed(marker, map, pt, x, y)
 		if marker.SuperBigMapEdgeTopUp and not in_ring then return false end
 		if (marker.SuperBigMapResourceTopUp or marker.SuperBigMapEffectTopUp) and in_ring then return false end
 	end
-	-- These top-ups were explicitly required to use accessible, buildable ground.
-	if (marker.SuperBigMapEdgeTopUp or marker.SuperBigMapEffectTopUp)
-		and not IsBuildableAt(map, pt, true) then return false end
 	return true
 end
 
@@ -1859,7 +1866,7 @@ local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
 	return true, true, revealed
 end
 
-local function UnregisterNativeMarker(map, marker)
+UnregisterNativeMarker = function(map, marker)
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	local pos = ObjectPos(marker)
@@ -2834,7 +2841,7 @@ end
 -- scan reveals it. Underground extras retain whole-map placement because there is no surface
 -- mountain-edge ring there. Surface placement is deliberately two-stage: first choose a ring
 -- sector without considering its terrain candidates, then choose randomly among that sector's
--- least-restrictive low-area candidates. Occupied anomaly hexes are reserved to prevent overlap.
+-- flat, buildable low-area candidates. Occupied anomaly hexes are reserved to prevent overlap.
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
@@ -3193,22 +3200,18 @@ function DepositRules.TopUpAnomalies(map)
 				local pt = point(x, y)
 				passable = PassableAt(map, pt)
 				flatness = FlatnessAt(map, pt) or 0
-				can_receive = surface_edge_ring
-					and passable and flatness >= FLATNESS_MIN or CanReceiveDeposit(map, pt)
-				buildable = not surface_edge_ring or IsBuildableAt(map, pt, true)
+				can_receive = CanReceiveDeposit(map, pt)
+				buildable = IsBuildableAt(map, pt, true)
 				unobstructed = not surface_edge_ring or IsUnobstructedAt(map, pt, true)
-				if surface_edge_ring and not passable then
-					rejection = "not_passable"
-				elseif not surface_edge_ring and not can_receive then
-					rejection = "not_passable_or_too_steep"
+				if not can_receive then
+					rejection = "not_flat_buildable_terrain"
 				elseif surface_edge_ring and not unobstructed then
 					rejection = "build_obstructed"
 				else
 					if surface_edge_ring then
-						-- Buildability and slope are stage-two preferences. They must not remove
-						-- difficult sectors from the stage-one sector lottery.
-						restriction_tier = buildable and (can_receive and 1 or 2)
-							or (can_receive and 3 or 4)
+						-- Terrain never influences the stage-one sector lottery, but it is a hard
+						-- stage-two constraint: every accepted point is flat and buildable.
+						restriction_tier = 1
 						if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
 							local ok_h, h = pcall(terrain_api.GetHeight, map, pt)
 							if ok_h and type(h) == "number" then terrain_z = h end
@@ -3455,10 +3458,8 @@ function DepositRules.TopUpAnomalies(map)
 				end
 			end
 		end)
-		-- Stage two first keeps the least restrictive terrain class available in the selected
-		-- sector, then randomly chooses from the configured lowest percentage of that class. Tiers are:
-		-- 1 buildable+flat, 2 buildable+steep, 3 unbuildable+flat, 4 unbuildable+steep.
-		-- Every tier is still passable and unobstructed because those are hard safety requirements.
+		-- Stage two accepts only flat, buildable, passable, unobstructed coordinates in the selected
+		-- sector, then randomly chooses from the configured lowest percentage of that valid pool.
 		local stage_two_sample_n = MAX_SAMPLES
 		local function sample_selected_sector_area(sector, source)
 			local step = edge_ctx.sector_step
@@ -3472,20 +3473,19 @@ function DepositRules.TopUpAnomalies(map)
 				local live_sector = SectorAtPoint(map, x, y)
 				local pt = point(x, y)
 				local passable = PassableAt(map, pt)
-				local unobstructed = passable and IsUnobstructedAt(map, pt, true) or false
+				local flatness = FlatnessAt(map, pt) or 0
+				local buildable = IsBuildableAt(map, pt, true)
+				local can_receive = CanReceiveDeposit(map, pt)
+				local unobstructed = can_receive and IsUnobstructedAt(map, pt, true) or false
 				local rejection
 				if not live_sector or live_sector.id ~= sector.id then rejection = "sector_mapping_mismatch"
 				elseif SectorIsScanned(live_sector) then rejection = "sector_scanned"
 				elseif not IsInFinalOuterSectorRing(map, x, y, ring_sectors) then rejection = "outside_target_final_ring"
-				elseif not passable then rejection = "not_passable"
+				elseif not can_receive then rejection = "not_flat_buildable_terrain"
 				elseif not unobstructed then rejection = "build_obstructed" end
-				local flatness, buildable, can_receive, terrain_z, restriction_tier
+				local terrain_z, restriction_tier
 				if not rejection then
-					flatness = FlatnessAt(map, pt) or 0
-					buildable = IsBuildableAt(map, pt, true)
-					can_receive = flatness >= FLATNESS_MIN
-					restriction_tier = buildable and (can_receive and 1 or 2)
-						or (can_receive and 3 or 4)
+					restriction_tier = 1
 					if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
 						local ok_h, h = pcall(terrain_api.GetHeight, map, pt)
 						if ok_h and type(h) == "number" then terrain_z = h end
@@ -3493,7 +3493,7 @@ function DepositRules.TopUpAnomalies(map)
 					local candidate_edge, source_region = DescribeTopUpEdge(edge_ctx, live_sector, x, y)
 					local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
 					local candidate = {
-						x = x, y = y, passable = true, can_receive = can_receive,
+						x = x, y = y, passable = passable, can_receive = can_receive,
 						flatness = flatness, buildable = buildable, unobstructed = true,
 						terrain_z = terrain_z, restriction_tier = restriction_tier, valley_score = 0,
 						edge = candidate_edge, source_region = source_region,
@@ -3528,7 +3528,7 @@ function DepositRules.TopUpAnomalies(map)
 			local best_tier
 			for _, candidate in ipairs(source) do
 				local key = anomaly_hex_key(candidate.x, candidate.y)
-				local tier = candidate.restriction_tier or 4
+				local tier = candidate.restriction_tier or 1
 				if not candidate.used and not seen[key] and not reserved_anomaly_hexes[key] then
 					seen[key] = true
 					if best_tier == nil or tier < best_tier then
@@ -4380,10 +4380,10 @@ function DepositRules.TopUpEffectDeposits(map)
 end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
--- passes are inspected: vanilla/generated enrichments remain untouched. Every anomaly top-up must
--- be in the final outer ring, passable, unobstructed, and on a unique anomaly hex; buildability,
--- slope, and valley score are preference diagnostics. Resource and effect-deposit top-ups must be
--- outside the ring. The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
+-- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
+-- passable, flat, engine-buildable terrain. Anomaly top-ups must additionally be in the final outer
+-- ring, unobstructed, and on unique hexes; resources and effects must remain outside that ring.
+-- The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
@@ -4395,6 +4395,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
 		anomaly_not_mountain_base = 0,
+		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
 	}
 	local violation_count = 0
@@ -4430,6 +4431,8 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local pt = has_position and pos or nil
 		local in_ring = has_position and IsInFinalOuterSectorRing(map, x, y, ring_sectors) or false
 		local reachable = has_position and PassableAt(map, pt) or false
+		local even_terrain = has_position and CanReceiveDeposit(map, pt) or false
+		local flatness = has_position and FlatnessAt(map, pt) or 0
 		local buildable = has_position and IsBuildableAt(map, pt, true) or false
 		local unobstructed = has_position and IsUnobstructedAt(map, pt, true) or false
 		local valley_score = has_position and ValleyScore(map, pt) or 0
@@ -4442,6 +4445,11 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		if family == "anomaly" and valley_score <= 0 then
 			stats.anomaly_not_mountain_base = stats.anomaly_not_mountain_base + 1
 		end
+		if has_position and not even_terrain then
+			stats.topup_uneven = stats.topup_uneven + 1
+			local family_key = family .. "_uneven"
+			stats[family_key] = (stats[family_key] or 0) + 1
+		end
 		local violation
 		if not has_position then
 			stats.missing_position = stats.missing_position + 1
@@ -4449,6 +4457,8 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		elseif must_be_in_ring and not in_ring then
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
+		elseif not even_terrain then
+			violation = family .. "_topup_not_flat_buildable_terrain"
 		elseif family == "anomaly" and not reachable then
 			stats.anomaly_unreachable = stats.anomaly_unreachable + 1
 			violation = "anomaly_topup_not_passable"
@@ -4482,7 +4492,9 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 				col = tostring(sector and sector.col), row = tostring(sector and sector.row),
 				must_be_in_final_ring = tostring(must_be_in_ring),
 				in_final_ring = tostring(in_ring), reachable = tostring(reachable),
-				buildable = tostring(buildable), valley_score = tostring(valley_score),
+				flatness = tostring(flatness), flatness_required = tostring(TopUpFlatnessMinimum()),
+				even_terrain = tostring(even_terrain), buildable = tostring(buildable),
+				valley_score = tostring(valley_score),
 				unobstructed = tostring(unobstructed), hex_key = tostring(hex_key), overlap = tostring(overlap),
 				violation = tostring(violation or "none"),
 			})
@@ -4517,6 +4529,9 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_obstructed = stats.anomaly_obstructed,
 		anomaly_overlap = stats.anomaly_overlap,
 		anomaly_not_mountain_base = stats.anomaly_not_mountain_base,
+		topup_uneven = stats.topup_uneven, resource_uneven = stats.resource_uneven,
+		anomaly_uneven = stats.anomaly_uneven, effect_uneven = stats.effect_uneven,
+		flatness_required = TopUpFlatnessMinimum(),
 		effect_unbuildable = stats.effect_unbuildable, effect_obstructed = stats.effect_obstructed,
 		missing_position = stats.missing_position, violations = violation_count,
 	})

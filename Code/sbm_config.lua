@@ -267,6 +267,11 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
+-- Hard terrain-evenness rule for every added enrichment on both maps. terrain normal Z uses
+-- 4096 for perfectly horizontal ground; 4080 limits accepted top-up positions to approximately
+-- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
+-- Native vanilla enrichments are never moved by this rule.
+config.TopUpMinimumTerrainNormalZ = 4080
 -- Choose whole-map top-up positions by the live enrichment load divided by each sector's
 -- sampled eligible terrain capacity. This preserves vanilla's terrain-driven pockets and the
 -- original generated marker positions, while filling underrepresented sectors before adding
@@ -283,9 +288,9 @@ config.TopUpSectorBalancedPlacement = true
 -- 0 restores whole-map placement with no reserved ring.
 config.TopUpAnomalyOuterRingSectors = 3
 -- Two-stage surface placement first chooses a random outer-ring sector, independently of terrain.
--- Inside that sector it keeps the least-restrictive viable terrain tier, sorts that tier by terrain
--- height, and randomly chooses within this lowest percentage. 35 means the lowest 35% of the best
--- tier. Passability, obstruction avoidance, and anomaly-hex non-overlap remain hard requirements.
+-- Inside that sector it accepts only flat, buildable, unobstructed terrain, sorts the viable
+-- candidates by terrain height, and randomly chooses within this lowest percentage. 35 means the
+-- lowest 35% of that valid pool. Anomaly-hex non-overlap remains a hard requirement.
 config.TopUpAnomalyLowAreaPercent = 35
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
@@ -742,6 +747,8 @@ C.TOPUP_RESEARCH_SITES = expansion_step_13
 	and as_bool(config.TopUpResearchSites)
 C.TOPUP_MORALE_VISTAS = expansion_step_13
 	and as_bool(config.TopUpMoraleVistas)
+C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
+	as_number(config.TopUpMinimumTerrainNormalZ, 4080)))
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
