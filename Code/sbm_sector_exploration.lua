@@ -1148,7 +1148,18 @@ local function RevealVanillaStartSectors(map)
 	local final_h = tonumber(map.SuperBigMapDesiredHeightTiles) or final_w
 	local origin_x = tonumber(map.SuperBigMapSourceX) or 0
 	local origin_y = tonumber(map.SuperBigMapSourceY) or 0
-	local scale_x, scale_y = final_w / source_w, final_h / source_h
+	-- The game preserves integer division when both operands are integers.  A plain
+	-- 8192 / 6144 therefore becomes 1 and leaves the reveal box at its unscaled
+	-- source coordinate.  Terrain/object stretching deliberately adds 0.0 before
+	-- division; use the identical floating proportional transform here.
+	local scale_x = (final_w + 0.0) / source_w
+	local scale_y = (final_h + 0.0) / source_h
+	if (final_w > source_w and scale_x <= 1.0)
+		or (final_h > source_h and scale_y <= 1.0) then
+		error(string.format("invalid stretched start-sector scale: source=%sx%s final=%sx%s scale=%s,%s",
+			tostring(source_w), tostring(source_h), tostring(final_w), tostring(final_h),
+			tostring(scale_x), tostring(scale_y)))
+	end
 	local x0 = math.floor(origin_x + (winner.x0 - origin_x) * scale_x + 0.5)
 	local y0 = math.floor(origin_y + (winner.y0 - origin_y) * scale_y + 0.5)
 	local x1 = math.floor(origin_x + (winner.x1 - origin_x) * scale_x + 0.5)
@@ -1239,6 +1250,8 @@ local function RevealVanillaStartSectors(map)
 		source_tiles = string.format("%dx%d", source_w, source_h),
 		final_tiles = string.format("%dx%d", final_w, final_h),
 		scale = string.format("%.9f,%.9f", scale_x, scale_y),
+		scale_inputs = string.format("(%d+0.0)/%d,(%d+0.0)/%d",
+			final_w, source_w, final_h, source_h),
 		transformed_box = string.format("%d,%d-%d,%d", x0, y0, x1, y1),
 		intersections = table.concat(candidate_log, " "),
 		max_overlap = max_overlap,
@@ -1253,6 +1266,7 @@ local function RevealVanillaStartSectors(map)
 		source_sector = diagnostics.source_sector,
 		source_box = diagnostics.source_box,
 		scale = diagnostics.scale,
+		scale_inputs = diagnostics.scale_inputs,
 		transformed_box = diagnostics.transformed_box,
 		intersection_count = #overlaps, intersections = diagnostics.intersections,
 		max_overlap = max_overlap, positional_candidates = diagnostics.positional_candidates,
