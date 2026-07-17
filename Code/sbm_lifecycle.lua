@@ -1449,6 +1449,22 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
 	end
+	-- This is the authoritative no-delay boundary for deferred underground Elevators. The map is
+	-- current and Lifecycle.Apply has completed every final grid rebuild. The handler owns a
+	-- monotonic generation token, so stale work from an older map transaction cannot proceed.
+	if IsModMap(map) and gen
+		and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
+		local restored, restore_result = gen.HandlePendingUndergroundElevatorRestore(
+			map_slot, map, "CurrentMapChangeDone after Lifecycle.Apply")
+		if restored ~= true then
+			local DebugLog = SuperBigMap.DebugLog
+			if DebugLog then
+				DebugLog.Error("Lifecycle", "underground Elevator lifecycle transaction failed", {
+					map = tostring(map), map_slot = tostring(map_slot), error = tostring(restore_result),
+				})
+			end
+		end
+	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")
@@ -1467,6 +1483,18 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		if validation and type(validation.CheckVanillaMapState) == "function" then
 			validation.CheckVanillaMapState(map, "CurrentMapChangeDone")
 		end
+	end
+end)
+
+-- Already-current recovery never performs an artificial map switch, so it has no
+-- CurrentMapChangeDone of its own. The completed stretch emits this explicit lifecycle event after
+-- all final grids are installed; it follows the same tokenized handler and contains no timer.
+RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason)
+	if not active() or not IsModMap(map) then return end
+	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
+		gen.HandlePendingUndergroundElevatorRestore(map and map.slot, map,
+			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " token=" .. tostring(token_id))
 	end
 end)
 

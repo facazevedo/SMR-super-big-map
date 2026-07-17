@@ -97,4 +97,7 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- public-global wrappers do not intercept the shipped closure's delayed line-1665 callback.
 -- Bumped to 105: require at least one captured private environment before reporting that bridge
 -- verified; an empty record set previously produced a false-positive verification result.
-SuperBigMap.GENERATOR_PATCH_VERSION = 105
+-- Bumped to 106: make underground Elevator restoration a tokenized lifecycle transaction, validate
+-- every map/grid/footprint invariant, reproduce tagged Elevator connection synchronously, and
+-- synchronously merge/copy its fragments so no private delayed overlay callback is scheduled.
+SuperBigMap.GENERATOR_PATCH_VERSION = 106

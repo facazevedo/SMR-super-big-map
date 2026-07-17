@@ -172,9 +172,9 @@ config.DebugRocketTerrain = false
 -- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
 config.DebugElevatorTerrain = true -- TEMP underground supply-grid assertion investigation
 -- Exhaustive supply-grid lifecycle trace for deferred underground Elevator restoration. Records
--- map-scoped MapVar resolution, grid dimensions/identities, Elevator supply fragments, and every
--- game-time thread scheduled while the counterpart is reconstructed, including its execution
--- context. Observational only; disable after the native pSupplyGrid assertion is resolved.
+-- generation tokens, map-scoped MapVar identities, grid dimensions, Elevator footprints,
+-- synchronous fragment merges/copies, and every fail-closed transaction boundary.
+-- Observational only; disable after the native pSupplyGrid assertion is resolved.
 config.DebugSupplyGrid    = true
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
@@ -355,22 +355,6 @@ config.ExpansionStep01GenerateAndCaptureVanillaSource = true
 -- placement therefore all consume the same backing and object state as pure vanilla. Only after that
 -- transaction finishes are its terrain and generated objects migrated into the expanded destination.
 config.GenerateVanillaSourceOnTemporaryBacking = true
--- Disabled while the exact temporary-source transaction is active. The sampler path remains as a
--- diagnostic fallback, but copying terrain/collision state into a blank map cannot reproduce every
--- engine-private map index observed by InitBuildableGrid.
-config.UseNativeHeightSamplerBacking = false
--- Recreate only collision-bearing source objects as lightweight entity proxies while the native
--- sampler builds its raw hex grid. This supplies InitBuildableGrid's non-terrain input without
--- running a second RandomMapGenerate or migrating gameplay objects.
-config.UseNativeSamplerCollisionProxies = false
--- Use the contributing object's real class for each temporary collision proxy. This preserves
--- class-specific entity state and auto-attached collision surfaces; the sampler map is unloaded
--- immediately after generation, so no proxy becomes a gameplay object.
-config.UseExactClassNativeSamplerCollisionProxies = false
--- Experimental exact-source backing mode. Disabled: SetHeightGrid/SetTypeGrid can replace only
--- same-sized live terrain grids, so a vanilla-to-expanded promotion requires a real map-backing
--- replacement rather than an in-place terrain setter.
-config.DeferExpandedBackingUntilAfterVanillaSource = false
 -- 02: Stretch the source terrain, transform each captured enrichment proportionally, align it
 -- to the final hex/terrain height, verify the result, and rebuild the final gameplay grids.
 config.ExpansionStep02StretchAndTransformVanillaSource = true
@@ -810,14 +794,6 @@ C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
 	expansion_step_01
 C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
 	and as_bool(config.GenerateVanillaSourceOnTemporaryBacking)
-C.USE_NATIVE_HEIGHT_SAMPLER_BACKING = expansion_step_01
-	and as_bool(config.UseNativeHeightSamplerBacking)
-C.USE_NATIVE_SAMPLER_COLLISION_PROXIES = C.USE_NATIVE_HEIGHT_SAMPLER_BACKING
-	and as_bool(config.UseNativeSamplerCollisionProxies)
-C.USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES = C.USE_NATIVE_SAMPLER_COLLISION_PROXIES
-	and as_bool(config.UseExactClassNativeSamplerCollisionProxies)
-C.DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE = expansion_step_01
-	and as_bool(config.DeferExpandedBackingUntilAfterVanillaSource)
 C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
 	expansion_step_02
 C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS =

@@ -5,9 +5,9 @@
 -- content over the destination. The RandomMapGenerator.Generate/DoGenerate hook
 -- and stretch pass share pending-map state, so they live together here.
 --
--- Generic engine helpers come from sbm_engine. This module keeps ONLY a gen-time
--- TerrainSize and the infinite-loop-pause guard local, because their behavior is
--- context-specific to map generation -- e.g. DoGenerate temporarily overrides
+-- Generic engine helpers come from sbm_engine. This module keeps only the gen-time
+-- TerrainSize local because its behavior is context-specific to map generation --
+-- e.g. DoGenerate temporarily overrides
 -- terrain.GetMapSize so the generator only sees the native source view, and the gen-time
 -- size must read mapdata.Width x HeightTileSize (assert-free), not map:GetMapSize.
 
@@ -29,11 +29,17 @@ SuperBigMap.State.underground_recovery_maps = SuperBigMap.State.underground_reco
 SuperBigMap.State.pending_underground_elevator_restores =
 	SuperBigMap.State.pending_underground_elevator_restores
 	or setmetatable({}, { __mode = "k" })
+SuperBigMap.State.underground_elevator_restore_tokens =
+	SuperBigMap.State.underground_elevator_restore_tokens or {}
+SuperBigMap.State.underground_elevator_restore_epoch =
+	SuperBigMap.State.underground_elevator_restore_epoch or 0
 local pending_maps = SuperBigMap.State.expansion_pending_maps
 local blocked_maps = SuperBigMap.State.expansion_blocked_maps
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
 local pending_underground_elevator_restores =
 	SuperBigMap.State.pending_underground_elevator_restores
+local underground_elevator_restore_tokens =
+	SuperBigMap.State.underground_elevator_restore_tokens
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -267,25 +273,6 @@ local function InitSeq(message, data)
 	end
 end
 
-local function RunWithInfiniteLoopPause(reason, fn, ...)
-	local pause = Global("PauseInfiniteLoopDetection")
-	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then
-		SafeCall(pause, reason)
-	end
-
-	local results = { pcall(fn, ...) }
-
-	if type(resume) == "function" then
-		SafeCall(resume, reason)
-	end
-
-	if not results[1] then
-		error(results[2])
-	end
-	return Unpack(results, 2)
-end
-
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -405,8 +392,6 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapExpandedWorldHeight = nil
 	map.SuperBigMapExpandedHexWidth = nil
 	map.SuperBigMapExpandedHexHeight = nil
-	map.SuperBigMapDeferredBackingPromotion = nil
-	map.SuperBigMapBackingPromotionComplete = nil
 	return true
 end
 
@@ -593,7 +578,6 @@ local function AttachPendingMapState(map)
 	map.SuperBigMapGeneratorHeight = pending.generator_height
 	map.SuperBigMapGeneratorWidthTiles = pending.generator_width_tiles
 	map.SuperBigMapGeneratorHeightTiles = pending.generator_height_tiles
-	map.SuperBigMapDeferredBackingPromotion = pending.deferred_backing == true
 
 	VerbosePrint(string.format(
 		"attached pending stretch expansion to %s (source %s x %s world, %s x %s tiles)",
@@ -717,9 +701,6 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 		DebugPrint("stretch allocation failed: source terrain would be empty")
 		return false
 	end
-	local deferred_backing = cfg_bool("DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE", false)
-		and mapdata.Environment == "Surface"
-
 	-- Capture shared-preset values before any generation or expansion mutation.
 	-- They must be restored byte-for-byte for the next vanilla game in this process.
 	if mapdata.SuperBigMapOriginalPassBorderCaptured ~= true then
@@ -739,15 +720,8 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	mapdata.SuperBigMapOriginalHeightTiles = original_height
 	mapdata.SuperBigMapSourceWidthTiles = source_width_tiles
 	mapdata.SuperBigMapSourceHeightTiles = source_height_tiles
-	if deferred_backing then
-		-- Keep ChangeMap on a genuine vanilla backing. The desired dimensions remain in the
-		-- pending record and are promoted only after native source generation has completed.
-		mapdata.Width = original_width
-		mapdata.Height = original_height
-	else
-		mapdata.Width = desired_width
-		mapdata.Height = desired_height
-	end
+	mapdata.Width = desired_width
+	mapdata.Height = desired_height
 
 	-- The engine bakes a symmetric impassable border of mapdata.PassBorder into
 	-- the passability grid at map-build time (the property help reads "requires a
@@ -763,7 +737,7 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	-- the outer strip don't crash Heat_Get. EXPANDED_MAP_EDGE_BORDER can set a positive
 	-- impassable ring instead (rounded UP to a const.MapPatchSize multiple, required by the
 	-- engine: l_EngineChangeMap asserts nPassBorder % MAP_PATCH == 0). 0 is always valid.
-	if not deferred_backing then
+	do
 		local const_tbl = Global("const")
 		local patch = (type(const_tbl) == "table" and type(const_tbl.MapPatchSize) == "number" and const_tbl.MapPatchSize > 0)
 			and const_tbl.MapPatchSize or nil
@@ -788,10 +762,6 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 			end
 		end
 	end
-	if deferred_backing and mapdata.SuperBigMapOriginalPassBorder == nil then
-		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
-	end
-
 	-- The vanilla source view and the proportional stretch share origin (0,0).
 	local source_x, source_y = 0, 0
 
@@ -810,7 +780,6 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 		generator_height_tiles = generator_height_tiles,
 		desired_width = desired_width,
 		desired_height = desired_height,
-		deferred_backing = deferred_backing,
 	}
 	StorePendingMap(map_name, pending)
 
@@ -832,10 +801,9 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	map_instance.SuperBigMapGeneratorHeight = pending.generator_height
 	map_instance.SuperBigMapGeneratorWidthTiles = pending.generator_width_tiles
 	map_instance.SuperBigMapGeneratorHeightTiles = pending.generator_height_tiles
-	map_instance.SuperBigMapDeferredBackingPromotion = deferred_backing
 
 	DebugPrint(string.format(
-		"prepared %s for stretch expansion via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles; deferred_backing=%s)",
+		"prepared %s for stretch expansion via %s (%s x %s tiles -> %s x %s tiles; source %s x %s tiles)",
 		tostring(map_name),
 		tostring(source or "ChangingMap"),
 		tostring(original_width),
@@ -843,8 +811,7 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 		tostring(desired_width),
 		tostring(desired_height),
 		tostring(source_width_tiles),
-		tostring(source_height_tiles),
-		tostring(deferred_backing)
+		tostring(source_height_tiles)
 	))
 	return true
 end
@@ -1067,8 +1034,7 @@ CaptureGeneratedNativeEnrichments = function(map, label)
 	local is_source_transaction = map and map.SuperBigMapVanillaSourceMigration == true
 		or (SuperBigMap.State or {}).vanilla_source_migration_active == true
 	if not is_destination and not is_source_transaction
-		and not (map and (map.SuperBigMapExpansionPending == true
-			or map.SuperBigMapDeferredBackingPromotion == true)) then
+		and not (map and map.SuperBigMapExpansionPending == true) then
 		-- A normal vanilla-size run is not a source stage.  Do not annotate its
 		-- markers or map object with SuperBigMap capture fields.
 		return 0
@@ -1600,63 +1566,6 @@ local function SupplyGridSnapshot(label, expected_map)
 	return data, ow, oh, ew, eh, ww, wh
 end
 
-local supply_thread_trace_sequence = 0
-local function InstallScopedSupplyThreadTrace(map, label)
-	local original = Global("CreateGameTimeThread")
-	if type(original) ~= "function" then
-		SupplyGridLog("game-time thread tracer unavailable", {
-			label = tostring(label), create_thread = tostring(original), map = tostring(map),
-		}, "warn")
-		return false
-	end
-	local wrapper
-	wrapper = function(fn, ...)
-		supply_thread_trace_sequence = supply_thread_trace_sequence + 1
-		local sequence = supply_thread_trace_sequence
-		local args = PackValues(...)
-		local scheduled = {
-			sequence = sequence, label = tostring(label), function_ref = tostring(fn),
-			argument_count = args.n, current_map = tostring(Global("CurrentMap")),
-			current_map_name = tostring(Global("CurrentMap") and Global("CurrentMap").name),
-		}
-		for i = 1, math.min(args.n, 8) do
-			scheduled["arg" .. tostring(i)] = DescribeSupplyValue(args[i])
-		end
-		SupplyGridLog("game-time thread scheduled during Elevator restoration", scheduled)
-		local traced = function(...)
-			local run_args = PackValues(...)
-			local running = {
-				sequence = sequence, function_ref = tostring(fn), argument_count = run_args.n,
-				current_map = tostring(Global("CurrentMap")),
-				current_map_name = tostring(Global("CurrentMap") and Global("CurrentMap").name),
-			}
-			for i = 1, math.min(run_args.n, 8) do
-				running["arg" .. tostring(i)] = DescribeSupplyValue(run_args[i])
-			end
-			SupplyGridLog("game-time thread BEGIN", running)
-			SupplyGridSnapshot("inside traced game-time thread before callback", map)
-			-- Do not add pcall here: a game-time callback may legally yield, and wrapping it in a
-			-- protected Lua call could alter scheduler semantics. If the native assert fires, BEGIN
-			-- without END is deliberately the diagnostic signature.
-			local results = PackValues(fn(Unpack(run_args, 1, run_args.n)))
-			SupplyGridLog("game-time thread END", { sequence = sequence, function_ref = tostring(fn) })
-			return Unpack(results, 1, results.n)
-		end
-		return original(traced, Unpack(args, 1, args.n))
-	end
-	rawset(_G, "CreateGameTimeThread", wrapper)
-	SupplyGridLog("scoped game-time thread tracer installed", {
-		label = tostring(label), original = tostring(original), wrapper = tostring(wrapper), map = tostring(map),
-	})
-	return function()
-		local current = Global("CreateGameTimeThread")
-		if current == wrapper then rawset(_G, "CreateGameTimeThread", original) end
-		SupplyGridLog("scoped game-time thread tracer removed", {
-			label = tostring(label), restored = tostring(current == wrapper), current = tostring(current),
-		})
-	end
-end
-
 local function AuditElevatorSupplyRecords(records, label)
 	if type(records) ~= "table" then return end
 	for i, record in ipairs(records) do
@@ -1765,6 +1674,7 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 
 	local elements = type(fragment) == "table" and rawget(fragment, "elements")
 	if type(elements) ~= "table" then return data end
+	local fragment_resource = rawget(fragment, "supply_resource")
 	local width, height = SupplyGridDimensions(connection_grid)
 	local world_to_hex = Global("WorldToHex")
 	local rotate = Global("HexRotate")
@@ -1789,7 +1699,8 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 			and SafeCall(angle_to_direction, building) or nil
 		local shape, shape_error
 		if include_shapes and building_valid and type(building.GetSupplyGridConnectionShapePoints) == "function" then
-			local ok, result = pcall(building.GetSupplyGridConnectionShapePoints, building)
+			local ok, result = pcall(building.GetSupplyGridConnectionShapePoints,
+				building, fragment_resource)
 			if ok then shape = result else shape_error = tostring(result) end
 		end
 		if include_shapes and type(shape) ~= "table" then missing_shapes = missing_shapes + 1 end
@@ -1849,271 +1760,723 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 		min_sy = tostring(min_sy), max_sy = tostring(max_sy),
 		grid_width = tostring(width), grid_height = tostring(height),
 	}, out_of_bounds > 0 and "error" or nil)
+	data.total_shape_points = total_points
+	data.out_of_bounds = out_of_bounds
+	data.missing_shapes = missing_shapes
+	data.grid_width = width
+	data.grid_height = height
 	return data
 end
 
-local supply_overlay_thread_sequence = 0
-local supply_merge_trace_sequence = 0
-
-local function IsSupplyOverlayThreadArgs(args)
-	if type(args) ~= "table" or (args.n or 0) < 4 then return false end
-	local fragment, city = args[3], args[4]
-	if type(fragment) ~= "table" or type(rawget(fragment, "elements")) ~= "table" then return false end
-	if type(city) ~= "table" or type(city.GetMap) ~= "function" then return false end
-	local ow, oh = SupplyGridDimensions(args[1])
-	local cw, ch = SupplyGridDimensions(args[2])
-	return ow ~= nil or oh ~= nil or cw ~= nil or ch ~= nil
+local function CaptureSupplyGridRefs(map)
+	local connections = type(map) == "table" and rawget(map, "supply_connection_grid") or nil
+	return {
+		map = map,
+		connections = connections,
+		electricity = type(connections) == "table" and connections.electricity or nil,
+		water = type(connections) == "table" and connections.water or nil,
+		overlay = type(map) == "table" and rawget(map, "supply_overlay_grid") or nil,
+		object = type(map) == "table" and rawget(map, "object_hex_grid") or nil,
+	}
 end
 
--- MergeGrids queues its overlay copy and returns. The callback may not run until after the map
--- switch, so a short-lived tracer around Elevator reconstruction cannot see who created it. Keep
--- this narrowly filtered tracer active for the expanded-map lifecycle and preserve vanilla thread
--- invocation/yield behavior exactly.
-local function PatchPersistentSupplyThreadTrace(source)
+local function SupplyRefSet(refs)
+	local set = {}
+	for _, name in ipairs({ "connections", "electricity", "water", "overlay", "object" }) do
+		local value = type(refs) == "table" and refs[name] or nil
+		if value ~= nil then set[value] = name end
+	end
+	return set
+end
+
+local function QueueUndergroundElevatorRestore(map, records, source)
+	if type(map) ~= "table" or type(records) ~= "table" or #records == 0 then return nil end
 	local State = SuperBigMap.State
-	local current = Global("CreateGameTimeThread")
-	if current == State.supply_overlay_thread_wrapper
-		and State.supply_overlay_thread_patch_version == GENERATOR_PATCH_VERSION then return true end
-	if current == State.supply_overlay_thread_wrapper
-		and type(State.original_supply_overlay_create_thread) == "function" then
-		current = State.original_supply_overlay_create_thread
-		rawset(_G, "CreateGameTimeThread", current)
+	local old = pending_underground_elevator_restores[map]
+	if type(old) == "table" and old.token_id then
+		old.cancelled = true
+		old.status = "superseded"
+		underground_elevator_restore_tokens[old.token_id] = nil
 	end
-	if type(current) ~= "function" then
-		SupplyGridLog("persistent supply thread tracer unavailable", { source = tostring(source) }, "warn")
-		return false
+	State.underground_elevator_restore_epoch =
+		(State.underground_elevator_restore_epoch or 0) + 1
+	local source_map = Global("CurrentMap")
+	if source_map == map then source_map = Global("MainMap") end
+	local token = {
+		token_id = State.underground_elevator_restore_epoch,
+		map = map,
+		records = records,
+		source = tostring(source or "unknown"),
+		source_map = source_map,
+		forbidden_refs = SupplyRefSet(CaptureSupplyGridRefs(source_map)),
+		status = "queued",
+		connected = setmetatable({}, { __mode = "k" }),
+		merged = setmetatable({}, { __mode = "k" }),
+	}
+	pending_underground_elevator_restores[map] = token
+	underground_elevator_restore_tokens[token.token_id] = token
+	map.SuperBigMapDeferredElevatorRestorePending = #records
+	map.SuperBigMapDeferredElevatorRestoreToken = token.token_id
+	SupplyGridLog("underground Elevator restore transaction queued", {
+		token = token.token_id, source = token.source, map = tostring(map),
+		map_name = tostring(map.name), records = #records, source_map = tostring(source_map),
+		source_map_name = tostring(source_map and source_map.name),
+	})
+	return token
+end
+
+local function CurrentElevatorRestoreToken(map, token_id)
+	local token = type(map) == "table" and pending_underground_elevator_restores[map] or nil
+	if type(token) ~= "table" or token.token_id == nil then return nil end
+	if token_id ~= nil and token.token_id ~= token_id then return nil end
+	if token.cancelled == true or underground_elevator_restore_tokens[token.token_id] ~= token then
+		return nil
 	end
-	State.original_supply_overlay_create_thread = current
-	local captured_original = current
-	local wrapper
-	wrapper = function(fn, ...)
-		local args = PackValues(...)
-		if not IsSupplyOverlayThreadArgs(args) then
-			return captured_original(fn, Unpack(args, 1, args.n))
-		end
-		supply_overlay_thread_sequence = supply_overlay_thread_sequence + 1
-		local sequence = supply_overlay_thread_sequence
-		AuditSupplyFragmentFootprint("scheduled delayed supply overlay copy", args[1], args[2], args[3], args[4], false, {
-			sequence = sequence, source = tostring(source), callback = tostring(fn), phase = "scheduled",
+	return token
+end
+
+local function SupplyGridSetFailure(token, stage, reason, data)
+	data = data or {}
+	data.token = tostring(token and token.token_id)
+	data.stage = tostring(stage)
+	data.reason = tostring(reason)
+	SupplyGridLog("underground Elevator supply invariant failed", data, "error")
+	return false, tostring(reason)
+end
+
+local function ValidateSupplyGridSet(token, map, stage, require_current)
+	if type(token) ~= "table" or CurrentElevatorRestoreToken(token.map, token.token_id) ~= token then
+		return SupplyGridSetFailure(token, stage, "stale or superseded map-generation token")
+	end
+	if map ~= token.map and map ~= token.source_map then
+		return SupplyGridSetFailure(token, stage, "grid owner is outside the restore transaction", {
+			map = tostring(map), target = tostring(token.map), source_map = tostring(token.source_map),
 		})
-		local traced = function(...)
-			local run_args = PackValues(...)
-			AuditSupplyFragmentFootprint("begin delayed supply overlay copy", run_args[1], run_args[2], run_args[3], run_args[4], true, {
-				sequence = sequence, source = tostring(source), callback = tostring(fn), phase = "begin",
-			})
-			-- No pcall: game-time callbacks may yield. A BEGIN without END intentionally identifies the
-			-- exact callback whose native operation asserted.
-			local results = PackValues(fn(Unpack(run_args, 1, run_args.n)))
-			SupplyGridLog("delayed supply overlay copy END", {
-				sequence = sequence, source = tostring(source), callback = tostring(fn),
-				current_map = tostring(Global("CurrentMap")),
-			})
-			return Unpack(results, 1, results.n)
-		end
-		return captured_original(traced, Unpack(args, 1, args.n))
 	end
-	rawset(_G, "CreateGameTimeThread", wrapper)
-	State.supply_overlay_thread_wrapper = wrapper
-	State.supply_overlay_thread_patch_version = GENERATOR_PATCH_VERSION
-	SupplyGridLog("persistent supply thread tracer installed", {
-		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
-	})
-	return true
-end
-
-local function PatchSupplyMergeTrace(source)
-	local State = SuperBigMap.State
-	local current = Global("MergeGrids")
-	if current == State.supply_merge_trace_wrapper
-		and State.supply_merge_trace_patch_version == GENERATOR_PATCH_VERSION then return true end
-	if current == State.supply_merge_trace_wrapper and type(State.original_supply_merge_grids) == "function" then
-		current = State.original_supply_merge_grids
-		rawset(_G, "MergeGrids", current)
+	if require_current ~= false and Global("CurrentMap") ~= token.map then
+		return SupplyGridSetFailure(token, stage, "the intended underground map is not current", {
+			current = tostring(Global("CurrentMap")), intended = tostring(token.map),
+		})
 	end
-	if type(current) ~= "function" then
-		SupplyGridLog("MergeGrids tracer unavailable", { source = tostring(source) }, "warn")
-		return false
+	local refs = CaptureSupplyGridRefs(map)
+	local expected_width = type(map) == "table" and tonumber(rawget(map, "hex_width")) or nil
+	local expected_height = type(map) == "table" and tonumber(rawget(map, "hex_height")) or nil
+	if not expected_width or not expected_height then
+		return SupplyGridSetFailure(token, stage, "map hex dimensions are unavailable")
 	end
-	State.original_supply_merge_grids = current
-	local captured_original = current
-	local wrapper = function(new_grid, grid, filter)
-		local map = SupplyFragmentMap(new_grid)
-		local current_map = Global("CurrentMap")
-		local trace = IsExpandedSupplyContext(map) or IsExpandedSupplyContext(current_map)
-		local sequence
-		if trace then
-			supply_merge_trace_sequence = supply_merge_trace_sequence + 1
-			sequence = supply_merge_trace_sequence
-			SupplyGridLog("MergeGrids BEGIN", {
-				sequence = sequence, source = tostring(source), current_map = tostring(current_map),
-				fragment_map = tostring(map), new_grid = DescribeSupplyValue(new_grid),
-				old_grid = DescribeSupplyValue(grid), filter = tostring(filter),
+	if type(refs.connections) ~= "table" or not refs.electricity or not refs.water
+		or not refs.overlay or not refs.object then
+		return SupplyGridSetFailure(token, stage, "one or more supply MapVars are unavailable", {
+			connections = tostring(refs.connections), electricity = tostring(refs.electricity),
+			water = tostring(refs.water), overlay = tostring(refs.overlay), object = tostring(refs.object),
+		})
+	end
+	local dimensions = {}
+	for _, name in ipairs({ "electricity", "water", "overlay", "object" }) do
+		local width, height = SupplyGridDimensions(refs[name])
+		dimensions[name] = tostring(width) .. "x" .. tostring(height)
+		if width ~= expected_width or height ~= expected_height then
+			return SupplyGridSetFailure(token, stage,
+				name .. " grid dimensions differ from the owning map", {
+				expected = tostring(expected_width) .. "x" .. tostring(expected_height),
+				actual = dimensions[name], map = tostring(map), map_name = tostring(map.name),
 			})
 		end
-		local results = PackValues(captured_original(new_grid, grid, filter))
-		if trace then
-			SupplyGridLog("MergeGrids END", {
-				sequence = sequence, source = tostring(source), current_map = tostring(Global("CurrentMap")),
-				fragment_map = tostring(SupplyFragmentMap(new_grid)), new_grid = DescribeSupplyValue(new_grid),
-				old_grid = DescribeSupplyValue(grid),
-			})
-		end
-		return Unpack(results, 1, results.n)
 	end
-	rawset(_G, "MergeGrids", wrapper)
-	State.supply_merge_trace_wrapper = wrapper
-	State.supply_merge_trace_patch_version = GENERATOR_PATCH_VERSION
-	SupplyGridLog("MergeGrids tracer installed", {
-		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
-	})
-	return true
-end
-
-local function SupplyFunctionEnvironment(fn)
-	if type(fn) ~= "function" then return nil, "not-a-function" end
-	local getfenv_fn = Global("getfenv")
-	if type(getfenv_fn) == "function" then
-		local ok, env = pcall(getfenv_fn, fn)
-		if ok and type(env) == "table" then return env, "getfenv" end
-	end
-	local debug_lib = Global("debug")
-	if type(debug_lib) == "table" and type(debug_lib.getfenv) == "function" then
-		local ok, env = pcall(debug_lib.getfenv, fn)
-		if ok and type(env) == "table" then return env, "debug.getfenv" end
-	end
-	if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
-		for index = 1, 64 do
-			local ok, name, value = pcall(debug_lib.getupvalue, fn, index)
-			if not ok or name == nil then break end
-			if name == "_ENV" and type(value) == "table" then
-				return value, "debug.getupvalue:_ENV"
+	if map == token.map then
+		for _, name in ipairs({ "connections", "electricity", "water", "overlay", "object" }) do
+			local forbidden_owner = token.forbidden_refs and token.forbidden_refs[refs[name]]
+			if forbidden_owner then
+				return SupplyGridSetFailure(token, stage,
+					"target map retains a surface-grid reference", {
+					field = name, surface_field = forbidden_owner, reference = tostring(refs[name]),
+				})
 			end
 		end
+		if token.authoritative_refs then
+			for _, name in ipairs({ "connections", "electricity", "water", "overlay", "object" }) do
+				if token.authoritative_refs[name] ~= refs[name] then
+					return SupplyGridSetFailure(token, stage,
+						"target supply-grid reference changed during the transaction", {
+						field = name, expected_ref = tostring(token.authoritative_refs[name]),
+						actual_ref = tostring(refs[name]),
+					})
+				end
+			end
+		else
+			token.authoritative_refs = refs
+		end
 	end
-	return nil, "unavailable"
+	SupplyGridLog("underground Elevator supply-grid invariant passed", {
+		token = token.token_id, stage = tostring(stage), map = tostring(map),
+		map_name = tostring(map.name), current = tostring(Global("CurrentMap")),
+		expected = tostring(expected_width) .. "x" .. tostring(expected_height),
+		electricity = dimensions.electricity, water = dimensions.water,
+		overlay = dimensions.overlay, object = dimensions.object,
+	})
+	return true, refs, expected_width, expected_height
 end
 
-local function RestoreSupplyPrivateEnvironmentTrace(source)
-	local State = SuperBigMap.State
-	local records = State.supply_private_environment_records
-	if type(records) ~= "table" then return false end
-	local restored, skipped = 0, 0
-	for _, record in ipairs(records) do
-		local env = record.environment
-		if type(env) == "table" and type(record.entries) == "table" then
-			for name, entry in pairs(record.entries) do
-				local current = rawget(env, name)
-				if current == entry.wrapper then
-					rawset(env, name, entry.had_raw and entry.raw_value or nil)
-					restored = restored + 1
-				else
-					skipped = skipped + 1
-					SupplyGridLog("private SupplyGrid environment restore skipped changed entry", {
-						source = tostring(source), environment = tostring(env), name = tostring(name),
-						current = tostring(current), expected_wrapper = tostring(entry.wrapper),
-					}, "warn")
+local function ValidateSupplyBuildingFootprint(token, building, resource, stage)
+	local ok, refs, width, height = ValidateSupplyGridSet(token, token.map, stage, true)
+	if not ok then return false, refs end
+	if type(building) ~= "table" then
+		return SupplyGridSetFailure(token, stage, "supply building is unavailable")
+	end
+	local city = rawget(building, "city")
+	if city ~= token.map.City then
+		return SupplyGridSetFailure(token, stage, "Elevator city does not belong to the target map", {
+			building = tostring(building), city = tostring(city), expected_city = tostring(token.map.City),
+		})
+	end
+	local world_to_hex = Global("WorldToHex")
+	local rotate = Global("HexRotate")
+	local angle_to_direction = Global("HexAngleToDirection")
+	if type(world_to_hex) ~= "function" or type(building.GetSupplyGridConnectionShapePoints) ~= "function" then
+		return SupplyGridSetFailure(token, stage, "supply footprint APIs are unavailable")
+	end
+	local q, r = SafeCall(world_to_hex, building)
+	local direction = type(angle_to_direction) == "function"
+		and SafeCall(angle_to_direction, building) or 0
+	local shape_ok, shape = pcall(building.GetSupplyGridConnectionShapePoints, building, resource)
+	if not shape_ok or type(shape) ~= "table" or #shape == 0
+		or type(q) ~= "number" or type(r) ~= "number" then
+		return SupplyGridSetFailure(token, stage, "Elevator supply footprint could not be resolved", {
+			building = tostring(building), resource = tostring(resource), q = tostring(q), r = tostring(r),
+			shape = tostring(shape), shape_error = shape_ok and nil or tostring(shape),
+		})
+	end
+	for index, shape_point in ipairs(shape) do
+		local local_q, local_r = SupplyPointXY(shape_point)
+		local rotated_q, rotated_r = local_q, local_r
+		if type(rotate) == "function" and type(direction) == "number" then
+			rotated_q, rotated_r = SafeCall(rotate, local_q, local_r, direction)
+		end
+		local final_q = type(rotated_q) == "number" and q + rotated_q or nil
+		local final_r = type(rotated_r) == "number" and r + rotated_r or nil
+		local sx = type(final_q) == "number" and type(final_r) == "number"
+			and final_q + final_r / 2 or nil
+		local sy = final_r
+		local in_bounds = type(sx) == "number" and type(sy) == "number"
+			and sx >= 0 and sy >= 0 and sx < width and sy < height
+		SupplyGridLog("underground Elevator supply coordinate invariant", {
+			token = token.token_id, stage = tostring(stage), resource = tostring(resource),
+			point = index, q = tostring(final_q), r = tostring(final_r), sx = tostring(sx),
+			sy = tostring(sy), width = width, height = height, in_bounds = tostring(in_bounds),
+		}, in_bounds and nil or "error")
+		if not in_bounds then
+			return SupplyGridSetFailure(token, stage, "supply-fragment coordinate is out of bounds", {
+				resource = tostring(resource), point = index, sx = tostring(sx), sy = tostring(sy),
+				width = width, height = height,
+			})
+		end
+	end
+	local element = resource and rawget(building, resource) or nil
+	if type(element) == "table" then
+		if rawget(element, "building") ~= building then
+			return SupplyGridSetFailure(token, stage, "supply element belongs to a different building", {
+				resource = tostring(resource), element = tostring(element), building = tostring(building),
+			})
+		end
+		local grid = rawget(element, "grid")
+		if grid and token.forbidden_refs and token.forbidden_refs[grid] then
+			return SupplyGridSetFailure(token, stage, "Elevator element retains a surface-grid reference", {
+				resource = tostring(resource), grid = tostring(grid),
+			})
+		end
+		if grid then
+			local fragment_resource = type(grid) == "table" and rawget(grid, "supply_resource") or nil
+			if fragment_resource and fragment_resource ~= resource then
+				return SupplyGridSetFailure(token, stage, "Elevator element uses the wrong supply fragment", {
+					resource = tostring(resource), fragment_resource = tostring(fragment_resource),
+				})
+			end
+			for _, candidate in ipairs(type(grid) == "table" and rawget(grid, "elements") or {}) do
+				local owner = type(candidate) == "table" and rawget(candidate, "building") or nil
+				local owner_city = type(owner) == "table" and rawget(owner, "city") or nil
+				if owner and owner_city ~= token.map.City then
+					return SupplyGridSetFailure(token, stage,
+						"new underground fragment contains a surface-map element", {
+						resource = tostring(resource), fragment = tostring(grid),
+						element = tostring(candidate), owner = tostring(owner), city = tostring(owner_city),
+					})
 				end
 			end
 		end
 	end
-	SupplyGridLog("private SupplyGrid environment trace restored", {
-		source = tostring(source), environments = #records, restored_entries = restored,
-		skipped_entries = skipped,
-	})
-	State.supply_private_environment_records = nil
-	State.supply_private_environment_patch_version = nil
-	return true
+	return true, refs
 end
 
--- Relaunched compiles SupplyGrid.lua with a private _ENV. The previous run proved that replacing
--- _G.MergeGrids/CreateGameTimeThread/CopySupplyFragmentToOverlayGrid leaves that environment's
--- lookups untouched: all public wrappers were installed, yet line 1665 executed with no trace.
--- Bridge the same observational wrappers into the actual environments of MergeGrids and its main
--- caller, preserving each raw entry exactly so vanilla teardown can restore the lookup chain.
-local function PatchSupplyPrivateEnvironmentTrace(source)
-	local State = SuperBigMap.State
-	local expected = {
-		MergeGrids = State.supply_merge_trace_wrapper,
-		CreateGameTimeThread = State.supply_overlay_thread_wrapper,
-		CopySupplyFragmentToOverlayGrid = State.supply_grid_overlay_copy_wrapper,
-	}
-	for name, wrapper in pairs(expected) do
-		if type(wrapper) ~= "function" then
-			SupplyGridLog("private SupplyGrid environment trace unavailable", {
-				source = tostring(source), missing_wrapper = tostring(name), value = tostring(wrapper),
-			}, "error")
+local function CompleteElevatorRestoreTransactionIfReady(token)
+	if CurrentElevatorRestoreToken(token.map, token.token_id) ~= token then return false end
+	for _, record in ipairs(token.records) do
+		local building = record.rebuilt_elevator
+		local connected = building and token.connected[building]
+		local merged = building and token.merged[building]
+		if not building or not connected or not merged
+			or connected.electricity ~= true or connected.water ~= true
+			or merged.electricity ~= true or merged.water ~= true then
 			return false
 		end
 	end
-	if State.supply_private_environment_patch_version == GENERATOR_PATCH_VERSION
-		and type(State.supply_private_environment_records) == "table" then
-		local verified = #State.supply_private_environment_records > 0
-		for _, record in ipairs(State.supply_private_environment_records) do
-			for name, wrapper in pairs(expected) do
-				verified = verified and rawget(record.environment, name) == wrapper
-			end
-		end
-		SupplyGridLog("private SupplyGrid environment trace verification", {
-			source = tostring(source), verified = tostring(verified),
-			environments = #State.supply_private_environment_records,
-		}, verified and nil or "error")
-		if verified then return true end
-		RestoreSupplyPrivateEnvironmentTrace("reinstall/" .. tostring(source))
-	elseif type(State.supply_private_environment_records) == "table" then
-		RestoreSupplyPrivateEnvironmentTrace("upgrade/" .. tostring(source))
-	end
-
-	local supply_object_class = Engine.ClassTable and Engine.ClassTable("SupplyGridObject")
-	local candidates = {
-		{ label = "MergeGrids original", fn = State.original_supply_merge_grids },
-		{ label = "SupplyGridObject:SupplyGridConnectElement",
-			fn = type(supply_object_class) == "table" and supply_object_class.SupplyGridConnectElement or nil },
-	}
-	local records, seen = {}, {}
-	for _, candidate in ipairs(candidates) do
-		local env, env_source = SupplyFunctionEnvironment(candidate.fn)
-		SupplyGridLog("private SupplyGrid environment candidate", {
-			source = tostring(source), label = candidate.label, function_ref = tostring(candidate.fn),
-			environment = tostring(env), environment_source = tostring(env_source),
-			environment_is_global = tostring(env == _G),
-		})
-		if type(env) == "table" and env ~= _G and not seen[env] then
-			seen[env] = true
-			local record = {
-				environment = env, environment_source = env_source,
-				candidate = candidate.label, entries = {},
-			}
-			for name, wrapper in pairs(expected) do
-				local raw_value = rawget(env, name)
-				local ok_resolved, resolved = pcall(function() return env[name] end)
-				local entry = {
-					had_raw = raw_value ~= nil, raw_value = raw_value,
-					resolved_value = ok_resolved and resolved or nil, wrapper = wrapper,
-				}
-				record.entries[name] = entry
-				local ok_install, install_error = pcall(rawset, env, name, wrapper)
-				local installed = ok_install and rawget(env, name) == wrapper
-				SupplyGridLog("private SupplyGrid environment entry bridged", {
-					source = tostring(source), candidate = candidate.label,
-					environment = tostring(env), environment_source = tostring(env_source),
-					name = name, had_raw = tostring(entry.had_raw), raw_before = tostring(raw_value),
-					resolved_before = tostring(entry.resolved_value), wrapper = tostring(wrapper),
-					installed = tostring(installed), install_error = tostring(install_error),
-				}, installed and nil or "error")
-			end
-			record.metatable = getmetatable(env)
-			records[#records + 1] = record
-		end
-	end
-	State.supply_private_environment_records = records
-	State.supply_private_environment_patch_version = GENERATOR_PATCH_VERSION
-	SupplyGridLog("private SupplyGrid environment trace installed", {
-		source = tostring(source), environments = #records,
-		merge_wrapper = tostring(expected.MergeGrids),
-		thread_wrapper = tostring(expected.CreateGameTimeThread),
-		copy_wrapper = tostring(expected.CopySupplyFragmentToOverlayGrid),
+	token.status = "complete"
+	token.completed_on_map = Global("CurrentMap")
+	pending_underground_elevator_restores[token.map] = nil
+	underground_elevator_restore_tokens[token.token_id] = nil
+	token.map.SuperBigMapDeferredElevatorRestorePending = nil
+	token.map.SuperBigMapDeferredElevatorRestoreToken = nil
+	token.map.SuperBigMapDeferredElevatorRestoreCompletedToken = token.token_id
+	SupplyGridLog("underground Elevator restore transaction complete", {
+		token = token.token_id, map = tostring(token.map), records = #token.records,
+		current = tostring(Global("CurrentMap")), status = token.status,
 	})
-	return #records > 0
+	return true
+end
+
+local function CopySupplyFragmentSynchronously(token, city, fragment, resource, stage)
+	local map = SupplyObjectMap(city)
+	if not map and city == token.map.City then map = token.map end
+	if not map and token.source_map and city == token.source_map.City then map = token.source_map end
+	local ok, refs = ValidateSupplyGridSet(token, map, stage, false)
+	if not ok then return false, refs end
+	if Global("CurrentMap") ~= token.map then
+		return SupplyGridSetFailure(token, stage, "underground map changed before synchronous overlay copy")
+	end
+	local connection = refs[resource]
+	local footprint = AuditSupplyFragmentFootprint(stage, refs.overlay, connection,
+		fragment, city, true, {
+		token = token.token_id, synchronous = "true", resource = tostring(resource),
+	})
+	if type(footprint) ~= "table" or type(footprint.total_shape_points) ~= "number"
+		or footprint.total_shape_points < 1 or footprint.out_of_bounds ~= 0
+		or footprint.missing_shapes ~= 0 then
+		return SupplyGridSetFailure(token, stage,
+			"supply fragment failed the complete coordinate audit", {
+			total_shape_points = tostring(footprint and footprint.total_shape_points),
+			out_of_bounds = tostring(footprint and footprint.out_of_bounds),
+			missing_shapes = tostring(footprint and footprint.missing_shapes),
+			resource = tostring(resource), fragment = tostring(fragment),
+		})
+	end
+	local copy = SuperBigMap.State.original_supply_grid_overlay_copy
+		or Global("CopySupplyFragmentToOverlayGrid")
+	if type(copy) ~= "function" then
+		return SupplyGridSetFailure(token, stage, "native overlay-copy API is unavailable")
+	end
+	local copy_ok, copy_result = pcall(copy, refs.overlay, connection, city, fragment)
+	if not copy_ok then
+		return SupplyGridSetFailure(token, stage, "synchronous overlay copy failed", {
+			error = tostring(copy_result), resource = tostring(resource), fragment = tostring(fragment),
+		})
+	end
+	SupplyGridLog("underground Elevator overlay copied synchronously", {
+		token = token.token_id, stage = tostring(stage), map = tostring(map),
+		city = tostring(city), resource = tostring(resource), fragment = tostring(fragment),
+	})
+	return true
+end
+
+local function MergeSupplyFragmentsSynchronously(token, new_grid, grid, filter, resource, copy_overlay)
+	local get_connections = Global("GetElementConnections")
+	local destroy_connections = Global("DestroyAllConnectionsFromElement")
+	local connect_grids = Global("ConnectGrids")
+	if type(get_connections) ~= "function" or type(destroy_connections) ~= "function"
+		or type(connect_grids) ~= "function" then
+		return SupplyGridSetFailure(token, "synchronous fragment merge",
+			"vanilla supply-fragment APIs are unavailable", {
+			get_connections = tostring(get_connections), destroy_connections = tostring(destroy_connections),
+			connect_grids = tostring(connect_grids),
+		})
+	end
+	if grid ~= new_grid then
+		local elements = rawget(grid, "elements") or {}
+		for index = #elements, 1, -1 do
+			local element = elements[index]
+			if not filter or filter(element) then
+				local element_connections = get_connections(element)
+				local saved = {}
+				if type(element_connections) == "table" then
+					for i, pair in ipairs(element_connections) do saved[i] = pair end
+				end
+				destroy_connections(element)
+				grid:RemoveElement(element)
+				new_grid:AddElement(element)
+				for _, pair in ipairs(saved) do connect_grids(pair[1], pair[2]) end
+			end
+		end
+	end
+	local remaining = type(rawget(grid, "elements")) == "table" and #grid.elements or 0
+	if not filter and remaining ~= 0 then
+		return SupplyGridSetFailure(token, "synchronous fragment merge",
+			"vanilla full merge left elements behind", { remaining = remaining })
+	end
+	if remaining == 0 and type(grid.delete) == "function" then grid:delete() end
+	if copy_overlay ~= false and not rawget(new_grid, "grid_subtype") then
+		for _, city in ipairs(rawget(new_grid, "cities") or {}) do
+			local copied, copy_error = CopySupplyFragmentSynchronously(token, city, new_grid,
+				resource, "synchronous merged-fragment overlay copy")
+			if not copied then return false, copy_error end
+		end
+	end
+	return true
+end
+
+local function TaggedListContains(list, field, value)
+	for _, item in ipairs(list) do
+		if item[field] == value then return true end
+	end
+	return false
+end
+
+-- Vanilla SupplyGridConnectElement schedules an opaque game-time callback only when it merges
+-- multiple neighbouring fragments. For a tagged restored Elevator, reproduce the normal-building
+-- branch with the same public engine primitives and perform that merge/copy synchronously. This is
+-- intentionally narrow: construction grids, switches, domes, and every untagged object retain the
+-- original class method.
+local function ConnectTaggedElevatorElementSynchronously(token, building, element,
+	grid_class, new_grid_skin, force_create_connections)
+	local resource = type(grid_class) == "table" and grid_class.supply_resource or nil
+	if resource ~= "electricity" and resource ~= "water" then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"unsupported Elevator supply resource", { resource = tostring(resource) })
+	end
+	local valid, why = ValidateSupplyBuildingFootprint(token, building, resource,
+		"before tagged synchronous element connection")
+	if not valid then return false, why end
+	local is_obj_in_dome = Global("IsObjInDome")
+	if type(is_obj_in_dome) == "function" and is_obj_in_dome(building) then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"deferred underground Elevator unexpectedly belongs to a dome")
+	end
+	local has_member = type(building.HasMember) == "function"
+	local construction_connections = has_member
+		and SafeCall(building.HasMember, building, "construction_connections") == true
+		and building.construction_connections ~= -1 and building.construction_connections or 0
+	if building.connect_dir or construction_connections ~= 0 then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"unexpected preferred/construction connection state", {
+			connect_dir = tostring(building.connect_dir),
+			construction_connections = tostring(construction_connections),
+		})
+	end
+	local apply_building = Global("SupplyGridApplyBuilding")
+	local get_object_grid = Global("GetObjectHexGrid")
+	local are_connected = Global("AreGridsConnected")
+	local connect_grids = Global("ConnectGrids")
+	local copy_grid_connections = Global("CopyGridConnections")
+	local get_overlay_index = Global("GetGridOverlayIndex")
+	local apply_overlay_id = Global("ApplyIDToOverlayGrid")
+	local shift = Global("shift")
+	if type(apply_building) ~= "function" or type(get_object_grid) ~= "function"
+		or type(are_connected) ~= "function" or type(connect_grids) ~= "function"
+		or type(copy_grid_connections) ~= "function"
+		or type(get_overlay_index) ~= "function" or type(apply_overlay_id) ~= "function"
+		or (resource == "water" and type(shift) ~= "function") then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"vanilla supply connection APIs are unavailable", {
+			apply_building = tostring(apply_building), object_grid = tostring(get_object_grid),
+			are_connected = tostring(are_connected), connect_grids = tostring(connect_grids),
+			copy_grid_connections = tostring(copy_grid_connections),
+			get_overlay_index = tostring(get_overlay_index), apply_overlay_id = tostring(apply_overlay_id),
+			shift = tostring(shift),
+		})
+	end
+	local refs = token.authoritative_refs
+	local connection_grid = refs and refs[resource]
+	local shape = building:GetSupplyGridConnectionShapePoints(resource)
+	local shape_connections = building:GetShapeConnections(resource)
+	local potential_neighbours = apply_building(connection_grid, building, shape,
+		shape_connections, nil, false)
+	if type(potential_neighbours) ~= "table" then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"SupplyGridApplyBuilding returned no neighbour list")
+	end
+	new_grid_skin = new_grid_skin or (has_member
+		and SafeCall(building.HasMember, building, "construction_grid_skin") == true
+		and building.construction_grid_skin)
+	local object_grid = get_object_grid(building)
+	if not object_grid or type(object_grid.GetObjectAtPos) ~= "function" then
+		return SupplyGridSetFailure(token, "tagged synchronous element connection",
+			"object grid is unavailable")
+	end
+	local built_connections = {}
+	local create_connection_call_data = {}
+	local grid
+	local grids_merged = false
+	local function should_skip(other_grid)
+		local ignore_grid_to_grid = not other_grid.grid_subtype
+			and IsKindOfSafe(building, "Building")
+		for _, entry in ipairs(built_connections) do
+			local connected_grid = entry[1]
+			if (ignore_grid_to_grid and connected_grid == other_grid)
+				or (not ignore_grid_to_grid and are_connected(connected_grid, other_grid)) then
+				return true
+			end
+		end
+		return false
+	end
+	for index = 1, #potential_neighbours, 2 do
+		local point_a, point_b = potential_neighbours[index], potential_neighbours[index + 1]
+		local adjacent = object_grid:GetObjectAtPos(point_b, nil, nil,
+			function(object) return object[resource] end)
+		local adjacent_element = adjacent and adjacent[resource]
+		local adjacent_grid = type(adjacent_element) == "table" and adjacent_element.grid or nil
+		if not adjacent_grid then
+			return SupplyGridSetFailure(token, "tagged synchronous element connection",
+				"native neighbour has no supply fragment", {
+				index = index, adjacent = tostring(adjacent), resource = resource,
+			})
+		end
+		local force_connect = (IsKindOfSafe(building, "Building")
+			and not IsKindOfSafe(building, "LifeSupportGridElement")
+			and IsKindOfSafe(adjacent, "LifeSupportGridElement"))
+			or (IsKindOfSafe(building, "LifeSupportGridElement")
+				and IsKindOfSafe(adjacent, "Building")
+				and not IsKindOfSafe(adjacent, "LifeSupportGridElement"))
+		if not grid then
+			if not should_skip(adjacent_grid)
+				or (force_connect and not TaggedListContains(built_connections, 2, adjacent_element))
+				or not TaggedListContains(built_connections, 1, adjacent_grid) then
+				create_connection_call_data[#built_connections + 1] = {
+					point_a, point_b, building, adjacent,
+				}
+				built_connections[#built_connections + 1] = { adjacent_grid, adjacent_element }
+			end
+			if not adjacent_grid.grid_subtype then
+				grid = adjacent_grid
+				grid:AddElement(element)
+			end
+		else
+			if force_create_connections and adjacent_grid == grid then
+				create_connection_call_data[#built_connections + 1] = {
+					point_a, point_b, building, adjacent,
+				}
+				built_connections[#built_connections + 1] = { adjacent_grid, adjacent_element }
+			elseif adjacent_grid ~= grid and adjacent_grid.grid_subtype == grid.grid_subtype then
+				if not should_skip(adjacent_grid) then
+					if not TaggedListContains(built_connections, 1, adjacent_grid) then
+						create_connection_call_data[#built_connections + 1] = {
+							point_a, point_b, building, adjacent,
+						}
+						built_connections[#built_connections + 1] = { adjacent_grid, adjacent_element }
+					end
+					grids_merged = grid
+					for _, moved_element in ipairs(adjacent_grid.elements or {}) do
+						grid:AddElement(moved_element)
+					end
+					copy_grid_connections(adjacent_grid, grid)
+					adjacent_grid:delete()
+				end
+			elseif (force_connect and not TaggedListContains(built_connections, 2, adjacent_element))
+				or (not are_connected(grid, adjacent_grid) and not should_skip(adjacent_grid)) then
+				create_connection_call_data[#built_connections + 1] = {
+					point_a, point_b, building, adjacent,
+				}
+				built_connections[#built_connections + 1] = { adjacent_grid, adjacent_element }
+			end
+		end
+	end
+	local city = rawget(building, "city") or token.map.City
+	if not grid then
+		local params = { city = city, element_skin = new_grid_skin }
+		local create = type(grid_class) == "table" and grid_class.new
+		if type(create) ~= "function" then
+			return SupplyGridSetFailure(token, "tagged synchronous element connection",
+				"supply grid constructor is unavailable")
+		end
+		grid = create(grid_class, params, token.map)
+		if not grid then
+			return SupplyGridSetFailure(token, "tagged synchronous element connection",
+				"supply grid constructor failed")
+		end
+		grid:AddElement(element)
+	elseif new_grid_skin and grids_merged and type(grids_merged.ChangeElementSkin) == "function" then
+		grids_merged:ChangeElementSkin(new_grid_skin, nil, true)
+	end
+	for index, entry in ipairs(built_connections) do
+		local other_grid, adjacent_element = entry[1], entry[2]
+		local connection_data = create_connection_call_data[index]
+		if connection_data then
+			grid_class.CreateConnection(Unpack(connection_data, 1, 4))
+		end
+		if other_grid ~= grid and other_grid.grid_subtype ~= grid.grid_subtype then
+			connect_grids(element, adjacent_element)
+		end
+	end
+	if not grid.grid_subtype then
+		if grids_merged then
+			local copied, copy_error = CopySupplyFragmentSynchronously(token, city, grid,
+				resource, "synchronous local merged-fragment overlay copy")
+			if not copied then return false, copy_error end
+		else
+			local overlay_id = get_overlay_index(grid)
+			if resource == "water" then overlay_id = shift(overlay_id, 4) end
+			apply_overlay_id(refs.overlay, building, shape, overlay_id)
+		end
+	end
+	SupplyGridLog("tagged Elevator element connected without delayed callback", {
+		token = token.token_id, building = tostring(building), resource = resource,
+		fragment = tostring(grid), neighbours = #potential_neighbours / 2,
+		merged = tostring(grids_merged ~= false),
+	})
+	return true
+end
+
+local function MergeTaggedElevatorGridsSynchronously(building, resource, token)
+	local valid, why = ValidateSupplyBuildingFootprint(token, building, resource,
+		"before synchronous passage-grid merge")
+	if not valid then return false, why end
+	local element = rawget(building, resource)
+	local my_grid = type(element) == "table" and rawget(element, "grid") or nil
+	if not my_grid then
+		SupplyGridLog("synchronous passage-grid merge deferred until element connection", {
+			token = token.token_id, building = tostring(building), resource = tostring(resource),
+		})
+		return true
+	end
+	local other = rawget(building, "other")
+	local other_element = type(other) == "table" and rawget(other, resource) or nil
+	local other_grid = type(other_element) == "table" and rawget(other_element, "grid") or nil
+	if my_grid and other_grid and my_grid ~= other_grid then
+		local other_map = SupplyObjectMap(other) or token.source_map
+		local source_ok, source_error = ValidateSupplyGridSet(token, other_map,
+			"before synchronous source passage-grid merge", false)
+		if not source_ok then return false, source_error end
+		if other_map ~= token.source_map
+			or rawget(other, "city") ~= (token.source_map and token.source_map.City) then
+			return SupplyGridSetFailure(token, "synchronous passage-grid merge",
+				"linked Elevator does not belong to the captured source map", {
+					other = tostring(other), other_map = tostring(other_map),
+					expected_map = tostring(token.source_map),
+				})
+		end
+		local visit = Global("VisitConnectedElements")
+		if type(visit) ~= "function" then
+			return SupplyGridSetFailure(token, "synchronous passage-grid merge",
+				"VisitConnectedElements is unavailable")
+		end
+		local visited_grids, visited_elements = {}, {}
+		visit(element, resource, 0, 16384 + 64, false, visited_grids, visited_elements)
+		local merged, merge_error = MergeSupplyFragmentsSynchronously(token, my_grid, other_grid,
+			function(candidate) return visited_elements[candidate] end, resource)
+		for _, visited in ipairs(visited_grids) do
+			if visited and type(visited.free) == "function" then visited:free() end
+		end
+		if not merged then return false, merge_error end
+	elseif my_grid and not rawget(my_grid, "grid_subtype") then
+		local copied, copy_error = CopySupplyFragmentSynchronously(token, token.map.City,
+			my_grid, resource, "synchronous unmerged-fragment overlay copy")
+		if not copied then return false, copy_error end
+	end
+	token.merged[building] = token.merged[building] or {}
+	token.merged[building][resource] = true
+	CompleteElevatorRestoreTransactionIfReady(token)
+	return true
+end
+
+local function PatchElevatorSupplyTransactionBoundary(source)
+	local State = SuperBigMap.State
+	local supply_class = Engine.ClassTable and Engine.ClassTable("SupplyGridObject")
+	local passage_class = Engine.ClassTable and Engine.ClassTable("MapPassageLinked")
+	local elevator_class = Engine.ClassTable and Engine.ClassTable("Elevator")
+	if type(supply_class) ~= "table" or type(passage_class) ~= "table"
+		or type(elevator_class) ~= "table" then
+		SupplyGridLog("Elevator supply transaction boundary unavailable", {
+			source = tostring(source), supply_class = tostring(supply_class),
+			passage_class = tostring(passage_class), elevator_class = tostring(elevator_class),
+		}, "error")
+		return false
+	end
+	if State.elevator_supply_boundary_patch_version == GENERATOR_PATCH_VERSION
+		and elevator_class.SupplyGridConnectElement == State.elevator_supply_connect_wrapper
+		and elevator_class.MergeGrids == State.elevator_passage_merge_wrapper then
+		return true
+	end
+	if elevator_class.SupplyGridConnectElement == State.elevator_supply_connect_wrapper
+		and type(State.original_elevator_supply_connect) == "function" then
+		elevator_class.SupplyGridConnectElement = State.original_elevator_supply_connect
+	end
+	if elevator_class.MergeGrids == State.elevator_passage_merge_wrapper
+		and type(State.original_elevator_passage_merge_grids) == "function" then
+		elevator_class.MergeGrids = State.original_elevator_passage_merge_grids
+	end
+	local original_connect = elevator_class.SupplyGridConnectElement
+	local original_merge = elevator_class.MergeGrids
+	if type(original_connect) ~= "function" or type(original_merge) ~= "function" then return false end
+	local connect_wrapper = function(building, element, grid_class, new_grid_skin,
+		force_create_connections)
+		local token_id = type(building) == "table" and rawget(building, "SuperBigMapElevatorRestoreToken")
+		local token = token_id and underground_elevator_restore_tokens[token_id] or nil
+		if not token then
+			return original_connect(building, element, grid_class, new_grid_skin,
+				force_create_connections)
+		end
+		local resource = type(grid_class) == "table" and grid_class.supply_resource or nil
+		local ok, why = ValidateSupplyBuildingFootprint(token, building, resource,
+			"before vanilla SupplyGridConnectElement")
+		if not ok then error("blocked unsafe underground Elevator supply connection: " .. tostring(why)) end
+		if rawget(element, "grid") ~= false then
+			-- This object is a freshly recreated transaction member, so an attached fragment can only
+			-- be stale work from an older lifecycle pass. Detach it without invoking the native
+			-- disconnect path (which would consume the stale grid), then let vanilla build a fresh
+			-- fragment against the already-validated current map.
+			local stale_grid = rawget(element, "grid")
+			if stale_grid and type(stale_grid.RemoveElement) == "function" then
+				pcall(stale_grid.RemoveElement, stale_grid, element)
+			end
+			element.grid = false
+			SupplyGridLog("stale Elevator supply fragment discarded before native connection", {
+				token = token.token_id, building = tostring(building), resource = tostring(resource),
+				stale_fragment = tostring(stale_grid),
+			}, "warn")
+		end
+		local connected, connect_error = ConnectTaggedElevatorElementSynchronously(token,
+			building, element, grid_class, new_grid_skin, force_create_connections)
+		if not connected then
+			error("underground Elevator synchronous supply connection failed: "
+				.. tostring(connect_error))
+		end
+		local after_ok, after_why = ValidateSupplyBuildingFootprint(token, building, resource,
+			"after synchronous SupplyGridConnectElement")
+		if not after_ok or not rawget(element, "grid") then
+			error("underground Elevator supply fragment failed post-connect validation: "
+				.. tostring(after_why or "missing fragment"))
+		end
+		token.connected[building] = token.connected[building] or {}
+		token.connected[building][resource] = true
+		local other = rawget(building, "other")
+		local other_element = type(other) == "table" and rawget(other, resource) or nil
+		if type(other_element) == "table" and rawget(other_element, "grid") then
+			local merged, merge_error = MergeTaggedElevatorGridsSynchronously(
+				building, resource, token)
+			if not merged then
+				error("underground Elevator supply fragment merge failed after connection: "
+					.. tostring(merge_error))
+			end
+		end
+		CompleteElevatorRestoreTransactionIfReady(token)
+		return
+	end
+	local merge_wrapper = function(building, resource, ...)
+		local token_id = type(building) == "table" and rawget(building, "SuperBigMapElevatorRestoreToken")
+		local token = token_id and underground_elevator_restore_tokens[token_id] or nil
+		if not token then return original_merge(building, resource, ...) end
+		local ok, why = MergeTaggedElevatorGridsSynchronously(building, resource, token)
+		if not ok then error("blocked unsafe underground Elevator passage-grid merge: " .. tostring(why)) end
+		return true
+	end
+	State.original_elevator_supply_connect = original_connect
+	State.original_elevator_passage_merge_grids = original_merge
+	State.elevator_supply_connect_wrapper = connect_wrapper
+	State.elevator_passage_merge_wrapper = merge_wrapper
+	State.elevator_supply_boundary_patch_version = GENERATOR_PATCH_VERSION
+	elevator_class.SupplyGridConnectElement = connect_wrapper
+	elevator_class.MergeGrids = merge_wrapper
+	SupplyGridLog("Elevator supply transaction boundary installed", {
+		source = tostring(source), connect_wrapper = tostring(connect_wrapper),
+		merge_wrapper = tostring(merge_wrapper),
+	})
+	return true
 end
 
 -- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
@@ -2192,32 +2555,82 @@ local function PatchSupplyGridOverlayCopyGuard(source)
 end
 
 local function FinalizePendingUndergroundElevators(map, reason)
-	local records = map and pending_underground_elevator_restores[map]
+	local token = CurrentElevatorRestoreToken(map)
+	if not token then return true, 0 end
+	local records = token.records
 	if type(records) ~= "table" or #records == 0 then return true, 0 end
 	SupplyGridSnapshot("before current-map underground Elevator restoration", map)
 	AuditElevatorSupplyRecords(records, "before restoration")
-	if Global("CurrentMap") ~= map then
-		return false, "underground map is not current during deferred Elevator restoration"
+	local ready, ready_reason = ValidateSupplyGridSet(token, map,
+		"lifecycle restore boundary: " .. tostring(reason), true)
+	if not ready then return false, ready_reason end
+	if not PatchElevatorSupplyTransactionBoundary("FinalizePendingUndergroundElevators") then
+		return false, "Elevator supply transaction boundary is unavailable"
 	end
-	-- Base-game scripts can refresh native globals during a map transition. Re-check the intended
-	-- overlay wrapper at the last possible point, and trace every thread scheduled by the restore.
-	PatchSupplyGridOverlayCopyGuard("FinalizePendingUndergroundElevators/pre-restore")
-	local remove_thread_trace = InstallScopedSupplyThreadTrace(map,
-		"FinalizePendingUndergroundElevators/" .. tostring(reason))
+	token.status = "restoring"
+	token.lifecycle_reason = tostring(reason)
+	local function transaction_guard(stage, guarded_map, building, record, index)
+		if CurrentElevatorRestoreToken(map, token.token_id) ~= token then
+			return false, "stale map-generation token"
+		end
+		if guarded_map ~= map then return false, "restore changed its target map" end
+		local ok, why = ValidateSupplyGridSet(token, map,
+			"restore guard " .. tostring(stage), true)
+		if not ok then return false, why end
+		if (stage == "before-create" or stage == "after-create")
+			and type(building) == "table" then
+			building.SuperBigMapElevatorRestoreToken = token.token_id
+			building.SuperBigMapElevatorRestoreRecord = index
+		elseif building and (stage == "after-position" or stage == "before-apply-grids"
+			or stage == "before-construction-complete" or stage == "after-construction-complete") then
+			for _, resource in ipairs({ "electricity", "water" }) do
+				local footprint_ok, footprint_reason = ValidateSupplyBuildingFootprint(token,
+					building, resource, "restore guard " .. tostring(stage))
+				if not footprint_ok then return false, footprint_reason end
+			end
+		end
+		return true
+	end
 	local ok, rebuilt = pcall(RestoreDeferredElevatorMigration, map, records,
-		reason or "after underground map switch")
-	if type(remove_thread_trace) == "function" then remove_thread_trace() end
+		reason or "current-map lifecycle event", transaction_guard)
 	SupplyGridSnapshot("after current-map underground Elevator restoration", map)
 	AuditElevatorSupplyRecords(records, "after restoration")
-	if not ok then return false, tostring(rebuilt) end
+	if not ok then
+		token.status = "failed"
+		token.failure = tostring(rebuilt)
+		return false, tostring(rebuilt)
+	end
 	if rebuilt ~= #records then
+		token.status = "failed"
 		return false, "rebuilt " .. tostring(rebuilt) .. " of " .. tostring(#records)
 	end
-	pending_underground_elevator_restores[map] = nil
-	map.SuperBigMapDeferredElevatorRestorePending = nil
-	UndergroundAccessLog("current-map underground Elevator restoration complete",
-		UndergroundAccessState(map, { rebuilt = rebuilt, reason = tostring(reason) }))
+	CompleteElevatorRestoreTransactionIfReady(token)
+	if token.status ~= "complete" then token.status = "awaiting-supply-gameinit" end
+	UndergroundAccessLog("current-map underground Elevator recreation complete; supply transaction retained",
+		UndergroundAccessState(map, {
+			rebuilt = rebuilt, reason = tostring(reason), token = token.token_id,
+			transaction_status = token.status,
+		}))
 	return true, rebuilt
+end
+
+local function HandlePendingUndergroundElevatorRestore(map_slot, map, reason)
+	local token = CurrentElevatorRestoreToken(map)
+	if not token then return true, 0 end
+	SupplyGridLog("underground Elevator lifecycle event received", {
+		token = token.token_id, map_slot = tostring(map_slot), map = tostring(map),
+		current = tostring(Global("CurrentMap")), reason = tostring(reason), status = tostring(token.status),
+	})
+	if token.status ~= "queued" then
+		return token.status ~= "failed", token.failure or token.status
+	end
+	local ok, result = FinalizePendingUndergroundElevators(map,
+		reason or "CurrentMapChangeDone")
+	if not ok then
+		map.SuperBigMapUndergroundPreparationFailed = true
+		map.SuperBigMapUndergroundStretchFailed = tostring(result)
+	end
+	return ok, result
 end
 
 local function CopyGeneratedMapState(source, destination)
@@ -2798,248 +3211,6 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	return true, results
 end
 
--- Promote a genuinely vanilla-generated surface map to the deferred expanded destination without
--- replaying RandomMapGenerator. This deliberately exercises the engine's terrain setters as the
--- backing-resize boundary. If they cannot resize a live map, the transaction fails closed and the
--- diagnostics preserve every observed pre/post dimension; no source marker or generator result is
--- silently accepted as expanded.
-local function PromoteDeferredExpandedBacking(map, reason)
-	if not map or map.SuperBigMapDeferredBackingPromotion ~= true then return true, "not-required" end
-	if map.SuperBigMapBackingPromotionComplete == true then return true, "already-complete" end
-	local mapdata = map.mapdata
-	local terrain_api = Global("terrain")
-	local grid_to_compute = Global("GridToCompute")
-	local new_compute_grid = Global("NewComputeGrid")
-	local is_compute_grid = Global("IsComputeGrid")
-	local grid_fill = Global("GridFill")
-	local grid_min_max = Global("GridMinMax")
-	local box_fn = Global("box")
-	local point_fn = Global("point")
-	local hex_to_world = Global("HexToWorld")
-	local const_tbl = Global("const")
-	local tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or nil
-	local desired_w = tonumber(map.SuperBigMapDesiredWidthTiles)
-	local desired_h = tonumber(map.SuperBigMapDesiredHeightTiles)
-	local source_w = tonumber(map.SuperBigMapGeneratorWidthTiles)
-	local source_h = tonumber(map.SuperBigMapGeneratorHeightTiles)
-	if type(mapdata) ~= "table" or type(terrain_api) ~= "table"
-		or type(terrain_api.GetHeightGrid) ~= "function"
-		or type(terrain_api.SetHeightGrid) ~= "function"
-		or type(terrain_api.GetTypeGrid) ~= "function"
-		or type(terrain_api.SetTypeGrid) ~= "function"
-		or type(grid_to_compute) ~= "function" or type(new_compute_grid) ~= "function"
-		or type(is_compute_grid) ~= "function" or type(grid_fill) ~= "function"
-		or type(box_fn) ~= "function" or type(point_fn) ~= "function"
-		or type(hex_to_world) ~= "function" or not tile or tile <= 0
-		or not desired_w or not desired_h or not source_w or not source_h
-		or desired_w <= source_w or desired_h <= source_h then
-		return false, "required-promotion-api-or-dimensions-unavailable"
-	end
-
-	local ticks = Global("GetPreciseTicks") or Global("RealTime")
-	local function now()
-		if type(ticks) == "function" then
-			local ok, value = pcall(ticks)
-			if ok and type(value) == "number" then return value end
-		end
-		return 0
-	end
-	local function grid_size(grid)
-		local ok, width, height = pcall(function() return grid:size() end)
-		if not ok then return nil, nil end
-		return width, height or width
-	end
-	local function grid_summary(grid)
-		local width, height = grid_size(grid)
-		local summary = { grid = tostring(grid), width = tostring(width), height = tostring(height) }
-		if width and height and type(grid.get) == "function" then
-			local probes = {
-				{ 0, 0 }, { math.floor((width - 1) / 2), math.floor((height - 1) / 2) },
-				{ width - 1, height - 1 },
-			}
-			local values = {}
-			for i = 1, #probes do
-				local x, y = probes[i][1], probes[i][2]
-				local ok_value, value = pcall(grid.get, grid, x, y)
-				values[#values + 1] = tostring(x) .. ":" .. tostring(y) .. "="
-					.. tostring(ok_value and value or "ERROR")
-			end
-			summary.probes = table.concat(values, ",")
-		end
-		if type(grid_min_max) == "function" then
-			local ok_range, minimum, maximum = pcall(grid_min_max, grid)
-			if ok_range then summary.minimum, summary.maximum = minimum, maximum end
-		end
-		return summary
-	end
-
-	local started = now()
-	local stats = {
-		reason = tostring(reason), map = tostring(map.name),
-		source_tiles = tostring(source_w) .. "x" .. tostring(source_h),
-		destination_tiles = tostring(desired_w) .. "x" .. tostring(desired_h),
-		mapdata_before = tostring(mapdata.Width) .. "x" .. tostring(mapdata.Height),
-		map_fields_before = tostring(map.Width) .. "x" .. tostring(map.Height),
-		hex_fields_before = tostring(map.hex_width) .. "x" .. tostring(map.hex_height),
-		pass_border_before = tostring(mapdata.PassBorder),
-	}
-	pcall(function()
-		local width, height = map:GetMapSize()
-		stats.map_get_size_before = tostring(width) .. "x" .. tostring(height)
-	end)
-	if type(terrain_api.HeightMapSize) == "function" then
-		local ok, width, height = pcall(terrain_api.HeightMapSize, map)
-		if ok then stats.height_size_before = tostring(width) .. "x" .. tostring(height or width) end
-	end
-	if type(terrain_api.TypeMapSize) == "function" then
-		local ok, width, height = pcall(terrain_api.TypeMapSize, map)
-		if ok then stats.type_size_before = tostring(width) .. "x" .. tostring(height or width) end
-	end
-	BackingPromotionLog("DEFERRED_BACKING_PROMOTION_BEGIN", stats)
-
-	local height_raw, height_compute, height_target
-	local type_raw, type_compute, type_target
-	local pause = Global("PauseInfiniteLoopDetection")
-	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then pcall(pause, "SBMDeferredBackingPromotion") end
-	local promotion_ok, promotion_err = pcall(function()
-		height_raw = terrain_api.GetHeightGrid(map)
-		type_raw = terrain_api.GetTypeGrid(map)
-		if not height_raw or not type_raw then error("source-terrain-grid-capture-failed") end
-		local height_source_w, height_source_h = grid_size(height_raw)
-		local type_source_w, type_source_h = grid_size(type_raw)
-		if height_source_w ~= source_w or height_source_h ~= source_h
-			or not type_source_w or not type_source_h then
-			error(string.format("unexpected-source-grid-size:height=%sx%s type=%sx%s expected=%sx%s",
-				tostring(height_source_w), tostring(height_source_h),
-				tostring(type_source_w), tostring(type_source_h), tostring(source_w), tostring(source_h)))
-		end
-		stats.height_source = grid_summary(height_raw)
-		stats.type_source = grid_summary(type_raw)
-		BackingPromotionLog("DEFERRED_BACKING_SOURCE_CAPTURED", {
-			height_width = height_source_w, height_height = height_source_h,
-			type_width = type_source_w, type_height = type_source_h,
-			height_probes = stats.height_source.probes, type_probes = stats.type_source.probes,
-			height_minimum = tostring(stats.height_source.minimum),
-			height_maximum = tostring(stats.height_source.maximum),
-			type_minimum = tostring(stats.type_source.minimum),
-			type_maximum = tostring(stats.type_source.maximum),
-		})
-
-		height_compute = grid_to_compute(height_raw)
-		type_compute = grid_to_compute(type_raw)
-		if not height_compute or not type_compute then error("GridToCompute-failed") end
-		local height_fmt, height_bits = is_compute_grid(height_compute)
-		local type_fmt, type_bits = is_compute_grid(type_compute)
-		local type_target_w = math.max(1, math.floor(type_source_w * desired_w / source_w + 0.5))
-		local type_target_h = math.max(1, math.floor(type_source_h * desired_h / source_h + 0.5))
-		height_target = new_compute_grid(desired_w, desired_h, height_fmt, height_bits)
-		type_target = new_compute_grid(type_target_w, type_target_h, type_fmt, type_bits)
-		if not height_target or not type_target then error("destination-grid-allocation-failed") end
-		local height_fill = height_compute:get(0, 0)
-		local type_fill = type_compute:get(0, 0)
-		grid_fill(height_target, height_fill)
-		grid_fill(type_target, type_fill)
-		height_target:copyrect(height_compute,
-			box_fn(0, 0, height_source_w, height_source_h), point_fn(0, 0))
-		type_target:copyrect(type_compute,
-			box_fn(0, 0, type_source_w, type_source_h), point_fn(0, 0))
-		BackingPromotionLog("DEFERRED_BACKING_DESTINATION_PREPARED", {
-			height_target = tostring(desired_w) .. "x" .. tostring(desired_h),
-			type_target = tostring(type_target_w) .. "x" .. tostring(type_target_h),
-			height_format = tostring(height_fmt) .. ":" .. tostring(height_bits),
-			type_format = tostring(type_fmt) .. ":" .. tostring(type_bits),
-			height_fill = tostring(height_fill), type_fill = tostring(type_fill),
-		})
-
-		local desired_world_w, desired_world_h = desired_w * tile, desired_h * tile
-		local hx0, hy0 = hex_to_world(0, 0)
-		local hx1 = select(1, hex_to_world(1, 0))
-		local _, hy1 = hex_to_world(0, 1)
-		local hex_step_x, hex_step_y = math.abs(hx1 - hx0), math.abs(hy1 - hy0)
-		if hex_step_x <= 0 or hex_step_y <= 0 then error("hex-step-unavailable") end
-		local desired_hex_w = math.ceil(desired_world_w / hex_step_x)
-		local desired_hex_h = math.ceil(desired_world_h / hex_step_y)
-		stats.destination_world = tostring(desired_world_w) .. "x" .. tostring(desired_world_h)
-		stats.destination_hex = tostring(desired_hex_w) .. "x" .. tostring(desired_hex_h)
-
-		mapdata.Width, mapdata.Height = desired_w, desired_h
-		local edge_border = 0
-		local patch = type(const_tbl) == "table" and tonumber(const_tbl.MapPatchSize) or nil
-		local requested_border = cfg_number("EXPANDED_MAP_EDGE_BORDER", -1)
-		if requested_border > 0 and patch and patch > 0 then
-			edge_border = math.floor((requested_border + patch - 1) / patch) * patch
-		end
-		mapdata.PassBorder = edge_border
-		if type(mapdata.PassBorderTiles) == "number" then
-			mapdata.PassBorderTiles = math.floor(edge_border / tile)
-		end
-		map.Width, map.Height = desired_world_w, desired_world_h
-		map.hex_width, map.hex_height = desired_hex_w, desired_hex_h
-		map.SuperBigMapExpandedWorldWidth = desired_world_w
-		map.SuperBigMapExpandedWorldHeight = desired_world_h
-		map.SuperBigMapExpandedHexWidth = desired_hex_w
-		map.SuperBigMapExpandedHexHeight = desired_hex_h
-
-		local height_set_started = now()
-		local height_set_error = terrain_api.SetHeightGrid(map, height_target)
-		stats.height_set_ms = now() - height_set_started
-		stats.height_set_error = tostring(height_set_error)
-		if height_set_error then error("SetHeightGrid:" .. tostring(height_set_error)) end
-		local type_set_started = now()
-		local type_set_error = terrain_api.SetTypeGrid(map, type_target)
-		stats.type_set_ms = now() - type_set_started
-		stats.type_set_error = tostring(type_set_error)
-		if type_set_error then error("SetTypeGrid:" .. tostring(type_set_error)) end
-
-		local height_after_w, height_after_h
-		if type(terrain_api.HeightMapSize) == "function" then
-			height_after_w, height_after_h = terrain_api.HeightMapSize(map)
-			height_after_h = height_after_h or height_after_w
-		end
-		local type_after_w, type_after_h
-		if type(terrain_api.TypeMapSize) == "function" then
-			type_after_w, type_after_h = terrain_api.TypeMapSize(map)
-			type_after_h = type_after_h or type_after_w
-		end
-		stats.height_size_after = tostring(height_after_w) .. "x" .. tostring(height_after_h)
-		stats.type_size_after = tostring(type_after_w) .. "x" .. tostring(type_after_h)
-		local map_size_w, map_size_h
-		pcall(function() map_size_w, map_size_h = map:GetMapSize() end)
-		stats.map_get_size_after = tostring(map_size_w) .. "x" .. tostring(map_size_h)
-		if height_after_w ~= desired_w or height_after_h ~= desired_h
-			or type_after_w ~= type_target_w or type_after_h ~= type_target_h
-			or map_size_w ~= desired_world_w or map_size_h ~= desired_world_h then
-			error("live-backing-did-not-resize-to-destination")
-		end
-
-		local invalidate_box = box_fn(0, 0, desired_world_w, desired_world_h)
-		if type(map.RebuildGrids) == "function" then map:RebuildGrids(invalidate_box) end
-		map.SuperBigMapDeferredBackingPromotion = false
-		map.SuperBigMapBackingPromotionComplete = true
-		map.SuperBigMapBackingPromotionStats = stats
-	end)
-	if type(resume) == "function" then pcall(resume, "SBMDeferredBackingPromotion") end
-	local function free_grid(grid, raw)
-		if grid and grid ~= raw then pcall(function() if type(grid.free) == "function" then grid:free() end end) end
-	end
-	free_grid(height_target, height_raw)
-	free_grid(type_target, type_raw)
-	free_grid(height_compute, height_raw)
-	free_grid(type_compute, type_raw)
-	stats.total_ms = now() - started
-	stats.ok = promotion_ok
-	stats.error = promotion_ok and "none" or tostring(promotion_err)
-	map.SuperBigMapBackingPromotionStats = stats
-	if not promotion_ok then
-		BackingPromotionLog("DEFERRED_BACKING_PROMOTION_FAILED", stats, "error")
-		return false, tostring(promotion_err)
-	end
-	BackingPromotionLog("DEFERRED_BACKING_PROMOTION_END", stats)
-	return true, "promoted"
-end
-
--- Snapshot of every size/border input the generator derives placement from.
 local function GenRandInputs(generator, map)
 	local map_data_table = Global("MapData")
 	local blank = generator and generator.BlankMap
@@ -4682,371 +4853,9 @@ local function PatchRandomMapGenerator()
 				return stats
 			end
 
-			local function source_collision_call(obj, method, ...)
-				local fn = obj and obj[method]
-				if type(fn) ~= "function" then return nil, "unavailable" end
-				local ok, value, value2 = pcall(fn, obj, ...)
-				if not ok then return nil, tostring(value) end
-				return value, nil, value2
-			end
-
-			local function source_collision_counts_text(counts)
-				local keys = {}
-				for key in pairs(counts) do keys[#keys + 1] = key end
-				table.sort(keys)
-				local parts = {}
-				for i = 1, #keys do
-					parts[i] = tostring(keys[i]) .. ":" .. tostring(counts[keys[i]])
-				end
-				return #parts > 0 and table.concat(parts, ";") or "none"
-			end
-
-			local function source_collision_hash_text(hash, text)
-				local MOD = 2147483647
-				text = tostring(text or "")
-				for i = 1, #text do hash = (hash * 65599 + string.byte(text, i)) % MOD end
-				return hash
-			end
-
-			-- InitBuildableGrid consumes every efCollision object's collision surface, but the native
-			-- sampler initially owns only the blank-map object set. Capture every relevant transform so
-			-- the next run can prove whether object state is the remaining source of grid divergence.
-			local function source_collision_manifest(target_map, label, area, enum_flags,
-				ignore_game_flags, surface_types)
-				local records = {}
-				local stats = {
-					label = tostring(label), map = tostring(target_map), area = tostring(area),
-					enum_flags = enum_flags, ignore_game_flags = ignore_game_flags,
-					surface_types = surface_types,
-					queried = 0, eligible = 0, ignored_game_flags = 0,
-					missing_entity = 0, missing_position = 0, checksum = 0,
-					geometry_checksum = 0,
-				}
-				local class_counts, entity_counts = {}, {}
-				if not target_map or type(target_map.MapForEach) ~= "function" then
-					stats.ok = false
-					stats.error = "MapForEach-unavailable"
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats, "error")
-					return records, stats
-				end
-				source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_BEGIN", stats)
-				local ok_scan, scan_error = pcall(target_map.MapForEach, target_map,
-					area, "CObject", enum_flags, function(obj)
-						stats.queried = stats.queried + 1
-						local game_flags = source_collision_call(obj, "GetGameFlags")
-						local ignored_flags = source_collision_call(obj, "GetGameFlags", ignore_game_flags)
-						local enum_value = source_collision_call(obj, "GetEnumFlags")
-						local entity = source_collision_call(obj, "GetEntity")
-						local state = source_collision_call(obj, "GetState")
-						local pos = source_collision_call(obj, "GetVisualPos")
-						if not pos then pos = source_collision_call(obj, "GetPos") end
-						local x, y, z = point_xyz(pos)
-						local axis = source_collision_call(obj, "GetVisualAxis")
-						if not axis then axis = source_collision_call(obj, "GetAxis") end
-						local angle = source_collision_call(obj, "GetVisualAngle")
-						if angle == nil then angle = source_collision_call(obj, "GetAngle") end
-						local scale = source_collision_call(obj, "GetVisualScale")
-						if scale == nil then scale = source_collision_call(obj, "GetScale") end
-						local mirrored = source_collision_call(obj, "GetMirrored")
-						local radius = source_collision_call(obj, "GetRadius")
-						local parent = source_collision_call(obj, "GetParent")
-						local collision_bbox, _, matched_surfaces = source_collision_call(
-							obj, "GetSurfacesBBox", surface_types, 0)
-						local entity_bbox = source_collision_call(obj, "GetEntityBBox")
-						local class_name = tostring(obj and obj.class or "?")
-						entity = tostring(entity or "")
-						local ignored = type(ignored_flags) == "number" and ignored_flags ~= 0
-						local eligible = not ignored and entity ~= "" and x ~= nil and y ~= nil
-						if ignored then stats.ignored_game_flags = stats.ignored_game_flags + 1 end
-						if entity == "" then stats.missing_entity = stats.missing_entity + 1 end
-						if x == nil or y == nil then stats.missing_position = stats.missing_position + 1 end
-						if eligible then stats.eligible = stats.eligible + 1 end
-						class_counts[class_name] = (class_counts[class_name] or 0) + 1
-						entity_counts[entity ~= "" and entity or "<none>"] =
-							(entity_counts[entity ~= "" and entity or "<none>"] or 0) + 1
-						records[#records + 1] = {
-							obj = obj, class = class_name, entity = entity, state = state,
-							pos = pos, x = x, y = y, z = z, axis = axis, angle = angle,
-							scale = scale, mirrored = mirrored, radius = radius,
-							parent = parent, enum_flags = enum_value, game_flags = game_flags,
-							ignored_flags = ignored_flags, ignored = ignored, eligible = eligible,
-							collision_bbox = collision_bbox, matched_surfaces = matched_surfaces,
-							entity_bbox = entity_bbox,
-						}
-					end)
-				table.sort(records, function(a, b)
-					local ak = table.concat({ a.entity, tostring(a.x), tostring(a.y),
-						tostring(a.z), tostring(a.axis), tostring(a.angle), tostring(a.scale),
-						tostring(a.state), tostring(a.mirrored), a.class }, "|")
-					local bk = table.concat({ b.entity, tostring(b.x), tostring(b.y),
-						tostring(b.z), tostring(b.axis), tostring(b.angle), tostring(b.scale),
-						tostring(b.state), tostring(b.mirrored), b.class }, "|")
-					return ak < bk
-				end)
-				for i = 1, #records do
-					local record = records[i]
-					local signature = table.concat({ record.class, record.entity,
-						tostring(record.x), tostring(record.y), tostring(record.z), tostring(record.axis),
-						tostring(record.angle), tostring(record.scale), tostring(record.state),
-						tostring(record.mirrored), tostring(record.enum_flags),
-						tostring(record.game_flags), tostring(record.ignored) }, "|")
-					stats.checksum = source_collision_hash_text(stats.checksum, signature)
-					local geometry_signature = table.concat({ record.entity,
-						tostring(record.x), tostring(record.y), tostring(record.z), tostring(record.axis),
-						tostring(record.angle), tostring(record.scale), tostring(record.state),
-						tostring(record.mirrored), tostring(record.collision_bbox),
-						tostring(record.matched_surfaces), tostring(record.entity_bbox),
-						tostring(record.ignored) }, "|")
-					if record.eligible then
-						stats.geometry_checksum = source_collision_hash_text(
-							stats.geometry_checksum, geometry_signature)
-					end
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_OBJECT", {
-						label = stats.label, index = i, object = tostring(record.obj),
-						class = record.class, entity = record.entity, state = tostring(record.state),
-						x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
-						axis = tostring(record.axis), angle = tostring(record.angle),
-						scale = tostring(record.scale), mirrored = tostring(record.mirrored),
-						radius = tostring(record.radius), parent = tostring(record.parent),
-						collision_bbox = tostring(record.collision_bbox),
-						matched_surfaces = tostring(record.matched_surfaces),
-						entity_bbox = tostring(record.entity_bbox),
-						enum_flags = tostring(record.enum_flags), game_flags = tostring(record.game_flags),
-						ignored_flags = tostring(record.ignored_flags), ignored = record.ignored,
-						eligible = record.eligible,
-					})
-				end
-				stats.ok = ok_scan
-				stats.error = ok_scan and "none" or tostring(scan_error)
-				stats.classes = source_collision_counts_text(class_counts)
-				stats.entities = source_collision_counts_text(entity_counts)
-				if ok_scan then
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats)
-				else
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_CENSUS_END", stats, "error")
-				end
-				return records, stats
-			end
-
-			local function source_collision_proxy_cleanup(context)
-				if type(context) ~= "table" or context.cleaned then return true end
-				context.cleaned = true
-				local done_object = Global("DoneObject")
-				local cleanup_ok, cleanup_error = true, nil
-				for i = #context.proxies, 1, -1 do
-					local proxy = context.proxies[i]
-					if type(done_object) == "function" then
-						local ok, err = pcall(done_object, proxy)
-						if not ok then cleanup_ok, cleanup_error = false, err end
-					end
-				end
-				if context.suspended and context.sampler
-					and type(context.sampler.ResumePassEdits) == "function" then
-					local ok, err = pcall(context.sampler.ResumePassEdits, context.sampler,
-						"SBMNativeSamplerCollisionProxies")
-					if not ok then cleanup_ok, cleanup_error = false, err end
-				end
-				context.stats.cleanup_ok = cleanup_ok
-				context.stats.cleanup_error = cleanup_ok and "none" or tostring(cleanup_error)
-				context.stats.proxies_destroyed = #context.proxies
-				if cleanup_ok then
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_CLEANUP", context.stats)
-				else
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_CLEANUP", context.stats, "error")
-				end
-				return cleanup_ok, cleanup_error
-			end
-
-			local function source_collision_proxy_install(destination, sampler, area,
-				enum_flags, ignore_game_flags, surface_types)
-				local destination_records, destination_stats = source_collision_manifest(
-					destination, "destination-source-region", area, enum_flags,
-					ignore_game_flags, surface_types)
-				local sampler_records, sampler_stats = source_collision_manifest(
-					sampler, "sampler-before-collision-proxies", area, enum_flags,
-					ignore_game_flags, surface_types)
-				local context = {
-					sampler = sampler, proxies = {}, disabled = {}, suspended = false,
-					stats = {
-						destination_queried = destination_stats.queried,
-						destination_eligible = destination_stats.eligible,
-						destination_checksum = destination_stats.checksum,
-						sampler_queried = sampler_stats.queried,
-						sampler_eligible = sampler_stats.eligible,
-						sampler_checksum = sampler_stats.checksum,
-						proxies_created = 0, proxy_failures = 0, no_entity = 0,
-						exact_class_proxies = 0, generic_class_proxies = 0,
-						game_flags_synced = 0, game_flag_mismatches_before = 0,
-						sampler_colliders_disabled = 0,
-					},
-				}
-				if not destination_stats.ok or not sampler_stats.ok then
-					return context, "collision-census-failed"
-				end
-				local g_classes = closure_global("g_Classes", Global("g_Classes"))
-				local generic_proxy_class = type(g_classes) == "table"
-					and (g_classes.EntityChangeKeepsFlags or g_classes.Shapeshifter) or nil
-				if type(generic_proxy_class) ~= "table" or type(generic_proxy_class.new) ~= "function" then
-					return context, "collision-proxy-class-unavailable"
-				end
-				local exact_classes = cfg_bool("USE_EXACT_CLASS_NATIVE_SAMPLER_COLLISION_PROXIES", true)
-				if type(sampler.SuspendPassEdits) == "function" then
-					local ok = pcall(sampler.SuspendPassEdits, sampler, "SBMNativeSamplerCollisionProxies")
-					context.suspended = ok
-				end
-				for i = 1, #sampler_records do
-					local record = sampler_records[i]
-					if record.obj and type(record.obj.ClearEnumFlags) == "function" then
-						local ok = pcall(record.obj.ClearEnumFlags, record.obj, enum_flags)
-						if ok then
-							context.disabled[#context.disabled + 1] = record.obj
-							context.stats.sampler_colliders_disabled =
-								context.stats.sampler_colliders_disabled + 1
-						end
-					end
-				end
-				for i = 1, #destination_records do
-					local record = destination_records[i]
-					if record.eligible then
-						local proxy
-						local record_proxy_class = exact_classes and type(g_classes) == "table"
-							and g_classes[record.class] or nil
-						local using_exact_class = type(record_proxy_class) == "table"
-							and type(record_proxy_class.new) == "function"
-						local proxy_class = using_exact_class and record_proxy_class or generic_proxy_class
-						local proxy_game_flags_before, proxy_game_flags_after
-						local proxy_game_flags_added, proxy_game_flags_removed = 0, 0
-						local ok_proxy, proxy_error = pcall(function()
-							proxy = proxy_class:new(nil, sampler)
-							if not proxy then error("new-returned-nil") end
-							if type(proxy.CopyProperties) == "function" then
-								pcall(proxy.CopyProperties, proxy, record.obj)
-							end
-							if type(proxy.ChangeEntity) ~= "function" then error("ChangeEntity-unavailable") end
-							proxy:ChangeEntity(record.entity)
-							if record.state ~= nil and type(proxy.SetState) == "function" then
-								pcall(proxy.SetState, proxy, record.state)
-							end
-							if record.axis and type(proxy.SetAxisAngle) == "function"
-								and type(record.angle) == "number" then
-								proxy:SetAxisAngle(record.axis, record.angle)
-							elseif type(record.angle) == "number" and type(proxy.SetAngle) == "function" then
-								proxy:SetAngle(record.angle)
-							end
-							if type(record.scale) == "number" and type(proxy.SetScale) == "function" then
-								proxy:SetScale(record.scale)
-							end
-							if record.mirrored ~= nil and type(proxy.SetMirrored) == "function" then
-								proxy:SetMirrored(record.mirrored == true)
-							end
-							-- Never clear the complete enum word: it contains engine-owned efAlive,
-							-- which is immutable while the proxy exists. InitBuildableGrid queries
-							-- specifically for efCollision, so setting that bit is sufficient.
-							if type(proxy.SetEnumFlags) ~= "function" then error("SetEnumFlags-unavailable") end
-							proxy:SetEnumFlags(enum_flags)
-							-- Exact-class construction and CopyProperties preserve collision geometry,
-							-- but not game flags. Synchronize the full live source mask generically; no
-							-- flag value, class, coordinate, or expected output participates.
-							if type(record.game_flags) == "number" then
-								if type(proxy.GetGameFlags) ~= "function"
-									or type(proxy.SetGameFlags) ~= "function"
-									or type(proxy.ClearGameFlags) ~= "function" then
-									error("game-flag-sync-unavailable")
-								end
-								proxy_game_flags_before = proxy:GetGameFlags()
-								proxy_game_flags_added = record.game_flags & (~proxy_game_flags_before)
-								proxy_game_flags_removed = proxy_game_flags_before & (~record.game_flags)
-								if proxy_game_flags_removed ~= 0 then
-									proxy:ClearGameFlags(proxy_game_flags_removed)
-								end
-								if proxy_game_flags_added ~= 0 then
-									proxy:SetGameFlags(proxy_game_flags_added)
-								end
-								proxy_game_flags_after = proxy:GetGameFlags()
-								if proxy_game_flags_after ~= record.game_flags then
-									error(string.format("game-flag-sync-mismatch:%s!=%s",
-										tostring(proxy_game_flags_after), tostring(record.game_flags)))
-								end
-							end
-							if type(proxy.SetPos) ~= "function" then error("SetPos-unavailable") end
-							proxy:SetPos(record.pos)
-						end)
-						if ok_proxy then
-							context.proxies[#context.proxies + 1] = proxy
-							context.stats.proxies_created = context.stats.proxies_created + 1
-							if type(record.game_flags) == "number" then
-								context.stats.game_flags_synced = context.stats.game_flags_synced + 1
-								if proxy_game_flags_before ~= record.game_flags then
-									context.stats.game_flag_mismatches_before =
-										context.stats.game_flag_mismatches_before + 1
-								end
-							end
-							if using_exact_class then
-								context.stats.exact_class_proxies = context.stats.exact_class_proxies + 1
-							else
-								context.stats.generic_class_proxies = context.stats.generic_class_proxies + 1
-							end
-							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXY", {
-								index = i, proxy = tostring(proxy), source = tostring(record.obj),
-								class = record.class, entity = record.entity,
-								proxy_class = tostring(proxy and proxy.class),
-								exact_class = using_exact_class,
-								x = tostring(record.x), y = tostring(record.y), z = tostring(record.z),
-								axis = tostring(record.axis), angle = tostring(record.angle),
-								scale = tostring(record.scale), state = tostring(record.state),
-								source_game_flags = tostring(record.game_flags),
-								proxy_game_flags_before = tostring(proxy_game_flags_before),
-								proxy_game_flags_after = tostring(proxy_game_flags_after),
-								game_flags_added = tostring(proxy_game_flags_added),
-								game_flags_removed = tostring(proxy_game_flags_removed),
-							})
-						else
-							context.stats.proxy_failures = context.stats.proxy_failures + 1
-							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXY_FAILED", {
-								index = i, source = tostring(record.obj), class = record.class,
-								entity = record.entity, error = tostring(proxy_error),
-							}, "error")
-							local done_object = Global("DoneObject")
-							if proxy and type(done_object) == "function" then pcall(done_object, proxy) end
-						end
-					end
-				end
-				local _, sampler_after_stats = source_collision_manifest(
-					sampler, "sampler-after-collision-proxies", area, enum_flags,
-					ignore_game_flags, surface_types)
-				context.stats.sampler_after_queried = sampler_after_stats.queried
-				context.stats.sampler_after_eligible = sampler_after_stats.eligible
-				context.stats.sampler_after_checksum = sampler_after_stats.checksum
-				context.stats.state_match = destination_stats.checksum
-					== sampler_after_stats.checksum
-				context.stats.destination_geometry_checksum = destination_stats.geometry_checksum
-				context.stats.sampler_after_geometry_checksum = sampler_after_stats.geometry_checksum
-				context.stats.geometry_match = destination_stats.geometry_checksum
-					== sampler_after_stats.geometry_checksum
-				context.stats.exact_proxy_count = context.stats.proxies_created
-					== context.stats.destination_eligible
-					and sampler_after_stats.eligible == context.stats.destination_eligible
-				if context.stats.exact_proxy_count and context.stats.geometry_match
-					and context.stats.state_match then
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_INSTALLED", context.stats)
-				else
-					source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_INSTALLED", context.stats, "error")
-				end
-				if not context.stats.exact_proxy_count or not context.stats.geometry_match
-					or not context.stats.state_match or context.stats.proxy_failures > 0 then
-					return context, "collision-proxy-coverage-incomplete"
-				end
-				return context, nil
-			end
-
-			-- The stock Proc_ResolveBuildable calls MaskBuildableGrid before GetPlayableArea. Keep the
-			-- sampler's exact source grid in this transaction-local variable, while exposing a separately
-			-- padded grid whose dimensions match the destination backing to that unavoidable stock call.
-			local sampler_source_buildable_grid
 			local function rebuild_source_buildable_grid(target_map)
 				if is_underground
 					or target_map ~= map
-					or map.SuperBigMapDeferredBackingPromotion == true
 					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 					or not cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
@@ -5096,27 +4905,7 @@ local function PatchRandomMapGenerator()
 					local ok_z, value = pcall(closure_build_unbuildable_z)
 					if ok_z and type(value) == "number" then unbuildable_z = value end
 				end
-				local native_sampler = map.SuperBigMapNativeSourceSampler
-				local use_native_sampler = native_sampler ~= nil
-					and cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false)
-				local sync_native_sampler = map.SuperBigMapSyncNativeSourceSampler
-				if use_native_sampler then
-					if type(sync_native_sampler) ~= "function" then
-						return nil, "native-source-sampler-sync-unavailable"
-					end
-					local ok_sync, sync_error = pcall(sync_native_sampler, "buildable-grid")
-					if not ok_sync then
-						return nil, "native-source-sampler-sync-failed:" .. tostring(sync_error)
-					end
-					local sync_state = map.SuperBigMapNativeSourceSamplerSyncState
-					source_mask_log("SOURCE_BUILDABLE_SAMPLER_SYNCED", {
-						sampler = tostring(native_sampler), destination = tostring(map),
-						syncs = tostring(sync_state and sync_state.sampler_syncs),
-						last_reason = tostring(sync_state and sync_state.last_sync_reason),
-						total_sync_ms = tostring(sync_state and sync_state.sampler_sync_ms),
-					})
-				end
-				local build_map = use_native_sampler and native_sampler or map
+				local build_map = map
 				local map_data = map.mapdata
 				if type(map_data) ~= "table" then return nil, "mapdata-unavailable" end
 				local pass_border = tonumber(map_data.PassBorder) or 0
@@ -5196,13 +4985,9 @@ local function PatchRandomMapGenerator()
 					diagnostics_enabled = ok_enabled and enabled == true
 				end
 				local stats = {
-					algorithm = use_native_sampler
-						and "native InitBuildableGrid on real source-sized sampler -> native ProcessBuildableGrid"
-						or "native InitBuildableGrid into full backing capacity under exact source view -> source crop -> native ProcessBuildableGrid",
-					backing_mode = use_native_sampler and "native-source-sampler" or "expanded-capacity",
+					algorithm = "native InitBuildableGrid into full backing capacity under exact source view -> source crop -> native ProcessBuildableGrid",
+					backing_mode = "expanded-capacity",
 					build_map = tostring(build_map), destination_map = tostring(map),
-					sampler_syncs = tostring(map.SuperBigMapNativeSourceSamplerSyncState
-						and map.SuperBigMapNativeSourceSamplerSyncState.sampler_syncs),
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
 					source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
@@ -5223,10 +5008,8 @@ local function PatchRandomMapGenerator()
 					process_maxdelta = process_params.maxdelta,
 					process_minarea = process_params.minarea,
 					logical_view = "source",
-					output_capacity = use_native_sampler and "native-source" or "expanded",
-					border_mode = use_native_sampler
-						and "native source backing and native source view"
-						or "native InitBuildableGrid under source view",
+					output_capacity = "expanded",
+					border_mode = "native InitBuildableGrid under source view",
 					diagnostic_shadow = diagnostics_enabled,
 					old_grid = tostring(buildable.z_grid), old_grid_size = "unavailable",
 				}
@@ -5236,15 +5019,14 @@ local function PatchRandomMapGenerator()
 				end)
 				source_mask_log("SOURCE_BUILDABLE_BRIDGE_BEGIN", stats)
 
-				local capacity_raw, source_raw, source_processed, destination_safe_processed
-				local direct_raw, direct_processed, sampler_without_collision_proxies_raw
-				local collision_context
+				local capacity_raw, source_raw, source_processed
+				local direct_raw, direct_processed
 				local pause = Global("PauseInfiniteLoopDetection")
 				local resume = Global("ResumeInfiniteLoopDetection")
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableRawGridBridge") end
 				local bridge_ok, bridge_err = pcall(function()
-					local capacity_hex_w = use_native_sampler and source_hex_w or expanded_hex_w
-					local capacity_hex_h = use_native_sampler and source_hex_h or expanded_hex_h
+					local capacity_hex_w = expanded_hex_w
+					local capacity_hex_h = expanded_hex_h
 					capacity_raw = closure_new_grid(capacity_hex_w, capacity_hex_h, 16, unbuildable_z)
 					source_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					source_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
@@ -5252,14 +5034,8 @@ local function PatchRandomMapGenerator()
 						direct_raw = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 						direct_processed = closure_new_grid(source_hex_w, source_hex_h, 16, unbuildable_z)
 					end
-					if use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_PROXIES", true) then
-						sampler_without_collision_proxies_raw = closure_new_grid(
-							source_hex_w, source_hex_h, 16, unbuildable_z)
-					end
 					if not capacity_raw or not source_raw or not source_processed
-						or (diagnostics_enabled and (not direct_raw or not direct_processed))
-						or (use_native_sampler and cfg_bool("USE_NATIVE_SAMPLER_COLLISION_PROXIES", true)
-							and not sampler_without_collision_proxies_raw) then
+						or (diagnostics_enabled and (not direct_raw or not direct_processed)) then
 						error("grid-allocation-failed")
 					end
 					stats.allocate_ms = now() - started
@@ -5324,68 +5100,14 @@ local function PatchRandomMapGenerator()
 						terrain_get_size_function = tostring(terrain_get_size),
 					})
 					local init_started = now()
-					if use_native_sampler and sampler_without_collision_proxies_raw then
-						local without_collision_proxies_started = now()
-						init_params.buildable_grid = sampler_without_collision_proxies_raw
-						closure_init_buildable_grid(build_map, init_params)
-						stats.sampler_without_collision_proxies_init_ms = now() - without_collision_proxies_started
-						source_mask_log("SOURCE_BUILDABLE_SAMPLER_WITHOUT_COLLISION_PROXIES_INIT_END", stats)
-						source_buildable_trace("SOURCE_BUILDABLE_RAW_SAMPLER_WITHOUT_COLLISION_PROXIES",
-							sampler_without_collision_proxies_raw, "buildable", stats)
-						local box_fn = closure_global("box", Global("box"))
-						if type(box_fn) ~= "function" then error("collision-proxy-box-unavailable") end
-						local source_area = box_fn(0, 0, source_world_w, source_world_h)
-						local proxy_started = now()
-						local proxy_error
-						collision_context, proxy_error = source_collision_proxy_install(
-							map, build_map, source_area, init_params.enum_flags,
-							init_params.ignore_game_flags, init_params.surface_types)
-						stats.collision_proxy_install_ms = now() - proxy_started
-						stats.collision_proxy_error = tostring(proxy_error or "none")
-						if proxy_error then
-							local proxy_stats = collision_context and collision_context.stats or {}
-							source_mask_log("SOURCE_BUILDABLE_COLLISION_PROXIES_PARTIAL", {
-								error = tostring(proxy_error),
-								destination_eligible = tostring(proxy_stats.destination_eligible),
-								proxies_created = tostring(proxy_stats.proxies_created),
-								proxy_failures = tostring(proxy_stats.proxy_failures),
-								geometry_match = tostring(proxy_stats.geometry_match),
-							}, "warn")
-							if (tonumber(proxy_stats.destination_eligible) or 0) > 0
-								and (tonumber(proxy_stats.proxies_created) or 0) == 0 then
-								error("native sampler collision proxies: " .. tostring(proxy_error))
-							end
-						end
-					end
 					init_params.buildable_grid = capacity_raw
 					local primary_init_started = now()
 					closure_init_buildable_grid(build_map, init_params)
 					stats.primary_init_ms = now() - primary_init_started
 					stats.init_ms = now() - init_started
-					if collision_context then
-						local cleanup_ok, cleanup_error = source_collision_proxy_cleanup(collision_context)
-						collision_context = nil
-						if not cleanup_ok then
-							error("native sampler collision cleanup: " .. tostring(cleanup_error))
-						end
-					end
 					source_mask_log("SOURCE_BUILDABLE_NATIVE_INIT_END", stats)
 					source_buildable_trace("SOURCE_BUILDABLE_RAW_CAPACITY_SOURCE_VIEW",
 						capacity_raw, "buildable", stats)
-					if sampler_without_collision_proxies_raw then
-						local comparison = source_buildable_compare(
-							"sampler-with-collision-proxies-vs-without-collision-proxies-raw",
-							capacity_raw, sampler_without_collision_proxies_raw,
-							source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "raw", primary = "native-source-sampler-with-collision-proxies",
-								shadow = "native-source-sampler-without-collision-proxies",
-							})
-						stats.collision_proxy_exact_differences = comparison.exact_differences
-						stats.collision_proxy_classification_differences =
-							comparison.classification_differences
-						stats.collision_proxy_buildable_added = comparison.a_buildable_only
-						stats.collision_proxy_buildable_removed = comparison.b_buildable_only
-					end
 
 					local crop_started = now()
 					for y = 0, source_hex_h - 1 do
@@ -5412,10 +5134,8 @@ local function PatchRandomMapGenerator()
 						local comparison = source_buildable_compare(
 							"capacity-source-view-crop-vs-direct-source-sized-raw",
 							source_raw, direct_raw, source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "raw", primary = use_native_sampler
-									and "native-source-sampler" or "full-capacity-source-view-crop",
-								shadow = use_native_sampler
-									and "expanded-backing-source-sized" or "direct-source-sized-native",
+								stage = "raw", primary = "full-capacity-source-view-crop",
+								shadow = "direct-source-sized-native",
 							})
 						stats.raw_exact_differences = comparison.exact_differences
 						stats.raw_classification_differences = comparison.classification_differences
@@ -5452,10 +5172,8 @@ local function PatchRandomMapGenerator()
 							"capacity-source-view-crop-vs-direct-source-sized-processed",
 							source_processed, direct_processed,
 							source_hex_w, source_hex_h, unbuildable_z, {
-								stage = "processed", primary = use_native_sampler
-									and "native-source-sampler" or "full-capacity-source-view-crop",
-								shadow = use_native_sampler
-									and "expanded-backing-source-sized" or "direct-source-sized-native",
+								stage = "processed", primary = "full-capacity-source-view-crop",
+								shadow = "direct-source-sized-native",
 							})
 						stats.processed_exact_differences = comparison.exact_differences
 						stats.processed_classification_differences = comparison.classification_differences
@@ -5465,71 +5183,22 @@ local function PatchRandomMapGenerator()
 					end
 
 					local replaced_grid = buildable.z_grid
-					if use_native_sampler then
-						if sampler_source_buildable_grid then
-							error("native source buildable grid already retained in this transaction")
-						end
-						destination_safe_processed = closure_new_grid(
-							expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
-						if not destination_safe_processed then
-							error("destination-safe buildable grid allocation failed")
-						end
-						local pad_started = now()
-						for y = 0, source_hex_h - 1 do
-							for x = 0, source_hex_w - 1 do
-								destination_safe_processed:set(x, y, source_processed:get(x, y))
-							end
-						end
-						stats.destination_safe_pad_ms = now() - pad_started
-						stats.stock_mask_grid = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h)
-						stats.sampler_mask_grid = tostring(source_hex_w) .. "x" .. tostring(source_hex_h)
-						buildable.z_grid = destination_safe_processed
-						destination_safe_processed = nil -- ownership transferred to BuildableGrid.z_grid
-						sampler_source_buildable_grid = source_processed
-						source_processed = nil -- retained until OnGenerateLogic completes
-						source_mask_log("SOURCE_BUILDABLE_STOCK_MASK_SAFETY_GRID", {
-							destination_map = tostring(map), stock_grid = tostring(buildable.z_grid),
-							stock_grid_size = stats.stock_mask_grid,
-							sampler_grid = tostring(sampler_source_buildable_grid),
-							sampler_grid_size = stats.sampler_mask_grid,
-							padding = "unbuildable", pad_ms = stats.destination_safe_pad_ms,
-						})
-					else
-						buildable.z_grid = source_processed
-						source_processed = nil -- ownership transferred to the live BuildableGrid
-					end
+					buildable.z_grid = source_processed
+					source_processed = nil -- ownership transferred to the live BuildableGrid
 					source_mask_log("SOURCE_BUILDABLE_GRID_TRANSFER", {
 						old_grid = tostring(replaced_grid), new_grid = tostring(buildable.z_grid),
 						source_grid = tostring(sampler_source_buildable_grid),
 						source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
-						live_hex = use_native_sampler
-							and (tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h))
-							or (tostring(source_hex_w) .. "x" .. tostring(source_hex_h)),
-						ownership = use_native_sampler
-							and "BuildableGrid.z_grid=destination-safe;transaction=source"
-							or "BuildableGrid.z_grid",
+						live_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
+						ownership = "BuildableGrid.z_grid",
 					})
 				end)
-				if collision_context then
-					local cleanup_ok, cleanup_error = source_collision_proxy_cleanup(collision_context)
-					collision_context = nil
-					if bridge_ok and not cleanup_ok then
-						bridge_ok = false
-						bridge_err = "native sampler collision cleanup: " .. tostring(cleanup_error)
-					end
-				end
 				if type(resume) == "function" then pcall(resume, "SBMSourceBuildableRawGridBridge") end
 				if capacity_raw then pcall(function() capacity_raw:free() end) end
 				if source_raw then pcall(function() source_raw:free() end) end
 				if source_processed then pcall(function() source_processed:free() end) end
-				if destination_safe_processed then
-					pcall(function() destination_safe_processed:free() end)
-				end
 				if direct_raw then pcall(function() direct_raw:free() end) end
 				if direct_processed then pcall(function() direct_processed:free() end) end
-				if sampler_without_collision_proxies_raw then
-					pcall(function() sampler_without_collision_proxies_raw:free() end)
-				end
 				stats.total_ms = now() - started
 				stats.ok = bridge_ok
 				stats.error = bridge_ok and "none" or tostring(bridge_err)
@@ -5543,8 +5212,7 @@ local function PatchRandomMapGenerator()
 			end
 
 			local function rebuild_source_invalid_mask(incoming_mask)
-				if map.SuperBigMapDeferredBackingPromotion == true
-					or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+				if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 					or not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 					return nil, "mode-not-eligible"
 				end
@@ -5598,9 +5266,6 @@ local function PatchRandomMapGenerator()
 					or tonumber(map.SuperBigMapSourceWidth)
 				local source_world_h = tonumber(map.SuperBigMapGeneratorHeight)
 					or tonumber(map.SuperBigMapSourceHeight)
-				local native_sampler = map.SuperBigMapNativeSourceSampler
-				local use_native_sampler = native_sampler ~= nil
-					and cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false)
 				local expanded_world_w = tonumber(map.SuperBigMapExpandedWorldWidth)
 				local expanded_world_h = tonumber(map.SuperBigMapExpandedWorldHeight)
 				local expanded_hex_w = tonumber(map.SuperBigMapExpandedHexWidth)
@@ -5644,67 +5309,37 @@ local function PatchRandomMapGenerator()
 					return nil, "GridNot-failed:" .. tostring(not_err)
 				end
 
-				local sampler_width, sampler_height
-				if use_native_sampler then
-					local get_size = native_sampler.GetMapSize
-					if type(get_size) ~= "function" then
-						pcall(function() repaired:free() end)
-						return nil, "native-source-sampler-map-size-unavailable"
-					end
-					local ok_size, width, height = pcall(get_size, native_sampler)
-					sampler_width, sampler_height = width, height or width
-					if not ok_size or sampler_width ~= source_world_w or sampler_height ~= source_world_h then
-						pcall(function() repaired:free() end)
-						return nil, string.format("native-source-sampler-size-mismatch:%sx%s expected %sx%s",
-							tostring(sampler_width), tostring(sampler_height),
-							tostring(source_world_w), tostring(source_world_h))
-					end
+				local ok_virtual_mask, virtual_mask_or_err = pcall(
+					closure_new_compute_grid, virtual_w, virtual_h, mask_format, mask_bits)
+				local virtual_mask = ok_virtual_mask and virtual_mask_or_err or nil
+				local ok_virtual_z, virtual_z_or_err = pcall(
+					closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+				local virtual_z = ok_virtual_z and virtual_z_or_err or nil
+				if not virtual_mask or not virtual_z then
+					pcall(function() repaired:free() end)
+					if virtual_mask then pcall(function() virtual_mask:free() end) end
+					if virtual_z then pcall(function() virtual_z:free() end) end
+					return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
+						.. ";z=" .. tostring(virtual_z_or_err)
 				end
-
-				local virtual_mask, virtual_z
-				if not use_native_sampler then
-					local ok_virtual_mask, virtual_mask_or_err = pcall(
-						closure_new_compute_grid, virtual_w, virtual_h, mask_format, mask_bits)
-					if ok_virtual_mask then virtual_mask = virtual_mask_or_err end
-					local ok_virtual_z, virtual_z_or_err = pcall(
-						closure_new_grid, expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
-					if ok_virtual_z then virtual_z = virtual_z_or_err end
-					if not virtual_mask or not virtual_z then
-						pcall(function() repaired:free() end)
-						if virtual_mask then pcall(function() virtual_mask:free() end) end
-						if virtual_z then pcall(function() virtual_z:free() end) end
-						return nil, "virtual-grid-create-failed:mask=" .. tostring(virtual_mask_or_err)
-							.. ";z=" .. tostring(virtual_z_or_err)
-					end
-					local ok_fill, fill_err = pcall(closure_grid_fill, virtual_mask, 1)
-					if not ok_fill then
-						pcall(function() repaired:free() end)
-						pcall(function() virtual_mask:free() end)
-						pcall(function() virtual_z:free() end)
-						return nil, "virtual-mask-fill-failed:" .. tostring(fill_err)
-					end
+				local ok_fill, fill_err = pcall(closure_grid_fill, virtual_mask, 1)
+				if not ok_fill then
+					pcall(function() repaired:free() end)
+					pcall(function() virtual_mask:free() end)
+					pcall(function() virtual_z:free() end)
+					return nil, "virtual-mask-fill-failed:" .. tostring(fill_err)
 				end
 
 				local stats = {
-					algorithm = use_native_sampler
-						and "native MaskBuildableGrid on real source-sized sampler"
-						or "native MaskBuildableGrid on ratio-derived virtual source grid",
-					backing_mode = use_native_sampler and "native-source-sampler" or "expanded-virtual",
-					mask_map = tostring(use_native_sampler and native_sampler or map),
+					algorithm = "native MaskBuildableGrid on ratio-derived virtual source grid",
+					backing_mode = "expanded-virtual",
+					mask_map = tostring(map),
 					destination_map = tostring(map),
-					sampler_syncs = tostring(map.SuperBigMapNativeSourceSamplerSyncState
-						and map.SuperBigMapNativeSourceSamplerSyncState.sampler_syncs),
-					sampler_last_sync_reason = tostring(map.SuperBigMapNativeSourceSamplerSyncState
-						and map.SuperBigMapNativeSourceSamplerSyncState.last_sync_reason),
 					grid = tostring(grid_w) .. "x" .. tostring(grid_h),
-					virtual_grid = use_native_sampler and "bypassed"
-						or (tostring(virtual_w) .. "x" .. tostring(virtual_h)),
+					virtual_grid = tostring(virtual_w) .. "x" .. tostring(virtual_h),
 					virtual_mask_format = tostring(mask_format) .. tostring(mask_bits),
 					buildable = tostring(build_w) .. "x" .. tostring(build_h),
-					virtual_buildable = use_native_sampler and "bypassed"
-						or (tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h)),
-					sampler_world = use_native_sampler
-						and (tostring(sampler_width) .. "x" .. tostring(sampler_height)) or "none",
+					virtual_buildable = tostring(expanded_hex_w) .. "x" .. tostring(expanded_hex_h),
 					source_world = tostring(source_world_w) .. "x" .. tostring(source_world_h),
 					expanded_world = tostring(expanded_world_w) .. "x" .. tostring(expanded_world_h),
 					work_step = complement_work_step, unbuildable_z = unbuildable_z,
@@ -5737,37 +5372,22 @@ local function PatchRandomMapGenerator()
 				end
 				if type(pause) == "function" then pcall(pause, "SBMSourceBuildableMaskNativeBridge") end
 				local ok_bridge, bridge_err = pcall(function()
-					if use_native_sampler then
-						source_mask_log("SOURCE_MASK_SAMPLER_CALL_BEGIN", {
-							map = tostring(native_sampler), destination = tostring(map),
-							map_world = tostring(sampler_width) .. "x" .. tostring(sampler_height),
-							buildable = tostring(build_w) .. "x" .. tostring(build_h),
-							mask = tostring(grid_w) .. "x" .. tostring(grid_h),
-							unbuildable_z = unbuildable_z,
-						})
-						closure_mask_buildable_grid(native_sampler, z_grid, repaired, unbuildable_z)
-						source_mask_log("SOURCE_MASK_SAMPLER_CALL_END", {
-							map = tostring(native_sampler), result_grid = tostring(repaired),
-							algorithm = stats.algorithm,
-						})
-					else
-						-- The fallback grids are initialized invalid/unbuildable. Copy only the
-						-- source rectangles; their padding represents terrain outside the view.
-						for y = 0, grid_h - 1 do
-							for x = 0, grid_w - 1 do
-								virtual_mask:set(x, y, repaired:get(x, y))
-							end
+					-- The virtual grids are initialized invalid/unbuildable. Copy only the source
+					-- rectangles; their padding represents terrain outside the source view.
+					for y = 0, grid_h - 1 do
+						for x = 0, grid_w - 1 do
+							virtual_mask:set(x, y, repaired:get(x, y))
 						end
-						for y = 0, build_h - 1 do
-							for x = 0, build_w - 1 do
-								virtual_z:set(x, y, z_grid:get(x, y))
-							end
+					end
+					for y = 0, build_h - 1 do
+						for x = 0, build_w - 1 do
+							virtual_z:set(x, y, z_grid:get(x, y))
 						end
-						closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
-						for y = 0, grid_h - 1 do
-							for x = 0, grid_w - 1 do
-								repaired:set(x, y, virtual_mask:get(x, y))
-							end
+					end
+					closure_mask_buildable_grid(map, virtual_z, virtual_mask, unbuildable_z)
+					for y = 0, grid_h - 1 do
+						for x = 0, grid_w - 1 do
+							repaired:set(x, y, virtual_mask:get(x, y))
 						end
 					end
 				end)
@@ -7259,8 +6879,8 @@ local function PatchRandomMapGenerator()
 			local desired_h = tonumber(map and map.SuperBigMapDesiredHeightTiles)
 			local generator_w = tonumber(map and map.SuperBigMapGeneratorWidthTiles)
 			local generator_h = tonumber(map and map.SuperBigMapGeneratorHeightTiles)
-			local rebuild_buildable_grid_required = map.SuperBigMapDeferredBackingPromotion ~= true
-				and cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
+			local rebuild_buildable_grid_required =
+				cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
 				and cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
 				and desired_w and desired_h and generator_w and generator_h
 				and desired_w > generator_w and desired_h > generator_h
@@ -7843,8 +7463,7 @@ local function PatchRandomMapGenerator()
 			local mapdata = map and map.mapdata
 			local expansion_transaction = map and (
 				map.SuperBigMapExpansionPending == true
-				or map.SuperBigMapDeferredBackingPromotion == true
-				or map.SuperBigMapVanillaSourceMigration == true
+					or map.SuperBigMapVanillaSourceMigration == true
 				or map.SuperBigMapDesiredWidthTiles ~= nil)
 				or type(mapdata) == "table" and (
 					mapdata.SuperBigMapOriginalWidthTiles ~= nil
@@ -7852,7 +7471,7 @@ local function PatchRandomMapGenerator()
 				or State.vanilla_source_migration_active == true
 			if not expansion_transaction then
 				-- Exact vanilla fast path: no profiler state, marker census/capture,
-				-- backing promotion, or per-procedure wrapper behavior.
+				-- temporary-source migration, or per-procedure wrapper behavior.
 				return original_do_generate(self, map, ...)
 			end
 			State.loading_proc_profile_stack = {}
@@ -7938,11 +7557,6 @@ local function PatchRandomMapGenerator()
 					end
 					GenRandCensus(map, "post-gen NATIVE")
 					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
-					local promoted, promotion_reason = PromoteDeferredExpandedBacking(map,
-						"DoGenerate native complete")
-					if not promoted then
-						error("deferred expanded backing promotion failed: " .. tostring(promotion_reason))
-					end
 					return Unpack(results, 2)
 				end
 				local profiler = SuperBigMap.LoadingProfiler
@@ -7953,11 +7567,6 @@ local function PatchRandomMapGenerator()
 				local function complete(...)
 					if load_token then profiler.End(load_token, { result_count = select("#", ...) }, true) end
 					CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
-					local promoted, promotion_reason = PromoteDeferredExpandedBacking(map,
-						"DoGenerate native complete")
-					if not promoted then
-						error("deferred expanded backing promotion failed: " .. tostring(promotion_reason))
-					end
 					return ...
 				end
 				return complete(original_do_generate(self, map, ...))
@@ -7974,977 +7583,7 @@ local function PatchRandomMapGenerator()
 				return Unpack(migrated_results, 1, migrated_results.n)
 			end
 
-			-- Cap to the per-map generator markers if present, else the max.
-			local gen_width_tiles = (type(map.SuperBigMapGeneratorWidthTiles) == "number" and map.SuperBigMapGeneratorWidthTiles > 0)
-				and map.SuperBigMapGeneratorWidthTiles or max_random_tiles
-			local gen_height_tiles = (type(map.SuperBigMapGeneratorHeightTiles) == "number" and map.SuperBigMapGeneratorHeightTiles > 0)
-				and map.SuperBigMapGeneratorHeightTiles or max_random_tiles
-			gen_width_tiles = math.max(1, math.min(gen_width_tiles, max_random_tiles))
-			gen_height_tiles = math.max(1, math.min(gen_height_tiles, max_random_tiles))
-
-			local gen_world_w = (type(map.SuperBigMapGeneratorWidth) == "number" and map.SuperBigMapGeneratorWidth > 0)
-				and map.SuperBigMapGeneratorWidth or (gen_width_tiles * height_tile_size)
-			local gen_world_h = (type(map.SuperBigMapGeneratorHeight) == "number" and map.SuperBigMapGeneratorHeight > 0)
-				and map.SuperBigMapGeneratorHeight or (gen_height_tiles * height_tile_size)
-
-			local saved_template_w = template and template.Width
-			local saved_template_h = template and template.Height
-			local saved_mapdata_w = type(mapdata) == "table" and mapdata.Width or nil
-			local saved_mapdata_h = type(mapdata) == "table" and mapdata.Height or nil
-			local saved_map_width = map and map.Width
-			local saved_map_height = map and map.Height
-			local saved_map_hex_width = map and map.hex_width
-			local saved_map_hex_height = map and map.hex_height
-			local buildable_source_view = false
-
-			map.GetMapSize = function(target)
-				if target == map then
-					return gen_world_w, gen_world_h
-				end
-				if type(original_map_get_size) == "function" then
-					return original_map_get_size(target)
-				end
-				return gen_world_w, gen_world_h
-			end
-			if terrain_api and type(original_terrain_get_size) == "function" then
-				terrain_api.GetMapSize = function(target)
-					if target == map or (target == nil and Global("CurrentMap") == map) then
-						return gen_world_w, gen_world_h
-					end
-					return original_terrain_get_size(target)
-				end
-			end
-			if template then
-				template.Width = gen_width_tiles
-				template.Height = gen_height_tiles
-			end
-			if type(mapdata) == "table" then
-				mapdata.Width = gen_width_tiles
-				mapdata.Height = gen_height_tiles
-			end
-
-			-- ATOMIC SOURCE-SIZED MAP/BUILDABLE VIEW. Vanilla RebuildBuildableGrid does not consult
-			-- map:GetMapSize, terrain.GetMapSize, or MapData.Width when choosing its grid
-			-- dimensions; it directly passes map.hex_width/map.hex_height into BuildableGrid:Build.
-			-- MaskBuildableGrid then consumes the Map object natively and can still project that grid
-			-- through the cached map.Width/map.Height MapVars, which were initialized from the expanded
-			-- allocation. Present all four cached extents as one vanilla-sized transaction (8192 ->
-			-- 6144 gives world 819200 -> 614400 and hex 820x946 -> 615x710), restore all four
-			-- immediately afterward even when native generation fails, and only then rebuild the real
-			-- expanded gameplay grid.
-			if cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
-				and type(saved_map_width) == "number" and saved_map_width > 0
-				and type(saved_map_height) == "number" and saved_map_height > 0
-				and type(saved_map_hex_width) == "number" and saved_map_hex_width > 0
-				and type(saved_map_hex_height) == "number" and saved_map_hex_height > 0
-				and cur_w_tiles > 0 and cur_h_tiles > 0 then
-				local source_hex_width = math.max(1,
-					math.floor((saved_map_hex_width * gen_width_tiles + 0.0) / cur_w_tiles + 0.5))
-				local source_hex_height = math.max(1,
-					math.floor((saved_map_hex_height * gen_height_tiles + 0.0) / cur_h_tiles + 0.5))
-				local source_fits_expanded = gen_world_w <= saved_map_width and gen_world_h <= saved_map_height
-					and source_hex_width <= saved_map_hex_width and source_hex_height <= saved_map_hex_height
-				local source_is_smaller = gen_world_w < saved_map_width or gen_world_h < saved_map_height
-					or source_hex_width < saved_map_hex_width or source_hex_height < saved_map_hex_height
-				if source_fits_expanded and source_is_smaller then
-					buildable_source_view = {
-						source_world_width = gen_world_w, source_world_height = gen_world_h,
-						expanded_world_width = saved_map_width, expanded_world_height = saved_map_height,
-						source_hex_width = source_hex_width, source_hex_height = source_hex_height,
-						expanded_hex_width = saved_map_hex_width, expanded_hex_height = saved_map_hex_height,
-					}
-					-- Retain the real backing dimensions while the Lua-facing Map fields present the
-					-- source view. The source-mask bridge uses these values to make the native mask
-					-- sampler's cell-to-world step identical to a genuinely vanilla allocation.
-					map.SuperBigMapExpandedWorldWidth = saved_map_width
-					map.SuperBigMapExpandedWorldHeight = saved_map_height
-					map.SuperBigMapExpandedHexWidth = saved_map_hex_width
-					map.SuperBigMapExpandedHexHeight = saved_map_hex_height
-					map.Width = gen_world_w
-					map.Height = gen_world_h
-					map.hex_width = source_hex_width
-					map.hex_height = source_hex_height
-					DebugPrint(string.format(
-						"vanilla cached map/buildable view installed: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; tiles %sx%s -> %sx%s",
-						tostring(saved_map_width), tostring(saved_map_height),
-						tostring(gen_world_w), tostring(gen_world_h),
-						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
-						tostring(source_hex_width), tostring(source_hex_height),
-						tostring(cur_w_tiles), tostring(cur_h_tiles),
-						tostring(gen_width_tiles), tostring(gen_height_tiles)))
-					EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-installed", {
-						expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
-						source_world = tostring(gen_world_w) .. "x" .. tostring(gen_world_h),
-						expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
-						source_hex = tostring(source_hex_width) .. "x" .. tostring(source_hex_height),
-					})
-				else
-					DebugPrint(string.format(
-						"vanilla cached map/buildable view skipped: source does not fit or is not smaller; world %sx%s -> %sx%s; hex %sx%s -> %sx%s",
-						tostring(saved_map_width), tostring(saved_map_height),
-						tostring(gen_world_w), tostring(gen_world_h),
-						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
-						tostring(source_hex_width), tostring(source_hex_height)))
-				end
-			elseif cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
-				DebugPrint(string.format(
-					"vanilla cached map/buildable view unavailable: world=%sx%s hex=%sx%s tiles=%sx%s",
-					tostring(saved_map_width), tostring(saved_map_height),
-					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
-					tostring(cur_w_tiles), tostring(cur_h_tiles)))
-			end
-
-			DebugPrint(string.format(
-				"limiting random generator to %s x %s tiles (%s x %s wu) [blank=%s, detected %s x %s tiles]",
-				tostring(gen_width_tiles), tostring(gen_height_tiles),
-				tostring(gen_world_w), tostring(gen_world_h),
-				tostring(blank), tostring(cur_w_tiles), tostring(cur_h_tiles)
-			))
-
-			-- Make the AREA FACTOR computable at Begin time: mapdata.Width was just overridden to
-			-- the generator size, and the pending-map markers can be wiped by the new-game Lua
-			-- reload -- with both gone AreaFactor read 6144/6144 = 1 and the anomaly/research count
-			-- scaling silently did nothing (logs showed anom_count_scale=1.000). Stamp the DETECTED
-			-- full + generator tile sizes on the map so RmgPlacement (and the later stretch passes)
-			-- always see desired=8192 / generator=6144.
-			map.SuperBigMapDesiredWidthTiles = map.SuperBigMapDesiredWidthTiles or cur_w_tiles
-			map.SuperBigMapDesiredHeightTiles = map.SuperBigMapDesiredHeightTiles or cur_h_tiles
-			map.SuperBigMapGeneratorWidthTiles = map.SuperBigMapGeneratorWidthTiles or gen_width_tiles
-			map.SuperBigMapGeneratorHeightTiles = map.SuperBigMapGeneratorHeightTiles or gen_height_tiles
-
-			-- VANILLA-EXACT PLAY ZONE: PrepareMapDataForExpansion zeroed mapdata.PassBorder
-			-- BEFORE ChangeMap so the engine bakes full-destination passability. But the
-			-- generator ALSO reads map.mapdata.PassBorder to compute its play zone
-			-- (RandomMapGenerator GetPlayableArea x2, BiomeFiller POI frame) -- with 0 instead
-			-- of the native ~1024-tile border the play zone is BIGGER than vanilla, the
-			-- placement masks differ, and the per-proc rand stream diverges: the same seed
-			-- placed the same lake prefab at a different position/rotation. The engine consumed
-			-- PassBorder at ChangeMap (before DoGenerate), so restoring the ORIGINAL value for
-			-- just this DoGenerate window gives the generator vanilla-identical inputs while
-			-- the baked passability stays border-free. Restored (re-zeroed) below.
-			local saved_mapdata_pb, saved_mapdata_pbt, saved_template_pb, saved_template_pbt
-			if cfg_bool("STRETCH_VANILLA_EXACT_PASSBORDER", true) then
-				local orig_pb = (type(mapdata) == "table" and mapdata.SuperBigMapOriginalPassBorder)
-					or (template and template.SuperBigMapOriginalPassBorder)
-				if type(orig_pb) == "number" and orig_pb > 0 then
-					if type(mapdata) == "table" and mapdata.PassBorder ~= orig_pb then
-						saved_mapdata_pb = mapdata.PassBorder
-						saved_mapdata_pbt = mapdata.PassBorderTiles
-						mapdata.PassBorder = orig_pb
-						if type(mapdata.PassBorderTiles) == "number" then
-							mapdata.PassBorderTiles = math.floor(orig_pb / height_tile_size)
-						end
-					end
-					if template and template ~= mapdata and template.PassBorder ~= orig_pb then
-						saved_template_pb = template.PassBorder
-						saved_template_pbt = template.PassBorderTiles
-						template.PassBorder = orig_pb
-						if type(template.PassBorderTiles) == "number" then
-							template.PassBorderTiles = math.floor(orig_pb / height_tile_size)
-						end
-					end
-					DebugPrint(string.format(
-						"vanilla-exact play zone: PassBorder %s -> %s for the DoGenerate window (re-zeroed after)",
-						tostring(saved_mapdata_pb), tostring(orig_pb)))
-				end
-			end
-
-			-- Terrain-safe placement auto-fit: relax the deposit/anomaly placement
-			-- margins + spacing (placement-only knobs; never touch gen_zone/terrain)
-			-- so the full preset counts seat in the smaller expanded play_zone. Sizes
-			-- are already overridden here, so coverage is measured over the generated
-			-- span. Restored in End() below, regardless of success.
-			-- (In STRETCH mode Begin() self-skips: bit-identical generation required.)
-			local placement = SuperBigMap.RmgPlacement
-			-- Whole-DoGenerate placement begins before OnGenerateLogic can capture
-			-- this run's grids. Clear any retry residue so it deliberately uses the safe fallback
-			-- rather than stale coverage from an earlier attempt. Stretch mode captures fresh data
-			-- before its late PlaceAnomalies transaction.
-			map.SuperBigMapRmgGenZoneCoverage = nil
-			map.SuperBigMapRmgGenZoneCoverageInfo = nil
-			map.SuperBigMapRmgPlayableCoverage = nil
-			map.SuperBigMapRmgPlayableCoverageInfo = nil
-			local placement_active = placement and placement.Begin(self, map) or false
-
-			if GenRandEnabled() then
-				State.genrand_active_mapdata = mapdata or template or false
-				GenRandLog("DoGenerate begin (EXPANDED run, capped sizes)", GenRandInputs(self, map))
-			end
-
-			-- JUST-IN-TIME pairing-wrapper verification: the passage pairing runs INSIDE the
-			-- underground map's DoGenerate (Picard PlaceArtefacts_Passages), and anything can
-			-- have redefined the global since module load (a v434 run had the install line but
-			-- ZERO pairing calls). Verify + reinstall right here, and log the verdict.
-			do
-				local live = Global("SpawnUndergroundPassage")
-				local was_installed = live ~= nil and live == State.spawn_passage_wrapper
-				if not was_installed then
-					PatchPassagePairing()
-				end
-				local live2 = Global("SpawnUndergroundPassage")
-				PairingLog("wrapper status at DoGenerate", {
-					blank = tostring(self.BlankMap),
-					was_installed = was_installed,
-					now_installed = live2 ~= nil and live2 == State.spawn_passage_wrapper,
-					global_type = tostring(type(live)),
-				})
-			end
-
-			-- DETERMINISTIC ENTRANCE PAIRING, the no-terrain-touching way (config
-			-- PAIRING_SURFACE_BUILDABLE_REBUILD). Passage selection runs during underground
-			-- generation but searches MainMap's surface grids. A generic RebuildGrids completion
-			-- flag is not sufficient here: after temporary-source migration it described a usable
-			-- gameplay grid, yet vanilla FindPassageSpawnPos rejected both passage markers. Build
-			-- the surface Z grid once, synchronously, immediately before passage selection, against
-			-- the live surface map dimensions and object grid. Vanilla then selects a complete
-			-- naturally buildable Elevator footprint; the mod never manufactures a terrain pad.
-			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
-				local env = (type(mapdata) == "table" and mapdata.Environment)
-					or (template and template.Environment)
-				if env == "Underground" then
-					local main_map = Global("MainMap")
-					local rebuild = Global("RebuildBuildableGrid")
-					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
-						if main_map.SuperBigMapSurfaceBuildablePairingReady == true then
-							PairingLog("dedicated surface pairing-grid rebuild already complete", {
-								map = tostring(main_map.name),
-							})
-						else
-							local before_w, before_h = MigrationGridSize(main_map.buildable.z_grid)
-							local t0 = 0
-							local ticks = Global("GetPreciseTicks")
-							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
-							PairingLog("dedicated surface pairing-grid rebuild begin", {
-								map = tostring(main_map.name),
-								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
-								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
-								map_world = tostring(main_map.Width) .. "x" .. tostring(main_map.Height),
-								mapdata = tostring(main_map.mapdata and main_map.mapdata.Width)
-									.. "x" .. tostring(main_map.mapdata and main_map.mapdata.Height),
-								generic_current_flag = tostring(main_map.SuperBigMapSurfaceBuildableCurrent),
-							})
-							local ok_rb, err_rb = pcall(rebuild, main_map)
-							local t1 = t0
-							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
-							local after_w, after_h = MigrationGridSize(main_map.buildable.z_grid)
-							PairingLog("dedicated surface pairing-grid rebuild end", {
-								map = tostring(main_map.name), ok = ok_rb,
-								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
-								after_grid = tostring(after_w) .. "x" .. tostring(after_h),
-								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
-								ms = t1 - t0, error = ok_rb and nil or tostring(err_rb),
-							})
-							if not ok_rb then
-								error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
-							end
-							main_map.SuperBigMapSurfaceBuildableCurrent = true
-							main_map.SuperBigMapSurfaceBuildablePairingReady = true
-							DebugPrint(string.format(
-								"surface buildable grid rebuilt immediately before passage selection: grid=%sx%s map_hex=%sx%s ms=%s",
-								tostring(after_w), tostring(after_h), tostring(main_map.hex_width),
-								tostring(main_map.hex_height), tostring(t1 - t0)))
-						end
-					end
-				end
-			end
-
-			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
-			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
-			local profiler = SuperBigMap.LoadingProfiler
-			local load_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
-				"RandomMapGenerator.DoGenerate vanilla body",
-				{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
-					detected_height_tiles = cur_h_tiles, generator_width_tiles = gen_width_tiles,
-					generator_height_tiles = gen_height_tiles }, map) or false
-			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
-			local generation_environment = (type(mapdata) == "table" and mapdata.Environment)
-				or (type(template) == "table" and template.Environment)
-			local is_surface_generation = generation_environment ~= "Underground"
-
-			-- VANILLA HEIGHT-MAP VIEW + NATIVE SAMPLER BRIDGE. Proc_InitPlayZone is the one native generator
-			-- path which bypasses every size view above: it grows its terrace height grid from
-			-- terrain.HeightMapSize(map), which still exposes the real 8192 backing allocation.
-			-- That changes the terrain sampled later by ResolveBuildable even though GetMapSize,
-			-- MapData, PassBorder, seed, and rand stream all match a 6144 vanilla run. During the
-			-- native source transaction, make this final size read agree with the source view.
-			--
-			-- A vanilla 6144 SetHeightGrid cannot be allowed to replace the 8192 destination,
-			-- so intercept that one write, copy it into the top-left of the existing full grid,
-			-- and pass a full-sized options table to the real setter. Both native functions are
-			-- restored immediately after DoGenerate, including its error path. When the sampler option
-			-- is enabled, source-sized GetHeightGrid reads are executed by the engine against an empty
-			-- 6144 backing containing a fresh top-left copy of the destination terrain. This preserves
-			-- native sampling exactly without moving generation or any generated object off the final map.
-			local height_bridge = false
-			local height_sampler = false
-			local height_sampler_slot = false
-			local original_terrain_height_map_size = terrain_api and terrain_api.HeightMapSize
-			local original_terrain_set_height_grid = terrain_api and terrain_api.SetHeightGrid
-			local original_terrain_get_height_grid = terrain_api and terrain_api.GetHeightGrid
-			local original_terrain_set_type_grid = terrain_api and terrain_api.SetTypeGrid
-			local original_terrain_get_type_grid = terrain_api and terrain_api.GetTypeGrid
-			map.SuperBigMapNativeSourceSampler = nil
-			map.SuperBigMapSyncNativeSourceSampler = nil
-			map.SuperBigMapNativeSourceSamplerSyncState = nil
-			if is_surface_generation and cfg_bool("BRIDGE_VANILLA_HEIGHT_GRID", true)
-				and type(original_terrain_height_map_size) == "function"
-				and type(original_terrain_set_height_grid) == "function"
-				and type(original_terrain_get_height_grid) == "function"
-				and cur_w_tiles > gen_width_tiles and cur_h_tiles > gen_height_tiles then
-				local grid_to_compute = Global("GridToCompute")
-				local new_compute_grid = Global("NewComputeGrid")
-				local is_compute_grid = Global("IsComputeGrid")
-				local box_fn = Global("box")
-				local point_fn = Global("point")
-				if type(grid_to_compute) == "function" and type(box_fn) == "function"
-					and type(point_fn) == "function" then
-					local raw_ok, raw_width, raw_height = pcall(original_terrain_height_map_size, map)
-					height_bridge = {
-						height_size_calls = 0,
-						set_calls = 0,
-						get_calls = 0,
-						sampled_reads = 0,
-						sampler_syncs = 0,
-						sampler_sync_ms = 0,
-						bridged_writes = 0,
-						raw_width = raw_ok and raw_width or "ERROR",
-						raw_height = raw_ok and (raw_height or raw_width) or "ERROR",
-					}
-
-					if cfg_bool("USE_NATIVE_HEIGHT_SAMPLER_BACKING", false) then
-						if type(new_compute_grid) ~= "function" or type(is_compute_grid) ~= "function" then
-							error("native height sampler compute-grid API unavailable")
-						end
-						if type(original_terrain_get_type_grid) ~= "function"
-							or type(original_terrain_set_type_grid) ~= "function" then
-							error("native source sampler type-grid API unavailable")
-						end
-						local change_map_in_slot = Global("ChangeMapInSlot")
-						local maps = Global("Maps")
-						height_sampler_slot = FindTemporarySourceSlot(map.slot)
-						if type(change_map_in_slot) ~= "function" or type(maps) ~= "table" or not height_sampler_slot then
-							error("native height sampler map-slot API unavailable")
-						end
-						local original_pass_border = tonumber(mapdata and mapdata.SuperBigMapOriginalPassBorder)
-							or tonumber(template and template.SuperBigMapOriginalPassBorder)
-							or tonumber(template and template.PassBorder) or 0
-						local sampler_mapdata = NewNativeSourceMapData(template or mapdata,
-							gen_width_tiles, gen_height_tiles, original_pass_border)
-						local sampler_instance = {
-							mapdata = sampler_mapdata,
-							RandomMapGenObject = self,
-							SuperBigMapVanillaSourceMigration = true,
-						}
-						local allocation_started = MigrationTicks()
-						local allocation_error = change_map_in_slot(height_sampler_slot,
-							self.BlankMap, sampler_instance)
-						height_bridge.sampler_allocation_ms = MigrationTicks() - allocation_started
-						if allocation_error then
-							error("native height sampler ChangeMapInSlot failed: " .. tostring(allocation_error))
-						end
-						height_sampler = maps[height_sampler_slot]
-						if not height_sampler then error("native height sampler map was not created") end
-						local sampler_width, sampler_height = original_terrain_height_map_size(height_sampler)
-						sampler_height = sampler_height or sampler_width
-						height_bridge.sampler_width = sampler_width
-						height_bridge.sampler_height = sampler_height
-						if sampler_width ~= gen_width_tiles or sampler_height ~= gen_height_tiles then
-							error(string.format("native height sampler has wrong backing: %sx%s expected %sx%s",
-								tostring(sampler_width), tostring(sampler_height),
-								tostring(gen_width_tiles), tostring(gen_height_tiles)))
-						end
-						BackingPromotionLog("NATIVE_HEIGHT_SAMPLER_ALLOCATED", {
-							slot = height_sampler_slot,
-							backing = tostring(sampler_width) .. "x" .. tostring(sampler_height),
-							allocation_ms = height_bridge.sampler_allocation_ms,
-							pass_border = original_pass_border,
-						})
-					end
-
-					terrain_api.HeightMapSize = function(target)
-						if target == map or (target == nil and Global("CurrentMap") == map) then
-							height_bridge.height_size_calls = height_bridge.height_size_calls + 1
-							return gen_width_tiles, gen_height_tiles
-						end
-						return original_terrain_height_map_size(target)
-					end
-
-					local function SyncNativeHeightSampler(reason)
-						if not height_sampler then return false end
-						local sync_started = MigrationTicks()
-						local raw_full, compute_full, compute_source
-						local type_raw_full, type_compute_full, type_compute_source
-						local sync_ok, sync_error = pcall(function()
-							raw_full = original_terrain_get_height_grid(map)
-							compute_full = grid_to_compute(raw_full)
-							local full_width, full_height = compute_full:size()
-							full_height = full_height or full_width
-							if full_width < gen_width_tiles or full_height < gen_height_tiles then
-								error(string.format("expanded source terrain unavailable: %sx%s expected at least %sx%s",
-									tostring(full_width), tostring(full_height),
-									tostring(gen_width_tiles), tostring(gen_height_tiles)))
-							end
-							local format, bits = is_compute_grid(compute_full)
-							compute_source = new_compute_grid(gen_width_tiles, gen_height_tiles, format, bits)
-							if not compute_source then error("native height sampler source-grid allocation failed") end
-							compute_source:copyrect(compute_full,
-								box_fn(0, 0, gen_width_tiles, gen_height_tiles), point_fn(0, 0))
-							local set_error = original_terrain_set_height_grid(height_sampler, compute_source)
-							if set_error then error("native height sampler SetHeightGrid: " .. tostring(set_error)) end
-
-							type_raw_full = original_terrain_get_type_grid(map)
-							type_compute_full = grid_to_compute(type_raw_full)
-							local type_full_width, type_full_height = type_compute_full:size()
-							type_full_height = type_full_height or type_full_width
-							if type_full_width < gen_width_tiles or type_full_height < gen_height_tiles then
-								error(string.format("expanded source type terrain unavailable: %sx%s expected at least %sx%s",
-									tostring(type_full_width), tostring(type_full_height),
-									tostring(gen_width_tiles), tostring(gen_height_tiles)))
-							end
-							local type_format, type_bits = is_compute_grid(type_compute_full)
-							type_compute_source = new_compute_grid(gen_width_tiles, gen_height_tiles,
-								type_format, type_bits)
-							if not type_compute_source then
-								error("native source sampler type-grid allocation failed")
-							end
-							type_compute_source:copyrect(type_compute_full,
-								box_fn(0, 0, gen_width_tiles, gen_height_tiles), point_fn(0, 0))
-							local type_set_error = original_terrain_set_type_grid(height_sampler,
-								type_compute_source)
-							if type_set_error then
-								error("native source sampler SetTypeGrid: " .. tostring(type_set_error))
-							end
-							height_bridge.type_full_width = type_full_width
-							height_bridge.type_full_height = type_full_height
-
-							-- Compare the exact fine-resolution terrain consumed by InitBuildableGrid,
-							-- not only the later 768x768 playable-height derivative. The Step-01-off
-							-- vanilla boundary emits the same label. Native grid hashes plus normalized
-							-- 24x24 block hashes cover every source height/type cell and localize any
-							-- divergence without a tens-of-millions-of-cells Lua scan.
-							if tostring(reason) == "buildable-grid"
-								and not height_bridge.fine_terrain_buildable_input_audited then
-								height_bridge.fine_terrain_buildable_input_audited = true
-								local fine_started = MigrationTicks()
-								local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
-								local fine_ok, fine_result = pcall(function()
-									if not diagnostics
-										or type(diagnostics.TraceFineTerrainForensics) ~= "function" then
-										error("fine-terrain-diagnostics-unavailable")
-									end
-									local sampler_height_grid = original_terrain_get_height_grid(height_sampler)
-									local sampler_type_grid = original_terrain_get_type_grid(height_sampler)
-									return diagnostics.TraceFineTerrainForensics(map,
-										"FINE_TERRAIN_BUILDABLE_INPUT",
-										sampler_height_grid, sampler_type_grid, {
-											mode = "step01-on", stage = "sampler-after-sync-before-buildable",
-											sampler = tostring(height_sampler), destination = tostring(map),
-											sync_reason = tostring(reason),
-										}, {
-											source_width = gen_width_tiles, source_height = gen_height_tiles,
-											blocks_x = 24, blocks_y = 24,
-										})
-								end)
-								height_bridge.fine_terrain_audit_ms = MigrationTicks() - fine_started
-								height_bridge.fine_terrain_audit_ok = fine_ok
-									and type(fine_result) == "table" and fine_result.ok == true
-								height_bridge.fine_terrain_audit_error = height_bridge.fine_terrain_audit_ok
-									and "none" or tostring(fine_result)
-								BackingPromotionLog("NATIVE_SOURCE_FINE_TERRAIN_AUDIT", {
-									ok = height_bridge.fine_terrain_audit_ok,
-									error = height_bridge.fine_terrain_audit_error,
-									ms = height_bridge.fine_terrain_audit_ms,
-									height_hash_a = tostring(fine_ok and fine_result and fine_result.height
-										and fine_result.height.normalized_hash_a),
-									height_hash_b = tostring(fine_ok and fine_result and fine_result.height
-										and fine_result.height.normalized_hash_b),
-									type_hash_a = tostring(fine_ok and fine_result and fine_result.terrain_type
-										and fine_result.terrain_type.normalized_hash_a),
-									type_hash_b = tostring(fine_ok and fine_result and fine_result.terrain_type
-										and fine_result.terrain_type.normalized_hash_b),
-								})
-							end
-						end)
-						if compute_source then pcall(function() if type(compute_source.free) == "function" then compute_source:free() end end) end
-						if compute_full and compute_full ~= raw_full then
-							pcall(function() if type(compute_full.free) == "function" then compute_full:free() end end)
-						end
-						if type_compute_source then
-							pcall(function() if type(type_compute_source.free) == "function" then type_compute_source:free() end end)
-						end
-						if type_compute_full and type_compute_full ~= type_raw_full then
-							pcall(function() if type(type_compute_full.free) == "function" then type_compute_full:free() end end)
-						end
-						local elapsed = MigrationTicks() - sync_started
-						height_bridge.sampler_sync_ms = height_bridge.sampler_sync_ms + elapsed
-						if not sync_ok then
-							height_bridge.sampler_error = tostring(sync_error)
-							error("native height sampler sync failed: " .. tostring(sync_error))
-						end
-						height_bridge.sampler_syncs = height_bridge.sampler_syncs + 1
-						height_bridge.last_sync_reason = tostring(reason or "unspecified")
-						BackingPromotionLog("NATIVE_HEIGHT_SAMPLER_SYNC", {
-							sync = height_bridge.sampler_syncs,
-							reason = height_bridge.last_sync_reason,
-							elapsed_ms = elapsed,
-							total_sync_ms = height_bridge.sampler_sync_ms,
-							height_source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
-							type_source = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
-							type_backing = tostring(height_bridge.type_full_width)
-								.. "x" .. tostring(height_bridge.type_full_height),
-						})
-						return true
-					end
-
-					if height_sampler then
-						map.SuperBigMapNativeSourceSampler = height_sampler
-						map.SuperBigMapSyncNativeSourceSampler = SyncNativeHeightSampler
-						map.SuperBigMapNativeSourceSamplerSyncState = height_bridge
-						BackingPromotionLog("NATIVE_SOURCE_SAMPLER_BRIDGE_PUBLISHED", {
-							sampler = tostring(height_sampler), destination = tostring(map),
-							slot = height_sampler_slot,
-							height_backing = tostring(height_bridge.sampler_width)
-								.. "x" .. tostring(height_bridge.sampler_height),
-							buildable_and_mask = true,
-						})
-					end
-
-					terrain_api.GetHeightGrid = function(target, output_grid, ...)
-						height_bridge.get_calls = height_bridge.get_calls + 1
-						local destination_read = target == map
-							or (target == nil and Global("CurrentMap") == map)
-						if height_sampler and destination_read and output_grid ~= nil then
-							SyncNativeHeightSampler("GetHeightGrid-output")
-							height_bridge.sampled_reads = height_bridge.sampled_reads + 1
-							return original_terrain_get_height_grid(height_sampler, output_grid, ...)
-						end
-						return original_terrain_get_height_grid(target, output_grid, ...)
-					end
-
-					terrain_api.SetHeightGrid = function(target, spec, ...)
-						height_bridge.set_calls = height_bridge.set_calls + 1
-						if target ~= map and not (target == nil and Global("CurrentMap") == map) then
-							return original_terrain_set_height_grid(target, spec, ...)
-						end
-
-						local source = type(spec) == "table" and spec.height_grid or spec
-						local size_ok, source_width, source_height = pcall(function()
-							return source:size()
-						end)
-						source_height = source_height or source_width
-						-- Only the exact Proc_InitPlayZone source-grid write is bridged. Any other
-						-- setter call keeps its native semantics and is recorded in the trace.
-						if not size_ok or source_width ~= gen_width_tiles or source_height ~= gen_height_tiles then
-							EnrichmentSpreadBoundary(self, map, "height-grid-bridge-pass-through", {
-								source_width = tostring(source_width), source_height = tostring(source_height),
-								size_ok = tostring(size_ok), spec_type = tostring(type(spec)),
-							})
-							return original_terrain_set_height_grid(target, spec, ...)
-						end
-
-						local raw_full, compute_full
-						local setter_results
-						local setter_extra = PackValues(...)
-						local bridge_ok, bridge_err = pcall(function()
-							raw_full = original_terrain_get_height_grid(map)
-							compute_full = grid_to_compute(raw_full)
-							local full_width, full_height = compute_full:size()
-							full_height = full_height or full_width
-							if type(full_width) ~= "number" or type(full_height) ~= "number"
-								or full_width <= source_width or full_height <= source_height then
-								error(string.format(
-									"expanded height backing unavailable: source=%sx%s backing=%sx%s",
-									tostring(source_width), tostring(source_height),
-									tostring(full_width), tostring(full_height)))
-							end
-							compute_full:copyrect(source,
-								box_fn(0, 0, source_width, source_height), point_fn(0, 0))
-
-							local bridged_spec = compute_full
-							if type(spec) == "table" and spec.height_grid == source then
-								bridged_spec = {}
-								for key, value in pairs(spec) do bridged_spec[key] = value end
-								bridged_spec.height_grid = compute_full
-							end
-							setter_results = PackValues(original_terrain_set_height_grid(target, bridged_spec,
-								Unpack(setter_extra, 1, setter_extra.n)))
-							height_bridge.bridged_writes = height_bridge.bridged_writes + 1
-							height_bridge.source_width = source_width
-							height_bridge.source_height = source_height
-							height_bridge.full_width = full_width
-							height_bridge.full_height = full_height
-						end)
-						if compute_full and compute_full ~= raw_full then
-							pcall(function() if type(compute_full.free) == "function" then compute_full:free() end end)
-						end
-						if not bridge_ok then
-							height_bridge.error = tostring(bridge_err)
-							error("vanilla height-grid bridge failed: " .. tostring(bridge_err))
-						end
-						EnrichmentSpreadBoundary(self, map, "height-grid-bridge-write", {
-							source = tostring(source_width) .. "x" .. tostring(source_height),
-							backing = tostring(height_bridge.full_width) .. "x" .. tostring(height_bridge.full_height),
-							bridged_writes = tostring(height_bridge.bridged_writes),
-						})
-						return Unpack(setter_results, 1, setter_results.n)
-					end
-
-					DebugPrint(string.format(
-						"vanilla height-grid bridge installed: backing=%sx%s source=%sx%s",
-						tostring(height_bridge.raw_width), tostring(height_bridge.raw_height),
-						tostring(gen_width_tiles), tostring(gen_height_tiles)))
-					EnrichmentSpreadBoundary(self, map, "height-grid-bridge-installed", {
-						backing_width = tostring(height_bridge.raw_width),
-						backing_height = tostring(height_bridge.raw_height),
-						source_width = tostring(gen_width_tiles), source_height = tostring(gen_height_tiles),
-					})
-				else
-					DebugPrint("vanilla height-grid bridge skipped: compute/copy API unavailable")
-				end
-			end
-			if is_surface_generation then
-				-- ResolveBuildable inside the native generator is the first authoritative build
-				-- after the provisional loading-only placeholder. Mark it current only after the
-				-- complete native generation transaction succeeds.
-				map.SuperBigMapSurfaceBuildableCurrent = false
-			end
-			State.rmg_placement_active_map = map
-			State.rmg_placement_proc_active = false
-			State.rmg_placement_proc_stack = {}
-			local results = { pcall(original_do_generate, self, map, ...) }
-			-- Restore the cached MapVars before any diagnostic or bridge cleanup can run. The
-			-- pcall above covers both the successful and failing native-generation paths, so an
-			-- engine/Lua failure cannot leave the live expanded map reporting source dimensions.
-			if buildable_source_view then
-				map.Width = saved_map_width
-				map.Height = saved_map_height
-				map.hex_width = saved_map_hex_width
-				map.hex_height = saved_map_hex_height
-			end
-			if height_bridge then
-				if results[1] and height_sampler and height_bridge.sampled_reads < 1 then
-					results[1] = false
-					results[2] = "native height sampler completed without servicing a source-grid read"
-				end
-				terrain_api.HeightMapSize = original_terrain_height_map_size
-				terrain_api.SetHeightGrid = original_terrain_set_height_grid
-				terrain_api.GetHeightGrid = original_terrain_get_height_grid
-				map.SuperBigMapNativeSourceSampler = nil
-				map.SuperBigMapSyncNativeSourceSampler = nil
-				map.SuperBigMapNativeSourceSamplerSyncState = nil
-				if height_sampler_slot then
-					local change_map_in_slot = Global("ChangeMapInSlot")
-					local maps = Global("Maps")
-					local unload_started = MigrationTicks()
-					local unload_ok, unload_error = true, nil
-					if type(change_map_in_slot) == "function" and type(maps) == "table"
-						and maps[height_sampler_slot] then
-						unload_ok, unload_error = pcall(change_map_in_slot, height_sampler_slot, "")
-					end
-					height_bridge.sampler_unload_ms = MigrationTicks() - unload_started
-					if not unload_ok and results[1] then
-						results[1] = false
-						results[2] = "native height sampler unload failed: " .. tostring(unload_error)
-					end
-					height_sampler = false
-				end
-				DebugPrint(string.format(
-					"vanilla height-grid bridge restored: height_size_calls=%s get_calls=%s sampled_reads=%s set_calls=%s bridged_writes=%s sampler_syncs=%s sampler_ms=%s source=%sx%s backing=%sx%s error=%s",
-					tostring(height_bridge.height_size_calls), tostring(height_bridge.get_calls),
-					tostring(height_bridge.sampled_reads), tostring(height_bridge.set_calls),
-					tostring(height_bridge.bridged_writes), tostring(height_bridge.sampler_syncs),
-					tostring(height_bridge.sampler_sync_ms), tostring(height_bridge.source_width),
-					tostring(height_bridge.source_height), tostring(height_bridge.full_width),
-					tostring(height_bridge.full_height), tostring(height_bridge.error)))
-				EnrichmentSpreadBoundary(self, map, "height-grid-bridge-restored", {
-					height_size_calls = tostring(height_bridge.height_size_calls),
-					get_calls = tostring(height_bridge.get_calls),
-					sampled_reads = tostring(height_bridge.sampled_reads),
-					set_calls = tostring(height_bridge.set_calls),
-					bridged_writes = tostring(height_bridge.bridged_writes),
-					sampler_syncs = tostring(height_bridge.sampler_syncs),
-					sampler_sync_ms = tostring(height_bridge.sampler_sync_ms),
-					sampler_allocation_ms = tostring(height_bridge.sampler_allocation_ms),
-					sampler_unload_ms = tostring(height_bridge.sampler_unload_ms),
-					sampler_error = tostring(height_bridge.sampler_error),
-					source = tostring(height_bridge.source_width) .. "x" .. tostring(height_bridge.source_height),
-					backing = tostring(height_bridge.full_width) .. "x" .. tostring(height_bridge.full_height),
-					error = tostring(height_bridge.error),
-				})
-			end
-			if buildable_source_view then
-				DebugPrint(string.format(
-					"vanilla cached map/buildable view restored after native placement: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; generation_ok=%s",
-					tostring(buildable_source_view.source_world_width), tostring(buildable_source_view.source_world_height),
-					tostring(saved_map_width), tostring(saved_map_height),
-					tostring(buildable_source_view.source_hex_width), tostring(buildable_source_view.source_hex_height),
-					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
-					tostring(results[1] == true)))
-				EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-restored", {
-					source_world = tostring(buildable_source_view.source_world_width) .. "x" .. tostring(buildable_source_view.source_world_height),
-					expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
-					source_hex = tostring(buildable_source_view.source_hex_width) .. "x" .. tostring(buildable_source_view.source_hex_height),
-					expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
-					generation_ok = tostring(results[1] == true),
-				})
-			end
-			if next(map.SuperBigMapExpectedResourceCounts or {}) then
-				local debug_log = SuperBigMap.DebugLog
-				if debug_log then
-					debug_log.Info("Generation", "captured RMG resource target floors",
-						map.SuperBigMapExpectedResourceCounts)
-				end
-			end
-			-- ProcEnd normally restores the late stretch placement snapshot. If the
-			-- generator raised before ProcEnd, restore it here so no preset mutation
-			-- can leak into another map generation.
-			if State.rmg_placement_proc_active then
-				if placement and type(placement.End) == "function" then
-					local restore_ok, restore_err = pcall(placement.End, map)
-					if restore_ok then
-						State.rmg_placement_proc_active = false
-					else
-						DebugPrint("DoGenerate placement repair rollback ERROR: " .. tostring(restore_err))
-						results[1] = false
-						results[2] = "placement-property rollback failed: " .. tostring(restore_err)
-					end
-				end
-			end
-			State.rmg_placement_active_map = false
-			State.rmg_placement_proc_stack = nil
-			if results[1] and is_surface_generation and not buildable_source_view
-				and map.buildable and map.buildable.z_grid
-				and map.SuperBigMapProvisionalBuildableDeferred ~= true then
-				map.SuperBigMapSurfaceBuildableCurrent = true
-				map.SuperBigMapProvisionalBuildableDeferred = nil
-				local debug_log = SuperBigMap.DebugLog
-				if debug_log then
-					pcall(debug_log.Info, "Bounds", "native surface ResolveBuildable grid is authoritative", {
-						map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
-						generator_tiles = tostring(gen_width_tiles) .. "x" .. tostring(gen_height_tiles),
-					})
-				end
-			end
-			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
-			if load_token and type(profiler.End) == "function" then
-				profiler.End(load_token, { result_count = #results - 1,
-					error = results[1] and nil or tostring(results[2]) }, results[1] == true)
-			end
-			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
-
-			State.genrand_active_mapdata = false
-
-			if placement_active then
-				placement.End(map)
-			end
-
-			map.GetMapSize = original_map_get_size
-			if terrain_api and original_terrain_get_size then
-				terrain_api.GetMapSize = original_terrain_get_size
-			end
-			if template then
-				template.Width = saved_template_w
-				template.Height = saved_template_h
-				if saved_template_pb ~= nil then
-					template.PassBorder = saved_template_pb
-					template.PassBorderTiles = saved_template_pbt
-				end
-			end
-			if type(mapdata) == "table" then
-				mapdata.Width = saved_mapdata_w
-				mapdata.Height = saved_mapdata_h
-				if saved_mapdata_pb ~= nil then
-					mapdata.PassBorder = saved_mapdata_pb
-					mapdata.PassBorderTiles = saved_mapdata_pbt
-				end
-			end
-
-			-- Native placement deliberately used the source-sized 615x710 buildable grid above.
-			-- Enrichments are final now, so replace it with the authoritative expanded 820x946 grid
-			-- only after map dimensions and the full-map PassBorder have been restored. This rebuild
-			-- cannot influence the already-completed vanilla candidate/repulsion transaction.
-			if results[1] and is_surface_generation and buildable_source_view then
-				local rebuild = Global("RebuildBuildableGrid")
-				local ticks = Global("GetPreciseTicks")
-				local t0 = 0
-				if type(ticks) == "function" then
-					local ok_ticks, value = pcall(ticks)
-					if ok_ticks and type(value) == "number" then t0 = value end
-				end
-				local rebuild_ok, rebuild_err = false, "RebuildBuildableGrid unavailable"
-				if type(rebuild) == "function" then
-					rebuild_ok, rebuild_err = pcall(rebuild, map)
-				end
-				local t1 = t0
-				if type(ticks) == "function" then
-					local ok_ticks, value = pcall(ticks)
-					if ok_ticks and type(value) == "number" then t1 = value end
-				end
-				local final_grid_w, final_grid_h = "nil", "nil"
-				if rebuild_ok and map.buildable and map.buildable.z_grid then
-					local ok_size, width, height = pcall(function() return map.buildable.z_grid:size() end)
-					if ok_size then final_grid_w, final_grid_h = width, height or width end
-					map.SuperBigMapSurfaceBuildableCurrent = true
-					map.SuperBigMapProvisionalBuildableDeferred = nil
-				else
-					results[1] = false
-					results[2] = "expanded buildable-grid rebuild failed: " .. tostring(rebuild_err)
-				end
-				DebugPrint(string.format(
-					"expanded buildable grid rebuilt after native placement: ok=%s grid=%sx%s expected=%sx%s ms=%s%s",
-					tostring(rebuild_ok), tostring(final_grid_w), tostring(final_grid_h),
-					tostring(saved_map_hex_width), tostring(saved_map_hex_height), tostring(t1 - t0),
-					rebuild_ok and "" or (" err=" .. tostring(rebuild_err))))
-				EnrichmentSpreadBoundary(self, map, "expanded-buildable-grid-rebuilt-after-native-placement", {
-					ok = tostring(rebuild_ok), grid = tostring(final_grid_w) .. "x" .. tostring(final_grid_h),
-					expected = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
-					ms = tostring(t1 - t0), error = rebuild_ok and "none" or tostring(rebuild_err),
-				})
-			end
-			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-after-source-view-restored")
-
-			if not results[1] then
-				if GenRandEnabled() then
-					GenRandLog("DoGenerate FAILED (expanded)", { err = tostring(results[2]) })
-				end
-				error(results[2])
-			end
-			-- POST-GENERATION PAD SMOOTHING (config PASSAGE_PAD_SMOOTHING). The generator's
-			-- entrance flatten is PER-HEX -- one height per hex -- so even with clean values it
-			-- leaves faint hex terracing (zigzag creases) around the entrances. After the
-			-- generator has fully finished (nothing re-flattens after this), smooth the height
-			-- field around each remembered entrance footprint with the engine's own GridSmooth
-			-- (the same op the map generator uses for terrain filtering). Runs PRE-stretch, so
-			-- the stretch resample carries the smoothed ground to the final map. One height-grid
-			-- get/set for all pads (~1-2s during loading).
-			do
-				local pads = State.sbm_entrance_pads
-				if type(pads) == "table" and #pads > 0 and cfg_bool("PASSAGE_PAD_SMOOTHING", true) then
-					local terrain_api3 = Global("terrain")
-					local grid_to_compute = Global("GridToCompute")
-					local new_grid = Global("NewComputeGrid")
-					local is_compute = Global("IsComputeGrid")
-					local grid_smooth = Global("GridSmooth")
-					local box_fn3 = Global("box")
-					local point_fn3 = Global("point")
-					local const_tbl3 = Global("const")
-					local tile3 = (type(const_tbl3) == "table" and type(const_tbl3.HeightTileSize) == "number"
-						and const_tbl3.HeightTileSize > 0) and const_tbl3.HeightTileSize or 100
-					local hex3 = (type(const_tbl3) == "table" and type(const_tbl3.HexSize) == "number"
-						and const_tbl3.HexSize > 0) and const_tbl3.HexSize or 1000
-					local function free_grid3(g)
-						if g then pcall(function() if type(g.free) == "function" then g:free() end end) end
-					end
-					if type(terrain_api3) == "table" and type(terrain_api3.GetHeightGrid) == "function"
-						and type(terrain_api3.SetHeightGrid) == "function" and type(grid_smooth) == "function"
-						and type(grid_to_compute) == "function" and type(new_grid) == "function"
-						and type(box_fn3) == "function" and type(point_fn3) == "function" then
-						-- All pads are on the same (surface) map in practice; group by map anyway.
-						local by_map = {}
-						for _, pad in ipairs(pads) do
-							if pad.map then
-								by_map[pad.map] = by_map[pad.map] or {}
-								table.insert(by_map[pad.map], pad)
-							end
-						end
-						for pmap, plist in pairs(by_map) do
-							local ok_all, err_all = pcall(function()
-								local raw = terrain_api3.GetHeightGrid(pmap)
-								local full = grid_to_compute(raw)
-								local fw, fh = full:size()
-								local fmt, bits
-								if type(is_compute) == "function" then
-									fmt, bits = is_compute(full)
-								end
-								fmt = fmt or "F"
-								for _, pad in ipairs(plist) do
-									-- +10 hexes: the outer ~30 tiles are the FEATHER band (see below),
-								-- so the footprint itself stays inside the fully-smoothed core.
-								local radius_wu = ((pad.hex_radius or 10) + 10) * hex3
-									local r_tiles = math.floor(radius_wu / tile3 + 0.5)
-									local cx_t = math.floor(pad.x / tile3 + 0.5)
-									local cy_t = math.floor(pad.y / tile3 + 0.5)
-									local x0 = math.max(0, cx_t - r_tiles)
-									local y0 = math.max(0, cy_t - r_tiles)
-									local x1 = math.min(fw, cx_t + r_tiles)
-									local y1 = math.min(fh, cy_t + r_tiles)
-									local w, h = x1 - x0, y1 - y0
-									if w > 4 and h > 4 then
-										local region = new_grid(w, h, fmt, bits)
-										region:copyrect(full, box_fn3(x0, y0, x1, y1), point_fn3(0, 0))
-										local smoothed = new_grid(w, h, fmt, bits)
-										local ok_s, err_s = pcall(grid_smooth, region, smoothed, 3)
-										local blended = 0
-										if ok_s then
-											-- FEATHER the region edge: a hard copyrect boundary
-											-- between smoothed interior and untouched exterior
-											-- reads as a straight LINE on the ground (user
-											-- report). Blend an edge band: original terrain at
-											-- the border -> fully smoothed at band depth, so the
-											-- transition is gradual and invisible. Integer math:
-											-- multiply before dividing (engine Lua truncates).
-											local BAND = 30 -- tiles (~3000 wu)
-											local pause3 = Global("PauseInfiniteLoopDetection")
-											local resume3 = Global("ResumeInfiniteLoopDetection")
-											if type(pause3) == "function" then pcall(pause3, "SBMPadFeather") end
-											local ok_f, err_f = pcall(function()
-												for yy = 0, h - 1 do
-													local dy0 = math.min(yy, h - 1 - yy)
-													for xx = 0, w - 1 do
-														local dd = math.min(xx, w - 1 - xx, dy0)
-														if dd < BAND then
-															local ov = region:get(xx, yy)
-															local sv = smoothed:get(xx, yy)
-															if type(ov) == "number" and type(sv) == "number" then
-																smoothed:set(xx, yy, ov + (sv - ov) * dd / BAND)
-																blended = blended + 1
-															end
-														end
-													end
-												end
-											end)
-											if type(resume3) == "function" then pcall(resume3, "SBMPadFeather") end
-											if not ok_f then
-												PairingLog("pad feather ERROR", { err = tostring(err_f) })
-											end
-											full:copyrect(smoothed, box_fn3(0, 0, w, h), point_fn3(x0, y0))
-										end
-										free_grid3(region)
-										free_grid3(smoothed)
-										PairingLog("post-gen pad smoothing", {
-											x = pad.x, y = pad.y, region = tostring(w) .. "x" .. tostring(h),
-											smoothed = ok_s, feathered_cells = blended,
-											err = ok_s and nil or tostring(err_s),
-										})
-									end
-								end
-								terrain_api3.SetHeightGrid(pmap, full)
-								if type(terrain_api3.InvalidateHeight) == "function" then
-									pcall(terrain_api3.InvalidateHeight, pmap)
-								end
-								if full ~= raw then free_grid3(full) end
-							end)
-							if not ok_all then
-								PairingLog("post-gen pad smoothing ERROR", { err = tostring(err_all) })
-							end
-						end
-					end
-					-- Consumed: never smooth stale pads on a later generation/new game.
-					State.sbm_entrance_pads = nil
-				end
-			end
-			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
-			CaptureGeneratedNativeEnrichments(map, "DoGenerate expanded source complete")
-			-- Spike audits (DEBUG_SPIKES): the generated map, and -- after the UNDERGROUND
-			-- generation, which is when the passage pairing touches MainMap -- the surface too.
-			SpikeAudit(map, "post-gen " .. tostring(self.BlankMap))
-			do
-				local main_map = Global("MainMap")
-				if main_map and main_map ~= map then
-					SpikeAudit(main_map, "post-gen(" .. tostring(self.BlankMap) .. ") MainMap")
-				end
-			end
-			return Unpack(results, 2)
+			error("expanded surface generation requires the exact temporary vanilla backing transaction")
 		end
 		generator_class.DoGenerate = do_generate_wrapper
 		State.generator_do_generate_wrapper = do_generate_wrapper
@@ -10093,27 +8732,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
 				if #elevator_migrations > 0 then
-					-- Supply-grid globals are MapVars. When first access is intercepted BEFORE the map
-					-- switch, constructing an underground Elevator here binds its supply fragments to the
-					-- still-current surface context and leaves an asynchronous native overlay copy queued
-					-- across the switch. Queue the records and reconstruct only after the original switch
-					-- has made the underground authoritative. Bypassed/recovery paths already run with the
-					-- underground current and can restore synchronously.
-					if Global("CurrentMap") ~= map then
-						pending_underground_elevator_restores[map] = elevator_migrations
-						map.SuperBigMapDeferredElevatorRestorePending = #elevator_migrations
-						SupplyGridSnapshot("queued underground Elevator restoration before map switch", map)
-						StretchLog("underground stretch: deferred Elevator restoration queued for current-map context", {
-							migrations = #elevator_migrations,
-						})
-					else
-						SetLoadingPhase("Rebuilding underground Elevator counterparts")
-						pending_underground_elevator_restores[map] = elevator_migrations
-						map.SuperBigMapDeferredElevatorRestorePending = #elevator_migrations
-						local restored_ok, restored_result = FinalizePendingUndergroundElevators(
-							map, "post-buildable-grid current-map recovery")
-						if restored_ok ~= true then error(tostring(restored_result)) end
-					end
+					-- Reconstruction is never performed from inside the stretch pipeline. The records carry
+					-- a monotonic generation token into CurrentMapChangeDone (or the explicit already-current
+					-- lifecycle message emitted at the pipeline exit). That event is the sole authority to
+					-- create the Elevator after every final grid exists on the current underground map.
+					local token = QueueUndergroundElevatorRestore(map, elevator_migrations,
+						Global("CurrentMap") == map and "already-current underground pipeline"
+						or "pre-switch underground pipeline")
+					if not token then error("failed to create underground Elevator restore transaction") end
+					SupplyGridSnapshot("queued underground Elevator restoration for lifecycle event", map)
+					StretchLog("underground stretch: tokenized Elevator restoration queued", {
+						migrations = #elevator_migrations, token = token.token_id,
+						current_is_target = tostring(Global("CurrentMap") == map),
+					})
 				end
 				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
 				-- buildable grid disagreed with the expanded object grid. Both final grids are now
@@ -10312,14 +8943,21 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 		end)
 		if not ok_branch and type(elevator_migrations) == "table" and #elevator_migrations > 0 then
-			-- Do not strand the player without the removed underground half if a later stretch stage
-			-- fails. Rebuild any record not already restored on the map's current live terrain.
+			-- A partially failed terrain transaction is not a safe context in which to touch native
+			-- supply grids. Invalidate the token and keep underground access blocked; never recreate
+			-- the Elevator on the still-current surface or on grids whose rebuild did not complete.
+			local failed_token = CurrentElevatorRestoreToken(map)
+			if failed_token then
+				failed_token.cancelled = true
+				failed_token.status = "pipeline-failed"
+				underground_elevator_restore_tokens[failed_token.token_id] = nil
+			end
 			pending_underground_elevator_restores[map] = nil
 			map.SuperBigMapDeferredElevatorRestorePending = nil
-			local recovery_ok, recovery_err = pcall(RestoreDeferredElevatorMigration, map,
-				elevator_migrations, "pipeline-failure-recovery")
-			StretchLog("underground stretch: deferred Elevator failure recovery", {
-				ok = recovery_ok, err = recovery_ok and nil or tostring(recovery_err),
+			map.SuperBigMapDeferredElevatorRestoreToken = nil
+			StretchLog("underground stretch: unsafe Elevator failure recovery suppressed", {
+				token = tostring(failed_token and failed_token.token_id), records = #elevator_migrations,
+				error = tostring(branch_err),
 			})
 		end
 		if stretch_token and type(loading_profiler.End) == "function" then
@@ -10377,6 +9015,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		DebugPrint(ok_branch and "underground stretch complete" or "underground stretch failed; access remains blocked")
 		local msg = Global("Msg")
 		if type(msg) == "function" then
+			local restore_token = ok_branch and Global("CurrentMap") == map
+				and CurrentElevatorRestoreToken(map) or nil
+			if restore_token then
+				pcall(msg, "SuperBigMapUndergroundSupplyReady", map,
+					restore_token.token_id, "already-current pipeline complete")
+			end
 			pcall(msg, "SuperBigMapUndergroundExpansionDone", map, ok_branch, branch_err)
 		end
 		-- End of this loading phase (single exit point of the thread; every step above is
@@ -10634,10 +9278,8 @@ end
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
 local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
-	PatchPersistentSupplyThreadTrace(source)
-	PatchSupplyMergeTrace(source)
 	PatchSupplyGridOverlayCopyGuard(source)
-	PatchSupplyPrivateEnvironmentTrace(source)
+	PatchElevatorSupplyTransactionBoundary(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	UndergroundAccessLog("map-slot gate patch check", {
@@ -10809,22 +9451,31 @@ local function PatchDeferredUndergroundAccess(source)
 		UndergroundAccessLog("calling original map switch after successful preparation", UndergroundAccessState(target, {
 			original_switch = tostring(original), suppress_original_screen = tostring(screen_open),
 		}))
+		local switch_restore_token = CurrentElevatorRestoreToken(target)
+		local switch_restore_token_id = switch_restore_token and switch_restore_token.token_id
 		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
 		local get_current_slot = Global("GetCurrentMapSlot")
 		local current_slot = type(get_current_slot) == "function" and SafeCall(get_current_slot) or nil
 		UndergroundAccessLog("original map switch returned", UndergroundAccessState(target, {
 			result = tostring(result), current_slot = tostring(current_slot),
 		}))
-		SetLoadingPhase("Rebuilding underground Elevator supply connections")
-		local restored_ok, restored_result =
-			FinalizePendingUndergroundElevators(target, "after original underground map switch")
-		if restored_ok ~= true then
+		-- CurrentMapChangeDone is synchronous inside the original switch. It must have consumed the
+		-- queued token; never perform a post-return reconstruction here, because that would recreate
+		-- the old race with later engine lifecycle work.
+		local after_token = switch_restore_token_id and CurrentElevatorRestoreToken(
+			target, switch_restore_token_id) or nil
+		local lifecycle_failed = after_token and after_token.status == "failed"
+		local lifecycle_missed = after_token and after_token.status == "queued"
+		if lifecycle_failed or lifecycle_missed then
+			local restored_result = after_token.failure or
+				"CurrentMapChangeDone did not consume Elevator restore token "
+				.. tostring(switch_restore_token_id)
 			target.SuperBigMapUndergroundPreparationFailed = true
 			target.SuperBigMapUndergroundStretchFailed = tostring(restored_result)
-			UndergroundAccessLog("post-switch underground Elevator restoration failed",
+			UndergroundAccessLog("lifecycle underground Elevator restoration failed",
 				UndergroundAccessState(target, { error = tostring(restored_result) }), "error")
 			if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
-			show_failure("Underground Elevator restoration failed after the map switch: "
+			show_failure("Underground Elevator restoration failed at the map lifecycle boundary: "
 				.. tostring(restored_result))
 			return false
 		end
@@ -10933,6 +9584,7 @@ MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
 MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
+MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
@@ -11047,7 +9699,22 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.original_underground_hud_init = nil
 	State.underground_hud_patch_version = nil
 	State.underground_hud_init_depth = nil
-	RestoreSupplyPrivateEnvironmentTrace("MapGeneration.RestoreVanillaBehavior")
+	local elevator_supply_class = Engine.ClassTable and Engine.ClassTable("Elevator")
+	if type(elevator_supply_class) == "table" and State.elevator_supply_connect_wrapper
+		and elevator_supply_class.SupplyGridConnectElement == State.elevator_supply_connect_wrapper
+		and type(State.original_elevator_supply_connect) == "function" then
+		elevator_supply_class.SupplyGridConnectElement = State.original_elevator_supply_connect
+	end
+	if type(elevator_supply_class) == "table" and State.elevator_passage_merge_wrapper
+		and elevator_supply_class.MergeGrids == State.elevator_passage_merge_wrapper
+		and type(State.original_elevator_passage_merge_grids) == "function" then
+		elevator_supply_class.MergeGrids = State.original_elevator_passage_merge_grids
+	end
+	State.elevator_supply_connect_wrapper = nil
+	State.original_elevator_supply_connect = nil
+	State.elevator_passage_merge_wrapper = nil
+	State.original_elevator_passage_merge_grids = nil
+	State.elevator_supply_boundary_patch_version = nil
 	if State.supply_grid_overlay_copy_wrapper
 		and Global("CopySupplyFragmentToOverlayGrid") == State.supply_grid_overlay_copy_wrapper
 		and type(State.original_supply_grid_overlay_copy) == "function" then
@@ -11056,25 +9723,25 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.supply_grid_overlay_copy_wrapper = nil
 	State.original_supply_grid_overlay_copy = nil
 	State.supply_grid_overlay_copy_patch_version = nil
-	if State.supply_merge_trace_wrapper and Global("MergeGrids") == State.supply_merge_trace_wrapper
-		and type(State.original_supply_merge_grids) == "function" then
-		rawset(_G, "MergeGrids", State.original_supply_merge_grids)
-	end
-	State.supply_merge_trace_wrapper = nil
-	State.original_supply_merge_grids = nil
-	State.supply_merge_trace_patch_version = nil
-	if State.supply_overlay_thread_wrapper
-		and Global("CreateGameTimeThread") == State.supply_overlay_thread_wrapper
-		and type(State.original_supply_overlay_create_thread) == "function" then
-		rawset(_G, "CreateGameTimeThread", State.original_supply_overlay_create_thread)
-	end
-	State.supply_overlay_thread_wrapper = nil
-	State.original_supply_overlay_create_thread = nil
-	State.supply_overlay_thread_patch_version = nil
 	for key in pairs(blocked_maps) do blocked_maps[key] = nil end
 	for key in pairs(underground_recovery_maps) do underground_recovery_maps[key] = nil end
-	for key in pairs(pending_underground_elevator_restores) do
+	State.underground_elevator_restore_epoch =
+		(State.underground_elevator_restore_epoch or 0) + 1
+	for key, token in pairs(pending_underground_elevator_restores) do
+		if type(token) == "table" then
+			token.cancelled = true
+			token.status = "teardown"
+			for _, record in ipairs(token.records or {}) do
+				if type(record.rebuilt_elevator) == "table" then
+					record.rebuilt_elevator.SuperBigMapElevatorRestoreToken = nil
+					record.rebuilt_elevator.SuperBigMapElevatorRestoreRecord = nil
+				end
+			end
+		end
 		pending_underground_elevator_restores[key] = nil
+	end
+	for key in pairs(underground_elevator_restore_tokens) do
+		underground_elevator_restore_tokens[key] = nil
 	end
 	RestoreEntranceBadgePositionPatch()
 end

@@ -25,25 +25,10 @@ local function cfg_bool(key, default)
 	return default
 end
 
-local function cfg_number(key, default, min_value)
-	local value = (SuperBigMap.Config or {})[key]
-	if type(value) == "number" and (min_value == nil or value >= min_value) then
-		return value
-	end
-	return default
-end
-
 local function DebugPrint(text)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
 		DebugLog.Info("Generation", text)
-	end
-end
-
-local function VerbosePrint(text)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("GenerationVerbose", text)
 	end
 end
 
@@ -1606,7 +1591,21 @@ local function BeginDeferredElevatorMigration(map)
 	return records
 end
 
-local function RestoreDeferredElevatorMigration(map, records, reason)
+local function CheckElevatorRestoreTransaction(transaction_guard, stage, map, bld, record, index)
+	if type(transaction_guard) ~= "function" then return true end
+	local ok, allowed, why = pcall(transaction_guard, stage, map, bld, record, index)
+	if not ok then
+		error("underground Elevator transaction guard failed at " .. tostring(stage)
+			.. ": " .. tostring(allowed))
+	end
+	if allowed ~= true then
+		error("underground Elevator transaction rejected at " .. tostring(stage)
+			.. ": " .. tostring(why or allowed))
+	end
+	return true
+end
+
+local function RestoreDeferredElevatorMigration(map, records, reason, transaction_guard)
 	if type(records) ~= "table" or #records == 0 then return 0 end
 	local point_fn = Global("point")
 	local place_building = Global("PlaceBuildingIn")
@@ -1618,6 +1617,7 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 	local restored = 0
 	for i, record in ipairs(records) do
 		if not record.restored then
+			CheckElevatorRestoreTransaction(transaction_guard, "before-record", map, nil, record, i)
 			-- Vanilla constructs the underground half on its linked underground passage/imprint.
 			-- The surface entrance may have been shifted to nearby buildable terrain, so its XY is
 			-- deliberately not authoritative for underground placement.
@@ -1642,6 +1642,11 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 				city = map.City,
 				name = record.name,
 			}
+			-- Seed the generation token into the object instance before PlaceObject/PlaceBuildingIn.
+			-- GameInit is normally deferred, but this closes the lifecycle boundary even if a future
+			-- engine build initializes supply elements during construction.
+			CheckElevatorRestoreTransaction(transaction_guard, "before-create", map,
+				instance, record, i)
 			local params = {
 				alternative_entity_t = {
 					entity = "ElevatorUnderground",
@@ -1652,6 +1657,7 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			if not IsLiveGameObject(bld) then
 				error("failed to rebuild underground Elevator counterpart " .. tostring(i))
 			end
+			CheckElevatorRestoreTransaction(transaction_guard, "after-create", map, bld, record, i)
 			ElevatorSupplyTrace("after PlaceBuildingIn", map, bld, record, { record = i })
 			local passage_angle = type(passage.GetAngle) == "function"
 				and SafeCall(passage.GetAngle, passage) or record.angle or 0
@@ -1660,7 +1666,9 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 				record = i, passage_angle = tostring(passage_angle),
 			})
 			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
+			CheckElevatorRestoreTransaction(transaction_guard, "after-position", map, bld, record, i)
 			ElevatorSupplyTrace("after SetPos", map, bld, record, { record = i })
+			CheckElevatorRestoreTransaction(transaction_guard, "before-apply-grids", map, bld, record, i)
 			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
 			ElevatorSupplyTrace("after ApplyToGrids", map, bld, record, { record = i })
 			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
@@ -1681,10 +1689,14 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			ElevatorSupplyTrace("after QuickBuildSetup", map, bld, record, {
 				record = i, quick_build_setup = tostring(quick_build_setup),
 			})
+			CheckElevatorRestoreTransaction(transaction_guard, "before-construction-complete",
+				map, bld, record, i)
 			local ok_complete, complete_err = pcall(msg, "ConstructionComplete", bld, false)
 			if not ok_complete then
 				error("underground Elevator ConstructionComplete failed: " .. tostring(complete_err))
 			end
+			CheckElevatorRestoreTransaction(transaction_guard, "after-construction-complete",
+				map, bld, record, i)
 			ElevatorSupplyTrace("after ConstructionComplete", map, bld, record, { record = i })
 			local terrain_after = ElevatorTerrainFingerprint(map, passage_x, passage_y)
 			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
