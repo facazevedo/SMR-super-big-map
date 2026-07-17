@@ -1683,6 +1683,292 @@ local function IsExpandedSupplyContext(map)
 		or (type(desired) == "number" and type(generator) == "number" and desired > generator)
 end
 
+local function SupplyObjectMap(obj)
+	if type(obj) ~= "table" then return nil end
+	local stored = rawget(obj, "map")
+	if stored then return stored end
+	local is_valid = Global("IsValid")
+	if type(is_valid) == "function" and SafeCall(is_valid, obj) ~= true then return nil end
+	if type(obj.GetMap) == "function" then return SafeCall(obj.GetMap, obj) end
+	return nil
+end
+
+local function SupplyFragmentMap(fragment, city)
+	local map = SupplyObjectMap(city)
+	if map then return map end
+	local cities = type(fragment) == "table" and rawget(fragment, "cities")
+	if type(cities) == "table" then
+		for _, candidate in ipairs(cities) do
+			map = SupplyObjectMap(candidate)
+			if map then return map end
+		end
+	end
+	return nil
+end
+
+local function SupplyPointXY(point_value)
+	if point_value == nil then return nil, nil end
+	local ok, x, y = pcall(function() return point_value:xy() end)
+	if ok and type(x) == "number" and type(y) == "number" then return x, y end
+	if type(point_value) == "table" then
+		x, y = rawget(point_value, "x"), rawget(point_value, "y")
+		if type(x) == "number" and type(y) == "number" then return x, y end
+	end
+	return nil, nil
+end
+
+local function SupplyFragmentContextData(overlay, connection_grid, fragment, city, extra)
+	local map = SupplyFragmentMap(fragment, city)
+	local current = Global("CurrentMap")
+	local resource = type(fragment) == "table" and rawget(fragment, "supply_resource") or nil
+	local live_overlay = map and select(1, ResolveSupplyMapVar(map, "supply_overlay_grid")) or nil
+	local live_connections = map and select(1, ResolveSupplyMapVar(map, "supply_connection_grid")) or nil
+	local live_connection = type(live_connections) == "table" and live_connections[resource] or nil
+	local ow, oh = SupplyGridDimensions(overlay)
+	local cw, ch = SupplyGridDimensions(connection_grid)
+	local low, loh = SupplyGridDimensions(live_overlay)
+	local lcw, lch = SupplyGridDimensions(live_connection)
+	local elements = type(fragment) == "table" and rawget(fragment, "elements")
+	local cities = type(fragment) == "table" and rawget(fragment, "cities")
+	local is_valid = Global("IsValid")
+	local valid = type(is_valid) == "function" and SafeCall(is_valid, fragment)
+	local data = {
+		current_map = tostring(current and current.name), current_map_ref = tostring(current),
+		city = tostring(city), city_map = tostring(map and map.name), city_map_ref = tostring(map),
+		current_is_city_map = tostring(current == map), expanded_context = tostring(IsExpandedSupplyContext(map)),
+		resource = tostring(resource), fragment = DescribeSupplyValue(fragment),
+		fragment_valid = tostring(valid), fragment_elements = tostring(type(elements) == "table" and #elements or nil),
+		fragment_cities = tostring(type(cities) == "table" and #cities or nil),
+		captured_overlay = tostring(overlay), captured_overlay_size = tostring(ow) .. "x" .. tostring(oh),
+		captured_connection = tostring(connection_grid), captured_connection_size = tostring(cw) .. "x" .. tostring(ch),
+		live_overlay = tostring(live_overlay), live_overlay_size = tostring(low) .. "x" .. tostring(loh),
+		live_connection = tostring(live_connection), live_connection_size = tostring(lcw) .. "x" .. tostring(lch),
+		captured_overlay_is_live = tostring(overlay == live_overlay),
+		captured_connection_is_live = tostring(connection_grid == live_connection),
+		captured_grid_sizes_match = tostring(ow ~= nil and ow == cw and oh == ch),
+		live_grid_sizes_match = tostring(low ~= nil and low == lcw and loh == lch),
+	}
+	for key, value in pairs(extra or {}) do data[key] = value end
+	return data, map
+end
+
+-- CopySupplyFragmentToOverlayGrid ultimately converts every connected object's axial hex into
+-- offset-grid coordinates (sx = q + r/2, sy = r) and performs a native Grid:Get. The native
+-- assertion gives no Lua stack details, so record the complete fragment footprint without calling
+-- Grid:Get ourselves. At schedule time we only inspect positions; immediately before the vanilla
+-- callback we also ask for the exact connection shape it is about to consume.
+local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fragment, city, include_shapes, extra)
+	local data, map = SupplyFragmentContextData(overlay, connection_grid, fragment, city, extra)
+	data.label = tostring(label)
+	data.include_shapes = tostring(include_shapes == true)
+	SupplyGridLog("supply fragment context", data)
+
+	local elements = type(fragment) == "table" and rawget(fragment, "elements")
+	if type(elements) ~= "table" then return data end
+	local width, height = SupplyGridDimensions(connection_grid)
+	local world_to_hex = Global("WorldToHex")
+	local rotate = Global("HexRotate")
+	local angle_to_direction = Global("HexAngleToDirection")
+	local total_points, out_of_bounds, missing_shapes = 0, 0, 0
+	local min_sx, max_sx, min_sy, max_sy
+	for index, element in ipairs(elements) do
+		local building = type(element) == "table" and rawget(element, "building") or nil
+		local parent_dome = type(element) == "table" and rawget(element, "parent_dome") or nil
+		local is_valid = Global("IsValid")
+		local building_valid = building and (type(is_valid) ~= "function" or SafeCall(is_valid, building) == true)
+		local pos = building_valid and ObjectPosition(building) or nil
+		local px, py = SupplyPointXY(pos)
+		local q, r
+		if type(world_to_hex) == "function" and building_valid then
+			q, r = SafeCall(world_to_hex, building)
+			if type(q) ~= "number" and type(px) == "number" then
+				q, r = SafeCall(world_to_hex, px, py)
+			end
+		end
+		local direction = type(angle_to_direction) == "function" and building_valid
+			and SafeCall(angle_to_direction, building) or nil
+		local shape, shape_error
+		if include_shapes and building_valid and type(building.GetSupplyGridConnectionShapePoints) == "function" then
+			local ok, result = pcall(building.GetSupplyGridConnectionShapePoints, building)
+			if ok then shape = result else shape_error = tostring(result) end
+		end
+		if include_shapes and type(shape) ~= "table" then missing_shapes = missing_shapes + 1 end
+		SupplyGridLog("supply fragment element", {
+			label = tostring(label), element_index = index, element = tostring(element),
+			building = tostring(building), class = tostring(building and building.class),
+			building_valid = tostring(building_valid),
+			building_map = tostring(SupplyObjectMap(building)), parent_dome = tostring(parent_dome),
+			position = tostring(pos), world_x = tostring(px), world_y = tostring(py),
+			origin_q = tostring(q), origin_r = tostring(r), direction = tostring(direction),
+			shape_count = tostring(type(shape) == "table" and #shape or nil), shape_error = tostring(shape_error),
+			resource = tostring(type(fragment) == "table" and rawget(fragment, "supply_resource")),
+			map = tostring(map), connection_width = tostring(width), connection_height = tostring(height),
+		})
+		if include_shapes and type(shape) == "table" and type(q) == "number" and type(r) == "number" then
+			for shape_index, shape_point in ipairs(shape) do
+				local local_q, local_r = SupplyPointXY(shape_point)
+				local rotated_q, rotated_r = local_q, local_r
+				if type(rotate) == "function" and type(direction) == "number"
+					and type(local_q) == "number" and type(local_r) == "number" then
+					rotated_q, rotated_r = SafeCall(rotate, local_q, local_r, direction)
+				end
+				local final_q = type(rotated_q) == "number" and q + rotated_q or nil
+				local final_r = type(rotated_r) == "number" and r + rotated_r or nil
+				local sx = type(final_q) == "number" and type(final_r) == "number"
+					and final_q + final_r / 2 or nil
+				local sy = final_r
+				local in_bounds = type(sx) == "number" and type(sy) == "number"
+					and type(width) == "number" and type(height) == "number"
+					and sx >= 0 and sy >= 0 and sx < width and sy < height
+				total_points = total_points + 1
+				if not in_bounds then out_of_bounds = out_of_bounds + 1 end
+				if type(sx) == "number" then
+					min_sx = min_sx and math.min(min_sx, sx) or sx
+					max_sx = max_sx and math.max(max_sx, sx) or sx
+				end
+				if type(sy) == "number" then
+					min_sy = min_sy and math.min(min_sy, sy) or sy
+					max_sy = max_sy and math.max(max_sy, sy) or sy
+				end
+				SupplyGridLog("supply fragment shape point", {
+					label = tostring(label), element_index = index, shape_index = shape_index,
+					building = tostring(building), class = tostring(building and building.class),
+					local_q = tostring(local_q), local_r = tostring(local_r),
+					rotated_q = tostring(rotated_q), rotated_r = tostring(rotated_r),
+					final_q = tostring(final_q), final_r = tostring(final_r),
+					sx = tostring(sx), sy = tostring(sy), in_bounds = tostring(in_bounds),
+					grid_width = tostring(width), grid_height = tostring(height),
+				}, in_bounds and nil or "error")
+			end
+		end
+	end
+	SupplyGridLog("supply fragment footprint summary", {
+		label = tostring(label), fragment = tostring(fragment), elements = #elements,
+		total_shape_points = total_points, out_of_bounds = out_of_bounds,
+		missing_shapes = missing_shapes, min_sx = tostring(min_sx), max_sx = tostring(max_sx),
+		min_sy = tostring(min_sy), max_sy = tostring(max_sy),
+		grid_width = tostring(width), grid_height = tostring(height),
+	}, out_of_bounds > 0 and "error" or nil)
+	return data
+end
+
+local supply_overlay_thread_sequence = 0
+local supply_merge_trace_sequence = 0
+
+local function IsSupplyOverlayThreadArgs(args)
+	if type(args) ~= "table" or (args.n or 0) < 4 then return false end
+	local fragment, city = args[3], args[4]
+	if type(fragment) ~= "table" or type(rawget(fragment, "elements")) ~= "table" then return false end
+	if type(city) ~= "table" or type(city.GetMap) ~= "function" then return false end
+	local ow, oh = SupplyGridDimensions(args[1])
+	local cw, ch = SupplyGridDimensions(args[2])
+	return ow ~= nil or oh ~= nil or cw ~= nil or ch ~= nil
+end
+
+-- MergeGrids queues its overlay copy and returns. The callback may not run until after the map
+-- switch, so a short-lived tracer around Elevator reconstruction cannot see who created it. Keep
+-- this narrowly filtered tracer active for the expanded-map lifecycle and preserve vanilla thread
+-- invocation/yield behavior exactly.
+local function PatchPersistentSupplyThreadTrace(source)
+	local State = SuperBigMap.State
+	local current = Global("CreateGameTimeThread")
+	if current == State.supply_overlay_thread_wrapper
+		and State.supply_overlay_thread_patch_version == GENERATOR_PATCH_VERSION then return true end
+	if current == State.supply_overlay_thread_wrapper
+		and type(State.original_supply_overlay_create_thread) == "function" then
+		current = State.original_supply_overlay_create_thread
+		rawset(_G, "CreateGameTimeThread", current)
+	end
+	if type(current) ~= "function" then
+		SupplyGridLog("persistent supply thread tracer unavailable", { source = tostring(source) }, "warn")
+		return false
+	end
+	State.original_supply_overlay_create_thread = current
+	local captured_original = current
+	local wrapper
+	wrapper = function(fn, ...)
+		local args = PackValues(...)
+		if not IsSupplyOverlayThreadArgs(args) then
+			return captured_original(fn, Unpack(args, 1, args.n))
+		end
+		supply_overlay_thread_sequence = supply_overlay_thread_sequence + 1
+		local sequence = supply_overlay_thread_sequence
+		AuditSupplyFragmentFootprint("scheduled delayed supply overlay copy", args[1], args[2], args[3], args[4], false, {
+			sequence = sequence, source = tostring(source), callback = tostring(fn), phase = "scheduled",
+		})
+		local traced = function(...)
+			local run_args = PackValues(...)
+			AuditSupplyFragmentFootprint("begin delayed supply overlay copy", run_args[1], run_args[2], run_args[3], run_args[4], true, {
+				sequence = sequence, source = tostring(source), callback = tostring(fn), phase = "begin",
+			})
+			-- No pcall: game-time callbacks may yield. A BEGIN without END intentionally identifies the
+			-- exact callback whose native operation asserted.
+			local results = PackValues(fn(Unpack(run_args, 1, run_args.n)))
+			SupplyGridLog("delayed supply overlay copy END", {
+				sequence = sequence, source = tostring(source), callback = tostring(fn),
+				current_map = tostring(Global("CurrentMap")),
+			})
+			return Unpack(results, 1, results.n)
+		end
+		return captured_original(traced, Unpack(args, 1, args.n))
+	end
+	rawset(_G, "CreateGameTimeThread", wrapper)
+	State.supply_overlay_thread_wrapper = wrapper
+	State.supply_overlay_thread_patch_version = GENERATOR_PATCH_VERSION
+	SupplyGridLog("persistent supply thread tracer installed", {
+		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
+	})
+	return true
+end
+
+local function PatchSupplyMergeTrace(source)
+	local State = SuperBigMap.State
+	local current = Global("MergeGrids")
+	if current == State.supply_merge_trace_wrapper
+		and State.supply_merge_trace_patch_version == GENERATOR_PATCH_VERSION then return true end
+	if current == State.supply_merge_trace_wrapper and type(State.original_supply_merge_grids) == "function" then
+		current = State.original_supply_merge_grids
+		rawset(_G, "MergeGrids", current)
+	end
+	if type(current) ~= "function" then
+		SupplyGridLog("MergeGrids tracer unavailable", { source = tostring(source) }, "warn")
+		return false
+	end
+	State.original_supply_merge_grids = current
+	local captured_original = current
+	local wrapper = function(new_grid, grid, filter)
+		local map = SupplyFragmentMap(new_grid)
+		local current_map = Global("CurrentMap")
+		local trace = IsExpandedSupplyContext(map) or IsExpandedSupplyContext(current_map)
+		local sequence
+		if trace then
+			supply_merge_trace_sequence = supply_merge_trace_sequence + 1
+			sequence = supply_merge_trace_sequence
+			SupplyGridLog("MergeGrids BEGIN", {
+				sequence = sequence, source = tostring(source), current_map = tostring(current_map),
+				fragment_map = tostring(map), new_grid = DescribeSupplyValue(new_grid),
+				old_grid = DescribeSupplyValue(grid), filter = tostring(filter),
+			})
+		end
+		local results = PackValues(captured_original(new_grid, grid, filter))
+		if trace then
+			SupplyGridLog("MergeGrids END", {
+				sequence = sequence, source = tostring(source), current_map = tostring(Global("CurrentMap")),
+				fragment_map = tostring(SupplyFragmentMap(new_grid)), new_grid = DescribeSupplyValue(new_grid),
+				old_grid = DescribeSupplyValue(grid),
+			})
+		end
+		return Unpack(results, 1, results.n)
+	end
+	rawset(_G, "MergeGrids", wrapper)
+	State.supply_merge_trace_wrapper = wrapper
+	State.supply_merge_trace_patch_version = GENERATOR_PATCH_VERSION
+	SupplyGridLog("MergeGrids tracer installed", {
+		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
+	})
+	return true
+end
+
 -- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
 -- overlay and connection grids disagree. Keep vanilla untouched for normal maps, but fail closed
 -- on an expanded map if a future lifecycle regression presents incompatible MapVars. The ordering
@@ -10169,6 +10455,8 @@ end
 -- are moved only by the existing post-stretch marker/visual pass against final terrain.
 local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
+	PatchPersistentSupplyThreadTrace(source)
+	PatchSupplyMergeTrace(source)
 	PatchSupplyGridOverlayCopyGuard(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
@@ -10587,6 +10875,21 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.supply_grid_overlay_copy_wrapper = nil
 	State.original_supply_grid_overlay_copy = nil
 	State.supply_grid_overlay_copy_patch_version = nil
+	if State.supply_merge_trace_wrapper and Global("MergeGrids") == State.supply_merge_trace_wrapper
+		and type(State.original_supply_merge_grids) == "function" then
+		rawset(_G, "MergeGrids", State.original_supply_merge_grids)
+	end
+	State.supply_merge_trace_wrapper = nil
+	State.original_supply_merge_grids = nil
+	State.supply_merge_trace_patch_version = nil
+	if State.supply_overlay_thread_wrapper
+		and Global("CreateGameTimeThread") == State.supply_overlay_thread_wrapper
+		and type(State.original_supply_overlay_create_thread) == "function" then
+		rawset(_G, "CreateGameTimeThread", State.original_supply_overlay_create_thread)
+	end
+	State.supply_overlay_thread_wrapper = nil
+	State.original_supply_overlay_create_thread = nil
+	State.supply_overlay_thread_patch_version = nil
 	for key in pairs(blocked_maps) do blocked_maps[key] = nil end
 	for key in pairs(underground_recovery_maps) do underground_recovery_maps[key] = nil end
 	for key in pairs(pending_underground_elevator_restores) do

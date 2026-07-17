@@ -91,4 +91,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- hex collisions to the nearest free non-primary hex before recreation.
 -- Bumped to 102: read Relaunched supply MapVars from their actual per-map lowercase fields and
 -- trace the native overlay-copy signature without touching the strict global environment.
-SuperBigMap.GENERATOR_PATCH_VERSION = 102
+-- Bumped to 103: trace MergeGrids provenance and the complete delayed supply-overlay fragment
+-- footprint, including live/captured grid identity and every native offset-grid coordinate.
+SuperBigMap.GENERATOR_PATCH_VERSION = 103
