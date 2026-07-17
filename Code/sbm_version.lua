@@ -63,9 +63,10 @@ SuperBigMap.EnrichmentSpreadDiagnostics = nil
 --     full-destination grid.
 -- 51: initialize migrated entrance passages and badges synchronously for the first overview;
 --     replace the ScaleSmallObjects duration guess with lifecycle completion events.
-SuperBigMap.SECTOR_PATCH_VERSION = 51
+-- Bumped to 52: capture the native source start winner and choose exactly one intersecting
+-- post-stretch sector with vanilla InitialReveal.
+SuperBigMap.SECTOR_PATCH_VERSION = 52
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 92: preserve concrete anomaly-class constructor fields,
--- normalize sequence/list pairs before recreated markers run their Init validation, and audit
--- repaired pairs against their canonical constructor state.
-SuperBigMap.GENERATOR_PATCH_VERSION = 92
+-- (sbm_map_generation). Bumped to 93: stage the native start-sector annotation across temporary
+-- source migration and require exactly one post-stretch initial reveal.
+SuperBigMap.GENERATOR_PATCH_VERSION = 93

@@ -808,18 +808,22 @@ end
 -- (origin PassBorder, tile (W-2*border)/10), preferring Metals>=50 + Concrete, weighted by
 -- play_ratio*avg_heat, with the map-seed-deterministic CreateMapRand("Exploration") stream.
 -- On the expanded map the candidate set is the 20x20 grid, so the (deterministic) pick lands
--- somewhere unrelated to vanilla's. Fix: reproduce vanilla's pick with vanilla's OWN
--- ORIGINAL InitialReveal (not the fast wrapper -- exact vanilla semantics incl.
--- CanPlaceDeposit gating) over VIRTUAL 10x10 sectors built at vanilla geometry from the
--- pre-stretch map, then AFTER the stretch reveal the expanded sectors covering the winner's
--- x4/3 box (replaces StretchRelocateStartSector on this path). InitialReveal only reads
--- plain fields (markers.surface / play_ratio / avg_heat / area / id) from its candidates,
--- so lightweight virtual tables work.
+-- somewhere unrelated to vanilla's. Fix: while the temporary native backing and all of its
+-- markers still exist, run vanilla's OWN ORIGINAL InitialReveal (not the fast wrapper -- exact
+-- vanilla semantics including CanPlaceDeposit gating) over VIRTUAL 10x10 sectors at native
+-- geometry and annotate its first winner. AFTER the stretch, collect only the live 20x20 sectors
+-- intersecting that winner's proportionally transformed box, run the same vanilla rule over that
+-- small set, and reveal only its first result. InitialReveal only reads plain sector fields, so
+-- lightweight virtual source tables work without constructing a second exploration grid.
 -- ---------------------------------------------------------------------------------------
 local function StartLog(message, data)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then DebugLog.Info("StartSector", message, data) end
 end
+
+-- Native-source start annotations are transient generation data. Keying them by destination map
+-- prevents a deferred underground map or a second map slot from consuming the surface selection.
+local pending_vanilla_start_by_map = setmetatable({}, { __mode = "k" })
 
 -- Build the virtual vanilla sector list and run vanilla's InitialReveal over it.
 -- Returns { winners = { {x0,y0,x1,y1,id}, ... } } or nil + reason.
@@ -957,24 +961,17 @@ local function VanillaStartPick(city, map)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
-	-- SINGLE START SECTOR (user decision): vanilla's fallback branch can return TWO winners
-	-- (best-metals sector + nearest-concrete sector) when no single sector has both
-	-- Metals>=50 and Concrete. The expanded start reveals exactly ONE sector, chosen
-	-- PLAIN-RANDOMLY among the winners (user decision: no determinism needed here -- a
-	-- restart may pick the other one).
+	-- Vanilla can return a second, nearest-concrete sector in its fallback branch. The requested
+	-- expanded behavior is exactly one reveal corresponding to VANILLA'S FIRST winner, never a
+	-- random choice between the first and its auxiliary concrete sector.
+	local vanilla_revealed_count = #revealed
 	if #revealed > 1 then
-		local idx = 1
-		local rand_int = Engine.RandInt
-		if type(rand_int) == "function" then
-			local ok_r, r = pcall(rand_int, #revealed)
-			if ok_r and type(r) == "number" then idx = r + 1 end
-		end
-		local chosen = revealed[idx] or revealed[1]
-		StartLog("multiple winners -- picking one at random (single start sector)", {
-			count = #revealed, chosen = tostring(chosen.id),
+		StartLog("multiple vanilla source winners -- annotating first only", {
+			count = #revealed, first = tostring(revealed[1] and revealed[1].id),
+			auxiliary = tostring(revealed[2] and revealed[2].id),
 		})
-		revealed = { chosen }
 	end
+	revealed = { revealed[1] }
 	local winners = {}
 	for _, sec in ipairs(revealed) do
 		local mn, mx = sec.area:min(), sec.area:max()
@@ -984,13 +981,62 @@ local function VanillaStartPick(city, map)
 		StartLog("vanilla start pick", { id = tostring(sec.id), box = string.format("%d,%d-%d,%d", x0, y0, x1, y1) })
 		DebugPrint("vanilla-equivalent starting sector selected: " .. tostring(sec.id))
 	end
-	return { winners = winners }
+	return { winners = winners, vanilla_revealed_count = vanilla_revealed_count }
 end
 
--- Wrap Exploration:InitialExplore: on expanded surface maps, skip vanilla's own
--- 20x20 reveal entirely; compute the vanilla pick and defer the reveal to post-stretch
--- (RevealVanillaStartSectors, called from the stretch pipeline). Everything else runs
--- the original.
+local function CaptureVanillaStartSelection(map)
+	-- A temporary generation backing may not own a fully initialized City yet. CreateMapRand is
+	-- delegated to UIColony, so the current destination city is an equivalent deterministic owner.
+	local city = map and map.City or Global("MainCity")
+	if not city then return nil, "native source city unavailable" end
+	local ok, selection, reason = pcall(VanillaStartPick, city, map)
+	if not (ok and type(selection) == "table" and type(selection.winners) == "table"
+		and #selection.winners == 1) then
+		return nil, tostring(ok and reason or selection)
+	end
+	local winner = selection.winners[1]
+	StartLog("native source start sector annotated", {
+		map = tostring(map.name), sector = tostring(winner.id),
+		source_box = string.format("%s,%s-%s,%s", tostring(winner.x0), tostring(winner.y0),
+			tostring(winner.x1), tostring(winner.y1)),
+		vanilla_revealed_count = tostring(selection.vanilla_revealed_count),
+	})
+	DebugPrint(string.format("native start annotated: sector=%s box=%s,%s-%s,%s vanilla_count=%s",
+		tostring(winner.id), tostring(winner.x0), tostring(winner.y0), tostring(winner.x1),
+		tostring(winner.y1), tostring(selection.vanilla_revealed_count)))
+	return selection
+end
+
+local function StageVanillaStartSelection(map, selection, reason)
+	if not map or type(selection) ~= "table" or type(selection.winners) ~= "table"
+		or #selection.winners ~= 1 then return false, "invalid native start annotation" end
+	pending_vanilla_start_by_map[map] = selection
+	local winner = selection.winners[1]
+	map.SuperBigMapVanillaStartSourceSector = winner.id
+	map.SuperBigMapVanillaStartSourceX0 = winner.x0
+	map.SuperBigMapVanillaStartSourceY0 = winner.y0
+	map.SuperBigMapVanillaStartSourceX1 = winner.x1
+	map.SuperBigMapVanillaStartSourceY1 = winner.y1
+	StartLog("native source start annotation staged for destination", {
+		map = tostring(map.name), reason = tostring(reason), sector = tostring(winner.id),
+	})
+	return true
+end
+
+local function HasPendingVanillaStartSelection(map)
+	return map ~= nil and pending_vanilla_start_by_map[map] ~= nil
+end
+
+local function ClearPendingVanillaStartSelection(map, reason)
+	if map then pending_vanilla_start_by_map[map] = nil end
+	StartLog("native source start annotation cleared", {
+		map = tostring(map and map.name), reason = tostring(reason),
+	})
+end
+
+-- Wrap Exploration:InitialExplore: on expanded surface maps, skip vanilla's own 20x20 reveal
+-- entirely and preserve the annotation already captured from the native source. The compatibility
+-- path can still reconstruct and stage a source pick if temporary backing is not in use.
 local function PatchInitialExplore()
 	if (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR ~= true then return false end
 	local State = SuperBigMap.State
@@ -1003,7 +1049,9 @@ local function PatchInitialExplore()
 		return false
 	end
 	if cls.InitialExplore == State.initial_explore_wrapper then return true end
-	State.original_initial_explore = cls.InitialExplore
+	if type(State.original_initial_explore) ~= "function" then
+		State.original_initial_explore = cls.InitialExplore
+	end
 	local wrapper = function(self, eligible_out, ...)
 		local original = State.original_initial_explore
 		local map
@@ -1042,6 +1090,15 @@ local function PatchInitialExplore()
 			end)
 			return
 		end
+		-- The exact winner was captured while the temporary native source and its markers still
+		-- existed. At this later destination InitSectors boundary those markers are deliberately
+		-- staged as value records, so recomputing from the live destination would see no resources.
+		if HasPendingVanillaStartSelection(map) then
+			StartLog("initial reveal deferred using staged native source annotation", {
+				sector = tostring(map.SuperBigMapVanillaStartSourceSector),
+			})
+			return
+		end
 		local ok_pick, pick, reason = pcall(VanillaStartPick, self, map)
 		if not (ok_pick and pick) then
 			StartLog("vanilla start pick FAILED -- falling back to vanilla InitialExplore", {
@@ -1049,8 +1106,9 @@ local function PatchInitialExplore()
 			})
 			return original(self, eligible_out, ...)
 		end
-		-- Defer the reveal to after the stretch; nothing is scanned now.
-		State.sbm_vanilla_start = pick
+		-- Compatibility fallback for an expanded path without a temporary source. Defer this
+		-- reconstructed native selection exactly as the source-capture path does.
+		StageVanillaStartSelection(map, pick, "InitialExplore compatibility fallback")
 		StartLog("initial reveal DEFERRED to post-stretch", { winners = #pick.winners })
 	end
 	cls.InitialExplore = wrapper
@@ -1059,16 +1117,16 @@ local function PatchInitialExplore()
 	return true
 end
 
--- Post-stretch reveal: scan the expanded sectors covering each winner's x4/3 box, set
--- InitialSector/overview exit_to, and replicate vanilla InitialExplore's tail (commander
--- profile bonus deposit + forced overview SelectSector). Called from the stretch branch
--- INSTEAD of StretchRelocateStartSector when a deferred pick is pending.
+-- Post-stretch reveal: transform the annotated vanilla winner box, collect only expanded sectors
+-- intersecting it, run vanilla's own InitialReveal over those few live sectors, and scan exactly
+-- its first result. Then replicate vanilla InitialExplore's tail (commander profile bonus deposit
+-- plus forced overview SelectSector). Called instead of StretchRelocateStartSector.
 local function RevealVanillaStartSectors(map)
 	local State = SuperBigMap.State or {}
-	local data = State.sbm_vanilla_start
-	if not data then return 0 end
-	State.sbm_vanilla_start = nil
 	map = map or Global("MainMap")
+	local data = map and pending_vanilla_start_by_map[map]
+	if not data then return 0 end
+	pending_vanilla_start_by_map[map] = nil
 	local city = map and map.City
 	if not (city and Grid and type(Grid.ForEachSector) == "function") then
 		StartLog("post-stretch reveal skipped (city/grid unavailable)")
@@ -1080,58 +1138,122 @@ local function RevealVanillaStartSectors(map)
 		StartLog("post-stretch reveal skipped (sizes unknown)")
 		return 0
 	end
-	local MIN_OVERLAP_PCT = 30
-	local scanned_total = 0
-	local primary
-	local last_revealed
-	for wi, wbox in ipairs(data.winners) do
-		local x0 = math.floor(wbox.x0 * full / sw)
-		local y0 = math.floor(wbox.y0 * full / sw)
-		local x1 = math.floor(wbox.x1 * full / sw)
-		local y1 = math.floor(wbox.y1 * full / sw)
-		local cx, cy = math.floor((x0 + x1) / 2), math.floor((y0 + y1) / 2)
-		Grid.ForEachSector(city, function(sector)
-			pcall(function()
-				local a = sector.area
-				if not a then return end
-				local mn, mx = a:min(), a:max()
-				local ax0, ay0 = mn:xy()
-				local ax1, ay1 = mx:xy()
-				local ix = math.min(ax1, x1) - math.max(ax0, x0)
-				local iy = math.min(ay1, y1) - math.max(ay0, y0)
-				if ix <= 0 or iy <= 0 then return end
-				local sector_area = (ax1 - ax0) * (ay1 - ay0)
-				if sector_area <= 0 then return end
-				local contains_center = cx >= ax0 and cx < ax1 and cy >= ay0 and cy < ay1
-				-- COUNT PARITY WITH VANILLA (user report: '5 sectors revealed'): vanilla
-				-- reveals exactly ONE sector per winner, so scan ONLY the sector containing
-				-- the winner's scaled center. Overlapping neighbors are logged (diagnostic)
-				-- but not revealed.
-				if contains_center then
-					if sector.status == "unexplored" then
-						-- No spawn_positions: those were computed pre-stretch; Scan resolves
-						-- placement itself against the markers' current (scaled) positions.
-						pcall(sector.Scan, sector, "scanned")
-						scanned_total = scanned_total + 1
-					end
-					last_revealed = sector
-					if wi == 1 then primary = sector end
-					StartLog("post-stretch reveal: sector scanned (center of winner)", {
-						winner = tostring(wbox.id), sector = tostring(sector.id),
-						winner_scaled_center = tostring(cx) .. "," .. tostring(cy),
-						sector_bounds = string.format("%d,%d-%d,%d", ax0, ay0, ax1, ay1),
-					})
-				elseif (ix * iy * 100) >= (MIN_OVERLAP_PCT * sector_area) then
-					StartLog("post-stretch reveal: overlapping neighbor NOT revealed (count parity)", {
-						winner = tostring(wbox.id), sector = tostring(sector.id),
-						overlap_pct = math.floor((ix * iy * 100.0) / sector_area + 0.5),
-					})
-				end
-			end)
-		end)
+	local winner = data.winners and data.winners[1]
+	if not winner then error("native source start annotation has no first winner") end
+	local source_w = tonumber(map.SuperBigMapSourceWidthTiles)
+		or tonumber(map.SuperBigMapGeneratorWidthTiles) or sw
+	local source_h = tonumber(map.SuperBigMapSourceHeightTiles)
+		or tonumber(map.SuperBigMapGeneratorHeightTiles) or source_w
+	local final_w = tonumber(map.SuperBigMapDesiredWidthTiles) or full
+	local final_h = tonumber(map.SuperBigMapDesiredHeightTiles) or final_w
+	local origin_x = tonumber(map.SuperBigMapSourceX) or 0
+	local origin_y = tonumber(map.SuperBigMapSourceY) or 0
+	local scale_x, scale_y = final_w / source_w, final_h / source_h
+	local x0 = math.floor(origin_x + (winner.x0 - origin_x) * scale_x + 0.5)
+	local y0 = math.floor(origin_y + (winner.y0 - origin_y) * scale_y + 0.5)
+	local x1 = math.floor(origin_x + (winner.x1 - origin_x) * scale_x + 0.5)
+	local y1 = math.floor(origin_y + (winner.y1 - origin_y) * scale_y + 0.5)
+	local box_fn = Global("box")
+	local transformed_box = type(box_fn) == "function" and box_fn(x0, y0, x1, y1) or nil
+	if transformed_box and type(city.UpdateBuildableRatio) == "function" then
+		pcall(city.UpdateBuildableRatio, city, transformed_box)
 	end
-	if primary or last_revealed then
-		city.InitialSector = primary or last_revealed
+
+	local candidates, candidate_log = {}, {}
+	local heat_grid = map.heat_grid
+	Grid.ForEachSector(city, function(sector)
+		local a = sector and sector.area
+		if not a then return end
+		local mn, mx = a:min(), a:max()
+		local ax0, ay0 = mn:xy()
+		local ax1, ay1 = mx:xy()
+		local ix = math.min(ax1, x1) - math.max(ax0, x0)
+		local iy = math.min(ay1, y1) - math.max(ay0, y0)
+		if ix <= 0 or iy <= 0 then return end
+		if heat_grid and type(heat_grid.GetAverageHeatIn) == "function" then
+			local ok_heat, avg_heat = pcall(heat_grid.GetAverageHeatIn, heat_grid, a)
+			if ok_heat and type(avg_heat) == "number" then sector.avg_heat = avg_heat end
+		end
+		candidates[#candidates + 1] = sector
+		candidates[sector] = true
+		local marker_count = sector.markers and sector.markers.surface
+			and #sector.markers.surface or 0
+		candidate_log[#candidate_log + 1] = string.format("%s(overlap=%d markers=%d play=%s heat=%s)",
+			tostring(sector.id), ix * iy, marker_count,
+			tostring(sector.play_ratio), tostring(sector.avg_heat))
+	end)
+	if #candidates == 0 then
+		error("no expanded sector intersects the transformed vanilla start sector")
+	end
+
+	local initial_reveal = State.original_initial_reveal
+	if type(initial_reveal) ~= "function" then
+		error("vanilla InitialReveal unavailable for transformed start candidates")
+	end
+	local ok_rand, _, trand = pcall(city.CreateMapRand, city, "Exploration")
+	if not (ok_rand and type(trand) == "function") then
+		error("vanilla Exploration random stream unavailable for transformed start candidates")
+	end
+	local ok_pick, revealed, spawn_positions = pcall(initial_reveal, candidates, trand)
+	if not (ok_pick and type(revealed) == "table" and revealed[1]
+		and candidates[revealed[1]] == true) then
+		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
+	end
+	local selected = revealed[1]
+	StartLog("post-stretch vanilla candidate selection", {
+		source_sector = tostring(winner.id),
+		transformed_box = string.format("%d,%d-%d,%d", x0, y0, x1, y1),
+		candidate_count = #candidates, candidates = table.concat(candidate_log, " "),
+		vanilla_result_count = #revealed, selected = tostring(selected.id),
+	})
+	DebugPrint(string.format("transformed native start: source=%s box=%d,%d-%d,%d candidates=%s selected=%s",
+		tostring(winner.id), x0, y0, x1, y1, table.concat(candidate_log, " "),
+		tostring(selected.id)))
+
+	-- This is still initial generation: remove any accidental destination reveal produced while the
+	-- class wrapper was being reclaimed, then persist exactly the one vanilla-selected candidate.
+	local done_object = Global("DoneObject")
+	local is_valid = Global("IsValid")
+	if type(map.MapForEach) == "function" and type(done_object) == "function" then
+		local persisted_reveals = {}
+		pcall(map.MapForEach, map, "map", "RevealedMapSector", function(obj)
+			persisted_reveals[#persisted_reveals + 1] = obj
+		end)
+		for i = 1, #persisted_reveals do
+			local obj = persisted_reveals[i]
+			if type(is_valid) ~= "function" or is_valid(obj) then pcall(done_object, obj) end
+		end
+	end
+	local cleared = 0
+	Grid.ForEachSector(city, function(sector)
+		if sector.status and sector.status ~= "unexplored" then cleared = cleared + 1 end
+		sector.status = "unexplored"
+		sector.revealed_obj = nil
+		sector.revealed_surf = nil
+		sector.revealed_deep = nil
+		if type(sector.UpdateDecal) == "function" then pcall(sector.UpdateDecal, sector) end
+	end)
+	city.InitialSector = false
+	local scan_ok, scan_error = pcall(selected.Scan, selected, "scanned", nil, spawn_positions)
+	if not scan_ok then error("selected transformed start sector scan failed: " .. tostring(scan_error)) end
+	city.InitialSector = selected
+
+	local scanned_total = 0
+	Grid.ForEachSector(city, function(sector)
+		if sector.status and sector.status ~= "unexplored" then scanned_total = scanned_total + 1 end
+	end)
+	if scanned_total ~= 1 or selected.status == "unexplored" then
+		error(string.format("initial reveal cardinality verification failed: scanned=%s selected_status=%s",
+			tostring(scanned_total), tostring(selected.status)))
+	end
+	StartLog("post-stretch reveal: exactly one sector scanned", {
+		source_sector = tostring(winner.id), selected = tostring(selected.id),
+		cleared_preexisting = cleared, scanned = scanned_total,
+	})
+	DebugPrint(string.format("transformed native start verified: source=%s selected=%s scanned=%s cleared=%s",
+		tostring(winner.id), tostring(selected.id), tostring(scanned_total), tostring(cleared)))
+
+	if selected then
 		-- Vanilla tail: overview exit_to + forced SelectSector on the last revealed sector.
 		pcall(function()
 			local igi = Global("GetInGameInterface")()
@@ -1142,7 +1264,7 @@ local function RevealVanillaStartSectors(map)
 				local get_mode_dlg = Global("GetInGameInterfaceModeDlg")
 				local dlg = type(get_mode_dlg) == "function" and get_mode_dlg() or nil
 				if dlg and type(dlg.SelectSector) == "function" then
-					dlg:SelectSector(last_revealed, nil, "forced")
+					dlg:SelectSector(selected, nil, "forced")
 				end
 			end
 		end)
@@ -1611,6 +1733,9 @@ local function EnsureSectorsBuilt(map, reason)
 		to = tostring(expected) .. "x" .. tostring(expected),
 	})
 	-- Prefer our stored closure (independent of whatever is currently on the class).
+	-- Random-map generation can also restore Exploration.InitialExplore after the initial mod
+	-- install. Reclaim the deferral wrapper immediately before InitSectors invokes that method.
+	PatchInitialExplore()
 	local init_fn = (type(custom_fn) == "function") and custom_fn or exploration_class.InitSectors
 	local ok, err = pcall(init_fn, city, map, {})
 	if not ok then
@@ -1681,6 +1806,10 @@ SectorExploration.RefreshSectorDecals = RefreshSectorDecals
 
 SectorExploration.InstallSectorPatch = InstallSectorPatch
 SectorExploration.PatchInitialExplore = PatchInitialExplore
+SectorExploration.CaptureVanillaStartSelection = CaptureVanillaStartSelection
+SectorExploration.StageVanillaStartSelection = StageVanillaStartSelection
+SectorExploration.HasPendingVanillaStartSelection = HasPendingVanillaStartSelection
+SectorExploration.ClearPendingVanillaStartSelection = ClearPendingVanillaStartSelection
 SectorExploration.RevealVanillaStartSectors = RevealVanillaStartSectors
 SectorExploration.EnsureSectorPatch = EnsureSectorPatch
 SectorExploration.EnsureSectorsBuilt = EnsureSectorsBuilt
@@ -1718,7 +1847,7 @@ function SectorExploration.RestoreVanillaBehavior()
 		end
 		State.initial_explore_wrapper = nil
 		State.original_initial_explore = nil
-		State.sbm_vanilla_start = nil
+		pending_vanilla_start_by_map = setmetatable({}, { __mode = "k" })
 	end
 	if type(State.original_is_expl_avail_sectors) == "function" then
 		rawset(_G, "IsExplorationAvailable_Sectors", State.original_is_expl_avail_sectors)

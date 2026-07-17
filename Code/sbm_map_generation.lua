@@ -1470,6 +1470,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local native_enrichment_records
 	local native_enrichment_excluded
 	local native_enrichment_record_stats
+	local vanilla_start_selection
 	local saved_main_map = Global("MainMap")
 	local saved_main_city = Global("MainCity")
 	local results
@@ -1603,6 +1604,27 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			signature = stats.source_enrichment_record_signature,
 			classes = stats.source_enrichment_record_classes,
 			independent_of_source_objects = true,
+		})
+		-- Capture the start choice at the same native-source boundary as enrichments. The final
+		-- destination temporarily has no live markers until post-stretch recreation, so waiting for
+		-- its InitialExplore would make vanilla choose from an empty or unrelated 20x20 set.
+		local sectors = SuperBigMap.SectorExploration
+		if not sectors or type(sectors.CaptureVanillaStartSelection) ~= "function" then
+			error("native start-sector annotation API unavailable")
+		end
+		local start_capture_ok, selection, selection_error = pcall(
+			sectors.CaptureVanillaStartSelection, source)
+		if not (start_capture_ok and selection) then
+			error("native start-sector annotation failed: "
+				.. tostring(start_capture_ok and selection_error or selection))
+		end
+		vanilla_start_selection = selection
+		stats.source_start_sector = selection.winners and selection.winners[1]
+			and selection.winners[1].id or "unknown"
+		BackingPromotionLog("TEMP_SOURCE_START_SECTOR_ANNOTATED", {
+			sector = tostring(stats.source_start_sector),
+			vanilla_revealed_count = tostring(selection.vanilla_revealed_count),
+			source_markers_available = true,
 		})
 
 		-- The complete buildable/playable/enrichment transaction has already finished on the true
@@ -1865,10 +1887,32 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				.. tostring(verify_call_ok and record_verify_stats and record_verify_stats.reason or records_ok)
 		end
 	end
+	if ok and vanilla_start_selection then
+		local sectors = SuperBigMap.SectorExploration
+		local stage_call_ok, staged, stage_error = pcall(
+			sectors.StageVanillaStartSelection, destination, vanilla_start_selection,
+			"temporary vanilla source migrated and unloaded")
+		stats.source_start_annotation_staged = stage_call_ok and staged == true
+		BackingPromotionLog("TEMP_SOURCE_START_SECTOR_STAGED", {
+			ok = stats.source_start_annotation_staged,
+			sector = tostring(stats.source_start_sector),
+			error = tostring(stage_call_ok and stage_error or staged),
+		})
+		if not stats.source_start_annotation_staged then
+			ok = false
+			migration_error = "native start-sector annotation did not survive migration: "
+				.. tostring(stage_call_ok and stage_error or staged)
+		end
+	end
 	if not ok then
 		local deposits = SuperBigMap.DepositRules
 		if deposits and type(deposits.ClearStagedNativeEnrichmentRecords) == "function" then
 			pcall(deposits.ClearStagedNativeEnrichmentRecords, destination,
+				"temporary source migration failed")
+		end
+		local sectors = SuperBigMap.SectorExploration
+		if sectors and type(sectors.ClearPendingVanillaStartSelection) == "function" then
+			pcall(sectors.ClearPendingVanillaStartSelection, destination,
 				"temporary source migration failed")
 		end
 	end
@@ -8412,22 +8456,27 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					InvestigationEnd(detail_token, { floaters = n_float }, true)
 					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
-				-- Step 4: relocate the initial revealed sector(s) to the scaled position of the
-				-- original pick, moving the landed rocket along (config STRETCH_RELOCATE_START_SECTOR).
-				-- START SECTOR: when the InitialExplore wrapper deferred the vanilla pick
-				-- (STRETCH_VANILLA_START_SECTOR), reveal the winner's x4/3 block NOW -- the
-				-- markers are at their scaled positions, so Scan spawns deposits correctly.
-				-- Mutually exclusive with the legacy relocation (which would re-scale a
-				-- freshly scanned sector).
-				local vanilla_start_pending = (SuperBigMap.State or {}).sbm_vanilla_start ~= nil
+				-- Step 4: consume the native-source start annotation after marker recreation. Only
+				-- expanded sectors intersecting the transformed vanilla winner are considered; vanilla's
+				-- own resource/heat/buildability rule chooses exactly one of them. Mutually exclusive with
+				-- legacy relocation (which would re-scale a freshly scanned destination sector).
+				local sectors_mod = SuperBigMap.SectorExploration
+				local vanilla_start_pending = sectors_mod
+					and type(sectors_mod.HasPendingVanillaStartSelection) == "function"
+					and sectors_mod.HasPendingVanillaStartSelection(map) == true
 				if vanilla_start_pending then
-					local sectors_mod = SuperBigMap.SectorExploration
 					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
 						StretchLog("stretch branch: -> RevealVanillaStartSectors (vanilla-equivalent start)")
 						local n_rev = InvestigationSafeCall("surface: reveal vanilla start sector", map,
 							sectors_mod.RevealVanillaStartSectors, map)
 						StretchLog("stretch branch: RevealVanillaStartSectors returned", { scanned = n_rev })
+						if n_rev ~= 1 then
+							error("vanilla-equivalent initial reveal must scan exactly one sector; got "
+								.. tostring(n_rev))
+						end
 					end
+				elseif cfg_bool("STRETCH_VANILLA_START_SECTOR", false) then
+					error("native start-sector annotation missing before surface stretch")
 				elseif type(StretchRelocateStartSector) == "function" then
 					StretchLog("stretch branch: -> StretchRelocateStartSector")
 					local detail_token = InvestigationBegin("surface: relocate start sector", map)

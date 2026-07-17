@@ -600,13 +600,12 @@ config.StretchShiftHeightsDown = true
 -- ~90% of vanilla steepness ONLY on maps that need it; most maps keep the full 4/3. The
 -- relief-dz and height-range consumers read the stamped factor, so seating stays correct.
 config.StretchAdaptiveZScale = true
--- VANILLA-EQUIVALENT START SECTOR (sbm_sector_exploration PatchInitialExplore +
--- RevealVanillaStartSectors). Vanilla picks the initially revealed sector by resource
--- quality over its 10x10 grid with a map-seed-deterministic weighted rand; on the expanded
--- 20x20 grid the same algorithm picks somewhere else. When true, vanilla's OWN InitialReveal
--- runs over virtual 10x10 sectors at vanilla geometry (same markers, play_ratio, heat,
--- seeded rand), and after the stretch the expanded sectors covering the winner's x4/3 box
--- are revealed instead (replaces the legacy start-sector relocation on this path).
+-- VANILLA-EQUIVALENT START SECTOR (sbm_sector_exploration source annotation +
+-- RevealVanillaStartSectors). Vanilla's OWN InitialReveal runs while the native source markers
+-- still exist, and its first 10x10 winner is recorded. After stretching, only 20x20 sectors that
+-- intersect the proportionally transformed winner box are candidates; vanilla InitialReveal runs
+-- again over that small set and exactly its first result is revealed. This replaces legacy
+-- start-sector relocation and never preserves vanilla's optional second concrete sector.
 config.StretchVanillaStartSector = true
 config.DebugStartSector = false     -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
