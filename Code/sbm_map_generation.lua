@@ -8457,8 +8457,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
 				-- Step 4: consume the native-source start annotation after marker recreation. Only
-				-- expanded sectors intersecting the transformed vanilla winner are considered; vanilla's
-				-- own resource/heat/buildability rule chooses exactly one of them. Mutually exclusive with
+				-- expanded sectors tied for greatest overlap with the transformed vanilla winner are
+				-- considered; vanilla's own resource/heat/buildability rule breaks a positional tie and
+				-- chooses exactly one. Mutually exclusive with
 				-- legacy relocation (which would re-scale a freshly scanned destination sector).
 				local sectors_mod = SuperBigMap.SectorExploration
 				local vanilla_start_pending = sectors_mod
@@ -8467,9 +8468,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if vanilla_start_pending then
 					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
 						StretchLog("stretch branch: -> RevealVanillaStartSectors (vanilla-equivalent start)")
-						local n_rev = InvestigationSafeCall("surface: reveal vanilla start sector", map,
+						local n_rev, reveal_info = InvestigationSafeCall("surface: reveal vanilla start sector", map,
 							sectors_mod.RevealVanillaStartSectors, map)
-						StretchLog("stretch branch: RevealVanillaStartSectors returned", { scanned = n_rev })
+						reveal_info = type(reveal_info) == "table" and reveal_info or {}
+						reveal_info.scanned = n_rev
+						StretchLog("stretch branch: RevealVanillaStartSectors returned", reveal_info)
 						if n_rev ~= 1 then
 							error("vanilla-equivalent initial reveal must scan exactly one sector; got "
 								.. tostring(n_rev))

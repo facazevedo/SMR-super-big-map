@@ -1118,10 +1118,11 @@ local function PatchInitialExplore()
 	return true
 end
 
--- Post-stretch reveal: transform the annotated vanilla winner box, collect only expanded sectors
--- intersecting it, run vanilla's own InitialReveal over those few live sectors, and scan exactly
--- its first result. Then replicate vanilla InitialExplore's tail (commander profile bonus deposit
--- plus forced overview SelectSector). Called instead of StretchRelocateStartSector.
+-- Post-stretch reveal: transform the annotated vanilla winner box, rank the live expanded sectors
+-- by geometric overlap, then run vanilla's own InitialReveal only over the sector(s) tied for the
+-- greatest overlap. Position therefore decides equivalence first; vanilla resource/heat rules are
+-- used only to break a genuine positional tie. Scan exactly the first vanilla result, then replicate
+-- InitialExplore's tail (commander bonus deposit plus forced overview SelectSector).
 local function RevealVanillaStartSectors(map)
 	local State = SuperBigMap.State or {}
 	map = map or Global("MainMap")
@@ -1160,7 +1161,8 @@ local function RevealVanillaStartSectors(map)
 		pcall(city.UpdateBuildableRatio, city, transformed_box)
 	end
 
-	local candidates, candidate_log = {}, {}
+	local overlaps, candidate_log = {}, {}
+	local max_overlap = 0
 	local heat_grid = map.heat_grid
 	Grid.ForEachSector(city, function(sector)
 		local a = sector and sector.area
@@ -1175,16 +1177,35 @@ local function RevealVanillaStartSectors(map)
 			local ok_heat, avg_heat = pcall(heat_grid.GetAverageHeatIn, heat_grid, a)
 			if ok_heat and type(avg_heat) == "number" then sector.avg_heat = avg_heat end
 		end
-		candidates[#candidates + 1] = sector
-		candidates[sector] = true
+		local overlap = ix * iy
+		if overlap > max_overlap then max_overlap = overlap end
+		overlaps[#overlaps + 1] = { sector = sector, overlap = overlap }
 		local marker_count = sector.markers and sector.markers.surface
 			and #sector.markers.surface or 0
 		candidate_log[#candidate_log + 1] = string.format("%s(overlap=%d markers=%d play=%s heat=%s)",
-			tostring(sector.id), ix * iy, marker_count,
+			tostring(sector.id), overlap, marker_count,
 			tostring(sector.play_ratio), tostring(sector.avg_heat))
 	end)
-	if #candidates == 0 then
+	if #overlaps == 0 then
 		error("no expanded sector intersects the transformed vanilla start sector")
+	end
+
+	-- A stretched 10x10 source sector can touch several 20x20 destination sectors. Treating every
+	-- positive intersection as equivalent lets a one-unit sliver beat the sector containing almost
+	-- the entire transformed footprint. Keep only maximum-overlap sectors; exact ties are the only
+	-- case where multiple destination sectors are equally faithful positional equivalents.
+	local candidates, positional_log = {}, {}
+	for i = 1, #overlaps do
+		local record = overlaps[i]
+		if record.overlap == max_overlap then
+			local sector = record.sector
+			candidates[#candidates + 1] = sector
+			candidates[sector] = true
+			positional_log[#positional_log + 1] = tostring(sector.id)
+		end
+	end
+	if #candidates == 0 then
+		error("no maximum-overlap equivalent for transformed vanilla start sector")
 	end
 
 	local initial_reveal = State.original_initial_reveal
@@ -1201,15 +1222,35 @@ local function RevealVanillaStartSectors(map)
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
 	local selected = revealed[1]
-	StartLog("post-stretch vanilla candidate selection", {
+	local diagnostics = {
 		source_sector = tostring(winner.id),
+		source_box = string.format("%d,%d-%d,%d", winner.x0, winner.y0, winner.x1, winner.y1),
+		source_origin = string.format("%d,%d", origin_x, origin_y),
+		source_tiles = string.format("%dx%d", source_w, source_h),
+		final_tiles = string.format("%dx%d", final_w, final_h),
+		scale = string.format("%.9f,%.9f", scale_x, scale_y),
 		transformed_box = string.format("%d,%d-%d,%d", x0, y0, x1, y1),
-		candidate_count = #candidates, candidates = table.concat(candidate_log, " "),
+		intersections = table.concat(candidate_log, " "),
+		max_overlap = max_overlap,
+		positional_candidates = table.concat(positional_log, "+"),
+		positional_candidate_count = #candidates,
+		vanilla_result_count = #revealed,
+		selected = tostring(selected.id),
+	}
+	StartLog("post-stretch vanilla candidate selection", {
+		source_sector = diagnostics.source_sector,
+		source_box = diagnostics.source_box,
+		scale = diagnostics.scale,
+		transformed_box = diagnostics.transformed_box,
+		intersection_count = #overlaps, intersections = diagnostics.intersections,
+		max_overlap = max_overlap, positional_candidates = diagnostics.positional_candidates,
+		candidate_count = #candidates,
 		vanilla_result_count = #revealed, selected = tostring(selected.id),
 	})
-	DebugPrint(string.format("transformed native start: source=%s box=%d,%d-%d,%d candidates=%s selected=%s",
-		tostring(winner.id), x0, y0, x1, y1, table.concat(candidate_log, " "),
-		tostring(selected.id)))
+	DebugPrint(string.format("transformed native start: source=%s source_box=%s scale=%s box=%s intersections=%s max_overlap=%s positional=%s selected=%s",
+		diagnostics.source_sector, diagnostics.source_box, diagnostics.scale,
+		diagnostics.transformed_box, diagnostics.intersections, tostring(max_overlap),
+		diagnostics.positional_candidates, diagnostics.selected))
 
 	-- This is still initial generation: remove any accidental destination reveal produced while the
 	-- class wrapper was being reclaimed, then persist exactly the one vanilla-selected candidate.
@@ -1295,9 +1336,12 @@ local function RevealVanillaStartSectors(map)
 		scanned = scanned_total,
 		initial_sector = tostring(city.InitialSector and city.InitialSector.id),
 	})
+	diagnostics.scanned = scanned_total
+	diagnostics.cleared_preexisting = cleared
+	diagnostics.initial_sector = tostring(city.InitialSector and city.InitialSector.id)
 	DebugPrint(string.format("vanilla-equivalent start revealed: %s sector(s), InitialSector=%s",
 		tostring(scanned_total), tostring(city.InitialSector and city.InitialSector.id)))
-	return scanned_total
+	return scanned_total, diagnostics
 end
 
 local function InstallSectorPatch()
