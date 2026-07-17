@@ -65,6 +65,6 @@ SuperBigMap.EnrichmentSpreadDiagnostics = nil
 --     replace the ScaleSmallObjects duration guess with lifecycle completion events.
 SuperBigMap.SECTOR_PATCH_VERSION = 51
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 90: reject stale cached game-object wrappers after underground
--- enrichment staging, before decoration scaling can call native object methods on them.
-SuperBigMap.GENERATOR_PATCH_VERSION = 90
+-- (sbm_map_generation). Bumped to 91: preserve concrete anomaly-class constructor fields and
+-- normalize sequence/list pairs before recreated markers run their Init validation.
+SuperBigMap.GENERATOR_PATCH_VERSION = 91

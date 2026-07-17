@@ -1572,6 +1572,16 @@ local function NativePropertyIsPortable(prop_meta)
 	return true
 end
 
+-- Property metadata defaults are not always the live subclass value. In particular,
+-- SubsurfaceRareAnomalyMarker inherits the sequence_list property whose metadata default is
+-- GenericAnomalies, while the concrete class overrides the live field to its rare-anomaly list.
+-- Preserve these constructor-critical values directly from the generated source object.
+local native_stable_property_ids = {
+	"resource", "max_amount", "grade", "depth_layer", "entity_variant",
+	"deposit_type", "tech_action", "sequence", "sequence_list", "scan_msg", "revealed",
+	"granted_resource", "granted_amount", "display_name", "description",
+}
+
 local function CaptureNativeMarkerProperties(marker)
 	local values, ids = {}, {}
 	if type(marker.GetProperties) ~= "function" or type(marker.GetProperty) ~= "function" then
@@ -1590,17 +1600,25 @@ local function CaptureNativeMarkerProperties(marker)
 			end
 		end
 	end
+	local captured_ids = {}
+	for i = 1, #ids do captured_ids[ids[i]] = true end
+	for i = 1, #native_stable_property_ids do
+		local id = native_stable_property_ids[i]
+		local ok_value, value = pcall(function() return marker[id] end)
+		if ok_value and value ~= nil then
+			values[id] = CloneNativePropertyValue(marker, value, nil)
+			if not captured_ids[id] then
+				captured_ids[id] = true
+				ids[#ids + 1] = id
+			end
+		end
+	end
 	table.sort(ids)
 	return values, ids
 end
 
 local function NativeRecordSignature(records)
 	local tokens = {}
-	local stable_properties = {
-		"resource", "max_amount", "grade", "depth_layer", "entity_variant",
-		"deposit_type", "tech_action", "sequence", "sequence_list", "granted_resource",
-		"granted_amount", "display_name", "description",
-	}
 	for i = 1, #records do
 		local record = records[i]
 		local props = record.properties or {}
@@ -1608,8 +1626,8 @@ local function NativeRecordSignature(records)
 			tostring(record.class), tostring(record.source_x), tostring(record.source_y),
 			tostring(record.source_z),
 		}
-		for j = 1, #stable_properties do
-			local id = stable_properties[j]
+		for j = 1, #native_stable_property_ids do
+			local id = native_stable_property_ids[j]
 			token[#token + 1] = id .. "=" .. tostring(props[id])
 		end
 		tokens[#tokens + 1] = table.concat(token, ":")
@@ -1668,6 +1686,12 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 			if ok_z then z = value end
 		end
 		local properties, property_ids = CaptureNativeMarkerProperties(marker)
+		if type(properties.sequence) == "string" and properties.sequence ~= "" then
+			Log("captured native anomaly constructor sequence", {
+				class = tostring(marker.class), sequence = properties.sequence,
+				sequence_list = tostring(properties.sequence_list), source_x = x, source_y = y,
+			})
+		end
 		local record = {
 			class = tostring(marker.class), source_x = x, source_y = y, source_z = z,
 			source_hash = marker.SuperBigMapNativeSourceHash,
@@ -2098,6 +2122,71 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 	return verified, stats
 end
 
+local function ScenarioListContains(sequence_list, sequence)
+	local scenarios = Global("Scenarios")
+	local list = type(scenarios) == "table" and scenarios[sequence_list] or nil
+	if type(list) ~= "table" then return false end
+	for i = 1, #list do
+		if type(list[i]) == "table" and list[i].name == sequence then return true end
+	end
+	return false
+end
+
+local function PrepareAnomalyConstructorSequence(map, record, properties)
+	local sequence = properties.sequence
+	if type(sequence) ~= "string" or sequence == "" then return true end
+	local original_list = properties.sequence_list
+	if ScenarioListContains(original_list, sequence) then
+		return true, { mode = "captured", original_list = original_list, final_list = original_list }
+	end
+
+	-- First reproduce the shipped game's own legacy correction before Init validates the pair.
+	-- Calling it on the plain constructor table is safe and lets the corrected value reach Init.
+	local class_table = Engine.ClassTable(record.class)
+	if (properties.sequence_list == nil or properties.sequence_list == "")
+		and type(class_table) == "table" then
+		properties.sequence_list = class_table.sequence_list
+	end
+	local fix_sequence_list = Global("FixSequenceList")
+	if type(fix_sequence_list) == "function" then
+		pcall(fix_sequence_list, properties)
+		if ScenarioListContains(properties.sequence_list, sequence) then
+			return true, { mode = "vanilla_fix", original_list = original_list,
+				final_list = properties.sequence_list }
+		end
+	end
+
+	-- Derived anomaly classes can override the inherited property metadata default. Prefer the
+	-- concrete class value before the generic scenario lookup.
+	local class_list = type(class_table) == "table" and class_table.sequence_list or nil
+	if ScenarioListContains(class_list, sequence) then
+		properties.sequence_list = class_list
+		return true, { mode = "class_default", original_list = original_list, final_list = class_list }
+	end
+
+	-- Compatibility fallback for custom scenarios: resolve the sequence by actual scenario
+	-- membership, never by a hardcoded name. Accept only a unique match.
+	local scenarios = Global("Scenarios")
+	local matches = {}
+	if type(scenarios) == "table" then
+		for list_name, list in pairs(scenarios) do
+			if type(list_name) == "string" and type(list) == "table"
+				and ScenarioListContains(list_name, sequence) then
+				matches[#matches + 1] = list_name
+			end
+		end
+	end
+	table.sort(matches)
+	if #matches == 1 then
+		properties.sequence_list = matches[1]
+		return true, { mode = "unique_scenario_membership", original_list = original_list,
+			final_list = matches[1] }
+	end
+	return false, { mode = #matches == 0 and "not_found" or "ambiguous",
+		original_list = original_list, final_list = properties.sequence_list,
+		matches = table.concat(matches, ",") }
+end
+
 -- Stage 02: after the terrain grid is stretched, reconstruct every source enrichment directly at
 -- its final proportional hex. This avoids both TransferToMap ownership loss and any second random
 -- selection. Constructor properties are supplied before Init (required by anomaly sequence checks).
@@ -2142,6 +2231,24 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			if not final_point then error("record " .. tostring(i) .. ": " .. tostring(transform_error)) end
 			local constructor_properties = {}
 			for id, value in pairs(record.properties or {}) do constructor_properties[id] = value end
+			local sequence_ok, sequence_info =
+				PrepareAnomalyConstructorSequence(map, record, constructor_properties)
+			if not sequence_ok then
+				error(string.format("record %s: cannot resolve anomaly sequence %s from list %s (%s; matches=%s)",
+					tostring(i), tostring(constructor_properties.sequence),
+					tostring(sequence_info and sequence_info.original_list),
+					tostring(sequence_info and sequence_info.mode),
+					tostring(sequence_info and sequence_info.matches)))
+			end
+			if sequence_info and (exhaustive
+				or sequence_info.original_list ~= sequence_info.final_list) then
+				Log("prepared native anomaly constructor sequence", {
+					class = tostring(record.class), index = i,
+					sequence = tostring(constructor_properties.sequence),
+					original_list = tostring(sequence_info.original_list),
+					final_list = tostring(sequence_info.final_list), mode = sequence_info.mode,
+				})
+			end
 			local marker = place_object_in(record.class, map, constructor_properties)
 			if not marker then error("record " .. tostring(i) .. ": constructor returned nil") end
 			created[#created + 1] = marker
