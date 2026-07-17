@@ -1884,12 +1884,12 @@ local function NativePropertyValuesEqual(actual, expected)
 	return false
 end
 
-local function NativeRecordFinalPoint(map, record)
+local function NativeRecordBaseGeometry(map, record)
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
-	local hex_to_world = Global("HexToWorld")
-	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
-		or type(hex_to_world) ~= "function" then return nil, "point/hex API unavailable" end
+	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function" then
+		return nil, "point/WorldToHex API unavailable"
+	end
 	local source_w = tonumber(map.SuperBigMapSourceWidthTiles)
 		or tonumber(map.SuperBigMapGeneratorWidthTiles)
 	local source_h = tonumber(map.SuperBigMapSourceHeightTiles)
@@ -1910,6 +1910,23 @@ local function NativeRecordFinalPoint(map, record)
 	if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then
 		return nil, "WorldToHex failed"
 	end
+	return {
+		raw_x = raw_x, raw_y = raw_y, q = q, r = r,
+		intended_q = q, intended_r = r,
+		scale_x = scale_x, scale_y = scale_y,
+	}
+end
+
+local function NativeRecordFinalPoint(map, record)
+	local point_fn = Global("point")
+	local hex_to_world = Global("HexToWorld")
+	if type(point_fn) ~= "function" or type(hex_to_world) ~= "function" then
+		return nil, "point/HexToWorld API unavailable"
+	end
+	local geometry, geometry_error = NativeRecordBaseGeometry(map, record)
+	if not geometry then return nil, geometry_error end
+	local q = tonumber(record.SuperBigMapResolvedFinalQ) or geometry.q
+	local r = tonumber(record.SuperBigMapResolvedFinalR) or geometry.r
 	local ok_world, x, y = pcall(hex_to_world, q, r)
 	if not ok_world or type(x) ~= "number" or type(y) ~= "number" then
 		return nil, "HexToWorld failed"
@@ -1918,10 +1935,19 @@ local function NativeRecordFinalPoint(map, record)
 	if type(final_point.SetTerrainZ) ~= "function" then return nil, "SetTerrainZ unavailable" end
 	local ok_z, terrain_point = pcall(final_point.SetTerrainZ, final_point, map)
 	if not ok_z or not terrain_point then return nil, "SetTerrainZ failed: " .. tostring(terrain_point) end
-	return terrain_point, nil, {
-		raw_x = raw_x, raw_y = raw_y, x = x, y = y,
-		q = q, r = r, scale_x = scale_x, scale_y = scale_y,
-	}
+	geometry.q, geometry.r, geometry.x, geometry.y = q, r, x, y
+	geometry.intended_x, geometry.intended_y = x, y
+	if q ~= geometry.intended_q or r ~= geometry.intended_r then
+		local ok_intended, intended_x, intended_y = pcall(hex_to_world,
+			geometry.intended_q, geometry.intended_r)
+		if ok_intended and type(intended_x) == "number" and type(intended_y) == "number" then
+			geometry.intended_x, geometry.intended_y = intended_x, intended_y
+		end
+	end
+	geometry.collision_resolved = record.SuperBigMapTransformCollisionResolved == true
+	geometry.resolution_radius = record.SuperBigMapTransformCollisionResolutionRadius
+	geometry.collision_owner_index = record.SuperBigMapTransformCollisionOwnerIndex
+	return terrain_point, nil, geometry
 end
 
 local function NativeRecordSourceHexKey(record)
@@ -1936,6 +1962,156 @@ local function NativeRecordSourceHexKey(record)
 		end
 	end
 	return nil, nil, nil
+end
+
+-- Proportional world-space scaling followed by hex alignment is not injective. Two source points
+-- can sit on opposite sides of a source-hex boundary yet land inside the same destination hex even
+-- though their raw distance increased. Build the complete destination plan before constructing any
+-- objects so every unaffected marker keeps its exact transformed hex and only the later member of
+-- an introduced collision moves. Future primary targets are reserved as well, preventing a repair
+-- from displacing a marker whose own proportional result was already unique.
+local function PrepareNativeRecordFinalPointPlan(map, records, reason)
+	local point_fn = Global("point")
+	local hex_to_world = Global("HexToWorld")
+	if type(point_fn) ~= "function" or type(hex_to_world) ~= "function" then
+		return false, { error = "point/HexToWorld API unavailable" }
+	end
+	local map_w, map_h = MapWorldSize(map)
+	local plans, primary_keys = {}, {}
+	local stats = {
+		records = #records, exact = 0, preserved_source_overlaps = 0,
+		introduced_collisions = 0, resolved = 0, failures = 0, max_resolution_radius = 0,
+	}
+	for i = 1, #records do
+		local record = records[i]
+		record.SuperBigMapResolvedFinalQ = nil
+		record.SuperBigMapResolvedFinalR = nil
+		record.SuperBigMapTransformCollisionResolved = nil
+		record.SuperBigMapTransformCollisionResolutionRadius = nil
+		record.SuperBigMapTransformCollisionOwnerIndex = nil
+		local geometry, geometry_error = NativeRecordBaseGeometry(map, record)
+		if not geometry then
+			stats.failures = stats.failures + 1
+			stats.error = "record " .. tostring(i) .. ": " .. tostring(geometry_error)
+			Log("native enrichment final-point plan failed", {
+				map = tostring(map and map.name), reason = tostring(reason), index = i,
+				error = stats.error,
+			})
+			return false, stats
+		end
+		local key = BadgeHexKey(geometry.q, geometry.r)
+		plans[i] = geometry
+		local owners = primary_keys[key]
+		if not owners then owners = {}; primary_keys[key] = owners end
+		owners[#owners + 1] = i
+	end
+
+	local occupied = {}
+	local function candidate_for(q, r, raw_x, raw_y, radius)
+		local key = BadgeHexKey(q, r)
+		if occupied[key] or primary_keys[key] then return nil end
+		local ok_world, x, y = pcall(hex_to_world, q, r)
+		if not ok_world or type(x) ~= "number" or type(y) ~= "number"
+			or (type(map_w) == "number" and (x < 0 or x >= map_w))
+			or (type(map_h) == "number" and (y < 0 or y >= map_h)) then return nil end
+		local pt = point_fn(x, y)
+		if type(pt.SetTerrainZ) ~= "function" then return nil end
+		local ok_z, terrain_point = pcall(pt.SetTerrainZ, pt, map)
+		if not ok_z or not terrain_point then return nil end
+		local dx, dy = x - raw_x, y - raw_y
+		return { q = q, r = r, x = x, y = y, radius = radius, distance_sq = dx * dx + dy * dy }
+	end
+
+	for i = 1, #records do
+		local record, geometry = records[i], plans[i]
+		local key = BadgeHexKey(geometry.q, geometry.r)
+		local owner_index = occupied[key]
+		if not owner_index then
+			occupied[key] = i
+			stats.exact = stats.exact + 1
+		else
+			local owner_record = records[owner_index]
+			local owner_source_hex = NativeRecordSourceHexKey(owner_record)
+			local source_hex = NativeRecordSourceHexKey(record)
+			local source_overlap = owner_record and ((owner_source_hex and source_hex
+				and owner_source_hex == source_hex)
+				or (not owner_source_hex and not source_hex
+					and owner_record.source_x == record.source_x
+					and owner_record.source_y == record.source_y))
+			if source_overlap then
+				stats.preserved_source_overlaps = stats.preserved_source_overlaps + 1
+			else
+				stats.introduced_collisions = stats.introduced_collisions + 1
+				Log("native enrichment transform collision detected", {
+					map = tostring(map and map.name), reason = tostring(reason), index = i,
+					class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
+					raw_x = geometry.raw_x, raw_y = geometry.raw_y,
+					intended_q = geometry.q, intended_r = geometry.r,
+					owner_index = owner_index, owner_class = tostring(owner_record and owner_record.class),
+					owner_source_x = tostring(owner_record and owner_record.source_x),
+					owner_source_y = tostring(owner_record and owner_record.source_y),
+				})
+				local selected
+				-- With N records, a radius of N is a derived finite bound: even a completely occupied
+				-- local cluster cannot contain every in-bounds hex in all N rings on these maps.
+				for radius = 1, math.max(1, #records) do
+					for dq = -radius, radius do
+						for dr = -radius, radius do
+							local distance = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+							if distance == radius then
+								local candidate = candidate_for(geometry.q + dq, geometry.r + dr,
+									geometry.raw_x, geometry.raw_y, radius)
+								if candidate and (not selected
+									or candidate.distance_sq < selected.distance_sq
+									or (candidate.distance_sq == selected.distance_sq and candidate.q < selected.q)
+									or (candidate.distance_sq == selected.distance_sq and candidate.q == selected.q
+										and candidate.r < selected.r)) then
+									selected = candidate
+								end
+							end
+						end
+					end
+					if selected then break end
+				end
+				if not selected then
+					stats.failures = stats.failures + 1
+					stats.error = "record " .. tostring(i) .. ": no free final hex"
+					Log("native enrichment transform collision resolution failed", {
+						map = tostring(map and map.name), reason = tostring(reason), index = i,
+						class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
+						raw_x = geometry.raw_x, raw_y = geometry.raw_y,
+						intended_q = geometry.q, intended_r = geometry.r,
+						error = stats.error,
+					})
+					return false, stats
+				end
+				record.SuperBigMapResolvedFinalQ = selected.q
+				record.SuperBigMapResolvedFinalR = selected.r
+				record.SuperBigMapTransformCollisionResolved = true
+				record.SuperBigMapTransformCollisionResolutionRadius = selected.radius
+				record.SuperBigMapTransformCollisionOwnerIndex = owner_index
+				occupied[BadgeHexKey(selected.q, selected.r)] = i
+				stats.resolved = stats.resolved + 1
+				stats.max_resolution_radius = math.max(stats.max_resolution_radius, selected.radius)
+				Log("native enrichment transform collision resolved", {
+					map = tostring(map and map.name), reason = tostring(reason), index = i,
+					class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
+					raw_x = geometry.raw_x, raw_y = geometry.raw_y,
+					intended_q = geometry.q, intended_r = geometry.r,
+					resolved_q = selected.q, resolved_r = selected.r,
+					resolved_x = selected.x, resolved_y = selected.y,
+					resolution_radius = selected.radius, owner_index = owner_index,
+				})
+			end
+		end
+	end
+	Log("native enrichment final-point plan complete", {
+		map = tostring(map and map.name), reason = tostring(reason), records = stats.records,
+		exact = stats.exact, preserved_source_overlaps = stats.preserved_source_overlaps,
+		introduced_collisions = stats.introduced_collisions, resolved = stats.resolved,
+		failures = stats.failures, max_resolution_radius = stats.max_resolution_radius,
+	})
+	return true, stats
 end
 
 local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
@@ -2283,6 +2459,12 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 	local DebugLog = SuperBigMap.DebugLog
 	local exhaustive = DebugLog and type(DebugLog.On) == "function"
 		and DebugLog.On("EnrichmentPositionsExhaustive") == true
+	local plan_ok, plan_stats = PrepareNativeRecordFinalPointPlan(map, records, reason)
+	stats.plan = plan_stats
+	if not plan_ok then
+		stats.error = tostring(plan_stats and plan_stats.error or "final-point plan failed")
+		return false, stats
+	end
 	local ok, recreate_error = pcall(function()
 		for i = 1, #records do
 			local record = records[i]
@@ -2341,8 +2523,13 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			marker.SuperBigMapDebugPreStretchHash = record.source_hash
 			marker.SuperBigMapRawStretchedX = geometry.raw_x
 			marker.SuperBigMapRawStretchedY = geometry.raw_y
+			marker.SuperBigMapIntendedStretchedX = geometry.intended_x
+			marker.SuperBigMapIntendedStretchedY = geometry.intended_y
 			marker.SuperBigMapExpectedStretchedX = geometry.x
 			marker.SuperBigMapExpectedStretchedY = geometry.y
+			marker.SuperBigMapTransformCollisionResolved = geometry.collision_resolved
+			marker.SuperBigMapTransformCollisionResolutionRadius = geometry.resolution_radius
+			marker.SuperBigMapTransformCollisionOwnerIndex = geometry.collision_owner_index
 			marker.SuperBigMapNativeRecordIndex = i
 			marker.SuperBigMapNativeRecreatedAtFinal = true
 			local registered_ok, registered, revealed =
@@ -2360,6 +2547,10 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 					source_x = record.source_x, source_y = record.source_y,
 					source_z = tostring(record.source_z), raw_x = geometry.raw_x, raw_y = geometry.raw_y,
 					final_x = x, final_y = y, final_z = tostring(z), q = geometry.q, r = geometry.r,
+					intended_q = geometry.intended_q, intended_r = geometry.intended_r,
+					collision_resolved = tostring(geometry.collision_resolved),
+					resolution_radius = tostring(geometry.resolution_radius),
+					collision_owner_index = tostring(geometry.collision_owner_index),
 					scale_x = tostring(geometry.scale_x), scale_y = tostring(geometry.scale_y),
 					property_count = #record.property_ids,
 					property_ids = table.concat(record.property_ids, ","), registered = tostring(registered),
@@ -2475,10 +2666,12 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 			and math.floor(source_origin_x + (pre_x - source_origin_x) * scale + 0.5) or nil
 		local raw_expected_y = type(pre_y) == "number" and scale
 			and math.floor(source_origin_y + (pre_y - source_origin_y) * scale + 0.5) or nil
-		local expected_x, expected_y = raw_expected_x, raw_expected_y
+		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX) or raw_expected_x
+		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY) or raw_expected_y
 		if type(raw_expected_x) == "number" and type(raw_expected_y) == "number"
 			and type(point_fn) == "function" and type(world_to_hex) == "function"
-			and type(hex_to_world) == "function" then
+			and type(hex_to_world) == "function"
+			and type(marker.SuperBigMapExpectedStretchedX) ~= "number" then
 			local ok_h, eq, er = pcall(world_to_hex, point_fn(raw_expected_x, raw_expected_y))
 			if ok_h and type(eq) == "number" and type(er) == "number" then
 				local ok_w, ex, ey = pcall(hex_to_world, eq, er)
@@ -2500,6 +2693,9 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 			pre_x = pre_x, pre_y = pre_y, pre_z = pre_z, pre_hash = pre_hash,
 			raw_expected_x = raw_expected_x, raw_expected_y = raw_expected_y,
 			expected_x = expected_x, expected_y = expected_y,
+			collision_resolved = marker.SuperBigMapTransformCollisionResolved == true,
+			collision_resolution_radius = marker.SuperBigMapTransformCollisionResolutionRadius,
+			collision_owner_index = marker.SuperBigMapTransformCollisionOwnerIndex,
 		}
 	end)
 
@@ -2614,6 +2810,9 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 			pre_stretch_z = tostring(entry.pre_z), pre_stretch_hash = tostring(entry.pre_hash),
 			raw_scaled_x = tostring(entry.raw_expected_x), raw_scaled_y = tostring(entry.raw_expected_y),
 			expected_stretched_x = tostring(entry.expected_x), expected_stretched_y = tostring(entry.expected_y),
+			transform_collision_resolved = tostring(entry.collision_resolved),
+			transform_collision_resolution_radius = tostring(entry.collision_resolution_radius),
+			transform_collision_owner_index = tostring(entry.collision_owner_index),
 			stretch_delta_x = tostring(entry.expected_x and (entry.x - entry.expected_x)),
 			stretch_delta_y = tostring(entry.expected_y and (entry.y - entry.expected_y)),
 			repulse_same = tostring(entry.profile and entry.profile.repulse_same),
@@ -2695,10 +2894,16 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 		end
 		local raw_x = math.floor(origin_x + (source_x - origin_x) * scale_x + 0.5)
 		local raw_y = math.floor(origin_y + (source_y - origin_y) * scale_y + 0.5)
-		local ok_h, q, r = pcall(world_to_hex, point_fn(raw_x, raw_y))
-		local ok_w, expected_x, expected_y = false, nil, nil
-		if ok_h and type(q) == "number" and type(r) == "number" then
-			ok_w, expected_x, expected_y = pcall(hex_to_world, q, r)
+		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX)
+		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY)
+		local ok_w = type(expected_x) == "number" and type(expected_y) == "number"
+		local q, r
+		if not ok_w then
+			local ok_h
+			ok_h, q, r = pcall(world_to_hex, point_fn(raw_x, raw_y))
+			if ok_h and type(q) == "number" and type(r) == "number" then
+				ok_w, expected_x, expected_y = pcall(hex_to_world, q, r)
+			end
 		end
 		local pos = ObjectPos(marker)
 		local actual_x, actual_y
@@ -2732,6 +2937,8 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 					raw_x = raw_x, raw_y = raw_y, expected_x = tostring(expected_x),
 					expected_y = tostring(expected_y), actual_x = tostring(actual_x),
 					actual_y = tostring(actual_y), expected_z = tostring(expected_z), actual_z = tostring(actual_z),
+					collision_resolved = tostring(marker.SuperBigMapTransformCollisionResolved == true),
+					collision_resolution_radius = tostring(marker.SuperBigMapTransformCollisionResolutionRadius),
 				})
 			end
 		end

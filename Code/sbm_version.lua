@@ -87,4 +87,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- Elevator reconstruction stage to identify the remaining native overlay assertion.
 -- Bumped to 100: distinguish vanilla-preserved native enrichment coordinate overlaps from
 -- transform-introduced collisions, log both owners, and reject only introduced collisions.
-SuperBigMap.GENERATOR_PATCH_VERSION = 100
+-- Bumped to 101: pre-plan every native enrichment destination and move only transform-introduced
+-- hex collisions to the nearest free non-primary hex before recreation.
+SuperBigMap.GENERATOR_PATCH_VERSION = 101
