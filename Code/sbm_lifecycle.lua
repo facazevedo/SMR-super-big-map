@@ -79,26 +79,6 @@ local function InitSeq(message, data)
 	end
 end
 
-local function EnrichmentSpreadSnapshot(map, phase)
-	local diagnostics = SuperBigMap.EnrichmentSpreadDiagnostics
-	if diagnostics and type(diagnostics.Snapshot) == "function" then
-		local profiler = SuperBigMap.LoadingProfiler
-		local token = profiler and type(profiler.InvestigationBegin) == "function"
-			and profiler.InvestigationBegin("diagnostic: enrichment spread lifecycle snapshot", {
-				phase = tostring(phase), work_class = "diagnostic-only",
-				can_disable_without_gameplay_change = true,
-			}, map) or false
-		local result = SafeCall(diagnostics.Snapshot, map, phase)
-		if token and type(profiler.InvestigationEnd) == "function" then
-			profiler.InvestigationEnd(token, {
-				phase = tostring(phase), result = tostring(result),
-				work_class = "diagnostic-only",
-				can_disable_without_gameplay_change = true,
-			}, true)
-		end
-	end
-end
-
 -- Map liveness / terrain size are intentionally NOT in sbm_engine (their resolution
 -- order is context-specific); kept local for map resolution + the apply log.
 local IsLiveMap = Engine.IsLiveMap
@@ -944,7 +924,6 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if not active() then
 		return
 	end
-	EnrichmentSpreadSnapshot(map, "PostNewMapLoaded-entry")
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded", map)
 	if HandleModEditorMap() then return end
 	LogChosenMap(map, "PostNewMapLoaded")
@@ -1112,7 +1091,6 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		})
 	end
 	DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
-	EnrichmentSpreadSnapshot(map, "PostNewMapLoaded-complete")
 end)
 
 -- Engine fires MapSectorsReady at the END of Exploration:InitExploration (after
@@ -1153,10 +1131,6 @@ RegisterOnce("CityInitialized", function(city)
 		return
 	end
 	local map = city and type(city.GetMap) == "function" and city:GetMap() or false
-	-- Vanilla InitBreakThroughAnomalies runs immediately before this message. The deferred
-	-- final-terrain selector uses the flag to subtract the planetary reserve exactly once.
-	if map then map.SuperBigMapBreakthroughPruningDone = true end
-	EnrichmentSpreadSnapshot(map, "CityInitialized")
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and map and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "CityInitialized-readiness-fallback")
@@ -1377,12 +1351,6 @@ local function EnsureGeneratorHookInstalled()
 	end
 	if SuperBigMap.State.main_menu_vanilla == true then
 		return
-	end
-	-- Install the read-only comparison wrapper first. The expansion wrapper then sits above it,
-	-- so the same vanilla generator boundary is observed with step 01 both off and on.
-	local comparison = SuperBigMap.EnrichmentSpreadDiagnostics
-	if comparison and type(comparison.PatchGenerator) == "function" then
-		comparison.PatchGenerator("EnsureGeneratorHookInstalled")
 	end
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchRandomMapGenerator) == "function" then
@@ -1636,7 +1604,6 @@ RegisterOnce("MapGenerated", function(map)
 	if not active() then
 		return
 	end
-	EnrichmentSpreadSnapshot(map, "MapGenerated-before-expansion-finalize")
 	DiagSnapshotEvent("OnMsg.MapGenerated_BEFORE_tile", map)
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
@@ -1688,7 +1655,6 @@ RegisterOnce("MapGenerated", function(map)
 	if gen and type(gen.NotifyGenerationMilestone) == "function" then
 		gen.NotifyGenerationMilestone(map, "MapGenerated", "MapGenerated-handler-complete")
 	end
-	EnrichmentSpreadSnapshot(map, "MapGenerated-complete")
 end)
 
 RegisterOnce("OverviewMode", function(enabled)

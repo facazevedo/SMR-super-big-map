@@ -334,6 +334,7 @@ local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
+local AlignPassagePairsToSharedHex = TerrainCopy.AlignPassagePairsToSharedHex
 local PatchEntranceBadgePosition = TerrainCopy.PatchEntranceBadgePosition
 local RestoreEntranceBadgePositionPatch = TerrainCopy.RestoreEntranceBadgePositionPatch
 local RestoreEntranceBadgePositions = TerrainCopy.RestoreEntranceBadgePositions
@@ -5991,169 +5992,15 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			local replace_breakthrough_selector = not is_underground
-				and cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false)
-
-			-- Breakthrough anomalies are the sole enrichment positions selected through
-			-- GridMinMax instead of grand. The stock procedure calls it for every maximum
-			-- quota slot even when the rolled quota is smaller, so only a fully rolled quota
-			-- makes every returned maximum authoritative. In that safe case, replace a
-			-- same-hex maximum with the next maximum from a private clone. The stock call and
-			-- random stream remain untouched, and the requested anomaly count is unchanged.
-			if type(saved_grid_min_max) == "function" and not replace_breakthrough_selector then
-				grid_min_max_wrapper = function(...)
-					local call_args = PackValues(...)
-					local grid_results = PackValues(saved_grid_min_max(...))
-					local stack = State.rmg_placement_proc_stack
-					local proc = type(stack) == "table" and tostring(stack[#stack]) or ""
-					local exact_breakthrough_call =
-						proc == "PlaceAnomalies_FindAnomalies_Breakthrough"
-						and call_args.n == 3 and call_args[2] == 1 and call_args[3] == true
-					if exact_breakthrough_call then
-						alignment_trace.breakthrough_calls = alignment_trace.breakthrough_calls + 1
-						local candidate = grid_results[4]
-						local candidate_hex = aligned_hex_key(candidate)
-						local collision = candidate_hex and consumed_aligned_hexes[candidate_hex] or false
-						local bonus_to
-						pcall(function() bonus_to = self.BonusCountBreakthrough.to end)
-						local full_quota = cfg_bool("ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR", false)
-							and cfg_bool("COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS", true)
-							and not is_underground
-							and roll_index == #roll_specs
-							and type(self.AnomBreakthroughCount) == "number"
-							and type(rolls.breakthrough_bonus) == "number"
-							and type(bonus_to) == "number"
-							and self.AnomBreakthroughCount + rolls.breakthrough_bonus
-								== self.AnomBreakthroughCount + bonus_to
-						local repair_reason = collision and "collision_detected" or "native_unique"
-
-						if collision then
-							alignment_trace.breakthrough_collisions =
-								alignment_trace.breakthrough_collisions + 1
-						end
-						if collision and full_quota and call_args[1] ~= nil then
-							local ok_clone, work = pcall(function() return call_args[1]:clone() end)
-							if ok_clone and work then
-								local retry = grid_results
-								for attempt = 1, 4096 do
-									local rejected = retry[4]
-									local reject_x, reject_y = point_xyz(rejected)
-									if reject_x == nil or reject_y == nil then
-										repair_reason = "candidate_coordinates_unavailable"
-										break
-									end
-									local ok_retire = pcall(function() work:set(reject_x, reject_y, 0) end)
-									if not ok_retire then
-										repair_reason = "candidate_retire_failed"
-										break
-									end
-									local next_results
-									local ok_next, next_err = pcall(function()
-										next_results = PackValues(saved_grid_min_max(
-											work, Unpack(call_args, 2, call_args.n)))
-									end)
-									if not ok_next then
-										repair_reason = "next_max_error:" .. tostring(next_err)
-										break
-									end
-									local next_max, next_candidate = next_results[2], next_results[4]
-									if type(next_max) ~= "number" or next_max <= 0 or not next_candidate then
-										repair_reason = "next_max_exhausted"
-										break
-									end
-									local next_hex = aligned_hex_key(next_candidate)
-									if not next_hex then
-										repair_reason = "next_max_alignment_unavailable"
-										break
-									elseif not consumed_aligned_hexes[next_hex] then
-										-- Change only the maximum pair consumed by the breakthrough proc. The
-										-- native minimum pair and tuple shape remain byte-for-byte equivalent.
-										grid_results[2] = next_max
-										grid_results[4] = next_candidate
-										candidate = next_candidate
-										candidate_hex = next_hex
-										collision = false
-										repair_reason = "collision_replaced"
-										alignment_trace.breakthrough_replacements =
-											alignment_trace.breakthrough_replacements + 1
-										break
-									end
-									retry = next_results
-									repair_reason = "next_max_still_collides"
-								end
-								pcall(function() work:free() end)
-							else
-								repair_reason = "candidate_clone_failed"
-							end
-						elseif collision and not full_quota then
-							alignment_trace.breakthrough_partial_quota_calls =
-								alignment_trace.breakthrough_partial_quota_calls + 1
-							repair_reason = "partial_quota_fail_closed"
-						end
-
-						-- With a full quota every loop iteration reaches NewAnomaly. Partial-quota
-						-- iterations include an indistinguishable erosion-only tail, so do not claim
-						-- occupancy for them; the final closure audit will still expose any warning.
-						if full_quota and candidate then
-							record_consumed_position(candidate, true, {
-								proc = proc, resource = "subs Anomaly/Breakthrough",
-								index = alignment_trace.breakthrough_calls,
-								shape = "single_point", source = repair_reason == "collision_replaced"
-									and "replacement" or "native",
-								aligns = true, role = "aligned",
-							})
-						elseif candidate then
-							record_consumed_position(candidate, false, {
-								proc = proc, resource = "subs Anomaly/Breakthrough",
-								index = alignment_trace.breakthrough_calls,
-								shape = "single_point", source = "native",
-								aligns = false, role = "accepted_or_erosion_tail_unknown",
-							})
-						end
-						if collision then
-							alignment_trace.breakthrough_retained_collisions =
-								alignment_trace.breakthrough_retained_collisions + 1
-						end
-						AlignmentTrace("breakthrough maximum audit", {
-							call = alignment_trace.breakthrough_calls,
-							full_quota = full_quota, rolled_bonus = tostring(rolls.breakthrough_bonus),
-							bonus_max = tostring(bonus_to), hash = tostring(candidate_hex),
-							collision_retained = collision, repair_reason = repair_reason,
-						})
-					end
-					return Unpack(grid_results, 1, grid_results.n)
-				end
-				-- Stock OnGenerateLogic resolves GridMinMax through its private `_ENV`. Install
-				-- there first and remember the exact raw entry so cleanup restores proxy lookup.
-				if type(generator_closure_env) == "table" then
-					grid_min_max_closure_raw = rawget(generator_closure_env, "GridMinMax")
-					grid_min_max_closure_had_raw = grid_min_max_closure_raw ~= nil
-					local ok_install = pcall(rawset, generator_closure_env,
-						"GridMinMax", grid_min_max_wrapper)
-					grid_min_max_installed_in_closure = ok_install
-						and rawget(generator_closure_env, "GridMinMax") == grid_min_max_wrapper
-				end
-				if not grid_min_max_installed_in_closure then
-					AlignmentTrace("breakthrough GridMinMax hook unavailable", {
-						closure_env = tostring(generator_closure_env),
-						resolved_function = tostring(saved_grid_min_max),
-					})
-				end
-			end
-
-			-- The stock breakthrough filler resolves GridMinMax through an inaccessible private
-			-- environment. Once that grid is exhausted it can return (0,0) as if it were valid,
-			-- so bypass that one procedure before NewAnomaly and rebuild its requested complement
-			-- on the final expanded terrain. All other anomaly/resource/effect procedures retain
-			-- their native selection functions and are protected by the general duplicate guard.
-			-- Authoritative read-only audit of the engine's FINAL alignment loop. The compiled
+			-- Native breakthrough selection runs unchanged on the exact vanilla source. The optional
+			-- ProcInvoke wrapper below now serves only deferred underground artefacts and read-only
+			-- alignment diagnostics. The compiled
 			-- RMG closure owns a private `_ENV`, so changing `_G.HexGetNearestCenter` cannot see
 			-- this call. ProcInvoke gives us the actual local alignment closure and its named
 			-- `to_align`/`work_step` upvalues; inspect the engine-populated `info.align_pos` only
 			-- AFTER the original function runs. No alignment is recomputed or mutated here.
 			if type(saved_proc_invoke) == "function"
 				and (defer_underground_artefacts
-					or replace_breakthrough_selector
 					or (alignment_trace_enabled and not hex_hook_installed_in_closure)) then
 				proc_invoke_wrapper = function(tag, func, randless)
 					if defer_underground_artefacts and tag == "PlaceArtefacts" then
@@ -6177,35 +6024,6 @@ local function PatchRandomMapGenerator()
 							end
 							return details
 						end, randless)
-					end
-					if replace_breakthrough_selector
-						and tag == "PlaceAnomalies_FindAnomalies_Breakthrough" then
-						local target = type(map.SuperBigMapRolledBreakthroughCount) == "number"
-							and map.SuperBigMapRolledBreakthroughCount
-							or ((type(self.AnomBreakthroughCount) == "number"
-								and self.AnomBreakthroughCount or 0)
-								+ (type(rolls.breakthrough_bonus) == "number"
-									and rolls.breakthrough_bonus or 0))
-						target = math.max(0, math.floor(target))
-						map.SuperBigMapBreakthroughRepairTarget = target
-						map.SuperBigMapBreakthroughAnomalySpacing = self.AnomalySpacing
-						map.SuperBigMapBreakthroughDeepChance = self.DeepAnomBreakthroughChance
-						map.SuperBigMapBreakthroughRepairPending = target > 0
-						map.SuperBigMapBreakthroughSelector = "post_generation_vanilla_farthest"
-						AlignmentTrace("bypassed exhausted private breakthrough selector", {
-							target = target, spacing = tostring(self.AnomalySpacing),
-							procedure = tag,
-						})
-						local debug_log = SuperBigMap.DebugLog
-						if debug_log and type(debug_log.Info) == "function" then
-							pcall(debug_log.Info, "Deposits",
-								"deferred breakthrough selection to final expanded terrain", {
-									target = target, spacing = tostring(self.AnomalySpacing),
-								})
-						end
-						-- Keep the native ProcInvoke seed/procedure boundary. Its private function is
-						-- the only skipped work, so later procedure random streams remain independent.
-						return saved_proc_invoke(tag, function() end, randless)
 					end
 					if tag ~= "PlaceAnomalies_AlignToHexGrid" or type(func) ~= "function" then
 						return saved_proc_invoke(tag, func, randless)
@@ -8662,16 +8480,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							InvestigationSafeCall("surface enrichment: resolve badge overlaps", map,
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
-						if type(deposits.RepairBreakthroughAnomalies) == "function" then
-							StretchLog("stretch branch: -> RepairBreakthroughAnomalies")
-							InvestigationSafeCall("surface enrichment: repair breakthrough selection", map,
-								deposits.RepairBreakthroughAnomalies, map)
-						end
 						if type(deposits.LogEnrichmentPositionCensus) == "function" then
 							StretchLog("stretch branch: -> final enrichment position census")
 							InvestigationSafeCall("surface enrichment positions: final after density suite", map,
 								deposits.LogEnrichmentPositionCensus,
-								map, "surface final after topups and breakthroughs", false)
+								map, "surface final after topups", false)
 						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							StretchLog("stretch branch: -> AuditSurfaceTopUpRingExclusivity")
@@ -9140,6 +8953,31 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					position_deposits.LogEnrichmentPositionCensus,
 					map, "underground before stretch", true)
 			end
+			-- Preserve the complete vanilla underground population by value, not by object lifetime.
+			-- This runs only when first access actually starts the stretch, so an intervening save/load
+			-- still persists the original marker objects. The same records are recreated below after
+			-- the final height/type grids exist.
+			if not position_deposits
+				or type(position_deposits.StageAndRemoveNativeEnrichmentsForStretch) ~= "function" then
+				error("underground native enrichment staging API is unavailable")
+			end
+			SetLoadingPhase("Preserving vanilla underground resources and anomalies")
+			StretchLog("underground stretch: -> StageAndRemoveNativeEnrichmentsForStretch")
+			local stage_token = InvestigationBegin(
+				"underground enrichment: capture values and remove source markers", map)
+			local staged, stage_stats = position_deposits.StageAndRemoveNativeEnrichmentsForStretch(
+				map, "underground immediately before terrain stretch")
+			InvestigationEnd(stage_token, {
+				captured = stage_stats and stage_stats.captured,
+				removed = stage_stats and stage_stats.removed,
+				remaining = stage_stats and stage_stats.remaining,
+				signature = stage_stats and stage_stats.signature,
+				error = staged and nil or tostring(stage_stats and stage_stats.error),
+			}, staged == true)
+			if staged ~= true then
+				error("underground native enrichment staging failed: "
+					.. tostring(stage_stats and stage_stats.error or "unknown error"))
+			end
 			SetLoadingPhase("Stretching the underground terrain")
 			local ok_s, n_grids = true, 0
 			if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
@@ -9164,6 +9002,31 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local n_dec = ScaleDecorationsToFull(map, false)
 				InvestigationEnd(detail_token, { moved = n_dec }, true)
 				StretchLog("underground stretch: decorations done", { moved = n_dec })
+			end
+			-- Reconstruct every captured native marker directly at the identical proportional hex used
+			-- by the surface transaction. Constructor properties are restored before Init and the
+			-- complete class/property/coordinate census is verified before top-ups can begin.
+			if not position_deposits
+				or type(position_deposits.RecreateStagedNativeEnrichments) ~= "function" then
+				error("underground native enrichment recreation API is unavailable")
+			end
+			SetLoadingPhase("Restoring vanilla underground resources and anomalies")
+			StretchLog("underground stretch: -> RecreateStagedNativeEnrichments", {
+				records = stage_stats and stage_stats.captured,
+			})
+			local recreate_token = InvestigationBegin(
+				"underground enrichment: recreate native records on final terrain", map)
+			local recreated, recreate_stats = position_deposits.RecreateStagedNativeEnrichments(
+				map, "underground after terrain and decoration stretch")
+			InvestigationEnd(recreate_token, {
+				created = recreate_stats and recreate_stats.created,
+				registered = recreate_stats and recreate_stats.registered,
+				expected = recreate_stats and recreate_stats.expected,
+				error = recreated and nil or tostring(recreate_stats and recreate_stats.error),
+			}, recreated == true)
+			if recreated ~= true then
+				error("underground native enrichment recreation failed: "
+					.. tostring(recreate_stats and recreate_stats.error or "unknown error"))
 			end
 			if type(ScaleMarkersToFull) == "function" then
 				SetLoadingPhase("Repositioning underground resource deposits")
@@ -9302,6 +9165,32 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("deferred underground passage-marker activation failed: "
 						.. tostring(tunnel_result))
 				end
+				if type(AlignPassagePairsToSharedHex) ~= "function" then
+					error("final passage-pair alignment API is unavailable")
+				end
+				SetLoadingPhase("Aligning surface and underground passage entrances")
+				StretchLog("underground stretch: -> AlignPassagePairsToSharedHex")
+				local pair_token = InvestigationBegin(
+					"underground: align linked passages to nearest common buildable hex", map)
+				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map)
+				InvestigationEnd(pair_token, {
+					pairs = pair_stats and pair_stats.pairs,
+					exact = pair_stats and pair_stats.exact,
+					fallback = pair_stats and pair_stats.fallback,
+					checked = pair_stats and pair_stats.checked,
+					moved_dependants = pair_stats and pair_stats.moved_dependants,
+					error = pair_ok and nil or tostring(pair_stats and pair_stats.error),
+				}, pair_ok == true)
+				if pair_ok ~= true then
+					error("final passage-pair alignment failed: "
+						.. tostring(pair_stats and pair_stats.error or "unknown error"))
+				end
+				StretchLog("underground stretch: shared passage-hex alignment complete", {
+					pairs = pair_stats.pairs, exact = pair_stats.exact,
+					fallback = pair_stats.fallback, checked = pair_stats.checked,
+					moved_dependants = pair_stats.moved_dependants,
+				})
+				EntranceSnapshot("underground after final shared passage-hex alignment", map)
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
 				if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -9386,6 +9275,27 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
 						InvestigationSafeCall("underground enrichment: resolve badge overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+					end
+					if cfg_bool("UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING", false) then
+						if type(deposits.RevealAllUndergroundEnrichmentsForTesting) ~= "function" then
+							error("temporary underground enrichment reveal API is unavailable")
+						end
+						SetLoadingPhase("Revealing underground enrichments for verification")
+						StretchLog("underground stretch: -> RevealAllUndergroundEnrichmentsForTesting")
+						local reveal_token = InvestigationBegin(
+							"underground enrichment: temporary reveal-all verification", map)
+						local reveal_ok, reveal_stats =
+							deposits.RevealAllUndergroundEnrichmentsForTesting(map)
+						InvestigationEnd(reveal_token, reveal_stats, reveal_ok == true)
+						if reveal_ok ~= true then
+							error("temporary underground enrichment reveal failed: "
+								.. tostring(reveal_stats and reveal_stats.error or "unknown error"))
+						end
+						StretchLog("underground stretch: temporary enrichment reveal complete", {
+							markers = reveal_stats.markers, requested = reveal_stats.requested,
+							placed = reveal_stats.placed, revealed = reveal_stats.revealed,
+							unresolved = reveal_stats.unresolved,
+						})
 					end
 					if type(deposits.LogEnrichmentPositionCensus) == "function" then
 						StretchLog("underground stretch: -> final enrichment position census")

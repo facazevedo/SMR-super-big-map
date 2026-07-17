@@ -383,7 +383,6 @@ local function IsNativeEnrichmentMarker(marker)
 		and marker.SuperBigMapResourceTopUp ~= true
 		and marker.SuperBigMapAnomalyTopUp ~= true
 		and marker.SuperBigMapEffectTopUp ~= true
-		and marker.SuperBigMapBreakthroughRepair ~= true
 		and marker.SuperBigMapEnrichmentClone ~= true
 end
 
@@ -767,7 +766,6 @@ local function PatchBadgeOverlapPrevention()
 		local additional = marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapBreakthroughRepair == true
 			or marker.SuperBigMapEnrichmentClone == true)
 		if additional and BadgeSpacingEnabledOnMap(map) and IsBadgeMarker(marker)
 			and type(x) == "number" and type(y) == "number" then
@@ -837,7 +835,6 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 		return marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapBreakthroughRepair == true
 			or marker.SuperBigMapEnrichmentClone == true)
 	end
 	-- Start with fixed live badges. Unplaced markers are then claimed one at a time; the first
@@ -1670,6 +1667,88 @@ function DepositRules.StageNativeEnrichmentRecords(map, records, reason)
 	return true
 end
 
+-- Underground generation remains live on the expanded destination while its expensive stretch is
+-- deferred. Immediately before that stretch, turn the native marker objects into the same durable
+-- value records used by the temporary surface source, unregister and remove the source objects, and
+-- let RecreateStagedNativeEnrichments construct them directly on their final proportional hexes.
+-- Doing this at first underground access (rather than at initial generation) also makes save/load
+-- before first access safe: the vanilla marker objects remain the persistent source of truth.
+function DepositRules.StageAndRemoveNativeEnrichmentsForStretch(map, reason)
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		return false, { error = "map/MapForEach unavailable", captured = 0, removed = 0 }
+	end
+	local records, source_objects, capture_stats =
+		DepositRules.CaptureNativeEnrichmentRecords(map, reason)
+	if type(records) ~= "table" then
+		return false, {
+			error = "native enrichment capture returned no record table",
+			captured = 0,
+			removed = 0,
+		}
+	end
+	local staged, stage_error = DepositRules.StageNativeEnrichmentRecords(map, records, reason)
+	if staged ~= true then
+		return false, { error = tostring(stage_error), captured = #records, removed = 0 }
+	end
+	if #records == 0 then
+		local stats = {
+			captured = 0, removed = 0, removed_placed = 0, remaining = 0,
+			signature = capture_stats and capture_stats.signature,
+			class_counts = capture_stats and capture_stats.class_counts_text,
+		}
+		Log("staged empty native enrichment set immediately before terrain stretch", {
+			map = tostring(map.name), reason = tostring(reason), captured = 0,
+			signature = tostring(stats.signature),
+		})
+		return true, stats
+	end
+
+	local done_object = Global("DoneObject")
+	local is_valid = Global("IsValid")
+	if type(done_object) ~= "function" then
+		DepositRules.ClearStagedNativeEnrichmentRecords(map, "source-object removal unavailable")
+		return false, { error = "DoneObject unavailable", captured = #records, removed = 0 }
+	end
+	local removed, removed_placed = 0, 0
+	for marker in pairs(source_objects or {}) do
+		UnregisterNativeMarker(map, marker)
+		local placed_obj = marker and marker.placed_obj
+		if placed_obj and (type(is_valid) ~= "function" or is_valid(placed_obj)) then
+			pcall(done_object, placed_obj)
+			removed_placed = removed_placed + 1
+		end
+		if marker and (type(is_valid) ~= "function" or is_valid(marker)) then
+			pcall(done_object, marker)
+			removed = removed + 1
+		end
+	end
+	local remaining = 0
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if IsNativeEnrichmentMarker(marker) then remaining = remaining + 1 end
+	end)
+	local stats = {
+		captured = #records,
+		removed = removed,
+		removed_placed = removed_placed,
+		remaining = remaining,
+		signature = capture_stats and capture_stats.signature,
+		class_counts = capture_stats and capture_stats.class_counts_text,
+	}
+	if removed ~= #records or remaining ~= 0 then
+		DepositRules.ClearStagedNativeEnrichmentRecords(map, "source-object removal verification failed")
+		stats.error = "native marker removal verification failed"
+		return false, stats
+	end
+	Log("staged and removed native enrichments immediately before terrain stretch", {
+		map = tostring(map.name), reason = tostring(reason), captured = stats.captured,
+		removed = stats.removed, removed_placed = stats.removed_placed,
+		remaining = stats.remaining, signature = tostring(stats.signature),
+		class_counts = tostring(stats.class_counts),
+	})
+	return true, stats
+end
+
 function DepositRules.HasStagedNativeEnrichmentRecords(map)
 	local records = map and pending_native_enrichment_records_by_map[map]
 	return type(records) == "table", type(records) == "table" and #records or 0
@@ -1750,6 +1829,15 @@ local function NativeRecordFinalPoint(map, record)
 end
 
 local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
+	if IsUndergroundMap(map) then
+		-- Vanilla underground enrichments are discovered by proximity. Registering them with the
+		-- surface scan-sector machinery can reveal/place them before the deferred underground map is
+		-- entered, and can invoke placement against a grid that is still being rebuilt.
+		marker.is_placed = false
+		marker.placed_obj = false
+		SetRevealedState(marker, false)
+		return true, false, false
+	end
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not city or type(get_sector) ~= "function" then return true, false, false end
@@ -1815,6 +1903,8 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 	local coordinate_owners = {}
 	local city = map.City
 	local get_sector = Global("GetMapSectorXY")
+	local underground = IsUndergroundMap(map)
+	local is_valid = Global("IsValid")
 	for i = 1, #records do
 		local record = records[i]
 		local marker = by_index[i]
@@ -1862,7 +1952,13 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 				else
 					coordinate_owners[coordinate_key] = i
 				end
-				if city and type(get_sector) == "function" then
+				if underground then
+					local placed_obj = marker.placed_obj
+					if marker.is_placed == true or (placed_obj
+						and (type(is_valid) ~= "function" or is_valid(placed_obj) == true)) then
+						stats.object_state_mismatches = stats.object_state_mismatches + 1
+					end
+				elseif city and type(get_sector) == "function" then
 					local ok_sector, sector = pcall(get_sector, city, actual_x, actual_y)
 					local registered = false
 					if ok_sector and sector and type(sector.GetDepositList) == "function" then
@@ -2084,7 +2180,6 @@ function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretc
 		and (desired_tiles + 0.0) / generator_tiles or nil
 
 	local function marker_origin(marker)
-		if marker.SuperBigMapBreakthroughRepair == true then return "breakthrough_repair" end
 		if marker.SuperBigMapResourceTopUp == true then return "resource_topup" end
 		if marker.SuperBigMapAnomalyTopUp == true then return "ordinary_anomaly_topup" end
 		if marker.SuperBigMapEffectTopUp == true then return "effect_topup" end
@@ -2343,7 +2438,6 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 			or marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapBreakthroughRepair == true
 			or marker.SuperBigMapEnrichmentClone == true then return end
 		stats.checked = stats.checked + 1
 		local source_x = marker.SuperBigMapNativeSourceX
@@ -2464,405 +2558,12 @@ function DepositRules.LogBuildableSectorCensus(map, label)
 end
 
 local function RecordEnrichmentTopUpAudit(map, kind, data)
-	-- Read-only diagnostics only. Native RMG warnings are never buffered or suppressed;
-	-- this reports whether the later map-size density top-up also completed.
-	pcall(function()
-		local debug_log = SuperBigMap.DebugLog
-		if not (debug_log and type(debug_log.On) == "function"
-			and debug_log.On("RmgPlacementExhaustive") == true) then return end
-		local fields = { kind = tostring(kind), map = tostring(map and map.name or "?") }
-		for k, v in pairs(data or {}) do fields[k] = v end
-		debug_log.Info("RmgPlacementExhaustive", "post-stretch enrichment density audit", fields)
-	end)
+	local fields = { kind = tostring(kind), map = tostring(map and map.name or "?") }
+	for k, v in pairs(data or {}) do fields[k] = v end
+	Log("post-stretch enrichment density audit", fields)
 end
 
--- Shared post-generation coordinate guard. Candidate families may supply their own acceptance
--- rule and scoring policy, but every family gets the same non-negotiable invariants: a real
--- non-origin coordinate, valid terrain, an unscanned surface sector, a unique world coordinate,
--- and a unique final hex across every existing enrichment marker.
-local function NewValidatedEnrichmentCoordinateSelector(map, options)
-	options = options or {}
-	local point = Global("point")
-	local world_to_hex = Global("WorldToHex")
-	local hex_to_world = Global("HexToWorld")
-	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
-		or type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function" then
-		return nil, "map/point/hex coordinate APIs unavailable"
-	end
-	local map_w, map_h = MapWorldSize(map)
-	if type(map_w) ~= "number" or type(map_h) ~= "number" then
-		return nil, "map world size unavailable"
-	end
-	local occupied_hex = BuildBadgeOccupancy(map, nil, nil, false)
-	local occupied_world, offered_hex, offered_world = {}, {}, {}
-	local stats = {
-		offered = 0, accepted = 0, reserved = 0, rejected = 0,
-		rejected_origin = 0, rejected_repeat_coordinate = 0,
-		rejected_repeat_hex = 0, rejected_terrain = 0,
-		rejected_sector = 0, rejected_family_rule = 0,
-	}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if not IsEnrichmentMarker(marker) then return end
-		local pos = ObjectPos(marker)
-		if not pos or type(pos.xy) ~= "function" then return end
-		local x, y = pos:xy()
-		if type(x) == "number" and type(y) == "number" then
-			occupied_world[tostring(x) .. ":" .. tostring(y)] = true
-			local ok_h, q, r = pcall(world_to_hex, pos)
-			if ok_h then
-				local key = BadgeHexKey(q, r)
-				if key then occupied_hex[key] = true end
-			end
-		end
-	end)
-
-	local function reject(field)
-		stats.rejected = stats.rejected + 1
-		stats[field] = (stats[field] or 0) + 1
-		return nil
-	end
-
-	local function offer(x, y)
-		stats.offered = stats.offered + 1
-		if type(x) ~= "number" or type(y) ~= "number" or (x == 0 and y == 0) then
-			return reject("rejected_origin")
-		end
-		local ok_h, q, r = pcall(world_to_hex, point(x, y))
-		if not ok_h or type(q) ~= "number" or type(r) ~= "number" then
-			return reject("rejected_terrain")
-		end
-		local ok_w, cx, cy = pcall(hex_to_world, q, r)
-		if not ok_w or type(cx) ~= "number" or type(cy) ~= "number"
-			or cx < 0 or cy < 0 or cx >= map_w or cy >= map_h
-			or (cx == 0 and cy == 0) then
-			return reject("rejected_origin")
-		end
-		local world_key = tostring(cx) .. ":" .. tostring(cy)
-		local hex_key = BadgeHexKey(q, r)
-		if occupied_world[world_key] or offered_world[world_key] then
-			return reject("rejected_repeat_coordinate")
-		end
-		if not hex_key or occupied_hex[hex_key] or offered_hex[hex_key] then
-			return reject("rejected_repeat_hex")
-		end
-		local sector = SectorAtPoint(map, cx, cy)
-		if not sector or (options.require_unscanned ~= false and SectorIsScanned(sector)) then
-			return reject("rejected_sector")
-		end
-		local pt = point(cx, cy)
-		if type(pt.SetTerrainZ) == "function" then
-			local ok_z, terrain_pt = pcall(pt.SetTerrainZ, pt, map)
-			if ok_z and terrain_pt then pt = terrain_pt end
-		end
-		if not CanReceiveDeposit(map, pt)
-			or (options.require_unobstructed == true and not IsUnobstructedAt(map, pt, true)) then
-			return reject("rejected_terrain")
-		end
-		local candidate = {
-			point = pt, x = cx, y = cy, q = q, r = r,
-			hex_key = hex_key, world_key = world_key, sector = sector,
-		}
-		if type(options.accept) == "function" and options.accept(candidate) ~= true then
-			return reject("rejected_family_rule")
-		end
-		offered_world[world_key], offered_hex[hex_key] = true, true
-		stats.accepted = stats.accepted + 1
-		return candidate
-	end
-
-	local function reserve(candidate)
-		if not candidate or occupied_world[candidate.world_key]
-			or occupied_hex[candidate.hex_key] then return false end
-		occupied_world[candidate.world_key] = true
-		occupied_hex[candidate.hex_key] = true
-		stats.reserved = stats.reserved + 1
-		return true
-	end
-
-	return { Offer = offer, Reserve = reserve, Stats = function() return stats end }
-end
-
--- Replace the stock breakthrough-only GridMinMax filler on the FINAL surface. This retains the
--- vanilla breakthrough policy rather than treating breakthroughs like ordinary anomalies:
--- candidates must satisfy the anomaly layer's full same-family repulsion distance, then the
--- farthest point from resource deposits and already-selected breakthroughs wins each round.
-function DepositRules.RepairBreakthroughAnomalies(map)
-	if not ExpansionAdditionStagesReady("breakthrough repair") then return true end
-	map = map or Global("CurrentMap")
-	if cfg().ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR ~= true
-		or not map or IsUndergroundMap(map)
-		or map.SuperBigMapBreakthroughRepairPending ~= true then return true end
-	local point = Global("point")
-	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
-	local function invariant_fail(reason)
-		map.SuperBigMapBreakthroughRepairComplete = false
-		map.SuperBigMapBreakthroughRepairPending = true
-		Log("breakthrough placement invariant FAILED", { reason = tostring(reason) })
-		error("breakthrough placement invariant failed: " .. tostring(reason))
-	end
-	if type(point) ~= "function" or type(clone_fn) ~= "function"
-		or type(map.MapForEach) ~= "function" then
-		invariant_fail("clone/map APIs unavailable")
-	end
-	local target = tonumber(map.SuperBigMapBreakthroughRepairTarget
-		or map.SuperBigMapRolledBreakthroughCount) or 0
-	target = math.max(0, math.floor(target))
-	local reserved_for_planetary = 0
-	if map.SuperBigMapBreakthroughPruningDone == true then
-		local game_consts = Global("g_Consts")
-		reserved_for_planetary = type(game_consts) == "table"
-			and tonumber(game_consts.PlanetaryBreakthroughCount) or 0
-		reserved_for_planetary = math.max(0, math.floor(reserved_for_planetary or 0))
-		target = math.max(0, target - reserved_for_planetary)
-		local colony = Global("UIColony")
-		if colony and type(colony.UpdateAvailableBreackthroughTechs) == "function" then
-			local ok_available, available = pcall(
-				colony.UpdateAvailableBreackthroughTechs, colony, map)
-			if ok_available and type(available) == "table" then
-				target = math.min(target, #available)
-			end
-		end
-	end
-
-	local templates, fallback_templates = {}, {}
-	local breakthroughs, anomaly_positions, resource_anchors = {}, {}, {}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		local pos = marker and ObjectPos(marker)
-		local x, y
-		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
-		if IsAnomalyMarker(marker) then
-			if tostring(marker.class or "") == "SubsurfaceAnomalyMarker" then
-				templates[#templates + 1] = marker
-			end
-			fallback_templates[#fallback_templates + 1] = marker
-			if type(x) == "number" and type(y) == "number" then
-				anomaly_positions[#anomaly_positions + 1] = { x = x, y = y }
-				if marker.tech_action == "breakthrough" then
-					breakthroughs[#breakthroughs + 1] = marker
-					resource_anchors[#resource_anchors + 1] = { x = x, y = y }
-				end
-			end
-		elseif IsResourceDepositMarker(marker)
-			and type(x) == "number" and type(y) == "number" then
-			resource_anchors[#resource_anchors + 1] = { x = x, y = y }
-		end
-	end)
-	local current = #breakthroughs
-	if current > target then
-		invariant_fail(string.format("current count %d exceeds target %d", current, target))
-	end
-	if current >= target then
-		map.SuperBigMapBreakthroughRepairPending = false
-		map.SuperBigMapBreakthroughRepairComplete = current == target
-		Log("breakthrough farthest-point repair already satisfied", {
-			target = target, current = current, reserved_for_planetary = reserved_for_planetary,
-		})
-		return current == target
-	end
-	local deficit = target - current
-	if #templates == 0 then templates = fallback_templates end
-	if #templates == 0 then
-		invariant_fail("no anomaly marker template")
-	end
-
-	local guim = tonumber(Global("guim")) or 1000
-	local anomaly_spacing = tonumber(map.SuperBigMapBreakthroughAnomalySpacing) or (200 * guim)
-	local min_spacing = math.max(0, anomaly_spacing * 2)
-	local min_spacing_sq = min_spacing * min_spacing
-	local validator, validator_error = NewValidatedEnrichmentCoordinateSelector(map, {
-		require_unscanned = true,
-		require_unobstructed = true,
-		accept = function(candidate)
-			for _, pos in ipairs(anomaly_positions) do
-				local dx, dy = candidate.x - pos.x, candidate.y - pos.y
-				if dx * dx + dy * dy < min_spacing_sq then return false end
-			end
-			return true
-		end,
-	})
-	if not validator then
-		invariant_fail(tostring(validator_error))
-	end
-	local map_w, map_h, tile = MapWorldSize(map)
-	if not map_w or not map_h or not tile then
-		invariant_fail("map size unavailable")
-	end
-	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
-	local span_x, span_y = map_w - 2 * margin, map_h - 2 * margin
-	if span_x <= 0 or span_y <= 0 then
-		invariant_fail("final surface has no sampling span")
-	end
-
-	local candidates = {}
-	-- The final map has roughly 400 sectors. A 12k pool gives the farthest-point pass broad
-	-- whole-map coverage (about 30 accepted candidates per sector on average) without scanning
-	-- every terrain hex.
-	local candidate_goal = math.max(12000, deficit * 1500)
-	local cached = CachedTopUpCandidates(map)
-	for _, source in ipairs(cached or {}) do
-		if #candidates >= candidate_goal then break end
-		local candidate = validator.Offer(source.x, source.y)
-		if candidate then candidates[#candidates + 1] = candidate end
-	end
-	local random_attempts, max_random_attempts = 0, candidate_goal * 40
-	while #candidates < candidate_goal and random_attempts < max_random_attempts do
-		random_attempts = random_attempts + 1
-		local candidate = validator.Offer(
-			margin + RandInt(span_x), margin + RandInt(span_y))
-		if candidate then candidates[#candidates + 1] = candidate end
-	end
-	if #candidates < deficit then
-		invariant_fail(string.format("candidate builder produced %d for %d placements",
-			#candidates, deficit))
-	end
-
-	-- Seed every candidate with its distance to the vanilla resource/breakthrough anchors.
-	-- Resource-less test maps fall back to anomaly anchors; real generated surfaces have many.
-	local score_anchors = #resource_anchors > 0 and resource_anchors or anomaly_positions
-	for _, candidate in ipairs(candidates) do
-		local score = math.huge
-		for _, anchor in ipairs(score_anchors) do
-			local dx, dy = candidate.x - anchor.x, candidate.y - anchor.y
-			local dist_sq = dx * dx + dy * dy
-			if dist_sq < score then score = dist_sq end
-		end
-		if score == math.huge then
-			local edge = math.min(candidate.x, candidate.y,
-				map_w - candidate.x, map_h - candidate.y)
-			score = edge * edge
-		end
-		candidate.farthest_score = score
-	end
-
-	local selected = {}
-	for _ = 1, deficit do
-		local best, best_score
-		for _, candidate in ipairs(candidates) do
-			if not candidate.selected and not candidate.too_close
-				and (best_score == nil or candidate.farthest_score > best_score) then
-				best, best_score = candidate, candidate.farthest_score
-			end
-		end
-		if not best or not validator.Reserve(best) then
-			invariant_fail("farthest selector exhausted valid coordinates")
-		end
-		best.selected = true
-		selected[#selected + 1] = best
-		for _, candidate in ipairs(candidates) do
-			if not candidate.selected and not candidate.too_close then
-				local dx, dy = candidate.x - best.x, candidate.y - best.y
-				local dist_sq = dx * dx + dy * dy
-				if dist_sq < min_spacing_sq then
-					candidate.too_close = true
-				elseif dist_sq < candidate.farthest_score then
-					candidate.farthest_score = dist_sq
-				end
-			end
-		end
-	end
-
-	local deep_chance = tonumber(map.SuperBigMapBreakthroughDeepChance)
-	if deep_chance then deep_chance = math.max(0, math.min(100, deep_chance)) end
-	local added = 0
-	for index, candidate in ipairs(selected) do
-		local template = templates[((index - 1) % #templates) + 1]
-		local template_pos = ObjectPos(template)
-		if not template_pos or type(template_pos.xy) ~= "function" then
-			invariant_fail("template position unavailable")
-		end
-		local tx, ty = template_pos:xy()
-		local clone = clone_fn(map, template, point(candidate.x - tx, candidate.y - ty, 0))
-		if not clone or type(clone) ~= "table" then
-			invariant_fail("marker clone failed")
-		end
-		clone.tech_action = "breakthrough"
-		clone.sequence = ""
-		clone.sequence_list = ""
-		if deep_chance then
-			clone.depth_layer = RandInt(100) < deep_chance and 2 or 1
-		end
-		clone.SuperBigMapBreakthroughRepair = true
-		clone.SuperBigMapBreakthroughSelection = "vanilla_farthest_point"
-		if type(clone.SetPos) == "function" then
-			local ok_set = pcall(clone.SetPos, clone, candidate.point)
-			if not ok_set then
-				invariant_fail("marker SetPos failed")
-			end
-		end
-		clone.is_placed = false
-		clone.placed_obj = false
-		SetRevealedState(clone, false)
-		if not candidate.sector or type(candidate.sector.RegisterDeposit) ~= "function"
-			or pcall(candidate.sector.RegisterDeposit, candidate.sector, clone) ~= true then
-			invariant_fail("sector registration failed")
-		end
-		added = added + 1
-	end
-	-- Recount the live map and re-check the two placement invariants rather than trusting the
-	-- clone counter. A mismatch is an implementation failure, never a normal terrain shortfall.
-	local final_positions, final_world, final_hex = {}, {}, {}
-	local duplicate_world, duplicate_hex = 0, 0
-	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
-		if not IsAnomalyMarker(marker) or marker.tech_action ~= "breakthrough" then return end
-		local pos = ObjectPos(marker)
-		if not pos or type(pos.xy) ~= "function" then return end
-		local x, y = pos:xy()
-		if type(x) ~= "number" or type(y) ~= "number" then return end
-		local world_key = tostring(x) .. ":" .. tostring(y)
-		if final_world[world_key] then duplicate_world = duplicate_world + 1 end
-		final_world[world_key] = true
-		local _, _, hex_key = BadgeObjectHex(marker)
-		if hex_key and final_hex[hex_key] then duplicate_hex = duplicate_hex + 1 end
-		if hex_key then final_hex[hex_key] = true end
-		final_positions[#final_positions + 1] = { x = x, y = y }
-	end)
-	local min_pair_distance
-	for i = 1, #final_positions do
-		for j = i + 1, #final_positions do
-			local dx = final_positions[i].x - final_positions[j].x
-			local dy = final_positions[i].y - final_positions[j].y
-			local distance = math.sqrt(dx * dx + dy * dy)
-			if not min_pair_distance or distance < min_pair_distance then
-				min_pair_distance = distance
-			end
-		end
-	end
-	local final_count = #final_positions
-	map.SuperBigMapBreakthroughRepairComplete = final_count == target
-		and duplicate_world == 0 and duplicate_hex == 0
-		and (not min_pair_distance or min_pair_distance >= min_spacing)
-	map.SuperBigMapBreakthroughRepairPending = not map.SuperBigMapBreakthroughRepairComplete
-	map.SuperBigMapBreakthroughRepairStats = {
-		target = target, current = current, added = added, final = final_count,
-		pre_prune_target = map.SuperBigMapBreakthroughRepairTarget,
-		reserved_for_planetary = reserved_for_planetary,
-		min_spacing = min_spacing, min_pair_distance = min_pair_distance,
-		duplicate_world = duplicate_world, duplicate_hex = duplicate_hex,
-		candidates = #candidates,
-		random_attempts = random_attempts, coordinate_stats = validator.Stats(),
-	}
-	Log("breakthrough anomalies rebuilt with vanilla farthest-point selection", {
-		target = target, current = current, added = added, final = final_count,
-		pre_prune_target = tostring(map.SuperBigMapBreakthroughRepairTarget),
-		reserved_for_planetary = reserved_for_planetary,
-		min_spacing = min_spacing, min_pair_distance = tostring(min_pair_distance),
-		duplicate_world = duplicate_world, duplicate_hex = duplicate_hex,
-		candidates = #candidates,
-		random_attempts = random_attempts,
-	})
-	RecordEnrichmentTopUpAudit(map, "breakthroughs", {
-		complete = map.SuperBigMapBreakthroughRepairComplete, target = target, current = current,
-		added = added, final = final_count, candidates = #candidates,
-	})
-	if final_count ~= target or duplicate_world > 0 or duplicate_hex > 0
-		or (min_pair_distance and min_pair_distance < min_spacing) then
-		invariant_fail(string.format(
-			"final=%d target=%d duplicate_world=%d duplicate_hex=%d min_pair=%s required=%s",
-			final_count, target, duplicate_world, duplicate_hex,
-			tostring(min_pair_distance), tostring(min_spacing)))
-	end
-	return true, map.SuperBigMapBreakthroughRepairStats
-end
+-- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
 function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
@@ -2891,7 +2592,7 @@ function DepositRules.TopUpDeposits(map)
 		return
 	end
 
-	-- Area factor = (desired/generated)^2 (same as sbm_rmg_placement); an override forces it.
+	-- Area factor = (desired/generated)^2; an explicit resource-only override may force it.
 	local area_factor = 1.0
 	local override = cfg().DEPOSIT_COUNT_SCALE_OVERRIDE
 	if type(override) == "number" and override > 0 then
@@ -2931,18 +2632,12 @@ function DepositRules.TopUpDeposits(map)
 		end
 	end)
 
-	-- Per-resource targets normally preserve the generated mix. When the RMG reported
-	-- an explicit shortfall, use its requested native count as the floor before applying
-	-- the map area factor, so Concrete 11/27 becomes a target based on 27, not 11.
+	-- The complete captured vanilla marker population is the sole density baseline. Native
+	-- generator requests are deliberately irrelevant here: exact vanilla generation already
+	-- decided which markers exist, and the expanded map scales that observed population.
 	local target_by_type, target_keys = {}, {}
 	for res, count in pairs(src_by_type) do
 		target_by_type[res] = math.floor(count * area_factor + 0.5)
-	end
-	for res, count in pairs(map.SuperBigMapExpectedResourceCounts or {}) do
-		if type(count) == "number" and count > 0 then
-			local floor_target = math.floor(count * area_factor + 0.5)
-			target_by_type[res] = math.max(target_by_type[res] or 0, floor_target)
-		end
 	end
 	local target, shortfall = 0, 0
 	for res, count in pairs(target_by_type) do
@@ -3127,13 +2822,10 @@ end
 
 -- POST-GENERATION anomaly top-up (config TOPUP_ANOMALIES). Raises the ANOMALY population
 -- to vanilla density x area WITHOUT touching the generator: the previous in-generation count
--- scaling (sbm_rmg_placement) shifted the generator's random stream, so the same coordinates
--- produced a DIFFERENT map than vanilla (terrain prefabs at other positions/rotations) -- the
--- user requires bit-identical generation, so RmgPlacement.Begin is now skipped in stretch mode
--- and the scaling happens here instead. Clones existing standard anomaly markers; the actual
+-- scaling happens here after exact vanilla generation so no generator random stream changes.
+-- Clones existing standard anomaly markers; the actual
 -- reward resolves at scan time. This density pass deliberately does not scale breakthroughs;
--- their finite rolled target is restored separately by RepairBreakthroughAnomalies after City
--- reserve pruning, using the breakthrough family's vanilla farthest-point placement policy.
+-- breakthroughs are preserved exactly from the vanilla source and are never density-topped-up.
 -- safety arguments as the original design. Only standard `complete`, `unlock`, and event
 -- `sequence` deficits are cloned. Those previously selected reward categories are placed
 -- exclusively in the FINAL map's outer three-sector mountain ring. `other` (including unique/
@@ -3257,15 +2949,6 @@ function DepositRules.TopUpAnomalies(map)
 			target_by_kind[kind] = current_count
 		end
 	end
-	for kind, count in pairs(map.SuperBigMapExpectedAnomalyCounts or {}) do
-		if scalable_kind[kind] and type(count) == "number" and count >= 0 then
-			local special_current = math.max(0, (current_by_kind[kind] or 0)
-				- (current_standard_by_kind[kind] or 0))
-			local floor_target = special_current + math.floor(count * area_factor + 0.5)
-			target_by_kind[kind] = math.max(target_by_kind[kind] or 0, floor_target)
-		end
-	end
-
 	-- Build the engine-configured Event scenario pool. Prefer scenarios not already
 	-- assigned to native markers; once exhausted, reuse is allowed just as vanilla's
 	-- PlaceEventAnomalies extends a short scenario pool.
@@ -4874,7 +4557,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local additional = marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapBreakthroughRepair == true
 			or marker.SuperBigMapEnrichmentClone == true)
 		if additional and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
@@ -5098,6 +4780,67 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	Log("underground enrichment reachability audit complete", stats)
 	ProfileStep("underground enrichment reachability audit complete", stats, map)
 	return unresolved == 0, stats
+end
+
+-- Temporary visual verification switch. Production underground discovery is proximity-based;
+-- this deliberately invokes the same vanilla RevealDeposits operation over the final marker set
+-- only after restoration, top-up placement, and reachability correction are complete.
+function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
+	if cfg().UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING ~= true then
+		return true, { enabled = false, markers = 0, requested = 0, placed = 0, revealed = 0 }
+	end
+	map = map or Global("CurrentMap")
+	if not IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
+		return false, { enabled = true, error = "underground map API unavailable" }
+	end
+	local markers, by_class = {}, {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		markers[#markers + 1] = marker
+		local class = tostring(marker.class or "?")
+		by_class[class] = (by_class[class] or 0) + 1
+	end)
+	local reveal_deposits = Global("RevealDeposits")
+	if type(reveal_deposits) ~= "function" then
+		return false, { enabled = true, error = "RevealDeposits unavailable", markers = #markers }
+	end
+	local requested = {}
+	for i = 1, #markers do
+		if markers[i].is_placed ~= true then requested[#requested + 1] = markers[i] end
+	end
+	local reveal_ok, reveal_error = true, nil
+	if #requested > 0 then
+		reveal_ok, reveal_error = pcall(reveal_deposits, requested)
+	end
+	local placed, revealed, unresolved = 0, 0, 0
+	local is_valid = Global("IsValid")
+	for i = 1, #markers do
+		local marker = markers[i]
+		local placed_obj = marker.placed_obj
+		local placed_valid = placed_obj
+			and (type(is_valid) ~= "function" or is_valid(placed_obj) == true)
+		if marker.is_placed == true or placed_valid then placed = placed + 1 end
+		if placed_valid then
+			SetRevealedState(placed_obj, true)
+			if placed_obj.revealed == true then revealed = revealed + 1 end
+		else
+			-- Some marker families provide their own visibility instead of a separate placed object.
+			SetRevealedState(marker, true)
+			if marker.revealed == true then revealed = revealed + 1 end
+		end
+		if marker.is_placed ~= true and not placed_valid then unresolved = unresolved + 1 end
+	end
+	local stats = {
+		enabled = true, markers = #markers, requested = #requested, placed = placed,
+		revealed = revealed, unresolved = unresolved, classes = TallyString(by_class),
+		reveal_call_ok = reveal_ok,
+	}
+	Log("TEMP revealed all final underground enrichments for visual verification", stats)
+	if not reveal_ok then
+		stats.error = tostring(reveal_error)
+		return false, stats
+	end
+	return true, stats
 end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker

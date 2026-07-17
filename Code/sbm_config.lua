@@ -134,24 +134,6 @@ config.DebugDeposits      = true    -- TEMP multi-run verification: complementar
 -- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
 -- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
 config.DebugTopUpEdgeDistribution = false
-config.DebugRmgPlacement  = false   -- RmgPlacement: deposit/anomaly placement auto-fit (coverage, scale, placed counts)
--- Exhaustive trace for the generator's enrichment-placement transaction. Logs every
--- ResolveBuildable/PlaceAnomalies boundary, all relaxed border/spacing values, every private
--- RMG warning argument tuple, and native placed-vs-requested counts. Temporarily enabled while
--- the loading-screen placement failures are being investigated; disable for release.
-config.DebugRmgPlacementExhaustive = false
--- Exhaustive read-only alignment trace. When the private generator closure is inaccessible, the
--- sandbox-safe marker-factory path still records actual post-snap hashes/classes/subtypes and
--- correlates collisions with the complete predicted raw-candidate stream. Never moves markers.
-config.DebugRmgAlignmentExhaustive = false
--- Correlated census of every resource, anomaly, and effect marker before terrain stretch,
--- immediately after marker scaling, and after the final density suite.
-config.DebugEnrichmentPositionsExhaustive = false
--- Mode-independent, read-only trace for comparing enrichment spread with expansion step 01 on
--- and off. It observes the vanilla generator beneath any expansion wrapper and logs generator
--- inputs, procedure random fingerprints, placement-helper results, final factory coordinates,
--- and complete post-generation marker/spread censuses. Leave enabled for both comparison runs.
-config.DebugEnrichmentSpreadComparison = false
 config.DebugStretch       = false
 config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
 config.DebugLoadTime      = false
@@ -380,12 +362,11 @@ config.DeferExpandedBackingUntilAfterVanillaSource = false
 config.ExpansionStep02StretchAndTransformVanillaSource = true
 -- 03: Generate only the additional enrichments required by the increased area, treating every
 -- transformed native enrichment as an immutable repulsion obstacle, then register and audit them.
-config.ExpansionStep03GenerateAdditionalEnrichments = false
--- 04 (former 02): Preserve vanilla enrichment borders, counts, spacing, and repulsion.
-config.ExpansionStep04PreserveVanillaEnrichmentRules = true
--- 05 (former 03): Reject exhausted, origin, repeated-coordinate, and repeated-hex native candidates.
-config.ExpansionStep05RejectInvalidNativeCandidates = false
--- 06 (former 04): Capture every native enrichment coordinate and target shortfall before stretching.
+config.ExpansionStep03GenerateAdditionalEnrichments = true
+-- 04 and 05 are retired compatibility slots. Native generation now runs unchanged on the exact
+-- vanilla source backing, so neither generator-rule mutation nor native-candidate correction is
+-- part of the expansion pipeline.
+-- 06 (former 04): Capture every native enrichment coordinate, class, and property before stretching.
 config.ExpansionStep06CapturePreStretchEnrichments = true
 -- 07 (former 05): Stretch the generated source terrain grids to the full expanded allocation.
 config.ExpansionStep07StretchTerrain = true
@@ -398,25 +379,25 @@ config.ExpansionStep10VerifyNativeScale = true
 -- 11 (former 09): Rebuild final passability and buildability before selecting added enrichment.
 config.ExpansionStep11RebuildGameplayGrids = true
 -- 12 (former 10): Build the coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
-config.ExpansionStep12BuildEnrichmentOccupancy = false
--- 13 (former 11): Calculate resource, effect, ordinary-anomaly, and breakthrough additions.
-config.ExpansionStep13CalculateEnrichmentAdditions = false
+config.ExpansionStep12BuildEnrichmentOccupancy = true
+-- 13 (former 11): Calculate resource, effect, and eligible ordinary-anomaly additions.
+config.ExpansionStep13CalculateEnrichmentAdditions = true
 -- 14 (former 12): Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
-config.ExpansionStep14ValidateEnrichmentCandidates = false
+config.ExpansionStep14ValidateEnrichmentCandidates = true
 -- 15 (former 13): Restrict each family to its configured region, including the anomaly outer ring.
-config.ExpansionStep15ApplyCategoryRegions = false
--- 16 (former 14): Run the randomized vanilla or breakthrough farthest-point family selector.
-config.ExpansionStep16SelectCategoryCandidates = false
+config.ExpansionStep15ApplyCategoryRegions = true
+-- 16 (former 14): Run the randomized category-specific candidate selector.
+config.ExpansionStep16SelectCategoryCandidates = true
 -- 17 (former 15): Reserve each accepted coordinate and aligned hex before selecting another marker.
-config.ExpansionStep17ReserveCandidatePositions = false
+config.ExpansionStep17ReserveCandidatePositions = true
 -- 18 (former 16): Perform final alignment and revalidate the aligned coordinate and hex.
-config.ExpansionStep18AlignAndRevalidateCandidates = false
+config.ExpansionStep18AlignAndRevalidateCandidates = true
 -- 19 (former 17): Construct markers only after their final candidate passes every enabled rule.
-config.ExpansionStep19CreateEnrichmentMarkers = false
+config.ExpansionStep19CreateEnrichmentMarkers = true
 -- 20 (former 18): Register surface markers and configure underground proximity reveal.
-config.ExpansionStep20RegisterAndRevealMarkers = false
--- 21 (former 19): Audit counts, coordinates, hexes, repulsion, regions, and breakthrough spread.
-config.ExpansionStep21AuditFinalEnrichments = false
+config.ExpansionStep20RegisterAndRevealMarkers = true
+-- 21 (former 19): Audit counts, coordinates, hexes, repulsion, and category regions.
+config.ExpansionStep21AuditFinalEnrichments = true
 
 -- Stretch-only expanded-map allocation. A native source is generated once and
 -- proportionally resampled over this destination; no terrain is tiled or mirrored.
@@ -467,6 +448,11 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- RevealDarkness.lua normally restores hr.EnableDarknessReveal=90 on every underground map
 -- switch; the lifecycle hook overrides it to 0 after the switch. Set false again for release.
 config.UndergroundRevealAllDarkness = true
+-- TEMP (testing): after the deferred underground stretch, vanilla restoration, top-ups, and
+-- reachability corrections finish, place and reveal every underground enrichment immediately.
+-- This bypasses proximity discovery only for visual distribution verification; set false again
+-- after the underground population has been confirmed.
+config.RevealAllUndergroundEnrichmentsForTesting = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -553,59 +539,10 @@ config.LimitBuildableGridToSource = true
 -- into the expanded backing grid so vanilla never sees 8192 and the destination stays 8192.
 config.BridgeVanillaHeightGrid = true
 
--- Legacy RMG placement tuning retained for diagnostic steps 04-05. With the current defaults,
--- step 04 preserves exact vanilla placement and step 05 remains off. Native shortfall completion
--- stays hard-disabled because stage 03 must add enrichments only after the native transform.
--- Zero the per-layer placement borders (DepBorderSurf/Subs/Terr/Anomaly/Effects)
--- during generation. This recovers the candidate cells the border erosion ate and is
--- the main lever that revives FreeTech (whose border defaults to max_border ->
--- DepBorderSubs). true = zero them (recommended), false = leave vanilla borders.
-config.RmgPlacementZeroBorders = true
--- Floor on the base resource/effect spacing scale. 0.6 is the closest observed setting
--- that seats the full native resource set while retaining useful separation. Same-anomaly
--- packing has its own narrowly lower cap below because those markers share one eroded mask.
-config.RmgPlacementSpacingFloor = 0.6
--- Resource layers share the same clipped play zone and mutually erase candidates through
--- RepulseAll. Scale their ResourcePreset distances with the measured coverage too; zeroing
--- borders alone cannot recover cells already consumed by earlier layers (the 11/27 Concrete
--- failure in the diagnostic run).
-config.RmgPlacementScaleDeposits = true
--- Extra squeeze multiplier applied on top of the measured sqrt(coverage) scale
--- (1.0 = auto only). Set below 1.0 to pack tighter than coverage predicts if a run
--- still shows shortfall; the floor above still bounds it. Tune from the
--- DebugRmgPlacement log's placed-vs-coverage numbers.
-config.RmgPlacementExtraSqueeze = 1.0
--- Known-safe scale from the observed worst case. It is both the fallback when the exact
--- work-grid read is unavailable and the upper cap on coverage-derived spacing: area coverage
--- alone cannot model fragmented zones or the sequential cross-layer repulsion erosion.
-config.RmgPlacementFallbackScale = 0.6
--- Separate upper cap for same-anomaly spacing. Ordinary TechUnlock/Event/FreeTech markers
--- all share the native subs/Anomaly mask, and every placed marker erases a circle with radius
--- twice AnomalySpacing from that mask. The observed 15-work-cell setting left only six slots
--- for seven FreeTech markers after TechUnlock and Event placement. 0.55 rounds the stock
--- 20000-unit value down to 10400 (13 work cells), cutting that destructive area by about 25%
--- without changing resource spacing or AnomalyRepulseSubs/All. 1.0 disables this extra cap.
-config.RmgPlacementAnomalySpacingCap = 0.55
-
--- SCALE ANOMALY COUNTS TO MAP SIZE (sbm_rmg_placement.lua). The generator places the native
--- (Big) preset anomaly count; spread over the larger 20x20 that is well below vanilla density
--- for the map's size. When true, the anomaly count properties (AnomFreeTechCount/EventCount/
--- TechUnlockCount/BreakthroughCount + BonusCount*) are scaled up by the area factor
--- ((desired/generated tiles)^2 ~= 1.78) before generation, so the generator places
--- proportionally more anomalies WITH correct unique rewards (breakthroughs self-trim to the
--- game's available pool at load -- safe, they just plateau below the full scale). The gen-zone
--- anomaly additions are generated only after the native markers have been transformed.
--- false = native (Big) anomaly count (leaner research for the bigger map).
--- NOTE: in STRETCH fill mode only the in-generation COUNT scaling is skipped. The placement
--- auto-fit starts later at PlaceAnomalies, after terrain/prefab generation, so it can satisfy
--- the native source-map enrichment counts without changing terrain or prefab placement. The
--- post-generation top-up below then supplies the additional full-map density.
--- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies) -- the stretch-mode
--- replacement for in-generation count scaling. After generation, clones anomaly MARKERS
--- (categories preserved via property copy; rewards resolve at scan; breakthroughs stay
--- pool-capped by the game) up to vanilla density x area factor, onto unscanned-sector tiles,
--- hidden + sector-registered so a real scan reveals them. Generator output stays bit-identical
--- to vanilla.
+-- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies). After exact vanilla
+-- generation and proportional marker recreation, clone eligible ordinary anomaly families up to
+-- the observed vanilla population times the area factor. Surface additions are restricted to the
+-- outer ring; underground additions use reachable buildable terrain across the whole map.
 -- EFFECT-DEPOSIT TOP-UP (sbm_deposits.lua TopUpEffectDeposits). EffectDepositMarker is the
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
@@ -631,7 +568,9 @@ config.FlattenSkipWhenUnbuildable = true
 -- a surface entrance toward an underground marker bypasses vanilla's complete-footprint
 -- validation and can make the stock flatten extrude an unbuildable footprint into a terrain
 -- column. The exact-source path now runs vanilla FindPassageSpawnPos against the authoritative
--- surface buildable grid, then proportionally moves each independently selected endpoint.
+-- surface buildable grid. After both maps have their final stretched grids, the production path
+-- aligns each linked pair to the underground hex or the nearest complete footprint buildable on
+-- both maps; this legacy link-time relocation remains disabled.
 config.StretchDeterministicPassages = false
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation.
@@ -664,13 +603,6 @@ config.StretchAdaptiveZScale = true
 -- are revealed instead (replaces the legacy start-sector relocation on this path).
 config.StretchVanillaStartSector = true
 config.DebugStartSector = false     -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace
--- Override the anomaly count scale. false = auto (area factor from the map's tile counts). A
--- number forces that multiplier (e.g. 1.5 for a gentler boost, 1.0 to effectively disable).
-config.AnomalyCountScaleOverride = false
--- Lower spacing floor used ONLY while fitting the scaled-up anomaly count into the gen-zone
--- (below the normal RmgPlacementSpacingFloor, since more anomalies must fit). Raise toward the
--- normal floor if a run over-packs; lower if the RmgPlacement log shows placement shortfall.
-config.AnomalyCountSpacingFloor = 0.35
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
 -- complete expanded terrain. Only progress cadence remains configurable here.
 config.SectorFastInitialReveal = true
@@ -708,10 +640,9 @@ local expansion_step_02 = expansion_step_01
 	and as_bool(config.ExpansionStep02StretchAndTransformVanillaSource)
 local expansion_step_03 = expansion_step_02
 	and as_bool(config.ExpansionStep03GenerateAdditionalEnrichments)
-local expansion_step_04 = expansion_step_01
-	and as_bool(config.ExpansionStep04PreserveVanillaEnrichmentRules)
-local expansion_step_05 = expansion_step_01
-	and as_bool(config.ExpansionStep05RejectInvalidNativeCandidates)
+-- Retain two false entries in the indexed step table so the public 06-21 numbering remains stable.
+local expansion_step_04 = false
+local expansion_step_05 = false
 local expansion_step_06 = expansion_step_01
 	and as_bool(config.ExpansionStep06CapturePreStretchEnrichments)
 local expansion_step_07 = expansion_step_02
@@ -769,11 +700,6 @@ C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
 C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
 C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
-C.DEBUG_RMGPLACEMENT  = as_bool(config.DebugRmgPlacement)
-C.DEBUG_RMGPLACEMENTEXHAUSTIVE = as_bool(config.DebugRmgPlacementExhaustive)
-C.DEBUG_RMGALIGNMENTEXHAUSTIVE = as_bool(config.DebugRmgAlignmentExhaustive)
-C.DEBUG_ENRICHMENTPOSITIONSEXHAUSTIVE = as_bool(config.DebugEnrichmentPositionsExhaustive)
-C.DEBUG_ENRICHMENTSPREADCOMPARISON = as_bool(config.DebugEnrichmentSpreadComparison)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
 C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
@@ -878,8 +804,6 @@ C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE =
 	expansion_step_02
 C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS =
 	expansion_step_03
-C.EXPANSION_STEP_04_PRESERVE_VANILLA_ENRICHMENT_RULES = expansion_step_04
-C.EXPANSION_STEP_05_REJECT_INVALID_NATIVE_CANDIDATES = expansion_step_05
 C.EXPANSION_STEP_06_CAPTURE_PRE_STRETCH_ENRICHMENTS = expansion_step_06
 C.EXPANSION_STEP_07_STRETCH_TERRAIN = expansion_step_07
 C.EXPANSION_STEP_08_SCALE_NATIVE_ENRICHMENT_XY = expansion_step_08
@@ -900,8 +824,8 @@ C.EXPANSION_ENRICHMENT_STEPS = {
 	C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE,
 	C.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE,
 	C.EXPANSION_STEP_03_GENERATE_ADDITIONAL_ENRICHMENTS,
-	C.EXPANSION_STEP_04_PRESERVE_VANILLA_ENRICHMENT_RULES,
-	C.EXPANSION_STEP_05_REJECT_INVALID_NATIVE_CANDIDATES,
+	false, -- retired compatibility slot 04
+	false, -- retired compatibility slot 05
 	C.EXPANSION_STEP_06_CAPTURE_PRE_STRETCH_ENRICHMENTS,
 	C.EXPANSION_STEP_07_STRETCH_TERRAIN,
 	C.EXPANSION_STEP_08_SCALE_NATIVE_ENRICHMENT_XY,
@@ -934,6 +858,8 @@ C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
+C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
+	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
@@ -954,17 +880,10 @@ C.LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitBuildableGridToSource)
 C.BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
 	and as_bool(config.BridgeVanillaHeightGrid)
-C.ENABLE_RMG_PLACEMENT_FIX = expansion_step_01
-	and not expansion_step_04
+C.ENABLE_RMG_PLACEMENT_FIX = false
 C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = false
-C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR = expansion_step_05
-C.RMG_PLACEMENT_ZERO_BORDERS = as_bool(config.RmgPlacementZeroBorders)
-C.RMG_PLACEMENT_SPACING_FLOOR = as_number(config.RmgPlacementSpacingFloor, 0.6)
-C.RMG_PLACEMENT_SCALE_DEPOSITS = as_bool(config.RmgPlacementScaleDeposits)
-C.RMG_PLACEMENT_EXTRA_SQUEEZE = as_number(config.RmgPlacementExtraSqueeze, 1.0)
-C.RMG_PLACEMENT_FALLBACK_SCALE = as_number(config.RmgPlacementFallbackScale, 0.6)
-C.RMG_PLACEMENT_ANOMALY_SPACING_CAP = as_number(config.RmgPlacementAnomalySpacingCap, 0.55)
-C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_04
+C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR = false
+C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_01
 	and as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.STRETCH_DETERMINISTIC_PASSAGES = expansion_step_08
@@ -978,9 +897,6 @@ C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
 C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
-C.ANOMALY_COUNT_SCALE_OVERRIDE = (type(config.AnomalyCountScaleOverride) == "number" and config.AnomalyCountScaleOverride > 0)
-	and config.AnomalyCountScaleOverride or false
-C.ANOMALY_COUNT_SPACING_FLOOR = as_number(config.AnomalyCountSpacingFloor, 0.35)
 C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
 -- Fixed expanded sector layout + exploration progress controls.

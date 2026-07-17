@@ -2303,6 +2303,267 @@ local function MoveEntranceVisualsToScale(map)
 	return moved
 end
 
+-- Final passage correspondence is decided only after both stretched maps have authoritative
+-- buildability grids. The underground endpoint is the canonical vanilla placement. Keep that
+-- exact hex when it is buildable for the complete Elevator footprint on both maps; otherwise use
+-- the engine's expanding hex search for the nearest common buildable footprint. No terrain or
+-- buildable-grid value is edited. Both linked anchors receive the same final X/Y and their own
+-- terrain Z, while already-created Elevator/site and badge dependants follow the anchor move.
+local function AlignPassagePairsToSharedHex(underground_map)
+	local surface_map = Global("MainMap")
+	if not underground_map or not surface_map or underground_map == surface_map then
+		return false, { error = "surface/underground maps unavailable", pairs = 0 }
+	end
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local get_unbuildable = Global("buildUnbuildableZ")
+	local validate_shape = Global("ValidateEachShapeHexPos")
+	local get_shape = Global("GetExtendedSpawnShape")
+	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" or type(get_unbuildable) ~= "function" then
+		return false, { error = "point/hex/buildability APIs unavailable", pairs = 0 }
+	end
+	local ok_sentinel, unbuildable_z = pcall(get_unbuildable)
+	if not ok_sentinel then
+		return false, { error = "unbuildable sentinel unavailable", pairs = 0 }
+	end
+	local elevator_shape
+	if type(get_shape) == "function" then
+		local ok_shape, value = pcall(get_shape, "Elevator")
+		if ok_shape and type(value) == "table" then elevator_shape = value end
+	end
+	local surface_w, surface_h = TerrainSize(surface_map)
+	local underground_w, underground_h = TerrainSize(underground_map)
+
+	local function map_of(obj)
+		if not obj or type(obj.GetMap) ~= "function" then return nil end
+		local ok, value = pcall(obj.GetMap, obj)
+		return ok and value or nil
+	end
+
+	local function map_point_in_bounds(map, x, y)
+		local w, h = map == surface_map and surface_w or underground_w,
+			map == surface_map and surface_h or underground_h
+		return type(x) == "number" and type(y) == "number"
+			and type(w) == "number" and type(h) == "number"
+			and x >= 0 and y >= 0 and x < w and y < h
+	end
+
+	local function footprint_buildable(map, q, r, angle)
+		local buildable = map and map.buildable
+		if not buildable or type(buildable.GetZ) ~= "function" then return false end
+		local ok_world, x, y = pcall(hex_to_world, q, r)
+		if not ok_world or not map_point_in_bounds(map, x, y) then return false end
+		local level
+		local function valid_hex(hq, hr)
+			local ok_xy, hx, hy = pcall(hex_to_world, hq, hr)
+			if not ok_xy or not map_point_in_bounds(map, hx, hy) then return false end
+			local ok_z, z = pcall(buildable.GetZ, buildable, hq, hr)
+			if not ok_z or z == nil or z == unbuildable_z then return false end
+			if level == nil then level = z elseif z ~= level then return false end
+			return true
+		end
+		if elevator_shape and type(validate_shape) == "function" then
+			local ok, valid = pcall(validate_shape, elevator_shape, point_fn(x, y), angle or 0, valid_hex)
+			return ok and valid == true
+		end
+		return valid_hex(q, r)
+	end
+
+	local function registered_shape(obj, map)
+		local is_valid = Global("IsValid")
+		if not obj or not map or not map.object_hex_grid
+			or (type(is_valid) == "function" and is_valid(obj) ~= true)
+			or type(obj.handle) ~= "number" or obj.handle <= 0
+			or type(obj.GetShapePoints) ~= "function" then return nil, false end
+		local ok_shape, shape = pcall(obj.GetShapePoints, obj)
+		if not ok_shape or not shape then return nil, false end
+		local get_list = Global("HexGridShapeGetObjectList")
+		if type(get_list) ~= "function" then return shape, nil end
+		local ok_list, list = pcall(get_list, map.object_hex_grid, obj, shape)
+		if not ok_list or type(list) ~= "table" then return shape, nil end
+		for i = 1, #list do
+			if list[i] == obj then return shape, true end
+		end
+		return shape, false
+	end
+
+	local function move_object(obj, map, x, y)
+		if not IsLiveGameObject(obj) or type(obj.SetPos) ~= "function" then return false end
+		local destination = point_fn(x, y)
+		if type(destination.SetTerrainZ) == "function" then
+			local ok_z, snapped = pcall(destination.SetTerrainZ, destination, map)
+			if ok_z and snapped then destination = snapped end
+		end
+		local shape, registered = registered_shape(obj, map)
+		if shape and registered == nil then return false end
+		local remove_shape = Global("HexGridShapeRemoveObject")
+		local add_shape = Global("HexGridShapeAddObject")
+		if shape and (type(add_shape) ~= "function"
+			or (registered and type(remove_shape) ~= "function")) then
+			return false
+		end
+		local remove_ok = true
+		if shape and registered and type(remove_shape) == "function" then
+			remove_ok = pcall(remove_shape, map.object_hex_grid, obj, shape)
+		end
+		local ok_set = pcall(obj.SetPos, obj, destination)
+		local add_ok = true
+		-- The list check makes removal safe. A shaped object that was absent from the grid still needs
+		-- one registration at its final position so Elevator snapping sees the visible anchor.
+		if shape and type(add_shape) == "function" then
+			add_ok = pcall(add_shape, map.object_hex_grid, obj, shape)
+		end
+		return remove_ok and ok_set and add_ok
+	end
+
+	local function is_elevator_site(obj)
+		if not IsKindOfSafe(obj, "ConstructionSite") then return false end
+		local class_name = obj.building_class or obj.template_name
+		if type(obj.GetBuildingClass) == "function" then
+			local ok, value = pcall(obj.GetBuildingClass, obj)
+			if ok and type(value) == "string" then class_name = value end
+		end
+		return class_name == "Elevator" or IsKindOfSafe(obj.building_class_proto, "ElevatorBase")
+	end
+
+	local function move_dependants(map, anchor, old_x, old_y, new_x, new_y)
+		local moved = 0
+		if not map or type(map.MapForEach) ~= "function" then return moved end
+		pcall(map.MapForEach, map, "map", "CObject", function(obj)
+			if not obj or obj == anchor then return end
+			local exact = (IsKindOfSafe(obj, "ElevatorBase") or is_elevator_site(obj))
+				and (obj.passage == anchor or obj.other == anchor or obj.linked_obj == anchor
+					or obj.SuperBigMapDeferredElevatorPassage == anchor)
+			local relative = obj.spawner == anchor or obj.passage == anchor
+				or (obj.tunnel_marker and obj.tunnel_marker.spawner == anchor)
+			if not exact and not relative then return end
+			local x, y = new_x, new_y
+			if not exact then
+				local pos = ObjectPosition(obj)
+				local ox, oy = PointXY(pos)
+				if type(ox) ~= "number" or type(oy) ~= "number" then return end
+				x, y = ox + (new_x - old_x), oy + (new_y - old_y)
+			end
+			if move_object(obj, map, x, y) then moved = moved + 1 end
+		end)
+		return moved
+	end
+
+	local stats = { pairs = 0, exact = 0, fallback = 0, moved_dependants = 0, checked = 0 }
+	local seen = {}
+	local linked_pairs = {}
+	if type(underground_map.MapForEach) == "function" then
+		pcall(underground_map.MapForEach, underground_map, "map", "ElevatorPassage", function(anchor)
+			local surface_anchor = anchor and anchor.other
+			if IsLiveGameObject(anchor) and IsLiveGameObject(surface_anchor)
+				and surface_anchor.other == anchor and map_of(surface_anchor) == surface_map
+				and not seen[anchor] then
+				seen[anchor], seen[surface_anchor] = true, true
+				linked_pairs[#linked_pairs + 1] = { underground = anchor, surface = surface_anchor }
+			end
+		end)
+	end
+	if #linked_pairs == 0 then
+		return false, { error = "no linked ElevatorPassage pairs found", pairs = 0 }
+	end
+
+	for i = 1, #linked_pairs do
+		local pair = linked_pairs[i]
+		local underground_anchor, surface_anchor = pair.underground, pair.surface
+		local underground_pos, surface_pos = ObjectPosition(underground_anchor), ObjectPosition(surface_anchor)
+		local ux, uy = PointXY(underground_pos)
+		local sx, sy = PointXY(surface_pos)
+		if type(ux) ~= "number" or type(uy) ~= "number"
+			or type(sx) ~= "number" or type(sy) ~= "number" then
+			return false, { error = "linked passage position unavailable", pairs = stats.pairs }
+		end
+		local ok_hex, origin_q, origin_r = pcall(world_to_hex, point_fn(ux, uy))
+		if not ok_hex or type(origin_q) ~= "number" or type(origin_r) ~= "number" then
+			return false, { error = "underground passage hex unavailable", pairs = stats.pairs }
+		end
+		local underground_angle = type(underground_anchor.GetAngle) == "function"
+			and SafeCall(underground_anchor.GetAngle, underground_anchor) or 0
+		local surface_angle = type(surface_anchor.GetAngle) == "function"
+			and SafeCall(surface_anchor.GetAngle, surface_anchor) or 0
+		local found_q, found_r, found_radius, search_algorithm
+		local function common_footprint(q, r)
+			stats.checked = stats.checked + 1
+			return footprint_buildable(underground_map, q, r, underground_angle)
+				and footprint_buildable(surface_map, q, r, surface_angle)
+		end
+		if (tonumber(surface_map.hex_width) or 0) <= 0
+			or (tonumber(underground_map.hex_width) or 0) <= 0 then
+			return false, { error = "map hex dimensions unavailable", pairs = stats.pairs }
+		end
+		if common_footprint(origin_q, origin_r) then
+			found_q, found_r, found_radius = origin_q, origin_r, 0
+			search_algorithm = "exact underground hex"
+		else
+			-- The engine search is an expanding hex-distance search over the final underground
+			-- object/buildable grids. The callback adds the complete surface footprint constraint,
+			-- so its first accepted coordinate is the closest buildable hex shared by both maps.
+			local native_find = Global("HexGridFindBuildable")
+			local object_grid = underground_map.object_hex_grid
+			local buildable_grid = underground_map.buildable and underground_map.buildable.z_grid
+			if type(native_find) == "function" and object_grid and buildable_grid then
+				local ok_find, q, r = pcall(native_find, origin_q, origin_r,
+					object_grid, buildable_grid, unbuildable_z,
+					function(candidate_q, candidate_r)
+						return not common_footprint(candidate_q, candidate_r)
+					end)
+				if ok_find and type(q) == "number" and type(r) == "number" then
+					found_q, found_r = q, r
+					local dq, dr = q - origin_q, r - origin_r
+					found_radius = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+					search_algorithm = "HexGridFindBuildable common-footprint predicate"
+				end
+			end
+		end
+		if found_q == nil then
+			return false, { error = "no common buildable passage footprint", pairs = stats.pairs,
+				checked = stats.checked }
+		end
+		local ok_world, final_x, final_y = pcall(hex_to_world, found_q, found_r)
+		if not ok_world or type(final_x) ~= "number" or type(final_y) ~= "number" then
+			return false, { error = "final passage world coordinate unavailable", pairs = stats.pairs }
+		end
+		if not move_object(underground_anchor, underground_map, final_x, final_y)
+			or not move_object(surface_anchor, surface_map, final_x, final_y) then
+			return false, { error = "linked passage move failed", pairs = stats.pairs }
+		end
+		local verify_ux, verify_uy = PointXY(ObjectPosition(underground_anchor))
+		local verify_sx, verify_sy = PointXY(ObjectPosition(surface_anchor))
+		if verify_ux ~= final_x or verify_uy ~= final_y
+			or verify_sx ~= final_x or verify_sy ~= final_y then
+			return false, {
+				error = "linked passage post-move coordinate verification failed",
+				pairs = stats.pairs,
+				underground = tostring(verify_ux) .. "," .. tostring(verify_uy),
+				surface = tostring(verify_sx) .. "," .. tostring(verify_sy),
+				expected = tostring(final_x) .. "," .. tostring(final_y),
+			}
+		end
+		stats.moved_dependants = stats.moved_dependants
+			+ move_dependants(underground_map, underground_anchor, ux, uy, final_x, final_y)
+			+ move_dependants(surface_map, surface_anchor, sx, sy, final_x, final_y)
+		stats.pairs = stats.pairs + 1
+		if found_radius == 0 then stats.exact = stats.exact + 1
+		else stats.fallback = stats.fallback + 1 end
+		underground_anchor.SuperBigMapSharedPassageHex = tostring(found_q) .. ":" .. tostring(found_r)
+		surface_anchor.SuperBigMapSharedPassageHex = underground_anchor.SuperBigMapSharedPassageHex
+		StretchLog("passage pair aligned to shared final hex", {
+			pair = i, q = found_q, r = found_r, radius = found_radius,
+			algorithm = search_algorithm,
+			underground_from = tostring(ux) .. "," .. tostring(uy),
+			surface_from = tostring(sx) .. "," .. tostring(sy),
+			final = tostring(final_x) .. "," .. tostring(final_y),
+		})
+	end
+	return true, stats
+end
+
 -- STRETCH step 3c (floater audit): find objects HOVERING above the stretched terrain and log
 -- exactly who they are. Cause under investigation (user screenshot: large rock formations
 -- floating): the decoration pass SKIPS several categories (ShouldSkipObject: mystery objects,
@@ -2672,6 +2933,7 @@ local TerrainCopy = {
 	ScaleMarkersToFull = ScaleMarkersToFull,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
+	AlignPassagePairsToSharedHex = AlignPassagePairsToSharedHex,
 	PatchEntranceBadgePosition = PatchEntranceBadgePosition,
 	RestoreEntranceBadgePositionPatch = RestoreEntranceBadgePositionPatch,
 	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,

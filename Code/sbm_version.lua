@@ -15,6 +15,10 @@ end
 -- Shared mod state: saved vanilla originals and patch-installed guards, used by the
 -- monkey-patching domain modules so apply/restore share one place (no _G globals).
 SuperBigMap.State = SuperBigMap.State or {}
+-- These pre-source-generation correction modules were retired once generation moved onto an exact
+-- vanilla backing. Clear any tables left by an in-session reload of an older build.
+SuperBigMap.RmgPlacement = nil
+SuperBigMap.EnrichmentSpreadDiagnostics = nil
 
 -- Sector exploration + overview-highlight patches (sbm_sector_exploration / sbm_sector_highlight).
 -- 28: added the IsExplorationAvailable_Sectors/Queue wraps (underground overview sector UI).
@@ -61,7 +65,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 --     replace the ScaleSmallObjects duration guess with lifecycle completion events.
 SuperBigMap.SECTOR_PATCH_VERSION = 51
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 88: protect deferred underground ResolveBuildable by giving
--- stock MaskBuildableGrid a backing-sized padded grid while retaining the exact source grid for
--- the authoritative source-coordinate playable-mask repair.
-SuperBigMap.GENERATOR_PATCH_VERSION = 88
+-- (sbm_map_generation). Bumped to 89: serialize/recreate the vanilla underground enrichment set,
+-- enable proportional underground density top-ups, and align linked passages to the nearest hex
+-- whose complete Elevator footprint is buildable on both final maps.
+SuperBigMap.GENERATOR_PATCH_VERSION = 89
