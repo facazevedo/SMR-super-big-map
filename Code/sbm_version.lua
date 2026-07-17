@@ -89,4 +89,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- transform-introduced collisions, log both owners, and reject only introduced collisions.
 -- Bumped to 101: pre-plan every native enrichment destination and move only transform-introduced
 -- hex collisions to the nearest free non-primary hex before recreation.
-SuperBigMap.GENERATOR_PATCH_VERSION = 101
+-- Bumped to 102: read Relaunched supply MapVars from their actual per-map lowercase fields and
+-- trace the native overlay-copy signature without touching the strict global environment.
+SuperBigMap.GENERATOR_PATCH_VERSION = 102

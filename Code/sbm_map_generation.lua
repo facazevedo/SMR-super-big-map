@@ -1519,20 +1519,15 @@ local function SupplyGridLog(message, data, level)
 	if type(emit) == "function" then emit("SupplyGrid", message, data) end
 end
 
--- MapVar values are exposed as fields on the owning map and through the engine's guarded global
--- environment. Engine.Global deliberately uses rawget, which is correct for normal globals but
--- skipped every supply-grid MapVar in the first diagnostic build. Prefer the explicit map field,
--- then use protected ordinary global indexing only for the known MapVar names below.
+-- Relaunched MapVars are initialized directly on each Map object. They are not globals: indexing
+-- _G with a missing MapVar name invokes the engine's strict undefined-global assertion even inside
+-- pcall. Read only the owning map's raw field so diagnostics can never alter or interrupt gameplay.
 local function ResolveSupplyMapVar(map, name)
 	if type(map) == "table" then
-		local ok, value = pcall(function() return map[name] end)
-		if ok and value ~= nil then return value, "map-field" end
+		local value = rawget(map, name)
+		if value ~= nil then return value, "map-field" end
 	end
-	local ok, value = pcall(function() return _G[name] end)
-	if ok and value ~= nil then return value, "mapvar-global" end
-	local raw = rawget(_G, name)
-	if raw ~= nil then return raw, "raw-global" end
-	return nil, ok and "missing" or "global-read-error"
+	return nil, "missing-map-field"
 end
 
 local function DescribeSupplyValue(value)
@@ -1560,18 +1555,18 @@ local function SupplyElementDescription(obj, resource)
 	return "element=" .. tostring(element) .. ";grid=" .. DescribeSupplyValue(grid)
 end
 
--- SupplyGridConnections and OverlaySupplyGrid are MapVars. Creating an object for a non-current
+-- supply_connection_grid and supply_overlay_grid are MapVars. Creating an object for a non-current
 -- map can therefore connect it through the CURRENT map's supply grids. The deferred underground
 -- pipeline used to rebuild Elevator counterparts before ChangeCurrentMapSlot, while the surface
 -- was still current; vanilla then queued CopySupplyFragmentToOverlayGrid in a game-time thread and
 -- executed it after the switch against a different-sized MapVar pair. Log every boundary involved
 -- in that hand-off so future map sizes/scenarios are diagnosable without relying on a native assert.
 local function SupplyGridSnapshot(label, expected_map)
-	local connections, connections_source = ResolveSupplyMapVar(expected_map, "SupplyGridConnections")
-	local overlay, overlay_source = ResolveSupplyMapVar(expected_map, "OverlaySupplyGrid")
-	local object_grid, object_grid_source = ResolveSupplyMapVar(expected_map, "ObjectGrid")
-	local hex_width, hex_width_source = ResolveSupplyMapVar(expected_map, "HexMapWidth")
-	local hex_height, hex_height_source = ResolveSupplyMapVar(expected_map, "HexMapHeight")
+	local connections, connections_source = ResolveSupplyMapVar(expected_map, "supply_connection_grid")
+	local overlay, overlay_source = ResolveSupplyMapVar(expected_map, "supply_overlay_grid")
+	local object_grid, object_grid_source = ResolveSupplyMapVar(expected_map, "object_hex_grid")
+	local hex_width, hex_width_source = ResolveSupplyMapVar(expected_map, "hex_width")
+	local hex_height, hex_height_source = ResolveSupplyMapVar(expected_map, "hex_height")
 	local ew, eh = SupplyGridDimensions(type(connections) == "table" and connections.electricity)
 	local ww, wh = SupplyGridDimensions(type(connections) == "table" and connections.water)
 	local ow, oh = SupplyGridDimensions(overlay)
@@ -1723,12 +1718,13 @@ local function PatchSupplyGridOverlayCopyGuard(source)
 	end
 	State.original_supply_grid_overlay_copy = current
 	local captured_original = current
-	local wrapper = function(overlay, connection_grid, fragment, ...)
-		local map = Global("CurrentMap")
+	local wrapper = function(overlay, connection_grid, city, fragment, ...)
+		local map = city and type(city.GetMap) == "function" and SafeCall(city.GetMap, city)
+			or Global("CurrentMap")
 		SupplyGridLog("overlay-copy wrapper INVOKED", {
 			source = tostring(source), map = tostring(map), map_name = tostring(map and map.name),
 			overlay = DescribeSupplyValue(overlay), connection = DescribeSupplyValue(connection_grid),
-			fragment = DescribeSupplyValue(fragment),
+			city = tostring(city), fragment = DescribeSupplyValue(fragment),
 		})
 		if IsExpandedSupplyContext(map) then
 			local ow, oh = SupplyGridDimensions(overlay)
@@ -1747,7 +1743,7 @@ local function PatchSupplyGridOverlayCopyGuard(source)
 				return false
 			end
 		end
-		return captured_original(overlay, connection_grid, fragment, ...)
+		return captured_original(overlay, connection_grid, city, fragment, ...)
 	end
 	rawset(_G, "CopySupplyFragmentToOverlayGrid", wrapper)
 	State.supply_grid_overlay_copy_wrapper = wrapper

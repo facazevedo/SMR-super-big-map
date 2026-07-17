@@ -1466,9 +1466,9 @@ local function ElevatorSupplyTrace(stage, map, bld, record, extra)
 	if not (DebugLog and type(DebugLog.On) == "function" and DebugLog.On("SupplyGrid")) then return end
 	local current = Global("CurrentMap")
 	local pos = bld and type(bld.GetPos) == "function" and SafeCall(bld.GetPos, bld)
-	local connections = type(map) == "table" and map.SupplyGridConnections
-	local overlay = type(map) == "table" and map.OverlaySupplyGrid
-	local object_grid = type(map) == "table" and map.ObjectGrid
+	local connections = type(map) == "table" and rawget(map, "supply_connection_grid")
+	local overlay = type(map) == "table" and rawget(map, "supply_overlay_grid")
+	local object_grid = type(map) == "table" and rawget(map, "object_hex_grid")
 	local data = {
 		stage = tostring(stage), current_map = tostring(current), current_name = tostring(current and current.name),
 		expected_map = tostring(map), expected_name = tostring(map and map.name),
