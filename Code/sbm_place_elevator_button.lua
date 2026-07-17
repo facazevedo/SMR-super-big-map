@@ -20,19 +20,25 @@ local SafeCall = Engine.SafeCall
 
 local function cfg() return SuperBigMap.Config or {} end
 
--- Clean up an instance created by the previous copy of this module during an in-session reload.
--- This matters when the feature is switched off: the old button owns the only reference to its
--- window, so the replacement module could not otherwise remove it.
+-- Never delete an XWindow while mod code itself is being hot-reloaded. ReloadLua reconstructs the
+-- X class tables and desktop incrementally; the previous implementation called old_api.Hide here,
+-- and XWindow:delete reached XDesktop:ChildLeaving while InvalidateMeasure/child state was only
+-- partially rebuilt. A reload-safe API now only HIDES its old window. Legacy copies without that
+-- API are left untouched here and are retired by Build through the reload-safe API/desktop ID
+-- lookup once UI class reconstruction has completed. Module load itself performs no UI mutation.
 local previous_button_api = SuperBigMap.PlaceElevatorButton
-if previous_button_api and type(previous_button_api.Hide) == "function" then
-	pcall(previous_button_api.Hide)
-end
+local previous_button_retired = false
 
 local button = false
 local armed = false -- next Elevator construction site placed gets instantly completed
 
 local function Valid()
 	return button and button.window_state ~= "destroying" and button.window_state ~= "destroyed"
+end
+
+local function WindowLive(win)
+	return type(win) == "table"
+		and win.window_state ~= "destroying" and win.window_state ~= "destroyed"
 end
 
 local function Color(r, g, b, a)
@@ -46,6 +52,32 @@ local function Log(message, data)
 	-- gated, so one switch captures the button, class method, linked sites, and Quick Build.
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
+end
+
+local function RetireWindowWithoutDelete(win, reason)
+	if not WindowLive(win) then return true end
+	local hidden = false
+	if type(win.SetVisible) == "function" then
+		local ok = pcall(win.SetVisible, win, false)
+		hidden = ok == true
+	end
+	Log("place-elevator: window retired without delete", {
+		reason = tostring(reason), window = tostring(win), hidden = tostring(hidden),
+		state = tostring(win.window_state), parent = tostring(win.parent),
+	})
+	return hidden
+end
+
+local function DesktopReadyForWindowDelete(win)
+	if not WindowLive(win) or type(win.delete) ~= "function"
+		or type(win.InvalidateMeasure) ~= "function" then return false end
+	local parent = win.parent
+	if parent and (type(parent) ~= "table"
+		or parent.window_state == "destroying" or parent.window_state == "destroyed"
+		or type(parent.InvalidateMeasure) ~= "function") then
+		return false
+	end
+	return true
 end
 
 -- Press: unlock the Elevator template (placement rejects locked buildings), arm the one-shot
@@ -153,11 +185,26 @@ function OnMsg.ConstructionSitePlaced(site, class_name)
 end
 
 local function Hide()
-	if Valid() and type(button.delete) == "function" then
-		pcall(function() button:delete() end)
+	local old = button
+	button = false
+	if WindowLive(old) then
+		if DesktopReadyForWindowDelete(old) then
+			local ok, err = pcall(old.delete, old)
+			Log("place-elevator: window delete", {
+				window = tostring(old), ok = tostring(ok), error = ok and nil or tostring(err),
+			})
+		else
+			RetireWindowWithoutDelete(old, "unsafe desktop teardown context")
+		end
 	end
+	armed = false
+end
+
+local function RetireForReload(reason)
+	local old = button
 	button = false
 	armed = false
+	return RetireWindowWithoutDelete(old, reason or "module reload")
 end
 
 local function Build()
@@ -166,6 +213,20 @@ local function Build()
 	local box = Global("box")
 	if not desktop or type(XTextButton) ~= "table" then
 		return false
+	end
+	if not previous_button_retired then
+		previous_button_retired = true
+		if previous_button_api and type(previous_button_api.RetireForReload) == "function" then
+			pcall(previous_button_api.RetireForReload, "first Build after module reload")
+		end
+	end
+	-- Upgrade path from module versions that exposed only destructive Hide(): find the existing
+	-- button by ID after the desktop is healthy and hide it without changing parent/child ownership.
+	if type(desktop.ResolveId) == "function" then
+		local ok_existing, existing = pcall(desktop.ResolveId, desktop, "SBMPlaceElevator")
+		if ok_existing and existing and existing ~= button then
+			RetireWindowWithoutDelete(existing, "stale pre-reload button found by desktop ID")
+		end
 	end
 	button = XTextButton:new({
 		Id = "SBMPlaceElevator",
@@ -202,5 +263,6 @@ function PlaceElevatorButton.Show()
 end
 
 PlaceElevatorButton.Hide = Hide
+PlaceElevatorButton.RetireForReload = RetireForReload
 
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
