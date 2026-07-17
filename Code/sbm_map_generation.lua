@@ -8458,8 +8458,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 				-- Step 4: consume the native-source start annotation after marker recreation. Only
 				-- expanded sectors tied for greatest overlap with the transformed vanilla winner are
-				-- considered; vanilla's own resource/heat/buildability rule breaks a positional tie and
-				-- chooses exactly one. Mutually exclusive with
+				-- considered; vanilla's own resource/heat/buildability rule breaks a positional tie for
+				-- the InitialSector anchor, while every positive-overlap equivalent is revealed. Mutually
+				-- exclusive with
 				-- legacy relocation (which would re-scale a freshly scanned destination sector).
 				local sectors_mod = SuperBigMap.SectorExploration
 				local vanilla_start_pending = sectors_mod
@@ -8473,9 +8474,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						reveal_info = type(reveal_info) == "table" and reveal_info or {}
 						reveal_info.scanned = n_rev
 						StretchLog("stretch branch: RevealVanillaStartSectors returned", reveal_info)
-						if n_rev ~= 1 then
-							error("vanilla-equivalent initial reveal must scan exactly one sector; got "
-								.. tostring(n_rev))
+						local equivalent_count = tonumber(reveal_info.equivalent_sector_count)
+						if type(n_rev) ~= "number" or n_rev < 1
+							or (equivalent_count and n_rev ~= equivalent_count) then
+							error(string.format("stretched vanilla initial reveal mismatch: expected=%s scanned=%s",
+								tostring(equivalent_count), tostring(n_rev)))
 						end
 					end
 				elseif cfg_bool("STRETCH_VANILLA_START_SECTOR", false) then

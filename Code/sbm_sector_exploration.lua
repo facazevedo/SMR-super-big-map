@@ -811,10 +811,12 @@ end
 -- somewhere unrelated to vanilla's. Fix: while the temporary native backing and all of its
 -- markers still exist, run vanilla's OWN ORIGINAL InitialReveal (not the fast wrapper -- exact
 -- vanilla semantics including CanPlaceDeposit gating) over VIRTUAL 10x10 sectors at native
--- geometry and annotate its first winner. AFTER the stretch, collect only the live 20x20 sectors
--- intersecting that winner's proportionally transformed box, run the same vanilla rule over that
--- small set, and reveal only its first result. InitialReveal only reads plain sector fields, so
--- lightweight virtual source tables work without constructing a second exploration grid.
+-- geometry and annotate its first winner. AFTER the stretch, reveal every live 20x20 sector with
+-- positive-area intersection against that winner's proportionally transformed box. The greatest-
+-- overlap sector remains InitialSector (vanilla breaks exact geometric ties), so camera/profile
+-- behavior has one deterministic anchor while the revealed area matches the complete stretched
+-- vanilla footprint. InitialReveal reads plain sector fields, so lightweight virtual source tables
+-- work without constructing a second exploration grid.
 -- ---------------------------------------------------------------------------------------
 local function StartLog(message, data)
 	local DebugLog = SuperBigMap.DebugLog
@@ -962,9 +964,9 @@ local function VanillaStartPick(city, map)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
-	-- Vanilla can return a second, nearest-concrete sector in its fallback branch. The requested
-	-- expanded behavior is exactly one reveal corresponding to VANILLA'S FIRST winner, never a
-	-- random choice between the first and its auxiliary concrete sector.
+	-- Vanilla can return a second, nearest-concrete sector in its fallback branch. The stretched
+	-- footprint is based on VANILLA'S FIRST winner; the auxiliary concrete sector is not part of
+	-- that source footprint and therefore is not used as another transform anchor.
 	local vanilla_revealed_count = #revealed
 	if #revealed > 1 then
 		StartLog("multiple vanilla source winners -- annotating first only", {
@@ -1120,9 +1122,10 @@ end
 
 -- Post-stretch reveal: transform the annotated vanilla winner box, rank the live expanded sectors
 -- by geometric overlap, then run vanilla's own InitialReveal only over the sector(s) tied for the
--- greatest overlap. Position therefore decides equivalence first; vanilla resource/heat rules are
--- used only to break a genuine positional tie. Scan exactly the first vanilla result, then replicate
--- InitialExplore's tail (commander bonus deposit plus forced overview SelectSector).
+-- greatest overlap. Position therefore chooses the single InitialSector anchor first; vanilla
+-- resource/heat rules are used only to break a genuine positional tie. Reveal every destination
+-- sector with positive-area overlap against the transformed box, then replicate InitialExplore's
+-- tail (commander bonus deposit plus forced overview SelectSector).
 local function RevealVanillaStartSectors(map)
 	local State = SuperBigMap.State or {}
 	map = map or Global("MainMap")
@@ -1222,6 +1225,18 @@ local function RevealVanillaStartSectors(map)
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
 	local selected = revealed[1]
+	-- The selected maximum-overlap sector is the deterministic camera/profile anchor. The revealed
+	-- area, however, is the complete destination-sector cover of the stretched vanilla footprint.
+	-- Put the anchor first to preserve vanilla InitialExplore ordering, then append every other
+	-- positive-area intersection in the stable Grid.ForEachSector order captured above.
+	local reveal_targets, equivalent_log = { selected }, { tostring(selected.id) }
+	for i = 1, #overlaps do
+		local sector = overlaps[i].sector
+		if sector ~= selected then
+			reveal_targets[#reveal_targets + 1] = sector
+			equivalent_log[#equivalent_log + 1] = tostring(sector.id)
+		end
+	end
 	local diagnostics = {
 		source_sector = tostring(winner.id),
 		source_box = string.format("%d,%d-%d,%d", winner.x0, winner.y0, winner.x1, winner.y1),
@@ -1236,6 +1251,8 @@ local function RevealVanillaStartSectors(map)
 		positional_candidate_count = #candidates,
 		vanilla_result_count = #revealed,
 		selected = tostring(selected.id),
+		equivalent_sectors = table.concat(equivalent_log, "+"),
+		equivalent_sector_count = #reveal_targets,
 	}
 	StartLog("post-stretch vanilla candidate selection", {
 		source_sector = diagnostics.source_sector,
@@ -1245,15 +1262,17 @@ local function RevealVanillaStartSectors(map)
 		intersection_count = #overlaps, intersections = diagnostics.intersections,
 		max_overlap = max_overlap, positional_candidates = diagnostics.positional_candidates,
 		candidate_count = #candidates,
+		equivalent_sectors = diagnostics.equivalent_sectors,
+		equivalent_sector_count = diagnostics.equivalent_sector_count,
 		vanilla_result_count = #revealed, selected = tostring(selected.id),
 	})
-	DebugPrint(string.format("transformed native start: source=%s source_box=%s scale=%s box=%s intersections=%s max_overlap=%s positional=%s selected=%s",
+	DebugPrint(string.format("transformed native start: source=%s source_box=%s scale=%s box=%s intersections=%s max_overlap=%s positional=%s selected=%s equivalents=%s",
 		diagnostics.source_sector, diagnostics.source_box, diagnostics.scale,
 		diagnostics.transformed_box, diagnostics.intersections, tostring(max_overlap),
-		diagnostics.positional_candidates, diagnostics.selected))
+		diagnostics.positional_candidates, diagnostics.selected, diagnostics.equivalent_sectors))
 
 	-- This is still initial generation: remove any accidental destination reveal produced while the
-	-- class wrapper was being reclaimed, then persist exactly the one vanilla-selected candidate.
+	-- class wrapper was being reclaimed, then persist the complete stretched-equivalent cover.
 	local done_object = Global("DoneObject")
 	local is_valid = Global("IsValid")
 	if type(map.MapForEach) == "function" and type(done_object) == "function" then
@@ -1275,28 +1294,43 @@ local function RevealVanillaStartSectors(map)
 		sector.revealed_deep = nil
 		if type(sector.UpdateDecal) == "function" then pcall(sector.UpdateDecal, sector) end
 	end)
-	city.InitialSector = false
-	local scan_ok, scan_error = pcall(selected.Scan, selected, "scanned", nil, spawn_positions)
-	if not scan_ok then error("selected transformed start sector scan failed: " .. tostring(scan_error)) end
 	city.InitialSector = selected
+	local scan_order, blocked_targets = {}, {}
+	for i = 1, #reveal_targets do
+		local target = reveal_targets[i]
+		local scan_ok, scan_error = pcall(target.Scan, target, "scanned", nil, spawn_positions)
+		if not scan_ok then
+			error(string.format("stretched-equivalent start sector %s scan failed: %s",
+				tostring(target.id), tostring(scan_error)))
+		end
+		if target.status == "unexplored" then
+			blocked_targets[#blocked_targets + 1] = tostring(target.id)
+		else
+			scan_order[#scan_order + 1] = tostring(target.id)
+		end
+	end
 
 	local scanned_total = 0
 	Grid.ForEachSector(city, function(sector)
 		if sector.status and sector.status ~= "unexplored" then scanned_total = scanned_total + 1 end
 	end)
-	if scanned_total ~= 1 or selected.status == "unexplored" then
-		error(string.format("initial reveal cardinality verification failed: scanned=%s selected_status=%s",
-			tostring(scanned_total), tostring(selected.status)))
+	if scanned_total ~= #reveal_targets or selected.status == "unexplored" then
+		error(string.format("stretched-equivalent reveal verification failed: expected=%s scanned=%s selected_status=%s blocked=%s",
+			tostring(#reveal_targets), tostring(scanned_total), tostring(selected.status),
+			table.concat(blocked_targets, "+")))
 	end
-	StartLog("post-stretch reveal: exactly one sector scanned", {
+	StartLog("post-stretch reveal: all stretched-equivalent sectors scanned", {
 		source_sector = tostring(winner.id), selected = tostring(selected.id),
+		equivalents = diagnostics.equivalent_sectors,
+		scan_order = table.concat(scan_order, "+"),
 		cleared_preexisting = cleared, scanned = scanned_total,
 	})
-	DebugPrint(string.format("transformed native start verified: source=%s selected=%s scanned=%s cleared=%s",
-		tostring(winner.id), tostring(selected.id), tostring(scanned_total), tostring(cleared)))
+	DebugPrint(string.format("transformed native start verified: source=%s anchor=%s equivalents=%s scanned=%s cleared=%s",
+		tostring(winner.id), tostring(selected.id), diagnostics.equivalent_sectors,
+		tostring(scanned_total), tostring(cleared)))
 
 	if selected then
-		-- Vanilla tail: overview exit_to + forced SelectSector on the last revealed sector.
+		-- Vanilla tail: overview exit_to + forced SelectSector on the deterministic anchor.
 		pcall(function()
 			local igi = Global("GetInGameInterface")()
 			if igi and igi:IsInMode("overview") then
@@ -1337,6 +1371,7 @@ local function RevealVanillaStartSectors(map)
 		initial_sector = tostring(city.InitialSector and city.InitialSector.id),
 	})
 	diagnostics.scanned = scanned_total
+	diagnostics.scan_order = table.concat(scan_order, "+")
 	diagnostics.cleared_preexisting = cleared
 	diagnostics.initial_sector = tostring(city.InitialSector and city.InitialSector.id)
 	DebugPrint(string.format("vanilla-equivalent start revealed: %s sector(s), InitialSector=%s",
