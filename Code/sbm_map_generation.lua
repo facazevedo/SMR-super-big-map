@@ -1749,7 +1749,7 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 					final_q = tostring(final_q), final_r = tostring(final_r),
 					sx = tostring(sx), sy = tostring(sy), in_bounds = tostring(in_bounds),
 					grid_width = tostring(width), grid_height = tostring(height),
-				}, in_bounds and nil or "error")
+				}, not in_bounds and "error" or nil)
 			end
 		end
 	end
@@ -1963,7 +1963,7 @@ local function ValidateSupplyBuildingFootprint(token, building, resource, stage)
 			token = token.token_id, stage = tostring(stage), resource = tostring(resource),
 			point = index, q = tostring(final_q), r = tostring(final_r), sx = tostring(sx),
 			sy = tostring(sy), width = width, height = height, in_bounds = tostring(in_bounds),
-		}, in_bounds and nil or "error")
+		}, not in_bounds and "error" or nil)
 		if not in_bounds then
 			return SupplyGridSetFailure(token, stage, "supply-fragment coordinate is out of bounds", {
 				resource = tostring(resource), point = index, sx = tostring(sx), sy = tostring(sy),
@@ -2187,10 +2187,27 @@ local function ConnectTaggedElevatorElementSynchronously(token, building, elemen
 	local shape_connections = building:GetShapeConnections(resource)
 	local potential_neighbours = apply_building(connection_grid, building, shape,
 		shape_connections, nil, false)
-	if type(potential_neighbours) ~= "table" then
+	-- The native engine result is an indexable point sequence, but it is not guaranteed to be
+	-- represented as a plain Lua table. Vanilla only applies # and numeric indexing to it. Preserve
+	-- that contract and additionally require complete point pairs before consuming the sequence.
+	local neighbour_length_ok, neighbour_point_count = pcall(function()
+		return #potential_neighbours
+	end)
+	if not neighbour_length_ok or type(neighbour_point_count) ~= "number"
+		or neighbour_point_count < 0 or neighbour_point_count % 2 ~= 0 then
 		return SupplyGridSetFailure(token, "tagged synchronous element connection",
-			"SupplyGridApplyBuilding returned no neighbour list")
+			"SupplyGridApplyBuilding returned an invalid neighbour sequence", {
+				result_type = type(potential_neighbours), result = tostring(potential_neighbours),
+				length_ok = tostring(neighbour_length_ok),
+				length = neighbour_length_ok and tostring(neighbour_point_count) or "unavailable",
+				length_error = neighbour_length_ok and "none" or tostring(neighbour_point_count),
+			})
 	end
+	SupplyGridLog("SupplyGridApplyBuilding neighbour sequence accepted", {
+		token = token.token_id, building = tostring(building), resource = resource,
+		result_type = type(potential_neighbours), points = neighbour_point_count,
+		neighbours = neighbour_point_count / 2,
+	})
 	new_grid_skin = new_grid_skin or (has_member
 		and SafeCall(building.HasMember, building, "construction_grid_skin") == true
 		and building.construction_grid_skin)
@@ -2215,7 +2232,7 @@ local function ConnectTaggedElevatorElementSynchronously(token, building, elemen
 		end
 		return false
 	end
-	for index = 1, #potential_neighbours, 2 do
+	for index = 1, neighbour_point_count, 2 do
 		local point_a, point_b = potential_neighbours[index], potential_neighbours[index + 1]
 		local adjacent = object_grid:GetObjectAtPos(point_b, nil, nil,
 			function(object) return object[resource] end)
@@ -2316,7 +2333,7 @@ local function ConnectTaggedElevatorElementSynchronously(token, building, elemen
 	end
 	SupplyGridLog("tagged Elevator element connected without delayed callback", {
 		token = token.token_id, building = tostring(building), resource = resource,
-		fragment = tostring(grid), neighbours = #potential_neighbours / 2,
+		fragment = tostring(grid), neighbours = neighbour_point_count / 2,
 		merged = tostring(grids_merged ~= false),
 	})
 	return true

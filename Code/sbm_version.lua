@@ -104,4 +104,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- retired surface sampler experiments; surface generation still requires exact temporary backing.
 -- Bumped to 108: restore the transaction-local retained source buildable grid used by the
 -- underground native-mask safety bridge; its declaration was removed with the sampler cleanup.
-SuperBigMap.GENERATOR_PATCH_VERSION = 108
+-- Bumped to 109: accept the engine-native indexable neighbour sequence returned by
+-- SupplyGridApplyBuilding instead of requiring its representation to be a Lua table.
+SuperBigMap.GENERATOR_PATCH_VERSION = 109
