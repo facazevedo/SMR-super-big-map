@@ -83,4 +83,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- larger stretched-equivalent candidate count.
 -- Bumped to 98: restore deferred underground Elevators only after their map becomes current;
 -- guard and audit asynchronous native supply-fragment overlay copies across the switch.
-SuperBigMap.GENERATOR_PATCH_VERSION = 98
+-- Bumped to 99: trace map-scoped supply grids and game-time callbacks across every underground
+-- Elevator reconstruction stage to identify the remaining native overlay assertion.
+SuperBigMap.GENERATOR_PATCH_VERSION = 99

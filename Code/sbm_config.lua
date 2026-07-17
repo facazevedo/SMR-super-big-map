@@ -166,7 +166,12 @@ config.DebugRocketTerrain = false
 -- Optional Elevator terrain-forensics trace. Logs the exact class/global patch identity,
 -- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
 -- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
-config.DebugElevatorTerrain = false
+config.DebugElevatorTerrain = true -- TEMP underground supply-grid assertion investigation
+-- Exhaustive supply-grid lifecycle trace for deferred underground Elevator restoration. Records
+-- map-scoped MapVar resolution, grid dimensions/identities, Elevator supply fragments, and every
+-- game-time thread scheduled while the counterpart is reconstructed, including its execution
+-- context. Observational only; disable after the native pSupplyGrid assertion is resolved.
+config.DebugSupplyGrid    = true
 config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
 config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
 config.DebugValidation    = false   -- Validation: runtime validation snapshots
@@ -719,6 +724,7 @@ C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
 C.DEBUG_ROCKET        = as_bool(config.DebugRocket)
 C.DEBUG_ROCKETTERRAIN = as_bool(config.DebugRocketTerrain)
 C.DEBUG_ELEVATORTERRAIN = as_bool(config.DebugElevatorTerrain)
+C.DEBUG_SUPPLYGRID    = as_bool(config.DebugSupplyGrid)
 C.DEBUG_HEAT          = as_bool(config.DebugHeat)
 C.DEBUG_BOUNDS        = as_bool(config.DebugBounds)
 C.DEBUG_VALIDATION    = as_bool(config.DebugValidation)

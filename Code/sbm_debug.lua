@@ -14,7 +14,7 @@
 --   Stretch, Loading, LoadTime, LoadingSteps,
 --   LoadingInvestigation,
 --   UndergroundAccess,
---   Hover, Align, EntrancePositions, Overview, Camera, Rocket, RocketTerrain, ElevatorTerrain,
+--   Hover, Align, EntrancePositions, Overview, Camera, Rocket, RocketTerrain, ElevatorTerrain, SupplyGrid,
 --   Heat, Bounds, Validation, Zoom,
 --   ZoomVanilla, RestartNotice, PregameToggle, EditorCamera, InitSeq.
 --

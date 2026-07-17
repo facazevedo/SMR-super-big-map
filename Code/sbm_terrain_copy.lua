@@ -1436,6 +1436,58 @@ local function ElevatorMigrationLog(message, data)
 	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
 end
 
+local function ElevatorSupplyGridBrief(grid)
+	if not grid then return "nil" end
+	local width, height
+	if type(grid.size) == "function" then
+		local ok, w, h = pcall(grid.size, grid)
+		if ok then width, height = w, h or w end
+	end
+	local resource = type(grid) == "table" and rawget(grid, "supply_resource")
+	local subtype = type(grid) == "table" and rawget(grid, "grid_subtype")
+	local elements = type(grid) == "table" and rawget(grid, "elements")
+	return tostring(grid)
+		.. ";size=" .. tostring(width) .. "x" .. tostring(height)
+		.. ";resource=" .. tostring(resource)
+		.. ";subtype=" .. tostring(subtype)
+		.. ";elements=" .. tostring(type(elements) == "table" and #elements or nil)
+end
+
+local function ElevatorSupplyElementBrief(obj, resource)
+	if type(obj) ~= "table" then return "object=" .. type(obj) .. "@" .. tostring(obj) end
+	local element = rawget(obj, resource)
+	if type(element) ~= "table" then return "none" end
+	return "element=" .. tostring(element) .. ";grid="
+		.. ElevatorSupplyGridBrief(rawget(element, "grid"))
+end
+
+local function ElevatorSupplyTrace(stage, map, bld, record, extra)
+	local DebugLog = SuperBigMap.DebugLog
+	if not (DebugLog and type(DebugLog.On) == "function" and DebugLog.On("SupplyGrid")) then return end
+	local current = Global("CurrentMap")
+	local pos = bld and type(bld.GetPos) == "function" and SafeCall(bld.GetPos, bld)
+	local connections = type(map) == "table" and map.SupplyGridConnections
+	local overlay = type(map) == "table" and map.OverlaySupplyGrid
+	local object_grid = type(map) == "table" and map.ObjectGrid
+	local data = {
+		stage = tostring(stage), current_map = tostring(current), current_name = tostring(current and current.name),
+		expected_map = tostring(map), expected_name = tostring(map and map.name),
+		context_matches = tostring(current == map), elevator = tostring(bld),
+		class = tostring(bld and bld.class), position = tostring(pos), city = tostring(bld and bld.city),
+		passage = tostring(record and record.underground_passage),
+		surface_elevator = tostring(record and record.surface_elevator),
+		electricity = ElevatorSupplyElementBrief(bld, "electricity"),
+		water = ElevatorSupplyElementBrief(bld, "water"),
+		air = ElevatorSupplyElementBrief(bld, "air"),
+		connections = tostring(connections),
+		connections_electricity = ElevatorSupplyGridBrief(type(connections) == "table" and connections.electricity),
+		connections_water = ElevatorSupplyGridBrief(type(connections) == "table" and connections.water),
+		overlay = ElevatorSupplyGridBrief(overlay), object_grid = ElevatorSupplyGridBrief(object_grid),
+	}
+	if type(extra) == "table" then for key, value in pairs(extra) do data[key] = value end end
+	DebugLog.Info("SupplyGrid", "Elevator restoration stage", data)
+end
+
 local function ElevatorTerrainFingerprint(map, cx, cy)
 	local terrain_api = Global("terrain")
 	local point_fn = Global("point")
@@ -1582,6 +1634,10 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 				if snapped then target = snapped end
 			end
 			local target_z = type(target.z) == "function" and SafeCall(target.z, target) or nil
+			ElevatorSupplyTrace("before PlaceBuildingIn", map, nil, record, {
+				record = i, target = tostring(target), target_x = passage_x,
+				target_y = passage_y, target_z = tostring(target_z),
+			})
 			local instance = {
 				city = map.City,
 				name = record.name,
@@ -1596,11 +1652,17 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 			if not IsLiveGameObject(bld) then
 				error("failed to rebuild underground Elevator counterpart " .. tostring(i))
 			end
+			ElevatorSupplyTrace("after PlaceBuildingIn", map, bld, record, { record = i })
 			local passage_angle = type(passage.GetAngle) == "function"
 				and SafeCall(passage.GetAngle, passage) or record.angle or 0
 			if type(bld.SetAngle) == "function" then SafeCall(bld.SetAngle, bld, passage_angle) end
+			ElevatorSupplyTrace("after SetAngle", map, bld, record, {
+				record = i, passage_angle = tostring(passage_angle),
+			})
 			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
+			ElevatorSupplyTrace("after SetPos", map, bld, record, { record = i })
 			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
+			ElevatorSupplyTrace("after ApplyToGrids", map, bld, record, { record = i })
 			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
 
 			-- Match the final steps of ConstructionSite:Complete("quick_build"). PlaceBuildingIn
@@ -1616,10 +1678,14 @@ local function RestoreDeferredElevatorMigration(map, records, reason)
 				end
 				quick_build_setup = true
 			end
+			ElevatorSupplyTrace("after QuickBuildSetup", map, bld, record, {
+				record = i, quick_build_setup = tostring(quick_build_setup),
+			})
 			local ok_complete, complete_err = pcall(msg, "ConstructionComplete", bld, false)
 			if not ok_complete then
 				error("underground Elevator ConstructionComplete failed: " .. tostring(complete_err))
 			end
+			ElevatorSupplyTrace("after ConstructionComplete", map, bld, record, { record = i })
 			local terrain_after = ElevatorTerrainFingerprint(map, passage_x, passage_y)
 			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
 			if not terrain_unchanged then

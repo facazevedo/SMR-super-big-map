@@ -1511,6 +1511,55 @@ local function SupplyGridDimensions(grid)
 	return width, type(height) == "number" and height or width
 end
 
+local function SupplyGridLog(message, data, level)
+	local debug_log = SuperBigMap.DebugLog
+	if not debug_log then return end
+	local emit = level == "error" and debug_log.Error
+		or level == "warn" and debug_log.Warn or debug_log.Info
+	if type(emit) == "function" then emit("SupplyGrid", message, data) end
+end
+
+-- MapVar values are exposed as fields on the owning map and through the engine's guarded global
+-- environment. Engine.Global deliberately uses rawget, which is correct for normal globals but
+-- skipped every supply-grid MapVar in the first diagnostic build. Prefer the explicit map field,
+-- then use protected ordinary global indexing only for the known MapVar names below.
+local function ResolveSupplyMapVar(map, name)
+	if type(map) == "table" then
+		local ok, value = pcall(function() return map[name] end)
+		if ok and value ~= nil then return value, "map-field" end
+	end
+	local ok, value = pcall(function() return _G[name] end)
+	if ok and value ~= nil then return value, "mapvar-global" end
+	local raw = rawget(_G, name)
+	if raw ~= nil then return raw, "raw-global" end
+	return nil, ok and "missing" or "global-read-error"
+end
+
+local function DescribeSupplyValue(value)
+	local width, height = SupplyGridDimensions(value)
+	local parts = { type(value) .. "@" .. tostring(value) }
+	if width then parts[#parts + 1] = "size=" .. tostring(width) .. "x" .. tostring(height) end
+	if type(value) == "table" then
+		local class = rawget(value, "class") or rawget(value, "template_name")
+		local resource = rawget(value, "supply_resource")
+		local subtype = rawget(value, "grid_subtype")
+		local elements = rawget(value, "elements")
+		if class then parts[#parts + 1] = "class=" .. tostring(class) end
+		if resource then parts[#parts + 1] = "resource=" .. tostring(resource) end
+		if subtype then parts[#parts + 1] = "subtype=" .. tostring(subtype) end
+		if type(elements) == "table" then parts[#parts + 1] = "elements=" .. tostring(#elements) end
+	end
+	return table.concat(parts, ";")
+end
+
+local function SupplyElementDescription(obj, resource)
+	if type(obj) ~= "table" then return type(obj) .. "@" .. tostring(obj) end
+	local element = rawget(obj, resource)
+	if type(element) ~= "table" then return "none" end
+	local grid = rawget(element, "grid")
+	return "element=" .. tostring(element) .. ";grid=" .. DescribeSupplyValue(grid)
+end
+
 -- SupplyGridConnections and OverlaySupplyGrid are MapVars. Creating an object for a non-current
 -- map can therefore connect it through the CURRENT map's supply grids. The deferred underground
 -- pipeline used to rebuild Elevator counterparts before ChangeCurrentMapSlot, while the surface
@@ -1518,31 +1567,117 @@ end
 -- executed it after the switch against a different-sized MapVar pair. Log every boundary involved
 -- in that hand-off so future map sizes/scenarios are diagnosable without relying on a native assert.
 local function SupplyGridSnapshot(label, expected_map)
-	local connections = Global("SupplyGridConnections")
-	local overlay = Global("OverlaySupplyGrid")
-	local object_grid = Global("ObjectGrid")
+	local connections, connections_source = ResolveSupplyMapVar(expected_map, "SupplyGridConnections")
+	local overlay, overlay_source = ResolveSupplyMapVar(expected_map, "OverlaySupplyGrid")
+	local object_grid, object_grid_source = ResolveSupplyMapVar(expected_map, "ObjectGrid")
+	local hex_width, hex_width_source = ResolveSupplyMapVar(expected_map, "HexMapWidth")
+	local hex_height, hex_height_source = ResolveSupplyMapVar(expected_map, "HexMapHeight")
 	local ew, eh = SupplyGridDimensions(type(connections) == "table" and connections.electricity)
 	local ww, wh = SupplyGridDimensions(type(connections) == "table" and connections.water)
 	local ow, oh = SupplyGridDimensions(overlay)
 	local gw, gh = SupplyGridDimensions(object_grid)
 	local current = Global("CurrentMap")
+	local mapdata = expected_map and expected_map.mapdata
 	local data = {
 		label = tostring(label), expected_map = tostring(expected_map and expected_map.name),
 		expected_ref = tostring(expected_map), current_map = tostring(current and current.name),
 		current_ref = tostring(current), context_matches = tostring(current == expected_map),
-		hex_width = tostring(Global("HexMapWidth")), hex_height = tostring(Global("HexMapHeight")),
+		hex_width = tostring(hex_width), hex_width_source = tostring(hex_width_source),
+		hex_height = tostring(hex_height), hex_height_source = tostring(hex_height_source),
+		map_width = tostring(expected_map and expected_map.Width),
+		map_height = tostring(expected_map and expected_map.Height),
+		map_hex_width = tostring(expected_map and expected_map.hex_width),
+		map_hex_height = tostring(expected_map and expected_map.hex_height),
+		mapdata = tostring(mapdata and mapdata.Width) .. "x" .. tostring(mapdata and mapdata.Height),
+		connections_ref = tostring(connections), connections_source = tostring(connections_source),
 		electricity = tostring(ew) .. "x" .. tostring(eh),
+		electricity_ref = tostring(type(connections) == "table" and connections.electricity),
 		water = tostring(ww) .. "x" .. tostring(wh),
-		overlay = tostring(ow) .. "x" .. tostring(oh),
-		object_grid = tostring(gw) .. "x" .. tostring(gh),
+		water_ref = tostring(type(connections) == "table" and connections.water),
+		overlay = tostring(ow) .. "x" .. tostring(oh), overlay_ref = tostring(overlay),
+		overlay_source = tostring(overlay_source),
+		object_grid = tostring(gw) .. "x" .. tostring(gh), object_grid_ref = tostring(object_grid),
+		object_grid_source = tostring(object_grid_source),
 		desired_tiles = tostring(expected_map and expected_map.SuperBigMapDesiredWidthTiles),
 		generator_tiles = tostring(expected_map and expected_map.SuperBigMapGeneratorWidthTiles),
 	}
-	local debug_log = SuperBigMap.DebugLog
-	if debug_log and type(debug_log.Info) == "function" then
-		debug_log.Info("Generation", "supply-grid context audit", data)
-	end
+	SupplyGridLog("map-context snapshot", data)
 	return data, ow, oh, ew, eh, ww, wh
+end
+
+local supply_thread_trace_sequence = 0
+local function InstallScopedSupplyThreadTrace(map, label)
+	local original = Global("CreateGameTimeThread")
+	if type(original) ~= "function" then
+		SupplyGridLog("game-time thread tracer unavailable", {
+			label = tostring(label), create_thread = tostring(original), map = tostring(map),
+		}, "warn")
+		return false
+	end
+	local wrapper
+	wrapper = function(fn, ...)
+		supply_thread_trace_sequence = supply_thread_trace_sequence + 1
+		local sequence = supply_thread_trace_sequence
+		local args = PackValues(...)
+		local scheduled = {
+			sequence = sequence, label = tostring(label), function_ref = tostring(fn),
+			argument_count = args.n, current_map = tostring(Global("CurrentMap")),
+			current_map_name = tostring(Global("CurrentMap") and Global("CurrentMap").name),
+		}
+		for i = 1, math.min(args.n, 8) do
+			scheduled["arg" .. tostring(i)] = DescribeSupplyValue(args[i])
+		end
+		SupplyGridLog("game-time thread scheduled during Elevator restoration", scheduled)
+		local traced = function(...)
+			local run_args = PackValues(...)
+			local running = {
+				sequence = sequence, function_ref = tostring(fn), argument_count = run_args.n,
+				current_map = tostring(Global("CurrentMap")),
+				current_map_name = tostring(Global("CurrentMap") and Global("CurrentMap").name),
+			}
+			for i = 1, math.min(run_args.n, 8) do
+				running["arg" .. tostring(i)] = DescribeSupplyValue(run_args[i])
+			end
+			SupplyGridLog("game-time thread BEGIN", running)
+			SupplyGridSnapshot("inside traced game-time thread before callback", map)
+			-- Do not add pcall here: a game-time callback may legally yield, and wrapping it in a
+			-- protected Lua call could alter scheduler semantics. If the native assert fires, BEGIN
+			-- without END is deliberately the diagnostic signature.
+			local results = PackValues(fn(Unpack(run_args, 1, run_args.n)))
+			SupplyGridLog("game-time thread END", { sequence = sequence, function_ref = tostring(fn) })
+			return Unpack(results, 1, results.n)
+		end
+		return original(traced, Unpack(args, 1, args.n))
+	end
+	rawset(_G, "CreateGameTimeThread", wrapper)
+	SupplyGridLog("scoped game-time thread tracer installed", {
+		label = tostring(label), original = tostring(original), wrapper = tostring(wrapper), map = tostring(map),
+	})
+	return function()
+		local current = Global("CreateGameTimeThread")
+		if current == wrapper then rawset(_G, "CreateGameTimeThread", original) end
+		SupplyGridLog("scoped game-time thread tracer removed", {
+			label = tostring(label), restored = tostring(current == wrapper), current = tostring(current),
+		})
+	end
+end
+
+local function AuditElevatorSupplyRecords(records, label)
+	if type(records) ~= "table" then return end
+	for i, record in ipairs(records) do
+		local elevator = record.rebuilt_elevator
+		local pos = elevator and type(elevator.GetPos) == "function" and SafeCall(elevator.GetPos, elevator)
+		SupplyGridLog("Elevator supply object snapshot", {
+			label = tostring(label), record = i, restored = tostring(record.restored),
+			elevator = tostring(elevator), class = tostring(elevator and elevator.class),
+			position = tostring(pos), city = tostring(elevator and elevator.city),
+			object_map = tostring(elevator and elevator.map), expected_map = tostring(record.underground_passage and record.underground_passage.map),
+			electricity = SupplyElementDescription(elevator, "electricity"),
+			water = SupplyElementDescription(elevator, "water"),
+			air = SupplyElementDescription(elevator, "air"),
+			passage = tostring(record.underground_passage),
+		})
+	end
 end
 
 local function IsExpandedSupplyContext(map)
@@ -1560,8 +1695,19 @@ end
 local function PatchSupplyGridOverlayCopyGuard(source)
 	local State = SuperBigMap.State
 	local current = Global("CopySupplyFragmentToOverlayGrid")
+	SupplyGridLog("overlay-copy wrapper state", {
+		source = tostring(source), current = tostring(current),
+		state_wrapper = tostring(State.supply_grid_overlay_copy_wrapper),
+		state_original = tostring(State.original_supply_grid_overlay_copy),
+		patch_version = tostring(State.supply_grid_overlay_copy_patch_version),
+		target_version = tostring(GENERATOR_PATCH_VERSION),
+		current_is_wrapper = tostring(current == State.supply_grid_overlay_copy_wrapper),
+	})
 	if current == State.supply_grid_overlay_copy_wrapper
 		and State.supply_grid_overlay_copy_patch_version == GENERATOR_PATCH_VERSION then
+		SupplyGridLog("overlay-copy wrapper already active", {
+			source = tostring(source), wrapper = tostring(current),
+		})
 		return true
 	end
 	if current == State.supply_grid_overlay_copy_wrapper
@@ -1579,6 +1725,11 @@ local function PatchSupplyGridOverlayCopyGuard(source)
 	local captured_original = current
 	local wrapper = function(overlay, connection_grid, fragment, ...)
 		local map = Global("CurrentMap")
+		SupplyGridLog("overlay-copy wrapper INVOKED", {
+			source = tostring(source), map = tostring(map), map_name = tostring(map and map.name),
+			overlay = DescribeSupplyValue(overlay), connection = DescribeSupplyValue(connection_grid),
+			fragment = DescribeSupplyValue(fragment),
+		})
 		if IsExpandedSupplyContext(map) then
 			local ow, oh = SupplyGridDimensions(overlay)
 			local cw, ch = SupplyGridDimensions(connection_grid)
@@ -1601,6 +1752,10 @@ local function PatchSupplyGridOverlayCopyGuard(source)
 	rawset(_G, "CopySupplyFragmentToOverlayGrid", wrapper)
 	State.supply_grid_overlay_copy_wrapper = wrapper
 	State.supply_grid_overlay_copy_patch_version = GENERATOR_PATCH_VERSION
+	SupplyGridLog("overlay-copy wrapper installed", {
+		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
+		global_after = tostring(Global("CopySupplyFragmentToOverlayGrid")),
+	})
 	UndergroundAccessLog("supply-grid overlay guard installed", {
 		source = tostring(source), original = tostring(current), wrapper = tostring(wrapper),
 	})
@@ -1611,12 +1766,20 @@ local function FinalizePendingUndergroundElevators(map, reason)
 	local records = map and pending_underground_elevator_restores[map]
 	if type(records) ~= "table" or #records == 0 then return true, 0 end
 	SupplyGridSnapshot("before current-map underground Elevator restoration", map)
+	AuditElevatorSupplyRecords(records, "before restoration")
 	if Global("CurrentMap") ~= map then
 		return false, "underground map is not current during deferred Elevator restoration"
 	end
+	-- Base-game scripts can refresh native globals during a map transition. Re-check the intended
+	-- overlay wrapper at the last possible point, and trace every thread scheduled by the restore.
+	PatchSupplyGridOverlayCopyGuard("FinalizePendingUndergroundElevators/pre-restore")
+	local remove_thread_trace = InstallScopedSupplyThreadTrace(map,
+		"FinalizePendingUndergroundElevators/" .. tostring(reason))
 	local ok, rebuilt = pcall(RestoreDeferredElevatorMigration, map, records,
 		reason or "after underground map switch")
+	if type(remove_thread_trace) == "function" then remove_thread_trace() end
 	SupplyGridSnapshot("after current-map underground Elevator restoration", map)
+	AuditElevatorSupplyRecords(records, "after restoration")
 	if not ok then return false, tostring(rebuilt) end
 	if rebuilt ~= #records then
 		return false, "rebuilt " .. tostring(rebuilt) .. " of " .. tostring(#records)
