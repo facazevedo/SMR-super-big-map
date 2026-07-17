@@ -106,4 +106,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- underground native-mask safety bridge; its declaration was removed with the sampler cleanup.
 -- Bumped to 109: accept the engine-native indexable neighbour sequence returned by
 -- SupplyGridApplyBuilding instead of requiring its representation to be a Lua table.
-SuperBigMap.GENERATOR_PATCH_VERSION = 109
+-- Bumped to 110: replace the tagged cross-map Elevator's native fragment-to-overlay copy with
+-- bounded per-building overlay writes, avoiding connection-grid reads during reentrant GameInit.
+SuperBigMap.GENERATOR_PATCH_VERSION = 110

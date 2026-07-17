@@ -1502,7 +1502,7 @@ local function DescribeSupplyValue(value)
 	if width then parts[#parts + 1] = "size=" .. tostring(width) .. "x" .. tostring(height) end
 	if type(value) == "table" then
 		local class = rawget(value, "class") or rawget(value, "template_name")
-		local resource = rawget(value, "supply_resource")
+		local resource = value.supply_resource
 		local subtype = rawget(value, "grid_subtype")
 		local elements = rawget(value, "elements")
 		if class then parts[#parts + 1] = "class=" .. tostring(class) end
@@ -1629,7 +1629,8 @@ end
 local function SupplyFragmentContextData(overlay, connection_grid, fragment, city, extra)
 	local map = SupplyFragmentMap(fragment, city)
 	local current = Global("CurrentMap")
-	local resource = type(fragment) == "table" and rawget(fragment, "supply_resource") or nil
+	local resource = type(fragment) == "table" and fragment.supply_resource or nil
+	if resource == nil and type(extra) == "table" then resource = extra.resource end
 	local live_overlay = map and select(1, ResolveSupplyMapVar(map, "supply_overlay_grid")) or nil
 	local live_connections = map and select(1, ResolveSupplyMapVar(map, "supply_connection_grid")) or nil
 	local live_connection = type(live_connections) == "table" and live_connections[resource] or nil
@@ -1674,7 +1675,10 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 
 	local elements = type(fragment) == "table" and rawget(fragment, "elements")
 	if type(elements) ~= "table" then return data end
-	local fragment_resource = rawget(fragment, "supply_resource")
+	local fragment_resource = fragment.supply_resource
+	if fragment_resource == nil and type(extra) == "table" then
+		fragment_resource = extra.resource
+	end
 	local width, height = SupplyGridDimensions(connection_grid)
 	local world_to_hex = Global("WorldToHex")
 	local rotate = Global("HexRotate")
@@ -1712,7 +1716,7 @@ local function AuditSupplyFragmentFootprint(label, overlay, connection_grid, fra
 			position = tostring(pos), world_x = tostring(px), world_y = tostring(py),
 			origin_q = tostring(q), origin_r = tostring(r), direction = tostring(direction),
 			shape_count = tostring(type(shape) == "table" and #shape or nil), shape_error = tostring(shape_error),
-			resource = tostring(type(fragment) == "table" and rawget(fragment, "supply_resource")),
+			resource = tostring(type(fragment) == "table" and fragment.supply_resource),
 			map = tostring(map), connection_width = tostring(width), connection_height = tostring(height),
 		})
 		if include_shapes and type(shape) == "table" and type(q) == "number" and type(r) == "number" then
@@ -1985,7 +1989,7 @@ local function ValidateSupplyBuildingFootprint(token, building, resource, stage)
 			})
 		end
 		if grid then
-			local fragment_resource = type(grid) == "table" and rawget(grid, "supply_resource") or nil
+			local fragment_resource = type(grid) == "table" and grid.supply_resource or nil
 			if fragment_resource and fragment_resource ~= resource then
 				return SupplyGridSetFailure(token, stage, "Elevator element uses the wrong supply fragment", {
 					resource = tostring(resource), fragment_resource = tostring(fragment_resource),
@@ -2058,20 +2062,65 @@ local function CopySupplyFragmentSynchronously(token, city, fragment, resource, 
 			resource = tostring(resource), fragment = tostring(fragment),
 		})
 	end
-	local copy = SuperBigMap.State.original_supply_grid_overlay_copy
-		or Global("CopySupplyFragmentToOverlayGrid")
-	if type(copy) ~= "function" then
-		return SupplyGridSetFailure(token, stage, "native overlay-copy API is unavailable")
-	end
-	local copy_ok, copy_result = pcall(copy, refs.overlay, connection, city, fragment)
-	if not copy_ok then
-		return SupplyGridSetFailure(token, stage, "synchronous overlay copy failed", {
-			error = tostring(copy_result), resource = tostring(resource), fragment = tostring(fragment),
+	-- Do not call CopySupplyFragmentToOverlayGrid here. Its native implementation reads every
+	-- footprint back through the connection grid and asserts when a cross-map Elevator merge is
+	-- still inside the second element's GameInit. The overlay does not need that read: vanilla's
+	-- unmerged branch obtains the fragment ID and applies it directly to the building shape. Do the
+	-- same bounded operation for each element owned by this city after the complete coordinate audit.
+	local get_overlay_index = Global("GetGridOverlayIndex")
+	local apply_overlay_id = Global("ApplyIDToOverlayGrid")
+	local shift = Global("shift")
+	if type(get_overlay_index) ~= "function" or type(apply_overlay_id) ~= "function"
+		or (resource == "water" and type(shift) ~= "function") then
+		return SupplyGridSetFailure(token, stage, "bounded overlay-copy APIs are unavailable", {
+			get_overlay_index = tostring(get_overlay_index),
+			apply_overlay_id = tostring(apply_overlay_id), shift = tostring(shift),
 		})
 	end
-	SupplyGridLog("underground Elevator overlay copied synchronously", {
+	local overlay_id = get_overlay_index(fragment)
+	if type(overlay_id) ~= "number" then
+		return SupplyGridSetFailure(token, stage, "merged fragment has no overlay ID", {
+			resource = tostring(resource), fragment = tostring(fragment),
+		})
+	end
+	if resource == "water" then overlay_id = shift(overlay_id, 4) end
+	local applied = 0
+	for _, element in ipairs(type(fragment) == "table" and rawget(fragment, "elements") or {}) do
+		local building = type(element) == "table" and rawget(element, "building") or nil
+		local building_city = type(building) == "table" and rawget(building, "city") or nil
+		local building_map = SupplyObjectMap(building)
+		if building and (building_city == city or building_map == map) then
+			local shape_ok, shape = pcall(building.GetSupplyGridConnectionShapePoints,
+				building, resource)
+			if not shape_ok or type(shape) ~= "table" or #shape == 0 then
+				return SupplyGridSetFailure(token, stage,
+					"bounded overlay copy could not resolve an Elevator footprint", {
+						building = tostring(building), city = tostring(city),
+						resource = tostring(resource), shape_error = shape_ok and "none" or tostring(shape),
+					})
+			end
+			local apply_ok, apply_error = pcall(apply_overlay_id,
+				refs.overlay, building, shape, overlay_id)
+			if not apply_ok then
+				return SupplyGridSetFailure(token, stage, "bounded overlay copy failed", {
+					error = tostring(apply_error), building = tostring(building),
+					city = tostring(city), resource = tostring(resource),
+				})
+			end
+			applied = applied + 1
+		end
+	end
+	if applied < 1 then
+		return SupplyGridSetFailure(token, stage,
+			"bounded overlay copy found no fragment element owned by the target city", {
+				city = tostring(city), map = tostring(map), resource = tostring(resource),
+				fragment = tostring(fragment),
+			})
+	end
+	SupplyGridLog("underground Elevator overlay applied synchronously without native grid reads", {
 		token = token.token_id, stage = tostring(stage), map = tostring(map),
 		city = tostring(city), resource = tostring(resource), fragment = tostring(fragment),
+		overlay_id = overlay_id, applied_elements = applied,
 	})
 	return true
 end
