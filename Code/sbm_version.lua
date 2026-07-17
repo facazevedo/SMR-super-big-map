@@ -93,4 +93,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- trace the native overlay-copy signature without touching the strict global environment.
 -- Bumped to 103: trace MergeGrids provenance and the complete delayed supply-overlay fragment
 -- footprint, including live/captured grid identity and every native offset-grid coordinate.
-SuperBigMap.GENERATOR_PATCH_VERSION = 103
+-- Bumped to 104: bridge those diagnostics into SupplyGrid.lua's private function environment;
+-- public-global wrappers do not intercept the shipped closure's delayed line-1665 callback.
+SuperBigMap.GENERATOR_PATCH_VERSION = 104

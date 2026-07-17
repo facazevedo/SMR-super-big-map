@@ -1969,6 +1969,153 @@ local function PatchSupplyMergeTrace(source)
 	return true
 end
 
+local function SupplyFunctionEnvironment(fn)
+	if type(fn) ~= "function" then return nil, "not-a-function" end
+	local getfenv_fn = Global("getfenv")
+	if type(getfenv_fn) == "function" then
+		local ok, env = pcall(getfenv_fn, fn)
+		if ok and type(env) == "table" then return env, "getfenv" end
+	end
+	local debug_lib = Global("debug")
+	if type(debug_lib) == "table" and type(debug_lib.getfenv) == "function" then
+		local ok, env = pcall(debug_lib.getfenv, fn)
+		if ok and type(env) == "table" then return env, "debug.getfenv" end
+	end
+	if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
+		for index = 1, 64 do
+			local ok, name, value = pcall(debug_lib.getupvalue, fn, index)
+			if not ok or name == nil then break end
+			if name == "_ENV" and type(value) == "table" then
+				return value, "debug.getupvalue:_ENV"
+			end
+		end
+	end
+	return nil, "unavailable"
+end
+
+local function RestoreSupplyPrivateEnvironmentTrace(source)
+	local State = SuperBigMap.State
+	local records = State.supply_private_environment_records
+	if type(records) ~= "table" then return false end
+	local restored, skipped = 0, 0
+	for _, record in ipairs(records) do
+		local env = record.environment
+		if type(env) == "table" and type(record.entries) == "table" then
+			for name, entry in pairs(record.entries) do
+				local current = rawget(env, name)
+				if current == entry.wrapper then
+					rawset(env, name, entry.had_raw and entry.raw_value or nil)
+					restored = restored + 1
+				else
+					skipped = skipped + 1
+					SupplyGridLog("private SupplyGrid environment restore skipped changed entry", {
+						source = tostring(source), environment = tostring(env), name = tostring(name),
+						current = tostring(current), expected_wrapper = tostring(entry.wrapper),
+					}, "warn")
+				end
+			end
+		end
+	end
+	SupplyGridLog("private SupplyGrid environment trace restored", {
+		source = tostring(source), environments = #records, restored_entries = restored,
+		skipped_entries = skipped,
+	})
+	State.supply_private_environment_records = nil
+	State.supply_private_environment_patch_version = nil
+	return true
+end
+
+-- Relaunched compiles SupplyGrid.lua with a private _ENV. The previous run proved that replacing
+-- _G.MergeGrids/CreateGameTimeThread/CopySupplyFragmentToOverlayGrid leaves that environment's
+-- lookups untouched: all public wrappers were installed, yet line 1665 executed with no trace.
+-- Bridge the same observational wrappers into the actual environments of MergeGrids and its main
+-- caller, preserving each raw entry exactly so vanilla teardown can restore the lookup chain.
+local function PatchSupplyPrivateEnvironmentTrace(source)
+	local State = SuperBigMap.State
+	local expected = {
+		MergeGrids = State.supply_merge_trace_wrapper,
+		CreateGameTimeThread = State.supply_overlay_thread_wrapper,
+		CopySupplyFragmentToOverlayGrid = State.supply_grid_overlay_copy_wrapper,
+	}
+	for name, wrapper in pairs(expected) do
+		if type(wrapper) ~= "function" then
+			SupplyGridLog("private SupplyGrid environment trace unavailable", {
+				source = tostring(source), missing_wrapper = tostring(name), value = tostring(wrapper),
+			}, "error")
+			return false
+		end
+	end
+	if State.supply_private_environment_patch_version == GENERATOR_PATCH_VERSION
+		and type(State.supply_private_environment_records) == "table" then
+		local verified = true
+		for _, record in ipairs(State.supply_private_environment_records) do
+			for name, wrapper in pairs(expected) do
+				verified = verified and rawget(record.environment, name) == wrapper
+			end
+		end
+		SupplyGridLog("private SupplyGrid environment trace verification", {
+			source = tostring(source), verified = tostring(verified),
+			environments = #State.supply_private_environment_records,
+		})
+		if verified then return true end
+		RestoreSupplyPrivateEnvironmentTrace("reinstall/" .. tostring(source))
+	elseif type(State.supply_private_environment_records) == "table" then
+		RestoreSupplyPrivateEnvironmentTrace("upgrade/" .. tostring(source))
+	end
+
+	local supply_object_class = Engine.ClassTable and Engine.ClassTable("SupplyGridObject")
+	local candidates = {
+		{ label = "MergeGrids original", fn = State.original_supply_merge_grids },
+		{ label = "SupplyGridObject:SupplyGridConnectElement",
+			fn = type(supply_object_class) == "table" and supply_object_class.SupplyGridConnectElement or nil },
+	}
+	local records, seen = {}, {}
+	for _, candidate in ipairs(candidates) do
+		local env, env_source = SupplyFunctionEnvironment(candidate.fn)
+		SupplyGridLog("private SupplyGrid environment candidate", {
+			source = tostring(source), label = candidate.label, function_ref = tostring(candidate.fn),
+			environment = tostring(env), environment_source = tostring(env_source),
+			environment_is_global = tostring(env == _G),
+		})
+		if type(env) == "table" and env ~= _G and not seen[env] then
+			seen[env] = true
+			local record = {
+				environment = env, environment_source = env_source,
+				candidate = candidate.label, entries = {},
+			}
+			for name, wrapper in pairs(expected) do
+				local raw_value = rawget(env, name)
+				local ok_resolved, resolved = pcall(function() return env[name] end)
+				local entry = {
+					had_raw = raw_value ~= nil, raw_value = raw_value,
+					resolved_value = ok_resolved and resolved or nil, wrapper = wrapper,
+				}
+				record.entries[name] = entry
+				local ok_install, install_error = pcall(rawset, env, name, wrapper)
+				local installed = ok_install and rawget(env, name) == wrapper
+				SupplyGridLog("private SupplyGrid environment entry bridged", {
+					source = tostring(source), candidate = candidate.label,
+					environment = tostring(env), environment_source = tostring(env_source),
+					name = name, had_raw = tostring(entry.had_raw), raw_before = tostring(raw_value),
+					resolved_before = tostring(entry.resolved_value), wrapper = tostring(wrapper),
+					installed = tostring(installed), install_error = tostring(install_error),
+				}, installed and nil or "error")
+			end
+			record.metatable = getmetatable(env)
+			records[#records + 1] = record
+		end
+	end
+	State.supply_private_environment_records = records
+	State.supply_private_environment_patch_version = GENERATOR_PATCH_VERSION
+	SupplyGridLog("private SupplyGrid environment trace installed", {
+		source = tostring(source), environments = #records,
+		merge_wrapper = tostring(expected.MergeGrids),
+		thread_wrapper = tostring(expected.CreateGameTimeThread),
+		copy_wrapper = tostring(expected.CopySupplyFragmentToOverlayGrid),
+	})
+	return #records > 0
+end
+
 -- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
 -- overlay and connection grids disagree. Keep vanilla untouched for normal maps, but fail closed
 -- on an expanded map if a future lifecycle regression presents incompatible MapVars. The ordering
@@ -10458,6 +10605,7 @@ local function PatchDeferredUndergroundAccess(source)
 	PatchPersistentSupplyThreadTrace(source)
 	PatchSupplyMergeTrace(source)
 	PatchSupplyGridOverlayCopyGuard(source)
+	PatchSupplyPrivateEnvironmentTrace(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	UndergroundAccessLog("map-slot gate patch check", {
@@ -10867,6 +11015,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.original_underground_hud_init = nil
 	State.underground_hud_patch_version = nil
 	State.underground_hud_init_depth = nil
+	RestoreSupplyPrivateEnvironmentTrace("MapGeneration.RestoreVanillaBehavior")
 	if State.supply_grid_overlay_copy_wrapper
 		and Global("CopySupplyFragmentToOverlayGrid") == State.supply_grid_overlay_copy_wrapper
 		and type(State.original_supply_grid_overlay_copy) == "function" then
