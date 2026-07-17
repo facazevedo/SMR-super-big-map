@@ -71,7 +71,9 @@ SuperBigMap.EnrichmentSpreadDiagnostics = nil
 -- and normalize the process-global sector count before vanilla InitSectors.
 -- Bumped to 57: force floating division in the stretched start-sector coordinate transform;
 -- integer 8192/6144 truncated to 1 and revealed the unscaled source location.
-SuperBigMap.SECTOR_PATCH_VERSION = 57
+-- Bumped to 58: pass every stretched-footprint equivalent through vanilla InitialReveal and
+-- scan only its first selected winner instead of revealing the complete equivalent cover.
+SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
 -- (sbm_map_generation). 93 staged the native start-sector annotation across temporary source
 -- migration. 94 persisted exhaustive source/transform/overlap selection diagnostics.
