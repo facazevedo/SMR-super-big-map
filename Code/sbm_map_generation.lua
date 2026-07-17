@@ -4853,6 +4853,10 @@ local function PatchRandomMapGenerator()
 				return stats
 			end
 
+			-- Proc_ResolveBuildable performs a native mask call before GetPlayableArea. Retain the
+			-- exact source-sized grid only for this synchronous generation transaction while the
+			-- live BuildableGrid temporarily exposes a destination-sized, unbuildable-padded copy.
+			local retained_source_buildable_grid
 			local function rebuild_source_buildable_grid(target_map)
 				if is_underground
 					or target_map ~= map
@@ -5187,7 +5191,7 @@ local function PatchRandomMapGenerator()
 					source_processed = nil -- ownership transferred to the live BuildableGrid
 					source_mask_log("SOURCE_BUILDABLE_GRID_TRANSFER", {
 						old_grid = tostring(replaced_grid), new_grid = tostring(buildable.z_grid),
-						source_grid = tostring(sampler_source_buildable_grid),
+						source_grid = tostring(retained_source_buildable_grid),
 						source_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
 						live_hex = tostring(source_hex_w) .. "x" .. tostring(source_hex_h),
 						ownership = "BuildableGrid.z_grid",
@@ -5227,7 +5231,7 @@ local function PatchRandomMapGenerator()
 				local gen_zone = env.gen_zone
 				local buildable = map and map.buildable
 				local stock_z_grid = buildable and buildable.z_grid
-				local z_grid = sampler_source_buildable_grid or stock_z_grid
+				local z_grid = retained_source_buildable_grid or stock_z_grid
 				if not gen_zone or not incoming_mask or not buildable or not z_grid
 					or type(z_grid.get) ~= "function" or type(z_grid.set) ~= "function"
 					or type(closure_new_grid) ~= "function"
@@ -5510,11 +5514,11 @@ local function PatchRandomMapGenerator()
 									repair_reason = "native-bridge", pass_border = tostring(args[2]),
 								})
 						end
-					elseif sampler_source_buildable_grid then
+					elseif retained_source_buildable_grid then
 						source_mask_log("SOURCE_MASK_REPAIR_REQUIRED_BUT_FAILED", {
 							map = tostring(map and map.name), environment = tostring(environment),
 							reason = tostring(repair_reason),
-							authoritative_grid = tostring(sampler_source_buildable_grid),
+							authoritative_grid = tostring(retained_source_buildable_grid),
 							stock_grid = tostring(map and map.buildable and map.buildable.z_grid),
 						}, "error")
 						error("source playable-mask repair failed: " .. tostring(repair_reason))
@@ -6917,7 +6921,7 @@ local function PatchRandomMapGenerator()
 						or type(closure_new_grid) ~= "function" then
 						error("underground stock-mask safety APIs unavailable")
 					end
-					if sampler_source_buildable_grid then
+					if retained_source_buildable_grid then
 						error("underground source buildable grid already retained")
 					end
 					saved_buildable_grid_build(buildable, target_map, width, height, map_data, ...)
@@ -6969,7 +6973,7 @@ local function PatchRandomMapGenerator()
 						end
 					end
 					local pad_finished = type(ticks) == "function" and ticks() or pad_started
-					sampler_source_buildable_grid = source_grid
+					retained_source_buildable_grid = source_grid
 					buildable.z_grid = padded
 					invariant.stock_grid = tostring(expanded_w) .. "x" .. tostring(expanded_h)
 					invariant.authoritative_grid = tostring(source_w) .. "x" .. tostring(source_h)
@@ -7042,12 +7046,12 @@ local function PatchRandomMapGenerator()
 			end
 
 			local retained_source_cleanup = {
-				grid = tostring(sampler_source_buildable_grid), present = sampler_source_buildable_grid ~= nil,
+				grid = tostring(retained_source_buildable_grid), present = retained_source_buildable_grid ~= nil,
 				generation_ok = results[1] == true,
 			}
-			if sampler_source_buildable_grid then
-				local retained = sampler_source_buildable_grid
-				sampler_source_buildable_grid = nil
+			if retained_source_buildable_grid then
+				local retained = retained_source_buildable_grid
+				retained_source_buildable_grid = nil
 				local ok_free, free_error = pcall(function() retained:free() end)
 				retained_source_cleanup.freed = ok_free
 				retained_source_cleanup.error = ok_free and "none" or tostring(free_error)

@@ -102,4 +102,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- synchronously merge/copy its fragments so no private delayed overlay callback is scheduled.
 -- Bumped to 107: restore the underground-only source-sized generator transaction removed with
 -- retired surface sampler experiments; surface generation still requires exact temporary backing.
-SuperBigMap.GENERATOR_PATCH_VERSION = 107
+-- Bumped to 108: restore the transaction-local retained source buildable grid used by the
+-- underground native-mask safety bridge; its declaration was removed with the sampler cleanup.
+SuperBigMap.GENERATOR_PATCH_VERSION = 108
