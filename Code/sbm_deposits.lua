@@ -2240,6 +2240,14 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 					tostring(sequence_info and sequence_info.mode),
 					tostring(sequence_info and sequence_info.matches)))
 			end
+			-- Verification must compare the recreated marker with the constructor state that can
+			-- actually pass the shipped anomaly Init validation. A generated marker can carry a
+			-- stale sequence_list because vanilla assigns its sequence after construction; when we
+			-- repair that pair before recreation, make the same canonical value the expected value.
+			if sequence_info and sequence_info.final_list ~= nil
+				and type(record.properties) == "table" then
+				record.properties.sequence_list = constructor_properties.sequence_list
+			end
 			if sequence_info and (exhaustive
 				or sequence_info.original_list ~= sequence_info.final_list) then
 				Log("prepared native anomaly constructor sequence", {
