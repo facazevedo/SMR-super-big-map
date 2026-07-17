@@ -100,4 +100,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- Bumped to 106: make underground Elevator restoration a tokenized lifecycle transaction, validate
 -- every map/grid/footprint invariant, reproduce tagged Elevator connection synchronously, and
 -- synchronously merge/copy its fragments so no private delayed overlay callback is scheduled.
-SuperBigMap.GENERATOR_PATCH_VERSION = 106
+-- Bumped to 107: restore the underground-only source-sized generator transaction removed with
+-- retired surface sampler experiments; surface generation still requires exact temporary backing.
+SuperBigMap.GENERATOR_PATCH_VERSION = 107

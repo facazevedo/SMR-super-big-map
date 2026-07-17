@@ -7583,7 +7583,530 @@ local function PatchRandomMapGenerator()
 				return Unpack(migrated_results, 1, migrated_results.n)
 			end
 
-			error("expanded surface generation requires the exact temporary vanilla backing transaction")
+			local backing_environment = (type(mapdata) == "table" and mapdata.Environment)
+				or (type(template) == "table" and template.Environment)
+			if backing_environment ~= "Underground" then
+				error("expanded surface generation requires the exact temporary vanilla backing transaction")
+			end
+
+			-- Underground generation cannot use the temporary surface migration transaction:
+			-- it must create and pair passage anchors against the live expanded surface. Present
+			-- the expanded underground backing through an exact source-sized generator view, run
+			-- vanilla once, then restore the real expanded dimensions before deferred stretching.
+			-- Cap to the per-map generator markers if present, else the max.
+			local gen_width_tiles = (type(map.SuperBigMapGeneratorWidthTiles) == "number" and map.SuperBigMapGeneratorWidthTiles > 0)
+				and map.SuperBigMapGeneratorWidthTiles or max_random_tiles
+			local gen_height_tiles = (type(map.SuperBigMapGeneratorHeightTiles) == "number" and map.SuperBigMapGeneratorHeightTiles > 0)
+				and map.SuperBigMapGeneratorHeightTiles or max_random_tiles
+			gen_width_tiles = math.max(1, math.min(gen_width_tiles, max_random_tiles))
+			gen_height_tiles = math.max(1, math.min(gen_height_tiles, max_random_tiles))
+
+			local gen_world_w = (type(map.SuperBigMapGeneratorWidth) == "number" and map.SuperBigMapGeneratorWidth > 0)
+				and map.SuperBigMapGeneratorWidth or (gen_width_tiles * height_tile_size)
+			local gen_world_h = (type(map.SuperBigMapGeneratorHeight) == "number" and map.SuperBigMapGeneratorHeight > 0)
+				and map.SuperBigMapGeneratorHeight or (gen_height_tiles * height_tile_size)
+
+			local saved_template_w = template and template.Width
+			local saved_template_h = template and template.Height
+			local saved_mapdata_w = type(mapdata) == "table" and mapdata.Width or nil
+			local saved_mapdata_h = type(mapdata) == "table" and mapdata.Height or nil
+			local saved_map_width = map and map.Width
+			local saved_map_height = map and map.Height
+			local saved_map_hex_width = map and map.hex_width
+			local saved_map_hex_height = map and map.hex_height
+			local buildable_source_view = false
+
+			map.GetMapSize = function(target)
+				if target == map then
+					return gen_world_w, gen_world_h
+				end
+				if type(original_map_get_size) == "function" then
+					return original_map_get_size(target)
+				end
+				return gen_world_w, gen_world_h
+			end
+			if terrain_api and type(original_terrain_get_size) == "function" then
+				terrain_api.GetMapSize = function(target)
+					if target == map or (target == nil and Global("CurrentMap") == map) then
+						return gen_world_w, gen_world_h
+					end
+					return original_terrain_get_size(target)
+				end
+			end
+			if template then
+				template.Width = gen_width_tiles
+				template.Height = gen_height_tiles
+			end
+			if type(mapdata) == "table" then
+				mapdata.Width = gen_width_tiles
+				mapdata.Height = gen_height_tiles
+			end
+
+			-- ATOMIC SOURCE-SIZED MAP/BUILDABLE VIEW. Vanilla RebuildBuildableGrid does not consult
+			-- map:GetMapSize, terrain.GetMapSize, or MapData.Width when choosing its grid
+			-- dimensions; it directly passes map.hex_width/map.hex_height into BuildableGrid:Build.
+			-- MaskBuildableGrid then consumes the Map object natively and can still project that grid
+			-- through the cached map.Width/map.Height MapVars, which were initialized from the expanded
+			-- allocation. Present all four cached extents as one vanilla-sized transaction (8192 ->
+			-- 6144 gives world 819200 -> 614400 and hex 820x946 -> 615x710), restore all four
+			-- immediately afterward even when native generation fails, and only then rebuild the real
+			-- expanded gameplay grid.
+			if cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true)
+				and type(saved_map_width) == "number" and saved_map_width > 0
+				and type(saved_map_height) == "number" and saved_map_height > 0
+				and type(saved_map_hex_width) == "number" and saved_map_hex_width > 0
+				and type(saved_map_hex_height) == "number" and saved_map_hex_height > 0
+				and cur_w_tiles > 0 and cur_h_tiles > 0 then
+				local source_hex_width = math.max(1,
+					math.floor((saved_map_hex_width * gen_width_tiles + 0.0) / cur_w_tiles + 0.5))
+				local source_hex_height = math.max(1,
+					math.floor((saved_map_hex_height * gen_height_tiles + 0.0) / cur_h_tiles + 0.5))
+				local source_fits_expanded = gen_world_w <= saved_map_width and gen_world_h <= saved_map_height
+					and source_hex_width <= saved_map_hex_width and source_hex_height <= saved_map_hex_height
+				local source_is_smaller = gen_world_w < saved_map_width or gen_world_h < saved_map_height
+					or source_hex_width < saved_map_hex_width or source_hex_height < saved_map_hex_height
+				if source_fits_expanded and source_is_smaller then
+					buildable_source_view = {
+						source_world_width = gen_world_w, source_world_height = gen_world_h,
+						expanded_world_width = saved_map_width, expanded_world_height = saved_map_height,
+						source_hex_width = source_hex_width, source_hex_height = source_hex_height,
+						expanded_hex_width = saved_map_hex_width, expanded_hex_height = saved_map_hex_height,
+					}
+					-- Retain the real backing dimensions while the Lua-facing Map fields present the
+					-- source view. The source-mask bridge uses these values to make the native mask
+					-- sampler's cell-to-world step identical to a genuinely vanilla allocation.
+					map.SuperBigMapExpandedWorldWidth = saved_map_width
+					map.SuperBigMapExpandedWorldHeight = saved_map_height
+					map.SuperBigMapExpandedHexWidth = saved_map_hex_width
+					map.SuperBigMapExpandedHexHeight = saved_map_hex_height
+					map.Width = gen_world_w
+					map.Height = gen_world_h
+					map.hex_width = source_hex_width
+					map.hex_height = source_hex_height
+					DebugPrint(string.format(
+						"vanilla cached map/buildable view installed: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; tiles %sx%s -> %sx%s",
+						tostring(saved_map_width), tostring(saved_map_height),
+						tostring(gen_world_w), tostring(gen_world_h),
+						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+						tostring(source_hex_width), tostring(source_hex_height),
+						tostring(cur_w_tiles), tostring(cur_h_tiles),
+						tostring(gen_width_tiles), tostring(gen_height_tiles)))
+					EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-installed", {
+						expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
+						source_world = tostring(gen_world_w) .. "x" .. tostring(gen_world_h),
+						expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
+						source_hex = tostring(source_hex_width) .. "x" .. tostring(source_hex_height),
+					})
+				else
+					DebugPrint(string.format(
+						"vanilla cached map/buildable view skipped: source does not fit or is not smaller; world %sx%s -> %sx%s; hex %sx%s -> %sx%s",
+						tostring(saved_map_width), tostring(saved_map_height),
+						tostring(gen_world_w), tostring(gen_world_h),
+						tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+						tostring(source_hex_width), tostring(source_hex_height)))
+				end
+			elseif cfg_bool("LIMIT_BUILDABLE_GRID_TO_SOURCE", true) then
+				DebugPrint(string.format(
+					"vanilla cached map/buildable view unavailable: world=%sx%s hex=%sx%s tiles=%sx%s",
+					tostring(saved_map_width), tostring(saved_map_height),
+					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+					tostring(cur_w_tiles), tostring(cur_h_tiles)))
+			end
+
+			DebugPrint(string.format(
+				"limiting random generator to %s x %s tiles (%s x %s wu) [blank=%s, detected %s x %s tiles]",
+				tostring(gen_width_tiles), tostring(gen_height_tiles),
+				tostring(gen_world_w), tostring(gen_world_h),
+				tostring(blank), tostring(cur_w_tiles), tostring(cur_h_tiles)
+			))
+
+			-- Make the AREA FACTOR computable at Begin time: mapdata.Width was just overridden to
+			-- the generator size, and the pending-map markers can be wiped by the new-game Lua
+			-- reload -- with both gone AreaFactor read 6144/6144 = 1 and the anomaly/research count
+			-- scaling silently did nothing (logs showed anom_count_scale=1.000). Stamp the DETECTED
+			-- full + generator tile sizes on the map so RmgPlacement (and the later stretch passes)
+			-- always see desired=8192 / generator=6144.
+			map.SuperBigMapDesiredWidthTiles = map.SuperBigMapDesiredWidthTiles or cur_w_tiles
+			map.SuperBigMapDesiredHeightTiles = map.SuperBigMapDesiredHeightTiles or cur_h_tiles
+			map.SuperBigMapGeneratorWidthTiles = map.SuperBigMapGeneratorWidthTiles or gen_width_tiles
+			map.SuperBigMapGeneratorHeightTiles = map.SuperBigMapGeneratorHeightTiles or gen_height_tiles
+
+			-- VANILLA-EXACT PLAY ZONE: PrepareMapDataForExpansion zeroed mapdata.PassBorder
+			-- BEFORE ChangeMap so the engine bakes full-destination passability. But the
+			-- generator ALSO reads map.mapdata.PassBorder to compute its play zone
+			-- (RandomMapGenerator GetPlayableArea x2, BiomeFiller POI frame) -- with 0 instead
+			-- of the native ~1024-tile border the play zone is BIGGER than vanilla, the
+			-- placement masks differ, and the per-proc rand stream diverges: the same seed
+			-- placed the same lake prefab at a different position/rotation. The engine consumed
+			-- PassBorder at ChangeMap (before DoGenerate), so restoring the ORIGINAL value for
+			-- just this DoGenerate window gives the generator vanilla-identical inputs while
+			-- the baked passability stays border-free. Restored (re-zeroed) below.
+			local saved_mapdata_pb, saved_mapdata_pbt, saved_template_pb, saved_template_pbt
+			if cfg_bool("STRETCH_VANILLA_EXACT_PASSBORDER", true) then
+				local orig_pb = (type(mapdata) == "table" and mapdata.SuperBigMapOriginalPassBorder)
+					or (template and template.SuperBigMapOriginalPassBorder)
+				if type(orig_pb) == "number" and orig_pb > 0 then
+					if type(mapdata) == "table" and mapdata.PassBorder ~= orig_pb then
+						saved_mapdata_pb = mapdata.PassBorder
+						saved_mapdata_pbt = mapdata.PassBorderTiles
+						mapdata.PassBorder = orig_pb
+						if type(mapdata.PassBorderTiles) == "number" then
+							mapdata.PassBorderTiles = math.floor(orig_pb / height_tile_size)
+						end
+					end
+					if template and template ~= mapdata and template.PassBorder ~= orig_pb then
+						saved_template_pb = template.PassBorder
+						saved_template_pbt = template.PassBorderTiles
+						template.PassBorder = orig_pb
+						if type(template.PassBorderTiles) == "number" then
+							template.PassBorderTiles = math.floor(orig_pb / height_tile_size)
+						end
+					end
+					DebugPrint(string.format(
+						"vanilla-exact play zone: PassBorder %s -> %s for the DoGenerate window (re-zeroed after)",
+						tostring(saved_mapdata_pb), tostring(orig_pb)))
+				end
+			end
+
+			-- Terrain-safe placement auto-fit: relax the deposit/anomaly placement
+			-- margins + spacing (placement-only knobs; never touch gen_zone/terrain)
+			-- so the full preset counts seat in the smaller expanded play_zone. Sizes
+			-- are already overridden here, so coverage is measured over the generated
+			-- span. Restored in End() below, regardless of success.
+			-- (In STRETCH mode Begin() self-skips: bit-identical generation required.)
+			local placement = SuperBigMap.RmgPlacement
+			-- Whole-DoGenerate placement begins before OnGenerateLogic can capture
+			-- this run's grids. Clear any retry residue so it deliberately uses the safe fallback
+			-- rather than stale coverage from an earlier attempt. Stretch mode captures fresh data
+			-- before its late PlaceAnomalies transaction.
+			map.SuperBigMapRmgGenZoneCoverage = nil
+			map.SuperBigMapRmgGenZoneCoverageInfo = nil
+			map.SuperBigMapRmgPlayableCoverage = nil
+			map.SuperBigMapRmgPlayableCoverageInfo = nil
+			local placement_active = placement and placement.Begin(self, map) or false
+
+			if GenRandEnabled() then
+				State.genrand_active_mapdata = mapdata or template or false
+				GenRandLog("DoGenerate begin (EXPANDED run, capped sizes)", GenRandInputs(self, map))
+			end
+
+			-- JUST-IN-TIME pairing-wrapper verification: the passage pairing runs INSIDE the
+			-- underground map's DoGenerate (Picard PlaceArtefacts_Passages), and anything can
+			-- have redefined the global since module load (a v434 run had the install line but
+			-- ZERO pairing calls). Verify + reinstall right here, and log the verdict.
+			do
+				local live = Global("SpawnUndergroundPassage")
+				local was_installed = live ~= nil and live == State.spawn_passage_wrapper
+				if not was_installed then
+					PatchPassagePairing()
+				end
+				local live2 = Global("SpawnUndergroundPassage")
+				PairingLog("wrapper status at DoGenerate", {
+					blank = tostring(self.BlankMap),
+					was_installed = was_installed,
+					now_installed = live2 ~= nil and live2 == State.spawn_passage_wrapper,
+					global_type = tostring(type(live)),
+				})
+			end
+
+			-- DETERMINISTIC ENTRANCE PAIRING, the no-terrain-touching way (config
+			-- PAIRING_SURFACE_BUILDABLE_REBUILD). Passage selection runs during underground
+			-- generation but searches MainMap's surface grids. A generic RebuildGrids completion
+			-- flag is not sufficient here: after temporary-source migration it described a usable
+			-- gameplay grid, yet vanilla FindPassageSpawnPos rejected both passage markers. Build
+			-- the surface Z grid once, synchronously, immediately before passage selection, against
+			-- the live surface map dimensions and object grid. Vanilla then selects a complete
+			-- naturally buildable Elevator footprint; the mod never manufactures a terrain pad.
+			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
+				local env = (type(mapdata) == "table" and mapdata.Environment)
+					or (template and template.Environment)
+				if env == "Underground" then
+					local main_map = Global("MainMap")
+					local rebuild = Global("RebuildBuildableGrid")
+					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
+						if main_map.SuperBigMapSurfaceBuildablePairingReady == true then
+							PairingLog("dedicated surface pairing-grid rebuild already complete", {
+								map = tostring(main_map.name),
+							})
+						else
+							local before_w, before_h = MigrationGridSize(main_map.buildable.z_grid)
+							local t0 = 0
+							local ticks = Global("GetPreciseTicks")
+							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t0 = t end end
+							PairingLog("dedicated surface pairing-grid rebuild begin", {
+								map = tostring(main_map.name),
+								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
+								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
+								map_world = tostring(main_map.Width) .. "x" .. tostring(main_map.Height),
+								mapdata = tostring(main_map.mapdata and main_map.mapdata.Width)
+									.. "x" .. tostring(main_map.mapdata and main_map.mapdata.Height),
+								generic_current_flag = tostring(main_map.SuperBigMapSurfaceBuildableCurrent),
+							})
+							local ok_rb, err_rb = pcall(rebuild, main_map)
+							local t1 = t0
+							if type(ticks) == "function" then local okt, t = pcall(ticks); if okt then t1 = t end end
+							local after_w, after_h = MigrationGridSize(main_map.buildable.z_grid)
+							PairingLog("dedicated surface pairing-grid rebuild end", {
+								map = tostring(main_map.name), ok = ok_rb,
+								before_grid = tostring(before_w) .. "x" .. tostring(before_h),
+								after_grid = tostring(after_w) .. "x" .. tostring(after_h),
+								map_hex = tostring(main_map.hex_width) .. "x" .. tostring(main_map.hex_height),
+								ms = t1 - t0, error = ok_rb and nil or tostring(err_rb),
+							})
+							if not ok_rb then
+								error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
+							end
+							main_map.SuperBigMapSurfaceBuildableCurrent = true
+							main_map.SuperBigMapSurfaceBuildablePairingReady = true
+							DebugPrint(string.format(
+								"surface buildable grid rebuilt immediately before passage selection: grid=%sx%s map_hex=%sx%s ms=%s",
+								tostring(after_w), tostring(after_h), tostring(main_map.hex_width),
+								tostring(main_map.hex_height), tostring(t1 - t0)))
+						end
+					end
+				end
+			end
+
+			local LT = SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime
+			if LT then LT("DoGenerate: vanilla generator begin", { blank = tostring(self.BlankMap) }) end
+			local profiler = SuperBigMap.LoadingProfiler
+			local load_token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
+				"RandomMapGenerator.DoGenerate vanilla body",
+				{ blank = tostring(self.BlankMap), detected_width_tiles = cur_w_tiles,
+					detected_height_tiles = cur_h_tiles, generator_width_tiles = gen_width_tiles,
+					generator_height_tiles = gen_height_tiles }, map) or false
+			EntranceSnapshot("DoGenerate before vanilla generator: " .. tostring(self.BlankMap), map)
+			State.rmg_placement_active_map = map
+			State.rmg_placement_proc_active = false
+			State.rmg_placement_proc_stack = {}
+			local results = { pcall(original_do_generate, self, map, ...) }
+			-- Restore the cached MapVars before any diagnostic or bridge cleanup can run. The
+			-- pcall above covers both the successful and failing native-generation paths, so an
+			-- engine/Lua failure cannot leave the live expanded map reporting source dimensions.
+			if buildable_source_view then
+				map.Width = saved_map_width
+				map.Height = saved_map_height
+				map.hex_width = saved_map_hex_width
+				map.hex_height = saved_map_hex_height
+			end
+			if buildable_source_view then
+				DebugPrint(string.format(
+					"vanilla cached map/buildable view restored after native placement: world %sx%s -> %sx%s; hex %sx%s -> %sx%s; generation_ok=%s",
+					tostring(buildable_source_view.source_world_width), tostring(buildable_source_view.source_world_height),
+					tostring(saved_map_width), tostring(saved_map_height),
+					tostring(buildable_source_view.source_hex_width), tostring(buildable_source_view.source_hex_height),
+					tostring(saved_map_hex_width), tostring(saved_map_hex_height),
+					tostring(results[1] == true)))
+				EnrichmentSpreadBoundary(self, map, "cached-map-buildable-source-view-restored", {
+					source_world = tostring(buildable_source_view.source_world_width) .. "x" .. tostring(buildable_source_view.source_world_height),
+					expanded_world = tostring(saved_map_width) .. "x" .. tostring(saved_map_height),
+					source_hex = tostring(buildable_source_view.source_hex_width) .. "x" .. tostring(buildable_source_view.source_hex_height),
+					expanded_hex = tostring(saved_map_hex_width) .. "x" .. tostring(saved_map_hex_height),
+					generation_ok = tostring(results[1] == true),
+				})
+			end
+			if next(map.SuperBigMapExpectedResourceCounts or {}) then
+				local debug_log = SuperBigMap.DebugLog
+				if debug_log then
+					debug_log.Info("Generation", "captured RMG resource target floors",
+						map.SuperBigMapExpectedResourceCounts)
+				end
+			end
+			-- ProcEnd normally restores the late stretch placement snapshot. If the
+			-- generator raised before ProcEnd, restore it here so no preset mutation
+			-- can leak into another map generation.
+			if State.rmg_placement_proc_active then
+				if placement and type(placement.End) == "function" then
+					local restore_ok, restore_err = pcall(placement.End, map)
+					if restore_ok then
+						State.rmg_placement_proc_active = false
+					else
+						DebugPrint("DoGenerate placement repair rollback ERROR: " .. tostring(restore_err))
+						results[1] = false
+						results[2] = "placement-property rollback failed: " .. tostring(restore_err)
+					end
+				end
+			end
+			State.rmg_placement_active_map = false
+			State.rmg_placement_proc_stack = nil
+			EntranceSnapshot("DoGenerate after vanilla generator: " .. tostring(self.BlankMap), map)
+			if load_token and type(profiler.End) == "function" then
+				profiler.End(load_token, { result_count = #results - 1,
+					error = results[1] and nil or tostring(results[2]) }, results[1] == true)
+			end
+			if LT then LT("DoGenerate: vanilla generator end", { ok = results[1] == true }) end
+
+			State.genrand_active_mapdata = false
+
+			if placement_active then
+				placement.End(map)
+			end
+
+			map.GetMapSize = original_map_get_size
+			if terrain_api and original_terrain_get_size then
+				terrain_api.GetMapSize = original_terrain_get_size
+			end
+			if template then
+				template.Width = saved_template_w
+				template.Height = saved_template_h
+				if saved_template_pb ~= nil then
+					template.PassBorder = saved_template_pb
+					template.PassBorderTiles = saved_template_pbt
+				end
+			end
+			if type(mapdata) == "table" then
+				mapdata.Width = saved_mapdata_w
+				mapdata.Height = saved_mapdata_h
+				if saved_mapdata_pb ~= nil then
+					mapdata.PassBorder = saved_mapdata_pb
+					mapdata.PassBorderTiles = saved_mapdata_pbt
+				end
+			end
+
+			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-after-source-view-restored")
+
+			if not results[1] then
+				if GenRandEnabled() then
+					GenRandLog("DoGenerate FAILED (expanded)", { err = tostring(results[2]) })
+				end
+				error(results[2])
+			end
+			-- POST-GENERATION PAD SMOOTHING (config PASSAGE_PAD_SMOOTHING). The generator's
+			-- entrance flatten is PER-HEX -- one height per hex -- so even with clean values it
+			-- leaves faint hex terracing (zigzag creases) around the entrances. After the
+			-- generator has fully finished (nothing re-flattens after this), smooth the height
+			-- field around each remembered entrance footprint with the engine's own GridSmooth
+			-- (the same op the map generator uses for terrain filtering). Runs PRE-stretch, so
+			-- the stretch resample carries the smoothed ground to the final map. One height-grid
+			-- get/set for all pads (~1-2s during loading).
+			do
+				local pads = State.sbm_entrance_pads
+				if type(pads) == "table" and #pads > 0 and cfg_bool("PASSAGE_PAD_SMOOTHING", true) then
+					local terrain_api3 = Global("terrain")
+					local grid_to_compute = Global("GridToCompute")
+					local new_grid = Global("NewComputeGrid")
+					local is_compute = Global("IsComputeGrid")
+					local grid_smooth = Global("GridSmooth")
+					local box_fn3 = Global("box")
+					local point_fn3 = Global("point")
+					local const_tbl3 = Global("const")
+					local tile3 = (type(const_tbl3) == "table" and type(const_tbl3.HeightTileSize) == "number"
+						and const_tbl3.HeightTileSize > 0) and const_tbl3.HeightTileSize or 100
+					local hex3 = (type(const_tbl3) == "table" and type(const_tbl3.HexSize) == "number"
+						and const_tbl3.HexSize > 0) and const_tbl3.HexSize or 1000
+					local function free_grid3(g)
+						if g then pcall(function() if type(g.free) == "function" then g:free() end end) end
+					end
+					if type(terrain_api3) == "table" and type(terrain_api3.GetHeightGrid) == "function"
+						and type(terrain_api3.SetHeightGrid) == "function" and type(grid_smooth) == "function"
+						and type(grid_to_compute) == "function" and type(new_grid) == "function"
+						and type(box_fn3) == "function" and type(point_fn3) == "function" then
+						-- All pads are on the same (surface) map in practice; group by map anyway.
+						local by_map = {}
+						for _, pad in ipairs(pads) do
+							if pad.map then
+								by_map[pad.map] = by_map[pad.map] or {}
+								table.insert(by_map[pad.map], pad)
+							end
+						end
+						for pmap, plist in pairs(by_map) do
+							local ok_all, err_all = pcall(function()
+								local raw = terrain_api3.GetHeightGrid(pmap)
+								local full = grid_to_compute(raw)
+								local fw, fh = full:size()
+								local fmt, bits
+								if type(is_compute) == "function" then
+									fmt, bits = is_compute(full)
+								end
+								fmt = fmt or "F"
+								for _, pad in ipairs(plist) do
+									-- +10 hexes: the outer ~30 tiles are the FEATHER band (see below),
+								-- so the footprint itself stays inside the fully-smoothed core.
+								local radius_wu = ((pad.hex_radius or 10) + 10) * hex3
+									local r_tiles = math.floor(radius_wu / tile3 + 0.5)
+									local cx_t = math.floor(pad.x / tile3 + 0.5)
+									local cy_t = math.floor(pad.y / tile3 + 0.5)
+									local x0 = math.max(0, cx_t - r_tiles)
+									local y0 = math.max(0, cy_t - r_tiles)
+									local x1 = math.min(fw, cx_t + r_tiles)
+									local y1 = math.min(fh, cy_t + r_tiles)
+									local w, h = x1 - x0, y1 - y0
+									if w > 4 and h > 4 then
+										local region = new_grid(w, h, fmt, bits)
+										region:copyrect(full, box_fn3(x0, y0, x1, y1), point_fn3(0, 0))
+										local smoothed = new_grid(w, h, fmt, bits)
+										local ok_s, err_s = pcall(grid_smooth, region, smoothed, 3)
+										local blended = 0
+										if ok_s then
+											-- FEATHER the region edge: a hard copyrect boundary
+											-- between smoothed interior and untouched exterior
+											-- reads as a straight LINE on the ground (user
+											-- report). Blend an edge band: original terrain at
+											-- the border -> fully smoothed at band depth, so the
+											-- transition is gradual and invisible. Integer math:
+											-- multiply before dividing (engine Lua truncates).
+											local BAND = 30 -- tiles (~3000 wu)
+											local pause3 = Global("PauseInfiniteLoopDetection")
+											local resume3 = Global("ResumeInfiniteLoopDetection")
+											if type(pause3) == "function" then pcall(pause3, "SBMPadFeather") end
+											local ok_f, err_f = pcall(function()
+												for yy = 0, h - 1 do
+													local dy0 = math.min(yy, h - 1 - yy)
+													for xx = 0, w - 1 do
+														local dd = math.min(xx, w - 1 - xx, dy0)
+														if dd < BAND then
+															local ov = region:get(xx, yy)
+															local sv = smoothed:get(xx, yy)
+															if type(ov) == "number" and type(sv) == "number" then
+																smoothed:set(xx, yy, ov + (sv - ov) * dd / BAND)
+																blended = blended + 1
+															end
+														end
+													end
+												end
+											end)
+											if type(resume3) == "function" then pcall(resume3, "SBMPadFeather") end
+											if not ok_f then
+												PairingLog("pad feather ERROR", { err = tostring(err_f) })
+											end
+											full:copyrect(smoothed, box_fn3(0, 0, w, h), point_fn3(x0, y0))
+										end
+										free_grid3(region)
+										free_grid3(smoothed)
+										PairingLog("post-gen pad smoothing", {
+											x = pad.x, y = pad.y, region = tostring(w) .. "x" .. tostring(h),
+											smoothed = ok_s, feathered_cells = blended,
+											err = ok_s and nil or tostring(err_s),
+										})
+									end
+								end
+								terrain_api3.SetHeightGrid(pmap, full)
+								if type(terrain_api3.InvalidateHeight) == "function" then
+									pcall(terrain_api3.InvalidateHeight, pmap)
+								end
+								if full ~= raw then free_grid3(full) end
+							end)
+							if not ok_all then
+								PairingLog("post-gen pad smoothing ERROR", { err = tostring(err_all) })
+							end
+						end
+					end
+					-- Consumed: never smooth stale pads on a later generation/new game.
+					State.sbm_entrance_pads = nil
+				end
+			end
+			GenRandCensus(map, "post-gen EXPANDED (pre-stretch)")
+			CaptureGeneratedNativeEnrichments(map, "DoGenerate expanded source complete")
+			-- Spike audits (DEBUG_SPIKES): the generated map, and -- after the UNDERGROUND
+			-- generation, which is when the passage pairing touches MainMap -- the surface too.
+			SpikeAudit(map, "post-gen " .. tostring(self.BlankMap))
+			do
+				local main_map = Global("MainMap")
+				if main_map and main_map ~= map then
+					SpikeAudit(main_map, "post-gen(" .. tostring(self.BlankMap) .. ") MainMap")
+				end
+			end
+			return Unpack(results, 2)
 		end
 		generator_class.DoGenerate = do_generate_wrapper
 		State.generator_do_generate_wrapper = do_generate_wrapper
