@@ -79,4 +79,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- migration. 94 persisted exhaustive source/transform/overlap selection diagnostics.
 -- Bumped to 95: accept and verify the variable-size stretched-equivalent initial reveal set.
 -- Bumped to 96: add the exact vanilla fast path and full shared-preset/session teardown.
-SuperBigMap.GENERATOR_PATCH_VERSION = 96
+-- Bumped to 97: validate the singular vanilla-selected start reveal independently from the
+-- larger stretched-equivalent candidate count.
+SuperBigMap.GENERATOR_PATCH_VERSION = 97

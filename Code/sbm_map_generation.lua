@@ -8624,12 +8624,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					InvestigationEnd(detail_token, { floaters = n_float }, true)
 					StretchLog("stretch branch: AuditFloatingObjects returned", { floaters = n_float })
 				end
-				-- Step 4: consume the native-source start annotation after marker recreation. Only
-				-- expanded sectors tied for greatest overlap with the transformed vanilla winner are
-				-- considered; vanilla's own resource/heat/buildability rule breaks a positional tie for
-				-- the InitialSector anchor, while every positive-overlap equivalent is revealed. Mutually
-				-- exclusive with
-				-- legacy relocation (which would re-scale a freshly scanned destination sector).
+				-- Step 4: consume the native-source start annotation after marker recreation. Every
+				-- positive-overlap equivalent of the transformed vanilla winner is passed through the
+				-- original vanilla InitialReveal resource/heat/buildability logic, and only its first
+				-- winner is scanned. Mutually exclusive with legacy relocation (which would re-scale a
+				-- freshly scanned destination sector).
 				local sectors_mod = SuperBigMap.SectorExploration
 				local vanilla_start_pending = sectors_mod
 					and type(sectors_mod.HasPendingVanillaStartSelection) == "function"
@@ -8643,10 +8642,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						reveal_info.scanned = n_rev
 						StretchLog("stretch branch: RevealVanillaStartSectors returned", reveal_info)
 						local equivalent_count = tonumber(reveal_info.equivalent_sector_count)
-						if type(n_rev) ~= "number" or n_rev < 1
-							or (equivalent_count and n_rev ~= equivalent_count) then
-							error(string.format("stretched vanilla initial reveal mismatch: expected=%s scanned=%s",
-								tostring(equivalent_count), tostring(n_rev)))
+						local reveal_target_count = tonumber(reveal_info.reveal_target_count)
+						if type(n_rev) ~= "number" or n_rev ~= 1
+							or type(equivalent_count) ~= "number" or equivalent_count < 1
+							or reveal_target_count ~= 1 then
+							error(string.format(
+								"stretched vanilla initial reveal mismatch: equivalents=%s targets=%s scanned=%s selected=%s",
+								tostring(equivalent_count), tostring(reveal_target_count), tostring(n_rev),
+								tostring(reveal_info.selected)))
 						end
 					end
 				elseif cfg_bool("STRETCH_VANILLA_START_SECTOR", false) then
