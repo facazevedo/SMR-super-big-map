@@ -35,13 +35,6 @@ local function ObjectMap(obj)
 	return nil
 end
 
-local function log(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Heat", message, data)
-	end
-end
-
 -- Clamp a world (x, y) into the heat grid's valid coverage [border, size - border - 1].
 -- The grid is sized from self.map_width/map_height minus const.HeatGridBorder on each side.
 local function ClampToGrid(self, x, y)
@@ -85,7 +78,6 @@ local function Install()
 	end
 	local HeatGrid = Engine.ClassTable("HeatGrid")
 	if type(HeatGrid) ~= "table" or type(HeatGrid.GetHeatAt) ~= "function" or type(HeatGrid.GetHeatAtXY) ~= "function" then
-		log("patch skipped", { reason = "HeatGrid / GetHeatAt(XY) unavailable" })
 		return
 	end
 
@@ -182,7 +174,6 @@ local function Install()
 	end
 
 	heat_patched = true
-	log("HeatGrid + global GetHeatAt/GetHeatAtXY wrapped (out-of-grid queries clamped)")
 end
 
 local HeatSafety = {}
@@ -214,7 +205,6 @@ function HeatSafety.RestoreVanillaBehavior()
 	original_global_get_heat_at = false
 	original_global_get_heat_at_xy = false
 	heat_patched = false
-	log("HeatGrid + global heat-query wrappers restored to vanilla")
 end
 
 SuperBigMap.HeatSafety = HeatSafety

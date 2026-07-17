@@ -6,8 +6,7 @@
 -- notice with its persistent suppression flags, and the "Loading Super Big Map" box
 -- shown during expansion (ExpansionLoadingBegin/End). Reached through its SuperBigMap.*
 -- exports; calls back into the lifecycle only via the runtime SuperBigMap.Lifecycle.IsActive()
--- gate. Loads BEFORE sbm_lifecycle so the latter can bind NoticeLog
--- at load time.
+-- gate. Loads BEFORE sbm_lifecycle so its exports are available at load time.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -17,32 +16,6 @@ end
 
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
-
--- Editor-camera diagnostic logger (gated on Config.DEBUG_EDITORCAMERA). A thin copy of
--- the lifecycle logger of the same name -- ShowMessageOverWelcome emits through it, and
--- duplicating these ~15 lines keeps this module independent of lifecycle load order.
-local function EditorCamOn()
-	local cfg = SuperBigMap.Config or {}
-	return cfg.DEBUG_EDITORCAMERA == true
-end
-
-local function EditorCamLog(message, data)
-	if not EditorCamOn() then
-		return
-	end
-	local parts = {}
-	if type(data) == "table" then
-		local keys = {}
-		for k in pairs(data) do keys[#keys + 1] = k end
-		table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-		for _, k in ipairs(keys) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(data[k]) end
-	end
-	local print_fn = rawget(_G, "print")
-	if type(print_fn) == "function" then
-		print_fn("[Super Big Map] EditorCam: " .. tostring(message)
-			.. (#parts > 0 and (" {" .. table.concat(parts, ", ") .. "}") or ""))
-	end
-end
 
 local function WelcomeDialog()
 	local get_dialog = Global("GetDialog")
@@ -58,9 +31,6 @@ local function ShowMessageOverWelcome(title, text)
 	local create_thread = Global("CreateRealTimeThread")
 	local create_box = Global("CreateMessageBox")
 	if type(create_thread) ~= "function" or type(create_box) ~= "function" then
-		EditorCamLog("popup: API unavailable", {
-			thread = type(create_thread), box = type(create_box),
-		})
 		-- Best effort: at least show the box directly if we have CreateMessageBox.
 		if type(create_box) == "function" then pcall(create_box, nil, title, text) end
 		return
@@ -83,14 +53,12 @@ local function ShowMessageOverWelcome(title, text)
 		if welcome and type(welcome.SetVisibleInstant) == "function" then
 			pcall(function() welcome:SetVisibleInstant(false) end)
 		end
-		EditorCamLog("popup: showing message box", { title = title, welcome_hidden = welcome ~= nil })
 
 		local ok, box = pcall(create_box, nil, title, text)
 		-- Block until the user presses OK (the dialog closes).
 		if ok and box and type(box.Wait) == "function" then
 			pcall(function() box:Wait() end)
 		end
-		EditorCamLog("popup: OK pressed -- restoring welcome popup", { title = title })
 
 		-- Re-show the welcome popup. Re-resolve it (it may have been recreated) in case
 		-- the original reference is stale.
@@ -161,31 +129,6 @@ end
 -- does. A persistent _G marker shows it once per session, and a LocalStorage flag suppresses
 -- it across launches when the player chooses "Don't show again". Gated on
 -- Config.SHOW_RESTART_NOTICE. AccountStorage is mirrored only for backward compatibility.
-local function NoticeLog(msg, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("RestartNotice", msg, data) end
-	local cfg = SuperBigMap.Config or {}
-	if cfg.DEBUG_RESTARTNOTICE == true then
-		local print_fn = Global("print")
-		if type(print_fn) == "function" then
-			local suffix = ""
-			if type(data) == "table" then
-				local parts = {}
-				for k, v in pairs(data) do
-					parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
-				end
-				table.sort(parts)
-				if #parts > 0 then
-					suffix = " {" .. table.concat(parts, ", ") .. "}"
-				end
-			elseif data ~= nil then
-				suffix = " " .. tostring(data)
-			end
-			print_fn("[Super Big Map] RestartNotice: " .. tostring(msg) .. suffix)
-		end
-	end
-end
-
 local function RestartNoticeStorage(storage_name, create)
 	local root = Global(storage_name)
 	local prefix = storage_name == "LocalStorage" and "local_storage" or "account_storage"
@@ -257,13 +200,6 @@ end
 local function SetRestartNoticeSuppressed(value)
 	local local_ok, local_reason = SetRestartNoticeLocalSuppressed(value)
 	local account_ok, account_reason = SetRestartNoticeAccountSuppressed(value)
-	NoticeLog("suppression update attempted", {
-		suppressed = value == true,
-		local_storage = local_ok == true,
-		local_reason = local_reason,
-		account_storage = account_ok == true,
-		account_reason = account_reason,
-	})
 	if local_ok == true or account_ok == true then
 		return true
 	end
@@ -276,58 +212,24 @@ SuperBigMap.ResetFreshRestartNotice = function()
 	return SetRestartNoticeSuppressed(false)
 end
 
-local function GameStateFlags()
-	local gs = Global("GameState")
-	if type(gs) ~= "table" then return "<none>" end
-	local parts = {}
-	for k, v in pairs(gs) do if v == true then parts[#parts + 1] = tostring(k) end end
-	return (#parts > 0) and table.concat(parts, ",") or "<empty>"
-end
-
--- Dump the ids of currently-open dialogs (the global Dialogs registry) so we can see the
--- exact id of the Installed-Mods screen at the moment ModsReloaded fires.
-local function OpenDialogsDump()
-	local dialogs = Global("Dialogs")
-	if type(dialogs) ~= "table" then return "<no Dialogs>" end
-	local parts = {}
-	for k in pairs(dialogs) do parts[#parts + 1] = tostring(k) end
-	return (#parts > 0) and table.concat(parts, ",") or "<none open>"
-end
-
-local function Elapsed()
-	local gpt = Global("GetPreciseTicks") or Global("RealTime")
-	if type(gpt) == "function" then
-		local ok, t = pcall(gpt)
-		if ok and type(t) == "number" then return t end
-	end
-	return -1
-end
-
 -- Past the cold boot? Only when the game UI is up (a menu/game/the Mods dialog exists).
 -- NO time-based fallback: a slow boot would read as "past boot" and pop the notice at launch.
 local function PastBoot()
-	if GameUiIsUp() then return true, "ui_up" end
-	return false, "boot"
+	return GameUiIsUp()
 end
 
 local function ShowFreshRestartNotice()
 	local cfg = SuperBigMap.Config or {}
-	NoticeLog("ShowFreshRestartNotice called", { gamestate = GameStateFlags(), dialogs = OpenDialogsDump(), elapsed = Elapsed() })
-	if cfg.SHOW_RESTART_NOTICE == false then NoticeLog("skip: config off"); return end
-	local suppressed, suppression_reason, suppression_source = RestartNoticeSuppressed()
-	if suppressed then NoticeLog("skip: hidden by setting", { source = suppression_source }); return end
-	if suppression_reason == "local_storage_unavailable" then
-		NoticeLog("suppression check unavailable", { reason = suppression_reason })
-	end
-	if rawget(_G, "SuperBigMapRestartNoticeShown") then NoticeLog("skip: already shown this session"); return end
-	local past, why = PastBoot()
-	if not past then NoticeLog("skip: still booting", { why = why }); return end
-	NoticeLog("past boot -> will show", { why = why })
+	if cfg.SHOW_RESTART_NOTICE == false then return end
+	local suppressed = RestartNoticeSuppressed()
+	if suppressed then return end
+	if rawget(_G, "SuperBigMapRestartNoticeShown") then return end
+	if not PastBoot() then return end
 	local create_multi_choice = Global("CreateMultiChoiceQuestionBox")
 	local wait_question = Global("WaitQuestion")
 	local create_box = Global("CreateMessageBox")
 	if type(create_multi_choice) ~= "function" and type(wait_question) ~= "function" and type(create_box) ~= "function" then
-		NoticeLog("skip: no message-box API"); return
+		return
 	end
 	local title = "Super Big Map"
 	local text = "A fresh restart is recommended to play Super Big Map."
@@ -355,26 +257,22 @@ local function ShowFreshRestartNotice()
 			if ok and dialog and type(dialog.Wait) == "function" then
 				local wait_ok, choice = pcall(function() return dialog:Wait() end)
 				if wait_ok then
-					return normalize_choice(choice), "multi_choice", choice
+					return normalize_choice(choice)
 				end
-				NoticeLog("multi-choice wait failed", { error = choice })
-			else
-				NoticeLog("multi-choice create failed", { error = dialog })
 			end
 		end
 		if type(wait_question) == "function" then
 			local ok, res = pcall(wait_question, nil, title, text, "Restart", "Cancel")
 			if ok then
-				return normalize_choice(res), "question", res
+				return normalize_choice(res)
 			end
-			NoticeLog("WaitQuestion failed", { error = res })
 		elseif type(create_box) == "function" then
 			local ok, box = pcall(create_box, nil, title, text)
 			if ok and box and type(box.Wait) == "function" then
 				pcall(function() box:Wait() end)
 			end
 		end
-		return false, "unavailable", false
+		return false
 	end
 	-- Show only if the mod is STILL enabled at display time -- guards the on->off-in-the-same-
 	-- screen case (this thread survives the OFF reload). Set the once-marker only when it shows.
@@ -382,30 +280,21 @@ local function ShowFreshRestartNotice()
 	-- has no guaranteed in-process relaunch path here; the player reopens the game so the mod
 	-- loads cleanly for a fresh new game).
 	local function maybe_show()
-		if rawget(_G, "SuperBigMapRestartNoticeShown") then NoticeLog("maybe_show skip: already shown"); return end
-		local hidden, _, hidden_source = RestartNoticeSuppressed()
-		if hidden then NoticeLog("maybe_show skip: hidden by setting", { source = hidden_source }); return end
-		if not SuperBigMapIsLoaded() then NoticeLog("maybe_show skip: mod not loaded (toggled off)"); return end
+		if rawget(_G, "SuperBigMapRestartNoticeShown") then return end
+		local hidden = RestartNoticeSuppressed()
+		if hidden then return end
+		if not SuperBigMapIsLoaded() then return end
 		if SuperBigMap.Lifecycle and type(SuperBigMap.Lifecycle.IsActive) == "function"
 			and not SuperBigMap.Lifecycle.IsActive() then
-			NoticeLog("maybe_show skip: not active")
 			return
 		end
 		rawset(_G, "SuperBigMapRestartNoticeShown", true)
-		NoticeLog("maybe_show: showing box", {
-			multi_choice = type(create_multi_choice) == "function",
-			wait_question = type(wait_question) == "function",
-		})
-		local choice, source, raw_choice = wait_for_choice()
-		NoticeLog("choice selected", { choice = choice, raw_choice = raw_choice, source = source })
+		local choice = wait_for_choice()
 		if choice == 1 then
 			local quit_fn = Global("quit")
 			if type(quit_fn) == "function" then pcall(quit_fn) end
 		elseif choice == 3 then
-			local saved, save_reason = SetRestartNoticeSuppressed(true)
-			if saved ~= true then
-				NoticeLog("suppression update failed after choice", { reason = save_reason })
-			end
+			SetRestartNoticeSuppressed(true)
 		end
 	end
 	local create_thread = Global("CreateRealTimeThread")
@@ -447,23 +336,6 @@ local LOADING_DEFAULT_STATUS = "Preparing the expanded map. Please wait."
 local current_phase_body = LOADING_DEFAULT_STATUS
 local loading_on_welcome = false
 
-local function LoadingLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", message, data)
-	end
-end
-
--- Exhaustive loading-box trace (gated on Config.DEBUG_LOADING): the watch-loop lifetime and the
--- "Please wait" dot animation, so we can see whether the animation stopped because the box closed
--- (fast load) or the watch thread died. Temporary diagnostic scope; only the flag is turned off.
-local function LoadingDbg(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Loading", message, data)
-	end
-end
-
 -- Our separate "Loading Super Big Map" message box (a standard message dialog), shown ON TOP of
 -- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, with a bright-gold
 -- "Please wait." footer button, auto-closed when the expansion finishes.
@@ -489,7 +361,7 @@ end
 
 -- active=true: hide the welcome popup (if up) and ensure our loading box is shown on top.
 -- active=false: remove our loading box and re-show the welcome popup.
--- Returns true when the loading box is up (active path) so the watch loop can log "applied".
+-- Returns true when the loading box is up.
 -- The engine's own big loading screen: present while the map is (re)loading, gone once the
 -- game is on screen. We show our box the instant it disappears (see below).
 local function EngineLoadingScreenUp()
@@ -553,23 +425,19 @@ end
 local function RemoveLoadingBlurEdge(box)
 	for _, opener in ipairs(box or {}) do
 		if opener and opener.Layer == "MarsBlur" then
-			local removed, blur_radius = RemoveBlurLayerEdge(opener.dialog)
+			local removed = RemoveBlurLayerEdge(opener.dialog)
 			if removed then
-				LoadingLog("loading blur retained with edge frame removed", {
-					blur_radius = blur_radius,
-				})
 				return true
 			end
 		end
 	end
-	LoadingLog("loading blur edge frame not found")
 	return false
 end
 
 local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
-		local welcome_present = HideWelcomePopupInstant()
+		HideWelcomePopupInstant()
 		-- Show our loading box the MOMENT the engine's big loading screen is gone and the
 		-- desktop exists -- NOT waiting for the welcome popup. The welcome popup appears
 		-- noticeably LATER than the loading screen closes, and in that gap the player could
@@ -595,7 +463,6 @@ local function SetWelcomeLoading(active)
 				if ok and box then
 					RemoveLoadingBlurEdge(box)
 					loading_box = box
-					LoadingLog("loading box created over hidden welcome popup", { status = current_phase_body })
 				end
 			end
 		end
@@ -640,10 +507,6 @@ function SuperBigMap.SetLoadingPhase(message)
 		text = text .. " Please wait."
 	end
 	current_phase_body = text
-	local profiler = SuperBigMap.LoadingProfiler
-	if profiler and type(profiler.Step) == "function" then
-		profiler.Step("loading footer phase", { status = text, box_visible = LoadingBoxValid() == true }, Global("CurrentMap"))
-	end
 	-- Live-update the FOOTER BUTTON (bottom-most): set the Ok action's name and rebuild the
 	-- action bar (no box recreate -> no flicker). MarsMessageQuestionBox uses the same
 	-- action-name + UpdateActionViews pattern.
@@ -661,7 +524,6 @@ function SuperBigMap.SetLoadingPhase(message)
 			end
 		end)
 	end
-	LoadingLog("loading phase set", { status = text, box = LoadingBoxValid() == true })
 end
 
 -- REFERENCE-COUNTED phases (user report: the welcome popup appeared -- unclickable -- while
@@ -673,19 +535,10 @@ local loading_refs = 0
 
 function SuperBigMap.ExpansionLoadingBegin()
 	loading_refs = loading_refs + 1
-	local profiler = SuperBigMap.LoadingProfiler
-	if profiler and type(profiler.Start) == "function" then
-		profiler.Start("ExpansionLoadingBegin", { refs = loading_refs }, Global("CurrentMap"))
-	end
 	if loading_on_welcome then
-		LoadingLog("ExpansionLoadingBegin: additional phase joined", { refs = loading_refs })
 		return
 	end
 	loading_on_welcome = true
-	LoadingLog("ExpansionLoadingBegin: watching for welcome popup")
-	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
-		SuperBigMap.DebugLog.LoadTime("loading box watch begin")
-	end
 	local create_thread = Global("CreateRealTimeThread")
 	if type(create_thread) ~= "function" then
 		SetWelcomeLoading(true)
@@ -694,78 +547,42 @@ function SuperBigMap.ExpansionLoadingBegin()
 	create_thread(function()
 		local sleep = Global("Sleep")
 		local applied = false
-		local iter = 0
-		LoadingDbg("watch loop: START")
 		for _ = 1, 2000 do -- ~60s backstop (30ms ticks)
-			iter = iter + 1
 			if not loading_on_welcome then
-				LoadingDbg("watch loop: EXIT (loading_on_welcome cleared)", { iter = iter })
 				return -- ended (expansion finished) before/while watching
 			end
 			-- pcall so a throw inside SetWelcomeLoading can NEVER kill this watch thread (which
 			-- would leave the loading box stuck on screen).
 			local ok_call, ok = pcall(SetWelcomeLoading, true)
 			if not ok_call then
-				LoadingDbg("watch loop: SetWelcomeLoading THREW (loop kept alive)", { iter = iter, err = tostring(ok) })
 				ok = false
 			end
 			if ok and not applied then
 				applied = true
-				LoadingLog("loading box shown over hidden welcome popup")
 			elseif not ok and applied then
 				applied = false
-				LoadingLog("loading box not present; will recreate")
-			end
-			if iter % 33 == 0 then
-				LoadingDbg("watch loop: tick", { iter = iter, box_valid = LoadingBoxValid() == true })
 			end
 			if type(sleep) ~= "function" then
-				LoadingDbg("watch loop: EXIT (no Sleep fn)", { iter = iter })
 				return
 			end
 			sleep(30)
 		end
-		LoadingDbg("watch loop: EXIT (backstop expired)", { iter = iter })
-		LoadingLog("ExpansionLoadingBegin: watch backstop expired (60s)")
 	end)
 end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
 function SuperBigMap.ExpansionLoadingEnd(force_all)
-	local profiler = SuperBigMap.LoadingProfiler
 	if force_all ~= true and loading_refs > 1 then
 		loading_refs = loading_refs - 1
-		if profiler and type(profiler.Step) == "function" then
-			profiler.Step("ExpansionLoadingEnd: phase complete, work remains", { refs = loading_refs }, Global("CurrentMap"))
-		end
-		LoadingLog("ExpansionLoadingEnd: phase ended, others still busy -- box stays", { refs = loading_refs })
 		return
 	end
 	loading_refs = 0
-	local was_on = loading_on_welcome
 	loading_on_welcome = false
-	if was_on and SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime then
-		SuperBigMap.DebugLog.LoadTime("loading box end (welcome popup restored)")
-	end
 	-- Always tear the loading box down (idempotent), even if the flag was cleared by a mid-load
 	-- mod reload -- so a stale box can never linger on screen waiting for an OK press.
 	SetWelcomeLoading(false)
-	if was_on then
-		LoadingLog("ExpansionLoadingEnd: loading box removed, welcome popup re-shown")
-	end
-	if profiler and type(profiler.Stop) == "function" then
-		profiler.Stop(force_all == true
-			and "ExpansionLoadingEnd: session teardown"
-			or "ExpansionLoadingEnd: all expansion work complete", {
-			refs = loading_refs, loading_box_was_on = was_on, forced = force_all == true,
-		}, Global("CurrentMap"))
-	end
 end
 
--- Public API. NoticeLog is bound by sbm_lifecycle at load; the welcome-popup /
--- restart-notice / loading-box entry points are published on the SuperBigMap
+-- The welcome-popup, restart-notice, and loading-box entry points are published on the SuperBigMap
 -- namespace above for runtime callers (sbm_map_generation, sbm_terrain_copy).
-local LoadingUI = {
-	NoticeLog = NoticeLog,
-}
-SuperBigMap.LoadingUI = LoadingUI
+SuperBigMap.LoadingUI = {}

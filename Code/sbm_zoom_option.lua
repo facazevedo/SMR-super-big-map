@@ -24,7 +24,6 @@ if type(SuperBigMap) ~= "table" then
 	SuperBigMap = {}
 	rawset(_G, "SuperBigMap", SuperBigMap)
 end
-
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
@@ -33,11 +32,6 @@ local OPTION_ID = "SuperBigMapMaxZoom"
 
 local function cfg()
 	return SuperBigMap.Config or {}
-end
-
-local function Log(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("Zoom", message, data) end
 end
 
 local function Enabled()
@@ -119,7 +113,6 @@ function ZoomOption.AppendOption()
 	if not Enabled() then return false end
 	local opt = Global("OptionsObject")
 	if type(opt) ~= "table" or type(opt.properties) ~= "table" then
-		Log("Max Zoom option not added: OptionsObject.properties unavailable")
 		return false
 	end
 	for i = 1, #opt.properties do
@@ -161,9 +154,6 @@ function ZoomOption.AppendOption()
 			return ZoomOption.BuildHelpText(pct)
 		end,
 	}
-	Log("Max Zoom Level option added to Options/Display", {
-		min = MinPercent(), max = MaxPercent(), step = StepPercent(), default = DefaultPercent(),
-	})
 	return true
 end
 
@@ -174,10 +164,6 @@ function ZoomOption.Apply()
 	local zi = SuperBigMap.ZoomPlusIntegration
 	if zi and type(zi.ApplyNormalZoom) == "function" then
 		SafeCall(zi.ApplyNormalZoom)
-		Log("applied max zoom from option", {
-			percent = ZoomOption.GetPercent(),
-			multiplier = string.format("%.2f", ZoomOption.GetMultiplier()),
-		})
 	end
 end
 
@@ -277,6 +263,3 @@ if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
 		ZoomOption.StartRolloverWatcher(win, control)
 	end)
 end
-
-local DebugLog = SuperBigMap.DebugLog
-if DebugLog then DebugLog.Info("Zoom", "max zoom option module loaded") end

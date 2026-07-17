@@ -5,7 +5,7 @@
 -- correctly rebuilt to our vanilla-sized layout (via EnsureSectorsBuilt) the
 -- vanilla path produces a correctly-aligned highlight on the surface. Underground,
 -- the SelectSector override retains the rollover but suppresses all grid/highlight
--- decals. It also logs sector identity and area dimensions when diagnostics are on.
+-- decals.
 -- Driven by the sector-exploration patch (InstallSectorPatch calls Install()).
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -24,12 +24,6 @@ local function IsModMap(map)
 		and grid.IsModMap(map) == true
 end
 
-local function DebugPrint(message)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", message)
-	end
-end
 
 -- Vanilla initializes deposit/sign visibility only for the objects that exist when
 -- OverviewModeDialog:ScaleSmallObjects runs. The stretch pipeline migrates the
@@ -120,19 +114,6 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		Engine.SafeCall(terrain_copy.RestoreEntranceBadgePositions, map,
 			"entrance visual readiness: " .. tostring(reason or "unspecified"))
 	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Overview", "entrance visuals ready", {
-			map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
-			reason = tostring(reason or "unspecified"),
-			overview = tostring(stats.overview),
-			badges = stats.badges,
-			passages = stats.passages,
-			failed_calls = stats.failed_calls,
-			overview_scale = tostring(overview_scale),
-			overview_opacity = tostring(overview_opacity),
-		})
-	end
 	return stats.failed_calls == 0, stats
 end
 
@@ -151,7 +132,7 @@ local function Install()
 	State.original_overview_select_sector = original_select_sector
 
 	-- Declared FIRST: every helper below (frame create/destroy, hover-frame reuse check, the
-	-- wrapper's sector_obj guard, the visual diagnostics) validates objects through this.
+	-- wrapper's sector_obj guard) validates objects through this.
 	local is_valid = Engine.Global("IsValid")
 
 	-- True when the currently viewed city/map is underground and its informational sector UI is on.
@@ -288,188 +269,6 @@ local function Install()
 		end
 	end
 
-	-- One-shot diagnostic helper: when Config.SHOW_SECTOR_DIAGNOSTICS is on, log
-	-- the selected sector's identity + area dimensions every time a NEW sector
-	-- is hovered (vanilla's SelectSector already gates on sector_id change so we
-	-- can rely on that being throttled). The visible width/height of sector.area
-	-- is what vanilla feeds into the SectorTarget decal's SetScale -- so if this
-	-- prints e.g. 81920 instead of 40960 on an 8192 mapdata map, we know the
-	-- hover highlight is being scaled to 2x our sector size because MapSectors
-	-- was built by vanilla InitSectors (10x10 huge sectors) rather than rebuilt
-	-- to our layout.
-	local last_logged_id = false
-	local function DiagSelect(sector)
-		local DebugLog = SuperBigMap.DebugLog
-		if not (DebugLog and DebugLog.On("Sector")) then
-			return
-		end
-		if not sector then
-			return
-		end
-		local id = sector.id
-		if id == last_logged_id then
-			return
-		end
-		last_logged_id = id
-		local sx, sy = "?", "?"
-		if sector.area then
-			local ok1, vx = pcall(sector.area.sizex, sector.area)
-			local ok2, vy = pcall(sector.area.sizey, sector.area)
-			if ok1 then sx = tostring(vx) end
-			if ok2 then sy = tostring(vy) end
-		end
-		DebugLog.Info("Sector", string.format(
-			"SelectSector id=%s col=%s row=%s area_size=%sx%s",
-			tostring(id), tostring(sector.col), tostring(sector.row), sx, sy
-		))
-	end
-
-	-- Hover-misalignment diagnostic (gated on Config.DEBUG_HOVER, scope "Hover"): per NEW hovered
-	-- sector, log the terrain-cursor world position, the cursor ray-hit Z vs the AUTHORITATIVE
-	-- terrain height at that x,y (a large dz means the mouse ray intersected a STALE height
-	-- surface -- e.g. pre-stretch heights -- so the cursor lands at the wrong world point), the
-	-- resolved sector + bounds, and whether the cursor is inside it (false = sector math wrong).
-	-- One line per sector as the mouse sweeps; enough to tell WHICH half of the mapping is off.
-	local last_hover_id = false
-	local function HoverDiag(sector)
-		local DebugLog = SuperBigMap.DebugLog
-		if not (DebugLog and DebugLog.On("Hover")) then return end
-		if not sector or sector.id == last_hover_id then return end
-		last_hover_id = sector.id
-		local Global = Engine.Global
-		local gtc = Global("GetTerrainCursor")
-		if type(gtc) ~= "function" then return end
-		local ok_c, cur = pcall(gtc)
-		if not ok_c or not cur then return end
-		local cx, cy, cz
-		if type(cur.xyz) == "function" then
-			local ok; ok, cx, cy, cz = pcall(cur.xyz, cur)
-			if not ok then cx = nil end
-		end
-		if type(cx) ~= "number" or type(cy) ~= "number" then return end
-		-- Authoritative height at the cursor's x,y (post-stretch grid).
-		local h
-		local terrain_api = Global("terrain")
-		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-			local map = Global("CurrentMap")
-			local ok_h, v = pcall(terrain_api.GetHeight, map, cur)
-			if not ok_h then ok_h, v = pcall(terrain_api.GetHeight, cur) end
-			if ok_h and type(v) == "number" then h = v end
-		end
-		-- Sector bounds + containment.
-		local inside, bounds = "?", "?"
-		if sector.area then
-			local ok_ctr, ctr = pcall(sector.area.Center, sector.area)
-			local ok_sx, sx = pcall(sector.area.sizex, sector.area)
-			local ok_sy, sy = pcall(sector.area.sizey, sector.area)
-			if ok_ctr and ctr and ok_sx and ok_sy and type(ctr.xy) == "function" then
-				local ok_xy, ax, ay = pcall(ctr.xy, ctr)
-				if ok_xy and type(ax) == "number" then
-					local x1, y1 = ax - sx / 2, ay - sy / 2
-					local x2, y2 = ax + sx / 2, ay + sy / 2
-					inside = (cx >= x1 and cx <= x2 and cy >= y1 and cy <= y2)
-					bounds = string.format("%d,%d..%d,%d", x1, y1, x2, y2)
-				end
-			end
-		end
-		DebugLog.Info("Hover", "hovered sector", {
-			sector = tostring(sector.id), col = sector.col, row = sector.row,
-			cursor_xy = tostring(cx) .. "," .. tostring(cy),
-			cursor_z = cz, terrain_h = h,
-			dz = (type(cz) == "number" and type(h) == "number") and (cz - h) or "?",
-			bounds = bounds, cursor_inside_sector = inside,
-		})
-	end
-
-	-- Visual-condition diagnostic (gated on Config.DEBUG_HOVER): vanilla SelectSector early-outs
-	-- before drawing the highlight/rollover on any of these -- no sector_obj decal,
-	-- IsExplorationAvailable_Sectors false (vanilla hard-gates underground/asteroid!), a running
-	-- camera transition, IsExplorationAvailable_Queue false or a popup (both kill the rollover).
-	-- One line per newly hovered sector with every condition, so "hover shows nothing" is
-	-- immediately attributable to the exact failing gate.
-	local last_visual_id = false
-	local function HoverVisualDiag(self, sector)
-		local DebugLog = SuperBigMap.DebugLog
-		if not (DebugLog and DebugLog.On("Hover")) then return end
-		if not sector or sector.id == last_visual_id then return end
-		last_visual_id = sector.id
-		local Global = Engine.Global
-		local uicity = Global("UICity")
-		local function avail(fn_name)
-			local fn = Global(fn_name)
-			if type(fn) ~= "function" or not uicity then return "?" end
-			local ok, v = pcall(fn, uicity)
-			return ok and (v == true) or false
-		end
-		local notif = "?"
-		local get_dialog = Global("GetDialog")
-		if type(get_dialog) == "function" then
-			local ok, d = pcall(get_dialog, "PopupNotification")
-			if ok then notif = d ~= nil end
-		end
-		local obj = self.sector_obj
-		local obj_state = obj == nil and "nil"
-			or (type(is_valid) == "function" and not is_valid(obj)) and "INVALID"
-			or "valid"
-		DebugLog.Info("Hover", "visual conditions", {
-			sector = tostring(sector.id),
-			sector_obj = obj_state,
-			avail_sectors = avail("IsExplorationAvailable_Sectors"),
-			avail_queue = avail("IsExplorationAvailable_Queue"),
-			camera_transition = Global("CameraTransitionThread") and true or false,
-			popup_notification_up = notif,
-			dialog_sector_id = tostring(self.sector_id),
-		})
-		-- SCREEN-SPACE offset measurement (user report: highlighted sector is not the one
-		-- under the cursor). Project the SELECTED sector's center AND the highlight decal's
-		-- actual position to screen and compare with the live mouse position -- the pixel
-		-- deltas measure the perceived offset directly, and the decal z vs live terrain z
-		-- shows whether a stale/shifted height (v449 down-shift) displaces the visual.
-		pcall(function()
-			local game_to_screen = Global("GameToScreen")
-			local get_mouse = Global("GetMousePos")
-			local terrain_api = Global("terrain")
-			local cur_map = Global("CurrentMap")
-			if type(game_to_screen) ~= "function" then return end
-			local mouse = type(get_mouse) == "function" and get_mouse() or nil
-			local center = sector.area and sector.area:Center()
-			local center_scr = center and game_to_screen(center) or nil
-			local obj_pos, obj_scr, obj_z, ground_z
-			if obj and type(obj.GetPos) == "function" then
-				local ok_p, p = pcall(obj.GetPos, obj)
-				if ok_p and p then
-					obj_pos = p
-					obj_scr = game_to_screen(p)
-					local ok_z, z = pcall(function() return p:z() end)
-					obj_z = ok_z and z or nil
-					if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" and cur_map then
-						local ok_g, g = pcall(terrain_api.GetHeight, cur_map, p)
-						ground_z = ok_g and g or nil
-					end
-				end
-			end
-			local function d(a, b)
-				if not (a and b) then return "n/a" end
-				local ok_d, dx, dy = pcall(function()
-					local ax, ay = a:xy()
-					local bx, by = b:xy()
-					return ax - bx, ay - by
-				end)
-				return ok_d and (tostring(dx) .. "," .. tostring(dy)) or "n/a"
-			end
-			DebugLog.Info("Hover", "screen-space offsets", {
-				sector = tostring(sector.id),
-				mouse = tostring(mouse),
-				sector_center_scr = tostring(center_scr),
-				highlight_scr = tostring(obj_scr),
-				mouse_minus_center_px = d(mouse, center_scr),
-				mouse_minus_highlight_px = d(mouse, obj_scr),
-				highlight_pos = tostring(obj_pos),
-				highlight_z = tostring(obj_z), ground_z_at_highlight = tostring(ground_z),
-				z_delta = tostring(obj_z and ground_z and (obj_z - ground_z)),
-			})
-		end)
-	end
 
 	-- Off-map cursor test (both maps): GetTerrainCursor CLAMPS to the map edge and GetMapSectorXY
 	-- CLAMPS into 1..count, so pointing into the black beyond the map still resolves a border
@@ -502,7 +301,7 @@ local function Install()
 	end
 
 	overview_class.SelectSector = function(self, sector, rollover_pos, forced, ...)
-		-- Do not run off-map suppression, object repair, diagnostics, or underground
+		-- Do not run off-map suppression, object repair, or underground
 		-- visual handling in a vanilla game.  Delegating at the first instruction makes
 		-- the wrapper observationally equivalent to the unmodified class method.
 		local uicity = Engine.Global("UICity")
@@ -516,8 +315,6 @@ local function Install()
 		if sector and not forced and CursorOffMap() then
 			sector = false
 		end
-		DiagSelect(sector)
-		HoverDiag(sector)
 		-- Guard against a destroyed hover-highlight object. self.sector_obj is the
 		-- dialog's SectorTarget/SectorRadius decal (placed in CurrentMap); our sector
 		-- rebuild (forced InitSectors) and surface/underground map switches can
@@ -549,7 +346,6 @@ local function Install()
 			end
 			HideUndergroundGridVisuals()
 		end
-		HoverVisualDiag(self, sector)
 		return r1, r2
 	end
 
@@ -570,11 +366,9 @@ local function Install()
 		end
 		overview_class.ScaleSmallObjects = wrapper
 		State.scale_small_objects_wrapper = wrapper
-		DebugPrint("OverviewModeDialog.ScaleSmallObjects wrapped (entrance sign always visible)")
 	end
 
 	State.overview_highlight_patch_version = SECTOR_PATCH_VERSION
-	DebugPrint("overview highlight patch installed")
 	return true
 end
 

@@ -18,11 +18,6 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Config = SuperBigMap.Config or {}
 
--- Verbose overview-camera diagnostics, gated by config.ShowOverviewCameraDiagnostics.
-local function OverviewDiagOn()
-	local cfg = SuperBigMap.Config or {}
-	return cfg.DEBUG_CAMERA == true
-end
 
 local function PointXYZ(p)
 	if not p then
@@ -31,54 +26,6 @@ local function PointXYZ(p)
 	return SafeCall(p.x, p), SafeCall(p.y, p), SafeCall(p.z, p)
 end
 
--- Snapshot of the live camera + mode + transition state, for diagnostics.
-local function LiveCameraState()
-	local state = {
-		transition_active = Global("CameraTransitionThread") and true or false,
-		changing_map = Global("ChangingMap") and true or false,
-	}
-	local get_mode = Global("GetInGameInterfaceMode")
-	if type(get_mode) == "function" then
-		state.mode = SafeCall(get_mode)
-	end
-	local is_overview = Global("IsOverviewMode")
-	if type(is_overview) == "function" then
-		state.is_overview = SafeCall(is_overview) and true or false
-	end
-	local camera = Global("cameraRTS")
-	if type(camera) == "table" then
-		if type(camera.GetEye) == "function" then
-			state.eye_x, state.eye_y, state.eye_z = PointXYZ(SafeCall(camera.GetEye))
-		end
-		if type(camera.GetZoom) == "function" then
-			state.zoom = SafeCall(camera.GetZoom)
-		end
-		if type(camera.IsMoving) == "function" then
-			state.is_moving = SafeCall(camera.IsMoving) and true or false
-		end
-		if type(camera.GetProperties) == "function" then
-			local props = SafeCall(camera.GetProperties, 1)
-			if type(props) == "table" then
-				state.LookatDistZoomOut = props.LookatDistZoomOut
-			end
-		end
-	end
-	local camera_api = Global("camera")
-	if type(camera_api) == "table" and type(camera_api.GetFovX) == "function" then
-		state.fov_x = SafeCall(camera_api.GetFovX)
-	end
-	return state
-end
-
-local function OverviewDiag(msg, data)
-	if not OverviewDiagOn() then
-		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Camera", msg, data or {})
-	end
-end
 
 -- Integer-safe component interpolation: a + (b-a)*num/den. This runtime's `/` is
 -- integer division, so multiply BEFORE dividing (the product stays well within
@@ -195,28 +142,6 @@ local function CameraDestinationStatus(map, require_finalized)
 	return true, "ready"
 end
 
-local function CameraMapDiag(map, extra)
-	local width, height, geometry_source, live_width, live_height = StableCameraTerrainSize(map)
-	local data = extra or {}
-	data.map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?")
-	data.map_ref = tostring(map)
-	data.current_ref = tostring(Global("CurrentMap"))
-	data.main_ref = tostring(Global("MainMap"))
-	data.geometry_source = geometry_source
-	data.camera_width = width
-	data.camera_height = height
-	data.live_width = live_width
-	data.live_height = live_height
-	data.desired_width_tiles = map and map.SuperBigMapDesiredWidthTiles
-	data.desired_height_tiles = map and map.SuperBigMapDesiredHeightTiles
-	data.generator_width_tiles = map and map.SuperBigMapGeneratorWidthTiles
-	data.generator_height_tiles = map and map.SuperBigMapGeneratorHeightTiles
-	data.pending = map and map.SuperBigMapExpansionPending == true
-	data.expanded = map and map.SuperBigMapExpanded == true
-	data.temporary_source = IsTemporaryVanillaSource(map)
-	data.migration_active = CameraMigrationActive()
-	return data
-end
 
 local function cfg_number(key, default)
 	local value = Config[key]
@@ -245,39 +170,18 @@ local overview_reset_token = 0
 -- OverviewModeDialog:StoreView runs. Exact-vanilla source generation switches maps
 -- after that call, which can restore the normal lens even though our overview consts
 -- still say 3600/3400. Re-apply the lens together with every destination reframe.
--- This preserves the camera profile from 626ddb8: normal max zoom 900%, overview
--- distance 140% of terrain, overview horizontal FOV 60 degrees at 16:9.
+-- This preserves the configured overview distance and horizontal field of view.
 local function ApplyLiveOverviewFov(transition_time, source)
 	local camera_api = Global("camera")
 	local const_tbl = Global("const")
 	if type(camera_api) ~= "table" or type(camera_api.SetAutoFovX) ~= "function"
 		or type(const_tbl) ~= "table" or type(const_tbl.Camera) ~= "table" then
-		OverviewDiag("live overview FOV skipped", {
-			source = source or "?",
-			reason = "camera API or const.Camera unavailable",
-		})
 		return false
 	end
-	local before = type(camera_api.GetFovX) == "function" and SafeCall(camera_api.GetFovX) or nil
 	local fov_4_3 = tonumber(const_tbl.Camera.OverviewFovX_4_3) or OVERVIEW_FOV_4_3
 	local fov_16_9 = tonumber(const_tbl.Camera.OverviewFovX_16_9) or OVERVIEW_FOV_16_9
-	local ok, err = pcall(camera_api.SetAutoFovX, 1, transition_time or 0,
+	local ok = pcall(camera_api.SetAutoFovX, 1, transition_time or 0,
 		fov_4_3, 4, 3, fov_16_9, 16, 9)
-	local after = type(camera_api.GetFovX) == "function" and SafeCall(camera_api.GetFovX) or nil
-	local zoom_option = SuperBigMap.ZoomOption
-	local max_zoom_percent = zoom_option and type(zoom_option.GetPercent) == "function"
-		and SafeCall(zoom_option.GetPercent) or nil
-	OverviewDiag("live overview FOV applied", {
-		source = source or "?",
-		ok = ok,
-		error = ok and nil or tostring(err),
-		fov_before = before,
-		fov_after = after,
-		fov_4_3 = fov_4_3,
-		fov_16_9 = fov_16_9,
-		normal_max_zoom_percent = max_zoom_percent,
-		overview_distance_percent = OVERVIEW_ZOOM_DISTANCE_PERCENT,
-	})
 	return ok
 end
 
@@ -374,15 +278,6 @@ local function PatchOverviewFov()
 		const.Camera.OverviewFovX_16_9 = math.max(const.Camera.OverviewFovX_16_9 or 0, OVERVIEW_FOV_16_9)
 		const.Camera.OverviewFovX_4_3 = math.max(const.Camera.OverviewFovX_4_3 or 0, OVERVIEW_FOV_4_3)
 	end)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
-		DebugLog.Info("ZoomVanilla", "PatchOverviewFov widened FOV (mod map only -- gated on IsModMap)", {
-			is_mod_map = IsModMap(ResolveLiveMap(Global("CurrentMap"))),
-			fov_16_9 = const.Camera.OverviewFovX_16_9,
-			fov_4_3 = const.Camera.OverviewFovX_4_3,
-			vanilla_16_9 = const.Camera.SuperBigMapOriginalOverviewFovX_16_9,
-		})
-	end
 end
 
 local function PatchOverviewCamera()
@@ -392,11 +287,6 @@ local function PatchOverviewCamera()
 		return true
 	end
 	if type(current) ~= "function" then
-		OverviewDiag("CalcOverviewCameraPos hook unavailable", {
-			current = tostring(current),
-			patched_flag = overview_camera_patched,
-			wrapper = tostring(overview_camera_wrapper),
-		})
 		return false
 	end
 
@@ -405,8 +295,6 @@ local function PatchOverviewCamera()
 	-- reloading this module, leaving overview_camera_patched=true while our wrapper is
 	-- no longer installed. Treat function identity as authoritative and wrap the new
 	-- environment-specific vanilla calculator immediately.
-	local displaced = overview_camera_patched == true and overview_camera_wrapper ~= false
-	local previous_original = original_calc_overview_camera_pos
 	original_calc_overview_camera_pos = current
 
 	local wrapper
@@ -427,29 +315,13 @@ local function PatchOverviewCamera()
 		local pos, lookat = original_calc_overview_camera_pos(angle, map)
 		map = resolved
 		if not pos or not lookat or not map then
-			OverviewDiag("CalcOverviewCameraPos vanilla result unavailable", CameraMapDiag(map, {
-				angle = angle,
-				original = tostring(original_calc_overview_camera_pos),
-				pos = tostring(pos),
-				lookat = tostring(lookat),
-			}))
 			return pos, lookat
 		end
-		local raw_pos_x, raw_pos_y, raw_pos_z = PointXYZ(pos)
-		local raw_lookat_x, raw_lookat_y, raw_lookat_z = PointXYZ(lookat)
-
-		local width, height, geometry_source, live_width, live_height = StableCameraTerrainSize(map)
+		local width, height = StableCameraTerrainSize(map)
 		local size = math.max(width or 0, height or 0)
 		if size <= 0 then
 			return pos, lookat
 		end
-		OverviewDiag("CalcOverviewCameraPos geometry", CameraMapDiag(map, {
-			geometry_source = geometry_source,
-			live_width = live_width,
-			live_height = live_height,
-			angle = angle,
-			size = size,
-		}))
 
 		local point_fn = Global("point")
 		if type(point_fn) == "function" then
@@ -470,29 +342,6 @@ local function PatchOverviewCamera()
 				lookat = center
 				pos = center + point_fn(new_dx, new_dy, new_z)
 				pos, lookat = ApplyOverviewNudge(pos, lookat, size)
-				local final_pos_x, final_pos_y, final_pos_z = PointXYZ(pos)
-				local final_lookat_x, final_lookat_y, final_lookat_z = PointXYZ(lookat)
-				OverviewDiag("CalcOverviewCameraPos normalized vanilla result", CameraMapDiag(map, {
-					angle = angle,
-					original = tostring(original_calc_overview_camera_pos),
-					raw_pos_x = raw_pos_x,
-					raw_pos_y = raw_pos_y,
-					raw_pos_z = raw_pos_z,
-					raw_lookat_x = raw_lookat_x,
-					raw_lookat_y = raw_lookat_y,
-					raw_lookat_z = raw_lookat_z,
-					raw_offset_x = dx,
-					raw_offset_y = dy,
-					raw_xy_length = xy_len,
-					target_xy_distance = xy_dist,
-					target_z_distance = new_z,
-					final_pos_x = final_pos_x,
-					final_pos_y = final_pos_y,
-					final_pos_z = final_pos_z,
-					final_lookat_x = final_lookat_x,
-					final_lookat_y = final_lookat_y,
-					final_lookat_z = final_lookat_z,
-				}))
 				return pos, lookat
 			end
 		end
@@ -513,16 +362,6 @@ local function PatchOverviewCamera()
 	overview_camera_wrapper = wrapper
 	_G.CalcOverviewCameraPos = wrapper
 	overview_camera_patched = true
-	OverviewDiag(displaced and "CalcOverviewCameraPos hook displaced and reinstalled"
-		or "CalcOverviewCameraPos hook installed", {
-		current_before = tostring(current),
-		previous_original = tostring(previous_original),
-		original = tostring(original_calc_overview_camera_pos),
-		wrapper = tostring(overview_camera_wrapper),
-		current_after = tostring(Global("CalcOverviewCameraPos")),
-		displaced = displaced,
-		map = tostring((Global("CurrentMap") or {}).name or Global("CurrentMap")),
-	})
 	return true
 end
 
@@ -538,11 +377,7 @@ end
 -- match. Only writes when the live limit is below target; the SetCamera that
 -- follows immediately commits the far eye, so there is no visible jump.
 local function EnsureOverviewZoomOutLimit(camera)
-	local DebugLog = SuperBigMap.DebugLog
 	if type(camera.GetProperties) ~= "function" or type(camera.SetProperties) ~= "function" then
-		if DebugLog then
-			DebugLog.Info("Overview", "EnsureOverviewZoomOutLimit skipped", { reason = "no GetProperties/SetProperties" })
-		end
 		return false
 	end
 	-- The OVERVIEW camera needs the engine's large overview LookatDistZoomOut
@@ -556,18 +391,6 @@ local function EnsureOverviewZoomOutLimit(camera)
 	local target = tonumber(cfg.OVERVIEW_CAMERA_ZOOM_OUT_LIMIT) or 20000
 	local props = SafeCall(camera.GetProperties, 1)
 	local current = type(props) == "table" and tonumber(props.LookatDistZoomOut) or nil
-	local min_zoom, max_zoom
-	if type(camera.GetZoomLimits) == "function" then
-		min_zoom, max_zoom = SafeCall(camera.GetZoomLimits)
-	end
-	if DebugLog then
-		DebugLog.Info("Overview", "EnsureOverviewZoomOutLimit", {
-			overview_target = target,
-			live_zoom_out = current,
-			zoom_limit_min = min_zoom,
-			zoom_limit_max = max_zoom,
-		})
-	end
 	if type(props) ~= "table" then
 		return false
 	end
@@ -580,15 +403,10 @@ local function EnsureOverviewZoomOutLimit(camera)
 end
 
 local function ResetOverviewCamera(map, transition_time, source)
-	local DebugLog = SuperBigMap.DebugLog
 	source = source or "?"
 	map = ResolveLiveMap(map)
 	local destination_ready, destination_reason = CameraDestinationStatus(map, true)
 	if not destination_ready then
-		OverviewDiag("ResetOverviewCamera skipped", CameraMapDiag(map, {
-			source = source,
-			reason = destination_reason,
-		}))
 		return false
 	end
 	-- Verify the hook at the final call boundary as well as in RefreshOverviewCamera.
@@ -597,7 +415,6 @@ local function ResetOverviewCamera(map, transition_time, source)
 	PatchOverviewCamera()
 	local calc_overview = Global("CalcOverviewCameraPos")
 	if type(calc_overview) ~= "function" then
-		OverviewDiag("ResetOverviewCamera skipped", { source = source, reason = "no CalcOverviewCameraPos" })
 		return false
 	end
 
@@ -605,15 +422,9 @@ local function ResetOverviewCamera(map, transition_time, source)
 	local igi = SafeCall(get_interface)
 	local camera = Global("cameraRTS")
 	if not igi or not camera or type(camera.SetCamera) ~= "function" then
-		if DebugLog then
-			DebugLog.Info("Overview", "ResetOverviewCamera skipped", { reason = "no igi/cameraRTS" })
-		end
 		return false
 	end
 	if type(igi.IsInMode) ~= "function" or not SafeCall(igi.IsInMode, igi, "overview") then
-		if DebugLog then
-			DebugLog.Info("Overview", "ResetOverviewCamera skipped", { reason = "not in overview mode" })
-		end
 		return false
 	end
 
@@ -645,7 +456,6 @@ local function ResetOverviewCamera(map, transition_time, source)
 				lookat = lookat or offset,
 				bigger_maps_startup_overview_return = true,
 			}
-			OverviewDiag("seeded startup saved_camera (clean)", { south = south, up = up })
 		end
 	end
 
@@ -655,60 +465,11 @@ local function ResetOverviewCamera(map, transition_time, source)
 	end
 	local pos, lookat = calc_overview(angle, map)
 	if pos and lookat then
-		-- Snapshot the live camera state BEFORE our SetCamera: this is what reveals
-		-- whether a camera transition is in flight (the enter transition that
-		-- overrides our snap to a closer target) and what eye/zoom we start from.
-		if OverviewDiagOn() then
-			local before = LiveCameraState()
-			before.source = source
-			before.req_pos_z = SafeCall(pos.z, pos)
-			before.angle = angle
-			before.transition_time = transition_time or 0
-			before.calc_overview = tostring(calc_overview)
-			before.calc_global = tostring(Global("CalcOverviewCameraPos"))
-			before.calc_wrapper = tostring(overview_camera_wrapper)
-			before.calc_original = tostring(original_calc_overview_camera_pos)
-			before.hook_matches = calc_overview == overview_camera_wrapper
-			before.map = tostring(map and map.name or map)
-			OverviewDiag("ResetOverviewCamera BEFORE SetCamera", before)
-		end
 		-- Raise the live far-zoom limit first so the engine doesn't clamp the far
 		-- overview eye on the first entry (see EnsureOverviewZoomOutLimit).
 		EnsureOverviewZoomOutLimit(camera)
 		ApplyLiveOverviewFov(transition_time or 0, source)
 		SafeCall(camera.SetCamera, pos, lookat, transition_time or 0)
-		if OverviewDiagOn() then
-			local after = LiveCameraState()
-			after.source = source
-			after.req_pos_z = SafeCall(pos.z, pos)
-			OverviewDiag("ResetOverviewCamera AFTER SetCamera", after)
-		end
-		if DebugLog then
-			-- Read back what the engine actually accepted after our SetCamera. Full
-			-- 3D eye + lookat, plus zoom and dialog.overview_angle: enough to fully
-			-- reconstruct the rendered camera and tell apart "engine ignored us"
-			-- (actual_* != requested) from "engine accepted but visual differs".
-			local actual_eye = SafeCall(camera.GetEye)
-			local actual_lookat = SafeCall(camera.GetLookAt)
-			local actual_zoom = SafeCall(camera.GetZoom)
-			DebugLog.Info("Overview", "ResetOverviewCamera applied", {
-				transition = transition_time or 0,
-				pos_x = SafeCall(pos.x, pos),
-				pos_y = SafeCall(pos.y, pos),
-				pos_z = SafeCall(pos.z, pos),
-				lookat_x = SafeCall(lookat.x, lookat),
-				lookat_y = SafeCall(lookat.y, lookat),
-				lookat_z = SafeCall(lookat.z, lookat),
-				actual_eye_x = actual_eye and SafeCall(actual_eye.x, actual_eye),
-				actual_eye_y = actual_eye and SafeCall(actual_eye.y, actual_eye),
-				actual_eye_z = actual_eye and SafeCall(actual_eye.z, actual_eye),
-				actual_lookat_x = actual_lookat and SafeCall(actual_lookat.x, actual_lookat),
-				actual_lookat_y = actual_lookat and SafeCall(actual_lookat.y, actual_lookat),
-				actual_lookat_z = actual_lookat and SafeCall(actual_lookat.z, actual_lookat),
-				actual_zoom = actual_zoom,
-				overview_angle = dialog and dialog.overview_angle,
-			})
-		end
 		return true
 	end
 	return false
@@ -730,13 +491,6 @@ function RestoreOverviewFovVanilla()
 			const.Camera.OverviewFovX_4_3 = const.Camera.SuperBigMapOriginalOverviewFovX_4_3
 		end
 	end)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
-		DebugLog.Info("ZoomVanilla", "RestoreOverviewFovVanilla ran (FOV set back to vanilla)", {
-			fov_16_9 = const.Camera.OverviewFovX_16_9,
-			fov_4_3 = const.Camera.OverviewFovX_4_3,
-		})
-	end
 end
 
 local function RefreshOverviewCamera(source, expected_map)
@@ -745,19 +499,10 @@ local function RefreshOverviewCamera(source, expected_map)
 	local render = SuperBigMap.OverviewRender
 	local map = ResolveLiveMap(expected_map or Global("CurrentMap"))
 	if expected_map and map ~= expected_map then
-		OverviewDiag("RefreshOverviewCamera skipped", CameraMapDiag(map, {
-			source = source,
-			reason = "destination-identity-changed",
-			expected_ref = tostring(expected_map),
-		}))
 		return false
 	end
 	local destination_ready, destination_reason = CameraDestinationStatus(map, true)
 	if not destination_ready and destination_reason ~= "not-mod-map" then
-		OverviewDiag("RefreshOverviewCamera skipped", CameraMapDiag(map, {
-			source = source,
-			reason = destination_reason,
-		}))
 		return false
 	end
 
@@ -770,11 +515,6 @@ local function RefreshOverviewCamera(source, expected_map)
 		if render then
 			render.Apply(false)
 		end
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
-			DebugLog.Info("ZoomVanilla", "RefreshOverviewCamera: non-mod map -> restored vanilla FOV + render (no reframe)", { source = source })
-		end
-		OverviewDiag("RefreshOverviewCamera skipped (non-mod map -> vanilla overview)", { source = source })
 		return false
 	end
 
@@ -785,11 +525,9 @@ local function RefreshOverviewCamera(source, expected_map)
 	end
 
 	if not (Global("IsOverviewMode") and IsOverviewMode()) then
-		OverviewDiag("RefreshOverviewCamera skipped (not overview)", { source = source, state = LiveCameraState() })
 		return false
 	end
 
-	OverviewDiag("RefreshOverviewCamera", { source = source, state = LiveCameraState() })
 	if render then
 		render.Apply(true)
 	end
@@ -837,23 +575,11 @@ local function ScheduleOverviewCameraRefresh(expected_map, schedule_source)
 				return
 			end
 			local ready, reason = CameraDestinationStatus(expected_map, true)
-			OverviewDiag("schedule re-apply tick", CameraMapDiag(expected_map, {
-				index = i,
-				delay = delay,
-				source = schedule_source,
-				ready = ready,
-				reason = reason,
-				state = LiveCameraState(),
-			}))
 			if ready then
 				RefreshOverviewCamera(schedule_source .. "#" .. tostring(i)
 					.. "@" .. tostring(delay) .. "ms", expected_map)
 			end
 		end
-		OverviewDiag("schedule re-apply done", CameraMapDiag(expected_map, {
-			ticks = #delays,
-			source = schedule_source,
-		}))
 	end)
 	return true
 end
@@ -876,11 +602,6 @@ end
 function OverviewCamera.ReframeFinalizedDestination(map, source)
 	map = ResolveLiveMap(map)
 	local ready, reason = CameraDestinationStatus(map, true)
-	OverviewDiag("destination reframe requested", CameraMapDiag(map, {
-		source = source or "?",
-		ready = ready,
-		reason = reason,
-	}))
 	if not ready then
 		return false
 	end
@@ -937,12 +658,10 @@ function OverviewCamera.TakeOverExitTransition(target_eye, target_lookat, time)
 		or type(zoom_plus.ConsumeFirstOverviewExitTakeover) ~= "function"
 		or zoom_plus.ConsumeFirstOverviewExitTakeover() ~= true
 	then
-		OverviewDiag("exit takeover skipped", { reason = "not_first_startup_exit", start_z = start_z, target_z = target_z })
 		return false
 	end
 	exit_takeover_token = exit_takeover_token + 1
 	local token = exit_takeover_token
-	OverviewDiag("exit takeover start", { time = time, start_z = start_z, target_z = target_z })
 	create_thread(function()
 		local frame = 16
 		local steps = math.max(2, math.floor(time / frame))
@@ -962,7 +681,6 @@ function OverviewCamera.TakeOverExitTransition(target_eye, target_lookat, time)
 		end
 		if token == exit_takeover_token then
 			pcall(camera.SetCamera, target_eye, target_lookat, 0)
-			OverviewDiag("exit takeover done", { steps = steps })
 		end
 	end)
 	return true
@@ -980,12 +698,6 @@ function OverviewCamera.RestoreVanillaBehavior()
 	if overview_camera_patched and original_calc_overview_camera_pos
 		and Global("CalcOverviewCameraPos") == overview_camera_wrapper then
 		_G.CalcOverviewCameraPos = original_calc_overview_camera_pos
-	elseif overview_camera_patched then
-		OverviewDiag("CalcOverviewCameraPos restore skipped because hook was displaced", {
-			current = tostring(Global("CalcOverviewCameraPos")),
-			wrapper = tostring(overview_camera_wrapper),
-			original = tostring(original_calc_overview_camera_pos),
-		})
 	end
 	original_calc_overview_camera_pos = false
 	overview_camera_wrapper = false

@@ -101,14 +101,6 @@ local function PatchOverviewCurtains()
 	end
 
 	HideOverviewCurtains()
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Overview", "overview curtains patched/hidden", {
-			calc = original_calc_overview_curtains_size ~= nil,
-			set = original_set_overview_curtains ~= nil,
-			show = original_show_overview_map_curtains ~= nil,
-		})
-	end
 end
 
 local OverviewCurtains = {}

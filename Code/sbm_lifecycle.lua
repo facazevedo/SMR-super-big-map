@@ -22,13 +22,6 @@ local MAIN_MENU_GUARD_VERSION = 5
 local InstallRestoreInGameInterfaceGuard
 local UninstallRestoreInGameInterfaceGuard
 
-local LOAD_PROFILE_MESSAGES = {
-	ChangingMap = true, PreNewMap = true, NewMap = true, NewMapObject = true,
-	NewMapLoaded = true, PostNewMapLoaded = true, MapGenerated = true,
-	MapSectorsReady = true, CityInitialized = true, LoadGame = true,
-	CurrentMapChangeDone = true,
-}
-
 -- Register an OnMsg handler at most ONCE per message per session, even across mod
 -- hot-reloads. Engine.ChainOnMsg CHAINS (wraps the previous handler), so a mid-game
 -- reload -- which re-executes this module -- would otherwise STACK our handlers and run
@@ -50,39 +43,14 @@ local function RegisterOnce(message_name, handler)
 	end
 	State.registered_msgs[message_name] = true
 	Engine.ChainOnMsg(message_name, function(...)
-		local profiler = SuperBigMap.LoadingProfiler
-		local tracked = LOAD_PROFILE_MESSAGES[message_name] == true
-		if tracked and profiler and type(profiler.Start) == "function"
-			and (message_name == "ChangingMap" or message_name == "PreNewMap")
-			and not (type(profiler.IsActive) == "function" and profiler.IsActive()) then
-			profiler.Start("OnMsg." .. message_name, nil, select(1, ...))
-		end
-		local token = tracked and profiler and type(profiler.Begin) == "function"
-			and type(profiler.IsActive) == "function" and profiler.IsActive()
-			and profiler.Begin("OnMsg." .. message_name, nil, select(1, ...)) or false
-		local function complete(...)
-			if token and type(profiler.End) == "function" then
-				profiler.End(token, { handler_returned = true,
-					result_count = select("#", ...) }, true)
-			end
-			return ...
-		end
 		local live_handler = (SuperBigMap.State.msg_handlers or {})[message_name]
-		if type(live_handler) ~= "function" then return complete() end
-		return complete(live_handler(...))
+		if type(live_handler) ~= "function" then return end
+		return live_handler(...)
 	end)
 end
 
--- Init-sequence trace (gated on Config.DEBUG_INIT_SEQUENCE via DebugLog.InitSeq).
-local function InitSeq(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and type(DebugLog.InitSeq) == "function" then
-		DebugLog.InitSeq(message, data)
-	end
-end
-
 -- Map liveness / terrain size are intentionally NOT in sbm_engine (their resolution
--- order is context-specific); kept local for map resolution + the apply log.
+-- order is context-specific); kept local for map resolution and application.
 local IsLiveMap = Engine.IsLiveMap
 
 local function ResolveLiveMap(map)
@@ -114,41 +82,6 @@ local function IsModMap(map)
 	return false
 end
 
--- hr.EnableDarknessReveal is shared across maps. Capture the live vanilla value
--- immediately before the expanded-underground override and restore that exact value
--- on every other map/menu transition.
-local function ApplyUndergroundDarknessState(map, reason)
-	local hr = Global("hr")
-	if type(hr) ~= "table" then return false end
-	local State = SuperBigMap.State
-	local environment = map and map.mapdata and map.mapdata.Environment
-	local should_reveal = IsModMap(map)
-		and environment == "Underground"
-		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
-	if should_reveal then
-		if State.original_enable_darkness_reveal_captured ~= true then
-			State.original_enable_darkness_reveal = hr.EnableDarknessReveal
-			State.original_enable_darkness_reveal_captured = true
-		end
-		hr.EnableDarknessReveal = 0
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Lifecycle", "TEMP: underground darkness fully revealed", {
-				map = tostring(map.name or (map.mapdata and map.mapdata.id) or "?"),
-				enable_darkness_reveal = tostring(hr.EnableDarknessReveal),
-				reason = tostring(reason or "?"),
-			})
-		end
-		return true
-	end
-	if State.original_enable_darkness_reveal_captured == true then
-		hr.EnableDarknessReveal = State.original_enable_darkness_reveal
-		State.original_enable_darkness_reveal = nil
-		State.original_enable_darkness_reveal_captured = nil
-	end
-	return false
-end
-
 -- Correct shared state for a non-expanded map without uninstalling the transparent
 -- wrappers required by a later opt-in expanded game.
 local function NormalizeVanillaRuntimeState(map, reason)
@@ -173,9 +106,6 @@ local function NormalizeVanillaRuntimeState(map, reason)
 	if zoom_option and type(zoom_option.RestoreVanillaBehavior) == "function" then
 		zoom_option.RestoreVanillaBehavior()
 	end
-	local elevator_btn = SuperBigMap.PlaceElevatorButton
-	if elevator_btn and type(elevator_btn.Hide) == "function" then SafeCall(elevator_btn.Hide) end
-	ApplyUndergroundDarknessState(map, reason)
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
 	end
@@ -194,22 +124,6 @@ local function WarnOldSaveIfNeeded(map)
 	end
 
 	local cfg = SuperBigMap.Config or {}
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		-- Diagnostic for the "expanded save loads as vanilla" case (no overview grid, no
-		-- deposits, false old-save warning): show why IsModMap returned false on this load.
-		local mapdata = map and map.mapdata
-		local mw = (map and type(map.Width) == "number") and map.Width or 0
-		local mdw = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width or 0
-		DebugLog.Info("Lifecycle", "IsModMap=false on load -- staying inert (vanilla); detection inputs", {
-			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "map"),
-			warn_enabled = cfg.WARN_OLD_SAVE_NEEDS_NEW_GAME == true,
-			SuperBigMapExpanded = tostring(map and map.SuperBigMapExpanded),
-			map_width = mw,
-			mapdata_width = mdw,
-			wu_per_tile = (mdw > 0) and (mw / mdw) or "?",
-		})
-	end
 
 	if cfg.WARN_OLD_SAVE_NEEDS_NEW_GAME ~= true then
 		return true
@@ -228,8 +142,6 @@ local function WarnOldSaveIfNeeded(map)
 	local create_box = Global("CreateMessageBox")
 	if type(create_box) == "function" then
 		pcall(create_box, nil, "Super Big Map", detail)
-	elseif DebugLog then
-		DebugLog.Info("Lifecycle", "WarnOldSaveIfNeeded: CreateMessageBox unavailable -- logged only")
 	end
 	return true
 end
@@ -239,14 +151,6 @@ local TerrainSize = Engine.TerrainSize
 -- Re-install the static overview patches (FOV widen, camera override, curtain stubs)
 -- and re-apply ZoomPlus. Delegates to the extracted domain modules.
 local function ApplyOverviewPatches()
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and DebugLog.On and DebugLog.On("ZoomVanilla") then
-		local is_ov = Global("IsOverviewMode")
-		DebugLog.Info("ZoomVanilla", "ApplyOverviewPatches (widens FOV + patches camera + ApplyNormalZoom -- runs on EVERY map)", {
-			is_mod_map = IsModMap(Global("CurrentMap")),
-			overview = type(is_ov) == "function" and (SafeCall(is_ov) == true) or "?",
-		})
-	end
 	local camera = SuperBigMap.OverviewCamera
 	local curtains = SuperBigMap.OverviewCurtains
 	local zoom = SuperBigMap.ZoomPlusIntegration
@@ -286,10 +190,6 @@ local function ForceVanillaMainMenuState(reason)
 	if curtains and type(curtains.RestoreVanillaBehavior) == "function" then
 		curtains.RestoreVanillaBehavior()
 	end
-	local elevator_btn = SuperBigMap.PlaceElevatorButton
-	if elevator_btn and type(elevator_btn.Hide) == "function" then
-		SafeCall(elevator_btn.Hide)
-	end
 	if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 		SafeCall(SuperBigMap.ExpansionLoadingEnd, true)
 	end
@@ -312,12 +212,6 @@ local function ForceVanillaMainMenuState(reason)
 		UninstallRestoreInGameInterfaceGuard()
 	end
 
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", "forced vanilla pregame state", {
-			reason = tostring(reason or "?"),
-		})
-	end
 end
 
 -- The Relaunched game returns to pregame through ResetGameSession.  Guarding only
@@ -367,19 +261,11 @@ local function InstallPreGameMainMenuResetGuard()
 	end
 	State.original_open_pregame_main_menu = original
 	local wrapper = function(...)
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Lifecycle", "OpenPreGameMainMenu fired (returned to main menu)")
-		end
 		local lifecycle = SuperBigMap.Lifecycle
 		if lifecycle and type(lifecycle.ReturnToMainMenuVanilla) == "function" then
 			lifecycle.ReturnToMainMenuVanilla("OpenPreGameMainMenu")
 		else
 			ForceVanillaMainMenuState("OpenPreGameMainMenu")
-		end
-		local toggle = SuperBigMap.PregameToggle
-		if toggle and type(toggle.LogOpenState) == "function" then
-			toggle.LogOpenState("after OpenPreGameMainMenu")
 		end
 		return State.original_open_pregame_main_menu(...)
 	end
@@ -399,10 +285,6 @@ local function ReactivateFromMainMenu(reason)
 	if not (lifecycle and type(lifecycle.Enable) == "function") then return false end
 	if SafeCall(lifecycle.Enable, true) ~= true then return false end
 	State.main_menu_vanilla = false
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", "left vanilla main-menu state", { reason = tostring(reason or "?") })
-	end
 	return true
 end
 
@@ -453,62 +335,21 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	if not map then
 		return false
 	end
-	local profiler = SuperBigMap.LoadingProfiler
-	local apply_token = profiler and type(profiler.InvestigationBegin) == "function"
-		and profiler.InvestigationBegin("lifecycle: apply map bounds sectors and overview", {
-			rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
-			work_class = "lifecycle-state",
-		}, map) or false
 
 	-- Keep the global overview patches installed (idempotent) so they are ready
 	-- for when a mod map loads -- but they are internally gated to mod maps, so on
 	-- a non-mod map they stay vanilla.
-	local overview_patch_token = profiler and type(profiler.InvestigationBegin) == "function"
-		and profiler.InvestigationBegin("lifecycle: apply global overview patches", {
-			work_class = "idempotent-patch-install",
-		}, map) or false
 	ApplyOverviewPatches()
-	if overview_patch_token and type(profiler.InvestigationEnd) == "function" then
-		profiler.InvestigationEnd(overview_patch_token, {
-			work_class = "idempotent-patch-install",
-		}, true)
-	end
 
 	-- New-game-only / mod-map-only gate: do NO per-map work (bounds, sector refit,
 	-- overview reshaping) on vanilla maps or old saves not started with the mod.
 	if not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "Lifecycle.Apply non-mod map")
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Lifecycle", "skipped: not a mod map (vanilla/non-mod save)", {
-				map = tostring(map.name or (map.mapdata and map.mapdata.id) or "map"),
-			})
-		end
-		if apply_token and type(profiler.InvestigationEnd) == "function" then
-			profiler.InvestigationEnd(apply_token, {
-				skipped = true, reason = "not a mod map", work_class = "lifecycle-state",
-			}, true)
-		end
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "Lifecycle.Apply")
-		end
 		return false, "not a mod map"
-	end
-
-	-- TEMP verification button (config-gated and idempotent).
-	local elevator_btn = SuperBigMap.PlaceElevatorButton
-	if elevator_btn and type(elevator_btn.Show) == "function" then
-		elevator_btn.Show()
 	end
 
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
-		local bounds_token = profiler and type(profiler.InvestigationBegin) == "function"
-			and profiler.InvestigationBegin("lifecycle: reset and optionally rebuild map bounds", {
-				rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
-				work_class = "bounds-and-gameplay-grids",
-			}, map) or false
 		bounds.ResetMapDataBounds(map, map.mapdata)
 		bounds.ResetMapAreas(map)
 
@@ -516,18 +357,8 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 			bounds.RebuildMapBounds(map, skip_buildable_rebuild)
 			bounds.RefreshSectors(map)
 		end
-		if bounds_token and type(profiler.InvestigationEnd) == "function" then
-			profiler.InvestigationEnd(bounds_token, {
-				rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
-				work_class = "bounds-and-gameplay-grids",
-			}, true)
-		end
 	end
 
-	local presentation_token = profiler and type(profiler.InvestigationBegin) == "function"
-		and profiler.InvestigationBegin("lifecycle: refresh overview render and camera", {
-			work_class = "presentation-refresh",
-		}, map) or false
 	local render = SuperBigMap.OverviewRender
 	if render then
 		render.Apply(Global("IsOverviewMode") and IsOverviewMode())
@@ -535,24 +366,6 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	local camera = SuperBigMap.OverviewCamera
 	if camera then
 		camera.ResetOverviewCamera(map, 0)
-	end
-	if presentation_token and type(profiler.InvestigationEnd) == "function" then
-		profiler.InvestigationEnd(presentation_token, {
-			work_class = "presentation-refresh",
-		}, true)
-	end
-
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		local width, height = TerrainSize(map)
-		DebugLog.Info("Lifecycle", "playable bounds reset to full terrain", { width = width, height = height })
-	end
-
-	if apply_token and type(profiler.InvestigationEnd) == "function" then
-		profiler.InvestigationEnd(apply_token, {
-			rebuild = tostring(rebuild), skip_buildable_rebuild = tostring(skip_buildable_rebuild),
-			work_class = "lifecycle-state",
-		}, true)
 	end
 	return true
 end
@@ -575,7 +388,6 @@ local function ShouldSkipNewMapBuildableRebuild(map)
 		and config.OPTIMIZE_STRETCH_DEFERRED_REBUILDS == true
 		and config.SURFACE_STRETCH_AT_START == true
 		and config.FULL_MAP_PLAYABLE == true
-		and config.FORCE_BUILDABLE_GRID_STORAGE ~= true
 		and env == "Surface"
 		and buildable and buildable.z_grid
 		and StretchEligibleForDeferredBounds(map)
@@ -625,54 +437,9 @@ local function run_phase(order, method)
 	end
 end
 
--- Log every ACTIVE (loaded) mod this session plus the editor/ZoomPlus context. Always
--- prints (one block) so we can see exactly which mods are live and why the camera is
--- being reshaped -- e.g. whether the Scenario Editor mod is actually loaded, and which
--- ZoomPlus instance owns the global. Gated by DEBUG_LOGS (Config.EnableDiagnosticLogs).
-local function LogSessionDiagnostics()
-	-- Gated like all mod debug output: only when Config.EnableDiagnosticLogs (DEBUG_LOGS) is on.
-	if (SuperBigMap.Config or {}).DEBUG_LOGS ~= true then
-		return
-	end
-	local print_fn = rawget(_G, "print")
-	if type(print_fn) ~= "function" then
-		return
-	end
-	local mods = Global("ModsLoaded")
-	print_fn("[Super Big Map] ActiveMods: ===== loaded mods this session =====")
-	if type(mods) == "table" then
-		for i = 1, #mods do
-			local m = mods[i]
-			if type(m) == "table" then
-				print_fn(string.format("[Super Big Map] ActiveMods:   %s | id=%s | v=%s",
-					tostring(m.title or "?"), tostring(m.id or "?"), tostring(m.version or m.ModVersion or "?")))
-			end
-		end
-	else
-		print_fn("[Super Big Map] ActiveMods: (ModsLoaded unavailable)")
-	end
-
-	local is_editor = Global("IsEditorActive")
-	local zoom_plus = Global("SuperBigMapZoomPlus")
-	local scenario = rawget(_G, "ScenarioEditor")
-	local mode_fn = rawget(_G, "ScenarioEditor_ModeIsActive")
-	print_fn(string.format(
-		"[Super Big Map] ActiveMods: context editor_active=%s ScenarioEditor_present=%s ScenarioEditor_ModeIsActive_present=%s ZoomPlus_present=%s ZoomPlus_enabled=%s",
-		tostring(type(is_editor) == "function" and is_editor() or "no_fn"),
-		tostring(scenario ~= nil),
-		tostring(type(mode_fn) == "function"),
-		tostring(type(zoom_plus) == "table"),
-		tostring(type(zoom_plus) == "table" and zoom_plus.enabled)))
-	print_fn("[Super Big Map] ActiveMods: ====================================")
-end
-
 function Lifecycle.Enable(force_from_main_menu)
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Lifecycle", "enable skipped: ENABLE_MOD is false")
-		end
 		return false
 	end
 	if SuperBigMap.State.main_menu_vanilla == true and force_from_main_menu ~= true then
@@ -689,22 +456,12 @@ function Lifecycle.Enable(force_from_main_menu)
 		InstallRestoreInGameInterfaceGuard()
 	end
 	Lifecycle.Apply(Global("CurrentMap"), true)
-
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", "enabled")
-	end
-	LogSessionDiagnostics()
-	if SuperBigMap.Validation then
-		SuperBigMap.Validation.CheckRuntimeState()
-	end
 	-- The "fresh restart needed" notice is fired from the ModsReloaded handler (so it can
 	-- tell a runtime toggle from the cold boot via GameUiIsUp), not here.
 	return true
 end
 
 function Lifecycle.Disable()
-	local was_active = Lifecycle.IsActive()
 	-- Always execute the idempotent reverse phase. A late Lua/class reload can
 	-- leave a wrapper or shared preset behind even if State.active was already
 	-- cleared, and main-menu teardown is the last safe point to normalize it.
@@ -712,16 +469,6 @@ function Lifecycle.Disable()
 	SuperBigMap.State.active = false
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
-	end
-
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", "disabled (vanilla behavior restored)", {
-			was_active = was_active,
-		})
-	end
-	if SuperBigMap.Validation then
-		SuperBigMap.Validation.CheckVanillaRestoration()
 	end
 	return true
 end
@@ -742,8 +489,7 @@ end
 
 -- True on the MOD EDITOR test map -- the authoritative "leave everything vanilla"
 -- signal. IsModEditorMap (engine, GedModEditor.lua) is always available; the world
--- editor's IsEditorActive does NOT exist in normal sessions (it logged no_fn), which
--- is why an earlier gate on it never fired -- kept only as a secondary check.
+-- editor's IsEditorActive is kept only as a secondary check.
 local function editor_active()
 	local fn = Global("IsModEditorMap")
 	if type(fn) == "function" then
@@ -755,84 +501,6 @@ local function editor_active()
 	local we = Global("IsEditorActive")
 	return type(we) == "function" and we() == true
 end
-
--- ---- editor-camera diagnostics (gated on Config.DEBUG_EDITORCAMERA) ------------
-local function EditorCamOn()
-	local cfg = SuperBigMap.Config or {}
-	return cfg.DEBUG_EDITORCAMERA == true
-end
-
-local function EditorCamLog(message, data)
-	if not EditorCamOn() then
-		return
-	end
-	local parts = {}
-	if type(data) == "table" then
-		local keys = {}
-		for k in pairs(data) do keys[#keys + 1] = k end
-		table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-		for _, k in ipairs(keys) do parts[#parts + 1] = tostring(k) .. "=" .. tostring(data[k]) end
-	end
-	local print_fn = rawget(_G, "print")
-	if type(print_fn) == "function" then
-		print_fn("[Super Big Map] EditorCam: " .. tostring(message)
-			.. (#parts > 0 and (" {" .. table.concat(parts, ", ") .. "}") or ""))
-	end
-end
-
--- Flat snapshot of everything that could explain a bugged editor zoom/FOV.
-local function CameraSnapshot()
-	local snap = {}
-	local is_editor = Global("IsEditorActive")
-	snap.editor = type(is_editor) == "function" and (is_editor() == true) or false
-	local is_ov = Global("IsOverviewMode")
-	snap.overview = type(is_ov) == "function" and (SafeCall(is_ov) == true) or false
-
-	local const_tbl = Global("const")
-	if type(const_tbl) == "table" and type(const_tbl.Camera) == "table" then
-		snap.fov_16_9 = const_tbl.Camera.OverviewFovX_16_9
-		snap.fov_4_3 = const_tbl.Camera.OverviewFovX_4_3
-		snap.fov_orig_16_9 = const_tbl.Camera.SuperBigMapOriginalOverviewFovX_16_9
-	end
-
-	local cam = Global("cameraRTS")
-	if type(cam) == "table" then
-		if type(cam.GetProperties) == "function" then
-			local props = SafeCall(cam.GetProperties, 1)
-			if type(props) == "table" then
-				snap.zoom_in = props.LookatDistZoomIn
-				snap.zoom_out = props.LookatDistZoomOut
-				snap.fovx = props.FovX
-				snap.zoom_step = props.ZoomStep
-			end
-		end
-		if type(cam.GetZoom) == "function" then snap.zoom = SafeCall(cam.GetZoom) end
-		if type(cam.GetEye) == "function" then
-			local eye = SafeCall(cam.GetEye)
-			if eye and type(eye.z) == "function" then snap.eye_z = SafeCall(eye.z, eye) end
-		end
-	end
-
-	local zoom_plus = Global("SuperBigMapZoomPlus")
-	if type(zoom_plus) == "table" then
-		snap.zoomplus_present = true
-		snap.zoomplus_enabled = type(zoom_plus.IsEnabled) == "function" and (SafeCall(zoom_plus.IsEnabled) == true) or "?"
-	else
-		snap.zoomplus_present = false
-	end
-	return snap
-end
-
-
--- Welcome-popup warnings, the fresh-restart notice, and the expansion loading box live
--- in sbm_loading_ui (loaded before this module). Bind the two it exposes for the gates
--- below; the rest is reached via its SuperBigMap.* exports at runtime.
-local LoadingUI = SuperBigMap.LoadingUI
-assert(type(LoadingUI) == "table",
-	"sbm_lifecycle: SuperBigMap.LoadingUI missing -- load sbm_loading_ui before this file")
-local NoticeLog = LoadingUI.NoticeLog
-assert(type(NoticeLog) == "function",
-	"sbm_lifecycle: required LoadingUI helpers missing (check sbm_loading_ui exports)")
 
 -- When on the mod editor map, force Super Big Map fully vanilla: disable ZoomPlus,
 -- restore the overview camera/render (no popup -- the mod is silently inert in the editor).
@@ -849,124 +517,7 @@ local function HandleModEditorMap()
 	local render = SuperBigMap.OverviewRender
 	if render and type(render.Apply) == "function" then render.Apply(false) end
 
-	EditorCamLog("mod editor map detected -- forcing vanilla", CameraSnapshot())
 	return true
-end
-
--- Sector lifecycle diagnostic helper. Gated on Config.SHOW_SECTOR_DIAGNOSTICS;
--- when ON, each OnMsg hook below calls this to snapshot the engine's sector
--- state at that exact lifecycle point (city existence, MapSectors size, sector
--- area dimensions, whether our patched InitSectors is still installed). Useful
--- to find out WHEN MapSectors gets populated for pre-built maps that don't
--- run our InitSectors -- the snapshot at MapSectorsReady / CityInitialized
--- shows whether the engine populated MapSectors itself.
-local function DiagSnapshotEvent(label, map)
-	local sectors = SuperBigMap.SectorExploration
-	if sectors and type(sectors.DiagSnapshot) == "function" then
-		sectors.DiagSnapshot(label, map)
-	end
-	-- Single-switch init-sequence timeline: one line per lifecycle event, in order,
-	-- with the live sector-grid dimensions at that moment -- so we can see exactly
-	-- WHEN a built 20x20 grid loses its frame sectors during initialization.
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and type(DebugLog.InitSeqOn) == "function" and DebugLog.InitSeqOn() then
-		local city = map and map.City
-		local describe = (sectors and type(sectors.DescribeCityState) == "function")
-			and sectors.DescribeCityState(city) or "?"
-		DebugLog.InitSeq("event " .. tostring(label), {
-			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
-			grid = describe,
-		})
-	end
-end
-
--- Resolve the friendly "named" denomination of the current landing site (e.g.
--- "Marineris Alpha") in addition to the internal map id. g_CurrentMapParams.landing_spot
--- holds the chosen LandingSpot preset id ("" for random/custom coordinates); the
--- matching preset's display_name is the human name. Returns (id, display) where
--- either may be nil when unavailable (e.g. a random-coordinate game has no named spot).
-local function ResolveLandingSpotName()
-	local params = Global("g_CurrentMapParams")
-	local spot_id = (type(params) == "table") and params.landing_spot or nil
-	if type(spot_id) ~= "string" or spot_id == "" then
-		return nil, nil
-	end
-
-	local presets = Global("Presets")
-	local groups = (type(presets) == "table") and presets.LandingSpot or nil
-	if type(groups) ~= "table" then
-		return spot_id, nil
-	end
-
-	for _, group in pairs(groups) do
-		if type(group) == "table" then
-			for _, item in ipairs(group) do
-				if type(item) == "table" and item.id == spot_id then
-					local display
-					local translate = Global("_InternalTranslate")
-					if type(translate) == "function" and item.display_name ~= nil then
-						local ok, text = pcall(translate, item.display_name)
-						if ok and type(text) == "string" and text ~= "" then
-							display = text
-						end
-					end
-					return spot_id, display
-				end
-			end
-		end
-	end
-
-	return spot_id, nil
-end
-
--- Log the chosen map's name + Mars landing coordinates so the player can tell which
--- map they picked. Gated by Config.ShowChosenMapLog (off in normal play; one line
--- per map load when on). Internal lat/long are
--- degrees*60 (arc-minutes), so /60 ~= degrees; positive lat=N, positive long=E.
--- Logs BOTH denominations: the internal map id (mapdata.id) and the friendly named
--- landing site (LandingSpot display_name / id) when one was chosen.
-local function LogChosenMap(map, reason)
-	local cfg = SuperBigMap.Config or {}
-	if cfg.DEBUG_CHOSENMAP ~= true and cfg.DEBUG_LOGS ~= true then
-		return
-	end
-	map = map or Global("CurrentMap")
-	if not map or map.SuperBigMapChosenMapLogged == true then
-		return
-	end
-	map.SuperBigMapChosenMapLogged = true
-	local mapdata = map.mapdata
-	local params = Global("g_CurrentMapParams")
-	local lat = (type(map.latitude) == "number" and map.latitude)
-		or (type(params) == "table" and type(params.latitude) == "number" and params.latitude) or nil
-	local long = (type(map.longitude) == "number" and map.longitude)
-		or (type(params) == "table" and type(params.longitude) == "number" and params.longitude) or nil
-	local function deg(v)
-		if type(v) ~= "number" then return "?" end
-		return string.format("%.2f", math.abs(v) / 60)
-	end
-	local ns = (type(lat) == "number") and (lat >= 0 and "N" or "S") or ""
-	local ew = (type(long) == "number") and (long >= 0 and "E" or "W") or ""
-	local spot_id, spot_display = ResolveLandingSpotName()
-	local named
-	if spot_id and spot_display then
-		named = string.format("%s (\"%s\")", spot_id, spot_display)
-	elseif spot_id then
-		named = spot_id
-	else
-		named = "none (random/custom coordinates)"
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("ChosenMap", string.format(
-			"via %s -- name=%s mapdata=%s named=%s env=%s | coords lat=%s long=%s (~%s%s %s%s)",
-			tostring(reason),
-			tostring(map.name or (mapdata and mapdata.id) or "?"),
-			tostring(mapdata and mapdata.id or "?"),
-			named,
-			tostring(mapdata and mapdata.Environment or "?"),
-			tostring(lat), tostring(long), deg(lat), ns, deg(long), ew))
-	end
 end
 
 RegisterOnce("PreNewMap", function(map, mapdata)
@@ -976,7 +527,6 @@ RegisterOnce("PreNewMap", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.PreNewMap", map)
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
 		bounds.ResetMapDataBounds(map, mapdata)
@@ -994,18 +544,9 @@ RegisterOnce("NewMap", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.NewMap", map)
 	if HandleModEditorMap() then return end
 	local skip_buildable_rebuild = ShouldSkipNewMapBuildableRebuild(map) == true
 	Lifecycle.Apply(map, true, skip_buildable_rebuild)
-	if skip_buildable_rebuild then
-		local profiler = SuperBigMap.LoadingProfiler
-		if profiler and type(profiler.Step) == "function" then
-			profiler.Step("stretch optimization: skipped duplicate NewMap buildable rebuild", {
-				environment = tostring(map and map.mapdata and map.mapdata.Environment),
-			}, map)
-		end
-	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.EnsureSectorPatch(map or mapdata, "NewMap")
@@ -1019,7 +560,6 @@ RegisterOnce("NewMapLoaded", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.NewMapLoaded", map)
 	if HandleModEditorMap() then return end
 	Lifecycle.Apply(map, false)
 	-- Save-load path: the engine's NewMapLoaded restores MapSectors from save
@@ -1032,113 +572,10 @@ RegisterOnce("NewMapLoaded", function(map, mapdata)
 end)
 
 RegisterOnce("PostNewMapLoaded", function(map, mapdata)
-	-- Entry trace (before the active() gate): confirms the message fired for THIS map and whether
-	-- the handler will proceed. If a mod-expanded map loads but this never logs, the message hook
-	-- was lost (typically a mid-session hot-reload) -- that is why the stretch/expansion silently
-	-- does not run. On a clean launch it must log with is_mod_map=true for the real game map.
-	InitSeq("PostNewMapLoaded FIRED (entry)", {
-		map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
-		active = active() == true,
-		is_mod_map = IsModMap(map) == true,
-	})
-	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.LoadTime and IsModMap(map) then
-		SuperBigMap.DebugLog.LoadTime("PostNewMapLoaded (mod map)", {
-			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
-		})
-	end
 	if not active() then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.PostNewMapLoaded", map)
 	if HandleModEditorMap() then return end
-	if IsModMap(map) then LogChosenMap(map, "PostNewMapLoaded") end
-	do
-		local id = tostring((map and map.mapdata and map.mapdata.id) or (map and map.name) or "")
-		if map and map.mapdata and id ~= "PreGame" and IsModMap(map) then
-			local elevator_btn = SuperBigMap.PlaceElevatorButton
-			if elevator_btn and type(elevator_btn.Show) == "function" then
-				elevator_btn.Show()
-			end
-			local entrance_debug = SuperBigMap.EntranceDebug
-			if entrance_debug and type(entrance_debug.SnapshotAll) == "function" then
-				entrance_debug.SnapshotAll("PostNewMapLoaded:" .. id, map)
-			end
-			-- GROUND-TRUTH entrance dump (gated on DEBUG_ALIGN): logs every tunnel spawner /
-			-- marker / passage on this map, EXPANDED OR NOT -- so a vanilla run (EXPAND off) and
-			-- an expanded run at the SAME coordinates can be diffed to find where the expansion
-			-- relocates a surface entrance relative to vanilla (user-proven: vanilla corresponds
-			-- D4<->D4 / F3<->F3 on both views). Delayed 3s so CityInit-spawned markers exist.
-			local DebugLog = SuperBigMap.DebugLog
-			if DebugLog and DebugLog.On and DebugLog.On("Align") then
-				local create_thread = Global("CreateRealTimeThread")
-				local sleep = Global("Sleep")
-				if type(create_thread) == "function" and type(sleep) == "function" then
-					create_thread(function()
-						-- Multiple phases: the SURFACE generator finishes well after map load, so
-						-- a +3s dump found nothing there (log 18.20.22: only the underground's
-						-- fixed spawners appeared). Dump at 3s/30s/60s with a phase label and a
-						-- per-class summary even when empty -- the last non-empty dump is the
-						-- generation ground truth.
-						local get_sector = Global("GetMapSectorXY")
-						local map_id = tostring((map.mapdata and map.mapdata.id) or map.name or "?")
-						local elapsed = 0
-						for _, delay in ipairs({ 3000, 27000, 30000 }) do
-							sleep(delay)
-							elapsed = elapsed + delay
-							local city = map.City
-							local entrance_positions = {}
-							for _, class_name in ipairs({ "SpawnsTunnelOnCityInit", "SurfaceUndergroundTunnelMarker", "ElevatorPassage" }) do
-								local n = 0
-								pcall(map.MapForEach, map, "map", class_name, function(o)
-									n = n + 1
-									local ok, x, y = pcall(function()
-										local p = o:GetPos()
-										return p:x(), p:y()
-									end)
-									local sector = "?"
-									if ok and type(x) == "number" and city and type(get_sector) == "function" then
-										local ok_s, sec = pcall(get_sector, city, x, y)
-										sector = tostring((ok_s and sec) and sec.id or "nil")
-									end
-									if ok and type(x) == "number" and class_name == "SpawnsTunnelOnCityInit" then
-										entrance_positions[#entrance_positions + 1] = { x = x, y = y }
-									end
-									DebugLog.Info("Align", "entrance ground truth", {
-										map = map_id, query = class_name, n = n, at_ms = elapsed,
-										class = tostring(o.class or "?"),
-										xy = ok and (tostring(x) .. "," .. tostring(y)) or "?",
-										sector = sector,
-									})
-								end)
-								DebugLog.Info("Align", "entrance ground truth summary", {
-									map = map_id, query = class_name, found = n, at_ms = elapsed,
-								})
-							end
-							-- FINE spike scan around each entrance (DEBUG_SPIKES): the map-wide
-							-- audit lattice misses 1-2-cell needles; this dense scan catches
-							-- them (or proves the ground clean) right where they matter.
-							do
-								local tc2 = SuperBigMap.TerrainCopy
-								if tc2 and type(tc2.FineSpikeScan) == "function" then
-									for _, ep in ipairs(entrance_positions) do
-										SafeCall(tc2.FineSpikeScan, map, ep.x, ep.y, 12000, 400,
-											"entrance @" .. tostring(ep.x) .. "," .. tostring(ep.y) .. " at " .. tostring(elapsed) .. "ms")
-									end
-								end
-							end
-							-- Terrain spike audit per phase (DEBUG_SPIKES): the entrance spike
-							-- crown appears at SOME post-generation stage; this stamps the
-							-- terrain max + tallest sample coordinates over time.
-							local tc = SuperBigMap.TerrainCopy
-							if tc and type(tc.SpikeAudit) == "function" then
-								SafeCall(tc.SpikeAudit, map, "ground-truth dump at " .. tostring(elapsed) .. "ms")
-							end
-						end
-					end)
-				end
-			end
-		end
-	end
 	local gen = SuperBigMap.MapGeneration
 	local env = map and map.mapdata and map.mapdata.Environment
 	if IsModMap(map) and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
@@ -1149,24 +586,12 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	local defer_postload_bounds = config.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS == true
 		and stretch_eligible
 	Lifecycle.Apply(map, not defer_postload_bounds)
-	if defer_postload_bounds then
-		local profiler = SuperBigMap.LoadingProfiler
-		if profiler and type(profiler.Step) == "function" then
-			profiler.Step("stretch optimization: deferred PostNewMapLoaded full bounds rebuild", {
-				environment = tostring(env),
-			}, map)
-		end
-	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "PostNewMapLoaded")
 	end
 	if env == "Underground" and not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "PostNewMapLoaded vanilla underground")
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "PostNewMapLoaded underground")
-		end
 		return
 	end
 	-- Underground maps take their own stretch path, never the surface pipeline.
@@ -1193,13 +618,8 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 					map.mapdata.SuperBigMapOriginalOverviewAllowed = map.mapdata.IsAllowedToEnterOverview
 				end
 				map.mapdata.IsAllowedToEnterOverview = true
-				local DebugLog = SuperBigMap.DebugLog
-				if DebugLog then
-					DebugLog.Info("Lifecycle", "underground overview mode enabled (mapdata.IsAllowedToEnterOverview=true)")
-				end
 			end
 		end
-		DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
 		return
 	end
 
@@ -1222,47 +642,23 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		if defer_postload_bounds and not scheduled then
 			Lifecycle.Apply(map, true)
 		end
-	else
-		InitSeq("PostNewMapLoaded: expansion-completion skipped (not a mod map)", {
-			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "?"),
-		})
 	end
-	DiagSnapshotEvent("OnMsg.PostNewMapLoaded_AFTER_ensure", map)
 end)
 
 -- Engine fires MapSectorsReady at the END of Exploration:InitExploration (after
--- InitSectors + InitMapArea + InitialExplore). If our patched InitSectors never
--- ran, the message still fires when vanilla InitSectors completes (with the
--- vanilla-built sector grid). Tapping it shows what state MapSectors is in at
--- that moment, which lets us tell whether the engine ever called any InitSectors
--- at all for the problematic map (e.g. BlankBig_03).
+-- InitSectors + InitMapArea + InitialExplore). Ensure the final sector layout once
+-- vanilla has completed that stage.
 RegisterOnce("MapSectorsReady", function(exploration)
 	if not active() then
 		return
 	end
 	local sectors = SuperBigMap.SectorExploration
 	local map = exploration and type(exploration.GetMap) == "function" and exploration:GetMap() or false
-	if sectors and type(sectors.DiagOn) == "function" and sectors.DiagOn() then
-		print("[Super Big Map] SectorDiag: OnMsg.MapSectorsReady: exploration=" .. tostring(exploration)
-			.. " map=" .. tostring(map and map.name or "?")
-			.. " | " .. sectors.DescribeCityState(exploration))
-		-- Force-rebuild here too: if the engine's InitSectors built a 10x10
-		-- vanilla grid for a map our layout expects to be bigger, this catches
-		-- it after MapSectorsReady fires.
-		if map and type(sectors.EnsureSectorsBuilt) == "function" then
-			sectors.EnsureSectorsBuilt(map, "MapSectorsReady")
-		end
-	elseif sectors and type(sectors.EnsureSectorsBuilt) == "function" then
-		if map then
-			sectors.EnsureSectorsBuilt(map, "MapSectorsReady")
-		end
+	if sectors and map and type(sectors.EnsureSectorsBuilt) == "function" then
+		sectors.EnsureSectorsBuilt(map, "MapSectorsReady")
 	end
 	if map and not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "MapSectorsReady non-mod map")
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "MapSectorsReady")
-		end
 	end
 end)
 
@@ -1282,21 +678,12 @@ RegisterOnce("CityInitialized", function(city)
 	if gen and map and type(gen.NotifyGenerationMilestone) == "function" then
 		gen.NotifyGenerationMilestone(map, "CityInitialized", "CityInitialized-after-sectors")
 	end
-	if sectors and type(sectors.DiagOn) == "function" and sectors.DiagOn() then
-		print("[Super Big Map] SectorDiag: OnMsg.CityInitialized: city=" .. tostring(city)
-			.. " map=" .. tostring(map and map.name or "?")
-			.. " | " .. sectors.DescribeCityState(city))
-	end
 	local camera = SuperBigMap.OverviewCamera
 	if IsModMap(map) and camera and type(camera.ReframeFinalizedDestination) == "function" then
 		camera.ReframeFinalizedDestination(map, "CityInitialized")
 	end
 	if map and not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "CityInitialized non-mod map")
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "CityInitialized")
-		end
 	end
 end)
 
@@ -1343,13 +730,6 @@ InstallRestoreInGameInterfaceGuard = function()
 		if not err_str:find("InGameInterface_OverviewState") then
 			error(err)
 		end
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Warn("Lifecycle",
-				"vanilla RestoreInGameInterfaceOnLoadGame crashed (mod-reload mid-load wiped InGameInterface_OverviewState)",
-				{ pre_was_table = type(pre) == "table", err = err_str })
-		end
-		print("[Super Big Map] vanilla RestoreInGameInterfaceOnLoadGame crash guarded: " .. err_str)
 	end
 	State.restore_in_game_interface_wrapper = wrapper
 	rawset(_G, "RestoreInGameInterfaceOnLoadGame", wrapper)
@@ -1372,7 +752,6 @@ RegisterOnce("LoadGame", function()
 	end
 	InstallRestoreInGameInterfaceGuard()
 	local current = Global("CurrentMap")
-	DiagSnapshotEvent("OnMsg.LoadGame", current)
 	if not IsModMap(current) then
 		NormalizeVanillaRuntimeState(current, "OnMsg.LoadGame non-mod save")
 	end
@@ -1416,16 +795,14 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if not active() then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.CurrentMapChangeDone(slot=" .. tostring(map_slot) .. ")", map)
 	if HandleModEditorMap() then return end
-	if IsModMap(map) then LogChosenMap(map, "CurrentMapChangeDone") end
 	local gen = SuperBigMap.MapGeneration
 	if IsModMap(map) and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("CurrentMapChangeDone")
 	end
 	-- Safety net for engine/generated-UI switch paths that bypassed the pre-switch gate. The
-	-- handler is diagnostic on every transition and schedules the full deferred preparation only
-	-- when an unprepared expanded underground has already become current.
+	-- handler schedules the full deferred preparation only when an unprepared expanded underground
+	-- has already become current.
 	if IsModMap(map) and gen and type(gen.HandleDeferredUndergroundMapChange) == "function" then
 		gen.HandleDeferredUndergroundMapChange(map_slot, map)
 	end
@@ -1435,14 +812,6 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		and map.SuperBigMapSkipNextLifecycleBoundsRebuild == true
 	if skip_final_underground_rebuild then
 		map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Lifecycle", "skipping duplicate first-access underground grid rebuild; final grids already validated")
-		end
-		local profiler = SuperBigMap.LoadingProfiler
-		if profiler and type(profiler.Step) == "function" then
-			profiler.Step("underground first access: duplicate lifecycle grid rebuild skipped", nil, map)
-		end
 	end
 	Lifecycle.Apply(map, not defer_rebuild and not skip_final_underground_rebuild)
 	local sectors = SuperBigMap.SectorExploration
@@ -1454,16 +823,8 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- monotonic generation token, so stale work from an older map transaction cannot proceed.
 	if IsModMap(map) and gen
 		and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
-		local restored, restore_result = gen.HandlePendingUndergroundElevatorRestore(
+		gen.HandlePendingUndergroundElevatorRestore(
 			map_slot, map, "CurrentMapChangeDone after Lifecycle.Apply")
-		if restored ~= true then
-			local DebugLog = SuperBigMap.DebugLog
-			if DebugLog then
-				DebugLog.Error("Lifecycle", "underground Elevator lifecycle transaction failed", {
-					map = tostring(map), map_slot = tostring(map_slot), error = tostring(restore_result),
-				})
-			end
-		end
 	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
@@ -1476,13 +837,8 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 			SafeCall(highlight.UpdateUndergroundOverviewVisuals, false)
 		end
 	end
-	ApplyUndergroundDarknessState(map, "CurrentMapChangeDone")
 	if not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "CurrentMapChangeDone non-mod map")
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "CurrentMapChangeDone")
-		end
 	end
 end)
 
@@ -1501,7 +857,7 @@ end)
 -- Authoritative, class-agnostic rocket-landing hook: the RocketLanded message fires for
 -- every rocket regardless of subclass (the LandOnMars method wrap can miss subclasses if
 -- the engine flattens methods). Delegates to RocketRules to snap a ground-landed rocket
--- onto the live (expanded) terrain and to log the landing diagnostics.
+-- onto the live expanded terrain.
 RegisterOnce("RocketLandAttempt", function(rocket)
 	if not active() then
 		return
@@ -1564,9 +920,6 @@ local function EnsurePregameToggleInstalled(reason)
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.PatchLandingDialog) == "function" then
 		toggle.PatchLandingDialog()
-	end
-	if toggle and type(toggle.LogOpenState) == "function" then
-		toggle.LogOpenState("after EnsurePregameToggleInstalled(" .. tostring(reason or "?") .. ")")
 	end
 end
 
@@ -1644,13 +997,9 @@ end)
 local function ReinstallTerrainCriticalPatches(reason)
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then
-		NoticeLog("terrain-critical patch reinstall skipped", { reason = reason, enabled = false })
 		return false
 	end
 	if (SuperBigMap.State or {}).main_menu_vanilla == true then
-		NoticeLog("terrain-critical patch reinstall skipped", {
-			reason = reason, main_menu_vanilla = true,
-		})
 		return false
 	end
 	-- These hooks are transparent on non-expanded maps, so keeping them installed while the
@@ -1667,11 +1016,6 @@ local function ReinstallTerrainCriticalPatches(reason)
 	if type(rockets_fn) == "function" then
 		rockets_ok, rockets_result = pcall(rockets_fn)
 	end
-	NoticeLog("terrain-critical patch reinstall attempted", {
-		reason = reason, active = active(), bounds_ok = tostring(bounds_ok),
-		bounds_result = tostring(bounds_result), rockets_ok = tostring(rockets_ok),
-		rockets_result = tostring(rockets_result),
-	})
 	return bounds_ok and rockets_ok
 end
 
@@ -1689,9 +1033,6 @@ RegisterOnce("ClassesBuilt", function()
 	local gen = SuperBigMap.MapGeneration
 	if gen then
 		gen.PatchRandomMapGenerator()
-		if type(gen.PatchPassagePairing) == "function" then
-			gen.PatchPassagePairing()
-		end
 		if type(gen.PatchEntranceBadgePosition) == "function" then
 			gen.PatchEntranceBadgePosition()
 		end
@@ -1717,7 +1058,6 @@ RegisterOnce("ClassesBuilt", function()
 end)
 
 RegisterOnce("ModsReloaded", function()
-	NoticeLog("ModsReloaded handler fired", { active = active() })
 	-- The restart notice must fire regardless of the active() gate below (it has its own
 	-- gating), so try it first.
 	if type(SuperBigMap.ShowFreshRestartNotice) == "function" then
@@ -1802,7 +1142,6 @@ RegisterOnce("MapGenerated", function(map)
 	if not active() then
 		return
 	end
-	DiagSnapshotEvent("OnMsg.MapGenerated_BEFORE_tile", map)
 	local gen = SuperBigMap.MapGeneration
 	local mod_map = IsModMap(map)
 	if mod_map and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
@@ -1816,11 +1155,9 @@ RegisterOnce("MapGenerated", function(map)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.EnsureSectorPatch(map, "MapGenerated")
-		DiagSnapshotEvent("OnMsg.MapGenerated_AFTER_ensure_patch", map)
 		if type(sectors.EnsureSectorsBuilt) == "function" then
 			sectors.EnsureSectorsBuilt(map, "MapGenerated")
 		end
-		DiagSnapshotEvent("OnMsg.MapGenerated_AFTER_ensure_built", map)
 	end
 	-- Final terrain re-invalidate after source generation and sector rebuild.
 	-- PostNewMapLoaded fires BEFORE MapGenerated, so the earlier invalidate ran
@@ -1832,11 +1169,6 @@ RegisterOnce("MapGenerated", function(map)
 		end
 		if not defer_rebuild and type(gen.ReinvalidateExpandedTerrain) == "function" then
 			gen.ReinvalidateExpandedTerrain(map)
-		elseif defer_rebuild then
-			local profiler = SuperBigMap.LoadingProfiler
-			if profiler and type(profiler.Step) == "function" then
-				profiler.Step("stretch optimization: deferred MapGenerated terrain revalidation", nil, map)
-			end
 		end
 	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
@@ -1856,10 +1188,6 @@ RegisterOnce("MapGenerated", function(map)
 	end
 	if not mod_map then
 		NormalizeVanillaRuntimeState(map, "MapGenerated non-mod map")
-		local validation = SuperBigMap.Validation
-		if validation and type(validation.CheckVanillaMapState) == "function" then
-			validation.CheckVanillaMapState(map, "MapGenerated")
-		end
 	end
 end)
 
@@ -1868,7 +1196,6 @@ RegisterOnce("OverviewMode", function(enabled)
 		return
 	end
 	if editor_active() then
-		EditorCamLog("OverviewMode handler skipped (editor)", { enabled = enabled == true })
 		return
 	end
 	if not active() then
@@ -1878,10 +1205,6 @@ RegisterOnce("OverviewMode", function(enabled)
 	if not IsModMap(current_map) then
 		NormalizeVanillaRuntimeState(current_map, "OverviewMode non-mod map")
 		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Overview", "OverviewMode message", { enabled = enabled == true })
 	end
 	-- Underground sectors are data-only: keep their hover context but suppress all grid decals.
 	local highlight = SuperBigMap.SectorHighlight
@@ -1921,13 +1244,9 @@ RegisterOnce("OverviewMode", function(enabled)
 	end
 end)
 
--- DIAGNOSTIC: sample the live camera through each transition so the curve in the
--- overview<->sector zoom is visible (lookat panning vs eye descending). Gated by
--- ShowOverviewCameraDiagnostics; logs the requested target then ~every 40ms until
--- the camera stops moving.
+-- Apply the custom first overview-exit transition on expanded maps.
 RegisterOnce("CameraTransitionStart", function(eye, lookat, time)
 	if editor_active() then
-		EditorCamLog("CameraTransitionStart skipped (editor)", CameraSnapshot())
 		return
 	end
 	if not active() then
@@ -1944,51 +1263,6 @@ RegisterOnce("CameraTransitionStart", function(eye, lookat, time)
 	if overview and type(overview.TakeOverExitTransition) == "function" then
 		overview.TakeOverExitTransition(eye, lookat, time)
 	end
-	local cfg = SuperBigMap.Config or {}
-	if cfg.DEBUG_CAMERA ~= true then
-		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	local camera = Global("cameraRTS")
-	local get_mode = Global("GetInGameInterfaceMode")
-	local function xyz(p)
-		if not p then
-			return nil, nil, nil
-		end
-		return SafeCall(p.x, p), SafeCall(p.y, p), SafeCall(p.z, p)
-	end
-	if DebugLog then
-		local ex, ey, ez = xyz(eye)
-		local lx, ly, lz = xyz(lookat)
-		DebugLog.Info("Camera", "CameraTransitionStart target", {
-			mode = get_mode and SafeCall(get_mode) or "?", time = time,
-			eye_x = ex, eye_y = ey, eye_z = ez, lookat_x = lx, lookat_y = ly, lookat_z = lz,
-		})
-	end
-	local create_thread = Global("CreateRealTimeThread")
-	local sleep = Global("Sleep")
-	if type(create_thread) ~= "function" or type(sleep) ~= "function" or not camera or type(camera.GetEye) ~= "function" then
-		return
-	end
-	create_thread(function()
-		for i = 1, 50 do
-			local e = SafeCall(camera.GetEye)
-			local l = SafeCall(camera.GetLookAt)
-			local moving = type(camera.IsMoving) == "function" and SafeCall(camera.IsMoving) and true or false
-			if DebugLog and e and l then
-				local ex, ey, ez = xyz(e)
-				local lx, ly, lz = xyz(l)
-				DebugLog.Info("Camera", "transition sample", {
-					i = i, moving = moving,
-					eye_x = ex, eye_y = ey, eye_z = ez, lookat_x = lx, lookat_y = ly, lookat_z = lz,
-				})
-			end
-			if not moving and i > 2 then
-				return
-			end
-			sleep(40)
-		end
-	end)
 end)
 
 RegisterOnce("CameraTransitionEnd", function()
@@ -1996,7 +1270,6 @@ RegisterOnce("CameraTransitionEnd", function()
 		return
 	end
 	if editor_active() then
-		EditorCamLog("CameraTransitionEnd skipped (editor)", CameraSnapshot())
 		return
 	end
 	if not active() then
@@ -2006,10 +1279,6 @@ RegisterOnce("CameraTransitionEnd", function()
 	if not IsModMap(current_map) then
 		NormalizeVanillaRuntimeState(current_map, "CameraTransitionEnd non-mod map")
 		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Overview", "CameraTransitionEnd message")
 	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom then
@@ -2042,7 +1311,6 @@ RegisterOnce("GameEnterEditor", function()
 	if not active() then
 		return
 	end
-	EditorCamLog("GameEnterEditor fired -- BEFORE restore", CameraSnapshot())
 	local cam = SuperBigMap.OverviewCamera
 	if cam and type(cam.RestoreVanillaBehavior) == "function" then cam.RestoreVanillaBehavior() end
 	local render = SuperBigMap.OverviewRender
@@ -2052,31 +1320,6 @@ RegisterOnce("GameEnterEditor", function()
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom and type(zoom.RestoreVanillaBehavior) == "function" then zoom.RestoreVanillaBehavior() end
 
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", "GameEnterEditor: mod set inert (vanilla editor camera)")
-	end
-
-	EditorCamLog("GameEnterEditor -- AFTER restore", CameraSnapshot())
-	-- Sample the camera for a few seconds after entering: if something RE-APPLIES a
-	-- zoom/FOV after our restore, these lines will show WHEN and to WHAT, and whether
-	-- ZoomPlus re-enabled itself -- the data needed to find the real culprit.
-	if EditorCamOn() then
-		local create_thread = Global("CreateRealTimeThread")
-		local sleep = Global("Sleep")
-		if type(create_thread) == "function" and type(sleep) == "function" then
-			create_thread(function()
-				for _, delay in ipairs({ 200, 500, 1000, 2000, 4000 }) do
-					sleep(delay)
-					if not editor_active() then
-						EditorCamLog("sample -- editor closed, stopping", {})
-						return
-					end
-					EditorCamLog("sample @+" .. tostring(delay) .. "ms", CameraSnapshot())
-				end
-			end)
-		end
-	end
 end)
 
 -- Leaving the editor: reinstall the mod's patches and re-apply to the current map
@@ -2085,7 +1328,6 @@ RegisterOnce("GameExitEditor", function()
 	if not active() then
 		return
 	end
-	EditorCamLog("GameExitEditor fired", CameraSnapshot())
 	ApplyOverviewPatches()
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom and type(zoom.ApplyModBehavior) == "function" then zoom.ApplyModBehavior() end

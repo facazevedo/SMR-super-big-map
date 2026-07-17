@@ -108,88 +108,6 @@ config.OverviewFarZ = 12000000
 -- Hide the dark overview map curtains around the visible map.
 config.HideOverviewCurtains = true
 
--- ============================================================================
--- DEBUG LOGGING (all default false -- production ships silent)
--- ============================================================================
--- Every mod log line routes through SuperBigMap.DebugLog with a SCOPE. A line prints
--- when the MASTER flag below is true (turns on ALL scopes), OR that line's own scope
--- flag is true (trace one domain in isolation). Flip the master for a full trace, or a
--- single scope to focus. Each flag maps to DebugLog scope "<Name>" (see sbm_debug.lua).
-config.EnableDiagnosticLogs = false  -- MASTER: when true, every scope below also logs
-
-config.DebugLifecycle     = false   -- Lifecycle: enable/disable, Apply/Restore, OnMsg flow, old-save warning
-config.DebugPregameToggle = false   -- PregameToggle: EXPAND MAP action, state, and underline diagnostics
-config.DebugGeneration    = true    -- TEMP multi-run verification: authoritative enrichment targets
-config.DebugGenerationVerbose = false -- GenerationVerbose: per-object clone spam (very noisy)
--- Lightweight aggregate timings for the temporary source -> expanded destination object handoff.
--- Records per-class counts/totals and the slowest individual transfers without changing order.
-config.DebugMigrationPerformance = true
-config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
-config.DebugSectorSizing  = true    -- TEMP camera verification: stable 20x20 layout geometry
-config.DebugDeposits      = true    -- TEMP multi-run verification: complementary top-up totals and final mix
--- Complete pre/post-stretch record trace for every native resource, anomaly, and effect marker.
--- Temporarily enabled to classify the underground coordinate collision as vanilla-preserved or
--- transform-introduced; disable after the recreation and supply-grid investigations are complete.
-config.DebugEnrichmentPositionsExhaustive = true
--- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
--- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
--- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
--- records, stage-one sector draws, stage-two low-area choices, side/bin/layer fallbacks, a 20x20
--- accepted/selected/final matrix, every clone result, overlap checks, and the final scan/reveal
--- audit. This is intentionally very noisy and adds diagnostic overhead only while enabled.
-config.DebugTopUpEdgeDistribution = false
-config.DebugStretch       = false
-config.DebugLoading       = false   -- Loading: loading-box watch loop + "Please wait" dot animation
-config.DebugLoadTime      = false
--- Exhaustive, read-only loading profiler. Records ordered lifecycle, generator, stretch,
--- loading-footer, and legacy timeline events with cumulative/gap/step durations. It adds
--- no sleeps, yields, scheduling, or behavioral changes; disable after collecting a trace.
-config.DebugLoadingSteps  = true
--- Extra loading-performance investigation. Adds nested timings for the expensive terrain,
--- decoration, marker, enrichment, audit, and finalization calls plus a descending per-session
--- summary. Observational only: it never sleeps, yields, changes call order, or invokes extra
--- gameplay work. It does add log/timer overhead, so disable after collecting a representative run.
-config.DebugLoadingInvestigation = false
--- Exhaustive first-access trace for deferred underground expansion. Logs every HUD click,
--- map-slot gate decision, state/geometry field, loading-screen transition, fallback path,
--- and preparation result. Keep enabled while investigating underground access.
-config.DebugUndergroundAccess = false
-config.DebugHover         = false   -- Hover: overview hover-highlight mapping
-config.DebugAlign         = false   -- Align: legacy entrance/alignment trace; superseded by DebugEntrancePositions
--- Exhaustive surface-entrance / underground-exit forensic trace. Logs every relevant object,
--- marker, spawner, and linked passage with world+hex positions, terrain/buildability data,
--- pairwise cross-map deltas, and best matches at lifecycle and generation-event snapshots.
-config.DebugEntrancePositions = false
-config.DebugOverview      = true    -- TEMP camera verification: overview curtains + render-distance
-config.DebugCamera        = true    -- TEMP camera verification: destination-bound framing and transitions
-config.DebugRocket        = false   -- Rocket: rocket landing Z-snap path
--- Exhaustive trace for rocket/pod terrain changes. Logs patch identity and lifecycle state,
--- construction cursor/template/rocket identity, every mod-map flatten decision, buildable-vs-
--- live terrain Z, and the landing transaction before/after. Temporarily enabled for diagnosis.
-config.DebugRocketTerrain = false
--- Optional Elevator terrain-forensics trace. Logs the exact class/global patch identity,
--- incoming construction arguments, both linked passage positions, buildable-vs-live terrain Z,
--- and 13x13 before/after height grids around both Elevator footprints. Disabled for release.
-config.DebugElevatorTerrain = true -- TEMP underground supply-grid assertion investigation
--- Exhaustive supply-grid lifecycle trace for deferred underground Elevator restoration. Records
--- generation tokens, map-scoped MapVar identities, grid dimensions, Elevator footprints,
--- synchronous fragment merges/copies, and every fail-closed transaction boundary.
--- Observational only; disable after the native pSupplyGrid assertion is resolved.
-config.DebugSupplyGrid    = true
-config.DebugHeat          = false   -- Heat: heat-grid clamp wraps
-config.DebugBounds        = false   -- Bounds: playable bounds / PassBorder + buildable wrapper identity (temporary investigation)
-config.DebugValidation    = false   -- Validation: runtime validation snapshots
-config.DebugZoom          = true    -- TEMP camera verification: live zoom limits and ZoomPlus state
-config.DebugZoomVanilla   = false   -- ZoomVanilla: normal-map zoom/FOV diagnostics
-config.DebugRestartNotice = false   -- RestartNotice: restart-notice decision path
-config.DebugEditorCamera  = false   -- EditorCamera: map-editor camera trace
-config.DebugInitSeq       = false   -- InitSeq: step-by-step init/expansion sequence trace
-config.DebugChosenMap     = false   -- ChosenMap: one line per map load (id, landing site, coordinates)
-config.DebugSpikes        = false   -- Spikes: expensive terrain spike lattice audits
-config.DebugPairing       = true    -- Pairing: startup passage bootstrap/link/position trace
-config.DebugFlatten       = false   -- Flatten: construction-flatten diagnostics
-config.DebugGenRand       = false   -- GenRand: generation-determinism trace
-
 --- Re-snap a landing rocket onto the live (expanded) terrain surface. On a mod map
 --- the copied frame region's height was changed after the engine first resolved
 --- landing positions, so a rocket commanded to land in the expanded terrain could
@@ -235,19 +153,6 @@ config.ExpandedMapEdgeBorder = false
 -- of crashing. In-bounds queries are unchanged (exact vanilla). Lets the full map stay
 -- passable without an impassable ring.
 config.ClampHeatQueriesOnExpandedMap = true
-
--- Force the buildable z-grid's unbuildable cells to a height (making them buildable).
--- DISABLED: we want VANILLA rules -- rockets/buildings only where the terrain is actually
--- buildable, so they can't land on cliffs. The post-copy RebuildBuildableGrid already makes
--- the grid recognize the new terrain (flat=buildable, cliff=unbuildable) correctly.
-config.ForceBuildableGridStorage = false
-
--- Permissive BUILD override (BuildableGrid:GetZ -> buildable on cliffs). DISABLED: this is
--- what let a rocket land on a cliff (and then the construction flatten asserted on the
--- unbuildable cell). With it off, vanilla buildability (from the rebuilt-after-copy grid)
--- decides: you can build/land on the flat copied terrain but NOT on cliffs -- exactly like a
--- native map. (Cliffs can still be made buildable by LANDSCAPING them flat; see below.)
-config.PermissiveBuildOnExpanded = false
 
 -- Allow the LANDSCAPING tools (terraform / flatten / level) to operate across the WHOLE
 -- expanded terrain. ENABLED: this is separate from buildability -- vanilla lets you landscape
@@ -325,12 +230,6 @@ config.ClearInitialConcreteImprint = true
 -- tiles.
 config.ConcreteImprintMaxTiles = 0
 
--- TEMP verification control (sbm_place_elevator_button.lua): shows a bottom-right button that
--- enters the normal Elevator placement cursor, force-unlocks the template, and quick-builds the
--- next placed Elevator for free. This exists only to inspect surface/underground correspondence.
--- Set false again before release.
-config.PlaceElevatorButtonEnabled = true
-
 -- Show an on-screen notice (the game's standard message box) telling the player a fresh
 -- restart is necessary -- but ONLY when they just turned the mod ON under Installed Mods
 -- (an off->on toggle), NOT on a normal launch where it was already enabled. Set false to
@@ -341,9 +240,8 @@ config.ShowRestartNotice = true
 -- ============================================================================
 -- CORRECTED ENRICHMENT EXPANSION PIPELINE -- INDIVIDUAL STEP SWITCHES
 -- ============================================================================
--- The original 19-stage diagnostic contract is retained. Its former step 01 has been expanded
--- into the three high-level stages below, so the complete contract now contains 21 switches.
--- Former steps 02-19 follow as steps 04-21 and remain independently controllable diagnostics.
+-- Three high-level stages own the detailed pipeline controls below. Detailed controls remain
+-- independently switchable within their owning stage.
 -- A detailed switch can only run when its owning high-level stage is enabled. Disabling all
 -- switches restores pure vanilla allocation, generation, and placement behavior.
 --
@@ -442,15 +340,6 @@ config.StretchUnderground = true
 -- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
 -- recorded at startup, so deferral does not change which wonder belongs to each marker.
 config.DeferUndergroundExpansionUntilFirstAccess = true
--- TEMP (testing): fully reveal the underground darkness fog whenever that map is viewed.
--- RevealDarkness.lua normally restores hr.EnableDarknessReveal=90 on every underground map
--- switch; the lifecycle hook overrides it to 0 after the switch. Set false again for release.
-config.UndergroundRevealAllDarkness = true
--- TEMP (testing): after the deferred underground stretch, vanilla restoration, top-ups, and
--- reachability corrections finish, place and reveal every underground enrichment immediately.
--- This bypasses proximity discovery only for visual distribution verification; set false again
--- after the underground population has been confirmed.
-config.RevealAllUndergroundEnrichmentsForTesting = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -463,20 +352,11 @@ config.UndergroundOverviewEnabled = true
 config.UndergroundExplorationUI = true
 -- Underground sectors remain available as invisible data for hover resolution, sector names,
 -- and buildable-area percentages. No sector grid, veil, or hover-frame decals are drawn.
--- (Entrance placement correction removed by user decision: entrances receive only the stretch
--- transform itself, like every other object. Vanilla-mismatched pairs stay mismatched.)
-
--- FLOATER fix: after the stretch, snap objects found hovering >300 wu above the terrain back
--- down onto it (surface map only; Buildings are logged but never touched). The audit itself
--- always logs floaters -- class, height above ground, and whether the decor pass had skipped
--- the object -- under the Align scope.
-config.StretchResnapFloaters = true
-
 -- FULL 3D STRETCH: also scale the terrain HEIGHT VALUES by full/source (x1.333), matching the
 -- X/Y grid stretch and the object mesh scaling -- a true similarity transform. Restores vanilla
 -- slope steepness and object seating geometry (XY-only stretching made slopes 25% shallower
--- while meshes grew x1.333 in all axes; formations sculpted into relief floated). Off = the old
--- wider-and-gentler terrain for comparison.
+-- while meshes grew x1.333 in all axes; formations sculpted into relief floated). When disabled,
+-- only X/Y is stretched and slopes become shallower.
 config.StretchScaleHeights = true
 
 -- RELIEF-AWARE decoration Z (user-designed): before the terrain stretch, annotate each object's
@@ -531,12 +411,6 @@ config.LimitGeneratorToSource = true
 -- all four as one vanilla-sized source view during native generation, then restore them and
 -- rebuild the full expanded gameplay grid afterward.
 config.LimitBuildableGridToSource = true
--- Proc_InitPlayZone bypasses terrain.GetMapSize and grows its terrace grid from the real
--- backing terrain via terrain.HeightMapSize. During the exact vanilla-sized source window,
--- temporarily report the source size there too, then copy the resulting source height grid
--- into the expanded backing grid so vanilla never sees 8192 and the destination stays 8192.
-config.BridgeVanillaHeightGrid = true
-
 -- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies). After exact vanilla
 -- generation and proportional marker recreation, clone eligible ordinary anomaly families up to
 -- the observed vanilla population times the area factor. Surface additions are restricted to the
@@ -563,14 +437,6 @@ config.StretchVanillaExactPassBorder = true
 -- the same way. Root cause was stale height ranges after the 3D stretch (see
 -- ScaleHeightRanges); this guard keeps any residual case from crashing.
 config.FlattenSkipWhenUnbuildable = true
--- LEGACY PASSAGE RELOCATION (sbm_map_generation PatchPassagePairing). Keep this off: forcing
--- a surface entrance toward an underground marker bypasses vanilla's complete-footprint
--- validation and can make the stock flatten extrude an unbuildable footprint into a terrain
--- column. The exact-source path now runs vanilla FindPassageSpawnPos against the authoritative
--- surface buildable grid. After both maps have their final stretched grids, the production path
--- aligns each linked pair to the underground hex or the nearest complete footprint buildable on
--- both maps; this legacy link-time relocation remains disabled.
-config.StretchDeterministicPassages = false
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation.
 -- When true, the surface Z grid is synchronously rebuilt once immediately before that search;
@@ -600,12 +466,9 @@ config.StretchAdaptiveZScale = true
 -- again over that small set and exactly its first result is revealed. This replaces legacy
 -- start-sector relocation and never preserves vanilla's optional second concrete sector.
 config.StretchVanillaStartSector = true
-config.DebugStartSector = false     -- StartSector: virtual-sector candidates + weights, the vanilla pick, and the post-stretch reveal trace
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
--- complete expanded terrain. Only progress cadence remains configurable here.
+-- complete expanded terrain.
 config.SectorFastInitialReveal = true
-config.SectorProgressColumnInterval = 2
-config.SectorInitialRevealProgressInterval = 50
 
 -- ============================================================================
 -- Typed config view: SuperBigMap.Config
@@ -638,9 +501,6 @@ local expansion_step_02 = expansion_step_01
 	and as_bool(config.ExpansionStep02StretchAndTransformVanillaSource)
 local expansion_step_03 = expansion_step_02
 	and as_bool(config.ExpansionStep03GenerateAdditionalEnrichments)
--- Retain two false entries in the indexed step table so the public 06-21 numbering remains stable.
-local expansion_step_04 = false
-local expansion_step_05 = false
 local expansion_step_06 = expansion_step_01
 	and as_bool(config.ExpansionStep06CapturePreStretchEnrichments)
 local expansion_step_07 = expansion_step_02
@@ -679,55 +539,13 @@ local expansion_step_21 = expansion_step_03
 C.ENABLE_MOD = true
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
--- expanded sector grid. Expansion step 01 remains the diagnostic master gate.
+-- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
 C.FULL_MAP_PLAYABLE = expansion_step_01
 	and as_bool(config.SuperBigMapFullMapPlayable)
-
--- Debug logging: master + per-scope (see sbm_debug.lua). Logger reads C.DEBUG_<SCOPE>.
-C.DEBUG_LOGS          = as_bool(config.EnableDiagnosticLogs)   -- master: enables every scope
-C.DEBUG_LIFECYCLE     = as_bool(config.DebugLifecycle)
-C.DEBUG_PREGAMETOGGLE = as_bool(config.DebugPregameToggle)
-C.DEBUG_GENERATION    = as_bool(config.DebugGeneration)
-C.DEBUG_MIGRATIONPERFORMANCE = as_bool(config.DebugMigrationPerformance)
-C.DEBUG_GENRAND       = as_bool(config.DebugGenRand)
-C.DEBUG_FLATTEN       = as_bool(config.DebugFlatten)
-C.DEBUG_PAIRING       = as_bool(config.DebugPairing)
-C.DEBUG_SPIKES        = as_bool(config.DebugSpikes)
-C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
-C.DEBUG_SECTOR        = as_bool(config.DebugSector)
-C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
-C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
-C.DEBUG_ENRICHMENTPOSITIONSEXHAUSTIVE = as_bool(config.DebugEnrichmentPositionsExhaustive)
-C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
-C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
-C.DEBUG_LOADING       = as_bool(config.DebugLoading)
-C.DEBUG_LOADTIME      = as_bool(config.DebugLoadTime)
-C.DEBUG_LOADINGSTEPS  = as_bool(config.DebugLoadingSteps)
-C.DEBUG_LOADINGINVESTIGATION = as_bool(config.DebugLoadingInvestigation)
-C.DEBUG_UNDERGROUNDACCESS = as_bool(config.DebugUndergroundAccess)
-C.DEBUG_HOVER         = as_bool(config.DebugHover)
-C.DEBUG_ALIGN         = as_bool(config.DebugAlign)
-C.DEBUG_ENTRANCEPOSITIONS = as_bool(config.DebugEntrancePositions)
-C.DEBUG_OVERVIEW      = as_bool(config.DebugOverview)
-C.DEBUG_CAMERA        = as_bool(config.DebugCamera)
-C.DEBUG_ROCKET        = as_bool(config.DebugRocket)
-C.DEBUG_ROCKETTERRAIN = as_bool(config.DebugRocketTerrain)
-C.DEBUG_ELEVATORTERRAIN = as_bool(config.DebugElevatorTerrain)
-C.DEBUG_SUPPLYGRID    = as_bool(config.DebugSupplyGrid)
-C.DEBUG_HEAT          = as_bool(config.DebugHeat)
-C.DEBUG_BOUNDS        = as_bool(config.DebugBounds)
-C.DEBUG_VALIDATION    = as_bool(config.DebugValidation)
-C.DEBUG_ZOOM          = as_bool(config.DebugZoom)
-C.DEBUG_ZOOMVANILLA   = as_bool(config.DebugZoomVanilla)
-C.DEBUG_RESTARTNOTICE = as_bool(config.DebugRestartNotice)
-C.DEBUG_EDITORCAMERA  = as_bool(config.DebugEditorCamera)
-C.DEBUG_INITSEQ       = as_bool(config.DebugInitSeq)
-C.DEBUG_CHOSENMAP     = as_bool(config.DebugChosenMap)
 
 C.SURFACE_STRETCH_AT_START = expansion_step_07
 C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
-C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.CLEAR_INITIAL_CONCRETE_IMPRINT = as_bool(config.ClearInitialConcreteImprint)
 C.CONCRETE_IMPRINT_MAX_TILES = as_number(config.ConcreteImprintMaxTiles, 0)
@@ -755,9 +573,7 @@ C.PREVENT_ELEVATOR_FLATTEN = as_bool(config.PreventElevatorFlatten)
 C.EXPANDED_MAP_EDGE_BORDER = (type(config.ExpandedMapEdgeBorder) == "number" and config.ExpandedMapEdgeBorder >= 0)
 	and math.floor(config.ExpandedMapEdgeBorder) or false
 C.CLAMP_HEAT_QUERIES = as_bool(config.ClampHeatQueriesOnExpandedMap)
-C.FORCE_BUILDABLE_GRID_STORAGE = as_bool(config.ForceBuildableGridStorage)
-C.PERMISSIVE_BUILD_ON_EXPANDED = as_bool(config.PermissiveBuildOnExpanded)
-C.ALLOW_LANDSCAPING_ON_EXPANDED = as_bool(config.AllowLandscapingOnExpanded)
+	C.ALLOW_LANDSCAPING_ON_EXPANDED = as_bool(config.AllowLandscapingOnExpanded)
 
 -- ZoomPlus integration
 C.ENABLE_NORMAL_ZOOM_PLUS = as_bool(config.EnableNormalZoomPlus)
@@ -788,8 +604,7 @@ C.OVERVIEW_FOV_4_3 = as_number(config.OverviewFovX4_3, 3400)
 C.OVERVIEW_FAR_Z = as_number(config.OverviewFarZ, 12000000)
 C.HIDE_OVERVIEW_CURTAINS = as_bool(config.HideOverviewCurtains)
 
--- Corrected enrichment expansion pipeline: three high-level stages plus the retained
--- independently switchable diagnostics from the original 19-stage contract.
+-- Enrichment expansion pipeline: three high-level stages plus detailed controls.
 C.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE =
 	expansion_step_01
 C.GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING = expansion_step_01
@@ -851,15 +666,11 @@ C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
-C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
-C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
-	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 	and as_bool(config.StretchMoveEntranceVisuals)
 C.ALWAYS_SHOW_ENTRANCE_SIGN = as_bool(config.AlwaysShowEntranceSign)
-C.STRETCH_RESNAP_FLOATERS = as_bool(config.StretchResnapFloaters)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
@@ -872,16 +683,9 @@ C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitGeneratorToSource)
 C.LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitBuildableGridToSource)
-C.BRIDGE_VANILLA_HEIGHT_GRID = expansion_step_01
-	and as_bool(config.BridgeVanillaHeightGrid)
-C.ENABLE_RMG_PLACEMENT_FIX = false
-C.COMPLETE_NATIVE_ENRICHMENT_SHORTFALLS = false
-C.ENABLE_NATIVE_ALIGNED_HEX_COLLISION_REPAIR = false
 C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_01
 	and as_bool(config.StretchVanillaExactPassBorder)
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
-C.STRETCH_DETERMINISTIC_PASSAGES = expansion_step_08
-	and as_bool(config.StretchDeterministicPassages)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
 	and as_bool(config.PairingSurfaceBuildableRebuild)
 C.PASSAGE_PAD_SMOOTHING = expansion_step_11
@@ -890,13 +694,10 @@ C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
-C.DEBUG_STARTSECTOR   = as_bool(config.DebugStartSector)
 C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
--- Fixed expanded sector layout + exploration progress controls.
+-- Fixed expanded sector layout and initial exploration behavior.
 C.ENABLE_EXPANDED_SECTORS = expansion_step_01
 C.SECTOR_FAST_INITIAL_REVEAL = as_bool(config.SectorFastInitialReveal)
-C.SECTOR_PROGRESS_COLUMN_INTERVAL = as_number(config.SectorProgressColumnInterval, 2)
-C.SECTOR_INITIAL_REVEAL_PROGRESS_INTERVAL = as_number(config.SectorInitialRevealProgressInterval, 50)
 
 SuperBigMap.Config = C

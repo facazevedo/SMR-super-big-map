@@ -27,20 +27,6 @@ SuperBigMap.State = State
 State.pregame_expand_selected = false
 State.pregame_expand_start_armed = false
 
-local function Log(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Lifecycle", message, data)
-	end
-end
-
-local function ToggleLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("PregameToggle", message, data)
-	end
-end
-
 local function BoxText(b)
 	if not b then
 		return "nil"
@@ -65,20 +51,12 @@ local function SetSelected(value, source)
 		State.pregame_expand_start_armed = false
 		SetCurrentParamsArmed(false)
 	end
-	Log("pregame expand-map selection changed", {
-		enabled = State.pregame_expand_selected,
-		source = tostring(source or "?"),
-	})
 	return State.pregame_expand_selected
 end
 
 local function SetStartArmed(value, source)
 	State.pregame_expand_start_armed = value == true
 	SetCurrentParamsArmed(State.pregame_expand_start_armed)
-	Log("pregame expand-map start armed", {
-		enabled = State.pregame_expand_start_armed,
-		source = tostring(source or "?"),
-	})
 	return State.pregame_expand_start_armed
 end
 
@@ -88,8 +66,7 @@ end
 
 -- The new-game flow RELOADS Lua between the landing screen and generation, wiping
 -- SuperBigMap.State -- including the armed EXPAND flag -- so Generate could run UNEXPANDED
--- (v378 crash log: 'expand action clicked selected=true' but no stretch-allocation prepare and a
--- 'SKIP (fits)' 6144 cap check). g_CurrentMapParams is deliberately NOT a GlobalVar ("they have
+-- before stretch allocation can be prepared. g_CurrentMapParams is deliberately NOT a GlobalVar ("they have
 -- to persist between PreGame and in-game" -- PreGameMission.lua:314) so it SURVIVES that reload,
 -- and SetStartArmed already mirrors the flag into it (SetCurrentParamsArmed). Read it back:
 -- ShouldExpandNewMap falls back to the params flag, and module load restores State from it.
@@ -107,7 +84,6 @@ end
 if ParamsArmed() and State.pregame_expand_start_armed ~= true then
 	State.pregame_expand_selected = true
 	State.pregame_expand_start_armed = true
-	Log("pregame expand-map state RESTORED from g_CurrentMapParams (post-reload)", {})
 end
 
 local function IsModMap(map)
@@ -140,10 +116,6 @@ end
 local function UpdateExpandActionLabel(action)
 	if action then
 		action.ActionName = ExpandActionName()
-		ToggleLog("action label updated", {
-			action = tostring(action.ActionId),
-			name = tostring(action.ActionName),
-		})
 	end
 	return action
 end
@@ -182,11 +154,6 @@ local function ResolveExpandButton(dialog)
 				.. tostring(button.measure_width) .. "|" .. tostring(button.measure_height)
 			if State.pregame_expand_resolve_sig ~= sig then
 				State.pregame_expand_resolve_sig = sig
-				ToggleLog("expand button resolved via toolbar", {
-					button_box = BoxText(button.box),
-					measure_width = tostring(button.measure_width),
-					measure_height = tostring(button.measure_height),
-				})
 			end
 			return button
 		end
@@ -199,66 +166,14 @@ local function ResolveExpandButton(dialog)
 				.. tostring(button.measure_width) .. "|" .. tostring(button.measure_height)
 			if State.pregame_expand_resolve_sig ~= sig then
 				State.pregame_expand_resolve_sig = sig
-				ToggleLog("expand button resolved via dialog", {
-					button_box = BoxText(button.box),
-					measure_width = tostring(button.measure_width),
-					measure_height = tostring(button.measure_height),
-				})
 			end
 			return button
 		end
 	end
 	if State.pregame_expand_resolve_sig ~= "missing" then
 		State.pregame_expand_resolve_sig = "missing"
-		ToggleLog("expand button not resolved")
 	end
 	return false
-end
-
-local function ResolveStartButton(dialog)
-	local action_bar = dialog and dialog.idActionBar
-	local toolbar = action_bar and action_bar.idToolBar
-	local resolve = toolbar and toolbar.ResolveId
-	if type(resolve) == "function" then
-		local ok, button = pcall(resolve, toolbar, "idstart")
-		if ok and button then
-			return button
-		end
-	end
-	resolve = dialog and dialog.ResolveId
-	if type(resolve) == "function" then
-		local ok, button = pcall(resolve, dialog, "idstart")
-		if ok and button then
-			return button
-		end
-	end
-	return false
-end
-
-local function ActionTextColor(button)
-	local label = button and button.idLabel
-	if label and type(label.CalcTextColor) == "function" then
-		local color = SafeCall(label.CalcTextColor, label)
-		if type(color) == "number" then return color end
-	end
-	if button and type(button.CalcTextColor) == "function" then
-		local color = SafeCall(button.CalcTextColor, button)
-		if type(color) == "number" then return color end
-	end
-	local styles = Global("TextStyles")
-	local style = type(styles) == "table" and styles.ActionSmall
-	if type(style) == "table" and type(style.TextColor) == "number" then
-		return style.TextColor
-	end
-	local const_tbl = Global("const")
-	if type(const_tbl) == "table" and type(const_tbl.GameColorA) == "number" then
-		return const_tbl.GameColorA
-	end
-	local rgba = Global("RGBA")
-	if type(rgba) == "function" then
-		return rgba(255, 238, 200, 255)
-	end
-	return 4293840584
 end
 
 local function ExpandBarColor()
@@ -323,10 +238,6 @@ local function PositionExpandBar(dialog, bar, button)
 	local geometry_sig = table.concat({ BoxText(box), tostring(x), tostring(y), tostring(length) }, "|")
 	if State.pregame_expand_bar_geometry_sig ~= geometry_sig then
 		State.pregame_expand_bar_geometry_sig = geometry_sig
-		ToggleLog("live Expand underline anchored", {
-			button_box = BoxText(box), holder_box = BoxText(bar.holder.box),
-			track_box = BoxText(bar.track.box), x = x, y = y, length = length,
-		})
 	end
 	return button
 end
@@ -378,9 +289,6 @@ local function EnsureExpandBar(dialog, button)
 	info.holder = holder
 	info.track = track
 	info.fill = fill
-	ToggleLog("expand bar created", {
-		button_box = BoxText(button and button.box),
-	})
 	return info
 end
 
@@ -437,15 +345,11 @@ end
 ApplyExpandUnderline = function(dialog)
 	local button = ResolveExpandButton(dialog)
 	if not button then
-		ToggleLog("underline skipped: button missing", {
-			selected = IsSelected(),
-		})
 		return false
 	end
 	local color = ExpandBarColor()
 	local bar = EnsureExpandBar(dialog, button)
 	if not bar then
-		ToggleLog("expand bar skipped: missing windows")
 		return false
 	end
 	if type(bar.track.SetBackground) == "function" then
@@ -471,18 +375,6 @@ ApplyExpandUnderline = function(dialog)
 	end
 	-- Keep it synced while the screen is up (hide over modal popups, re-show on close).
 	StartExpandBarWatcher()
-	ToggleLog("underline applied", {
-		button_box = BoxText(button.box),
-		color = tostring(color),
-		selected = IsSelected(),
-		start_box = BoxText((ResolveStartButton(dialog) or {}).box),
-		bar_box = BoxText(bar.holder and bar.holder.box),
-		fill_box = BoxText(bar.fill and bar.fill.box),
-		tune_x = tostring(State.pregame_underline_x),
-		tune_y = tostring(State.pregame_underline_y),
-		tune_length = tostring(State.pregame_underline_length),
-		visible = tostring(visible),
-	})
 	return true
 end
 
@@ -531,9 +423,6 @@ end
 
 local function RefreshActions(host)
 	if not host or type(host.UpdateActionViews) ~= "function" then return end
-	ToggleLog("refresh actions", {
-		host = tostring(host.class or host.Id or host),
-	})
 	SafeCall(host.UpdateActionViews, host, host.idActionBar or host)
 	ApplyExpandUnderline(host)
 end
@@ -559,17 +448,9 @@ local function InstallLandingDialogAction(dialog)
 	if action_present then
 		ReorderLandingActions(dialog)
 		RefreshActions(dialog)
-		ToggleLog("InstallLandingDialogAction: action already present -- skip", {
-			dialog = tostring(dialog.class or dialog.Id or "nil"),
-			flag = dialog.SuperBigMapExpandActionInstalled == true,
-		})
 		dialog.SuperBigMapExpandActionInstalled = true
 		return false
 	end
-	ToggleLog("InstallLandingDialogAction: (re)installing action", {
-		dialog = tostring(dialog.class or dialog.Id or "nil"),
-		flag_was_set = dialog.SuperBigMapExpandActionInstalled == true,
-	})
 
 	local back_action = ActionById(dialog, "back")
 	if back_action and back_action.SuperBigMapBackWrapped ~= true then
@@ -606,10 +487,6 @@ local function InstallLandingDialogAction(dialog)
 		ActionSortKey = "045",
 		OnAction = function(action, host)
 			SetSelected(not IsSelected(), "toggle")
-			ToggleLog("expand action clicked", {
-				host = tostring(host and (host.class or host.Id) or "nil"),
-				selected = IsSelected(),
-			})
 			UpdateExpandActionLabel(action)
 			ApplyExpandUnderline(host or dialog)
 		end,
@@ -623,76 +500,31 @@ local function InstallLandingDialogAction(dialog)
 	return true
 end
 
--- Diagnostic: is the live PGMissionLandingSpotRemastered.Open our wrapper, the captured
--- original, or a FOREIGN one (another landing-spot mod replaced it after us)?
-local function OpenIsOurs()
-	local cls = Global("PGMissionLandingSpotRemastered")
-	if type(cls) ~= "table" then return "no-class" end
-	if type(cls.Open) ~= "function" then return "no-open" end
-	if cls.Open == State.pregame_toggle_open_wrapper then return "ours" end
-	if cls.Open == State.pregame_toggle_open_original then return "original/vanilla" end
-	return "foreign"
-end
-
-local function LogOpenState(reason)
-	local cls = Global("PGMissionLandingSpotRemastered")
-	ToggleLog("Open-state check", {
-		reason = tostring(reason or "?"),
-		class_present = type(cls) == "table",
-		open_is = OpenIsOurs(),
-		live_open = tostring((type(cls) == "table") and cls.Open or "nil"),
-		our_wrapper = tostring(State.pregame_toggle_open_wrapper or "nil"),
-		our_original = tostring(State.pregame_toggle_open_original or "nil"),
-	})
-end
-
 local function PatchLandingDialog()
 	local cls = Global("PGMissionLandingSpotRemastered")
 	if type(cls) ~= "table" or type(cls.Open) ~= "function" then
-		ToggleLog("PatchLandingDialog: class/Open unavailable", {
-			class_present = type(cls) == "table",
-		})
 		return false
 	end
 	if State.pregame_toggle_open_original and cls.Open == State.pregame_toggle_open_wrapper then
-		ToggleLog("PatchLandingDialog: our Open wrapper already installed (ok)", {
-			live_open = tostring(cls.Open),
-		})
 		return true
 	end
 	if cls.Open ~= State.pregame_toggle_open_wrapper then
 		-- Live Open is NOT our wrapper: first install, a ClassesBuilt reset, or another mod
 		-- (e.g. Filter Landing Spots) replaced/re-wrapped it. Capture whatever is live as the
 		-- original so we chain over it instead of clobbering the other mod.
-		ToggleLog("PatchLandingDialog: (re)wrapping Open -- live method was not ours", {
-			open_is = OpenIsOurs(),
-			had_prior_wrapper = State.pregame_toggle_open_wrapper ~= nil,
-			live_is_prior_original = cls.Open == State.pregame_toggle_open_original,
-			live_open = tostring(cls.Open),
-			prior_wrapper = tostring(State.pregame_toggle_open_wrapper or "nil"),
-		})
 		State.pregame_toggle_open_original = cls.Open
 	end
 
 	local original_open = State.pregame_toggle_open_original
 	local wrapper = function(self, ...)
-		ToggleLog("landing dialog Open wrapper ENTER", {
-			dialog_instance = tostring(self),
-			dialog_class = tostring(self and self.class or "nil"),
-		})
 		SetSelected(false, "landing_open")
 		SetStartArmed(false, "landing_open")
 		local results = { original_open(self, ...) }
 		InstallLandingDialogAction(self)
-		ToggleLog("landing dialog Open wrapper fired (after install)", {
-			dialog_instance = tostring(self),
-			action_present_after = self and ActionById(self, "super_big_map_expand") ~= nil,
-		})
 		return Unpack(results)
 	end
 	cls.Open = wrapper
 	State.pregame_toggle_open_wrapper = wrapper
-	Log("pregame expand-map toggle patched")
 	return true
 end
 
@@ -768,7 +600,6 @@ local PregameToggle = {
 	ShouldUseModZoom = ShouldUseModZoom,
 	InstallLandingDialogAction = InstallLandingDialogAction,
 	PatchLandingDialog = PatchLandingDialog,
-	LogOpenState = LogOpenState,
 }
 
 function PregameToggle.ApplyModBehavior()

@@ -25,22 +25,10 @@ end
 
 local function ExpansionAdditionStagesReady(label)
 	if not ExpansionStepEnabled(3) then
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Deposits", "additional-enrichment stage disabled", {
-				pipeline = tostring(label or "?"), step = 3,
-			})
-		end
 		return false
 	end
 	for step = 11, 19 do
 		if not ExpansionStepEnabled(step) then
-			local DebugLog = SuperBigMap.DebugLog
-			if DebugLog then
-				DebugLog.Info("Deposits", "additional-enrichment detail stage disabled", {
-					pipeline = tostring(label or "?"), step = step,
-				})
-			end
 			return false
 		end
 	end
@@ -55,9 +43,6 @@ local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
 local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
--- Aggregate proof that all top-up families passed through the same vanilla obstruction gate.
--- Keeping counters avoids per-sample log spam while still exposing native/fallback/rejection use.
-local obstruction_check_stats_by_map = setmetatable({}, { __mode = "k" })
 -- Stage 01 cannot keep the generated marker OBJECTS alive: they belong to the temporary vanilla
 -- map slot and are destroyed when that slot is unloaded. Retain an independent value-only record
 -- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
@@ -78,29 +63,6 @@ end
 
 local function Enabled()
 	return cfg().HIDE_CLONED_DEPOSITS_UNTIL_SCAN ~= false
-end
-
-local function Log(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("Deposits", message, data) end
-end
-
-local function TopUpEdgeLogOn()
-	local DebugLog = SuperBigMap.DebugLog
-	return DebugLog and type(DebugLog.On) == "function"
-		and DebugLog.On("TopUpEdgeDistribution") == true
-end
-
-local function TopUpEdgeLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("TopUpEdgeDistribution", message, data) end
-end
-
-local function ProfileStep(message, data, map)
-	local profiler = SuperBigMap.LoadingProfiler
-	if profiler and type(profiler.Step) == "function" then
-		profiler.Step("enrichment optimization: " .. tostring(message), data, map)
-	end
 end
 
 local IsKindOfSafe = Engine.IsKindOf
@@ -196,9 +158,6 @@ local function RunPaused(reason, fn)
 	if type(pause) == "function" then SafeCall(pause, reason) end
 	local ok, err = pcall(fn)
 	if type(resume) == "function" then SafeCall(resume, reason) end
-	if not ok then Log("paused enrichment operation ERROR", {
-		reason = tostring(reason), error = tostring(err),
-	}) end
 	return ok, err
 end
 
@@ -225,17 +184,9 @@ end
 
 local function IsUnobstructedAt(map, pt, strict)
 	if not map or not pt then return strict ~= true end
-	local stats = obstruction_check_stats_by_map[map]
-	if not stats then
-		stats = { checks = 0, native = 0, native_rejected = 0, native_errors = 0,
-			fallback = 0, fallback_rejected = 0, fallback_errors = 0, unavailable = 0 }
-		obstruction_check_stats_by_map[map] = stats
-	end
-	stats.checks = stats.checks + 1
 	local hex_grid = map and map.object_hex_grid
 	local world_to_hex = Global("WorldToHex")
 	if not hex_grid then
-		stats.unavailable = stats.unavailable + 1
 		return strict ~= true
 	end
 
@@ -251,45 +202,24 @@ local function IsUnobstructedAt(map, pt, strict)
 		if type(x) == "number" and type(y) == "number" then
 			local ok_native, obstructed = pcall(is_deposit_obstructed, hex_grid, x, y, radius)
 			if ok_native then
-				stats.native = stats.native + 1
-				if obstructed then stats.native_rejected = stats.native_rejected + 1 end
 				return not obstructed
 			end
-			stats.native_errors = stats.native_errors + 1
 		end
 	end
 
 	if not (type(hex_grid.GetBuildObstructions) == "function"
 		and type(world_to_hex) == "function") then
-		stats.unavailable = stats.unavailable + 1
 		return strict ~= true
 	end
 	local ok_h, q, r = pcall(world_to_hex, pt)
 	if not ok_h or type(q) ~= "number" or type(r) ~= "number" then
-		stats.fallback_errors = stats.fallback_errors + 1
 		return strict ~= true
 	end
 	local ok_o, obstructions = pcall(hex_grid.GetBuildObstructions, hex_grid, q, r)
 	if not ok_o then
-		stats.fallback_errors = stats.fallback_errors + 1
 		return strict ~= true
 	end
-	stats.fallback = stats.fallback + 1
-	if obstructions and #obstructions > 0 then
-		stats.fallback_rejected = stats.fallback_rejected + 1
-	end
 	return not obstructions or #obstructions == 0
-end
-
-local function LogObstructionAudit(map, label)
-	local stats = obstruction_check_stats_by_map[map] or {}
-	Log("top-up vanilla obstruction audit", {
-		map = tostring(map and map.name), label = tostring(label),
-		checks = stats.checks or 0, native = stats.native or 0,
-		native_rejected = stats.native_rejected or 0, native_errors = stats.native_errors or 0,
-		fallback = stats.fallback or 0, fallback_rejected = stats.fallback_rejected or 0,
-		fallback_errors = stats.fallback_errors or 0, unavailable = stats.unavailable or 0,
-	})
 end
 
 local function BuildUndergroundReachability(map)
@@ -345,13 +275,6 @@ local function BuildUndergroundReachability(map)
 		end
 	end
 	state.available = #state.seeds > 0 and state.method ~= "unavailable"
-	Log("underground entrance reachability initialized", {
-		map = tostring(map and map.name), seeds = #state.seeds, method = state.method,
-		available = state.available, snap_radius = snap_radius,
-	})
-	ProfileStep("underground entrance reachability initialized", {
-		seeds = #state.seeds, method = state.method, available = state.available,
-	}, map)
 	return state
 end
 
@@ -858,21 +781,10 @@ local function PatchBadgeOverlapPrevention()
 				candidate, reason = FindNearestFreeBadgePosition(marker, map, x, y)
 			end
 			if candidate and MoveBadgeMarker(marker, map, candidate, sector) then
-				Log("overlapping badge marker moved to nearest free hex", {
-					marker = tostring(marker), class = tostring(marker.class),
-					from_x = x, from_y = y, to_x = candidate.x, to_y = candidate.y,
-					hex_radius = candidate.radius, old_sector = tostring(sector and sector.id),
-					new_sector = tostring(candidate.sector and candidate.sector.id),
-				})
 				StampResolvedBadgeHex(marker, candidate.q, candidate.r)
 				sector, x, y, obstructed, moved = candidate.sector, candidate.x, candidate.y, false, true
 			elseif not already_resolved and reason == "free" then
 				StampResolvedBadgeHex(marker, target_q, target_r)
-			elseif not already_resolved and reason ~= "free" and reason ~= "moved" then
-				Log("overlapping badge marker could not be moved", {
-					marker = tostring(marker), class = tostring(marker.class), x = x, y = y,
-					reason = tostring(reason),
-				})
 			end
 		end
 		return sector, x, y, obstructed, moved
@@ -881,7 +793,6 @@ local function PatchBadgeOverlapPrevention()
 	State.badge_spacing_find_sector_wrapper = wrapper
 	State.badge_spacing_patch_version = BADGE_SPACING_PATCH_VERSION
 	cls.FindSectorPos = wrapper
-	Log("badge overlap-prevention patch installed", { version = BADGE_SPACING_PATCH_VERSION })
 	return true
 end
 
@@ -937,23 +848,14 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
 			local q, r, key = BadgeObjectHex(marker)
 			if key and BadgeHexOccupied(occupied, q, r) then
-				local candidate, why = FindNearestFreeBadgePosition(marker, map, x, y, occupied)
+		local candidate = FindNearestFreeBadgePosition(marker, map, x, y, occupied)
 				local old_sector = SectorAtPoint(map, x, y)
 				if candidate and MoveBadgeMarker(marker, map, candidate, old_sector) then
 					occupied[BadgeHexKey(candidate.q, candidate.r)] = true
 					moved = moved + 1
-					Log("pre-reveal badge collision resolved", {
-						reason = tostring(reason), marker = tostring(marker), class = tostring(marker.class),
-						from_x = x, from_y = y, to_x = candidate.x, to_y = candidate.y,
-						hex_radius = candidate.radius,
-					})
 				else
 					occupied[key] = true
 					unresolved = unresolved + 1
-					Log("pre-reveal badge collision unresolved", {
-						reason = tostring(reason), marker = tostring(marker), class = tostring(marker.class),
-						x = tostring(x), y = tostring(y), error = tostring(why),
-					})
 				end
 			elseif key then
 				occupied[key] = true
@@ -969,10 +871,6 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 			remaining_overlaps = remaining_overlaps + count - 1
 		end
 	end
-	Log("badge overlap audit complete", {
-		reason = tostring(reason), markers = #markers, moved = moved,
-		search_failures = unresolved, remaining_overlaps = remaining_overlaps,
-	})
 	return moved, remaining_overlaps
 end
 
@@ -1001,7 +899,6 @@ function DepositRules.HideClone(obj)
 	if not Enabled() then return end
 	if not IsScanGatedDeposit(obj) then return end
 	SetRevealedState(obj, false)
-	Log("hid cloned deposit until scan", { class = obj.class })
 end
 
 -- Per-clone handling: clear is_placed so an added RESOURCE marker follows normal
@@ -1026,13 +923,11 @@ local function MoveConcreteImprints(map, moves)
 	if type(terrain_api) ~= "table"
 		or type(terrain_api.GetTypeGrid) ~= "function"
 		or type(terrain_api.SetTypeGrid) ~= "function" then
-		Log("concrete imprint move skipped", { reason = "terrain type-grid API unavailable" })
 		return
 	end
 
 	local get_idx = Global("GetTerrainTextureIndex")
 	if type(get_idx) ~= "function" then
-		Log("concrete imprint move skipped", { reason = "GetTerrainTextureIndex unavailable" })
 		return
 	end
 	local ok1, reg1 = pcall(get_idx, "Regolith")
@@ -1040,14 +935,12 @@ local function MoveConcreteImprints(map, moves)
 	reg1 = (ok1 and type(reg1) == "number") and reg1 or nil
 	reg2 = (ok2 and type(reg2) == "number") and reg2 or nil
 	if reg1 == nil and reg2 == nil then
-		Log("concrete imprint move skipped", { reason = "regolith texture indices unavailable" })
 		return
 	end
 
 	local grid = SafeCall(terrain_api.GetTypeGrid, map)
 	if not grid or type(grid.get) ~= "function"
 		or type(grid.set) ~= "function" or type(grid.size) ~= "function" then
-		Log("concrete imprint move skipped", { reason = "type grid not editable" })
 		return
 	end
 	local grid_w, grid_h = grid:size()
@@ -1198,10 +1091,6 @@ local function MoveConcreteImprints(map, moves)
 		if (not ok) or err then
 			local ok2, err2 = pcall(terrain_api.SetTypeGrid, map, grid)
 			if (not ok2) or err2 then
-				Log("concrete imprint move failed", {
-					err = tostring(err),
-					err2 = tostring(err2),
-				})
 				return
 			end
 		end
@@ -1213,15 +1102,6 @@ local function MoveConcreteImprints(map, moves)
 		end
 	end
 
-	Log("moved concrete imprints", {
-		moves = #moves,
-		blobs = blobs,
-		cleared = total_cleared,
-		painted = total_painted,
-		postponed = postponed,
-		skipped_large = skipped_large,
-		clipped = clipped,
-	})
 end
 
 -- Register added RESOURCE markers with their final map sectors so scanning them spawns
@@ -1231,22 +1111,18 @@ end
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(20) then
-		Log("register skipped", { reason = "expansion step 03 or 20 disabled" })
 		return
 	end
 	map = map or Global("CurrentMap")
 	if IsUndergroundMap(map) then
-		Log("register skipped", { reason = "underground -- proximity reveal, no sector dependence" })
 		return
 	end
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-		Log("register skipped", { reason = "stretch top-up clones registered at creation" })
 		return
 	end
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
-		Log("register skipped", { city = city ~= nil })
 		return
 	end
 	local count = 0
@@ -1263,122 +1139,6 @@ function DepositRules.RegisterClonedMarkers(map)
 			end
 		end
 	end)
-	Log("registered cloned deposit markers with sectors", { count = count })
-end
-
--- ---------------------------------------------------------------------------------------
--- Exhaustive distribution diagnostic (gated by DebugDeposits): bucket every enrichment marker
--- exactly once by family and sector, then compare the proportionally transformed
--- native-source region with the additional outer destination region.
-function DepositRules.LogDistributionReport(map, phase)
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and DebugLog.On and DebugLog.On("Deposits")) then return end
-	map = map or Global("CurrentMap")
-	if not map or type(map.MapForEach) ~= "function" then return end
-
-	local map_w, map_h = MapWorldSize(map)
-	local src_w = (type(map.SuperBigMapSourceWidth) == "number") and map.SuperBigMapSourceWidth or 0
-	local src_h = (type(map.SuperBigMapSourceHeight) == "number") and map.SuperBigMapSourceHeight or 0
-	local region_source, region_outer = 0, 0
-
-	local per_sector, order = {}, {}
-	local function bucket(kind, marker)
-		local pos = ObjectPos(marker)
-		if not pos or type(pos.xy) ~= "function" then return end
-		local px, py = pos:xy()
-		if px == nil then return end
-		if src_w > 0 and src_h > 0 and px < src_w and py < src_h then
-			region_source = region_source + 1
-		else
-			region_outer = region_outer + 1
-		end
-		local sector = SectorAtPoint(map, px, py)
-		local name = tostring((type(sector) == "table" and (sector.display_name or sector.id)) or "offgrid")
-		local rec = per_sector[name]
-		if not rec then
-			rec = { resource = 0, anom = 0, effect = 0, scanned = SectorIsScanned(sector) }
-			per_sector[name] = rec
-			order[#order + 1] = name
-		end
-		rec[kind] = rec[kind] + 1
-	end
-
-	local total_resource, total_anom, total_effect = 0, 0, 0
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(m)
-		if IsResourceDepositMarker(m) then
-			total_resource = total_resource + 1
-			bucket("resource", m)
-		elseif IsAnomalyMarker(m) then
-			total_anom = total_anom + 1
-			bucket("anom", m)
-		elseif IsKindOfSafe(m, "EffectDepositMarker") then
-			total_effect = total_effect + 1
-			bucket("effect", m)
-		end
-	end)
-
-	local sectors_with, scanned_sectors = 0, 0
-	local scanned_resource, scanned_anom, scanned_effect = 0, 0, 0
-	local scanned_detail = {}
-	for _, name in ipairs(order) do
-		local rec = per_sector[name]
-		sectors_with = sectors_with + 1
-		if rec.scanned then
-			scanned_sectors = scanned_sectors + 1
-			scanned_resource = scanned_resource + rec.resource
-			scanned_anom = scanned_anom + rec.anom
-			scanned_effect = scanned_effect + rec.effect
-			scanned_detail[#scanned_detail + 1] = string.format("%s[r%d/a%d/e%d]",
-				name, rec.resource, rec.anom, rec.effect)
-		end
-	end
-
-	table.sort(order, function(a, b)
-		local ra, rb = per_sector[a], per_sector[b]
-		return (ra.resource + ra.anom + ra.effect) > (rb.resource + rb.anom + rb.effect)
-	end)
-	local top = {}
-	for i = 1, math.min(#order, 12) do
-		local name = order[i]
-		local rec = per_sector[name]
-		local total = rec.resource + rec.anom + rec.effect
-		top[#top + 1] = string.format("%s%s=%d(r%d/a%d/e%d)", name,
-			rec.scanned and "*" or "", total, rec.resource, rec.anom, rec.effect)
-	end
-
-	local total_markers = total_resource + total_anom + total_effect
-	local avg = (sectors_with > 0) and string.format("%.2f", total_markers / sectors_with) or "n/a"
-	Log("DISTRIBUTION [" .. tostring(phase) .. "] summary", {
-		total_resources = total_resource,
-		total_anomalies = total_anom,
-		total_effects = total_effect,
-		total_markers = total_markers,
-		sectors_with_markers = sectors_with,
-		avg_markers_per_occupied_sector = avg,
-		scanned_sectors = scanned_sectors,
-		scanned_resources = scanned_resource,
-		scanned_anomalies = scanned_anom,
-		scanned_effects = scanned_effect,
-		scanned_detail = table.concat(scanned_detail, " "),
-	})
-	Log("DISTRIBUTION [" .. tostring(phase) .. "] top density (name*=scanned; =total(rResources/aAnomalies/eEffects))", {
-		top = table.concat(top, " "),
-	})
-	-- Coarse raw-area regional check only. The reserved surface ring and inaccessible underground
-	-- rock mean this ratio is not expected to equal 1; placement selectors log eligible-capacity
-	-- sector coverage separately.
-	local src_area = src_w * src_h
-	local total_area = (map_w or 0) * (map_h or 0)
-	local outer_area = total_area - src_area
-	local dens_source = (src_area > 0) and (region_source * 1000000.0 / src_area) or 0
-	local dens_outer = (outer_area > 0) and (region_outer * 1000000.0 / outer_area) or 0
-	Log("DISTRIBUTION [" .. tostring(phase) .. "] region density (outer destination vs native source extent, markers/Mwu^2)", {
-		source_markers = region_source,
-		outer_markers = region_outer,
-		density_source = string.format("%.3f", dens_source),
-		density_outer = string.format("%.3f", dens_outer),
-		outer_over_source_ratio = (dens_source > 0) and string.format("%.2f", dens_outer / dens_source) or "n/a",
-	})
 end
 
 local function ResourceDepositLayer(marker)
@@ -1615,9 +1375,9 @@ local function NewTopUpRepulsionTracker(map, label)
 	}
 end
 
--- Stage 01 invariant: capture the generator's native enrichment coordinates exactly once,
--- independently of diagnostic logging. Stage 02 transforms from these immutable coordinates,
--- never from a position that another post-generation callback may already have changed.
+-- Stage 01 invariant: capture the generator's native enrichment coordinates exactly once.
+-- Stage 02 transforms from these immutable coordinates, never from a position that another
+-- post-generation callback may already have changed.
 function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	if not ExpansionStepEnabled(1) or not ExpansionStepEnabled(6) then return 0 end
 	map = map or Global("CurrentMap")
@@ -1625,7 +1385,7 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	local pending_records = pending_native_enrichment_records_by_map[map]
 	if type(pending_records) == "table" then
 		-- The live source objects are intentionally absent between stages 01 and 02. Do not let an
-		-- intervening FinalizeExpandedMap census overwrite the durable source count with zero.
+		-- intervening finalization pass overwrite the durable source count with zero.
 		return #pending_records
 	end
 	if map.SuperBigMapNativeEnrichmentCaptureDone == true then
@@ -1652,11 +1412,6 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 		marker.SuperBigMapNativeSourceY = y
 		marker.SuperBigMapNativeSourceZ = z
 		marker.SuperBigMapNativeSourceHash = position_hash
-		-- Retain the original diagnostic field names for existing log-analysis tooling.
-		marker.SuperBigMapDebugPreStretchX = x
-		marker.SuperBigMapDebugPreStretchY = y
-		marker.SuperBigMapDebugPreStretchZ = z
-		marker.SuperBigMapDebugPreStretchHash = position_hash
 		captured = captured + 1
 	end)
 	if not capture_ok then
@@ -1666,9 +1421,6 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	map.SuperBigMapNativeEnrichmentCaptureDone = true
 	map.SuperBigMapNativeEnrichmentCapturePending = false
 	map.SuperBigMapNativeEnrichmentCaptureCount = captured
-	Log("captured native enrichment coordinates", {
-		map = tostring(map.name), reason = tostring(reason or "stage 01"), captured = captured,
-	})
 	return captured
 end
 
@@ -1700,7 +1452,7 @@ local function NativePropertyIsPortable(prop_meta)
 	local id = prop_meta.id
 	if id == nil or id == "Deposit" or id == "Pos"
 		or tostring(id):sub(1, 4) == "dbg_" then return false end
-	-- Object/grid references belong to the temporary map; debug/read-only/dont-save values are
+	-- Object/grid references belong to the temporary map; transient/read-only/dont-save values are
 	-- derived runtime state. Pos is captured separately as immutable source coordinates and must be
 	-- transformed, not copied or compared as an ordinary property. Reconstruct only constructor-safe
 	-- gameplay properties.
@@ -1823,12 +1575,6 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 			if ok_z then z = value end
 		end
 		local properties, property_ids = CaptureNativeMarkerProperties(marker)
-		if type(properties.sequence) == "string" and properties.sequence ~= "" then
-			Log("captured native anomaly constructor sequence", {
-				class = tostring(marker.class), sequence = properties.sequence,
-				sequence_list = tostring(properties.sequence_list), source_x = x, source_y = y,
-			})
-		end
 		local record = {
 			class = tostring(marker.class), source_x = x, source_y = y, source_z = z,
 			source_hash = marker.SuperBigMapNativeSourceHash,
@@ -1864,25 +1610,6 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 		count = #records, signature = NativeRecordSignature(records),
 		class_counts = class_counts, class_counts_text = NativeClassCountsText(class_counts),
 	}
-	local DebugLog = SuperBigMap.DebugLog
-	local exhaustive = DebugLog and type(DebugLog.On) == "function"
-		and DebugLog.On("EnrichmentPositionsExhaustive") == true
-	if exhaustive then
-		for i = 1, #records do
-			local record = records[i]
-			DebugLog.Info("EnrichmentPositionsExhaustive", "native enrichment value record captured", {
-				reason = tostring(reason), index = i, class = record.class,
-				source_x = record.source_x, source_y = record.source_y,
-				source_z = tostring(record.source_z), source_hash = tostring(record.source_hash),
-				property_count = #record.property_ids,
-				property_ids = table.concat(record.property_ids, ","),
-			})
-		end
-	end
-	Log("captured native enrichment value records", {
-		map = tostring(map.name), reason = tostring(reason), count = stats.count,
-		signature = stats.signature, class_counts = stats.class_counts_text,
-	})
 	return records, excluded, stats
 end
 
@@ -1893,10 +1620,6 @@ function DepositRules.StageNativeEnrichmentRecords(map, records, reason)
 	map.SuperBigMapNativeEnrichmentCapturePending = true
 	map.SuperBigMapNativeEnrichmentCaptureCount = #records
 	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
-	Log("staged native enrichment records for post-stretch recreation", {
-		map = tostring(map.name), reason = tostring(reason), count = #records,
-		signature = map.SuperBigMapNativeEnrichmentRecordSignature,
-	})
 	return true
 end
 
@@ -1930,10 +1653,6 @@ function DepositRules.StageAndRemoveNativeEnrichmentsForStretch(map, reason)
 			signature = capture_stats and capture_stats.signature,
 			class_counts = capture_stats and capture_stats.class_counts_text,
 		}
-		Log("staged empty native enrichment set immediately before terrain stretch", {
-			map = tostring(map.name), reason = tostring(reason), captured = 0,
-			signature = tostring(stats.signature),
-		})
 		return true, stats
 	end
 
@@ -1973,12 +1692,6 @@ function DepositRules.StageAndRemoveNativeEnrichmentsForStretch(map, reason)
 		stats.error = "native marker removal verification failed"
 		return false, stats
 	end
-	Log("staged and removed native enrichments immediately before terrain stretch", {
-		map = tostring(map.name), reason = tostring(reason), captured = stats.captured,
-		removed = stats.removed, removed_placed = stats.removed_placed,
-		remaining = stats.remaining, signature = tostring(stats.signature),
-		class_counts = tostring(stats.class_counts),
-	})
 	return true, stats
 end
 
@@ -1989,9 +1702,6 @@ end
 
 function DepositRules.ClearStagedNativeEnrichmentRecords(map, reason)
 	if map then pending_native_enrichment_records_by_map[map] = nil end
-	Log("cleared staged native enrichment records", {
-		map = tostring(map and map.name), reason = tostring(reason),
-	})
 end
 
 function DepositRules.VerifyStagedNativeEnrichmentRecords(map, expected_count, expected_signature, reason)
@@ -2003,11 +1713,6 @@ function DepositRules.VerifyStagedNativeEnrichmentRecords(map, expected_count, e
 		count = count, expected_count = tonumber(expected_count), signature = signature,
 		expected_signature = tostring(expected_signature), reason = tostring(reason),
 	}
-	Log("verified staged native enrichment records", {
-		map = tostring(map and map.name), reason = tostring(reason), ok = ok,
-		count = count, expected_count = tostring(expected_count), signature = signature,
-		expected_signature = tostring(expected_signature),
-	})
 	return ok, stats
 end
 
@@ -2130,10 +1835,6 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 		if not geometry then
 			stats.failures = stats.failures + 1
 			stats.error = "record " .. tostring(i) .. ": " .. tostring(geometry_error)
-			Log("native enrichment final-point plan failed", {
-				map = tostring(map and map.name), reason = tostring(reason), index = i,
-				error = stats.error,
-			})
 			return false, stats
 		end
 		local key = BadgeHexKey(geometry.q, geometry.r)
@@ -2179,15 +1880,6 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 				stats.preserved_source_overlaps = stats.preserved_source_overlaps + 1
 			else
 				stats.introduced_collisions = stats.introduced_collisions + 1
-				Log("native enrichment transform collision detected", {
-					map = tostring(map and map.name), reason = tostring(reason), index = i,
-					class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
-					raw_x = geometry.raw_x, raw_y = geometry.raw_y,
-					intended_q = geometry.q, intended_r = geometry.r,
-					owner_index = owner_index, owner_class = tostring(owner_record and owner_record.class),
-					owner_source_x = tostring(owner_record and owner_record.source_x),
-					owner_source_y = tostring(owner_record and owner_record.source_y),
-				})
 				local selected
 				-- With N records, a radius of N is a derived finite bound: even a completely occupied
 				-- local cluster cannot contain every in-bounds hex in all N rings on these maps.
@@ -2213,13 +1905,6 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 				if not selected then
 					stats.failures = stats.failures + 1
 					stats.error = "record " .. tostring(i) .. ": no free final hex"
-					Log("native enrichment transform collision resolution failed", {
-						map = tostring(map and map.name), reason = tostring(reason), index = i,
-						class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
-						raw_x = geometry.raw_x, raw_y = geometry.raw_y,
-						intended_q = geometry.q, intended_r = geometry.r,
-						error = stats.error,
-					})
 					return false, stats
 				end
 				record.SuperBigMapResolvedFinalQ = selected.q
@@ -2230,24 +1915,9 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 				occupied[BadgeHexKey(selected.q, selected.r)] = i
 				stats.resolved = stats.resolved + 1
 				stats.max_resolution_radius = math.max(stats.max_resolution_radius, selected.radius)
-				Log("native enrichment transform collision resolved", {
-					map = tostring(map and map.name), reason = tostring(reason), index = i,
-					class = tostring(record.class), source_x = record.source_x, source_y = record.source_y,
-					raw_x = geometry.raw_x, raw_y = geometry.raw_y,
-					intended_q = geometry.q, intended_r = geometry.r,
-					resolved_q = selected.q, resolved_r = selected.r,
-					resolved_x = selected.x, resolved_y = selected.y,
-					resolution_radius = selected.radius, owner_index = owner_index,
-				})
 			end
 		end
 	end
-	Log("native enrichment final-point plan complete", {
-		map = tostring(map and map.name), reason = tostring(reason), records = stats.records,
-		exact = stats.exact, preserved_source_overlaps = stats.preserved_source_overlaps,
-		introduced_collisions = stats.introduced_collisions, resolved = stats.resolved,
-		failures = stats.failures, max_resolution_radius = stats.max_resolution_radius,
-	})
 	return true, stats
 end
 
@@ -2324,7 +1994,6 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 		end
 	end)
 	if not enum_ok then stats.error = tostring(enum_error) end
-	local DebugLog = SuperBigMap.DebugLog
 	local coordinate_owners = {}
 	local city = map.City
 	local get_sector = Global("GetMapSectorXY")
@@ -2363,7 +2032,7 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 					stats.object_state_mismatches = stats.object_state_mismatches + 1
 				end
 			end
-			local expected, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			local expected = NativeRecordFinalPoint(map, record)
 			local actual = ObjectPos(marker)
 			local expected_x, expected_y, expected_z, actual_x, actual_y, actual_z
 			if expected and type(expected.xy) == "function" then expected_x, expected_y = expected:xy() end
@@ -2376,9 +2045,8 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 				if owner_index then
 					stats.coordinate_collisions = stats.coordinate_collisions + 1
 					local owner_record = records[owner_index]
-					local owner_source_hex, owner_source_q, owner_source_r =
-						NativeRecordSourceHexKey(owner_record)
-					local source_hex, source_q, source_r = NativeRecordSourceHexKey(record)
+					local owner_source_hex = NativeRecordSourceHexKey(owner_record)
+					local source_hex = NativeRecordSourceHexKey(record)
 					-- Native placement is hex-based. Two different world points in the same source hex
 					-- already overlap under vanilla placement semantics, so retaining that overlap is
 					-- exact preservation rather than a collision introduced by proportional scaling.
@@ -2394,27 +2062,6 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 						stats.introduced_coordinate_collisions =
 							stats.introduced_coordinate_collisions + 1
 					end
-					Log("classified recreated native enrichment coordinate collision", {
-						map = tostring(map.name), reason = tostring(reason),
-						final_x = actual_x, final_y = actual_y, preserved_from_source = tostring(preserved),
-						owner_index = owner_index, owner_class = tostring(owner_record and owner_record.class),
-						owner_source_x = tostring(owner_record and owner_record.source_x),
-						owner_source_y = tostring(owner_record and owner_record.source_y),
-						owner_source_z = tostring(owner_record and owner_record.source_z),
-						owner_source_hash = tostring(owner_record and owner_record.source_hash),
-						owner_source_hex = tostring(owner_source_hex),
-						owner_source_q = tostring(owner_source_q), owner_source_r = tostring(owner_source_r),
-						owner_sequence = tostring(owner_record and owner_record.properties
-							and owner_record.properties.sequence),
-						index = i, class = tostring(record.class), source_x = record.source_x,
-						source_y = record.source_y, source_z = tostring(record.source_z),
-						source_hash = tostring(record.source_hash),
-						source_hex = tostring(source_hex), source_q = tostring(source_q),
-						source_r = tostring(source_r),
-						sequence = tostring(record.properties and record.properties.sequence),
-						raw_x = tostring(geometry and geometry.raw_x),
-						raw_y = tostring(geometry and geometry.raw_y),
-					})
 				else
 					coordinate_owners[coordinate_key] = i
 				end
@@ -2441,30 +2088,13 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 				stats.xy_mismatches = stats.xy_mismatches + 1
 			end
 			if not expected or actual_z ~= expected_z then stats.z_mismatches = stats.z_mismatches + 1 end
-			local property_mismatch_ids = {}
 			if type(marker.GetProperty) == "function" then
 				for id, expected_value in pairs(record.properties or {}) do
 					local ok_value, actual_value = pcall(marker.GetProperty, marker, id)
 					if not ok_value or not NativePropertyValuesEqual(actual_value, expected_value) then
 						stats.property_mismatches = stats.property_mismatches + 1
-						property_mismatch_ids[#property_mismatch_ids + 1] = tostring(id)
 					end
 				end
-			end
-			table.sort(property_mismatch_ids)
-			if DebugLog and type(DebugLog.On) == "function"
-				and DebugLog.On("EnrichmentPositionsExhaustive") == true then
-				DebugLog.Info("EnrichmentPositionsExhaustive", "recreated native enrichment verified", {
-					reason = tostring(reason), index = i, class = tostring(marker.class),
-					source_x = record.source_x, source_y = record.source_y,
-					raw_x = tostring(geometry and geometry.raw_x), raw_y = tostring(geometry and geometry.raw_y),
-					expected_x = tostring(expected_x), expected_y = tostring(expected_y),
-					expected_z = tostring(expected_z), actual_x = tostring(actual_x),
-					actual_y = tostring(actual_y), actual_z = tostring(actual_z),
-					property_mismatch_count = #property_mismatch_ids,
-					property_mismatch_ids = table.concat(property_mismatch_ids, ","),
-					transform_error = tostring(transform_error),
-				})
 			end
 		end
 	end
@@ -2477,20 +2107,6 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 	local verified = stats.mismatches == 0
 	map.SuperBigMapNativeTransformVerified = verified
 	map.SuperBigMapNativeTransformStats = stats
-	Log("verified recreated native enrichments", {
-		map = tostring(map.name), reason = tostring(reason), verified = verified,
-		expected = stats.expected, actual = stats.actual, missing = stats.missing,
-		duplicates = stats.duplicates, class_mismatches = stats.class_mismatches,
-		source_mismatches = stats.source_mismatches, xy_mismatches = stats.xy_mismatches,
-		z_mismatches = stats.z_mismatches, property_mismatches = stats.property_mismatches,
-		coordinate_collisions = stats.coordinate_collisions,
-		preserved_source_coordinate_collisions = stats.preserved_source_coordinate_collisions,
-		introduced_coordinate_collisions = stats.introduced_coordinate_collisions,
-		registration_mismatches = stats.registration_mismatches,
-		scanned_state_mismatches = stats.scanned_state_mismatches,
-		object_state_mismatches = stats.object_state_mismatches,
-		mismatches = stats.mismatches,
-	})
 	return verified, stats
 end
 
@@ -2593,9 +2209,6 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			end
 		end
 	end
-	local DebugLog = SuperBigMap.DebugLog
-	local exhaustive = DebugLog and type(DebugLog.On) == "function"
-		and DebugLog.On("EnrichmentPositionsExhaustive") == true
 	local plan_ok, plan_stats = PrepareNativeRecordFinalPointPlan(map, records, reason)
 	stats.plan = plan_stats
 	if not plan_ok then
@@ -2626,15 +2239,6 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 				and type(record.properties) == "table" then
 				record.properties.sequence_list = constructor_properties.sequence_list
 			end
-			if sequence_info and (exhaustive
-				or sequence_info.original_list ~= sequence_info.final_list) then
-				Log("prepared native anomaly constructor sequence", {
-					class = tostring(record.class), index = i,
-					sequence = tostring(constructor_properties.sequence),
-					original_list = tostring(sequence_info.original_list),
-					final_list = tostring(sequence_info.final_list), mode = sequence_info.mode,
-				})
-			end
 			local marker = place_object_in(record.class, map, constructor_properties)
 			if not marker then error("record " .. tostring(i) .. ": constructor returned nil") end
 			created[#created + 1] = marker
@@ -2654,10 +2258,6 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			marker.SuperBigMapNativeSourceY = record.source_y
 			marker.SuperBigMapNativeSourceZ = record.source_z
 			marker.SuperBigMapNativeSourceHash = record.source_hash
-			marker.SuperBigMapDebugPreStretchX = record.source_x
-			marker.SuperBigMapDebugPreStretchY = record.source_y
-			marker.SuperBigMapDebugPreStretchZ = record.source_z
-			marker.SuperBigMapDebugPreStretchHash = record.source_hash
 			marker.SuperBigMapRawStretchedX = geometry.raw_x
 			marker.SuperBigMapRawStretchedY = geometry.raw_y
 			marker.SuperBigMapIntendedStretchedX = geometry.intended_x
@@ -2676,33 +2276,11 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			if revealed == true then stats.revealed_in_scanned_sectors =
 				stats.revealed_in_scanned_sectors + 1 end
 			stats.created = stats.created + 1
-			if exhaustive then
-				local x, y = final_point:xy()
-				local z = type(final_point.z) == "function" and final_point:z() or nil
-				DebugLog.Info("EnrichmentPositionsExhaustive", "native enrichment recreated after stretch", {
-					reason = tostring(reason), index = i, class = record.class,
-					source_x = record.source_x, source_y = record.source_y,
-					source_z = tostring(record.source_z), raw_x = geometry.raw_x, raw_y = geometry.raw_y,
-					final_x = x, final_y = y, final_z = tostring(z), q = geometry.q, r = geometry.r,
-					intended_q = geometry.intended_q, intended_r = geometry.intended_r,
-					collision_resolved = tostring(geometry.collision_resolved),
-					resolution_radius = tostring(geometry.resolution_radius),
-					collision_owner_index = tostring(geometry.collision_owner_index),
-					scale_x = tostring(geometry.scale_x), scale_y = tostring(geometry.scale_y),
-					property_count = #record.property_ids,
-					property_ids = table.concat(record.property_ids, ","), registered = tostring(registered),
-					revealed_in_scanned_sector = tostring(revealed),
-				})
-			end
 		end
 	end)
 	if not ok then
 		stats.error = tostring(recreate_error)
 		cleanup_created()
-		Log("native enrichment recreation failed", {
-			map = tostring(map and map.name), reason = tostring(reason), expected = #records,
-			created = stats.created, error = stats.error,
-		})
 		return false, stats
 	end
 	local verified, verify_stats = DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
@@ -2718,275 +2296,12 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 	map.SuperBigMapNativeEnrichmentCaptureCount = #records
 	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
 	map.SuperBigMapNativeEnrichmentRecreatedCount = #records
-	Log("recreated staged native enrichments after terrain stretch", {
-		map = tostring(map.name), reason = tostring(reason), created = stats.created,
-		registered = stats.registered, revealed_in_scanned_sectors = stats.revealed_in_scanned_sectors,
-		signature = map.SuperBigMapNativeEnrichmentRecordSignature,
-	})
 	return true, stats
-end
-
-function DepositRules.LogEnrichmentPositionCensus(map, phase, capture_pre_stretch)
-	local phase_text = tostring(phase or "")
-	local controlling_step = capture_pre_stretch == true and 6
-		or (string.find(phase_text, "final", 1, true) and 21 or 10)
-	if not ExpansionStepEnabled(controlling_step) then return 0 end
-	map = map or Global("CurrentMap")
-	if capture_pre_stretch == true then
-		DepositRules.CaptureNativeEnrichmentPositions(map, phase)
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and type(DebugLog.On) == "function"
-		and DebugLog.On("EnrichmentPositionsExhaustive") == true) then return 0 end
-	if not map or type(map.MapForEach) ~= "function" then return 0 end
-	local world_to_hex = Global("WorldToHex")
-	local hex_to_world = Global("HexToWorld")
-	local point_fn = Global("point")
-	local xxhash = Global("xxhash")
-	local map_w, map_h = MapWorldSize(map)
-	local source_w = tonumber(map.SuperBigMapSourceWidth) or 0
-	local source_h = tonumber(map.SuperBigMapSourceHeight) or 0
-	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
-	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
-	local generator_tiles = tonumber(map.SuperBigMapGeneratorWidthTiles)
-	local desired_tiles = tonumber(map.SuperBigMapDesiredWidthTiles)
-	local scale = generator_tiles and generator_tiles > 0 and desired_tiles
-		and (desired_tiles + 0.0) / generator_tiles or nil
-
-	local function marker_origin(marker)
-		if marker.SuperBigMapResourceTopUp == true then return "resource_topup" end
-		if marker.SuperBigMapAnomalyTopUp == true then return "ordinary_anomaly_topup" end
-		if marker.SuperBigMapEffectTopUp == true then return "effect_topup" end
-		if marker.SuperBigMapEnrichmentClone == true then return "enrichment_clone" end
-		return "native_generated"
-	end
-
-	local function marker_subtype(marker, profile)
-		if profile and profile.resource == "Anomaly" then
-			if marker.tech_action and marker.tech_action ~= "" then return tostring(marker.tech_action) end
-			if marker.sequence and marker.sequence ~= "" then return "sequence:" .. tostring(marker.sequence) end
-			return "ordinary"
-		end
-		if profile and profile.resource == "Effects" then return tostring(marker.deposit_type or "?") end
-		return tostring(marker.resource or marker.class or "?")
-	end
-
-	local entries = {}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if not IsEnrichmentMarker(marker) then return end
-		local pos = ObjectPos(marker)
-		if not (pos and type(pos.xy) == "function") then return end
-		local x, y = pos:xy()
-		if type(x) ~= "number" or type(y) ~= "number" then return end
-		local z
-		if type(pos.z) == "function" then
-			local ok_z, value = pcall(pos.z, pos)
-			if ok_z then z = value end
-		end
-		local profile = VanillaRepulsionProfileForMarker(map, marker)
-		local origin = marker_origin(marker)
-		local position_hash
-		if type(xxhash) == "function" then
-			local ok_hash, value = pcall(xxhash, pos)
-			if ok_hash then position_hash = value end
-		end
-		local pre_x, pre_y, pre_z, pre_hash
-		-- A cloned top-up can inherit debug fields from its template. They describe the template,
-		-- not the clone, so expose the correlation only for the original native handle.
-		if origin == "native_generated" then
-			pre_x = marker.SuperBigMapNativeSourceX or marker.SuperBigMapDebugPreStretchX
-			pre_y = marker.SuperBigMapNativeSourceY or marker.SuperBigMapDebugPreStretchY
-			pre_z = marker.SuperBigMapNativeSourceZ or marker.SuperBigMapDebugPreStretchZ
-			pre_hash = marker.SuperBigMapNativeSourceHash or marker.SuperBigMapDebugPreStretchHash
-		end
-		local raw_expected_x = type(pre_x) == "number" and scale
-			and math.floor(source_origin_x + (pre_x - source_origin_x) * scale + 0.5) or nil
-		local raw_expected_y = type(pre_y) == "number" and scale
-			and math.floor(source_origin_y + (pre_y - source_origin_y) * scale + 0.5) or nil
-		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX) or raw_expected_x
-		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY) or raw_expected_y
-		if type(raw_expected_x) == "number" and type(raw_expected_y) == "number"
-			and type(point_fn) == "function" and type(world_to_hex) == "function"
-			and type(hex_to_world) == "function"
-			and type(marker.SuperBigMapExpectedStretchedX) ~= "number" then
-			local ok_h, eq, er = pcall(world_to_hex, point_fn(raw_expected_x, raw_expected_y))
-			if ok_h and type(eq) == "number" and type(er) == "number" then
-				local ok_w, ex, ey = pcall(hex_to_world, eq, er)
-				if ok_w and type(ex) == "number" and type(ey) == "number" then
-					expected_x, expected_y = ex, ey
-				end
-			end
-		end
-		local q, r
-		if type(world_to_hex) == "function" then
-			local ok_hex, hq, hr = pcall(world_to_hex, pos)
-			if ok_hex then q, r = hq, hr end
-		end
-		local sector = SectorAtPoint(map, x, y)
-		entries[#entries + 1] = {
-			marker = marker, pos = pos, x = x, y = y, z = z, q = q, r = r,
-			position_hash = position_hash, profile = profile, origin = origin,
-			subtype = marker_subtype(marker, profile), sector = sector,
-			pre_x = pre_x, pre_y = pre_y, pre_z = pre_z, pre_hash = pre_hash,
-			raw_expected_x = raw_expected_x, raw_expected_y = raw_expected_y,
-			expected_x = expected_x, expected_y = expected_y,
-			collision_resolved = marker.SuperBigMapTransformCollisionResolved == true,
-			collision_resolution_radius = marker.SuperBigMapTransformCollisionResolutionRadius,
-			collision_owner_index = marker.SuperBigMapTransformCollisionOwnerIndex,
-		}
-	end)
-
-	table.sort(entries, function(a, b)
-		local ar, br = tonumber(a.sector and a.sector.row) or 9999,
-			tonumber(b.sector and b.sector.row) or 9999
-		if ar ~= br then return ar < br end
-		local ac, bc = tonumber(a.sector and a.sector.col) or 9999,
-			tonumber(b.sector and b.sector.col) or 9999
-		if ac ~= bc then return ac < bc end
-		if a.y ~= b.y then return a.y < b.y end
-		if a.x ~= b.x then return a.x < b.x end
-		return tostring(a.marker.handle or a.marker) < tostring(b.marker.handle or b.marker)
-	end)
-
-	local by_origin, by_sector, by_family = {}, {}, {}
-	local world_counts, hex_counts = {}, {}
-	local repulsion_violations = 0
-	for _, entry in ipairs(entries) do
-		by_origin[entry.origin] = (by_origin[entry.origin] or 0) + 1
-		local sector_name = tostring(entry.sector
-			and (entry.sector.display_name or entry.sector.id) or "offgrid")
-		by_sector[sector_name] = (by_sector[sector_name] or 0) + 1
-		local family = entry.profile and (entry.profile.layer .. "/" .. entry.profile.resource) or "unknown"
-		by_family[family] = (by_family[family] or 0) + 1
-		local world_key = tostring(entry.x) .. ":" .. tostring(entry.y)
-		world_counts[world_key] = (world_counts[world_key] or 0) + 1
-		if type(entry.q) == "number" and type(entry.r) == "number" then
-			local hex_key = tostring(entry.q) .. ":" .. tostring(entry.r)
-			hex_counts[hex_key] = (hex_counts[hex_key] or 0) + 1
-		end
-	end
-	for i = 1, #entries - 1 do
-		local a = entries[i]
-		for j = i + 1, #entries do
-			local b = entries[j]
-			if a.profile and b.profile then
-				local radius = PairRepulsionRadius(a.profile, b.profile)
-				local dx, dy = a.x - b.x, a.y - b.y
-				local distance_sq = dx * dx + dy * dy
-				if (radius == 0 and distance_sq == 0)
-					or (radius > 0 and distance_sq <= radius * radius) then
-					repulsion_violations = repulsion_violations + 1
-				end
-			end
-		end
-	end
-
-	local function tally_string(tally)
-		local keys, parts = {}, {}
-		for key in pairs(tally) do keys[#keys + 1] = key end
-		table.sort(keys)
-		for _, key in ipairs(keys) do parts[#parts + 1] = tostring(key) .. "=" .. tostring(tally[key]) end
-		return table.concat(parts, " ")
-	end
-	local duplicate_world, duplicate_hex = 0, 0
-	for _, count in pairs(world_counts) do if count > 1 then duplicate_world = duplicate_world + count - 1 end end
-	for _, count in pairs(hex_counts) do if count > 1 then duplicate_hex = duplicate_hex + count - 1 end end
-	DebugLog.Info("EnrichmentPositionsExhaustive", "BEGIN enrichment marker position census", {
-		phase = tostring(phase), map = tostring(map.name), environment = tostring(map.mapdata and map.mapdata.Environment),
-		markers = #entries, capture_pre_stretch = tostring(capture_pre_stretch == true),
-		stretch_scale = tostring(scale), map_w = tostring(map_w), map_h = tostring(map_h),
-		by_origin = tally_string(by_origin), by_family = tally_string(by_family),
-	})
-
-	for index, entry in ipairs(entries) do
-		local nearest, nearest_distance
-		local nearest_same, nearest_same_distance
-		local tightest, tightest_distance, tightest_required, tightest_clearance
-		for other_index, other in ipairs(entries) do
-			if other_index ~= index then
-				local dx, dy = entry.x - other.x, entry.y - other.y
-				local distance = math.sqrt(dx * dx + dy * dy)
-				if nearest_distance == nil or distance < nearest_distance then
-					nearest, nearest_distance = other, distance
-				end
-				if entry.profile and other.profile
-					and entry.profile.layer == other.profile.layer
-					and entry.profile.resource == other.profile.resource
-					and (nearest_same_distance == nil or distance < nearest_same_distance) then
-					nearest_same, nearest_same_distance = other, distance
-				end
-				if entry.profile and other.profile then
-					local required = PairRepulsionRadius(entry.profile, other.profile)
-					local clearance = distance - required
-					if tightest_clearance == nil or clearance < tightest_clearance then
-						tightest, tightest_distance, tightest_required, tightest_clearance =
-							other, distance, required, clearance
-					end
-				end
-			end
-		end
-		local sector = entry.sector
-		local nearest_profile = nearest and nearest.profile
-		local same_profile = nearest_same and nearest_same.profile
-		local tight_profile = tightest and tightest.profile
-		DebugLog.Info("EnrichmentPositionsExhaustive", "enrichment marker position", {
-			phase = tostring(phase), index = index, handle = tostring(entry.marker.handle or entry.marker),
-			class = tostring(entry.marker.class), origin = entry.origin,
-			layer = tostring(entry.profile and entry.profile.layer),
-			family = tostring(entry.profile and entry.profile.resource), subtype = entry.subtype,
-			x = entry.x, y = entry.y, z = tostring(entry.z), position_hash = tostring(entry.position_hash),
-			q = tostring(entry.q), r = tostring(entry.r), hex = tostring(entry.q) .. ":" .. tostring(entry.r),
-			sector = tostring(sector and (sector.display_name or sector.id)), sector_id = tostring(sector and sector.id),
-			sector_col = tostring(sector and sector.col), sector_row = tostring(sector and sector.row),
-			sector_status = tostring(sector and sector.status),
-			in_source_region = tostring(source_w > 0 and source_h > 0
-				and entry.x < source_w and entry.y < source_h),
-			in_outer_ring = tostring(IsInFinalOuterSectorRing(map, entry.x, entry.y,
-				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)),
-			pre_stretch_x = tostring(entry.pre_x), pre_stretch_y = tostring(entry.pre_y),
-			pre_stretch_z = tostring(entry.pre_z), pre_stretch_hash = tostring(entry.pre_hash),
-			raw_scaled_x = tostring(entry.raw_expected_x), raw_scaled_y = tostring(entry.raw_expected_y),
-			expected_stretched_x = tostring(entry.expected_x), expected_stretched_y = tostring(entry.expected_y),
-			transform_collision_resolved = tostring(entry.collision_resolved),
-			transform_collision_resolution_radius = tostring(entry.collision_resolution_radius),
-			transform_collision_owner_index = tostring(entry.collision_owner_index),
-			stretch_delta_x = tostring(entry.expected_x and (entry.x - entry.expected_x)),
-			stretch_delta_y = tostring(entry.expected_y and (entry.y - entry.expected_y)),
-			repulse_same = tostring(entry.profile and entry.profile.repulse_same),
-			repulse_layer = tostring(entry.profile and entry.profile.repulse_layer),
-			repulse_all = tostring(entry.profile and entry.profile.repulse_all),
-			is_placed = tostring(entry.marker.is_placed), revealed = tostring(entry.marker.revealed),
-			depth_layer = tostring(entry.marker.depth_layer), tech_action = tostring(entry.marker.tech_action),
-			sequence = tostring(entry.marker.sequence), deposit_type = tostring(entry.marker.deposit_type),
-			nearest_handle = tostring(nearest and (nearest.marker.handle or nearest.marker)),
-			nearest_class = tostring(nearest and nearest.marker.class),
-			nearest_origin = tostring(nearest and nearest.origin),
-			nearest_family = tostring(nearest_profile and (nearest_profile.layer .. "/" .. nearest_profile.resource)),
-			nearest_x = tostring(nearest and nearest.x), nearest_y = tostring(nearest and nearest.y),
-			nearest_distance = tostring(nearest_distance),
-			nearest_same_handle = tostring(nearest_same and (nearest_same.marker.handle or nearest_same.marker)),
-			nearest_same_family = tostring(same_profile and (same_profile.layer .. "/" .. same_profile.resource)),
-			nearest_same_distance = tostring(nearest_same_distance),
-			tightest_repulsion_handle = tostring(tightest and (tightest.marker.handle or tightest.marker)),
-			tightest_repulsion_family = tostring(tight_profile and (tight_profile.layer .. "/" .. tight_profile.resource)),
-			tightest_repulsion_distance = tostring(tightest_distance),
-			tightest_repulsion_required = tostring(tightest_required),
-			tightest_repulsion_clearance = tostring(tightest_clearance),
-			tightest_repulsion_violation = tostring(type(tightest_clearance) == "number" and tightest_clearance <= 0),
-		})
-	end
-	DebugLog.Info("EnrichmentPositionsExhaustive", "END enrichment marker position census", {
-		phase = tostring(phase), map = tostring(map.name), markers = #entries,
-		by_origin = tally_string(by_origin), by_family = tally_string(by_family),
-		by_sector = tally_string(by_sector), duplicate_world = duplicate_world,
-		duplicate_hex = duplicate_hex, all_pair_repulsion_violations = repulsion_violations,
-	})
-	return #entries
 end
 
 -- Stage 02 invariant: every native marker must finish at the hex-aligned proportional
 -- transformation of the immutable stage-01 coordinate and at that final terrain height.
--- This audit is behavior-independent: exhaustive logging only adds per-marker detail.
+-- This check is behavior-independent and validates every marker.
 function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 	if not ExpansionStepEnabled(2) or not ExpansionStepEnabled(10) then
 		return true, { checked = 0, mismatches = 0 }
@@ -3014,7 +2329,6 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 	local origin_x = tonumber(map.SuperBigMapSourceX) or 0
 	local origin_y = tonumber(map.SuperBigMapSourceY) or 0
 	local stats = { checked = 0, missing_capture = 0, xy_mismatches = 0, z_mismatches = 0, mismatches = 0 }
-	local DebugLog = SuperBigMap.DebugLog
 	local verify_ok, verify_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not IsEnrichmentMarker(marker)
 			or marker.SuperBigMapResourceTopUp == true
@@ -3067,17 +2381,6 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 		if not z_ok then stats.z_mismatches = stats.z_mismatches + 1 end
 		if not xy_ok or not z_ok then
 			stats.mismatches = stats.mismatches + 1
-			if DebugLog then
-				DebugLog.Error("Deposits", "native enrichment transform mismatch", {
-					reason = tostring(reason or "stage 02"), marker = tostring(marker),
-					class = tostring(marker.class), source_x = source_x, source_y = source_y,
-					raw_x = raw_x, raw_y = raw_y, expected_x = tostring(expected_x),
-					expected_y = tostring(expected_y), actual_x = tostring(actual_x),
-					actual_y = tostring(actual_y), expected_z = tostring(expected_z), actual_z = tostring(actual_z),
-					collision_resolved = tostring(marker.SuperBigMapTransformCollisionResolved == true),
-					collision_resolution_radius = tostring(marker.SuperBigMapTransformCollisionResolutionRadius),
-				})
-			end
 		end
 	end)
 	if not verify_ok then
@@ -3086,11 +2389,6 @@ function DepositRules.VerifyNativeEnrichmentTransform(map, reason)
 	end
 	map.SuperBigMapNativeTransformVerified = stats.mismatches == 0
 	map.SuperBigMapNativeTransformStats = stats
-	Log("verified native enrichment transformation", {
-		map = tostring(map.name), reason = tostring(reason or "stage 02"), checked = stats.checked,
-		missing_capture = stats.missing_capture, xy_mismatches = stats.xy_mismatches,
-		z_mismatches = stats.z_mismatches, mismatches = stats.mismatches,
-	})
 	return stats.mismatches == 0, stats
 end
 
@@ -3104,58 +2402,20 @@ local function TallyString(tbl)
 	return table.concat(parts, " ")
 end
 
--- Assigned below after TopUpAnomalies; forward declarations keep the exhaustive diagnostics
--- private to this module while making them visible to the top-up closure.
-local IncrementTally
-local BuildTopUpEdgeDebugContext
-local DescribeTopUpEdge
+local BuildTopUpEdgeContext
 local PerimeterCoordinate
 
--- BUILDABLE-SECTOR CENSUS (verification aid): random-sample the map against the buildable
--- grid and report the buildable fraction + how many sectors contain buildable floor. On a
--- stretched map the buildable region scales by the same area factor as the map, so the
--- density target (count x area_factor) is correct per BUILDABLE area too -- this census
--- provides the measured numbers for the log. Runs AFTER RebuildBuildableGrid.
-function DepositRules.LogBuildableSectorCensus(map, label)
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and DebugLog.On and DebugLog.On("Deposits")) then return end
-	map = map or Global("CurrentMap")
-	local point = Global("point")
-	if not map or type(point) ~= "function" then return end
-	local map_w, map_h = MapWorldSize(map)
-	if not map_w or not map_h then return end
-	local SAMPLES = 20000
-	local buildable_hits = 0
-	local sectors_hit, sectors_seen = {}, {}
-	for _ = 1, SAMPLES do
-		local x, y = RandInt(map_w), RandInt(map_h)
-		local sector = SectorAtPoint(map, x, y)
-		if sector and sector.id then sectors_seen[sector.id] = true end
-		if IsBuildableAt(map, point(x, y)) then
-			buildable_hits = buildable_hits + 1
-			if sector and sector.id then sectors_hit[sector.id] = true end
-		end
+local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall)
+	if type(map) ~= "table" then return end
+	local status = map.SuperBigMapEnrichmentTopUpStatus
+	if type(status) ~= "table" then
+		status = {}
+		map.SuperBigMapEnrichmentTopUpStatus = status
 	end
-	local n_hit, n_seen = 0, 0
-	for _ in pairs(sectors_hit) do n_hit = n_hit + 1 end
-	for _ in pairs(sectors_seen) do n_seen = n_seen + 1 end
-	Log("buildable census", {
-		label = tostring(label), map = tostring(map.name),
-		buildable_fraction = string.format("%.3f", (buildable_hits + 0.0) / SAMPLES),
-		sectors_with_buildable_floor = n_hit, sectors_sampled = n_seen,
-		samples = SAMPLES,
-	})
-end
-
-local function RecordEnrichmentTopUpAudit(map, kind, data)
-	local fields = { kind = tostring(kind), map = tostring(map and map.name or "?") }
-	for k, v in pairs(data or {}) do fields[k] = v end
-	if type(map) == "table" then
-		local audit = map.SuperBigMapEnrichmentTopUpAudit
-		if type(audit) ~= "table" then audit = {}; map.SuperBigMapEnrichmentTopUpAudit = audit end
-		audit[tostring(kind)] = data or {}
-	end
-	Log("post-stretch enrichment density audit", fields)
+	status[kind] = {
+		complete = complete == true,
+		remaining_shortfall = tonumber(remaining_shortfall) or 0,
+	}
 end
 
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
@@ -3164,19 +2424,16 @@ function DepositRules.TopUpDeposits(map)
 	if cfg().TOPUP_RESOURCES ~= true then return end
 	if not ExpansionAdditionStagesReady("resource top-up") then return end
 	map = map or Global("CurrentMap")
-	RecordEnrichmentTopUpAudit(map, "resources", { complete = false, reason = "started" })
+	SetEnrichmentTopUpStatus(map, "resources", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
 	local city = map and map.City
 	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
 		or type(clone_fn) ~= "function" or not city then
-		Log("deposit top-up skipped", { reason = "map/city/point/clone unavailable" })
 		return
 	end
-	obstruction_check_stats_by_map[map] = nil
 	local map_w, map_h, tile = MapWorldSize(map)
 	if not map_w or not tile or tile <= 0 then
-		Log("deposit top-up skipped", { reason = "map size unavailable" })
 		return
 	end
 	local margin_tiles = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4))
@@ -3184,7 +2441,6 @@ function DepositRules.TopUpDeposits(map)
 	local lo_x, span_x = margin, (map_w - 2 * margin)
 	local lo_y, span_y = margin, (map_h - 2 * margin)
 	if span_x <= 0 or span_y <= 0 then
-		Log("deposit top-up skipped", { reason = "placeable span <= 0" })
 		return
 	end
 
@@ -3202,23 +2458,19 @@ function DepositRules.TopUpDeposits(map)
 		end
 	end
 	if area_factor <= 1.0 then
-		Log("deposit top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
 		return
 	end
 
 	-- Count current resource markers and collect native markers as clone templates.
 	-- After stretching, the baseline is the full current population: every non-top-up marker
 	-- came from the one native source and was transformed proportionally.
-	local total_current, source_count = 0, 0
 	local templates, templates_by_type = {}, {}
 	local current_by_type, src_by_type = {}, {}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
-		total_current = total_current + 1
 		local res = tostring(marker.resource or marker.class or "?")
 		current_by_type[res] = (current_by_type[res] or 0) + 1
 		if not marker.SuperBigMapResourceTopUp then
-			source_count = source_count + 1
 			-- All resource types are templates (incl. concrete) so the top-up mix is
 			-- proportional to the source; cloned concrete self-paints its patch on scan.
 			templates[#templates + 1] = marker
@@ -3235,34 +2487,20 @@ function DepositRules.TopUpDeposits(map)
 	for res, count in pairs(src_by_type) do
 		target_by_type[res] = math.floor(count * area_factor + 0.5)
 	end
-	local target, shortfall = 0, 0
+	local shortfall = 0
 	for res, count in pairs(target_by_type) do
 		target_keys[#target_keys + 1] = res
-		target = target + count
 		shortfall = shortfall + math.max(0, count - (current_by_type[res] or 0))
 	end
 	table.sort(target_keys)
 	if shortfall <= 0 or #templates == 0 then
-		Log("deposit top-up: nothing to add", {
-			total_current = total_current, source_count = source_count, target = target,
-			shortfall = shortfall, templates = #templates,
-			area_factor = string.format("%.3f", area_factor),
-		})
-		RecordEnrichmentTopUpAudit(map, "resources", {
-			complete = shortfall <= 0, remaining_shortfall = shortfall,
-			templates = #templates, target = target, current = total_current,
-		})
+		SetEnrichmentTopUpStatus(map, "resources", shortfall <= 0, shortfall)
 		return
 	end
 
 	local added_by_type = {}
 
 	local added = 0
-	local pool_final = 0
-	local registered_at_creation = 0
-	local placement_stats
-	local repulsion_stats
-	local placement_attempts, clone_failures, terrain_fallbacks = 0, 0, 0
 	RunPaused("SuperBigMapDepositTopUp", function()
 		-- Shared validated pool. Selection preserves terrain type while preferring sectors with
 		-- the lowest existing-enrichment load relative to sampled eligible terrain area.
@@ -3292,11 +2530,9 @@ function DepositRules.TopUpDeposits(map)
 				end
 			end
 		end
-		pool_final = pool
 		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
-		ProfileStep("resource candidate pool built", { candidates = pool }, map)
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
 		local selector = NewSectorBalancedCandidateSelector(map, shared_candidates, "resources",
 			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
@@ -3354,9 +2590,8 @@ function DepositRules.TopUpDeposits(map)
 						if not seen_options[option_key] then
 							seen_options[option_key] = true
 							local c = take(tt, profile)
-							local used_fallback = false
-							if not c then c, used_fallback = take_any(profile), true end
-							if c then return c, template, tpos, profile, used_fallback end
+							if not c then c = take_any(profile) end
+							if c then return c, template, tpos, profile end
 						end
 					end
 				end
@@ -3367,10 +2602,8 @@ function DepositRules.TopUpDeposits(map)
 		-- A candidate is reserved by Take. If cloning that candidate fails, keep trying unused
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
 		while added < shortfall and selector.Remaining() > 0 do
-			placement_attempts = placement_attempts + 1
-			local c, template, tpos, profile, used_fallback = select_needed_placement()
+			local c, template, tpos, profile = select_needed_placement()
 			if not c then break end
-			if used_fallback then terrain_fallbacks = terrain_fallbacks + 1 end
 			if tpos and type(tpos.xy) == "function" then
 				local tx, ty = tpos:xy()
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
@@ -3394,20 +2627,13 @@ function DepositRules.TopUpDeposits(map)
 						local sec = SectorAtPoint(map, c.x, c.y)
 						if sec and type(sec.RegisterDeposit) == "function" then
 							pcall(sec.RegisterDeposit, sec, clone)
-							registered_at_creation = registered_at_creation + 1
 						end
 					end
-				else
-					clone_failures = clone_failures + 1
 				end
-			else
-				clone_failures = clone_failures + 1
 			end
 		end
-		placement_stats = selector.Stats()
-		repulsion_stats = repulsion.Stats()
 	end)
-	local final_by_type, remaining_shortfall, excess = {}, 0, 0
+	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
 		local res = tostring(marker.resource or marker.class or "?")
@@ -3417,43 +2643,8 @@ function DepositRules.TopUpDeposits(map)
 		local final_count = final_by_type[res] or 0
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_type[res] or 0) - final_count)
-		excess = excess + math.max(0, final_count - (target_by_type[res] or 0))
 	end
-	Log("topped up resource deposits to map-size proportions", {
-		area_factor = string.format("%.3f", area_factor),
-		source_count = source_count, total_before = total_current,
-		target = target, added = added, templates = #templates,
-		map = tostring(map.name), pool = pool_final,
-		registered_at_creation = registered_at_creation,
-		target_capture = tostring(map.SuperBigMapResourceTargetCapture),
-		source_mix = TallyString(src_by_type),
-		target_mix = TallyString(target_by_type),
-		added_mix = TallyString(added_by_type),
-		final_mix = TallyString(final_by_type),
-		remaining_shortfall = remaining_shortfall,
-		excess = excess,
-		placement_attempts = placement_attempts,
-		clone_failures = clone_failures,
-		terrain_fallbacks = terrain_fallbacks,
-		balanced_placement = placement_stats and placement_stats.balanced,
-		eligible_sectors = placement_stats and placement_stats.eligible_sectors,
-		selected_sectors = placement_stats and placement_stats.selected_sectors,
-		selected = placement_stats and placement_stats.selected,
-		remaining_candidates = placement_stats and placement_stats.remaining_candidates,
-		max_additions_to_one_sector = placement_stats and placement_stats.max_additions_to_one_sector,
-		repulsion_seeded = repulsion_stats and repulsion_stats.seeded,
-		repulsion_committed = repulsion_stats and repulsion_stats.committed,
-		repulsion_checks = repulsion_stats and repulsion_stats.checks,
-		repulsion_pair_checks = repulsion_stats and repulsion_stats.nearby_pair_checks,
-		repulsion_rejects = repulsion_stats and repulsion_stats.repulsion_rejects,
-		duplicate_hex_rejects = repulsion_stats and repulsion_stats.duplicate_hex_rejects,
-		missing_profile_rejects = repulsion_stats and repulsion_stats.missing_profile_rejects,
-	})
-	RecordEnrichmentTopUpAudit(map, "resources", {
-		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
-		templates = #templates, target = target, current = total_current + added,
-	})
-	DepositRules.LogDistributionReport(map, "after deposit top-up")
+	SetEnrichmentTopUpStatus(map, "resources", remaining_shortfall == 0, remaining_shortfall)
 end
 
 -- POST-GENERATION anomaly top-up (config TOPUP_ANOMALIES). Raises the ANOMALY population
@@ -3475,18 +2666,16 @@ function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
 	map = map or Global("CurrentMap")
-	RecordEnrichmentTopUpAudit(map, "anomalies", { complete = false, reason = "started" })
+	SetEnrichmentTopUpStatus(map, "anomalies", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
 	local city = map and map.City
 	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
 		or type(clone_fn) ~= "function" or not city then
-		Log("anomaly top-up skipped", { reason = "map/city/point/clone unavailable" })
 		return
 	end
 	local map_w, map_h, tile = MapWorldSize(map)
 	if not map_w or not tile or tile <= 0 then
-		Log("anomaly top-up skipped", { reason = "map size unavailable" })
 		return
 	end
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
@@ -3503,11 +2692,9 @@ function DepositRules.TopUpAnomalies(map)
 		end
 	end
 	if area_factor <= 1.0 then
-		Log("anomaly top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
 		return
 	end
-	-- Category helpers. `kind` is stable across markers and already-spawned anomalies,
-	-- while the display category retains the marker class for diagnostics.
+	-- `kind` is stable across markers and already-spawned anomalies.
 	local function AnomalyKind(obj)
 		local action = obj and obj.tech_action
 		if action == "complete" or action == "unlock" or action == "breakthrough" then
@@ -3516,38 +2703,17 @@ function DepositRules.TopUpAnomalies(map)
 		if obj and obj.sequence ~= nil and obj.sequence ~= "" then return "sequence" end
 		return "other"
 	end
-	local function AnomalyCategory(marker)
-		return tostring(marker.class or "?") .. "/" .. AnomalyKind(marker)
-	end
-	local function AnomalyRewardFamily(marker)
-		local action = marker and marker.tech_action
-		if action == "complete" or action == "unlock" then
-			return "research_or_technology_progress"
-		elseif action == "breakthrough" then
-			return "breakthrough_reward"
-		elseif marker and marker.sequence ~= nil and marker.sequence ~= "" then
-			-- Event sequences contain the metal/rare-metal discoveries, large caches,
-			-- unique scenic discoveries, and other research/technology event outcomes.
-			return "event_discovery_cache_or_scenic_reward"
-		end
-		-- The base anomaly family is the ordinary research-points result.
-		return "research_points"
-	end
-
 	-- Markers remain as the authoritative backing records after an anomaly is spawned;
 	-- counting live SubsurfaceAnomaly objects too would double-count revealed markers.
-	-- Targets use only original generator output, while total_current includes prior
-	-- top-ups so a repeated call remains a no-op.
-	local total_current = 0
+	-- Targets use only original generator output; current counts include prior top-ups so a
+	-- repeated call remains a no-op.
 	local templates, standard_templates, standard_templates_by_kind = {}, {}, {}
 	local current_by_kind, current_standard_by_kind = {}, {}
 	local source_by_kind, source_standard_by_kind = {}, {}
-	local src_by_cat, added_by_cat, src_by_reward, added_by_reward = {}, {}, {}, {}
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not marker then return end
 		local kind = AnomalyKind(marker)
 		local is_standard = tostring(marker.class or "") == "SubsurfaceAnomalyMarker"
-		total_current = total_current + 1
 		current_by_kind[kind] = (current_by_kind[kind] or 0) + 1
 		if is_standard then
 			current_standard_by_kind[kind] = (current_standard_by_kind[kind] or 0) + 1
@@ -3563,12 +2729,6 @@ function DepositRules.TopUpAnomalies(map)
 			source_by_kind[kind] = (source_by_kind[kind] or 0) + 1
 		end
 	end)
-	for _, t in ipairs(templates) do
-		local cat = AnomalyCategory(t)
-		src_by_cat[cat] = (src_by_cat[cat] or 0) + 1
-		local reward = AnomalyRewardFamily(t)
-		src_by_reward[reward] = (src_by_reward[reward] or 0) + 1
-	end
 	local target_by_kind, target_keys = {}, {}
 	-- This is also the authoritative surface outer-ring category filter. Do not broaden it to
 	-- breakthrough/other: those are finite-pool or unique families rather than density top-ups.
@@ -3635,22 +2795,14 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		return nil, nil
 	end
-	local target, shortfall = 0, 0
+	local shortfall = 0
 	for kind, count in pairs(target_by_kind) do
 		target_keys[#target_keys + 1] = kind
-		target = target + count
 		shortfall = shortfall + math.max(0, count - (current_by_kind[kind] or 0))
 	end
 	table.sort(target_keys)
 	if shortfall <= 0 or #templates == 0 then
-		Log("anomaly top-up: nothing to add", {
-			total_current = total_current, templates = #templates, target = target,
-			shortfall = shortfall, area_factor = string.format("%.3f", area_factor),
-		})
-		RecordEnrichmentTopUpAudit(map, "anomalies", {
-			complete = shortfall <= 0, remaining_shortfall = shortfall,
-			templates = #templates, target = target, current = total_current,
-		})
+		SetEnrichmentTopUpStatus(map, "anomalies", shortfall <= 0, shortfall)
 		return
 	end
 	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
@@ -3666,29 +2818,12 @@ function DepositRules.TopUpAnomalies(map)
 	local added_by_kind = {}
 
 	local added = 0
-	local pool_final = 0
 	local reused_pool = false
-	local edge_debug = false
 	local edge_ctx
-	local added_markers = {}
-	local whole_map_placement_stats
-	local repulsion_stats
-	local placement_attempts, clone_failures = 0, 0
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	local low_area_percent = math.max(1, math.min(100,
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
-	-- Filled inside RunPaused and audited afterwards; keep it in this enclosing scope.
-	local ring_sector_count = 0
-	local edge_stats = {
-		sampled_by_edge = {}, sampled_by_planned_ring_edge = {}, sampled_by_source_region = {}, accepted_by_edge = {},
-		accepted_by_sector = {}, rejected_by_reason = {}, selected_by_edge = {}, selected_by_sector = {},
-		selected_by_target_side = {}, selected_by_nearest_side = {}, selected_by_scope = {},
-		added_by_edge = {}, added_by_sector = {}, final_by_edge = {}, final_by_nearest_side = {},
-		final_by_sector = {}, ring_predicate_comparison = {}, ring_sector_coverage = {},
-		accepted_by_exclusive_side = {}, accepted_by_side_layer = {},
-		selected_by_side_layer = {}, final_by_side_layer = {},
-	}
 	RunPaused("SuperBigMapAnomalyTopUp", function()
 		local repulsion = NewTopUpRepulsionTracker(map, "anomalies")
 		local candidates = {}
@@ -3697,11 +2832,10 @@ function DepositRules.TopUpAnomalies(map)
 		local SAMPLES_PER_RING_SECTOR = 32
 		local STAGE_TWO_AREA_SAMPLES = 96
 		local MAX_POOL = 10000
-		edge_debug = surface_edge_ring and TopUpEdgeLogOn()
-		-- Build the live, index-base-independent edge context for production placement as well as
-		-- diagnostics. Surface sampling is stratified by EVERY live ring sector so random sampling
+		-- Build the live, index-base-independent edge context. Surface sampling is stratified by
+		-- every live ring sector so random sampling
 		-- cannot silently omit the final bottom/right runs (or any other part of the perimeter).
-		edge_ctx = surface_edge_ring and BuildTopUpEdgeDebugContext(map, ring_sectors) or nil
+		edge_ctx = surface_edge_ring and BuildTopUpEdgeContext(map) or nil
 		local sampling_plan = {}
 		local function ring_edges_for_sector(s)
 			if not (edge_ctx and s) then return "whole_map" end
@@ -3716,7 +2850,6 @@ function DepositRules.TopUpAnomalies(map)
 			for _, s in ipairs(edge_ctx.sectors) do
 				local expected_edge = ring_edges_for_sector(s)
 				if expected_edge ~= "interior" then
-					ring_sector_count = ring_sector_count + 1
 					s.expected_edge = expected_edge
 					local sx0 = s.area_x0 or ((s.col - edge_ctx.min_col) * edge_ctx.sector_step)
 					local sy0 = s.area_y0 or ((s.row - edge_ctx.min_row) * edge_ctx.sector_step)
@@ -3728,57 +2861,11 @@ function DepositRules.TopUpAnomalies(map)
 					s.selection_layer = math.min(ring_sectors,
 						math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
 					ring_sector_pool[#ring_sector_pool + 1] = s
-					edge_stats.ring_sector_coverage[tostring(s.id)] = {
-						id = s.id, col = s.col, row = s.row, expected_edge = expected_edge,
-						planned = SAMPLES_PER_RING_SECTOR, sampled = 0, sector_match = 0,
-						accepted = 0, rejected = {},
-					}
 					for _ = 1, SAMPLES_PER_RING_SECTOR do sampling_plan[#sampling_plan + 1] = s end
 				end
 			end
 		end
 		local MAX_SAMPLES = #sampling_plan > 0 and #sampling_plan or BASE_WHOLE_MAP_SAMPLES
-		if edge_debug then
-			local marker_n = 0
-			pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
-				local mpos = marker and ObjectPos(marker)
-				local mx, my
-				if mpos and type(mpos.xy) == "function" then mx, my = mpos:xy() end
-				if type(mx) ~= "number" or type(my) ~= "number" then return end
-				marker_n = marker_n + 1
-				local sector = SectorAtPoint(map, mx, my)
-				local edge, source_region = DescribeTopUpEdge(edge_ctx, sector, mx, my)
-				local target_ring = IsInFinalOuterSectorRing(map, mx, my, ring_sectors)
-				local observed_ring = edge ~= "interior"
-				TopUpEdgeLog("existing anomaly marker", {
-					n = marker_n, marker = tostring(marker), class = tostring(marker.class),
-					category = AnomalyCategory(marker), clone = tostring(marker.SuperBigMapEnrichmentClone == true),
-					x = mx, y = my, sector = tostring(sector and sector.id),
-					col = tostring(sector and sector.col), row = tostring(sector and sector.row),
-					status = tostring(sector and sector.status), edge = edge, source_region = source_region,
-					target_final_ring = tostring(target_ring),
-					observed_ring = tostring(observed_ring),
-					ring_predicates_agree = tostring(target_ring == observed_ring),
-					distance_left = mx, distance_right = tostring(edge_ctx.map_w and (edge_ctx.map_w - mx)),
-					distance_top = my, distance_bottom = tostring(edge_ctx.map_h and (edge_ctx.map_h - my)),
-					distance_final_right = tostring(edge_ctx.ring_w and (edge_ctx.ring_w - mx)),
-					distance_final_bottom = tostring(edge_ctx.ring_h and (edge_ctx.ring_h - my)),
-					x_minus_source_edge = tostring(edge_ctx.source_w and (mx - edge_ctx.source_w)),
-					y_minus_source_edge = tostring(edge_ctx.source_h and (my - edge_ctx.source_h)),
-				})
-			end)
-			TopUpEdgeLog("top-up target", {
-				total_before = total_current, templates = #templates, target = target, shortfall = shortfall,
-				area_factor = string.format("%.3f", area_factor), max_samples = MAX_SAMPLES,
-				max_pool = MAX_POOL, low_area_percent = low_area_percent,
-				sampling_mode = surface_edge_ring and "every_final_ring_sector_random" or "whole_map_random",
-				ring_sector_count = ring_sector_count,
-				samples_per_ring_sector = SAMPLES_PER_RING_SECTOR,
-				stage_two_samples_per_selected_sector = STAGE_TWO_AREA_SAMPLES,
-				target_ring_w = tostring(edge_ctx.ring_w), target_ring_h = tostring(edge_ctx.ring_h),
-				band_world = tostring(edge_ctx.band_world), margin_world = tostring(margin),
-			})
-		end
 		local cached = not surface_edge_ring and CachedTopUpCandidates(map)
 		if cached then
 			for _, c in ipairs(cached) do
@@ -3795,7 +2882,7 @@ function DepositRules.TopUpAnomalies(map)
 		local function sample_position(sample_n)
 			local expected = sampling_plan[sample_n]
 			if not expected or not edge_ctx or type(edge_ctx.sector_step) ~= "number" then
-				return lo_x + RandInt(span_x), lo_y + RandInt(span_y), "whole_map", nil
+				return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil
 			end
 			local step = edge_ctx.sector_step
 			-- Prefer the live MapSector box. The arithmetic fallback is valid for the current
@@ -3807,27 +2894,19 @@ function DepositRules.TopUpAnomalies(map)
 			local y1 = math.min(edge_ctx.ring_h - margin, expected.area_y1 or (y0 + step))
 			x0 = math.max(margin, x0)
 			y0 = math.max(margin, y0)
-			return random_between(x0, x1), random_between(y0, y1), expected.expected_edge, expected
+			return random_between(x0, x1), random_between(y0, y1), expected
 		end
 		local terrain_api = Global("terrain")
 		for sample_n = 1, reused_pool and 0 or MAX_SAMPLES do
-			local x, y, sampled_side, expected_sector = sample_position(sample_n)
+			local x, y, expected_sector = sample_position(sample_n)
 			local sector = SectorAtPoint(map, x, y)
-			local candidate_edge, candidate_source_region
-			if edge_ctx then
-				candidate_edge, candidate_source_region = DescribeTopUpEdge(edge_ctx, sector, x, y)
-			end
 			local in_target_area = not surface_edge_ring or IsInFinalOuterSectorRing(map, x, y, ring_sectors)
 			local scanned = sector and SectorIsScanned(sector) or false
 			local passable, can_receive, buildable, unobstructed = false, false, false, false
 			local valley_score, flatness, terrain_z, restriction_tier = 0, 0, nil, nil
-			local coverage = expected_sector
-				and edge_stats.ring_sector_coverage[tostring(expected_sector.id)] or nil
-			if coverage then coverage.sampled = coverage.sampled + 1 end
 			local sector_matches_plan = not expected_sector or (sector
 				and sector.id == expected_sector.id
 				and sector.col == expected_sector.col and sector.row == expected_sector.row)
-			if coverage and sector_matches_plan then coverage.sector_match = coverage.sector_match + 1 end
 			local rejection
 			if not sector then
 				rejection = "no_sector"
@@ -3859,7 +2938,7 @@ function DepositRules.TopUpAnomalies(map)
 							if ok_h and type(h) == "number" then terrain_z = h end
 						end
 					end
-					local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
+					local _, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
 					local layer = surface_edge_ring and type(edge_ctx.sector_step) == "number"
 						and math.min(ring_sectors, math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
 						or nil
@@ -3867,89 +2946,14 @@ function DepositRules.TopUpAnomalies(map)
 						x = x, y = y, valley_score = valley_score, passable = passable,
 						flatness = flatness, buildable = buildable, unobstructed = unobstructed,
 						terrain_z = terrain_z, restriction_tier = restriction_tier,
-						edge = candidate_edge, source_region = candidate_source_region,
 						sector_id = sector and sector.id, col = sector and sector.col,
 						row = sector and sector.row, sample_n = sample_n,
-						sampled_side = sampled_side, expected_sector_id = expected_sector and expected_sector.id,
-						perimeter_u = perimeter_u, nearest_side = nearest_side,
+						nearest_side = nearest_side,
 						edge_depth = edge_depth, layer = layer,
 					}
 				end
 			end
-			if coverage then
-				if rejection then
-					IncrementTally(coverage.rejected, rejection)
-				else
-					coverage.accepted = coverage.accepted + 1
-				end
-			end
-			if edge_debug then
-				local edge, source_region = candidate_edge, candidate_source_region
-				local observed_ring = edge ~= "interior"
-				local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
-				local comparison = "target_" .. tostring(in_target_area)
-					.. "_observed_" .. tostring(observed_ring)
-				IncrementTally(edge_stats.ring_predicate_comparison, comparison)
-				IncrementTally(edge_stats.sampled_by_edge, edge)
-				IncrementTally(edge_stats.sampled_by_planned_ring_edge, sampled_side)
-				IncrementTally(edge_stats.sampled_by_source_region, source_region)
-				if rejection then
-					IncrementTally(edge_stats.rejected_by_reason, rejection)
-				else
-					IncrementTally(edge_stats.accepted_by_edge, edge)
-					IncrementTally(edge_stats.accepted_by_sector, sector and sector.id)
-					IncrementTally(edge_stats.accepted_by_exclusive_side, nearest_side)
-					local layer = type(edge_depth) == "number" and type(edge_ctx.sector_step) == "number"
-						and math.min(ring_sectors, math.floor(edge_depth / edge_ctx.sector_step) + 1) or "?"
-					IncrementTally(edge_stats.accepted_by_side_layer, tostring(nearest_side) .. "/L" .. tostring(layer))
-				end
-				-- Independent read-only terrain probes run even for samples rejected by the ring
-				-- predicate, so a missing edge can be separated from genuinely unusable mountains.
-				local debug_pt = point(x, y)
-				local debug_passable = PassableAt(map, debug_pt)
-				local debug_flatness = FlatnessAt(map, debug_pt)
-				local debug_buildable = IsBuildableAt(map, debug_pt)
-				local debug_terrain_type = TerrainTypeAt(map, debug_pt)
-				local debug_height
-				local terrain_api = Global("terrain")
-				if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-					local ok_h, h = pcall(terrain_api.GetHeight, map, debug_pt)
-					if ok_h then debug_height = h end
-				end
-				TopUpEdgeLog("candidate sample", {
-					n = sample_n, x = x, y = y, sector = tostring(sector and sector.id),
-					expected_sector = tostring(expected_sector and expected_sector.id),
-					expected_col = tostring(expected_sector and expected_sector.col),
-					expected_row = tostring(expected_sector and expected_sector.row),
-					sector_matches_plan = tostring(sector_matches_plan),
-					sampled_side = tostring(sampled_side),
-					col = tostring(sector and sector.col), row = tostring(sector and sector.row),
-					status = tostring(sector and sector.status), edge = edge, source_region = source_region,
-					target_final_ring = tostring(in_target_area),
-					observed_ring = tostring(observed_ring),
-					ring_predicates_agree = tostring(in_target_area == observed_ring), scanned = tostring(scanned),
-					can_receive = tostring(can_receive), buildable = tostring(buildable),
-					unobstructed = tostring(unobstructed),
-					terrain_passable = tostring(debug_passable), terrain_flatness = tostring(debug_flatness),
-					terrain_buildable = tostring(debug_buildable), terrain_type = tostring(debug_terrain_type),
-					terrain_z = tostring(debug_height), restriction_tier = tostring(restriction_tier),
-					valley_score = valley_score, accepted = tostring(rejection == nil),
-					perimeter_u = tostring(perimeter_u), nearest_side = tostring(nearest_side),
-					edge_depth = tostring(edge_depth),
-					rejection = tostring(rejection or "none"), pool_after = #candidates,
-					distance_left = x, distance_right = tostring(edge_ctx.map_w and (edge_ctx.map_w - x)),
-					distance_top = y, distance_bottom = tostring(edge_ctx.map_h and (edge_ctx.map_h - y)),
-					distance_final_right = tostring(edge_ctx.ring_w and (edge_ctx.ring_w - x)),
-					distance_final_bottom = tostring(edge_ctx.ring_h and (edge_ctx.ring_h - y)),
-					x_minus_source_edge = tostring(edge_ctx.source_w and (x - edge_ctx.source_w)),
-					y_minus_source_edge = tostring(edge_ctx.source_h and (y - edge_ctx.source_h)),
-				})
-			end
 		end
-		pool_final = #candidates
-		ProfileStep("anomaly candidate pool ready", {
-			candidates = pool_final, reused = reused_pool,
-		}, map)
 		-- Surface extras keep the dedicated outer-ring sector/side/layer scheduler. Underground
 		-- extras use the shared capacity-normalized selector across reachable cave-floor sectors.
 		local whole_map_selector = not surface_edge_ring
@@ -3965,32 +2969,6 @@ function DepositRules.TopUpAnomalies(map)
 				local j = RandInt(i) + 1
 				side_cycle[i], side_cycle[j] = side_cycle[j], side_cycle[i]
 			end
-		end
-		if edge_debug then
-			local counts = { left = 0, top = 0, right = 0, bottom = 0 }
-			local spans = {
-				left = { min = nil, max = nil }, top = { min = nil, max = nil },
-				right = { min = nil, max = nil }, bottom = { min = nil, max = nil },
-			}
-			for _, candidate in ipairs(candidates) do
-				for _, side in ipairs({ "left", "top", "right", "bottom" }) do
-					if candidate.nearest_side == side then
-						counts[side] = counts[side] + 1
-						local along = (side == "left" or side == "right") and candidate.y or candidate.x
-						spans[side].min = spans[side].min and math.min(spans[side].min, along) or along
-						spans[side].max = spans[side].max and math.max(spans[side].max, along) or along
-					end
-				end
-			end
-			TopUpEdgeLog("accepted candidate pool EXCLUSIVE side coverage", {
-				pool = #candidates, left = counts.left, top = counts.top,
-				right = counts.right, bottom = counts.bottom,
-				left_y_span = tostring(spans.left.min) .. ".." .. tostring(spans.left.max),
-				top_x_span = tostring(spans.top.min) .. ".." .. tostring(spans.top.max),
-				right_y_span = tostring(spans.right.min) .. ".." .. tostring(spans.right.max),
-				bottom_x_span = tostring(spans.bottom.min) .. ".." .. tostring(spans.bottom.max),
-				target_final_w = tostring(edge_ctx.ring_w), target_final_h = tostring(edge_ctx.ring_h),
-			})
 		end
 		-- Precompute the randomized side quota, then subdivide each side into that many broad
 		-- along-side bins. One random SECTOR is selected from every shuffled bin before a bin is
@@ -4039,37 +3017,6 @@ function DepositRules.TopUpAnomalies(map)
 			local along, along_count = along_index(candidate, side)
 			return math.min(bin_count, math.max(1,
 				math.floor(((along - 1) * bin_count) / math.max(1, along_count)) + 1))
-		end
-		if edge_debug and surface_edge_ring then
-			TopUpEdgeLog("coverage-aware selection side quotas", {
-				top = side_totals.top, right = side_totals.right,
-				bottom = side_totals.bottom, left = side_totals.left,
-			})
-			for _, side in ipairs({ "top", "right", "bottom", "left" }) do
-				local bin_count = math.max(1, side_totals[side])
-				for occurrence = 1, side_totals[side] do
-					local target_bin = side_bin_order[side][occurrence]
-					local target_layer = side_layer_order[side][occurrence]
-					local by_layer, total = {}, 0
-					local min_along, max_along
-					for _, candidate in ipairs(ring_sector_pool) do
-						if candidate.selection_side == side
-							and candidate_bin(candidate, side, bin_count) == target_bin then
-							total = total + 1
-							IncrementTally(by_layer, candidate.selection_layer)
-							local along = (side == "left" or side == "right") and candidate.row or candidate.col
-							min_along = min_along and math.min(min_along, along) or along
-							max_along = max_along and math.max(max_along, along) or along
-						end
-					end
-					TopUpEdgeLog("selection bin exhaustive inventory", {
-						side = side, occurrence = occurrence, side_quota = side_totals[side],
-						target_bin = target_bin, target_layer = target_layer,
-						sector_count = total, sectors_by_layer = TallyString(by_layer),
-						along_sector_span = tostring(min_along) .. ".." .. tostring(max_along),
-					})
-				end
-			end
 		end
 		local candidates_by_sector = {}
 		for _, candidate in ipairs(candidates) do
@@ -4134,31 +3081,18 @@ function DepositRules.TopUpAnomalies(map)
 						local ok_h, h = pcall(terrain_api.GetHeight, map, pt)
 						if ok_h and type(h) == "number" then terrain_z = h end
 					end
-					local candidate_edge, source_region = DescribeTopUpEdge(edge_ctx, live_sector, x, y)
-					local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
+					local _, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
 					local candidate = {
 						x = x, y = y, passable = passable, can_receive = can_receive,
 						flatness = flatness, buildable = buildable, unobstructed = true,
 						terrain_z = terrain_z, restriction_tier = restriction_tier, valley_score = 0,
-						edge = candidate_edge, source_region = source_region,
 						sector_id = live_sector.id, col = live_sector.col, row = live_sector.row,
 						sample_n = stage_two_sample_n, stage_two_sample = area_sample,
-						sampled_side = sector.expected_edge, expected_sector_id = sector.id,
-						perimeter_u = perimeter_u, nearest_side = nearest_side,
+						nearest_side = nearest_side,
 						edge_depth = edge_depth, layer = sector.selection_layer,
 					}
 					candidates[#candidates + 1] = candidate
 					source[#source + 1] = candidate
-				end
-				if edge_debug then
-					TopUpEdgeLog("stage-two selected-sector area sample", {
-						sector = tostring(sector.id), col = tostring(sector.col), row = tostring(sector.row),
-						area_sample = area_sample, x = x, y = y, accepted = tostring(rejection == nil),
-						passable = tostring(passable), unobstructed = tostring(unobstructed),
-						buildable = tostring(buildable), flatness = tostring(flatness),
-						terrain_z = tostring(terrain_z), restriction_tier = tostring(restriction_tier),
-						rejection = tostring(rejection or "none"),
-					})
 				end
 			end
 		end
@@ -4212,15 +3146,13 @@ function DepositRules.TopUpAnomalies(map)
 				return matching
 			end
 			local matching = collect(true, true)
-			local scope, fallback_distance = "exact_side_bin_layer", 0
 			if #matching == 0 then
-				matching, scope = collect(true, false), "same_bin_any_layer"
+				matching = collect(true, false)
 			end
 			if #matching == 0 then
 				for distance = 1, bin_count - 1 do
 					matching = collect(false, true, distance)
 					if #matching > 0 then
-						scope, fallback_distance = "nearest_bin_same_layer", distance
 						break
 					end
 				end
@@ -4229,21 +3161,17 @@ function DepositRules.TopUpAnomalies(map)
 				for distance = 1, bin_count - 1 do
 					matching = collect(false, false, distance)
 					if #matching > 0 then
-						scope, fallback_distance = "nearest_bin_any_layer", distance
 						break
 					end
 				end
 			end
-			if #matching == 0 then matching, scope = collect(false, false), "same_side_anywhere" end
+			if #matching == 0 then matching = collect(false, false) end
 			if #matching == 0 then
 				local whole = {}
 				for i = 1, #available_sectors do whole[#whole + 1] = i end
-				matching, scope = whole, "whole_ring_no_owned_sector"
+				matching = whole
 			end
-			local winner = #matching > 0 and matching[RandInt(#matching) + 1] or nil
-			local actual = winner and available_sectors[winner]
-			return winner, scope, #matching, fallback_distance,
-				actual and candidate_bin(actual, side, bin_count), actual and actual.selection_layer
+			return #matching > 0 and matching[RandInt(#matching) + 1] or nil
 		end
 		local function choose_needed_kind()
 			local deficit_total = 0
@@ -4263,80 +3191,32 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		local placement_n = 1
 		while placement_n <= shortfall do
-			placement_attempts = placement_attempts + 1
 			if (surface_edge_ring and #available_sectors == 0)
 				or (not surface_edge_ring and whole_map_selector.Remaining() == 0) then break end
 			local preferred_side = surface_edge_ring and placement_side_schedule[placement_n] or nil
 			local occurrence = preferred_side and (side_occurrence[preferred_side] + 1) or nil
 			local target_bin = preferred_side and side_bin_order[preferred_side][occurrence] or nil
 			local target_layer = preferred_side and side_layer_order[preferred_side][occurrence] or nil
-			local c, ci, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer
-			local selected_sector, reserved_key, restriction_tier, low_area_count, tier_area_count, sector_area_count
+			local c
+			local selected_sector, reserved_key
 			if surface_edge_ring then
 				-- A sector is drawn first. Only afterwards do we inspect that sector's terrain.
-				-- If it has no passable, unobstructed sampled hex, log it and draw another sector;
+				-- If it has no passable, unobstructed sampled hex, draw another sector;
 				-- terrain quality never influences which sector wins an individual draw.
 				while not c and #available_sectors > 0 do
 					local sector_i
-					sector_i, selection_scope, matching_count, fallback_distance, actual_bin, actual_layer =
-						coverage_sector_index(preferred_side, target_bin, target_layer)
+					sector_i = coverage_sector_index(preferred_side, target_bin, target_layer)
 					if not sector_i then break end
 					selected_sector = available_sectors[sector_i]
 					table.remove(available_sectors, sector_i)
-					c, reserved_key, restriction_tier, low_area_count, tier_area_count, sector_area_count =
-						area_candidate_for_sector(selected_sector)
-					if edge_debug then
-						TopUpEdgeLog("stage-one ring sector selected", {
-							placement = placement_n, sector = tostring(selected_sector.id),
-							col = tostring(selected_sector.col), row = tostring(selected_sector.row),
-							preferred_side = tostring(preferred_side), sector_side = tostring(selected_sector.selection_side),
-							target_bin = tostring(target_bin), target_layer = tostring(target_layer),
-							actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
-							selection_scope = tostring(selection_scope), matching_sector_count = matching_count,
-							fallback_bin_distance = tostring(fallback_distance),
-							sector_area_candidates = sector_area_count, viable = tostring(c ~= nil),
-							remaining_unselected_sectors = #available_sectors,
-						})
-					end
+					c, reserved_key = area_candidate_for_sector(selected_sector)
 				end
 				if not c then break end
 				reserved_anomaly_hexes[reserved_key] = true
 				c.used = true
 			else
-				matching_count = whole_map_selector.Remaining()
-				selection_scope = "capacity_balanced_whole_map"
 				c = whole_map_selector.Take(nil, anomaly_profile)
 				if not c then break end
-			end
-			if edge_debug then
-				IncrementTally(edge_stats.selected_by_edge, c.edge)
-				IncrementTally(edge_stats.selected_by_sector, c.sector_id)
-				IncrementTally(edge_stats.selected_by_target_side, preferred_side)
-				IncrementTally(edge_stats.selected_by_nearest_side,
-					selected_sector and selected_sector.selection_side or c.nearest_side)
-				IncrementTally(edge_stats.selected_by_side_layer,
-					tostring(selected_sector and selected_sector.selection_side or c.nearest_side)
-						.. "/L" .. tostring(actual_layer or c.layer or "?"))
-				IncrementTally(edge_stats.selected_by_scope, selection_scope)
-				TopUpEdgeLog("stage-two low-area candidate selected", {
-					placement = placement_n, candidate_index = ci, sample_n = tostring(c.sample_n),
-					sampled_side = tostring(c.sampled_side),
-					x = c.x, y = c.y, sector = tostring(c.sector_id), col = tostring(c.col), row = tostring(c.row),
-					edge = tostring(c.edge), source_region = tostring(c.source_region),
-					valley_score = c.valley_score, terrain_z = tostring(c.terrain_z),
-					flatness = tostring(c.flatness), buildable = tostring(c.buildable),
-					restriction_tier = tostring(restriction_tier or c.restriction_tier),
-					low_area_random_pool = tostring(low_area_count), tier_area_candidates = tostring(tier_area_count),
-					sector_area_candidates = tostring(sector_area_count), reserved_hex = tostring(reserved_key),
-					pool_remaining = surface_edge_ring and #available_sectors or #candidates,
-					preferred_side = tostring(preferred_side),
-					target_bin = tostring(target_bin), target_layer = tostring(target_layer),
-					actual_bin = tostring(actual_bin), actual_layer = tostring(actual_layer),
-					fallback_bin_distance = tostring(fallback_distance),
-					candidate_perimeter_u = tostring(c.perimeter_u),
-					nearest_side = tostring(c.nearest_side), edge_depth = tostring(c.edge_depth),
-					selection_scope = selection_scope, matching_sector_count = matching_count,
-				})
 			end
 			local needed_kind = choose_needed_kind()
 			local kind_templates = needed_kind and standard_templates_by_kind[needed_kind] or nil
@@ -4372,29 +3252,6 @@ function DepositRules.TopUpAnomalies(map)
 					added_by_kind[needed_kind] = (added_by_kind[needed_kind] or 0) + 1
 					clone.SuperBigMapAnomalyTopUp = true
 					clone.SuperBigMapEdgeTopUp = surface_edge_ring or nil
-					clone.SuperBigMapEdgeTopUpPlacement = surface_edge_ring and placement_n or nil
-					clone.SuperBigMapEdgeTopUpPreferredSide = surface_edge_ring and preferred_side or nil
-					clone.SuperBigMapEdgeTopUpTargetBin = surface_edge_ring and target_bin or nil
-					clone.SuperBigMapEdgeTopUpTargetLayer = surface_edge_ring and target_layer or nil
-					clone.SuperBigMapEdgeTopUpActualBin = surface_edge_ring and actual_bin or nil
-					clone.SuperBigMapEdgeTopUpActualLayer = surface_edge_ring and actual_layer or nil
-					clone.SuperBigMapEdgeTopUpSelectionScope = surface_edge_ring and selection_scope or nil
-					clone.SuperBigMapEdgeTopUpSelectedSector = surface_edge_ring
-						and selected_sector and selected_sector.id or nil
-					clone.SuperBigMapEdgeTopUpRestrictionTier = surface_edge_ring and restriction_tier or nil
-					clone.SuperBigMapEdgeTopUpTerrainZ = surface_edge_ring and c.terrain_z or nil
-					clone.SuperBigMapEdgeTopUpLowAreaPool = surface_edge_ring and low_area_count or nil
-					clone.SuperBigMapEdgeTopUpReservedHex = surface_edge_ring and reserved_key or nil
-					added_markers[#added_markers + 1] = clone
-					local cat = AnomalyCategory(clone)
-					local reward_family = AnomalyRewardFamily(clone)
-					clone.SuperBigMapAnomalyTopUpRewardFamily = reward_family
-					added_by_cat[cat] = (added_by_cat[cat] or 0) + 1
-					added_by_reward[reward_family] = (added_by_reward[reward_family] or 0) + 1
-					if edge_debug then
-						IncrementTally(edge_stats.added_by_edge, c.edge)
-						IncrementTally(edge_stats.added_by_sector, c.sector_id)
-					end
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
 						if type(pt.SetTerrainZ) == "function" then
@@ -4418,35 +3275,7 @@ function DepositRules.TopUpAnomalies(map)
 						if sec and type(sec.RegisterDeposit) == "function" then
 							registered = pcall(sec.RegisterDeposit, sec, clone) == true
 						end
-						if edge_debug then
-							TopUpEdgeLog("placement clone result", {
-								placement = placement_n, clone = tostring(clone), clone_ok = "true",
-								template = tostring(template), category = cat, reward_family = reward_family,
-								x = c.x, y = c.y,
-								sector = tostring(sec and sec.id), col = tostring(sec and sec.col), row = tostring(sec and sec.row),
-								edge = tostring(c.edge), source_region = tostring(c.source_region),
-								registered = tostring(registered), added_total = added,
-							})
-						end
 					end
-				else
-					clone_failures = clone_failures + 1
-					if edge_debug then
-						TopUpEdgeLog("placement clone result", {
-							placement = placement_n, clone = tostring(clone), clone_ok = "false",
-							template = tostring(template), category = AnomalyCategory(template),
-							x = c.x, y = c.y, sector = tostring(c.sector_id), edge = tostring(c.edge),
-						})
-					end
-				end
-			else
-				clone_failures = clone_failures + 1
-				if edge_debug then
-					TopUpEdgeLog("placement clone skipped", {
-						placement = placement_n, reason = "template_position_unavailable",
-						template = tostring(template), x = c.x, y = c.y, sector = tostring(c.sector_id),
-						edge = tostring(c.edge),
-					})
 				end
 			end
 			if placement_succeeded then
@@ -4454,140 +3283,8 @@ function DepositRules.TopUpAnomalies(map)
 				placement_n = placement_n + 1
 			end
 		end
-		if whole_map_selector then whole_map_placement_stats = whole_map_selector.Stats() end
-		repulsion_stats = repulsion.Stats()
 	end)
-	if edge_debug then
-		for n, clone in ipairs(added_markers) do
-			local pos = ObjectPos(clone)
-			local x, y
-			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
-			if type(x) == "number" and type(y) == "number" then
-				local sector = SectorAtPoint(map, x, y)
-				local edge, source_region = DescribeTopUpEdge(edge_ctx, sector, x, y)
-				local perimeter_u, nearest_side, edge_depth = PerimeterCoordinate(edge_ctx, x, y)
-				local layer = type(edge_depth) == "number" and type(edge_ctx.sector_step) == "number"
-					and math.min(ring_sectors, math.floor(edge_depth / edge_ctx.sector_step) + 1) or "?"
-				local registered = false
-				if sector and type(sector.GetDepositList) == "function" then
-					local ok_list, list = pcall(sector.GetDepositList, sector, clone)
-					if ok_list and type(list) == "table" then
-						registered = list[clone] == true
-						if not registered then
-							for _, marker in ipairs(list) do
-								if marker == clone then registered = true; break end
-							end
-						end
-					end
-				end
-				IncrementTally(edge_stats.final_by_edge, edge)
-				IncrementTally(edge_stats.final_by_nearest_side, nearest_side)
-				IncrementTally(edge_stats.final_by_side_layer,
-					tostring(nearest_side) .. "/L" .. tostring(layer))
-				IncrementTally(edge_stats.final_by_sector, sector and sector.id)
-				TopUpEdgeLog("final live clone audit", {
-					n = n, clone = tostring(clone), placement = tostring(clone.SuperBigMapEdgeTopUpPlacement),
-					x = x, y = y, sector = tostring(sector and sector.id), col = tostring(sector and sector.col),
-					row = tostring(sector and sector.row), status = tostring(sector and sector.status),
-					edge = edge, nearest_side = nearest_side, edge_depth = tostring(edge_depth), layer = tostring(layer),
-					perimeter_u = tostring(perimeter_u),
-					preferred_side = tostring(clone.SuperBigMapEdgeTopUpPreferredSide),
-					target_bin = tostring(clone.SuperBigMapEdgeTopUpTargetBin),
-					target_layer = tostring(clone.SuperBigMapEdgeTopUpTargetLayer),
-					actual_bin = tostring(clone.SuperBigMapEdgeTopUpActualBin),
-					actual_layer = tostring(clone.SuperBigMapEdgeTopUpActualLayer),
-					selection_scope = tostring(clone.SuperBigMapEdgeTopUpSelectionScope),
-					source_region = source_region,
-					in_target_final_ring = tostring(IsInFinalOuterSectorRing(map, x, y, ring_sectors)),
-					distance_to_final_right = tostring(edge_ctx.ring_w and (edge_ctx.ring_w - x)),
-					distance_to_final_bottom = tostring(edge_ctx.ring_h and (edge_ctx.ring_h - y)),
-					registered = tostring(registered), is_placed = tostring(clone.is_placed),
-					revealed = tostring(clone.revealed), placed_obj = tostring(clone.placed_obj),
-				})
-			end
-		end
-		local ring_sectors_audited, ring_sectors_fully_sampled = 0, 0
-		local ring_sectors_with_candidates, ring_sectors_selected, ring_sectors_final = 0, 0, 0
-		local matrix_by_row = {}
-		for _, s in ipairs(edge_ctx.sectors or {}) do
-			local coverage = edge_stats.ring_sector_coverage[tostring(s.id)]
-			if coverage then
-				ring_sectors_audited = ring_sectors_audited + 1
-				if coverage.sampled == coverage.planned and coverage.sector_match == coverage.planned then
-					ring_sectors_fully_sampled = ring_sectors_fully_sampled + 1
-				end
-				local selected = edge_stats.selected_by_sector[tostring(s.id)] or 0
-				local added_here = edge_stats.added_by_sector[tostring(s.id)] or 0
-				local final_here = edge_stats.final_by_sector[tostring(s.id)] or 0
-				if coverage.accepted > 0 then ring_sectors_with_candidates = ring_sectors_with_candidates + 1 end
-				if selected > 0 then ring_sectors_selected = ring_sectors_selected + 1 end
-				if final_here > 0 then ring_sectors_final = ring_sectors_final + 1 end
-				local step = edge_ctx.sector_step or 0
-				local x0 = s.area_x0 or ((s.col - edge_ctx.min_col) * step)
-				local y0 = s.area_y0 or ((s.row - edge_ctx.min_row) * step)
-				local x1 = s.area_x1 or (x0 + step)
-				local y1 = s.area_y1 or (y0 + step)
-				TopUpEdgeLog("ring sector exhaustive coverage", {
-					sector = tostring(s.id), col = s.col, row = s.row, raw_edges = coverage.expected_edge,
-					world_x = tostring(x0) .. ".." .. tostring(x1),
-					world_y = tostring(y0) .. ".." .. tostring(y1),
-					planned = coverage.planned, sampled = coverage.sampled,
-					sector_match = coverage.sector_match, accepted = coverage.accepted,
-					rejected = TallyString(coverage.rejected), selected = selected,
-					clone_added = added_here, final_markers = final_here,
-					candidate_status = coverage.accepted > 0 and "eligible"
-						or "no_safe_candidate_in_32_random_probes",
-				})
-				local row = matrix_by_row[s.row]
-				if not row then row = {}; matrix_by_row[s.row] = row end
-				row[s.col] = tostring(coverage.accepted) .. "/" .. tostring(selected) .. "/" .. tostring(final_here)
-			end
-		end
-		for row_n = edge_ctx.min_row or 1, edge_ctx.max_row or 0 do
-			local row = matrix_by_row[row_n]
-			if row then
-				local cells = {}
-				for col_n = edge_ctx.min_col or 1, edge_ctx.max_col or 0 do
-					cells[#cells + 1] = row[col_n] or "."
-				end
-				TopUpEdgeLog("ring coverage matrix row (accepted/selected/final)", {
-					row = row_n, cells_col_ascending = table.concat(cells, " "),
-				})
-			end
-		end
-		TopUpEdgeLog("ring sector coverage totals", {
-			ring_sectors_expected = ring_sector_count, audited = ring_sectors_audited,
-			fully_sampled = ring_sectors_fully_sampled,
-			with_safe_candidates = ring_sectors_with_candidates,
-			without_safe_candidates = ring_sectors_audited - ring_sectors_with_candidates,
-			selected_sectors = ring_sectors_selected, final_marker_sectors = ring_sectors_final,
-		})
-		TopUpEdgeLog("END surface anomaly edge-distribution trace", {
-			total_before = total_current, target = target, requested = shortfall, added = added,
-			pool_initial = pool_final, sampled_by_edge = TallyString(edge_stats.sampled_by_edge),
-			sampled_by_planned_ring_edge = TallyString(edge_stats.sampled_by_planned_ring_edge),
-			sampled_by_source_region = TallyString(edge_stats.sampled_by_source_region),
-			accepted_by_edge = TallyString(edge_stats.accepted_by_edge),
-			accepted_by_exclusive_side = TallyString(edge_stats.accepted_by_exclusive_side),
-			accepted_by_side_layer = TallyString(edge_stats.accepted_by_side_layer),
-			accepted_by_sector = TallyString(edge_stats.accepted_by_sector),
-			rejected_by_reason = TallyString(edge_stats.rejected_by_reason),
-			ring_predicate_comparison = TallyString(edge_stats.ring_predicate_comparison),
-			selected_by_edge = TallyString(edge_stats.selected_by_edge),
-			selected_by_sector = TallyString(edge_stats.selected_by_sector),
-			selected_by_target_side = TallyString(edge_stats.selected_by_target_side),
-			selected_by_nearest_side = TallyString(edge_stats.selected_by_nearest_side),
-			selected_by_side_layer = TallyString(edge_stats.selected_by_side_layer),
-			selected_by_scope = TallyString(edge_stats.selected_by_scope),
-			added_by_edge = TallyString(edge_stats.added_by_edge),
-			added_by_sector = TallyString(edge_stats.added_by_sector),
-			final_by_edge = TallyString(edge_stats.final_by_edge),
-			final_by_nearest_side = TallyString(edge_stats.final_by_nearest_side),
-			final_by_side_layer = TallyString(edge_stats.final_by_side_layer),
-			final_by_sector = TallyString(edge_stats.final_by_sector),
-		})
-	end
-	local final_by_kind, remaining_shortfall, excess = {}, 0, 0
+	local final_by_kind, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not marker then return end
 		local kind = AnomalyKind(marker)
@@ -4597,73 +3294,19 @@ function DepositRules.TopUpAnomalies(map)
 		local final_count = final_by_kind[kind] or 0
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
-		excess = excess + math.max(0, final_count - (target_by_kind[kind] or 0))
 	end
-	Log("topped up anomalies to map-size proportions (post-gen)", {
-		area_factor = string.format("%.3f", area_factor),
-		total_before = total_current, target = target, added = added, templates = #templates,
-		map = tostring(map.name), pool = pool_final,
-		reused_pool = reused_pool,
-		surface_edge_ring = surface_edge_ring,
-		edge_ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3,
-		low_area_percent = low_area_percent,
-		target_capture = tostring(map.SuperBigMapAnomalyTargetCapture),
-		source_mix = TallyString(src_by_cat),
-		target_kind_mix = TallyString(target_by_kind),
-		final_kind_mix = TallyString(final_by_kind),
-		remaining_shortfall = remaining_shortfall,
-		excess = excess,
-		placement_attempts = placement_attempts,
-		clone_failures = clone_failures,
-		added_mix = TallyString(added_by_cat),
-		source_reward_families = TallyString(src_by_reward),
-		added_reward_families = TallyString(added_by_reward),
-		balanced_placement = whole_map_placement_stats and whole_map_placement_stats.balanced,
-		eligible_sectors = whole_map_placement_stats and whole_map_placement_stats.eligible_sectors,
-		selected_sectors = whole_map_placement_stats and whole_map_placement_stats.selected_sectors,
-		selected = whole_map_placement_stats and whole_map_placement_stats.selected,
-		remaining_candidates = whole_map_placement_stats
-			and whole_map_placement_stats.remaining_candidates,
-		max_additions_to_one_sector = whole_map_placement_stats
-			and whole_map_placement_stats.max_additions_to_one_sector,
-		repulsion_seeded = repulsion_stats and repulsion_stats.seeded,
-		repulsion_committed = repulsion_stats and repulsion_stats.committed,
-		repulsion_checks = repulsion_stats and repulsion_stats.checks,
-		repulsion_pair_checks = repulsion_stats and repulsion_stats.nearby_pair_checks,
-		repulsion_rejects = repulsion_stats and repulsion_stats.repulsion_rejects,
-		duplicate_hex_rejects = repulsion_stats and repulsion_stats.duplicate_hex_rejects,
-		missing_profile_rejects = repulsion_stats and repulsion_stats.missing_profile_rejects,
-	})
-	RecordEnrichmentTopUpAudit(map, "anomalies", {
-		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
-		templates = #templates, target = target, current = total_current + added,
-	})
+	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall)
 end
 
-IncrementTally = function(tbl, key)
-	key = tostring(key or "?")
-	tbl[key] = (tbl[key] or 0) + 1
-end
-
--- Build a dual-coordinate description of the live surface grid. Production placement targets
--- the FINAL map perimeter; the original generated bounds remain in the trace only to expose any
--- accidental regression back to the old 614400 right/bottom boundary.
-BuildTopUpEdgeDebugContext = function(map, ring_sectors)
+-- Build an index-base-independent description of the live surface sector grid.
+BuildTopUpEdgeContext = function(map)
 	local map_w, map_h, tile = MapWorldSize(map)
 	local city = map and map.City
 	local ctx = {
-		map_w = map_w, map_h = map_h, tile = tile,
-		ring = ring_sectors,
+		map_w = map_w, map_h = map_h,
 		min_col = nil, max_col = nil, min_row = nil, max_row = nil,
 		sectors = {},
-		source_w = map and map.SuperBigMapSourceWidth,
-		source_h = map and map.SuperBigMapSourceHeight,
 	}
-	if type(ctx.source_w) ~= "number" and type(map.SuperBigMapGeneratorWidthTiles) == "number"
-		and type(tile) == "number" then
-		ctx.source_w = map.SuperBigMapGeneratorWidthTiles * tile
-	end
-	if type(ctx.source_h) ~= "number" then ctx.source_h = ctx.source_w end
 	local get_step = Global("GetMapSectorTileSize")
 	if type(get_step) == "function" then
 		local ok_s, step = pcall(get_step, map)
@@ -4710,78 +3353,7 @@ BuildTopUpEdgeDebugContext = function(map, ring_sectors)
 	if not ctx.sector_step and type(map_w) == "number" and ctx.cols > 0 then
 		ctx.sector_step = (map_w + 0.0) / ctx.cols
 	end
-	ctx.band_world = type(ctx.sector_step) == "number" and ring_sectors * ctx.sector_step or nil
-	ctx.source_cols = type(ctx.source_w) == "number" and type(ctx.sector_step) == "number"
-		and math.floor((ctx.source_w + 0.0) / ctx.sector_step + 0.5) or nil
-	ctx.source_rows = type(ctx.source_h) == "number" and type(ctx.sector_step) == "number"
-		and math.floor((ctx.source_h + 0.0) / ctx.sector_step + 0.5) or nil
-	TopUpEdgeLog("BEGIN surface anomaly edge-distribution trace", {
-		map = tostring(map and map.name), map_w = tostring(map_w), map_h = tostring(map_h),
-		source_w = tostring(ctx.source_w), source_h = tostring(ctx.source_h), ring_sectors = ring_sectors,
-		target_ring_w = tostring(ctx.ring_w), target_ring_h = tostring(ctx.ring_h),
-		sector_step = tostring(ctx.sector_step), band_world = tostring(ctx.band_world),
-		source_cols = tostring(ctx.source_cols), source_rows = tostring(ctx.source_rows),
-		sector_count = #ctx.sectors, min_col = tostring(ctx.min_col), max_col = tostring(ctx.max_col),
-		min_row = tostring(ctx.min_row), max_row = tostring(ctx.max_row), cols = ctx.cols, rows = ctx.rows,
-		target_final_thresholds = "col<=" .. tostring(ctx.min_col and (ctx.min_col + ring_sectors - 1))
-			.. " col>=" .. tostring(ctx.max_col and (ctx.max_col - ring_sectors + 1))
-			.. " row<=" .. tostring(ctx.min_row and (ctx.min_row + ring_sectors - 1))
-			.. " row>=" .. tostring(ctx.max_row and (ctx.max_row - ring_sectors + 1)),
-		original_source_thresholds_diagnostic = "col<=" .. tostring(ring_sectors)
-			.. " col>=" .. tostring(ctx.source_cols and (ctx.source_cols - ring_sectors + 1))
-			.. " row<=" .. tostring(ring_sectors)
-			.. " row>=" .. tostring(ctx.source_rows and (ctx.source_rows - ring_sectors + 1)),
-		target_left_world = "0.." .. tostring(ctx.band_world),
-		target_right_world = tostring(ctx.ring_w and ctx.band_world and (ctx.ring_w - ctx.band_world))
-			.. ".." .. tostring(ctx.ring_w),
-		target_top_world = "0.." .. tostring(ctx.band_world),
-		target_bottom_world = tostring(ctx.ring_h and ctx.band_world and (ctx.ring_h - ctx.band_world))
-			.. ".." .. tostring(ctx.ring_h),
-	})
-	local probe_margin = math.max(1, math.floor((tile or 1) * 2))
-	local corner_probes = {
-		{ raw_corner = "x_low_y_low", x = probe_margin, y = probe_margin },
-		{ raw_corner = "x_high_y_low", x = (map_w or 0) - probe_margin, y = probe_margin },
-		{ raw_corner = "x_low_y_high", x = probe_margin, y = (map_h or 0) - probe_margin },
-		{ raw_corner = "x_high_y_high", x = (map_w or 0) - probe_margin, y = (map_h or 0) - probe_margin },
-	}
-	for _, probe in ipairs(corner_probes) do
-		local sector = SectorAtPoint(map, probe.x, probe.y)
-		TopUpEdgeLog("raw-world corner to sector orientation probe", {
-			raw_corner = probe.raw_corner, x = probe.x, y = probe.y,
-			sector = tostring(sector and sector.id), col = tostring(sector and sector.col),
-			row = tostring(sector and sector.row),
-		})
-	end
-	for n, s in ipairs(ctx.sectors) do
-		TopUpEdgeLog("sector topology", {
-			n = n, id = tostring(s.id), col = s.col, row = s.row, status = tostring(s.status),
-			outer_key = tostring(s.outer_key), inner_key = tostring(s.inner_key),
-			area_x = tostring(s.area_x0) .. ".." .. tostring(s.area_x1),
-			area_y = tostring(s.area_y0) .. ".." .. tostring(s.area_y1),
-		})
-	end
 	return ctx
-end
-
-DescribeTopUpEdge = function(ctx, sector, x, y)
-	local sides = {}
-	if type(x) == "number" and type(y) == "number" and type(ctx.ring_w) == "number"
-		and type(ctx.ring_h) == "number" and type(ctx.band_world) == "number"
-		and x >= 0 and y >= 0 and x < ctx.ring_w and y < ctx.ring_h then
-		if x < ctx.band_world then sides[#sides + 1] = "left" end
-		if x >= ctx.ring_w - ctx.band_world then sides[#sides + 1] = "right" end
-		if y < ctx.band_world then sides[#sides + 1] = "top" end
-		if y >= ctx.ring_h - ctx.band_world then sides[#sides + 1] = "bottom" end
-	end
-	local edge = #sides > 0 and table.concat(sides, "+") or "interior"
-	local source_region = "unknown"
-	if type(ctx.source_w) == "number" and type(ctx.source_h) == "number" then
-		local beyond_x, beyond_y = x >= ctx.source_w, y >= ctx.source_h
-		source_region = beyond_x and (beyond_y and "expanded_xy" or "expanded_x")
-			or (beyond_y and "expanded_y" or "original_xy")
-	end
-	return edge, source_region
 end
 
 -- Clockwise coordinate around the FINAL map perimeter: top=[0,1), right=[1,2),
@@ -4795,8 +3367,7 @@ PerimeterCoordinate = function(ctx, x, y)
 		return nil, "unknown", nil
 	end
 	local choices = {
-		-- +0.0 is required: this engine truncates integer/integer division, which previously
-		-- collapsed every position on a side to exactly 0, 1, 2, or 3 in the diagnostics.
+		-- +0.0 is required because this engine truncates integer/integer division.
 		{ side = "top", distance = y, u = (x + 0.0) / map_w },
 		{ side = "right", distance = map_w - x, u = 1 + (y + 0.0) / map_h },
 		{ side = "bottom", distance = map_h - y, u = 2 + (map_w - x + 0.0) / map_w },
@@ -4830,18 +3401,16 @@ end
 function DepositRules.TopUpEffectDeposits(map)
 	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
-	RecordEnrichmentTopUpAudit(map, "effects", { complete = false, reason = "started" })
+	SetEnrichmentTopUpStatus(map, "effects", false, 0)
 	local point = Global("point")
 	local clone_fn = SuperBigMap.ObjectClone and SuperBigMap.ObjectClone.CloneObjectAtOffset
 	local city = map and map.City
 	if not map or type(map.MapForEach) ~= "function" or type(point) ~= "function"
 		or type(clone_fn) ~= "function" or not city then
-		Log("effect-deposit top-up skipped", { reason = "map/city/point/clone unavailable" })
 		return
 	end
 	local map_w, map_h, tile = MapWorldSize(map)
 	if not map_w or not tile or tile <= 0 then
-		Log("effect-deposit top-up skipped", { reason = "map size unavailable" })
 		return
 	end
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
@@ -4859,7 +3428,6 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 	end
 	if area_factor <= 1.0 then
-		Log("effect-deposit top-up: no scaling (area_factor <= 1)", { area_factor = area_factor })
 		return
 	end
 
@@ -4888,14 +3456,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	end
 	table.sort(types)
 	if total_shortfall <= 0 then
-		Log("effect-deposit top-up: nothing to add", {
-			area_factor = string.format("%.3f", area_factor), current = TallyString(current_by_type),
-			target = TallyString(target_by_type),
-		})
-		RecordEnrichmentTopUpAudit(map, "effects", {
-			complete = true, remaining_shortfall = 0,
-			target = TallyString(target_by_type), current = TallyString(current_by_type),
-		})
+		SetEnrichmentTopUpStatus(map, "effects", true, 0)
 		return
 	end
 	local effect_values = GeneratorFamilyRepulsionValues(map, "Effects")
@@ -4910,11 +3471,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	}
 
 	local added_by_type = {}
-	local pool_final = 0
 	local reused_pool = false
-	local placement_stats
-	local repulsion_stats
-	local placement_attempts, clone_failures = 0, 0
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates = {}
@@ -4955,10 +3512,6 @@ function DepositRules.TopUpEffectDeposits(map)
 				end
 			end
 		end
-		pool_final = #candidates
-		ProfileStep("effect candidate pool ready", {
-			candidates = pool_final, target_pool = target_pool, reused = reused_pool,
-		}, map)
 		local selector = NewSectorBalancedCandidateSelector(map, candidates, "effects",
 			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
 		for _, deposit_type in ipairs(types) do
@@ -4969,7 +3522,6 @@ function DepositRules.TopUpEffectDeposits(map)
 			-- bounded by the validated pool even when every clone attempt fails.
 			while (added_by_type[deposit_type] or 0) < shortfall do
 				if selector.Remaining() == 0 then break end
-				placement_attempts = placement_attempts + 1
 				local c = selector.Take(nil, effect_profile)
 				if not c then break end
 				local template = templates[RandInt(#templates) + 1]
@@ -5000,55 +3552,24 @@ function DepositRules.TopUpEffectDeposits(map)
 								pcall(sec.RegisterDeposit, sec, clone)
 							end
 						end
-					else
-						clone_failures = clone_failures + 1
 					end
-				else
-					clone_failures = clone_failures + 1
 				end
 			end
 		end
-		placement_stats = selector.Stats()
-		repulsion_stats = repulsion.Stats()
 	end)
-	local final_by_type, remaining_shortfall, excess, final_total = {}, 0, 0, 0
+	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
 		if not marker then return end
 		local deposit_type = tostring(marker.deposit_type or "")
 		if target_by_type[deposit_type] == nil then return end
 		final_by_type[deposit_type] = (final_by_type[deposit_type] or 0) + 1
-		final_total = final_total + 1
 	end)
 	for _, deposit_type in ipairs(types) do
 		local final_count = final_by_type[deposit_type] or 0
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_type[deposit_type] or 0) - final_count)
-		excess = excess + math.max(0, final_count - (target_by_type[deposit_type] or 0))
 	end
-	Log("topped up effect deposits to map-size proportions (post-gen)", {
-		area_factor = string.format("%.3f", area_factor), current = TallyString(current_by_type),
-		target = TallyString(target_by_type), added = TallyString(added_by_type),
-		final = TallyString(final_by_type), remaining_shortfall = remaining_shortfall, excess = excess,
-		map = tostring(map.name), pool = pool_final, reused_pool = reused_pool,
-		placement_attempts = placement_attempts, clone_failures = clone_failures,
-		balanced_placement = placement_stats and placement_stats.balanced,
-		eligible_sectors = placement_stats and placement_stats.eligible_sectors,
-		selected_sectors = placement_stats and placement_stats.selected_sectors,
-		selected = placement_stats and placement_stats.selected,
-		remaining_candidates = placement_stats and placement_stats.remaining_candidates,
-		max_additions_to_one_sector = placement_stats and placement_stats.max_additions_to_one_sector,
-		repulsion_seeded = repulsion_stats and repulsion_stats.seeded,
-		repulsion_committed = repulsion_stats and repulsion_stats.committed,
-		repulsion_checks = repulsion_stats and repulsion_stats.checks,
-		repulsion_pair_checks = repulsion_stats and repulsion_stats.nearby_pair_checks,
-		repulsion_rejects = repulsion_stats and repulsion_stats.repulsion_rejects,
-		duplicate_hex_rejects = repulsion_stats and repulsion_stats.duplicate_hex_rejects,
-		missing_profile_rejects = repulsion_stats and repulsion_stats.missing_profile_rejects,
-	})
-	RecordEnrichmentTopUpAudit(map, "effects", {
-		complete = remaining_shortfall == 0, remaining_shortfall = remaining_shortfall,
-		target = TallyString(target_by_type), current = final_total,
-	})
+	SetEnrichmentTopUpStatus(map, "effects", remaining_shortfall == 0, remaining_shortfall)
 end
 
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
@@ -5076,7 +3597,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		density_failures = 0, density_status = "",
 	}
 	do
-		local density = map.SuperBigMapEnrichmentTopUpAudit
+		local density = map.SuperBigMapEnrichmentTopUpStatus
 		local status = {}
 		for _, kind in ipairs({ "resources", "anomalies", "effects" }) do
 			local entry = type(density) == "table" and density[kind] or nil
@@ -5128,33 +3649,12 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				if repulsion_violation then
 					stats.repulsion_violations = stats.repulsion_violations + 1
 				end
-				if duplicate_hex or repulsion_violation then
-					Log("top-up vanilla repulsion invariant violation", {
-						reason = stats.reason, map = tostring(map.name),
-						a = tostring(a.marker.handle or a.marker), a_class = tostring(a.marker.class),
-						a_topup = tostring(a.topup), a_x = a.x, a_y = a.y,
-						b = tostring(b.marker.handle or b.marker), b_class = tostring(b.marker.class),
-						b_topup = tostring(b.topup), b_x = b.x, b_y = b.y,
-						hex = tostring(a.hex), duplicate_hex = tostring(duplicate_hex),
-						required = tostring(required), distance = math.sqrt(distance_sq),
-					}, "error")
-				end
 			end
 		end
 	end
 	local ok = stats.density_failures == 0
 		and stats.missing_positions == 0 and stats.missing_topup_profiles == 0
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
-	Log("top-up vanilla repulsion final audit", {
-		map = tostring(map.name), reason = stats.reason, ok = tostring(ok),
-		markers = stats.markers, topups = stats.topups, checked_pairs = stats.checked_pairs,
-		native_pairs_skipped = stats.native_pairs_skipped,
-		missing_positions = stats.missing_positions,
-		missing_topup_profiles = stats.missing_topup_profiles,
-		density_failures = stats.density_failures, density_status = stats.density_status,
-		duplicate_hex_pairs = stats.duplicate_hex_pairs,
-		repulsion_violations = stats.repulsion_violations,
-	}, ok and nil or "error")
 	return ok, stats
 end
 
@@ -5162,7 +3662,6 @@ end
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
 -- passable, flat, engine-buildable, unobstructed terrain. Anomaly top-ups must additionally be in
 -- the final outer ring and on unique hexes; resources and effects must remain outside that ring.
--- The same DebugTopUpEdgeDistribution switch gates the exhaustive marker trace.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
@@ -5178,7 +3677,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		effect_unbuildable = 0, effect_obstructed = 0,
 	}
 	local violation_count = 0
-	local trace = TopUpEdgeLogOn()
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local function audit_hex_key(x, y)
@@ -5256,26 +3754,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 			violation = "effect_topup_unbuildable"
 		end
 		if violation then violation_count = violation_count + 1 end
-		if trace then
-			local sector = has_position and SectorAtPoint(map, x, y) or nil
-			TopUpEdgeLog("top-up ring exclusivity marker", {
-				family = family, marker = tostring(marker), class = tostring(marker and marker.class),
-				reward_family = tostring(marker and marker.SuperBigMapAnomalyTopUpRewardFamily),
-				effect_type = tostring(marker and marker.SuperBigMapEffectTopUpType),
-				selected_sector = tostring(marker and marker.SuperBigMapEdgeTopUpSelectedSector),
-				restriction_tier = tostring(marker and marker.SuperBigMapEdgeTopUpRestrictionTier),
-				low_area_pool = tostring(marker and marker.SuperBigMapEdgeTopUpLowAreaPool),
-				x = tostring(x), y = tostring(y), sector = tostring(sector and sector.id),
-				col = tostring(sector and sector.col), row = tostring(sector and sector.row),
-				must_be_in_final_ring = tostring(must_be_in_ring),
-				in_final_ring = tostring(in_ring), reachable = tostring(reachable),
-				flatness = tostring(flatness), flatness_required = tostring(TopUpFlatnessMinimum()),
-				even_terrain = tostring(even_terrain), buildable = tostring(buildable),
-				valley_score = tostring(valley_score),
-				unobstructed = tostring(unobstructed), hex_key = tostring(hex_key), overlap = tostring(overlap),
-				violation = tostring(violation or "none"),
-			})
-		end
 	end
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if marker and marker.SuperBigMapAnomalyTopUp then
@@ -5296,27 +3774,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		end
 	end)
 	stats.violations = violation_count
-	LogObstructionAudit(map, "surface final after all enrichment top-ups")
-	TopUpEdgeLog("FINAL top-up ring exclusivity audit", {
-		map = tostring(map.name), ring_sectors = ring_sectors,
-		anomaly_topups = stats.anomaly_topups, resource_topups = stats.resource_topups,
-		effect_topups = stats.effect_topups, anomaly_outside_ring = stats.anomaly_outside_ring,
-		non_anomaly_inside_ring = stats.non_anomaly_inside_ring,
-		anomaly_unreachable = stats.anomaly_unreachable,
-		anomaly_unbuildable = stats.anomaly_unbuildable,
-		anomaly_obstructed = stats.anomaly_obstructed,
-		resource_obstructed = stats.resource_obstructed,
-		anomaly_overlap = stats.anomaly_overlap,
-		anomaly_not_mountain_base = stats.anomaly_not_mountain_base,
-		topup_uneven = stats.topup_uneven, resource_uneven = stats.resource_uneven,
-		anomaly_uneven = stats.anomaly_uneven, effect_uneven = stats.effect_uneven,
-		flatness_required = TopUpFlatnessMinimum(),
-		effect_unbuildable = stats.effect_unbuildable, effect_obstructed = stats.effect_obstructed,
-		missing_position = stats.missing_position, violations = violation_count,
-	})
-	if violation_count > 0 then
-		Log("surface top-up ring exclusivity violation", stats)
-	end
 	return violation_count == 0, stats
 end
 
@@ -5402,9 +3859,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
 			connectivity_rejected = reachable_state.rejected, connectivity_failures = reachable_state.failures,
 		}
-		LogObstructionAudit(map, "underground top-up reachability audit, no relocation needed")
-		Log("underground enrichment reachability audit complete", stats)
-		ProfileStep("underground enrichment reachability audit complete", stats, map)
 		return true, stats
 	end
 
@@ -5470,10 +3924,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
 		if not marker or type(marker.SetPos) ~= "function" then
 			unresolved = unresolved + 1
-			Log("underground enrichment relocation unresolved", {
-				class = class, index = invalid_i, old_x = ox, old_y = oy,
-				reason = not marker and "marker unavailable" or "SetPos unavailable",
-			})
 		else
 			-- Leave at least one candidate for every marker still to process. A candidate was
 			-- reachable when sampled, but terrain-Z snapping or SetPos can alter the effective
@@ -5503,21 +3953,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				if not CanReceiveDeposit(map, new_pos) then
 					snapped_rejected = snapped_rejected + 1
 					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
-					Log("underground enrichment relocation candidate rejected", {
-						attempt = attempts, candidate_x = c.x, candidate_y = c.y,
-						class = class, index = invalid_i, old_x = ox, old_y = oy,
-						reason = last_reason, snapped_x = nx, snapped_y = ny,
-					})
 				else
 					local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
 					if not ok_move then
 						setpos_failed = setpos_failed + 1
 						last_reason = "SetPos failed: " .. tostring(move_error)
-						Log("underground enrichment relocation candidate rejected", {
-							attempt = attempts, candidate_x = c.x, candidate_y = c.y,
-							class = class, index = invalid_i, old_x = ox, old_y = oy,
-							reason = last_reason, snapped_x = nx, snapped_y = ny,
-						})
 					else
 						local actual_pos = ObjectPos(marker)
 						local ax, ay
@@ -5525,21 +3965,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 						if actual_pos and CanReceiveDeposit(map, actual_pos) then
 							success = true
 							successful_pos = actual_pos
-							Log("underground enrichment relocation accepted", {
-								actual_x = ax, actual_y = ay, attempt = attempts,
-								candidate_x = c.x, candidate_y = c.y, class = class,
-								index = invalid_i, old_x = ox, old_y = oy,
-								snapped_x = nx, snapped_y = ny,
-							})
 						else
 							postmove_rejected = postmove_rejected + 1
 							last_reason = actual_pos and "actual marker position not reachable/buildable/unobstructed" or "actual marker position unavailable"
-							Log("underground enrichment relocation candidate rejected", {
-								actual_x = ax, actual_y = ay, attempt = attempts,
-								candidate_x = c.x, candidate_y = c.y, class = class,
-								index = invalid_i, old_x = ox, old_y = oy,
-								reason = last_reason, snapped_x = nx, snapped_y = ny,
-							})
 						end
 					end
 				end
@@ -5550,11 +3978,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				marker.SuperBigMapReachabilityRelocated = true
 			else
 				unresolved = unresolved + 1
-				Log("underground enrichment relocation unresolved", {
-					attempts = attempts, candidates_remaining = #candidates,
-					class = class, index = invalid_i, old_x = ox, old_y = oy,
-					reason = last_reason,
-				})
 			end
 		end
 	end
@@ -5572,71 +3995,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		connectivity_failures = reachable_state.failures,
 		moved_by_class = TallyString(moved_by_class),
 	}
-	LogObstructionAudit(map, "underground final after top-up relocation")
-	Log("underground enrichment reachability audit complete", stats)
-	ProfileStep("underground enrichment reachability audit complete", stats, map)
 	return unresolved == 0, stats
-end
-
--- Temporary visual verification switch. Production underground discovery is proximity-based;
--- this deliberately invokes the same vanilla RevealDeposits operation over the final marker set
--- only after restoration, top-up placement, and reachability correction are complete.
-function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
-	if cfg().UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING ~= true then
-		return true, { enabled = false, markers = 0, requested = 0, placed = 0, revealed = 0 }
-	end
-	map = map or Global("CurrentMap")
-	if not IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
-		return false, { enabled = true, error = "underground map API unavailable" }
-	end
-	local markers, by_class = {}, {}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if not IsEnrichmentMarker(marker) then return end
-		markers[#markers + 1] = marker
-		local class = tostring(marker.class or "?")
-		by_class[class] = (by_class[class] or 0) + 1
-	end)
-	local reveal_deposits = Global("RevealDeposits")
-	if type(reveal_deposits) ~= "function" then
-		return false, { enabled = true, error = "RevealDeposits unavailable", markers = #markers }
-	end
-	local requested = {}
-	for i = 1, #markers do
-		if markers[i].is_placed ~= true then requested[#requested + 1] = markers[i] end
-	end
-	local reveal_ok, reveal_error = true, nil
-	if #requested > 0 then
-		reveal_ok, reveal_error = pcall(reveal_deposits, requested)
-	end
-	local placed, revealed, unresolved = 0, 0, 0
-	local is_valid = Global("IsValid")
-	for i = 1, #markers do
-		local marker = markers[i]
-		local placed_obj = marker.placed_obj
-		local placed_valid = placed_obj
-			and (type(is_valid) ~= "function" or is_valid(placed_obj) == true)
-		if marker.is_placed == true or placed_valid then placed = placed + 1 end
-		if placed_valid then
-			SetRevealedState(placed_obj, true)
-			if placed_obj.revealed == true then revealed = revealed + 1 end
-		else
-			-- Some marker families provide their own visibility instead of a separate placed object.
-			SetRevealedState(marker, true)
-			if marker.revealed == true then revealed = revealed + 1 end
-		end
-		if marker.is_placed ~= true and not placed_valid then unresolved = unresolved + 1 end
-	end
-	local stats = {
-		enabled = true, markers = #markers, requested = #requested, placed = placed,
-		revealed = revealed, unresolved = unresolved, classes = TallyString(by_class),
-		reveal_call_ok = reveal_ok,
-	}
-	Log("TEMP revealed all final underground enrichments for visual verification", stats)
-	if not reveal_ok then
-		stats.error = tostring(reveal_error)
-		return false, stats
-	end
-	return true, stats
 end
 
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
@@ -5660,7 +4019,6 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not map or not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
-		Log("stretch scan-gate enforcement skipped", { reason = "map/city/GetMapSectorXY unavailable" })
 		return
 	end
 	-- A) hide revealed scan-gated objects that now sit in unscanned sectors.
@@ -5754,10 +4112,6 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 			end
 		end
 	end
-	Log("stretch scan-gate enforced", {
-		hidden_leaks = hidden, despawned_surface = despawned, concrete_imprints_cleared = #concrete_moves,
-		scanned_sectors_placed = placed_sectors, revealed_in_scanned = revealed_objs,
-	})
 end
 
 function DepositRules.OnSectorScanned(status, sector)
@@ -5767,7 +4121,7 @@ function DepositRules.OnSectorScanned(status, sector)
 	local area = sector.area
 	if not map or not area or type(map.MapForEach) ~= "function" then return end
 
-	-- Exhaustive + self-healing audit for surface anomaly top-up markers. Vanilla normally places
+	-- Self-heal surface anomaly top-up markers. Vanilla normally places
 	-- registered markers before SectorScanned fires; if the custom 20x20 sector path ever misses
 	-- one, place it here at the same scan boundary so it never remains permanently invisible.
 	local edge_markers, unplaced = {}, {}
@@ -5777,93 +4131,27 @@ function DepositRules.OnSectorScanned(status, sector)
 			if marker.is_placed ~= true then unplaced[#unplaced + 1] = marker end
 		end
 	end)
-	if #edge_markers > 0 and TopUpEdgeLogOn() then
-		TopUpEdgeLog("SectorScanned edge top-up audit BEGIN", {
-			status = tostring(status), sector = tostring(sector.id), col = tostring(sector.col),
-			row = tostring(sector.row), markers = #edge_markers, unplaced = #unplaced,
-		})
-		for n, marker in ipairs(edge_markers) do
-			local pos = ObjectPos(marker)
-			local x, y
-			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
-			TopUpEdgeLog("SectorScanned edge marker BEFORE", {
-				n = n, marker = tostring(marker), x = tostring(x), y = tostring(y),
-				placement = tostring(marker.SuperBigMapEdgeTopUpPlacement),
-				preferred_side = tostring(marker.SuperBigMapEdgeTopUpPreferredSide),
-				target_bin = tostring(marker.SuperBigMapEdgeTopUpTargetBin),
-				target_layer = tostring(marker.SuperBigMapEdgeTopUpTargetLayer),
-				actual_bin = tostring(marker.SuperBigMapEdgeTopUpActualBin),
-				actual_layer = tostring(marker.SuperBigMapEdgeTopUpActualLayer),
-				selection_scope = tostring(marker.SuperBigMapEdgeTopUpSelectionScope),
-				is_placed = tostring(marker.is_placed), placed_obj = tostring(marker.placed_obj),
-			})
-		end
-	end
-	local reveal_called, reveal_ok, reveal_result = false, false, nil
 	local reveal_deposits = Global("RevealDeposits")
 	if #unplaced > 0 and type(reveal_deposits) == "function" then
-		reveal_called = true
-		reveal_ok, reveal_result = pcall(reveal_deposits, unplaced)
+		pcall(reveal_deposits, unplaced)
 	end
-	local edge_placed, edge_revealed, edge_unresolved = 0, 0, 0
-	for n, marker in ipairs(edge_markers) do
+	for _, marker in ipairs(edge_markers) do
 		local placed_obj = marker.placed_obj
 		if marker.is_placed == true and placed_obj then
-			edge_placed = edge_placed + 1
 			if placed_obj.revealed ~= true then SetRevealedState(placed_obj, true) end
-			if placed_obj.revealed == true then edge_revealed = edge_revealed + 1 end
-		else
-			edge_unresolved = edge_unresolved + 1
-		end
-		if TopUpEdgeLogOn() then
-			local pos = ObjectPos(marker)
-			local x, y
-			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
-			local obj_pos = placed_obj and ObjectPos(placed_obj)
-			local ox, oy
-			if obj_pos and type(obj_pos.xy) == "function" then ox, oy = obj_pos:xy() end
-			TopUpEdgeLog("SectorScanned edge marker AFTER", {
-				n = n, marker = tostring(marker), x = tostring(x), y = tostring(y),
-				is_placed = tostring(marker.is_placed), placed_obj = tostring(placed_obj),
-				placed_x = tostring(ox), placed_y = tostring(oy),
-				position_matches_marker = tostring(ox == x and oy == y),
-				preferred_side = tostring(marker.SuperBigMapEdgeTopUpPreferredSide),
-				target_bin = tostring(marker.SuperBigMapEdgeTopUpTargetBin),
-				target_layer = tostring(marker.SuperBigMapEdgeTopUpTargetLayer),
-				actual_bin = tostring(marker.SuperBigMapEdgeTopUpActualBin),
-				actual_layer = tostring(marker.SuperBigMapEdgeTopUpActualLayer),
-				placed_revealed = tostring(placed_obj and placed_obj.revealed),
-			})
 		end
 	end
-	if #edge_markers > 0 and TopUpEdgeLogOn() then
-		TopUpEdgeLog("SectorScanned edge top-up audit END", {
-			sector = tostring(sector.id), markers = #edge_markers, initially_unplaced = #unplaced,
-			reveal_called = tostring(reveal_called), reveal_ok = tostring(reveal_ok),
-			reveal_result = tostring(reveal_result), placed = edge_placed,
-			revealed = edge_revealed, unresolved = edge_unresolved,
-		})
-	end
-	local revealed = 0
 	pcall(map.MapForEach, map, area, "SubsurfaceDeposit", function(obj)
 		if obj and obj.SuperBigMapEnrichmentClone and IsScanGatedDeposit(obj) then
 			SetRevealedState(obj, true)
-			revealed = revealed + 1
 		end
 	end)
 	-- SubsurfaceAnomaly is not a SubsurfaceDeposit subclass; sweep it too.
 	pcall(map.MapForEach, map, area, "SubsurfaceAnomaly", function(obj)
 		if obj and obj.SuperBigMapEnrichmentClone and IsScanGatedDeposit(obj) then
 			SetRevealedState(obj, true)
-			revealed = revealed + 1
 		end
 	end)
-	if revealed > 0 then
-		Log("revealed cloned deposits in scanned sector", {
-			sector = (sector.col and sector.row) and (tostring(sector.col) .. "," .. tostring(sector.row)) or "?",
-			revealed = revealed,
-		})
-	end
 end
 
 DepositRules.ClearTopUpPlacementPool = ClearTopUpPlacementPool

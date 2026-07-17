@@ -21,14 +21,6 @@ local ClampNumber = Engine.ClampNumber
 local Round = Engine.Round
 local VANILLA_SECTOR_COUNT = 10
 
--- Route the module's diagnostics through the centralized logger (scope "Sector").
-local function DebugPrint(message)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", message)
-	end
-end
-
 local function cfg_bool(key, default)
 	local value = (SuperBigMap.Config or {})[key]
 	if type(value) == "boolean" then
@@ -67,22 +59,6 @@ do
 	end
 end
 
--- Gated sector-SIZING diagnostics, de-duplicated per tag so frequently-called
--- functions (TerrainSize, ResolveSectorLayout via the cursor) don't spam -- a line
--- prints only when its message changes. Controlled by config.DebugSectorSizing.
-local sizing_diag_last = {}
-local function SizingDiag(tag, msg)
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and DebugLog.On("SectorSizing")) then
-		return
-	end
-	if sizing_diag_last[tag] == msg then
-		return
-	end
-	sizing_diag_last[tag] = msg
-	DebugLog.Info("SectorSizing", msg, { tag = "grid/" .. tostring(tag) })
-end
-
 local function MapData(map)
 	return map and map.mapdata or map
 end
@@ -93,35 +69,17 @@ local function TerrainSize(map)
 	end
 
 	if type(map.Width) == "number" and type(map.Height) == "number" and map.Width > 0 and map.Height > 0 then
-		SizingDiag("TerrainSize", string.format("TerrainSize via map.Width = %sx%s", tostring(map.Width), tostring(map.Height)))
 		return map.Width, map.Height
 	end
 
 	if type(map.GetMapSize) == "function" then
 		local width, height = SafeCall(map.GetMapSize, map)
 		if width and height then
-			SizingDiag("TerrainSize", string.format("TerrainSize via map:GetMapSize = %sx%s", tostring(width), tostring(height)))
 			return width, height
 		end
 	end
 
-	SizingDiag("TerrainSize", "TerrainSize FAILED -> 0,0 (map.Width and map:GetMapSize unavailable)")
 	return 0, 0
-end
-
-local function MapTileWorldSize(map)
-	local width = TerrainSize(map)
-	local mapdata = MapData(map)
-	if width and width > 0 and mapdata and type(mapdata.Width) == "number" and mapdata.Width > 0 then
-		return width / mapdata.Width
-	end
-
-	local const = Global("const")
-	if type(const) == "table" and type(const.HeightTileSize) == "number" and const.HeightTileSize > 0 then
-		return const.HeightTileSize
-	end
-
-	return 100
 end
 
 -- The TRUE vanilla sector footprint, in world units. It must never change with
@@ -140,9 +98,6 @@ local function SectorTargetSize(map)
 		and const_tbl.HeightTileSize
 		or 100
 	local target = base_tiles * height_tile / base_count
-	SizingDiag("SectorTargetSize", string.format(
-		"SectorTargetSize: base_tiles=%s base_count=%s height_tile=%s -> target=%s",
-		tostring(base_tiles), tostring(base_count), tostring(height_tile), tostring(math.max(1, Round(target)))))
 	return math.max(1, Round(target))
 end
 
@@ -217,8 +172,7 @@ local function CustomSectorStatus(map)
 		-- Expanded UNDERGROUND maps get the 20x20 custom grid too when the underground stretch is
 		-- enabled (config STRETCH_UNDERGROUND): same layout math, driven by the same mapdata
 		-- markers (SuperBigMapOriginalWidthTiles set by the prepare step). Without this exemption
-		-- the underground keeps vanilla 10x10 sectors over the 8192 allocation -- the Sector logs
-		-- showed exactly "custom=false reason=not surface" for BlankUnderground_01.
+		-- the underground otherwise keeps vanilla 10x10 sectors over the 8192 allocation.
 		local underground_ok = cfg_bool("STRETCH_UNDERGROUND", false)
 			and mapdata.Environment == "Underground"
 		if not underground_ok then
@@ -251,15 +205,9 @@ end
 -- size (const.HeightTileSize). This is the mod's canonical map-size definition (see
 -- sbm_map_generation MapSize) and the AUTHORITATIVE, deterministic terrain size.
 --
--- It exists because the LIVE terrain read (map.Width / map:GetMapSize, via TerrainSize)
--- can transiently report DOUBLE the true size during the new-game expansion/bounds flux
--- -- it returns the oversized MapArea before the engine finalizes terrain. Feeding that
--- 2x width into ResolveSectorLayout bakes a 2x-oversized grid (count 20 x step 81920 ->
--- MapArea 2x terrain), which then fails the 20x20 fit check with "block outside terrain"
--- -- the INTERMITTENT "cannot expand" on the 8192-tile "Big" maps (same map sometimes
--- expands, sometimes does not, purely on load timing). mapdata.Width never suffers that
--- transient (it is the final tile count, consistent with the real terrain), so deriving
--- the layout from it makes the grid deterministic regardless of when it is computed.
+-- The live terrain read can temporarily expose an in-progress MapArea during generation.
+-- mapdata.Width and mapdata.Height are the stable final tile dimensions, so sector layout
+-- is derived from them whenever they are available.
 -- Returns false when mapdata size is unavailable (caller falls back to the live read).
 local function StableTerrainSize(map)
 	local mapdata = MapData(map)
@@ -299,14 +247,6 @@ local function ResolveSectorLayout(map)
 	local step_x = usable_width / count_x
 	local step_y = usable_height / count_y
 
-	SizingDiag("ResolveSectorLayout", string.format(
-		"ResolveSectorLayout: terrain=%sx%s usable=%sx%s target=%s border=%s -> count=%sx%s step=%sx%s [step*count=%sx%s]",
-		tostring(Round(width)), tostring(Round(height)),
-		tostring(Round(usable_width)), tostring(Round(usable_height)),
-		tostring(target), tostring(Round(border)),
-		tostring(count_x), tostring(count_y),
-		tostring(Round(step_x)), tostring(Round(step_y)),
-		tostring(Round(step_x * count_x)), tostring(Round(step_y * count_y))))
 
 	return {
 		border = border,
@@ -418,13 +358,11 @@ end
 local function ConfigureGlobalSectorCount(map, reason)
 	local const = Global("const")
 	if type(const) ~= "table" then
-		DebugPrint("sector count not configured via " .. tostring(reason) .. ": const missing")
 		return false
 	end
 
 	local count = ResolveSectorCount(map)
 	if not count then
-		DebugPrint("sector count not configured via " .. tostring(reason) .. ": " .. DescribeMap(map))
 		return false
 	end
 
@@ -441,17 +379,6 @@ local function ConfigureGlobalSectorCount(map, reason)
 
 	if const.SectorCount ~= count then
 		const.SectorCount = count
-		DebugPrint(string.format(
-			"sector count set to %s via %s",
-			tostring(count),
-			tostring(reason or "map")
-		))
-	else
-		DebugPrint(string.format(
-			"sector count already %s via %s",
-			tostring(count),
-			tostring(reason or "map")
-		))
 	end
 
 	return count
@@ -470,14 +397,7 @@ local function NormalizeVanillaSectorCount(reason)
 	if State and State.vanilla_sector_count == nil then
 		State.vanilla_sector_count = VANILLA_SECTOR_COUNT
 	end
-	local previous = const.SectorCount
 	const.SectorCount = (State and State.vanilla_sector_count) or VANILLA_SECTOR_COUNT
-	if previous ~= const.SectorCount then
-		DebugPrint(string.format(
-			"vanilla sector count restored %s -> %s via %s",
-			tostring(previous), tostring(const.SectorCount), tostring(reason or "vanilla normalization")
-		))
-	end
 	return const.SectorCount
 end
 

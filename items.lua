@@ -8,20 +8,8 @@ return {
 		'CodeFileName', "Code/sbm_config.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "sbm_debug",
-		'CodeFileName', "Code/sbm_debug.lua",
-	}),
-	PlaceObj('ModItemCode', {
 		'name', "sbm_engine",
 		'CodeFileName', "Code/sbm_engine.lua",
-	}),
-	PlaceObj('ModItemCode', {
-		'name', "sbm_loading_profiler",
-		'CodeFileName', "Code/sbm_loading_profiler.lua",
-	}),
-	PlaceObj('ModItemCode', {
-		'name', "sbm_entrance_debug",
-		'CodeFileName', "Code/sbm_entrance_debug.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_pregame_toggle",
@@ -80,10 +68,6 @@ return {
 		'CodeFileName', "Code/sbm_map_generation.lua",
 	}),
 	PlaceObj('ModItemCode', {
-		'name', "sbm_place_elevator_button",
-		'CodeFileName', "Code/sbm_place_elevator_button.lua",
-	}),
-	PlaceObj('ModItemCode', {
 		'name', "sbm_deposits",
 		'CodeFileName', "Code/sbm_deposits.lua",
 	}),
@@ -94,10 +78,6 @@ return {
 	PlaceObj('ModItemCode', {
 		'name', "sbm_heat_safety",
 		'CodeFileName', "Code/sbm_heat_safety.lua",
-	}),
-	PlaceObj('ModItemCode', {
-		'name', "sbm_validation",
-		'CodeFileName', "Code/sbm_validation.lua",
 	}),
 	PlaceObj('ModItemCode', {
 		'name', "sbm_loading_ui",

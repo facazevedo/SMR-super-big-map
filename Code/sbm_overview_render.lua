@@ -64,12 +64,6 @@ function OverviewRender.Apply(enable)
 			hr.ShadowFadeOutRangePercent = 0
 		end
 		overview_render_distance_active = true
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Overview", "render distance extended for overview", {
-				far_z = OVERVIEW_FAR_Z, via = changed and "table.change" or "direct",
-			})
-		end
 	else
 		if not overview_render_distance_active then
 			return
@@ -88,10 +82,6 @@ function OverviewRender.Apply(enable)
 		end
 		overview_render_distance_active = false
 		overview_render_original_hr = false
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Overview", "render distance restored to vanilla", { via = restored and "table.restore" or "direct" })
-		end
 	end
 end
 

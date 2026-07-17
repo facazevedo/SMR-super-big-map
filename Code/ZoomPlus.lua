@@ -52,9 +52,6 @@ local ZoomPlus_InstallOverviewReturnCameraHook
 local ZoomPlus_RemoveOverviewReturnCameraHook
 local ZoomPlus_InstallZoomOutOverviewTriggerHook
 local ZoomPlus_RemoveZoomOutOverviewTriggerHook
-local ZoomPlus_RemoveWheelEventDebugHook
-local ZoomPlus_InstallVanillaOverviewDiagnostics
-local ZoomPlus_RemoveVanillaOverviewDiagnostics
 
 local function ZoomPlus_CanModifyCamera()
 	-- Super Big Map owns this instance and decides when it is enabled/disabled (the
@@ -65,144 +62,6 @@ end
 
 local function ZoomPlus_ShouldApplyZoomPlusCamera()
 	return ZP.enabled == true and ZoomPlus_CanModifyCamera()
-end
-
-local function ZoomPlus_DebugValue(value)
-	if value == nil then
-		return "nil"
-	end
-	local value_type = type(value)
-	if value_type == "string" or value_type == "number" or value_type == "boolean" then
-		return tostring(value)
-	end
-	local ok, text = pcall(tostring, value)
-	return ok and text or ("<" .. value_type .. ">")
-end
-
-local function ZoomPlus_DebugUiLabel(object)
-	if not object then
-		return "nil"
-	end
-	if type(object) ~= "table" and type(object) ~= "userdata" then
-		return tostring(object)
-	end
-	local ok, id = pcall(function()
-		return object.Id or object.id or object.class
-	end)
-	return ok and id and tostring(id) or ZoomPlus_DebugValue(object)
-end
-
-local function ZoomPlus_DebugEnabled(allow_inactive)
-	if not allow_inactive and not ZoomPlus_CanModifyCamera() then
-		return false
-	end
-	return type(ZP.Config) == "table" and ZP.Config.SHOW_ZOOM_DEBUG_LOGS == true
-end
-
-local function ZoomPlus_DebugCameraSummary()
-	local parts = {}
-	local get_mode = rawget(_G, "GetInGameInterfaceMode")
-	if type(get_mode) == "function" then
-		local ok, mode = pcall(get_mode)
-		parts[#parts + 1] = "mode=" .. (ok and ZoomPlus_DebugValue(mode) or "err")
-	end
-	local get_dialog = rawget(_G, "GetDialog")
-	if type(get_dialog) == "function" then
-		local ok, build_menu = pcall(get_dialog, "XBuildMenu")
-		parts[#parts + 1] = "build_menu_open=" .. tostring(ok and build_menu ~= nil and build_menu ~= false)
-	end
-	local camera_rts = rawget(_G, "cameraRTS")
-	if type(camera_rts) == "table" then
-		if type(camera_rts.GetZoom) == "function" then
-			local ok, zoom = pcall(camera_rts.GetZoom)
-			parts[#parts + 1] = "zoom=" .. (ok and ZoomPlus_DebugValue(zoom) or "err")
-		end
-		if type(camera_rts.GetZoomLimits) == "function" then
-			local ok, min_zoom, max_zoom = pcall(camera_rts.GetZoomLimits)
-			parts[#parts + 1] = "limits="
-				.. (ok and ZoomPlus_DebugValue(min_zoom) .. "," .. ZoomPlus_DebugValue(max_zoom) or "err")
-		end
-		if type(camera_rts.GetProperties) == "function" then
-			local ok, props = pcall(camera_rts.GetProperties, 1)
-			if ok and type(props) == "table" then
-				parts[#parts + 1] = "ZoomStep=" .. ZoomPlus_DebugValue(props.ZoomStep)
-				parts[#parts + 1] = "ZoomTime=" .. ZoomPlus_DebugValue(props.ZoomTime)
-				parts[#parts + 1] = "LookatDistZoomOut=" .. ZoomPlus_DebugValue(props.LookatDistZoomOut)
-			end
-		end
-	end
-	parts[#parts + 1] = "zoom_plus=" .. tostring(ZP.enabled == true)
-	return table.concat(parts, "; ")
-end
-
-local function ZoomPlus_DebugPropsSummary(props)
-	if type(props) ~= "table" then
-		return "props=nil"
-	end
-	return "LookatDistZoomIn=" .. ZoomPlus_DebugValue(props.LookatDistZoomIn)
-		.. "; LookatDistZoomOut=" .. ZoomPlus_DebugValue(props.LookatDistZoomOut)
-		.. "; ZoomStep=" .. ZoomPlus_DebugValue(props.ZoomStep)
-		.. "; ZoomTime=" .. ZoomPlus_DebugValue(props.ZoomTime)
-end
-
-local function ZoomPlus_VectorSummary(value)
-	if not value then
-		return "nil"
-	end
-	local len = "?"
-	if type(value) == "table" or type(value) == "userdata" then
-		local fn = value.Len
-		if type(fn) == "function" then
-			local ok, result = pcall(fn, value)
-			if ok then
-				len = ZoomPlus_DebugValue(result)
-			end
-		end
-	end
-	return ZoomPlus_DebugValue(value) .. "[len=" .. len .. "]"
-end
-
-local function ZoomPlus_SavedCameraSummary(dialog)
-	local saved = dialog and dialog.saved_camera
-	local eye_offset = saved and saved.eye_offset
-	local lookat = saved and (saved.lookat or saved.look_at)
-	return "saved=" .. tostring(saved ~= nil)
-		.. "; saved_eye_offset=" .. ZoomPlus_VectorSummary(eye_offset)
-		.. "; saved_lookat=" .. ZoomPlus_DebugValue(lookat)
-end
-
-local function ZoomPlus_Debug(trigger, object, path, success, extra, key, allow_inactive)
-	if not ZoomPlus_DebugEnabled(allow_inactive) then
-		return
-	end
-	local message = "zoom: "
-		.. "trigger=" .. tostring(trigger or "")
-		.. "; object=" .. ZoomPlus_DebugUiLabel(object)
-		.. "; path=" .. tostring(path or "")
-		.. "; success=" .. tostring(success == true)
-		.. "; " .. ZoomPlus_DebugCameraSummary()
-		.. (extra and extra ~= "" and ("; " .. tostring(extra)) or "")
-	ZP.debug_last = ZP.debug_last or {}
-	if key and ZP.debug_last[key] == message then
-		return
-	end
-	if key then
-		ZP.debug_last[key] = message
-	end
-	print("[Super Big Map] ZoomPlus: " .. message)
-end
-
-local function ZoomPlus_ShouldLogVanillaDiagnostics()
-	return ZP.vanilla_diagnostics_armed == true and ZP.enabled ~= true and ZoomPlus_DebugEnabled(true)
-end
-
--- Disable/enable-path diagnostics. These previously routed to a host helper; this
--- private copy has no host, so they are no-ops kept only so existing call sites stay
--- valid. (General zoom diagnostics still go through ZoomPlus_Debug.)
-local function ZoomPlus_DebugDisable(trigger, path, success, extra, key)
-end
-
-local function ZoomPlus_DebugEnable(trigger, path, success, extra, key)
 end
 
 -- ---------------------------------------------------------------------------
@@ -305,25 +164,6 @@ local function ZoomPlus_GetRTSCameraProperties()
 	return ok and type(props) == "table" and props or false
 end
 
-local function ZoomPlus_DebugCameraTablesSummary()
-	return "transition=" .. tostring(ZoomPlus_IsCameraTransitionActive())
-		.. "; overview=" .. tostring(ZoomPlus_IsOverviewZoomActive())
-		.. "; live{" .. ZoomPlus_DebugPropsSummary(ZoomPlus_GetRTSCameraProperties()) .. "}"
-		.. "; defaults{" .. ZoomPlus_DebugPropsSummary(ZoomPlus_GetDefaultRTSCameraProperties()) .. "}"
-		.. "; original{" .. ZoomPlus_DebugPropsSummary(ZP.original_properties) .. "}"
-		.. "; original_default_zoom_out=" .. ZoomPlus_DebugValue(ZP.original_default_zoom_out)
-end
-
-local function ZoomPlus_DebugOverviewExtra(dialog, prefix)
-	local parts = {}
-	if prefix and prefix ~= "" then
-		parts[#parts + 1] = tostring(prefix)
-	end
-	parts[#parts + 1] = ZoomPlus_SavedCameraSummary(dialog)
-	parts[#parts + 1] = ZoomPlus_DebugCameraTablesSummary()
-	return table.concat(parts, "; ")
-end
-
 -- Return the normal RTS camera defaults while overview has temporary camera props applied.
 local function ZoomPlus_GetNormalRTSCameraProperties()
 	local defaults = ZoomPlus_GetDefaultRTSCameraProperties()
@@ -338,14 +178,6 @@ local function ZoomPlus_GetNormalRTSCameraProperties()
 		local current_zoom_out = tonumber(props.LookatDistZoomOut)
 		local default_zoom_out = tonumber(defaults.LookatDistZoomOut)
 		if current_zoom_out and default_zoom_out and current_zoom_out < default_zoom_out then
-			ZoomPlus_Debug(
-				"capture",
-				ZP,
-				"use_defaults_while_mode_unset",
-				true,
-				ZoomPlus_DebugPropsSummary(props),
-				"capture_mode_unset_defaults"
-			)
 			return defaults
 		end
 	end
@@ -379,23 +211,9 @@ end
 local function ZoomPlus_SetRTSCameraZoomProperties(props)
 	local camera_rts = ZoomPlus_GetRTSCamera()
 	if not camera_rts or type(camera_rts.SetProperties) ~= "function" or type(props) ~= "table" then
-		ZoomPlus_Debug(
-			"set_properties",
-			camera_rts,
-			"camera_set_properties_unavailable",
-			false,
-			ZoomPlus_DebugPropsSummary(props)
-		)
 		return false
 	end
 	local ok = pcall(camera_rts.SetProperties, 1, props)
-	ZoomPlus_Debug(
-		"set_properties",
-		camera_rts,
-		"camera_set_properties_full_table",
-		ok,
-		ZoomPlus_DebugPropsSummary(props)
-	)
 	return ok
 end
 
@@ -589,13 +407,6 @@ local function ZoomPlus_ArmFirstOverviewExitTakeover(dialog)
 	local token = {}
 	ZP.first_overview_exit_takeover_token = token
 	ZP.first_overview_exit_takeover_armed = true
-	ZoomPlus_Debug(
-		"overview_exit",
-		dialog,
-		"first_exit_takeover_armed",
-		true,
-		"exit_to=" .. ZoomPlus_VectorSummary(dialog.exit_to)
-	)
 
 	local create_thread = rawget(_G, "CreateRealTimeThread")
 	local sleep = rawget(_G, "Sleep")
@@ -605,13 +416,6 @@ local function ZoomPlus_ArmFirstOverviewExitTakeover(dialog)
 			if ZP.first_overview_exit_takeover_token == thread_token then
 				ZP.first_overview_exit_takeover_token = false
 				ZP.first_overview_exit_takeover_armed = false
-				ZoomPlus_Debug(
-					"overview_exit",
-					ZP,
-					"first_exit_takeover_expired",
-					true,
-					"timeout_ms=" .. tostring(ZOOM_FIRST_EXIT_TAKEOVER_TIMEOUT_MS)
-				)
 			end
 		end, token)
 	end
@@ -624,7 +428,6 @@ function ZP.ConsumeFirstOverviewExitTakeover()
 	end
 	ZP.first_overview_exit_takeover_armed = false
 	ZP.first_overview_exit_takeover_token = false
-	ZoomPlus_Debug("overview_exit", ZP, "first_exit_takeover_consumed", true, "")
 	return true
 end
 
@@ -701,17 +504,6 @@ local function ZoomPlus_PreAimOverviewExit(dialog, first_exit_takeover_armed)
 		pan_time = 0
 	end
 	local ok = pcall(camera_rts.SetCamera, new_eye, exit_to, pan_time)
-	ZoomPlus_Debug(
-		"overview_exit",
-		dialog,
-		"pre_aim_pan_over_sector",
-		ok == true,
-		"pan_time=" .. tostring(pan_time)
-			.. "; exit_to=" .. ZoomPlus_VectorSummary(exit_to)
-			.. "; old_eye=" .. ZoomPlus_VectorSummary(eye)
-			.. "; new_eye=" .. ZoomPlus_VectorSummary(new_eye)
-			.. "; offset=" .. ZoomPlus_VectorSummary(offset)
-	)
 	if ok and pan_time > 0 then
 		local sleep = rawget(_G, "Sleep")
 		if type(sleep) == "function" then
@@ -719,29 +511,6 @@ local function ZoomPlus_PreAimOverviewExit(dialog, first_exit_takeover_armed)
 		end
 	end
 	return ok == true
-end
-
-local function ZoomPlus_RestoreOriginalZoomProperties(original, path, reapply_camera)
-	ZoomPlus_RestoreDefaultZoomOut()
-
-	local restored = ZoomPlus_SetRTSCameraZoomProperties(original)
-	local reapplied = false
-	if restored and reapply_camera then
-		reapplied = ZoomPlus_ReapplyCurrentCameraForZoomProperties()
-	end
-
-	ZoomPlus_Debug(
-		"disable",
-		ZoomPlus_GetRTSCamera() or ZP,
-		path or "restore_original_properties",
-		restored and (not reapply_camera or reapplied),
-		"reapply_requested=" .. tostring(reapply_camera == true)
-			.. "; reapplied=" .. tostring(reapplied == true)
-			.. "; " .. ZoomPlus_DebugPropsSummary(original),
-		"disable_restore:" .. tostring(path or "restore_original_properties"),
-		true
-	)
-	return restored
 end
 
 -- Capture the live RTS camera eye, lookat, and the eye-to-lookat distance.
@@ -807,37 +576,15 @@ end
 -- snapshot eye/lookat first, then SetProperties (which may otherwise clamp the
 -- camera in if it's currently beyond the vanilla LookatDistZoomOut), then put
 -- the captured eye/lookat back so the user keeps their current viewpoint.
-local function ZoomPlus_RestoreOriginalZoomPropertiesPreservingCamera(original, path)
-	local distance, eye, lookat = ZoomPlus_CaptureLiveCameraView()
-	local snapshot_ok = eye and lookat and true or false
+local function ZoomPlus_RestoreOriginalZoomPropertiesPreservingCamera(original)
+	local _, eye, lookat = ZoomPlus_CaptureLiveCameraView()
 
 	ZoomPlus_RestoreDefaultZoomOut()
 	local restored = ZoomPlus_SetRTSCameraZoomProperties(original)
-	local reapplied = restored and ZoomPlus_ApplyCapturedCameraView(eye, lookat) or false
-	local success = restored and (not snapshot_ok or reapplied)
+	if restored and eye and lookat then
+		ZoomPlus_ApplyCapturedCameraView(eye, lookat)
+	end
 
-	ZoomPlus_Debug(
-		"disable",
-		ZoomPlus_GetRTSCamera() or ZP,
-		path or "restore_preserving_camera",
-		success,
-		"captured_distance=" .. ZoomPlus_DebugValue(distance)
-			.. "; reapplied=" .. tostring(reapplied == true)
-			.. "; " .. ZoomPlus_DebugPropsSummary(original),
-		"disable_restore_preserving_camera:" .. tostring(path or "restore_preserving_camera"),
-		true
-	)
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		path or "restore_preserving_camera",
-		success,
-		"snapshot_ok=" .. tostring(snapshot_ok)
-			.. "; captured_distance=" .. ZoomPlus_DebugValue(distance)
-			.. "; set_props_ok=" .. tostring(restored == true)
-			.. "; reapplied_camera=" .. tostring(reapplied == true)
-			.. "; vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original and original.LookatDistZoomOut),
-		"restore_preserving_camera:" .. tostring(path or "restore_preserving_camera")
-	)
 	return restored
 end
 
@@ -850,45 +597,15 @@ end
 local function ZoomPlus_EnterOverviewModeForDisable(reason)
 	local current_map = rawget(_G, "CurrentMap")
 	if not current_map or not current_map.mapdata or not current_map.mapdata.IsAllowedToEnterOverview then
-		ZoomPlus_Debug(
-			"disable",
-			ZP,
-			"enter_overview_blocked_map_disallowed",
-			false,
-			"reason=" .. tostring(reason or "")
-		)
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"enter_overview_blocked_map_disallowed",
-			false,
-			"reason=" .. tostring(reason or ""),
-			"enter_overview:blocked_map"
-		)
 		return false
 	end
 
 	local get_interface = rawget(_G, "GetInGameInterface")
 	if type(get_interface) ~= "function" then
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"enter_overview_blocked_get_interface_missing",
-			false,
-			"reason=" .. tostring(reason or ""),
-			"enter_overview:get_interface_missing"
-		)
 		return false
 	end
 	local ok_igi, igi = pcall(get_interface)
 	if not ok_igi or type(igi) ~= "table" or type(igi.SetMode) ~= "function" then
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"enter_overview_blocked_igi_unavailable",
-			false,
-			"reason=" .. tostring(reason or "")
-				.. "; ok_igi=" .. tostring(ok_igi == true)
-				.. "; igi_type=" .. type(igi),
-			"enter_overview:igi_unavailable"
-		)
 		return false
 	end
 
@@ -898,21 +615,6 @@ local function ZoomPlus_EnterOverviewModeForDisable(reason)
 		and type(mode_dialog.AllowExitToOverview) == "function"
 		and not mode_dialog:AllowExitToOverview()
 	then
-		ZoomPlus_Debug(
-			"disable",
-			ZP,
-			"enter_overview_blocked_dialog_disallowed",
-			false,
-			"reason=" .. tostring(reason or "")
-		)
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"enter_overview_blocked_dialog_disallowed",
-			false,
-			"reason=" .. tostring(reason or "")
-				.. "; mode_dialog_class=" .. ZoomPlus_DebugUiLabel(mode_dialog),
-			"enter_overview:blocked_dialog"
-		)
 		return false
 	end
 
@@ -924,21 +626,6 @@ local function ZoomPlus_EnterOverviewModeForDisable(reason)
 	local ok_set = pcall(function()
 		igi:SetMode("overview")
 	end)
-	ZoomPlus_Debug(
-		"disable",
-		ZP,
-		"enter_overview_for_disable",
-		ok_set == true,
-		"reason=" .. tostring(reason or "")
-	)
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		"enter_overview_for_disable",
-		ok_set == true,
-		"reason=" .. tostring(reason or "")
-			.. "; mode_dialog=" .. ZoomPlus_DebugUiLabel(mode_dialog),
-		"enter_overview:set_mode"
-	)
 	return ok_set == true
 end
 
@@ -953,13 +640,6 @@ local function ZoomPlus_ScheduleClampOverviewSavedCamera(original)
 	local create_thread = rawget(_G, "CreateRealTimeThread")
 	local sleep = rawget(_G, "Sleep")
 	if type(create_thread) ~= "function" or type(sleep) ~= "function" then
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"defer_clamp_unavailable_no_thread",
-			false,
-			"vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original and original.LookatDistZoomOut),
-			"overview:defer_clamp:no_thread"
-		)
 		return false
 	end
 
@@ -973,28 +653,11 @@ local function ZoomPlus_ScheduleClampOverviewSavedCamera(original)
 			local clamped = ZoomPlus_ClampOverviewSavedCameraToVanilla()
 			if restored or clamped then
 				ZP.deferred_clamp_token = false
-				ZoomPlus_DebugDisable(
-					"scenario_mode_disable",
-					"deferred_overview_saved_camera_clamped",
-					true,
-					"restored_cache=" .. tostring(restored == true)
-						.. "; clamped=" .. tostring(clamped == true)
-						.. "; attempts=" .. tostring(attempts),
-					"overview:defer_clamp:done"
-				)
 				return
 			end
 			attempts = attempts + 1
 			if attempts >= ZOOM_DEFERRED_CLAMP_RETRY_COUNT then
 				ZP.deferred_clamp_token = false
-				ZoomPlus_DebugDisable(
-					"scenario_mode_disable",
-					"deferred_overview_saved_camera_clamp_timeout",
-					false,
-					"attempts=" .. tostring(attempts)
-						.. "; retry_ms=" .. tostring(ZOOM_DEFERRED_CLAMP_RETRY_MS),
-					"overview:defer_clamp:timeout"
-				)
 				return
 			end
 			sleep(ZOOM_DEFERRED_CLAMP_RETRY_MS)
@@ -1004,7 +667,7 @@ local function ZoomPlus_ScheduleClampOverviewSavedCamera(original)
 end
 
 -- Disable path used when the user is currently in (or transitioning into)
--- overview mode. The user wants to STAY in overview, so we leave the live
+--                                   -> STAY in overview; clamp saved_camera.
 -- cameraRTS alone (vanilla's overview-close will reset it via
 -- cameraRTS.SetProperties(1, defaults) at the tail of its transition) and only
 -- clamp the saved return camera so the eventual exit lands at vanilla max.
@@ -1022,17 +685,6 @@ local function ZoomPlus_StayInOverviewForDisable(original)
 		scheduled = ZoomPlus_ScheduleClampOverviewSavedCamera(original)
 	end
 
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		"stay_in_overview",
-		true,
-		"restored_now=" .. tostring(restored_now == true)
-			.. "; clamped_now=" .. tostring(clamped_now == true)
-			.. "; scheduled_deferred_clamp=" .. tostring(scheduled == true)
-			.. "; vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original and original.LookatDistZoomOut)
-			.. "; live_cameraRTS_untouched=true",
-		"stay_in_overview"
-	)
 	return true
 end
 
@@ -1047,14 +699,6 @@ ZoomPlus_RunDisableEvaluation = function(original, source)
 	local mode_string = ZoomPlus_GetInterfaceMode()
 	local overview_now = ZoomPlus_IsOverviewZoomActive() or mode_string == "overview"
 	if overview_now then
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"evaluation_overview_now",
-			true,
-			"source=" .. tostring(source or "")
-				.. "; mode=" .. ZoomPlus_DebugValue(mode_string),
-			"eval:overview_now:" .. tostring(source or "")
-		)
 		return ZoomPlus_StayInOverviewForDisable(original)
 	end
 
@@ -1063,39 +707,14 @@ ZoomPlus_RunDisableEvaluation = function(original, source)
 	local vanilla_max = (tonumber(original.LookatDistZoomOut) or 0) * guim_value
 	local beyond_vanilla = distance and vanilla_max > 0 and distance > vanilla_max
 
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		"evaluation_decision",
-		beyond_vanilla == true,
-		"source=" .. tostring(source or "")
-			.. "; mode=" .. ZoomPlus_DebugValue(mode_string)
-			.. "; current_distance=" .. ZoomPlus_DebugValue(distance)
-			.. "; vanilla_max=" .. ZoomPlus_DebugValue(vanilla_max)
-			.. "; beyond_vanilla=" .. tostring(beyond_vanilla == true)
-			.. "; vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original.LookatDistZoomOut)
-			.. "; guim=" .. ZoomPlus_DebugValue(guim_value),
-		"eval:decision:" .. tostring(source or "")
-	)
 
 	if beyond_vanilla then
 		if ZoomPlus_EnterOverviewModeForDisable("evaluation_" .. tostring(source or "beyond_vanilla")) then
 			return true
 		end
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"evaluation_enter_overview_failed_falling_back_to_preserve",
-			false,
-			"source=" .. tostring(source or "")
-				.. "; current_distance=" .. ZoomPlus_DebugValue(distance)
-				.. "; vanilla_max=" .. ZoomPlus_DebugValue(vanilla_max),
-			"eval:enter_overview_failed:" .. tostring(source or "")
-		)
 	end
 
-	return ZoomPlus_RestoreOriginalZoomPropertiesPreservingCamera(
-		original,
-		"preserve_zoom:" .. tostring(source or "")
-	)
+	return ZoomPlus_RestoreOriginalZoomPropertiesPreservingCamera(original)
 end
 
 -- Wait for the active non-overview camera transition to end, then re-run the
@@ -1106,13 +725,6 @@ ZoomPlus_ScheduleDeferredDisableEvaluation = function(original)
 	local create_thread = rawget(_G, "CreateRealTimeThread")
 	local sleep = rawget(_G, "Sleep")
 	if type(create_thread) ~= "function" or type(sleep) ~= "function" then
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"deferred_evaluation_unavailable_no_thread",
-			false,
-			"vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original and original.LookatDistZoomOut),
-			"deferred_eval:no_thread"
-		)
 		return ZoomPlus_RunDisableEvaluation(original, "deferred_no_thread_immediate")
 	end
 
@@ -1120,15 +732,6 @@ ZoomPlus_ScheduleDeferredDisableEvaluation = function(original)
 	ZP.deferred_eval_token = token
 	ZP.deferred_eval_original = ZoomPlus_CopyTable(original)
 
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		"deferred_evaluation_started",
-		true,
-		"vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original.LookatDistZoomOut)
-			.. "; retry_ms=" .. tostring(ZOOM_RESTORE_RETRY_MS)
-			.. "; retry_count=" .. tostring(ZOOM_RESTORE_RETRY_COUNT),
-		"deferred_eval:start"
-	)
 
 	pcall(create_thread, function(thread_token)
 		local attempts = 0
@@ -1165,25 +768,10 @@ function ZP.Enable(preserve_camera)
 		ZoomPlus_RestoreDefaultZoomOut()
 		ZoomPlus_RemoveOverviewReturnCameraHook()
 		ZoomPlus_RemoveZoomOutOverviewTriggerHook()
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"camera_modification_blocked",
-			false,
-			"preserve_camera=" .. tostring(preserve_camera),
-			"enable:no_modify"
-		)
 		return false
 	end
 	local original = ZoomPlus_CaptureOriginalZoomProperties()
 	if not original or type(original.LookatDistZoomOut) ~= "number" then
-		ZoomPlus_Debug("enable", ZP, "capture_original_failed", false, ZoomPlus_DebugPropsSummary(original))
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"capture_original_failed",
-			false,
-			"preserve_camera=" .. tostring(preserve_camera),
-			"enable:capture_failed"
-		)
 		return false
 	end
 
@@ -1203,18 +791,6 @@ function ZP.Enable(preserve_camera)
 	local overview_active = ZoomPlus_IsOverviewZoomActive() or mode_string == "overview"
 	local transition_active = ZoomPlus_IsCameraTransitionActive()
 
-	ZoomPlus_DebugEnable(
-		"scenario_mode_enable",
-		"entry_state",
-		true,
-		"overview_active=" .. tostring(overview_active == true)
-			.. "; mode=" .. ZoomPlus_DebugValue(mode_string)
-			.. "; transition_active=" .. tostring(transition_active == true)
-			.. "; preserve_camera=" .. tostring(preserve_camera)
-			.. "; vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original.LookatDistZoomOut)
-			.. "; new_LookatDistZoomOut=" .. ZoomPlus_DebugValue(props.LookatDistZoomOut),
-		"enable:entry"
-	)
 
 	-- CASE 1: User is in overview. Don't touch live cameraRTS or call SetProperties:
 	-- vanilla freezes the camera through the overview transition and re-deriving
@@ -1222,22 +798,7 @@ function ZP.Enable(preserve_camera)
 	-- patch const.DefaultCameraRTS (already done above) and cache the saved
 	-- camera so the disable path can clamp it back to vanilla on exit.
 	if overview_active then
-		local cached = ZoomPlus_CacheVanillaOverviewSavedCamera()
-		ZoomPlus_Debug(
-			"enable",
-			ZP,
-			"overview_cache_saved_camera",
-			true,
-			"cached=" .. tostring(cached == true) .. "; " .. ZoomPlus_DebugPropsSummary(props)
-		)
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"overview_active_cache_only",
-			true,
-			"cached_saved_camera=" .. tostring(cached == true)
-				.. "; live_cameraRTS_untouched=true",
-			"enable:overview"
-		)
+		ZoomPlus_CacheVanillaOverviewSavedCamera()
 		return true
 	end
 
@@ -1247,20 +808,6 @@ function ZP.Enable(preserve_camera)
 	-- produce a visible snap. const has already been patched, so the new far
 	-- limit is in effect for any post-transition zoom.
 	if transition_active then
-		ZoomPlus_Debug(
-			"enable",
-			ZP,
-			"defer_set_properties_while_transition_active",
-			true,
-			"preserve_camera=" .. tostring(preserve_camera) .. "; " .. ZoomPlus_DebugPropsSummary(props)
-		)
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"defer_during_transition",
-			true,
-			"live_cameraRTS_untouched=true; const_already_patched=true",
-			"enable:transition"
-		)
 		return true
 	end
 
@@ -1273,9 +820,9 @@ function ZP.Enable(preserve_camera)
 	-- pushes the camera back automatically (the "auto zoom-out on enable" the
 	-- user reported). The snapshot/restore costs one extra SetCamera(eye, lookat,
 	-- 0) and is invisible because it lands at the original viewpoint.
-	local pre_distance, pre_eye, pre_lookat
+	local pre_eye, pre_lookat
 	if preserve_camera then
-		pre_distance, pre_eye, pre_lookat = ZoomPlus_CaptureLiveCameraView()
+		pre_eye, pre_lookat = select(2, ZoomPlus_CaptureLiveCameraView())
 	end
 
 	if not ZoomPlus_SetRTSCameraZoomProperties(props) then
@@ -1283,70 +830,27 @@ function ZP.Enable(preserve_camera)
 		ZoomPlus_RestoreDefaultZoomOut()
 		ZoomPlus_RemoveOverviewReturnCameraHook()
 		ZoomPlus_RemoveZoomOutOverviewTriggerHook()
-		ZoomPlus_Debug("enable", ZP, "apply_zoom_plus_properties", false, ZoomPlus_DebugPropsSummary(props))
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"set_properties_failed",
-			false,
-			"preserve_camera=" .. tostring(preserve_camera)
-				.. "; pre_distance=" .. ZoomPlus_DebugValue(pre_distance),
-			"enable:set_properties_failed"
-		)
 		return false
 	end
 
 	if preserve_camera then
-		local snapshot_ok = pre_eye and pre_lookat and true or false
-		local reapplied = snapshot_ok and ZoomPlus_ApplyCapturedCameraView(pre_eye, pre_lookat) or false
-		local success = (not snapshot_ok) or reapplied
-		ZoomPlus_Debug(
-			"enable",
-			ZP,
-			"apply_zoom_plus_properties_preserving_camera",
-			success,
-			"preserve_camera=" .. tostring(preserve_camera)
-				.. "; pre_distance=" .. ZoomPlus_DebugValue(pre_distance)
-				.. "; reapplied=" .. tostring(reapplied == true)
-				.. "; " .. ZoomPlus_DebugPropsSummary(props)
-		)
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"selection_preserve_eye_lookat",
-			success,
-			"snapshot_ok=" .. tostring(snapshot_ok)
-				.. "; pre_distance=" .. ZoomPlus_DebugValue(pre_distance)
-				.. "; set_props_ok=true"
-				.. "; reapplied_camera=" .. tostring(reapplied == true),
-			"enable:selection_preserve"
-		)
+		if pre_eye and pre_lookat then
+			ZoomPlus_ApplyCapturedCameraView(pre_eye, pre_lookat)
+		end
 	else
-		local reapplied = ZoomPlus_ReapplyCurrentCameraForZoomProperties()
-		ZoomPlus_Debug(
-			"enable",
-			ZP,
-			"reapply_current_camera",
-			reapplied,
-			"preserve_camera=" .. tostring(preserve_camera) .. "; " .. ZoomPlus_DebugPropsSummary(props)
-		)
-		ZoomPlus_DebugEnable(
-			"scenario_mode_enable",
-			"selection_reapply_current",
-			reapplied == true,
-			"reapplied_camera=" .. tostring(reapplied == true),
-			"enable:selection_reapply"
-		)
+		ZoomPlus_ReapplyCurrentCameraForZoomProperties()
 	end
 	return true
 end
 
 -- Restore the RTS camera zoom properties captured before Zoom+. Dispatches to
 -- one of four cases:
---   1. No captured original         → strip hooks/diagnostics and bail.
+--   1. No captured original         -> strip hooks and bail.
 --   2. Overview active (or mode==overview) at disable time
---                                   → STAY in overview; clamp saved_camera.
+--                                   -> STAY in overview; clamp saved_camera.
 --   3. Non-overview transition active
---                                   → defer evaluation until transition ends.
---   4. Selection mode, no transition → run rule decision now (preserve current
+--                                   -> defer evaluation until transition ends.
+--   4. Selection mode, no transition -> run rule decision now (preserve current
 --                                       zoom, or enter overview if the user is
 --                                       beyond vanilla's far limit).
 function ZP.Disable()
@@ -1362,26 +866,14 @@ function ZP.Disable()
 		ZoomPlus_ClearTransientState()
 		ZoomPlus_RemoveOverviewReturnCameraHook()
 		ZoomPlus_RemoveZoomOutOverviewTriggerHook()
-		-- Always strip diagnostic wrappers on disable: leaving them installed makes
-		-- vanilla overview zoom-in stutter during the transition (every frame logs).
-		ZoomPlus_RemoveVanillaOverviewDiagnostics()
-		ZoomPlus_Debug("disable", ZP, "no_original_properties", true, "", "disable_no_original", true)
-		ZoomPlus_DebugDisable(
-			"scenario_mode_disable",
-			"no_original_properties",
-			true,
-			"zp_enabled_was=false; nothing_to_restore=true",
-			"disable:no_original"
-		)
 		return true
 	end
 
-	-- Mark Zoom+ disabled and detach its hooks/diagnostics first so subsequent
+	-- Mark Zoom+ disabled and detach its hooks first so subsequent
 	-- state checks read the live engine state, not Zoom+ wrappers.
 	ZP.enabled = false
 	ZoomPlus_RemoveOverviewReturnCameraHook()
 	ZoomPlus_RemoveZoomOutOverviewTriggerHook()
-	ZoomPlus_RemoveVanillaOverviewDiagnostics()
 
 	-- Cancel any in-flight deferred work from a previous disable so the new
 	-- evaluation owns the camera restoration end-to-end.
@@ -1395,16 +887,6 @@ function ZP.Disable()
 	local overview_active = ZoomPlus_IsOverviewZoomActive() or mode_string == "overview"
 	local transition_active = ZoomPlus_IsCameraTransitionActive()
 
-	ZoomPlus_DebugDisable(
-		"scenario_mode_disable",
-		"entry_state",
-		true,
-		"overview_active=" .. tostring(overview_active == true)
-			.. "; mode=" .. ZoomPlus_DebugValue(mode_string)
-			.. "; transition_active=" .. tostring(transition_active == true)
-			.. "; vanilla_LookatDistZoomOut=" .. ZoomPlus_DebugValue(original.LookatDistZoomOut),
-		"disable:entry"
-	)
 
 	-- CASE 2: User is in overview (or transitioning into overview). Stay there.
 	-- Vanilla's overview-close will reset live cameraRTS at the tail of its
@@ -1440,252 +922,6 @@ function ZP.IsEnabled()
 	return ZP.enabled and ZoomPlus_CanModifyCamera() and true or false
 end
 
-local function ZoomPlus_SetPropertiesArgsSummary(first, second, third)
-	local props = type(third) == "table" and third
-		or type(second) == "table" and second
-		or type(first) == "table" and first
-		or false
-	return "args=" .. ZoomPlus_DebugValue(first)
-		.. "," .. ZoomPlus_DebugValue(second)
-		.. "," .. ZoomPlus_DebugValue(third)
-		.. "; arg_props{" .. ZoomPlus_DebugPropsSummary(props) .. "}"
-end
-
-ZoomPlus_InstallVanillaOverviewDiagnostics = function(reason)
-	if not ZoomPlus_DebugEnabled(true) then
-		return false
-	end
-
-	ZP.vanilla_diagnostics_armed = true
-	local installed = false
-	local overview = rawget(_G, "OverviewModeDialog")
-	if type(overview) == "table" then
-		if
-			type(overview.CheckBelowZoomLimit) == "function"
-			and overview.CheckBelowZoomLimit ~= ZP.vanilla_diag_check_below_zoom_limit_wrapper
-		then
-			ZP.vanilla_diag_original_check_below_zoom_limit = overview.CheckBelowZoomLimit
-			ZP.vanilla_diag_check_below_zoom_limit_wrapper = function(self, ...)
-				local should_log = ZoomPlus_ShouldLogVanillaDiagnostics()
-				if should_log then
-					ZoomPlus_Debug(
-						"vanilla_overview_zoom_in",
-						self,
-						"CheckBelowZoomLimit before",
-						true,
-						ZoomPlus_DebugOverviewExtra(self, "reason=" .. tostring(reason or "")),
-						nil,
-						true
-					)
-				end
-				local result, r2, r3, r4 = ZP.vanilla_diag_original_check_below_zoom_limit(self, ...)
-				if should_log then
-					ZoomPlus_Debug(
-						"vanilla_overview_zoom_in",
-						self,
-						"CheckBelowZoomLimit after",
-						true,
-						"result=" .. ZoomPlus_DebugValue(result)
-							.. "; " .. ZoomPlus_DebugOverviewExtra(self, ""),
-						nil,
-						true
-					)
-				end
-				return result, r2, r3, r4
-			end
-			overview.CheckBelowZoomLimit = ZP.vanilla_diag_check_below_zoom_limit_wrapper
-			installed = true
-		end
-
-		if type(overview.Close) == "function" and overview.Close ~= ZP.vanilla_diag_close_wrapper then
-			ZP.vanilla_diag_original_close = overview.Close
-			ZP.vanilla_diag_close_wrapper = function(self, ...)
-				local should_log = ZoomPlus_ShouldLogVanillaDiagnostics()
-				if should_log then
-					ZoomPlus_Debug(
-						"vanilla_overview_close",
-						self,
-						"OverviewModeDialog.Close before",
-						true,
-						ZoomPlus_DebugOverviewExtra(self, "reason=" .. tostring(reason or "")),
-						nil,
-						true
-					)
-				end
-				local result, r2, r3, r4 = ZP.vanilla_diag_original_close(self, ...)
-				if should_log then
-					ZoomPlus_Debug(
-						"vanilla_overview_close",
-						self,
-						"OverviewModeDialog.Close after",
-						true,
-						"result=" .. ZoomPlus_DebugValue(result)
-							.. "; " .. ZoomPlus_DebugOverviewExtra(self, ""),
-						nil,
-						true
-					)
-				end
-				return result, r2, r3, r4
-			end
-			overview.Close = ZP.vanilla_diag_close_wrapper
-			installed = true
-		end
-	end
-
-	local camera_rts = ZoomPlus_GetRTSCamera()
-	if
-		camera_rts
-		and type(camera_rts.SetProperties) == "function"
-		and camera_rts.SetProperties ~= ZP.vanilla_diag_camera_set_properties_wrapper
-	then
-		ZP.vanilla_diag_original_camera_set_properties = camera_rts.SetProperties
-		ZP.vanilla_diag_camera_set_properties_wrapper = function(first, second, third, ...)
-			local should_log = ZoomPlus_ShouldLogVanillaDiagnostics()
-			if should_log then
-				ZoomPlus_Debug(
-					"vanilla_camera_set_properties",
-					camera_rts,
-					"cameraRTS.SetProperties before",
-					true,
-					ZoomPlus_SetPropertiesArgsSummary(first, second, third)
-						.. "; " .. ZoomPlus_DebugCameraTablesSummary(),
-					nil,
-					true
-				)
-			end
-			local result, r2, r3, r4 = ZP.vanilla_diag_original_camera_set_properties(first, second, third, ...)
-			if should_log then
-				ZoomPlus_Debug(
-					"vanilla_camera_set_properties",
-					camera_rts,
-					"cameraRTS.SetProperties after",
-					true,
-					"result=" .. ZoomPlus_DebugValue(result)
-						.. "; " .. ZoomPlus_DebugCameraTablesSummary(),
-					nil,
-					true
-				)
-			end
-			return result, r2, r3, r4
-		end
-		camera_rts.SetProperties = ZP.vanilla_diag_camera_set_properties_wrapper
-		installed = true
-	end
-
-	local igi_class = rawget(_G, "InGameInterface")
-	if
-		type(igi_class) == "table"
-		and type(igi_class.SetMode) == "function"
-		and igi_class.SetMode ~= ZP.vanilla_diag_igi_set_mode_wrapper
-	then
-		ZP.vanilla_diag_original_igi_set_mode = igi_class.SetMode
-		ZP.vanilla_diag_igi_set_mode_wrapper = function(self, mode, context, ...)
-			local should_log = ZoomPlus_ShouldLogVanillaDiagnostics()
-			if should_log then
-				ZoomPlus_Debug(
-					"vanilla_interface_set_mode",
-					self,
-					"InGameInterface.SetMode before",
-					true,
-					"target_mode=" .. ZoomPlus_DebugValue(mode)
-						.. "; context=" .. ZoomPlus_DebugUiLabel(context)
-						.. "; " .. ZoomPlus_DebugCameraTablesSummary(),
-					nil,
-					true
-				)
-			end
-			local result, r2, r3, r4 = ZP.vanilla_diag_original_igi_set_mode(self, mode, context, ...)
-			if should_log then
-				ZoomPlus_Debug(
-					"vanilla_interface_set_mode",
-					self,
-					"InGameInterface.SetMode after",
-					true,
-					"target_mode=" .. ZoomPlus_DebugValue(mode)
-						.. "; result=" .. ZoomPlus_DebugValue(result)
-						.. "; " .. ZoomPlus_DebugCameraTablesSummary(),
-					nil,
-					true
-				)
-			end
-			return result, r2, r3, r4
-		end
-		igi_class.SetMode = ZP.vanilla_diag_igi_set_mode_wrapper
-		installed = true
-	end
-
-	ZoomPlus_Debug(
-		"diagnostics",
-		ZP,
-		"install_vanilla_overview_diagnostics",
-		installed,
-		"reason=" .. tostring(reason or "") .. "; " .. ZoomPlus_DebugCameraTablesSummary(),
-		"install_vanilla_overview_diagnostics",
-		true
-	)
-	return installed
-end
-
-ZoomPlus_RemoveVanillaOverviewDiagnostics = function()
-	local restored_check_below = false
-	local restored_close = false
-	local restored_set_properties = false
-	local restored_set_mode = false
-	local overview = rawget(_G, "OverviewModeDialog")
-	if type(overview) == "table" then
-		if
-			ZP.vanilla_diag_check_below_zoom_limit_wrapper
-			and overview.CheckBelowZoomLimit == ZP.vanilla_diag_check_below_zoom_limit_wrapper
-		then
-			overview.CheckBelowZoomLimit = ZP.vanilla_diag_original_check_below_zoom_limit
-			restored_check_below = true
-		end
-		if ZP.vanilla_diag_close_wrapper and overview.Close == ZP.vanilla_diag_close_wrapper then
-			overview.Close = ZP.vanilla_diag_original_close
-			restored_close = true
-		end
-	end
-
-	local camera_rts = ZoomPlus_GetRTSCamera()
-	if
-		camera_rts
-		and ZP.vanilla_diag_camera_set_properties_wrapper
-		and camera_rts.SetProperties == ZP.vanilla_diag_camera_set_properties_wrapper
-	then
-		camera_rts.SetProperties = ZP.vanilla_diag_original_camera_set_properties
-		restored_set_properties = true
-	end
-
-	local igi_class = rawget(_G, "InGameInterface")
-	if
-		type(igi_class) == "table"
-		and ZP.vanilla_diag_igi_set_mode_wrapper
-		and igi_class.SetMode == ZP.vanilla_diag_igi_set_mode_wrapper
-	then
-		igi_class.SetMode = ZP.vanilla_diag_original_igi_set_mode
-		restored_set_mode = true
-	end
-
-	if restored_check_below then
-		ZP.vanilla_diag_original_check_below_zoom_limit = nil
-		ZP.vanilla_diag_check_below_zoom_limit_wrapper = nil
-	end
-	if restored_close then
-		ZP.vanilla_diag_original_close = nil
-		ZP.vanilla_diag_close_wrapper = nil
-	end
-	if restored_set_properties then
-		ZP.vanilla_diag_original_camera_set_properties = nil
-		ZP.vanilla_diag_camera_set_properties_wrapper = nil
-	end
-	if restored_set_mode then
-		ZP.vanilla_diag_original_igi_set_mode = nil
-		ZP.vanilla_diag_igi_set_mode_wrapper = nil
-	end
-	ZP.vanilla_diagnostics_armed = false
-	return true
-end
-
 -- ---------------------------------------------------------------------------
 -- Hook installation
 -- ---------------------------------------------------------------------------
@@ -1714,17 +950,8 @@ ZoomPlus_InstallOverviewReturnCameraHook = function()
 	if type(overview.CheckBelowZoomLimit) == "function" then
 		ZP.original_overview_check_below_zoom_limit = overview.CheckBelowZoomLimit
 		ZP.overview_check_below_zoom_limit_wrapper = function(self, ...)
-			local adjusted = ZoomPlus_ApplyOverviewReturnCamera(self)
-			local result = ZP.original_overview_check_below_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_in",
-				self,
-				"overview_check_below_limit",
-				result == "break",
-				"return_camera_adjusted=" .. tostring(adjusted == true)
-					.. "; result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			ZoomPlus_ApplyOverviewReturnCamera(self)
+			return ZP.original_overview_check_below_zoom_limit(self, ...)
 		end
 		overview.CheckBelowZoomLimit = ZP.overview_check_below_zoom_limit_wrapper
 	end
@@ -1785,62 +1012,22 @@ ZoomPlus_InstallZoomOutOverviewTriggerHook = function()
 		local current_map = rawget(_G, "CurrentMap")
 		local changing_map = rawget(_G, "ChangingMap")
 		if editor_state and editor_state.Active or rawget(_G, "CameraTransitionThread") or changing_map then
-			local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_out",
-				self,
-				"selection_original_blocked_by_editor_or_transition",
-				result == "break",
-				"result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 		if not camera_rts or type(camera_rts.IsActive) ~= "function" or not camera_rts.IsActive() then
-			local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_out",
-				self,
-				"selection_original_camera_inactive",
-				result == "break",
-				"result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 		if not current_map or not current_map.mapdata or not current_map.mapdata.IsAllowedToEnterOverview then
-			local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_out",
-				self,
-				"selection_original_overview_not_allowed",
-				result == "break",
-				"result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 		if type(self.AllowExitToOverview) == "function" and not self:AllowExitToOverview() then
-			local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_out",
-				self,
-				"selection_original_exit_to_overview_disallowed",
-				result == "break",
-				"result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 
 		local get_zoom_limits = camera_rts.GetZoomLimits
 		local get_zoom = camera_rts.GetZoom
 		if type(get_zoom_limits) ~= "function" or type(get_zoom) ~= "function" then
-			local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-			ZoomPlus_Debug(
-				"mouse_wheel_zoom_out",
-				self,
-				"selection_original_zoom_api_missing",
-				result == "break",
-				"result=" .. ZoomPlus_DebugValue(result)
-			)
-			return result
+			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 
 		local _, max_zoom = get_zoom_limits()
@@ -1856,31 +1043,11 @@ ZoomPlus_InstallZoomOutOverviewTriggerHook = function()
 			ZP.last_overview_zoom_out = t
 			if ZP.overview_zoom_out_count > ZOOM_OUT_OVERVIEW_REPEAT_COUNT and self.parent then
 				self.parent:SetMode("overview")
-				ZoomPlus_Debug(
-					"mouse_wheel_zoom_out",
-					self,
-					"selection_enter_overview_after_repeat",
-					true,
-					"zoom=" .. ZoomPlus_DebugValue(zoom)
-						.. "; max_zoom=" .. ZoomPlus_DebugValue(max_zoom)
-						.. "; count=" .. ZoomPlus_DebugValue(ZP.overview_zoom_out_count)
-				)
 				return "break"
 			end
 		end
 
-		local result = ZP.original_selection_check_above_zoom_limit(self, ...)
-		ZoomPlus_Debug(
-			"mouse_wheel_zoom_out",
-			self,
-			"selection_original_after_zoom_plus_limit_check",
-			result == "break",
-			"zoom=" .. ZoomPlus_DebugValue(zoom)
-				.. "; max_zoom=" .. ZoomPlus_DebugValue(max_zoom)
-				.. "; count=" .. ZoomPlus_DebugValue(ZP.overview_zoom_out_count)
-				.. "; result=" .. ZoomPlus_DebugValue(result)
-		)
-		return result
+		return ZP.original_selection_check_above_zoom_limit(self, ...)
 	end
 	selection.CheckAboveZoomLimit = ZP.selection_check_above_zoom_limit_wrapper
 
@@ -1913,56 +1080,23 @@ function ZP.Reapply()
 		return true
 	end
 	if not ZP.enabled then
-		ZoomPlus_Debug("reapply", ZP, "skip_zoom_plus_disabled", true, "")
 		return true
 	end
 	if ZoomPlus_IsCameraTransitionActive() then
-		ZoomPlus_Debug("reapply", ZP, "skip_while_transition_active", true, "")
 		return true
 	end
 	if ZoomPlus_IsOverviewZoomActive() then
-		ZoomPlus_Debug("reapply", ZP, "skip_while_overview_active", true, "")
 		return true
 	end
 	local camera_rts = ZoomPlus_GetRTSCamera()
 	if camera_rts and type(camera_rts.IsMoving) == "function" and camera_rts.IsMoving() then
-		ZoomPlus_Debug("reapply", ZP, "skip_while_camera_moving", true, "")
 		return true
 	end
-	local ok = ZP.Enable("preserve camera")
-	ZoomPlus_Debug("reapply", ZP, "enable_preserve_camera", ok, "")
-	return ok
-end
-
-ZoomPlus_RemoveWheelEventDebugHook = function()
-	local x_desktop = rawget(_G, "XDesktop")
-	if type(x_desktop) ~= "table" then
-		return false
-	end
-	if ZP.wheel_event_debug_chained and type(ZP.original_xdesktop_mouse_event) == "function" then
-		if not ZP.debug_xdesktop_mouse_event_wrapper or x_desktop.MouseEvent == ZP.debug_xdesktop_mouse_event_wrapper then
-			x_desktop.MouseEvent = ZP.original_xdesktop_mouse_event
-		end
-	end
-	ZP.debug_xdesktop_mouse_event_wrapper = nil
-	ZP.original_xdesktop_mouse_event = nil
-	ZP.wheel_event_debug_chained = false
-	return true
-end
-
--- Public access to the diagnostic-wrapper removal. Called from the Scenario Editor
--- mode-exit path to guarantee no Zoom+ wrapper outlives a scenario session.
-function ZP.RemoveDiagnosticWrappers()
-	return ZoomPlus_RemoveVanillaOverviewDiagnostics()
+	return ZP.Enable("preserve camera")
 end
 
 -- Initialize Zoom+ lifecycle hooks.
 function ZP.Init()
-	ZoomPlus_RemoveWheelEventDebugHook()
-	-- Diagnostics are opt-in only; never auto-reinstall them at init time. A separate
-	-- explicit ZP.RemoveDiagnosticWrappers() / ZoomPlus_InstallVanillaOverviewDiagnostics()
-	-- call must be made by debugging code if it wants the verbose wrappers back.
-	ZoomPlus_RemoveVanillaOverviewDiagnostics()
 	if not ZoomPlus_CanModifyCamera() then
 		if ZP.enabled then
 			ZP.Disable()

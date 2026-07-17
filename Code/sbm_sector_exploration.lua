@@ -21,7 +21,6 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local ClassTable = Engine.ClassTable
 local ClampNumber = Engine.ClampNumber
-local Round = Engine.Round
 local SECTOR_PATCH_VERSION = SuperBigMap.SECTOR_PATCH_VERSION or 21
 
 local Grid = SuperBigMap.SectorGrid
@@ -42,146 +41,12 @@ local function UndergroundExplorationUiOn(city)
 	return ok and map and env == "Underground" and map.SuperBigMapExpanded == true
 end
 
-local function DebugPrint(message)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", message)
-	end
-end
-
--- Init-sequence trace (gated on Config.DEBUG_INIT_SEQUENCE via DebugLog.InitSeq).
-local function InitSeq(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and type(DebugLog.InitSeq) == "function" then
-		DebugLog.InitSeq(message, data)
-	end
-end
-
--- One-shot verbose diagnostics for the sector-init flow, gated on
--- Config.SHOW_SECTOR_DIAGNOSTICS. These print whether or not the normal
--- DebugLog gate would have hidden them, because they're collected to diagnose
--- *missing* events (e.g. an InitSectors call we don't see in the log).
-local function DiagOn()
-	local DebugLog = SuperBigMap.DebugLog
-	return DebugLog ~= nil and DebugLog.On("Sector") == true
-end
-
-local function DiagPrint(message)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", message)
-	end
-end
-
--- Inspect a city's MapSectors and return a one-line summary: column count, row
--- count, first sector's area dimensions, MapArea bounds. The width/height of
--- sector[1][1] reveals whether the engine pre-built sectors with a different
--- size than our layout expects (e.g. vanilla 12288/10 = 1228.8-tile sectors on
--- a BlankBig map vs. our expected 410-tile vanilla-sized sectors).
-local function DescribeCityState(city)
-	if not city then
-		return "city=nil"
-	end
-	local sectors = type(city.MapSectors) == "table" and city.MapSectors or false
-	local cols = 0
-	if sectors then
-		while type(sectors[cols + 1]) == "table" do
-			cols = cols + 1
-		end
-	end
-	local rows = 0
-	if cols > 0 and type(sectors[1]) == "table" then
-		while sectors[1][rows + 1] ~= nil do
-			rows = rows + 1
-		end
-	end
-
-	local size_x, size_y = "?", "?"
-	if cols > 0 and rows > 0 then
-		local first = sectors[1][1]
-		if first and first.area then
-			local ok_x, sx = pcall(first.area.sizex, first.area)
-			local ok_y, sy = pcall(first.area.sizey, first.area)
-			if ok_x then size_x = tostring(sx) end
-			if ok_y then size_y = tostring(sy) end
-		end
-	end
-
-	local map_area = "?"
-	if city.MapArea then
-		local ok, sx = pcall(city.MapArea.sizex, city.MapArea)
-		local ok2, sy = pcall(city.MapArea.sizey, city.MapArea)
-		if ok and ok2 then
-			map_area = tostring(sx) .. "x" .. tostring(sy)
-		end
-	end
-
-	return string.format(
-		"city=%s MapSectors=%dx%d sector[1][1]_size=%sx%s MapArea_size=%s",
-		tostring(city), cols, rows, size_x, size_y, map_area
-	)
-end
-
--- Compare exploration_class.InitSectors to the original we saved in State, and
--- report whether our patched function is still installed. Important because if
--- something (engine reload, another mod, our own restore path) replaced the
--- class function, InitSectors would not call our patched version.
-local function DescribeInitSectorsBinding()
-	local cls = ClassTable("Exploration")
-	local State = SuperBigMap.State or {}
-	if not cls then
-		return "exploration_class=nil"
-	end
-	local live = cls.InitSectors
-	local saved_original = State.original_exploration_init_sectors
-	return string.format(
-		"exploration_class.InitSectors=%s saved_original=%s same_as_original=%s",
-		tostring(live),
-		tostring(saved_original),
-		tostring(live == saved_original)
-	)
-end
-
-local function DiagSnapshot(label, map)
-	if not DiagOn() then
-		return
-	end
-	local city = map and map.City
-	DiagPrint(string.format(
-		"%s: map=%s env=%s mapdata=%sx%s terrain=%sx%s | %s | %s",
-		tostring(label),
-		tostring(map and map.name or (map and map.mapdata and map.mapdata.id) or "?"),
-		tostring(map and map.mapdata and map.mapdata.Environment),
-		tostring(map and map.mapdata and map.mapdata.Width),
-		tostring(map and map.mapdata and map.mapdata.Height),
-		tostring(map and map.Width),
-		tostring(map and map.Height),
-		DescribeCityState(city),
-		DescribeInitSectorsBinding()
-	))
-end
-
 local function cfg_bool(key, default)
 	local value = (SuperBigMap.Config or {})[key]
 	if type(value) == "boolean" then
 		return value
 	end
 	return default
-end
-
--- Gated sector-SIZING diagnostics (config.DebugSectorSizing), de-duplicated per
--- tag so cursor-driven calls don't spam. Pair with sbm_sector_grid's SizingDiag.
-local sizing_diag_last = {}
-local function SizingDiag(tag, msg)
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and DebugLog.On("SectorSizing")) then
-		return
-	end
-	if sizing_diag_last[tag] == msg then
-		return
-	end
-	sizing_diag_last[tag] = msg
-	DebugLog.Info("SectorSizing", msg, { tag = "expl/" .. tostring(tag) })
 end
 
 -- GetMapSectorXY is called from engine hex searches once per tested hex. Recomputing the full
@@ -225,9 +90,6 @@ local function GetCachedSectorLookupLayout(city, map)
 				count_y = layout.count_y,
 				layout = layout,
 			}
-			SizingDiag("GetMapSectorXYLayoutCache", string.format(
-				"cached completed %sx%s lookup layout for city=%s map=%s",
-				tostring(layout.count_x), tostring(layout.count_y), tostring(city), tostring(map)))
 		end
 	end
 	return layout
@@ -244,14 +106,6 @@ local function LiveSectorSize(city)
 		end
 	end
 	return nil
-end
-
-local function cfg_number(key, default, min_value)
-	local value = (SuperBigMap.Config or {})[key]
-	if type(value) == "number" and (min_value == nil or value >= min_value) then
-		return value
-	end
-	return default
 end
 
 local function PickFromList(list, trand, weight_func)
@@ -325,10 +179,6 @@ local function BuildFastInitialReveal(original_initial_reveal)
 		local has_metals, has_concrete = {}, {}
 		local qty_per_sector = {}
 		local deposit_resources = Global("GroupResourceIds") and GroupResourceIds.DepositResources or {}
-		local progress_interval = math.floor(cfg_number("SECTOR_INITIAL_REVEAL_PROGRESS_INTERVAL", 50, 1))
-
-		DebugPrint("fast initial reveal evaluating " .. tostring(#eligible) .. " candidate sectors")
-
 		for i = 1, #eligible do
 			local sector = eligible[i]
 			local qtys = {}
@@ -356,9 +206,6 @@ local function BuildFastInitialReveal(original_initial_reveal)
 				has_concrete[#has_concrete + 1] = sector
 			end
 			qty_per_sector[sector.id] = qtys
-			if progress_interval > 0 and i % progress_interval == 0 then
-				DebugPrint("fast initial reveal progress " .. tostring(i) .. "/" .. tostring(#eligible))
-			end
 		end
 
 		local function weight_func(sector)
@@ -400,11 +247,6 @@ local function BuildFastInitialReveal(original_initial_reveal)
 			AddSurfaceSpawnPositions(revealed[i], spawn_positions)
 		end
 
-		DebugPrint(string.format(
-			"fast initial reveal selected %s sector(s) from %s candidates",
-			tostring(#revealed),
-			tostring(#eligible)
-		))
 
 		return revealed, spawn_positions
 	end
@@ -432,32 +274,9 @@ local function BuildSector(map, city, row, col, layout, orient, unbuildable_z, e
 	return sector
 end
 
-local function InterfaceMode()
-	local get_mode = Global("GetInGameInterfaceMode")
-	if type(get_mode) == "function" then
-		return SafeCall(get_mode)
-	end
-	return nil
-end
-
 local SectorDecalClasses = { "SectorUnexplored", "SectorScanned" }
 local SectorDecalEntitySet = { SectorUnexplored = true, SectorScanned = true }
 local SectorSelectionClasses = { "SectorRadius", "SectorTarget" }
-
-local function SectorVisualDiagOn()
-	local Config = SuperBigMap.Config
-	return Config and Config.SHOW_SECTOR_VISUAL_DIAGNOSTICS == true
-end
-
-local function VisualDiag(message, data)
-	if not SectorVisualDiagOn() then
-		return
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", message, data)
-	end
-end
 
 local function ResolveVisualMap(city, map)
 	if map then
@@ -472,39 +291,26 @@ local function ResolveVisualMap(city, map)
 	return Global("CurrentMap")
 end
 
-local function ForEachMapObjectByClass(map, classes, callback, reason, filter)
+local function ForEachMapObjectByClass(map, classes, callback, _, filter)
 	if not map or type(map.MapForEach) ~= "function" then
-		VisualDiag("map object scan skipped", { reason = reason or "?", cause = "no map.MapForEach" })
 		return 0
 	end
 
 	local objects = {}
 	for i = 1, #classes do
 		local class = classes[i]
-		local ok, err = pcall(map.MapForEach, map, "map", class, function(obj)
+		pcall(map.MapForEach, map, "map", class, function(obj)
 			objects[#objects + 1] = obj
 		end)
-		if not ok then
-			VisualDiag("map object scan failed", {
-				reason = reason or "?",
-				class = class,
-				error = err,
-			})
-		end
 	end
 
 	local count = 0
 	for i = 1, #objects do
 		local obj = objects[i]
 		if IsValid(obj) and (not filter or filter(obj)) then
-			local ok, err = pcall(callback, obj)
+			local ok = pcall(callback, obj)
 			if ok then
 				count = count + 1
-			else
-				VisualDiag("map object callback failed", {
-					reason = reason or "?",
-					error = err,
-				})
 			end
 		end
 	end
@@ -526,13 +332,6 @@ local function ForEachSectorDecalObject(map, callback, reason)
 	end
 
 	local fallback_count = ForEachMapObjectByClass(map, { "Decal" }, callback, reason, IsSectorDecalEntity)
-	if fallback_count > 0 then
-		VisualDiag("map sector decal fallback matched", {
-			reason = reason or "?",
-			count = fallback_count,
-			mode = InterfaceMode(),
-		})
-	end
 	return fallback_count
 end
 
@@ -545,11 +344,6 @@ local function HideSectorDecals(city, reason)
 			count = count + 1
 		end
 	end)
-	VisualDiag("sector decal refs hidden", {
-		reason = reason or "?",
-		count = count,
-		mode = InterfaceMode(),
-	})
 	return count
 end
 
@@ -558,11 +352,6 @@ local function HideSectorDecalObjects(city, reason, map)
 	local count = ForEachSectorDecalObject(map, function(obj)
 		obj:ClearEnumFlags(const.efVisible)
 	end, reason)
-	VisualDiag("map sector decal objects hidden", {
-		reason = reason or "?",
-		count = count,
-		mode = InterfaceMode(),
-	})
 	return count
 end
 
@@ -571,36 +360,20 @@ local function HideOverviewSelectionObjects(reason, map)
 	local count = ForEachMapObjectByClass(map, SectorSelectionClasses, function(obj)
 		obj:ClearEnumFlags(const.efVisible)
 	end, reason)
-	VisualDiag("overview selection objects hidden", {
-		reason = reason or "?",
-		count = count,
-		mode = InterfaceMode(),
-	})
 	return count
 end
 
 local function HideSectorVisuals(city, reason)
 	local map = ResolveVisualMap(city)
-	local hidden_decal_refs = HideSectorDecals(city, reason)
+	HideSectorDecals(city, reason)
 	local hidden_decal_objects = HideSectorDecalObjects(city, reason, map)
 	local hidden_selection = HideOverviewSelectionObjects(reason, map)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Sector", "overview sector visuals hidden", {
-			reason = reason or "?",
-			sector_decal_refs = hidden_decal_refs,
-			sector_decal_objects = hidden_decal_objects,
-			selection_objects = hidden_selection,
-			mode = InterfaceMode(),
-		})
-	end
 	return hidden_decal_objects, hidden_selection
 end
 
 local function DestroySectorDecalRefs(city, reason)
 	local done_object = Global("DoneObject")
 	if type(done_object) ~= "function" then
-		VisualDiag("sector decal ref destroy skipped", { reason = reason or "?", cause = "no DoneObject" })
 		return 0
 	end
 
@@ -613,52 +386,25 @@ local function DestroySectorDecalRefs(city, reason)
 			count = count + 1
 		end
 	end)
-	VisualDiag("sector decal refs destroyed before rebuild", {
-		reason = reason or "?",
-		count = count,
-		mode = InterfaceMode(),
-	})
 	return count
 end
 
 local function DestroySectorDecalObjects(map, reason)
 	local done_object = Global("DoneObject")
 	if type(done_object) ~= "function" then
-		VisualDiag("map sector decal destroy skipped", { reason = reason or "?", cause = "no DoneObject" })
 		return 0
 	end
 
 	local count = ForEachSectorDecalObject(map, function(obj)
 		done_object(obj)
 	end, reason)
-	VisualDiag("map sector decal objects destroyed before rebuild", {
-		reason = reason or "?",
-		count = count,
-		mode = InterfaceMode(),
-	})
 	return count
 end
 
 local function DestroyExistingSectorVisuals(city, map, reason)
 	map = ResolveVisualMap(city, map)
-	InitSeq("sector visuals about to be destroyed", {
-		reason = reason or "?",
-		grid = DescribeCityState(city),
-		mode = InterfaceMode(),
-	})
 	local ref_count = DestroySectorDecalRefs(city, reason)
 	local object_count = DestroySectorDecalObjects(map, reason)
-	InitSeq("sector visuals destroyed", {
-		reason = reason or "?",
-		sector_decal_refs = ref_count,
-		sector_decal_objects = object_count,
-	})
-	VisualDiag("sector visuals destroyed before rebuild", {
-		reason = reason or "?",
-		sector_decal_refs = ref_count,
-		sector_decal_objects = object_count,
-		mode = InterfaceMode(),
-	})
 	return ref_count, object_count
 end
 
@@ -684,26 +430,16 @@ end
 local function InstallBasicSectorPatch()
 	local State = SuperBigMap.State
 
-	DebugPrint(string.format(
-		"sector basic patch attempt v%s: GetMapSectorTileSize=%s GetMapSectorXY=%s InitialReveal=%s",
-		tostring(SECTOR_PATCH_VERSION),
-		type(Global("GetMapSectorTileSize")),
-		type(Global("GetMapSectorXY")),
-		type(Global("InitialReveal"))
-	))
 
 	if State.sector_basic_patch_version == SECTOR_PATCH_VERSION then
-		DebugPrint("sector basic functions already patched")
 		return true
 	end
 
 	if type(Global("GetMapSectorTileSize")) ~= "function" then
-		DebugPrint("sector patch waiting for GetMapSectorTileSize")
 		return false
 	end
 
 	if type(Global("GetMapSectorXY")) ~= "function" then
-		DebugPrint("sector patch waiting for GetMapSectorXY")
 		return false
 	end
 
@@ -721,20 +457,12 @@ local function InstallBasicSectorPatch()
 			local city = map and map.City
 			local layout = city and GetCachedSectorLookupLayout(city, map) or Grid.ResolveSectorLayout(map)
 			local step = layout.step_x
-			SizingDiag("GetMapSectorTileSize", string.format("GetMapSectorTileSize CUSTOM -> step_x=%s", tostring(Round(step))))
 			return step
 		end
 		local vanilla = original_tile_size(map)
-		SizingDiag("GetMapSectorTileSize", string.format(
-			"GetMapSectorTileSize VANILLA -> %s (UseCustomSectorsForMap=false)", tostring(vanilla)))
 		return vanilla
 	end
 
-	-- Diagnostic state for GetMapSectorXY: log once per (col,row) pair when the
-	-- cursor moves to a new sector cell. Reveals what our layout-based math says
-	-- vs. what city.MapSectors actually returns (e.g. nil if MapSectors only has
-	-- 10 rows but our layout says col=15).
-	local last_logged_xy = false
 	function GetMapSectorXY(city, mx, my)
 		-- The completed expanded grid is the steady-state hot path. Avoid even resolving the map
 		-- or re-running the custom-map predicate for every hex tested by HexGridFindBuildable.
@@ -752,35 +480,6 @@ local function InstallBasicSectorPatch()
 		local row = ClampNumber(1 + math.floor(y / layout.step_y), 1, layout.count_y)
 		local sector_col = city.MapSectors and city.MapSectors[col]
 		local sector = sector_col and sector_col[row]
-
-		if DiagOn() then
-			local key = tostring(col) .. "," .. tostring(row)
-			if key ~= last_logged_xy then
-				last_logged_xy = key
-				local cols = 0
-				if city and type(city.MapSectors) == "table" then
-					while type(city.MapSectors[cols + 1]) == "table" do
-						cols = cols + 1
-					end
-				end
-				local rows = 0
-				if cols > 0 and type(city.MapSectors[1]) == "table" then
-					while city.MapSectors[1][rows + 1] ~= nil do
-						rows = rows + 1
-					end
-				end
-				print(string.format(
-					"[Super Big Map] SectorDiag: GetMapSectorXY mx=%s my=%s border=%s step=%s layout=%sx%s -> col=%s row=%s sector=%s MapSectors=%dx%d",
-					tostring(mx), tostring(my),
-					tostring(layout.border), tostring(Round(layout.step_x)),
-					tostring(layout.count_x), tostring(layout.count_y),
-					tostring(col), tostring(row),
-					tostring(sector and sector.id or "nil"),
-					cols, rows
-				))
-			end
-		end
-
 		return sector
 	end
 
@@ -788,7 +487,7 @@ local function InstallBasicSectorPatch()
 	-- underground maps -- IsExplorationAvailable_Sectors/Queue return false for
 	-- Environment=="Underground" (Exploration.lua:569-577), so OverviewModeDialog:SelectSector
 	-- early-outs before drawing the highlight decal or rollover (the "hover shows nothing
-	-- underground" report; the Hover logs proved sector RESOLUTION worked). Wrap both to return
+	-- underground"). Wrap both to return
 	-- true for fully prepared underground cities when config UNDERGROUND_EXPLORATION_UI is on
 	-- (checked live, so flipping the config takes effect without a reload). The preparation gate
 	-- is gameplay-critical: without it vanilla InitSectors performs InitialExplore merely because
@@ -816,7 +515,6 @@ local function InstallBasicSectorPatch()
 	end
 
 	State.sector_basic_patch_version = SECTOR_PATCH_VERSION
-	DebugPrint("sector basic functions patched")
 	return true
 end
 
@@ -836,11 +534,6 @@ end
 -- reads plain sector fields, so lightweight virtual source tables work without constructing a
 -- second exploration grid.
 -- ---------------------------------------------------------------------------------------
-local function StartLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("StartSector", message, data) end
-end
-
 -- Native-source start annotations are transient generation data. Keying them by destination map
 -- prevents a deferred underground map or a second map slot from consuming the surface selection.
 local pending_vanilla_start_by_map = setmetatable({}, { __mode = "k" })
@@ -906,7 +599,6 @@ local function VanillaStartPick(city, map)
 	end
 	local eligible = {}
 	local virtual_grid = {}
-	local diag = {}
 	for col = 1, VN do
 		virtual_grid[col] = {}
 		local x = border + (col - 1) * tile
@@ -946,28 +638,14 @@ local function VanillaStartPick(city, map)
 
 	-- CanPlaceDeposit requires the owning city's vanilla exploration geometry even though the
 	-- temporary source never reaches InitSectors/InitMapArea. Install the exact transient 10x10
-	-- view for both diagnostics and vanilla InitialReveal, then restore the city and global count.
+	-- view for vanilla InitialReveal, then restore the city and global count.
 	local saved_map_area = city.MapArea
 	local saved_map_sectors = city.MapSectors
 	local saved_sector_count = type(const_tbl) == "table" and const_tbl.SectorCount or nil
 	city.MapArea = box_fn(border, border, border + VN * tile, border + VN * tile)
 	city.MapSectors = virtual_grid
 	if type(const_tbl) == "table" then const_tbl.SectorCount = VN end
-	DebugPrint(string.format("native start temporary exploration view installed: grid=%dx%d area=%d,%d-%d,%d",
-		VN, VN, border, border, border + VN * tile, border + VN * tile))
 
-	-- Keep diagnostics side-effect-free and cheap. Vanilla's actual InitialReveal below performs
-	-- the authoritative CanPlaceDeposit-gated resource calculation once.
-	for i = 1, #eligible do
-		local sec = eligible[i]
-		diag[#diag + 1] = string.format("%s(m=%d pr=%d heat=%d w=%d)",
-			sec.id, #sec.markers.surface, sec.play_ratio, sec.avg_heat,
-			math.floor(sec.play_ratio * sec.avg_heat / max_heat))
-	end
-	StartLog("virtual vanilla sectors built", {
-		eligible = #eligible, tile = tile, border = border, orient = orient,
-		candidates = table.concat(diag, " "),
-	})
 	-- Same seeded stream vanilla's InitialExplore would create.
 	local ok_rand, _, trand = pcall(city.CreateMapRand, city, "Exploration")
 	local ok_pick, revealed
@@ -977,7 +655,6 @@ local function VanillaStartPick(city, map)
 	city.MapArea = saved_map_area
 	city.MapSectors = saved_map_sectors
 	if type(const_tbl) == "table" then const_tbl.SectorCount = saved_sector_count or VN end
-	DebugPrint("native start temporary exploration view restored")
 	if not (ok_rand and type(trand) == "function") then return nil, "trand unavailable" end
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
@@ -985,13 +662,6 @@ local function VanillaStartPick(city, map)
 	-- Vanilla can return a second, nearest-concrete sector in its fallback branch. The stretched
 	-- footprint is based on VANILLA'S FIRST winner; the auxiliary concrete sector is not part of
 	-- that source footprint and therefore is not used as another transform anchor.
-	local vanilla_revealed_count = #revealed
-	if #revealed > 1 then
-		StartLog("multiple vanilla source winners -- annotating first only", {
-			count = #revealed, first = tostring(revealed[1] and revealed[1].id),
-			auxiliary = tostring(revealed[2] and revealed[2].id),
-		})
-	end
 	revealed = { revealed[1] }
 	local winners = {}
 	for _, sec in ipairs(revealed) do
@@ -999,10 +669,8 @@ local function VanillaStartPick(city, map)
 		local x0, y0 = mn:xy()
 		local x1, y1 = mx:xy()
 		winners[#winners + 1] = { x0 = x0, y0 = y0, x1 = x1, y1 = y1, id = sec.id }
-		StartLog("vanilla start pick", { id = tostring(sec.id), box = string.format("%d,%d-%d,%d", x0, y0, x1, y1) })
-		DebugPrint("vanilla-equivalent starting sector selected: " .. tostring(sec.id))
 	end
-	return { winners = winners, vanilla_revealed_count = vanilla_revealed_count }
+	return { winners = winners }
 end
 
 local function CaptureVanillaStartSelection(map)
@@ -1015,16 +683,6 @@ local function CaptureVanillaStartSelection(map)
 		and #selection.winners == 1) then
 		return nil, tostring(ok and reason or selection)
 	end
-	local winner = selection.winners[1]
-	StartLog("native source start sector annotated", {
-		map = tostring(map.name), sector = tostring(winner.id),
-		source_box = string.format("%s,%s-%s,%s", tostring(winner.x0), tostring(winner.y0),
-			tostring(winner.x1), tostring(winner.y1)),
-		vanilla_revealed_count = tostring(selection.vanilla_revealed_count),
-	})
-	DebugPrint(string.format("native start annotated: sector=%s box=%s,%s-%s,%s vanilla_count=%s",
-		tostring(winner.id), tostring(winner.x0), tostring(winner.y0), tostring(winner.x1),
-		tostring(winner.y1), tostring(selection.vanilla_revealed_count)))
 	return selection
 end
 
@@ -1038,9 +696,6 @@ local function StageVanillaStartSelection(map, selection, reason)
 	map.SuperBigMapVanillaStartSourceY0 = winner.y0
 	map.SuperBigMapVanillaStartSourceX1 = winner.x1
 	map.SuperBigMapVanillaStartSourceY1 = winner.y1
-	StartLog("native source start annotation staged for destination", {
-		map = tostring(map.name), reason = tostring(reason), sector = tostring(winner.id),
-	})
 	return true
 end
 
@@ -1050,9 +705,6 @@ end
 
 local function ClearPendingVanillaStartSelection(map, reason)
 	if map then pending_vanilla_start_by_map[map] = nil end
-	StartLog("native source start annotation cleared", {
-		map = tostring(map and map.name), reason = tostring(reason),
-	})
 end
 
 -- Wrap Exploration:InitialExplore: on expanded surface maps, skip vanilla's own 20x20 reveal
@@ -1066,7 +718,6 @@ local function PatchInitialExplore()
 		cls = ClassTable("City")
 	end
 	if type(cls) ~= "table" or type(cls.InitialExplore) ~= "function" then
-		StartLog("InitialExplore patch waiting (class unavailable)")
 		return false
 	end
 	if cls.InitialExplore == State.initial_explore_wrapper then return true end
@@ -1083,34 +734,25 @@ local function PatchInitialExplore()
 		local env = map and map.mapdata and map.mapdata.Environment
 		if not (expanded and env == "Surface"
 			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
-			-- Exact vanilla path: no reconstruction, extra random stream, logging pass,
-			-- or post-call inspection on a non-expanded map.
+			-- Exact vanilla path with no reconstruction or extra random stream.
 			return original(self, eligible_out, ...)
 		end
 		-- The exact winner was captured while the temporary native source and its markers still
 		-- existed. At this later destination InitSectors boundary those markers are deliberately
 		-- staged as value records, so recomputing from the live destination would see no resources.
 		if HasPendingVanillaStartSelection(map) then
-			StartLog("initial reveal deferred using staged native source annotation", {
-				sector = tostring(map.SuperBigMapVanillaStartSourceSector),
-			})
 			return
 		end
 		local ok_pick, pick, reason = pcall(VanillaStartPick, self, map)
 		if not (ok_pick and pick) then
-			StartLog("vanilla start pick FAILED -- falling back to vanilla InitialExplore", {
-				reason = tostring(ok_pick and reason or pick),
-			})
 			return original(self, eligible_out, ...)
 		end
 		-- Compatibility fallback for an expanded path without a temporary source. Defer this
 		-- reconstructed native selection exactly as the source-capture path does.
 		StageVanillaStartSelection(map, pick, "InitialExplore compatibility fallback")
-		StartLog("initial reveal DEFERRED to post-stretch", { winners = #pick.winners })
 	end
 	cls.InitialExplore = wrapper
 	State.initial_explore_wrapper = wrapper
-	StartLog("Exploration.InitialExplore wrapped (vanilla-equivalent start sector)")
 	return true
 end
 
@@ -1128,13 +770,11 @@ local function RevealVanillaStartSectors(map)
 	pending_vanilla_start_by_map[map] = nil
 	local city = map and map.City
 	if not (city and Grid and type(Grid.ForEachSector) == "function") then
-		StartLog("post-stretch reveal skipped (city/grid unavailable)")
 		return 0
 	end
 	local sw = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
 	local full = map.SuperBigMapDesiredWidthTiles
 	if not (type(sw) == "number" and type(full) == "number" and sw > 0 and full > sw) then
-		StartLog("post-stretch reveal skipped (sizes unknown)")
 		return 0
 	end
 	local winner = data.winners and data.winners[1]
@@ -1169,8 +809,7 @@ local function RevealVanillaStartSectors(map)
 		pcall(city.UpdateBuildableRatio, city, transformed_box)
 	end
 
-	local overlaps, candidate_log = {}, {}
-	local max_overlap = 0
+	local overlaps = {}
 	local heat_grid = map.heat_grid
 	Grid.ForEachSector(city, function(sector)
 		local a = sector and sector.area
@@ -1186,13 +825,7 @@ local function RevealVanillaStartSectors(map)
 			if ok_heat and type(avg_heat) == "number" then sector.avg_heat = avg_heat end
 		end
 		local overlap = ix * iy
-		if overlap > max_overlap then max_overlap = overlap end
 		overlaps[#overlaps + 1] = { sector = sector, overlap = overlap }
-		local marker_count = sector.markers and sector.markers.surface
-			and #sector.markers.surface or 0
-		candidate_log[#candidate_log + 1] = string.format("%s(overlap=%d markers=%d play=%s heat=%s)",
-			tostring(sector.id), overlap, marker_count,
-			tostring(sector.play_ratio), tostring(sector.avg_heat))
 	end)
 	if #overlaps == 0 then
 		error("no expanded sector intersects the transformed vanilla start sector")
@@ -1201,12 +834,11 @@ local function RevealVanillaStartSectors(map)
 	-- A stretched 10x10 source sector can cover several 20x20 destination sectors. Every positive
 	-- intersection belongs to that transformed footprint, so let the exact vanilla selection logic
 	-- decide between all of them instead of imposing a second geometric policy.
-	local candidates, equivalent_log = {}, {}
+	local candidates = {}
 	for i = 1, #overlaps do
 		local sector = overlaps[i].sector
 		candidates[#candidates + 1] = sector
 		candidates[sector] = true
-		equivalent_log[#equivalent_log + 1] = tostring(sector.id)
 	end
 	if #candidates == 0 then
 		error("no positional equivalent for transformed vanilla start sector")
@@ -1226,54 +858,10 @@ local function RevealVanillaStartSectors(map)
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
 	local selected = revealed[1]
-	local vanilla_result_log = {}
-	for i = 1, #revealed do
-		vanilla_result_log[#vanilla_result_log + 1] = tostring(revealed[i] and revealed[i].id)
-	end
 	-- Vanilla may return an auxiliary nearest-concrete sector in its fallback branch. The user-facing
 	-- initial reveal is deliberately singular here: use vanilla's first winner as the anchor and scan
 	-- only that sector.
 	local reveal_targets = { selected }
-	local diagnostics = {
-		source_sector = tostring(winner.id),
-		source_box = string.format("%d,%d-%d,%d", winner.x0, winner.y0, winner.x1, winner.y1),
-		source_origin = string.format("%d,%d", origin_x, origin_y),
-		source_tiles = string.format("%dx%d", source_w, source_h),
-		final_tiles = string.format("%dx%d", final_w, final_h),
-		scale = string.format("%.9f,%.9f", scale_x, scale_y),
-		scale_inputs = string.format("(%d+0.0)/%d,(%d+0.0)/%d",
-			final_w, source_w, final_h, source_h),
-		transformed_box = string.format("%d,%d-%d,%d", x0, y0, x1, y1),
-		intersections = table.concat(candidate_log, " "),
-		max_overlap = max_overlap,
-		positional_candidates = table.concat(equivalent_log, "+"),
-		positional_candidate_count = #candidates,
-		vanilla_result_count = #revealed,
-		vanilla_results = table.concat(vanilla_result_log, "+"),
-		selected = tostring(selected.id),
-		equivalent_sectors = table.concat(equivalent_log, "+"),
-		equivalent_sector_count = #candidates,
-		reveal_target_count = #reveal_targets,
-	}
-	StartLog("post-stretch vanilla candidate selection", {
-		source_sector = diagnostics.source_sector,
-		source_box = diagnostics.source_box,
-		scale = diagnostics.scale,
-		scale_inputs = diagnostics.scale_inputs,
-		transformed_box = diagnostics.transformed_box,
-		intersection_count = #overlaps, intersections = diagnostics.intersections,
-		max_overlap = max_overlap, positional_candidates = diagnostics.positional_candidates,
-		candidate_count = #candidates,
-		equivalent_sectors = diagnostics.equivalent_sectors,
-		equivalent_sector_count = diagnostics.equivalent_sector_count,
-		vanilla_result_count = #revealed, vanilla_results = diagnostics.vanilla_results,
-		reveal_target_count = diagnostics.reveal_target_count, selected = tostring(selected.id),
-	})
-	DebugPrint(string.format("transformed native start: source=%s source_box=%s scale=%s box=%s intersections=%s max_overlap=%s positional=%s selected=%s equivalents=%s",
-		diagnostics.source_sector, diagnostics.source_box, diagnostics.scale,
-		diagnostics.transformed_box, diagnostics.intersections, tostring(max_overlap),
-		diagnostics.positional_candidates, diagnostics.selected, diagnostics.equivalent_sectors))
-
 	-- This is still initial generation: remove any accidental destination reveal produced while the
 	-- class wrapper was being reclaimed, then persist only vanilla's selected initial winner.
 	local done_object = Global("DoneObject")
@@ -1288,9 +876,7 @@ local function RevealVanillaStartSectors(map)
 			if type(is_valid) ~= "function" or is_valid(obj) then pcall(done_object, obj) end
 		end
 	end
-	local cleared = 0
 	Grid.ForEachSector(city, function(sector)
-		if sector.status and sector.status ~= "unexplored" then cleared = cleared + 1 end
 		sector.status = "unexplored"
 		sector.revealed_obj = nil
 		sector.revealed_surf = nil
@@ -1298,7 +884,7 @@ local function RevealVanillaStartSectors(map)
 		if type(sector.UpdateDecal) == "function" then pcall(sector.UpdateDecal, sector) end
 	end)
 	city.InitialSector = selected
-	local scan_order, blocked_targets = {}, {}
+	local blocked_targets = {}
 	for i = 1, #reveal_targets do
 		local target = reveal_targets[i]
 		local scan_ok, scan_error = pcall(target.Scan, target, "scanned", nil, spawn_positions)
@@ -1308,8 +894,6 @@ local function RevealVanillaStartSectors(map)
 		end
 		if target.status == "unexplored" then
 			blocked_targets[#blocked_targets + 1] = tostring(target.id)
-		else
-			scan_order[#scan_order + 1] = tostring(target.id)
 		end
 	end
 
@@ -1322,15 +906,6 @@ local function RevealVanillaStartSectors(map)
 			tostring(#reveal_targets), tostring(scanned_total), tostring(selected.status),
 			table.concat(blocked_targets, "+")))
 	end
-	StartLog("post-stretch reveal: vanilla-selected stretched-equivalent sector scanned", {
-		source_sector = tostring(winner.id), selected = tostring(selected.id),
-		equivalents = diagnostics.equivalent_sectors,
-		scan_order = table.concat(scan_order, "+"),
-		cleared_preexisting = cleared, scanned = scanned_total,
-	})
-	DebugPrint(string.format("transformed native start verified: source=%s anchor=%s equivalents=%s scanned=%s cleared=%s",
-		tostring(winner.id), tostring(selected.id), diagnostics.equivalent_sectors,
-		tostring(scanned_total), tostring(cleared)))
 
 	if selected then
 		-- Vanilla tail: overview exit_to + forced SelectSector on the deterministic anchor.
@@ -1369,30 +944,12 @@ local function RevealVanillaStartSectors(map)
 			end
 		end)
 	end
-	StartLog("post-stretch reveal DONE", {
-		scanned = scanned_total,
-		initial_sector = tostring(city.InitialSector and city.InitialSector.id),
-	})
-	diagnostics.scanned = scanned_total
-	diagnostics.scan_order = table.concat(scan_order, "+")
-	diagnostics.cleared_preexisting = cleared
-	diagnostics.initial_sector = tostring(city.InitialSector and city.InitialSector.id)
-	DebugPrint(string.format("vanilla-equivalent start revealed: %s sector(s), InitialSector=%s",
-		tostring(scanned_total), tostring(city.InitialSector and city.InitialSector.id)))
-	return scanned_total, diagnostics
+	return scanned_total
 end
 
 local function InstallSectorPatch()
 	local State = SuperBigMap.State
 
-	DebugPrint(string.format(
-		"sector full patch attempt v%s: Exploration=%s g_Exploration=%s MapSector=%s InitSector=%s",
-		tostring(SECTOR_PATCH_VERSION),
-		type(Global("Exploration")),
-		type(ClassTable("Exploration")),
-		type(ClassTable("MapSector")),
-		type(Global("InitSector"))
-	))
 
 	local highlight = SuperBigMap.SectorHighlight
 	if highlight then
@@ -1400,12 +957,10 @@ local function InstallSectorPatch()
 	end
 
 	if not cfg_bool("ENABLE_EXPANDED_SECTORS", true) then
-		DebugPrint("sector full patch disabled")
 		return false
 	end
 
 	if State.sector_patch_version == SECTOR_PATCH_VERSION then
-		DebugPrint("sector full patch already installed")
 		return true
 	end
 
@@ -1417,17 +972,14 @@ local function InstallSectorPatch()
 	local map_sector_class = ClassTable("MapSector")
 
 	if type(Global("InitSector")) ~= "function" then
-		DebugPrint("sector patch waiting for InitSector")
 		return false
 	end
 
 	if not exploration_class then
-		DebugPrint("sector patch waiting for Exploration class")
 		return false
 	end
 
 	if not map_sector_class then
-		DebugPrint("sector patch waiting for MapSector class")
 		return false
 	end
 
@@ -1439,15 +991,6 @@ local function InstallSectorPatch()
 	State.original_exploration_update_buildable_ratio = original_update_buildable_ratio
 
 	exploration_class.InitSectors = function(self, map, eligible_sectors_with_surface_deposits_out)
-		-- Unconditional diagnostic so we know the engine actually called us
-		-- (even when SHOW_SECTOR_DIAGNOSTICS is off, this fires whenever
-		-- InitSectors enters -- useful when DebugLog is somehow disabled).
-		DiagPrint(string.format(
-			"InitSectors ENTER: self=%s map=%s name=%s",
-			tostring(self), tostring(map),
-			tostring(map and map.name or (map and map.mapdata and map.mapdata.id) or "?")
-		))
-
 		if not Grid.UseCustomSectorsForMap(map) then
 			-- Vanilla InitSectors reads the process-global const.SectorCount.  An expanded
 			-- map previously left that value at 20, causing the next vanilla map to build
@@ -1455,34 +998,14 @@ local function InstallSectorPatch()
 			if type(Grid.NormalizeVanillaSectorCount) == "function" then
 				Grid.NormalizeVanillaSectorCount("Exploration.InitSectors vanilla path")
 			end
-			SizingDiag("InitSectors", "InitSectors VANILLA path (UseCustomSectorsForMap=false) -> exact engine 10x10 input")
-			DebugPrint("sector InitSectors using vanilla path: " .. Grid.DescribeMap(map))
 			return original_init_sectors(self, map, eligible_sectors_with_surface_deposits_out)
 		end
 
 		DestroyExistingSectorVisuals(self, map, "InitSectors")
 		Grid.ConfigureGlobalSectorCount(map, "InitSectors")
 		local layout = Grid.ResolveSectorLayout(map)
-		InitSeq("InitSectors: building grid", {
-			count_x = layout.count_x,
-			count_y = layout.count_y,
-			target = layout.target,
-			map = Grid.DescribeMap(map),
-		})
 		local orient = map.mapdata.OverviewOrientation
 		local unbuildable_z = buildUnbuildableZ()
-		local progress_interval = math.floor(cfg_number("SECTOR_PROGRESS_COLUMN_INTERVAL", 2, 1))
-
-		DebugPrint(string.format(
-			"sector InitSectors begin: %s layout=%s x %s target=%s actual=%s x %s",
-			Grid.DescribeMap(map),
-			tostring(layout.count_x),
-			tostring(layout.count_y),
-			tostring(layout.target),
-			tostring(Round(layout.step_x)),
-			tostring(Round(layout.step_y))
-		))
-
 		return SetSectorCountForInit(layout.count, function()
 			self.ExplorationQueue = {}
 			self.MapSectors = {}
@@ -1497,32 +1020,8 @@ local function InstallSectorPatch()
 					sectors_col[row] = sector
 					self.MapSectors[sector] = true
 				end
-				if progress_interval > 0 and (col % progress_interval == 0 or col == layout.count_x) then
-					DebugPrint("sector InitSectors progress column " .. tostring(col) .. "/" .. tostring(layout.count_x))
-				end
 			end
 
-			DebugPrint(string.format(
-				"vanilla-sized sector grid for %s: %s x %s sectors, target %s world units, actual %s x %s, uniform=%s",
-				tostring(map.name or map.mapdata and map.mapdata.id or "map"),
-				tostring(layout.count_x),
-				tostring(layout.count_y),
-				tostring(layout.target),
-				tostring(Round(layout.step_x)),
-				tostring(Round(layout.step_y)),
-				tostring(layout.uniform)
-			))
-			InitSeq("InitSectors: grid built", {
-				count_x = layout.count_x,
-				count_y = layout.count_y,
-				live = DescribeCityState(self),
-			})
-			SizingDiag("InitSectors", string.format(
-				"InitSectors CUSTOM built: count=%sx%s layout.step=%sx%s actual sector[1][1] size=%s (match=%s)",
-				tostring(layout.count_x), tostring(layout.count_y),
-				tostring(Round(layout.step_x)), tostring(Round(layout.step_y)),
-				tostring(LiveSectorSize(self)),
-				tostring(LiveSectorSize(self) ~= nil and math.abs(LiveSectorSize(self) - layout.step_x) <= 2)))
 		end)
 	end
 
@@ -1534,7 +1033,6 @@ local function InstallSectorPatch()
 
 	exploration_class.InitMapArea = function(self)
 		if not Grid.UseCustomSectorsForMap(self:GetMap()) then
-			DebugPrint("sector InitMapArea using vanilla path: " .. Grid.DescribeMap(self:GetMap()))
 			return original_init_map_area(self)
 		end
 
@@ -1551,16 +1049,12 @@ local function InstallSectorPatch()
 		local map_height = map and map.Height
 		if full_map and type(map_width) == "number" and type(map_height) == "number" and map_width > 0 and map_height > 0 then
 			self.MapArea = box(0, 0, map_width, map_height)
-			DebugPrint(string.format(
-				"sector InitMapArea full-terrain MapArea: 0,0 -> %d,%d (%d x %d sectors)",
-				map_width, map_height, last_col, last_row))
 			return
 		end
 
 		self.MapArea = box(
 			self.MapSectors[1][1].area:min(),
 			self.MapSectors[last_col][last_row].area:max())
-		DebugPrint("sector InitMapArea complete: " .. tostring(last_col) .. " x " .. tostring(last_row))
 	end
 
 	exploration_class.UpdateBuildableRatio = function(self, bbox)
@@ -1577,7 +1071,6 @@ local function InstallSectorPatch()
 				processed = processed + 1
 			end
 		end)
-		DebugPrint("sector UpdateBuildableRatio processed " .. tostring(processed) .. " sectors")
 	end
 
 	-- The following are global / class functions the engine calls by name. They are
@@ -1632,10 +1125,8 @@ local function InstallSectorPatch()
 		if type(init_fn) ~= "function" or type(process_fn) ~= "function" then
 			local fallback = State.original_exploration_gather_discovered_deposits
 			if type(fallback) == "function" then
-				DebugPrint("GatherDiscoveredDeposits delegating to vanilla (helpers not global in this build)")
 				return fallback(self)
 			end
-			DebugPrint("GatherDiscoveredDeposits returning empty (no fallback)")
 			return {}
 		end
 
@@ -1702,12 +1193,10 @@ local function InstallSectorPatch()
 	end
 
 	State.sector_patch_version = SECTOR_PATCH_VERSION
-	DebugPrint("vanilla-sized sector patch installed")
 	return true
 end
 
 local function EnsureSectorPatch(map, reason)
-	DebugPrint("sector EnsureSectorPatch via " .. tostring(reason) .. ": " .. Grid.DescribeMap(map))
 	InstallSectorPatch()
 	if Grid.UseCustomSectorsForMap(map) then
 		Grid.ConfigureGlobalSectorCount(map, reason)
@@ -1737,19 +1226,16 @@ local function EnsureSectorsBuilt(map, reason)
 
 	local city = map and map.City
 	if not city then
-		DebugPrint("EnsureSectorsBuilt via " .. tostring(reason) .. ": no map.City yet")
 		return false, "no city"
 	end
 
 	local exploration_class = ClassTable("Exploration")
 	if not exploration_class or type(exploration_class.InitSectors) ~= "function" then
-		DebugPrint("EnsureSectorsBuilt via " .. tostring(reason) .. ": no patched InitSectors")
 		return false, "no init_sectors"
 	end
 
 	local expected = Grid.ResolveSectorCount(map)
 	if type(expected) ~= "number" or expected <= 0 then
-		DebugPrint("EnsureSectorsBuilt via " .. tostring(reason) .. ": no expected count: " .. Grid.DescribeMap(map))
 		return false, "no expected"
 	end
 
@@ -1781,28 +1267,7 @@ local function EnsureSectorsBuilt(map, reason)
 	local size_ok = (type(expected_step) ~= "number") or (type(live_size) ~= "number")
 		or (math.abs(live_size - expected_step) <= 2)
 
-	DebugPrint(string.format(
-		"EnsureSectorsBuilt via %s: live=%dx%d expected=%dx%d live_size=%s step=%s size_ok=%s city=%s",
-		tostring(reason), cols, rows, expected, expected,
-		tostring(live_size), tostring(expected_step and Round(expected_step)), tostring(size_ok),
-		tostring(city)
-	))
-	SizingDiag("EnsureSectorsBuilt", string.format(
-		"EnsureSectorsBuilt via %s: live=%dx%d expected_count=%d live_size=%s expected_step=%s size_ok=%s %s",
-		tostring(reason), cols, rows, expected,
-		tostring(live_size), tostring(expected_step and Round(expected_step)), tostring(size_ok),
-		Grid.DescribeMap(map)))
 
-	InitSeq("EnsureSectorsBuilt: decision", {
-		reason = tostring(reason),
-		live_cols = cols,
-		live_rows = rows,
-		expected = expected,
-		live_size = tostring(live_size),
-		expected_step = tostring(expected_step and Round(expected_step)),
-		size_ok = size_ok,
-		will_rebuild = not (cols == expected and rows == expected and size_ok),
-	})
 
 	if cols == expected and rows == expected and size_ok then
 		return true, "matches"
@@ -1820,7 +1285,6 @@ local function EnsureSectorsBuilt(map, reason)
 	local custom_fn = State.superbigmap_init_sectors
 	local custom_installed = type(custom_fn) == "function" and exploration_class.InitSectors == custom_fn
 	if not custom_installed then
-		SizingDiag("EnsureSectorsBuilt", "custom InitSectors NOT active on class (missing/clobbered) -> (re)installing + reclaiming")
 		pcall(InstallSectorPatch)
 		exploration_class = ClassTable("Exploration") or exploration_class
 		custom_fn = State.superbigmap_init_sectors
@@ -1829,22 +1293,11 @@ local function EnsureSectorsBuilt(map, reason)
 		-- every later InitSectors call use the vanilla-sized layout.
 		if type(custom_fn) == "function" and exploration_class.InitSectors ~= custom_fn then
 			exploration_class.InitSectors = custom_fn
-			DebugPrint("EnsureSectorsBuilt: reclaimed clobbered Exploration.InitSectors -> mod custom closure")
 		end
 		custom_installed = type(custom_fn) == "function" and exploration_class.InitSectors == custom_fn
 	end
 
-	DebugPrint(string.format(
-		"EnsureSectorsBuilt via %s: forcing InitSectors rebuild (%dx%d -> %dx%d, size %s -> step %s, custom_init=%s)",
-		tostring(reason), cols, rows, expected, expected,
-		tostring(live_size), tostring(expected_step and Round(expected_step)), tostring(custom_installed)
-	))
 
-	InitSeq("EnsureSectorsBuilt: forcing InitSectors rebuild", {
-		reason = tostring(reason),
-		from = tostring(cols) .. "x" .. tostring(rows),
-		to = tostring(expected) .. "x" .. tostring(expected),
-	})
 	-- Prefer our stored closure (independent of whatever is currently on the class).
 	-- Random-map generation can also restore Exploration.InitialExplore after the initial mod
 	-- install. Reclaim the deferral wrapper immediately before InitSectors invokes that method.
@@ -1852,7 +1305,6 @@ local function EnsureSectorsBuilt(map, reason)
 	local init_fn = (type(custom_fn) == "function") and custom_fn or exploration_class.InitSectors
 	local ok, err = pcall(init_fn, city, map, {})
 	if not ok then
-		DebugPrint("EnsureSectorsBuilt: InitSectors threw: " .. tostring(err))
 		return false, err
 	end
 
@@ -1860,18 +1312,6 @@ local function EnsureSectorsBuilt(map, reason)
 	-- bounds and overview match the freshly-built grid.
 	if type(exploration_class.InitMapArea) == "function" then
 		pcall(exploration_class.InitMapArea, city)
-	end
-
-	local new_size = LiveSectorSize(city)
-	local new_ok = type(new_size) == "number" and type(expected_step) == "number"
-		and math.abs(new_size - expected_step) <= 2
-	SizingDiag("EnsureSectorsBuilt", string.format(
-		"EnsureSectorsBuilt via %s: rebuilt -> sector[1][1] size=%s (expected step=%s, ok=%s)",
-		tostring(reason), tostring(new_size), tostring(expected_step and Round(expected_step)), tostring(new_ok)))
-	if type(new_size) == "number" and type(expected_step) == "number" and not new_ok then
-		DebugPrint(string.format(
-			"EnsureSectorsBuilt via %s: WARNING rebuilt grid still wrong size (%s, expected %s) -- custom InitSectors path not active",
-			tostring(reason), tostring(new_size), tostring(Round(expected_step))))
 	end
 
 	return true, "rebuilt"
@@ -1905,10 +1345,6 @@ local function RefreshSectorDecals(city)
 			recreated = recreated + 1
 		end
 	end)
-	if recreated > 0 then
-		DebugPrint("RefreshSectorDecals: recreated " .. tostring(recreated) .. " missing sector decals")
-	end
-	InitSeq("RefreshSectorDecals", { recreated = recreated })
 	return recreated
 end
 
@@ -1926,11 +1362,6 @@ SectorExploration.RevealVanillaStartSectors = RevealVanillaStartSectors
 SectorExploration.EnsureSectorPatch = EnsureSectorPatch
 SectorExploration.EnsureSectorsBuilt = EnsureSectorsBuilt
 SectorExploration.HideSectorVisuals = HideSectorVisuals
-SectorExploration.DiagSnapshot = DiagSnapshot
-SectorExploration.DiagOn = DiagOn
-SectorExploration.DescribeCityState = DescribeCityState
-SectorExploration.DescribeInitSectorsBinding = DescribeInitSectorsBinding
-
 function SectorExploration.ApplyModBehavior()
 	InstallSectorPatch()
 	PatchInitialExplore()
@@ -2011,5 +1442,3 @@ function SectorExploration.RestoreVanillaBehavior()
 end
 
 SuperBigMap.SectorExploration = SectorExploration
-
-DebugPrint("sector exploration module loaded v" .. tostring(SECTOR_PATCH_VERSION))

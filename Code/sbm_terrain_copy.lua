@@ -13,7 +13,6 @@ end
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local Unpack = Engine.Unpack
 local IsKindOfSafe = Engine.IsKindOf
 local ObjectPosition = Engine.ObjectPos
 
@@ -23,46 +22,6 @@ local function cfg_bool(key, default)
 		return value
 	end
 	return default
-end
-
-local function DebugPrint(text)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Generation", text)
-	end
-end
-
-local function InitSeq(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog and type(DebugLog.InitSeq) == "function" then
-		DebugLog.InitSeq(message, data)
-	end
-end
-
--- Per-step stretch trace (gated on Config.DEBUG_STRETCH). Deliberately
--- fine-grained so the LAST line before a stuck-at-loading pinpoints exactly which grid step hung
--- or threw. Temporary diagnostic scope; the code stays, only the flag is turned off for release.
-local function StretchLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Stretch", message, data)
-	end
-end
-
-local function InvestigationBegin(name, map, data)
-	local profiler = SuperBigMap.LoadingProfiler
-	if profiler and type(profiler.InvestigationBegin) == "function" then
-		return profiler.InvestigationBegin(name, data, map)
-	end
-	return false
-end
-
-local function InvestigationEnd(token, data, ok)
-	local profiler = SuperBigMap.LoadingProfiler
-	if token and profiler and type(profiler.InvestigationEnd) == "function" then
-		return profiler.InvestigationEnd(token, data, ok)
-	end
-	return false
 end
 
 local function TerrainSize(map)
@@ -115,47 +74,6 @@ assert(type(ShouldSkipObject) == "function" and type(CloneObjectAtOffset) == "fu
 -- effect (e.g. the renderer wasn't ready, or the engine clamped the invalidate
 -- bbox to the original PlayArea), this pass forces the texture/height to
 -- re-render across the whole expanded map. Safe to call repeatedly.
--- Sample a grid at 9 positions across its full extent. If those cells
--- contain a real value (texture index or height), the renderer SHOULD show
--- content. If they contain 0/sentinel, the grid lacks data.
-local function SampleGrid(label, grid)
-	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function" then
-		return
-	end
-	local gw, gh = grid:size()
-	if not gw or gw <= 0 then return end
-
-	local samples = {
-		{ "TL_0.1", math.floor(gw * 0.1), math.floor(gh * 0.1) },
-		{ "TM_0.5", math.floor(gw * 0.5), math.floor(gh * 0.1) },
-		{ "TR_0.9", math.floor(gw * 0.9), math.floor(gh * 0.1) },
-		{ "ML_0.1", math.floor(gw * 0.1), math.floor(gh * 0.5) },
-		{ "MM_0.5", math.floor(gw * 0.5), math.floor(gh * 0.5) },
-		{ "MR_0.9", math.floor(gw * 0.9), math.floor(gh * 0.5) },
-		{ "BL_0.1", math.floor(gw * 0.1), math.floor(gh * 0.9) },
-		{ "BM_0.5", math.floor(gw * 0.5), math.floor(gh * 0.9) },
-		{ "BR_0.9", math.floor(gw * 0.9), math.floor(gh * 0.9) },
-	}
-	local parts = {}
-	for i = 1, #samples do
-		local name, x, y = samples[i][1], samples[i][2], samples[i][3]
-		local ok, value = pcall(grid.get, grid, x, y)
-		parts[#parts + 1] = name .. "=" .. tostring(ok and value or "err")
-	end
-	DebugPrint(string.format("%s size=%sx%s samples: %s", tostring(label), tostring(gw), tostring(gh), table.concat(parts, " ")))
-end
-
-local function SampleTypeGrid(map, terrain_api)
-	if type(terrain_api.GetTypeGrid) == "function" then
-		local g = SafeCall(terrain_api.GetTypeGrid, map)
-		SampleGrid("type_grid", g)
-	end
-	if type(terrain_api.GetHeightGrid) == "function" then
-		local g = SafeCall(terrain_api.GetHeightGrid, map)
-		SampleGrid("height_grid", g)
-	end
-end
-
 -- Full-map invalidation bbox in WORLD units, or false if the engine box() ctor
 -- is unavailable (some calls then fall back to a whole-map invalidate).
 local function FullMapInvalidateBox(map_width, map_height)
@@ -172,34 +90,12 @@ end
 local function ReinvalidateExpandedTerrain(map)
 	local terrain_api = Global("terrain")
 	if type(terrain_api) ~= "table" then
-		DebugPrint("ReinvalidateExpandedTerrain skipped: no terrain api")
 		return false
 	end
 	local map_width, map_height = TerrainSize(map)
 	if not map_width or map_width <= 0 or not map_height or map_height <= 0 then
-		DebugPrint("ReinvalidateExpandedTerrain skipped: invalid terrain size")
 		return false
 	end
-
-	-- Diagnostic: dimensions of the terrain grids (which may differ from
-	-- mapdata.Width) + texture-index samples at 9 positions across the map.
-	-- If samples near the expanded edge (e.g. BR_0.9) come back as 0/invalid,
-	-- the type grid lacks data there -> renderer correctly draws no texture.
-	-- If samples look consistent with the source-side samples (TL_0.1), data is fine
-	-- and the renderer just hasn't refreshed.
-	if type(terrain_api.HeightMapSize) == "function" then
-		local ok, hw, hh = pcall(terrain_api.HeightMapSize, map)
-		if ok then
-			DebugPrint(string.format("terrain.HeightMapSize=%sx%s", tostring(hw), tostring(hh)))
-		end
-	end
-	if type(terrain_api.TypeMapSize) == "function" then
-		local ok, tw, th = pcall(terrain_api.TypeMapSize, map)
-		if ok then
-			DebugPrint(string.format("terrain.TypeMapSize=%sx%s", tostring(tw), tostring(th)))
-		end
-	end
-	SampleTypeGrid(map, terrain_api)
 
 	-- Detect "this map was expanded by the mod" without relying on transient
 	-- per-map markers (SuperBigMapSourceWidthTiles etc.), which are set during
@@ -223,35 +119,11 @@ local function ReinvalidateExpandedTerrain(map)
 	local expanded = has_markers or wu_per_tile > height_tile + 1 or mapdata_width > 4096
 
 	if not expanded then
-		DebugPrint(string.format(
-			"ReinvalidateExpandedTerrain skipped: vanilla map (mapdata=%s wu/tile=%s)",
-			tostring(mapdata_width), tostring(wu_per_tile)
-		))
 		return false
 	end
 
 	local invalidate_box = FullMapInvalidateBox(map_width, map_height)
 	map.SuperBigMapRevalidationRebuiltGrids = false
-	DebugPrint(string.format(
-		"ReinvalidateExpandedTerrain: terrain=%sx%s mapdata=%s wu/tile=%s markers=%s bbox=%s",
-		tostring(map_width), tostring(map_height),
-		tostring(mapdata_width), tostring(wu_per_tile),
-		tostring(has_markers and true or false),
-		invalidate_box and "full-map" or "none"
-	))
-
-	local profiler = SuperBigMap.LoadingProfiler
-	local function profiled_call(name, fn, ...)
-		local token = profiler and type(profiler.Begin) == "function" and profiler.Begin(
-			"terrain revalidation: " .. tostring(name), nil, map) or false
-		local detail_token = InvestigationBegin("terrain revalidation: " .. tostring(name), map)
-		local results = { pcall(fn, ...) }
-		InvestigationEnd(detail_token, { error = results[1] and nil or tostring(results[2]) }, results[1] == true)
-		if token and type(profiler.End) == "function" then
-			profiler.End(token, { error = results[1] and nil or tostring(results[2]) }, results[1] == true)
-		end
-		return Unpack(results, 1, #results)
-	end
 
 	-- RebuildGrids is the editor's authoritative post-height-edit entry point. It already
 	-- invalidates terrain and rebuilds passability/buildable/water/object-Z state, so running
@@ -261,52 +133,47 @@ local function ReinvalidateExpandedTerrain(map)
 		and type(map.RebuildGrids) == "function" and invalidate_box
 	local consolidated_ok = false
 	if consolidated then
-		DebugPrint("ReinvalidateExpandedTerrain: consolidated map:RebuildGrids")
-		consolidated_ok = profiled_call("consolidated RebuildGrids", map.RebuildGrids,
+		consolidated_ok = pcall(map.RebuildGrids,
 			map, invalidate_box) == true
 		-- Engine methods commonly return nil on success; pcall success is the signal. The helper
 		-- returns pcall's boolean first, so consolidated_ok is true even with a nil method result.
 		if consolidated_ok then
 			map.SuperBigMapRevalidationRebuiltGrids = true
 			-- Preserve the explicit vanilla border repair. It is kept outside the consolidated
-			-- call until the profiler proves RebuildGrids subsumes it on expanded terrain.
+			-- call because RebuildGrids does not consistently repair it on expanded terrain.
 			if type(terrain_api.FixHeightBorder) == "function" then
-				profiled_call("consolidated FixHeightBorder", terrain_api.FixHeightBorder,
+				pcall(terrain_api.FixHeightBorder,
 					map, invalidate_box)
 			end
 		end
 	end
 	if not consolidated_ok then
-		if consolidated then
-			DebugPrint("ReinvalidateExpandedTerrain: consolidated rebuild failed -- legacy fallback")
-		end
 		if type(terrain_api.InvalidateHeight) == "function" then
 			if invalidate_box then
-				profiled_call("legacy InvalidateHeight", terrain_api.InvalidateHeight, map, invalidate_box)
+				pcall(terrain_api.InvalidateHeight, map, invalidate_box)
 			else
-				profiled_call("legacy InvalidateHeight", terrain_api.InvalidateHeight, map)
+				pcall(terrain_api.InvalidateHeight, map)
 			end
 		end
 		if type(terrain_api.InvalidateType) == "function" then
 			if invalidate_box then
-				profiled_call("legacy InvalidateType", terrain_api.InvalidateType, map, invalidate_box)
+				pcall(terrain_api.InvalidateType, map, invalidate_box)
 			else
-				profiled_call("legacy InvalidateType", terrain_api.InvalidateType, map)
+				pcall(terrain_api.InvalidateType, map)
 			end
 		end
 		if type(terrain_api.RebuildPassability) == "function" then
 			if invalidate_box then
-				profiled_call("legacy RebuildPassability", terrain_api.RebuildPassability, map, invalidate_box)
+				pcall(terrain_api.RebuildPassability, map, invalidate_box)
 			else
-				profiled_call("legacy RebuildPassability", terrain_api.RebuildPassability, map)
+				pcall(terrain_api.RebuildPassability, map)
 			end
 		end
 		if type(terrain_api.FixHeightBorder) == "function" and invalidate_box then
-			profiled_call("legacy FixHeightBorder", terrain_api.FixHeightBorder, map, invalidate_box)
+			pcall(terrain_api.FixHeightBorder, map, invalidate_box)
 		end
 		if type(map.RebuildGrids) == "function" and invalidate_box then
-			DebugPrint("ReinvalidateExpandedTerrain: legacy map:RebuildGrids")
-			local rebuild_ok = profiled_call("legacy RebuildGrids", map.RebuildGrids, map, invalidate_box)
+			local rebuild_ok = pcall(map.RebuildGrids, map, invalidate_box)
 			if rebuild_ok == true then map.SuperBigMapRevalidationRebuiltGrids = true end
 		end
 	end
@@ -314,10 +181,7 @@ local function ReinvalidateExpandedTerrain(map)
 	-- detect "terrain changed, redraw me" (e.g. clutter, decals). If present,
 	-- bumping the hash should kick anything still cached.
 	if type(terrain_api.HashGrids) == "function" then
-		local ok, h = pcall(terrain_api.HashGrids, map)
-		if ok then
-			DebugPrint("ReinvalidateExpandedTerrain: terrain.HashGrids -> " .. tostring(h))
-		end
+		pcall(terrain_api.HashGrids, map)
 	end
 	return true
 end
@@ -393,11 +257,9 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			pcall(function() if type(x.free) == "function" then x:free() end end)
 		end
 	end
-	StretchLog("mapgrid: get src", { grid = name })
 	-- GetGrid(from_box) is ALWAYS safe: the source region is within any grid's coverage.
 	local ok_s, src = pcall(editor_api.GetGrid, map, name, from_box)
 	if not ok_s or not src then
-		StretchLog("mapgrid: src absent/failed -- skip", { grid = name, err = tostring(src) })
 		return false
 	end
 	-- SIZE GUARD: some MapGrids (e.g. BiomeGrid) are allocated only for the generated SOURCE region,
@@ -431,8 +293,6 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	local src_w = grid_size(src)
 	if type(ref_w) == "number" and ref_w > 0 and type(src_w) == "number"
 		and src_w > ref_w * (frac + 1.0) / 2 then
-		StretchLog("mapgrid: NOT full-map sized -- skip (avoids full-box overflow assert)",
-			{ grid = name, src_w = src_w, ref_w = ref_w, frac = tostring(frac) })
 		free_grid(src)
 		return false
 	end
@@ -449,7 +309,6 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
 		if not ok_d or not dst_ref then
 			free_grid(src)
-			StretchLog("mapgrid: destination metadata fallback failed -- skip", { grid = name })
 			return false
 		end
 		dw, dh = grid_size(dst_ref)
@@ -457,25 +316,15 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		metadata_source = "full_destination_fallback"
 	end
 	local ok_all, res = pcall(function()
-		StretchLog("mapgrid: dims", {
-			grid = name, dw = dw, dh = dh, metadata_source = metadata_source,
-			target_fmt = tostring(target_fmt), target_bits = tostring(target_bits),
-		})
 		local src_c = GridToCompute(src)
 		local stretched = GridResample(src_c, dw, dh, interpolate == true)
 		local out = stretched
 		local stretched_fmt, stretched_bits = grid_format(stretched)
-		local repacked = false
 		if type(GridRepack) == "function" and target_fmt
 			and (stretched_fmt ~= target_fmt or stretched_bits ~= target_bits) then
 			out = GridRepack(stretched, target_fmt, target_bits)
-			repacked = true
 		end
 		local ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
-		StretchLog("mapgrid: set done", {
-			grid = name, ok_set = ok_set, repacked = repacked,
-			stretched_fmt = tostring(stretched_fmt), stretched_bits = tostring(stretched_bits),
-		})
 		if src_c ~= src then free_grid(src_c) end
 		if out ~= stretched then free_grid(out) end
 		free_grid(stretched)
@@ -483,9 +332,6 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 	end)
 	free_grid(dst_ref)
 	free_grid(src)
-	if not ok_all then
-		StretchLog("mapgrid: EXCEPTION", { grid = name, err = tostring(res) })
-	end
 	return ok_all and res == true
 end
 
@@ -548,11 +394,9 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	if cfg_bool("STRETCH_SCALE_HEIGHTS", true) ~= true then return false end
 	local mapdata = map and map.mapdata
 	if type(mapdata) ~= "table" or type(mul) ~= "number" or type(div) ~= "number" or div <= 0 then
-		StretchLog("ScaleHeightRanges: skipped", { reason = "mapdata/factor unavailable" })
 		return false
 	end
 	if mapdata.SuperBigMapHeightRangesScaled == true then
-		StretchLog("ScaleHeightRanges: already scaled -- skip")
 		return false
 	end
 	-- Ranges are in METERS; the height transform is affine in world units
@@ -565,17 +409,11 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	end
 	local function scale_range(tag, range)
 		if type(range) ~= "table" or type(range.from) ~= "number" or type(range.to) ~= "number" then
-			StretchLog("ScaleHeightRanges: no range to scale", { range = tag, value = tostring(range) })
 			return
 		end
 		local from0, to0 = range.from, range.to
 		range.from = scale_out(from0, false)
 		range.to = scale_out(to0, true)
-		StretchLog("ScaleHeightRanges: scaled", {
-			range = tag, mul = mul, div = div, add_wu = add_wu,
-			from = tostring(from0) .. " -> " .. tostring(range.from),
-			to = tostring(to0) .. " -> " .. tostring(range.to),
-		})
 	end
 	-- mapdata is a shared preset and survives Map destruction. Preserve the exact
 	-- vanilla ranges so the next non-expanded game does not inherit stretched-height
@@ -606,8 +444,7 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	return true
 end
 
-local function StretchSourceToFull(map, debug)
-	StretchLog("StretchSourceToFull: ENTER", { map = tostring(map and (map.name or "?")) })
+local function StretchSourceToFull(map)
 	if not map then return false, 0 end
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
@@ -619,7 +456,6 @@ local function StretchSourceToFull(map, debug)
 	if type(terrain_api) ~= "table" or type(GridToCompute) ~= "function" or type(GridResample) ~= "function"
 		or type(IsComputeGrid) ~= "function" or type(NewComputeGrid) ~= "function"
 		or type(box_fn) ~= "function" or type(point_fn) ~= "function" then
-		DebugPrint("StretchSourceToFull: required grid/terrain API unavailable -- cannot stretch")
 		return false, 0
 	end
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
@@ -633,12 +469,9 @@ local function StretchSourceToFull(map, debug)
 	end
 	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
 		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= 0 or full_th <= 0 then
-		DebugPrint("StretchSourceToFull: source/full tile sizes unknown -- cannot stretch")
 		return false, 0
 	end
 	if full_tw <= sw_tiles and full_th <= sh_tiles then
-		DebugPrint(string.format("StretchSourceToFull: no expansion to stretch (source %sx%s == full %sx%s tiles)",
-			tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th)))
 		return false, 0
 	end
 	-- Force FLOAT division: this engine's Lua does INTEGER division on int/int (6144/8192 -> 0),
@@ -659,35 +492,26 @@ local function StretchSourceToFull(map, debug)
 	-- GridToCompute so only the 6144^2 source cells are converted instead of all 8192^2 cells.
 	-- The original full-grid conversion remains the compatibility fallback. The 'raw' grid from
 	-- get_fn is left for the engine.
-	-- EVERY sub-step is StretchLog'd so a stuck/failed grid is pinpointed to the exact line.
-	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
+	local function stretch_one(get_fn, set_fn, invalidate_fn, interpolate, scale_values)
 		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then
-			StretchLog("stretch_one: missing get/set fn", { grid = label })
 			return false
 		end
-		StretchLog("stretch_one: BEGIN", { grid = label, interpolate = interpolate == true })
 		local ok_g, raw = pcall(get_fn, map)
 		if not ok_g or not raw then
-			StretchLog("stretch_one: get FAILED", { grid = label, err = tostring(raw) })
 			return false
 		end
-		StretchLog("stretch_one: got source grid", { grid = label })
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
 			if not ok_size or type(fw) ~= "number" or type(fh) ~= "number" then
-				StretchLog("stretch_one: raw size unavailable -> full compute fallback", { grid = label })
 				full_c = GridToCompute(raw)
 				fw, fh = full_c:size()
 			end
-			StretchLog("stretch_one: full grid size", { grid = label, fw = fw, fh = fh })
 			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
 			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
 			local src_sub, native_sub
-			local extraction_path = "native_corner"
-			local corner_error
 			if not full_c and type(raw.new_instance) == "function" then
-				local ok_corner, err_corner = pcall(function()
+				local ok_corner = pcall(function()
 					native_sub = raw:new_instance(scw, sch)
 					if not native_sub or type(native_sub.copyrect) ~= "function" then
 						error("native corner grid/copyrect unavailable")
@@ -697,7 +521,6 @@ local function StretchSourceToFull(map, debug)
 					if not src_sub then error("native corner GridToCompute failed") end
 				end)
 				if not ok_corner then
-					corner_error = err_corner
 					if src_sub and src_sub ~= native_sub then free_grid(src_sub) end
 					src_sub = nil
 					free_grid(native_sub)
@@ -705,10 +528,6 @@ local function StretchSourceToFull(map, debug)
 				end
 			end
 			if not src_sub then
-				extraction_path = "full_compute_fallback"
-				StretchLog("stretch_one: GridToCompute full fallback...", {
-					grid = label, native_corner_error = tostring(corner_error),
-				})
 				full_c = full_c or GridToCompute(raw)
 				local fmt, bits = IsComputeGrid(full_c)
 				src_sub = NewComputeGrid(scw, sch, fmt, bits)
@@ -719,11 +538,6 @@ local function StretchSourceToFull(map, debug)
 				native_sub = nil
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
-			StretchLog("stretch_one: source corner ready", {
-				grid = label, scw = scw, sch = sch, fmt = tostring(fmt), bits = tostring(bits),
-				extraction_path = extraction_path,
-			})
-			StretchLog("stretch_one: GridResample...", { grid = label, to_w = fw, to_h = fh })
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
@@ -764,19 +578,17 @@ local function StretchSourceToFull(map, debug)
 					end
 					local FLOOR_MARGIN = 1000 -- 1 m of bottom headroom (resample undershoot buffer)
 					local zmul, zdiv, zadd = full_tw, sw_tiles, 0
-					local adaptive = false
 					if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
 						local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
 						if shift and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
 							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
 							zmul, zdiv = cap - FLOOR_MARGIN, max0 - min0
-							adaptive = true
 						end
 						if shift then
 							zadd = FLOOR_MARGIN - math.floor(min0 * zmul / zdiv)
 						end
 					end
-					local ok_scale, err_scale = pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
+					pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
 					-- Stamp the applied Z transform for consumers (height ranges, relief dz).
 					map.SuperBigMapZScaleMul = zmul
 					map.SuperBigMapZScaleDiv = zdiv
@@ -788,81 +600,36 @@ local function StretchSourceToFull(map, debug)
 					end
 					-- Clamp belt-and-braces: the border-ring resample undershoot can go negative
 					-- after the shift, and a hair of overshoot can exceed the cap at the rim.
-					local clamped = false
 					if cap and ((type(max1) == "number" and max1 > cap) or (type(min1) == "number" and min1 < 0)) then
 						local grid_clamp = Global("GridClamp")
 						if type(grid_clamp) == "function" then
-							clamped = pcall(grid_clamp, stretched, 0, cap) == true
+							pcall(grid_clamp, stretched, 0, cap)
 						end
 					end
-					StretchLog("height scale (full 3D stretch, shift + adaptive z)", {
-						grid = label, ok = ok_scale, err = ok_scale and nil or tostring(err_scale),
-						zmul = zmul, zdiv = zdiv, zadd = zadd, adaptive = adaptive,
-						z_scale = string.format("%.4f", (zmul + 0.0) / zdiv),
-						src_min = tostring(min0), src_max = tostring(max0),
-						min_after = tostring(min1), max_after = tostring(max1),
-						cap = tostring(cap), clamped = clamped,
-					})
-				else
-					StretchLog("height scale SKIPPED -- GridMulDivAdd unavailable", { grid = label })
 				end
 			end
-			StretchLog("stretch_one: resample done -> set_fn...", { grid = label })
 			local ok_set = pcall(set_fn, map, stretched)
-			StretchLog("stretch_one: set_fn done", { grid = label, ok_set = ok_set })
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
-			StretchLog("stretch_one: invalidate done -> freeing", { grid = label })
 			free_grid(src_sub)
 			if stretched ~= src_sub then free_grid(stretched) end
 			if full_c ~= raw then free_grid(full_c) end
 			return ok_set == true
 		end)
-		if not ok_all then
-			StretchLog("stretch_one: EXCEPTION", { grid = label, err = tostring(res) })
-		else
-			StretchLog("stretch_one: END", { grid = label, ok = res == true })
-		end
 		return ok_all and res == true
 	end
 
-	-- Per-step wall-clock timing (DEBUG_STRETCH) to find the loading hotspot. Each grid call is one
-	-- long C call -- Lua is single-threaded, so nothing else (not even the UI) runs during it.
-	local ticks = Global("GetPreciseTicks") or Global("RealTime")
-	local function now_ms()
-		if type(ticks) == "function" then
-			local ok, t = pcall(ticks)
-			if ok and type(t) == "number" then return t end
-		end
-		return 0
-	end
-	local t_total = now_ms()
-	local function timed(label, fn, ...)
-		local t0 = now_ms()
-		local detail_token = InvestigationBegin("terrain grid: " .. tostring(label), map)
-		local a, b = fn(...)
-		local elapsed = now_ms() - t0
-		InvestigationEnd(detail_token, { first_result = tostring(a), second_result = tostring(b) }, true)
-		StretchLog("TIMING: " .. label, { ms = elapsed })
-		return a, b
-	end
-
-	StretchLog("StretchSourceToFull: begin resample", { src_w = sw_tiles, src_h = sh_tiles, full_w = full_tw, full_h = full_th, frac_w = tostring(frac_w) })
-	DebugPrint(string.format("StretchSourceToFull: source %sx%s tiles -> full %sx%s tiles (frac %s)",
-		tostring(sw_tiles), tostring(sh_tiles), tostring(full_tw), tostring(full_th), tostring(frac_w)))
 	local done = 0
-	StretchLog("StretchSourceToFull: -> stretch HEIGHT")
-	if timed("height", stretch_one, "height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then
+	if stretch_one(terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then
 		done = done + 1
 		-- Height VALUES just transformed (h*zmul/zdiv + zadd, stamped by stretch_one) -> the
 		-- declared buildable/playable height ranges must follow the SAME affine transform
 		-- before any buildable rebuild.
-		timed("height-ranges", ScaleHeightRanges, map,
+		ScaleHeightRanges(map,
 			map.SuperBigMapZScaleMul or full_tw,
 			map.SuperBigMapZScaleDiv or sw_tiles,
 			map.SuperBigMapZScaleAdd or 0)
 	end
-	StretchLog("StretchSourceToFull: -> stretch TYPE")
-	if timed("type", stretch_one, "type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
+	if stretch_one(terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
 	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
 	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
@@ -881,15 +648,11 @@ local function StretchSourceToFull(map, debug)
 				{ name = "grass_density",   interp = true  },
 			}
 			for _, mg in ipairs(map_grids) do
-				StretchLog("StretchSourceToFull: -> stretch MAPGRID", { grid = mg.name })
-				if timed("mapgrid:" .. mg.name, ResampleMapGrid, map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
+				if ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
 			end
 		end
 	end
-	StretchLog("StretchSourceToFull: -> ReinvalidateExpandedTerrain")
-	timed("reinvalidate", ReinvalidateExpandedTerrain, map)
-	StretchLog("StretchSourceToFull: COMPLETE", { grids_done = done, total_ms = now_ms() - t_total })
-	DebugPrint(string.format("StretchSourceToFull: done (%s grids stretched: height+type+colour/biome/clutter/grass)", tostring(done)))
+	ReinvalidateExpandedTerrain(map)
 	return done > 0, done
 end
 
@@ -922,8 +685,7 @@ local function AnnotateDecorRelief(map)
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	local relief = setmetatable({}, { __mode = "k" })
 	local objects = {}
-	local annotated, sampled = 0, 0
-	local DebugLog = SuperBigMap.DebugLog
+	local annotated = 0
 	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
@@ -944,21 +706,11 @@ local function AnnotateDecorRelief(map)
 		if not ok_h or type(h) ~= "number" then return end
 		relief[obj] = pz - h
 		annotated = annotated + 1
-		if sampled < 8 and DebugLog and DebugLog.On("Align") then
-			sampled = sampled + 1
-			local px, py = PointXY(pos)
-			DebugLog.Info("Align", "relief annotated", {
-				n = sampled, class = tostring(obj.class or "?"),
-				xy = tostring(px) .. "," .. tostring(py), dz = pz - h,
-			})
-		end
 	end)
 	decor_relief_by_map[map] = relief
 	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
 		decor_objects_by_map[map] = objects
 	end
-	StretchLog("AnnotateDecorRelief: DONE", { annotated = annotated, collected = #objects })
-	DebugPrint(string.format("relief annotations: %s objects", tostring(annotated)))
 	return annotated
 end
 
@@ -981,8 +733,7 @@ end
 -- put (ShouldSkipObject); only the scatter moves. Deposits/anomalies are a separate later pass.
 -- Returns the number of decorations moved. When pass_edits_already_suspended is true, the
 -- caller owns the balanced ResumePassEdits after this pass and any adjacent mass edits.
-local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
-	StretchLog("ScaleDecorationsToFull: ENTER", { map = tostring(map and (map.name or "?")) })
+local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local terrain_api_g = Global("terrain") -- for relief-aware Z placement
 	if not map then return 0 end
 	local const_tbl = Global("const")
@@ -990,7 +741,6 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	local box_fn = Global("box")
 	local point_fn = Global("point")
 	if type(box_fn) ~= "function" or type(point_fn) ~= "function" then
-		StretchLog("ScaleDecorationsToFull: box/point unavailable -- skip")
 		return 0
 	end
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
@@ -1004,7 +754,6 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	end
 	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
 		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= sw_tiles then
-		StretchLog("ScaleDecorationsToFull: sizes unknown / no expansion -- skip")
 		return 0
 	end
 	-- Terrain was stretched UP by full/source; decorations move the same way AND grow by that factor
@@ -1021,35 +770,13 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	if not reused_collection then
 		objs = {}
 	end
-	local collection_token = InvestigationBegin("decorations: collect source objects", map, {
-		reused_pre_stretch_collection = reused_collection,
-	})
 	if not reused_collection and type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
-	InvestigationEnd(collection_token, { collected = #objs, reused = reused_collection }, true)
-	StretchLog("ScaleDecorationsToFull: collected", {
-		count = #objs, scale_x = tostring(scale_x), scale_y = tostring(scale_y),
-		reused_pre_stretch_collection = reused_collection,
-		src_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
-		full_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
-		src_box_wu = tostring(sw_tiles * hts) .. "x" .. tostring(sh_tiles * hts),
-	})
 
-	-- Exhaustive trace (gated on Config.DEBUG_STRETCH via StretchLog): per-category skip counts, a
-	-- sample of the first objects' old->new position + old->new scale (verifies the transform), and
-	-- the min/max of the resulting positions (confirms the decor fans out across the full map, i.e.
-	-- new_x_range ~ 0..full_wu, not clustered in the source corner).
 	local MAX_SCALE = 500 -- engine object-scale ceiling (percent)
 	local full_wu = full_tw * hts
-	local moved, scaled = 0, 0
-	local skipped_invalid, skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0, 0
-	local sample_n = 0
-	local minx, miny, maxx, maxy
-	-- Time the whole pass (DEBUG_STRETCH) for the loading-hotspot investigation.
-	local ticks = Global("GetPreciseTicks") or Global("RealTime")
-	local t0 = 0
-	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then t0 = t end end
+	local moved = 0
 	-- DECOR TOP-UP (config STRETCH_DECOR_TOPUP): the stretch spreads the ORIGINAL decoration count
 	-- over area_factor (~1.78x) more area, thinning density. Give each moved decoration an
 	-- (area_factor - 1) chance to spawn ONE jittered clone nearby (within ~0.75 sector), restoring
@@ -1060,19 +787,13 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	local area_factor_permille = math.floor(scale_x * scale_y * 1000 + 0.5) -- e.g. 1778
 	local topup_permille = math.max(0, area_factor_permille - 1000)         -- e.g. 778
 	local TOPUP_JITTER = 30000 -- wu (~3/4 sector)
-	local topped_up = 0
 	-- BATCH passability edits around the mass move: without this every SetPos/SetScale runs its
-	-- own local passability update -- measured ~10ms per object, 87s for ~8300 objects (log
-	-- 09.18.54); the engine's own mass-spawn code (Billboards.lua, AutoRemoveObj.lua) uses this
+			-- own local passability update; the engine's own mass-spawn code uses this
 	-- exact Suspend/Resume idiom to batch the rebuild into ONE pass at Resume. The per-object
 	-- bodies are pcall'd, so the loop cannot throw past the Resume below.
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
 	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
-	local transform_token = InvestigationBegin("decorations: reposition scale and clone objects", map, {
-		collected = #objs, pass_edits_batched = pass_batch,
-		pass_edits_owned_by_caller = pass_edits_already_suspended == true,
-	})
 	local is_valid = Global("IsValid")
 	for _, obj in ipairs(objs) do
 		if not obj then
@@ -1080,17 +801,14 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 		elseif type(is_valid) == "function" and SafeCall(is_valid, obj) ~= true then
 			-- The cached pre-stretch traversal includes enrichment markers that staging has since
 			-- destroyed. Do not cross into any C object method through their stale Lua wrappers.
-			skipped_invalid = skipped_invalid + 1
 		elseif ShouldSkipObject(obj) then
-			skipped_skip = skipped_skip + 1
 		elseif IsImportantSectorObject(obj) then
-			skipped_marker = skipped_marker + 1
 		else
 			pcall(function()
 				local pos = ObjectPosition(obj)
-				if not pos then skipped_nopos = skipped_nopos + 1; return end
+				if not pos then return end
 				local ox, oy = PointXY(pos)
-				if type(ox) ~= "number" or type(oy) ~= "number" then skipped_nopos = skipped_nopos + 1; return end
+				if type(ox) ~= "number" or type(oy) ~= "number" then return end
 				local nx = math.floor(ox * scale_x + 0.5)
 				local ny = math.floor(oy * scale_y + 0.5)
 				local np = point_fn(nx, ny)
@@ -1124,35 +842,15 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 				if type(obj.SetPos) == "function" then
 					pcall(obj.SetPos, obj, np)
 					moved = moved + 1
-					minx = minx and math.min(minx, nx) or nx
-					maxx = maxx and math.max(maxx, nx) or nx
-					miny = miny and math.min(miny, ny) or ny
-					maxy = maxy and math.max(maxy, ny) or ny
-				else
-					no_setpos = no_setpos + 1
 				end
 				-- Grow the object to match the enlarged terrain features.
-				local old_scale, new_scale
 				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
 					local s = SafeCall(obj.GetScale, obj)
 					if type(s) == "number" and s > 0 then
-						old_scale = s
 						local ns = math.floor(s * scale_x + 0.5)
 						if ns > MAX_SCALE then ns = MAX_SCALE elseif ns < 1 then ns = 1 end
 						SafeCall(obj.SetScale, obj, ns)
-						new_scale = ns
-						scaled = scaled + 1
 					end
-				end
-				if sample_n < 15 then
-					sample_n = sample_n + 1
-					StretchLog("decor sample", {
-						n = sample_n, class = tostring(obj.class),
-						old_xy = tostring(ox) .. "," .. tostring(oy),
-						new_xy = tostring(nx) .. "," .. tostring(ny),
-						z_snapped = z_ok, z_mode = z_mode,
-						old_scale = old_scale, new_scale = new_scale,
-					})
 				end
 				-- Density top-up: chance to add one jittered clone of this decoration nearby.
 				if topup_on and rand_fn(1000) < topup_permille then
@@ -1170,37 +868,14 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 							if ok_cz and cpz then cp = cpz end
 						end
 						if type(clone.SetPos) == "function" then pcall(clone.SetPos, clone, cp) end
-						topped_up = topped_up + 1
 					end
 				end
 			end)
 		end
 	end
-	InvestigationEnd(transform_token, {
-		moved = moved, scaled = scaled, topped_up = topped_up,
-		skipped = skipped_invalid + skipped_skip + skipped_marker + skipped_nopos,
-		skipped_invalid_cached_objects = skipped_invalid,
-	}, true)
 	if owns_pass_batch then
-		local resume_token = InvestigationBegin("decorations: resume batched passability edits", map)
-		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
-		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
+		pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
 	end
-	local elapsed_ms = 0
-	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then elapsed_ms = t - t0 end end
-	StretchLog("ScaleDecorationsToFull: DONE", {
-		collected = #objs, moved = moved, scaled = scaled,
-		skipped_invalid_cached_objects = skipped_invalid,
-		skipped_shouldskip = skipped_skip, skipped_marker = skipped_marker,
-		skipped_nopos = skipped_nopos, no_setpos = no_setpos,
-		new_x_range = minx and (tostring(minx) .. ".." .. tostring(maxx)) or "none",
-		new_y_range = miny and (tostring(miny) .. ".." .. tostring(maxy)) or "none",
-		full_wu = full_wu, elapsed_ms = elapsed_ms,
-		topped_up = topped_up, topup_permille = topup_permille,
-	})
-	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, topped up %s; skipped invalid=%s skip=%s marker=%s nopos=%s)",
-		tostring(moved), tostring(scaled), tostring(topped_up), tostring(skipped_invalid),
-		tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
 	return moved
 end
 
@@ -1209,8 +884,7 @@ end
 -- on the stretched terrain -- the same position * (full/source) transform as the decorations.
 -- Without this they stay clustered in the source corner. Positions only: marker SIZE is gameplay
 -- (scan radius/visuals), so scale is left untouched. Gated on config STRETCH_SCALE_MARKERS.
-local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
-	StretchLog("ScaleMarkersToFull: ENTER")
+local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 	if not map or not cfg_bool("STRETCH_SCALE_MARKERS", true) then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -1230,7 +904,6 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	end
 	if type(sw_tiles) ~= "number" or type(sh_tiles) ~= "number" or sw_tiles <= 0 or sh_tiles <= 0
 		or type(full_tw) ~= "number" or type(full_th) ~= "number" or full_tw <= sw_tiles then
-		StretchLog("ScaleMarkersToFull: sizes unknown / no expansion -- skip")
 		return 0
 	end
 	local scale_x = (full_tw + 0.0) / sw_tiles
@@ -1246,7 +919,7 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 			or IsKindOfSafe(obj, "EffectDepositMarker")
 			-- Tunnel/entrance MARKERS move with the stretch on BOTH maps (user-confirmed design):
 			-- vanilla generates the surface and underground natural entrances at IDENTICAL native
-			-- coordinates (Align logs), so applying the identical x(full/source) transform to both
+			-- coordinates, so applying the identical x(full/source) transform to both
 			-- sides keeps every entrance pair vertically corresponding AND sitting on the terrain
 			-- feature it was generated on. The visible structures follow in
 			-- MoveEntranceVisualsToScale (STRETCH_MOVE_ENTRANCE_VISUALS).
@@ -1256,12 +929,10 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 			or IsKindOfSafe(obj, "BuriedWonderMarker")
 	end
 	local objs = {}
-	local collection_token = InvestigationBegin("markers: collect source objects", map)
 	if type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
-	InvestigationEnd(collection_token, { collected = #objs }, true)
-	local moved, sample_n, reregistered, skipped_recreated = 0, 0, 0, 0
+	local moved = 0
 	-- Sector marker REGISTRIES: each MapSector keeps per-sector marker lists (sector.markers.*)
 	-- that vanilla Scan reveals from. A moved marker must be re-registered from its old sector to
 	-- its new one, or scanning the new sector misses it (and scanning the old one reveals a marker
@@ -1272,10 +943,6 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
 	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchMarkers") end
-	local move_token = InvestigationBegin("markers: reposition and reregister objects", map, {
-		collected = #objs, pass_edits_batched = pass_batch,
-		pass_edits_owned_by_caller = pass_edits_already_suspended == true,
-	})
 	for _, obj in ipairs(objs) do
 		if obj and is_marker(obj) then
 			pcall(function()
@@ -1283,7 +950,6 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 				-- terrain stretching. Do not apply the proportional transform a second time; the same
 				-- pass must still move entrance markers and any already-spawned live deposits.
 				if obj.SuperBigMapNativeRecreatedAtFinal == true then
-					skipped_recreated = skipped_recreated + 1
 					return
 				end
 				local pos = ObjectPosition(obj)
@@ -1341,51 +1007,21 @@ local function ScaleMarkersToFull(map, debug, pass_edits_already_suspended)
 							if ok_o and ok_n and old_sec and new_sec and old_sec ~= new_sec then
 								if type(old_sec.UnregisterDeposit) == "function" then pcall(old_sec.UnregisterDeposit, old_sec, obj) end
 								if type(new_sec.RegisterDeposit) == "function" then pcall(new_sec.RegisterDeposit, new_sec, obj) end
-								reregistered = reregistered + 1
 							end
 						end
-					end
-					if sample_n < 10 then
-						sample_n = sample_n + 1
-						local nx2, ny2 = PointXY(np)
-						StretchLog("marker sample", {
-							n = sample_n, class = tostring(obj.class),
-							source_xy = tostring(source_x) .. "," .. tostring(source_y),
-							old_xy = tostring(ox) .. "," .. tostring(oy),
-							raw_scaled_xy = tostring(raw_nx) .. "," .. tostring(raw_ny),
-							new_xy = tostring(nx2) .. "," .. tostring(ny2),
-							captured_native = tostring(captured_native),
-						})
 					end
 				end
 			end)
 		end
 	end
-	InvestigationEnd(move_token, {
-		moved = moved, reregistered = reregistered,
-		skipped_recreated_at_final = skipped_recreated,
-	}, true)
 	if owns_pass_batch then
-		local resume_token = InvestigationBegin("markers: resume batched passability edits", map)
-		local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
-		InvestigationEnd(resume_token, { error = resume_ok and nil or tostring(resume_err) }, resume_ok)
+		pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
 	end
-	StretchLog("ScaleMarkersToFull: DONE", {
-		scanned = #objs, moved = moved, reregistered = reregistered,
-		skipped_recreated_at_final = skipped_recreated,
-	})
-	DebugPrint(string.format("ScaleMarkersToFull: moved %s deposit/anomaly markers (%s re-registered to new sectors)",
-		tostring(moved), tostring(reregistered)))
 	return moved
 end
 
--- STRETCH step 3b (entrance VISUALS): the Align diagnostics proved the tunnel MARKERS on both
--- maps already correspond after the stretch (both moved x1.333), but the entrances the player
--- SEES stayed at the pre-stretch positions: the decoration pass deliberately SKIPS every
--- underground-access object (ShouldSkipObject/IsUndergroundAccessObject protects live entrance
--- structures), so the signs / entrance structures / spawner
--- visuals never moved (observed: surface visuals at K7+N5 = markers' H9+K7 positions / 1.333).
--- This pass applies the SAME position*(full/source) transform to those visuals.
+-- STRETCH step 3b (entrance visuals): the decoration pass deliberately skips live
+-- underground-access objects, so this pass applies the same proportional transform separately.
 --
 -- DEFERRED ELEVATOR MIGRATION:
 -- A surface Elevator can be instant-completed before deferred underground expansion while its
@@ -1414,63 +1050,6 @@ local function IsElevatorConstructionSite(obj)
 		if type(value) == "string" then class_name = value end
 	end
 	return class_name == "Elevator" or IsKindOfSafe(obj.building_class_proto, "ElevatorBase")
-end
-
-local function ElevatorMigrationLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
-end
-
-local function ElevatorSupplyGridBrief(grid)
-	if not grid then return "nil" end
-	local width, height
-	if type(grid.size) == "function" then
-		local ok, w, h = pcall(grid.size, grid)
-		if ok then width, height = w, h or w end
-	end
-	local resource = type(grid) == "table" and rawget(grid, "supply_resource")
-	local subtype = type(grid) == "table" and rawget(grid, "grid_subtype")
-	local elements = type(grid) == "table" and rawget(grid, "elements")
-	return tostring(grid)
-		.. ";size=" .. tostring(width) .. "x" .. tostring(height)
-		.. ";resource=" .. tostring(resource)
-		.. ";subtype=" .. tostring(subtype)
-		.. ";elements=" .. tostring(type(elements) == "table" and #elements or nil)
-end
-
-local function ElevatorSupplyElementBrief(obj, resource)
-	if type(obj) ~= "table" then return "object=" .. type(obj) .. "@" .. tostring(obj) end
-	local element = rawget(obj, resource)
-	if type(element) ~= "table" then return "none" end
-	return "element=" .. tostring(element) .. ";grid="
-		.. ElevatorSupplyGridBrief(rawget(element, "grid"))
-end
-
-local function ElevatorSupplyTrace(stage, map, bld, record, extra)
-	local DebugLog = SuperBigMap.DebugLog
-	if not (DebugLog and type(DebugLog.On) == "function" and DebugLog.On("SupplyGrid")) then return end
-	local current = Global("CurrentMap")
-	local pos = bld and type(bld.GetPos) == "function" and SafeCall(bld.GetPos, bld)
-	local connections = type(map) == "table" and rawget(map, "supply_connection_grid")
-	local overlay = type(map) == "table" and rawget(map, "supply_overlay_grid")
-	local object_grid = type(map) == "table" and rawget(map, "object_hex_grid")
-	local data = {
-		stage = tostring(stage), current_map = tostring(current), current_name = tostring(current and current.name),
-		expected_map = tostring(map), expected_name = tostring(map and map.name),
-		context_matches = tostring(current == map), elevator = tostring(bld),
-		class = tostring(bld and bld.class), position = tostring(pos), city = tostring(bld and bld.city),
-		passage = tostring(record and record.underground_passage),
-		surface_elevator = tostring(record and record.surface_elevator),
-		electricity = ElevatorSupplyElementBrief(bld, "electricity"),
-		water = ElevatorSupplyElementBrief(bld, "water"),
-		air = ElevatorSupplyElementBrief(bld, "air"),
-		connections = tostring(connections),
-		connections_electricity = ElevatorSupplyGridBrief(type(connections) == "table" and connections.electricity),
-		connections_water = ElevatorSupplyGridBrief(type(connections) == "table" and connections.water),
-		overlay = ElevatorSupplyGridBrief(overlay), object_grid = ElevatorSupplyGridBrief(object_grid),
-	}
-	if type(extra) == "table" then for key, value in pairs(extra) do data[key] = value end end
-	DebugLog.Info("SupplyGrid", "Elevator restoration stage", data)
 end
 
 local function ElevatorTerrainFingerprint(map, cx, cy)
@@ -1544,11 +1123,6 @@ local function BeginDeferredElevatorMigration(map)
 					restored = false,
 				}
 				records[#records + 1] = record
-				ElevatorMigrationLog("deferred Elevator annotated before underground expansion", {
-					n = #records, site = tostring(site), surface_elevator = tostring(surface_elevator),
-					underground_passage = tostring(passage), surface_passage = tostring(surface_passage),
-					target_x = sx, target_y = sy, angle = tostring(angle),
-				})
 				-- Clear passage occupancy first. The old linked_obj is deliberately never dereferenced:
 				-- it may be the destroyed surface ConstructionSite that caused HGE::l_GetPos.
 				if passage.elevator_construction == site or not IsLiveGameObject(passage.elevator_construction) then
@@ -1563,9 +1137,6 @@ local function BeginDeferredElevatorMigration(map)
 				if not ok_done or IsLiveGameObject(site) then
 					error("failed to remove pending underground Elevator site: " .. tostring(done_err))
 				end
-				ElevatorMigrationLog("pending underground Elevator site removed without terrain restore", {
-					n = #records, old_site = tostring(site), target_x = sx, target_y = sy,
-				})
 			end
 		else
 			local surface_site = IsLiveGameObject(surface_passage)
@@ -1576,18 +1147,8 @@ local function BeginDeferredElevatorMigration(map)
 			if IsElevatorConstructionSite(surface_site) then
 				site.SuperBigMapDeferredElevatorPassage = passage
 			end
-			ElevatorMigrationLog("underground Elevator site left in place (no finished surface counterpart)", {
-				site = tostring(site), passage = tostring(passage), surface_passage = tostring(surface_passage),
-				surface_elevator = tostring(surface_elevator),
-				surface_site = tostring(surface_site),
-				surface_stage = IsElevatorConstructionSite(surface_site) and "construction" or "absent",
-				underground_stage = "construction", stages_match = tostring(IsElevatorConstructionSite(surface_site)),
-			})
 		end
 	end
-	ElevatorMigrationLog("deferred Elevator annotation/removal complete", {
-		pending_sites = #sites, migrations = #records,
-	})
 	return records
 end
 
@@ -1633,11 +1194,6 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 				local snapped = SafeCall(target.SetTerrainZ, target, map)
 				if snapped then target = snapped end
 			end
-			local target_z = type(target.z) == "function" and SafeCall(target.z, target) or nil
-			ElevatorSupplyTrace("before PlaceBuildingIn", map, nil, record, {
-				record = i, target = tostring(target), target_x = passage_x,
-				target_y = passage_y, target_z = tostring(target_z),
-			})
 			local instance = {
 				city = map.City,
 				name = record.name,
@@ -1658,19 +1214,13 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 				error("failed to rebuild underground Elevator counterpart " .. tostring(i))
 			end
 			CheckElevatorRestoreTransaction(transaction_guard, "after-create", map, bld, record, i)
-			ElevatorSupplyTrace("after PlaceBuildingIn", map, bld, record, { record = i })
 			local passage_angle = type(passage.GetAngle) == "function"
 				and SafeCall(passage.GetAngle, passage) or record.angle or 0
 			if type(bld.SetAngle) == "function" then SafeCall(bld.SetAngle, bld, passage_angle) end
-			ElevatorSupplyTrace("after SetAngle", map, bld, record, {
-				record = i, passage_angle = tostring(passage_angle),
-			})
 			if type(bld.SetPos) == "function" then SafeCall(bld.SetPos, bld, target) end
 			CheckElevatorRestoreTransaction(transaction_guard, "after-position", map, bld, record, i)
-			ElevatorSupplyTrace("after SetPos", map, bld, record, { record = i })
 			CheckElevatorRestoreTransaction(transaction_guard, "before-apply-grids", map, bld, record, i)
 			if type(bld.ApplyToGrids) == "function" then SafeCall(bld.ApplyToGrids, bld) end
-			ElevatorSupplyTrace("after ApplyToGrids", map, bld, record, { record = i })
 			if record.user_include_in_lrt ~= nil then bld.user_include_in_lrt = record.user_include_in_lrt end
 
 			-- Match the final steps of ConstructionSite:Complete("quick_build"). PlaceBuildingIn
@@ -1686,9 +1236,6 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 				end
 				quick_build_setup = true
 			end
-			ElevatorSupplyTrace("after QuickBuildSetup", map, bld, record, {
-				record = i, quick_build_setup = tostring(quick_build_setup),
-			})
 			CheckElevatorRestoreTransaction(transaction_guard, "before-construction-complete",
 				map, bld, record, i)
 			local ok_complete, complete_err = pcall(msg, "ConstructionComplete", bld, false)
@@ -1697,33 +1244,16 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 			end
 			CheckElevatorRestoreTransaction(transaction_guard, "after-construction-complete",
 				map, bld, record, i)
-			ElevatorSupplyTrace("after ConstructionComplete", map, bld, record, { record = i })
 			local terrain_after = ElevatorTerrainFingerprint(map, passage_x, passage_y)
 			local terrain_unchanged = SameElevatorTerrainFingerprint(terrain_before, terrain_after)
 			if not terrain_unchanged then
 				error("rebuilding underground Elevator counterpart changed terrain at "
 					.. tostring(passage_x) .. "," .. tostring(passage_y))
 			end
-			local nearest_passage = type(map.MapFindNearest) == "function"
-				and SafeCall(map.MapFindNearest, map, target, "map", "SurfacePassageBase", "UndergroundPassageBase") or nil
 			passage.elevator_construction = false
 			record.rebuilt_elevator = bld
 			record.restored = true
 			restored = restored + 1
-			ElevatorMigrationLog("finished underground Elevator counterpart rebuilt", {
-				n = i, reason = tostring(reason or "normal"), elevator = tostring(bld),
-				surface_elevator = tostring(record.surface_elevator), passage = tostring(passage),
-				nearest_passage = tostring(nearest_passage), passage_is_nearest = tostring(nearest_passage == passage),
-				surface_stage = "complete", underground_stage = "complete", stages_match = "true",
-				quick_build_setup = tostring(quick_build_setup), construction_complete = "true",
-				x = passage_x, y = passage_y, z = tostring(target_z),
-				surface_x = record.surface_x, surface_y = record.surface_y,
-				offset_x = record.surface_x - passage_x, offset_y = record.surface_y - passage_y,
-				terrain_unchanged = tostring(terrain_unchanged),
-				terrain_checksum = terrain_after and terrain_after.checksum or "?",
-				terrain_min_z = terrain_after and terrain_after.min_z or "?",
-				terrain_max_z = terrain_after and terrain_after.max_z or "?",
-			})
 		end
 	end
 	return restored
@@ -1739,11 +1269,6 @@ local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 3
 local ENTRANCE_BADGE_MARKER_CLASSES = {
 	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
 }
-
-local function EntranceBadgeLog(message, data)
-	local log = SuperBigMap.DebugLog
-	if log then log.Info("EntrancePositions", message, data) end
-end
 
 local function PositionXYZ(pos)
 	local x, y = PointXY(pos)
@@ -1816,22 +1341,15 @@ local function CaptureEntranceBadgePosition(marker, sign, reason)
 	if type(z) == "number" and type(point_fn) == "function" and type(sign.SetPos) == "function" then
 		snapped = pcall(sign.SetPos, sign, point_fn(x, y, z))
 	end
-	EntranceBadgeLog("entrance badge starting position locked", {
-		reason = tostring(reason or "capture"), marker = tostring(marker), sign = tostring(sign),
-		passage = tostring(marker.spawner), x = x, y = y, z = tostring(z),
-		terrain_z = tostring(terrain_z), snapped = tostring(snapped),
-	})
 	return true
 end
 
 local function RestoreEntranceBadgePosition(marker, sign, reason)
 	if not marker or not sign or type(sign.SetPos) ~= "function" then return false end
-	local x, y, z, source = EntranceBadgeAnchor(marker, sign)
+	local x, y, z = EntranceBadgeAnchor(marker, sign)
 	if type(x) ~= "number" or type(y) ~= "number" then return false end
 	local point_fn = Global("point")
 	if type(point_fn) ~= "function" then return false end
-	local before = ObjectPosition(sign)
-	local bx, by, bz = PositionXYZ(before)
 	local terrain_z = EntranceBadgeTerrainZ(marker, sign, x, y)
 	if type(terrain_z) == "number" then z = terrain_z end
 	-- Update the carriers first: the SetPos lock wrapper reads this anchor while applying target.
@@ -1839,15 +1357,7 @@ local function RestoreEntranceBadgePosition(marker, sign, reason)
 	WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
 	WriteEntranceBadgeAnchor(sign, x, y, z)
 	local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
-	local ok, err = pcall(sign.SetPos, sign, target)
-	EntranceBadgeLog("entrance badge position restored after refresh", {
-		reason = tostring(reason or "restore"), marker = tostring(marker), sign = tostring(sign),
-		passage = tostring(marker.spawner), anchor_source = tostring(source),
-		before_x = tostring(bx), before_y = tostring(by), before_z = tostring(bz),
-		after_x = x, after_y = y, after_z = tostring(z), terrain_z = tostring(terrain_z),
-		moved = tostring(bx ~= x or by ~= y or bz ~= z),
-		ok = tostring(ok), error = ok and "none" or tostring(err),
-	})
+	local ok = pcall(sign.SetPos, sign, target)
 	return ok
 end
 
@@ -1945,7 +1455,6 @@ local function PatchEntranceBadgePosition()
 		installed = installed + 1
 	end
 	State.entrance_badge_position_patch_version = ENTRANCE_BADGE_POSITION_PATCH_VERSION
-	EntranceBadgeLog("entrance badge position-lock patch installed", { classes = installed })
 	return installed > 0
 end
 
@@ -1977,8 +1486,8 @@ end
 -- Continue STRETCH step 3b: move everything matching IsUndergroundAccessObject or a
 -- SpawnsOnCityInit tunnel spawner, EXCEPT the tunnel
 -- markers themselves (already moved by ScaleMarkersToFull; moving twice would double-scale).
--- Runs on BOTH maps, so entrance pairs stay vertically corresponding. Every object handled is
--- logged under the "Align" scope. Gated on STRETCH_MOVE_ENTRANCE_VISUALS; once per map.
+-- Runs on both maps, so entrance pairs stay vertically corresponding. Gated on
+-- STRETCH_MOVE_ENTRANCE_VISUALS and applied once per map.
 local function MoveEntranceVisualsToScale(map)
 	if not cfg_bool("STRETCH_MOVE_ENTRANCE_VISUALS", true) then return 0 end
 	if not map or map.SuperBigMapEntranceVisualsMoved == true then return 0 end
@@ -1999,11 +1508,7 @@ local function MoveEntranceVisualsToScale(map)
 	local scale = (full_tw + 0.0) / sw_tiles
 	local src_w = sw_tiles * hts
 	map.SuperBigMapEntranceVisualsMoved = true
-	local DebugLog = SuperBigMap.DebugLog
 	local terrain_api = Global("terrain")
-	local function AlignLog(message, data)
-		if DebugLog then DebugLog.Info("Align", message, data) end
-	end
 	local moved, seen_objs = 0, {}
 	local function is_elevator_or_site(obj)
 		if IsKindOfSafe(obj, "ElevatorBase") then return true, "elevator" end
@@ -2095,10 +1600,6 @@ local function MoveEntranceVisualsToScale(map)
 			if ok_h2 and type(ground_z) == "number" then
 				np = point_fn(nx, ny, ground_z)
 				placed_z = true
-				AlignLog("entrance sign snapped to live terrain", {
-					xy = tostring(nx) .. "," .. tostring(ny),
-					terrain_z = ground_z, z = ground_z,
-				})
 			end
 		end
 		local ok_set = false
@@ -2117,8 +1618,8 @@ local function MoveEntranceVisualsToScale(map)
 			-- underground expansion must carry their occupied hexes to the stretched coordinate.
 			-- luaHex.cpp asserts 'handle > 0' (uncatchable C-side) both for handle-less objects
 			-- AND when removing an object that is not currently registered in the grid -- some
-			-- Building-derived entrance indicators pass a Building+handle test yet were never
-			-- hex-registered by vanilla (crash log 16.44.48). Whitelist, don't heuristic.
+			-- Some Building-derived entrance indicators have a handle but were never registered
+			-- in the object grid, so only the known passage/elevator classes are eligible.
 			local is_valid_fn = Global("IsValid")
 			if hex_grid and type(hex_remove) == "function" and type(hex_add) == "function"
 				and (IsKindOfSafe(obj, "ElevatorPassage") or is_elevator_or_site(obj))
@@ -2131,8 +1632,7 @@ local function MoveEntranceVisualsToScale(map)
 			-- REGISTRATION PRE-CHECK: luaHex.cpp asserts 'handle > 0' (uncatchable) when
 			-- REMOVING an object that is not currently registered at its cells. Verify via
 			-- HexGridShapeGetObjectList that the object really is registered there before
-			-- removing; if it is not, skip the remove but still ADD after the move (that IS
-			-- the desired end state for the snap machinery), and log the anomaly.
+			-- removing; if it is not, skip the remove but still add it after the move.
 			local was_registered = false
 			if shape then
 				local hex_list = Global("HexGridShapeGetObjectList")
@@ -2143,11 +1643,6 @@ local function MoveEntranceVisualsToScale(map)
 							if o2 == obj then was_registered = true break end
 						end
 					end
-				end
-				if not was_registered then
-					AlignLog("hex re-reg pre-check: object NOT registered at its cells -- remove skipped", {
-						class = tostring(obj.class or "?"), handle = tostring(obj.handle),
-					})
 				end
 			end
 			if shape and was_registered then pcall(hex_remove, hex_grid, obj, shape) end
@@ -2173,13 +1668,6 @@ local function MoveEntranceVisualsToScale(map)
 			if type(obj.SetVisible) == "function" then pcall(obj.SetVisible, obj, true) end
 			if type(obj.SetOpacity) == "function" then pcall(obj.SetOpacity, obj, 100) end
 		end
-		AlignLog("entrance visual moved", {
-			via = via, class = tostring(obj.class or "?"),
-			from = tostring(ox) .. "," .. tostring(oy),
-			to = tostring(nx) .. "," .. tostring(ny),
-			ok = ok_set, rehexed = rehexed, paired_exact_xy = pair_exact,
-			pair_anchor = pair_anchor,
-		})
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
 	pcall(map.MapForEach, map, "map", "CObject", function(obj)
@@ -2220,41 +1708,32 @@ local function MoveEntranceVisualsToScale(map)
 		if type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function"
 			or not buildable or type(buildable.GetZ) ~= "function"
 			or type(get_unbuildable) ~= "function" then
-			return nil, { reason = "hex/buildable APIs unavailable" }
+			return nil
 		end
 		local ok_center, center_q, center_r = pcall(world_to_hex, point_fn(center_x, center_y))
 		local ok_sentinel, unbuildable = pcall(get_unbuildable)
 		if not ok_center or type(center_q) ~= "number" or not ok_sentinel then
-			return nil, { reason = "center hex or unbuildable sentinel unavailable" }
+			return nil
 		end
 		local old_pos = ObjectPosition(sign)
 		local old_x, old_y = PointXY(old_pos)
-		local rejected = {
-			unbuildable = 0, impassable = 0, uneven = 0, obstructed = 0, badge = 0, api = 0,
-		}
-		local checked = 0
 		local function candidate_valid(q, r)
-			checked = checked + 1
 			if badge_occupancy and type(badge_rules.BadgeHexOccupied) == "function"
 				and badge_rules.BadgeHexOccupied(badge_occupancy, q, r) then
-				rejected.badge = rejected.badge + 1
 				return nil
 			end
 			local ok_b, build_z = pcall(buildable.GetZ, buildable, q, r)
 			if not ok_b or build_z == nil or build_z == unbuildable then
-				rejected.unbuildable = rejected.unbuildable + 1
 				return nil
 			end
 			local ok_w, x, y = pcall(hex_to_world, q, r)
 			if not ok_w or type(x) ~= "number" or type(y) ~= "number" then
-				rejected.api = rejected.api + 1
 				return nil
 			end
 			local pt = point_fn(x, y)
 			if type(terrain_api) == "table" and type(terrain_api.IsPassable) == "function" then
 				local ok_p, passable = pcall(terrain_api.IsPassable, map, pt)
 				if not ok_p or passable ~= true then
-					rejected.impassable = rejected.impassable + 1
 					return nil
 				end
 			end
@@ -2263,18 +1742,15 @@ local function MoveEntranceVisualsToScale(map)
 				local normal_z = ok_n and normal and type(normal.z) == "function"
 					and SafeCall(normal.z, normal) or nil
 				if type(normal_z) ~= "number" or normal_z < 3700 then
-					rejected.uneven = rejected.uneven + 1
 					return nil
 				end
 			end
 			if hex_grid and type(hex_grid.GetBuildObstructions) == "function" then
 				local ok_o, obstructions = pcall(hex_grid.GetBuildObstructions, hex_grid, q, r)
 				if not ok_o then
-					rejected.api = rejected.api + 1
 					return nil
 				end
 				if obstructions and #obstructions > 0 then
-					rejected.obstructed = rejected.obstructed + 1
 					return nil
 				end
 			end
@@ -2301,19 +1777,11 @@ local function MoveEntranceVisualsToScale(map)
 				end
 			end
 			if best then
-				best.center_tiles = radius
-				best.checked = checked
-				best.rejected = rejected
-				best.fallback = radius > 2
 				return best
 			end
 		end
-		return nil, {
-			reason = "no safe side hex within eight tiles of entrance center",
-			checked = checked, rejected = rejected,
-		}
+		return nil
 	end
-	local signs_anchored, signs_unresolved = 0, 0
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
 		local marker = sign and sign.tunnel_marker
 		local passage = marker and marker.spawner
@@ -2324,30 +1792,11 @@ local function MoveEntranceVisualsToScale(map)
 			if marker and sign then
 				CaptureEntranceBadgePosition(marker, sign, "initial position; passage anchor unresolved")
 			end
-			signs_unresolved = signs_unresolved + 1
-			AlignLog("entrance sign passage anchor unresolved", {
-				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
-			})
 			return
 		end
-		local old_pos = ObjectPosition(sign)
-		local sx, sy = PointXY(old_pos)
-		local side, side_error = find_badge_side_position(sign, px, py)
+		local side = find_badge_side_position(sign, px, py)
 		if not side then
 			CaptureEntranceBadgePosition(marker, sign, "initial position; no safe side hex")
-			signs_unresolved = signs_unresolved + 1
-			AlignLog("entrance sign safe side unresolved", {
-				sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
-				center_x = px, center_y = py, reason = tostring(side_error and side_error.reason),
-				checked = tostring(side_error and side_error.checked),
-				rejected = side_error and side_error.rejected and
-					("unbuildable=" .. tostring(side_error.rejected.unbuildable)
-					.. " impassable=" .. tostring(side_error.rejected.impassable)
-					.. " uneven=" .. tostring(side_error.rejected.uneven)
-					.. " obstructed=" .. tostring(side_error.rejected.obstructed)
-					.. " badge=" .. tostring(side_error.rejected.badge)
-					.. " api=" .. tostring(side_error.rejected.api)) or "?",
-			})
 			return
 		end
 		local badge_x, badge_y = side.x, side.y
@@ -2363,9 +1812,8 @@ local function MoveEntranceVisualsToScale(map)
 			local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
 			if ok_z and snapped then anchor = snapped end
 		end
-		local ok_set, set_err = pcall(sign.SetPos, sign, anchor)
+		local ok_set = pcall(sign.SetPos, sign, anchor)
 		if ok_set then
-			signs_anchored = signs_anchored + 1
 			sign.SuperBigMapPassageAnchored = true
 			CaptureEntranceBadgePosition(marker, sign, "initial post-expansion passage anchor")
 			if cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
@@ -2375,31 +1823,8 @@ local function MoveEntranceVisualsToScale(map)
 			end
 		else
 			CaptureEntranceBadgePosition(marker, sign, "initial position; anchor SetPos failed")
-			signs_unresolved = signs_unresolved + 1
 		end
-		local before_distance
-		if type(sx) == "number" and type(sy) == "number" then
-			local dx, dy = sx - px, sy - py
-			before_distance = math.floor(math.sqrt(dx * dx + dy * dy) + 0.5)
-		end
-		local after_dx, after_dy = badge_x - px, badge_y - py
-		local after_distance = math.floor(math.sqrt(after_dx * after_dx + after_dy * after_dy) + 0.5)
-		AlignLog("entrance sign anchored to final passage", {
-			sign = tostring(sign), marker = tostring(marker), passage = tostring(passage),
-			from_x = tostring(sx), from_y = tostring(sy), passage_x = px, passage_y = py,
-			to_x = badge_x, to_y = badge_y, center_tiles = side.center_tiles,
-			fallback = tostring(side.fallback),
-			candidates_checked = side.checked,
-			distance_before = tostring(before_distance),
-			distance_after = ok_set and after_distance or "unchanged",
-			terrain_z = tostring(terrain_z),
-			ok = tostring(ok_set), error = ok_set and "none" or tostring(set_err),
-		})
 	end)
-	StretchLog("MoveEntranceVisualsToScale: DONE", {
-		moved = moved, signs_anchored = signs_anchored, signs_unresolved = signs_unresolved,
-	})
-	DebugPrint(string.format("MoveEntranceVisualsToScale: moved %s entrance visuals", tostring(moved)))
 	return moved
 end
 
@@ -2653,144 +2078,8 @@ local function AlignPassagePairsToSharedHex(underground_map)
 		else stats.fallback = stats.fallback + 1 end
 		underground_anchor.SuperBigMapSharedPassageHex = tostring(found_q) .. ":" .. tostring(found_r)
 		surface_anchor.SuperBigMapSharedPassageHex = underground_anchor.SuperBigMapSharedPassageHex
-		StretchLog("passage pair aligned to shared final hex", {
-			pair = i, q = found_q, r = found_r, radius = found_radius,
-			algorithm = search_algorithm,
-			underground_from = tostring(ux) .. "," .. tostring(uy),
-			surface_from = tostring(sx) .. "," .. tostring(sy),
-			final = tostring(final_x) .. "," .. tostring(final_y),
-		})
 	end
 	return true, stats
-end
-
--- STRETCH step 3c (floater audit): find objects HOVERING above the stretched terrain and log
--- exactly who they are. Cause under investigation (user screenshot: large rock formations
--- floating): the decoration pass SKIPS several categories (ShouldSkipObject: mystery objects,
--- underground access, buildings, ~450-800 per map in the logs) -- a skipped object keeps its OLD
--- Z at its OLD position while the terrain there stretched away and may now be lower. Every
--- floater logs class / position / z / terrain height / dz / whether it has a parent and, most
--- diagnostic, the ShouldSkipObject verdict (true = the decor pass skipped it -- cause confirmed).
--- When STRETCH_RESNAP_FLOATERS is on, non-Building floaters are snapped down onto the terrain
--- (Buildings are logged but never touched). Surface map only -- underground ceilings would
--- misflag. Threshold 300 wu above terrain.
-local function AuditFloatingObjects(map, phase)
-	phase = tostring(phase or "?")
-	if not map or type(map.MapForEach) ~= "function" then return 0 end
-	local terrain_api = Global("terrain")
-	local point_fn = Global("point")
-	if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
-		or type(point_fn) ~= "function" then
-		return 0
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	local function AlignLog(msg, data)
-		if DebugLog then DebugLog.Info("Align", msg, data) end
-	end
-	local object_clone = SuperBigMap.ObjectClone
-	local should_skip = object_clone and object_clone.ShouldSkipObject
-	local fix = cfg_bool("STRETCH_RESNAP_FLOATERS", true)
-	local THRESHOLD = 300       -- wu above terrain at the ORIGIN = floating
-	local EDGE_THRESHOLD = 1500 -- wu clearance under a big mesh's EDGES = visual overhang float
-	local BIG_RADIUS = 6000     -- wu: objects at least this wide get the edge check
-	local skip_classes = {
-		City = true, MapSector = true, RandomMapGeneratorHolder = true, RevealedMapSector = true,
-		SectorUnexplored = true, SectorScanned = true, SectorTarget = true, SectorRadius = true,
-		CameraObj = true,
-	}
-	local floaters, fixed, examined = 0, 0, 0
-	local edge_floaters, skipped_parent, no_explicit_z = 0, 0, 0
-	local class_counts = {}
-	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
-	if pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapFloaterAudit") end
-	pcall(map.MapForEach, map, "map", "CObject", function(obj)
-		if not obj or skip_classes[obj.class or false] then return end
-		-- Attached children follow their parent; only audit root objects (counted -- a large
-		-- attached mesh under a distant parent would be a blind spot worth knowing about).
-		if type(obj.GetParent) == "function" then
-			local ok_p, parent = pcall(obj.GetParent, obj)
-			if ok_p and parent then
-				skipped_parent = skipped_parent + 1
-				return
-			end
-		end
-		local pos = ObjectPosition(obj)
-		if not pos then return end
-		local px, py = PointXY(pos)
-		if type(px) ~= "number" or type(py) ~= "number" then return end
-		local pz
-		pcall(function() pz = pos:z() end)
-		if type(pz) ~= "number" then
-			no_explicit_z = no_explicit_z + 1
-			return
-		end
-		examined = examined + 1
-		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
-		if not ok_h or type(h) ~= "number" then return end
-		local dz = pz - h
-		local cls = tostring(obj.class or "?")
-		if dz > THRESHOLD then
-			floaters = floaters + 1
-			class_counts[cls] = (class_counts[cls] or 0) + 1
-			local skipped_verdict = "?"
-			if type(should_skip) == "function" then
-				local ok_s, v = pcall(should_skip, obj)
-				if ok_s then skipped_verdict = v and true or false end
-			end
-			local is_building = IsKindOfSafe(obj, "Building")
-			if floaters <= 25 then
-				AlignLog("floater", {
-					phase = phase, class = cls, xy = tostring(px) .. "," .. tostring(py),
-					z = pz, terrain_h = h, dz = dz,
-					decor_pass_skips_it = skipped_verdict, building = is_building,
-				})
-			end
-			if fix and not is_building and type(obj.SetPos) == "function" then
-				local np = point_fn(px, py, h)
-				if pcall(obj.SetPos, obj, np) then fixed = fixed + 1 end
-			end
-			return
-		end
-		-- EDGE CHECK for large meshes: the origin can sit ON the ground while the mesh bulk
-		-- hangs over lower terrain (screenshot: razor-flat rock base high above a dip). Sample
-		-- the terrain under the mesh edges; large positive clearance = visual float that the
-		-- origin test cannot see. Log-only (auto-lowering could bury the origin side).
-		if type(obj.GetRadius) == "function" then
-			local ok_r, r = pcall(obj.GetRadius, obj)
-			if ok_r and type(r) == "number" and r >= BIG_RADIUS then
-				local worst
-				for _, off in ipairs({ {r, 0}, {-r, 0}, {0, r}, {0, -r} }) do
-					local ok_h2, h2 = pcall(terrain_api.GetHeight, map, point_fn(px + off[1], py + off[2]))
-					if ok_h2 and type(h2) == "number" then
-						local clearance = pz - h2
-						if not worst or clearance > worst then worst = clearance end
-					end
-				end
-				if worst and worst > EDGE_THRESHOLD then
-					edge_floaters = edge_floaters + 1
-					if edge_floaters <= 25 then
-						AlignLog("floater (edge overhang)", {
-							phase = phase, class = cls, xy = tostring(px) .. "," .. tostring(py),
-							z = pz, dz_origin = dz, worst_edge_clearance = worst, radius = r,
-						})
-					end
-				end
-			end
-		end
-	end)
-	if pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapFloaterAudit") end
-	local top = {}
-	for cls, n in pairs(class_counts) do top[#top + 1] = cls .. "=" .. n end
-	table.sort(top)
-	AlignLog("floater audit DONE", {
-		phase = phase, examined = examined, floaters = floaters, fixed = fixed,
-		edge_overhangs = edge_floaters, skipped_attached = skipped_parent, no_explicit_z = no_explicit_z,
-		by_class = table.concat(top, " "),
-	})
-	StretchLog("AuditFloatingObjects: DONE", { phase = phase, floaters = floaters, fixed = fixed, edge_overhangs = edge_floaters })
-	DebugPrint(string.format("floater audit [%s]: %s floating (%s snapped), %s edge overhangs",
-		phase, tostring(floaters), tostring(fixed), tostring(edge_floaters)))
-	return floaters
 end
 
 -- STRETCH step 5: relocate the INITIAL revealed sector(s). Vanilla picks the start sector by its
@@ -2804,7 +2093,6 @@ end
 -- (which then hides anything revealed that spilled outside the new scanned sector). Gated on
 -- config STRETCH_RELOCATE_START_SECTOR.
 local function StretchRelocateStartSector(map)
-	StretchLog("StretchRelocateStartSector: ENTER")
 	if not map or not cfg_bool("STRETCH_RELOCATE_START_SECTOR", true) then return 0 end
 	local city = map.City
 	local get_sector = Global("GetMapSectorXY")
@@ -2812,13 +2100,11 @@ local function StretchRelocateStartSector(map)
 	local IsValid = Global("IsValid")
 	local point_fn = Global("point")
 	if not city or type(get_sector) ~= "function" or type(point_fn) ~= "function" then
-		StretchLog("StretchRelocateStartSector: city/GetMapSectorXY unavailable -- skip")
 		return 0
 	end
 	local sw = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
 	local full = map.SuperBigMapDesiredWidthTiles or (map.mapdata and map.mapdata.Width)
 	if not (type(sw) == "number" and type(full) == "number" and sw > 0 and full > sw) then
-		StretchLog("StretchRelocateStartSector: sizes unknown / no expansion -- skip")
 		return 0
 	end
 	local scale = (full + 0.0) / sw
@@ -2844,12 +2130,10 @@ local function StretchRelocateStartSector(map)
 			if type(cx) ~= "number" then return end
 			local ok_t, target = pcall(get_sector, city, math.floor(cx * scale + 0.5), math.floor(cy * scale + 0.5))
 			if not ok_t or not target or target == old then
-				StretchLog("relocate: target same/none -- sector kept", { old = tostring(old.id) })
 				return
 			end
 			local status = old.status
 			-- Move any landed rocket in the old sector to its scaled position (Z-snapped).
-			local rockets_moved = 0
 			if type(map.MapForEach) == "function" then
 				pcall(map.MapForEach, map, old.area, "RocketBase", function(r)
 					local rp = ObjectPosition(r)
@@ -2863,7 +2147,6 @@ local function StretchRelocateStartSector(map)
 					end
 					if type(r.SetPos) == "function" then
 						pcall(r.SetPos, r, np)
-						rockets_moved = rockets_moved + 1
 					end
 				end)
 			end
@@ -2884,145 +2167,13 @@ local function StretchRelocateStartSector(map)
 			-- Keep the exploration bookkeeping consistent (overview exit_to, profile fallbacks).
 			if city.InitialSector == old then city.InitialSector = target end
 			relocated = relocated + 1
-			StretchLog("relocate: start sector moved", {
-				old = tostring(old.id), new = tostring(target.id),
-				status = tostring(status), rockets_moved = rockets_moved,
-			})
 		end)
 	end
-	StretchLog("StretchRelocateStartSector: DONE", { scanned = #scanned, relocated = relocated })
-	DebugPrint(string.format("StretchRelocateStartSector: relocated %s scanned sector(s)", tostring(relocated)))
 	return relocated
-end
-
--- TERRAIN SPIKE AUDIT (config DEBUG_SPIKES, scope "Spikes"). The entrance "spike crown"
--- artifact persisted even after the entrance pads were PROVEN clean at generation end
--- (post-gen re-level read back the exact leveled z) -- so some LATER pipeline stage creates
--- it, or it is on the other map. This audit samples the height field on a coarse lattice
--- (~16k GetHeight calls, one long C burst) and logs the global min/max plus the TALLEST
--- samples with world coordinates. Called with a stage label at every stretch-pipeline step
--- on both maps: the first stage whose report shows the max exploding (and where) names the
--- culprit. Cheap enough to leave in while DEBUG_SPIKES is on.
-local function SpikeAudit(map, label)
-	if not cfg_bool("DEBUG_SPIKES", false) then return end
-	map = map or Global("CurrentMap")
-	local terrain_api = Global("terrain")
-	local point_fn = Global("point")
-	if not (map and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
-		and type(point_fn) == "function") then
-		return
-	end
-	local w, h
-	if type(terrain_api.GetMapSize) == "function" then
-		local ok, ww, hh = pcall(terrain_api.GetMapSize, map)
-		if ok then w, h = ww, hh end
-	end
-	if not (type(w) == "number" and w > 0) then
-		local mapdata = map.mapdata
-		local tile = 100
-		local const_tbl = Global("const")
-		if type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number" then
-			tile = const_tbl.HeightTileSize
-		end
-		w = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width * tile or nil
-		h = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height * tile or w
-	end
-	if not w then return end
-	h = h or w
-	local step = math.max(1, math.floor(w / 128)) -- 128x128 lattice
-	local zmin, zmax
-	local top = {} -- top-8 tallest samples { z, x, y }
-	local function consider(z, x, y)
-		if zmin == nil or z < zmin then zmin = z end
-		if zmax == nil or z > zmax then zmax = z end
-		if #top < 8 then
-			top[#top + 1] = { z = z, x = x, y = y }
-			table.sort(top, function(a, b) return a.z > b.z end)
-		elseif z > top[#top].z then
-			top[#top] = { z = z, x = x, y = y }
-			table.sort(top, function(a, b) return a.z > b.z end)
-		end
-	end
-	local y = 0
-	while y < h do
-		local x = 0
-		while x < w do
-			local ok_h, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
-			if ok_h and type(z) == "number" then consider(z, x, y) end
-			x = x + step
-		end
-		y = y + step
-	end
-	local parts = {}
-	for _, t in ipairs(top) do
-		parts[#parts + 1] = string.format("z=%d@(%d,%d)", t.z, t.x, t.y)
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Spikes", "audit " .. tostring(label), {
-			map = tostring(map.name), z_min = tostring(zmin), z_max = tostring(zmax),
-			step = step, tallest = table.concat(parts, " "),
-		})
-	end
-end
-
--- FINE spike scan (config DEBUG_SPIKES): dense sampling around a point. The map-wide
--- SpikeAudit lattice (step ~6400) is blind to 1-2-cell needles (a needle is ~100-200 wu
--- wide); this scans a small area at 400-wu steps -- used around each entrance in the timed
--- ground-truth dumps to prove or disprove thin needles the coarse audit misses.
-local function FineSpikeScan(map, cx, cy, radius, step, label)
-	if not cfg_bool("DEBUG_SPIKES", false) then return end
-	map = map or Global("CurrentMap")
-	local terrain_api = Global("terrain")
-	local point_fn = Global("point")
-	if not (map and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function"
-		and type(point_fn) == "function" and type(cx) == "number" and type(cy) == "number") then
-		return
-	end
-	radius = radius or 12000
-	step = step or 400
-	local zmin, zmax
-	local top = {}
-	local y = cy - radius
-	while y <= cy + radius do
-		local x = cx - radius
-		while x <= cx + radius do
-			local ok, z = pcall(terrain_api.GetHeight, map, point_fn(x, y))
-			if ok and type(z) == "number" then
-				if zmin == nil or z < zmin then zmin = z end
-				if zmax == nil or z > zmax then zmax = z end
-				if #top < 5 then
-					top[#top + 1] = { z = z, x = x, y = y }
-					table.sort(top, function(a, b) return a.z > b.z end)
-				elseif z > top[#top].z then
-					top[#top] = { z = z, x = x, y = y }
-					table.sort(top, function(a, b) return a.z > b.z end)
-				end
-			end
-			x = x + step
-		end
-		y = y + step
-	end
-	local parts = {}
-	for _, t in ipairs(top) do
-		parts[#parts + 1] = string.format("z=%d@(%d,%d)", t.z, t.x, t.y)
-	end
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Spikes", "fine scan " .. tostring(label), {
-			map = tostring(map.name), center = tostring(cx) .. "," .. tostring(cy),
-			radius = radius, step = step,
-			z_min = tostring(zmin), z_max = tostring(zmax),
-			spread = tostring(zmin and zmax and (zmax - zmin)),
-			tallest = table.concat(parts, " "),
-		})
-	end
 end
 
 -- Public API consumed by the stretch-only map-generation pipeline.
 local TerrainCopy = {
-	SpikeAudit = SpikeAudit,
-	FineSpikeScan = FineSpikeScan,
 	ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain,
 	SectorWorldRect = SectorWorldRect,
 	FindSectorByName = FindSectorByName,
@@ -3039,7 +2190,6 @@ local TerrainCopy = {
 	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
-	AuditFloatingObjects = AuditFloatingObjects,
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,
 }

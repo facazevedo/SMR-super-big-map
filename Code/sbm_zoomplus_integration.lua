@@ -2,7 +2,7 @@
 --
 -- The bundled `Code/ZoomPlus.lua` is a self-contained camera-zoom module. This is the ONLY
 -- Super Big Map code that touches the global ZoomPlus table: it sets the multiplier /
--- scenario-editor allowance / debug-log toggle from Config and (re)applies the zoom after map
+-- scenario-editor allowance from Config and (re)applies the zoom after map
 -- and camera resets. RestoreVanillaBehavior disables ZoomPlus. ZoomPlus stays drop-in-ready:
 -- do not introduce dependencies from inside `ZoomPlus.lua` on the SuperBigMap namespace.
 
@@ -19,7 +19,6 @@ local Config = SuperBigMap.Config or {}
 
 local NORMAL_ZOOM_ENABLED = Config.ENABLE_NORMAL_ZOOM_PLUS == true
 local NORMAL_ZOOM_MULTIPLIER = (type(Config.NORMAL_ZOOM_MULTIPLIER) == "number") and Config.NORMAL_ZOOM_MULTIPLIER or 4.0
-local SHOW_ZOOM_DEBUG_LOGS = Config.DEBUG_ZOOM == true or Config.DEBUG_LOGS == true
 local PRE_AIM_OVERVIEW_EXIT = Config.PRE_AIM_OVERVIEW_EXIT ~= false
 local OVERVIEW_EXIT_PAN_TIME = (type(Config.OVERVIEW_EXIT_PAN_TIME) == "number") and Config.OVERVIEW_EXIT_PAN_TIME or 250
 
@@ -82,36 +81,8 @@ local function ApplyNormalZoom()
 		return false
 	end
 
-	if SuperBigMap.DebugLog and SuperBigMap.DebugLog.On and SuperBigMap.DebugLog.On("ZoomVanilla") then
-		-- Ground-truth snapshot: the live camera zoom-out limit and const default (which
-		-- ZoomPlus patches) + overview FOV (current vs saved-vanilla). Lets one repro show
-		-- directly whether zoom/FOV is vanilla and which mechanism made it non-vanilla.
-		local const_tbl = Global("const")
-		local def = type(const_tbl) == "table" and const_tbl.DefaultCameraRTS or nil
-		local cam_cfg = type(const_tbl) == "table" and const_tbl.Camera or nil
-		local cam = Global("cameraRTS")
-		local live_props = (type(cam) == "table" and type(cam.GetProperties) == "function")
-			and SafeCall(cam.GetProperties, 1) or nil
-		SuperBigMap.DebugLog.Info("ZoomVanilla", "ApplyNormalZoom snapshot", {
-			map = tostring((Global("CurrentMap") or {}).name or "?"),
-			should_use_mod_zoom = ShouldUseModZoom(),
-			normal_zoom_enabled = NORMAL_ZOOM_ENABLED,
-			zp_enabled = type(zoom_plus.IsEnabled) == "function" and (SafeCall(zoom_plus.IsEnabled) == true) or "?",
-			effective_multiplier = EffectiveMultiplier(),
-			const_default_zoom_out = (type(def) == "table") and def.LookatDistZoomOut or "?",
-			live_zoom_out = (type(live_props) == "table") and live_props.LookatDistZoomOut or "?",
-			zp_saved_vanilla_zoom_out = zoom_plus.original_default_zoom_out,
-			fov_16_9 = (type(cam_cfg) == "table") and cam_cfg.OverviewFovX_16_9 or "?",
-			vanilla_fov_16_9 = (type(cam_cfg) == "table") and cam_cfg.SuperBigMapOriginalOverviewFovX_16_9 or "?",
-		})
-	end
-
 	if not ShouldUseModZoom() then
 		DisableZoomPlus(zoom_plus)
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Zoom", "current map is not Super Big Map-expanded -- ZoomPlus left disabled")
-		end
 		return false
 	end
 
@@ -119,15 +90,10 @@ local function ApplyNormalZoom()
 	-- editor camera/zoom is stock. (ZoomPlus re-applies normally on real game maps.)
 	if InModEditor() then
 		DisableZoomPlus(zoom_plus)
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Zoom", "mod editor detected -- ZoomPlus left disabled (vanilla camera)")
-		end
 		return false
 	end
 
 	zoom_plus.Config = type(zoom_plus.Config) == "table" and zoom_plus.Config or {}
-	zoom_plus.Config.SHOW_ZOOM_DEBUG_LOGS = SHOW_ZOOM_DEBUG_LOGS
 	zoom_plus.Config.PRE_AIM_OVERVIEW_EXIT = PRE_AIM_OVERVIEW_EXIT
 	zoom_plus.Config.OVERVIEW_EXIT_PAN_TIME = OVERVIEW_EXIT_PAN_TIME
 

@@ -61,256 +61,8 @@ local function PointZ(p)
 	return nil
 end
 
--- Verbose rocket trace, gated on its own Config.DEBUG_ROCKET (independent of DEBUG_LOGS)
--- so the landing path can be traced with one switch. Raw print so it lands regardless.
-local function RocketOn()
-	local DebugLog = SuperBigMap.DebugLog
-	return DebugLog ~= nil and DebugLog.On("Rocket") == true
-end
-
-local function RocketLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Rocket", message, data)
-	end
-end
-
-local function RocketTerrainOn()
-	local DebugLog = SuperBigMap.DebugLog
-	return DebugLog and type(DebugLog.On) == "function" and DebugLog.On("RocketTerrain") == true
-end
-
-local function RocketTerrainLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("RocketTerrain", message, data) end
-end
-
-local function RocketTerrainTraceLog(message, data)
-	if RocketTerrainOn() then
-		RocketTerrainLog(message, data)
-	else
-		RocketLog(message, data)
-	end
-end
-
--- Describe a rocket for the log: class, validity, command, landed state, position +
--- its Z, and the LIVE terrain Z directly under it (so we can see if it floats/sinks).
-local function DescribeRocket(rocket, map)
-	local d = {}
-	d.class = (type(rocket) == "table" and type(rocket.class) == "string") and rocket.class or "?"
-	local is_valid = Global("IsValid")
-	d.valid = type(is_valid) ~= "function" or is_valid(rocket) == true
-	d.command = type(rocket) == "table" and tostring(rocket.command) or "?"
-	d.landed = type(rocket.IsRocketLanded) == "function" and (SafeCall(rocket.IsRocketLanded, rocket) == true) or "?"
-	local pos = type(rocket.GetPos) == "function" and SafeCall(rocket.GetPos, rocket) or nil
-	if pos then
-		if type(pos.xyz) == "function" then
-			local x, y, z = SafeCall(pos.xyz, pos)
-			d.x, d.y, d.pos_z = x, y, z
-		else
-			d.pos_z = PointZ(pos)
-		end
-		if map and type(pos.SetTerrainZ) == "function" then
-			local tp = SafeCall(pos.SetTerrainZ, pos, map)
-			d.terrain_z = PointZ(tp)
-			if type(d.pos_z) == "number" and type(d.terrain_z) == "number" then
-				d.above_ground = d.pos_z - d.terrain_z
-			end
-		end
-	end
-	local site = (type(rocket.GetLandingSite) == "function" and SafeCall(rocket.GetLandingSite, rocket)) or rocket.landing_site
-	d.has_site = site and true or false
-	d.on_pad = site and site.landing_pad and type(is_valid) == "function" and (is_valid(site.landing_pad) == true) or false
-	return d, site
-end
-
--- Sample the live terrain height in a grid around (cx,cy) and log min/max/range/center.
--- A near-zero range over a wide grid means the ground was FLATTENED (a deformed landing
--- platform); a large range means natural/varied (e.g. copied cliff) terrain that just
--- looks bumpy. Helps tell a real "deform the terrain to land" from copied cliffs.
-local function SampleTerrainProfile(map, cx, cy, tag)
-	if (not RocketOn() and not RocketTerrainOn()) or type(cx) ~= "number" or type(cy) ~= "number" then
-		return
-	end
-	local point_fn = Global("point")
-	if type(point_fn) ~= "function" then
-		return
-	end
-	local step = 2000 -- ~20m between samples
-	local n = 3       -- -3..3 -> 7x7 grid spanning ~120m
-	local lo, hi, center
-	for gx = -n, n do
-		for gy = -n, n do
-			local p = SafeCall(point_fn, cx + gx * step, cy + gy * step, 0)
-			local sp = (p and type(p.SetTerrainZ) == "function") and SafeCall(p.SetTerrainZ, p, map) or nil
-			local z = PointZ(sp)
-			if type(z) == "number" then
-				if not lo or z < lo then lo = z end
-				if not hi or z > hi then hi = z end
-				if gx == 0 and gy == 0 then center = z end
-			end
-		end
-	end
-	if lo and hi then
-		RocketTerrainTraceLog("terrain profile around landing", {
-			tag = tag or "?", center_z = center, min_z = lo, max_z = hi, range = hi - lo,
-			grid = tostring(2 * n + 1) .. "x" .. tostring(2 * n + 1), step = step,
-		})
-	end
-end
-
-local function TerrainHeightAt(map, x, y)
-	local point_fn = Global("point")
-	if type(point_fn) ~= "function" then
-		return nil
-	end
-	local p = SafeCall(point_fn, x, y, 0)
-	local sp = (p and type(p.SetTerrainZ) == "function") and SafeCall(p.SetTerrainZ, p, map) or nil
-	return PointZ(sp)
-end
-
--- The buildable z-grid value at a world point. The construction flatten levels terrain TO
--- this value; if it is far from the real terrain height, the buildable grid is STALE (built
--- from the pre-copy terrain) and the landing carves a pillar/hole up/down to it.
-local function BuildableZAt(map, x, y)
-	local buildable = map and map.buildable
-	local w2h = Global("WorldToHex")
-	local point_fn = Global("point")
-	if not buildable or type(buildable.GetZ) ~= "function" or type(w2h) ~= "function" or type(point_fn) ~= "function" then
-		return "?"
-	end
-	local q, r = SafeCall(w2h, point_fn(x, y))
-	if type(q) ~= "number" then
-		return "?"
-	end
-	local z = SafeCall(buildable.GetZ, buildable, q, r)
-	return z
-end
-
--- FINE-resolution terrain dump around (cx,cy): logs each row of heights + a summary, so
--- the exact local shape is visible -- a sharp central peak vs its immediate neighbors
--- means a SPIKE/flattened platform (deformation); a gradual change is natural slope.
--- step ~256 wu (~2.5m), n=4 -> 9x9 spanning ~20m. Gated on DEBUG_ROCKET.
-local function LogTerrainGrid(map, cx, cy, tag)
-	if (not RocketOn() and not RocketTerrainOn()) or type(cx) ~= "number" or type(cy) ~= "number" then
-		return
-	end
-	local step, n = 256, 4
-	local lo, hi, center
-	for gy = -n, n do
-		local row = {}
-		for gx = -n, n do
-			local z = TerrainHeightAt(map, cx + gx * step, cy + gy * step)
-			row[#row + 1] = (type(z) == "number") and tostring(z) or "?"
-			if type(z) == "number" then
-				if not lo or z < lo then lo = z end
-				if not hi or z > hi then hi = z end
-				if gx == 0 and gy == 0 then center = z end
-			end
-		end
-		RocketTerrainTraceLog("terrain row", { tag = tag, gy = gy, z = table.concat(row, ",") })
-	end
-	RocketTerrainTraceLog("terrain grid summary", {
-		tag = tag, center_z = center, min_z = lo, max_z = hi,
-		range = (lo and hi) and (hi - lo) or "?", step = step, span = 2 * n * step,
-	})
-end
-
--- Sample the terrain at a rocket's landing destination (the landing site / spot). Used
--- BEFORE landing (RocketLandAttempt) and AFTER (RocketLanded) so the two log blocks can
--- be compared: if the AFTER terrain at the same XY is raised/flattened vs BEFORE, the
--- landing deformed the ground. Returns the destination x,y it sampled.
-local function SampleLandingDestination(rocket, map, tag)
-	local site = (type(rocket.GetLandingSite) == "function" and SafeCall(rocket.GetLandingSite, rocket)) or rocket.landing_site
-	local dx, dy
-	if site and type(site.GetPos) == "function" then
-		local sp = SafeCall(site.GetPos, site)
-		if sp and type(sp.xyz) == "function" then
-			dx, dy = SafeCall(sp.xyz, sp)
-		end
-	end
-	if type(dx) ~= "number" then
-		local pos = type(rocket.GetPos) == "function" and SafeCall(rocket.GetPos, rocket) or nil
-		if pos and type(pos.xyz) == "function" then dx, dy = SafeCall(pos.xyz, pos) end
-	end
-	if type(dx) == "number" and type(dy) == "number" then
-		RocketLog("landing destination", { tag = tag, x = dx, y = dy, terrain_z = TerrainHeightAt(map, dx, dy) })
-		SampleTerrainProfile(map, dx, dy, tag .. ":coarse")
-		LogTerrainGrid(map, dx, dy, tag .. ":fine")
-	end
-	return dx, dy
-end
-
--- The REAL (natural) terrain level near (cx,cy): sample a ring AROUND the point (outside any
--- central landing-pad pillar/hole) and take the median, so an artifact at the exact center
--- doesn't skew it. This is the height the player actually clicked on.
-local function NaturalTerrainLevel(map, cx, cy)
-	local point_fn = Global("point")
-	if type(point_fn) ~= "function" or type(cx) ~= "number" or type(cy) ~= "number" then
-		return nil
-	end
-	local R = 5000 -- ~50m out: past the ~20m landing pad, on natural ground
-	local offs = { {R, 0}, {-R, 0}, {0, R}, {0, -R}, {R, R}, {-R, -R}, {R, -R}, {-R, R} }
-	local zs = {}
-	for _, o in ipairs(offs) do
-		local p = SafeCall(point_fn, cx + o[1], cy + o[2], 0)
-		local sp = (p and type(p.SetTerrainZ) == "function") and SafeCall(p.SetTerrainZ, p, map) or nil
-		local z = PointZ(sp)
-		if type(z) == "number" then
-			zs[#zs + 1] = z
-		end
-	end
-	if #zs == 0 then
-		return nil
-	end
-	table.sort(zs)
-	return zs[math.ceil(#zs / 2)]
-end
-
--- Reprogram the HEIGHT the rocket is told to land at to the real terrain level near where
--- the player clicked. We move the LANDING SITE's Z (the descent target dest = site:GetSpotLoc
--- reads it), so the rocket descends to the real ground. The TERRAIN IS NOT MODIFIED here.
-local function ReprogramLandingHeight(rocket, map, tag)
-	if RuntimeConfig().FIX_ROCKET_LANDING_Z ~= true then
-		return
-	end
-	if not IsModMap(map) then
-		return
-	end
-	local site = (type(rocket.GetLandingSite) == "function" and SafeCall(rocket.GetLandingSite, rocket)) or rocket.landing_site
-	if not site or type(site.GetPos) ~= "function" or type(site.SetPos) ~= "function" then
-		return
-	end
-	local is_valid = Global("IsValid")
-	if site.landing_pad and type(is_valid) == "function" and SafeCall(is_valid, site.landing_pad) == true then
-		return -- pad landing keeps the pad's height
-	end
-	local sp = SafeCall(site.GetPos, site)
-	local sx, sy
-	if sp and type(sp.xyz) == "function" then
-		sx, sy = SafeCall(sp.xyz, sp)
-	end
-	if type(sx) ~= "number" or type(sy) ~= "number" then
-		return
-	end
-	local natural = NaturalTerrainLevel(map, sx, sy)
-	if type(natural) ~= "number" then
-		return
-	end
-	local point_fn = Global("point")
-	local old_z = PointZ(sp)
-	if old_z == natural then
-		RocketLog("landing height already at real terrain level", { tag = tag, z = natural })
-		return
-	end
-	SafeCall(site.SetPos, site, point_fn(sx, sy, natural))
-	RocketLog("reprogrammed landing height to real terrain level", {
-		tag = tag, old_z = old_z, new_z = natural, x = sx, y = sy,
-	})
-end
-
--- RocketLandAttempt fires (from_ui landings) BEFORE the descent -- this is where we reprogram
--- the landing height to the real ground the player clicked, and snapshot the terrain.
+-- RocketLandAttempt fires before the descent, while the landing site can still be aligned
+-- to the current terrain.
 local SnapLandingSiteToTerrain
 
 local function ResolveLandingMap(rocket, site)
@@ -324,8 +76,7 @@ local function ResolveLandingMap(rocket, site)
 end
 
 local function OnRocketLandAttempt(rocket)
-	local fix_enabled = RuntimeConfig().FIX_ROCKET_LANDING_Z == true
-	if not fix_enabled and not RocketOn() then
+	if RuntimeConfig().FIX_ROCKET_LANDING_Z ~= true then
 		return
 	end
 	if type(rocket) ~= "table" then
@@ -333,40 +84,21 @@ local function OnRocketLandAttempt(rocket)
 	end
 	local site = (type(rocket.GetLandingSite) == "function" and SafeCall(rocket.GetLandingSite, rocket))
 		or rocket.landing_site
-	local map = ResolveLandingMap(rocket, site)
 	-- UniversalRocketBase does not inherit RocketBase. This message still fires before its
 	-- CmdLand reads GetSpotLoc, so snap the already-created ground site here as a class-agnostic
 	-- safety net (pad landings remain untouched inside the helper).
-	if fix_enabled then
-		-- Debugging must remain observational: DEBUG_ROCKET alone never changes the site.
-		SafeCall(SnapLandingSiteToTerrain, rocket, site)
-	end
-	local desc = DescribeRocket(rocket, map)
-	desc.is_mod_map = IsModMap(map)
-	RocketLog("RocketLandAttempt (before descent)", desc)
-	local dx, dy = SampleLandingDestination(rocket, map, "BeforeLanding")
-	-- Confirm the stale-buildable-grid theory: the flatten levels terrain TO this value.
-	if type(dx) == "number" then
-		RocketLog("buildable vs terrain at landing", {
-			buildable_z = BuildableZAt(map, dx, dy), terrain_z = TerrainHeightAt(map, dx, dy),
-		})
-	end
+	SafeCall(SnapLandingSiteToTerrain, rocket, site)
 end
 
--- Re-snap the landing site's Z onto the live terrain. Keeps X/Y; only Z changes. A
--- no-op when the site is already on the surface (SetTerrainZ returns the same Z). Logs
--- every decision (gated on DEBUG_LOGS) so we can see exactly why a landing did or did
--- not get snapped.
+-- Re-snap the landing site's Z onto the live terrain. Keeps X/Y; only Z changes.
 SnapLandingSiteToTerrain = function(rocket, site)
 	local is_valid = Global("IsValid")
 	if not site or (type(is_valid) == "function" and SafeCall(is_valid, site) ~= true) then
-		RocketLog("LandOnMars: snap skipped", { reason = "invalid site" })
 		return
 	end
 	local get_pos = Field(site, "GetPos")
 	local set_pos = Field(site, "SetPos")
 	if type(get_pos) ~= "function" or type(set_pos) ~= "function" then
-		RocketLog("LandOnMars: snap skipped", { reason = "no usable site" })
 		return
 	end
 
@@ -377,18 +109,7 @@ SnapLandingSiteToTerrain = function(rocket, site)
 	local on_pad = landing_pad and type(is_valid) == "function" and SafeCall(is_valid, landing_pad) == true
 
 	local pos = SafeCall(get_pos, site)
-	local old_z = PointZ(pos)
 	local snapped = (pos and type(pos.SetTerrainZ) == "function") and SafeCall(pos.SetTerrainZ, pos, map) or nil
-	local new_z = PointZ(snapped)
-
-	RocketLog("LandOnMars: snap decision", {
-		map = map and (map.name or (map.mapdata and map.mapdata.id)) or "?",
-		is_mod_map = mod_map,
-		on_landing_pad = on_pad,
-		old_z = old_z,
-		terrain_z = new_z,
-	})
-
 	-- Vanilla / non-mod maps and pad landings keep their Z untouched.
 	if not mod_map or on_pad or not snapped then
 		return
@@ -409,11 +130,9 @@ local function ResnapRocketsOnMap(map)
 	end
 	map = map or Global("CurrentMap")
 	if not IsModMap(map) then
-		RocketLog("post-expansion resnap skipped", { reason = "not a mod map" })
 		return
 	end
 	if type(map) ~= "table" or type(map.MapForEach) ~= "function" then
-		RocketLog("post-expansion resnap skipped", { reason = "no map.MapForEach" })
 		return
 	end
 	local is_valid = Global("IsValid")
@@ -427,7 +146,6 @@ local function ResnapRocketsOnMap(map)
 		end)
 	end
 
-	local snapped_count = 0
 	for _, rocket in ipairs(rockets) do
 		local valid = type(is_valid) ~= "function" or is_valid(rocket) == true
 		local landed = type(rocket.IsRocketLanded) ~= "function" or SafeCall(rocket.IsRocketLanded, rocket) == true
@@ -438,7 +156,6 @@ local function ResnapRocketsOnMap(map)
 			local pos = SafeCall(rocket.GetPos, rocket)
 			local snapped = (pos and type(pos.SetTerrainZ) == "function") and SafeCall(pos.SetTerrainZ, pos, map) or nil
 			if snapped then
-				local oz, nz = PointZ(pos), PointZ(snapped)
 				SafeCall(rocket.SetPos, rocket, snapped)
 				-- Snap the landing site too so its decal/marker aligns with the rocket.
 				if site and type(site.GetPos) == "function" and type(site.SetPos) == "function" then
@@ -446,19 +163,13 @@ local function ResnapRocketsOnMap(map)
 					local sps = (sp and type(sp.SetTerrainZ) == "function") and SafeCall(sp.SetTerrainZ, sp, map) or nil
 					if sps then SafeCall(site.SetPos, site, sps) end
 				end
-				snapped_count = snapped_count + 1
-				RocketLog("post-expansion rocket re-snapped to live terrain Z", { old_z = oz, new_z = nz })
 			end
 		end
 	end
-	RocketLog("post-expansion rocket re-snap pass", { rockets = #rockets, snapped = snapped_count })
 end
 
--- Fired from the RocketLanded message (lifecycle OnMsg) -- the AUTHORITATIVE, class-
--- agnostic landing hook (the LandOnMars method wrap can miss subclasses if the engine
--- flattens methods onto them). Logs the rocket's position vs the live terrain Z and, on
--- a mod map, snaps a ground-landed rocket (and its site) down/up onto the surface so it
--- never floats / sits on a copied hill.
+-- Fired from the RocketLanded message. This class-agnostic hook covers subclasses whose
+-- landing method is flattened onto the subclass rather than inherited from RocketBase.
 local function OnRocketLanded(rocket)
 	if RuntimeConfig().FIX_ROCKET_LANDING_Z ~= true then
 		return
@@ -468,16 +179,12 @@ local function OnRocketLanded(rocket)
 	end
 	local map = (type(rocket.GetMap) == "function") and SafeCall(rocket.GetMap, rocket) or Global("CurrentMap")
 	local mod_map = IsModMap(map)
-	local desc, site = DescribeRocket(rocket, map)
-	desc.is_mod_map = mod_map
-	RocketLog("RocketLanded", desc)
-	-- AFTER snapshot of the terrain at the touchdown (compare to BeforeLanding from
-	-- RocketLandAttempt): a raised/flattened center vs BEFORE = the landing deformed the
-	-- ground; unchanged = the rocket just sits on pre-existing (copied cliff) terrain.
-	SampleTerrainProfile(map, desc.x, desc.y, "AfterLanding:coarse")
-	LogTerrainGrid(map, desc.x, desc.y, "AfterLanding:fine")
-
-	if not mod_map or desc.on_pad then
+	local site = (type(rocket.GetLandingSite) == "function" and SafeCall(rocket.GetLandingSite, rocket))
+		or rocket.landing_site
+	local is_valid = Global("IsValid")
+	local on_pad = site and site.landing_pad and type(is_valid) == "function"
+		and SafeCall(is_valid, site.landing_pad) == true
+	if not mod_map or on_pad then
 		return
 	end
 	-- Place the rocket on the ACTUAL terrain surface at its spot (NOT the surrounding-ring
@@ -491,7 +198,6 @@ local function OnRocketLanded(rocket)
 			if oz ~= nz then
 				SafeCall(rocket.SetPos, rocket, snapped)
 			end
-			RocketLog("RocketLanded: rocket on terrain surface", { old_z = oz, new_z = nz })
 		end
 	end
 end
@@ -503,18 +209,7 @@ local function PatchRocketLanding()
 	local State = SuperBigMap.State or {}
 	local RocketBase = Engine.ClassTable("RocketBase")
 	local current = type(RocketBase) == "table" and RocketBase.LandOnMars or nil
-	RocketTerrainLog("RocketBase.LandOnMars patch check", {
-		class = tostring(RocketBase), current = tostring(current),
-		stored_wrapper = tostring(State.rocket_land_on_mars_wrapper),
-		stored_original = tostring(State.original_rocket_land_on_mars),
-		stored_version = tostring(State.rocket_land_on_mars_version),
-		target_version = ROCKET_LANDING_PATCH_VERSION,
-	})
 	if type(current) ~= "function" then
-		local DebugLog = SuperBigMap.DebugLog
-		if DebugLog then
-			DebugLog.Info("Rocket", "patch skipped", { reason = "RocketBase.LandOnMars unavailable" })
-		end
 		return false
 	end
 	if current == State.rocket_land_on_mars_wrapper
@@ -541,41 +236,37 @@ local function PatchRocketLanding()
 	State.rocket_land_on_mars_version = ROCKET_LANDING_PATCH_VERSION
 	State.rocket_land_on_mars_token = MODULE_TOKEN
 
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Rocket", "RocketBase.LandOnMars wrapped (terrain-Z snap on mod maps)")
-	end
 	return true
 end
 
 -- True for a rocket/pod landing site object (the foundation that flattens a pad).
 local function IsLandingSite(obj)
-	if obj == nil or obj == false then return false, "nil" end
+	if obj == nil or obj == false then return false end
 	local is_kind = Global("IsKindOfClasses") or Global("IsKindOf")
 	if type(is_kind) == "function" then
 		local ok, res = pcall(is_kind, obj, "RocketLandingSiteBase", "PodLandingSite", "RocketLandingSite")
 		if ok and res then
-			return true, "object class"
+			return true
 		end
 	end
 	-- Fallback: RocketLandingSiteBase carries snap_target_type == "LandingPad".
-	if Field(obj, "snap_target_type") == "LandingPad" then return true, "snap_target_type" end
+	if Field(obj, "snap_target_type") == "LandingPad" then return true end
 	-- The instant-build flatten receives a generic CursorBuilding, not the final site. The cursor
 	-- retains its authoritative rocket, landing template, and entity identity.
-	if Field(obj, "rocket") then return true, "cursor.rocket" end
+	if Field(obj, "rocket") then return true end
 	local entity = Field(obj, "entity")
 	if entity == "RocketLandingSite" or entity == "PodLandingSite" then
-		return true, "cursor.entity=" .. tostring(entity)
+		return true
 	end
 	local tmpl = Field(obj, "template")
 	if type(tmpl) == "string" and (tmpl == "RocketLandingSite" or tmpl == "PodLandingSite") then
-		return true, "cursor.template=" .. tmpl
+		return true
 	end
 	if tmpl ~= nil and type(is_kind) == "function" then
 		local ok, res = pcall(is_kind, tmpl, "RocketLandingSiteBase", "PodLandingSite", "RocketLandingSite")
-		if ok and res then return true, "cursor.template object" end
+		if ok and res then return true end
 	end
-	return false, "not landing object"
+	return false
 end
 
 -- Relaunched rockets use UniversalRocketBase, which is independent of RocketBase.
@@ -584,15 +275,7 @@ local function PatchUniversalRocketLanding()
 	local State = SuperBigMap.State or {}
 	local UniversalRocketBase = Engine.ClassTable("UniversalRocketBase")
 	local current = type(UniversalRocketBase) == "table" and UniversalRocketBase.CmdLand or nil
-	RocketTerrainLog("UniversalRocketBase.CmdLand patch check", {
-		class = tostring(UniversalRocketBase), current = tostring(current),
-		stored_wrapper = tostring(State.universal_rocket_cmd_land_wrapper),
-		stored_original = tostring(State.original_universal_rocket_cmd_land),
-		stored_version = tostring(State.universal_rocket_cmd_land_version),
-		target_version = UNIVERSAL_LANDING_PATCH_VERSION,
-	})
 	if type(current) ~= "function" then
-		RocketTerrainLog("UniversalRocketBase.CmdLand patch skipped", { reason = "method unavailable" })
 		return false
 	end
 	if current == State.universal_rocket_cmd_land_wrapper
@@ -606,14 +289,7 @@ local function PatchUniversalRocketLanding()
 	end
 	local original = current
 	local wrapper = function(self, landing_site, from_ui, ...)
-		local rocket_get_map = Field(self, "GetMap")
-		local site_get_map = Field(landing_site, "GetMap")
-		RocketTerrainLog("UniversalRocketBase:CmdLand ENTER", {
-			rocket = tostring(self), landing_site = tostring(landing_site), from_ui = tostring(from_ui),
-			rocket_map = tostring(type(rocket_get_map) == "function" and SafeCall(rocket_get_map, self) or nil),
-			site_map = tostring(type(site_get_map) == "function" and SafeCall(site_get_map, landing_site) or nil),
-		})
-		-- A diagnostic/fix failure must never abort the engine's landing command.
+		-- A terrain-alignment failure must never abort the engine's landing command.
 		if RuntimeConfig().FIX_ROCKET_LANDING_Z == true then
 			SafeCall(SnapLandingSiteToTerrain, self, landing_site)
 		end
@@ -624,9 +300,6 @@ local function PatchUniversalRocketLanding()
 	State.universal_rocket_cmd_land_wrapper = wrapper
 	State.universal_rocket_cmd_land_version = UNIVERSAL_LANDING_PATCH_VERSION
 	State.universal_rocket_cmd_land_token = MODULE_TOKEN
-	RocketTerrainLog("UniversalRocketBase.CmdLand PATCHED", {
-		original = tostring(original), wrapper = tostring(wrapper), version = UNIVERSAL_LANDING_PATCH_VERSION,
-	})
 	return true
 end
 
@@ -634,7 +307,7 @@ end
 -- site, so checking the obj class misses it. The active construction MODE carries the real
 -- identity: igi:SetMode("construction", {template="RocketLandingSite", params={rocket=..}}).
 -- Detect a landing placement from the mode dialog (template name / rocket param / a template
--- that is a landing-site class). Returns true + a short reason for logging.
+-- that is a landing-site class).
 local function ActiveLandingConstruction()
 	local igi_fn = Global("GetInGameInterface")
 	local igi = (type(igi_fn) == "function") and SafeCall(igi_fn) or nil
@@ -648,14 +321,14 @@ local function ActiveLandingConstruction()
 	if type(get_controller) == "function" then
 		controller = SafeCall(get_controller, (md and md.mode_name) or "construction")
 	end
-	if not md and not controller then return false, "no mode_dialog/controller" end
+	if not md and not controller then return false end
 	local params = md and md.params
 	if type(params) == "table" and params.rocket then
-		return true, "params.rocket"
+		return true
 	end
 	local tmpl = md and md.template
 	if type(tmpl) == "string" and (tmpl == "RocketLandingSite" or tmpl == "PodLandingSite") then
-		return true, "template=" .. tmpl
+		return true
 	end
 	-- md.template may be a template OBJECT (a landing-site class), not a name.
 	if type(tmpl) == "table" then
@@ -663,43 +336,24 @@ local function ActiveLandingConstruction()
 		if type(is_kind) == "function" then
 			local ok, res = pcall(is_kind, tmpl, "RocketLandingSiteBase", "PodLandingSite", "RocketLandingSite")
 			if ok and res then
-				return true, "template_obj"
+				return true
 			end
 		end
 	end
 	if controller then
 		if controller.rocket then
-			return true, "controller.rocket"
+			return true
 		end
 		if type(controller.params) == "table" and controller.params.rocket then
-			return true, "controller.params.rocket"
+			return true
 		end
-		local landing, why = IsLandingSite(controller.cursor_obj)
-		if landing then return true, "controller cursor: " .. tostring(why) end
-		landing, why = IsLandingSite(controller.template_obj)
-		if landing then return true, "controller template: " .. tostring(why) end
+		if IsLandingSite(controller.cursor_obj) then return true end
+		if IsLandingSite(controller.template_obj) then return true end
 		if controller.template == "RocketLandingSite" or controller.template == "PodLandingSite" then
-			return true, "controller.template=" .. tostring(controller.template)
+			return true
 		end
 	end
-	return false, (type(tmpl) == "string" and ("template=" .. tmpl)) or "not landing"
-end
-
-local FlattenLog
-
--- Dedicated Elevator trace. It is deliberately separate from the broad Flatten/Align scopes:
--- the v484 runtime log proved that the placement path bypassed both global wrappers, and those
--- scopes were disabled, leaving no evidence. DEBUG_ELEVATORTERRAIN is enabled temporarily in
--- config while this issue is investigated. DebugLog itself prints directly, so these lines are
--- guaranteed to reach MarsDebug whenever that one flag is on.
-local function ElevatorTerrainOn()
-	local DebugLog = SuperBigMap.DebugLog
-	return DebugLog and type(DebugLog.On) == "function" and DebugLog.On("ElevatorTerrain") == true
-end
-
-local function ElevatorTerrainLog(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("ElevatorTerrain", message, data) end
+	return false
 end
 
 local function PositionXYZ(pos)
@@ -713,124 +367,25 @@ local function PositionXYZ(pos)
 	return x, y, PointZ(pos)
 end
 
-local function ElevatorMapData(map)
-	return {
-		map = tostring(map and (map.name or (map.mapdata and map.mapdata.id)) or "nil"),
-		map_ref = tostring(map),
-		environment = tostring(map and map.mapdata and map.mapdata.Environment or "?"),
-		is_mod_map = tostring(IsModMap(map)),
-	}
-end
-
--- Capture the live terrain itself, not object Z. A 13x13 grid at 512 world-unit spacing
--- spans 6144 units (~61 m), covering the Elevator foundation and enough neighboring natural
--- ground to make a raised pillar/hole unmistakable. Each row is logged, while the returned
--- flat array lets the caller report exactly how many samples changed and by how much.
-local function CaptureElevatorTerrain(map, pos, label)
-	if not ElevatorTerrainOn() then return nil end
-	local cx, cy, pos_z = PositionXYZ(pos)
-	if type(cx) ~= "number" or type(cy) ~= "number" then
-		ElevatorTerrainLog("terrain capture skipped", { label = label, reason = "invalid position", pos = tostring(pos) })
-		return nil
-	end
-	local capture = { map = map, x = cx, y = cy, pos_z = pos_z, values = {}, label = label }
-	local step, radius = 512, 6
-	local lo, hi, center, checksum, sample_count = nil, nil, nil, 0, 0
-	for gy = -radius, radius do
-		local row = {}
-		for gx = -radius, radius do
-			local z = TerrainHeightAt(map, cx + gx * step, cy + gy * step)
-			capture.values[#capture.values + 1] = z
-			row[#row + 1] = type(z) == "number" and tostring(z) or "?"
-			if type(z) == "number" then
-				sample_count = sample_count + 1
-				lo = not lo and z or math.min(lo, z)
-				hi = not hi and z or math.max(hi, z)
-				checksum = checksum + z * (#capture.values + 17)
-				if gx == 0 and gy == 0 then center = z end
-			end
-		end
-		ElevatorTerrainLog("terrain height row", {
-			label = label, gy = gy, x = cx, y = cy, step = step, z = table.concat(row, ","),
-		})
-	end
-	local data = ElevatorMapData(map)
-	data.label, data.x, data.y, data.pos_z = label, cx, cy, pos_z
-	data.center_terrain_z = center
-	data.anchor_buildable_z = BuildableZAt(map, cx, cy)
-	data.min_z, data.max_z = lo, hi
-	data.range = lo and hi and (hi - lo) or "?"
-	data.samples, data.grid, data.step, data.checksum = sample_count, "13x13", step, checksum
-	ElevatorTerrainLog("terrain capture summary", data)
-	return capture
-end
-
-local function CompareElevatorTerrain(before, after, label)
-	if not ElevatorTerrainOn() then return end
-	if type(before) ~= "table" or type(after) ~= "table" then
-		ElevatorTerrainLog("terrain comparison unavailable", {
-			label = label, before = tostring(before ~= nil), after = tostring(after ~= nil),
-		})
-		return
-	end
-	local changed, max_delta, first_changes = 0, 0, {}
-	local count = math.max(#before.values, #after.values)
-	for i = 1, count do
-		local a, b = before.values[i], after.values[i]
-		if a ~= b then
-			changed = changed + 1
-			if type(a) == "number" and type(b) == "number" then
-				local delta = b - a
-				max_delta = math.max(max_delta, math.abs(delta))
-				if #first_changes < 12 then
-					first_changes[#first_changes + 1] = tostring(i) .. ":" .. tostring(a) .. "->" .. tostring(b) .. "(" .. tostring(delta) .. ")"
-				end
-			elseif #first_changes < 12 then
-				first_changes[#first_changes + 1] = tostring(i) .. ":" .. tostring(a) .. "->" .. tostring(b)
-			end
-		end
-	end
-	ElevatorTerrainLog(changed == 0 and "terrain comparison UNCHANGED" or "terrain comparison CHANGED", {
-		label = label, samples = count, changed = changed, max_abs_delta = max_delta,
-		first_changes = table.concat(first_changes, " "),
-	})
-end
-
 -- no_flatten protects the terrain, but PlaceConstructionSite still runs AdjustBuildPos and
 -- assigns the site's Z from the buildable grid. On an expanded surface that grid may retain
 -- the pre-stretch height (observed: buildable 20696 vs live terrain 5398), leaving the Elevator
 -- floating even though the ground no longer rises to meet it. Preserve X/Y and move only the
 -- construction-site object onto the live terrain before completion creates the final building.
-local function SnapElevatorSiteToLiveTerrain(site, map, label)
+local function SnapElevatorSiteToLiveTerrain(site, map)
 	if type(site) ~= "table" or type(site.GetPos) ~= "function" or type(site.SetPos) ~= "function" then
-		ElevatorTerrainLog("site terrain snap skipped", {
-			label = label, site = tostring(site), reason = "site lacks GetPos/SetPos",
-		})
 		return false
 	end
 	local old_pos = SafeCall(site.GetPos, site)
-	local old_x, old_y, old_z = PositionXYZ(old_pos)
 	local snapped = old_pos and type(old_pos.SetTerrainZ) == "function" and SafeCall(old_pos.SetTerrainZ, old_pos, map) or nil
 	local new_x, new_y, terrain_z = PositionXYZ(snapped)
-	ElevatorTerrainLog("site terrain snap decision", {
-		label = label, site = tostring(site), map = tostring(map and map.name),
-		old_x = old_x, old_y = old_y, old_z = old_z,
-		terrain_x = new_x, terrain_y = new_y, terrain_z = terrain_z,
-		buildable_z = type(old_x) == "number" and BuildableZAt(map, old_x, old_y) or "?",
-		z_delta = type(old_z) == "number" and type(terrain_z) == "number" and (terrain_z - old_z) or "?",
-	})
 	if not snapped or type(terrain_z) ~= "number" then
-		ElevatorTerrainLog("site terrain snap skipped", { label = label, reason = "live terrain position unavailable" })
 		return false
 	end
 	SafeCall(site.SetPos, site, snapped)
 	local final_pos = SafeCall(site.GetPos, site)
 	local final_x, final_y, final_z = PositionXYZ(final_pos)
 	local ok = final_x == new_x and final_y == new_y and final_z == terrain_z
-	ElevatorTerrainLog(ok and "site terrain snap APPLIED" or "site terrain snap FAILED", {
-		label = label, site = tostring(site), final_x = final_x, final_y = final_y,
-		final_z = final_z, expected_z = terrain_z, exact = tostring(ok),
-	})
 	return ok, final_pos
 end
 
@@ -863,24 +418,23 @@ local function ActiveElevatorConstruction()
 	local igi_fn = Global("GetInGameInterface")
 	local igi = type(igi_fn) == "function" and SafeCall(igi_fn) or nil
 	local md = igi and igi.mode_dialog
-	if type(md) ~= "table" then return false, "no mode_dialog" end
+	if type(md) ~= "table" then return false end
 	local tmpl = md.template
-	if tmpl == "Elevator" then return true, "template=Elevator" end
+	if tmpl == "Elevator" then return true end
 	if type(tmpl) == "table" then
 		local is_kind = Global("IsKindOf")
 		if type(is_kind) == "function" then
 			local ok, result = pcall(is_kind, tmpl, "ElevatorBase")
-			if ok and result then return true, "template_obj" end
+			if ok and result then return true end
 		end
 	end
-	return false, "not elevator"
+	return false
 end
 
 local function PatchElevatorConstructionNoFlatten()
 	local State = SuperBigMap.State or {}
 	local current = Global("PlaceConstructionSite")
 	if type(current) ~= "function" then
-		FlattenLog("elevator no-flatten patch skipped", { reason = "PlaceConstructionSite unavailable" })
 		return
 	end
 	if current == State.elevator_place_construction_site_wrapper then return end
@@ -891,15 +445,11 @@ local function PatchElevatorConstructionNoFlatten()
 		if class_name == "Elevator" and IsModMap(map)
 			and RuntimeConfig().PREVENT_ELEVATOR_FLATTEN == true then
 			no_flatten = true
-			FlattenLog("PlaceConstructionSite forced no_flatten for Elevator", {
-				map = tostring(map and map.name), environment = tostring(map and map.mapdata and map.mapdata.Environment),
-			})
 		end
 		return original(city, class_name, pos, angle, params, no_block_pass, no_flatten)
 	end
 	rawset(_G, "PlaceConstructionSite", wrapper)
 	State.elevator_place_construction_site_wrapper = wrapper
-	FlattenLog("PlaceConstructionSite wrapped (Elevator no-flatten)")
 end
 
 -- Vanilla ElevatorBase:PlaceConstructionSite receives no_flatten=true from the construction
@@ -919,19 +469,7 @@ local function PatchElevatorBasePlaceConstructionSite()
 	local current = type(ElevatorBase) == "table" and ElevatorBase.PlaceConstructionSite or nil
 	local class_current = type(ElevatorClass) == "table" and ElevatorClass.PlaceConstructionSite or nil
 	local template_current = type(ElevatorTemplate) == "table" and ElevatorTemplate.PlaceConstructionSite or nil
-	ElevatorTerrainLog("ElevatorBase patch check", {
-		class = tostring(ElevatorBase), current = tostring(current),
-		elevator_class = tostring(ElevatorClass), class_current = tostring(class_current),
-		elevator_template = tostring(ElevatorTemplate), template_current = tostring(template_current),
-		stored_wrapper = tostring(State.elevator_base_place_construction_site_wrapper),
-		stored_original = tostring(State.original_elevator_base_place_construction_site),
-		stored_version = tostring(State.elevator_base_place_construction_site_version),
-		target_version = ELEVATOR_METHOD_PATCH_VERSION,
-		global_place_site = tostring(Global("PlaceConstructionSite")),
-		global_flatten = tostring(Global("FlattenTerrainInBuildShape")),
-	})
 	if type(current) ~= "function" then
-		ElevatorTerrainLog("ElevatorBase patch skipped", { reason = "class method unavailable" })
 		return false
 	end
 	local stored_wrapper = State.elevator_base_place_construction_site_wrapper
@@ -943,10 +481,6 @@ local function PatchElevatorBasePlaceConstructionSite()
 	if current == stored_wrapper
 		and State.elevator_base_place_construction_site_version == ELEVATOR_METHOD_PATCH_VERSION
 		and class_verified and template_verified then
-		ElevatorTerrainLog("Elevator method patch verified on all dispatch targets", {
-			wrapper = tostring(current), class_verified = tostring(class_verified),
-			template_verified = tostring(template_verified),
-		})
 		return true
 	end
 	-- Hot reload of a newer patch version: peel off our older wrapper before capturing the
@@ -961,19 +495,7 @@ local function PatchElevatorBasePlaceConstructionSite()
 		local map = city and type(city.GetMap) == "function" and SafeCall(city.GetMap, city) or nil
 		local enforce = class_name == "Elevator" and IsModMap(map)
 			and RuntimeConfig().PREVENT_ELEVATOR_FLATTEN == true
-		local x, y, z = PositionXYZ(pos)
-		local entry = ElevatorMapData(map)
-		entry.class_name, entry.x, entry.y, entry.pos_z = tostring(class_name), x, y, z
-		entry.incoming_no_block_pass = tostring(no_block_pass)
-		entry.incoming_no_flatten = tostring(no_flatten)
-		entry.enforce_no_flatten = tostring(enforce)
-		entry.self = tostring(self)
-		entry.city = tostring(city)
-		ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite ENTER", entry)
 		if not enforce then
-			ElevatorTerrainLog("ElevatorBase method using vanilla path", {
-				reason = class_name ~= "Elevator" and "not Elevator" or "not enabled/mod map",
-			})
 			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
 		end
 
@@ -981,10 +503,6 @@ local function PatchElevatorBasePlaceConstructionSite()
 		local place_site = Global("PlaceConstructionSite")
 		if type(create_group) ~= "function" or type(place_site) ~= "function"
 			or type(map) ~= "table" or type(map.MapFindNearest) ~= "function" then
-			ElevatorTerrainLog("direct no-flatten path unavailable; falling back to vanilla", {
-				create_group = tostring(create_group), place_site = tostring(place_site),
-				map = tostring(map), map_find = tostring(map and map.MapFindNearest),
-			})
 			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
 		end
 
@@ -996,22 +514,10 @@ local function PatchElevatorBasePlaceConstructionSite()
 		local other_city = other_map and other_map.City
 		local other_pos = other and type(other.GetPos) == "function" and SafeCall(other.GetPos, other) or nil
 		local other_angle = other and type(other.GetAngle) == "function" and SafeCall(other.GetAngle, other) or nil
-		local ox, oy, oz = PositionXYZ(other_pos)
-		ElevatorTerrainLog("linked passage resolved", {
-			passage = tostring(passage), passage_class = tostring(passage and passage.class),
-			passage_other = tostring(other), other_class = tostring(other and other.class),
-			other_map = tostring(other_map and (other_map.name or (other_map.mapdata and other_map.mapdata.id))),
-			other_environment = tostring(other_map and other_map.mapdata and other_map.mapdata.Environment),
-			other_x = ox, other_y = oy, other_pos_z = oz, other_angle = tostring(other_angle),
-			other_city = tostring(other_city),
-		})
 		if not passage or not other or not other_map or not other_city or not other_pos then
-			ElevatorTerrainLog("linked passage incomplete; falling back to vanilla", { passage = tostring(passage), other = tostring(other) })
 			return original(self, city, class_name, pos, angle, params, no_block_pass, no_flatten)
 		end
 
-		local before_primary = CaptureElevatorTerrain(map, pos, "PrimaryBeforeSite")
-		local before_linked = CaptureElevatorTerrain(other_map, other_pos, "LinkedBeforeSite")
 		local group = create_group("Elevator", pos, map, 2, false, true, false, params)
 		local params1 = { construction_group = group, place_stockpile = false }
 		local params2 = { construction_group = group, place_stockpile = false }
@@ -1019,20 +525,13 @@ local function PatchElevatorBasePlaceConstructionSite()
 		params2.linked_obj = params1
 		table.insert(group, params1)
 		table.insert(group, params2)
-		ElevatorTerrainLog("construction group created", { group = tostring(group), group_count = tostring(#group) })
 
 		-- Preserve vanilla behavior except for the final true argument. Vanilla ignored
 		-- no_block_pass here, so keep that omission to avoid changing passage/grid behavior.
 		local site1 = place_site(city, class_name, pos, angle, params1, nil, true)
-		SnapElevatorSiteToLiveTerrain(site1, map, "PrimarySite")
-		local primary_site_pos = site1 and type(site1.GetPos) == "function" and SafeCall(site1.GetPos, site1) or pos
-		local after_primary = CaptureElevatorTerrain(map, primary_site_pos, "PrimaryAfterSite")
-		CompareElevatorTerrain(before_primary, after_primary, "Primary PlaceConstructionSite")
+		SnapElevatorSiteToLiveTerrain(site1, map)
 		local site2 = place_site(other_city, class_name, other_pos, other_angle, params2, nil, true)
-		SnapElevatorSiteToLiveTerrain(site2, other_map, "LinkedSite")
-		local linked_site_pos = site2 and type(site2.GetPos) == "function" and SafeCall(site2.GetPos, site2) or other_pos
-		local after_linked = CaptureElevatorTerrain(other_map, linked_site_pos, "LinkedAfterSite")
-		CompareElevatorTerrain(before_linked, after_linked, "Linked PlaceConstructionSite")
+		SnapElevatorSiteToLiveTerrain(site2, other_map)
 
 		local is_kind = Global("IsKindOf")
 		local underground_first = type(is_kind) == "function" and SafeCall(is_kind, passage, "UndergroundPassageBase") == true
@@ -1043,10 +542,6 @@ local function PatchElevatorBasePlaceConstructionSite()
 			if site1 and type(site1.ChangeEntity) == "function" then SafeCall(site1.ChangeEntity, site1, "ElevatorUnderground") end
 			if site2 and type(site2.ChangeEntity) == "function" then SafeCall(site2.ChangeEntity, site2, "ElevatorSurface") end
 		end
-		ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite EXIT", {
-			site1 = tostring(site1), site2 = tostring(site2), group = tostring(group),
-			underground_first = tostring(underground_first), forced_no_flatten = "true",
-		})
 		return site1
 	end
 	-- Classes are method-flattened during ClassesBuilt, so changing ElevatorBase alone may not
@@ -1070,133 +565,45 @@ local function PatchElevatorBasePlaceConstructionSite()
 	State.elevator_template_place_construction_site_target = ElevatorTemplate
 	State.elevator_base_place_construction_site_wrapper = wrapper
 	State.elevator_base_place_construction_site_version = ELEVATOR_METHOD_PATCH_VERSION
-	ElevatorTerrainLog("ElevatorBase:PlaceConstructionSite PATCHED", {
-		original = tostring(original), class_original = tostring(original_class),
-		template_original = tostring(original_template), wrapper = tostring(wrapper),
-		base_target = tostring(ElevatorBase), class_target = tostring(ElevatorClass),
-		template_target = tostring(ElevatorTemplate), version = ELEVATOR_METHOD_PATCH_VERSION,
-	})
 	return true
 end
 
--- The deformation: placing a rocket landing site runs the engine construction flatten
--- (global FlattenTerrainInBuildShape -> FlattenTerrainInShape), which levels the pad's
--- footprint to the buildable z-grid. On the copied/expanded terrain that raises a tall
--- flat PILLAR (it levels up to a nearby high z). We wrap the GLOBAL function (class
--- methods get flattened/bypassed, but this global is the actual call) and SKIP it for
--- landing sites on mod maps, so the site sits on the natural terrain -- the rocket then
--- lands there via the terrain-Z snap, with no carved/raised pad. Other buildings flatten
--- normally. Heavy logging gated on DEBUG_ROCKET.
+-- Landing sites and Elevator anchors must preserve the stretched terrain. Wrap the global
+-- flatten boundary because class methods may be flattened or bypassed at runtime.
 -- (flatten wrap bookkeeping lives in SuperBigMap.State -- module locals reset on the
 -- new-game Lua reload while the wiped global needs re-wrapping; see PatchLandingFlatten.)
 
--- Flatten diagnostics (scope "Flatten", gated DEBUG_FLATTEN) + C-assert guard.
--- HGE::FlattenTerrainInShape asserts `z != nUnbuildableZ` when the flatten target z read
--- from the buildable z-grid is the UNBUILDABLE sentinel (buildUnbuildableZ() = 2^16-1) --
--- observed when placing the elevator's underground construction site on a stretched map
--- whose buildable grid was rebuilt against STALE height ranges (root fix: sbm_terrain_copy
--- ScaleHeightRanges). The analyzer reports, for every flatten on a MOD map, the anchor
--- hex's buildable z vs live terrain z and how many footprint hexes are unbuildable; the
--- guard (config FLATTEN_SKIP_WHEN_UNBUILDABLE) SKIPS the flatten when the anchor hex is
--- unbuildable -- vanilla's own Lua reference implementation skips unbuildable hexes the
--- same way (Construction.lua: `if z ~= UnbuildableZ then SetHeightCircle(...) end`); the
--- C assert is debug-build strictness on the same condition. Vanilla maps never touched.
-FlattenLog = function(message, data)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then DebugLog.Info("Flatten", message, data) end
-end
-
-local function AnalyzeFlattenShape(map, shape_data, obj)
+-- The native flatten call requires a buildable anchor. Reject an unbuildable anchor on
+-- expanded maps before entering the strict engine path; vanilla maps are untouched.
+local function IsFlattenAnchorUnbuildable(map, obj)
 	local buildable = map and map.buildable
-	if not buildable or type(buildable.GetZ) ~= "function" then return nil end
-	if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return nil end
+	if not buildable or type(buildable.GetZ) ~= "function" then return false end
+	if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return false end
 	local world_to_hex = Global("WorldToHex")
-	local hex_rotate = Global("HexRotate")
-	local angle_to_dir = Global("HexAngleToDirection")
 	local build_unbuildable = Global("buildUnbuildableZ")
-	if type(world_to_hex) ~= "function" or type(build_unbuildable) ~= "function" then return nil end
+	if type(world_to_hex) ~= "function" or type(build_unbuildable) ~= "function" then return false end
 	local ok_u, unbuildable = pcall(build_unbuildable)
-	if not ok_u then return nil end
+	if not ok_u then return false end
 	local ok_p, pos = pcall(obj.GetPos, obj)
-	if not ok_p or not pos then return nil end
+	if not ok_p or not pos then return false end
 	local ok_h, q, r = pcall(world_to_hex, pos)
-	if not ok_h or type(q) ~= "number" then return nil end
+	if not ok_h or type(q) ~= "number" then return false end
 	local ok_az, anchor_z = pcall(buildable.GetZ, buildable, q, r)
-	anchor_z = ok_az and anchor_z or nil
-	local dir = 0
-	if type(angle_to_dir) == "function" and type(obj.GetAngle) == "function" then
-		local ok_a, a = pcall(obj.GetAngle, obj)
-		if ok_a and type(a) == "number" then
-			local ok_d, d = pcall(angle_to_dir, a)
-			if ok_d and type(d) == "number" then dir = d end
-		end
-	end
-	local n_hexes, n_unbuildable, samples = 0, 0, {}
-	if type(shape_data) == "table" and type(hex_rotate) == "function" then
-		for _, pt in ipairs(shape_data) do
-			local ok_xy, sx, sy = pcall(function() return pt:x(), pt:y() end)
-			if ok_xy and type(sx) == "number" then
-				local ok_r, hx, hy = pcall(hex_rotate, sx, sy, dir)
-				if ok_r and type(hx) == "number" then
-					n_hexes = n_hexes + 1
-					local ok_z, z = pcall(buildable.GetZ, buildable, q + hx, r + hy)
-					local zz = ok_z and z or nil
-					if zz == unbuildable or zz == nil then
-						n_unbuildable = n_unbuildable + 1
-						if #samples < 8 then
-							samples[#samples + 1] = string.format("hex(%s,%s)=UNBUILDABLE", tostring(q + hx), tostring(r + hy))
-						end
-					end
-				end
-			end
-		end
-	end
-	local terrain_api = Global("terrain")
-	local ground_z
-	if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-		local ok_g, g = pcall(terrain_api.GetHeight, map, pos)
-		if ok_g then ground_z = g end
-	end
-	return {
-		obj_class = tostring(obj.class),
-		map = tostring(map and map.name),
-		pos = tostring(pos),
-		anchor_hex = tostring(q) .. "," .. tostring(r),
-		anchor_buildable_z = tostring(anchor_z),
-		terrain_z = tostring(ground_z),
-		anchor_unbuildable = (anchor_z == unbuildable or anchor_z == nil),
-		shape_hexes = n_hexes,
-		shape_unbuildable = n_unbuildable,
-		samples = table.concat(samples, " "),
-	}
+	return not ok_az or anchor_z == nil or anchor_z == unbuildable
 end
 
--- State-verified (NOT module-local-guarded): the NEW-GAME Lua reload re-executes the game's
--- Construction.lua, which redefines the global and silently WIPES any wrapper -- proven by a
--- session where the elevator flatten asserted with ZERO Flatten: log lines (the assert stack
--- showed vanilla's function directly, no sbm frame in between). Module load re-runs this
--- after every reload; the State check makes repeat calls no-ops while catching a reverted
--- global.
+-- Construction.lua can redefine this global during a new-game Lua reload, so installation is
+-- state-verified on every module load rather than guarded by a module-local flag.
 local LANDING_FLATTEN_PATCH_VERSION = 1
 local function PatchLandingFlatten()
 	local State = SuperBigMap.State or {}
-	-- NOTE: this used to also wrap terrain.SetHeightCircle / SetHeightGrid to log a captured
-	-- call stack on EVERY call (pillar investigation). That was removed: RegolithExtractor dig
-	-- animations call SetHeightCircle every tick, so the wrap flooded the log with thousands of
-	-- stack traces per minute and stalled the game. The pillar issue is resolved via vanilla
-	-- buildability, so the diagnostic is no longer needed.
 	local current = Global("FlattenTerrainInBuildShape")
 	if type(current) ~= "function" then
-		RocketLog("flatten patch skipped", { reason = "FlattenTerrainInBuildShape unavailable" })
 		return
 	end
 	if current == State.flatten_in_build_shape_wrapper
 		and State.flatten_in_build_shape_version == LANDING_FLATTEN_PATCH_VERSION
 		and State.flatten_in_build_shape_token == MODULE_TOKEN then
-		RocketTerrainLog("flatten wrapper identity verified", {
-			live = tostring(current), wrapper = tostring(State.flatten_in_build_shape_wrapper),
-			original = tostring(State.original_flatten_in_build_shape),
-		})
 		return -- still installed
 	end
 	if current == State.flatten_in_build_shape_wrapper
@@ -1211,74 +618,27 @@ local function PatchLandingFlatten()
 		local get_map = Field(obj, "GetMap")
 		local map = type(get_map) == "function" and SafeCall(get_map, obj) or Global("CurrentMap")
 		local mod_map = IsModMap(map)
-		local site_obj, site_reason = IsLandingSite(obj)
-		local landing_mode, reason = ActiveLandingConstruction()
+		local site_obj = IsLandingSite(obj)
+		local landing_mode = ActiveLandingConstruction()
 		local context_depth = tonumber(State.rocket_landing_placement_depth) or 0
 		local landing = site_obj or landing_mode or context_depth > 0
-		local elevator_mode, elevator_reason = ActiveElevatorConstruction()
+		local elevator_mode = ActiveElevatorConstruction()
 		local elevator = IsElevatorObject(obj) or elevator_mode
-		if RocketTerrainOn() and mod_map then
-			local info = AnalyzeFlattenShape(map, shape_data, obj) or {}
-			info.live_function = tostring(Global("FlattenTerrainInBuildShape"))
-			info.wrapper_function = tostring(State.flatten_in_build_shape_wrapper)
-			info.original_function = tostring(original)
-			info.obj_type = type(obj)
-			info.obj_class = tostring(Field(obj, "class"))
-			info.obj_entity = tostring(Field(obj, "entity"))
-			info.obj_has_rocket = Field(obj, "rocket") ~= nil
-			info.site_object = tostring(site_obj)
-			info.site_reason = tostring(site_reason)
-			info.landing_mode = tostring(landing_mode)
-			info.mode_reason = tostring(reason)
-			info.context_depth = context_depth
-			info.flatten_unbuildable = tostring(flatten_unbuildable)
-			RocketTerrainLog("FlattenTerrainInBuildShape intercepted", info)
-		end
 		local runtime_config = RuntimeConfig()
 		if elevator and mod_map and runtime_config.PREVENT_ELEVATOR_FLATTEN == true then
-			FlattenLog("FlattenTerrainInBuildShape SKIPPED (Elevator -> preserve terrain)", {
-				obj_class = (type(obj) == "table" and obj.class) or "?",
-				via = IsElevatorObject(obj) and "obj" or "mode", mode_reason = elevator_reason,
-				map = tostring(map and map.name),
-			})
 			return
 		end
-		-- Only log when we actually SKIP (a rocket landing on a mod map). Do NOT log every
-		-- call: FlattenTerrainInBuildShape fires for every building placement, which spams.
 		if landing and mod_map and runtime_config.PREVENT_LANDING_PAD_FLATTEN == true then
 			-- Skip the flatten entirely: leave the natural terrain, no pillar.
-			RocketLog("FlattenTerrainInBuildShape SKIPPED (rocket landing on mod map -> no pad flatten)", {
-				obj_class = tostring(Field(obj, "class") or "?"),
-				via = site_obj and "obj" or (context_depth > 0 and "construction transaction" or "mode"),
-				object_reason = tostring(site_reason), mode_reason = reason,
-				context_depth = context_depth,
-			})
-			RocketTerrainLog("rocket landing flatten prevented", {
-				map = tostring(map and map.name), object_reason = tostring(site_reason),
-				mode_reason = tostring(reason), context_depth = context_depth,
-			})
 			return
 		end
-		-- Diagnostics + unbuildable-anchor guard (MOD maps only; vanilla untouched).
 		-- flatten_unbuildable calls are EXEMPT from the guard: callers passing
 		-- "flatten unbuildable" (e.g. the passage-pad sculpting at entrance spawn) explicitly
 		-- intend to flatten unbuildable terrain, and the C path supports that mode.
-		if mod_map and not flatten_unbuildable then
-			local info = AnalyzeFlattenShape(map, shape_data, obj)
-			if info then
-				if runtime_config.DEBUG_FLATTEN == true then
-					FlattenLog("FlattenTerrainInBuildShape call", info)
-				end
-				if info.anchor_unbuildable and runtime_config.FLATTEN_SKIP_WHEN_UNBUILDABLE ~= false then
-					-- Loud even without DEBUG_FLATTEN: this is the C-assert path being averted.
-					FlattenLog("FlattenTerrainInBuildShape SKIPPED (anchor hex UNBUILDABLE -> would assert z != nUnbuildableZ)", info)
-					RocketLog("FlattenTerrainInBuildShape SKIPPED (anchor hex unbuildable guard)", {
-						obj_class = info.obj_class, map = info.map, pos = info.pos,
-						shape_unbuildable = info.shape_unbuildable .. "/" .. info.shape_hexes,
-					})
-					return
-				end
-			end
+		if mod_map and not flatten_unbuildable
+			and runtime_config.FLATTEN_SKIP_WHEN_UNBUILDABLE ~= false
+			and IsFlattenAnchorUnbuildable(map, obj) then
+			return
 		end
 		return original(shape_data, obj, flatten_unbuildable)
 	end
@@ -1286,12 +646,6 @@ local function PatchLandingFlatten()
 	State.flatten_in_build_shape_wrapper = wrapper
 	State.flatten_in_build_shape_version = LANDING_FLATTEN_PATCH_VERSION
 	State.flatten_in_build_shape_token = MODULE_TOKEN
-	RocketLog("FlattenTerrainInBuildShape wrapped (skip flatten for landing sites on mod maps)")
-	RocketTerrainLog("flatten wrapper installed", {
-		live = tostring(Global("FlattenTerrainInBuildShape")), wrapper = tostring(wrapper),
-		original = tostring(original), active = tostring(State.active),
-		main_menu_vanilla = tostring(State.main_menu_vanilla),
-	})
 end
 
 -- Authoritative terrain-mutation boundary for rocket landing sites.  The UI creates those
@@ -1308,49 +662,31 @@ local function LandingPlacementContext(controller, external_template_name, param
 	local template_obj = not is_external and Field(controller, "template_obj")
 		or (type(templates) == "table" and templates[template_name] or nil)
 	local cursor_obj = not is_external and Field(controller, "cursor_obj") or nil
-	local reasons = {}
 	local landing = false
 	if template_name == "RocketLandingSite" or template_name == "PodLandingSite" then
 		landing = true
-		reasons[#reasons + 1] = "template=" .. tostring(template_name)
 	end
 	local controller_rocket = not is_external and Field(controller, "rocket") or nil
 	if controller_rocket then
 		landing = true
-		reasons[#reasons + 1] = "controller.rocket"
 	end
 	if type(param_t) == "table" and param_t.rocket then
 		landing = true
-		reasons[#reasons + 1] = "param_t.rocket"
 	end
-	local cursor_landing, cursor_reason = IsLandingSite(cursor_obj)
-	if cursor_landing then
+	if IsLandingSite(cursor_obj) then
 		landing = true
-		reasons[#reasons + 1] = "cursor:" .. tostring(cursor_reason)
 	end
-	local template_landing, template_reason = IsLandingSite(template_obj)
-	if template_landing then
+	if IsLandingSite(template_obj) then
 		landing = true
-		reasons[#reasons + 1] = "template_obj:" .. tostring(template_reason)
 	end
-	return landing, table.concat(reasons, ","), template_name, template_obj, cursor_obj
+	return landing, template_obj, cursor_obj
 end
 
 local function PatchLandingConstructionPlace()
 	local State = SuperBigMap.State or {}
 	local ConstructionController = Engine.ClassTable("ConstructionController")
 	local current = type(ConstructionController) == "table" and ConstructionController.Place or nil
-	RocketTerrainLog("ConstructionController.Place patch check", {
-		class = tostring(ConstructionController), current = tostring(current),
-		stored_wrapper = tostring(State.landing_construction_place_wrapper),
-		stored_original = tostring(State.original_landing_construction_place),
-		stored_version = tostring(State.landing_construction_place_version),
-		target_version = LANDING_CONSTRUCTION_PATCH_VERSION,
-		flatten_live = tostring(Global("FlattenTerrainInBuildShape")),
-		flatten_wrapper = tostring(State.flatten_in_build_shape_wrapper),
-	})
 	if type(current) ~= "function" then
-		RocketTerrainLog("ConstructionController.Place patch skipped", { reason = "method unavailable" })
 		return false
 	end
 	if current == State.landing_construction_place_wrapper
@@ -1365,7 +701,7 @@ local function PatchLandingConstructionPlace()
 	local original = current
 	local wrapper
 	wrapper = function(self, external_template_name, pos, angle, param_t, force_instant_build, from_ui, flatten_unbuildable)
-		local landing, reason, template_name, template_obj, cursor_obj =
+		local landing, template_obj, cursor_obj =
 			LandingPlacementContext(self, external_template_name, param_t)
 		local get_map = Field(self, "GetMap")
 		local map = type(get_map) == "function" and SafeCall(get_map, self) or nil
@@ -1377,12 +713,6 @@ local function PatchLandingConstructionPlace()
 		local runtime_config = SuperBigMap.Config or Config
 		local protected = landing and IsModMap(map) and runtime_config.PREVENT_LANDING_PAD_FLATTEN == true
 		if not protected then
-			if RocketTerrainOn() and landing then
-				RocketTerrainLog("ConstructionController:Place landing uses vanilla path", {
-					reason = reason, template = tostring(template_name), map = tostring(map),
-					is_mod_map = tostring(IsModMap(map)), prevent_flatten = tostring(runtime_config.PREVENT_LANDING_PAD_FLATTEN),
-				})
-			end
 			return original(self, external_template_name, pos, angle, param_t,
 				force_instant_build, from_ui, flatten_unbuildable)
 		end
@@ -1390,39 +720,13 @@ local function PatchLandingConstructionPlace()
 		-- A reload can replace the global even while this class wrapper survives. Re-verify it
 		-- immediately before entering the one call where terrain must not be modified.
 		PatchLandingFlatten()
-		local placement_pos = pos
-		if not placement_pos then
-			local cursor_get_pos = Field(cursor_obj, "GetPos")
-			placement_pos = type(cursor_get_pos) == "function" and SafeCall(cursor_get_pos, cursor_obj) or nil
-		end
-		local x, y, z = PositionXYZ(placement_pos)
 		local previous_depth = State.rocket_landing_placement_depth
 		local depth = tonumber(previous_depth) or 0
 		local old_snap_only = Field(template_obj, "only_build_on_snapped_locations")
-		-- All potentially expensive diagnostics run before the temporary mutation. Once depth is
-		-- raised, only protected calls occur until both shared values are restored.
-		RocketTerrainLog("ConstructionController:Place LANDING ENTER", {
-			reason = reason, template = tostring(template_name), template_obj = tostring(template_obj),
-			cursor = tostring(cursor_obj), cursor_class = tostring(Field(cursor_obj, "class")),
-			controller = tostring(self), controller_rocket = tostring(Field(self, "rocket")),
-			map = tostring(map and (map.name or (map.mapdata and map.mapdata.id))),
-			environment = tostring(map and map.mapdata and map.mapdata.Environment),
-			x = x, y = y, pos_z = z, terrain_z = type(x) == "number" and TerrainHeightAt(map, x, y) or "?",
-			buildable_z = type(x) == "number" and BuildableZAt(map, x, y) or "?",
-			force_instant_build = tostring(force_instant_build), from_ui = tostring(from_ui),
-			flatten_unbuildable = tostring(flatten_unbuildable), previous_depth = tostring(previous_depth),
-			transaction_depth = depth + 1, old_snap_only = tostring(old_snap_only), property_set = "pending",
-			live_place = tostring(ConstructionController.Place), expected_place = tostring(wrapper),
-			live_flatten = tostring(Global("FlattenTerrainInBuildShape")),
-			expected_flatten = tostring(State.flatten_in_build_shape_wrapper),
-		})
-		SampleTerrainProfile(map, x, y, "ConstructionPlace:before")
-		LogTerrainGrid(map, x, y, "ConstructionPlace:before")
-
 		State.rocket_landing_placement_depth = depth + 1
-		local property_set, property_set_err = false, "no template object"
+		local property_set = false
 		if template_obj ~= nil then
-			property_set, property_set_err = pcall(function()
+			property_set = pcall(function()
 				template_obj.only_build_on_snapped_locations = true
 			end)
 		end
@@ -1435,19 +739,6 @@ local function PatchLandingConstructionPlace()
 			end)
 		end
 		State.rocket_landing_placement_depth = previous_depth
-		RocketTerrainLog("ConstructionController:Place LANDING EXIT", {
-			ok = tostring(results[1]), error = results[1] and "" or tostring(results[2]),
-			template = tostring(template_name), reason = reason, x = x, y = y,
-			terrain_z = type(x) == "number" and TerrainHeightAt(map, x, y) or "?",
-			buildable_z = type(x) == "number" and BuildableZAt(map, x, y) or "?",
-			property_set = tostring(property_set), property_set_error = property_set and "" or tostring(property_set_err),
-			property_restored = tostring(restored), property_restore_error = restored and "" or tostring(restore_err),
-			restored_snap_only = tostring(Field(template_obj, "only_build_on_snapped_locations")),
-			transaction_depth = tostring(State.rocket_landing_placement_depth),
-			live_flatten = tostring(Global("FlattenTerrainInBuildShape")),
-		})
-		SampleTerrainProfile(map, x, y, "ConstructionPlace:after")
-		LogTerrainGrid(map, x, y, "ConstructionPlace:after")
 		if not restored then
 			error("failed to restore landing template no-flatten property: " .. tostring(restore_err))
 		end
@@ -1459,9 +750,6 @@ local function PatchLandingConstructionPlace()
 	State.landing_construction_place_wrapper = wrapper
 	State.landing_construction_place_version = LANDING_CONSTRUCTION_PATCH_VERSION
 	State.landing_construction_place_token = MODULE_TOKEN
-	RocketTerrainLog("ConstructionController.Place PATCHED", {
-		original = tostring(original), wrapper = tostring(wrapper), version = LANDING_CONSTRUCTION_PATCH_VERSION,
-	})
 	return true
 end
 
@@ -1470,8 +758,6 @@ local RocketRules = {}
 RocketRules.ResnapRocketsOnMap = ResnapRocketsOnMap
 RocketRules.OnRocketLanded = OnRocketLanded
 RocketRules.OnRocketLandAttempt = OnRocketLandAttempt
-RocketRules.CaptureElevatorTerrain = CaptureElevatorTerrain
-RocketRules.CompareElevatorTerrain = CompareElevatorTerrain
 
 function RocketRules.ReinstallGlobalHooks()
 	local runtime_config = SuperBigMap.Config or Config
@@ -1575,10 +861,6 @@ function RocketRules.RestoreVanillaBehavior()
 	State.rocket_land_on_mars_version = nil
 	State.rocket_land_on_mars_token = nil
 
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Rocket", "RocketBase.LandOnMars restored to vanilla")
-	end
 end
 
 SuperBigMap.RocketRules = RocketRules

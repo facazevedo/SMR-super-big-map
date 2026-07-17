@@ -29,20 +29,6 @@ local function IsLiveGameObject(obj)
 	return type(obj.GetPos) == "function"
 end
 
-local function DebugPrint(text)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("Generation", text)
-	end
-end
-
-local function VerbosePrint(text)
-	local DebugLog = SuperBigMap.DebugLog
-	if DebugLog then
-		DebugLog.Info("GenerationVerbose", text)
-	end
-end
-
 local skip_clone_classes = {
 	City = true,
 	MapSector = true,
@@ -228,14 +214,8 @@ local function ShouldSkipObject(obj)
 	-- Never clone underground entrance/access markers, symbols, or decoration. Game
 	-- references: UndergroundPassage.lua defines SurfaceUndergroundTunnelMarker /
 	-- Sign, and SurfacePassageRocks.lua uses ElevatorBuildIndicator_UndergroundRocks.
-	local underground, reason, match = IsUndergroundAccessObject(obj)
+	local underground = IsUndergroundAccessObject(obj)
 	if underground then
-		VerbosePrint(string.format(
-			"skip underground access object: class=%s reason=%s match=%s",
-			tostring(obj.class),
-			tostring(reason),
-			tostring(match)
-		))
 		return true
 	end
 
