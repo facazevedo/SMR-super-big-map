@@ -24,6 +24,10 @@ local overview_render_original_hr = false
 
 local OverviewRender = {}
 
+function OverviewRender.IsActive()
+	return overview_render_distance_active == true
+end
+
 function OverviewRender.Apply(enable)
 	local hr = Global("hr")
 	if type(hr) ~= "table" then

@@ -67,9 +67,12 @@ SuperBigMap.EnrichmentSpreadDiagnostics = nil
 -- 54: choose maximum-overlap positional equivalents after stretching.
 -- Bumped to 55: reveal the complete positive-overlap destination-sector cover of the stretched
 -- vanilla start footprint while retaining one maximum-overlap InitialSector anchor.
-SuperBigMap.SECTOR_PATCH_VERSION = 55
+-- Bumped to 56: make every exploration/highlight wrapper delegate immediately on vanilla maps
+-- and normalize the process-global sector count before vanilla InitSectors.
+SuperBigMap.SECTOR_PATCH_VERSION = 56
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
 -- (sbm_map_generation). 93 staged the native start-sector annotation across temporary source
 -- migration. 94 persisted exhaustive source/transform/overlap selection diagnostics.
 -- Bumped to 95: accept and verify the variable-size stretched-equivalent initial reveal set.
-SuperBigMap.GENERATOR_PATCH_VERSION = 95
+-- Bumped to 96: add the exact vanilla fast path and full shared-preset/session teardown.
+SuperBigMap.GENERATOR_PATCH_VERSION = 96

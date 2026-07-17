@@ -135,8 +135,12 @@ local function ResetMapDataBounds(map, mapdata)
 		return
 	end
 
-	if mapdata.SuperBigMapOriginalPassBorder == nil then
+	if mapdata.SuperBigMapOriginalPassBorderCaptured ~= true then
+		mapdata.SuperBigMapOriginalPassBorderCaptured = true
+		mapdata.SuperBigMapOriginalPassBorderWasNil = mapdata.PassBorder == nil
 		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
+		mapdata.SuperBigMapOriginalPassBorderTilesWasNil = mapdata.PassBorderTiles == nil
+		mapdata.SuperBigMapOriginalPassBorderTiles = mapdata.PassBorderTiles
 	end
 
 	-- Default PassBorder = 0 so the whole expanded map is available. The engine's gameplay grids (heat, etc.) only
@@ -829,7 +833,23 @@ function MapBounds.RestoreVanillaBehavior()
 		return
 	end
 
-	if mapdata.SuperBigMapOriginalPassBorder ~= nil then
+	if mapdata.SuperBigMapOriginalPassBorderCaptured == true then
+		if mapdata.SuperBigMapOriginalPassBorderWasNil == true then
+			mapdata.PassBorder = nil
+		else
+			mapdata.PassBorder = mapdata.SuperBigMapOriginalPassBorder
+		end
+		if mapdata.SuperBigMapOriginalPassBorderTilesWasNil == true then
+			mapdata.PassBorderTiles = nil
+		else
+			mapdata.PassBorderTiles = mapdata.SuperBigMapOriginalPassBorderTiles
+		end
+		mapdata.SuperBigMapOriginalPassBorder = nil
+		mapdata.SuperBigMapOriginalPassBorderCaptured = nil
+		mapdata.SuperBigMapOriginalPassBorderWasNil = nil
+		mapdata.SuperBigMapOriginalPassBorderTiles = nil
+		mapdata.SuperBigMapOriginalPassBorderTilesWasNil = nil
+	elseif mapdata.SuperBigMapOriginalPassBorder ~= nil then
 		mapdata.PassBorder = mapdata.SuperBigMapOriginalPassBorder
 		mapdata.SuperBigMapOriginalPassBorder = nil
 	end
@@ -840,6 +860,7 @@ SuperBigMap.MapBounds = MapBounds
 -- Game Lua reloads can recreate BuildableGrid and the global rebuild function before a
 -- mod map is active. Install the transparent, map-gated wrappers at module load; lifecycle
 -- boundaries below re-verify their live identities after ClassesBuilt/ModsReloaded.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false then
+if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
+	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
 	MapBounds.ReinstallGlobalHooks()
 end

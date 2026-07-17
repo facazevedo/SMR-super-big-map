@@ -592,6 +592,20 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 			to = tostring(to0) .. " -> " .. tostring(range.to),
 		})
 	end
+	-- mapdata is a shared preset and survives Map destruction. Preserve the exact
+	-- vanilla ranges so the next non-expanded game does not inherit stretched-height
+	-- bounds from the previous expanded session.
+	if mapdata.SuperBigMapOriginalHeightRangesCaptured ~= true then
+		mapdata.SuperBigMapOriginalHeightRangesCaptured = true
+		if type(mapdata.visible_height_range) == "table" then
+			mapdata.SuperBigMapOriginalVisibleHeightFrom = mapdata.visible_height_range.from
+			mapdata.SuperBigMapOriginalVisibleHeightTo = mapdata.visible_height_range.to
+		end
+		if type(mapdata.playable_height_range) == "table" then
+			mapdata.SuperBigMapOriginalPlayableHeightFrom = mapdata.playable_height_range.from
+			mapdata.SuperBigMapOriginalPlayableHeightTo = mapdata.playable_height_range.to
+		end
+	end
 	scale_range("visible_height_range", mapdata.visible_height_range)
 	scale_range("playable_height_range", mapdata.playable_height_range)
 	-- Some engine paths read the range straight off the MAP object (Pathfinding

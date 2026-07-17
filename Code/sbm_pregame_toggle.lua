@@ -495,6 +495,13 @@ local function SetSortKey(action, key)
 	end
 end
 
+local function RememberSortKey(action)
+	if action and action.SuperBigMapOriginalActionSortKeyCaptured ~= true then
+		action.SuperBigMapOriginalActionSortKeyCaptured = true
+		action.SuperBigMapOriginalActionSortKey = action.ActionSortKey
+	end
+end
+
 -- Keep EXPAND MAP immediately before START in every configuration. Filter Landing Spots uses
 -- `fls_filter_landing_spots` at sort key 040; giving EXPAND its own 045 slot preserves both
 -- intended layouts:
@@ -502,12 +509,24 @@ end
 --   with Filter:     BACK / CUSTOM / RANDOM / FILTER / EXPAND MAP / START
 -- Reapply this when an existing action bar is reused because either mod may rebuild it later.
 local function ReorderLandingActions(dialog)
-	SetSortKey(ActionById(dialog, "back"), "010")
-	SetSortKey(ActionById(dialog, "custom"), "020")
-	SetSortKey(ActionById(dialog, "random"), "030")
-	SetSortKey(ActionById(dialog, "fls_filter_landing_spots"), "040")
+	local back = ActionById(dialog, "back")
+	local custom = ActionById(dialog, "custom")
+	local random = ActionById(dialog, "random")
+	local filter = ActionById(dialog, "fls_filter_landing_spots")
+	local start = ActionById(dialog, "start")
+	-- Do not use ipairs over optional actions: a missing CUSTOM/FILTER entry would
+	-- stop at the first nil and leave later vanilla sort keys unrestorable.
+	RememberSortKey(back)
+	RememberSortKey(custom)
+	RememberSortKey(random)
+	RememberSortKey(filter)
+	RememberSortKey(start)
+	SetSortKey(back, "010")
+	SetSortKey(custom, "020")
+	SetSortKey(random, "030")
+	SetSortKey(filter, "040")
 	SetSortKey(ActionById(dialog, "super_big_map_expand"), "045")
-	SetSortKey(ActionById(dialog, "start"), "050")
+	SetSortKey(start, "050")
 end
 
 local function RefreshActions(host)
@@ -527,6 +546,9 @@ local function InstallLandingDialogAction(dialog)
 	if type(XAction) ~= "table" then
 		return false
 	end
+	State.pregame_toggle_dialogs = State.pregame_toggle_dialogs
+		or setmetatable({}, { __mode = "k" })
+	State.pregame_toggle_dialogs[dialog] = true
 	-- Source of truth is whether our action is ACTUALLY on the dialog, not a sticky
 	-- per-dialog flag: the dialog instance can be reused across opens while its action bar
 	-- is rebuilt (by the engine or another landing-spot mod, e.g. Filter Landing Spots),
@@ -552,6 +574,7 @@ local function InstallLandingDialogAction(dialog)
 	local back_action = ActionById(dialog, "back")
 	if back_action and back_action.SuperBigMapBackWrapped ~= true then
 		local original_on_action = back_action.OnAction
+		back_action.SuperBigMapBackOriginalOnAction = original_on_action
 		back_action.OnAction = function(action, host, source, ...)
 			SetSelected(false, "back")
 			ApplyExpandUnderline(host or dialog)
@@ -565,6 +588,7 @@ local function InstallLandingDialogAction(dialog)
 	local start_action = ActionById(dialog, "start")
 	if start_action and start_action.SuperBigMapStartWrapped ~= true then
 		local original_on_action = start_action.OnAction
+		start_action.SuperBigMapStartOriginalOnAction = original_on_action
 		start_action.OnAction = function(action, host, source, ...)
 			SetStartArmed(IsSelected(), "start")
 			if type(original_on_action) == "function" then
@@ -678,6 +702,59 @@ local function RestoreLandingDialog()
 		and cls.Open == State.pregame_toggle_open_wrapper then
 		cls.Open = State.pregame_toggle_open_original
 	end
+	for dialog in pairs(State.pregame_toggle_dialogs or {}) do
+		local expand_action = ActionById(dialog, "super_big_map_expand")
+		if expand_action then
+			if type(dialog.RemoveAction) == "function" then
+				SafeCall(dialog.RemoveAction, dialog, expand_action)
+			end
+			if type(expand_action.delete) == "function" then SafeCall(expand_action.delete, expand_action) end
+		end
+		for _, id in ipairs({ "back", "custom", "random", "fls_filter_landing_spots", "start" }) do
+			local action = ActionById(dialog, id)
+			if action then
+				if id == "back" and action.SuperBigMapBackWrapped == true then
+					action.OnAction = action.SuperBigMapBackOriginalOnAction
+					action.SuperBigMapBackOriginalOnAction = nil
+					action.SuperBigMapBackWrapped = nil
+				elseif id == "start" and action.SuperBigMapStartWrapped == true then
+					action.OnAction = action.SuperBigMapStartOriginalOnAction
+					action.SuperBigMapStartOriginalOnAction = nil
+					action.SuperBigMapStartWrapped = nil
+				end
+				if action.SuperBigMapOriginalActionSortKeyCaptured == true then
+					if action.SuperBigMapOriginalActionSortKey == nil then
+						action.ActionSortKey = nil
+					else
+						SetSortKey(action, action.SuperBigMapOriginalActionSortKey)
+					end
+					action.SuperBigMapOriginalActionSortKey = nil
+					action.SuperBigMapOriginalActionSortKeyCaptured = nil
+				end
+			end
+		end
+		dialog.SuperBigMapExpandActionInstalled = nil
+		if type(dialog.UpdateActionViews) == "function" then
+			SafeCall(dialog.UpdateActionViews, dialog, dialog.idActionBar or dialog)
+		end
+	end
+	local bar = State.pregame_expand_bar
+	if type(bar) == "table" and bar.holder and type(bar.holder.delete) == "function" then
+		SafeCall(bar.holder.delete, bar.holder)
+	end
+	local watcher = State.pregame_expand_bar_watcher
+	local delete_thread = Global("DeleteThread")
+	if watcher and type(delete_thread) == "function" then
+		SafeCall(delete_thread, watcher)
+	end
+	State.pregame_expand_bar = nil
+	State.pregame_expand_bar_watcher = nil
+	State.pregame_expand_bar_geometry_sig = nil
+	State.pregame_expand_resolve_sig = nil
+	State.pregame_underline_x = nil
+	State.pregame_underline_y = nil
+	State.pregame_underline_length = nil
+	State.pregame_toggle_dialogs = nil
 	State.pregame_toggle_open_original = nil
 	State.pregame_toggle_open_wrapper = nil
 end

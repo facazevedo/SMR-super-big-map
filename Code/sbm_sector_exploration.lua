@@ -292,6 +292,17 @@ local function AddSurfaceSpawnPositions(sector, spawn_positions)
 	end
 end
 
+local function CityMap(city)
+	if city and type(city.GetMap) == "function" then
+		return SafeCall(city.GetMap, city)
+	end
+	return nil
+end
+
+local function UsesCustomCitySectors(city)
+	return Grid.UseCustomSectorsForMap(CityMap(city)) == true
+end
+
 local function BuildFastInitialReveal(original_initial_reveal)
 	return function(eligible, trand)
 		if not cfg_bool("SECTOR_FAST_INITIAL_REVEAL", true) then
@@ -299,6 +310,14 @@ local function BuildFastInitialReveal(original_initial_reveal)
 		end
 
 		if type(eligible) ~= "table" or #eligible <= 0 then
+			return original_initial_reveal(eligible, trand)
+		end
+
+		-- The fast selector is an expanded-grid optimization, not a replacement for
+		-- vanilla InitialReveal.  On a non-expanded map call the exact engine function
+		-- before inspecting or re-weighting a single sector.
+		local first_city = eligible[1] and eligible[1].city
+		if not UsesCustomCitySectors(first_city) then
 			return original_initial_reveal(eligible, trand)
 		end
 
@@ -1065,33 +1084,9 @@ local function PatchInitialExplore()
 		local env = map and map.mapdata and map.mapdata.Environment
 		if not (expanded and env == "Surface"
 			and (SuperBigMap.Config or {}).STRETCH_VANILLA_START_SECTOR == true) then
-			-- VALIDATION MODE on VANILLA surface maps (DEBUG_STARTSECTOR): run the same
-			-- reconstruction ANALYSIS (no scanning, no deferral, own rand stream -- zero
-			-- interference) right before vanilla's own selection, so one vanilla run logs
-			-- our predicted pick next to vanilla's native 'starting sector selected:' print.
-			-- A mismatch, with both candidate tables in the log, pinpoints the divergent
-			-- input (qty / play_ratio / heat / eligibility).
-			if env == "Surface" and not expanded
-				and (SuperBigMap.Config or {}).DEBUG_STARTSECTOR == true then
-				local ok_a, pick_a, reason_a = pcall(VanillaStartPick, self, map)
-				StartLog("VALIDATION (vanilla map): reconstruction pick", {
-					ok = ok_a and pick_a ~= nil,
-					prediction = (ok_a and pick_a) and table.concat((function()
-						local ids = {}
-						for _, w in ipairs(pick_a.winners) do ids[#ids + 1] = tostring(w.id) end
-						return ids
-					end)(), "+") or tostring(ok_a and reason_a or pick_a),
-				})
-			end
-			original(self, eligible_out, ...) -- InitialExplore returns nothing
-			pcall(function()
-				if env == "Surface" and not expanded then
-					StartLog("VALIDATION (vanilla map): vanilla actual InitialSector", {
-						id = tostring(self.InitialSector and self.InitialSector.id),
-					})
-				end
-			end)
-			return
+			-- Exact vanilla path: no reconstruction, extra random stream, logging pass,
+			-- or post-call inspection on a non-expanded map.
+			return original(self, eligible_out, ...)
 		end
 		-- The exact winner was captured while the temporary native source and its markers still
 		-- existed. At this later destination InitSectors boundary those markers are deliberately
@@ -1446,7 +1441,13 @@ local function InstallSectorPatch()
 		))
 
 		if not Grid.UseCustomSectorsForMap(map) then
-			SizingDiag("InitSectors", "InitSectors VANILLA path (UseCustomSectorsForMap=false) -> sectors sized mapWidth/10 (OVERSIZED on expanded maps)")
+			-- Vanilla InitSectors reads the process-global const.SectorCount.  An expanded
+			-- map previously left that value at 20, causing the next vanilla map to build
+			-- a 20x20 grid.  Restore the vanilla input immediately before the original call.
+			if type(Grid.NormalizeVanillaSectorCount) == "function" then
+				Grid.NormalizeVanillaSectorCount("Exploration.InitSectors vanilla path")
+			end
+			SizingDiag("InitSectors", "InitSectors VANILLA path (UseCustomSectorsForMap=false) -> exact engine 10x10 input")
 			DebugPrint("sector InitSectors using vanilla path: " .. Grid.DescribeMap(map))
 			return original_init_sectors(self, map, eligible_sectors_with_surface_deposits_out)
 		end
@@ -1578,6 +1579,10 @@ local function InstallSectorPatch()
 		State.original_unexplored_sectors_exist = Global("UnexploredSectorsExist") or false
 	end
 	function UnexploredSectorsExist(city)
+		if not UsesCustomCitySectors(city) then
+			local original = State.original_unexplored_sectors_exist
+			if type(original) == "function" then return original(city) end
+		end
 		local can_scan
 		local fully_scanned = true
 		local saw_sector = false
@@ -1602,6 +1607,10 @@ local function InstallSectorPatch()
 		State.original_exploration_gather_discovered_deposits = exploration_class.GatherDiscoveredDeposits or false
 	end
 	exploration_class.GatherDiscoveredDeposits = function(self)
+		if not UsesCustomCitySectors(self) then
+			local original = State.original_exploration_gather_discovered_deposits
+			if type(original) == "function" then return original(self) end
+		end
 		-- InitDepositInfoTable and ProcessDepositMarkers were globals in older
 		-- Surviving Mars builds, but in Surviving Mars Relaunched they are
 		-- function-locals inside vanilla's GatherDiscoveredDeposits (the runtime
@@ -1635,6 +1644,10 @@ local function InstallSectorPatch()
 		State.original_show_exploration_sectors = Global("ShowExploration_Sectors") or false
 	end
 	function ShowExploration_Sectors(city, time)
+		if not UsesCustomCitySectors(city) then
+			local original = State.original_show_exploration_sectors
+			if type(original) == "function" then return original(city, time) end
+		end
 		-- Underground MapSectors are data-only: keep them for hover names and buildable ratios,
 		-- but never re-show their grid decals when overview mode opens.
 		if UndergroundExplorationUiOn(city) then
@@ -1653,6 +1666,10 @@ local function InstallSectorPatch()
 		State.original_hide_exploration_sectors = Global("HideExploration_Sectors") or false
 	end
 	function HideExploration_Sectors(city, time)
+		if not UsesCustomCitySectors(city) then
+			local original = State.original_hide_exploration_sectors
+			if type(original) == "function" then return original(city, time) end
+		end
 		HideSectorVisuals(city, "HideExploration_Sectors")
 	end
 
@@ -1661,6 +1678,10 @@ local function InstallSectorPatch()
 	end
 	function UpdateScannedSectorVisuals(status)
 		local city = Global("MainCity")
+		if not UsesCustomCitySectors(city) then
+			local original = State.original_update_scanned_sector_visuals
+			if type(original) == "function" then return original(status) end
+		end
 		if UndergroundExplorationUiOn(city) then
 			HideSectorVisuals(city, "UpdateScannedSectorVisuals underground data-only")
 			return
@@ -1680,7 +1701,11 @@ end
 local function EnsureSectorPatch(map, reason)
 	DebugPrint("sector EnsureSectorPatch via " .. tostring(reason) .. ": " .. Grid.DescribeMap(map))
 	InstallSectorPatch()
-	Grid.ConfigureGlobalSectorCount(map, reason)
+	if Grid.UseCustomSectorsForMap(map) then
+		Grid.ConfigureGlobalSectorCount(map, reason)
+	elseif type(Grid.NormalizeVanillaSectorCount) == "function" then
+		Grid.NormalizeVanillaSectorCount(tostring(reason or "EnsureSectorPatch") .. " non-custom map")
+	end
 end
 
 -- Force-rebuild MapSectors when the live grid doesn't match the layout this mod
@@ -1861,8 +1886,7 @@ local function RefreshSectorDecals(city)
 	if not city then
 		return 0
 	end
-	local ok_env, env = pcall(function() return city:GetMap().mapdata.Environment end)
-	if ok_env and env == "Underground" and (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
+	if UndergroundExplorationUiOn(city) then
 		HideSectorVisuals(city, "RefreshSectorDecals underground data-only")
 		return 0
 	end

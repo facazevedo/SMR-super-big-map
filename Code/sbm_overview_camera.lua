@@ -787,10 +787,14 @@ end
 local OverviewCamera = {}
 
 OverviewCamera.PatchOverviewFov = PatchOverviewFov
+OverviewCamera.RestoreOverviewFovVanilla = RestoreOverviewFovVanilla
 OverviewCamera.PatchOverviewCamera = PatchOverviewCamera
 OverviewCamera.ResetOverviewCamera = ResetOverviewCamera
 OverviewCamera.RefreshOverviewCamera = RefreshOverviewCamera
 OverviewCamera.ScheduleOverviewCameraRefresh = ScheduleOverviewCameraRefresh
+OverviewCamera.IsPatched = function()
+	return overview_camera_patched == true
+end
 
 -- Explicit handoff from map generation/lifecycle. Temporary-source generation can
 -- consume the startup OverviewMode event, so this destination-bound retry series is
@@ -918,6 +922,9 @@ function OverviewCamera.RestoreVanillaBehavior()
 
 	-- Cancel any pending scheduled refresh so it cannot re-apply framing.
 	overview_reset_token = overview_reset_token + 1
+	-- Cancel an in-flight first-overview exit takeover too; otherwise its real-time
+	-- thread can write one last expanded camera pose after the main menu is open.
+	exit_takeover_token = exit_takeover_token + 1
 end
 
 SuperBigMap.OverviewCamera = OverviewCamera

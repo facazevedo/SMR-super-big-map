@@ -421,14 +421,28 @@ local function RestorePreparedMapData(map_name, mapdata)
 		return false
 	end
 	local original_width = mapdata.SuperBigMapOriginalWidthTiles
+		or mapdata.SuperBigMapOriginalMapDataWidth
 	local original_height = mapdata.SuperBigMapOriginalHeightTiles
+		or mapdata.SuperBigMapOriginalMapDataHeight
 	if type(original_width) == "number" and original_width > 0 then
 		mapdata.Width = original_width
 	end
 	if type(original_height) == "number" and original_height > 0 then
 		mapdata.Height = original_height
 	end
-	if mapdata.SuperBigMapOriginalPassBorder ~= nil then
+	if mapdata.SuperBigMapOriginalPassBorderCaptured == true then
+		if mapdata.SuperBigMapOriginalPassBorderWasNil == true then
+			mapdata.PassBorder = nil
+		else
+			mapdata.PassBorder = mapdata.SuperBigMapOriginalPassBorder
+		end
+		if mapdata.SuperBigMapOriginalPassBorderTilesWasNil == true then
+			mapdata.PassBorderTiles = nil
+		else
+			mapdata.PassBorderTiles = mapdata.SuperBigMapOriginalPassBorderTiles
+		end
+	elseif mapdata.SuperBigMapOriginalPassBorder ~= nil then
+		-- Legacy capture from an older in-process module version.
 		mapdata.PassBorder = mapdata.SuperBigMapOriginalPassBorder
 		local const_tbl = Global("const")
 		local tile = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
@@ -442,8 +456,97 @@ local function RestorePreparedMapData(map_name, mapdata)
 	mapdata.SuperBigMapSourceWidthTiles = nil
 	mapdata.SuperBigMapSourceHeightTiles = nil
 	mapdata.SuperBigMapOriginalPassBorder = nil
+	mapdata.SuperBigMapOriginalPassBorderCaptured = nil
+	mapdata.SuperBigMapOriginalPassBorderWasNil = nil
+	mapdata.SuperBigMapOriginalPassBorderTiles = nil
+	mapdata.SuperBigMapOriginalPassBorderTilesWasNil = nil
+	mapdata.SuperBigMapOriginalMapDataWidth = nil
+	mapdata.SuperBigMapOriginalMapDataHeight = nil
+	if mapdata.SuperBigMapOriginalOverviewAllowedCaptured == true then
+		if mapdata.SuperBigMapOriginalOverviewAllowedWasNil == true then
+			mapdata.IsAllowedToEnterOverview = nil
+		else
+			mapdata.IsAllowedToEnterOverview = mapdata.SuperBigMapOriginalOverviewAllowed
+		end
+		mapdata.SuperBigMapOriginalOverviewAllowed = nil
+		mapdata.SuperBigMapOriginalOverviewAllowedWasNil = nil
+		mapdata.SuperBigMapOriginalOverviewAllowedCaptured = nil
+	end
+	if mapdata.SuperBigMapOriginalHeightRangesCaptured == true then
+		if type(mapdata.visible_height_range) == "table" then
+			mapdata.visible_height_range.from = mapdata.SuperBigMapOriginalVisibleHeightFrom
+			mapdata.visible_height_range.to = mapdata.SuperBigMapOriginalVisibleHeightTo
+		end
+		if type(mapdata.playable_height_range) == "table" then
+			mapdata.playable_height_range.from = mapdata.SuperBigMapOriginalPlayableHeightFrom
+			mapdata.playable_height_range.to = mapdata.SuperBigMapOriginalPlayableHeightTo
+		end
+		mapdata.SuperBigMapOriginalVisibleHeightFrom = nil
+		mapdata.SuperBigMapOriginalVisibleHeightTo = nil
+		mapdata.SuperBigMapOriginalPlayableHeightFrom = nil
+		mapdata.SuperBigMapOriginalPlayableHeightTo = nil
+		mapdata.SuperBigMapOriginalHeightRangesCaptured = nil
+		mapdata.SuperBigMapHeightRangesScaled = nil
+	end
+	if mapdata.SuperBigMapOriginalTerrainHashCaptured == true then
+		if mapdata.SuperBigMapOriginalTerrainHashWasNil == true then
+			mapdata.terrain_hash = nil
+		else
+			mapdata.terrain_hash = mapdata.SuperBigMapOriginalTerrainHash
+		end
+		mapdata.SuperBigMapOriginalTerrainHash = nil
+		mapdata.SuperBigMapOriginalTerrainHashWasNil = nil
+		mapdata.SuperBigMapOriginalTerrainHashCaptured = nil
+	end
+	-- MapData presets are process-shared. Remove every mod-owned annotation, including
+	-- diagnostic and legacy fields not known to this version, so a later vanilla map
+	-- receives the same property surface as it would after a fresh game launch.
+	local mod_fields = {}
+	for key, value in pairs(mapdata) do
+		if value ~= nil and tostring(key):find("^SuperBigMap") then
+			mod_fields[#mod_fields + 1] = key
+		end
+	end
+	for i = 1, #mod_fields do mapdata[mod_fields[i]] = nil end
 	ClearPendingMap(map_name)
 	return true
+end
+
+-- MapData presets are shared process-wide.  Expansion changes their dimensions,
+-- pass border and underground-overview flag; unloading a Map object does not recreate
+-- those presets.  Restore every touched preset when returning to pregame so the next
+-- map starts from the same inputs as a fresh vanilla process.
+local function RestorePreparedMapDataForVanillaSession(reason)
+	local restored, seen = 0, {}
+	local function restore(name, mapdata)
+		if type(mapdata) ~= "table" or seen[mapdata] then return end
+		seen[mapdata] = true
+		local touched = false
+		for key, value in pairs(mapdata) do
+			if value ~= nil and tostring(key):find("^SuperBigMap") then
+				touched = true
+				break
+			end
+		end
+		if touched then
+			RestorePreparedMapData(name, mapdata)
+			restored = restored + 1
+		end
+	end
+	local map_data = Global("MapData")
+	if type(map_data) == "table" then
+		for name, mapdata in pairs(map_data) do restore(name, mapdata) end
+	end
+	for _, global_name in ipairs({ "CurrentMap", "MainMap" }) do
+		local map = Global(global_name)
+		restore(map and map.name, map and map.mapdata)
+	end
+	local keys = {}
+	for name in pairs(pending_maps) do keys[#keys + 1] = name end
+	for i = 1, #keys do pending_maps[keys[i]] = nil end
+	DebugPrint(string.format("restored %s shared MapData preset(s) for vanilla session via %s",
+		tostring(restored), tostring(reason or "main menu")))
+	return restored
 end
 
 local function AlignDown(value, step)
@@ -612,6 +715,21 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	local deferred_backing = cfg_bool("DEFER_EXPANDED_BACKING_UNTIL_AFTER_VANILLA_SOURCE", false)
 		and mapdata.Environment == "Surface"
 
+	-- Capture shared-preset values before any generation or expansion mutation.
+	-- They must be restored byte-for-byte for the next vanilla game in this process.
+	if mapdata.SuperBigMapOriginalPassBorderCaptured ~= true then
+		mapdata.SuperBigMapOriginalPassBorderCaptured = true
+		mapdata.SuperBigMapOriginalPassBorderWasNil = mapdata.PassBorder == nil
+		mapdata.SuperBigMapOriginalPassBorder = mapdata.PassBorder
+		mapdata.SuperBigMapOriginalPassBorderTilesWasNil = mapdata.PassBorderTiles == nil
+		mapdata.SuperBigMapOriginalPassBorderTiles = mapdata.PassBorderTiles
+	end
+	if mapdata.SuperBigMapOriginalTerrainHashCaptured ~= true then
+		mapdata.SuperBigMapOriginalTerrainHashCaptured = true
+		mapdata.SuperBigMapOriginalTerrainHashWasNil = mapdata.terrain_hash == nil
+		mapdata.SuperBigMapOriginalTerrainHash = mapdata.terrain_hash
+	end
+
 	mapdata.SuperBigMapOriginalWidthTiles = original_width
 	mapdata.SuperBigMapOriginalHeightTiles = original_height
 	mapdata.SuperBigMapSourceWidthTiles = source_width_tiles
@@ -763,6 +881,11 @@ local function FinalizeExpandedMap(map)
 	-- The surface stretch runs after the generation/city readiness milestones.
 	local terrain_api = Global("terrain")
 	if terrain_api and type(terrain_api.HashGrids) == "function" and map.mapdata then
+		if map.mapdata.SuperBigMapOriginalTerrainHashCaptured ~= true then
+			map.mapdata.SuperBigMapOriginalTerrainHashCaptured = true
+			map.mapdata.SuperBigMapOriginalTerrainHashWasNil = map.mapdata.terrain_hash == nil
+			map.mapdata.SuperBigMapOriginalTerrainHash = map.mapdata.terrain_hash
+		end
 		map.mapdata.terrain_hash = SafeCall(terrain_api.HashGrids, map) or map.mapdata.terrain_hash
 	end
 
@@ -933,6 +1056,18 @@ end
 
 CaptureGeneratedNativeEnrichments = function(map, label)
 	if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false) then return 0 end
+	local grid = SuperBigMap.SectorGrid
+	local is_destination = type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+	local is_source_transaction = map and map.SuperBigMapVanillaSourceMigration == true
+		or (SuperBigMap.State or {}).vanilla_source_migration_active == true
+	if not is_destination and not is_source_transaction
+		and not (map and (map.SuperBigMapExpansionPending == true
+			or map.SuperBigMapDeferredBackingPromotion == true)) then
+		-- A normal vanilla-size run is not a source stage.  Do not annotate its
+		-- markers or map object with SuperBigMap capture fields.
+		return 0
+	end
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.CaptureNativeEnrichmentPositions) == "function" then
 		local token = InvestigationBegin("diagnostic: native enrichment coordinate capture", map, {
@@ -6803,6 +6938,14 @@ local function PatchRandomMapGenerator()
 	-- last value the proc consumed -- its stream fingerprint.
 	if type(original_proc_start) == "function" then
 		local proc_start_wrapper = function(self, tag, ...)
+			-- A normal, non-expanded generation enters the exact vanilla method.
+			-- Expansion profiling and random-stream diagnostics must not become
+			-- observable work in the next vanilla game of the same process.
+			if not State.rmg_placement_active_map
+				and not State.genrand_active_mapdata
+				and State.vanilla_source_migration_active ~= true then
+				return original_proc_start(self, tag, ...)
+			end
 			local active_map = State.rmg_placement_active_map or Global("CurrentMap")
 			local profiler = SuperBigMap.LoadingProfiler
 			local profile_token = profiler and type(profiler.Begin) == "function"
@@ -6877,6 +7020,11 @@ local function PatchRandomMapGenerator()
 	end
 	if type(original_proc_end) == "function" then
 		local proc_end_wrapper = function(self, tag, ...)
+			if not State.rmg_placement_active_map
+				and not State.genrand_active_mapdata
+				and State.vanilla_source_migration_active ~= true then
+				return original_proc_end(self, tag, ...)
+			end
 			if GenRandEnabled() then
 				GenRandLog(string.format("ProcEnd   %-24s rand_last=%s   <-- fingerprint",
 					tostring(tag), tostring(GenRandLast(self))))
@@ -6938,6 +7086,11 @@ local function PatchRandomMapGenerator()
 				RandomMapGenObject = self,
 			}
 			PrepareMapDataForExpansion(params.map_slot or 1, map_name, instance, "RandomMapGenerator.Generate")
+			if instance.SuperBigMapExpansionPending ~= true then
+				-- EXPAND MAP is off (or the map is ineligible). Do not annotate
+				-- vanilla Generate parameters or run expansion diagnostics.
+				return original_generate(self, params)
+			end
 			if params.map_slot then
 				params.mapdata = params.mapdata or instance.mapdata
 				params.RandomMapGenObject = params.RandomMapGenObject or self
@@ -6966,6 +7119,21 @@ local function PatchRandomMapGenerator()
 
 	if type(original_do_generate) == "function" then
 		local do_generate_wrapper = function(self, map, ...)
+			local mapdata = map and map.mapdata
+			local expansion_transaction = map and (
+				map.SuperBigMapExpansionPending == true
+				or map.SuperBigMapDeferredBackingPromotion == true
+				or map.SuperBigMapVanillaSourceMigration == true
+				or map.SuperBigMapDesiredWidthTiles ~= nil)
+				or type(mapdata) == "table" and (
+					mapdata.SuperBigMapOriginalWidthTiles ~= nil
+					or mapdata.SuperBigMapSourceWidthTiles ~= nil)
+				or State.vanilla_source_migration_active == true
+			if not expansion_transaction then
+				-- Exact vanilla fast path: no profiler state, marker census/capture,
+				-- backing promotion, or per-procedure wrapper behavior.
+				return original_do_generate(self, map, ...)
+			end
 			State.loading_proc_profile_stack = {}
 			EnrichmentSpreadBoundary(self, map, "expansion-DoGenerate-entry-before-source-view")
 			if not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
@@ -6990,7 +7158,7 @@ local function PatchRandomMapGenerator()
 			local map_data_table = Global("MapData")
 			local blank = self and self.BlankMap
 			local template = type(map_data_table) == "table" and type(blank) == "string" and map_data_table[blank] or nil
-			local mapdata = map and map.mapdata
+			mapdata = map and map.mapdata
 			local terrain_api = Global("terrain")
 			local original_map_get_size = map and map.GetMapSize
 			local original_terrain_get_size = terrain_api and terrain_api.GetMapSize
@@ -9465,6 +9633,15 @@ end
 -- generation returned; CityInitialized proves exploration and breakthrough placement returned.
 local function NotifyGenerationMilestone(map, milestone, source)
 	if type(map) ~= "table" then return false end
+	local grid = SuperBigMap.SectorGrid
+	local is_mod_map = type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+	if not is_mod_map and map.SuperBigMapExpansionPending ~= true then
+		-- These readiness fields are part of the stretch transaction.  A normal map
+		-- must not acquire SuperBigMap state merely because the persistent lifecycle
+		-- observer saw MapGenerated/CityInitialized.
+		return false
+	end
 	if milestone == "MapGenerated" then
 		map.SuperBigMapNativeGenerationComplete = true
 		map.SuperBigMapNativeGenerationCompleteSource = tostring(source or milestone)
@@ -9487,9 +9664,6 @@ local function NotifyGenerationMilestone(map, milestone, source)
 
 	local env = map.mapdata and map.mapdata.Environment
 	if env == "Surface" then
-		local grid = SuperBigMap.SectorGrid
-		local is_mod_map = type(grid) == "table" and type(grid.IsModMap) == "function"
-			and grid.IsModMap(map) == true
 		if is_mod_map and map.SuperBigMapVanillaSourceMigration ~= true then
 			return RunSurfaceStretchIfEnabled(map, source)
 		end
@@ -9980,6 +10154,7 @@ MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
+MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
 
 function MapGeneration.ApplyModBehavior()
 	local generate_source = cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
@@ -10003,6 +10178,10 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	-- Restore process-shared MapData presets as part of the domain teardown too,
+	-- not only through the main-menu convenience path. This covers config disable,
+	-- hot reload, and any alternate session exit that calls Lifecycle.Disable.
+	RestorePreparedMapDataForVanillaSession("MapGeneration.RestoreVanillaBehavior")
 	local generator_class = Global("RandomMapGenerator")
 	if type(generator_class) == "table" then
 		if type(State.generator_original_generate) == "function" then
@@ -10026,12 +10205,18 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.generator_original_proc_start = nil
 	State.generator_original_proc_end = nil
 	State.generator_original_on_generate_logic = nil
+	State.generator_generate_wrapper = nil
+	State.generator_do_generate_wrapper = nil
 	State.generator_proc_start_wrapper = nil
 	State.generator_proc_end_wrapper = nil
 	State.generator_on_generate_logic_wrapper = nil
 	State.rmg_placement_active_map = nil
 	State.rmg_placement_proc_active = nil
 	State.rmg_placement_proc_stack = nil
+	State.genrand_active_mapdata = nil
+	State.loading_proc_profile_stack = nil
+	State.sbm_entrance_pads = nil
+	State.vanilla_source_migration_active = nil
 	State.generator_patch_version = nil
 	if State.spawn_passage_wrapper and Global("SpawnUndergroundPassage") == State.spawn_passage_wrapper
 		and type(State.original_spawn_passage) == "function" then
@@ -10078,6 +10263,9 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.underground_hud_init_wrapper = nil
 	State.original_underground_hud_init = nil
 	State.underground_hud_patch_version = nil
+	State.underground_hud_init_depth = nil
+	for key in pairs(blocked_maps) do blocked_maps[key] = nil end
+	for key in pairs(underground_recovery_maps) do underground_recovery_maps[key] = nil end
 	RestoreEntranceBadgePositionPatch()
 end
 

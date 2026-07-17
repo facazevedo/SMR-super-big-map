@@ -731,9 +731,9 @@ function SuperBigMap.ExpansionLoadingBegin()
 end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
-function SuperBigMap.ExpansionLoadingEnd()
+function SuperBigMap.ExpansionLoadingEnd(force_all)
 	local profiler = SuperBigMap.LoadingProfiler
-	if loading_refs > 1 then
+	if force_all ~= true and loading_refs > 1 then
 		loading_refs = loading_refs - 1
 		if profiler and type(profiler.Step) == "function" then
 			profiler.Step("ExpansionLoadingEnd: phase complete, work remains", { refs = loading_refs }, Global("CurrentMap"))
@@ -754,8 +754,10 @@ function SuperBigMap.ExpansionLoadingEnd()
 		LoadingLog("ExpansionLoadingEnd: loading box removed, welcome popup re-shown")
 	end
 	if profiler and type(profiler.Stop) == "function" then
-		profiler.Stop("ExpansionLoadingEnd: all expansion work complete", {
-			refs = loading_refs, loading_box_was_on = was_on,
+		profiler.Stop(force_all == true
+			and "ExpansionLoadingEnd: session teardown"
+			or "ExpansionLoadingEnd: all expansion work complete", {
+			refs = loading_refs, loading_box_was_on = was_on, forced = force_all == true,
 		}, Global("CurrentMap"))
 	end
 end

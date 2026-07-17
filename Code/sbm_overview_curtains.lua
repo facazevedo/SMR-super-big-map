@@ -115,6 +115,11 @@ local OverviewCurtains = {}
 
 OverviewCurtains.HideOverviewCurtains = HideOverviewCurtains
 OverviewCurtains.PatchOverviewCurtains = PatchOverviewCurtains
+OverviewCurtains.IsPatched = function()
+	return original_calc_overview_curtains_size ~= false
+		or original_show_overview_map_curtains ~= false
+		or original_set_overview_curtains ~= false
+end
 
 function OverviewCurtains.ApplyModBehavior()
 	PatchOverviewCurtains()

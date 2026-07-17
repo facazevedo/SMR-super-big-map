@@ -18,6 +18,12 @@ local Engine = SuperBigMap.Engine
 local ClassTable = Engine.ClassTable
 local SECTOR_PATCH_VERSION = SuperBigMap.SECTOR_PATCH_VERSION or 21
 
+local function IsModMap(map)
+	local grid = SuperBigMap.SectorGrid
+	return type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+end
+
 local function DebugPrint(message)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -35,6 +41,12 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 	map = map or Engine.Global("CurrentMap")
 	if not map or type(map.MapForEach) ~= "function" then
 		return false, { reason = "map unavailable" }
+	end
+	-- Entrance visibility/no-depth-test changes exist only to repair objects migrated by
+	-- the stretch transaction.  Native objects on a vanilla map must retain the engine's
+	-- own visibility and camera initialization exactly.
+	if not IsModMap(map) then
+		return false, { reason = "not a mod map", vanilla = true }
 	end
 	if overview_active == nil then
 		local is_overview = Engine.Global("IsOverviewMode")
@@ -147,8 +159,8 @@ local function Install()
 		if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI ~= true then return false end
 		local uicity = Engine.Global("UICity")
 		if not uicity then return false end
-		local ok, env = pcall(function() return uicity:GetMap().mapdata.Environment end)
-		return ok and env == "Underground"
+		local ok, map = pcall(function() return uicity:GetMap() end)
+		return ok and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground"
 	end
 
 	-- Underground sectors remain as an INVISIBLE data grid so cursor lookup, sector names, and
@@ -247,8 +259,9 @@ local function Install()
 		map_sector_class.UpdateDecal = function(self, ...)
 			local underground = false
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
-				local ok, env = pcall(function() return self:GetMap().mapdata.Environment end)
-				underground = ok and env == "Underground"
+				local ok, map = pcall(function() return self:GetMap() end)
+				underground = ok and IsModMap(map)
+					and map.mapdata and map.mapdata.Environment == "Underground"
 			end
 			if underground then
 				if self.decal and type(is_valid) == "function" and is_valid(self.decal) then
@@ -266,8 +279,8 @@ local function Install()
 		State.original_sector_queue_for_exploration = original_queue
 		map_sector_class.QueueForExploration = function(self, ...)
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
-				local ok, env = pcall(function() return self:GetMap().mapdata.Environment end)
-				if ok and env == "Underground" then
+				local ok, map = pcall(function() return self:GetMap() end)
+				if ok and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground" then
 					return
 				end
 			end
@@ -489,6 +502,15 @@ local function Install()
 	end
 
 	overview_class.SelectSector = function(self, sector, rollover_pos, forced, ...)
+		-- Do not run off-map suppression, object repair, diagnostics, or underground
+		-- visual handling in a vanilla game.  Delegating at the first instruction makes
+		-- the wrapper observationally equivalent to the unmodified class method.
+		local uicity = Engine.Global("UICity")
+		local ok_map, viewed_map = pcall(function() return uicity and uicity:GetMap() end)
+		viewed_map = ok_map and viewed_map or Engine.Global("CurrentMap")
+		if not IsModMap(viewed_map) then
+			return original_select_sector(self, sector, rollover_pos, forced, ...)
+		end
 		-- Suppress highlight + tooltip when the mouse is off the map (mouse-driven calls only;
 		-- a `forced` selection e.g. overview exit_to has no meaningful cursor).
 		if sector and not forced and CursorOffMap() then

@@ -66,6 +66,16 @@ end
 
 local ZoomOption = {}
 
+function ZoomOption.IsInstalled()
+	local opt = Global("OptionsObject")
+	if type(opt) ~= "table" or type(opt.properties) ~= "table" then return false end
+	for i = 1, #opt.properties do
+		local property = opt.properties[i]
+		if type(property) == "table" and property.id == OPTION_ID then return true end
+	end
+	return false
+end
+
 ZoomOption.OPTION_ID = OPTION_ID
 
 -- The per-save percent from g_SessionOptions (serialized in the savegame), clamped to

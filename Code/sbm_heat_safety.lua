@@ -22,6 +22,19 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local Config = SuperBigMap.Config or {}
 
+local function IsModMap(map)
+	local grid = SuperBigMap.SectorGrid
+	return type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+end
+
+local function ObjectMap(obj)
+	if obj and type(obj.GetMap) == "function" then
+		return SafeCall(obj.GetMap, obj)
+	end
+	return nil
+end
+
 local function log(message, data)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -80,6 +93,9 @@ local function Install()
 	original_get_heat_at_xy = HeatGrid.GetHeatAtXY
 
 	HeatGrid.GetHeatAtXY = function(self, x, y)
+		if not IsModMap(self and self.map) then
+			return original_get_heat_at_xy(self, x, y)
+		end
 		if type(x) == "number" and type(y) == "number" then
 			x, y = ClampToGrid(self, x, y)
 		end
@@ -87,6 +103,10 @@ local function Install()
 	end
 
 	HeatGrid.GetHeatAt = function(self, obj)
+		local map = ObjectMap(obj) or (self and self.map)
+		if not IsModMap(map) then
+			return original_get_heat_at(self, obj)
+		end
 		-- ALWAYS route through the clamped XY lookup so an out-of-grid object can never
 		-- reach the asserting Heat_Get(obj) path. Use the LOGICAL position (GetPosXYZ --
 		-- what Heat_Get uses; the object's VISUAL pos can be in-bounds while the logical
@@ -126,6 +146,9 @@ local function Install()
 			if type(obj) == "table" and (type(is_valid) ~= "function" or is_valid(obj) == true)
 				and type(obj.GetMap) == "function" then
 				local map = SafeCall(obj.GetMap, obj)
+				if not IsModMap(map) then
+					return original_global_get_heat_at(obj)
+				end
 				local heat_grid = map and map.heat_grid
 				if heat_grid then
 					local x, y = ObjXY(obj)
@@ -147,6 +170,9 @@ local function Install()
 				x, y = x:xy()
 			end
 			local map = Global("CurrentMap")
+			if not IsModMap(map) then
+				return original_global_get_heat_at_xy(x, y)
+			end
 			local heat_grid = map and map.heat_grid
 			if heat_grid and type(x) == "number" and type(y) == "number" then
 				x, y = ClampToGrid(heat_grid, x, y)
@@ -160,6 +186,10 @@ local function Install()
 end
 
 local HeatSafety = {}
+
+function HeatSafety.IsPatched()
+	return heat_patched == true
+end
 
 function HeatSafety.ApplyModBehavior()
 	if Config.CLAMP_HEAT_QUERIES ~= true then

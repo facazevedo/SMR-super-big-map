@@ -19,6 +19,7 @@ local Global = Engine.Global
 local SafeCall = Engine.SafeCall
 local ClampNumber = Engine.ClampNumber
 local Round = Engine.Round
+local VANILLA_SECTOR_COUNT = 10
 
 -- Route the module's diagnostics through the centralized logger (scope "Sector").
 local function DebugPrint(message)
@@ -428,8 +429,14 @@ local function ConfigureGlobalSectorCount(map, reason)
 	end
 
 	local State = SuperBigMap.State
+	-- const.SectorCount is process-global, not map-local.  Capture the engine baseline
+	-- independently of the current value: the current value may still be 20 after an
+	-- expanded map if a menu transition bypassed teardown.
+	if State and State.vanilla_sector_count == nil then
+		State.vanilla_sector_count = VANILLA_SECTOR_COUNT
+	end
 	if State and State.original_sector_count == nil then
-		State.original_sector_count = const.SectorCount
+		State.original_sector_count = State.vanilla_sector_count or VANILLA_SECTOR_COUNT
 	end
 
 	if const.SectorCount ~= count then
@@ -448,6 +455,30 @@ local function ConfigureGlobalSectorCount(map, reason)
 	end
 
 	return count
+end
+
+-- Restore the process-global sector count before vanilla builds a city.  This is
+-- deliberately callable while the mod's wrappers remain installed: a non-expanded
+-- map must receive the same 10-sector input as an unmodified process even if the
+-- main-menu teardown hook was replaced or missed.
+local function NormalizeVanillaSectorCount(reason)
+	local const = Global("const")
+	if type(const) ~= "table" then
+		return false
+	end
+	local State = SuperBigMap.State
+	if State and State.vanilla_sector_count == nil then
+		State.vanilla_sector_count = VANILLA_SECTOR_COUNT
+	end
+	local previous = const.SectorCount
+	const.SectorCount = (State and State.vanilla_sector_count) or VANILLA_SECTOR_COUNT
+	if previous ~= const.SectorCount then
+		DebugPrint(string.format(
+			"vanilla sector count restored %s -> %s via %s",
+			tostring(previous), tostring(const.SectorCount), tostring(reason or "vanilla normalization")
+		))
+	end
+	return const.SectorCount
 end
 
 local function ForEachSector(city, callback)
@@ -516,6 +547,8 @@ SectorGrid.ResolveSectorCount = ResolveSectorCount
 SectorGrid.ResolveMapBorder = ResolveMapBorder
 SectorGrid.DescribeMap = DescribeMap
 SectorGrid.ConfigureGlobalSectorCount = ConfigureGlobalSectorCount
+SectorGrid.NormalizeVanillaSectorCount = NormalizeVanillaSectorCount
+SectorGrid.VanillaSectorCount = function() return VANILLA_SECTOR_COUNT end
 SectorGrid.ForEachSector = ForEachSector
 SectorGrid.SectorName = SectorName
 SectorGrid.SectorBounds = SectorBounds
@@ -526,10 +559,9 @@ function SectorGrid.ApplyModBehavior()
 end
 
 function SectorGrid.RestoreVanillaBehavior()
-	local const = Global("const")
 	local State = SuperBigMap.State
-	if type(const) == "table" and State and State.original_sector_count ~= nil then
-		const.SectorCount = State.original_sector_count
+	NormalizeVanillaSectorCount("SectorGrid.RestoreVanillaBehavior")
+	if State then
 		State.original_sector_count = nil
 	end
 end
