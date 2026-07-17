@@ -2047,7 +2047,7 @@ local function PatchSupplyPrivateEnvironmentTrace(source)
 	end
 	if State.supply_private_environment_patch_version == GENERATOR_PATCH_VERSION
 		and type(State.supply_private_environment_records) == "table" then
-		local verified = true
+		local verified = #State.supply_private_environment_records > 0
 		for _, record in ipairs(State.supply_private_environment_records) do
 			for name, wrapper in pairs(expected) do
 				verified = verified and rawget(record.environment, name) == wrapper
@@ -2056,7 +2056,7 @@ local function PatchSupplyPrivateEnvironmentTrace(source)
 		SupplyGridLog("private SupplyGrid environment trace verification", {
 			source = tostring(source), verified = tostring(verified),
 			environments = #State.supply_private_environment_records,
-		})
+		}, verified and nil or "error")
 		if verified then return true end
 		RestoreSupplyPrivateEnvironmentTrace("reinstall/" .. tostring(source))
 	elseif type(State.supply_private_environment_records) == "table" then
@@ -9427,6 +9427,22 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							InvestigationSafeCall("surface enrichment: resolve badge overlaps", map,
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
+						if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
+							error("top-up vanilla repulsion audit is unavailable")
+						end
+						local repulsion_token = InvestigationBegin(
+							"surface enrichment: final vanilla repulsion audit", map)
+						local repulsion_ok, repulsion_stats =
+							deposits.AuditTopUpVanillaRepulsion(map, "surface final after density suite")
+						InvestigationEnd(repulsion_token, repulsion_stats, repulsion_ok == true)
+						if repulsion_ok ~= true then
+							error("surface top-up vanilla repulsion audit failed: density_failures="
+								.. tostring(repulsion_stats and repulsion_stats.density_failures)
+								.. " duplicate_hex_pairs="
+								.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
+								.. " repulsion_violations="
+								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
+						end
 						if type(deposits.LogEnrichmentPositionCensus) == "function" then
 							StretchLog("stretch branch: -> final enrichment position census")
 							InvestigationSafeCall("surface enrichment positions: final after density suite", map,
@@ -10230,6 +10246,22 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						StretchLog("underground stretch: -> ResolveBadgeMarkerOverlaps")
 						InvestigationSafeCall("underground enrichment: resolve badge overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+					end
+					if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
+						error("top-up vanilla repulsion audit is unavailable")
+					end
+					local repulsion_token = InvestigationBegin(
+						"underground enrichment: final vanilla repulsion audit", map)
+					local repulsion_ok, repulsion_stats =
+						deposits.AuditTopUpVanillaRepulsion(map, "underground final after density suite")
+					InvestigationEnd(repulsion_token, repulsion_stats, repulsion_ok == true)
+					if repulsion_ok ~= true then
+						error("underground top-up vanilla repulsion audit failed: density_failures="
+							.. tostring(repulsion_stats and repulsion_stats.density_failures)
+							.. " duplicate_hex_pairs="
+							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
+							.. " repulsion_violations="
+							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
 					end
 					if cfg_bool("UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING", false) then
 						if type(deposits.RevealAllUndergroundEnrichmentsForTesting) ~= "function" then

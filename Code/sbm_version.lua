@@ -95,4 +95,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- footprint, including live/captured grid identity and every native offset-grid coordinate.
 -- Bumped to 104: bridge those diagnostics into SupplyGrid.lua's private function environment;
 -- public-global wrappers do not intercept the shipped closure's delayed line-1665 callback.
-SuperBigMap.GENERATOR_PATCH_VERSION = 104
+-- Bumped to 105: require at least one captured private environment before reporting that bridge
+-- verified; an empty record set previously produced a false-positive verification result.
+SuperBigMap.GENERATOR_PATCH_VERSION = 105
