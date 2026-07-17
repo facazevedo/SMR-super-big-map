@@ -85,4 +85,6 @@ SuperBigMap.SECTOR_PATCH_VERSION = 58
 -- guard and audit asynchronous native supply-fragment overlay copies across the switch.
 -- Bumped to 99: trace map-scoped supply grids and game-time callbacks across every underground
 -- Elevator reconstruction stage to identify the remaining native overlay assertion.
-SuperBigMap.GENERATOR_PATCH_VERSION = 99
+-- Bumped to 100: distinguish vanilla-preserved native enrichment coordinate overlaps from
+-- transform-introduced collisions, log both owners, and reject only introduced collisions.
+SuperBigMap.GENERATOR_PATCH_VERSION = 100

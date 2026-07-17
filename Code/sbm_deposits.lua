@@ -1924,6 +1924,20 @@ local function NativeRecordFinalPoint(map, record)
 	}
 end
 
+local function NativeRecordSourceHexKey(record)
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	if type(point_fn) == "function" and type(world_to_hex) == "function"
+		and type(record) == "table" and type(record.source_x) == "number"
+		and type(record.source_y) == "number" then
+		local ok, q, r = pcall(world_to_hex, point_fn(record.source_x, record.source_y))
+		if ok and type(q) == "number" and type(r) == "number" then
+			return tostring(q) .. ":" .. tostring(r), q, r
+		end
+	end
+	return nil, nil, nil
+end
+
 local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
 	if IsUndergroundMap(map) then
 		-- Vanilla underground enrichments are discovered by proximity. Registering them with the
@@ -1975,6 +1989,8 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 		missing = 0, duplicates = 0, class_mismatches = 0, source_mismatches = 0,
 		xy_mismatches = 0, z_mismatches = 0, property_mismatches = 0,
 		coordinate_collisions = 0, registration_mismatches = 0,
+		preserved_source_coordinate_collisions = 0,
+		introduced_coordinate_collisions = 0,
 		scanned_state_mismatches = 0, object_state_mismatches = 0,
 	}
 	if not map or type(map.MapForEach) ~= "function" or type(records) ~= "table" then
@@ -2043,8 +2059,49 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 			if actual and type(actual.z) == "function" then actual_z = actual:z() end
 			if type(actual_x) == "number" and type(actual_y) == "number" then
 				local coordinate_key = tostring(actual_x) .. ":" .. tostring(actual_y)
-				if coordinate_owners[coordinate_key] then
+				local owner_index = coordinate_owners[coordinate_key]
+				if owner_index then
 					stats.coordinate_collisions = stats.coordinate_collisions + 1
+					local owner_record = records[owner_index]
+					local owner_source_hex, owner_source_q, owner_source_r =
+						NativeRecordSourceHexKey(owner_record)
+					local source_hex, source_q, source_r = NativeRecordSourceHexKey(record)
+					-- Native placement is hex-based. Two different world points in the same source hex
+					-- already overlap under vanilla placement semantics, so retaining that overlap is
+					-- exact preservation rather than a collision introduced by proportional scaling.
+					local preserved = owner_record and ((owner_source_hex and source_hex
+						and owner_source_hex == source_hex)
+						or (not owner_source_hex and not source_hex
+							and owner_record.source_x == record.source_x
+							and owner_record.source_y == record.source_y))
+					if preserved then
+						stats.preserved_source_coordinate_collisions =
+							stats.preserved_source_coordinate_collisions + 1
+					else
+						stats.introduced_coordinate_collisions =
+							stats.introduced_coordinate_collisions + 1
+					end
+					Log("classified recreated native enrichment coordinate collision", {
+						map = tostring(map.name), reason = tostring(reason),
+						final_x = actual_x, final_y = actual_y, preserved_from_source = tostring(preserved),
+						owner_index = owner_index, owner_class = tostring(owner_record and owner_record.class),
+						owner_source_x = tostring(owner_record and owner_record.source_x),
+						owner_source_y = tostring(owner_record and owner_record.source_y),
+						owner_source_z = tostring(owner_record and owner_record.source_z),
+						owner_source_hash = tostring(owner_record and owner_record.source_hash),
+						owner_source_hex = tostring(owner_source_hex),
+						owner_source_q = tostring(owner_source_q), owner_source_r = tostring(owner_source_r),
+						owner_sequence = tostring(owner_record and owner_record.properties
+							and owner_record.properties.sequence),
+						index = i, class = tostring(record.class), source_x = record.source_x,
+						source_y = record.source_y, source_z = tostring(record.source_z),
+						source_hash = tostring(record.source_hash),
+						source_hex = tostring(source_hex), source_q = tostring(source_q),
+						source_r = tostring(source_r),
+						sequence = tostring(record.properties and record.properties.sequence),
+						raw_x = tostring(geometry and geometry.raw_x),
+						raw_y = tostring(geometry and geometry.raw_y),
+					})
 				else
 					coordinate_owners[coordinate_key] = i
 				end
@@ -2100,7 +2157,7 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 	end
 	stats.mismatches = (enum_ok and 0 or 1) + stats.missing + stats.duplicates
 		+ stats.class_mismatches + stats.source_mismatches + stats.xy_mismatches
-		+ stats.z_mismatches + stats.property_mismatches + stats.coordinate_collisions
+		+ stats.z_mismatches + stats.property_mismatches + stats.introduced_coordinate_collisions
 		+ stats.registration_mismatches + stats.scanned_state_mismatches
 		+ stats.object_state_mismatches
 	if stats.actual ~= stats.expected then stats.mismatches = stats.mismatches + 1 end
@@ -2114,6 +2171,8 @@ function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 		source_mismatches = stats.source_mismatches, xy_mismatches = stats.xy_mismatches,
 		z_mismatches = stats.z_mismatches, property_mismatches = stats.property_mismatches,
 		coordinate_collisions = stats.coordinate_collisions,
+		preserved_source_coordinate_collisions = stats.preserved_source_coordinate_collisions,
+		introduced_coordinate_collisions = stats.introduced_coordinate_collisions,
 		registration_mismatches = stats.registration_mismatches,
 		scanned_state_mismatches = stats.scanned_state_mismatches,
 		object_state_mismatches = stats.object_state_mismatches,

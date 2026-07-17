@@ -127,6 +127,10 @@ config.DebugMigrationPerformance = true
 config.DebugSector        = false   -- Sector: grid build/patch, visibility, decal cleanup (very noisy; leave off for loading benchmarks)
 config.DebugSectorSizing  = true    -- TEMP camera verification: stable 20x20 layout geometry
 config.DebugDeposits      = true    -- TEMP multi-run verification: complementary top-up totals and final mix
+-- Complete pre/post-stretch record trace for every native resource, anomaly, and effect marker.
+-- Temporarily enabled to classify the underground coordinate collision as vanilla-preserved or
+-- transform-introduced; disable after the recreation and supply-grid investigations are complete.
+config.DebugEnrichmentPositionsExhaustive = true
 -- Exhaustive forensic trace for the surface anomaly top-up's outer three-sector ring.
 -- Logs the complete live sector topology and raw-world corner orientation, every existing anomaly,
 -- every sampled candidate (accepted/rejected with terrain tier), all 204 ring-sector coverage
@@ -709,6 +713,7 @@ C.DEBUG_GENERATIONVERBOSE = as_bool(config.DebugGenerationVerbose)
 C.DEBUG_SECTOR        = as_bool(config.DebugSector)
 C.DEBUG_SECTORSIZING  = as_bool(config.DebugSectorSizing)
 C.DEBUG_DEPOSITS      = as_bool(config.DebugDeposits)
+C.DEBUG_ENRICHMENTPOSITIONSEXHAUSTIVE = as_bool(config.DebugEnrichmentPositionsExhaustive)
 C.DEBUG_TOPUPEDGEDISTRIBUTION = as_bool(config.DebugTopUpEdgeDistribution)
 C.DEBUG_STRETCH       = as_bool(config.DebugStretch)
 C.DEBUG_LOADING       = as_bool(config.DebugLoading)
