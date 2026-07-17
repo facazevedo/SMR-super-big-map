@@ -1044,7 +1044,7 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	local MAX_SCALE = 500 -- engine object-scale ceiling (percent)
 	local full_wu = full_tw * hts
 	local moved, scaled = 0, 0
-	local skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0
+	local skipped_invalid, skipped_skip, skipped_marker, skipped_nopos, no_setpos = 0, 0, 0, 0, 0
 	local sample_n = 0
 	local minx, miny, maxx, maxy
 	-- Time the whole pass (DEBUG_STRETCH) for the loading-hotspot investigation.
@@ -1074,9 +1074,14 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 		collected = #objs, pass_edits_batched = pass_batch,
 		pass_edits_owned_by_caller = pass_edits_already_suspended == true,
 	})
+	local is_valid = Global("IsValid")
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
+		elseif type(is_valid) == "function" and SafeCall(is_valid, obj) ~= true then
+			-- The cached pre-stretch traversal includes enrichment markers that staging has since
+			-- destroyed. Do not cross into any C object method through their stale Lua wrappers.
+			skipped_invalid = skipped_invalid + 1
 		elseif ShouldSkipObject(obj) then
 			skipped_skip = skipped_skip + 1
 		elseif IsImportantSectorObject(obj) then
@@ -1174,7 +1179,8 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	end
 	InvestigationEnd(transform_token, {
 		moved = moved, scaled = scaled, topped_up = topped_up,
-		skipped = skipped_skip + skipped_marker + skipped_nopos,
+		skipped = skipped_invalid + skipped_skip + skipped_marker + skipped_nopos,
+		skipped_invalid_cached_objects = skipped_invalid,
 	}, true)
 	if owns_pass_batch then
 		local resume_token = InvestigationBegin("decorations: resume batched passability edits", map)
@@ -1185,6 +1191,7 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 	if type(ticks) == "function" then local ok, t = pcall(ticks); if ok and type(t) == "number" then elapsed_ms = t - t0 end end
 	StretchLog("ScaleDecorationsToFull: DONE", {
 		collected = #objs, moved = moved, scaled = scaled,
+		skipped_invalid_cached_objects = skipped_invalid,
 		skipped_shouldskip = skipped_skip, skipped_marker = skipped_marker,
 		skipped_nopos = skipped_nopos, no_setpos = no_setpos,
 		new_x_range = minx and (tostring(minx) .. ".." .. tostring(maxx)) or "none",
@@ -1192,8 +1199,9 @@ local function ScaleDecorationsToFull(map, debug, pass_edits_already_suspended)
 		full_wu = full_wu, elapsed_ms = elapsed_ms,
 		topped_up = topped_up, topup_permille = topup_permille,
 	})
-	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, topped up %s; skipped skip=%s marker=%s nopos=%s)",
-		tostring(moved), tostring(scaled), tostring(topped_up), tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
+	DebugPrint(string.format("ScaleDecorationsToFull: moved %s decorations (scaled %s, topped up %s; skipped invalid=%s skip=%s marker=%s nopos=%s)",
+		tostring(moved), tostring(scaled), tostring(topped_up), tostring(skipped_invalid),
+		tostring(skipped_skip), tostring(skipped_marker), tostring(skipped_nopos)))
 	return moved
 end
 

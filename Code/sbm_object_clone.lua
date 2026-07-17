@@ -16,6 +16,19 @@ local TryCall = Engine.TryCall
 local IsKindOfSafe = Engine.IsKindOf
 local ObjectPosition = Engine.ObjectPos
 
+-- Cached generation traversals can retain Lua wrappers after their native game objects have been
+-- destroyed (notably when underground enrichment markers are staged between decor annotation and
+-- decor scaling). Never call a C object method such as GetParent until IsValid confirms the native
+-- luaGameObject still exists.
+local function IsLiveGameObject(obj)
+	if not obj then return false end
+	local is_valid = Global("IsValid")
+	if type(is_valid) == "function" then
+		return SafeCall(is_valid, obj) == true
+	end
+	return type(obj.GetPos) == "function"
+end
+
 local function DebugPrint(text)
 	local DebugLog = SuperBigMap.DebugLog
 	if DebugLog then
@@ -153,7 +166,7 @@ local function ObjectMatchesUndergroundAccessName(obj)
 end
 
 local function IsUndergroundAccessObject(obj)
-	if not obj then
+	if not IsLiveGameObject(obj) then
 		return false
 	end
 
@@ -199,7 +212,7 @@ local function IsResourceDepositMarker(obj)
 end
 
 local function ShouldSkipObject(obj)
-	if not obj or skip_clone_classes[obj.class or false] then
+	if not IsLiveGameObject(obj) or skip_clone_classes[obj.class or false] then
 		return true
 	end
 
@@ -326,6 +339,7 @@ end
 
 -- Public API consumed by the stretch and enrichment modules.
 local ObjectClone = {
+	IsLiveGameObject = IsLiveGameObject,
 	IsMysteryRelatedObject = IsMysteryRelatedObject,
 	MatchUndergroundAccessName = MatchUndergroundAccessName,
 	ObjectMatchesUndergroundAccessName = ObjectMatchesUndergroundAccessName,

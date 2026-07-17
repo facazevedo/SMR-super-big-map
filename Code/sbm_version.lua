@@ -65,7 +65,6 @@ SuperBigMap.EnrichmentSpreadDiagnostics = nil
 --     replace the ScaleSmallObjects duration guess with lifecycle completion events.
 SuperBigMap.SECTOR_PATCH_VERSION = 51
 -- RandomMapGenerator Generate/DoGenerate/OnGenerateLogic + map-access patch
--- (sbm_map_generation). Bumped to 89: serialize/recreate the vanilla underground enrichment set,
--- enable proportional underground density top-ups, and align linked passages to the nearest hex
--- whose complete Elevator footprint is buildable on both final maps.
-SuperBigMap.GENERATOR_PATCH_VERSION = 89
+-- (sbm_map_generation). Bumped to 90: reject stale cached game-object wrappers after underground
+-- enrichment staging, before decoration scaling can call native object methods on them.
+SuperBigMap.GENERATOR_PATCH_VERSION = 90
