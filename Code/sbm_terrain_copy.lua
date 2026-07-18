@@ -1318,13 +1318,13 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 	return restored
 end
 
--- Keep an underground-entrance badge at the exact position where it first settles after the
--- surface stretch. Vanilla reveal completes the SurfaceUndergroundPassage scenario later and can
--- call marker:PlaceSign again (or recreate the sign). Overview refreshes also revisit the sign.
--- Those lifecycle operations remain untouched; only their authority over the badge XYZ is removed.
--- The anchor is copied onto the marker, its passage (when available), and the current sign so a
--- replacement sign can recover the same position. Vanilla maps never receive a final anchor.
-local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 3
+-- Surface entrance signs and underground exit signs share the engine class
+-- SurfaceUndergroundTunnelSign, but they are not the same placement concept. A surface sign uses a
+-- safe badge position beside the entrance footprint. An underground SurfaceTunnelMarker owns the
+-- native SignUnderground symbol and that symbol stays on the authoritative SurfacePassage hex.
+-- Keep separate anchors so no badge-offset or badge-restoration rule can affect the underground
+-- marker. Vanilla maps never receive either final anchor.
+local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 4
 local ENTRANCE_BADGE_MARKER_CLASSES = {
 	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
 }
@@ -1371,6 +1371,35 @@ local function EntranceBadgeMap(marker, sign)
 	return nil
 end
 
+local function IsUndergroundExitMarker(marker, sign)
+	if not marker or not IsKindOfSafe(marker, "SurfaceTunnelMarker") then return false end
+	local map = EntranceBadgeMap(marker, sign)
+	return map and map.mapdata and map.mapdata.Environment == "Underground"
+end
+
+local function WriteUndergroundExitSignAnchor(obj, x, y, z)
+	if not obj then return end
+	obj.SuperBigMapUndergroundExitSignX = x
+	obj.SuperBigMapUndergroundExitSignY = y
+	obj.SuperBigMapUndergroundExitSignZ = z
+	obj.SuperBigMapUndergroundExitSignFinal = true
+end
+
+local function UndergroundExitSignAnchor(marker, sign)
+	local passage = marker and marker.spawner
+	local objects = { [1] = marker, [2] = passage, [3] = sign }
+	for i = 1, 3 do
+		local obj = objects[i]
+		if obj and obj.SuperBigMapUndergroundExitSignFinal == true
+			and type(obj.SuperBigMapUndergroundExitSignX) == "number"
+			and type(obj.SuperBigMapUndergroundExitSignY) == "number" then
+			return obj.SuperBigMapUndergroundExitSignX, obj.SuperBigMapUndergroundExitSignY,
+				obj.SuperBigMapUndergroundExitSignZ, obj
+		end
+	end
+	return nil
+end
+
 local function EntranceBadgeTerrainZ(marker, sign, x, y)
 	if type(x) ~= "number" or type(y) ~= "number" then return nil end
 	local map = EntranceBadgeMap(marker, sign)
@@ -1403,8 +1432,32 @@ local function CaptureEntranceBadgePosition(marker, sign, reason)
 	return true
 end
 
+local function CaptureUndergroundExitSignPosition(marker, sign, reason)
+	if not IsUndergroundExitMarker(marker, sign) or not sign
+		or type(sign.SetPos) ~= "function" then return false end
+	local passage = marker.spawner
+	local passage_pos = IsLiveGameObject(passage) and ObjectPosition(passage) or nil
+	local x, y = PointXY(passage_pos)
+	if type(x) ~= "number" or type(y) ~= "number" then return false end
+	local z = EntranceBadgeTerrainZ(marker, sign, x, y)
+	WriteUndergroundExitSignAnchor(marker, x, y, z)
+	WriteUndergroundExitSignAnchor(passage, x, y, z)
+	WriteUndergroundExitSignAnchor(sign, x, y, z)
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" then return false end
+	local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
+	return pcall(sign.SetPos, sign, target)
+end
+
 local function RestoreEntranceBadgePosition(marker, sign, reason)
 	if not marker or not sign or type(sign.SetPos) ~= "function" then return false end
+	if IsUndergroundExitMarker(marker, sign) then
+		local x = UndergroundExitSignAnchor(marker, sign)
+		if type(x) == "number" then
+			return CaptureUndergroundExitSignPosition(marker, sign, reason)
+		end
+		return false
+	end
 	local x, y, z = EntranceBadgeAnchor(marker, sign)
 	if type(x) ~= "number" or type(y) ~= "number" then return false end
 	local point_fn = Global("point")
@@ -1457,13 +1510,19 @@ local function PatchEntranceBadgePosition()
 			local result = original(marker, ...)
 			local sign = marker and marker.tunnel_sign
 			if sign then
-				local x = EntranceBadgeAnchor(marker, sign)
-				if type(x) == "number" then
-					RestoreEntranceBadgePosition(marker, sign, "PlaceSign:" .. class_name)
+				if IsUndergroundExitMarker(marker, sign) then
+					CaptureUndergroundExitSignPosition(marker, sign,
+						"PlaceSign underground exit:" .. class_name)
 				else
-					local map = type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) or nil
-					if map and map.SuperBigMapExpanded == true then
-						CaptureEntranceBadgePosition(marker, sign, "first post-expansion PlaceSign:" .. class_name)
+					local x = EntranceBadgeAnchor(marker, sign)
+					if type(x) == "number" then
+						RestoreEntranceBadgePosition(marker, sign, "PlaceSign:" .. class_name)
+					else
+						local map = type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) or nil
+						if map and map.SuperBigMapExpanded == true then
+							CaptureEntranceBadgePosition(marker, sign,
+								"first post-expansion PlaceSign:" .. class_name)
+						end
 					end
 				end
 			end
@@ -1493,15 +1552,27 @@ local function PatchEntranceBadgePosition()
 	if type(sign_class) == "table" and type(current_set_pos) == "function" then
 		local set_pos_wrapper = function(sign, ...)
 			local marker = sign and sign.tunnel_marker
-			local x, y, z = EntranceBadgeAnchor(marker, sign)
+			local underground_exit = IsUndergroundExitMarker(marker, sign)
+			local x, y, z
+			if underground_exit then
+				x, y, z = UndergroundExitSignAnchor(marker, sign)
+			else
+				x, y, z = EntranceBadgeAnchor(marker, sign)
+			end
 			if type(x) == "number" and type(y) == "number" then
 				local point_fn = Global("point")
 				if type(point_fn) == "function" then
 					local terrain_z = EntranceBadgeTerrainZ(marker, sign, x, y)
 					if type(terrain_z) == "number" then z = terrain_z end
-					WriteEntranceBadgeAnchor(marker, x, y, z)
-					WriteEntranceBadgeAnchor(marker and marker.spawner, x, y, z)
-					WriteEntranceBadgeAnchor(sign, x, y, z)
+					if underground_exit then
+						WriteUndergroundExitSignAnchor(marker, x, y, z)
+						WriteUndergroundExitSignAnchor(marker and marker.spawner, x, y, z)
+						WriteUndergroundExitSignAnchor(sign, x, y, z)
+					else
+						WriteEntranceBadgeAnchor(marker, x, y, z)
+						WriteEntranceBadgeAnchor(marker and marker.spawner, x, y, z)
+						WriteEntranceBadgeAnchor(sign, x, y, z)
+					end
 					local target = type(z) == "number" and point_fn(x, y, z) or point_fn(x, y)
 					return current_set_pos(sign, target)
 				end
@@ -1910,35 +1981,22 @@ local function MoveEntranceVisualsToScale(map)
 	pcall(map.MapForEach, map, "map", "SurfaceUndergroundTunnelSign", function(sign)
 		local marker = sign and sign.tunnel_marker
 		local passage = marker and marker.spawner
+		local is_underground_exit = map.mapdata and map.mapdata.Environment == "Underground"
+			and IsKindOfSafe(marker, "SurfaceTunnelMarker")
 		local passage_pos = IsLiveGameObject(passage) and ObjectPosition(passage) or nil
 		local px, py = PointXY(passage_pos)
 		if not sign or type(sign.SetPos) ~= "function"
 			or type(px) ~= "number" or type(py) ~= "number" then
-			if marker and sign then
+			if marker and sign and not is_underground_exit then
 				CaptureEntranceBadgePosition(marker, sign, "initial position; passage anchor unresolved")
 			end
 			return
 		end
-		local is_underground_exit = map.mapdata and map.mapdata.Environment == "Underground"
-			and IsKindOfSafe(marker, "SurfaceTunnelMarker")
 		if is_underground_exit then
-			local anchor = point_fn(px, py)
-			local terrain_z
-			if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-				local ok_h, height = pcall(terrain_api.GetHeight, map, anchor)
-				if ok_h and type(height) == "number" then terrain_z = height end
-			end
-			if type(terrain_z) == "number" then
-				anchor = point_fn(px, py, terrain_z)
-			elseif type(anchor.SetTerrainZ) == "function" then
-				local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
-				if ok_z and snapped then anchor = snapped end
-			end
-			local ok_set = pcall(sign.SetPos, sign, anchor)
+			local ok_set = CaptureUndergroundExitSignPosition(marker, sign,
+				"initial authoritative underground exit sign")
 			if ok_set then
 				sign.SuperBigMapPassageAnchored = true
-				CaptureEntranceBadgePosition(marker, sign,
-					"initial authoritative underground exit sign")
 				EntranceAudit("UNDERGROUND_EXIT_SIGN_ANCHORED", {
 					passage_x = px, passage_y = py,
 					sign_x = px, sign_y = py,
@@ -1949,9 +2007,6 @@ local function MoveEntranceVisualsToScale(map)
 					if type(sign.SetVisible) == "function" then pcall(sign.SetVisible, sign, true) end
 					if type(sign.SetOpacity) == "function" then pcall(sign.SetOpacity, sign, 100) end
 				end
-			else
-				CaptureEntranceBadgePosition(marker, sign,
-					"authoritative underground exit SetPos failed")
 			end
 			return
 		end

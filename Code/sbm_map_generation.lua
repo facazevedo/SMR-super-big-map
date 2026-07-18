@@ -2715,6 +2715,10 @@ local function EnsureDeferredUndergroundTunnelSigns(map)
 		obj.SuperBigMapEntranceBadgeAnchorY = nil
 		obj.SuperBigMapEntranceBadgeAnchorZ = nil
 		obj.SuperBigMapEntranceBadgeAnchorFinal = nil
+		obj.SuperBigMapUndergroundExitSignX = nil
+		obj.SuperBigMapUndergroundExitSignY = nil
+		obj.SuperBigMapUndergroundExitSignZ = nil
+		obj.SuperBigMapUndergroundExitSignFinal = nil
 	end
 
 	local stats = { markers = #markers, signs = 0, created = 0 }
