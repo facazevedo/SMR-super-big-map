@@ -2684,6 +2684,93 @@ local function MaterializeDeferredUndergroundTunnelSpawns(map)
 	return spawned == #pending, spawned
 end
 
+-- SurfacePassage's own entity is only a tiny carrier plane; the visible vanilla ground marker is
+-- its auto-attached SurfacePassageRocks (ElevatorBuildIndicator_UndergroundRocks). The deferred
+-- stretch can preserve the carrier while losing or detaching that child visual. Rebuild the normal
+-- entity attachments after the passage reaches its final terrain position. This does not create a
+-- tunnel sign, reveal a sector, or alter the passage/Elevator link.
+local function RefreshVanillaUndergroundPassageIndicators(map)
+	local auto_attach = Global("AutoAttachObjects")
+	local point_fn = Global("point")
+	local terrain_api = Global("terrain")
+	if type(auto_attach) ~= "function" or type(point_fn) ~= "function" then
+		return false, { error = "vanilla auto-attachment APIs unavailable" }
+	end
+	local passages = ArtefactMapGet(map, "SurfacePassage")
+	local stats = { passages = #passages, rebuilt = 0, rocks = 0, skipped_built = 0 }
+	for index, passage in ipairs(passages) do
+		local built = passage.elevator or passage.elevator_construction
+		local entity
+		if type(passage.GetEntity) == "function" then
+			local ok_entity, value = pcall(passage.GetEntity, passage)
+			if ok_entity then entity = value end
+		end
+		if built or entity == "ElevatorBuildIndicator_UndergroundImprint" then
+			stats.skipped_built = stats.skipped_built + 1
+		else
+			if entity ~= "ElevatorBuildIndicator_Underground"
+				and type(passage.ChangeEntity) == "function" then
+				local ok_entity, err = pcall(
+					passage.ChangeEntity, passage, "ElevatorBuildIndicator_Underground")
+				if not ok_entity then
+					return false, { error = "failed to restore vanilla passage entity: " .. tostring(err),
+						index = index }
+				end
+				entity = "ElevatorBuildIndicator_Underground"
+			end
+			-- Re-seat the carrier on final terrain before rebuilding relative visual attachments.
+			local ok_pos, pos = false, nil
+			if type(passage.GetPos) == "function" then
+				ok_pos, pos = pcall(passage.GetPos, passage)
+			end
+			if ok_pos then
+				local x, y = PointXY(pos)
+				if type(x) == "number" and type(y) == "number" then
+					local target = point_fn(x, y)
+					if type(map.SnapToTerrain) == "function" then
+						local ok_snap, snapped = pcall(map.SnapToTerrain, map, target)
+						if ok_snap and snapped then target = snapped end
+					elseif type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+						local ok_height, z = pcall(terrain_api.GetHeight, map, target)
+						if ok_height and type(z) == "number" then target = point_fn(x, y, z) end
+					end
+					if type(passage.SetPos) == "function" then pcall(passage.SetPos, passage, target) end
+				end
+			end
+			if type(passage.DestroyAttaches) == "function" then
+				local ok_destroy, err = pcall(passage.DestroyAttaches, passage)
+				if not ok_destroy then
+					return false, { error = "failed to clear stale passage attachments: " .. tostring(err),
+						index = index }
+				end
+			end
+			local ok_attach, err = pcall(auto_attach, passage)
+			if not ok_attach then
+				return false, { error = "failed to rebuild vanilla passage attachments: " .. tostring(err),
+					index = index }
+			end
+			local rocks = {}
+			if type(passage.GetAttaches) == "function" then
+				local ok_rocks, value = pcall(passage.GetAttaches, passage, "SurfacePassageRocks")
+				if ok_rocks and type(value) == "table" then rocks = value end
+			end
+			if type(rocks) ~= "table" or #rocks == 0 then
+				return false, { error = "vanilla SurfacePassageRocks attachment was not recreated",
+					index = index, entity = tostring(entity) }
+			end
+			for _, visual in ipairs(rocks) do
+				if type(visual.SetVisible) == "function" then pcall(visual.SetVisible, visual, true) end
+				if type(visual.SetOpacity) == "function" then pcall(visual.SetOpacity, visual, 100) end
+			end
+			if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, true) end
+			if type(passage.SetOpacity) == "function" then pcall(passage.SetOpacity, passage, 100) end
+			stats.rebuilt = stats.rebuilt + 1
+			stats.rocks = stats.rocks + #rocks
+		end
+	end
+	return stats.passages > 0, stats
+end
+
 local function PatchRandomMapGenerator()
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
@@ -4620,6 +4707,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if type(MoveEntranceVisualsToScale) == "function" then
 					MoveEntranceVisualsToScale(map)
 				end
+				local indicator_ok, indicator_stats = RefreshVanillaUndergroundPassageIndicators(map)
+				if indicator_ok ~= true then
+					error("vanilla underground passage ground-indicator restoration failed: "
+						.. tostring(indicator_stats and indicator_stats.error or "unknown error"))
+				end
 				local highlight = SuperBigMap.SectorHighlight
 				if highlight and type(highlight.EnsureEntranceVisualsReady) == "function" then
 					local visuals_ok, visuals_stats = highlight.EnsureEntranceVisualsReady(
@@ -4651,6 +4743,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					ExpansionAudit("UNDERGROUND_VANILLA_PASSAGE_INDICATORS_READY", {
 						passages = visuals_stats and visuals_stats.passages or 0,
 						vanilla_passages = #vanilla_passages,
+						rebuilt = indicator_stats and indicator_stats.rebuilt or 0,
+						rocks = indicator_stats and indicator_stats.rocks or 0,
+						skipped_built = indicator_stats and indicator_stats.skipped_built or 0,
 						forced_signs = 0,
 						tunnel_signs = #ArtefactMapGet(map, "SurfaceUndergroundTunnelSign"),
 					}, map)
