@@ -725,6 +725,29 @@ end
 -- after the stretch branch (never savegame-persisted).
 local decor_relief_by_map = setmetatable({}, { __mode = "k" })
 local decor_objects_by_map = setmetatable({}, { __mode = "k" })
+local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
+
+-- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
+-- (2147483647). Treating "numeric" as "explicit Z" converts that sentinel into a
+-- gigantic relief offset and leaves rocks floating after the stretch. Match vanilla's
+-- RandomMapGenerator exactly: CObject:IsValidZ is authoritative, with point:IsValidZ
+-- and the sentinel comparison retained only as compatibility fallbacks.
+local function ObjectHasExplicitZ(obj, pos)
+	if obj and type(obj.IsValidZ) == "function" then
+		local ok, valid = pcall(obj.IsValidZ, obj)
+		if ok then return valid == true end
+	end
+	if pos and type(pos.IsValidZ) == "function" then
+		local ok, valid = pcall(pos.IsValidZ, pos)
+		if ok then return valid == true end
+	end
+	local pz
+	pcall(function() pz = pos and pos:z() end)
+	if type(pz) ~= "number" then return false end
+	local const_tbl = Global("const")
+	local invalid_z = type(const_tbl) == "table" and const_tbl.InvalidZ or Global("InvalidZ")
+	return type(invalid_z) ~= "number" or pz ~= invalid_z
+end
 
 local function AnnotateDecorRelief(map)
 	if not map or not cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true) then return 0 end
@@ -745,6 +768,10 @@ local function AnnotateDecorRelief(map)
 	local relief = setmetatable({}, { __mode = "k" })
 	local objects = {}
 	local annotated = 0
+	local eligible = 0
+	local terrain_glued = 0
+	local height_failures = 0
+	local max_abs_relief = 0
 	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
@@ -758,18 +785,37 @@ local function AnnotateDecorRelief(map)
 		end
 		local pos = ObjectPosition(obj)
 		if not pos then return end
+		eligible = eligible + 1
+		if not ObjectHasExplicitZ(obj, pos) then
+			terrain_glued = terrain_glued + 1
+			return
+		end
 		local pz
 		pcall(function() pz = pos:z() end)
-		if type(pz) ~= "number" then return end -- terrain-glued: no explicit z to preserve
+		if type(pz) ~= "number" then return end
 		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
-		if not ok_h or type(h) ~= "number" then return end
-		relief[obj] = pz - h
+		if not ok_h or type(h) ~= "number" then
+			height_failures = height_failures + 1
+			return
+		end
+		local dz = pz - h
+		relief[obj] = dz
+		max_abs_relief = math.max(max_abs_relief, math.abs(dz))
 		annotated = annotated + 1
 	end)
 	decor_relief_by_map[map] = relief
+	decor_relief_stats_by_map[map] = {
+		scanned = #objects,
+		eligible = eligible,
+		explicit_z = annotated,
+		terrain_glued = terrain_glued,
+		height_failures = height_failures,
+		max_abs_relief = max_abs_relief,
+	}
 	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
 		decor_objects_by_map[map] = objects
 	end
+	LoadingStep("decoration relief capture complete", decor_relief_stats_by_map[map], map)
 	return annotated
 end
 
@@ -777,6 +823,7 @@ local function ClearDecorRelief(map)
 	if map then
 		decor_relief_by_map[map] = nil
 		decor_objects_by_map[map] = nil
+		decor_relief_stats_by_map[map] = nil
 	end
 end
 
@@ -836,6 +883,11 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local MAX_SCALE = 500 -- engine object-scale ceiling (percent)
 	local full_wu = full_tw * hts
 	local moved = 0
+	local relief_placed = 0
+	local terrain_snapped = 0
+	local unresolved_z = 0
+	local setpos_failures = 0
+	local topup_clones = 0
 	-- DECOR TOP-UP (config STRETCH_DECOR_TOPUP): the stretch spreads the ORIGINAL decoration count
 	-- over area_factor (~1.78x) more area, thinning density. Give each moved decoration an
 	-- (area_factor - 1) chance to spawn ONE jittered clone nearby (within ~0.75 sector), restoring
@@ -892,14 +944,21 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 						np = point_fn(nx, ny, h + math.floor(dz * zs + 0.5))
 						z_ok = true
 						z_mode = "relief"
+						relief_placed = relief_placed + 1
 					end
 				end
 				if not z_ok and type(np.SetTerrainZ) == "function" then
 					local ok_z, pz = pcall(np.SetTerrainZ, np, map)
-					if ok_z and pz then np = pz; z_ok = true end
+					if ok_z and pz then
+						np = pz
+						z_ok = true
+						terrain_snapped = terrain_snapped + 1
+					end
 				end
+				if not z_ok then unresolved_z = unresolved_z + 1 end
 				if type(obj.SetPos) == "function" then
-					pcall(obj.SetPos, obj, np)
+					local ok_set = pcall(obj.SetPos, obj, np)
+					if not ok_set then setpos_failures = setpos_failures + 1 end
 					moved = moved + 1
 				end
 				-- Grow the object to match the enlarged terrain features.
@@ -920,6 +979,7 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 					-- obj is already AT np, so the clone offset is just the jitter (clamped).
 					local clone = CloneObjectAtOffset(map, obj, point_fn(cx - nx, cy - ny))
 					if clone then
+						topup_clones = topup_clones + 1
 						-- Snap the clone onto the surface at its jittered spot.
 						local cp = point_fn(cx, cy)
 						if type(cp.SetTerrainZ) == "function" then
@@ -935,6 +995,18 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	if owns_pass_batch then
 		pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
 	end
+	local capture = decor_relief_stats_by_map[map] or {}
+	LoadingStep("decoration stretch placement complete", {
+		scanned = #objs,
+		moved = moved,
+		explicit_z_captured = capture.explicit_z or 0,
+		terrain_glued_captured = capture.terrain_glued or 0,
+		relief_placed = relief_placed,
+		terrain_snapped = terrain_snapped,
+		unresolved_z = unresolved_z,
+		setpos_failures = setpos_failures,
+		topup_clones = topup_clones,
+	}, map)
 	return moved
 end
 
