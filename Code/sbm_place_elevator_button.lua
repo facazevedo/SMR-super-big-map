@@ -1,7 +1,7 @@
 -- Super Big Map -- temporary free, instant Elevator placement button.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
--- the next Elevator construction site. It is enabled only by PLACE_ELEVATOR_BUTTON_ENABLED.
+-- the complete two-map construction group. It is enabled only by PLACE_ELEVATOR_BUTTON_ENABLED.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -65,6 +65,71 @@ local function IsElevatorSite(site, class_name)
 	return false
 end
 
+local function IsLiveObject(obj)
+	if type(obj) ~= "table" then return false end
+	local is_valid = Global("IsValid")
+	return type(is_valid) ~= "function" or is_valid(obj) == true
+end
+
+local function ObjectMap(obj)
+	if not IsLiveObject(obj) or type(obj.GetMap) ~= "function" then return nil end
+	return SafeCall(obj.GetMap, obj)
+end
+
+local function Audit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.Elevator) == "function" then
+		diagnostics.Elevator("TEMP_BUTTON_" .. tostring(event), data or {}, map)
+	end
+end
+
+local function ReportFailure(reason, data, map)
+	data = type(data) == "table" and data or {}
+	data.reason = tostring(reason)
+	Audit("FAILED", data, map)
+	local print_fn = Global("print") or print
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][Place Elevator] " .. tostring(reason))
+	end
+	return false
+end
+
+local function ResolveElevatorConstructionGroup(site)
+	if not IsLiveObject(site) then return nil, nil, "placed site is no longer valid" end
+	local group = rawget(site, "construction_group")
+	local leader = type(group) == "table" and group[1] or nil
+	if type(group) ~= "table" or not IsLiveObject(leader)
+		or type(leader.Complete) ~= "function" then
+		return nil, nil, "paired Elevator construction-group leader is unavailable"
+	end
+	local members = {}
+	for index = 2, #group do
+		local member = group[index]
+		if IsLiveObject(member) and IsElevatorSite(member, rawget(member, "building_class")) then
+			members[#members + 1] = member
+		end
+	end
+	if #members ~= 2 then
+		return nil, nil, "paired Elevator construction group does not contain two live sites"
+	end
+	local first_map, second_map = ObjectMap(members[1]), ObjectMap(members[2])
+	if not first_map or not second_map or first_map == second_map then
+		return nil, nil, "paired Elevator construction sites do not belong to two distinct maps"
+	end
+	return leader, members
+end
+
+local function PassageForSite(site)
+	local passage = type(site) == "table" and rawget(site, "snapped_to") or nil
+	if IsLiveObject(passage) then return passage end
+	local map = ObjectMap(site)
+	if map and type(map.MapFindNearest) == "function" and type(site.GetPos) == "function" then
+		return SafeCall(map.MapFindNearest, map, site:GetPos(), "map",
+			"SurfacePassageBase", "UndergroundPassageBase")
+	end
+	return nil
+end
+
 local function HandleConstructionSitePlaced(site, class_name)
 	if State.place_elevator_button_armed ~= true then return end
 	if not Enabled() then
@@ -75,12 +140,61 @@ local function HandleConstructionSitePlaced(site, class_name)
 	State.place_elevator_button_armed = nil
 
 	local function finish()
-		if site and type(site.Complete) == "function" then
-			pcall(site.Complete, site, "quick_build")
+		local map = ObjectMap(site)
+		local leader, members, resolve_error = ResolveElevatorConstructionGroup(site)
+		if not leader then
+			return ReportFailure(resolve_error, { class = tostring(class_name) }, map)
 		end
+		local passages = { PassageForSite(members[1]), PassageForSite(members[2]) }
+		Audit("GROUP_READY", {
+			members = #members,
+			first_map = tostring(ObjectMap(members[1])),
+			second_map = tostring(ObjectMap(members[2])),
+		}, map)
+		local ok, complete_error = pcall(leader.Complete, leader, "quick_build")
+		if not ok then
+			return ReportFailure("paired Elevator quick-build failed: " .. tostring(complete_error),
+				{ members = #members }, map)
+		end
+		if IsLiveObject(members[1]) or IsLiveObject(members[2]) then
+			return ReportFailure("paired Elevator quick-build left a construction site alive",
+				{ first_alive = tostring(IsLiveObject(members[1])),
+					second_alive = tostring(IsLiveObject(members[2])) }, map)
+		end
+
+		-- PlaceBuildingIn schedules GameInit for the completed buildings. Verify on the next game-time
+		-- task, after those already-queued GameInit calls have linked both halves through the passages.
+		local function verify()
+			local first = IsLiveObject(passages[1]) and rawget(passages[1], "elevator") or nil
+			local second = IsLiveObject(passages[2]) and rawget(passages[2], "elevator") or nil
+			local linked = IsLiveObject(first) and IsLiveObject(second)
+				and rawget(first, "other") == second and rawget(second, "other") == first
+			if not linked then
+				return ReportFailure("paired Elevator buildings did not link after quick-build", {
+					first_complete = tostring(IsLiveObject(first)),
+					second_complete = tostring(IsLiveObject(second)),
+				}, map)
+			end
+			Audit("COMPLETE", {
+				first_map = tostring(ObjectMap(first)), second_map = tostring(ObjectMap(second)),
+				linked = true,
+			}, map)
+			return true
+		end
+		local create_verify_thread = Global("CreateGameTimeThread")
+		if type(create_verify_thread) == "function" then
+			create_verify_thread(verify)
+		else
+			verify()
+		end
+		return true
 	end
 	local create_thread = Global("CreateGameTimeThread")
-	if type(create_thread) == "function" then create_thread(finish) else finish() end
+	if type(create_thread) ~= "function" then
+		return ReportFailure("game-time task API is unavailable; refusing a one-sided quick-build",
+			{ class = tostring(class_name) }, ObjectMap(site))
+	end
+	create_thread(finish)
 end
 
 local function ResolveExistingButton(desktop)
