@@ -3746,19 +3746,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					and sectors_mod.HasPendingVanillaStartSelection(map) == true
 				if vanilla_start_pending then
 					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
-						local n_rev, reveal_info = SafeCall(
-							sectors_mod.RevealVanillaStartSectors, map)
-						reveal_info = type(reveal_info) == "table" and reveal_info or {}
-						reveal_info.scanned = n_rev
-						local equivalent_count = tonumber(reveal_info.equivalent_sector_count)
-						local reveal_target_count = tonumber(reveal_info.reveal_target_count)
-						if type(n_rev) ~= "number" or n_rev ~= 1
-							or type(equivalent_count) ~= "number" or equivalent_count < 1
-							or reveal_target_count ~= 1 then
-							error(string.format(
-								"stretched vanilla initial reveal mismatch: equivalents=%s targets=%s scanned=%s selected=%s",
-								tostring(equivalent_count), tostring(reveal_target_count), tostring(n_rev),
-								tostring(reveal_info.selected)))
+						local n_rev = SafeCall(sectors_mod.RevealVanillaStartSectors, map)
+						if n_rev ~= 1 then
+							error("stretched vanilla initial reveal failed: scanned=" .. tostring(n_rev))
 						end
 					end
 				elseif cfg_bool("STRETCH_VANILLA_START_SECTOR", false) then
