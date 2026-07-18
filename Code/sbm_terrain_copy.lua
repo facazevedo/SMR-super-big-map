@@ -1318,13 +1318,12 @@ local function RestoreDeferredElevatorMigration(map, records, reason, transactio
 	return restored
 end
 
--- Surface entrance signs and underground tunnel signs share the engine class
--- SurfaceUndergroundTunnelSign, but only the surface sign is a mod-positioned badge. Underground
+-- Only surface-side entrance markers need the badge-position wrapper. Underground
 -- SurfaceTunnelMarker/SignUnderground objects remain entirely under vanilla's reveal and placement
--- lifecycle; this patch neither anchors nor moves them.
-local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 5
+-- lifecycle, and the shared sign SetPos wrapper explicitly bypasses them.
+local ENTRANCE_BADGE_POSITION_PATCH_VERSION = 6
 local ENTRANCE_BADGE_MARKER_CLASSES = {
-	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker", "SurfaceTunnelMarker",
+	"SurfaceUndergroundTunnelMarker", "UndergroundTunnelMarker",
 }
 
 local function PositionXYZ(pos)
@@ -1400,9 +1399,8 @@ local function CaptureEntranceBadgePosition(marker, sign, reason)
 	WriteEntranceBadgeAnchor(marker.spawner, x, y, z)
 	WriteEntranceBadgeAnchor(sign, x, y, z)
 	local point_fn = Global("point")
-	local snapped = false
 	if type(z) == "number" and type(point_fn) == "function" and type(sign.SetPos) == "function" then
-		snapped = pcall(sign.SetPos, sign, point_fn(x, y, z))
+		pcall(sign.SetPos, sign, point_fn(x, y, z))
 	end
 	return true
 end
@@ -1443,6 +1441,16 @@ local function PatchEntranceBadgePosition()
 	State.entrance_badge_place_sign_wrappers = State.entrance_badge_place_sign_wrappers or {}
 	local originals = State.entrance_badge_place_sign_originals
 	local wrappers = State.entrance_badge_place_sign_wrappers
+	-- A pre-cleanup hot reload may still have the old no-op wrapper on the vanilla underground
+	-- marker class. Peel it off once before installing the surface-only patch set.
+	local underground_marker_class = Engine.ClassTable and Engine.ClassTable("SurfaceTunnelMarker")
+	if type(underground_marker_class) == "table"
+		and underground_marker_class.PlaceSign == wrappers.SurfaceTunnelMarker
+		and type(originals.SurfaceTunnelMarker) == "function" then
+		underground_marker_class.PlaceSign = originals.SurfaceTunnelMarker
+	end
+	originals.SurfaceTunnelMarker = nil
+	wrappers.SurfaceTunnelMarker = nil
 	local targets = {}
 	for _, class_name in ipairs(ENTRANCE_BADGE_MARKER_CLASSES) do
 		local cls = Engine.ClassTable and Engine.ClassTable(class_name)
@@ -1617,8 +1625,6 @@ local function MoveEntranceVisualsToScale(map)
 		if not committed and (ox >= src_w or oy >= src_w) then return end
 		local nx = committed and committed_x or math.floor(ox * scale + 0.5)
 		local ny = committed and committed_y or math.floor(oy * scale + 0.5)
-		local pair_exact = committed
-		local pair_anchor = committed and "committed passage hex" or "scaled"
 		local elevator_kind = is_elevator_or_site(obj)
 		if elevator_kind then
 			local underground = map.mapdata and map.mapdata.Environment == "Underground"
@@ -1629,10 +1635,8 @@ local function MoveEntranceVisualsToScale(map)
 				-- buildable. Never pull the underground site/building away from its imprint.
 				anchor = IsKindOfSafe(obj, "ElevatorBase") and obj.passage
 					or obj.SuperBigMapDeferredElevatorPassage
-				pair_anchor = "underground_passage"
 			else
 				anchor = IsKindOfSafe(obj, "ElevatorBase") and obj.other or obj.linked_obj
-				pair_anchor = "linked_counterpart"
 			end
 			-- A destroyed construction site remains a Lua table with GetPos but is no longer a
 			-- luaGameObject. Never cross the engine boundary unless IsValid confirms it is live.
@@ -1644,7 +1648,6 @@ local function MoveEntranceVisualsToScale(map)
 					-- Use the selected live anchor's exact final coordinate instead of independently
 					-- scaling the Elevator and allowing it to drift away from its passage/counterpart.
 					nx, ny = lx, ly
-					pair_exact = true
 				end
 			end
 		end
@@ -1769,13 +1772,9 @@ local function MoveEntranceVisualsToScale(map)
 		local matched = is_elevator_or_site(obj)
 		if matched then handle(obj, "pre-expansion elevator site") end
 	end)
-	-- Vanilla deliberately moves a tunnel MARKER to a nearby unobstructed anomaly position. Keep the
-	-- gameplay marker there, but bind its visual sign to marker.spawner -- the exact final passage
-	-- object that owns the entrance. The two maps intentionally use different visual placement:
-	--   * Surface: place the entrance sign on the closest safe cell beside the passage footprint.
-	--   * Underground: place SignUnderground on the authoritative SurfacePassage hex itself.
-	-- The latter is the actual underground exit symbol, not a surface-side badge, and moving it to a
-	-- footprint-edge cell makes the displayed sector/hex disagree with the linked passage.
+	-- Vanilla may place the surface entrance marker away from the passage. Keep the gameplay marker
+	-- untouched, but place its visible surface badge on the closest safe cell beside the passage
+	-- footprint. Underground SignUnderground objects are detected and skipped below.
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
 	local get_unbuildable = Global("buildUnbuildableZ")
@@ -1959,7 +1958,6 @@ local function MoveEntranceVisualsToScale(map)
 		end
 		local ok_set = pcall(sign.SetPos, sign, anchor)
 		if ok_set then
-			sign.SuperBigMapPassageAnchored = true
 			CaptureEntranceBadgePosition(marker, sign, "initial post-expansion passage anchor")
 			EntranceAudit("ENTRANCE_BADGE_ANCHORED", {
 				passage_x = px, passage_y = py,
@@ -2367,7 +2365,6 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 
 	local function stamp_plan(anchor, plan, endpoint_q, endpoint_r, endpoint_x, endpoint_y)
 		anchor.SuperBigMapCommittedPassageLocked = true
-		anchor.SuperBigMapCommittedPassagePlanVersion = 2
 		anchor.SuperBigMapCommittedPassageSourceQ = plan.source_q
 		anchor.SuperBigMapCommittedPassageSourceR = plan.source_r
 		anchor.SuperBigMapCommittedPassageSourceX = plan.source_x
@@ -2676,11 +2673,6 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		stats.pairs = stats.pairs + 1
 		if surface_radius == 0 then stats.exact = stats.exact + 1
 		else stats.fallback = stats.fallback + 1 end
-		underground_anchor.SuperBigMapTrueUndergroundPassageHex =
-			tostring(plan.final_q) .. ":" .. tostring(plan.final_r)
-		surface_anchor.SuperBigMapTrueUndergroundPassageHex =
-			underground_anchor.SuperBigMapTrueUndergroundPassageHex
-		surface_anchor.SuperBigMapSurfacePassageHex = tostring(surface_q) .. ":" .. tostring(surface_r)
 		EntranceAudit(source_bootstrap and "PASSAGE_PLAN_COMMITTED" or "PASSAGE_PLAN_VALIDATED", {
 			pair = i,
 			algorithm = search_algorithm,

@@ -306,9 +306,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWonderCount = nil
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
 	map.SuperBigMapDeferredTunnelSpawnsPending = nil
-	map.SuperBigMapDeferredTunnelSpawnsDone = nil
 	map.SuperBigMapDeferredTunnelSpawnCount = nil
-	map.SuperBigMapDeferredTunnelSpawnsCreated = nil
 	map.SuperBigMapGeneratorWidth = nil
 	map.SuperBigMapGeneratorHeight = nil
 	map.SuperBigMapGeneratorWidthTiles = nil
@@ -2659,7 +2657,6 @@ local function MaterializeDeferredUndergroundTunnelSpawns(map)
 	if #pending == 0 then
 		return false, "tunnel marker spawn is pending but no deferred SurfacePassage survives"
 	end
-	local before = ArtefactMapGet(map, "SurfaceTunnelMarker")
 	local spawned = 0
 	for _, passage in ipairs(pending) do
 		local ok, err = pcall(original, passage)
@@ -2677,10 +2674,7 @@ local function MaterializeDeferredUndergroundTunnelSpawns(map)
 		passage.SuperBigMapDeferredTunnelSpawnDone = true
 		spawned = spawned + 1
 	end
-	local after = ArtefactMapGet(map, "SurfaceTunnelMarker")
 	map.SuperBigMapDeferredTunnelSpawnsPending = false
-	map.SuperBigMapDeferredTunnelSpawnsDone = true
-	map.SuperBigMapDeferredTunnelSpawnsCreated = spawned
 	return spawned == #pending, spawned
 end
 
@@ -4778,33 +4772,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. tostring(visuals_stats and visuals_stats.failed_calls or "unknown"))
 					end
 					local vanilla_passages = ArtefactMapGet(map, "SurfacePassage")
-					for index, passage in ipairs(vanilla_passages) do
-						local ok_pos, pos = pcall(passage.GetPos, passage)
-						local x, y
-						if ok_pos then x, y = PointXY(pos) end
-						local entity = passage.entity
-						if type(passage.GetEntity) == "function" then
-							local ok_entity, value = pcall(passage.GetEntity, passage)
-							if ok_entity then entity = value end
-						end
-						local visible
-						if type(passage.GetVisible) == "function" then
-							local ok_visible, value = pcall(passage.GetVisible, passage)
-							if ok_visible then visible = value end
-						end
-						ExpansionAudit("UNDERGROUND_VANILLA_PASSAGE_INDICATOR", {
-							index = index, class = passage.class, entity = entity,
-							x = x, y = y, visible = visible,
-						}, map)
-					end
 					ExpansionAudit("UNDERGROUND_VANILLA_PASSAGE_INDICATORS_READY", {
-						passages = visuals_stats and visuals_stats.passages or 0,
 						vanilla_passages = #vanilla_passages,
 						rebuilt = indicator_stats and indicator_stats.rebuilt or 0,
 						decals = indicator_stats and indicator_stats.decals or 0,
 						built_markers = indicator_stats and indicator_stats.built_markers or 0,
-						forced_signs = 0,
-						tunnel_signs = #ArtefactMapGet(map, "SurfaceUndergroundTunnelSign"),
 					}, map)
 				end
 				local deposits = SuperBigMap.DepositRules
@@ -5158,7 +5130,6 @@ local function PatchDeferredUndergroundHudAccess(source)
 			return
 		end
 		frame.SuperBigMapUndergroundAccessPressVersion = GENERATOR_PATCH_VERSION
-		frame.SuperBigMapUndergroundAccessOriginalPress = original_press
 		return result
 	end
 	hud_class.Init = wrapper
@@ -5372,7 +5343,6 @@ MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
-MapGeneration.RefreshVanillaUndergroundPassageIndicators = RefreshVanillaUndergroundPassageIndicators
 MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
 
 function MapGeneration.ApplyModBehavior()
