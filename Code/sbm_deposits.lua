@@ -3002,6 +3002,22 @@ function DepositRules.TopUpAnomalies(map)
 		repulse_all = anomaly_values.repulse_all,
 	}
 	local added_by_kind = {}
+	local function choose_needed_kind()
+		local deficit_total = 0
+		for _, kind in ipairs(target_keys) do
+			deficit_total = deficit_total + math.max(0,
+				(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
+		end
+		if deficit_total <= 0 then return nil end
+		local pick = RandInt(deficit_total)
+		for _, kind in ipairs(target_keys) do
+			local deficit = math.max(0,
+				(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
+			if pick < deficit then return kind end
+			pick = pick - deficit
+		end
+		return nil
+	end
 
 	local added = 0
 	local reused_pool = false
@@ -3012,6 +3028,83 @@ function DepositRules.TopUpAnomalies(map)
 	local low_area_percent = math.max(1, math.min(100,
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
 	local topup_ok, topup_error = RunPaused("SuperBigMapAnomalyTopUp", function()
+		-- Surface placement is finalized only after the complete population exists. Create every
+		-- missing ordinary anomaly as a temporary marker inside a canonical ring sector, without
+		-- consuming scarce reachable/repulsion slots one at a time. The redistribution transaction
+		-- below then ignores all old coordinates and plans native + added ring anomalies together.
+		if surface_edge_ring then
+			edge_ctx = BuildTopUpEdgeContext(map)
+			local placeholder_sectors = {}
+			if edge_ctx then
+				for _, sector in ipairs(edge_ctx.sectors or {}) do
+					if sector.col <= edge_ctx.min_col + ring_sectors - 1
+						or sector.col >= edge_ctx.max_col - ring_sectors + 1
+						or sector.row <= edge_ctx.min_row + ring_sectors - 1
+						or sector.row >= edge_ctx.max_row - ring_sectors + 1 then
+						placeholder_sectors[#placeholder_sectors + 1] = sector
+					end
+				end
+			end
+			local expected_ring_sectors = edge_ctx and edge_ctx.cols * edge_ctx.rows
+				- math.max(0, edge_ctx.cols - 2 * ring_sectors)
+					* math.max(0, edge_ctx.rows - 2 * ring_sectors) or 0
+			if #placeholder_sectors ~= expected_ring_sectors or #placeholder_sectors == 0 then
+				error("surface anomaly placeholders cannot resolve the complete outer-ring sector list")
+			end
+			if #standard_templates == 0 then
+				error("surface anomaly placeholder template pool is empty")
+			end
+			for i = #placeholder_sectors, 2, -1 do
+				local j = RandInt(i) + 1
+				placeholder_sectors[i], placeholder_sectors[j] =
+					placeholder_sectors[j], placeholder_sectors[i]
+			end
+			for placement_n = 1, shortfall do
+				local needed_kind = choose_needed_kind()
+				if not needed_kind then error("surface anomaly deficit selection exhausted early") end
+				local kind_templates = standard_templates_by_kind[needed_kind]
+				local template = kind_templates and kind_templates[RandInt(#kind_templates) + 1]
+					or standard_templates[RandInt(#standard_templates) + 1]
+				local event_sequence, event_sequence_list
+				if needed_kind == "sequence" then
+					event_sequence, event_sequence_list = take_event_scenario(template)
+					if not event_sequence then error("surface anomaly event scenario pool unavailable") end
+				end
+				local tpos = ObjectPos(template)
+				if not (tpos and type(tpos.xy) == "function") then
+					error("surface anomaly template position unavailable")
+				end
+				local sector = placeholder_sectors[((placement_n - 1) % #placeholder_sectors) + 1]
+				local x = math.floor((sector.area_x0 + sector.area_x1) / 2)
+				local y = math.floor((sector.area_y0 + sector.area_y1) / 2)
+				local tx, ty = tpos:xy()
+				local clone = clone_fn(map, template, point(x - tx, y - ty, 0))
+				if not clone or type(clone) ~= "table" then
+					error("surface anomaly placeholder creation failed")
+				end
+				if needed_kind == "complete" or needed_kind == "unlock" then
+					clone.tech_action = needed_kind
+					clone.sequence = ""
+					clone.sequence_list = ""
+				elseif needed_kind == "sequence" then
+					clone.tech_action = false
+					clone.sequence = event_sequence
+					clone.sequence_list = event_sequence_list
+				end
+				added = added + 1
+				added_by_kind[needed_kind] = (added_by_kind[needed_kind] or 0) + 1
+				clone.SuperBigMapAnomalyTopUp = true
+				clone.SuperBigMapAnomalyTopUpKind = needed_kind
+				clone.SuperBigMapEdgeTopUp = true
+				clone.is_placed = false
+				clone.placed_obj = false
+				SetRevealedState(clone, false)
+			end
+			local ok, stats = RedistributeOuterRingAnomalies(map, ring_sectors)
+			redistribution_stats = stats
+			if not ok then error(stats and stats.error or "unknown redistribution failure") end
+			return
+		end
 		local repulsion = NewTopUpRepulsionTracker(map, "anomalies")
 		local candidates = {}
 		local ring_sector_pool = {}
@@ -3368,22 +3461,6 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			return #matching > 0 and matching[RandInt(#matching) + 1] or nil
 		end
-		local function choose_needed_kind()
-			local deficit_total = 0
-			for _, kind in ipairs(target_keys) do
-				deficit_total = deficit_total + math.max(0,
-					(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
-			end
-			if deficit_total <= 0 then return nil end
-			local pick = RandInt(deficit_total)
-			for _, kind in ipairs(target_keys) do
-				local deficit = math.max(0,
-					(target_by_kind[kind] or 0) - (current_by_kind[kind] or 0) - (added_by_kind[kind] or 0))
-				if pick < deficit then return kind end
-				pick = pick - deficit
-			end
-			return nil
-		end
 		local placement_n = 1
 		while placement_n <= shortfall do
 			if (surface_edge_ring and #available_sectors == 0)
@@ -3497,6 +3574,15 @@ function DepositRules.TopUpAnomalies(map)
 		local final_count = final_by_kind[kind] or 0
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
+	end
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][AnomalyTopUp] source=" .. CountMapString(source_by_kind)
+			.. " target=" .. CountMapString(target_by_kind)
+			.. " final=" .. CountMapString(final_by_kind)
+			.. " added=" .. CountMapString(added_by_kind)
+			.. " added_total=" .. tostring(added)
+			.. " remaining=" .. tostring(remaining_shortfall))
 	end
 	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall, {
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
