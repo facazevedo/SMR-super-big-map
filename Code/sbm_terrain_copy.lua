@@ -970,8 +970,13 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
 	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
+	local marker_class_cache = {}
 	local function is_marker(obj)
-		return IsImportantSectorObject(obj) -- resource deposit markers (surface/subsurface/terrain)
+		local class = obj and obj.class
+		if type(class) == "string" and marker_class_cache[class] ~= nil then
+			return marker_class_cache[class]
+		end
+		local result = IsImportantSectorObject(obj) -- resource deposit markers (surface/subsurface/terrain)
 			or IsKindOfSafe(obj, "Deposit")
 			or IsKindOfSafe(obj, "SubsurfaceAnomaly")
 			or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
@@ -986,6 +991,8 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 			-- PlaceArtefacts keeps these markers alive when underground wonders are deferred.
 			-- They must receive the identical transform before the assigned wonder is materialized.
 			or IsKindOfSafe(obj, "BuriedWonderMarker")
+		if type(class) == "string" then marker_class_cache[class] = result == true end
+		return result
 	end
 	local objs = {}
 	if type(map.MapForEach) == "function" then

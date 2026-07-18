@@ -4186,19 +4186,28 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- (config STRETCH_SCALE_MARKERS) -- same transform, positions only.
 				if type(ScaleMarkersToFull) == "function" then
 					SetLoadingPhase("Repositioning surface resource deposits")
+					local marker_scale_token = LoadingBegin("surface scale marker objects", map)
 					local n_mark = ScaleMarkersToFull(map, false, pass_batch_active)
+					LoadingEnd(marker_scale_token, { moved = n_mark }, true)
 					local position_deposits = SuperBigMap.DepositRules
 					if position_deposits
 						and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
+						local marker_verify_token = LoadingBegin(
+							"surface verify native enrichment transform", map)
 						local verified, verify_stats = position_deposits.VerifyNativeEnrichmentTransform(
 							map, "surface after marker transform")
+						LoadingEnd(marker_verify_token, {
+							mismatches = verify_stats and verify_stats.mismatches or 0,
+						}, verified == true)
 						if verified ~= true then
 							error("native surface enrichment transformation verification failed (mismatches="
 								.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
 						end
 					end
 				end
-				ResumeCombinedPassEdits("after surface marker movement")
+				local pass_resume_token = LoadingBegin("surface resume combined pass edits", map)
+				local pass_resume_ok = ResumeCombinedPassEdits("after surface marker movement")
+				LoadingEnd(pass_resume_token, nil, pass_resume_ok == true)
 				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
@@ -4212,7 +4221,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					and sectors_mod.HasPendingVanillaStartSelection(map) == true
 				if vanilla_start_pending then
 					if sectors_mod and type(sectors_mod.RevealVanillaStartSectors) == "function" then
+						local initial_reveal_token = LoadingBegin(
+							"surface select stretched vanilla initial reveal", map)
 						local n_rev = SafeCall(sectors_mod.RevealVanillaStartSectors, map)
+						LoadingEnd(initial_reveal_token, { scanned = n_rev }, n_rev == 1)
 						if n_rev ~= 1 then
 							error("stretched vanilla initial reveal failed: scanned=" .. tostring(n_rev))
 						end
@@ -4268,6 +4280,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						local repulsion_ok, repulsion_stats =
 							deposits.AuditTopUpVanillaRepulsion(map, "surface final after density suite")
 						LoadingEnd(repulsion_token, {
+							markers = repulsion_stats and repulsion_stats.markers,
+							topups = repulsion_stats and repulsion_stats.topups,
+							density_status = repulsion_stats and repulsion_stats.density_status,
+							duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 							violations = repulsion_stats and repulsion_stats.repulsion_violations,
 						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
@@ -4844,6 +4860,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					local repulsion_ok, repulsion_stats =
 						deposits.AuditTopUpVanillaRepulsion(map, "underground final after density suite")
 					LoadingEnd(repulsion_token, {
+						markers = repulsion_stats and repulsion_stats.markers,
+						topups = repulsion_stats and repulsion_stats.topups,
+						density_status = repulsion_stats and repulsion_stats.density_status,
+						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
