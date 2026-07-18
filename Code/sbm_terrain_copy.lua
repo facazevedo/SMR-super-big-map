@@ -2072,12 +2072,61 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		or tonumber(underground_map.SuperBigMapSourceHeightTiles)
 	local desired_width_tiles = tonumber(underground_map.SuperBigMapDesiredWidthTiles)
 	local desired_height_tiles = tonumber(underground_map.SuperBigMapDesiredHeightTiles)
-	local scale_x = source_width_tiles and desired_width_tiles
-		and source_width_tiles > 0 and desired_width_tiles / source_width_tiles or nil
-	local scale_y = source_height_tiles and desired_height_tiles
-		and source_height_tiles > 0 and desired_height_tiles / source_height_tiles or nil
+	local function expansion_ratio(final_extent, source_extent)
+		final_extent, source_extent = tonumber(final_extent), tonumber(source_extent)
+		if final_extent and source_extent and source_extent > 0 and final_extent > source_extent then
+			return final_extent / source_extent
+		end
+		return nil
+	end
+	local scale_x = expansion_ratio(desired_width_tiles, source_width_tiles)
+	local scale_y = expansion_ratio(desired_height_tiles, source_height_tiles)
+	local scale_x_source = scale_x and "underground tile metadata" or nil
+	local scale_y_source = scale_y and "underground tile metadata" or nil
+	-- The passage bootstrap runs inside the deliberately source-sized underground view. Some
+	-- engine builds replace per-map generation markers during Proc_ResolveBuildable even though
+	-- the backing markers and MainMap metadata remain authoritative. Resolve each axis from any
+	-- exact live representation of the same geometry; no constant or scenario value is involved.
+	if not scale_x then
+		scale_x = expansion_ratio(surface_map.SuperBigMapDesiredWidthTiles,
+			surface_map.SuperBigMapGeneratorWidthTiles or surface_map.SuperBigMapSourceWidthTiles)
+		scale_x_source = scale_x and "surface tile metadata" or nil
+	end
+	if not scale_y then
+		scale_y = expansion_ratio(surface_map.SuperBigMapDesiredHeightTiles,
+			surface_map.SuperBigMapGeneratorHeightTiles or surface_map.SuperBigMapSourceHeightTiles)
+		scale_y_source = scale_y and "surface tile metadata" or nil
+	end
+	if not scale_x then
+		scale_x = expansion_ratio(underground_map.SuperBigMapExpandedWorldWidth,
+			underground_map.Width or underground_map.SuperBigMapGeneratorWidth)
+		scale_x_source = scale_x and "underground live backing/source world extents" or nil
+	end
+	if not scale_y then
+		scale_y = expansion_ratio(underground_map.SuperBigMapExpandedWorldHeight,
+			underground_map.Height or underground_map.SuperBigMapGeneratorHeight)
+		scale_y_source = scale_y and "underground live backing/source world extents" or nil
+	end
+	EntranceAudit("PASSAGE_PLAN_SCALE_RESOLVED", {
+		mode = source_bootstrap and "source bootstrap" or "deferred final validation",
+		scale_x = scale_x, scale_y = scale_y,
+		scale_x_source = scale_x_source, scale_y_source = scale_y_source,
+		underground_generator_tiles = tostring(underground_map.SuperBigMapGeneratorWidthTiles)
+			.. "x" .. tostring(underground_map.SuperBigMapGeneratorHeightTiles),
+		underground_source_tiles = tostring(underground_map.SuperBigMapSourceWidthTiles)
+			.. "x" .. tostring(underground_map.SuperBigMapSourceHeightTiles),
+		underground_desired_tiles = tostring(underground_map.SuperBigMapDesiredWidthTiles)
+			.. "x" .. tostring(underground_map.SuperBigMapDesiredHeightTiles),
+		underground_live_world = tostring(underground_map.Width)
+			.. "x" .. tostring(underground_map.Height),
+		underground_expanded_world = tostring(underground_map.SuperBigMapExpandedWorldWidth)
+			.. "x" .. tostring(underground_map.SuperBigMapExpandedWorldHeight),
+	}, underground_map)
 	if source_bootstrap and (not scale_x or not scale_y or scale_x <= 1 or scale_y <= 1) then
-		return false, { error = "source/final passage scale unavailable", pairs = 0 }
+		return false, {
+			error = "source/final passage scale unavailable",
+			pairs = 0, scale_x = scale_x, scale_y = scale_y,
+		}
 	end
 
 	local function scaled_final_hex(source_q, source_r)
