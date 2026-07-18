@@ -18,7 +18,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local MAIN_MENU_GUARD_VERSION = 5
+local MAIN_MENU_GUARD_VERSION = 6
 local InstallRestoreInGameInterfaceGuard
 local UninstallRestoreInGameInterfaceGuard
 
@@ -255,14 +255,13 @@ local function ForceVanillaMainMenuState(reason)
 		SafeCall(generation.RestorePreparedMapDataForVanillaSession, reason or "main menu")
 	end
 
-	-- The camera-only reset above is retained as a safe fallback, but returning to the main
-	-- menu now performs the complete reverse lifecycle: sectors, bounds, generation hooks,
-	-- deposits, construction/rocket/elevator hooks, heat, zoom, and UI all return to vanilla.
-	-- The transition guards below re-enable the mod only when NewGame/LoadGame actually starts.
+	-- Returning to the main menu reverses every gameplay patch. The pregame EXPAND MAP control is
+	-- intentionally retained: it is inert outside the colony-site dialog and must already be
+	-- installed when the next scenario constructs that dialog.
 	SuperBigMap.State.main_menu_vanilla = true
 	local lifecycle = SuperBigMap.Lifecycle
 	if lifecycle and type(lifecycle.Disable) == "function" then
-		SafeCall(lifecycle.Disable)
+		SafeCall(lifecycle.Disable, true)
 	end
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
@@ -497,11 +496,14 @@ local RESTORE_ORDER = {
 	"PregameToggle",
 }
 
-local function run_phase(order, method)
+local function run_phase(order, method, skip_module)
 	for i = 1, #order do
-		local mod = SuperBigMap[order[i]]
-		if type(mod) == "table" and type(mod[method]) == "function" then
-			SafeCall(mod[method])
+		local module_name = order[i]
+		if module_name ~= skip_module then
+			local mod = SuperBigMap[module_name]
+			if type(mod) == "table" and type(mod[method]) == "function" then
+				SafeCall(mod[method])
+			end
 		end
 	end
 end
@@ -530,11 +532,12 @@ function Lifecycle.Enable(force_from_main_menu)
 	return true
 end
 
-function Lifecycle.Disable()
+function Lifecycle.Disable(keep_pregame_toggle)
 	-- Always execute the idempotent reverse phase. A late Lua/class reload can
 	-- leave a wrapper or shared preset behind even if State.active was already
 	-- cleared, and main-menu teardown is the last safe point to normalize it.
-	run_phase(RESTORE_ORDER, "RestoreVanillaBehavior")
+	run_phase(RESTORE_ORDER, "RestoreVanillaBehavior",
+		keep_pregame_toggle == true and "PregameToggle" or nil)
 	local elevator_button = SuperBigMap.PlaceElevatorButton
 	if elevator_button and type(elevator_button.Hide) == "function" then
 		SafeCall(elevator_button.Hide)
@@ -998,9 +1001,9 @@ local function EnsurePregameToggleInstalled(reason)
 		return
 	end
 	InstallMainMenuTransitionGuards()
-	if SuperBigMap.State.main_menu_vanilla == true then
-		return
-	end
+	-- Unlike gameplay patches, the opt-in control belongs to pregame itself. Classes can be
+	-- rebuilt after ResetGameSession, so reclaim its Open wrapper even while gameplay remains in
+	-- the fully vanilla main-menu state. PatchLandingDialog is identity-checked and otherwise inert.
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.PatchLandingDialog) == "function" then
 		toggle.PatchLandingDialog()
