@@ -2075,7 +2075,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local function expansion_ratio(final_extent, source_extent)
 		final_extent, source_extent = tonumber(final_extent), tonumber(source_extent)
 		if final_extent and source_extent and source_extent > 0 and final_extent > source_extent then
-			return final_extent / source_extent
+			-- The engine Lua runtime preserves integer division when both operands are integers
+			-- (8192 / 6144 becomes 1). Promote the numerator exactly as the terrain stretch does.
+			return (final_extent + 0.0) / source_extent
 		end
 		return nil
 	end
