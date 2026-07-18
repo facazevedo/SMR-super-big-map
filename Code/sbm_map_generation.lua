@@ -2689,8 +2689,9 @@ end
 -- ElevatorBuildIndicator_UndergroundPassageImprint. SurfacePassageRocks is a different standalone
 -- obstruction class and must not be used as an attachment test. The stretch may move an attached
 -- child independently from its carrier, so rebuild the vanilla entity attachments only after the
--- passage reaches its committed final position. This does not create a tunnel sign, reveal a sector,
--- or alter the passage/Elevator link.
+-- passage reaches its committed final position. Keep this ground marker even after an Elevator is
+-- built: the Elevator remains linked and rendered above it, while both original passage locations
+-- remain identifiable on the underground map. This does not create a tunnel sign or reveal a sector.
 local function RefreshVanillaUndergroundPassageIndicators(map)
 	local auto_attach = Global("AutoAttachObjects")
 	local point_fn = Global("point")
@@ -2700,95 +2701,137 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 	end
 	local passages = ArtefactMapGet(map, "SurfacePassage")
 	local expected_decal_entity = "ElevatorBuildIndicator_UndergroundPassageImprint"
-	local stats = { passages = #passages, rebuilt = 0, decals = 0, skipped_built = 0 }
+	local stats = { passages = #passages, rebuilt = 0, decals = 0, built_markers = 0 }
 	for index, passage in ipairs(passages) do
 		local built = passage.elevator or passage.elevator_construction
+		if built then stats.built_markers = stats.built_markers + 1 end
 		local entity
 		if type(passage.GetEntity) == "function" then
 			local ok_entity, value = pcall(passage.GetEntity, passage)
 			if ok_entity then entity = value end
 		end
-		if built or entity == "ElevatorBuildIndicator_UndergroundImprint" then
-			stats.skipped_built = stats.skipped_built + 1
-		else
-			if entity ~= "ElevatorBuildIndicator_Underground"
-				and type(passage.ChangeEntity) == "function" then
-				local ok_entity, err = pcall(
-					passage.ChangeEntity, passage, "ElevatorBuildIndicator_Underground")
-				if not ok_entity then
-					return false, { error = "failed to restore vanilla passage entity: " .. tostring(err),
-						index = index }
-				end
-				entity = "ElevatorBuildIndicator_Underground"
-			end
-			-- Re-seat the carrier on final terrain before rebuilding relative visual attachments.
-			local ok_pos, pos = false, nil
-			if type(passage.GetPos) == "function" then
-				ok_pos, pos = pcall(passage.GetPos, passage)
-			end
-			if ok_pos then
-				local x, y = PointXY(pos)
-				if type(x) == "number" and type(y) == "number" then
-					local target = point_fn(x, y)
-					if type(map.SnapToTerrain) == "function" then
-						local ok_snap, snapped = pcall(map.SnapToTerrain, map, target)
-						if ok_snap and snapped then target = snapped end
-					elseif type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-						local ok_height, z = pcall(terrain_api.GetHeight, map, target)
-						if ok_height and type(z) == "number" then target = point_fn(x, y, z) end
-					end
-					if type(passage.SetPos) == "function" then pcall(passage.SetPos, passage, target) end
-				end
-			end
-			if type(passage.DestroyAttaches) == "function" then
-				local ok_destroy, err = pcall(passage.DestroyAttaches, passage)
-				if not ok_destroy then
-					return false, { error = "failed to clear stale passage attachments: " .. tostring(err),
-						index = index }
-				end
-			end
-			local ok_attach, err = pcall(auto_attach, passage)
-			if not ok_attach then
-				return false, { error = "failed to rebuild vanilla passage attachments: " .. tostring(err),
+		if entity ~= "ElevatorBuildIndicator_Underground"
+			and type(passage.ChangeEntity) == "function" then
+			local ok_entity, err = pcall(
+				passage.ChangeEntity, passage, "ElevatorBuildIndicator_Underground")
+			if not ok_entity then
+				return false, { error = "failed to restore vanilla passage entity: " .. tostring(err),
 					index = index }
 			end
-			local decals = {}
-			if type(passage.GetAttaches) == "function" then
-				local ok_attaches, attaches = pcall(passage.GetAttaches, passage)
-				if ok_attaches and type(attaches) == "table" then
-					for _, visual in ipairs(attaches) do
-						local visual_entity
-						if visual and type(visual.GetEntity) == "function" then
-							local ok_visual_entity, value = pcall(visual.GetEntity, visual)
-							if ok_visual_entity then visual_entity = value end
-						end
-						if visual_entity == expected_decal_entity then
-							decals[#decals + 1] = visual
-						end
+			entity = "ElevatorBuildIndicator_Underground"
+		end
+		-- Re-seat the carrier on final terrain before rebuilding relative visual attachments.
+		local ok_pos, pos = false, nil
+		if type(passage.GetPos) == "function" then
+			ok_pos, pos = pcall(passage.GetPos, passage)
+		end
+		if ok_pos then
+			local x, y = PointXY(pos)
+			if type(x) == "number" and type(y) == "number" then
+				local target = point_fn(x, y)
+				if type(map.SnapToTerrain) == "function" then
+					local ok_snap, snapped = pcall(map.SnapToTerrain, map, target)
+					if ok_snap and snapped then target = snapped end
+				elseif type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+					local ok_height, z = pcall(terrain_api.GetHeight, map, target)
+					if ok_height and type(z) == "number" then target = point_fn(x, y, z) end
+				end
+				if type(passage.SetPos) == "function" then pcall(passage.SetPos, passage, target) end
+			end
+		end
+		if type(passage.DestroyAttaches) == "function" then
+			local ok_destroy, err = pcall(passage.DestroyAttaches, passage)
+			if not ok_destroy then
+				return false, { error = "failed to clear stale passage attachments: " .. tostring(err),
+					index = index }
+			end
+		end
+		local ok_attach, err = pcall(auto_attach, passage)
+		if not ok_attach then
+			return false, { error = "failed to rebuild vanilla passage attachments: " .. tostring(err),
+				index = index }
+		end
+		local decals = {}
+		if type(passage.GetAttaches) == "function" then
+			local ok_attaches, attaches = pcall(passage.GetAttaches, passage)
+			if ok_attaches and type(attaches) == "table" then
+				for _, visual in ipairs(attaches) do
+					local visual_entity
+					if visual and type(visual.GetEntity) == "function" then
+						local ok_visual_entity, value = pcall(visual.GetEntity, visual)
+						if ok_visual_entity then visual_entity = value end
+					end
+					if visual_entity == expected_decal_entity then
+						decals[#decals + 1] = visual
 					end
 				end
 			end
-			if #decals == 0 then
-				return false, { error = "vanilla underground passage baked-decal attachment was not recreated",
-					index = index, entity = tostring(entity), expected_decal_entity = expected_decal_entity }
-			end
-			for _, visual in ipairs(decals) do
-				if type(visual.SetVisible) == "function" then pcall(visual.SetVisible, visual, true) end
-				if type(visual.SetOpacity) == "function" then pcall(visual.SetOpacity, visual, 100) end
-			end
-			if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, true) end
-			if type(passage.SetOpacity) == "function" then pcall(passage.SetOpacity, passage, 100) end
-			stats.rebuilt = stats.rebuilt + 1
-			stats.decals = stats.decals + #decals
 		end
+		if #decals == 0 then
+			return false, { error = "vanilla underground passage baked-decal attachment was not recreated",
+				index = index, entity = tostring(entity), expected_decal_entity = expected_decal_entity }
+		end
+		for _, visual in ipairs(decals) do
+			if type(visual.SetVisible) == "function" then pcall(visual.SetVisible, visual, true) end
+			if type(visual.SetOpacity) == "function" then pcall(visual.SetOpacity, visual, 100) end
+		end
+		if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, true) end
+		if type(passage.SetOpacity) == "function" then pcall(passage.SetOpacity, passage, 100) end
+		stats.rebuilt = stats.rebuilt + 1
+		stats.decals = stats.decals + #decals
 	end
-	return stats.passages > 0, stats
+	return stats.passages > 0 and stats.rebuilt == stats.passages
+		and stats.decals >= stats.passages, stats
+end
+
+-- Vanilla replaces and hides SurfacePassage's marker entity when an Elevator links through it.
+-- Keep the gameplay link unchanged, then restore the baked ground marker underneath the completed
+-- underground Elevator. The wrapper is map-scoped and has no effect on vanilla-size sessions.
+local function PatchPersistentBuiltUndergroundPassageMarker()
+	local State = SuperBigMap.State
+	local class = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
+	if type(class) ~= "table" or type(class.LinkThroughPassage) ~= "function" then return false end
+	if class.LinkThroughPassage == State.persistent_passage_marker_wrapper
+		and State.persistent_passage_marker_patch_version == GENERATOR_PATCH_VERSION then
+		return true
+	end
+	local original = class.LinkThroughPassage
+	if original == State.persistent_passage_marker_wrapper
+		and type(State.original_elevator_link_through_passage) == "function" then
+		original = State.original_elevator_link_through_passage
+	end
+	local wrapper = function(self, ...)
+		local result = PackValues(original(self, ...))
+		local passage = self and self.passage
+		local map = passage and type(passage.GetMap) == "function" and SafeCall(passage.GetMap, passage) or nil
+		local sector_grid = SuperBigMap.SectorGrid
+		local expanded = map and sector_grid and type(sector_grid.IsModMap) == "function"
+			and sector_grid.IsModMap(map) == true
+		local underground = expanded and map.mapdata and map.mapdata.Environment == "Underground"
+		if underground and IsKindOfSafe(passage, "SurfacePassageBase") then
+			local ok, stats = RefreshVanillaUndergroundPassageIndicators(map)
+			ExpansionAudit("BUILT_UNDERGROUND_PASSAGE_MARKER_RESTORED", {
+				ok = ok == true,
+				passages = stats and stats.passages or 0,
+				decals = stats and stats.decals or 0,
+				built_markers = stats and stats.built_markers or 0,
+				error = stats and stats.error or nil,
+			}, map)
+		end
+		return Unpack(result, 1, result.n)
+	end
+	State.original_elevator_link_through_passage = original
+	State.persistent_passage_marker_wrapper = wrapper
+	State.persistent_passage_marker_patch_version = GENERATOR_PATCH_VERSION
+	class.LinkThroughPassage = wrapper
+	return true
 end
 
 local function PatchRandomMapGenerator()
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
 	PatchDeferredUndergroundTunnelSpawn()
+	PatchPersistentBuiltUndergroundPassageMarker()
 	if not cfg_bool("PATCH_RANDOM_MAP_GENERATOR", true) then
 		return false
 	end
@@ -4758,8 +4801,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						passages = visuals_stats and visuals_stats.passages or 0,
 						vanilla_passages = #vanilla_passages,
 						rebuilt = indicator_stats and indicator_stats.rebuilt or 0,
-						rocks = indicator_stats and indicator_stats.rocks or 0,
-						skipped_built = indicator_stats and indicator_stats.skipped_built or 0,
+						decals = indicator_stats and indicator_stats.decals or 0,
+						built_markers = indicator_stats and indicator_stats.built_markers or 0,
 						forced_signs = 0,
 						tunnel_signs = #ArtefactMapGet(map, "SurfaceUndergroundTunnelSign"),
 					}, map)
@@ -5329,6 +5372,7 @@ MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
+MapGeneration.RefreshVanillaUndergroundPassageIndicators = RefreshVanillaUndergroundPassageIndicators
 MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
 
 function MapGeneration.ApplyModBehavior()
@@ -5386,6 +5430,15 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	State.deferred_tunnel_spawn_wrapper = nil
 	State.original_surface_passage_spawn = nil
+	local elevator_base_class = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
+	if type(elevator_base_class) == "table" and State.persistent_passage_marker_wrapper
+		and elevator_base_class.LinkThroughPassage == State.persistent_passage_marker_wrapper
+		and type(State.original_elevator_link_through_passage) == "function" then
+		elevator_base_class.LinkThroughPassage = State.original_elevator_link_through_passage
+	end
+	State.original_elevator_link_through_passage = nil
+	State.persistent_passage_marker_wrapper = nil
+	State.persistent_passage_marker_patch_version = nil
 	if State.change_current_map_slot_wrapper
 		and Global("ChangeCurrentMapSlot") == State.change_current_map_slot_wrapper
 		and type(State.original_change_current_map_slot) == "function" then
