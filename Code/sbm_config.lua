@@ -17,11 +17,11 @@ local config = {}
 -- per-sector density, placement validity, repulsion results, and the tokenized Elevator supply
 -- transaction. This is intentionally off for ordinary play because a complete marker dump is
 -- verbose and performs extra read-only validation passes.
-config.DebugEnrichmentAudit = false
+config.DebugEnrichmentAudit = true
 -- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
-config.DebugLoadingTimings = false
+config.DebugLoadingTimings = true
 
 -- ============================================================================
 -- MAIN LAYOUT
