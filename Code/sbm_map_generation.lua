@@ -2684,6 +2684,91 @@ local function MaterializeDeferredUndergroundTunnelSpawns(map)
 	return spawned == #pending, spawned
 end
 
+-- SurfacePassage:Spawn creates the gameplay marker, but vanilla leaves its visual sign absent
+-- while the underground sector is unexplored. Expanded maps expose the natural passage from the
+-- surface before the deferred underground map is opened, so AlwaysShowEntranceSign must also make
+-- that corresponding underground endpoint visible. Create only the sign here: calling PlaceSign
+-- directly avoids RevealDeposits/SpawnDeposit and therefore does not start the passage scenario or
+-- change exploration state. The entrance-visual pass that follows moves the sign beside the
+-- authoritative passage footprint and records its immutable final anchor.
+local function EnsureDeferredUndergroundTunnelSigns(map)
+	if not cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
+		return true, { markers = 0, signs = 0, created = 0 }
+	end
+	local markers = ArtefactMapGet(map, "SurfaceTunnelMarker")
+	local is_valid = Global("IsValid")
+	local function valid(obj)
+		if not obj then return false end
+		if type(is_valid) ~= "function" then return true end
+		local ok, result = pcall(is_valid, obj)
+		return ok and result == true
+	end
+	local function position(obj)
+		if not obj or type(obj.GetPos) ~= "function" then return nil, nil end
+		local ok, pos = pcall(obj.GetPos, obj)
+		if not ok then return nil, nil end
+		return PointXY(pos)
+	end
+	local function clear_provisional_anchor(obj)
+		if not obj then return end
+		obj.SuperBigMapEntranceBadgeAnchorX = nil
+		obj.SuperBigMapEntranceBadgeAnchorY = nil
+		obj.SuperBigMapEntranceBadgeAnchorZ = nil
+		obj.SuperBigMapEntranceBadgeAnchorFinal = nil
+	end
+
+	local stats = { markers = #markers, signs = 0, created = 0 }
+	local originals = SuperBigMap.State.entrance_badge_place_sign_originals or {}
+	for index, marker in ipairs(markers) do
+		local passage = marker and marker.spawner
+		local sign = marker and marker.tunnel_sign
+		local created = false
+		if not valid(sign) then
+			local x, y = position(passage)
+			if type(x) ~= "number" or type(y) ~= "number" then
+				return false, { error = "linked passage position unavailable", marker = index,
+					markers = #markers, signs = stats.signs, created = stats.created }
+			end
+			-- Prefer the captured vanilla method so the PlaceSign preservation wrapper cannot
+			-- mistake this provisional center position for the final side anchor.
+			local place_sign = originals.SurfaceTunnelMarker
+			if type(place_sign) ~= "function" then place_sign = marker.PlaceSign end
+			if type(place_sign) ~= "function" then
+				return false, { error = "SurfaceTunnelMarker:PlaceSign unavailable", marker = index,
+					markers = #markers, signs = stats.signs, created = stats.created }
+			end
+			local ok, err = pcall(place_sign, marker, x, y)
+			if not ok then
+				return false, { error = "SurfaceTunnelMarker:PlaceSign failed: " .. tostring(err),
+					marker = index, markers = #markers, signs = stats.signs, created = stats.created }
+			end
+			sign = marker.tunnel_sign
+			if not valid(sign) then
+				return false, { error = "PlaceSign returned without a live tunnel sign", marker = index,
+					markers = #markers, signs = stats.signs, created = stats.created }
+			end
+			-- A fallback through the wrapped method may have captured the provisional center.
+			-- Remove it before MoveEntranceVisualsToScale selects the closest safe side hex.
+			clear_provisional_anchor(marker)
+			clear_provisional_anchor(passage)
+			clear_provisional_anchor(sign)
+			created = true
+			stats.created = stats.created + 1
+		end
+		stats.signs = stats.signs + 1
+		local passage_x, passage_y = position(passage)
+		local marker_x, marker_y = position(marker)
+		local sign_x, sign_y = position(sign)
+		ExpansionAudit("UNDERGROUND_EXIT_SIGN_READY", {
+			marker = index, created = created,
+			passage_x = passage_x, passage_y = passage_y,
+			marker_x = marker_x, marker_y = marker_y,
+			sign_x = sign_x, sign_y = sign_y,
+		}, map)
+	end
+	return stats.signs == #markers, stats
+end
+
 local function PatchRandomMapGenerator()
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
@@ -4603,9 +4688,6 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("final passage-pair alignment failed: "
 						.. tostring(pair_stats and pair_stats.error or "unknown error"))
 				end
-				if type(MoveEntranceVisualsToScale) == "function" then
-					MoveEntranceVisualsToScale(map)
-				end
 				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
 				-- buildable grid disagreed with the expanded object grid. Align and prepare the immutable
 				-- true underground coordinate first, then create the deferred markers at that final
@@ -4615,6 +4697,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if tunnel_ok ~= true then
 					error("deferred underground passage-marker activation failed: "
 						.. tostring(tunnel_result))
+				end
+				local signs_ok, signs_result = EnsureDeferredUndergroundTunnelSigns(map)
+				if signs_ok ~= true then
+					error("deferred underground passage-sign activation failed: "
+						.. tostring(signs_result and signs_result.error or "unknown error"))
+				end
+				-- Marker and sign creation must precede this one-shot visual pass. Otherwise the
+				-- map is stamped complete before any SurfaceUndergroundTunnelSign exists and the
+				-- authoritative K7/L7 exit can remain permanently unmarked.
+				if type(MoveEntranceVisualsToScale) == "function" then
+					MoveEntranceVisualsToScale(map)
 				end
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
