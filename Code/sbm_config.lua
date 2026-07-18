@@ -135,6 +135,10 @@ config.PreventLandingPadFlatten = true
 -- any Elevator cursor/site fallback through the no-flatten path on Super Big Map maps.
 config.PreventElevatorFlatten = true
 
+-- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
+-- unlocks the template, and quick-builds the next placed Elevator for free.
+config.PlaceElevatorButtonEnabled = true
+
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
 -- the map edge / non-rendered frame -- is never trapped (the behavior fixed long ago by
@@ -340,6 +344,12 @@ config.StretchUnderground = true
 -- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
 -- recorded at startup, so deferral does not change which wonder belongs to each marker.
 config.DeferUndergroundExpansionUntilFirstAccess = true
+-- TEMP test aid: remove the underground darkness blanket while an expanded underground map is
+-- current, and restore the previous engine value on every surface/menu transition.
+config.UndergroundRevealAllDarkness = true
+-- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
+-- vanilla RevealDeposits for every final underground enrichment.
+config.RevealAllUndergroundEnrichmentsForTesting = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -570,6 +580,7 @@ C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "num
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
 C.PREVENT_LANDING_PAD_FLATTEN = as_bool(config.PreventLandingPadFlatten)
 C.PREVENT_ELEVATOR_FLATTEN = as_bool(config.PreventElevatorFlatten)
+C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
 C.EXPANDED_MAP_EDGE_BORDER = (type(config.ExpandedMapEdgeBorder) == "number" and config.ExpandedMapEdgeBorder >= 0)
 	and math.floor(config.ExpandedMapEdgeBorder) or false
 C.CLAMP_HEAT_QUERIES = as_bool(config.ClampHeatQueriesOnExpandedMap)
@@ -666,6 +677,9 @@ C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
+C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
+C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
+	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08

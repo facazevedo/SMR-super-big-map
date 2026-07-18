@@ -3998,6 +3998,56 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	return unresolved == 0, stats
 end
 
+-- TEMP test aid: use vanilla placement for every final underground marker, then force the
+-- resulting marker/deposit object visible so the complete distribution can be inspected.
+function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
+	if cfg().UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING ~= true then
+		return true, { markers = 0, requested = 0, placed = 0, revealed = 0 }
+	end
+	map = map or Global("CurrentMap")
+	if not IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
+		return false, { error = "underground map API unavailable" }
+	end
+
+	local markers = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
+	end)
+	local reveal_deposits = Global("RevealDeposits")
+	if type(reveal_deposits) ~= "function" then
+		return false, { error = "RevealDeposits unavailable", markers = #markers }
+	end
+
+	local requested = {}
+	for i = 1, #markers do
+		if markers[i].is_placed ~= true then requested[#requested + 1] = markers[i] end
+	end
+	if #requested > 0 then
+		local reveal_ok, reveal_error = pcall(reveal_deposits, requested)
+		if not reveal_ok then
+			return false, {
+				error = tostring(reveal_error), markers = #markers, requested = #requested,
+			}
+		end
+	end
+
+	local placed, revealed = 0, 0
+	local is_valid = Global("IsValid")
+	for i = 1, #markers do
+		local marker = markers[i]
+		local placed_object = marker.placed_obj
+		local placed_valid = placed_object
+			and (type(is_valid) ~= "function" or is_valid(placed_object) == true)
+		if marker.is_placed == true or placed_valid then placed = placed + 1 end
+		local visible_object = placed_valid and placed_object or marker
+		SetRevealedState(visible_object, true)
+		if visible_object.revealed == true then revealed = revealed + 1 end
+	end
+	return true, {
+		markers = #markers, requested = #requested, placed = placed, revealed = revealed,
+	}
+end
+
 DepositRules.IsResourceDepositMarker = IsResourceDepositMarker
 
 -- Reveal the clones inside a scanned sector's area (called from the SectorScanned handler).

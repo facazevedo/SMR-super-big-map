@@ -4283,6 +4283,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. " repulsion_violations="
 							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
 					end
+					if cfg_bool("UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING", false) then
+						if type(deposits.RevealAllUndergroundEnrichmentsForTesting) ~= "function" then
+							error("temporary underground enrichment reveal API is unavailable")
+						end
+						SetLoadingPhase("Revealing underground enrichments for verification")
+						local reveal_ok, reveal_stats =
+							deposits.RevealAllUndergroundEnrichmentsForTesting(map)
+						if reveal_ok ~= true then
+							error("temporary underground enrichment reveal failed: "
+								.. tostring(reveal_stats and reveal_stats.error or "unknown error"))
+						end
+					end
 					if type(deposits.ClearTopUpPlacementPool) == "function" then
 						deposits.ClearTopUpPlacementPool(map)
 					end

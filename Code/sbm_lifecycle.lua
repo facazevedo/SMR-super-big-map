@@ -82,6 +82,31 @@ local function IsModMap(map)
 	return false
 end
 
+-- TEMP test aid. hr.EnableDarknessReveal is process-global, so preserve the live value before
+-- revealing an expanded underground map and restore it on every surface/menu transition.
+local function ApplyUndergroundDarknessState(map)
+	local hr = Global("hr")
+	if type(hr) ~= "table" then return false end
+	local State = SuperBigMap.State
+	local environment = map and map.mapdata and map.mapdata.Environment
+	local should_reveal = IsModMap(map) and environment == "Underground"
+		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
+	if should_reveal then
+		if State.original_enable_darkness_reveal_captured ~= true then
+			State.original_enable_darkness_reveal = hr.EnableDarknessReveal
+			State.original_enable_darkness_reveal_captured = true
+		end
+		hr.EnableDarknessReveal = 0
+		return true
+	end
+	if State.original_enable_darkness_reveal_captured == true then
+		hr.EnableDarknessReveal = State.original_enable_darkness_reveal
+		State.original_enable_darkness_reveal = nil
+		State.original_enable_darkness_reveal_captured = nil
+	end
+	return false
+end
+
 -- Correct shared state for a non-expanded map without uninstalling the transparent
 -- wrappers required by a later opt-in expanded game.
 local function NormalizeVanillaRuntimeState(map, reason)
@@ -106,6 +131,11 @@ local function NormalizeVanillaRuntimeState(map, reason)
 	if zoom_option and type(zoom_option.RestoreVanillaBehavior) == "function" then
 		zoom_option.RestoreVanillaBehavior()
 	end
+	local elevator_button = SuperBigMap.PlaceElevatorButton
+	if elevator_button and type(elevator_button.Hide) == "function" then
+		SafeCall(elevator_button.Hide)
+	end
+	ApplyUndergroundDarknessState(map)
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
 	end
@@ -367,6 +397,19 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	if camera then
 		camera.ResetOverviewCamera(map, 0)
 	end
+	local elevator_button = SuperBigMap.PlaceElevatorButton
+	if elevator_button and type(elevator_button.Show) == "function" then
+		SafeCall(elevator_button.Show)
+	end
+	ApplyUndergroundDarknessState(map)
+	if map.mapdata and map.mapdata.Environment == "Underground"
+		and map.SuperBigMapUndergroundStretchDone == true
+		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING == true then
+		local deposits = SuperBigMap.DepositRules
+		if deposits and type(deposits.RevealAllUndergroundEnrichmentsForTesting) == "function" then
+			SafeCall(deposits.RevealAllUndergroundEnrichmentsForTesting, map)
+		end
+	end
 	return true
 end
 
@@ -466,6 +509,11 @@ function Lifecycle.Disable()
 	-- leave a wrapper or shared preset behind even if State.active was already
 	-- cleared, and main-menu teardown is the last safe point to normalize it.
 	run_phase(RESTORE_ORDER, "RestoreVanillaBehavior")
+	local elevator_button = SuperBigMap.PlaceElevatorButton
+	if elevator_button and type(elevator_button.Hide) == "function" then
+		SafeCall(elevator_button.Hide)
+	end
+	ApplyUndergroundDarknessState(nil)
 	SuperBigMap.State.active = false
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
