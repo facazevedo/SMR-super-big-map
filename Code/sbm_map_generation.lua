@@ -2348,8 +2348,8 @@ end
 
 local function VerifyBootstrapPassages(map, passages, expected)
 	local surface_map = Global("MainMap")
-	local linked, committed_pairs, placement_valid = 0, 0, 0
-	for _, underground_passage in ipairs(passages or {}) do
+	local linked, committed_pairs = 0, 0
+	for index, underground_passage in ipairs(passages or {}) do
 		local surface_passage = underground_passage and underground_passage.other
 		if surface_passage and surface_passage.other == underground_passage
 			and type(surface_passage.GetMap) == "function"
@@ -2375,14 +2375,23 @@ local function VerifyBootstrapPassages(map, passages, expected)
 				underground_passage.IsValidPlacement, underground_passage)
 			local ok_surface, surface_valid = pcall(
 				surface_passage.IsValidPlacement, surface_passage)
-			if ok_underground and underground_valid == true
-				and ok_surface and surface_valid == true then
-				placement_valid = placement_valid + 1
-			end
+			-- Diagnostic only: SurfacePassageBase:IsValidPlacement calls GetBuildableGrid(self),
+			-- whose ambient map lookup can observe the expanded backing while this transaction is
+			-- deliberately presenting the underground source view. The common-hex planner performs
+			-- the same vanilla flat test plus complete shape/slope/passability/obstruction validation
+			-- with explicit map objects before and after each move; that result is authoritative here.
+			ExpansionAudit("PASSAGE_BOOTSTRAP_OBJECT_METHOD_OBSERVATION", {
+				pair = index,
+				underground_call_ok = ok_underground,
+				underground_valid = underground_valid,
+				surface_call_ok = ok_surface,
+				surface_valid = surface_valid,
+				linked = true,
+				committed = sx == final_x and sy == final_y and ux == source_x and uy == source_y,
+			}, map)
 		end
 	end
-	return #(passages or {}) == expected and linked == expected
-		and committed_pairs == expected and placement_valid == expected
+	return #(passages or {}) == expected and linked == expected and committed_pairs == expected
 end
 
 local function BootstrapPassagesAndDeferWonders(env)

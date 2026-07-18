@@ -2465,6 +2465,33 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				expected_surface = tostring(final_x) .. "," .. tostring(final_y),
 			}
 		end
+		-- Re-run the complete validator after the anchors occupy their selected coordinates. This
+		-- is map-explicit and therefore remains authoritative inside the source-view transaction,
+		-- unlike SurfacePassageBase:IsValidPlacement -> GetBuildableGrid(self), whose private
+		-- ambient lookup can observe the expanded backing instead of the presented source view.
+		local post_underground_q = source_bootstrap and found_q or final_q
+		local post_underground_r = source_bootstrap and found_r or final_r
+		local underground_post_valid, underground_post_reason = footprint_buildable(
+			underground_map, post_underground_q, post_underground_r,
+			underground_angle, underground_anchor)
+		local surface_post_valid, surface_post_reason = footprint_buildable(
+			surface_map, final_q, final_r, surface_angle, surface_anchor)
+		EntranceAudit("PASSAGE_PLAN_POST_MOVE_VALIDATION", {
+			pair = i, mode = source_bootstrap and "source bootstrap" or "deferred final validation",
+			underground_valid = underground_post_valid,
+			underground_reason = underground_post_reason,
+			surface_valid = surface_post_valid, surface_reason = surface_post_reason,
+			underground_q = post_underground_q, underground_r = post_underground_r,
+			surface_q = final_q, surface_r = final_r,
+		}, underground_map)
+		if not underground_post_valid or not surface_post_valid then
+			return false, {
+				error = "linked passage post-move terrain validation failed",
+				pairs = stats.pairs,
+				underground_reason = underground_post_reason,
+				surface_reason = surface_post_reason,
+			}
+		end
 		stats.moved_dependants = stats.moved_dependants
 			+ move_dependants(underground_map, underground_anchor, ux, uy, expected_ux, expected_uy)
 		if source_bootstrap or not committed or committed_relocated then
