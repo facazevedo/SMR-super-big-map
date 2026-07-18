@@ -10,6 +10,20 @@
 local config = {}
 
 -- ============================================================================
+-- OPT-IN DIAGNOSTICS
+-- ============================================================================
+-- Exhaustive enrichment/Elevator audit. When enabled, the log contains every native source
+-- marker, its proportional destination, every final native/top-up marker, per-family targets,
+-- per-sector density, placement validity, repulsion results, and the tokenized Elevator supply
+-- transaction. This is intentionally off for ordinary play because a complete marker dump is
+-- verbose and performs extra read-only validation passes.
+config.DebugEnrichmentAudit = false
+-- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
+-- source allocation/migration, surface and underground stretch phases, individual phase durations,
+-- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
+config.DebugLoadingTimings = false
+
+-- ============================================================================
 -- MAIN LAYOUT
 -- ============================================================================
 -- The mod has one supported layout: generate a native vanilla source, stretch it
@@ -547,6 +561,8 @@ local expansion_step_21 = expansion_step_03
 
 -- Lifecycle / master
 C.ENABLE_MOD = true
+C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
+C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.

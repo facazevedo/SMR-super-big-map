@@ -22,6 +22,24 @@ local MAIN_MENU_GUARD_VERSION = 5
 local InstallRestoreInGameInterfaceGuard
 local UninstallRestoreInGameInterfaceGuard
 
+local function LoadingLifecycle(event, map, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and type(diagnostics.LoadingStep) == "function") then return end
+	local map_type = type(map)
+	local expansion_related = (map_type == "table" or map_type == "userdata")
+		and (map.SuperBigMapExpansionPending == true
+		or map.SuperBigMapExpanded == true or map.SuperBigMapDesiredWidthTiles ~= nil
+		or map.SuperBigMapVanillaSourceMigration == true)
+	if not expansion_related and SuperBigMap.State.vanilla_source_migration_active ~= true then return end
+	if event == "ChangingMap after expansion allocation plan"
+		and type(diagnostics.LoadingStart) == "function" then
+		diagnostics.LoadingStart("expanded map allocation", map, data)
+		return
+	end
+	if type(diagnostics.LoadingActive) == "function" and diagnostics.LoadingActive() ~= true then return end
+	diagnostics.LoadingStep("lifecycle: " .. tostring(event), data, map)
+end
+
 -- Register an OnMsg handler at most ONCE per message per session, even across mod
 -- hot-reloads. Engine.ChainOnMsg CHAINS (wraps the previous handler), so a mid-game
 -- reload -- which re-executes this module -- would otherwise STACK our handlers and run
@@ -198,6 +216,14 @@ local function ApplyOverviewPatches()
 end
 
 local function ForceVanillaMainMenuState(reason)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingFinish) == "function"
+		and type(diagnostics.LoadingActive) == "function"
+		and diagnostics.LoadingActive() == true then
+		diagnostics.LoadingFinish("main-menu transition", Global("CurrentMap"), {
+			reason = tostring(reason or "vanilla_reset"),
+		}, false)
+	end
 	local toggle = SuperBigMap.PregameToggle
 	if toggle and type(toggle.ResetForVanillaSession) == "function" then
 		SafeCall(toggle.ResetForVanillaSession, tostring(reason or "vanilla_reset"))
@@ -575,6 +601,7 @@ RegisterOnce("PreNewMap", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
+	LoadingLifecycle("PreNewMap", map, { mapdata = tostring(mapdata) })
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
 		bounds.ResetMapDataBounds(map, mapdata)
@@ -592,6 +619,7 @@ RegisterOnce("NewMap", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
+	LoadingLifecycle("NewMap", map, { mapdata = tostring(mapdata) })
 	if HandleModEditorMap() then return end
 	local skip_buildable_rebuild = ShouldSkipNewMapBuildableRebuild(map) == true
 	Lifecycle.Apply(map, true, skip_buildable_rebuild)
@@ -608,6 +636,7 @@ RegisterOnce("NewMapLoaded", function(map, mapdata)
 	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
+	LoadingLifecycle("NewMapLoaded", map, { mapdata = tostring(mapdata) })
 	if HandleModEditorMap() then return end
 	Lifecycle.Apply(map, false)
 	-- Save-load path: the engine's NewMapLoaded restores MapSectors from save
@@ -624,6 +653,7 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 		return
 	end
 	if HandleModEditorMap() then return end
+	LoadingLifecycle("PostNewMapLoaded", map, { mapdata = tostring(mapdata) })
 	local gen = SuperBigMap.MapGeneration
 	local env = map and map.mapdata and map.mapdata.Environment
 	if IsModMap(map) and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
@@ -702,6 +732,7 @@ RegisterOnce("MapSectorsReady", function(exploration)
 	end
 	local sectors = SuperBigMap.SectorExploration
 	local map = exploration and type(exploration.GetMap) == "function" and exploration:GetMap() or false
+	LoadingLifecycle("MapSectorsReady", map)
 	if sectors and map and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "MapSectorsReady")
 	end
@@ -718,6 +749,7 @@ RegisterOnce("CityInitialized", function(city)
 		return
 	end
 	local map = city and type(city.GetMap) == "function" and city:GetMap() or false
+	LoadingLifecycle("CityInitialized", map)
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and map and type(sectors.EnsureSectorsBuilt) == "function" then
 		sectors.EnsureSectorsBuilt(map, "CityInitialized-readiness-fallback")
@@ -844,6 +876,7 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		return
 	end
 	if HandleModEditorMap() then return end
+	LoadingLifecycle("CurrentMapChangeDone", map, { map_slot = tostring(map_slot) })
 	local gen = SuperBigMap.MapGeneration
 	if IsModMap(map) and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("CurrentMapChangeDone")
@@ -895,6 +928,9 @@ end)
 -- all final grids are installed; it follows the same tokenized handler and contains no timer.
 RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason)
 	if not active() or not IsModMap(map) then return end
+	LoadingLifecycle("SuperBigMapUndergroundSupplyReady", map, {
+		token = tostring(token_id), reason = tostring(reason),
+	})
 	local gen = SuperBigMap.MapGeneration
 	if gen and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
 		gen.HandlePendingUndergroundElevatorRestore(map and map.slot, map,
@@ -1170,6 +1206,9 @@ RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
 	if gen then
 		gen.PrepareMapDataForExpansion(map_slot, map_name, map_instance, "ChangingMap")
 	end
+	LoadingLifecycle("ChangingMap after expansion allocation plan", map_instance, {
+		map_slot = tostring(map_slot), map_name = tostring(map_name),
+	})
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.EnsureSectorPatch(map_instance, "ChangingMap")
@@ -1184,6 +1223,7 @@ RegisterOnce("NewMapObject", function(map)
 	if gen then
 		gen.AttachPendingMapState(map)
 	end
+	LoadingLifecycle("NewMapObject", map)
 end)
 
 RegisterOnce("MapGenerated", function(map)
@@ -1192,6 +1232,7 @@ RegisterOnce("MapGenerated", function(map)
 	end
 	local gen = SuperBigMap.MapGeneration
 	local mod_map = IsModMap(map)
+	LoadingLifecycle("MapGenerated", map, { mod_map = tostring(mod_map) })
 	if mod_map and gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("MapGenerated")
 	end

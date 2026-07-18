@@ -60,6 +60,10 @@ end
 -- Update the loading box's live status line (see sbm_loading_ui SetLoadingPhase). Safe no-op
 -- if the loading UI isn't present; " Please wait." is appended by SetLoadingPhase.
 local function SetLoadingPhase(message)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingPhase) == "function" then
+		diagnostics.LoadingPhase(message, Global("CurrentMap"))
+	end
 	if type(SuperBigMap.SetLoadingPhase) == "function" then
 		pcall(SuperBigMap.SetLoadingPhase, message)
 	end
@@ -67,6 +71,94 @@ end
 
 local function PackValues(...)
 	return { n = select("#", ...), ... }
+end
+
+local function LoadingStart(reason, map, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingStart) == "function" then
+		diagnostics.LoadingStart(reason, map, data)
+	end
+end
+
+local function LoadingStep(name, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingStep) == "function" then
+		diagnostics.LoadingStep(name, data, map)
+	end
+end
+
+local function LoadingBegin(name, map, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.LoadingBegin) == "function"
+		and diagnostics.LoadingBegin(name, map, data) or false
+end
+
+local function LoadingEnd(token, data, ok)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingEnd) == "function" then
+		diagnostics.LoadingEnd(token, data, ok)
+	end
+end
+
+local function LoadingFinish(reason, map, data, ok)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingFinish) == "function" then
+		diagnostics.LoadingFinish(reason, map, data, ok)
+	end
+end
+
+-- Preserve SafeCall's exact behavior and result tuple while timing only the opt-in diagnostic run.
+local function TimedSafeCall(name, map, func, ...)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and type(diagnostics.LoadingEnabled) == "function"
+		and diagnostics.LoadingEnabled() == true) then
+		return SafeCall(func, ...)
+	end
+	local token = LoadingBegin(name, map)
+	local results = PackValues(SafeCall(func, ...))
+	LoadingEnd(token, { first_result = tostring(results[1]) }, true)
+	return Unpack(results, 1, results.n)
+end
+
+local function ExpansionAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.Elevator) == "function" then
+		diagnostics.Elevator(event, data, map)
+	end
+end
+
+-- Instrument the generator's own procedure dispatcher only while the load-timing gate is on.
+-- The wrapper is synchronous, restores env.ProcInvoke on every Lua success/error path, and returns
+-- the exact original result tuple. With diagnostics off this is a direct tail call.
+local function CallOnGenerateLogicTimed(original, self, env, map, ...)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and type(diagnostics.LoadingEnabled) == "function"
+		and diagnostics.LoadingEnabled() == true) then
+		return original(self, env, ...)
+	end
+	local saved_proc = type(env) == "table" and env.ProcInvoke or nil
+	local timed_proc
+	if type(saved_proc) == "function" then
+		timed_proc = function(tag, func, randless)
+			if type(func) ~= "function" then return saved_proc(tag, func, randless) end
+			return saved_proc(tag, function(...)
+				local token = LoadingBegin("RandomMap procedure: " .. tostring(tag), map, {
+					tag = tostring(tag), randless = tostring(randless),
+				})
+				local result = PackValues(pcall(func, ...))
+				LoadingEnd(token, { tag = tostring(tag) }, result[1] == true)
+				if not result[1] then error(result[2]) end
+				return Unpack(result, 2, result.n)
+			end, randless)
+		end
+		env.ProcInvoke = timed_proc
+	end
+	local token = LoadingBegin("RandomMapGenerator.OnGenerateLogic", map)
+	local result = PackValues(pcall(original, self, env, ...))
+	if timed_proc and env.ProcInvoke == timed_proc then env.ProcInvoke = saved_proc end
+	LoadingEnd(token, nil, result[1] == true)
+	if not result[1] then error(result[2]) end
+	return Unpack(result, 2, result.n)
 end
 
 local function SignalExpansionReadinessChanged(map, reason)
@@ -1072,6 +1164,22 @@ local function QueueUndergroundElevatorRestore(map, records, source)
 	underground_elevator_restore_tokens[token.token_id] = token
 	map.SuperBigMapDeferredElevatorRestorePending = #records
 	map.SuperBigMapDeferredElevatorRestoreToken = token.token_id
+	ExpansionAudit("RESTORE_TOKEN_QUEUED", {
+		token = token.token_id, records = #records, source = token.source,
+		current_map_is_target = tostring(Global("CurrentMap") == map),
+		source_map = tostring(source_map), forbidden_grid_refs = tostring(token.forbidden_refs),
+	}, map)
+	for index, record in ipairs(records) do
+		local passage_pos = record.underground_passage and Engine.ObjectPos(record.underground_passage)
+		local passage_x, passage_y = SupplyPointXY(passage_pos)
+		ExpansionAudit("RESTORE_TOKEN_RECORD", {
+			token = token.token_id, record = index,
+			surface_x = tostring(record.surface_x), surface_y = tostring(record.surface_y),
+			underground_passage_x = tostring(passage_x),
+			underground_passage_y = tostring(passage_y),
+			angle = tostring(record.angle), restored = tostring(record.restored == true),
+		}, map)
+	end
 	return token
 end
 
@@ -1085,7 +1193,13 @@ local function CurrentElevatorRestoreToken(map, token_id)
 	return token
 end
 
-local function SupplyGridSetFailure(_, _, reason)
+local function SupplyGridSetFailure(token, stage, reason)
+	ExpansionAudit("SUPPLY_INVARIANT_FAILED", {
+		token = tostring(type(token) == "table" and token.token_id or nil),
+		stage = tostring(stage), reason = tostring(reason),
+		status = tostring(type(token) == "table" and token.status or nil),
+		current_map = tostring(Global("CurrentMap")),
+	}, type(token) == "table" and token.map or nil)
 	return false, tostring(reason)
 end
 
@@ -1135,6 +1249,20 @@ local function ValidateSupplyGridSet(token, map, stage, require_current)
 			token.authoritative_refs = refs
 		end
 	end
+	local electricity_w, electricity_h = SupplyGridDimensions(refs.electricity)
+	local water_w, water_h = SupplyGridDimensions(refs.water)
+	local overlay_w, overlay_h = SupplyGridDimensions(refs.overlay)
+	local object_w, object_h = SupplyGridDimensions(refs.object)
+	ExpansionAudit("SUPPLY_GRID_SET_VALID", {
+		token = token.token_id, stage = tostring(stage), status = tostring(token.status),
+		require_current = tostring(require_current ~= false),
+		expected_dimensions = tostring(expected_width) .. "x" .. tostring(expected_height),
+		electricity_dimensions = tostring(electricity_w) .. "x" .. tostring(electricity_h),
+		water_dimensions = tostring(water_w) .. "x" .. tostring(water_h),
+		overlay_dimensions = tostring(overlay_w) .. "x" .. tostring(overlay_h),
+		object_dimensions = tostring(object_w) .. "x" .. tostring(object_h),
+		current_map_is_target = tostring(Global("CurrentMap") == token.map),
+	}, map)
 	return true, refs, expected_width, expected_height
 end
 
@@ -1225,6 +1353,26 @@ local function CompleteElevatorRestoreTransactionIfReady(token)
 	token.map.SuperBigMapDeferredElevatorRestorePending = nil
 	token.map.SuperBigMapDeferredElevatorRestoreToken = nil
 	token.map.SuperBigMapDeferredElevatorRestoreCompletedToken = token.token_id
+	for index, record in ipairs(token.records) do
+		local building = record.rebuilt_elevator
+		local building_x, building_y = SupplyPointXY(building and Engine.ObjectPos(building))
+		local connected = building and token.connected[building] or {}
+		local merged = building and token.merged[building] or {}
+		ExpansionAudit("RESTORE_RECORD_COMPLETE", {
+			token = token.token_id, record = index,
+			x = tostring(building_x), y = tostring(building_y),
+			linked_other = tostring(type(building) == "table" and rawget(building, "other")),
+			electricity_connected = tostring(connected and connected.electricity == true),
+			water_connected = tostring(connected and connected.water == true),
+			electricity_merged = tostring(merged and merged.electricity == true),
+			water_merged = tostring(merged and merged.water == true),
+		}, token.map)
+	end
+	ExpansionAudit("RESTORE_TOKEN_COMPLETE", {
+		token = token.token_id, records = #token.records,
+		completed_on_target = tostring(token.completed_on_map == token.map),
+		status = token.status,
+	}, token.map)
 	return true
 end
 
@@ -1285,6 +1433,11 @@ local function CopySupplyFragmentSynchronously(token, city, fragment, resource, 
 		return SupplyGridSetFailure(token, stage,
 			"bounded overlay copy found no fragment element owned by the target city")
 	end
+	ExpansionAudit("SUPPLY_OVERLAY_COPY_COMPLETE", {
+		token = token.token_id, stage = tostring(stage), resource = tostring(resource),
+		footprint_points = total_points, applied_buildings = applied,
+		overlay_id = overlay_id, current_map_is_target = tostring(Global("CurrentMap") == token.map),
+	}, map)
 	return true
 end
 
@@ -1602,6 +1755,11 @@ local function PatchElevatorSupplyTransactionBoundary(source)
 				force_create_connections)
 		end
 		local resource = type(grid_class) == "table" and grid_class.supply_resource or nil
+		ExpansionAudit("SUPPLY_CONNECT_BEGIN", {
+			token = token.token_id, resource = tostring(resource),
+			record = tostring(rawget(building, "SuperBigMapElevatorRestoreRecord")),
+			had_grid = tostring(type(element) == "table" and rawget(element, "grid") ~= false),
+		}, token.map)
 		local ok, why = ValidateSupplyBuildingFootprint(token, building, resource,
 			"before vanilla SupplyGridConnectElement")
 		if not ok then error("blocked unsafe underground Elevator supply connection: " .. tostring(why)) end
@@ -1630,6 +1788,11 @@ local function PatchElevatorSupplyTransactionBoundary(source)
 		end
 		token.connected[building] = token.connected[building] or {}
 		token.connected[building][resource] = true
+		ExpansionAudit("SUPPLY_CONNECT_COMPLETE", {
+			token = token.token_id, resource = tostring(resource),
+			record = tostring(rawget(building, "SuperBigMapElevatorRestoreRecord")),
+			fragment = tostring(type(element) == "table" and rawget(element, "grid")),
+		}, token.map)
 		local other = rawget(building, "other")
 		local other_element = type(other) == "table" and rawget(other, resource) or nil
 		if type(other_element) == "table" and rawget(other_element, "grid") then
@@ -1647,8 +1810,16 @@ local function PatchElevatorSupplyTransactionBoundary(source)
 		local token_id = type(building) == "table" and rawget(building, "SuperBigMapElevatorRestoreToken")
 		local token = token_id and underground_elevator_restore_tokens[token_id] or nil
 		if not token then return original_merge(building, resource, ...) end
+		ExpansionAudit("SUPPLY_MERGE_BEGIN", {
+			token = token.token_id, resource = tostring(resource),
+			record = tostring(rawget(building, "SuperBigMapElevatorRestoreRecord")),
+		}, token.map)
 		local ok, why = MergeTaggedElevatorGridsSynchronously(building, resource, token)
 		if not ok then error("blocked unsafe underground Elevator passage-grid merge: " .. tostring(why)) end
+		ExpansionAudit("SUPPLY_MERGE_COMPLETE", {
+			token = token.token_id, resource = tostring(resource),
+			record = tostring(rawget(building, "SuperBigMapElevatorRestoreRecord")),
+		}, token.map)
 		return true
 	end
 	State.original_elevator_supply_connect = original_connect
@@ -1705,6 +1876,10 @@ local function FinalizePendingUndergroundElevators(map, reason)
 	if not token then return true, 0 end
 	local records = token.records
 	if type(records) ~= "table" or #records == 0 then return true, 0 end
+	ExpansionAudit("RESTORE_LIFECYCLE_BEGIN", {
+		token = token.token_id, records = #records, reason = tostring(reason),
+		status = tostring(token.status), current_map_is_target = tostring(Global("CurrentMap") == map),
+	}, map)
 	local ready, ready_reason = ValidateSupplyGridSet(token, map,
 		"lifecycle restore boundary: " .. tostring(reason), true)
 	if not ready then return false, ready_reason end
@@ -1714,6 +1889,18 @@ local function FinalizePendingUndergroundElevators(map, reason)
 	token.status = "restoring"
 	token.lifecycle_reason = tostring(reason)
 	local function transaction_guard(stage, guarded_map, building, record, index)
+		local building_pos = type(building) == "table" and Engine.ObjectPos(building) or nil
+		local building_x, building_y = SupplyPointXY(building_pos)
+		local passage_pos = type(record) == "table" and record.underground_passage
+			and Engine.ObjectPos(record.underground_passage) or nil
+		local passage_x, passage_y = SupplyPointXY(passage_pos)
+		ExpansionAudit("RESTORE_RECORD_STAGE", {
+			token = token.token_id, record = tostring(index), stage = tostring(stage),
+			status = tostring(token.status), target_map_matches = tostring(guarded_map == map),
+			building_x = tostring(building_x), building_y = tostring(building_y),
+			passage_x = tostring(passage_x), passage_y = tostring(passage_y),
+			current_map_is_target = tostring(Global("CurrentMap") == map),
+		}, map)
 		if CurrentElevatorRestoreToken(map, token.token_id) ~= token then
 			return false, "stale map-generation token"
 		end
@@ -1740,6 +1927,9 @@ local function FinalizePendingUndergroundElevators(map, reason)
 	if not ok then
 		token.status = "failed"
 		token.failure = tostring(rebuilt)
+		ExpansionAudit("RESTORE_LIFECYCLE_FAILED", {
+			token = token.token_id, reason = tostring(reason), error = tostring(rebuilt),
+		}, map)
 		return false, tostring(rebuilt)
 	end
 	if rebuilt ~= #records then
@@ -1748,12 +1938,26 @@ local function FinalizePendingUndergroundElevators(map, reason)
 	end
 	CompleteElevatorRestoreTransactionIfReady(token)
 	if token.status ~= "complete" then token.status = "awaiting-supply-gameinit" end
+	ExpansionAudit("RESTORE_LIFECYCLE_END", {
+		token = token.token_id, records = #records, rebuilt = tostring(rebuilt),
+		status = tostring(token.status),
+	}, map)
 	return true, rebuilt
 end
 
 local function HandlePendingUndergroundElevatorRestore(map_slot, map, reason)
 	local token = CurrentElevatorRestoreToken(map)
-	if not token then return true, 0 end
+	if not token then
+		ExpansionAudit("RESTORE_HANDLER_NO_PENDING_TOKEN", {
+			map_slot = tostring(map_slot), reason = tostring(reason),
+			completed_token = tostring(map and map.SuperBigMapDeferredElevatorRestoreCompletedToken),
+		}, map)
+		return true, 0
+	end
+	ExpansionAudit("RESTORE_HANDLER_ENTER", {
+		token = token.token_id, status = tostring(token.status),
+		map_slot = tostring(map_slot), reason = tostring(reason),
+	}, map)
 	if token.status ~= "queued" then
 		return token.status ~= "failed", token.failure or token.status
 	end
@@ -1852,6 +2056,12 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	}
 
 	SetLoadingPhase("Generating the exact vanilla source terrain...")
+	LoadingStep("temporary source transaction begin", {
+		destination_slot = destination_slot, source_slot = source_slot,
+		source_tiles = tostring(source_width) .. "x" .. tostring(source_height),
+		destination_tiles = tostring(desired_width) .. "x" .. tostring(desired_height),
+		pass_border = pass_border,
+	}, destination)
 	local source
 	local source_baseline
 	local native_enrichment_records
@@ -1864,7 +2074,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local results
 	SuperBigMap.State.vanilla_source_migration_active = true
 	local ok, migration_error = pcall(function()
+		local allocation_token = LoadingBegin("allocate temporary vanilla backing", destination,
+			{ source_slot = source_slot })
 		local allocation_error = change_map_in_slot(source_slot, blank_map, source_instance)
+		LoadingEnd(allocation_token, { error = tostring(allocation_error) }, allocation_error == nil)
 		if allocation_error then error("temporary source ChangeMapInSlot: " .. tostring(allocation_error)) end
 		source = maps[source_slot]
 		if not source then error("temporary source map was not created") end
@@ -1879,6 +2092,14 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				tostring(actual_width), tostring(actual_height), tostring(source_width), tostring(source_height)))
 		end
 		source_baseline = SnapshotMapObjectSet(source)
+		local baseline_count = 0
+		if type(source_baseline) == "table" then
+			for _ in pairs(source_baseline) do baseline_count = baseline_count + 1 end
+		end
+		LoadingStep("temporary source backing verified", {
+			actual_tiles = tostring(actual_width) .. "x" .. tostring(actual_height),
+			baseline_objects = baseline_count,
+		}, source)
 
 		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
@@ -1898,8 +2119,20 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			end
 		end
 		if type(source.SuspendPassEdits) == "function" then source:SuspendPassEdits("SuperBigMapVanillaSourceMigration") end
-		results = PackValues(original_do_generate(generator, source,
-			Unpack(call_args, 1, call_args.n)))
+		local generator_token = LoadingBegin("vanilla RandomMapGenerator.DoGenerate", source)
+		if generator_token then
+			local timed_results = PackValues(pcall(original_do_generate, generator, source,
+				Unpack(call_args, 1, call_args.n)))
+			LoadingEnd(generator_token, nil, timed_results[1] == true)
+			if not timed_results[1] then error(timed_results[2]) end
+			results = { n = timed_results.n - 1 }
+			for result_index = 2, timed_results.n do
+				results[result_index - 1] = timed_results[result_index]
+			end
+		else
+			results = PackValues(original_do_generate(generator, source,
+				Unpack(call_args, 1, call_args.n)))
+		end
 		local update_radius = Global("UpdateMapMaxObjRadius")
 		if type(update_radius) == "function" then update_radius(source) end
 		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
@@ -1912,6 +2145,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		native_enrichment_records, native_enrichment_excluded, native_enrichment_record_stats =
 			deposits.CaptureNativeEnrichmentRecords(
 				source, "temporary vanilla backing generation complete")
+		LoadingStep("native enrichment records captured", {
+			coordinate_count = source_generated_enrichments,
+			record_count = native_enrichment_record_stats and native_enrichment_record_stats.count,
+			record_signature = native_enrichment_record_stats and native_enrichment_record_stats.signature,
+		}, source)
 		if native_enrichment_record_stats.count ~= source_generated_enrichments then
 			error(string.format("native enrichment coordinate/value capture mismatch: coordinates=%s records=%s",
 				tostring(source_generated_enrichments),
@@ -1931,22 +2169,34 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				.. tostring(start_capture_ok and selection_error or selection))
 		end
 		vanilla_start_selection = selection
+		LoadingStep("vanilla initial sector captured", {
+			selection = tostring(selection),
+		}, source)
 
 		rawset(_G, "MainMap", saved_main_map)
 		rawset(_G, "MainCity", saved_main_city)
 		RestoreGeneratorTemplate()
 		SwitchGeneratorCurrentSlot(destination_slot)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
+		local terrain_copy_token = LoadingBegin("copy native terrain to destination", destination)
 		CopyMigratedTerrain(source, destination)
+		LoadingEnd(terrain_copy_token, nil, true)
+		local state_copy_token = LoadingBegin("copy generated map state", destination)
 		CopyGeneratedMapState(source, destination)
+		LoadingEnd(state_copy_token, nil, true)
 		if type(deposits.StageNativeEnrichmentRecords) ~= "function" then
 			error("native enrichment staging API unavailable")
 		end
 		local staged, stage_error = deposits.StageNativeEnrichmentRecords(destination,
 			native_enrichment_records, "temporary vanilla backing migrated to destination")
 		if staged ~= true then error("native enrichment staging failed: " .. tostring(stage_error)) end
-		TransferGeneratedObjects(source, destination, source_baseline,
+		LoadingStep("native enrichment records staged on destination", {
+			record_count = #native_enrichment_records,
+		}, destination)
+		local object_transfer_token = LoadingBegin("transfer generated non-enrichment objects", destination)
+		local transferred = TransferGeneratedObjects(source, destination, source_baseline,
 			native_enrichment_excluded)
+		LoadingEnd(object_transfer_token, { transferred = tostring(transferred) }, true)
 		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
 		-- This path deliberately preserves the vanilla-generated height field, so discard their
 		-- temporary-map references instead of allowing a later map generation to consume stale pads.
@@ -1957,7 +2207,9 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(destination.RebuildGrids) ~= "function" or type(box_fn) ~= "function" then
 			error("destination RebuildGrids API unavailable")
 		end
+		local rebuild_token = LoadingBegin("rebuild destination grids after source migration", destination)
 		destination:RebuildGrids(box_fn(0, 0, map_width, map_height))
+		LoadingEnd(rebuild_token, nil, true)
 		destination.SuperBigMapSurfaceBuildableCurrent = true
 	end)
 
@@ -1970,7 +2222,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		pcall(SwitchGeneratorCurrentSlot, destination_slot)
 	end
 	if maps[source_slot] then
+		local unload_token = LoadingBegin("unload temporary vanilla backing", destination,
+			{ source_slot = source_slot })
 		local unload_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
+		LoadingEnd(unload_token, { error = tostring(unload_error) }, unload_ok)
 		if not unload_ok and ok then
 			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
 		end
@@ -1986,6 +2241,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			migration_error = "native enrichment records did not survive source unload: "
 				.. tostring(verify_call_ok and record_verify_stats and record_verify_stats.reason or records_ok)
 		end
+		LoadingStep("staged enrichment records survived source unload", {
+			verified = tostring(verify_call_ok and records_ok == true),
+			record_count = native_enrichment_record_stats and native_enrichment_record_stats.count,
+		}, destination)
 	end
 	if ok and vanilla_start_selection then
 		local sectors = SuperBigMap.SectorExploration
@@ -2013,6 +2272,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	SuperBigMap.State.vanilla_source_migration_active = false
 	if not ok then error("temporary vanilla source migration failed: " .. tostring(migration_error)) end
 	SetLoadingPhase("Finishing the expanded map...")
+	LoadingStep("temporary source transaction complete", nil, destination)
 	return true, results
 end
 
@@ -2444,7 +2704,7 @@ local function PatchRandomMapGenerator()
 				and map.mapdata.Environment or nil
 			-- Normal generations enter the original method unchanged.
 			if State.rmg_placement_active_map ~= map then
-				return original_on_generate_logic(self, env, ...)
+				return CallOnGenerateLogicTimed(original_on_generate_logic, self, env, map, ...)
 			end
 			local is_underground = environment == "Underground"
 			local defer_underground_artefacts = is_underground
@@ -3017,7 +3277,8 @@ local function PatchRandomMapGenerator()
 			if rebuild_buildable_grid_required and not rebuild_buildable_grid_installed then
 				results = { false, "source buildable raw-grid bridge hook unavailable" }
 			else
-				results = { pcall(original_on_generate_logic, self, env, ...) }
+				results = { pcall(CallOnGenerateLogicTimed,
+					original_on_generate_logic, self, env, map, ...) }
 			end
 
 			if retained_source_buildable_grid then
@@ -3116,6 +3377,15 @@ local function PatchRandomMapGenerator()
 			if not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 				return original_do_generate(self, map, ...)
 			end
+			local loading_diagnostics = SuperBigMap.Diagnostics
+			local loading_session_already_active = loading_diagnostics
+				and type(loading_diagnostics.LoadingActive) == "function"
+				and loading_diagnostics.LoadingActive() == true
+			LoadingStart("RandomMapGenerator.DoGenerate", map, {
+				environment = tostring(mapdata and mapdata.Environment),
+				vanilla_source_migration = tostring(map and map.SuperBigMapVanillaSourceMigration == true),
+				expansion_pending = tostring(map and map.SuperBigMapExpansionPending == true),
+			})
 
 			local height_tile_size = (Global("const") and type(const.HeightTileSize) == "number" and const.HeightTileSize > 0)
 				and const.HeightTileSize or 1
@@ -3162,8 +3432,21 @@ local function PatchRandomMapGenerator()
 
 			-- Maps that already fit the native generator remain otherwise untouched.
 			if cur_w_tiles <= max_random_tiles and cur_h_tiles <= max_random_tiles then
+				local native_token = LoadingBegin("native-sized RandomMapGenerator.DoGenerate", map, {
+					map_tiles = tostring(cur_w_tiles) .. "x" .. tostring(cur_h_tiles),
+				})
 				local results = PackValues(original_do_generate(self, map, ...))
+				LoadingEnd(native_token, nil, true)
 				CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
+				if loading_session_already_active then
+					LoadingStep("nested native-sized map generation complete", {
+						map_tiles = tostring(cur_w_tiles) .. "x" .. tostring(cur_h_tiles),
+					}, map)
+				else
+					LoadingFinish("native-sized map generation complete", map, {
+						map_tiles = tostring(cur_w_tiles) .. "x" .. tostring(cur_h_tiles),
+					}, true)
+				end
 				return Unpack(results, 1, results.n)
 			end
 
@@ -3171,6 +3454,10 @@ local function PatchRandomMapGenerator()
 			-- execute the generator body once on a separate native-sized backing. The helper copies
 			-- terrain, transfers the generated objects, rebuilds only the final destination grids,
 			-- unloads the temporary slot, and returns the original DoGenerate result tuple.
+			LoadingStep("attempt exact temporary-source transaction", {
+				map_tiles = tostring(cur_w_tiles) .. "x" .. tostring(cur_h_tiles),
+				generator_limit_tiles = max_random_tiles,
+			}, map)
 			local migrated, migrated_results = GenerateOnTemporaryVanillaBacking(
 				self, map, original_do_generate, ...)
 			if migrated then
@@ -3354,7 +3641,10 @@ local function PatchRandomMapGenerator()
 			end
 
 			State.rmg_placement_active_map = map
+			local expanded_backing_token = LoadingBegin(
+				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
 			local results = { pcall(original_do_generate, self, map, ...) }
+			LoadingEnd(expanded_backing_token, nil, results[1] == true)
 			-- Restore the cached MapVars before bridge cleanup can run. The
 			-- pcall above covers both the successful and failing native-generation paths, so an
 			-- engine/Lua failure cannot leave the live expanded map reporting source dimensions.
@@ -3648,6 +3938,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			local resume_ild = Global("ResumeInfiniteLoopDetection")
 			if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapStretch") end
 			local ok_stretch, n_grids = false, 0
+			local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
 			-- One transaction owns both mass-object moves so intermediate edits do not flush
 			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
@@ -3761,7 +4052,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				do
 					local deposits = SuperBigMap.DepositRules
 					if deposits and type(deposits.EnforceScanGateAfterStretch) == "function" then
-						SafeCall(
+						TimedSafeCall("surface enforce scan gate", map,
 							deposits.EnforceScanGateAfterStretch, map)
 					end
 					-- Step 6: DENSITY NORMALIZATION after proportional marker movement:
@@ -3773,33 +4064,37 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if deposits then
 						SetLoadingPhase("Distributing surface resources and anomalies")
 						if type(deposits.TopUpDeposits) == "function" then
-							SafeCall(
+							TimedSafeCall("surface top-up resources", map,
 								deposits.TopUpDeposits, map)
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
 						-- layouts diverge from vanilla).
 						if type(deposits.TopUpAnomalies) == "function" then
-							SafeCall(
+							TimedSafeCall("surface top-up anomalies", map,
 								deposits.TopUpAnomalies, map)
 						end
 						if type(deposits.TopUpEffectDeposits) == "function" then
-							SafeCall(
+							TimedSafeCall("surface top-up effect deposits", map,
 								deposits.TopUpEffectDeposits, map)
 						end
 						if type(deposits.RegisterClonedMarkers) == "function" then
-							SafeCall(
+							TimedSafeCall("surface register top-up markers", map,
 								deposits.RegisterClonedMarkers, map)
 						end
 						if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
-							SafeCall(
+							TimedSafeCall("surface resolve marker overlaps", map,
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
 						if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
 							error("top-up vanilla repulsion audit is unavailable")
 						end
+						local repulsion_token = LoadingBegin("surface hard repulsion audit", map)
 						local repulsion_ok, repulsion_stats =
 							deposits.AuditTopUpVanillaRepulsion(map, "surface final after density suite")
+						LoadingEnd(repulsion_token, {
+							violations = repulsion_stats and repulsion_stats.repulsion_violations,
+						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
 							error("surface top-up vanilla repulsion audit failed: density_failures="
 								.. tostring(repulsion_stats and repulsion_stats.density_failures)
@@ -3809,8 +4104,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
 						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
-							SafeCall(
+							TimedSafeCall("surface audit outer-ring exclusivity", map,
 								deposits.AuditSurfaceTopUpRingExclusivity, map)
+						end
+						if type(deposits.DebugAuditFinalEnrichments) == "function" then
+							local audit_token = LoadingBegin("diagnostic surface enrichment audit", map)
+							local call_ok, audit_ok, audit_stats = pcall(
+								deposits.DebugAuditFinalEnrichments, map,
+								"surface final before placement-pool cleanup")
+							LoadingEnd(audit_token, {
+								audit_ok = tostring(audit_ok),
+								error = call_ok and "" or tostring(audit_ok),
+								markers = call_ok and audit_stats and audit_stats.markers or nil,
+							}, call_ok and audit_ok ~= false)
 						end
 						if type(deposits.ClearTopUpPlacementPool) == "function" then
 							deposits.ClearTopUpPlacementPool(map)
@@ -3825,7 +4131,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					-- landing pillars when this explicit pass was skipped, so correctness requires this one
 					-- authoritative synchronous rebuild after all terrain-height edits.
 					if type(rebuild_buildable) == "function" and map and map.buildable then
+						local rebuild_token = LoadingBegin("surface final RebuildBuildableGrid", map)
 						local rebuild_ok, rebuild_err = pcall(rebuild_buildable, map)
+						LoadingEnd(rebuild_token, { error = rebuild_ok and "" or tostring(rebuild_err) }, rebuild_ok)
 						if not rebuild_ok then
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
@@ -3846,6 +4154,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
 				end
 			end)
+			LoadingEnd(surface_pipeline_token, {
+				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
+			}, ok_branch)
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.
 			ResumeCombinedPassEdits("surface stretch cleanup")
 			-- Balanced resume (always, even on error) so the loop detector is restored.
@@ -3860,6 +4171,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			map.SuperBigMapExpanded = true
 			end_loading()
 			SignalExpansionReadinessChanged(map, "surface stretch complete")
+			LoadingFinish("surface expansion complete", map, {
+				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
+			}, ok_branch)
 			return
 		end
 
@@ -3876,6 +4190,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 				pcall(SuperBigMap.ExpansionLoadingEnd)
 			end
+			LoadingFinish("surface expansion thread failed", map,
+				{ error = tostring(thread_ok) }, false)
 		end
 	end)
 	if not schedule_ok then
@@ -4063,6 +4379,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		map.SuperBigMapStretchPipelinePending = true
 	end
 	local function run_pipeline()
+		LoadingStart("underground expansion first access", map, {
+			force_now = tostring(force_now == true),
+		})
 		local ready, readiness = UndergroundExpansionReadiness(map)
 		while not ready do
 			wait_msg("SuperBigMapExpansionReadinessChanged")
@@ -4078,6 +4397,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
 		local elevator_migrations = {}
+		local underground_pipeline_token = LoadingBegin("underground expansion pipeline", map)
 		local ok_branch, branch_err = pcall(function()
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
@@ -4179,14 +4499,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
 					error("underground final passability rebuild is unavailable")
 				end
+				local passability_token = LoadingBegin("underground final RebuildPassability", map)
 				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				LoadingEnd(passability_token, { error = pass_ok and "" or tostring(pass_err) }, pass_ok)
 				if not pass_ok then error("underground final passability rebuild failed: " .. tostring(pass_err)) end
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) ~= "function" then
 					error("underground final buildable-grid rebuild is unavailable")
 				end
 				SetLoadingPhase("Rebuilding the final underground build grid")
+				local buildable_token = LoadingBegin("underground final RebuildBuildableGrid", map)
 				local build_ok, build_err = pcall(rebuild_buildable, map)
+				LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
 				if #elevator_migrations > 0 then
@@ -4242,39 +4566,49 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if deposits then
 					if type(deposits.TopUpDeposits) == "function" then
 						SetLoadingPhase("Distributing underground resources and anomalies")
-						SafeCall(
+						TimedSafeCall("underground top-up resources", map,
 							deposits.TopUpDeposits, map)
 					end
 					if type(deposits.TopUpAnomalies) == "function" then
-						SafeCall(
+						TimedSafeCall("underground top-up anomalies", map,
 							deposits.TopUpAnomalies, map)
 					end
 					if type(deposits.TopUpEffectDeposits) == "function" then
-						SafeCall(
+						TimedSafeCall("underground top-up effect deposits", map,
 							deposits.TopUpEffectDeposits, map)
 					end
 					if type(deposits.RegisterClonedMarkers) == "function" then
-						SafeCall(
+						TimedSafeCall("underground register top-up markers", map,
 							deposits.RegisterClonedMarkers, map)
 					end
 					if type(deposits.RelocateUnreachableUndergroundEnrichments) ~= "function" then
 						error("underground enrichment reachability audit is unavailable")
 					end
-					SetLoadingPhase("Moving underground enrichments onto reachable terrain")
-					local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+				SetLoadingPhase("Moving underground enrichments onto reachable terrain")
+				local reachability_token = LoadingBegin(
+					"underground relocate unreachable enrichments", map)
+				local audit_ok, audit_stats = deposits.RelocateUnreachableUndergroundEnrichments(map)
+				LoadingEnd(reachability_token, {
+					moved = audit_stats and audit_stats.moved,
+					unresolved = audit_stats and audit_stats.unresolved,
+				}, audit_ok == true)
 					if audit_ok ~= true then
 						error("underground enrichment reachability audit left "
 							.. tostring(audit_stats and audit_stats.unresolved or "unknown") .. " unresolved markers")
 					end
 					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
-						SafeCall(
+						TimedSafeCall("underground resolve marker overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
 					end
 					if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
 						error("top-up vanilla repulsion audit is unavailable")
 					end
+					local repulsion_token = LoadingBegin("underground hard repulsion audit", map)
 					local repulsion_ok, repulsion_stats =
 						deposits.AuditTopUpVanillaRepulsion(map, "underground final after density suite")
+					LoadingEnd(repulsion_token, {
+						violations = repulsion_stats and repulsion_stats.repulsion_violations,
+					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="
 							.. tostring(repulsion_stats and repulsion_stats.density_failures)
@@ -4282,6 +4616,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 							.. " repulsion_violations="
 							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
+					end
+					if type(deposits.DebugAuditFinalEnrichments) == "function" then
+						local audit_token = LoadingBegin("diagnostic underground enrichment audit", map)
+						local call_ok, audit_ok, audit_stats = pcall(
+							deposits.DebugAuditFinalEnrichments, map,
+							"underground final before temporary reveal")
+						LoadingEnd(audit_token, {
+							audit_ok = tostring(audit_ok),
+							error = call_ok and "" or tostring(audit_ok),
+							markers = call_ok and audit_stats and audit_stats.markers or nil,
+						}, call_ok and audit_ok ~= false)
 					end
 					if cfg_bool("UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING", false) then
 						if type(deposits.RevealAllUndergroundEnrichmentsForTesting) ~= "function" then
@@ -4294,6 +4639,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							error("temporary underground enrichment reveal failed: "
 								.. tostring(reveal_stats and reveal_stats.error or "unknown error"))
 						end
+						if type(deposits.DebugAuditFinalEnrichments) == "function" then
+							local audit_token = LoadingBegin(
+								"diagnostic underground post-reveal enrichment audit", map)
+							local call_ok, audit_ok, audit_stats = pcall(
+								deposits.DebugAuditFinalEnrichments, map,
+								"underground after temporary RevealDeposits")
+							LoadingEnd(audit_token, {
+								audit_ok = tostring(audit_ok),
+								error = call_ok and "" or tostring(audit_ok),
+								markers = call_ok and audit_stats and audit_stats.markers or nil,
+							}, call_ok and audit_ok ~= false)
+						end
 					end
 					if type(deposits.ClearTopUpPlacementPool) == "function" then
 						deposits.ClearTopUpPlacementPool(map)
@@ -4304,6 +4661,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
 		end)
+		LoadingEnd(underground_pipeline_token, {
+			elevator_migrations = #elevator_migrations,
+			error = ok_branch and "" or tostring(branch_err),
+		}, ok_branch)
 		if not ok_branch and type(elevator_migrations) == "table" and #elevator_migrations > 0 then
 			-- A partially failed terrain transaction is not a safe context in which to touch native
 			-- supply grids. Invalidate the token and keep underground access blocked; never recreate
@@ -4363,6 +4724,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		-- pcall-guarded, so this always runs).
 		if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
 			pcall(SuperBigMap.ExpansionLoadingEnd)
+		end
+		if force_now ~= true then
+			LoadingFinish("underground asynchronous expansion complete", map, {
+				elevator_migrations = #elevator_migrations,
+				error = ok_branch and "" or tostring(branch_err),
+			}, ok_branch)
 		end
 		return ok_branch == true, branch_err
 	end
@@ -4630,6 +4997,8 @@ local function PatchDeferredUndergroundAccess(source)
 				if type(wait_render) == "function" then wait_render("scene") end
 			end
 			show_failure(err or target.SuperBigMapUndergroundStretchFailed or "Preparation did not complete")
+			LoadingFinish("underground first-access preparation failed", target,
+				{ error = tostring(err or target.SuperBigMapUndergroundStretchFailed) }, false)
 			return false
 		end
 
@@ -4655,9 +5024,15 @@ local function PatchDeferredUndergroundAccess(source)
 			if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
 			show_failure("Underground Elevator restoration failed at the map lifecycle boundary: "
 				.. tostring(restored_result))
+			LoadingFinish("underground map switch or Elevator restoration failed", target,
+				{ error = tostring(restored_result), token = tostring(switch_restore_token_id) }, false)
 			return false
 		end
 		if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+		LoadingFinish("underground first access complete", target, {
+			elevator_token = tostring(switch_restore_token_id),
+			elevator_token_status = tostring(after_token and after_token.status or "consumed-or-none"),
+		}, true)
 		return result
 	end
 	rawset(_G, "ChangeCurrentMapSlot", wrapper)
@@ -4699,6 +5074,8 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 			if type(wait_render) == "function" then wait_render("scene") end
 		end
 		underground_recovery_maps[map] = nil
+		LoadingFinish("underground bypass-recovery complete", map,
+			{ error = ok == true and "" or tostring(err) }, ok == true)
 		if ok ~= true then
 			local create_box = Global("CreateMessageBox")
 			if type(create_box) == "function" then

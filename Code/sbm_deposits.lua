@@ -18,6 +18,29 @@ local function cfg()
 	return SuperBigMap.Config or {}
 end
 
+local function AuditEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.EnrichmentEnabled) == "function"
+		and diagnostics.EnrichmentEnabled() == true
+end
+
+local function AuditEmit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.Audit) == "function" then
+		diagnostics.Audit(event, data, map)
+	end
+end
+
+local function CountMapString(values)
+	if type(values) ~= "table" then return "" end
+	local keys = {}
+	for key in pairs(values) do keys[#keys + 1] = key end
+	table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+	local parts = {}
+	for i, key in ipairs(keys) do parts[i] = tostring(key) .. ":" .. tostring(values[key]) end
+	return table.concat(parts, "|")
+end
+
 local function ExpansionStepEnabled(step)
 	local steps = cfg().EXPANSION_ENRICHMENT_STEPS
 	return type(steps) == "table" and steps[step] == true
@@ -1610,6 +1633,23 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 		count = #records, signature = NativeRecordSignature(records),
 		class_counts = class_counts, class_counts_text = NativeClassCountsText(class_counts),
 	}
+	if AuditEnabled() then
+		AuditEmit("NATIVE_SOURCE_SUMMARY", {
+			reason = tostring(reason), count = #records, signature = stats.signature,
+			class_counts = stats.class_counts_text, missing_positions = missing_positions,
+		}, map)
+		for i, record in ipairs(records) do
+			local properties = record.properties or {}
+			AuditEmit("NATIVE_SOURCE_MARKER", {
+				index = i, class = record.class,
+				resource = tostring(properties.resource), deposit_type = tostring(properties.deposit_type),
+				tech_action = tostring(properties.tech_action), sequence = tostring(properties.sequence),
+				sequence_list = tostring(properties.sequence_list),
+				source_x = record.source_x, source_y = record.source_y, source_z = record.source_z,
+				source_hash = tostring(record.source_hash), property_count = #(record.property_ids or {}),
+			}, map)
+		end
+	end
 	return records, excluded, stats
 end
 
@@ -2215,6 +2255,32 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 		stats.error = tostring(plan_stats and plan_stats.error or "final-point plan failed")
 		return false, stats
 	end
+	if AuditEnabled() then
+		AuditEmit("NATIVE_TRANSFORM_PLAN_SUMMARY", {
+			reason = tostring(reason), records = #records,
+			exact = tostring(plan_stats and plan_stats.exact),
+			preserved_source_overlaps = tostring(plan_stats and plan_stats.preserved_source_overlaps),
+			introduced_collisions = tostring(plan_stats and plan_stats.introduced_collisions),
+			resolved_collisions = tostring(plan_stats and plan_stats.resolved),
+		}, map)
+		for i, record in ipairs(records) do
+			local final_point, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			local final_x, final_y, final_z
+			if final_point and type(final_point.xy) == "function" then final_x, final_y = final_point:xy() end
+			if final_point and type(final_point.z) == "function" then final_z = final_point:z() end
+			AuditEmit("NATIVE_TRANSFORM_PLAN", {
+				index = i, class = tostring(record.class),
+				source_x = record.source_x, source_y = record.source_y, source_z = record.source_z,
+				raw_x = geometry and geometry.raw_x, raw_y = geometry and geometry.raw_y,
+				intended_x = geometry and geometry.intended_x, intended_y = geometry and geometry.intended_y,
+				expected_x = final_x, expected_y = final_y, expected_z = final_z,
+				final_hex = geometry and (tostring(geometry.q) .. ":" .. tostring(geometry.r)) or "nil",
+				collision_resolved = tostring(geometry and geometry.collision_resolved == true),
+				resolution_radius = tostring(geometry and geometry.resolution_radius),
+				error = tostring(transform_error),
+			}, map)
+		end
+	end
 	local ok, recreate_error = pcall(function()
 		for i = 1, #records do
 			local record = records[i]
@@ -2405,17 +2471,29 @@ end
 local BuildTopUpEdgeContext
 local PerimeterCoordinate
 
-local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall)
+local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall, details)
 	if type(map) ~= "table" then return end
 	local status = map.SuperBigMapEnrichmentTopUpStatus
 	if type(status) ~= "table" then
 		status = {}
 		map.SuperBigMapEnrichmentTopUpStatus = status
 	end
-	status[kind] = {
+	local entry = {
 		complete = complete == true,
 		remaining_shortfall = tonumber(remaining_shortfall) or 0,
 	}
+	if type(details) == "table" then
+		for key, value in pairs(details) do
+			if type(value) ~= "table" then entry[key] = value end
+		end
+	end
+	status[kind] = entry
+	if AuditEnabled() then
+		local audit = { kind = tostring(kind), complete = tostring(entry.complete),
+			remaining_shortfall = entry.remaining_shortfall }
+		for key, value in pairs(entry) do audit[key] = value end
+		AuditEmit("TOPUP_STATUS", audit, map)
+	end
 end
 
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
@@ -2494,7 +2572,11 @@ function DepositRules.TopUpDeposits(map)
 	end
 	table.sort(target_keys)
 	if shortfall <= 0 or #templates == 0 then
-		SetEnrichmentTopUpStatus(map, "resources", shortfall <= 0, shortfall)
+		SetEnrichmentTopUpStatus(map, "resources", shortfall <= 0, shortfall, {
+			area_factor = area_factor, source_counts = CountMapString(src_by_type),
+			target_counts = CountMapString(target_by_type),
+			current_counts = CountMapString(current_by_type), added_counts = "",
+		})
 		return
 	end
 
@@ -2644,7 +2726,11 @@ function DepositRules.TopUpDeposits(map)
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_type[res] or 0) - final_count)
 	end
-	SetEnrichmentTopUpStatus(map, "resources", remaining_shortfall == 0, remaining_shortfall)
+	SetEnrichmentTopUpStatus(map, "resources", remaining_shortfall == 0, remaining_shortfall, {
+		area_factor = area_factor, source_counts = CountMapString(src_by_type),
+		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
+		added_counts = CountMapString(added_by_type), added_total = added,
+	})
 end
 
 -- POST-GENERATION anomaly top-up (config TOPUP_ANOMALIES). Raises the ANOMALY population
@@ -2802,7 +2888,11 @@ function DepositRules.TopUpAnomalies(map)
 	end
 	table.sort(target_keys)
 	if shortfall <= 0 or #templates == 0 then
-		SetEnrichmentTopUpStatus(map, "anomalies", shortfall <= 0, shortfall)
+		SetEnrichmentTopUpStatus(map, "anomalies", shortfall <= 0, shortfall, {
+			area_factor = area_factor, source_counts = CountMapString(source_by_kind),
+			target_counts = CountMapString(target_by_kind),
+			current_counts = CountMapString(current_by_kind), added_counts = "",
+		})
 		return
 	end
 	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
@@ -3295,7 +3385,12 @@ function DepositRules.TopUpAnomalies(map)
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
 	end
-	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall)
+	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall, {
+		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
+		target_counts = CountMapString(target_by_kind), final_counts = CountMapString(final_by_kind),
+		added_counts = CountMapString(added_by_kind), added_total = added,
+		surface_outer_ring = tostring(not IsUndergroundMap(map)),
+	})
 end
 
 -- Build an index-base-independent description of the live surface sector grid.
@@ -3446,9 +3541,11 @@ function DepositRules.TopUpEffectDeposits(map)
 
 	local types, total_shortfall = {}, 0
 	local target_by_type = {}
+	local source_by_type = {}
 	for deposit_type, templates in pairs(templates_by_type) do
 		if #templates > 0 then
 			types[#types + 1] = deposit_type
+			source_by_type[deposit_type] = #templates
 			local target = math.floor(#templates * area_factor + 0.5)
 			target_by_type[deposit_type] = target
 			total_shortfall = total_shortfall + math.max(0, target - (current_by_type[deposit_type] or 0))
@@ -3456,7 +3553,11 @@ function DepositRules.TopUpEffectDeposits(map)
 	end
 	table.sort(types)
 	if total_shortfall <= 0 then
-		SetEnrichmentTopUpStatus(map, "effects", true, 0)
+		SetEnrichmentTopUpStatus(map, "effects", true, 0, {
+			area_factor = area_factor, source_counts = CountMapString(source_by_type),
+			target_counts = CountMapString(target_by_type),
+			current_counts = CountMapString(current_by_type), added_counts = "",
+		})
 		return
 	end
 	local effect_values = GeneratorFamilyRepulsionValues(map, "Effects")
@@ -3569,7 +3670,11 @@ function DepositRules.TopUpEffectDeposits(map)
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_type[deposit_type] or 0) - final_count)
 	end
-	SetEnrichmentTopUpStatus(map, "effects", remaining_shortfall == 0, remaining_shortfall)
+	SetEnrichmentTopUpStatus(map, "effects", remaining_shortfall == 0, remaining_shortfall, {
+		area_factor = area_factor, source_counts = CountMapString(source_by_type),
+		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
+		added_counts = CountMapString(added_by_type),
+	})
 end
 
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
@@ -4045,6 +4150,222 @@ function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
 	end
 	return true, {
 		markers = #markers, requested = #requested, placed = placed, revealed = revealed,
+	}
+end
+
+-- Exhaustive read-only snapshot used by config.DebugEnrichmentAudit. It deliberately runs after
+-- the normal hard invariants, and repeats their calculations only while the diagnostic gate is on.
+-- The per-marker rows preserve enough data to compare vanilla source coordinates, proportional
+-- targets, final hexes, top-up placement rules, and RevealDeposits movement from one log.
+function DepositRules.DebugAuditFinalEnrichments(map, reason)
+	if not AuditEnabled() then return true, { disabled = true } end
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		AuditEmit("FINAL_AUDIT_UNAVAILABLE", { reason = tostring(reason) }, map)
+		return false, { error = "map API unavailable" }
+	end
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local xxhash = Global("xxhash")
+	local underground = IsUndergroundMap(map)
+	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
+	local entries, sector_counts = {}, {}
+	local source_counts, final_counts, topup_counts = {}, {}, {}
+	local native_count, topup_count, native_mismatches, invalid_topups = 0, 0, 0, 0
+	local missing_positions, duplicate_hexes = 0, 0
+	local hex_owners = {}
+
+	local function family_and_type(marker)
+		if IsResourceDepositMarker(marker) then
+			return "resource", tostring(marker.resource or marker.class or "?")
+		end
+		if IsAnomalyMarker(marker) then
+			local action = marker.tech_action
+			if action == nil or action == "" then
+				action = marker.sequence and marker.sequence ~= "" and "sequence" or "other"
+			end
+			return "anomaly", tostring(action)
+		end
+		return "effect", tostring(marker.deposit_type or marker.class or "?")
+	end
+
+	local seen_markers = {}
+	local function capture_marker(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		if seen_markers[marker] then return end
+		seen_markers[marker] = true
+		local family, subtype = family_and_type(marker)
+		local type_key = family .. "/" .. subtype
+		final_counts[type_key] = (final_counts[type_key] or 0) + 1
+		local topup = marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+		local native = not topup and type(marker.SuperBigMapNativeSourceX) == "number"
+		if topup then
+			topup_count = topup_count + 1
+			topup_counts[type_key] = (topup_counts[type_key] or 0) + 1
+		elseif native then
+			native_count = native_count + 1
+			source_counts[type_key] = (source_counts[type_key] or 0) + 1
+		end
+		local pos = ObjectPos(marker)
+		local x, y, z
+		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+		if pos and type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		if type(x) ~= "number" or type(y) ~= "number" then missing_positions = missing_positions + 1 end
+		local q, r
+		if type(x) == "number" and type(world_to_hex) == "function" and type(point_fn) == "function" then
+			local ok_hex, hq, hr = pcall(world_to_hex, point_fn(x, y))
+			if ok_hex then q, r = hq, hr end
+		end
+		local hex_key = type(q) == "number" and (tostring(q) .. ":" .. tostring(r)) or "nil"
+		if hex_key ~= "nil" then
+			if hex_owners[hex_key] then duplicate_hexes = duplicate_hexes + 1
+			else hex_owners[hex_key] = true end
+		end
+		local sector = type(x) == "number" and SectorAtPoint(map, x, y) or nil
+		local sector_key = sector and (tostring(sector.col) .. ":" .. tostring(sector.row)) or "none"
+		local sector_entry = sector_counts[sector_key]
+		if not sector_entry then
+			sector_entry = { total = 0, native = 0, topup = 0, resource = 0, anomaly = 0, effect = 0 }
+			sector_counts[sector_key] = sector_entry
+		end
+		sector_entry.total = sector_entry.total + 1
+		sector_entry[family] = sector_entry[family] + 1
+		if topup then sector_entry.topup = sector_entry.topup + 1 else sector_entry.native = sector_entry.native + 1 end
+		local passable = pos and PassableAt(map, pos) or false
+		local flatness = pos and FlatnessAt(map, pos) or nil
+		local buildable = pos and IsBuildableAt(map, pos, true) or false
+		local unobstructed = pos and IsUnobstructedAt(map, pos, true) or false
+		local reachable = not underground or (pos and IsReachableFromUndergroundEntrance(map, pos) or false)
+		local terrain_valid = passable and type(flatness) == "number"
+			and flatness >= TopUpFlatnessMinimum() and buildable and unobstructed and reachable
+		if topup and not terrain_valid then invalid_topups = invalid_topups + 1 end
+		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX)
+		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY)
+		local native_xy_match = not native or (x == expected_x and y == expected_y)
+		if native and not native_xy_match then native_mismatches = native_mismatches + 1 end
+		local position_hash
+		if pos and type(xxhash) == "function" then
+			local ok_hash, value = pcall(xxhash, pos)
+			if ok_hash then position_hash = value end
+		end
+		local placed_obj = marker.placed_obj
+		local placed_pos = placed_obj and ObjectPos(placed_obj) or nil
+		local placed_x, placed_y, placed_z
+		if placed_pos and type(placed_pos.xy) == "function" then placed_x, placed_y = placed_pos:xy() end
+		if placed_pos and type(placed_pos.z) == "function" then
+			local ok_z, value = pcall(placed_pos.z, placed_pos)
+			if ok_z then placed_z = value end
+		end
+		entries[#entries + 1] = {
+			marker = marker, family = family, subtype = subtype, type_key = type_key,
+			topup = topup, native = native, class = tostring(marker.class),
+			x = x, y = y, z = z, q = q, r = r, hash = position_hash,
+			sector = sector, sector_key = sector_key,
+			passable = passable, flatness = flatness, buildable = buildable,
+			unobstructed = unobstructed, reachable = reachable, terrain_valid = terrain_valid,
+			native_xy_match = native_xy_match,
+			placed_x = placed_x, placed_y = placed_y, placed_z = placed_z,
+		}
+	end
+	local deposit_enum_ok, deposit_enum_error = pcall(
+		map.MapForEach, map, "map", "DepositMarker", capture_marker)
+	local effect_enum_ok, effect_enum_error = pcall(
+		map.MapForEach, map, "map", "EffectDepositMarker", capture_marker)
+	table.sort(entries, function(a, b)
+		if (a.x or -1) ~= (b.x or -1) then return (a.x or -1) < (b.x or -1) end
+		if (a.y or -1) ~= (b.y or -1) then return (a.y or -1) < (b.y or -1) end
+		if a.family ~= b.family then return a.family < b.family end
+		return a.class < b.class
+	end)
+
+	local transform_stats = map.SuperBigMapNativeTransformStats or {}
+	local density = map.SuperBigMapEnrichmentTopUpStatus or {}
+	local repulsion_ok, repulsion_stats = DepositRules.AuditTopUpVanillaRepulsion(map,
+		"diagnostic " .. tostring(reason))
+	local ring_ok, ring_stats = true, {}
+	if not underground then
+		ring_ok, ring_stats = DepositRules.AuditSurfaceTopUpRingExclusivity(map)
+	end
+	AuditEmit("FINAL_SUMMARY", {
+		reason = tostring(reason), markers = #entries, native = native_count, topups = topup_count,
+		captured_native = tostring(map.SuperBigMapNativeEnrichmentCaptureCount),
+		recreated_native = tostring(map.SuperBigMapNativeEnrichmentRecreatedCount),
+		native_transform_verified = tostring(map.SuperBigMapNativeTransformVerified),
+		native_transform_mismatches = tostring(transform_stats.mismatches),
+		native_current_xy_mismatches = native_mismatches,
+		missing_positions = missing_positions, duplicate_hexes_all_markers = duplicate_hexes,
+		deposit_enumeration_ok = tostring(deposit_enum_ok),
+		deposit_enumeration_error = deposit_enum_ok and "" or tostring(deposit_enum_error),
+		effect_enumeration_ok = tostring(effect_enum_ok),
+		effect_enumeration_error = effect_enum_ok and "" or tostring(effect_enum_error),
+		invalid_topups = invalid_topups, repulsion_ok = tostring(repulsion_ok),
+		repulsion_density_failures = tostring(repulsion_stats and repulsion_stats.density_failures),
+		repulsion_duplicate_hex_pairs = tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs),
+		repulsion_violations = tostring(repulsion_stats and repulsion_stats.repulsion_violations),
+		ring_ok = tostring(ring_ok), ring_violations = tostring(ring_stats and ring_stats.violations),
+		resource_status = type(density.resources) == "table" and tostring(density.resources.complete) or "missing",
+		resource_shortfall = type(density.resources) == "table" and density.resources.remaining_shortfall or "missing",
+		anomaly_status = type(density.anomalies) == "table" and tostring(density.anomalies.complete) or "missing",
+		anomaly_shortfall = type(density.anomalies) == "table" and density.anomalies.remaining_shortfall or "missing",
+		effect_status = type(density.effects) == "table" and tostring(density.effects.complete) or "missing",
+		effect_shortfall = type(density.effects) == "table" and density.effects.remaining_shortfall or "missing",
+		source_counts = CountMapString(source_counts), final_counts = CountMapString(final_counts),
+		topup_counts = CountMapString(topup_counts),
+	}, map)
+
+	local sector_keys = {}
+	for key in pairs(sector_counts) do sector_keys[#sector_keys + 1] = key end
+	table.sort(sector_keys)
+	for _, key in ipairs(sector_keys) do
+		local value = sector_counts[key]
+		AuditEmit("SECTOR_DENSITY", {
+			sector = key, total = value.total, native = value.native, topup = value.topup,
+			resources = value.resource, anomalies = value.anomaly, effects = value.effect,
+		}, map)
+	end
+	for index, entry in ipairs(entries) do
+		local marker = entry.marker
+		local origin = entry.topup and "topup" or (entry.native and "native" or "other")
+		AuditEmit("FINAL_MARKER", {
+			index = index, origin = origin, family = entry.family, subtype = entry.subtype,
+			class = entry.class, record_index = tostring(marker.SuperBigMapNativeRecordIndex),
+			source_x = tostring(marker.SuperBigMapNativeSourceX),
+			source_y = tostring(marker.SuperBigMapNativeSourceY),
+			source_z = tostring(marker.SuperBigMapNativeSourceZ),
+			source_hash = tostring(marker.SuperBigMapNativeSourceHash),
+			raw_x = tostring(marker.SuperBigMapRawStretchedX), raw_y = tostring(marker.SuperBigMapRawStretchedY),
+			intended_x = tostring(marker.SuperBigMapIntendedStretchedX),
+			intended_y = tostring(marker.SuperBigMapIntendedStretchedY),
+			expected_x = tostring(marker.SuperBigMapExpectedStretchedX),
+			expected_y = tostring(marker.SuperBigMapExpectedStretchedY),
+			actual_x = tostring(entry.x), actual_y = tostring(entry.y), actual_z = tostring(entry.z),
+			actual_hash = tostring(entry.hash), hex = tostring(entry.q) .. ":" .. tostring(entry.r),
+			native_xy_match = tostring(entry.native_xy_match),
+			collision_resolved = tostring(marker.SuperBigMapTransformCollisionResolved == true),
+			resolution_radius = tostring(marker.SuperBigMapTransformCollisionResolutionRadius),
+			sector = entry.sector_key,
+			sector_status = tostring(entry.sector and entry.sector.status),
+			in_surface_outer_ring = tostring(not underground and type(entry.x) == "number"
+				and IsInFinalOuterSectorRing(map, entry.x, entry.y, ring_sectors) or false),
+			passable = tostring(entry.passable), flatness = tostring(entry.flatness),
+			buildable = tostring(entry.buildable), unobstructed = tostring(entry.unobstructed),
+			reachable = tostring(entry.reachable), topup_terrain_valid = tostring(entry.terrain_valid),
+			is_placed = tostring(marker.is_placed == true), revealed = tostring(marker.revealed == true),
+			placed_x = tostring(entry.placed_x), placed_y = tostring(entry.placed_y),
+			placed_z = tostring(entry.placed_z),
+		}, map)
+	end
+	local ok = deposit_enum_ok and effect_enum_ok
+		and native_mismatches == 0 and invalid_topups == 0
+		and repulsion_ok == true and ring_ok == true
+	return ok, {
+		markers = #entries, native = native_count, topups = topup_count,
+		native_mismatches = native_mismatches, invalid_topups = invalid_topups,
 	}
 end
 

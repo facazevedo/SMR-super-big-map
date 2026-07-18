@@ -24,6 +24,26 @@ local function cfg_bool(key, default)
 	return default
 end
 
+local function LoadingBegin(name, map, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.LoadingBegin) == "function"
+		and diagnostics.LoadingBegin(name, map, data) or false
+end
+
+local function LoadingEnd(token, data, ok)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingEnd) == "function" then
+		diagnostics.LoadingEnd(token, data, ok)
+	end
+end
+
+local function LoadingStep(name, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingStep) == "function" then
+		diagnostics.LoadingStep(name, data, map)
+	end
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -492,21 +512,31 @@ local function StretchSourceToFull(map)
 	-- GridToCompute so only the 6144^2 source cells are converted instead of all 8192^2 cells.
 	-- The original full-grid conversion remains the compatibility fallback. The 'raw' grid from
 	-- get_fn is left for the engine.
-	local function stretch_one(get_fn, set_fn, invalidate_fn, interpolate, scale_values)
+	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
+		local grid_token = LoadingBegin("terrain grid stretch: " .. tostring(label), map, {
+			interpolate = tostring(interpolate == true),
+			scale_values = tostring(scale_values == true),
+		})
 		if type(get_fn) ~= "function" or type(set_fn) ~= "function" then
+			LoadingEnd(grid_token, { error = "terrain getter/setter unavailable" }, false)
 			return false
 		end
 		local ok_g, raw = pcall(get_fn, map)
 		if not ok_g or not raw then
+			LoadingEnd(grid_token, { error = "terrain getter failed" }, false)
 			return false
 		end
+		local measured_fw, measured_fh
+		local extraction_path = "unknown"
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
 			if not ok_size or type(fw) ~= "number" or type(fh) ~= "number" then
 				full_c = GridToCompute(raw)
 				fw, fh = full_c:size()
+				extraction_path = "full_grid_compute_fallback"
 			end
+			measured_fw, measured_fh = fw, fh
 			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
 			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
 			local src_sub, native_sub
@@ -525,10 +555,13 @@ local function StretchSourceToFull(map)
 					src_sub = nil
 					free_grid(native_sub)
 					native_sub = nil
+				else
+					extraction_path = "native_corner_then_compute"
 				end
 			end
 			if not src_sub then
 				full_c = full_c or GridToCompute(raw)
+				extraction_path = "full_grid_compute_then_corner"
 				local fmt, bits = IsComputeGrid(full_c)
 				src_sub = NewComputeGrid(scw, sch, fmt, bits)
 				src_sub:copyrect(full_c, box_fn(0, 0, scw, sch), point_fn(0, 0))
@@ -615,11 +648,18 @@ local function StretchSourceToFull(map)
 			if full_c ~= raw then free_grid(full_c) end
 			return ok_set == true
 		end)
-		return ok_all and res == true
+		local success = ok_all and res == true
+		LoadingEnd(grid_token, {
+			full_cells = tostring(measured_fw) .. "x" .. tostring(measured_fh),
+			extraction_path = extraction_path,
+			error = ok_all and "" or tostring(res),
+		}, success)
+		return success
 	end
 
 	local done = 0
-	if stretch_one(terrain_api.GetHeightGrid, terrain_api.SetHeightGrid, terrain_api.InvalidateHeight, true, true) then
+	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid,
+		terrain_api.InvalidateHeight, true, true) then
 		done = done + 1
 		-- Height VALUES just transformed (h*zmul/zdiv + zadd, stamped by stretch_one) -> the
 		-- declared buildable/playable height ranges must follow the SAME affine transform
@@ -629,7 +669,8 @@ local function StretchSourceToFull(map)
 			map.SuperBigMapZScaleDiv or sw_tiles,
 			map.SuperBigMapZScaleAdd or 0)
 	end
-	if stretch_one(terrain_api.GetTypeGrid, terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then done = done + 1 end
+	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid,
+		terrain_api.InvalidateType, false) then done = done + 1 end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
 	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
 	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
@@ -648,11 +689,22 @@ local function StretchSourceToFull(map)
 				{ name = "grass_density",   interp = true  },
 			}
 			for _, mg in ipairs(map_grids) do
-				if ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp) then done = done + 1 end
+				local grid_token = LoadingBegin("terrain map grid stretch: " .. mg.name, map,
+					{ interpolate = tostring(mg.interp == true) })
+				local grid_ok = ResampleMapGrid(map, mg.name, src_box, full_box, mg.interp)
+				LoadingEnd(grid_token, nil, grid_ok)
+				if grid_ok then done = done + 1 end
 			end
 		end
 	end
+	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
 	ReinvalidateExpandedTerrain(map)
+	LoadingEnd(invalidate_token, nil, true)
+	LoadingStep("terrain stretch grid suite complete", {
+		completed_grids = done,
+		source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
+		destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
+	}, map)
 	return done > 0, done
 end
 
