@@ -1756,14 +1756,13 @@ local function MoveEntranceVisualsToScale(map)
 		local matched = is_elevator_or_site(obj)
 		if matched then handle(obj, "pre-expansion elevator site") end
 	end)
-	-- Vanilla deliberately moves the tunnel MARKER to a nearby unobstructed anomaly position and
-	-- creates its visible badge there (UndergroundPassageBase:OnSpawn -> marker:PlaceSign(x,y)).
-	-- That is harmless on a vanilla-sized map, but after the independent 4/3 stretch the badge can
-	-- end up tens of thousands of world units from the passage and the Elevator that snaps to it.
-	-- Preserve the gameplay marker position, but bind its visual sign to marker.spawner -- the exact
-	-- final Surface/UndergroundPassage object that owns the entrance. Search outward from the
-	-- passage's ACTUAL occupied footprint, not its center: a large entrance can consume several
-	-- center-based rings and previously made the eight-ring search give up at the old distant badge.
+	-- Vanilla deliberately moves a tunnel MARKER to a nearby unobstructed anomaly position. Keep the
+	-- gameplay marker there, but bind its visual sign to marker.spawner -- the exact final passage
+	-- object that owns the entrance. The two maps intentionally use different visual placement:
+	--   * Surface: place the entrance sign on the closest safe cell beside the passage footprint.
+	--   * Underground: place SignUnderground on the authoritative SurfacePassage hex itself.
+	-- The latter is the actual underground exit symbol, not a surface-side badge, and moving it to a
+	-- footprint-edge cell makes the displayed sector/hex disagree with the linked passage.
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
 	local get_unbuildable = Global("buildUnbuildableZ")
@@ -1917,6 +1916,42 @@ local function MoveEntranceVisualsToScale(map)
 			or type(px) ~= "number" or type(py) ~= "number" then
 			if marker and sign then
 				CaptureEntranceBadgePosition(marker, sign, "initial position; passage anchor unresolved")
+			end
+			return
+		end
+		local is_underground_exit = map.mapdata and map.mapdata.Environment == "Underground"
+			and IsKindOfSafe(marker, "SurfaceTunnelMarker")
+		if is_underground_exit then
+			local anchor = point_fn(px, py)
+			local terrain_z
+			if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+				local ok_h, height = pcall(terrain_api.GetHeight, map, anchor)
+				if ok_h and type(height) == "number" then terrain_z = height end
+			end
+			if type(terrain_z) == "number" then
+				anchor = point_fn(px, py, terrain_z)
+			elseif type(anchor.SetTerrainZ) == "function" then
+				local ok_z, snapped = pcall(anchor.SetTerrainZ, anchor, map)
+				if ok_z and snapped then anchor = snapped end
+			end
+			local ok_set = pcall(sign.SetPos, sign, anchor)
+			if ok_set then
+				sign.SuperBigMapPassageAnchored = true
+				CaptureEntranceBadgePosition(marker, sign,
+					"initial authoritative underground exit sign")
+				EntranceAudit("UNDERGROUND_EXIT_SIGN_ANCHORED", {
+					passage_x = px, passage_y = py,
+					sign_x = px, sign_y = py,
+					exact_passage_hex = true,
+				}, map)
+				if cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
+					if type(sign.SetNoDepthTest) == "function" then pcall(sign.SetNoDepthTest, sign, true) end
+					if type(sign.SetVisible) == "function" then pcall(sign.SetVisible, sign, true) end
+					if type(sign.SetOpacity) == "function" then pcall(sign.SetOpacity, sign, 100) end
+				end
+			else
+				CaptureEntranceBadgePosition(marker, sign,
+					"authoritative underground exit SetPos failed")
 			end
 			return
 		end
