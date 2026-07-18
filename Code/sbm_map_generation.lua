@@ -252,10 +252,6 @@ local StretchSourceToFull = TerrainCopy.StretchSourceToFull
 local StretchBiomeReady = TerrainCopy.StretchBiomeReady
 local ScaleDecorationsToFull = TerrainCopy.ScaleDecorationsToFull
 local ScaleMarkersToFull = TerrainCopy.ScaleMarkersToFull
-local BeginMarkerScaleTracking = TerrainCopy.BeginMarkerScaleTracking
-local TrackMarkerScaleObject = TerrainCopy.TrackMarkerScaleObject
-local CompleteMarkerScaleTracking = TerrainCopy.CompleteMarkerScaleTracking
-local ClearMarkerScaleTracking = TerrainCopy.ClearMarkerScaleTracking
 local StretchRelocateStartSector = TerrainCopy.StretchRelocateStartSector
 local MoveEntranceVisualsToScale = TerrainCopy.MoveEntranceVisualsToScale
 local AlignPassagePairsToSharedHex = TerrainCopy.AlignPassagePairsToSharedHex
@@ -881,9 +877,6 @@ end
 local function TransferGeneratedObjects(source, destination, source_baseline, excluded_objects)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
-	if type(BeginMarkerScaleTracking) == "function" then
-		BeginMarkerScaleTracking(destination)
-	end
 	local is_valid = Global("IsValid")
 	local roots, seen_roots = {}, {}
 	local function belongs_to_excluded_root(obj)
@@ -991,30 +984,9 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 		end
 	end
 	if failed > 0 or remaining_generated > 0 then
-		if type(ClearMarkerScaleTracking) == "function" then ClearMarkerScaleTracking(destination) end
 		error(string.format("temporary source object migration failed for %d objects: %s",
 			failed + remaining_generated, table.concat(failures, " | ")))
 	end
-	local tracked = 0
-	if type(TrackMarkerScaleObject) == "function" then
-		for i = 1, #objects do
-			local obj = objects[i]
-			if not (source_baseline and source_baseline[obj])
-				and not belongs_to_excluded_root(obj)
-				and TrackMarkerScaleObject(destination, obj) then
-				tracked = tracked + 1
-			end
-		end
-	end
-	if type(CompleteMarkerScaleTracking) == "function" then
-		local complete, complete_count = CompleteMarkerScaleTracking(destination)
-		if complete ~= true then error("temporary source marker tracking did not complete") end
-		tracked = complete_count or tracked
-	end
-	LoadingStep("temporary source marker transform list captured", {
-		transferred_roots = #roots, tracked_objects = tracked,
-	}, destination)
-	return #roots
 end
 
 local function FindTemporarySourceSlot(destination_slot)
@@ -4460,7 +4432,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			SetLoadingPhase("Stretching the underground terrain")
 			local ok_s, n_grids = true, 0
 			if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
-				ok_s, n_grids = StretchSourceToFull(map, { defer_revalidation = true })
+				ok_s, n_grids = StretchSourceToFull(map)
 				if ok_s ~= true or type(n_grids) ~= "number" or n_grids < 2 then
 					error("underground terrain stretch did not complete its height/type grids")
 				end
@@ -4523,37 +4495,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- the real underground entrances before any enrichment is accepted or moved.
 			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
-				if map.SuperBigMapTerrainRevalidationPending == true then
-					local revalidation_token = LoadingBegin("underground final RebuildGrids", map)
-					local call_ok, revalidated = pcall(ReinvalidateExpandedTerrain, map)
-					local grids_ok = call_ok and revalidated == true
-						and map.SuperBigMapRevalidationRebuiltGrids == true
-					LoadingEnd(revalidation_token, {
-						error = call_ok and "" or tostring(revalidated),
-						rebuilt_grids = tostring(map.SuperBigMapRevalidationRebuiltGrids == true),
-					}, grids_ok)
-					if not grids_ok then
-						error("underground final consolidated grid rebuild failed: "
-							.. tostring(call_ok and "RebuildGrids did not complete" or revalidated))
-					end
-					map.SuperBigMapTerrainRevalidationPending = nil
-				else
-					-- Compatibility path for a scenario which enables gameplay-grid finalization without
-					-- running the stretch step. It retains the previous explicit passability rebuild.
-					local terrain_api2 = Global("terrain")
-					if not (type(terrain_api2) == "table"
-						and type(terrain_api2.RebuildPassability) == "function") then
-						error("underground final passability rebuild is unavailable")
-					end
-					local passability_token = LoadingBegin("underground final RebuildPassability", map)
-					local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
-					LoadingEnd(passability_token, {
-						error = pass_ok and "" or tostring(pass_err),
-					}, pass_ok)
-					if not pass_ok then
-						error("underground final passability rebuild failed: " .. tostring(pass_err))
-					end
+				local terrain_api2 = Global("terrain")
+				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
+					error("underground final passability rebuild is unavailable")
 				end
+				local passability_token = LoadingBegin("underground final RebuildPassability", map)
+				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				LoadingEnd(passability_token, { error = pass_ok and "" or tostring(pass_err) }, pass_ok)
+				if not pass_ok then error("underground final passability rebuild failed: " .. tostring(pass_err)) end
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) ~= "function" then
 					error("underground final buildable-grid rebuild is unavailable")
