@@ -2684,11 +2684,13 @@ local function MaterializeDeferredUndergroundTunnelSpawns(map)
 	return spawned == #pending, spawned
 end
 
--- SurfacePassage's own entity is only a tiny carrier plane; the visible vanilla ground marker is
--- its auto-attached SurfacePassageRocks (ElevatorBuildIndicator_UndergroundRocks). The deferred
--- stretch can preserve the carrier while losing or detaching that child visual. Rebuild the normal
--- entity attachments after the passage reaches its final terrain position. This does not create a
--- tunnel sign, reveal a sector, or alter the passage/Elevator link.
+-- SurfacePassage's own entity is only a tiny carrier plane. Vanilla renders the visible underground
+-- ground marker through the carrier entity's baked-decal auto-attachment,
+-- ElevatorBuildIndicator_UndergroundPassageImprint. SurfacePassageRocks is a different standalone
+-- obstruction class and must not be used as an attachment test. The stretch may move an attached
+-- child independently from its carrier, so rebuild the vanilla entity attachments only after the
+-- passage reaches its committed final position. This does not create a tunnel sign, reveal a sector,
+-- or alter the passage/Elevator link.
 local function RefreshVanillaUndergroundPassageIndicators(map)
 	local auto_attach = Global("AutoAttachObjects")
 	local point_fn = Global("point")
@@ -2697,7 +2699,8 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 		return false, { error = "vanilla auto-attachment APIs unavailable" }
 	end
 	local passages = ArtefactMapGet(map, "SurfacePassage")
-	local stats = { passages = #passages, rebuilt = 0, rocks = 0, skipped_built = 0 }
+	local expected_decal_entity = "ElevatorBuildIndicator_UndergroundPassageImprint"
+	local stats = { passages = #passages, rebuilt = 0, decals = 0, skipped_built = 0 }
 	for index, passage in ipairs(passages) do
 		local built = passage.elevator or passage.elevator_construction
 		local entity
@@ -2749,23 +2752,34 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 				return false, { error = "failed to rebuild vanilla passage attachments: " .. tostring(err),
 					index = index }
 			end
-			local rocks = {}
+			local decals = {}
 			if type(passage.GetAttaches) == "function" then
-				local ok_rocks, value = pcall(passage.GetAttaches, passage, "SurfacePassageRocks")
-				if ok_rocks and type(value) == "table" then rocks = value end
+				local ok_attaches, attaches = pcall(passage.GetAttaches, passage)
+				if ok_attaches and type(attaches) == "table" then
+					for _, visual in ipairs(attaches) do
+						local visual_entity
+						if visual and type(visual.GetEntity) == "function" then
+							local ok_visual_entity, value = pcall(visual.GetEntity, visual)
+							if ok_visual_entity then visual_entity = value end
+						end
+						if visual_entity == expected_decal_entity then
+							decals[#decals + 1] = visual
+						end
+					end
+				end
 			end
-			if type(rocks) ~= "table" or #rocks == 0 then
-				return false, { error = "vanilla SurfacePassageRocks attachment was not recreated",
-					index = index, entity = tostring(entity) }
+			if #decals == 0 then
+				return false, { error = "vanilla underground passage baked-decal attachment was not recreated",
+					index = index, entity = tostring(entity), expected_decal_entity = expected_decal_entity }
 			end
-			for _, visual in ipairs(rocks) do
+			for _, visual in ipairs(decals) do
 				if type(visual.SetVisible) == "function" then pcall(visual.SetVisible, visual, true) end
 				if type(visual.SetOpacity) == "function" then pcall(visual.SetOpacity, visual, 100) end
 			end
 			if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, true) end
 			if type(passage.SetOpacity) == "function" then pcall(passage.SetOpacity, passage, 100) end
 			stats.rebuilt = stats.rebuilt + 1
-			stats.rocks = stats.rocks + #rocks
+			stats.decals = stats.decals + #decals
 		end
 	end
 	return stats.passages > 0, stats
