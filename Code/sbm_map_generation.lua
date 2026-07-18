@@ -4061,12 +4061,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					end
 				end
 				ResumeCombinedPassEdits("after surface marker movement")
-				-- Step 3b: move the entrance VISUALS (signs/structures/spawners -- skipped by the
-				-- decor pass) with the same transform, so what the player SEES matches the markers.
-				if type(MoveEntranceVisualsToScale) == "function" then
-					SetLoadingPhase("Aligning the underground entrances")
-					local n_vis = MoveEntranceVisualsToScale(map)
-				end
+				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
+				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
 				-- positive-overlap equivalent of the transformed vanilla winner is passed through the
 				-- original vanilla InitialReveal resource/heat/buildability logic, and only its first
@@ -4182,19 +4178,22 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					else
 						error("final surface RebuildBuildableGrid unavailable")
 					end
-					-- The preliminary passage plan is made while the underground is still a cheap source-
-					-- sized map and before this surface terrain is stretched. Re-run the same source-view
-					-- search now, against the authoritative final surface grid. This prevents a coordinate
-					-- that was flat in the pre-stretch surface from becoming the visible entrance on a
-					-- mountain after resampling, without forcing early underground expansion.
+					-- The cheap underground bootstrap records the vanilla underground source hex before
+					-- this surface exists in its stretched form. Project that authoritative hex onto the
+					-- final surface now. Use it exactly when its full footprint is valid; otherwise commit
+					-- the nearest valid surface-only hex without forcing early underground expansion.
 					local maps = Global("Maps")
 					if type(maps) == "table" and type(AlignPassagePairsToSharedHex) == "function" then
+						local seen_underground = {}
 						for slot, underground_map in pairs(maps) do
 							local underground_environment = underground_map and underground_map.mapdata
 								and underground_map.mapdata.Environment
 							if slot ~= 1 and underground_environment == "Underground"
+								and not seen_underground[underground_map]
 								and underground_map.SuperBigMapPassageBootstrapComplete == true
+								and underground_map.SuperBigMapPassageSurfaceFinalCommitted ~= true
 								and underground_map.SuperBigMapUndergroundStretchDone ~= true then
+								seen_underground[underground_map] = true
 								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
 									source_bootstrap = true,
 									prepare_surface_pad = true,
@@ -4208,6 +4207,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								underground_map.SuperBigMapPassageSurfaceFinalCommitted = true
 							end
 						end
+					end
+					-- Now every surface passage owns its immutable final coordinate. Scale the remaining
+					-- entrance structures and place each badge relative to that coordinate exactly once.
+					if type(MoveEntranceVisualsToScale) == "function" then
+						SetLoadingPhase("Aligning the underground entrances")
+						MoveEntranceVisualsToScale(map)
 					end
 				end
 				local rockets = SuperBigMap.RocketRules
@@ -4348,11 +4353,11 @@ end
 
 -- STRETCH for the UNDERGROUND map (config STRETCH_UNDERGROUND): the same resample pipeline as the
 -- surface in its underground form -- terrain grids + decorations + markers (incl. tunnel markers),
--- final buildable/passability grids, and enrichment density normalization. Because BOTH maps receive
--- the IDENTICAL x(full/source) transform, surface<->underground entrances keep corresponding: the
--- game spawns an underground passage AT the surface passage's own x,y and links the pair by
--- object reference. Triggered from PostNewMapLoaded for Environment=="Underground" maps; gates on
--- the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
+-- final buildable/passability grids, and enrichment density normalization. The underground's
+-- transformed vanilla passage hex is authoritative. Surface loading projects that hex onto the
+-- final surface and commits the nearest valid surface-only fallback when the exact footprint is
+-- uneven, blocked, or unbuildable. Triggered from PostNewMapLoaded for Environment=="Underground"
+-- maps; gates on the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
 local function UndergroundExpansionReadiness(map)
 	if map.SuperBigMapNativeGenerationComplete ~= true then
 		return false, "underground native generation has not completed"
@@ -4548,10 +4553,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("deferred underground wonder materialization failed: " .. tostring(wonder_result))
 				end
 			end
-			-- Entrance VISUALS follow their markers (same transform; see surface step 3b).
-			if type(MoveEntranceVisualsToScale) == "function" then
-				local n_vis = MoveEntranceVisualsToScale(map)
-			end
+			-- Entrance visuals are finalized only after the authoritative underground coordinate has
+			-- been cleared, prepared, moved, and validated against the final gameplay grids.
 			-- Natural entrance objects still receive exactly one transformation (the stretch).
 			-- The one exception is an Elevator already completed on the surface: its removed
 			-- pending underground half is rebuilt later on its live underground passage/imprint.
@@ -4591,16 +4594,6 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						or "pre-switch underground pipeline")
 					if not token then error("failed to create underground Elevator restore transaction") end
 				end
-				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
-				-- buildable grid disagreed with the expanded object grid. Both final grids are now
-				-- authoritative, so create and verify the deferred tunnel markers before entrance
-				-- reachability uses them as seeds.
-				SetLoadingPhase("Activating underground passage markers")
-				local tunnel_ok, tunnel_result = MaterializeDeferredUndergroundTunnelSpawns(map)
-				if tunnel_ok ~= true then
-					error("deferred underground passage-marker activation failed: "
-						.. tostring(tunnel_result))
-				end
 				if type(AlignPassagePairsToSharedHex) ~= "function" then
 					error("final passage-pair alignment API is unavailable")
 				end
@@ -4609,6 +4602,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				if pair_ok ~= true then
 					error("final passage-pair alignment failed: "
 						.. tostring(pair_stats and pair_stats.error or "unknown error"))
+				end
+				if type(MoveEntranceVisualsToScale) == "function" then
+					MoveEntranceVisualsToScale(map)
+				end
+				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
+				-- buildable grid disagreed with the expanded object grid. Align and prepare the immutable
+				-- true underground coordinate first, then create the deferred markers at that final
+				-- position so they cannot masquerade as blockers or retain a stale source coordinate.
+				SetLoadingPhase("Activating underground passage markers")
+				local tunnel_ok, tunnel_result = MaterializeDeferredUndergroundTunnelSpawns(map)
+				if tunnel_ok ~= true then
+					error("deferred underground passage-marker activation failed: "
+						.. tostring(tunnel_result))
 				end
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
