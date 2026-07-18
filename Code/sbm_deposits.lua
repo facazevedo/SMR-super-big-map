@@ -2547,7 +2547,7 @@ end
 
 local BuildTopUpEdgeContext
 local PerimeterCoordinate
-local RedistributeOuterRingAnomalies
+local RedistributeOuterRingTopUpAnomalies
 
 local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall, details)
 	if type(map) ~= "table" then return end
@@ -2825,9 +2825,10 @@ end
 -- cave-specific) families are preserved; breakthroughs are handled by the dedicated pass above.
 -- Each clone is hidden + sector-registered so a real scan reveals it. Underground extras retain
 -- whole-map placement because there is no surface mountain-edge ring there. Once the complete
--- surface anomaly population exists, every marker currently in the outer ring is reassigned using
--- a fresh random shuffle of the complete ring-sector list, then a random reachable point inside
--- the chosen sector. One vanilla repulsion tracker reserves the whole replacement population.
+-- surface anomaly population exists, every TOP-UP marker is reassigned using a fresh random
+-- shuffle of the complete ring-sector list, then a random reachable point inside the chosen
+-- sector. Native anomalies remain at their exact proportional vanilla coordinates and participate
+-- only as fixed obstacles in the vanilla repulsion tracker.
 function DepositRules.TopUpAnomalies(map)
 	if cfg().TOPUP_ANOMALIES ~= true then return end
 	if not ExpansionAdditionStagesReady("anomaly top-up") then return end
@@ -2974,7 +2975,7 @@ function DepositRules.TopUpAnomalies(map)
 		if surface_edge_ring then
 			local redistribution_ok, redistribution_error = RunPaused(
 				"SuperBigMapOuterRingAnomalyRedistribution", function()
-					local ok, stats = RedistributeOuterRingAnomalies(map, ring_sectors)
+					local ok, stats = RedistributeOuterRingTopUpAnomalies(map, ring_sectors)
 					redistribution_stats = stats
 					if not ok then error(stats and stats.error or "unknown redistribution failure") end
 				end)
@@ -3031,7 +3032,8 @@ function DepositRules.TopUpAnomalies(map)
 		-- Surface placement is finalized only after the complete population exists. Create every
 		-- missing ordinary anomaly as a temporary marker inside a canonical ring sector, without
 		-- consuming scarce reachable/repulsion slots one at a time. The redistribution transaction
-		-- below then ignores all old coordinates and plans native + added ring anomalies together.
+		-- below then ignores only top-up coordinates and plans all added anomalies together. Native
+		-- anomalies retain their exact stretched-vanilla positions and repel these new placements.
 		if surface_edge_ring then
 			edge_ctx = BuildTopUpEdgeContext(map)
 			local placeholder_sectors = {}
@@ -3100,7 +3102,7 @@ function DepositRules.TopUpAnomalies(map)
 				clone.placed_obj = false
 				SetRevealedState(clone, false)
 			end
-			local ok, stats = RedistributeOuterRingAnomalies(map, ring_sectors)
+			local ok, stats = RedistributeOuterRingTopUpAnomalies(map, ring_sectors)
 			redistribution_stats = stats
 			if not ok then error(stats and stats.error or "unknown redistribution failure") end
 			return
@@ -3556,7 +3558,7 @@ function DepositRules.TopUpAnomalies(map)
 			end
 		end
 		if surface_edge_ring then
-			local ok, stats = RedistributeOuterRingAnomalies(map, ring_sectors)
+			local ok, stats = RedistributeOuterRingTopUpAnomalies(map, ring_sectors)
 			redistribution_stats = stats
 			if not ok then error(stats and stats.error or "unknown redistribution failure") end
 		end
@@ -3679,12 +3681,12 @@ BuildTopUpEdgeContext = function(map)
 	return ctx
 end
 
--- Replace every anomaly that currently belongs to the final N-sector perimeter ring. First plan
--- the complete new population against one repulsion tracker, then move it, so a failed search can
--- never leave a half-redistributed map. Each anomaly receives a fresh shuffle of ALL ring sectors;
--- terrain is considered only after a sector is drawn. This keeps the lower-right perimeter just as
--- eligible as every other side and preserves vanilla anomaly-family spacing plus unique hexes.
-RedistributeOuterRingAnomalies = function(map, ring_sectors)
+-- Replace every TOP-UP anomaly in the final N-sector perimeter ring. Native anomalies are never
+-- selected or moved: their exact proportional vanilla positions seed the repulsion tracker as fixed
+-- obstacles. First plan the complete top-up population, then move it, so a failed search can never
+-- leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors; terrain
+-- is considered only after a sector is drawn. This keeps the lower-right perimeter fully eligible.
+RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
 		bottom_sectors = 0, right_sectors = 0,
@@ -3754,6 +3756,7 @@ RedistributeOuterRingAnomalies = function(map, ring_sectors)
 	local moving, ignored = {}, {}
 	local enumeration_ok, enumeration_error = pcall(
 		map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+			if not (marker and marker.SuperBigMapAnomalyTopUp == true) then return end
 			local pos = marker and ObjectPos(marker)
 			if not (pos and type(pos.xy) == "function" and type(marker.SetPos) == "function") then return end
 			local x, y = pos:xy()
@@ -3792,7 +3795,7 @@ RedistributeOuterRingAnomalies = function(map, ring_sectors)
 	end
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
-		print_fn("[Super Big Map][OuterRingAnomalies] BEFORE count=" .. tostring(#moving)
+		print_fn("[Super Big Map][OuterRingTopUpAnomalies] BEFORE count=" .. tostring(#moving)
 			.. " sectors=" .. tostring(#ring)
 			.. " bottom_sectors=" .. tostring(stats.bottom_sectors)
 			.. " right_sectors=" .. tostring(stats.right_sectors)
@@ -3800,7 +3803,7 @@ RedistributeOuterRingAnomalies = function(map, ring_sectors)
 	end
 	if #moving == 0 then
 		if type(print_fn) == "function" then
-			print_fn("[Super Big Map][OuterRingAnomalies] AFTER count=0 sectors="
+			print_fn("[Super Big Map][OuterRingTopUpAnomalies] AFTER count=0 sectors="
 				.. tostring(#ring) .. " positions=")
 		end
 		return true, stats
@@ -3944,7 +3947,7 @@ RedistributeOuterRingAnomalies = function(map, ring_sectors)
 		stats.moved = stats.moved + 1
 	end
 	if type(print_fn) == "function" then
-		print_fn("[Super Big Map][OuterRingAnomalies] AFTER count=" .. tostring(#plans)
+		print_fn("[Super Big Map][OuterRingTopUpAnomalies] AFTER count=" .. tostring(#plans)
 			.. " sectors=" .. tostring(#ring)
 			.. " bottom_sectors=" .. tostring(stats.bottom_sectors)
 			.. " right_sectors=" .. tostring(stats.right_sectors)
@@ -4197,8 +4200,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	local function is_topup(marker)
 		return marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
-			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapEdgeRedistributed == true)
+			or marker.SuperBigMapEffectTopUp == true)
 	end
 	local entries = {}
 	local stats = {
