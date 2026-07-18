@@ -93,7 +93,6 @@ end
 -- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
 -- equivalent pools. Weak map keys release abandoned-map entries automatically.
 local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
-local topup_repulsion_tracker_by_map = setmetatable({}, { __mode = "k" })
 -- Final underground connectivity state, built only after the stretched passability/buildable
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
@@ -112,7 +111,6 @@ end
 local function ClearTopUpPlacementPool(map)
 	if map then
 		topup_candidate_pool_by_map[map] = nil
-		topup_repulsion_tracker_by_map[map] = nil
 		underground_reachability_by_map[map] = nil
 	end
 end
@@ -574,24 +572,11 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local balanced = cfg().TOPUP_SECTOR_BALANCED_PLACEMENT ~= false
 	local loads = BuildEnrichmentSectorLoads(map)
 	local capacity, capacity_by_terrain = {}, {}
-	local all_source = { list = {}, sectors = {}, sector_order = {} }
-	local sources_by_terrain = {}
-	local function add_to_source(source, candidate, key, ordinal)
-		source.list[#source.list + 1] = candidate
-		local sector_source = source.sectors[key]
-		if not sector_source then
-			sector_source = { key = key, list = {}, first_ordinal = ordinal }
-			source.sectors[key] = sector_source
-			source.sector_order[#source.sector_order + 1] = sector_source
-		end
-		sector_source.list[#sector_source.list + 1] = candidate
-	end
 	local remaining, eligible_sector_set, eligible_sectors = 0, {}, 0
-	for ordinal, candidate in ipairs(candidates) do
+	for _, candidate in ipairs(candidates) do
 		if not candidate.used then
 			local _, key = CandidateSector(map, candidate)
 			if key then
-				candidate._sbm_selector_ordinal = ordinal
 				remaining = remaining + 1
 				capacity[key] = (capacity[key] or 0) + 1
 				if not eligible_sector_set[key] then
@@ -602,13 +587,6 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 				local by_sector = capacity_by_terrain[terrain_key]
 				if not by_sector then by_sector = {}; capacity_by_terrain[terrain_key] = by_sector end
 				by_sector[key] = (by_sector[key] or 0) + 1
-				add_to_source(all_source, candidate, key, ordinal)
-				local terrain_source = sources_by_terrain[terrain_key]
-				if not terrain_source then
-					terrain_source = { list = {}, sectors = {}, sector_order = {} }
-					sources_by_terrain[terrain_key] = terrain_source
-				end
-				add_to_source(terrain_source, candidate, key, ordinal)
 			end
 		end
 	end
@@ -618,60 +596,33 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local function take(terrain_type, context)
 		local terrain_key = terrain_type ~= nil and tostring(terrain_type) or nil
 		local terrain_capacity = terrain_key and capacity_by_terrain[terrain_key] or nil
-		local source = terrain_key and sources_by_terrain[terrain_key] or all_source
-		if not source then return nil end
-		local best = {}
-		if not balanced then
-			for _, candidate in ipairs(source.list) do
-				if not candidate.used and (type(candidate_filter) ~= "function"
+		-- Compatibility contract: preserve the original full candidate traversal, predicate call
+		-- order, tie order, and single RandInt call. Repulsion memoization below accelerates repeated
+		-- terrain-specific/fallback queries without changing this selector's observable behavior.
+		local best, best_load, best_capacity = {}, nil, nil
+		for _, candidate in ipairs(candidates) do
+			if not candidate.used
+				and (terrain_key == nil or tostring(candidate.terrain_type) == terrain_key)
+				and (type(candidate_filter) ~= "function"
 					or candidate_filter(candidate, context) == true) then
-					best[#best + 1] = candidate
-				end
-		end
-		else
-			-- Every candidate in one sector has the same load/capacity ratio. Rank the small
-			-- sector set first, then evaluate dynamic repulsion only in the lowest ratio tier
-			-- containing a valid candidate. This is mathematically identical to the old full
-			-- candidate scan; winners are restored to original candidate order before RandInt.
-			local ranked = {}
-			for _, sector_source in ipairs(source.sector_order) do
-				local key = sector_source.key
-				local candidate_capacity = (terrain_capacity and terrain_capacity[key]) or capacity[key] or 0
-				if candidate_capacity > 0 then
-					ranked[#ranked + 1] = {
-						source = sector_source, key = key, capacity = candidate_capacity,
-						load = loads[key] or 0,
-					}
-				end
-			end
-			table.sort(ranked, function(a, b)
-				local left, right = a.load * b.capacity, b.load * a.capacity
-				if left ~= right then return left < right end
-				return a.source.first_ordinal < b.source.first_ordinal
-			end)
-			local tier_load, tier_capacity
-			for _, ranked_sector in ipairs(ranked) do
-				if #best > 0 and tier_load * ranked_sector.capacity
-					~= ranked_sector.load * tier_capacity then
-					break
-				end
-				local sector_matches = {}
-				for _, candidate in ipairs(ranked_sector.source.list) do
-					if not candidate.used and (type(candidate_filter) ~= "function"
-						or candidate_filter(candidate, context) == true) then
-						sector_matches[#sector_matches + 1] = candidate
+				local _, key = CandidateSector(map, candidate)
+				local candidate_capacity = key
+					and ((terrain_capacity and terrain_capacity[key]) or capacity[key]) or 0
+				if key and candidate_capacity > 0 then
+					local candidate_load = loads[key] or 0
+					local better = not best_load
+						or candidate_load * best_capacity < best_load * candidate_capacity
+					local equal = best_load
+						and candidate_load * best_capacity == best_load * candidate_capacity
+					if not balanced then better, equal = best_load == nil, best_load ~= nil end
+					if better then
+						best = { candidate }
+						best_load, best_capacity = candidate_load, candidate_capacity
+					elseif equal then
+						best[#best + 1] = candidate
 					end
 				end
-				if #sector_matches > 0 then
-					if #best == 0 then
-						tier_load, tier_capacity = ranked_sector.load, ranked_sector.capacity
-					end
-					for _, candidate in ipairs(sector_matches) do best[#best + 1] = candidate end
-				end
 			end
-			table.sort(best, function(a, b)
-				return (a._sbm_selector_ordinal or 0) < (b._sbm_selector_ordinal or 0)
-			end)
 		end
 		if #best == 0 then return nil end
 		local candidate = best[RandInt(#best) + 1]
@@ -700,6 +651,7 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local function stats()
 		return {
 			label = tostring(label or "top-up"), balanced = balanced,
+			contract = "reference-order-single-rand",
 			eligible_sectors = eligible_sectors, selected_sectors = selected_sectors,
 			selected = selected_count, remaining_candidates = remaining,
 			max_additions_to_one_sector = max_additions_to_sector,
@@ -1412,7 +1364,22 @@ local function NewTopUpRepulsionTracker(map, label)
 		checks = 0, nearby_pair_checks = 0, duplicate_hex_rejects = 0,
 		repulsion_rejects = 0, missing_profile_rejects = 0,
 		invalid_position_rejects = 0, seed_missing_profile = 0,
+		cache_hits = 0, cache_misses = 0,
 	}
+	-- A failed terrain-specific Take is immediately retried against the whole candidate pool with
+	-- the same profile. The reference selector must still invoke CanPlace in its original order, but
+	-- the geometric answer is immutable until Commit adds a new obstacle. Cache by candidate,
+	-- profile values, and obstacle generation so those repeated calls avoid the native hex and
+	-- bucket walk without altering the selector or its RNG stream.
+	local obstacle_generation = 0
+	local placement_cache = setmetatable({}, { __mode = "k" })
+	local function profile_cache_key(profile)
+		return table.concat({
+			tostring(profile.layer), tostring(profile.resource), tostring(profile.preset),
+			tostring(profile.repulse_same), tostring(profile.repulse_layer),
+			tostring(profile.repulse_all),
+		}, ":")
+	end
 
 	local function bucket_coordinate(value)
 		return math.floor((value + 0.0) / BUCKET_SIZE)
@@ -1487,9 +1454,27 @@ local function NewTopUpRepulsionTracker(map, label)
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
 			return false
 		end
+		local profile_key = profile_cache_key(profile)
+		local candidate_cache = placement_cache[candidate]
+		local cached = candidate_cache and candidate_cache[profile_key]
+		if cached and cached.generation == obstacle_generation then
+			stats.cache_hits = stats.cache_hits + 1
+			return cached.allowed
+		end
+		stats.cache_misses = stats.cache_misses + 1
+		if not candidate_cache then
+			candidate_cache = {}
+			placement_cache[candidate] = candidate_cache
+		end
+		local function remember(allowed)
+			candidate_cache[profile_key] = {
+				generation = obstacle_generation, allowed = allowed == true,
+			}
+			return allowed == true
+		end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
-			return false
+			return remember(false)
 		end
 		local search_radius = math.max(
 			(profile.repulse_same or 0) + max_same,
@@ -1508,18 +1493,19 @@ local function NewTopUpRepulsionTracker(map, label)
 						if type(required) == "number"
 							and dx * dx + dy * dy <= required * required then
 							stats.repulsion_rejects = stats.repulsion_rejects + 1
-							return false
+							return remember(false)
 						end
 					end
 				end
 			end
 		end
-		return true
+		return remember(true)
 	end
 
 	local function commit(candidate, profile, marker)
 		if not candidate or not profile then return false end
 		if not add_entry(candidate.x, candidate.y, profile, marker, true) then return false end
+		obstacle_generation = obstacle_generation + 1
 		stats.committed = stats.committed + 1
 		return true
 	end
@@ -2771,10 +2757,7 @@ function DepositRules.TopUpDeposits(map)
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
 		local repulsion_token = LoadingBegin("resource top-up repulsion index", map)
-		local repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
-		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-			topup_repulsion_tracker_by_map[map] = repulsion
-		end
+		local repulsion = NewTopUpRepulsionTracker(map, "resources")
 		LoadingEnd(repulsion_token, repulsion.Stats(), true)
 		local selector_token = LoadingBegin("resource top-up sector selector index", map, {
 			candidates = #shared_candidates,
@@ -3088,14 +3071,7 @@ function DepositRules.TopUpAnomalies(map)
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 	RunPaused("SuperBigMapAnomalyTopUp", function()
-		local repulsion = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-			and topup_repulsion_tracker_by_map[map] or nil
-		if not repulsion then
-			repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
-			if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-				topup_repulsion_tracker_by_map[map] = repulsion
-			end
-		end
+		local repulsion = NewTopUpRepulsionTracker(map, "anomalies")
 		local candidates = {}
 		local ring_sector_pool = {}
 		local BASE_WHOLE_MAP_SAMPLES = 6000
@@ -3754,14 +3730,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	local added_by_type = {}
 	local reused_pool = false
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
-		local repulsion = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-			and topup_repulsion_tracker_by_map[map] or nil
-		if not repulsion then
-			repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
-			if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-				topup_repulsion_tracker_by_map[map] = repulsion
-			end
-		end
+		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
 		local target_pool = math.min(MAX_POOL, math.max(512, total_shortfall * 32))
