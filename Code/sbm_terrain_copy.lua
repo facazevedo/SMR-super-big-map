@@ -44,6 +44,12 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+-- The temporary-source migration already enumerates every generated object in deterministic
+-- engine order. Retain the small subset which still needs the proportional marker transform so
+-- ScaleMarkersToFull does not perform a second full-map CObject query. Weak map keys release an
+-- abandoned transaction, and an incomplete list is never consumed.
+local marker_scale_objects_by_map = setmetatable({}, { __mode = "k" })
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -464,7 +470,7 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	return true
 end
 
-local function StretchSourceToFull(map)
+local function StretchSourceToFull(map, options)
 	if not map then return false, 0 end
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
@@ -697,9 +703,20 @@ local function StretchSourceToFull(map)
 			end
 		end
 	end
-	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
-	ReinvalidateExpandedTerrain(map)
-	LoadingEnd(invalidate_token, nil, true)
+	local defer_revalidation = type(options) == "table"
+		and options.defer_revalidation == true
+	if defer_revalidation then
+		-- Underground decorations, wonders, and entrances move after the grid stretch. Rebuilding
+		-- passability here and again after those moves duplicates the dominant native grid pass.
+		-- Height/type setters have already invalidated their grids; the complete RebuildGrids
+		-- transaction is performed once at the final-object boundary in sbm_map_generation.lua.
+		map.SuperBigMapTerrainRevalidationPending = true
+		LoadingStep("terrain revalidation deferred until final object state", nil, map)
+	else
+		local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
+		ReinvalidateExpandedTerrain(map)
+		LoadingEnd(invalidate_token, nil, true)
+	end
 	LoadingStep("terrain stretch grid suite complete", {
 		completed_grids = done,
 		source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
@@ -981,9 +998,25 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 			or IsKindOfSafe(obj, "BuriedWonderMarker")
 	end
 	local objs = {}
-	if type(map.MapForEach) == "function" then
+	local tracked = marker_scale_objects_by_map[map]
+	local tracked_complete = type(tracked) == "table" and tracked.complete == true
+	if tracked_complete then
+		for i = 1, #tracked.objects do
+			local obj = tracked.objects[i]
+			local pos = ObjectPosition(obj)
+			local inside = true
+			if pos and type(src_box.Point2DInside) == "function" then
+				inside = SafeCall(src_box.Point2DInside, src_box, pos) == true
+			end
+			if inside then objs[#objs + 1] = obj end
+		end
+	elseif type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, src_box, "CObject", function(o) objs[#objs + 1] = o end)
 	end
+	LoadingStep("marker transform input selected", {
+		mode = tracked_complete and "tracked-transfer-list" or "full-map-fallback",
+		objects = #objs,
+	}, map)
 	local moved = 0
 	-- Sector marker REGISTRIES: each MapSector keeps per-sector marker lists (sector.markers.*)
 	-- that vanilla Scan reveals from. A moved marker must be re-registered from its old sector to
@@ -1069,7 +1102,84 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 	if owns_pass_batch then
 		pcall(map.ResumePassEdits, map, "SuperBigMapStretchMarkers")
 	end
+	marker_scale_objects_by_map[map] = nil
 	return moved
+end
+
+local function BeginMarkerScaleTracking(map)
+	if not map then return false end
+	marker_scale_objects_by_map[map] = {
+		objects = {}, seen = setmetatable({}, { __mode = "k" }), complete = false,
+	}
+	return true
+end
+
+local function TrackMarkerScaleObject(map, obj)
+	local state = map and marker_scale_objects_by_map[map]
+	if type(state) ~= "table" or state.complete == true or not obj then return false end
+	local important = IsImportantSectorObject(obj)
+		or IsKindOfSafe(obj, "Deposit")
+		or IsKindOfSafe(obj, "SubsurfaceAnomaly")
+		or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
+		or IsKindOfSafe(obj, "EffectDepositMarker")
+		or IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker")
+		or IsKindOfSafe(obj, "BuriedWonderMarker")
+	if not important or state.seen[obj] then return false end
+	state.seen[obj] = true
+	state.objects[#state.objects + 1] = obj
+	return true
+end
+
+local function CompleteMarkerScaleTracking(map)
+	local state = map and marker_scale_objects_by_map[map]
+	if type(state) ~= "table" then return false, 0 end
+	state.complete = true
+	return true, #state.objects
+end
+
+local function ClearMarkerScaleTracking(map)
+	if map then marker_scale_objects_by_map[map] = nil end
+end
+
+-- Debug-only, read-only hashes used to prove that an optimization did not alter final terrain.
+-- xxhash accepts native/compute grid userdata directly; the vanilla map generator uses it for the
+-- same purpose when validating prefab and biome grids.
+local function DebugTerrainFingerprint(map)
+	local xxhash = Global("xxhash")
+	if not map or type(xxhash) ~= "function" then
+		return nil, { error = "xxhash/map unavailable" }
+	end
+	local terrain_api = Global("terrain")
+	local editor_api = Global("editor")
+	local parts, hashes = {}, {}
+	local function add(name, value)
+		if not value then
+			hashes[name] = "missing"
+		else
+			local ok, hash = pcall(xxhash, value)
+			hashes[name] = ok and tostring(hash) or "error"
+		end
+		parts[#parts + 1] = tostring(name) .. "=" .. tostring(hashes[name])
+	end
+	if type(terrain_api) == "table" then
+		add("height", type(terrain_api.GetHeightGrid) == "function"
+			and SafeCall(terrain_api.GetHeightGrid, map) or nil)
+		add("type", type(terrain_api.GetTypeGrid) == "function"
+			and SafeCall(terrain_api.GetTypeGrid, map) or nil)
+	else
+		add("height", nil)
+		add("type", nil)
+	end
+	for _, name in ipairs({ "BiomeGrid", "colorize", "clutter_density", "grass_density" }) do
+		local ref = type(editor_api) == "table" and type(editor_api.GetGridRef) == "function"
+			and SafeCall(editor_api.GetGridRef, map, name) or nil
+		add(name, ref)
+	end
+	table.sort(parts)
+	local material = table.concat(parts, "|")
+	local ok, combined = pcall(xxhash, material)
+	hashes.combined = ok and tostring(combined) or material
+	return hashes.combined, hashes
 end
 
 -- STRETCH step 3b (entrance visuals): the decoration pass deliberately skips live
@@ -2234,6 +2344,11 @@ local TerrainCopy = {
 	StretchBiomeReady = StretchBiomeReady,
 	ScaleDecorationsToFull = ScaleDecorationsToFull,
 	ScaleMarkersToFull = ScaleMarkersToFull,
+	BeginMarkerScaleTracking = BeginMarkerScaleTracking,
+	TrackMarkerScaleObject = TrackMarkerScaleObject,
+	CompleteMarkerScaleTracking = CompleteMarkerScaleTracking,
+	ClearMarkerScaleTracking = ClearMarkerScaleTracking,
+	DebugTerrainFingerprint = DebugTerrainFingerprint,
 	StretchRelocateStartSector = StretchRelocateStartSector,
 	MoveEntranceVisualsToScale = MoveEntranceVisualsToScale,
 	AlignPassagePairsToSharedHex = AlignPassagePairsToSharedHex,

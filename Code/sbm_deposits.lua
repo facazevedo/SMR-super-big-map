@@ -31,6 +31,37 @@ local function AuditEmit(event, data, map)
 	end
 end
 
+local function LoadingBegin(name, map, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.LoadingBegin) == "function"
+		and diagnostics.LoadingBegin(name, map, data) or false
+end
+
+local function LoadingEnd(token, data, ok)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.LoadingEnd) == "function" then
+		diagnostics.LoadingEnd(token, data, ok)
+	end
+end
+
+local function ProfileNow()
+	local diagnostics = SuperBigMap.Diagnostics
+	if not (diagnostics and type(diagnostics.LoadingEnabled) == "function"
+		and diagnostics.LoadingEnabled() == true) then return nil end
+	local now = Global("GetPreciseTicks") or Global("RealTime")
+	if type(now) ~= "function" then return nil end
+	local ok, value = pcall(now)
+	return ok and type(value) == "number" and value or nil
+end
+
+local function ProfileElapsed(profile, key, started)
+	if type(profile) ~= "table" or type(started) ~= "number" then return end
+	local finished = ProfileNow()
+	if type(finished) == "number" and finished >= started then
+		profile[key] = (profile[key] or 0) + finished - started
+	end
+end
+
 local function CountMapString(values)
 	if type(values) ~= "table" then return "" end
 	local keys = {}
@@ -62,6 +93,7 @@ end
 -- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
 -- equivalent pools. Weak map keys release abandoned-map entries automatically.
 local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
+local topup_repulsion_tracker_by_map = setmetatable({}, { __mode = "k" })
 -- Final underground connectivity state, built only after the stretched passability/buildable
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
@@ -80,6 +112,7 @@ end
 local function ClearTopUpPlacementPool(map)
 	if map then
 		topup_candidate_pool_by_map[map] = nil
+		topup_repulsion_tracker_by_map[map] = nil
 		underground_reachability_by_map[map] = nil
 	end
 end
@@ -372,6 +405,55 @@ local function CanReceiveDeposit(map, pt)
 	return CanReceiveDepositTerrain(map, pt) and IsUnobstructedAt(map, pt, true)
 end
 
+-- Diagnostic equivalent of CanReceiveDeposit. Predicate order and short-circuit behavior are
+-- intentionally identical; only the gated LoadingTiming channel pays for the per-predicate clock
+-- reads. This identifies the expensive native query without changing sampling or RNG consumption.
+local function CanReceiveDepositProfiled(map, pt, profile)
+	if type(profile) ~= "table" or ProfileNow() == nil then
+		return CanReceiveDeposit(map, pt)
+	end
+	profile.attempts = (profile.attempts or 0) + 1
+	local started = ProfileNow()
+	local passable = PassableAt(map, pt)
+	ProfileElapsed(profile, "passable_ms", started)
+	if not passable then
+		profile.rejected_passable = (profile.rejected_passable or 0) + 1
+		return false
+	end
+	started = ProfileNow()
+	local flat = (FlatnessAt(map, pt) or 0) >= TopUpFlatnessMinimum()
+	ProfileElapsed(profile, "flatness_ms", started)
+	if not flat then
+		profile.rejected_flatness = (profile.rejected_flatness or 0) + 1
+		return false
+	end
+	started = ProfileNow()
+	local buildable = IsBuildableAt(map, pt, true)
+	ProfileElapsed(profile, "buildable_ms", started)
+	if not buildable then
+		profile.rejected_buildable = (profile.rejected_buildable or 0) + 1
+		return false
+	end
+	if IsUndergroundMap(map) then
+		started = ProfileNow()
+		local reachable = IsReachableFromUndergroundEntrance(map, pt)
+		ProfileElapsed(profile, "connectivity_ms", started)
+		if not reachable then
+			profile.rejected_connectivity = (profile.rejected_connectivity or 0) + 1
+			return false
+		end
+	end
+	started = ProfileNow()
+	local unobstructed = IsUnobstructedAt(map, pt, true)
+	ProfileElapsed(profile, "obstruction_ms", started)
+	if not unobstructed then
+		profile.rejected_obstruction = (profile.rejected_obstruction or 0) + 1
+		return false
+	end
+	profile.accepted = (profile.accepted or 0) + 1
+	return true
+end
+
 local function SectorAtPoint(map, x, y)
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
@@ -492,11 +574,24 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local balanced = cfg().TOPUP_SECTOR_BALANCED_PLACEMENT ~= false
 	local loads = BuildEnrichmentSectorLoads(map)
 	local capacity, capacity_by_terrain = {}, {}
+	local all_source = { list = {}, sectors = {}, sector_order = {} }
+	local sources_by_terrain = {}
+	local function add_to_source(source, candidate, key, ordinal)
+		source.list[#source.list + 1] = candidate
+		local sector_source = source.sectors[key]
+		if not sector_source then
+			sector_source = { key = key, list = {}, first_ordinal = ordinal }
+			source.sectors[key] = sector_source
+			source.sector_order[#source.sector_order + 1] = sector_source
+		end
+		sector_source.list[#sector_source.list + 1] = candidate
+	end
 	local remaining, eligible_sector_set, eligible_sectors = 0, {}, 0
-	for _, candidate in ipairs(candidates) do
+	for ordinal, candidate in ipairs(candidates) do
 		if not candidate.used then
 			local _, key = CandidateSector(map, candidate)
 			if key then
+				candidate._sbm_selector_ordinal = ordinal
 				remaining = remaining + 1
 				capacity[key] = (capacity[key] or 0) + 1
 				if not eligible_sector_set[key] then
@@ -507,6 +602,13 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 				local by_sector = capacity_by_terrain[terrain_key]
 				if not by_sector then by_sector = {}; capacity_by_terrain[terrain_key] = by_sector end
 				by_sector[key] = (by_sector[key] or 0) + 1
+				add_to_source(all_source, candidate, key, ordinal)
+				local terrain_source = sources_by_terrain[terrain_key]
+				if not terrain_source then
+					terrain_source = { list = {}, sectors = {}, sector_order = {} }
+					sources_by_terrain[terrain_key] = terrain_source
+				end
+				add_to_source(terrain_source, candidate, key, ordinal)
 			end
 		end
 	end
@@ -516,29 +618,60 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local function take(terrain_type, context)
 		local terrain_key = terrain_type ~= nil and tostring(terrain_type) or nil
 		local terrain_capacity = terrain_key and capacity_by_terrain[terrain_key] or nil
-		local best, best_load, best_capacity = {}, nil, nil
-		for _, candidate in ipairs(candidates) do
-			if not candidate.used
-				and (terrain_key == nil or tostring(candidate.terrain_type) == terrain_key)
-				and (type(candidate_filter) ~= "function"
+		local source = terrain_key and sources_by_terrain[terrain_key] or all_source
+		if not source then return nil end
+		local best = {}
+		if not balanced then
+			for _, candidate in ipairs(source.list) do
+				if not candidate.used and (type(candidate_filter) ~= "function"
 					or candidate_filter(candidate, context) == true) then
-				local _, key = CandidateSector(map, candidate)
-				local candidate_capacity = key and ((terrain_capacity and terrain_capacity[key]) or capacity[key]) or 0
-				if key and candidate_capacity > 0 then
-					local candidate_load = loads[key] or 0
-					local better = not best_load
-						or candidate_load * best_capacity < best_load * candidate_capacity
-					local equal = best_load
-						and candidate_load * best_capacity == best_load * candidate_capacity
-					if not balanced then better, equal = best_load == nil, best_load ~= nil end
-					if better then
-						best = { candidate }
-						best_load, best_capacity = candidate_load, candidate_capacity
-					elseif equal then
-						best[#best + 1] = candidate
-					end
+					best[#best + 1] = candidate
+				end
+		end
+		else
+			-- Every candidate in one sector has the same load/capacity ratio. Rank the small
+			-- sector set first, then evaluate dynamic repulsion only in the lowest ratio tier
+			-- containing a valid candidate. This is mathematically identical to the old full
+			-- candidate scan; winners are restored to original candidate order before RandInt.
+			local ranked = {}
+			for _, sector_source in ipairs(source.sector_order) do
+				local key = sector_source.key
+				local candidate_capacity = (terrain_capacity and terrain_capacity[key]) or capacity[key] or 0
+				if candidate_capacity > 0 then
+					ranked[#ranked + 1] = {
+						source = sector_source, key = key, capacity = candidate_capacity,
+						load = loads[key] or 0,
+					}
 				end
 			end
+			table.sort(ranked, function(a, b)
+				local left, right = a.load * b.capacity, b.load * a.capacity
+				if left ~= right then return left < right end
+				return a.source.first_ordinal < b.source.first_ordinal
+			end)
+			local tier_load, tier_capacity
+			for _, ranked_sector in ipairs(ranked) do
+				if #best > 0 and tier_load * ranked_sector.capacity
+					~= ranked_sector.load * tier_capacity then
+					break
+				end
+				local sector_matches = {}
+				for _, candidate in ipairs(ranked_sector.source.list) do
+					if not candidate.used and (type(candidate_filter) ~= "function"
+						or candidate_filter(candidate, context) == true) then
+						sector_matches[#sector_matches + 1] = candidate
+					end
+				end
+				if #sector_matches > 0 then
+					if #best == 0 then
+						tier_load, tier_capacity = ranked_sector.load, ranked_sector.capacity
+					end
+					for _, candidate in ipairs(sector_matches) do best[#best + 1] = candidate end
+				end
+			end
+			table.sort(best, function(a, b)
+				return (a._sbm_selector_ordinal or 0) < (b._sbm_selector_ordinal or 0)
+			end)
 		end
 		if #best == 0 then return nil end
 		local candidate = best[RandInt(#best) + 1]
@@ -2588,8 +2721,14 @@ function DepositRules.TopUpDeposits(map)
 		-- the lowest existing-enrichment load relative to sampled eligible terrain area.
 		local shared_candidates, pool = {}, 0
 		local MAX_SAMPLES, MAX_POOL = 24000, 8000
+		local sampled = 0
+		local pool_profile = ProfileNow() ~= nil and {} or false
+		local pool_token = LoadingBegin("resource top-up candidate pool", map, {
+			max_samples = MAX_SAMPLES, max_pool = MAX_POOL,
+		})
 		for _ = 1, MAX_SAMPLES do
 			if pool >= MAX_POOL then break end
+			sampled = sampled + 1
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
 			-- Spread across the whole unscanned expanded destination,
@@ -2602,22 +2741,47 @@ function DepositRules.TopUpDeposits(map)
 				cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3)
 			if sector and (IsUndergroundMap(map) or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt) then
+				if CanReceiveDepositProfiled(map, pt, pool_profile) then
 					local tt = TerrainTypeAt(map, pt) or -1
 					local candidate = {
 						x = x, y = y, terrain_type = tt, sector = sector, sector_id = sector.id,
+						_sbm_can_receive = true,
 					}
 					shared_candidates[#shared_candidates + 1] = candidate
 					pool = pool + 1
 				end
 			end
 		end
+		local profile = type(pool_profile) == "table" and pool_profile or {}
+		LoadingEnd(pool_token, {
+			samples = sampled, accepted = pool,
+			predicate_attempts = profile.attempts or 0,
+			passable_ms = profile.passable_ms or 0,
+			flatness_ms = profile.flatness_ms or 0,
+			buildable_ms = profile.buildable_ms or 0,
+			connectivity_ms = profile.connectivity_ms or 0,
+			obstruction_ms = profile.obstruction_ms or 0,
+			rejected_passable = profile.rejected_passable or 0,
+			rejected_flatness = profile.rejected_flatness or 0,
+			rejected_buildable = profile.rejected_buildable or 0,
+			rejected_connectivity = profile.rejected_connectivity or 0,
+			rejected_obstruction = profile.rejected_obstruction or 0,
+		}, true)
 		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
-		local repulsion = NewTopUpRepulsionTracker(map, "resources")
+		local repulsion_token = LoadingBegin("resource top-up repulsion index", map)
+		local repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
+		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+			topup_repulsion_tracker_by_map[map] = repulsion
+		end
+		LoadingEnd(repulsion_token, repulsion.Stats(), true)
+		local selector_token = LoadingBegin("resource top-up sector selector index", map, {
+			candidates = #shared_candidates,
+		})
 		local selector = NewSectorBalancedCandidateSelector(map, shared_candidates, "resources",
 			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+		LoadingEnd(selector_token, selector.Stats(), true)
 		local function take(tt, profile)
 			return selector.Take(tt, profile)
 		end
@@ -2683,6 +2847,9 @@ function DepositRules.TopUpDeposits(map)
 
 		-- A candidate is reserved by Take. If cloning that candidate fails, keep trying unused
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
+		local placement_token = LoadingBegin("resource top-up selection and cloning", map, {
+			shortfall = shortfall, candidates = #shared_candidates,
+		})
 		while added < shortfall and selector.Remaining() > 0 do
 			local c, template, tpos, profile = select_needed_placement()
 			if not c then break end
@@ -2714,6 +2881,12 @@ function DepositRules.TopUpDeposits(map)
 				end
 			end
 		end
+		local placement_stats = selector.Stats()
+		placement_stats.added = added
+		local repulsion_stats = repulsion.Stats()
+		placement_stats.repulsion_checks = repulsion_stats.checks
+		placement_stats.repulsion_pair_checks = repulsion_stats.nearby_pair_checks
+		LoadingEnd(placement_token, placement_stats, added == shortfall)
 	end)
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
@@ -2915,7 +3088,14 @@ function DepositRules.TopUpAnomalies(map)
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 	RunPaused("SuperBigMapAnomalyTopUp", function()
-		local repulsion = NewTopUpRepulsionTracker(map, "anomalies")
+		local repulsion = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+			and topup_repulsion_tracker_by_map[map] or nil
+		if not repulsion then
+			repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
+			if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+				topup_repulsion_tracker_by_map[map] = repulsion
+			end
+		end
 		local candidates = {}
 		local ring_sector_pool = {}
 		local BASE_WHOLE_MAP_SAMPLES = 6000
@@ -3574,7 +3754,14 @@ function DepositRules.TopUpEffectDeposits(map)
 	local added_by_type = {}
 	local reused_pool = false
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
-		local repulsion = NewTopUpRepulsionTracker(map, "effects")
+		local repulsion = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+			and topup_repulsion_tracker_by_map[map] or nil
+		if not repulsion then
+			repulsion = NewTopUpRepulsionTracker(map, "shared top-ups")
+			if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+				topup_repulsion_tracker_by_map[map] = repulsion
+			end
+		end
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
 		local target_pool = math.min(MAX_POOL, math.max(512, total_shortfall * 32))
@@ -4283,6 +4470,111 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		return a.class < b.class
 	end)
 
+	-- Fixed-seed regression fingerprint. The material deliberately contains only stable gameplay
+	-- values (never object addresses): complete enrichment identity/coordinates, scanned-sector
+	-- state, terrain-grid hashes, and passage/Elevator anchor coordinates. Optimizations are
+	-- accepted only when this record remains identical for the same scenario and seed.
+	local marker_tokens = {}
+	for index, entry in ipairs(entries) do
+		local marker = entry.marker
+		local origin = entry.topup and "topup" or (entry.native and "native" or "other")
+		marker_tokens[index] = table.concat({
+			origin, entry.family, entry.subtype, entry.class,
+			tostring(marker.SuperBigMapNativeRecordIndex),
+			tostring(marker.SuperBigMapNativeSourceX), tostring(marker.SuperBigMapNativeSourceY),
+			tostring(marker.SuperBigMapExpectedStretchedX),
+			tostring(marker.SuperBigMapExpectedStretchedY),
+			tostring(entry.x), tostring(entry.y), tostring(entry.z),
+			tostring(entry.q), tostring(entry.r),
+			tostring(marker.is_placed == true), tostring(marker.revealed == true),
+		}, ":")
+	end
+	local marker_material = table.concat(marker_tokens, "|")
+	local marker_signature = marker_material
+	if type(xxhash) == "function" then
+		local ok_hash, value = pcall(xxhash, marker_material)
+		if ok_hash then marker_signature = tostring(value) end
+	end
+	local scanned_tokens = {}
+	local city = map.City
+	if type(city) == "table" and type(city.MapSectors) == "table" then
+		for _, column in pairs(city.MapSectors) do
+			if type(column) == "table" then
+				for _, sector in pairs(column) do
+					if type(sector) == "table" and sector.status and sector.status ~= "unexplored" then
+						scanned_tokens[#scanned_tokens + 1] = table.concat({
+							tostring(sector.col), tostring(sector.row), tostring(sector.id),
+							tostring(sector.status),
+						}, ":")
+					end
+				end
+			end
+		end
+	end
+	table.sort(scanned_tokens)
+	local scanned_material = table.concat(scanned_tokens, "|")
+	local scanned_signature = scanned_material
+	if type(xxhash) == "function" then
+		local ok_hash, value = pcall(xxhash, scanned_material)
+		if ok_hash then scanned_signature = tostring(value) end
+	end
+	local anchor_entries, anchor_seen = {}, {}
+	local function capture_anchor(obj)
+		if not obj or anchor_seen[obj] then return end
+		anchor_seen[obj] = true
+		local pos = ObjectPos(obj)
+		local x, y, z
+		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+		if pos and type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		local angle = type(obj.GetAngle) == "function" and SafeCall(obj.GetAngle, obj) or nil
+		anchor_entries[#anchor_entries + 1] = table.concat({
+			tostring(obj.class), tostring(x), tostring(y), tostring(z), tostring(angle),
+		}, ":")
+	end
+	for _, class_name in ipairs({
+		"SurfaceUndergroundTunnelMarker", "UndergroundPassageBase", "ElevatorBase", "RocketBase",
+	}) do
+		pcall(map.MapForEach, map, "map", class_name, capture_anchor)
+	end
+	table.sort(anchor_entries)
+	local anchor_material = table.concat(anchor_entries, "|")
+	local anchor_signature = anchor_material
+	if type(xxhash) == "function" then
+		local ok_hash, value = pcall(xxhash, anchor_material)
+		if ok_hash then anchor_signature = tostring(value) end
+	end
+	local terrain_signature, terrain_hashes
+	local terrain_copy = SuperBigMap.TerrainCopy
+	if terrain_copy and type(terrain_copy.DebugTerrainFingerprint) == "function" then
+		terrain_signature, terrain_hashes = terrain_copy.DebugTerrainFingerprint(map)
+	end
+	terrain_hashes = terrain_hashes or {}
+	local regression_material = table.concat({
+		tostring(marker_signature), tostring(scanned_signature), tostring(anchor_signature),
+		tostring(terrain_signature), tostring(map.mapdata and map.mapdata.terrain_hash),
+		tostring(map.hex_width), tostring(map.hex_height),
+	}, "|")
+	local regression_signature = regression_material
+	if type(xxhash) == "function" then
+		local ok_hash, value = pcall(xxhash, regression_material)
+		if ok_hash then regression_signature = tostring(value) end
+	end
+	AuditEmit("REGRESSION_FINGERPRINT", {
+		reason = tostring(reason), signature = regression_signature,
+		marker_signature = marker_signature, terrain_signature = tostring(terrain_signature),
+		scanned_signature = scanned_signature, scanned_sectors = #scanned_tokens,
+		anchor_signature = anchor_signature, anchors = #anchor_entries,
+		height_hash = tostring(terrain_hashes.height), type_hash = tostring(terrain_hashes.type),
+		biome_hash = tostring(terrain_hashes.BiomeGrid),
+		colorize_hash = tostring(terrain_hashes.colorize),
+		clutter_hash = tostring(terrain_hashes.clutter_density),
+		grass_hash = tostring(terrain_hashes.grass_density),
+		terrain_hash = tostring(map.mapdata and map.mapdata.terrain_hash),
+	}, map)
+
 	local transform_stats = map.SuperBigMapNativeTransformStats or {}
 	local density = map.SuperBigMapEnrichmentTopUpStatus or {}
 	local repulsion_ok, repulsion_stats = DepositRules.AuditTopUpVanillaRepulsion(map,
@@ -4366,6 +4658,7 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 	return ok, {
 		markers = #entries, native = native_count, topups = topup_count,
 		native_mismatches = native_mismatches, invalid_topups = invalid_topups,
+		regression_signature = regression_signature,
 	}
 end
 
