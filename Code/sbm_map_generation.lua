@@ -4234,6 +4234,26 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				elseif type(StretchRelocateStartSector) == "function" then
 					StretchRelocateStartSector(map)
 				end
+				-- The stretched terrain must have its authoritative destination-sized buildable grid
+				-- before any top-up samples reachable positions. Waiting until after density placement
+				-- leaves the lower and right perimeter represented by the old source-sized cutoff.
+				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
+					SetLoadingPhase("Rebuilding the surface build grid")
+					local rebuild_buildable = Global("RebuildBuildableGrid")
+					if type(rebuild_buildable) == "function" and map and map.buildable then
+						local rebuild_token = LoadingBegin("surface final RebuildBuildableGrid", map)
+						local rebuild_ok, rebuild_err = pcall(rebuild_buildable, map)
+						LoadingEnd(rebuild_token, {
+							error = rebuild_ok and "" or tostring(rebuild_err),
+						}, rebuild_ok)
+						if not rebuild_ok then
+							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
+						end
+						map.SuperBigMapSurfaceBuildableCurrent = true
+					else
+						error("final surface RebuildBuildableGrid unavailable")
+					end
+				end
 				-- Step 5: re-enforce scan-gating after the move (hide revealed enrichments that
 				-- landed in unscanned sectors; place/reveal what moved into scanned ones).
 				do
@@ -4315,23 +4335,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					end
 				end
 				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
-					SetLoadingPhase("Rebuilding the surface build grid")
-					local rebuild_buildable = Global("RebuildBuildableGrid")
-					-- map:RebuildGrids may return immediately after scheduling work; pcall success does NOT
-					-- prove the buildable z-grid was synchronously rebuilt. The stale-grid regression produced
-					-- landing pillars when this explicit pass was skipped, so correctness requires this one
-					-- authoritative synchronous rebuild after all terrain-height edits.
-					if type(rebuild_buildable) == "function" and map and map.buildable then
-						local rebuild_token = LoadingBegin("surface final RebuildBuildableGrid", map)
-						local rebuild_ok, rebuild_err = pcall(rebuild_buildable, map)
-						LoadingEnd(rebuild_token, { error = rebuild_ok and "" or tostring(rebuild_err) }, rebuild_ok)
-						if not rebuild_ok then
-							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
-						end
-						map.SuperBigMapSurfaceBuildableCurrent = true
-					else
-						error("final surface RebuildBuildableGrid unavailable")
-					end
 					-- The cheap underground bootstrap records the vanilla underground source hex before
 					-- this surface exists in its stretched form. Project that authoritative hex onto the
 					-- final surface now. Use it exactly when its full footprint is valid; otherwise commit
