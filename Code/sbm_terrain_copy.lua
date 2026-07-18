@@ -1917,6 +1917,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local get_shape = Global("GetExtendedSpawnShape")
 	local get_outline = Global("GetEntityOutlineShape")
 	local is_terrain_flat = Global("IsTerrainFlatForPlacement")
+	local flatten_build_shape = Global("FlattenTerrainInBuildShape")
 	local terrain_api = Global("terrain")
 	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
 		or type(hex_to_world) ~= "function" or type(get_unbuildable) ~= "function" then
@@ -2096,6 +2097,31 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			add_ok = pcall(add_shape, map.object_hex_grid, obj, shape)
 		end
 		return remove_ok and ok_set and add_ok
+	end
+
+	-- Vanilla prepares the surface passage with this exact Elevator shape after it has selected a
+	-- naturally valid footprint. Our two-phase planner can move that passage after vanilla's call,
+	-- so the preparation must follow the committed move instead of remaining at the discarded hex.
+	-- This is deliberately not a placement fallback: footprint_buildable must accept the untouched
+	-- terrain first, and a failed native preparation aborts the transaction.
+	local function prepare_passage_pad(anchor, map, x, y)
+		if not elevator_shape or type(flatten_build_shape) ~= "function" then
+			return false, "vanilla passage-pad preparation unavailable"
+		end
+		if map_of(anchor) ~= map then return false, "passage anchor belongs to another map" end
+		local ok_flatten, flatten_result = pcall(
+			flatten_build_shape, elevator_shape, anchor, "flatten unbuildable")
+		if not ok_flatten then
+			return false, "vanilla passage-pad preparation failed: " .. tostring(flatten_result)
+		end
+		-- FlattenTerrainInBuildShape changes the ground, not the object's stored Z. Re-snap and
+		-- re-register the passage at the same committed hex so visuals, collision, and the object
+		-- grid all observe the prepared terrain from the first frame.
+		if not move_object(anchor, map, x, y) then
+			return false, "prepared passage could not be re-snapped"
+		end
+		anchor.SuperBigMapPassagePadPrepared = true
+		return true
 	end
 
 	local function is_elevator_site(obj)
@@ -2491,6 +2517,58 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				underground_reason = underground_post_reason,
 				surface_reason = surface_post_reason,
 			}
+		end
+
+		-- Initial bootstrap runs before the surface stretch, so its provisional surface coordinate
+		-- must not sculpt terrain that is about to be replaced. A second source-view planning pass
+		-- after the final surface buildable-grid rebuild opts in here. Deferred underground final
+		-- alignment always prepares the underground endpoint; it also prepares the surface endpoint
+		-- when a final-grid incompatibility forced that endpoint to move.
+		local prepare_surface = source_bootstrap and options.prepare_surface_pad == true
+			or (not source_bootstrap and (committed_relocated
+				or surface_anchor.SuperBigMapPassagePadPrepared ~= true))
+		local prepare_underground = not source_bootstrap
+			and options.prepare_underground_pad ~= false
+		if prepare_surface then
+			local prepared, reason = prepare_passage_pad(surface_anchor, surface_map, final_x, final_y)
+			if not prepared then
+				return false, { error = "surface passage pad preparation failed", pairs = stats.pairs,
+					reason = reason }
+			end
+		end
+		if prepare_underground then
+			local prepared, reason = prepare_passage_pad(
+				underground_anchor, underground_map, expected_ux, expected_uy)
+			if not prepared then
+				return false, { error = "underground passage pad preparation failed", pairs = stats.pairs,
+					reason = reason }
+			end
+		end
+		if prepare_surface or prepare_underground then
+			local prepared_underground_valid, prepared_underground_reason = footprint_buildable(
+				underground_map, post_underground_q, post_underground_r,
+				underground_angle, underground_anchor)
+			local prepared_surface_valid, prepared_surface_reason = footprint_buildable(
+				surface_map, final_q, final_r, surface_angle, surface_anchor)
+			EntranceAudit("PASSAGE_PLAN_PAD_PREPARED", {
+				pair = i,
+				mode = source_bootstrap and "surface final commitment" or "deferred final validation",
+				surface_prepared = prepare_surface,
+				underground_prepared = prepare_underground,
+				surface_valid = prepared_surface_valid,
+				surface_reason = prepared_surface_reason,
+				underground_valid = prepared_underground_valid,
+				underground_reason = prepared_underground_reason,
+				final_q = final_q, final_r = final_r,
+			}, underground_map)
+			if not prepared_underground_valid or not prepared_surface_valid then
+				return false, {
+					error = "linked passage post-preparation terrain validation failed",
+					pairs = stats.pairs,
+					underground_reason = prepared_underground_reason,
+					surface_reason = prepared_surface_reason,
+				}
+			end
 		end
 		stats.moved_dependants = stats.moved_dependants
 			+ move_dependants(underground_map, underground_anchor, ux, uy, expected_ux, expected_uy)

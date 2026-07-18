@@ -2444,7 +2444,6 @@ local function BootstrapPassagesAndDeferWonders(env)
 
 	local spawn_surface_anchor = Global("SpawnUndergroundPassage")
 	local get_shape = Global("GetExtendedSpawnShape")
-	local flatten = Global("FlattenTerrainInBuildShape")
 	local for_each_hex = Global("HexShapeForEach")
 	local hex_to_world = Global("HexToWorld")
 	local world_to_hex = Global("WorldToHex")
@@ -2483,7 +2482,6 @@ local function BootstrapPassagesAndDeferWonders(env)
 					end)
 				end
 				ArtefactClearObstructions(underground_anchor, map.obj_prefab_marker, landscape_pos, shape)
-				flatten(shape, surface_anchor, "flatten unbuildable")
 				if underground_anchor:IsValidPlacement() then
 					done_object(marker)
 				else
@@ -3654,14 +3652,16 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			-- DETERMINISTIC ENTRANCE PAIRING, the no-terrain-touching way (config
+			-- DETERMINISTIC ENTRANCE PAIRING (config
 			-- PAIRING_SURFACE_BUILDABLE_REBUILD). Passage selection runs during underground
 			-- generation but searches MainMap's surface grids. A generic RebuildGrids completion
 			-- flag is not sufficient here: after temporary-source migration it described a usable
 			-- gameplay grid, yet vanilla FindPassageSpawnPos rejected both passage markers. Build
 			-- the surface Z grid once, synchronously, immediately before passage selection, against
 			-- the live surface map dimensions and object grid. Vanilla then selects a complete
-			-- naturally buildable Elevator footprint; the mod never manufactures a terrain pad.
+			-- naturally buildable Elevator footprint. Once the final stretched surface is available,
+			-- the plan is checked again and vanilla's normal passage-pad preparation is applied only
+			-- to that already-valid committed footprint.
 			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
 				local env = (type(mapdata) == "table" and mapdata.Environment)
 					or (template and template.Environment)
@@ -4181,6 +4181,33 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						map.SuperBigMapSurfaceBuildableCurrent = true
 					else
 						error("final surface RebuildBuildableGrid unavailable")
+					end
+					-- The preliminary passage plan is made while the underground is still a cheap source-
+					-- sized map and before this surface terrain is stretched. Re-run the same source-view
+					-- search now, against the authoritative final surface grid. This prevents a coordinate
+					-- that was flat in the pre-stretch surface from becoming the visible entrance on a
+					-- mountain after resampling, without forcing early underground expansion.
+					local maps = Global("Maps")
+					if type(maps) == "table" and type(AlignPassagePairsToSharedHex) == "function" then
+						for slot, underground_map in pairs(maps) do
+							local underground_environment = underground_map and underground_map.mapdata
+								and underground_map.mapdata.Environment
+							if slot ~= 1 and underground_environment == "Underground"
+								and underground_map.SuperBigMapPassageBootstrapComplete == true
+								and underground_map.SuperBigMapUndergroundStretchDone ~= true then
+								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(underground_map, {
+									source_bootstrap = true,
+									prepare_surface_pad = true,
+								})
+								if plan_ok ~= true then
+									error("final surface passage commitment failed: "
+										.. tostring(plan_stats and plan_stats.error or "unknown error")
+										.. (plan_stats and plan_stats.reason
+											and (": " .. tostring(plan_stats.reason)) or ""))
+								end
+								underground_map.SuperBigMapPassageSurfaceFinalCommitted = true
+							end
+						end
 					end
 				end
 				local rockets = SuperBigMap.RocketRules
@@ -4947,8 +4974,8 @@ end
 -- slots funnels through ChangeCurrentMapSlot. Hold that one call before it emits CurrentMapChange
 -- or exposes the target map, run the complete deferred underground pipeline, and switch only on
 -- success. The normal map-switch loading screen is opened BEFORE the heavy work and kept open
--- across the eventual switch. No terrain flatten/sculpt operation is added here: entrance objects
--- are moved only by the existing post-stretch marker/visual pass against final terrain.
+-- across the eventual switch. The committed entrance footprint is naturally valid before the
+-- native passage-pad preparation runs; final alignment never turns an invalid candidate into one.
 local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	PatchSupplyGridOverlayCopyGuard(source)
