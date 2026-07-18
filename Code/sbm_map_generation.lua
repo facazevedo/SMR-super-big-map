@@ -2348,7 +2348,7 @@ end
 
 local function VerifyBootstrapPassages(map, passages, expected)
 	local surface_map = Global("MainMap")
-	local linked, position_pairs, placement_valid = 0, 0, 0
+	local linked, committed_pairs, placement_valid = 0, 0, 0
 	for _, underground_passage in ipairs(passages or {}) do
 		local surface_passage = underground_passage and underground_passage.other
 		if surface_passage and surface_passage.other == underground_passage
@@ -2357,16 +2357,26 @@ local function VerifyBootstrapPassages(map, passages, expected)
 			and surface_passage:GetMap() == surface_map
 			and underground_passage:GetMap() == map then
 			linked = linked + 1
-			local spos = surface_passage:GetPos()
-			local upos = underground_passage:GetPos()
+			local spos, upos = surface_passage:GetPos(), underground_passage:GetPos()
 			local sx, sy = PointXY(spos)
 			local ux, uy = PointXY(upos)
-			if sx == ux and sy == uy then position_pairs = position_pairs + 1 end
+			local final_x = tonumber(underground_passage.SuperBigMapCommittedPassageX)
+			local final_y = tonumber(underground_passage.SuperBigMapCommittedPassageY)
+			local source_x = tonumber(underground_passage.SuperBigMapCommittedPassageSourceX)
+			local source_y = tonumber(underground_passage.SuperBigMapCommittedPassageSourceY)
+			if underground_passage.SuperBigMapCommittedPassageLocked == true
+				and surface_passage.SuperBigMapCommittedPassageLocked == true
+				and final_x == tonumber(surface_passage.SuperBigMapCommittedPassageX)
+				and final_y == tonumber(surface_passage.SuperBigMapCommittedPassageY)
+				and sx == final_x and sy == final_y and ux == source_x and uy == source_y then
+				committed_pairs = committed_pairs + 1
+			end
 			local ok_valid, valid = pcall(underground_passage.IsValidPlacement, underground_passage)
 			if ok_valid and valid == true then placement_valid = placement_valid + 1 end
 		end
 	end
-	return #(passages or {}) == expected and linked == expected and placement_valid == expected
+	return #(passages or {}) == expected and linked == expected
+		and committed_pairs == expected and placement_valid == expected
 end
 
 local function BootstrapPassagesAndDeferWonders(env)
@@ -2471,8 +2481,29 @@ local function BootstrapPassagesAndDeferWonders(env)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
 	if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
 	if not resume_ok then error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err)) end
+	if type(AlignPassagePairsToSharedHex) ~= "function" then
+		error("passage bootstrap common-hex planner is unavailable")
+	end
+	local plan_ok, plan_stats = AlignPassagePairsToSharedHex(map, { source_bootstrap = true })
+	if plan_ok ~= true then
+		error("passage bootstrap common-hex planning failed: "
+			.. tostring(plan_stats and plan_stats.error or "unknown error"))
+	end
+	local passage_shape = get_shape("Elevator")
+	for i = 1, #successful do
+		local underground_anchor = successful[i]
+		local surface_anchor = underground_anchor and underground_anchor.other
+		if underground_anchor then
+			ArtefactClearObstructions(underground_anchor, map.obj_prefab_marker,
+				underground_anchor:GetPos(), passage_shape)
+		end
+		if surface_anchor then
+			ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
+				surface_anchor:GetPos(), passage_shape)
+		end
+	end
 	if not VerifyBootstrapPassages(map, successful, desired_passages) then
-		error("passage bootstrap did not create two valid linked Elevator anchors")
+		error("passage bootstrap did not create two valid committed linked Elevator anchors")
 	end
 
 	map.SuperBigMapDeferredUndergroundWondersPending = #wonder_markers > 0
@@ -2482,6 +2513,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 	map.SuperBigMapPassageBootstrapCount = #successful
 	return true, {
 		passages = #successful, wonders_deferred = #wonder_markers,
+		planned_pairs = plan_stats and plan_stats.pairs or 0,
 	}
 end
 
@@ -3159,6 +3191,13 @@ local function PatchRandomMapGenerator()
 							if bootstrap_ok ~= true then
 								local stock_results = PackValues(func())
 								local stock_passages = ArtefactMapGet(map, "SurfacePassage")
+								local plan_ok, plan_stats = AlignPassagePairsToSharedHex(map,
+									{ source_bootstrap = true })
+								if plan_ok ~= true then
+									error("stock PlaceArtefacts passage planning failed after "
+										.. tostring(details) .. ": "
+										.. tostring(plan_stats and plan_stats.error or "unknown error"))
+								end
 								if not VerifyBootstrapPassages(map, stock_passages, 2) then
 									error("stock PlaceArtefacts did not create two valid linked Elevator anchors after "
 										.. tostring(details))

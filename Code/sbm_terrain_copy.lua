@@ -44,6 +44,13 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+local function EntranceAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.Elevator) == "function" then
+		diagnostics.Elevator(event, data, map)
+	end
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -1584,13 +1591,21 @@ local function MoveEntranceVisualsToScale(map)
 		if not pos then return end
 		local ox, oy = PointXY(pos)
 		if type(ox) ~= "number" or type(oy) ~= "number" then return end
-		-- Only objects still inside the source region need moving; an already transformed
-		-- object lies beyond it on at least one axis.
-		if ox >= src_w or oy >= src_w then return end
-		local nx = math.floor(ox * scale + 0.5)
-		local ny = math.floor(oy * scale + 0.5)
-		local pair_exact = false
-		local pair_anchor = "scaled"
+		-- A linked passage pair receives one committed final hex during the lightweight
+		-- underground passage bootstrap. Both maps must use that exact coordinate even though
+		-- their expensive stretch passes run at different times. Ordinary access objects keep
+		-- the proportional transform below.
+		local committed_x = tonumber(obj.SuperBigMapCommittedPassageX)
+		local committed_y = tonumber(obj.SuperBigMapCommittedPassageY)
+		local committed = obj.SuperBigMapCommittedPassageLocked == true
+			and type(committed_x) == "number" and type(committed_y) == "number"
+		-- Only uncommitted objects still inside the source region need moving; an already
+		-- transformed ordinary object lies beyond it on at least one axis.
+		if not committed and (ox >= src_w or oy >= src_w) then return end
+		local nx = committed and committed_x or math.floor(ox * scale + 0.5)
+		local ny = committed and committed_y or math.floor(oy * scale + 0.5)
+		local pair_exact = committed
+		local pair_anchor = committed and "committed passage hex" or "scaled"
 		local elevator_kind = is_elevator_or_site(obj)
 		if elevator_kind then
 			local underground = map.mapdata and map.mapdata.Environment == "Underground"
@@ -1880,13 +1895,14 @@ local function MoveEntranceVisualsToScale(map)
 	return moved
 end
 
--- Final passage correspondence is decided only after both stretched maps have authoritative
--- buildability grids. The underground endpoint is the canonical vanilla placement. Keep that
--- exact hex when it is buildable for the complete Elevator footprint on both maps; otherwise use
--- the engine's expanding hex search for the nearest common buildable footprint. No terrain or
--- buildable-grid value is edited. Both linked anchors receive the same final X/Y and their own
--- terrain Z, while already-created Elevator/site and badge dependants follow the anchor move.
-local function AlignPassagePairsToSharedHex(underground_map)
+-- Passage correspondence has two phases. During the lightweight native underground bootstrap,
+-- choose a common source/final footprint and stamp one immutable final hex on both linked anchors;
+-- this does not stretch or otherwise build the underground. After deferred underground expansion,
+-- validate that plan and move only the underground endpoint to it. The already-visible surface
+-- entrance is never moved on first underground access.
+local function AlignPassagePairsToSharedHex(underground_map, options)
+	options = type(options) == "table" and options or {}
+	local source_bootstrap = options.source_bootstrap == true
 	local surface_map = Global("MainMap")
 	if not underground_map or not surface_map or underground_map == surface_map then
 		return false, { error = "surface/underground maps unavailable", pairs = 0 }
@@ -2028,7 +2044,11 @@ local function AlignPassagePairsToSharedHex(underground_map)
 		return moved
 	end
 
-	local stats = { pairs = 0, exact = 0, fallback = 0, moved_dependants = 0, checked = 0 }
+	local stats = {
+		pairs = 0, exact = 0, fallback = 0, moved_dependants = 0, checked = 0,
+		mode = source_bootstrap and "source bootstrap" or "deferred final validation",
+		locked = 0, surface_moves = 0,
+	}
 	local seen = {}
 	local linked_pairs = {}
 	if type(underground_map.MapForEach) == "function" then
@@ -2044,6 +2064,54 @@ local function AlignPassagePairsToSharedHex(underground_map)
 	end
 	if #linked_pairs == 0 then
 		return false, { error = "no linked ElevatorPassage pairs found", pairs = 0 }
+	end
+
+	local source_width_tiles = tonumber(underground_map.SuperBigMapGeneratorWidthTiles)
+		or tonumber(underground_map.SuperBigMapSourceWidthTiles)
+	local source_height_tiles = tonumber(underground_map.SuperBigMapGeneratorHeightTiles)
+		or tonumber(underground_map.SuperBigMapSourceHeightTiles)
+	local desired_width_tiles = tonumber(underground_map.SuperBigMapDesiredWidthTiles)
+	local desired_height_tiles = tonumber(underground_map.SuperBigMapDesiredHeightTiles)
+	local scale_x = source_width_tiles and desired_width_tiles
+		and source_width_tiles > 0 and desired_width_tiles / source_width_tiles or nil
+	local scale_y = source_height_tiles and desired_height_tiles
+		and source_height_tiles > 0 and desired_height_tiles / source_height_tiles or nil
+	if source_bootstrap and (not scale_x or not scale_y or scale_x <= 1 or scale_y <= 1) then
+		return false, { error = "source/final passage scale unavailable", pairs = 0 }
+	end
+
+	local function scaled_final_hex(source_q, source_r)
+		local ok_source, source_x, source_y = pcall(hex_to_world, source_q, source_r)
+		if not ok_source or type(source_x) ~= "number" or type(source_y) ~= "number" then
+			return nil
+		end
+		local raw_x = math.floor(source_x * scale_x + 0.5)
+		local raw_y = math.floor(source_y * scale_y + 0.5)
+		local ok_hex, final_q, final_r = pcall(world_to_hex, point_fn(raw_x, raw_y))
+		if not ok_hex or type(final_q) ~= "number" or type(final_r) ~= "number" then
+			return nil
+		end
+		local ok_final, final_x, final_y = pcall(hex_to_world, final_q, final_r)
+		if not ok_final or type(final_x) ~= "number" or type(final_y) ~= "number" then
+			return nil
+		end
+		return {
+			source_q = source_q, source_r = source_r, source_x = source_x, source_y = source_y,
+			final_q = final_q, final_r = final_r, final_x = final_x, final_y = final_y,
+		}
+	end
+
+	local function stamp_plan(anchor, plan)
+		anchor.SuperBigMapCommittedPassageLocked = true
+		anchor.SuperBigMapCommittedPassagePlanVersion = 1
+		anchor.SuperBigMapCommittedPassageSourceQ = plan.source_q
+		anchor.SuperBigMapCommittedPassageSourceR = plan.source_r
+		anchor.SuperBigMapCommittedPassageSourceX = plan.source_x
+		anchor.SuperBigMapCommittedPassageSourceY = plan.source_y
+		anchor.SuperBigMapCommittedPassageQ = plan.final_q
+		anchor.SuperBigMapCommittedPassageR = plan.final_r
+		anchor.SuperBigMapCommittedPassageX = plan.final_x
+		anchor.SuperBigMapCommittedPassageY = plan.final_y
 	end
 
 	for i = 1, #linked_pairs do
@@ -2064,37 +2132,112 @@ local function AlignPassagePairsToSharedHex(underground_map)
 			and SafeCall(underground_anchor.GetAngle, underground_anchor) or 0
 		local surface_angle = type(surface_anchor.GetAngle) == "function"
 			and SafeCall(surface_anchor.GetAngle, surface_anchor) or 0
-		local found_q, found_r, found_radius, search_algorithm
-		local function common_footprint(q, r)
+		local found_q, found_r, found_radius, search_algorithm, planned_final
+		local function common_final_footprint(q, r)
 			stats.checked = stats.checked + 1
 			return footprint_buildable(underground_map, q, r, underground_angle)
 				and footprint_buildable(surface_map, q, r, surface_angle)
+		end
+		local function common_source_footprint(q, r)
+			stats.checked = stats.checked + 1
+			if not footprint_buildable(underground_map, q, r, underground_angle) then return false end
+			local plan = scaled_final_hex(q, r)
+			if not plan or not footprint_buildable(surface_map, plan.final_q, plan.final_r, surface_angle) then
+				return false
+			end
+			planned_final = plan
+			return true
 		end
 		if (tonumber(surface_map.hex_width) or 0) <= 0
 			or (tonumber(underground_map.hex_width) or 0) <= 0 then
 			return false, { error = "map hex dimensions unavailable", pairs = stats.pairs }
 		end
-		if common_footprint(origin_q, origin_r) then
+		local committed = underground_anchor.SuperBigMapCommittedPassageLocked == true
+			and surface_anchor.SuperBigMapCommittedPassageLocked == true
+		local committed_x = tonumber(underground_anchor.SuperBigMapCommittedPassageX)
+		local committed_y = tonumber(underground_anchor.SuperBigMapCommittedPassageY)
+		local committed_surface_x = tonumber(surface_anchor.SuperBigMapCommittedPassageX)
+		local committed_surface_y = tonumber(surface_anchor.SuperBigMapCommittedPassageY)
+		if not source_bootstrap and committed then
+			if type(committed_x) ~= "number" or type(committed_y) ~= "number"
+				or committed_x ~= committed_surface_x or committed_y ~= committed_surface_y then
+				return false, { error = "linked passage committed coordinates disagree", pairs = stats.pairs }
+			end
+			local committed_q = tonumber(underground_anchor.SuperBigMapCommittedPassageQ)
+			local committed_r = tonumber(underground_anchor.SuperBigMapCommittedPassageR)
+			local surface_committed_q = tonumber(surface_anchor.SuperBigMapCommittedPassageQ)
+			local surface_committed_r = tonumber(surface_anchor.SuperBigMapCommittedPassageR)
+			if committed_q ~= surface_committed_q or committed_r ~= surface_committed_r then
+				return false, { error = "linked passage committed hexes disagree", pairs = stats.pairs }
+			end
+			if type(committed_q) ~= "number" or type(committed_r) ~= "number" then
+				local ok_committed, q, r = pcall(world_to_hex, point_fn(committed_x, committed_y))
+				if ok_committed then committed_q, committed_r = q, r end
+			end
+			if type(committed_q) ~= "number" or type(committed_r) ~= "number"
+				or not common_final_footprint(committed_q, committed_r) then
+				return false, {
+					error = "committed passage footprint is not buildable on both final maps",
+					pairs = stats.pairs, committed = tostring(committed_x) .. "," .. tostring(committed_y),
+				}
+			end
+			found_q, found_r, found_radius = committed_q, committed_r, 0
+			search_algorithm = "committed pre-stretch passage hex"
+			stats.locked = stats.locked + 1
+		elseif source_bootstrap and common_source_footprint(origin_q, origin_r) then
 			found_q, found_r, found_radius = origin_q, origin_r, 0
-			search_algorithm = "exact underground hex"
+			search_algorithm = "exact underground source hex"
+		elseif not source_bootstrap and common_final_footprint(origin_q, origin_r) then
+			found_q, found_r, found_radius = origin_q, origin_r, 0
+			search_algorithm = "exact underground final hex"
 		else
-			-- The engine search is an expanding hex-distance search over the final underground
-			-- object/buildable grids. The callback adds the complete surface footprint constraint,
-			-- so its first accepted coordinate is the closest buildable hex shared by both maps.
-			local native_find = Global("HexGridFindBuildable")
-			local object_grid = underground_map.object_hex_grid
-			local buildable_grid = underground_map.buildable and underground_map.buildable.z_grid
-			if type(native_find) == "function" and object_grid and buildable_grid then
-				local ok_find, q, r = pcall(native_find, origin_q, origin_r,
-					object_grid, buildable_grid, unbuildable_z,
-					function(candidate_q, candidate_r)
-						return not common_footprint(candidate_q, candidate_r)
-					end)
-				if ok_find and type(q) == "number" and type(r) == "number" then
-					found_q, found_r = q, r
-					local dq, dr = q - origin_q, r - origin_r
-					found_radius = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
-					search_algorithm = "HexGridFindBuildable common-footprint predicate"
+			if source_bootstrap then
+				-- At bootstrap the underground buildable grid is deliberately source-sized while its
+				-- object grid has expanded capacity. Passing those unequal grids to native
+				-- HexGridFindBuildable asserts in C. A deterministic Lua hex-ring walk performs the
+				-- same nearest-distance selection over only two passage pairs and leaves the expensive
+				-- underground stretch deferred.
+				local max_radius = math.max(tonumber(underground_map.hex_width) or 0,
+					tonumber(underground_map.hex_height) or 0)
+				local directions = {
+					{ 1, 0 }, { 1, -1 }, { 0, -1 },
+					{ -1, 0 }, { -1, 1 }, { 0, 1 },
+				}
+				for radius = 1, max_radius do
+					local candidate_q, candidate_r = origin_q - radius, origin_r + radius
+					for side = 1, 6 do
+						local direction = directions[side]
+						for _ = 1, radius do
+							if common_source_footprint(candidate_q, candidate_r) then
+								found_q, found_r, found_radius = candidate_q, candidate_r, radius
+								search_algorithm = "source-view deterministic common-footprint ring"
+								break
+							end
+							candidate_q = candidate_q + direction[1]
+							candidate_r = candidate_r + direction[2]
+						end
+						if found_q ~= nil then break end
+					end
+					if found_q ~= nil then break end
+				end
+			else
+				-- Legacy/unplanned maps retain the native expanding search. Newly generated maps never
+				-- enter this branch because their final coordinate was committed at bootstrap.
+				local native_find = Global("HexGridFindBuildable")
+				local object_grid = underground_map.object_hex_grid
+				local buildable_grid = underground_map.buildable and underground_map.buildable.z_grid
+				if type(native_find) == "function" and object_grid and buildable_grid then
+					local ok_find, q, r = pcall(native_find, origin_q, origin_r,
+						object_grid, buildable_grid, unbuildable_z,
+						function(candidate_q, candidate_r)
+							return not common_final_footprint(candidate_q, candidate_r)
+						end)
+					if ok_find and type(q) == "number" and type(r) == "number" then
+						found_q, found_r = q, r
+						local dq, dr = q - origin_q, r - origin_r
+						found_radius = (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+						search_algorithm = "HexGridFindBuildable common-footprint predicate"
+					end
 				end
 			end
 		end
@@ -2102,34 +2245,84 @@ local function AlignPassagePairsToSharedHex(underground_map)
 			return false, { error = "no common buildable passage footprint", pairs = stats.pairs,
 				checked = stats.checked }
 		end
-		local ok_world, final_x, final_y = pcall(hex_to_world, found_q, found_r)
-		if not ok_world or type(final_x) ~= "number" or type(final_y) ~= "number" then
-			return false, { error = "final passage world coordinate unavailable", pairs = stats.pairs }
-		end
-		if not move_object(underground_anchor, underground_map, final_x, final_y)
-			or not move_object(surface_anchor, surface_map, final_x, final_y) then
-			return false, { error = "linked passage move failed", pairs = stats.pairs }
+		local source_x, source_y, final_x, final_y, final_q, final_r
+		if source_bootstrap then
+			planned_final = planned_final or scaled_final_hex(found_q, found_r)
+			if not planned_final then
+				return false, { error = "planned final passage coordinate unavailable", pairs = stats.pairs }
+			end
+			source_x, source_y = planned_final.source_x, planned_final.source_y
+			final_x, final_y = planned_final.final_x, planned_final.final_y
+			final_q, final_r = planned_final.final_q, planned_final.final_r
+			if not move_object(underground_anchor, underground_map, source_x, source_y)
+				or not move_object(surface_anchor, surface_map, final_x, final_y) then
+				return false, { error = "source passage plan move failed", pairs = stats.pairs }
+			end
+			stamp_plan(underground_anchor, planned_final)
+			stamp_plan(surface_anchor, planned_final)
+			stats.surface_moves = stats.surface_moves + 1
+		else
+			local ok_world
+			ok_world, final_x, final_y = pcall(hex_to_world, found_q, found_r)
+			final_q, final_r = found_q, found_r
+			if not ok_world or type(final_x) ~= "number" or type(final_y) ~= "number" then
+				return false, { error = "final passage world coordinate unavailable", pairs = stats.pairs }
+			end
+			if committed and (sx ~= final_x or sy ~= final_y) then
+				return false, {
+					error = "visible surface passage drifted from its committed coordinate",
+					pairs = stats.pairs, surface = tostring(sx) .. "," .. tostring(sy),
+					committed = tostring(final_x) .. "," .. tostring(final_y),
+				}
+			end
+			if (ux ~= final_x or uy ~= final_y)
+				and not move_object(underground_anchor, underground_map, final_x, final_y) then
+				return false, { error = "underground passage move failed", pairs = stats.pairs }
+			end
+			if not committed then
+				if not move_object(surface_anchor, surface_map, final_x, final_y) then
+					return false, { error = "legacy surface passage move failed", pairs = stats.pairs }
+				end
+				stats.surface_moves = stats.surface_moves + 1
+			end
 		end
 		local verify_ux, verify_uy = PointXY(ObjectPosition(underground_anchor))
 		local verify_sx, verify_sy = PointXY(ObjectPosition(surface_anchor))
-		if verify_ux ~= final_x or verify_uy ~= final_y
+		local expected_ux = source_bootstrap and source_x or final_x
+		local expected_uy = source_bootstrap and source_y or final_y
+		if verify_ux ~= expected_ux or verify_uy ~= expected_uy
 			or verify_sx ~= final_x or verify_sy ~= final_y then
 			return false, {
 				error = "linked passage post-move coordinate verification failed",
 				pairs = stats.pairs,
 				underground = tostring(verify_ux) .. "," .. tostring(verify_uy),
 				surface = tostring(verify_sx) .. "," .. tostring(verify_sy),
-				expected = tostring(final_x) .. "," .. tostring(final_y),
+				expected_underground = tostring(expected_ux) .. "," .. tostring(expected_uy),
+				expected_surface = tostring(final_x) .. "," .. tostring(final_y),
 			}
 		end
 		stats.moved_dependants = stats.moved_dependants
-			+ move_dependants(underground_map, underground_anchor, ux, uy, final_x, final_y)
-			+ move_dependants(surface_map, surface_anchor, sx, sy, final_x, final_y)
+			+ move_dependants(underground_map, underground_anchor, ux, uy, expected_ux, expected_uy)
+		if source_bootstrap or not committed then
+			stats.moved_dependants = stats.moved_dependants
+				+ move_dependants(surface_map, surface_anchor, sx, sy, final_x, final_y)
+		end
 		stats.pairs = stats.pairs + 1
 		if found_radius == 0 then stats.exact = stats.exact + 1
 		else stats.fallback = stats.fallback + 1 end
-		underground_anchor.SuperBigMapSharedPassageHex = tostring(found_q) .. ":" .. tostring(found_r)
+		underground_anchor.SuperBigMapSharedPassageHex = tostring(final_q) .. ":" .. tostring(final_r)
 		surface_anchor.SuperBigMapSharedPassageHex = underground_anchor.SuperBigMapSharedPassageHex
+		EntranceAudit(source_bootstrap and "PASSAGE_PLAN_COMMITTED" or "PASSAGE_PLAN_VALIDATED", {
+			pair = i,
+			algorithm = search_algorithm,
+			radius = found_radius,
+			source_x = source_bootstrap and source_x or tonumber(underground_anchor.SuperBigMapCommittedPassageSourceX),
+			source_y = source_bootstrap and source_y or tonumber(underground_anchor.SuperBigMapCommittedPassageSourceY),
+			final_x = final_x, final_y = final_y, final_q = final_q, final_r = final_r,
+			surface_before_x = sx, surface_before_y = sy,
+			underground_before_x = ux, underground_before_y = uy,
+			surface_moved_during_deferred_final = (not source_bootstrap and not committed) and true or false,
+		}, underground_map)
 	end
 	return true, stats
 end
