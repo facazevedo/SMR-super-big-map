@@ -2371,8 +2371,14 @@ local function VerifyBootstrapPassages(map, passages, expected)
 				and sx == final_x and sy == final_y and ux == source_x and uy == source_y then
 				committed_pairs = committed_pairs + 1
 			end
-			local ok_valid, valid = pcall(underground_passage.IsValidPlacement, underground_passage)
-			if ok_valid and valid == true then placement_valid = placement_valid + 1 end
+			local ok_underground, underground_valid = pcall(
+				underground_passage.IsValidPlacement, underground_passage)
+			local ok_surface, surface_valid = pcall(
+				surface_passage.IsValidPlacement, surface_passage)
+			if ok_underground and underground_valid == true
+				and ok_surface and surface_valid == true then
+				placement_valid = placement_valid + 1
+			end
 		end
 	end
 	return #(passages or {}) == expected and linked == expected
@@ -2488,19 +2494,6 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if plan_ok ~= true then
 		error("passage bootstrap common-hex planning failed: "
 			.. tostring(plan_stats and plan_stats.error or "unknown error"))
-	end
-	local passage_shape = get_shape("Elevator")
-	for i = 1, #successful do
-		local underground_anchor = successful[i]
-		local surface_anchor = underground_anchor and underground_anchor.other
-		if underground_anchor then
-			ArtefactClearObstructions(underground_anchor, map.obj_prefab_marker,
-				underground_anchor:GetPos(), passage_shape)
-		end
-		if surface_anchor then
-			ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
-				surface_anchor:GetPos(), passage_shape)
-		end
 	end
 	if not VerifyBootstrapPassages(map, successful, desired_passages) then
 		error("passage bootstrap did not create two valid committed linked Elevator anchors")

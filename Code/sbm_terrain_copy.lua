@@ -1899,7 +1899,9 @@ end
 -- choose a common source/final footprint and stamp one immutable final hex on both linked anchors;
 -- this does not stretch or otherwise build the underground. After deferred underground expansion,
 -- validate that plan and move only the underground endpoint to it. The already-visible surface
--- entrance is never moved on first underground access.
+-- entrance is not moved on first underground access unless the final stretched grids prove the
+-- precommitted footprint invalid; in that exceptional case both endpoints move to the nearest
+-- common valid hex so the surface entrance never remains on uneven, blocked, or unbuildable land.
 local function AlignPassagePairsToSharedHex(underground_map, options)
 	options = type(options) == "table" and options or {}
 	local source_bootstrap = options.source_bootstrap == true
@@ -1913,6 +1915,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	local get_unbuildable = Global("buildUnbuildableZ")
 	local validate_shape = Global("ValidateEachShapeHexPos")
 	local get_shape = Global("GetExtendedSpawnShape")
+	local get_outline = Global("GetEntityOutlineShape")
+	local is_terrain_flat = Global("IsTerrainFlatForPlacement")
+	local terrain_api = Global("terrain")
 	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
 		or type(hex_to_world) ~= "function" or type(get_unbuildable) ~= "function" then
 		return false, { error = "point/hex/buildability APIs unavailable", pairs = 0 }
@@ -1943,25 +1948,107 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			and x >= 0 and y >= 0 and x < w and y < h
 	end
 
-	local function footprint_buildable(map, q, r, angle)
+	local minimum_normal_z = tonumber((SuperBigMap.Config or {}).TOPUP_MINIMUM_TERRAIN_NORMAL_Z) or 4080
+	minimum_normal_z = math.max(0, math.min(4096, minimum_normal_z))
+	local function footprint_buildable(map, q, r, angle, anchor)
 		local buildable = map and map.buildable
-		if not buildable or type(buildable.GetZ) ~= "function" then return false end
+		if not buildable or type(buildable.GetZ) ~= "function" then
+			return false, "buildable grid unavailable"
+		end
 		local ok_world, x, y = pcall(hex_to_world, q, r)
-		if not ok_world or not map_point_in_bounds(map, x, y) then return false end
+		if not ok_world or not map_point_in_bounds(map, x, y) then
+			return false, "center outside map"
+		end
+		local center = point_fn(x, y)
+		local anchor_at_candidate = false
+		local anchor_pos = anchor and ObjectPosition(anchor)
+		if anchor_pos then
+			local ok_anchor_hex, anchor_q, anchor_r = pcall(world_to_hex, anchor_pos)
+			anchor_at_candidate = ok_anchor_hex and anchor_q == q and anchor_r == r
+		end
+		-- SurfacePassageBase:IsValidPlacement uses this exact vanilla predicate. Check it at
+		-- every candidate before considering the larger Elevator spawn footprint.
+		if type(is_terrain_flat) == "function" and type(get_outline) == "function"
+			and anchor and anchor.entity then
+			local ok_outline, outline = pcall(get_outline, anchor.entity)
+			if not ok_outline or not outline then return false, "entity outline unavailable" end
+			local ok_flat, flat = pcall(is_terrain_flat, buildable, outline, center, angle or 0)
+			if not ok_flat or flat ~= true then return false, "vanilla terrain-flat test failed" end
+		end
 		local level
+		local failure_reason
 		local function valid_hex(hq, hr)
 			local ok_xy, hx, hy = pcall(hex_to_world, hq, hr)
-			if not ok_xy or not map_point_in_bounds(map, hx, hy) then return false end
+			if not ok_xy or not map_point_in_bounds(map, hx, hy) then
+				failure_reason = "footprint outside map"
+				return false
+			end
 			local ok_z, z = pcall(buildable.GetZ, buildable, hq, hr)
-			if not ok_z or z == nil or z == unbuildable_z then return false end
-			if level == nil then level = z elseif z ~= level then return false end
+			if not ok_z or z == nil or z == unbuildable_z then
+				failure_reason = "unbuildable footprint hex"
+				return false
+			end
+			if level == nil then
+				level = z
+			elseif z ~= level then
+				failure_reason = "uneven buildable footprint"
+				return false
+			end
+			local hex_point = point_fn(hx, hy)
+			-- A live passage can make its own occupied footprint non-passable. When validating
+			-- the coordinate it already occupies, buildability/flatness/normal plus the obstruction
+			-- query (which ignores only that anchor) describe the underlying terrain without
+			-- mistaking the passage itself for a terrain defect.
+			if not anchor_at_candidate and type(terrain_api) == "table"
+				and type(terrain_api.IsPassable) == "function" then
+				local ok_passable, passable = pcall(terrain_api.IsPassable, map, hex_point)
+				if not ok_passable or passable ~= true then
+					failure_reason = "impassable footprint hex"
+					return false
+				end
+			end
+			if type(terrain_api) == "table" and type(terrain_api.GetTerrainNormal) == "function" then
+				local ok_normal, normal = pcall(terrain_api.GetTerrainNormal, map, hex_point)
+				local normal_z = ok_normal and normal and type(normal.z) == "function"
+					and SafeCall(normal.z, normal) or nil
+				if type(normal_z) ~= "number" or normal_z < minimum_normal_z then
+					failure_reason = "sloped footprint hex"
+					return false
+				end
+			end
+			local object_grid = map.object_hex_grid
+			if object_grid and type(object_grid.GetBuildObstructions) == "function" then
+				local ok_obstructions, obstructions = pcall(
+					object_grid.GetBuildObstructions, object_grid, hq, hr)
+				if not ok_obstructions then
+					failure_reason = "obstruction query failed"
+					return false
+				end
+				if type(obstructions) == "table" then
+					for i = 1, #obstructions do
+						local obstruction = obstructions[i]
+						local follows_anchor = obstruction == anchor
+							or (obstruction and (obstruction.passage == anchor
+								or obstruction.other == anchor or obstruction.linked_obj == anchor
+								or obstruction.SuperBigMapDeferredElevatorPassage == anchor
+								or obstruction.spawner == anchor))
+						if not follows_anchor then
+							failure_reason = "blocked footprint hex"
+							return false
+						end
+					end
+				end
+			end
 			return true
 		end
 		if elevator_shape and type(validate_shape) == "function" then
-			local ok, valid = pcall(validate_shape, elevator_shape, point_fn(x, y), angle or 0, valid_hex)
-			return ok and valid == true
+			local ok, valid = pcall(validate_shape, elevator_shape, center, angle or 0, valid_hex)
+			if not ok then return false, "Elevator shape validation failed" end
+			if valid ~= true then return false, failure_reason or "invalid Elevator footprint" end
+			return true
 		end
-		return valid_hex(q, r)
+		local valid = valid_hex(q, r)
+		return valid, valid and nil or failure_reason
 	end
 
 	local function registered_shape(obj, map)
@@ -2186,18 +2273,46 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local found_q, found_r, found_radius, search_algorithm, planned_final
 		local function common_final_footprint(q, r)
 			stats.checked = stats.checked + 1
-			return footprint_buildable(underground_map, q, r, underground_angle)
-				and footprint_buildable(surface_map, q, r, surface_angle)
+			return footprint_buildable(underground_map, q, r, underground_angle, underground_anchor)
+				and footprint_buildable(surface_map, q, r, surface_angle, surface_anchor)
 		end
 		local function common_source_footprint(q, r)
 			stats.checked = stats.checked + 1
-			if not footprint_buildable(underground_map, q, r, underground_angle) then return false end
+			if not footprint_buildable(underground_map, q, r, underground_angle,
+				underground_anchor) then return false end
 			local plan = scaled_final_hex(q, r)
-			if not plan or not footprint_buildable(surface_map, plan.final_q, plan.final_r, surface_angle) then
+			if not plan or not footprint_buildable(surface_map, plan.final_q, plan.final_r,
+				surface_angle, surface_anchor) then
 				return false
 			end
 			planned_final = plan
 			return true
+		end
+		local directions = {
+			{ 1, 0 }, { 1, -1 }, { 0, -1 },
+			{ -1, 0 }, { -1, 1 }, { 0, 1 },
+		}
+		local function nearest_on_hex_rings(center_q, center_r, predicate, first_radius)
+			local max_radius = math.max(tonumber(underground_map.hex_width) or 0,
+				tonumber(underground_map.hex_height) or 0)
+			for radius = first_radius or 0, max_radius do
+				if radius == 0 then
+					if predicate(center_q, center_r) then return center_q, center_r, 0 end
+				else
+					local candidate_q, candidate_r = center_q - radius, center_r + radius
+					for side = 1, 6 do
+						local direction = directions[side]
+						for _ = 1, radius do
+							if predicate(candidate_q, candidate_r) then
+								return candidate_q, candidate_r, radius
+							end
+							candidate_q = candidate_q + direction[1]
+							candidate_r = candidate_r + direction[2]
+						end
+					end
+				end
+			end
+			return nil
 		end
 		if (tonumber(surface_map.hex_width) or 0) <= 0
 			or (tonumber(underground_map.hex_width) or 0) <= 0 then
@@ -2205,6 +2320,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		end
 		local committed = underground_anchor.SuperBigMapCommittedPassageLocked == true
 			and surface_anchor.SuperBigMapCommittedPassageLocked == true
+		local committed_relocated = false
 		local committed_x = tonumber(underground_anchor.SuperBigMapCommittedPassageX)
 		local committed_y = tonumber(underground_anchor.SuperBigMapCommittedPassageY)
 		local committed_surface_x = tonumber(surface_anchor.SuperBigMapCommittedPassageX)
@@ -2225,16 +2341,29 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				local ok_committed, q, r = pcall(world_to_hex, point_fn(committed_x, committed_y))
 				if ok_committed then committed_q, committed_r = q, r end
 			end
-			if type(committed_q) ~= "number" or type(committed_r) ~= "number"
-				or not common_final_footprint(committed_q, committed_r) then
-				return false, {
-					error = "committed passage footprint is not buildable on both final maps",
-					pairs = stats.pairs, committed = tostring(committed_x) .. "," .. tostring(committed_y),
-				}
+			local underground_valid, underground_reason = footprint_buildable(underground_map,
+				committed_q, committed_r, underground_angle, underground_anchor)
+			local surface_valid, surface_reason = footprint_buildable(surface_map,
+				committed_q, committed_r, surface_angle, surface_anchor)
+			if underground_valid and surface_valid then
+				found_q, found_r, found_radius = committed_q, committed_r, 0
+				search_algorithm = "committed pre-stretch passage hex"
+				stats.locked = stats.locked + 1
+			else
+				EntranceAudit("PASSAGE_PLAN_COMMITTED_INVALID", {
+					pair = i, committed_q = committed_q, committed_r = committed_r,
+					committed_x = committed_x, committed_y = committed_y,
+					underground_valid = underground_valid,
+					underground_reason = underground_reason,
+					surface_valid = surface_valid, surface_reason = surface_reason,
+				}, underground_map)
+				found_q, found_r, found_radius = nearest_on_hex_rings(
+					committed_q, committed_r, common_final_footprint, 1)
+				if found_q ~= nil then
+					search_algorithm = "nearest final common valid footprint after committed invalidation"
+					committed_relocated = true
+				end
 			end
-			found_q, found_r, found_radius = committed_q, committed_r, 0
-			search_algorithm = "committed pre-stretch passage hex"
-			stats.locked = stats.locked + 1
 		elseif source_bootstrap and common_source_footprint(origin_q, origin_r) then
 			found_q, found_r, found_radius = origin_q, origin_r, 0
 			search_algorithm = "exact underground source hex"
@@ -2248,28 +2377,10 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				-- HexGridFindBuildable asserts in C. A deterministic Lua hex-ring walk performs the
 				-- same nearest-distance selection over only two passage pairs and leaves the expensive
 				-- underground stretch deferred.
-				local max_radius = math.max(tonumber(underground_map.hex_width) or 0,
-					tonumber(underground_map.hex_height) or 0)
-				local directions = {
-					{ 1, 0 }, { 1, -1 }, { 0, -1 },
-					{ -1, 0 }, { -1, 1 }, { 0, 1 },
-				}
-				for radius = 1, max_radius do
-					local candidate_q, candidate_r = origin_q - radius, origin_r + radius
-					for side = 1, 6 do
-						local direction = directions[side]
-						for _ = 1, radius do
-							if common_source_footprint(candidate_q, candidate_r) then
-								found_q, found_r, found_radius = candidate_q, candidate_r, radius
-								search_algorithm = "source-view deterministic common-footprint ring"
-								break
-							end
-							candidate_q = candidate_q + direction[1]
-							candidate_r = candidate_r + direction[2]
-						end
-						if found_q ~= nil then break end
-					end
-					if found_q ~= nil then break end
+				found_q, found_r, found_radius = nearest_on_hex_rings(
+					origin_q, origin_r, common_source_footprint, 1)
+				if found_q ~= nil then
+					search_algorithm = "source-view deterministic common-footprint ring"
 				end
 			else
 				-- Legacy/unplanned maps retain the native expanding search. Newly generated maps never
@@ -2319,7 +2430,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			if not ok_world or type(final_x) ~= "number" or type(final_y) ~= "number" then
 				return false, { error = "final passage world coordinate unavailable", pairs = stats.pairs }
 			end
-			if committed and (sx ~= final_x or sy ~= final_y) then
+			if committed and not committed_relocated and (sx ~= final_x or sy ~= final_y) then
 				return false, {
 					error = "visible surface passage drifted from its committed coordinate",
 					pairs = stats.pairs, surface = tostring(sx) .. "," .. tostring(sy),
@@ -2330,9 +2441,11 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				and not move_object(underground_anchor, underground_map, final_x, final_y) then
 				return false, { error = "underground passage move failed", pairs = stats.pairs }
 			end
-			if not committed then
+			if not committed or committed_relocated then
 				if not move_object(surface_anchor, surface_map, final_x, final_y) then
-					return false, { error = "legacy surface passage move failed", pairs = stats.pairs }
+					return false, { error = committed_relocated
+						and "surface passage relocation to nearest valid hex failed"
+						or "legacy surface passage move failed", pairs = stats.pairs }
 				end
 				stats.surface_moves = stats.surface_moves + 1
 			end
@@ -2354,7 +2467,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		end
 		stats.moved_dependants = stats.moved_dependants
 			+ move_dependants(underground_map, underground_anchor, ux, uy, expected_ux, expected_uy)
-		if source_bootstrap or not committed then
+		if source_bootstrap or not committed or committed_relocated then
 			stats.moved_dependants = stats.moved_dependants
 				+ move_dependants(surface_map, surface_anchor, sx, sy, final_x, final_y)
 		end
@@ -2363,6 +2476,15 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		else stats.fallback = stats.fallback + 1 end
 		underground_anchor.SuperBigMapSharedPassageHex = tostring(final_q) .. ":" .. tostring(final_r)
 		surface_anchor.SuperBigMapSharedPassageHex = underground_anchor.SuperBigMapSharedPassageHex
+		if committed_relocated then
+			for _, anchor in ipairs({ underground_anchor, surface_anchor }) do
+				anchor.SuperBigMapCommittedPassageQ = final_q
+				anchor.SuperBigMapCommittedPassageR = final_r
+				anchor.SuperBigMapCommittedPassageX = final_x
+				anchor.SuperBigMapCommittedPassageY = final_y
+				anchor.SuperBigMapCommittedPassageFinalFallbackRadius = found_radius
+			end
+		end
 		EntranceAudit(source_bootstrap and "PASSAGE_PLAN_COMMITTED" or "PASSAGE_PLAN_VALIDATED", {
 			pair = i,
 			algorithm = search_algorithm,
@@ -2372,7 +2494,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			final_x = final_x, final_y = final_y, final_q = final_q, final_r = final_r,
 			surface_before_x = sx, surface_before_y = sy,
 			underground_before_x = ux, underground_before_y = uy,
-			surface_moved_during_deferred_final = (not source_bootstrap and not committed) and true or false,
+			surface_moved_during_deferred_final = not source_bootstrap
+				and (not committed or committed_relocated) and true or false,
+			committed_relocated = committed_relocated,
 		}, underground_map)
 	end
 	return true, stats
