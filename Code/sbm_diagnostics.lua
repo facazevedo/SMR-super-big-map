@@ -1,6 +1,6 @@
 -- Super Big Map -- opt-in, observational expansion diagnostics.
 --
--- This module has no timers, threads, waits, or gameplay mutations. Its two channels are gated by
+-- This module has no timers, threads, waits, or gameplay mutations. Its channels are gated by
 -- sbm_config.lua and use stable one-line records so the newest Mars log can be parsed mechanically.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
@@ -95,6 +95,10 @@ function Diagnostics.EnrichmentEnabled()
 	return Config().DEBUG_ENRICHMENT_AUDIT == true
 end
 
+function Diagnostics.UndergroundDecorationEnabled()
+	return Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
+end
+
 function Diagnostics.Audit(event, data, map)
 	if not Diagnostics.EnrichmentEnabled() then return false end
 	return Print("EnrichmentAudit", event, CopyData(data, map))
@@ -103,6 +107,11 @@ end
 function Diagnostics.Elevator(event, data, map)
 	if not Diagnostics.EnrichmentEnabled() then return false end
 	return Print("ElevatorAudit", event, CopyData(data, map))
+end
+
+function Diagnostics.UndergroundDecoration(event, data, map)
+	if not Diagnostics.UndergroundDecorationEnabled() then return false end
+	return Print("UndergroundDecoration", event, CopyData(data, map))
 end
 
 local function EnsureLoading(reason, map)

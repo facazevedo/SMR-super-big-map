@@ -51,6 +51,21 @@ local function EntranceAudit(event, data, map)
 	end
 end
 
+local function UndergroundDecorationAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.UndergroundDecoration) == "function" then
+		diagnostics.UndergroundDecoration(event, data, map)
+	end
+end
+
+local function UndergroundDecorationAuditEnabled(map)
+	local mapdata = map and map.mapdata
+	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return false end
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.UndergroundDecorationEnabled) == "function"
+		and diagnostics.UndergroundDecorationEnabled() == true
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -726,6 +741,7 @@ end
 local decor_relief_by_map = setmetatable({}, { __mode = "k" })
 local decor_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
+local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
 
 -- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
 -- (2147483647). Treating "numeric" as "explicit Z" converts that sentinel into a
@@ -747,6 +763,77 @@ local function ObjectHasExplicitZ(obj, pos)
 	local const_tbl = Global("const")
 	local invalid_z = type(const_tbl) == "table" and const_tbl.InvalidZ or Global("InvalidZ")
 	return type(invalid_z) ~= "number" or pz ~= invalid_z
+end
+
+local function DecorationPositionSnapshot(map, obj, pos)
+	local x, y = PointXY(pos)
+	local data = { x = x, y = y }
+	if type(x) ~= "number" or type(y) ~= "number" then return data end
+	local raw_z
+	pcall(function() raw_z = pos:z() end)
+	local explicit_z = ObjectHasExplicitZ(obj, pos)
+	local terrain_api = Global("terrain")
+	local ground_z
+	if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+		local ok, value = pcall(terrain_api.GetHeight, map, pos)
+		if ok and type(value) == "number" then ground_z = value end
+	end
+	data.raw_z = raw_z
+	data.explicit_z = explicit_z
+	data.ground_z = ground_z
+	data.effective_z = explicit_z and raw_z or ground_z
+	if type(terrain_api) == "table" then
+		if type(terrain_api.IsPointInBounds) == "function" then
+			local ok, value = pcall(terrain_api.IsPointInBounds, map, pos)
+			if ok then data.in_bounds = value == true end
+		end
+		if type(terrain_api.IsPassable) == "function" then
+			local ok, value = pcall(terrain_api.IsPassable, map, pos)
+			if ok then data.passable = value == true end
+		end
+		if type(terrain_api.GetTerrainType) == "function" then
+			local ok, value = pcall(terrain_api.GetTerrainType, map, pos)
+			if ok then
+				data.terrain_type = value
+				local textures = Global("TerrainTextures")
+				local preset = type(textures) == "table" and textures[value]
+				data.terrain_id = type(preset) == "table" and preset.id or nil
+			end
+		end
+	end
+	local world_to_hex = Global("WorldToHex")
+	if type(world_to_hex) == "function" then
+		local ok, q, r = pcall(world_to_hex, pos)
+		if ok and type(q) == "number" and type(r) == "number" then
+			data.q, data.r = q, r
+			local buildable = map and map.buildable
+			if buildable and type(buildable.GetZ) == "function" then
+				local ok_b, build_z = pcall(buildable.GetZ, buildable, q, r)
+				if ok_b then
+					data.buildable_z = build_z
+					local get_unbuildable = Global("buildUnbuildableZ")
+					local sentinel = type(get_unbuildable) == "function"
+						and SafeCall(get_unbuildable) or nil
+					data.buildable = build_z ~= nil and build_z ~= sentinel
+				end
+			end
+		end
+	end
+	return data
+end
+
+local function DecorationAuditFields(prefix, snapshot, out)
+	out = out or {}
+	snapshot = snapshot or {}
+	for _, key in ipairs({
+		"x", "y", "raw_z", "effective_z", "ground_z", "explicit_z",
+		"q", "r", "in_bounds", "passable", "buildable", "buildable_z",
+		"terrain_type", "terrain_id",
+	}) do
+		local value = snapshot[key]
+		out[prefix .. key] = value == nil and "nil" or value
+	end
+	return out
 end
 
 local function AnnotateDecorRelief(map)
@@ -772,13 +859,40 @@ local function AnnotateDecorRelief(map)
 	local terrain_glued = 0
 	local height_failures = 0
 	local max_abs_relief = 0
+	local audit_on = UndergroundDecorationAuditEnabled(map)
+	local audit_records = audit_on and setmetatable({}, { __mode = "k" }) or nil
+	local audit_list = audit_on and {} or nil
 	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
+		local skip_object = ShouldSkipObject(obj)
+		local important_object = IsImportantSectorObject(obj)
+		if audit_on and not skip_object and not important_object then
+			local pos = ObjectPosition(obj)
+			if pos then
+				local parent
+				if type(obj.GetParent) == "function" then
+					local ok_p, value = pcall(obj.GetParent, obj)
+					if ok_p then parent = value end
+				end
+				local record = {
+					index = #audit_list + 1,
+					object = tostring(obj),
+					class = tostring(obj.class or "?"),
+					entity = tostring(type(obj.GetEntity) == "function"
+						and SafeCall(obj.GetEntity, obj) or obj.entity or "?"),
+					attached = parent ~= nil,
+					parent = parent and tostring(parent) or "nil",
+					source = DecorationPositionSnapshot(map, obj, pos),
+				}
+				audit_records[obj] = record
+				audit_list[#audit_list + 1] = record
+			end
+		end
 		-- Relief is consumed only by the decoration scaling pass. Avoid terrain-height calls for
 		-- buildings, markers, units, attached children, and other objects that pass never moves.
 		if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
-			and (ShouldSkipObject(obj) or IsImportantSectorObject(obj)) then return end
+			and (skip_object or important_object) then return end
 		if type(obj.GetParent) == "function" then
 			local ok_p, parent = pcall(obj.GetParent, obj)
 			if ok_p and parent then return end -- attached children follow their parent
@@ -804,8 +918,10 @@ local function AnnotateDecorRelief(map)
 		annotated = annotated + 1
 	end)
 	decor_relief_by_map[map] = relief
+	decor_position_audit_by_map[map] = audit_records
 	decor_relief_stats_by_map[map] = {
 		scanned = #objects,
+		audit_candidates = audit_on and #audit_list or 0,
 		eligible = eligible,
 		explicit_z = annotated,
 		terrain_glued = terrain_glued,
@@ -814,6 +930,25 @@ local function AnnotateDecorRelief(map)
 	}
 	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
 		decor_objects_by_map[map] = objects
+	end
+	if audit_on then
+		UndergroundDecorationAudit("CAPTURE_SUMMARY", {
+			candidates = #audit_list,
+			scanned = #objects,
+			scale_source_width_tiles = sw_tiles,
+			scale_source_height_tiles = sh_tiles,
+		}, map)
+		for _, record in ipairs(audit_list) do
+			local data = DecorationAuditFields("source_", record.source, {
+				index = record.index,
+				object = record.object,
+				class = record.class,
+				entity = record.entity,
+				attached = record.attached,
+				parent = record.parent,
+			})
+			UndergroundDecorationAudit("PRE", data, map)
+		end
 	end
 	LoadingStep("decoration relief capture complete", decor_relief_stats_by_map[map], map)
 	return annotated
@@ -824,6 +959,7 @@ local function ClearDecorRelief(map)
 		decor_relief_by_map[map] = nil
 		decor_objects_by_map[map] = nil
 		decor_relief_stats_by_map[map] = nil
+		decor_position_audit_by_map[map] = nil
 	end
 end
 
@@ -906,6 +1042,9 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
 	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
 	local is_valid = Global("IsValid")
+	local audit_on = UndergroundDecorationAuditEnabled(map)
+	local audit_records = decor_position_audit_by_map[map]
+	local audit_post_count = 0
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
@@ -918,6 +1057,8 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 			pcall(function()
 				local pos = ObjectPosition(obj)
 				if not pos then return end
+				local audit_record = audit_on and audit_records and audit_records[obj]
+				local before_snapshot = audit_on and DecorationPositionSnapshot(map, obj, pos) or nil
 				local ox, oy = PointXY(pos)
 				if type(ox) ~= "number" or type(oy) ~= "number" then return end
 				local nx = math.floor(ox * scale_x + 0.5)
@@ -961,6 +1102,62 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 					if not ok_set then setpos_failures = setpos_failures + 1 end
 					moved = moved + 1
 				end
+				if audit_on then
+					audit_post_count = audit_post_count + 1
+					local actual_pos = ObjectPosition(obj)
+					local actual = actual_pos and DecorationPositionSnapshot(map, obj, actual_pos) or {}
+					local source = audit_record and audit_record.source or {}
+					-- The authoritative expected coordinate always derives from the PRE-stretch
+					-- snapshot, never from the object's current coordinate. If an attached child
+					-- followed its parent before its own loop iteration, attempted_x/y will expose
+					-- the second transform while expected_x/y retain the one-transform truth.
+					local expected_x = type(source.x) == "number"
+						and math.floor(source.x * scale_x + 0.5) or nx
+					local expected_y = type(source.y) == "number"
+						and math.floor(source.y * scale_y + 0.5) or ny
+					local expected = DecorationPositionSnapshot(
+						map, nil, point_fn(expected_x, expected_y))
+					local expected_z = expected.ground_z
+					local source_dz = type(source.effective_z) == "number"
+						and type(source.ground_z) == "number"
+						and source.explicit_z == true
+						and (source.effective_z - source.ground_z) or nil
+					if type(source_dz) == "number" and type(expected.ground_z) == "number" then
+						local zs = (type(map.SuperBigMapZScaleMul) == "number"
+							and type(map.SuperBigMapZScaleDiv) == "number"
+							and map.SuperBigMapZScaleDiv > 0)
+							and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
+						expected_z = expected.ground_z + math.floor(source_dz * zs + 0.5)
+					end
+					expected.effective_z = expected_z
+					local attached = "uncaptured"
+					if audit_record then attached = audit_record.attached end
+					local data = {
+						index = audit_record and audit_record.index or "uncaptured",
+						object = audit_record and audit_record.object or tostring(obj),
+						class = audit_record and audit_record.class or tostring(obj.class or "?"),
+						entity = audit_record and audit_record.entity or tostring(obj.entity or "?"),
+						attached = attached,
+						parent = audit_record and audit_record.parent or "uncaptured",
+						transform_input_x = ox,
+						transform_input_y = oy,
+						attempted_x = nx,
+						attempted_y = ny,
+						expected_x = expected_x,
+						expected_y = expected_y,
+						expected_z = expected_z or "nil",
+						x_error = type(actual.x) == "number" and actual.x - expected_x or "nil",
+						y_error = type(actual.y) == "number" and actual.y - expected_y or "nil",
+						z_error = type(actual.effective_z) == "number" and type(expected_z) == "number"
+							and actual.effective_z - expected_z or "nil",
+						z_mode = z_mode,
+					}
+					DecorationAuditFields("source_", source, data)
+					DecorationAuditFields("before_move_", before_snapshot, data)
+					DecorationAuditFields("expected_terrain_", expected, data)
+					DecorationAuditFields("actual_", actual, data)
+					UndergroundDecorationAudit("POST", data, map)
+				end
 				-- Grow the object to match the enlarged terrain features.
 				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
 					local s = SafeCall(obj.GetScale, obj)
@@ -987,6 +1184,20 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 							if ok_cz and cpz then cp = cpz end
 						end
 						if type(clone.SetPos) == "function" then pcall(clone.SetPos, clone, cp) end
+						if audit_on then
+							local clone_pos = ObjectPosition(clone)
+							local clone_snapshot = clone_pos
+								and DecorationPositionSnapshot(map, clone, clone_pos) or {}
+							local clone_data = DecorationAuditFields("actual_", clone_snapshot, {
+								source_index = audit_record and audit_record.index or "uncaptured",
+								source_object = audit_record and audit_record.object or tostring(obj),
+								object = tostring(clone),
+								class = tostring(clone.class or "?"),
+								entity = tostring(type(clone.GetEntity) == "function"
+									and SafeCall(clone.GetEntity, clone) or clone.entity or "?"),
+							})
+							UndergroundDecorationAudit("POST_TOPUP", clone_data, map)
+						end
 					end
 				end
 			end)
@@ -996,6 +1207,14 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor")
 	end
 	local capture = decor_relief_stats_by_map[map] or {}
+	if audit_on then
+		UndergroundDecorationAudit("PLACEMENT_SUMMARY", {
+			captured_candidates = capture.audit_candidates or 0,
+			post_records = audit_post_count,
+			moved = moved,
+			topup_clones = topup_clones,
+		}, map)
+	end
 	LoadingStep("decoration stretch placement complete", {
 		scanned = #objs,
 		moved = moved,

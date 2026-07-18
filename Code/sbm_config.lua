@@ -22,6 +22,12 @@ config.DebugEnrichmentAudit = false
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
 config.DebugLoadingTimings = true
+-- Exhaustive underground decoration transform trace. When enabled, every decoration that the
+-- stretch pass may move gets a stable audit index plus PRE and POST records containing object
+-- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
+-- and buildable state. This can add thousands of log lines and materially slow the diagnostic
+-- run, so disable it again after the underground placement investigation.
+config.DebugUndergroundDecorationPositions = true
 
 -- ============================================================================
 -- MAIN LAYOUT
@@ -563,6 +569,7 @@ local expansion_step_21 = expansion_step_03
 C.ENABLE_MOD = true
 C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
+C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = as_bool(config.DebugUndergroundDecorationPositions)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
