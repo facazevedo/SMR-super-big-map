@@ -768,6 +768,7 @@ local decor_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
 local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
+local cave_in_snapshot_audit_by_map = setmetatable({}, { __mode = "k" })
 
 -- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
 -- (2147483647). Treating "numeric" as "explicit Z" converts that sentinel into a
@@ -1055,6 +1056,195 @@ local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y
 	CaveInNeighborhoodFields("expected_local_", expected_neighborhood, data)
 	CaveInNeighborhoodFields("actual_local_", actual_neighborhood, data)
 	return data
+end
+
+-- Mode-neutral final-state inventory used for direct vanilla/expanded comparisons. Unlike the
+-- transform audit above, this records only live facts from the current completed map, with exactly
+-- the same schema in both modes. It is observational: no object, terrain, or grid state is changed.
+local function AuditCaveInSnapshot(map, mode, reason)
+	mode = mode == "expanded" and "expanded" or "vanilla"
+	if not CaveInAuditEnabled(map) then return false, { disabled = true, mode = mode } end
+	if type(map.MapForEach) ~= "function" then
+		local stats = { mode = mode, error = "MapForEach unavailable", records = 0 }
+		CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
+		return false, stats
+	end
+	local previous = cave_in_snapshot_audit_by_map[map]
+	if type(previous) == "table" and previous.mode == mode then
+		return previous.ok, previous.stats
+	end
+
+	local records, errors = {}, {}
+	local scanned, candidates = 0, 0
+	local traversal_ok, traversal_err = pcall(map.MapForEach, map, "map", "CObject", function(obj)
+		scanned = scanned + 1
+		if not IsCaveInObject(obj) then return end
+		candidates = candidates + 1
+		local record_ok, record_or_err = pcall(function()
+			local pos = ObjectPosition(obj)
+			if not pos then error("position unavailable") end
+			local parent
+			if type(obj.GetParent) == "function" then
+				local ok_parent, value = pcall(obj.GetParent, obj)
+				if ok_parent then parent = value end
+			end
+			return {
+				object = tostring(obj),
+				handle = tostring(obj.handle),
+				class = tostring(obj.class or "?"),
+				entity = tostring(type(obj.GetEntity) == "function"
+					and SafeCall(obj.GetEntity, obj) or obj.entity or "?"),
+				attached = parent ~= nil,
+				parent = parent and tostring(parent) or "nil",
+				actual_scale = type(obj.GetScale) == "function"
+					and SafeCall(obj.GetScale, obj) or nil,
+				actual_angle = type(obj.GetAngle) == "function"
+					and SafeCall(obj.GetAngle, obj) or nil,
+				actual = DecorationPositionSnapshot(map, obj, pos),
+				actual_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
+			}
+		end)
+		if record_ok and type(record_or_err) == "table" then
+			records[#records + 1] = record_or_err
+		else
+			errors[#errors + 1] = {
+				object = tostring(obj),
+				class = tostring(obj and obj.class or "?"),
+				error = tostring(record_or_err),
+			}
+		end
+	end)
+	if not traversal_ok then
+		local stats = {
+			mode = mode,
+			reason = tostring(reason or ""),
+			error = tostring(traversal_err),
+			scanned = scanned,
+			candidates = candidates,
+			records = #records,
+			record_errors = #errors,
+		}
+		CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
+		return false, stats
+	end
+
+	table.sort(records, function(a, b)
+		local aa, bb = a.actual or {}, b.actual or {}
+		local ax, bx = tonumber(aa.x) or math.huge, tonumber(bb.x) or math.huge
+		if ax ~= bx then return ax < bx end
+		local ay, by = tonumber(aa.y) or math.huge, tonumber(bb.y) or math.huge
+		if ay ~= by then return ay < by end
+		if a.class ~= b.class then return a.class < b.class end
+		return a.object < b.object
+	end)
+
+	local stats = {
+		mode = mode,
+		reason = tostring(reason or ""),
+		scanned = scanned,
+		candidates = candidates,
+		records = #records,
+		record_errors = #errors,
+		removable_rocks_01 = 0,
+		removable_rocks_02 = 0,
+		other_classes = 0,
+		attached = 0,
+		explicit_z = 0,
+		in_bounds = 0,
+		out_of_bounds = 0,
+		bounds_unknown = 0,
+		passable = 0,
+		passability_unknown = 0,
+		buildable = 0,
+		buildability_unknown = 0,
+		local_height_samples = 0,
+		local_height_range_sum = 0,
+		max_local_height_range = 0,
+	}
+	for index, record in ipairs(records) do
+		local actual = record.actual or {}
+		local neighborhood = record.actual_neighborhood or {}
+		local actual_dz = type(actual.effective_z) == "number" and type(actual.ground_z) == "number"
+			and actual.effective_z - actual.ground_z or nil
+		local data = {
+			mode = mode,
+			reason = tostring(reason or ""),
+			index = index,
+			object = record.object,
+			handle = record.handle,
+			class = record.class,
+			entity = record.entity,
+			attached = record.attached,
+			parent = record.parent,
+			actual_scale = record.actual_scale or "nil",
+			actual_angle = record.actual_angle or "nil",
+			actual_dz = actual_dz or (actual_dz == 0 and 0 or "nil"),
+		}
+		DecorationAuditFields("actual_", actual, data)
+		CaveInNeighborhoodFields("actual_local_", neighborhood, data)
+		CaveInAudit("SNAPSHOT", data, map)
+
+		if record.class == "RemovableRocks_01" then
+			stats.removable_rocks_01 = stats.removable_rocks_01 + 1
+		elseif record.class == "RemovableRocks_02" then
+			stats.removable_rocks_02 = stats.removable_rocks_02 + 1
+		else
+			stats.other_classes = stats.other_classes + 1
+		end
+		if record.attached then stats.attached = stats.attached + 1 end
+		if actual.explicit_z == true then stats.explicit_z = stats.explicit_z + 1 end
+		if actual.in_bounds == true then
+			stats.in_bounds = stats.in_bounds + 1
+		elseif actual.in_bounds == false then
+			stats.out_of_bounds = stats.out_of_bounds + 1
+		else
+			stats.bounds_unknown = stats.bounds_unknown + 1
+		end
+		if actual.passable == true then
+			stats.passable = stats.passable + 1
+		elseif actual.passable == nil then
+			stats.passability_unknown = stats.passability_unknown + 1
+		end
+		if actual.buildable == true then
+			stats.buildable = stats.buildable + 1
+		elseif actual.buildable == nil then
+			stats.buildability_unknown = stats.buildability_unknown + 1
+		end
+		if type(actual.x) == "number" then
+			stats.min_x = stats.min_x and math.min(stats.min_x, actual.x) or actual.x
+			stats.max_x = stats.max_x and math.max(stats.max_x, actual.x) or actual.x
+		end
+		if type(actual.y) == "number" then
+			stats.min_y = stats.min_y and math.min(stats.min_y, actual.y) or actual.y
+			stats.max_y = stats.max_y and math.max(stats.max_y, actual.y) or actual.y
+		end
+		if type(actual_dz) == "number" then
+			stats.min_dz = stats.min_dz and math.min(stats.min_dz, actual_dz) or actual_dz
+			stats.max_dz = stats.max_dz and math.max(stats.max_dz, actual_dz) or actual_dz
+		end
+		if type(neighborhood.height_range) == "number" then
+			stats.local_height_samples = stats.local_height_samples + 1
+			stats.local_height_range_sum = stats.local_height_range_sum + neighborhood.height_range
+			stats.max_local_height_range = math.max(
+				stats.max_local_height_range, neighborhood.height_range)
+		end
+	end
+	for index, record in ipairs(errors) do
+		CaveInAudit("SNAPSHOT_ERROR", {
+			mode = mode,
+			reason = tostring(reason or ""),
+			index = index,
+			object = record.object,
+			class = record.class,
+			error = record.error,
+		}, map)
+	end
+	stats.average_local_height_range = stats.local_height_samples > 0
+		and math.floor(stats.local_height_range_sum / stats.local_height_samples + 0.5) or 0
+	CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
+	local ok = stats.record_errors == 0 and stats.records == stats.candidates
+	cave_in_snapshot_audit_by_map[map] = { mode = mode, ok = ok, stats = stats }
+	return ok, stats
 end
 
 local function AnnotateDecorRelief(map)
@@ -3556,6 +3746,7 @@ local TerrainCopy = {
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	AuditFinalCaveInPositions = AuditFinalCaveInPositions,
+	AuditCaveInSnapshot = AuditCaveInSnapshot,
 	ClearDecorRelief = ClearDecorRelief,
 }
 SuperBigMap.TerrainCopy = TerrainCopy

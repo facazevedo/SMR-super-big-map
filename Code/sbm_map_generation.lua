@@ -291,6 +291,7 @@ local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigratio
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
 local AuditFinalCaveInPositions = TerrainCopy.AuditFinalCaveInPositions
+local AuditCaveInSnapshot = TerrainCopy.AuditCaveInSnapshot
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 assert(type(ReinvalidateExpandedTerrain) == "function"
 	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function",
@@ -4994,6 +4995,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				xy_mismatches = type(audit_result) == "table" and audit_result.xy_mismatches or nil,
 				z_mismatches = type(audit_result) == "table" and audit_result.z_mismatches or nil,
 				moved_after_post = type(audit_result) == "table" and audit_result.moved_after_post or nil,
+			}, map)
+		end
+		if ok_branch and type(AuditCaveInSnapshot) == "function" then
+			local call_ok, audit_ok, audit_result = pcall(AuditCaveInSnapshot, map, "expanded",
+				"expanded underground pipeline final state")
+			LoadingStep("underground cave-in comparable snapshot", {
+				ok = tostring(call_ok and audit_ok ~= false),
+				error = call_ok and "" or tostring(audit_ok),
+				records = type(audit_result) == "table" and audit_result.records or nil,
+				record_errors = type(audit_result) == "table" and audit_result.record_errors or nil,
 			}, map)
 		end
 		LoadingEnd(underground_pipeline_token, {
