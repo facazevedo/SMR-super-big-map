@@ -452,9 +452,17 @@ config.OptimizeStretchDecorTraversal = true
 -- rebuild bounds/passability that the stretch immediately invalidates. Defer only the duplicate
 -- NewMap buildable pass, then defer the later full Apply exactly like the MapGenerated hooks.
 config.OptimizePostLoadDeferredBounds = true
--- Resource top-up builds a large validated candidate pool. Reuse its remaining candidates for
--- anomaly/effect top-ups and register stretch-mode clones at creation time instead of rescanning.
+-- Build resource top-up candidates adaptively, then reuse validated leftovers for anomaly/effect
+-- top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
+-- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe interior
+-- candidates. This preserves the complete perimeter sector list and placement constraints while
+-- avoiding an unconditional 153,600-point terrain scan.
+config.OptimizeAnomalyCandidateSearch = true
+-- Optional experimental batching across underground decoration/marker relocation. The measured
+-- work is tiny, so keep this off by default to preserve native construction timing exactly. The
+-- explicit authoritative final passability and buildable-grid rebuilds are never skipped.
+config.OptimizeUndergroundPassEditBatch = false
 -- Cap the random generator's working grid to the native source size during DoGenerate, so it
 -- never exceeds the engine's GSRP_MAX_SIZE assert on the oversized allocation. Read by the hook.
 config.LimitGeneratorToSource = true
@@ -744,6 +752,8 @@ C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
+C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
+C.OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH = as_bool(config.OptimizeUndergroundPassEditBatch)
 C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitGeneratorToSource)
 C.LIMIT_BUILDABLE_GRID_TO_SOURCE = expansion_step_01

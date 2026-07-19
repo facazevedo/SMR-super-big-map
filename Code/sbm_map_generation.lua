@@ -5342,12 +5342,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				local suspend_ok, suspend_result = pcall(map.SuspendPassEdits, map, pass_batch_reason)
 				pass_batch_active = suspend_ok and suspend_result ~= false
 			end
-			local function ResumeCombinedPassEdits(source)
+			local function ResumeCombinedPassEdits(source, ignore_errors)
 				if not pass_batch_active then return true end
-				-- Clear first so an engine exception cannot cause a second, unbalanced resume attempt.
-				pass_batch_active = false
-				local resume_ok, resume_err = pcall(map.ResumePassEdits, map, pass_batch_reason)
-				return resume_ok
+				local resume_ok, resume_err = pcall(
+					map.ResumePassEdits, map, pass_batch_reason, ignore_errors == true)
+				-- The engine validates GameTime before consuming this reason. Keep ownership after an
+				-- exception so the outer cleanup can balance it with ignore_errors=true.
+				if resume_ok then pass_batch_active = false end
+				return resume_ok, resume_err
 			end
 			local ok_branch, branch_err = pcall(function()
 				if type(StretchSourceToFull) == "function" then
@@ -5421,8 +5423,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					end
 				end
 				local pass_resume_token = LoadingBegin("surface resume combined pass edits", map)
-				local pass_resume_ok = ResumeCombinedPassEdits("after surface marker movement")
+				local pass_resume_ok, pass_resume_err = ResumeCombinedPassEdits(
+					"after surface marker movement")
 				LoadingEnd(pass_resume_token, nil, pass_resume_ok == true)
+				if not pass_resume_ok then
+					error("surface combined ResumePassEdits failed: " .. tostring(pass_resume_err))
+				end
 				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
@@ -5615,11 +5621,20 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					highlight.EnsureEntranceVisualsReady(map, nil, "surface stretch complete")
 				end
 			end)
+			-- Error-path cleanup. On the normal path the transaction was already resumed above.
+			local cleanup_ok, cleanup_err = ResumeCombinedPassEdits("surface stretch cleanup", true)
+			if not cleanup_ok then
+				if ok_branch then
+					ok_branch = false
+					branch_err = "surface pass-edit cleanup failed: " .. tostring(cleanup_err)
+				else
+					branch_err = tostring(branch_err) .. " | pass-edit cleanup failed: "
+						.. tostring(cleanup_err)
+				end
+			end
 			LoadingEnd(surface_pipeline_token, {
 				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
 			}, ok_branch)
-			-- Error-path cleanup. On the normal path the transaction was already resumed above.
-			ResumeCombinedPassEdits("surface stretch cleanup")
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
 			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
@@ -5861,6 +5876,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
 		local elevator_migrations = {}
 		local underground_pipeline_token = LoadingBegin("underground expansion pipeline", map)
+		local transform_pass_reason = "SuperBigMapUndergroundObjectTransform"
+		local transform_pass_batch_active = false
+		local function ResumeUndergroundTransformPassEdits(ignore_errors)
+			if not transform_pass_batch_active then return false, "batch inactive" end
+			local resume_ok, resume_err = pcall(
+				map.ResumePassEdits, map, transform_pass_reason, ignore_errors == true)
+			-- Vanilla checks the captured GameTime before removing the named reason. If a normal resume
+			-- asserts, retain ownership so the outer failure cleanup can balance the same reason with
+			-- ignore_errors=true. Relinquish ownership only after the engine accepted the resume.
+			if resume_ok then transform_pass_batch_active = false end
+			return resume_ok, resume_err
+		end
 		local ok_branch, branch_err = pcall(function()
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
@@ -5900,9 +5927,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground terrain stretch did not complete its height/type grids")
 				end
 			end
+			if cfg_bool("OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH", true)
+				and type(map.SuspendPassEdits) == "function"
+				and type(map.ResumePassEdits) == "function" then
+				local suspend_ok, suspend_result = pcall(
+					map.SuspendPassEdits, map, transform_pass_reason)
+				transform_pass_batch_active = suspend_ok and suspend_result ~= false
+			end
 			if type(ScaleDecorationsToFull) == "function" then
 				SetLoadingPhase("Repositioning underground rocks and decorations")
-				ScaleDecorationsToFull(map)
+				ScaleDecorationsToFull(map, transform_pass_batch_active)
 			end
 			-- Reconstruct every captured native marker directly at the identical proportional hex used
 			-- by the surface transaction. Constructor properties are restored before Init and the
@@ -5920,7 +5954,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			if type(ScaleMarkersToFull) == "function" then
 				SetLoadingPhase("Repositioning underground resource deposits")
-				local n_mark = ScaleMarkersToFull(map, false)
+				local n_mark = ScaleMarkersToFull(map, false, transform_pass_batch_active)
 				local position_deposits = SuperBigMap.DepositRules
 				if position_deposits
 					and type(position_deposits.VerifyNativeEnrichmentTransform) == "function" then
@@ -5930,6 +5964,16 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						error("native underground enrichment transformation verification failed (mismatches="
 							.. tostring(verify_stats and verify_stats.mismatches or "unknown") .. ")")
 					end
+				end
+			end
+			if transform_pass_batch_active then
+				local resume_token = LoadingBegin("underground resume combined pass edits", map)
+				local resume_ok, resume_err = ResumeUndergroundTransformPassEdits()
+				LoadingEnd(resume_token, {
+					error = resume_ok and "" or tostring(resume_err),
+				}, resume_ok)
+				if not resume_ok then
+					error("underground combined ResumePassEdits failed: " .. tostring(resume_err))
 				end
 			end
 			-- The vanilla wonder-class shuffle was consumed and recorded during generation, but
@@ -5956,14 +6000,23 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- the real underground entrances before any enrichment is accepted or moved.
 			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 				SetLoadingPhase("Finalizing reachable underground terrain")
+				-- Keep this explicit full-map rebuild even though the object transforms above now share one
+				-- pass-edit transaction. The underground map is not necessarily CurrentMap, and a successful
+				-- RebuildGrids/ResumePassEdits return does not prove that its asynchronous native pass grid is
+				-- already current. This remains the authoritative synchronization point before reachability-
+				-- constrained density placement.
 				local terrain_api2 = Global("terrain")
-				if not (type(terrain_api2) == "table" and type(terrain_api2.RebuildPassability) == "function") then
+				if not (type(terrain_api2) == "table"
+					and type(terrain_api2.RebuildPassability) == "function") then
 					error("underground final passability rebuild is unavailable")
 				end
 				local passability_token = LoadingBegin("underground final RebuildPassability", map)
 				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
-				LoadingEnd(passability_token, { error = pass_ok and "" or tostring(pass_err) }, pass_ok)
-				if not pass_ok then error("underground final passability rebuild failed: " .. tostring(pass_err)) end
+				LoadingEnd(passability_token,
+					{ error = pass_ok and "" or tostring(pass_err) }, pass_ok)
+				if not pass_ok then
+					error("underground final passability rebuild failed: " .. tostring(pass_err))
+				end
 				local rebuild_buildable = Global("RebuildBuildableGrid")
 				if type(rebuild_buildable) ~= "function" then
 					error("underground final buildable-grid rebuild is unavailable")
@@ -6216,6 +6269,23 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
 		end)
+		-- A failure anywhere between decoration movement and marker verification must still balance
+		-- the caller-owned pass transaction before diagnostics or lifecycle cleanup touch the map.
+		if transform_pass_batch_active then
+			local cleanup_ok, cleanup_err = ResumeUndergroundTransformPassEdits(true)
+			LoadingStep("underground combined pass-edit failure cleanup", {
+				ok = tostring(cleanup_ok == true), error = cleanup_ok and "" or tostring(cleanup_err),
+			}, map)
+			if not cleanup_ok then
+				if ok_branch then
+					ok_branch = false
+					branch_err = "underground pass-edit cleanup failed: " .. tostring(cleanup_err)
+				else
+					branch_err = tostring(branch_err) .. " | pass-edit cleanup failed: "
+						.. tostring(cleanup_err)
+				end
+			end
+		end
 		local cave_audit_ok, cave_audit_err = true, ""
 		if type(AuditFinalCaveInPositions) == "function" then
 			local call_ok, audit_ok, audit_result = pcall(AuditFinalCaveInPositions, map,

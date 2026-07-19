@@ -75,6 +75,11 @@ local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
 -- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
 -- map keys ensure an abandoned generation cannot leak the (potentially large) property snapshots.
 local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k" })
+-- CaptureNativeEnrichmentPositions and CaptureNativeEnrichmentRecords run back-to-back on the
+-- generated source. Keep that first traversal's exact live marker list long enough for the value
+-- snapshot, avoiding a second full DepositMarker enumeration. The cache is consumed immediately;
+-- weak keys also make an interrupted source transaction self-cleaning.
+local captured_native_enrichment_objects_by_map = setmetatable({}, { __mode = "k" })
 
 local function CachedTopUpCandidates(map)
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return nil end
@@ -429,22 +434,28 @@ local function EvaluateDepositTerrain(map, pt, context, defer_reachability)
 	-- engine's authoritative buildable grid. Mountain membership is irrelevant; a flat mountain
 	-- shelf is valid, while a passable slope is not. Native vanilla markers never pass through this
 	-- validator and remain at their exact proportional coordinates.
+	local underground = (context and context.underground == true)
+		or (not context and IsUndergroundMap(map))
+	local buildable, q, r
+	-- Buildability is the cheapest authoritative rejection and is especially selective in the
+	-- surface mountain ring and the underground black rock/void. Test it before the two terrain
+	-- queries on both maps. The accepted set is the same conjunction as before; only failed points
+	-- short-circuit sooner.
+	buildable, q, r = IsBuildableAt(map, pt, true, context)
+	if not buildable then return false, false, 0, false, q, r end
 	local passable = PassableAt(map, pt, context)
 	if not passable then return false, passable, 0, false end
 	local flatness = FlatnessAt(map, pt, context) or 0
 	if flatness < (context and context.flatness_minimum or TopUpFlatnessMinimum()) then
 		return false, passable, flatness, false
 	end
-	local buildable, q, r = IsBuildableAt(map, pt, true, context)
-	if not buildable then return false, passable, flatness, false, q, r end
 	-- UNDERGROUND: only the cavern floor is real accessible terrain; the surrounding rock/
 	-- void passes the passable+flat tests (the whole map is passable since the expansion
 	-- zeroes PassBorder, and the void is uniformly flat) -- which put topped-up anomalies
 	-- out in the black inaccessible area. Require the hex to be BUILDABLE (the game's own
 	-- accessibility measure: hills/rock/void are unbuildable, the floor is buildable), so
 	-- every top-up/respace/even-out pool samples only the playable floor.
-	if defer_reachability ~= true
-		and ((context and context.underground == true) or (not context and IsUndergroundMap(map))) then
+	if defer_reachability ~= true and underground then
 		if not IsReachableFromUndergroundEntrance(map, pt, q, r) then
 			return false, passable, flatness, buildable, q, r
 		end
@@ -1806,8 +1817,18 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	end
 	local xxhash = Global("xxhash")
 	local captured = 0
+	-- Only the temporary vanilla-source migration consumes value records immediately after this
+	-- coordinate pass. Destination/finalization calls are capture-only and must not retain live
+	-- object references for the rest of the map lifetime.
+	local cache_live_objects = map.SuperBigMapVanillaSourceMigration == true
+	local captured_objects = cache_live_objects and {} or nil
+	captured_native_enrichment_objects_by_map[map] = nil
 	local capture_ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not IsNativeEnrichmentMarker(marker) then return end
+		-- Retain invalid-position markers too. CaptureNativeEnrichmentRecords must still observe them
+		-- and fire its existing missing-position invariant instead of silently comparing two filtered
+		-- counts from the same traversal.
+		if captured_objects then captured_objects[#captured_objects + 1] = marker end
 		local pos = ObjectPos(marker)
 		if not (pos and type(pos.xy) == "function") then return end
 		local x, y = pos:xy()
@@ -1834,6 +1855,7 @@ function DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	map.SuperBigMapNativeEnrichmentCaptureDone = true
 	map.SuperBigMapNativeEnrichmentCapturePending = false
 	map.SuperBigMapNativeEnrichmentCaptureCount = captured
+	if captured_objects then captured_native_enrichment_objects_by_map[map] = captured_objects end
 	return captured
 end
 
@@ -1969,7 +1991,7 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 	DepositRules.CaptureNativeEnrichmentPositions(map, reason)
 	local records, excluded, class_counts = {}, {}, {}
 	local missing_positions = 0
-	local ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+	local function capture_marker(marker)
 		if not IsNativeEnrichmentMarker(marker) then return end
 		excluded[marker] = true
 		local pos = ObjectPos(marker)
@@ -2007,7 +2029,17 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 		end
 		records[#records + 1] = record
 		class_counts[record.class] = (class_counts[record.class] or 0) + 1
-	end)
+	end
+	local captured_objects = captured_native_enrichment_objects_by_map[map]
+	local ok, capture_error
+	if type(captured_objects) == "table" then
+		ok, capture_error = pcall(function()
+			for i = 1, #captured_objects do capture_marker(captured_objects[i]) end
+		end)
+	else
+		ok, capture_error = pcall(map.MapForEach, map, "map", "DepositMarker", capture_marker)
+	end
+	captured_native_enrichment_objects_by_map[map] = nil
 	if not ok then error("native enrichment record capture failed: " .. tostring(capture_error)) end
 	if missing_positions > 0 then
 		error("native enrichment record capture found " .. tostring(missing_positions) .. " markers without coordinates")
@@ -3117,6 +3149,36 @@ function DepositRules.TopUpDeposits(map)
 	local added_by_type = {}
 	local density_fallback_added = 0
 	local fallback_selector_stats
+	local fallback_actual_sector_counts = {}
+	local fallback_actual_min_spacing_world
+	local function merge_fallback_selector_stats(next_stats)
+		if type(next_stats) ~= "table" then return end
+		if not fallback_selector_stats then
+			fallback_selector_stats = {
+				strategy = next_stats.strategy,
+				eligible_sectors = next_stats.eligible_sectors or 0,
+				selected_sectors = next_stats.selected_sectors or 0,
+				max_additions_to_one_sector = next_stats.max_additions_to_one_sector or 0,
+				minimum_selected_spacing_world = next_stats.minimum_selected_spacing_world or 0,
+			}
+			return
+		end
+		fallback_selector_stats.strategy = next_stats.strategy or fallback_selector_stats.strategy
+		fallback_selector_stats.eligible_sectors = math.max(
+			fallback_selector_stats.eligible_sectors or 0, next_stats.eligible_sectors or 0)
+		fallback_selector_stats.selected_sectors = math.max(
+			fallback_selector_stats.selected_sectors or 0, next_stats.selected_sectors or 0)
+		fallback_selector_stats.max_additions_to_one_sector = math.max(
+			fallback_selector_stats.max_additions_to_one_sector or 0,
+			next_stats.max_additions_to_one_sector or 0)
+		local prior_spacing = fallback_selector_stats.minimum_selected_spacing_world or 0
+		local next_spacing = next_stats.minimum_selected_spacing_world or 0
+		if prior_spacing <= 0 or (next_spacing > 0 and next_spacing < prior_spacing) then
+			fallback_selector_stats.minimum_selected_spacing_world = next_spacing
+		end
+	end
+	local candidate_pool_target, candidate_pool_size, candidate_samples = 0, 0, 0
+	local candidate_deferred_count, candidate_deferred_promoted = 0, 0
 
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
@@ -3165,44 +3227,60 @@ function DepositRules.TopUpDeposits(map)
 		-- Shared validated pool. Selection preserves terrain type while preferring sectors with
 		-- the lowest existing-enrichment load relative to sampled eligible terrain area.
 		local shared_candidates, pool = {}, 0
+		local deferred_relaxation_candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 24000, 8000
-		for _ = 1, MAX_SAMPLES do
-			if pool >= MAX_POOL then break end
+		-- Eight thousand validated points was a fixed historical ceiling, not a gameplay
+		-- requirement. On the underground map every attempted point also performs an authoritative
+		-- entrance ConnectivityCheck, so forcing the ceiling for a few dozen missing deposits spent
+		-- most of the first-access load building a reserve that no selector could consume. Thirty-two
+		-- choices per missing marker matches the proven effect-top-up budget and leaves ample room for
+		-- terrain matching, vanilla repulsion, clone failures, and the well-spaced fallback.
+		candidate_pool_target = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+			and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL
+		local function append_valid_candidate(x, y, sector, terrain_type, q, r)
+			shared_candidates[#shared_candidates + 1] = {
+				x = x, y = y, terrain_type = terrain_type, sector = sector, sector_id = sector.id,
+				q = q, r = r, _sbm_terrain_valid = true,
+				_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
+					and (tostring(q) .. ":" .. tostring(r)) or nil,
+			}
+			pool = pool + 1
+		end
+		local function sample_valid_candidate(prefilter)
+			candidate_samples = candidate_samples + 1
 			local x = lo_x + RandInt(span_x)
 			local y = lo_y + RandInt(span_y)
-			-- Spread across the whole unscanned expanded destination,
-			-- excluding only the scanned start sector: this keeps relocated/added markers from
-			-- piling into one outer band, and
-			-- prevents hidden markers landing in an already-scanned sector where they'd never reveal.
-			-- The final map's outer perimeter is reserved for qualifying anomaly top-up extras.
+			-- Spread across the whole unscanned expanded destination, excluding only the scanned
+			-- start sector. The final surface perimeter remains reserved for anomaly extras.
 			local sector = SectorAtPoint(map, x, y)
 			local reserved_ring = not underground and IsInFinalOuterSectorRing(
 				map, x, y, ring_sectors, sector, ring_context)
-			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
-				local pt = point(x, y)
-				local can_receive, _, _, _, q, r = CanReceiveDeposit(
-					map, pt, validation_context)
-				if can_receive then
-					local tt = TerrainTypeAt(map, pt, validation_context) or -1
-					local candidate = {
-						x = x, y = y, terrain_type = tt, sector = sector, sector_id = sector.id,
-						q = q, r = r,
-						_sbm_terrain_valid = true,
-						_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
-							and (tostring(q) .. ":" .. tostring(r)) or nil,
-					}
-					shared_candidates[#shared_candidates + 1] = candidate
-					pool = pool + 1
-				end
+			if not (sector and (underground or not SectorIsScanned(sector)) and not reserved_ring) then
+				return false
 			end
+			local pt = point(x, y)
+			if type(prefilter) == "function" and prefilter(x, y, pt, sector) ~= true then
+				return false
+			end
+			local can_receive, _, _, _, q, r = CanReceiveDeposit(map, pt, validation_context)
+			if not can_receive then return false end
+			local tt = TerrainTypeAt(map, pt, validation_context) or -1
+			append_valid_candidate(x, y, sector, tt, q, r)
+			return true
 		end
+		local function grow_candidate_pool(target, prefilter)
+			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
+			while candidate_samples < MAX_SAMPLES and pool < target do
+				sample_valid_candidate(prefilter)
+			end
+			return pool
+		end
+		grow_candidate_pool(candidate_pool_target)
 		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
-		local selector = NewSectorBalancedCandidateSelector(map, shared_candidates, "resources",
-			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
-		local active_selector = selector
+		local active_selector
 		local function take(tt, profile)
 			return active_selector.Take(tt, profile)
 		end
@@ -3226,7 +3304,7 @@ function DepositRules.TopUpDeposits(map)
 			end
 			return nil
 		end
-		local function select_needed_placement()
+		local function select_needed_placement(allow_any_terrain)
 			local preferred = choose_needed_type()
 			if not preferred then return nil end
 			local order, others = { preferred }, {}
@@ -3251,7 +3329,7 @@ function DepositRules.TopUpDeposits(map)
 						if not seen_options[option.key] then
 							seen_options[option.key] = true
 							local c = take(option.terrain_type, option.profile)
-							if not c then c = take_any(option.profile) end
+							if not c and allow_any_terrain == true then c = take_any(option.profile) end
 							if c then return c, template, option.position, option.profile end
 						end
 					end
@@ -3262,10 +3340,10 @@ function DepositRules.TopUpDeposits(map)
 
 		-- A candidate is reserved by Take. If cloning that candidate fails, keep trying unused
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
-		local function place_from(active, density_fallback)
+		local function place_from(active, density_fallback, allow_any_terrain)
 			active_selector = active
 			while added < shortfall and active_selector.Remaining() > 0 do
-				local c, template, tpos, profile = select_needed_placement()
+				local c, template, tpos, profile = select_needed_placement(allow_any_terrain)
 				if not c then break end
 				if tpos and type(tpos.xy) == "function" then
 					local tx, ty = tpos:xy()
@@ -3281,7 +3359,23 @@ function DepositRules.TopUpDeposits(map)
 						clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
 						clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
 							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
-						if density_fallback then density_fallback_added = density_fallback_added + 1 end
+						if density_fallback then
+							density_fallback_added = density_fallback_added + 1
+							local _, fallback_sector_key = CandidateSector(map, c)
+							fallback_sector_key = c._sbm_well_spaced_fallback_sector_key
+								or fallback_sector_key
+							if fallback_sector_key then
+								fallback_actual_sector_counts[fallback_sector_key] =
+									(fallback_actual_sector_counts[fallback_sector_key] or 0) + 1
+							end
+							local spacing_world = RoundedWorldDistance(
+								c._sbm_selected_fallback_spacing_sq)
+							if spacing_world > 0 then
+								fallback_actual_min_spacing_world = fallback_actual_min_spacing_world
+									and math.min(fallback_actual_min_spacing_world, spacing_world)
+									or spacing_world
+							end
+						end
 						added_by_type[res] = (added_by_type[res] or 0) + 1
 						if type(clone.SetPos) == "function" then
 							local pt = point(c.x, c.y)
@@ -3302,14 +3396,198 @@ function DepositRules.TopUpDeposits(map)
 				end
 			end
 		end
-		place_from(selector, false)
-		if underground and added < shortfall then
-			local fallback_selector = NewWellSpacedUndergroundFallbackSelector(
-				map, shared_candidates, "underground resource residual",
-				function(candidate) return repulsion.CanPlaceUnique(candidate) end)
-			place_from(fallback_selector, true)
-			fallback_selector_stats = fallback_selector.Stats()
+		local function place_strict_once(label)
+			local strict_selector = NewSectorBalancedCandidateSelector(
+				map, shared_candidates, label or "resources strict reserve",
+				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+			place_from(strict_selector, false, false)
 		end
+		local function place_relaxed_once(label)
+			if added >= shortfall then return end
+			local relaxed_selector = NewSectorBalancedCandidateSelector(
+				map, shared_candidates, label or "resources any-terrain residual",
+				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+			place_from(relaxed_selector, false, true)
+		end
+		local function place_underground_fallback_once(label)
+			if not underground or added >= shortfall then return end
+			local fallback_selector = NewWellSpacedUndergroundFallbackSelector(
+				map, shared_candidates, label or "underground resource residual",
+				function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+			place_from(fallback_selector, true, true)
+			merge_fallback_selector_stats(fallback_selector.Stats())
+		end
+		local function strict_residual_prefilter()
+			local options, seen = {}, {}
+			for _, res in ipairs(target_keys) do
+				local deficit = math.max(0,
+					(target_by_type[res] or 0) - (current_by_type[res] or 0)
+						- (added_by_type[res] or 0))
+				if deficit > 0 then
+					for _, template in ipairs(templates_by_type[res] or {}) do
+						local option = template_option(template)
+						if option and not seen[option.key] then
+							seen[option.key] = true
+							options[#options + 1] = option
+						end
+					end
+				end
+			end
+			return function(x, y, pt, sector)
+				-- Residual search keeps the historical random-attempt ceiling, but cheaply discards a point
+				-- that cannot satisfy ANY remaining exact-terrain/vanilla-repulsion profile before asking
+				-- native passability, normal, connectivity, and obstruction APIs about it. Existing obstacles
+				-- only grow during this transaction, so a repulsion rejection can never become eligible later.
+				local buildable, q, r = IsBuildableAt(map, pt, true, validation_context)
+				if not buildable then return false end
+				local terrain_type = TerrainTypeAt(map, pt, validation_context) or -1
+				local probe = {
+					x = x, y = y, terrain_type = terrain_type, sector = sector,
+					sector_id = sector and sector.id, q = q, r = r,
+					_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
+						and (tostring(q) .. ":" .. tostring(r)) or nil,
+				}
+				for _, option in ipairs(options) do
+					if option.terrain_type == terrain_type
+						and repulsion.CanPlace(probe, option.profile) then
+						return true
+					end
+				end
+				-- This coordinate cannot be a strict placement now (and repulsion only tightens), but it
+				-- may be useful to the established any-terrain or unique-hex completion phase. Retain the
+				-- cheap buildable snapshot and validate only a small geographically random reserve later.
+				deferred_relaxation_candidates[#deferred_relaxation_candidates + 1] = probe
+				candidate_deferred_count = candidate_deferred_count + 1
+				return false
+			end
+		end
+		local deferred_relaxation_cursor = 1
+		local function remaining_relaxed_profiles()
+			local profiles, seen = {}, {}
+			for _, res in ipairs(target_keys) do
+				local deficit = math.max(0,
+					(target_by_type[res] or 0) - (current_by_type[res] or 0)
+						- (added_by_type[res] or 0))
+				if deficit > 0 then
+					for _, template in ipairs(templates_by_type[res] or {}) do
+						local option = template_option(template)
+						local profile = option and option.profile
+						local key = profile and table.concat({
+							tostring(profile.layer), tostring(profile.resource),
+							tostring(profile.repulse_same), tostring(profile.repulse_layer),
+							tostring(profile.repulse_all),
+						}, ":") or nil
+						if key and not seen[key] then
+							seen[key] = true
+							profiles[#profiles + 1] = profile
+						end
+					end
+				end
+			end
+			return profiles
+		end
+		local function promote_deferred_relaxation_candidates(target)
+			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
+			local profiles = remaining_relaxed_profiles()
+			while deferred_relaxation_cursor <= #deferred_relaxation_candidates and pool < target do
+				local candidate = deferred_relaxation_candidates[deferred_relaxation_cursor]
+				deferred_relaxation_cursor = deferred_relaxation_cursor + 1
+				local repulsion_eligible = false
+				for _, profile in ipairs(profiles) do
+					if repulsion.CanPlace(candidate, profile) then
+						repulsion_eligible = true
+						break
+					end
+				end
+				if repulsion_eligible then
+					candidate._sbm_full_validation_done = true
+					local pt = point(candidate.x, candidate.y)
+					local can_receive, _, _, _, q, r = CanReceiveDeposit(
+						map, pt, validation_context)
+					if can_receive then
+						append_valid_candidate(candidate.x, candidate.y, candidate.sector,
+							candidate.terrain_type, q, r)
+						candidate_deferred_promoted = candidate_deferred_promoted + 1
+					end
+				end
+			end
+		end
+		local deferred_unique_cursor = 1
+		local function promote_deferred_unique_candidates(target)
+			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
+			while deferred_unique_cursor <= #deferred_relaxation_candidates and pool < target do
+				local candidate = deferred_relaxation_candidates[deferred_unique_cursor]
+				deferred_unique_cursor = deferred_unique_cursor + 1
+				if candidate._sbm_full_validation_done ~= true then
+					candidate._sbm_full_validation_done = true
+					if repulsion.CanPlaceUnique(candidate) then
+						local pt = point(candidate.x, candidate.y)
+						local can_receive, _, _, _, q, r = CanReceiveDeposit(
+							map, pt, validation_context)
+						if can_receive then
+							append_valid_candidate(candidate.x, candidate.y, candidate.sector,
+								candidate.terrain_type, q, r)
+							candidate_deferred_promoted = candidate_deferred_promoted + 1
+						end
+					end
+				end
+			end
+		end
+
+		if underground and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+			-- A bounded general reserve handles the common case. If strict placements remain, retain the
+			-- historical 24,000 random opportunities but prefilter impossible terrain/profile/repulsion
+			-- combinations before expensive native reachability validation. Relaxation still happens only
+			-- after that strict opportunity is exhausted, so the gameplay priority is unchanged.
+			place_strict_once("underground resources adaptive strict reserve")
+			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
+				local before = pool
+				grow_candidate_pool(math.min(MAX_POOL,
+					math.max(pool + 64, pool + (shortfall - added) * 16)),
+					strict_residual_prefilter())
+				if pool <= before then break end
+				place_strict_once("underground resources targeted strict residual")
+			end
+			place_relaxed_once("underground resources any-terrain residual")
+			while added < shortfall
+				and deferred_relaxation_cursor <= #deferred_relaxation_candidates
+				and pool < MAX_POOL do
+				local before = pool
+				promote_deferred_relaxation_candidates(math.min(MAX_POOL,
+					pool + math.max(64, (shortfall - added) * 16)))
+				if pool > before then
+					place_relaxed_once("underground resources targeted any-terrain residual")
+				end
+				if pool <= before then break end
+			end
+			while added < shortfall
+				and deferred_unique_cursor <= #deferred_relaxation_candidates
+				and pool < MAX_POOL do
+				local before = pool
+				promote_deferred_unique_candidates(math.min(MAX_POOL,
+					pool + math.max(128, (shortfall - added) * 32)))
+				if pool > before then
+					place_underground_fallback_once(
+						"underground resources targeted well-spaced residual")
+				end
+				if pool <= before then break end
+			end
+			place_underground_fallback_once("underground resources well-spaced residual")
+		else
+			-- Surface behavior and the explicit optimization rollback retain the historical strict search
+			-- opportunity before any relaxation.
+			while added < shortfall do
+				place_strict_once("resources strict reserve")
+				if added >= shortfall or pool >= MAX_POOL or candidate_samples >= MAX_SAMPLES then break end
+				local before = pool
+				grow_candidate_pool(math.min(MAX_POOL,
+					math.max(pool + 512, pool * 2, shortfall * 64)))
+				if pool <= before then break end
+			end
+			place_relaxed_once("resources any-terrain residual")
+			place_underground_fallback_once("underground resource residual")
+		end
+		candidate_pool_size = pool
 	end)
 	local restore_ok, restore_err = true, nil
 	if rubble_token and owns_rubble_token then
@@ -3318,6 +3596,20 @@ function DepositRules.TopUpDeposits(map)
 	if not placement_ok then error("resource top-up placement failed: " .. tostring(placement_err)) end
 	if not restore_ok then error("resource top-up rubble-wall restore failed: "
 		.. tostring(restore_err)) end
+	if density_fallback_added > 0 then
+		fallback_selector_stats = fallback_selector_stats or {
+			strategy = "maximin_spacing_with_sector_diversity", eligible_sectors = 0,
+		}
+		local selected_sectors, maximum_per_sector = 0, 0
+		for _, count in pairs(fallback_actual_sector_counts) do
+			selected_sectors = selected_sectors + 1
+			maximum_per_sector = math.max(maximum_per_sector, count)
+		end
+		fallback_selector_stats.selected_sectors = selected_sectors
+		fallback_selector_stats.max_additions_to_one_sector = maximum_per_sector
+		fallback_selector_stats.minimum_selected_spacing_world =
+			fallback_actual_min_spacing_world or 0
+	end
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
@@ -3343,10 +3635,28 @@ function DepositRules.TopUpDeposits(map)
 			and fallback_selector_stats.max_additions_to_one_sector or 0,
 		underground_fallback_min_spacing_world = fallback_selector_stats
 			and fallback_selector_stats.minimum_selected_spacing_world or 0,
+		candidate_pool_target = candidate_pool_target,
+		candidate_pool_size = candidate_pool_size,
+		candidate_samples = candidate_samples,
+		candidate_deferred = candidate_deferred_count,
+		candidate_deferred_promoted = candidate_deferred_promoted,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
 	})
+	if cfg().DEBUG_LOADING_TIMINGS == true then
+		local print_fn = Global("print")
+		if type(print_fn) == "function" then
+			print_fn("[Super Big Map][TopUpCandidatePool] kind=resources"
+				.. " target=" .. tostring(candidate_pool_target)
+				.. " valid=" .. tostring(candidate_pool_size)
+				.. " sampled=" .. tostring(candidate_samples)
+				.. " deferred=" .. tostring(candidate_deferred_count)
+				.. " promoted=" .. tostring(candidate_deferred_promoted)
+				.. " added=" .. tostring(added)
+				.. " remaining=" .. tostring(remaining_shortfall))
+		end
+	end
 end
 
 -- POST-GENERATION anomaly top-up (config TOPUP_ANOMALIES). Raises the ANOMALY population
@@ -3695,6 +4005,10 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			reused_pool = #candidates > 0
 		end
+		local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+		local initial_candidate_target = optimize_placement_pool
+			and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL
+		local candidate_samples = 0
 		local function random_between(first, past_last)
 			first, past_last = math.floor(first), math.floor(past_last)
 			local span = past_last - first
@@ -3719,7 +4033,9 @@ function DepositRules.TopUpAnomalies(map)
 			return random_between(x0, x1), random_between(y0, y1), expected
 		end
 		local terrain_api = validation_context.terrain
-		for sample_n = 1, reused_pool and 0 or MAX_SAMPLES do
+		local function sample_candidate()
+			candidate_samples = candidate_samples + 1
+			local sample_n = candidate_samples
 			local x, y, expected_sector = sample_position(sample_n)
 			local sector = SectorAtPoint(map, x, y)
 			local in_target_area = not surface_edge_ring or IsInFinalOuterSectorRing(
@@ -3779,12 +4095,27 @@ function DepositRules.TopUpAnomalies(map)
 				end
 			end
 		end
+		local function grow_candidate_pool(target, maximum_samples)
+			target = math.min(MAX_POOL, math.max(#candidates, math.floor(target or #candidates)))
+			maximum_samples = math.max(candidate_samples, math.floor(maximum_samples or MAX_SAMPLES))
+			while #candidates < target and candidate_samples < maximum_samples do
+				sample_candidate()
+			end
+			return #candidates
+		end
+		-- A nonempty resource handoff is not automatically sufficient. Keep enough candidates per
+		-- missing anomaly for the same strict repulsion selector; top up only the deficit so the
+		-- common underground path still reuses almost all expensive reachability validation.
+		grow_candidate_pool(initial_candidate_target, MAX_SAMPLES)
 		-- Surface extras keep the dedicated outer-ring sector/side/layer scheduler. Underground
 		-- extras use the shared capacity-normalized selector across reachable cave-floor sectors.
-		local whole_map_selector = not surface_edge_ring
-			and NewSectorBalancedCandidateSelector(map, candidates,
-				underground and "underground anomalies" or "surface anomalies",
-				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end) or nil
+		local function new_whole_map_selector(label)
+			return not surface_edge_ring
+				and NewSectorBalancedCandidateSelector(map, candidates,
+					label or (underground and "underground anomalies" or "surface anomalies"),
+					function(candidate, profile) return repulsion.CanPlace(candidate, profile) end) or nil
+		end
+		local whole_map_selector = new_whole_map_selector()
 		local relaxed_whole_map_selector
 		-- Stage one chooses sectors, not points. A randomized four-placement cycle covers every
 		-- physical side, while shuffled along-side bins and depth layers keep the whole three-sector
@@ -4034,6 +4365,19 @@ function DepositRules.TopUpAnomalies(map)
 			else
 				c = whole_map_selector.Take(nil, anomaly_profile)
 				selected_whole_map_selector = c and whole_map_selector or nil
+				if not c and not surface_edge_ring and #candidates < MAX_POOL then
+					-- Do not let a reduced shared reserve force relaxed spacing. On the exceptional strict
+					-- miss, restore the historical whole-map search opportunity before constructing an
+					-- underground fallback or accepting a density shortfall on a surface whole-map mode.
+					local before = #candidates
+					grow_candidate_pool(MAX_POOL,
+						underground and optimize_placement_pool and 24000 or MAX_SAMPLES)
+					if #candidates > before then
+						whole_map_selector = new_whole_map_selector("underground anomalies expanded reserve")
+						c = whole_map_selector.Take(nil, anomaly_profile)
+						selected_whole_map_selector = c and whole_map_selector or nil
+					end
+				end
 				if not c and underground then
 					relaxed_whole_map_selector = relaxed_whole_map_selector
 						or NewWellSpacedUndergroundFallbackSelector(
@@ -4395,8 +4739,18 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local validation_context = NewDepositValidationContext(map)
 	local tile = edge_ctx.tile or select(3, MapWorldSize(map)) or 100
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
-	local CANDIDATE_SAMPLES_PER_SECTOR = 384
-	local MAX_PLANNING_ATTEMPTS = 64
+	local optimized_candidate_search = cfg().OPTIMIZE_ANOMALY_CANDIDATE_SEARCH ~= false
+	local OUTER_BOOTSTRAP_SAMPLES = optimized_candidate_search and 32 or 384
+	local LAZY_SAMPLE_BATCH = optimized_candidate_search and 96 or 0
+	local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 384
+	local LEGACY_PLANNING_ATTEMPTS = 64
+	local random_sample_limit = optimized_candidate_search and 128
+		or LEGACY_RANDOM_SAMPLES_PER_SECTOR
+	-- The reduced pool is only a fast probe: either it finds an all-outer plan, or the code below
+	-- expands the outer pools and spends the complete historical 64-attempt planning budget there.
+	-- Avoid seeding/scanning 64 provisional repulsion trackers whose partial plans cannot be final.
+	local initial_planning_attempts = optimized_candidate_search and 8
+		or LEGACY_PLANNING_ATTEMPTS
 	local MIN_TOPUP_HEX_DISTANCE = 10
 	local MAX_TOPUPS_PER_SECTOR = 1
 	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
@@ -4423,59 +4777,14 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 	end
 
-	-- Terrain validity is independent of anomaly order. Sample both the outer band and its interior
-	-- once, then retry the cheap selection rules with fresh randomized marker and sector orders.
-	-- Every attempt is transactional and leaves native markers untouched.
-	local candidates_by_sector = {}
+	-- Fixed native/non-moving anomalies are immutable throughout planning. Resolve them before
+	-- sampling so an outer candidate that can never clear the explicit ten-hex rule is discarded
+	-- before the relatively expensive obstruction query.
 	local world_to_hex = validation_context.world_to_hex
 	if type(world_to_hex) ~= "function" then
 		stats.error = "WorldToHex API unavailable for outer-ring anomaly spacing"
 		return false, stats
 	end
-	local sampled_hexes = {}
-	local function sample_sector_candidates(sectors)
-		local count = 0
-		for _, sector in ipairs(sectors) do
-			local candidates = {}
-			candidates_by_sector[sector] = candidates
-			local x0 = math.max(margin, sector.area_x0)
-			local y0 = math.max(margin, sector.area_y0)
-			local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
-			local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
-			for _ = 1, CANDIDATE_SAMPLES_PER_SECTOR do
-				local x, y = random_between(x0, x1), random_between(y0, y1)
-				if x and y then
-					local pt = point_fn(x, y)
-					local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
-						map, pt, validation_context)
-					if terrain_ok then
-						local hex_key = type(q) == "number" and type(r) == "number"
-							and (tostring(q) .. ":" .. tostring(r)) or nil
-						if hex_key and not sampled_hexes[hex_key]
-							and IsUnobstructedAt(map, pt, true, validation_context) then
-							sampled_hexes[hex_key] = true
-							candidates[#candidates + 1] = {
-								x = x, y = y, sector = sector.sector_ref,
-								sector_id = sector.id, col = sector.col, row = sector.row,
-								target_sector = sector, q = q, r = r, hex_key = hex_key,
-							}
-							count = count + 1
-						end
-					end
-				end
-			end
-		end
-		return count
-	end
-	local outer_candidate_count = sample_sector_candidates(ring)
-	local inner_candidate_count = sample_sector_candidates(inner)
-	stats.reachable_candidates = outer_candidate_count
-	stats.inner_reachable_candidates = inner_candidate_count
-	if outer_candidate_count + inner_candidate_count < #moving then
-		stats.error = "combined reachable candidate pools smaller than anomaly population"
-		return false, stats
-	end
-
 	local fixed_anomaly_hexes, fixed_anomalies = {}, {}
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if ignored[marker] == true then return end
@@ -4504,6 +4813,127 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		candidate._sbm_clears_fixed_anomalies = true
 		return true
+	end
+
+	-- The old implementation eagerly performed 384 complete terrain validations in all 204 outer
+	-- and 196 inner sectors (153,600 probes) before it knew which sectors planning would inspect.
+	-- Bootstrap every outer sector so the complete perimeter -- including bottom-right -- retains
+	-- an equal chance, then validate one additional batch only when a visited sector has no usable
+	-- candidate. Interior fallback normally consumes the resource pass's already-validated pool.
+	local candidate_states = {}
+	local sampled_hexes = {}
+	local outer_candidate_count, inner_candidate_count = 0, 0
+	local fresh_outer_samples, fresh_inner_samples = 0, 0
+	local reused_inner_candidates = 0
+	local function candidate_state(sector)
+		local state = candidate_states[sector]
+		if not state then
+			state = { candidates = {}, random_samples = 0, is_outer = in_ring(sector) }
+			candidate_states[sector] = state
+		end
+		return state
+	end
+	local function append_candidate(sector, candidate)
+		local hex_key = candidate and candidate.hex_key
+		if not hex_key or sampled_hexes[hex_key] then return false end
+		sampled_hexes[hex_key] = true
+		candidate._sbm_repulsion_hex = hex_key
+		local state = candidate_state(sector)
+		state.candidates[#state.candidates + 1] = candidate
+		if in_ring(sector) then
+			outer_candidate_count = outer_candidate_count + 1
+		else
+			inner_candidate_count = inner_candidate_count + 1
+		end
+		return true
+	end
+	local function sample_sector_candidates(sector, requested)
+		local state = candidate_state(sector)
+		local remaining = math.max(0, random_sample_limit - state.random_samples)
+		local samples = math.min(math.max(0, math.floor(requested or 0)), remaining)
+		if samples <= 0 then return 0 end
+		local x0 = math.max(margin, sector.area_x0)
+		local y0 = math.max(margin, sector.area_y0)
+		local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
+		local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
+		local added = 0
+		for _ = 1, samples do
+			state.random_samples = state.random_samples + 1
+			if state.is_outer then fresh_outer_samples = fresh_outer_samples + 1
+			else fresh_inner_samples = fresh_inner_samples + 1 end
+			local x, y = random_between(x0, x1), random_between(y0, y1)
+			if x and y then
+				local pt = point_fn(x, y)
+				local possible = true
+				if state.is_outer and optimized_candidate_search then
+					local ok_hex, early_q, early_r = pcall(world_to_hex, pt)
+					possible = ok_hex and type(early_q) == "number" and type(early_r) == "number"
+						and clears_fixed_anomalies({ q = early_q, r = early_r })
+				end
+				if possible then
+					local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
+						map, pt, validation_context)
+					if terrain_ok then
+						local hex_key = type(q) == "number" and type(r) == "number"
+							and (tostring(q) .. ":" .. tostring(r)) or nil
+						if hex_key and not sampled_hexes[hex_key]
+							and IsUnobstructedAt(map, pt, true, validation_context) then
+							if append_candidate(sector, {
+								x = x, y = y, sector = sector.sector_ref,
+								sector_id = sector.id, col = sector.col, row = sector.row,
+								target_sector = sector, q = q, r = r, hex_key = hex_key,
+							}) then added = added + 1 end
+						end
+					end
+				end
+			end
+		end
+		return added
+	end
+
+	for _, sector in ipairs(ring) do
+		sample_sector_candidates(sector, OUTER_BOOTSTRAP_SAMPLES)
+	end
+	if optimized_candidate_search then
+		local inner_by_ref, inner_by_id = {}, {}
+		for _, sector in ipairs(inner) do
+			inner_by_ref[sector.sector_ref] = sector
+			inner_by_id[tostring(sector.id)] = sector
+		end
+		local cached = CachedTopUpCandidates(map)
+		for _, source in ipairs(type(cached) == "table" and cached or {}) do
+			if source and not source.used and source._sbm_terrain_valid == true
+				and type(source.x) == "number" and type(source.y) == "number" then
+				local sector = inner_by_ref[source.sector]
+					or inner_by_id[tostring(source.sector_id)]
+				if not sector then
+					local canonical = sector_at_canonical_position(source.x, source.y)
+					if canonical and not in_ring(canonical) then sector = canonical end
+				end
+				if sector then
+					local q, r = source.q, source.r
+					if type(q) ~= "number" or type(r) ~= "number" then
+						local ok_hex
+						ok_hex, q, r = pcall(world_to_hex, point_fn(source.x, source.y))
+						if not ok_hex then q, r = nil, nil end
+					end
+					local hex_key = type(q) == "number" and type(r) == "number"
+						and (tostring(q) .. ":" .. tostring(r)) or nil
+					if append_candidate(sector, {
+						x = source.x, y = source.y, sector = sector.sector_ref,
+						sector_id = sector.id, col = sector.col, row = sector.row,
+						target_sector = sector, q = q, r = r, hex_key = hex_key,
+						_sbm_shared_source = source,
+					}) then
+						reused_inner_candidates = reused_inner_candidates + 1
+					end
+				end
+			end
+		end
+	else
+		for _, sector in ipairs(inner) do
+			sample_sector_candidates(sector, random_sample_limit)
+		end
 	end
 	local function new_outer_attempt_tracker()
 		local occupied, spaced_anomalies, sector_counts = {}, {}, {}
@@ -4536,83 +4966,134 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		shuffle(sector_order)
 		for _, sector in ipairs(sector_order) do
 			if not item.placed or SectorIsScanned(sector.sector_ref) then
-				local candidates = candidates_by_sector[sector]
-				if candidates and #candidates > 0 then
+				local state = candidate_state(sector)
+				local candidates = state.candidates
+				local function choose_from_current_pool()
+					if #candidates == 0 then return nil end
 					local first = RandInt(#candidates) + 1
 					for offset = 0, #candidates - 1 do
 						local candidate = candidates[((first + offset - 2) % #candidates) + 1]
-						if predicate(candidate) then return candidate end
+						local source = candidate._sbm_shared_source
+						if source and candidate._sbm_current_obstruction_ok == nil then
+							candidate._sbm_current_obstruction_ok = IsUnobstructedAt(
+								map, point_fn(candidate.x, candidate.y), true, validation_context) == true
+						end
+						if (not source or candidate._sbm_current_obstruction_ok == true)
+							and predicate(candidate) then return candidate end
 					end
+					return nil
+				end
+				local winner = choose_from_current_pool()
+				if winner then return winner end
+				if optimized_candidate_search
+					and state.random_samples < random_sample_limit then
+					local batch = state.random_samples == 0 and OUTER_BOOTSTRAP_SAMPLES
+						or LAZY_SAMPLE_BATCH
+					sample_sector_candidates(sector, batch)
+					winner = choose_from_current_pool()
+					if winner then return winner end
 				end
 			end
 		end
 		return nil
 	end
 
-	local plans, best_outer_planned, best_total_planned = nil, -1, 0
-	for attempt = 1, MAX_PLANNING_ATTEMPTS do
-		local can_place_outer, commit_outer = new_outer_attempt_tracker()
-		local marker_order = {}
-		for i = 1, #moving do marker_order[i] = moving[i] end
-		shuffle(marker_order)
-		local outer_plans, remaining = {}, {}
-		for _, item in ipairs(marker_order) do
-			local winner = find_candidate(item, ring, can_place_outer)
-			if winner and commit_outer(winner) then
-				outer_plans[#outer_plans + 1] = {
-					item = item, candidate = winner, in_outer_ring = true,
-				}
-			else
-				remaining[#remaining + 1] = item
+	local plans, best_outer_planned, best_outer_attempted, best_total_planned = nil, -1, 0, 0
+	local planning_attempts_run = 0
+	local function run_planning_attempts(attempt_count)
+		for _ = 1, attempt_count do
+			planning_attempts_run = planning_attempts_run + 1
+			local attempt = planning_attempts_run
+			local can_place_outer, commit_outer = new_outer_attempt_tracker()
+			local marker_order = {}
+			for i = 1, #moving do marker_order[i] = moving[i] end
+			shuffle(marker_order)
+			local outer_plans, remaining = {}, {}
+			for _, item in ipairs(marker_order) do
+				local winner = find_candidate(item, ring, can_place_outer)
+				if winner and commit_outer(winner) then
+					outer_plans[#outer_plans + 1] = {
+						item = item, candidate = winner, in_outer_ring = true,
+					}
+				else
+					remaining[#remaining + 1] = item
+				end
 			end
-		end
+			best_outer_attempted = math.max(best_outer_attempted, #outer_plans)
 
-		local attempt_plans, complete = {}, true
-		for _, plan in ipairs(outer_plans) do attempt_plans[#attempt_plans + 1] = plan end
-		if #remaining > 0 then
-			local repulsion = NewTopUpRepulsionTracker(
-				map, "inner-ring anomaly fallback attempt " .. tostring(attempt), ignored)
-			for _, plan in ipairs(outer_plans) do
-				if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
-					complete = false
-					break
-				end
-			end
-			local function clears_outer_spacing(candidate)
+			local attempt_plans, complete = {}, true
+			for _, plan in ipairs(outer_plans) do attempt_plans[#attempt_plans + 1] = plan end
+			if #remaining > 0 then
+				local repulsion = NewTopUpRepulsionTracker(
+					map, "inner-ring anomaly fallback attempt " .. tostring(attempt), ignored)
 				for _, plan in ipairs(outer_plans) do
-					if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then
-						return false
-					end
-				end
-				return true
-			end
-			if complete then
-				for _, item in ipairs(remaining) do
-					local winner = find_candidate(item, inner, function(candidate)
-						return clears_outer_spacing(candidate)
-							and repulsion.CanPlace(candidate, anomaly_profile)
-					end)
-					if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
+					if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
 						complete = false
 						break
 					end
-					attempt_plans[#attempt_plans + 1] = {
-						item = item, candidate = winner, in_outer_ring = false,
-					}
+				end
+				local function clears_outer_spacing(candidate)
+					for _, plan in ipairs(outer_plans) do
+						if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then
+							return false
+						end
+					end
+					return true
+				end
+				if complete then
+					for _, item in ipairs(remaining) do
+						local winner = find_candidate(item, inner, function(candidate)
+							return clears_outer_spacing(candidate)
+								and repulsion.CanPlace(candidate, anomaly_profile)
+						end)
+						if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
+							complete = false
+							break
+						end
+						attempt_plans[#attempt_plans + 1] = {
+							item = item, candidate = winner, in_outer_ring = false,
+						}
+					end
 				end
 			end
+			best_total_planned = math.max(best_total_planned, #attempt_plans)
+			if complete and #attempt_plans == #moving and #outer_plans > best_outer_planned then
+				plans = attempt_plans
+				best_outer_planned = #outer_plans
+				stats.selected_plan_attempt = attempt
+				if best_outer_planned == #moving then return true end
+			end
 		end
-		best_total_planned = math.max(best_total_planned, #attempt_plans)
-		if complete and #attempt_plans == #moving and #outer_plans > best_outer_planned then
-			plans = attempt_plans
-			best_outer_planned = #outer_plans
-			stats.planning_attempts = attempt
-			if best_outer_planned == #moving then break end
+		return false
+	end
+	run_planning_attempts(initial_planning_attempts)
+	if optimized_candidate_search and best_outer_planned < #moving then
+		-- The interior is only a fallback after the historical outer-ring search has been exhausted.
+		-- Preserve any complete fast plan while expanding every OUTER pool to 384 samples and running
+		-- a fresh full 64-attempt phase; a plan replaces the fast result only when it places more of the
+		-- moving anomalies in the outer ring. The much larger interior scan is needed only when there
+		-- is no complete plan yet, or the exhaustive outer pass demonstrates a higher partial outer
+		-- count that the reused/lazy interior pool could not complete.
+		random_sample_limit = LEGACY_RANDOM_SAMPLES_PER_SECTOR
+		for _, sector in ipairs(ring) do sample_sector_candidates(sector, random_sample_limit) end
+		stats.legacy_candidate_fallback = true
+		run_planning_attempts(LEGACY_PLANNING_ATTEMPTS)
+		if not plans or best_outer_attempted > best_outer_planned then
+			for _, sector in ipairs(inner) do sample_sector_candidates(sector, random_sample_limit) end
+			stats.legacy_inner_candidate_fallback = true
+			run_planning_attempts(LEGACY_PLANNING_ATTEMPTS)
 		end
 	end
+	stats.planning_attempts = planning_attempts_run
+	stats.reachable_candidates = outer_candidate_count
+	stats.inner_reachable_candidates = inner_candidate_count
+	stats.outer_random_samples = fresh_outer_samples
+	stats.inner_random_samples = fresh_inner_samples
+	stats.inner_reused_candidates = reused_inner_candidates
+	stats.candidate_search_optimized = optimized_candidate_search
 	if not plans then
 		stats.error = "no complete outer-plus-vanilla-interior anomaly plan after "
-			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best="
+			.. tostring(planning_attempts_run) .. " attempts (best="
 			.. tostring(best_total_planned) .. "/" .. tostring(#moving)
 			.. ", outer_candidates=" .. tostring(outer_candidate_count)
 			.. ", inner_candidates=" .. tostring(inner_candidate_count) .. ")"
@@ -4624,6 +5105,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		item.after_x, item.after_y = winner.x, winner.y
 		item.target_sector = winner.target_sector
 		item.in_outer_ring = plan.in_outer_ring == true
+		item.shared_candidate_source = winner._sbm_shared_source
 		finalized_plans[#finalized_plans + 1] = item
 	end
 	plans = finalized_plans
@@ -4687,6 +5169,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		item.marker.SuperBigMapEdgeRedistributed = true
 		item.marker.SuperBigMapOuterRingRedistributed = item.in_outer_ring == true or nil
 		item.marker.SuperBigMapInnerRingFallback = item.in_outer_ring ~= true or nil
+		-- The resource-pool wrapper and its source describe this same hex. Retire the source only
+		-- after the complete move/register transaction succeeds so the effect pass neither revalidates
+		-- an occupied coordinate nor counts it in capacity-normalized sector weights.
+		if item.shared_candidate_source then item.shared_candidate_source.used = true end
 		stats.moved = stats.moved + 1
 	end
 	if type(print_fn) == "function" then
@@ -4699,6 +5185,9 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " inner_fallback_count=" .. tostring(stats.inner_fallback)
 			.. " outer_reachable_candidates=" .. tostring(stats.reachable_candidates)
 			.. " inner_reachable_candidates=" .. tostring(stats.inner_reachable_candidates)
+			.. " outer_random_samples=" .. tostring(stats.outer_random_samples)
+			.. " inner_random_samples=" .. tostring(stats.inner_random_samples)
+			.. " inner_reused_candidates=" .. tostring(stats.inner_reused_candidates)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
