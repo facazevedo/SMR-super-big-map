@@ -479,6 +479,17 @@ config.OptimizeAnomalyCandidateSearch = true
 -- Reuse class-invariant DepositMarker property metadata and the immutable XYZ captured by stage 01
 -- while serializing native enrichment records from the temporary source.
 config.OptimizeNativeEnrichmentRecordCapture = true
+-- The temporary surface source is never entered and its passability is never queried: terrain is
+-- read directly, marker values are captured, objects are transferred, and the map is immediately
+-- unloaded. Keep its queued pass edits suspended through unload instead of spending ~2 seconds
+-- rebuilding a grid that cannot be observed. The unload path resumes and retries automatically if
+-- an engine build rejects disposal of a suspended map.
+config.OptimizeDiscardTemporarySourcePassEdits = true
+-- Underground candidate sampling first applies the identical buildable/passable/flat/unobstructed
+-- predicates, but performs the expensive entrance ConnectivityCheck only after a repulsion/sector
+-- selector chooses the candidate. Every selected position still passes the exact reachability gate
+-- before an object is cloned, and the result is shared across resources, anomalies, and effects.
+config.OptimizeUndergroundDeferredCandidateReachability = true
 -- Optional experimental batching across underground decoration/marker relocation. The measured
 -- work is tiny, so keep this off by default to preserve native construction timing exactly. The
 -- explicit authoritative final passability and buildable-grid rebuilds are never skipped.
@@ -782,6 +793,10 @@ C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
 C.OPTIMIZE_NATIVE_ENRICHMENT_RECORD_CAPTURE =
 	as_bool(config.OptimizeNativeEnrichmentRecordCapture)
+C.OPTIMIZE_DISCARD_TEMPORARY_SOURCE_PASS_EDITS =
+	as_bool(config.OptimizeDiscardTemporarySourcePassEdits)
+C.OPTIMIZE_UNDERGROUND_DEFER_CANDIDATE_REACHABILITY =
+	as_bool(config.OptimizeUndergroundDeferredCandidateReachability)
 C.OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH = as_bool(config.OptimizeUndergroundPassEditBatch)
 C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitGeneratorToSource)

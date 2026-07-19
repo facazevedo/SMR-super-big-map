@@ -1798,8 +1798,11 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	if type(map.MapForEach) ~= "function" then return 0 end
 	local relief_enabled = cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true)
 	local optimize_traversal = cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+	-- The placement loop already rejects invalid wrappers before invoking any C-object method. Keep
+	-- the eligible subset on underground maps too: enrichment staging may invalidate a few cached
+	-- wrappers, but rescanning class/kind/parent metadata for every one of the ~6,500 surviving
+	-- decorations cannot alter which valid objects pass the predicates captured here.
 	local cache_eligible_objects = optimize_traversal
-		and not (map.mapdata and map.mapdata.Environment == "Underground")
 	local terrain_api = Global("terrain")
 	local box_fn = Global("box")
 	local relief_terrain_available = type(terrain_api) == "table"
@@ -2466,6 +2469,9 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	end
 	LoadingStep("decoration stretch placement complete", {
 		scanned = capture.scanned or #objs,
+		placement_inputs = #objs,
+		preclassified = tostring(preclassified),
+		reused_collection = tostring(reused_collection),
 		moved = moved,
 		cave_ins_transformed = cave_stats and cave_stats.transformed or 0,
 		rubble_walls_transformed = cave_stats and cave_stats.transformed or 0,

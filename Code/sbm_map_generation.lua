@@ -2572,6 +2572,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local native_enrichment_record_stats
 	local source_generated_enrichments
 	local vanilla_start_selection
+	local source_pass_edits_deferred = false
 	local saved_main_map = Global("MainMap")
 	local saved_main_city = Global("MainCity")
 	local results
@@ -2640,9 +2641,24 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		local update_radius = Global("UpdateMapMaxObjRadius")
 		if type(update_radius) == "function" then update_radius(source) end
 		LoadingEnd(update_radius_token, nil, true)
-		local source_pass_flush_token = LoadingBegin("flush temporary source pass edits", source)
-		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
-		LoadingEnd(source_pass_flush_token, nil, true)
+		local discard_source_pass_edits = cfg_bool(
+			"OPTIMIZE_DISCARD_TEMPORARY_SOURCE_PASS_EDITS", true)
+		local source_pass_flush_token = LoadingBegin("finalize temporary source pass edits", source, {
+			mode = discard_source_pass_edits and "discard_on_unload" or "flush",
+		})
+		if discard_source_pass_edits then
+			-- Nothing downstream consumes source.passable/buildable: height/type are stretched directly,
+			-- marker state is value-captured, and transferred objects are revalidated on destination.
+			-- Keep the batch suspended so ChangeMapInSlot can destroy it without first rebuilding it.
+			source_pass_edits_deferred = true
+		else
+			if type(source.ResumePassEdits) == "function" then
+				source:ResumePassEdits("SuperBigMapVanillaSourceMigration")
+			end
+		end
+		LoadingEnd(source_pass_flush_token, {
+			mode = source_pass_edits_deferred and "discard_on_unload" or "flushed",
+		}, true)
 		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
@@ -2779,9 +2795,25 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	end
 	if maps[source_slot] then
 		local unload_token = LoadingBegin("unload temporary vanilla backing", destination,
-			{ source_slot = source_slot })
-		local unload_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
-		LoadingEnd(unload_token, { error = tostring(unload_error) }, unload_ok)
+			{ source_slot = source_slot, pass_edits_deferred = tostring(source_pass_edits_deferred) })
+		local unload_call_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
+		local unload_ok = unload_call_ok and unload_error == nil
+		local resumed_for_retry = false
+		if not unload_ok and source_pass_edits_deferred and source
+			and type(source.ResumePassEdits) == "function" and maps[source_slot] then
+			-- Compatibility fallback for an engine revision that requires a balanced ResumePassEdits
+			-- before map disposal. This retains the old behavior rather than failing the generation.
+			resumed_for_retry = pcall(
+				source.ResumePassEdits, source, "SuperBigMapVanillaSourceMigration") == true
+			source_pass_edits_deferred = false
+			if resumed_for_retry then
+				unload_call_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
+				unload_ok = unload_call_ok and unload_error == nil
+			end
+		end
+		LoadingEnd(unload_token, {
+			error = tostring(unload_error), resumed_for_retry = tostring(resumed_for_retry),
+		}, unload_ok)
 		if not unload_ok and ok then
 			ok, migration_error = false, "temporary source unload failed: " .. tostring(unload_error)
 		end

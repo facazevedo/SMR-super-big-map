@@ -478,7 +478,7 @@ local function CanReceiveDepositTerrain(map, pt, context)
 	return EvaluateDepositTerrain(map, pt, context)
 end
 
-local function CanReceiveDeposit(map, pt, context)
+local function CanReceiveDeposit(map, pt, context, defer_reachability)
 	context = type(context) == "table" and context.map == map and context or nil
 	-- Vanilla DepositMarker placement does not accept an obstructed coordinate: it searches for a
 	-- replacement through FindUnobstructedDepositPos. Top-up candidates are final coordinates, so
@@ -494,10 +494,36 @@ local function CanReceiveDeposit(map, pt, context)
 	end
 	local underground = (context and context.underground == true)
 		or (not context and IsUndergroundMap(map))
-	if underground and not IsReachableFromUndergroundEntrance(map, pt, q, r) then
+	if underground and defer_reachability ~= true
+		and not IsReachableFromUndergroundEntrance(map, pt, q, r) then
 		return false, passable, flatness, buildable, q, r, unobstructed
 	end
 	return true, passable, flatness, buildable, q, r, unobstructed
+end
+
+-- Candidate generation can reject thousands of coordinates before a selector consumes one. The
+-- underground native ConnectivityCheck is substantially more expensive than all of the immutable
+-- terrain predicates combined, so optimized top-ups defer only that predicate until selection.
+-- This gate is called before cloning/committing every selected candidate and memoizes the result on
+-- the shared candidate table; final placement therefore keeps the exact same reachability rule.
+local function UndergroundCandidateReachable(map, candidate, context)
+	if not candidate then return false, false end
+	local underground = (context and context.underground == true)
+		or (not context and IsUndergroundMap(map))
+	if not underground then return true, false end
+	if candidate._sbm_underground_reachable ~= nil then
+		return candidate._sbm_underground_reachable == true, false
+	end
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" or type(candidate.x) ~= "number"
+		or type(candidate.y) ~= "number" then
+		candidate._sbm_underground_reachable = false
+		return false, true
+	end
+	local reachable = IsReachableFromUndergroundEntrance(
+		map, point_fn(candidate.x, candidate.y), candidate.q, candidate.r) == true
+	candidate._sbm_underground_reachable = reachable
+	return reachable, true
 end
 
 local function SectorAtPoint(map, x, y)
@@ -3391,6 +3417,9 @@ function DepositRules.TopUpDeposits(map)
 	end
 	local underground = validation_context.underground == true
 	local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local defer_candidate_reachability = underground
+		and cfg().OPTIMIZE_UNDERGROUND_DEFER_CANDIDATE_REACHABILITY == true
+	local reachability_checks, reachability_rejections = 0, 0
 	-- Resource placement is demand-driven on both surfaces. The previous surface path first tried
 	-- to accumulate shortfall * 32 validated candidates (up to the global 8,000-point ceiling),
 	-- even though only one position is consumed by each missing marker. Underground already proved
@@ -3565,7 +3594,8 @@ function DepositRules.TopUpDeposits(map)
 				if accepted ~= true then return false end
 				prefiltered_terrain_type = terrain_type
 			end
-			local can_receive, _, _, _, q, r = CanReceiveDeposit(map, pt, validation_context)
+			local can_receive, _, _, _, q, r = CanReceiveDeposit(
+				map, pt, validation_context, defer_candidate_reachability)
 			if not can_receive then return false end
 			local tt = prefiltered_terrain_type
 			if tt == nil then tt = TerrainTypeAt(map, pt, validation_context) or -1 end
@@ -3591,10 +3621,18 @@ function DepositRules.TopUpDeposits(map)
 		local surface_selector_load_cache_reuses = 0
 		local active_selector
 		local function take(tt, profile)
-			return active_selector.Take(tt, profile)
+			while true do
+				local candidate = active_selector.Take(tt, profile)
+				if not candidate or not defer_candidate_reachability then return candidate end
+				local reachable, checked = UndergroundCandidateReachable(
+					map, candidate, validation_context)
+				if checked then reachability_checks = reachability_checks + 1 end
+				if reachable then return candidate end
+				reachability_rejections = reachability_rejections + 1
+			end
 		end
 		local function take_any(profile)
-			return active_selector.Take(nil, profile)
+			return take(nil, profile)
 		end
 
 		local function choose_needed_type()
@@ -3820,7 +3858,7 @@ function DepositRules.TopUpDeposits(map)
 					candidate._sbm_full_validation_done = true
 					local pt = point(candidate.x, candidate.y)
 					local can_receive, _, _, _, q, r = CanReceiveDeposit(
-						map, pt, validation_context)
+						map, pt, validation_context, defer_candidate_reachability)
 					if can_receive then
 						append_valid_candidate(candidate.x, candidate.y, candidate.sector,
 							candidate.terrain_type, q, r)
@@ -3840,7 +3878,7 @@ function DepositRules.TopUpDeposits(map)
 					if repulsion.CanPlaceUnique(candidate) then
 						local pt = point(candidate.x, candidate.y)
 						local can_receive, _, _, _, q, r = CanReceiveDeposit(
-							map, pt, validation_context)
+							map, pt, validation_context, defer_candidate_reachability)
 						if can_receive then
 							append_valid_candidate(candidate.x, candidate.y, candidate.sector,
 								candidate.terrain_type, q, r)
@@ -3981,6 +4019,9 @@ function DepositRules.TopUpDeposits(map)
 		surface_selector_load_cache_reuses =
 			map.SuperBigMapSurfaceResourceSelectorLoadCacheReuses or 0,
 		candidate_planned_sector_fast_path = candidate_planned_sector_fast_path,
+		deferred_reachability = defer_candidate_reachability,
+		reachability_checks = reachability_checks,
+		reachability_rejections = reachability_rejections,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -4004,6 +4045,9 @@ function DepositRules.TopUpDeposits(map)
 					map.SuperBigMapSurfaceResourceSelectorLoadCacheReuses or 0)
 				.. " planned_sector_fast_path=" .. tostring(
 					candidate_planned_sector_fast_path)
+				.. " deferred_reachability=" .. tostring(defer_candidate_reachability)
+				.. " reachability_checks=" .. tostring(reachability_checks)
+				.. " reachability_rejections=" .. tostring(reachability_rejections)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
@@ -4229,6 +4273,9 @@ function DepositRules.TopUpAnomalies(map)
 	local underground = validation_context.underground == true
 	local sequential_underground = underground
 		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local defer_candidate_reachability = underground
+		and cfg().OPTIMIZE_UNDERGROUND_DEFER_CANDIDATE_REACHABILITY == true
+	local reachability_checks, reachability_rejections = 0, 0
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
 	local low_area_percent = math.max(1, math.min(100,
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
@@ -4419,7 +4466,7 @@ function DepositRules.TopUpAnomalies(map)
 				local pt = point(x, y)
 				local evaluated_can_receive, evaluated_passable, evaluated_flatness,
 					evaluated_buildable, evaluated_q, evaluated_r, evaluated_unobstructed = CanReceiveDeposit(
-						map, pt, validation_context)
+						map, pt, validation_context, defer_candidate_reachability)
 				passable = evaluated_passable == true
 				flatness = evaluated_flatness or 0
 				unobstructed = evaluated_unobstructed == true
@@ -4492,6 +4539,18 @@ function DepositRules.TopUpAnomalies(map)
 		local function rebuild_whole_map_selectors()
 			whole_map_selector = new_whole_map_selector()
 			relaxed_whole_map_selector = nil
+		end
+		local function take_reachable_candidate(selector, profile)
+			while selector do
+				local candidate = selector.Take(nil, profile)
+				if not candidate or not defer_candidate_reachability then return candidate end
+				local reachable, checked = UndergroundCandidateReachable(
+					map, candidate, validation_context)
+				if checked then reachability_checks = reachability_checks + 1 end
+				if reachable then return candidate end
+				reachability_rejections = reachability_rejections + 1
+			end
+			return nil
 		end
 		-- Stage one chooses sectors, not points. A randomized four-placement cycle covers every
 		-- physical side, while shuffled along-side bins and depth layers keep the whole three-sector
@@ -4739,7 +4798,7 @@ function DepositRules.TopUpAnomalies(map)
 				reserved_anomaly_hexes[reserved_key] = true
 				c.used = true
 			else
-				c = whole_map_selector.Take(nil, anomaly_profile)
+				c = take_reachable_candidate(whole_map_selector, anomaly_profile)
 				selected_whole_map_selector = c and whole_map_selector or nil
 				if not c and sequential_underground then
 					-- As on the surface outer ring, search only for the anomaly currently being
@@ -4750,7 +4809,7 @@ function DepositRules.TopUpAnomalies(map)
 						grow_candidate_pool(before + 1, strict_sample_limit)
 						if #candidates <= before then break end
 						rebuild_whole_map_selectors()
-						c = whole_map_selector.Take(nil, anomaly_profile)
+						c = take_reachable_candidate(whole_map_selector, anomaly_profile)
 						selected_whole_map_selector = c and whole_map_selector or nil
 					end
 				end
@@ -4759,7 +4818,7 @@ function DepositRules.TopUpAnomalies(map)
 						or NewWellSpacedUndergroundFallbackSelector(
 							map, candidates, "underground anomaly residual",
 							function(candidate) return repulsion.CanPlaceUnique(candidate) end)
-					c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
+					c = take_reachable_candidate(relaxed_whole_map_selector, anomaly_profile)
 					selected_whole_map_selector = c and relaxed_whole_map_selector or nil
 					density_fallback = c ~= nil
 					if not c and sequential_underground then
@@ -4771,13 +4830,13 @@ function DepositRules.TopUpAnomalies(map)
 							grow_candidate_pool(before + 1, fallback_sample_limit)
 							if #candidates <= before then break end
 							rebuild_whole_map_selectors()
-							c = whole_map_selector.Take(nil, anomaly_profile)
+							c = take_reachable_candidate(whole_map_selector, anomaly_profile)
 							selected_whole_map_selector = c and whole_map_selector or nil
 							if not c then
 								relaxed_whole_map_selector = NewWellSpacedUndergroundFallbackSelector(
 									map, candidates, "underground anomaly sequential residual",
 									function(candidate) return repulsion.CanPlaceUnique(candidate) end)
-								c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
+								c = take_reachable_candidate(relaxed_whole_map_selector, anomaly_profile)
 								selected_whole_map_selector = c and relaxed_whole_map_selector or nil
 								density_fallback = c ~= nil
 							end
@@ -4899,7 +4958,10 @@ function DepositRules.TopUpAnomalies(map)
 			.. " candidates=" .. tostring(candidate_pool_size)
 			.. " sampled=" .. tostring(candidate_samples_total)
 			.. " reused=" .. tostring(reused_pool)
-			.. " sequential=" .. tostring(sequential_underground))
+			.. " sequential=" .. tostring(sequential_underground)
+			.. " deferred_reachability=" .. tostring(defer_candidate_reachability)
+			.. " reachability_checks=" .. tostring(reachability_checks)
+			.. " reachability_rejections=" .. tostring(reachability_rejections))
 	end
 	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall, {
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
@@ -4923,6 +4985,9 @@ function DepositRules.TopUpAnomalies(map)
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
 		sequential_placement = sequential_underground,
+		deferred_reachability = defer_candidate_reachability,
+		reachability_checks = reachability_checks,
+		reachability_rejections = reachability_rejections,
 	})
 end
 
@@ -5781,6 +5846,9 @@ function DepositRules.TopUpEffectDeposits(map)
 	local underground = validation_context.underground == true
 	local sequential_underground = underground
 		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local defer_candidate_reachability = underground
+		and cfg().OPTIMIZE_UNDERGROUND_DEFER_CANDIDATE_REACHABILITY == true
+	local reachability_checks, reachability_rejections = 0, 0
 	local wall_free_density_suite = underground
 		and rubble_wall_suite_token_by_map[map] ~= nil
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
@@ -5804,7 +5872,8 @@ function DepositRules.TopUpEffectDeposits(map)
 						and c._sbm_terrain_valid == true
 						and IsUnobstructedAt(map, pt, true, validation_context)
 					if not reserved_ring and (can_reuse
-						or CanReceiveDeposit(map, pt, validation_context)) then
+						or CanReceiveDeposit(map, pt, validation_context,
+							defer_candidate_reachability)) then
 						candidates[#candidates + 1] = c
 					end
 				end
@@ -5828,7 +5897,7 @@ function DepositRules.TopUpEffectDeposits(map)
 			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
 				local can_receive, _, _, _, q, r = CanReceiveDeposit(
-					map, pt, validation_context)
+					map, pt, validation_context, defer_candidate_reachability)
 				if can_receive and (not underground or ReserveUndergroundTopUpHex(map, q, r)) then
 					local candidate = {
 						x = x, y = y,
@@ -5857,6 +5926,18 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 		local selector = new_strict_selector()
 		local relaxed_selector
+		local function take_reachable_candidate(active, profile)
+			while active do
+				local candidate = active.Take(nil, profile)
+				if not candidate or not defer_candidate_reachability then return candidate end
+				local reachable, checked = UndergroundCandidateReachable(
+					map, candidate, validation_context)
+				if checked then reachability_checks = reachability_checks + 1 end
+				if reachable then return candidate end
+				reachability_rejections = reachability_rejections + 1
+			end
+			return nil
+		end
 		local function rebuild_effect_selectors()
 			selector = new_strict_selector()
 			relaxed_selector = nil
@@ -5868,7 +5949,7 @@ function DepositRules.TopUpEffectDeposits(map)
 			-- Continue after a failed clone. Take consumes one candidate, so this loop is
 			-- bounded by the validated pool even when every clone attempt fails.
 			while (added_by_type[deposit_type] or 0) < shortfall do
-				local c = selector.Take(nil, effect_profile)
+				local c = take_reachable_candidate(selector, effect_profile)
 				local active_selector = c and selector or nil
 				local density_fallback = false
 				if not c and sequential_underground then
@@ -5878,7 +5959,7 @@ function DepositRules.TopUpEffectDeposits(map)
 						sample_fresh_candidate()
 						if #candidates > before then
 							rebuild_effect_selectors()
-							c = selector.Take(nil, effect_profile)
+							c = take_reachable_candidate(selector, effect_profile)
 							active_selector = c and selector or nil
 						end
 					end
@@ -5887,7 +5968,7 @@ function DepositRules.TopUpEffectDeposits(map)
 					relaxed_selector = relaxed_selector or NewWellSpacedUndergroundFallbackSelector(
 						map, candidates, "underground effect residual",
 						function(candidate) return repulsion.CanPlaceUnique(candidate) end)
-					c = relaxed_selector.Take(nil, effect_profile)
+					c = take_reachable_candidate(relaxed_selector, effect_profile)
 					active_selector = c and relaxed_selector or nil
 					density_fallback = c ~= nil
 					if not c and sequential_underground then
@@ -5897,13 +5978,13 @@ function DepositRules.TopUpEffectDeposits(map)
 							sample_fresh_candidate()
 							if #candidates > before then
 								rebuild_effect_selectors()
-								c = selector.Take(nil, effect_profile)
+								c = take_reachable_candidate(selector, effect_profile)
 								active_selector = c and selector or nil
 								if not c then
 									relaxed_selector = NewWellSpacedUndergroundFallbackSelector(
 										map, candidates, "underground effect sequential residual",
 										function(candidate) return repulsion.CanPlaceUnique(candidate) end)
-									c = relaxed_selector.Take(nil, effect_profile)
+									c = take_reachable_candidate(relaxed_selector, effect_profile)
 									active_selector = c and relaxed_selector or nil
 									density_fallback = c ~= nil
 								end
@@ -5990,6 +6071,9 @@ function DepositRules.TopUpEffectDeposits(map)
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
 		sequential_placement = sequential_underground,
+		deferred_reachability = defer_candidate_reachability,
+		reachability_checks = reachability_checks,
+		reachability_rejections = reachability_rejections,
 		shared_candidate_samples = underground
 			and UndergroundTopUpSamplingState(map).samples or 0,
 		shared_candidate_sector_samples = underground
@@ -6012,6 +6096,9 @@ function DepositRules.TopUpEffectDeposits(map)
 					shared_state and shared_state.whole_map_samples or 0)
 				.. " shared_published=" .. tostring(
 					shared_state and shared_state.published_candidates or 0)
+				.. " deferred_reachability=" .. tostring(defer_candidate_reachability)
+				.. " reachability_checks=" .. tostring(reachability_checks)
+				.. " reachability_rejections=" .. tostring(reachability_rejections)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
