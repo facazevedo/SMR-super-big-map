@@ -1461,7 +1461,8 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 	local remaining_generated = 0
 	for i = 1, #remaining_objects do
 		if not (source_baseline and source_baseline[remaining_objects[i]]) then
-			if not belongs_to_excluded_root(remaining_objects[i]) then
+			local _, excluded = resolve_generated_root(remaining_objects[i])
+			if not excluded then
 				remaining_generated = remaining_generated + 1
 			end
 		end
