@@ -4140,6 +4140,22 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapStretch") end
 			local ok_stretch, n_grids = false, 0
 			local surface_pipeline_token = LoadingBegin("surface expansion pipeline", map)
+			-- Create and render the dialog before pass edits are suspended. ResumePassEdits requires
+			-- GameTime to match the value captured by SuspendPassEdits, so no Sleep/yield is allowed
+			-- inside that transaction.
+			local loading_visible = BeginSurfaceExpansionLoading(map,
+				"Stretching the surface terrain")
+			local sleep = Global("Sleep")
+			if type(sleep) == "function" then sleep(100) end
+			local visible_check = SuperBigMap.ExpansionLoadingVisible
+			if type(visible_check) == "function" then
+				loading_visible = visible_check() == true
+			end
+			LoadingStep("surface custom loading handoff", {
+				started = tostring(surface_loading_ref_maps[map] == true),
+				visible = tostring(loading_visible == true),
+				milestone = "before_pass_edit_suspension_and_terrain_stretch",
+			}, map)
 			-- One transaction owns both mass-object moves so intermediate edits do not flush
 			-- passability before the stretch's authoritative final revalidation.
 			local pass_batch_reason = "SuperBigMapSurfaceStretch"
@@ -4162,21 +4178,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if type(AnnotateDecorRelief) == "function" then
 						AnnotateDecorRelief(map)
 					end
-					-- Create the dialog synchronously at the last safe Lua boundary, then yield one short
-					-- real-time frame so Windows renders it before the bounded terrain resampling begins.
-					local loading_visible = BeginSurfaceExpansionLoading(map,
-						"Stretching the surface terrain")
-					local sleep = Global("Sleep")
-					if type(sleep) == "function" then sleep(100) end
-					local visible_check = SuperBigMap.ExpansionLoadingVisible
-					if type(visible_check) == "function" then
-						loading_visible = visible_check() == true
-					end
-					LoadingStep("surface custom loading handoff", {
-						started = tostring(surface_loading_ref_maps[map] == true),
-						visible = tostring(loading_visible == true),
-						milestone = "before_terrain_stretch",
-					}, map)
 					if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
