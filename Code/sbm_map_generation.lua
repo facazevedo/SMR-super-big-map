@@ -2505,9 +2505,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local engine_set_current_slot = Global("EngineSetCurrentMapSlot")
 	local get_current_slot = Global("GetCurrentMapSlot")
 	local maps = Global("Maps")
-	local optimized_silent_switch = cfg_bool("OPTIMIZE_TEMPORARY_SOURCE_SILENT_SWITCH", true)
-	local silent_switch_available = type(engine_set_current_slot) == "function"
-		and (type(set_current_map) == "function" or optimized_silent_switch)
+	local silent_switch_available = type(set_current_map) == "function"
+		and type(engine_set_current_slot) == "function"
 	if type(change_map_in_slot) ~= "function"
 		or (not silent_switch_available and type(change_current_slot) ~= "function")
 		or type(get_current_slot) ~= "function" or type(maps) ~= "table" then
@@ -2520,21 +2519,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if silent_switch_available then
 			local target = maps[slot]
 			if not target then error("temporary source migration switch target is unavailable: " .. tostring(slot)) end
-			local mode
-			if type(set_current_map) == "function" then
-				set_current_map(target)
-				mode = "engine SetCurrentMap"
-			else
-				-- SetCurrentMap is local in the shipped map.lua. These are its complete assignments;
-				-- the expensive public wrapper additionally changes render mode, audio, exposure, UI,
-				-- and broadcasts map-change messages that a hidden generator backing does not need.
-				rawset(_G, "CurrentMap", target)
-				rawset(_G, "CurrentMapName", target.name or "")
-				rawset(_G, "mapdata", target.mapdata or false)
-				mode = "mirrored private SetCurrentMap"
-			end
+			set_current_map(target)
 			engine_set_current_slot(slot)
-			LoadingEnd(switch_token, { mode = mode, target_slot = tostring(slot) }, true)
+			LoadingEnd(switch_token, {
+				mode = "engine SetCurrentMap", target_slot = tostring(slot),
+			}, true)
 			return true
 		end
 		change_current_slot(slot, false)
