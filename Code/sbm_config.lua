@@ -28,8 +28,9 @@ config.DebugLoadingTimings = true
 -- and buildable state. This can add thousands of log lines and materially slow the diagnostic
 -- run, so disable it again after the underground placement investigation.
 config.DebugUndergroundDecorationPositions = false
--- Focused cave-in audit. Cave-ins are the wall-forming CaveInRubble buildings spawned from
--- vanilla CaveInMarker objects. Both vanilla and expanded maps emit the same
+-- Focused underground rubble-wall audit. Cave-ins are CaveInRubble buildings spawned from
+-- CaveInMarker; collapsed tunnels are TunnelBlockerRubble buildings spawned from
+-- TunnelBlockerMarker. Both vanilla and expanded maps emit the same
 -- SNAPSHOT/SNAPSHOT_SUMMARY records with a mode label, position, class/entity, angle/scale,
 -- occupied hex count, terrain/buildability/passability, ground-relative height, and local terrain
 -- neighborhood. Expanded maps additionally retain PRE/POST_MOVE/FINAL transform records with

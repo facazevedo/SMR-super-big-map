@@ -5014,6 +5014,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				records = type(audit_result) == "table" and audit_result.records or nil,
 				record_errors = type(audit_result) == "table" and audit_result.record_errors or nil,
 				cave_in_rubble = type(audit_result) == "table" and audit_result.cave_in_rubble or nil,
+				tunnel_blocker_rubble = type(audit_result) == "table"
+					and audit_result.tunnel_blocker_rubble or nil,
 				total_shape_hexes = type(audit_result) == "table"
 					and audit_result.total_shape_hexes or nil,
 			}, map)

@@ -81,15 +81,18 @@ local function CaveInAuditEnabled(map)
 		and diagnostics.CaveInEnabled() == true
 end
 
--- The wall-forming, selectable underground cave-ins are CaveInRubble objects. RemovableRocks are
--- ordinary scatter/removal decorations and must not be used as a proxy: doing so made the audit
--- report hundreds of correctly moved rocks while the actual cave-in walls (Buildings, and thus
--- skipped by the cosmetic-decoration pass) stayed at their source positions and source size.
+-- The wall-forming, selectable underground blockers are CaveInRubble and TunnelBlockerRubble
+-- objects. The latter are the live "Collapsed Tunnel" objects spawned from TunnelBlockerMarker.
+-- RemovableRocks are ordinary scatter/removal decorations and must not be used as a proxy: doing
+-- so made the audit report hundreds of correctly moved rocks while the actual rubble walls
+-- (Buildings, and thus skipped by the cosmetic-decoration pass) stayed at source position/size.
 local function IsCaveInObject(obj)
 	if not obj then return false end
-	if IsKindOfSafe(obj, "CaveInRubble") then return true end
+	if IsKindOfSafe(obj, "CaveInRubble") or IsKindOfSafe(obj, "TunnelBlockerRubble") then
+		return true
+	end
 	local class = obj.class
-	return class == "CaveInRubble"
+	return class == "CaveInRubble" or class == "TunnelBlockerRubble"
 end
 
 local function TerrainSize(map)
@@ -772,16 +775,17 @@ local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_snapshot_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 
-local CAVE_IN_SHAPE_PATCH_VERSION = 1
+local CAVE_IN_SHAPE_PATCH_VERSION = 2
 
 local function RoundSigned(value)
 	if value >= 0 then return math.floor(value + 0.5) end
 	return math.ceil(value - 0.5)
 end
 
--- Rasterize a vanilla cave-in's axial-hex footprint through the same world-space transform used
--- by the terrain. Mapping destination hex centers back into the source shape fills the additional
--- cells introduced by the 4/3 expansion instead of merely spreading the original cells apart.
+-- Rasterize a vanilla rubble wall's axial-hex footprint through the same world-space transform
+-- used by the terrain. Mapping destination hex centers back into the source shape fills the
+-- additional cells introduced by the 4/3 expansion instead of merely spreading the original
+-- cells apart.
 local function ScaleCaveInHexShape(source_shape, scale_x, scale_y)
 	if type(source_shape) ~= "table" or #source_shape == 0
 		or type(scale_x) ~= "number" or type(scale_y) ~= "number"
@@ -816,7 +820,8 @@ local function ScaleCaveInHexShape(source_shape, scale_x, scale_y)
 	if not min_q then return source_shape end
 
 	-- Three cells of padding covers the largest supported terrain ratio while keeping this tiny:
-	-- CaveIn_Buildings has a compact local footprint and this runs only for generated cave walls.
+	-- Both supported rubble entities have compact local footprints, and this runs only for generated
+	-- underground walls.
 	min_q, max_q, min_r, max_r = min_q - 3, max_q + 3, min_r - 3, max_r + 3
 	local scaled = {}
 	for target_q = min_q, max_q do
@@ -852,25 +857,38 @@ local function CaveInShapePointCount(obj)
 	return type(shape) == "table" and #shape or nil
 end
 
--- CaveInRubble inherits GridObject:GetShapePoints, whose entity outline is not affected by
--- CObject:SetScale. Keep vanilla behavior for every unstamped object; only source cave-ins that
--- this mod stretches carry the ratio fields consumed by the wrapper.
-local function PatchCaveInShapePoints()
-	local State = SuperBigMap.State or {}
-	SuperBigMap.State = State
-	local cls = Engine.ClassTable and Engine.ClassTable("CaveInRubble")
+-- Both rubble-wall classes inherit GridObject:GetShapePoints, whose entity outline is unaffected
+-- by CObject:SetScale. Keep vanilla behavior for every unstamped object; only source blockers that
+-- this mod stretches carry the ratio fields consumed by these transparent class wrappers. The
+-- current entity is part of the cache key because TunnelBlockerRubble changes entity as clearing
+-- progresses and each clearing phase must continue to use its own expanded vanilla outline.
+local CAVE_IN_SHAPE_PATCHES = {
+	{
+		class = "CaveInRubble",
+		original_key = "original_cave_in_shape_points",
+		wrapper_key = "cave_in_shape_points_wrapper",
+	},
+	{
+		class = "TunnelBlockerRubble",
+		original_key = "original_tunnel_blocker_shape_points",
+		wrapper_key = "tunnel_blocker_shape_points_wrapper",
+	},
+}
+
+local function PatchCaveInShapeClass(State, spec, force_reinstall)
+	local cls = Engine.ClassTable and Engine.ClassTable(spec.class)
 	if type(cls) ~= "table" then return false end
 	local current = cls.GetShapePoints
+	local previous_wrapper = State[spec.wrapper_key]
+	local previous_original = State[spec.original_key]
+	if current == previous_wrapper and not force_reinstall then return true end
+	if current == previous_wrapper and type(previous_original) == "function" then
+		current = previous_original
+		cls.GetShapePoints = current
+	end
 	if type(current) ~= "function" then
 		local grid_object = Engine.ClassTable and Engine.ClassTable("GridObject")
 		current = type(grid_object) == "table" and grid_object.GetShapePoints or nil
-	end
-	if current == State.cave_in_shape_points_wrapper
-		and State.cave_in_shape_patch_version == CAVE_IN_SHAPE_PATCH_VERSION then return true end
-	if current == State.cave_in_shape_points_wrapper
-		and type(State.original_cave_in_shape_points) == "function" then
-		current = State.original_cave_in_shape_points
-		cls.GetShapePoints = current
 	end
 	if type(current) ~= "function" then return false end
 	local original = current
@@ -880,36 +898,55 @@ local function PatchCaveInShapePoints()
 		if not scale_x or scale_x <= 1 or not scale_y or scale_y <= 1 then
 			return source_shape
 		end
+		local entity = type(obj.GetEntity) == "function" and SafeCall(obj.GetEntity, obj)
+			or obj.entity
 		local cached = cave_in_scaled_shape_cache[obj]
 		if type(cached) == "table" and cached.source_shape == source_shape
-			and cached.scale_x == scale_x and cached.scale_y == scale_y then
+			and cached.entity == entity and cached.scale_x == scale_x
+			and cached.scale_y == scale_y then
 			return cached.shape
 		end
 		local shape = ScaleCaveInHexShape(source_shape, scale_x, scale_y)
 		cave_in_scaled_shape_cache[obj] = {
 			source_shape = source_shape,
+			entity = entity,
 			scale_x = scale_x,
 			scale_y = scale_y,
 			shape = shape,
 		}
 		return shape
 	end
-	State.original_cave_in_shape_points = original
-	State.cave_in_shape_points_wrapper = wrapper
-	State.cave_in_shape_patch_version = CAVE_IN_SHAPE_PATCH_VERSION
+	State[spec.original_key] = original
+	State[spec.wrapper_key] = wrapper
 	cls.GetShapePoints = wrapper
 	return true
 end
 
+local function PatchCaveInShapePoints()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	local force_reinstall = State.cave_in_shape_patch_version ~= CAVE_IN_SHAPE_PATCH_VERSION
+	local all_patched = true
+	for _, spec in ipairs(CAVE_IN_SHAPE_PATCHES) do
+		if not PatchCaveInShapeClass(State, spec, force_reinstall) then all_patched = false end
+	end
+	State.cave_in_shape_patch_version = all_patched and CAVE_IN_SHAPE_PATCH_VERSION or nil
+	return all_patched
+end
+
 local function RestoreCaveInShapePointsPatch()
 	local State = SuperBigMap.State or {}
-	local cls = Engine.ClassTable and Engine.ClassTable("CaveInRubble")
-	if type(cls) == "table" and cls.GetShapePoints == State.cave_in_shape_points_wrapper
-		and type(State.original_cave_in_shape_points) == "function" then
-		cls.GetShapePoints = State.original_cave_in_shape_points
+	for _, spec in ipairs(CAVE_IN_SHAPE_PATCHES) do
+		local cls = Engine.ClassTable and Engine.ClassTable(spec.class)
+		local wrapper = State[spec.wrapper_key]
+		local original = State[spec.original_key]
+		if type(cls) == "table" and cls.GetShapePoints == wrapper
+			and type(original) == "function" then
+			cls.GetShapePoints = original
+		end
+		State[spec.original_key] = nil
+		State[spec.wrapper_key] = nil
 	end
-	State.original_cave_in_shape_points = nil
-	State.cave_in_shape_points_wrapper = nil
 	State.cave_in_shape_patch_version = nil
 	cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 end
@@ -1301,6 +1338,7 @@ local function AuditCaveInSnapshot(map, mode, reason)
 		records = #records,
 		record_errors = #errors,
 		cave_in_rubble = 0,
+		tunnel_blocker_rubble = 0,
 		other_classes = 0,
 		total_shape_hexes = 0,
 		max_shape_hexes = 0,
@@ -1343,6 +1381,8 @@ local function AuditCaveInSnapshot(map, mode, reason)
 
 		if record.class == "CaveInRubble" then
 			stats.cave_in_rubble = stats.cave_in_rubble + 1
+		elseif record.class == "TunnelBlockerRubble" then
+			stats.tunnel_blocker_rubble = stats.tunnel_blocker_rubble + 1
 		else
 			stats.other_classes = stats.other_classes + 1
 		end
@@ -1434,7 +1474,8 @@ local function AnnotateDecorRelief(map)
 	local audit_list = audit_on and {} or nil
 	local cave_audit_on = CaveInAuditEnabled(map)
 	-- Placement correctness must never depend on diagnostic logging being enabled. Always capture
-	-- the real CaveInRubble objects; cave_audit_on controls only emission of the detailed records.
+	-- the real CaveInRubble/TunnelBlockerRubble objects; cave_audit_on controls only emission of
+	-- the detailed records.
 	local cave_capture = {
 		list = {},
 		scale_x = nil,
@@ -1626,10 +1667,10 @@ local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
 	return pos
 end
 
--- CaveInRubble is a Building and is intentionally excluded from the cosmetic-decoration loop.
--- Transform it explicitly, while its vanilla source coordinates are still captured, and update
--- its GridObject registration around the move so the expanded visual wall and gameplay footprint
--- continue to describe the same obstruction.
+-- CaveInRubble and TunnelBlockerRubble are Buildings and are intentionally excluded from the
+-- cosmetic-decoration loop. Transform them explicitly while their vanilla source coordinates are
+-- still captured, updating GridObject registration around each move so every expanded visual wall
+-- and gameplay footprint continues to describe the same obstruction.
 local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_th, sw_tiles, sh_tiles)
 	local capture = cave_in_position_audit_by_map[map]
 	local stats = {
@@ -1641,18 +1682,21 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 		grid_remove_failures = 0,
 		grid_apply_failures = 0,
 		post_records = 0,
+		cave_in_rubble = 0,
+		tunnel_blocker_rubble = 0,
 		source_shape_hexes = 0,
 		expanded_shape_hexes = 0,
 		scale_x = scale_x,
 		scale_y = scale_y,
 	}
 	if type(capture) ~= "table" or type(capture.list) ~= "table" then
-		stats.error = "no cave-in source capture"
+		stats.error = "no underground rubble-wall source capture"
 		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
 	end
 	if capture.capture_ok ~= true then
-		stats.error = "cave-in source traversal failed: " .. tostring(capture.capture_error)
+		stats.error = "underground rubble-wall source traversal failed: "
+			.. tostring(capture.capture_error)
 		stats.transform_failures = #capture.list
 		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
@@ -1663,7 +1707,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 		return true, stats
 	end
 	if not PatchCaveInShapePoints() then
-		stats.error = "CaveInRubble.GetShapePoints patch unavailable"
+		stats.error = "underground rubble-wall GetShapePoints patch unavailable"
 		stats.transform_failures = #capture.list
 		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
@@ -1672,6 +1716,11 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 	local is_valid = Global("IsValid")
 	local MAX_SCALE = 500
 	for _, record in ipairs(capture.list) do
+		if record.class == "CaveInRubble" then
+			stats.cave_in_rubble = stats.cave_in_rubble + 1
+		elseif record.class == "TunnelBlockerRubble" then
+			stats.tunnel_blocker_rubble = stats.tunnel_blocker_rubble + 1
+		end
 		local obj = record.object_ref
 		local live = obj ~= nil
 			and (type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true)
@@ -1695,7 +1744,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 					obj:RemoveFromGrids()
 					if obj.grids_applied == true then
 						stats.grid_remove_failures = stats.grid_remove_failures + 1
-						error("old cave-in footprint remained registered")
+						error("old underground rubble-wall footprint remained registered")
 					end
 					removed_grids = true
 				end
@@ -1731,7 +1780,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 					obj:ApplyToGrids()
 					if obj.grids_applied ~= true then
 						stats.grid_apply_failures = stats.grid_apply_failures + 1
-						error("expanded cave-in footprint was not registered")
+						error("expanded underground rubble-wall footprint was not registered")
 					end
 				end
 			end)
@@ -1779,7 +1828,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 				stats.post_records = stats.post_records + 1
 				CaveInAudit("POST_MOVE", CaveInPositionAuditData(
 					map, record, obj, "post_move", scale_x, scale_y,
-					"immediately after dedicated CaveInRubble transform"), map)
+					"immediately after dedicated underground rubble-wall transform"), map)
 			end
 		end
 	end
@@ -1871,7 +1920,7 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		map, scale_x, scale_y, full_tw, full_th, sw_tiles, sh_tiles)
 	if cave_ok ~= true then
 		if owns_pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor") end
-		error("dedicated CaveInRubble transform failed (captured="
+		error("dedicated underground rubble-wall transform failed (captured="
 			.. tostring(cave_stats and cave_stats.captured or "?")
 			.. ", failures=" .. tostring(cave_stats and cave_stats.transform_failures or "?") .. ")")
 	end
@@ -2053,6 +2102,9 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		scanned = #objs,
 		moved = moved,
 		cave_ins_transformed = cave_stats and cave_stats.transformed or 0,
+		rubble_walls_transformed = cave_stats and cave_stats.transformed or 0,
+		cave_in_rubble = cave_stats and cave_stats.cave_in_rubble or 0,
+		tunnel_blocker_rubble = cave_stats and cave_stats.tunnel_blocker_rubble or 0,
 		cave_in_source_shape_hexes = cave_stats and cave_stats.source_shape_hexes or 0,
 		cave_in_expanded_shape_hexes = cave_stats and cave_stats.expanded_shape_hexes or 0,
 		explicit_z_captured = capture.explicit_z or 0,
@@ -2066,10 +2118,10 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	return moved
 end
 
--- Final cave-in checkpoint, deliberately separate from the immediate decoration POST_MOVE record.
--- Underground finalization rebuilds passability/buildability and may modify entrance terrain after
--- the objects have moved. Comparing both checkpoints reveals late drift or a locally non-equivalent
--- stretched terrain profile even when the initial proportional X/Y transform itself was exact.
+-- Final rubble-wall checkpoint, deliberately separate from the immediate decoration POST_MOVE
+-- record. Underground finalization rebuilds passability/buildability and may modify entrance
+-- terrain after the objects have moved. Comparing both checkpoints reveals late drift or a locally
+-- non-equivalent stretched terrain profile even when the proportional X/Y transform was exact.
 local function AuditFinalCaveInPositions(map, reason)
 	if not CaveInAuditEnabled(map) then return false, { disabled = true } end
 	local capture = cave_in_position_audit_by_map[map]
@@ -2077,9 +2129,9 @@ local function AuditFinalCaveInPositions(map, reason)
 		CaveInAudit("FINAL_SUMMARY", {
 			reason = tostring(reason or ""),
 			captured = 0,
-			error = "no cave-in source capture",
+			error = "no underground rubble-wall source capture",
 		}, map)
-		return false, { error = "no cave-in source capture" }
+		return false, { error = "no underground rubble-wall source capture" }
 	end
 	local scale_x = tonumber(capture.scale_x)
 	local scale_y = tonumber(capture.scale_y)
