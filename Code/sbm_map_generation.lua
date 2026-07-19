@@ -182,7 +182,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 4
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 5
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -464,6 +464,7 @@ local function PatchElevatorTraversalDiagnostics()
 			local transferred = before_map ~= nil and after_map ~= nil and before_map ~= after_map
 			local outcome
 			if transferred then outcome = "transferred"
+			elseif before.has_power == "false" then outcome = "elevator_has_no_power"
 			elseif trace.same_map == false then outcome = "unit_elevator_map_mismatch"
 			elseif trace.entrance_valid == false then outcome = "elevator_entrance_invalid"
 			elseif trace.goto_entered == true and trace.goto_result ~= true then
@@ -3112,9 +3113,8 @@ end
 -- ElevatorBuildIndicator_UndergroundPassageImprint. SurfacePassageRocks is a different standalone
 -- obstruction class and must not be used as an attachment test. The stretch may move an attached
 -- child independently from its carrier, so rebuild the vanilla entity attachments only after the
--- passage reaches its committed final position. Keep this ground marker even after an Elevator is
--- built: the Elevator remains linked and rendered above it, while both original passage locations
--- remain identifiable on the underground map. This does not create a tunnel sign or reveal a sector.
+-- passage reaches its committed final position. Once an Elevator is linked, retain vanilla behavior:
+-- the passage carrier and its marker attachments stay hidden beneath the completed building.
 local function RefreshVanillaUndergroundPassageIndicators(map)
 	local auto_attach = Global("AutoAttachObjects")
 	local point_fn = Global("point")
@@ -3124,10 +3124,19 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 	end
 	local passages = ArtefactMapGet(map, "SurfacePassage")
 	local expected_decal_entity = "ElevatorBuildIndicator_UndergroundPassageImprint"
-	local stats = { passages = #passages, rebuilt = 0, decals = 0, built_markers = 0 }
+	local stats = {
+		passages = #passages, rebuilt = 0, decals = 0,
+		built_markers = 0, built_hidden = 0, unbuilt_markers = 0,
+	}
 	for index, passage in ipairs(passages) do
-		local built = passage.elevator or passage.elevator_construction
-		if built then stats.built_markers = stats.built_markers + 1 end
+		local built = TraversalObjectValid(passage.elevator)
+		if built then
+			stats.built_markers = stats.built_markers + 1
+			if type(passage.SetVisible) == "function" then pcall(passage.SetVisible, passage, false) end
+			stats.built_hidden = stats.built_hidden + 1
+			stats.rebuilt = stats.rebuilt + 1
+		else
+			stats.unbuilt_markers = stats.unbuilt_markers + 1
 		local entity
 		if type(passage.GetEntity) == "function" then
 			local ok_entity, value = pcall(passage.GetEntity, passage)
@@ -3202,14 +3211,65 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 		if type(passage.SetOpacity) == "function" then pcall(passage.SetOpacity, passage, 100) end
 		stats.rebuilt = stats.rebuilt + 1
 		stats.decals = stats.decals + #decals
+		end
 	end
 	return stats.passages > 0 and stats.rebuilt == stats.passages
-		and stats.decals >= stats.passages, stats
+		and stats.decals >= stats.unbuilt_markers, stats
 end
 
--- Vanilla replaces and hides SurfacePassage's marker entity when an Elevator links through it.
--- Keep the gameplay link unchanged, then restore the baked ground marker underneath the completed
--- underground Elevator. The wrapper is map-scoped and has no effect on vanilla-size sessions.
+local function HideCompletedPassageIndicator(passage)
+	if not TraversalObjectValid(passage) then return 0, 0 end
+	local hidden = 0
+	if type(passage.SetVisible) == "function" then
+		pcall(passage.SetVisible, passage, false)
+		hidden = 1
+	end
+	-- Do not alter child visibility or opacity. Vanilla hides only the carrier hierarchy, allowing
+	-- its normal demolition lifecycle to reveal the same marker again later.
+	return hidden, 0
+end
+
+local function HideCompletedPassagePair(elevator, reason)
+	local passage = elevator and elevator.passage or nil
+	local map = TraversalObjectMap(passage)
+	if not passage or not TraversalIsExpandedMap(map) then return 0, 0 end
+	local hidden, attachments = HideCompletedPassageIndicator(passage)
+	local other_hidden, other_attachments = HideCompletedPassageIndicator(passage.other)
+	hidden = hidden + other_hidden
+	attachments = attachments + other_attachments
+	ExpansionAudit("BUILT_PASSAGE_MARKERS_HIDDEN", {
+		elevator = tostring(elevator), passage = tostring(passage),
+		other_passage = tostring(passage.other), reason = tostring(reason),
+		hidden = hidden, attachments_hidden = attachments,
+	}, map)
+	return hidden, attachments
+end
+
+local function HideExistingCompletedPassageIndicators(reason)
+	local maps = Global("Maps")
+	if type(maps) ~= "table" then return 0 end
+	local hidden, seen = 0, setmetatable({}, { __mode = "k" })
+	for _, map in pairs(maps) do
+		if TraversalIsExpandedMap(map) then
+			for _, class_name in ipairs({ "SurfacePassage", "UndergroundPassage" }) do
+				for _, passage in ipairs(ArtefactMapGet(map, class_name)) do
+					local elevator = passage and passage.elevator
+					if TraversalObjectValid(elevator) and not seen[elevator] then
+						seen[elevator] = true
+						if TraversalObjectValid(elevator.other) then seen[elevator.other] = true end
+						local pair_hidden = HideCompletedPassagePair(elevator, reason)
+						hidden = hidden + pair_hidden
+					end
+				end
+			end
+		end
+	end
+	return hidden
+end
+
+-- Vanilla hides each passage marker when a completed Elevator links through it. Keep that result
+-- after the deferred counterpart reconstruction, and also clean up markers made visible by older
+-- versions of this patch. The wrapper is map-scoped and leaves vanilla-size sessions untouched.
 local function PatchPersistentBuiltUndergroundPassageMarker()
 	local State = SuperBigMap.State
 	local class = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
@@ -3225,28 +3285,14 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	end
 	local wrapper = function(self, ...)
 		local result = PackValues(original(self, ...))
-		local passage = self and self.passage
-		local map = passage and type(passage.GetMap) == "function" and SafeCall(passage.GetMap, passage) or nil
-		local sector_grid = SuperBigMap.SectorGrid
-		local expanded = map and sector_grid and type(sector_grid.IsModMap) == "function"
-			and sector_grid.IsModMap(map) == true
-		local underground = expanded and map.mapdata and map.mapdata.Environment == "Underground"
-		if underground and IsKindOfSafe(passage, "SurfacePassageBase") then
-			local ok, stats = RefreshVanillaUndergroundPassageIndicators(map)
-			ExpansionAudit("BUILT_UNDERGROUND_PASSAGE_MARKER_RESTORED", {
-				ok = ok == true,
-				passages = stats and stats.passages or 0,
-				decals = stats and stats.decals or 0,
-				built_markers = stats and stats.built_markers or 0,
-				error = stats and stats.error or nil,
-			}, map)
-		end
+		HideCompletedPassagePair(self, "ElevatorBase:LinkThroughPassage")
 		return Unpack(result, 1, result.n)
 	end
 	State.original_elevator_link_through_passage = original
 	State.persistent_passage_marker_wrapper = wrapper
 	State.persistent_passage_marker_patch_version = GENERATOR_PATCH_VERSION
 	class.LinkThroughPassage = wrapper
+	HideExistingCompletedPassageIndicators("passage-marker patch installation")
 	return true
 end
 
@@ -5617,7 +5663,8 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 3
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 4
+local EXPANDED_ELEVATOR_POWER_GATE_VERSION = 1
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5627,6 +5674,21 @@ local function DeferredUndergroundTargetForElevator(elevator)
 		return target
 	end
 	return nil
+end
+
+local function ElevatorHasTraversalPower(elevator)
+	if not TraversalObjectValid(elevator) or type(elevator.HasPower) ~= "function" then
+		return false
+	end
+	return SafeCall(elevator.HasPower, elevator) == true
+end
+
+local function AuditElevatorPowerBlock(unit, elevator, stage, wrapper_target)
+	local data, map = TraversalSnapshot(unit, elevator, false)
+	data.stage = tostring(stage)
+	data.wrapper_target = tostring(wrapper_target)
+	data.reason = "neither linked Elevator side has power"
+	ElevatorTraversalAudit("VEHICLE_USE_BLOCKED_NO_POWER", data, map)
 end
 
 local function ShowDeferredUndergroundAccessFailure(reason)
@@ -5738,6 +5800,10 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	if not IsKindOfSafe(unit, "BaseRover") or not TraversalIsExpandedContext(unit, elevator) then
 		return original(unit, elevator, ...)
 	end
+	if not ElevatorHasTraversalPower(elevator) then
+		AuditElevatorPowerBlock(unit, elevator, "before Unit:UseElevator", "rover close-range gate")
+		return false
+	end
 	local before_map = TraversalObjectMap(unit)
 	local original_light_guard = BeginOffscreenVehicleLightTransfer(unit, elevator)
 	local protected_results = PackValues(pcall(original, unit, elevator, ...))
@@ -5791,6 +5857,13 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	if type(building_use) ~= "function" then
 		return Unpack(results, 1, results.n)
 	end
+	-- Power can disappear while the rover is travelling to the entrance. Recheck at the exact
+	-- fallback transfer boundary instead of relying only on the interaction-time state.
+	if not ElevatorHasTraversalPower(elevator) then
+		AuditElevatorPowerBlock(unit, elevator,
+			"before close-range ElevatorBase:UseElevator", "rover close-range gate")
+		return Unpack(results, 1, results.n)
+	end
 	ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_BEGIN", {
 		unit = tostring(unit), elevator = tostring(elevator),
 		distance = tostring(math.sqrt(distance_sq)), max_distance = tostring(max_distance),
@@ -5813,6 +5886,123 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	return Unpack(results, 1, results.n)
 end
 
+local function RestoreExpandedElevatorPowerGate()
+	local State = SuperBigMap.State
+	local patches = State.expanded_elevator_power_gate_patches
+	if type(patches) == "table" then
+		for i = #patches, 1, -1 do
+			local patch = patches[i]
+			if patch.target and patch.target.UseElevator == patch.wrapper then
+				patch.target.UseElevator = patch.original
+			end
+		end
+	end
+	State.expanded_elevator_power_gate_patches = nil
+	State.expanded_elevator_power_gate_version = nil
+end
+
+local function PatchExpandedElevatorPowerGate(source)
+	local State = SuperBigMap.State
+	local installed = State.expanded_elevator_power_gate_patches
+	local function patch_is_intact(patch)
+		if patch.target and patch.target.UseElevator == patch.wrapper then return true end
+		for _, diagnostic in ipairs(State.elevator_traversal_diagnostic_patches or {}) do
+			if diagnostic.target == patch.target and diagnostic.method == "UseElevator"
+				and diagnostic.original == patch.wrapper
+				and patch.target.UseElevator == diagnostic.wrapper then
+				return true
+			end
+		end
+		return false
+	end
+	if State.expanded_elevator_power_gate_version == EXPANDED_ELEVATOR_POWER_GATE_VERSION
+		and type(installed) == "table" then
+		local intact = #installed > 0
+		for _, patch in ipairs(installed) do
+			if not patch_is_intact(patch) then intact = false break end
+		end
+		if intact then return true end
+	end
+	RestoreExpandedElevatorPowerGate()
+
+	local targets, seen = {}, setmetatable({}, { __mode = "k" })
+	local base = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
+	if type(base) == "table" then targets[#targets + 1] = { name = "ElevatorBase", class = base } end
+	local descendants = Global("ClassDescendants")
+	if type(descendants) == "function" then
+		pcall(descendants, "ElevatorBase", function(name, class, output)
+			if type(class) == "table" then output[#output + 1] = { name = name, class = class } end
+		end, targets)
+	end
+	local patches = {}
+	for _, entry in ipairs(targets) do
+		local class = entry.class
+		local original = class and class.UseElevator
+		if type(original) == "function" and not seen[class] then
+			seen[class] = true
+			local label = tostring(entry.name)
+			local wrapper = function(elevator, unit, ...)
+				if IsKindOfSafe(unit, "BaseRover")
+					and TraversalIsExpandedContext(unit, elevator)
+					and not ElevatorHasTraversalPower(elevator) then
+					AuditElevatorPowerBlock(unit, elevator,
+						"before ElevatorBase:UseElevator transfer", label)
+					return false
+				end
+				return original(elevator, unit, ...)
+			end
+			class.UseElevator = wrapper
+			patches[#patches + 1] = {
+				target = class, original = original, wrapper = wrapper, label = label,
+			}
+		end
+	end
+	State.expanded_elevator_power_gate_patches = patches
+	State.expanded_elevator_power_gate_version = EXPANDED_ELEVATOR_POWER_GATE_VERSION
+	ElevatorTraversalAudit("POWER_GATE_PATCH_INSTALLED", {
+		source = tostring(source), patches = #patches,
+	}, Global("CurrentMap"))
+	return #patches > 0
+end
+
+local function CaptureDeferredElevatorCamera()
+	local camera = Global("cameraRTS")
+	if type(camera) ~= "table" or type(camera.GetEye) ~= "function"
+		or type(camera.GetLookAt) ~= "function" then
+		return nil
+	end
+	local eye = SafeCall(camera.GetEye)
+	local lookat = SafeCall(camera.GetLookAt)
+	if not eye or not lookat then return nil end
+	local zoom = type(camera.GetZoom) == "function" and SafeCall(camera.GetZoom) or nil
+	return { eye = eye, lookat = lookat, zoom = zoom }
+end
+
+local function RestoreDeferredElevatorCamera(snapshot, expected_map)
+	if type(snapshot) ~= "table" then return true, "camera snapshot unavailable" end
+	if expected_map and Global("CurrentMap") ~= expected_map then
+		return false, "camera target map was not restored"
+	end
+	local camera = Global("cameraRTS")
+	if type(camera) ~= "table" or type(camera.SetCamera) ~= "function" then
+		return false, "cameraRTS.SetCamera is unavailable"
+	end
+	-- Restore the zoom controller first, then make the saved eye/look-at pair authoritative. The
+	-- final zero-time SetCamera prevents map-switch camera presets from shifting either framing or
+	-- distance after the hidden underground round trip.
+	if type(snapshot.zoom) == "number" and type(camera.SetZoom) == "function" then
+		SafeCall(camera.SetZoom, snapshot.zoom, 0)
+	end
+	local ok = pcall(camera.SetCamera, snapshot.eye, snapshot.lookat, 0)
+	if not ok then return false, "cameraRTS.SetCamera rejected the saved view" end
+	local eye_after = type(camera.GetEye) == "function" and SafeCall(camera.GetEye) or nil
+	local lookat_after = type(camera.GetLookAt) == "function" and SafeCall(camera.GetLookAt) or nil
+	local exact = eye_after and lookat_after
+		and tostring(eye_after) == tostring(snapshot.eye)
+		and tostring(lookat_after) == tostring(snapshot.lookat)
+	return exact == true, exact and "restored exact eye/look-at" or "saved camera did not remain exact"
+end
+
 local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	local State = SuperBigMap.State
 	local gate = State.change_current_map_slot_wrapper
@@ -5830,6 +6020,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	if not return_map or return_map.slot == nil then
 		return false, "the current map cannot be restored after underground preparation"
 	end
+	local return_camera = CaptureDeferredElevatorCamera()
 
 	State.deferred_elevator_access_sequence =
 		(tonumber(State.deferred_elevator_access_sequence) or 0) + 1
@@ -5870,11 +6061,18 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 				gate, return_map.slot, false, "idChangeCurrentMapSlot")
 			return_ok = return_ok and return_result ~= false and Global("CurrentMap") == return_map
 		end
+		local camera_ok, camera_reason = false, "return map was not restored"
+		if return_ok then
+			camera_ok, camera_reason = RestoreDeferredElevatorCamera(return_camera, return_map)
+		end
 		request.return_result = return_result
-		request.ok = target_ready and return_ok
+		request.camera_ok = camera_ok
+		request.camera_reason = camera_reason
+		request.ok = target_ready and return_ok and camera_ok
 		request.reason = request.ok and "prepared underground and restored original view"
 			or (not call_ok and tostring(call_result))
 			or target.SuperBigMapUndergroundStretchFailed
+			or (return_ok and not camera_ok and tostring(camera_reason))
 			or (target_ready and "the original map view could not be restored")
 			or "the underground first-access gate did not complete"
 		if loading_started and type(end_loading) == "function" then
@@ -5898,6 +6096,8 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		prepared = tostring(target.SuperBigMapUndergroundPrepared == true),
 		view_restored = tostring(Global("CurrentMap") == return_map),
 		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
+		camera_restored = tostring(request.camera_ok == true),
+		camera_reason = tostring(request.camera_reason),
 		reason = tostring(request.reason),
 	}, TraversalObjectMap(unit))
 	return request.ok == true, request.reason
@@ -6118,6 +6318,7 @@ local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	PatchSupplyGridOverlayCopyGuard(source)
 	PatchElevatorSupplyTransactionBoundary(source)
+	PatchExpandedElevatorPowerGate(source)
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
@@ -6360,6 +6561,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	RestoreElevatorTraversalDiagnostics()
 	RestoreDeferredUndergroundElevatorAccess()
+	RestoreExpandedElevatorPowerGate()
 	-- Restore process-shared MapData presets as part of the domain teardown too,
 	-- not only through the main-menu convenience path. This covers config disable,
 	-- hot reload, and any alternate session exit that calls Lifecycle.Disable.
