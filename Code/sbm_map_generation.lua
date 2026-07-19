@@ -4924,12 +4924,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						markers = repulsion_stats and repulsion_stats.markers,
 						topups = repulsion_stats and repulsion_stats.topups,
 						density_status = repulsion_stats and repulsion_stats.density_status,
+						resource_shortfall = repulsion_stats and repulsion_stats.resource_shortfall,
+						resource_ignored_rubble_walls = repulsion_stats
+							and repulsion_stats.resource_ignored_rubble_walls,
 						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="
 							.. tostring(repulsion_stats and repulsion_stats.density_failures)
+							.. " resource_shortfall="
+							.. tostring(repulsion_stats and repulsion_stats.resource_shortfall)
 							.. " duplicate_hex_pairs="
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 							.. " repulsion_violations="

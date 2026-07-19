@@ -2574,6 +2574,79 @@ local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall
 	end
 end
 
+local function IsUndergroundRubbleWall(obj)
+	if not obj then return false end
+	if IsKindOfSafe(obj, "CaveInRubble") or IsKindOfSafe(obj, "TunnelBlockerRubble") then
+		return true
+	end
+	return obj.class == "CaveInRubble" or obj.class == "TunnelBlockerRubble"
+end
+
+-- Resource density must not depend on removable cave-in/collapsed-tunnel walls. Remove only those
+-- objects from gameplay grids while the resource candidate pool is built, then restore the exact
+-- same live objects before anomalies/effects run. Terrain, buildings, deposits, and every other
+-- obstruction remain active. Connectivity/candidate caches are invalidated at both boundaries so
+-- no wall-free result leaks into a later enrichment family.
+local function SuspendRubbleWallGridsForResourceTopUp(map)
+	if not map or type(map.MapForEach) ~= "function" then
+		return nil, "map/MapForEach unavailable"
+	end
+	local candidates = {}
+	local traversal_ok, traversal_err = pcall(map.MapForEach, map, "map", "CObject", function(obj)
+		if IsUndergroundRubbleWall(obj) and obj.grids_applied == true then
+			candidates[#candidates + 1] = obj
+		end
+	end)
+	if not traversal_ok then return nil, "rubble-wall traversal failed: " .. tostring(traversal_err) end
+	local token = { objects = {}, discovered = #candidates }
+	for _, obj in ipairs(candidates) do
+		if type(obj.RemoveFromGrids) ~= "function" then
+			for i = #token.objects, 1, -1 do
+				local previous = token.objects[i]
+				if previous and type(previous.ApplyToGrids) == "function" then
+					pcall(previous.ApplyToGrids, previous)
+				end
+			end
+			return nil, "RemoveFromGrids unavailable for " .. tostring(obj.class)
+		end
+		local removed_ok, removed_err = pcall(obj.RemoveFromGrids, obj)
+		if not removed_ok or obj.grids_applied == true then
+			for i = #token.objects, 1, -1 do
+				local previous = token.objects[i]
+				if previous and type(previous.ApplyToGrids) == "function" then
+					pcall(previous.ApplyToGrids, previous)
+				end
+			end
+			return nil, "failed to suspend " .. tostring(obj.class) .. ": " .. tostring(removed_err)
+		end
+		token.objects[#token.objects + 1] = obj
+	end
+	topup_candidate_pool_by_map[map] = nil
+	underground_reachability_by_map[map] = nil
+	return token
+end
+
+local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
+	if type(token) ~= "table" or type(token.objects) ~= "table" then return false, "invalid token" end
+	local failures = {}
+	for i = #token.objects, 1, -1 do
+		local obj = token.objects[i]
+		if not obj or type(obj.ApplyToGrids) ~= "function" then
+			failures[#failures + 1] = tostring(obj and obj.class or "missing object")
+		else
+			local applied_ok, applied_err = pcall(obj.ApplyToGrids, obj)
+			if not applied_ok or obj.grids_applied ~= true then
+				failures[#failures + 1] = tostring(obj.class) .. ":" .. tostring(applied_err)
+			end
+		end
+	end
+	-- Force anomalies/effects and all post-placement checks to build their own normal, wall-aware
+	-- pools. Only resource top-up placement is allowed to observe the temporary grid state.
+	topup_candidate_pool_by_map[map] = nil
+	underground_reachability_by_map[map] = nil
+	return #failures == 0, table.concat(failures, "|")
+end
+
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
 
 function DepositRules.TopUpDeposits(map)
@@ -2662,9 +2735,18 @@ function DepositRules.TopUpDeposits(map)
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
+	local ignore_rubble_walls = underground
+		and cfg().UNDERGROUND_RESOURCE_TOPUPS_IGNORE_RUBBLE_WALLS == true
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
-	RunPaused("SuperBigMapDepositTopUp", function()
+	local rubble_token
+	if ignore_rubble_walls then
+		local suspend_err
+		rubble_token, suspend_err = SuspendRubbleWallGridsForResourceTopUp(map)
+		if not rubble_token then error("resource top-up could not ignore rubble walls: "
+			.. tostring(suspend_err)) end
+	end
+	local placement_ok, placement_err = RunPaused("SuperBigMapDepositTopUp", function()
 		-- Shared validated pool. Selection preserves terrain type while preferring sectors with
 		-- the lowest existing-enrichment load relative to sampled eligible terrain area.
 		local shared_candidates, pool = {}, 0
@@ -2775,6 +2857,7 @@ function DepositRules.TopUpDeposits(map)
 					added = added + 1
 					local res = tostring(template.resource or template.class or "?")
 					clone.SuperBigMapResourceTopUp = true
+					clone.SuperBigMapResourceTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
 					added_by_type[res] = (added_by_type[res] or 0) + 1
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
@@ -2795,6 +2878,13 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 	end)
+	local restore_ok, restore_err = true, nil
+	if rubble_token then
+		restore_ok, restore_err = RestoreRubbleWallGridsAfterResourceTopUp(map, rubble_token)
+	end
+	if not placement_ok then error("resource top-up placement failed: " .. tostring(placement_err)) end
+	if not restore_ok then error("resource top-up rubble-wall restore failed: "
+		.. tostring(restore_err)) end
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
@@ -2810,6 +2900,7 @@ function DepositRules.TopUpDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(src_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type), added_total = added,
+		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 	})
 end
 
@@ -4375,7 +4466,8 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
 		outer_ring_spacing_violations = 0,
-		density_failures = 0, density_status = "",
+		density_failures = 0, density_status = "", resource_shortfall = 0,
+		resource_ignored_rubble_walls = 0,
 	}
 	do
 		local density = map.SuperBigMapEnrichmentTopUpStatus
@@ -4385,6 +4477,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			local complete = type(entry) == "table" and entry.complete == true
 			status[#status + 1] = kind .. "=" .. tostring(complete)
 			if not complete then stats.density_failures = stats.density_failures + 1 end
+			if kind == "resources" and type(entry) == "table" then
+				stats.resource_shortfall = tonumber(entry.remaining_shortfall) or 0
+				stats.resource_ignored_rubble_walls = tonumber(entry.ignored_rubble_walls) or 0
+			end
 		end
 		stats.density_status = table.concat(status, " ")
 	end
@@ -4686,7 +4782,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	for _, marker in ipairs(markers) do
 		local pos = ObjectPos(marker)
-		if not pos or not CanReceiveDeposit(map, pos) then
+		local resource_ignores_rubble = marker
+			and marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true
+		if not pos or (not resource_ignores_rubble and not CanReceiveDeposit(map, pos)) then
 			invalid[#invalid + 1] = { marker = marker, pos = pos }
 		end
 	end
@@ -4975,8 +5073,11 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		local buildable = pos and IsBuildableAt(map, pos, true) or false
 		local unobstructed = pos and IsUnobstructedAt(map, pos, true) or false
 		local reachable = not underground or (pos and IsReachableFromUndergroundEntrance(map, pos) or false)
-		local terrain_valid = passable and type(flatness) == "number"
+		local resource_ignores_rubble = underground and family == "resource"
+			and marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true
+		local terrain_valid = resource_ignores_rubble or (passable and type(flatness) == "number"
 			and flatness >= TopUpFlatnessMinimum() and buildable and unobstructed and reachable
+		)
 		if topup and not terrain_valid then invalid_topups = invalid_topups + 1 end
 		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX)
 		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY)
@@ -5002,6 +5103,7 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 			sector = sector, sector_key = sector_key,
 			passable = passable, flatness = flatness, buildable = buildable,
 			unobstructed = unobstructed, reachable = reachable, terrain_valid = terrain_valid,
+			resource_ignores_rubble = resource_ignores_rubble,
 			native_xy_match = native_xy_match,
 			placed_x = placed_x, placed_y = placed_y, placed_z = placed_z,
 		}

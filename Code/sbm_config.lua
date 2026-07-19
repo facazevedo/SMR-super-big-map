@@ -211,6 +211,11 @@ config.HideClonedDepositsUntilScan = true
 config.DepositEdgeMarginTiles = 4
 -- ENRICHMENT TOP-UP SWITCHES. Each expanded-map population can be controlled independently.
 config.TopUpResources = true
+-- Underground resource additions are density content that may legitimately sit behind removable
+-- cave-in/collapsed-tunnel walls. Temporarily exclude CaveInRubble and TunnelBlockerRubble grid
+-- footprints while sampling and placing RESOURCE top-ups, then restore every wall before anomaly
+-- and effect placement. Other obstruction classes remain authoritative.
+config.UndergroundResourceTopUpsIgnoreRubbleWalls = true
 config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
@@ -598,6 +603,8 @@ C.CONCRETE_IMPRINT_MAX_TILES = as_number(config.ConcreteImprintMaxTiles, 0)
 C.DEPOSIT_EDGE_MARGIN_TILES = as_number(config.DepositEdgeMarginTiles, 4)
 C.TOPUP_RESOURCES = expansion_step_13
 	and as_bool(config.TopUpResources)
+C.UNDERGROUND_RESOURCE_TOPUPS_IGNORE_RUBBLE_WALLS =
+	as_bool(config.UndergroundResourceTopUpsIgnoreRubbleWalls)
 C.TOPUP_ANOMALIES = expansion_step_13
 	and as_bool(config.TopUpAnomalies)
 C.TOPUP_VISTAS = expansion_step_13
