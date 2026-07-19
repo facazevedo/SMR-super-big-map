@@ -25,7 +25,7 @@ config.DebugElevatorTraversal = false
 -- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
-config.DebugLoadingTimings = false
+config.DebugLoadingTimings = true
 -- Exhaustive underground decoration transform trace. When enabled, every decoration that the
 -- stretch pass may move gets a stable audit index plus PRE and POST records containing object
 -- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
