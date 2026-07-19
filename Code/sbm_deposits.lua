@@ -4365,20 +4365,13 @@ function DepositRules.TopUpAnomalies(map)
 			else
 				c = whole_map_selector.Take(nil, anomaly_profile)
 				selected_whole_map_selector = c and whole_map_selector or nil
-				if not c and not surface_edge_ring and #candidates < MAX_POOL then
-					-- Do not let a reduced shared reserve force relaxed spacing. On the exceptional strict
-					-- miss, restore the historical whole-map search opportunity before constructing an
-					-- underground fallback or accepting a density shortfall on a surface whole-map mode.
-					local before = #candidates
-					grow_candidate_pool(MAX_POOL,
-						underground and optimize_placement_pool and 24000 or MAX_SAMPLES)
-					if #candidates > before then
-						whole_map_selector = new_whole_map_selector("underground anomalies expanded reserve")
-						c = whole_map_selector.Take(nil, anomaly_profile)
-						selected_whole_map_selector = c and whole_map_selector or nil
-					end
-				end
 				if not c and underground then
+					-- Resource placement already spent the complete strict-search budget and handed its
+					-- unused, fully validated candidates to this pass. Repeating up to 24,000 native
+					-- terrain/connectivity checks here cannot restore a strict position rejected by that
+					-- search; it only delays the established unique-hex, well-spaced completion pass.
+					-- Preserve the same strict-first ordering and density fallback, but consume the shared
+					-- validation result once.
 					relaxed_whole_map_selector = relaxed_whole_map_selector
 						or NewWellSpacedUndergroundFallbackSelector(
 							map, candidates, "underground anomaly residual",
