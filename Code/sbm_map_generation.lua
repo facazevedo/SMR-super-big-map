@@ -5191,7 +5191,13 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local pair_ok, pair_stats = AlignPassagePairsToSharedHex(map)
 				if pair_ok ~= true then
 					error("final passage-pair alignment failed: "
-						.. tostring(pair_stats and pair_stats.error or "unknown error"))
+						.. tostring(pair_stats and pair_stats.error or "unknown error")
+						.. (pair_stats and pair_stats.reason
+							and (": " .. tostring(pair_stats.reason)) or "")
+						.. (pair_stats and pair_stats.underground_reason
+							and ("; underground=" .. tostring(pair_stats.underground_reason)) or "")
+						.. (pair_stats and pair_stats.surface_reason
+							and ("; surface=" .. tostring(pair_stats.surface_reason)) or ""))
 				end
 				-- CityInitialized deliberately skipped SurfacePassage:Spawn while the source-sized
 				-- buildable grid disagreed with the expanded object grid. Align and prepare the immutable

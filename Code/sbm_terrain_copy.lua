@@ -3925,6 +3925,14 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			-- unrelated pre-stretch surface found under the future coordinate.
 			surface_post_valid = true
 			surface_post_reason = "deferred until final surface stretch"
+		elseif not source_bootstrap then
+			-- The final surface endpoint was already selected, moved, validated, and prepared by the
+			-- surface-final commitment pass. Deferred underground construction neither moves nor edits
+			-- that terrain (the coordinate checks above still reject drift). Re-running a placement
+			-- validator now can only add false blockers from the live Elevator and its companion objects
+			-- that legitimately occupy the committed footprint.
+			surface_post_valid = true
+			surface_post_reason = "immutable final surface commitment already validated"
 		else
 			surface_post_valid, surface_post_reason = footprint_buildable(
 				surface_map, surface_q, surface_r, surface_angle, surface_anchor)
@@ -3976,8 +3984,16 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			local prepared_underground_valid, prepared_underground_reason = footprint_buildable(
 				underground_map, post_underground_q, post_underground_r,
 				underground_angle, underground_anchor)
-			local prepared_surface_valid, prepared_surface_reason = footprint_buildable(
-				surface_map, surface_q, surface_r, surface_angle, surface_anchor)
+			local prepared_surface_valid, prepared_surface_reason
+			if prepare_surface then
+				prepared_surface_valid, prepared_surface_reason = footprint_buildable(
+					surface_map, surface_q, surface_r, surface_angle, surface_anchor)
+			else
+				-- Preparing only the underground endpoint cannot invalidate the already-committed
+				-- surface terrain. Its live Elevator occupancy is not a placement failure.
+				prepared_surface_valid = true
+				prepared_surface_reason = "immutable final surface commitment unchanged"
+			end
 			EntranceAudit("PASSAGE_PLAN_PAD_PREPARED", {
 				pair = i,
 				mode = source_bootstrap and "surface final commitment" or "deferred final validation",
