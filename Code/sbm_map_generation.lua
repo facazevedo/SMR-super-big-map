@@ -4027,7 +4027,14 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	State.persistent_passage_marker_patch_version = GENERATOR_PATCH_VERSION
 	class.LinkThroughPassage = wrapper
 	class.Done = done_wrapper
-	HideExistingCompletedPassageIndicators("passage-marker patch installation")
+	-- Do not enumerate live autoattachments while installing this wrapper. The debug executable can
+	-- hot-reload mod code from FileSystemChanged while generated entity classes are being replaced;
+	-- GetAttaches then tries to resolve classes such as ElevatorBuildIndicator_SurfaceDecal and raises
+	-- an undefined-global assertion. Existing markers are already enforced at the map-lifecycle and
+	-- first-access final boundaries below, while newly linked Elevators are handled by the wrapper.
+	ElevatorTraversalAudit("PASSAGE_MARKER_PATCH_INSTALLED", {
+		cleanup_deferred_to_safe_boundary = true,
+	}, Global("CurrentMap"))
 	return true
 end
 
