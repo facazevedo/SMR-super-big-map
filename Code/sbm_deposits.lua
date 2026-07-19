@@ -5019,12 +5019,13 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			if #remaining > 0 then
 				local repulsion = NewTopUpRepulsionTracker(
 					map, "inner-ring anomaly fallback attempt " .. tostring(attempt), ignored)
-				for _, plan in ipairs(outer_plans) do
-					if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
-						complete = false
-						break
-					end
-				end
+				-- Outer-ring additions deliberately follow their explicit rules (unique hex,
+				-- one per sector, and ten-hex separation), not vanilla repulsion. Committing them
+				-- into the vanilla tracker incorrectly rejected otherwise valid outer plans and
+				-- forced a 384-sample scan of every interior sector. Interior additions still use
+				-- the unchanged vanilla tracker against every fixed native/resource/effect marker
+				-- and each previously committed interior addition; clears_outer_spacing below
+				-- keeps the required ten-hex separation from every selected outer addition.
 				local function clears_outer_spacing(candidate)
 					for _, plan in ipairs(outer_plans) do
 						if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then
@@ -5033,20 +5034,18 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 					end
 					return true
 				end
-				if complete then
-					for _, item in ipairs(remaining) do
-						local winner = find_candidate(item, inner, function(candidate)
-							return clears_outer_spacing(candidate)
-								and repulsion.CanPlace(candidate, anomaly_profile)
-						end)
-						if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
-							complete = false
-							break
-						end
-						attempt_plans[#attempt_plans + 1] = {
-							item = item, candidate = winner, in_outer_ring = false,
-						}
+				for _, item in ipairs(remaining) do
+					local winner = find_candidate(item, inner, function(candidate)
+						return clears_outer_spacing(candidate)
+							and repulsion.CanPlace(candidate, anomaly_profile)
+					end)
+					if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
+						complete = false
+						break
 					end
+					attempt_plans[#attempt_plans + 1] = {
+						item = item, candidate = winner, in_outer_ring = false,
+					}
 				end
 			end
 			best_total_planned = math.max(best_total_planned, #attempt_plans)
