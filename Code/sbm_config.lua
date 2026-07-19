@@ -229,11 +229,12 @@ config.TopUpMoraleVistas = true
 -- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
 -- Native vanilla enrichments are never moved by this rule.
 config.TopUpMinimumTerrainNormalZ = 4080
--- Choose whole-map top-up positions by the live enrichment load divided by each sector's
+-- Choose strict whole-map top-up positions by the live enrichment load divided by each sector's
 -- sampled eligible terrain capacity. This preserves vanilla's terrain-driven pockets and the
--- original generated marker positions, while filling underrepresented sectors before adding
--- more markers to already-dense ones. Surface anomaly extras keep their separate outer-ring
--- routing below; this switch balances resources/effects and all underground top-up families.
+-- original generated marker positions. If underground vanilla repulsion cannot fit every required
+-- marker, the residual fallback instead maximizes spacing from existing enrichments and uses
+-- lower-loaded sectors only as a secondary diversity rule. Surface anomaly extras keep their
+-- separate outer-ring routing below.
 config.TopUpSectorBalancedPlacement = true
 -- Every eligible surface anomaly TOP-UP extra is reserved for this many sector rows/columns along
 -- all four edges of the FINAL expanded map. Eligible kinds remain exactly the previously selected

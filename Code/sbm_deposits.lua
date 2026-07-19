@@ -644,6 +644,180 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	return { Take = take, Commit = commit, Remaining = function() return remaining end, Stats = stats }
 end
 
+-- The strict underground pass above preserves vanilla repulsion and capacity-normalized terrain
+-- density. If that pass cannot satisfy the requested total, use farthest-point sampling for the
+-- residual completion pass instead of dropping directly to arbitrary unique hexes. Spacing from
+-- every existing enrichment is the primary criterion. Among candidates within 90% of the best
+-- available nearest-neighbour distance, prefer sectors with fewer TOP-UP markers, then randomize
+-- the sector and coordinate. This keeps the fallback organic rather than perfectly uniform while
+-- preventing the largest connected cave-floor sectors from becoming the automatic sink.
+local function BuildUndergroundTopUpSectorLoads(map)
+	local loads = {}
+	if not map or type(map.MapForEach) ~= "function" then return loads end
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not (marker and (marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true)) then return end
+		local pos = ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then return end
+		local x, y = pos:xy()
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		local key = EnrichmentSectorKey(SectorAtPoint(map, x, y))
+		if key then loads[key] = (loads[key] or 0) + 1 end
+	end)
+	return loads
+end
+
+local function UndergroundEnrichmentPositions(map)
+	local positions = {}
+	if not map or type(map.MapForEach) ~= "function" then return positions end
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		local pos = ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then return end
+		local x, y = pos:xy()
+		if type(x) == "number" and type(y) == "number" then
+			positions[#positions + 1] = { x = x, y = y }
+		end
+	end)
+	return positions
+end
+
+local function RoundedWorldDistance(distance_sq)
+	if type(distance_sq) ~= "number" or distance_sq < 0 or distance_sq == math.huge then return 0 end
+	return math.floor(math.sqrt(distance_sq) + 0.5)
+end
+
+local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, candidate_filter)
+	candidates = candidates or {}
+	local loads = BuildUndergroundTopUpSectorLoads(map)
+	local enrichment_positions = UndergroundEnrichmentPositions(map)
+	local remaining, eligible_sector_set, eligible_sectors = 0, {}, 0
+	for _, candidate in ipairs(candidates) do
+		if not candidate.used then
+			local _, key = CandidateSector(map, candidate)
+			if key then
+				remaining = remaining + 1
+				local nearest_distance_sq
+				for _, pos in ipairs(enrichment_positions) do
+					local dx, dy = candidate.x - pos.x, candidate.y - pos.y
+					local distance_sq = dx * dx + dy * dy
+					if nearest_distance_sq == nil or distance_sq < nearest_distance_sq then
+						nearest_distance_sq = distance_sq
+					end
+				end
+				candidate._sbm_fallback_nearest_distance_sq = nearest_distance_sq
+				if not eligible_sector_set[key] then
+					eligible_sector_set[key] = true
+					eligible_sectors = eligible_sectors + 1
+				end
+			end
+		end
+	end
+	local selected_count, selected_sector_set, selected_sectors = 0, {}, 0
+	local additions_by_sector, max_additions_to_sector = {}, 0
+	local minimum_selected_spacing_sq
+	local SPACING_BAND_PERCENT = 90
+
+	local function take(terrain_type, context)
+		local terrain_key = terrain_type ~= nil and tostring(terrain_type) or nil
+		local eligible, best_spacing_sq = {}, nil
+		for _, candidate in ipairs(candidates) do
+			if not candidate.used
+				and (terrain_key == nil or tostring(candidate.terrain_type) == terrain_key)
+				and (type(candidate_filter) ~= "function"
+					or candidate_filter(candidate, context) == true) then
+				local _, key = CandidateSector(map, candidate)
+				if key then
+					local spacing_sq = candidate._sbm_fallback_nearest_distance_sq
+					if spacing_sq == nil then spacing_sq = math.huge end
+					eligible[#eligible + 1] = { candidate = candidate, key = key, spacing_sq = spacing_sq }
+					if best_spacing_sq == nil or spacing_sq > best_spacing_sq then
+						best_spacing_sq = spacing_sq
+					end
+				end
+			end
+		end
+		if #eligible == 0 then return nil end
+		local threshold_sq = best_spacing_sq == math.huge and math.huge
+			or best_spacing_sq * SPACING_BAND_PERCENT * SPACING_BAND_PERCENT / 10000
+		local best_load, sector_candidates, sector_keys = nil, {}, {}
+		for _, entry in ipairs(eligible) do
+			if entry.spacing_sq >= threshold_sq then
+				local load = loads[entry.key] or 0
+				if best_load == nil or load < best_load then
+					best_load, sector_candidates, sector_keys = load, {}, { entry.key }
+					sector_candidates[entry.key] = { entry.candidate }
+				elseif load == best_load then
+					local in_sector = sector_candidates[entry.key]
+					if not in_sector then
+						in_sector = {}
+						sector_candidates[entry.key] = in_sector
+						sector_keys[#sector_keys + 1] = entry.key
+					end
+					in_sector[#in_sector + 1] = entry.candidate
+				end
+			end
+		end
+		if #sector_keys == 0 then return nil end
+		local key = sector_keys[RandInt(#sector_keys) + 1]
+		local choices = sector_candidates[key]
+		local candidate = choices[RandInt(#choices) + 1]
+		candidate.used = true
+		candidate._sbm_well_spaced_fallback_sector_key = key
+		candidate._sbm_selected_fallback_spacing_sq =
+			candidate._sbm_fallback_nearest_distance_sq
+		remaining = math.max(0, remaining - 1)
+		return candidate
+	end
+
+	local function commit(candidate)
+		if not candidate or candidate.sector_load_committed then return false end
+		candidate.sector_load_committed = true
+		local key = candidate._sbm_well_spaced_fallback_sector_key or candidate.sector_key
+		if key then
+			loads[key] = (loads[key] or 0) + 1
+			additions_by_sector[key] = (additions_by_sector[key] or 0) + 1
+			max_additions_to_sector = math.max(max_additions_to_sector, additions_by_sector[key])
+			if not selected_sector_set[key] then
+				selected_sector_set[key] = true
+				selected_sectors = selected_sectors + 1
+			end
+		end
+		local selected_spacing_sq = candidate._sbm_selected_fallback_spacing_sq
+		if type(selected_spacing_sq) == "number" and selected_spacing_sq < math.huge then
+			minimum_selected_spacing_sq = minimum_selected_spacing_sq == nil
+				and selected_spacing_sq or math.min(minimum_selected_spacing_sq, selected_spacing_sq)
+		end
+		for _, other in ipairs(candidates) do
+			if not other.used and type(other.x) == "number" and type(other.y) == "number" then
+				local dx, dy = other.x - candidate.x, other.y - candidate.y
+				local distance_sq = dx * dx + dy * dy
+				local nearest = other._sbm_fallback_nearest_distance_sq
+				if nearest == nil or distance_sq < nearest then
+					other._sbm_fallback_nearest_distance_sq = distance_sq
+				end
+			end
+		end
+		selected_count = selected_count + 1
+		return true
+	end
+
+	local function stats()
+		return {
+			label = tostring(label or "underground residual"),
+			strategy = "maximin_spacing_with_sector_diversity",
+			spacing_band_percent = SPACING_BAND_PERCENT,
+			eligible_sectors = eligible_sectors, selected_sectors = selected_sectors,
+			selected = selected_count, remaining_candidates = remaining,
+			max_additions_to_one_sector = max_additions_to_sector,
+			minimum_selected_spacing_world = RoundedWorldDistance(minimum_selected_spacing_sq),
+		}
+	end
+
+	return { Take = take, Commit = commit, Remaining = function() return remaining end, Stats = stats }
+end
+
 -- How much higher the surrounding terrain is than this already-flat/buildable candidate.
 -- Best-of-N random selection uses this only as a preference, keeping placement random while
 -- favoring low pockets between mountains over isolated mountaintops.
@@ -2602,6 +2776,17 @@ local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall
 		for key, value in pairs(entry) do audit[key] = value end
 		AuditEmit("TOPUP_STATUS", audit, map)
 	end
+	local fallback_added = tonumber(entry.underground_density_fallback_added) or 0
+	local print_fn = Global("print")
+	if fallback_added > 0 and type(print_fn) == "function" then
+		print_fn("[Super Big Map][UndergroundTopUpFallback] kind=" .. tostring(kind)
+			.. " count=" .. tostring(fallback_added)
+			.. " strategy=" .. tostring(entry.underground_fallback_strategy or "unknown")
+			.. " eligible_sectors=" .. tostring(entry.underground_fallback_eligible_sectors or 0)
+			.. " selected_sectors=" .. tostring(entry.underground_fallback_selected_sectors or 0)
+			.. " max_per_sector=" .. tostring(entry.underground_fallback_max_per_sector or 0)
+			.. " min_spacing_world=" .. tostring(entry.underground_fallback_min_spacing_world or 0))
+	end
 end
 
 local function IsUndergroundRubbleWall(obj)
@@ -2814,6 +2999,7 @@ function DepositRules.TopUpDeposits(map)
 
 	local added_by_type = {}
 	local density_fallback_added = 0
+	local fallback_selector_stats
 
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
@@ -2950,6 +3136,9 @@ function DepositRules.TopUpDeposits(map)
 						clone.SuperBigMapResourceTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
 						clone.SuperBigMapTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
 						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+						clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
+						clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
+							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 						if density_fallback then density_fallback_added = density_fallback_added + 1 end
 						added_by_type[res] = (added_by_type[res] or 0) + 1
 						if type(clone.SetPos) == "function" then
@@ -2973,10 +3162,11 @@ function DepositRules.TopUpDeposits(map)
 		end
 		place_from(selector, false)
 		if underground and added < shortfall then
-			local fallback_selector = NewSectorBalancedCandidateSelector(
+			local fallback_selector = NewWellSpacedUndergroundFallbackSelector(
 				map, shared_candidates, "underground resource residual",
 				function(candidate) return repulsion.CanPlaceUnique(candidate) end)
 			place_from(fallback_selector, true)
+			fallback_selector_stats = fallback_selector.Stats()
 		end
 	end)
 	local restore_ok, restore_err = true, nil
@@ -3002,6 +3192,15 @@ function DepositRules.TopUpDeposits(map)
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type), added_total = added,
 		underground_density_fallback_added = density_fallback_added,
+		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
+		underground_fallback_eligible_sectors = fallback_selector_stats
+			and fallback_selector_stats.eligible_sectors or 0,
+		underground_fallback_selected_sectors = fallback_selector_stats
+			and fallback_selector_stats.selected_sectors or 0,
+		underground_fallback_max_per_sector = fallback_selector_stats
+			and fallback_selector_stats.max_additions_to_one_sector or 0,
+		underground_fallback_min_spacing_world = fallback_selector_stats
+			and fallback_selector_stats.minimum_selected_spacing_world or 0,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3219,6 +3418,7 @@ function DepositRules.TopUpAnomalies(map)
 
 	local added = 0
 	local density_fallback_added = 0
+	local fallback_selector_stats
 	local reused_pool = false
 	local edge_ctx
 	local validation_context = NewDepositValidationContext(map)
@@ -3692,7 +3892,7 @@ function DepositRules.TopUpAnomalies(map)
 				selected_whole_map_selector = c and whole_map_selector or nil
 				if not c and underground then
 					relaxed_whole_map_selector = relaxed_whole_map_selector
-						or NewSectorBalancedCandidateSelector(
+						or NewWellSpacedUndergroundFallbackSelector(
 							map, candidates, "underground anomaly residual",
 							function(candidate) return repulsion.CanPlaceUnique(candidate) end)
 					c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
@@ -3738,6 +3938,9 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
 						and rubble_wall_suite_token_by_map[map] ~= nil or nil
 					clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+					clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
+					clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
+						and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 					if density_fallback then density_fallback_added = density_fallback_added + 1 end
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
@@ -3775,6 +3978,9 @@ function DepositRules.TopUpAnomalies(map)
 			redistribution_stats = stats
 			if not ok then error(stats and stats.error or "unknown redistribution failure") end
 		end
+		if relaxed_whole_map_selector then
+			fallback_selector_stats = relaxed_whole_map_selector.Stats()
+		end
 	end)
 	if not topup_ok then
 		error("anomaly top-up transaction failed: " .. tostring(topup_error))
@@ -3804,6 +4010,15 @@ function DepositRules.TopUpAnomalies(map)
 		target_counts = CountMapString(target_by_kind), final_counts = CountMapString(final_by_kind),
 		added_counts = CountMapString(added_by_kind), added_total = added,
 		underground_density_fallback_added = density_fallback_added,
+		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
+		underground_fallback_eligible_sectors = fallback_selector_stats
+			and fallback_selector_stats.eligible_sectors or 0,
+		underground_fallback_selected_sectors = fallback_selector_stats
+			and fallback_selector_stats.selected_sectors or 0,
+		underground_fallback_max_per_sector = fallback_selector_stats
+			and fallback_selector_stats.max_additions_to_one_sector or 0,
+		underground_fallback_min_spacing_world = fallback_selector_stats
+			and fallback_selector_stats.minimum_selected_spacing_world or 0,
 		surface_outer_ring = tostring(not IsUndergroundMap(map)),
 		outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
@@ -4453,6 +4668,7 @@ function DepositRules.TopUpEffectDeposits(map)
 
 	local added_by_type = {}
 	local density_fallback_added = 0
+	local fallback_selector_stats
 	local reused_pool = false
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
@@ -4512,7 +4728,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				local active_selector = c and selector or nil
 				local density_fallback = false
 				if not c and underground then
-					relaxed_selector = relaxed_selector or NewSectorBalancedCandidateSelector(
+					relaxed_selector = relaxed_selector or NewWellSpacedUndergroundFallbackSelector(
 						map, candidates, "underground effect residual",
 						function(candidate) return repulsion.CanPlaceUnique(candidate) end)
 					c = relaxed_selector.Take(nil, effect_profile)
@@ -4532,6 +4748,9 @@ function DepositRules.TopUpEffectDeposits(map)
 						clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
 							and rubble_wall_suite_token_by_map[map] ~= nil or nil
 						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+						clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
+						clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
+							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 						if density_fallback then density_fallback_added = density_fallback_added + 1 end
 						added_by_type[deposit_type] = (added_by_type[deposit_type] or 0) + 1
 						if type(clone.SetPos) == "function" then
@@ -4556,6 +4775,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				end
 			end
 		end
+		if relaxed_selector then fallback_selector_stats = relaxed_selector.Stats() end
 	end)
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
@@ -4574,6 +4794,15 @@ function DepositRules.TopUpEffectDeposits(map)
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type),
 		underground_density_fallback_added = density_fallback_added,
+		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
+		underground_fallback_eligible_sectors = fallback_selector_stats
+			and fallback_selector_stats.eligible_sectors or 0,
+		underground_fallback_selected_sectors = fallback_selector_stats
+			and fallback_selector_stats.selected_sectors or 0,
+		underground_fallback_max_per_sector = fallback_selector_stats
+			and fallback_selector_stats.max_additions_to_one_sector or 0,
+		underground_fallback_min_spacing_world = fallback_selector_stats
+			and fallback_selector_stats.minimum_selected_spacing_world or 0,
 	})
 end
 
@@ -4605,6 +4834,12 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
 		outer_ring_spacing_violations = 0,
 		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
+		underground_well_spaced_fallback_topups = 0,
+		underground_fallback_strategy_failures = 0,
+		underground_fallback_sectors = 0, underground_fallback_max_per_sector = 0,
+		underground_fallback_min_selected_spacing_world = 0,
+		underground_fallback_actual_min_spacing_world = 0,
+		underground_fallback_actual_min_hex_distance = 0,
 		density_failures = 0, density_status = "", resource_shortfall = 0,
 		anomaly_shortfall = 0, effect_shortfall = 0,
 		resource_ignored_rubble_walls = 0, wall_aware_shared_candidates = 0,
@@ -4630,6 +4865,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		end
 		stats.density_status = table.concat(status, " ")
 	end
+	local fallback_by_sector, fallback_selected_spacing_min = {}, nil
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not IsEnrichmentMarker(marker) then return end
 		local topup = is_topup(marker)
@@ -4651,6 +4887,8 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			and marker.SuperBigMapInnerRingFallback == true
 		local density_fallback = underground
 			and marker.SuperBigMapUndergroundDensityFallback == true
+		local well_spaced_fallback = density_fallback
+			and marker.SuperBigMapUndergroundWellSpacedFallback == true
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		if topup and not outer_ring_topup and not profile then
 			stats.missing_topup_profiles = stats.missing_topup_profiles + 1
@@ -4660,6 +4898,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			marker = marker, topup = topup, outer_ring_topup = outer_ring_topup,
 			inner_ring_fallback = inner_ring_fallback,
 			density_fallback = density_fallback,
+			well_spaced_fallback = well_spaced_fallback,
 			anomaly = IsAnomalyMarker(marker),
 			profile = profile, x = x, y = y,
 			q = ok_hex and type(q) == "number" and q or nil,
@@ -4672,10 +4911,33 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			if density_fallback then
 				stats.underground_density_fallback_topups =
 					stats.underground_density_fallback_topups + 1
+				if well_spaced_fallback then
+					stats.underground_well_spaced_fallback_topups =
+						stats.underground_well_spaced_fallback_topups + 1
+				else
+					stats.underground_fallback_strategy_failures =
+						stats.underground_fallback_strategy_failures + 1
+				end
+				local sector_key = EnrichmentSectorKey(SectorAtPoint(map, x, y))
+				if sector_key then
+					fallback_by_sector[sector_key] = (fallback_by_sector[sector_key] or 0) + 1
+				end
+				local selected_spacing = tonumber(marker.SuperBigMapUndergroundFallbackSpacingWorld)
+				if selected_spacing and selected_spacing > 0 then
+					fallback_selected_spacing_min = fallback_selected_spacing_min == nil
+						and selected_spacing or math.min(fallback_selected_spacing_min, selected_spacing)
+				end
 			end
 		end
 	end)
 	stats.markers = #entries
+	for _, count in pairs(fallback_by_sector) do
+		stats.underground_fallback_sectors = stats.underground_fallback_sectors + 1
+		stats.underground_fallback_max_per_sector =
+			math.max(stats.underground_fallback_max_per_sector, count)
+	end
+	stats.underground_fallback_min_selected_spacing_world = fallback_selected_spacing_min or 0
+	local fallback_actual_min_spacing_sq, fallback_actual_min_hex_distance
 	for i = 1, #entries - 1 do
 		local a = entries[i]
 		for j = i + 1, #entries do
@@ -4688,6 +4950,19 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
 				local has_outer_ring_topup = a.outer_ring_topup or b.outer_ring_topup
 				local has_density_fallback = a.density_fallback or b.density_fallback
+				if a.well_spaced_fallback or b.well_spaced_fallback then
+					local dx, dy = a.x - b.x, a.y - b.y
+					local distance_sq = dx * dx + dy * dy
+					fallback_actual_min_spacing_sq = fallback_actual_min_spacing_sq == nil
+						and distance_sq or math.min(fallback_actual_min_spacing_sq, distance_sq)
+					if type(a.q) == "number" and type(a.r) == "number"
+						and type(b.q) == "number" and type(b.r) == "number" then
+						local dq, dr = a.q - b.q, a.r - b.r
+						local hex_distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+						fallback_actual_min_hex_distance = fallback_actual_min_hex_distance == nil
+							and hex_distance or math.min(fallback_actual_min_hex_distance, hex_distance)
+					end
+				end
 				if has_outer_ring_topup then
 					if ((a.outer_ring_topup and b.anomaly) or (b.outer_ring_topup and a.anomaly))
 						and type(a.q) == "number" and type(a.r) == "number"
@@ -4717,10 +4992,15 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			end
 		end
 	end
+	stats.underground_fallback_actual_min_spacing_world =
+		RoundedWorldDistance(fallback_actual_min_spacing_sq)
+	stats.underground_fallback_actual_min_hex_distance =
+		fallback_actual_min_hex_distance or 0
 	local ok = stats.density_failures == 0
 		and stats.missing_positions == 0 and stats.missing_topup_profiles == 0
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
 		and stats.outer_ring_spacing_violations == 0
+		and stats.underground_fallback_strategy_failures == 0
 	return ok, stats
 end
 

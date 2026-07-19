@@ -5323,6 +5323,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
 						underground_density_fallback_topups = repulsion_stats
 							and repulsion_stats.underground_density_fallback_topups,
+						underground_well_spaced_fallback_topups = repulsion_stats
+							and repulsion_stats.underground_well_spaced_fallback_topups,
+						underground_fallback_sectors = repulsion_stats
+							and repulsion_stats.underground_fallback_sectors,
+						underground_fallback_max_per_sector = repulsion_stats
+							and repulsion_stats.underground_fallback_max_per_sector,
+						underground_fallback_min_selected_spacing_world = repulsion_stats
+							and repulsion_stats.underground_fallback_min_selected_spacing_world,
+						underground_fallback_actual_min_spacing_world = repulsion_stats
+							and repulsion_stats.underground_fallback_actual_min_spacing_world,
+						underground_fallback_actual_min_hex_distance = repulsion_stats
+							and repulsion_stats.underground_fallback_actual_min_hex_distance,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="
@@ -5336,7 +5348,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. " duplicate_hex_pairs="
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 							.. " repulsion_violations="
-							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
+							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
+							.. " fallback_strategy_failures="
+							.. tostring(repulsion_stats
+								and repulsion_stats.underground_fallback_strategy_failures))
 					end
 					if type(deposits.DebugAuditFinalEnrichments) == "function" then
 						local audit_token = LoadingBegin("diagnostic underground enrichment audit", map)
