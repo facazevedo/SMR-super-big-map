@@ -3344,24 +3344,27 @@ local function PassageVisualDetail(obj, role, depth, before, after, hide_ok)
 	}, ":")
 end
 
-local function HideCompletedPassageRockVisual(obj)
+local function HideCompletedPassageVisual(obj, force_marker_visual)
 	local entity = PassageObjectEntity(obj)
-	if not completed_passage_rock_entities[tostring(entity)] then return false, false end
+	local marker_rock = completed_passage_rock_entities[tostring(entity)] == true
+	local marker_visual = force_marker_visual == true or marker_rock
+	if not marker_visual then return marker_rock, false, false end
 	local visible_ok = type(obj.SetVisible) == "function"
 		and pcall(obj.SetVisible, obj, false) or false
 	local opacity_ok = type(obj.SetOpacity) == "function"
 		and pcall(obj.SetOpacity, obj, 0) or false
 	local hide_ok = visible_ok or opacity_ok
 	if hide_ok then obj.SuperBigMapHiddenByCompletedElevator = true end
-	return true, hide_ok
+	return marker_rock, marker_visual, hide_ok
 end
 
 -- Audit the complete auto-attachment tree because LinkThroughPassage rebuilds both the passage and
 -- Elevator attaches after it hides the marker carrier. In the failing run there were zero standalone
 -- SurfacePassageRocks / UndergroundPassageRocks, proving that the visible ramp rocks were outside the
--- old class-only scan. Exact marker-rock entities are safe to suppress regardless of their runtime
--- class; every other Elevator/passage/rock visual is logged but left untouched.
-local function AuditAndHidePassageVisualTree(root, role, seen, details, stats, depth)
+-- old class-only scan. Every passage child is marker-only artwork and is suppressed; Elevator
+-- children are only suppressed when they use one of the two exact marker-rock entities.
+local function AuditAndHidePassageVisualTree(
+	root, role, seen, details, stats, depth, force_marker_visual)
 	if not TraversalObjectValid(root) or seen[root] then return end
 	seen[root] = true
 	depth = tonumber(depth) or 0
@@ -3379,18 +3382,47 @@ local function AuditAndHidePassageVisualTree(root, role, seen, details, stats, d
 		if TraversalObjectValid(attach) and not seen[attach] then
 			stats.attachments = stats.attachments + 1
 			local before = PassageObjectVisible(attach)
-			local marker_rock, hide_ok = HideCompletedPassageRockVisual(attach)
+			local marker_rock, marker_visual, hide_ok = HideCompletedPassageVisual(
+				attach, force_marker_visual)
 			if marker_rock then
 				stats.marker_rocks = stats.marker_rocks + 1
-				if hide_ok then stats.hidden = stats.hidden + 1 end
 			end
+			if marker_visual then stats.marker_visuals = stats.marker_visuals + 1 end
+			if hide_ok then stats.hidden = stats.hidden + 1 end
 			local entity = PassageObjectEntity(attach)
-			if (PassageVisualRelevant(attach, entity) or marker_rock) and #details < 96 then
+			if (PassageVisualRelevant(attach, entity) or marker_visual) and #details < 96 then
 				details[#details + 1] = PassageVisualDetail(attach,
 					role .. "-attach-" .. tostring(index), depth + 1, before,
 					PassageObjectVisible(attach), hide_ok)
 			end
-			AuditAndHidePassageVisualTree(attach, role, seen, details, stats, depth + 1)
+			AuditAndHidePassageVisualTree(
+				attach, role, seen, details, stats, depth + 1, force_marker_visual)
+		end
+	end
+end
+
+local function HideLinkedTunnelMarkerVisuals(passage, map, seen, details, stats)
+	for _, class_name in ipairs({ "UndergroundTunnelMarker", "SurfaceTunnelMarker" }) do
+		for _, marker in ipairs(ArtefactMapGet(map, class_name)) do
+			if marker.spawner == passage then
+				for _, entry in ipairs({
+					{ object = marker, role = class_name },
+					{ object = marker.tunnel_sign, role = class_name .. "-sign" },
+				}) do
+					local visual = entry.object
+					if TraversalObjectValid(visual) and not seen[visual] then
+						local before = PassageObjectVisible(visual)
+						local _, marker_visual, hide_ok = HideCompletedPassageVisual(visual, true)
+						seen[visual] = true
+						if marker_visual then stats.marker_visuals = stats.marker_visuals + 1 end
+						if hide_ok then stats.hidden = stats.hidden + 1 end
+						if #details < 96 then
+							details[#details + 1] = PassageVisualDetail(visual,
+								entry.role, 0, before, PassageObjectVisible(visual), hide_ok)
+						end
+					end
+				end
+			end
 		end
 	end
 end
@@ -3410,9 +3442,10 @@ local function AuditAndHideNearbyPassageVisuals(map, anchor, max_distance_sq, se
 		local entity = PassageObjectEntity(obj)
 		if not PassageVisualRelevant(obj, entity) then return end
 		local before = PassageObjectVisible(obj)
-		local marker_rock, hide_ok = HideCompletedPassageRockVisual(obj)
+		local marker_rock, marker_visual, hide_ok = HideCompletedPassageVisual(obj, false)
 		if marker_rock and not seen[obj] then
 			stats.marker_rocks = stats.marker_rocks + 1
+			if marker_visual then stats.marker_visuals = stats.marker_visuals + 1 end
 			if hide_ok then stats.hidden = stats.hidden + 1 end
 		end
 		if #details < 96 then
@@ -3439,7 +3472,8 @@ local function HideCompletedPassageRocks(passage, reason)
 	local details = {}
 	local seen = setmetatable({}, { __mode = "k" })
 	local stats = {
-		hidden = 0, marker_rocks = 0, attachments = 0, attach_failures = 0,
+		hidden = 0, marker_rocks = 0, marker_visuals = 0,
+		attachments = 0, attach_failures = 0,
 		cobjects = 0, nearby = 0, standalone = 0,
 	}
 	for _, class_name in ipairs({ "SurfacePassageRocks", "UndergroundPassageRocks" }) do
@@ -3451,9 +3485,11 @@ local function HideCompletedPassageRocks(passage, reason)
 				local distance_sq = dx * dx + dy * dy
 				if distance_sq <= max_distance_sq then
 					local visible_before = PassageObjectVisible(rocks)
-					local marker_rock, hide_ok = HideCompletedPassageRockVisual(rocks)
+					local marker_rock, marker_visual, hide_ok = HideCompletedPassageVisual(
+						rocks, false)
 					stats.standalone = stats.standalone + 1
 					if marker_rock then stats.marker_rocks = stats.marker_rocks + 1 end
+					if marker_visual then stats.marker_visuals = stats.marker_visuals + 1 end
 					if hide_ok then stats.hidden = stats.hidden + 1 end
 					seen[rocks] = true
 					if #details < 96 then
@@ -3465,14 +3501,19 @@ local function HideCompletedPassageRocks(passage, reason)
 			end
 		end
 	end
-	AuditAndHidePassageVisualTree(passage, "passage", seen, details, stats, 0)
-	AuditAndHidePassageVisualTree(passage.elevator, "elevator", seen, details, stats, 0)
+	-- Every child of a passage carrier is marker-only artwork. Once an Elevator is completed,
+	-- suppress that full tree (including SurfaceDecal / UndergroundPassageImprint), but inspect the
+	-- Elevator tree in exact-entity mode so doors, cabins, lights, and chargers remain untouched.
+	AuditAndHidePassageVisualTree(passage, "passage", seen, details, stats, 0, true)
+	AuditAndHidePassageVisualTree(passage.elevator, "elevator", seen, details, stats, 0, false)
+	HideLinkedTunnelMarkerVisuals(passage, map, seen, details, stats)
 	local map_scan_ok = AuditAndHideNearbyPassageVisuals(
 		map, anchor, max_distance_sq, seen, details, stats)
 	ElevatorTraversalAudit("PASSAGE_ROCKS_ENFORCED", {
 		passage = tostring(passage), elevator = tostring(passage.elevator),
 		reason = tostring(reason), max_distance = max_distance,
 		hidden = stats.hidden, marker_rocks = stats.marker_rocks,
+		marker_visuals = stats.marker_visuals,
 		standalone = stats.standalone, attachments = stats.attachments,
 		attach_failures = stats.attach_failures, cobjects = stats.cobjects,
 		nearby = stats.nearby, map_scan_ok = tostring(map_scan_ok),
@@ -3484,12 +3525,13 @@ end
 local function HideCompletedPassageIndicator(passage, reason)
 	if not TraversalObjectValid(passage) then return 0, 0 end
 	local hidden = 0
-	if type(passage.SetVisible) == "function" then
-		pcall(passage.SetVisible, passage, false)
-		hidden = 1
-	end
-	-- Enforce the same result on both standalone marker rocks and any exact rock entities retained
-	-- in the rebuilt passage/Elevator attachment trees.
+	local visible_ok = type(passage.SetVisible) == "function"
+		and pcall(passage.SetVisible, passage, false) or false
+	local opacity_ok = type(passage.SetOpacity) == "function"
+		and pcall(passage.SetOpacity, passage, 0) or false
+	if visible_ok or opacity_ok then hidden = 1 end
+	-- Enforce the same result on standalone rocks, the passage's marker-only attachment tree, and
+	-- the linked tunnel marker/sign. Elevator doors, cabins, lights, and chargers are only audited.
 	local rocks_hidden = HideCompletedPassageRocks(passage, reason)
 	return hidden, rocks_hidden
 end
@@ -3537,14 +3579,76 @@ local function HideExistingCompletedPassageIndicators(reason)
 	return hidden
 end
 
+local function RestorePassageMarkerVisualTree(root, seen)
+	if not TraversalObjectValid(root) or seen[root] then return 0 end
+	seen[root] = true
+	local restored = 0
+	local visible_ok = type(root.SetVisible) == "function"
+		and pcall(root.SetVisible, root, true) or false
+	local opacity_ok = type(root.SetOpacity) == "function"
+		and pcall(root.SetOpacity, root, 100) or false
+	if visible_ok or opacity_ok then restored = restored + 1 end
+	root.SuperBigMapHiddenByCompletedElevator = nil
+	if type(root.GetAttaches) == "function" then
+		local ok, attaches = pcall(root.GetAttaches, root)
+		if ok and type(attaches) == "table" then
+			for _, attach in ipairs(attaches) do
+				restored = restored + RestorePassageMarkerVisualTree(attach, seen)
+			end
+		end
+	end
+	return restored
+end
+
+-- Our zero-opacity fallback is stronger than vanilla's SetVisible(false), so explicitly undo it
+-- when vanilla removes an Elevator and exposes the passage again.
+local function RestoreUnlinkedPassageIndicators(passage, reason)
+	if not TraversalObjectValid(passage) or TraversalObjectValid(passage.elevator) then return 0 end
+	local map = TraversalObjectMap(passage)
+	local seen = setmetatable({}, { __mode = "k" })
+	local restored = RestorePassageMarkerVisualTree(passage, seen)
+	if map then
+		for _, class_name in ipairs({ "UndergroundTunnelMarker", "SurfaceTunnelMarker" }) do
+			for _, marker in ipairs(ArtefactMapGet(map, class_name)) do
+				if marker.spawner == passage then
+					restored = restored + RestorePassageMarkerVisualTree(marker, seen)
+					restored = restored + RestorePassageMarkerVisualTree(marker.tunnel_sign, seen)
+				end
+			end
+		end
+		local anchor = Engine.ObjectPos(passage)
+		local ax, ay = PointXY(anchor)
+		local const_tbl = Global("const")
+		local radius = math.max(1000,
+			(tonumber(type(const_tbl) == "table" and const_tbl.HexSize) or 1000) * 12)
+		for _, class_name in ipairs({ "SurfacePassageRocks", "UndergroundPassageRocks" }) do
+			for _, rocks in ipairs(ArtefactMapGet(map, class_name)) do
+				local rx, ry = PointXY(Engine.ObjectPos(rocks))
+				if rocks.SuperBigMapHiddenByCompletedElevator == true
+					and type(ax) == "number" and type(ay) == "number"
+					and type(rx) == "number" and type(ry) == "number"
+					and (rx - ax) * (rx - ax) + (ry - ay) * (ry - ay) <= radius * radius then
+					restored = restored + RestorePassageMarkerVisualTree(rocks, seen)
+				end
+			end
+		end
+	end
+	ElevatorTraversalAudit("PASSAGE_MARKER_VISUALS_RESTORED", {
+		passage = tostring(passage), reason = tostring(reason), restored = restored,
+	}, map)
+	return restored
+end
+
 -- Vanilla hides each passage marker when a completed Elevator links through it. Keep that result
 -- after the deferred counterpart reconstruction, and also clean up markers made visible by older
 -- versions of this patch. The wrapper is map-scoped and leaves vanilla-size sessions untouched.
 local function PatchPersistentBuiltUndergroundPassageMarker()
 	local State = SuperBigMap.State
 	local class = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
-	if type(class) ~= "table" or type(class.LinkThroughPassage) ~= "function" then return false end
+	if type(class) ~= "table" or type(class.LinkThroughPassage) ~= "function"
+		or type(class.Done) ~= "function" then return false end
 	if class.LinkThroughPassage == State.persistent_passage_marker_wrapper
+		and class.Done == State.persistent_passage_done_wrapper
 		and State.persistent_passage_marker_patch_version == GENERATOR_PATCH_VERSION then
 		return true
 	end
@@ -3558,10 +3662,29 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 		HideCompletedPassagePair(self, "ElevatorBase:LinkThroughPassage")
 		return Unpack(result, 1, result.n)
 	end
+	local original_done = class.Done
+	if original_done == State.persistent_passage_done_wrapper
+		and type(State.original_elevator_passage_done) == "function" then
+		original_done = State.original_elevator_passage_done
+	end
+	local done_wrapper = function(self, ...)
+		local done_map = ...
+		local passage = self and self.passage or nil
+		local other_passage = passage and passage.other or nil
+		local result = PackValues(original_done(self, ...))
+		if not done_map then
+			RestoreUnlinkedPassageIndicators(passage, "ElevatorBase:Done")
+			RestoreUnlinkedPassageIndicators(other_passage, "ElevatorBase:Done other passage")
+		end
+		return Unpack(result, 1, result.n)
+	end
 	State.original_elevator_link_through_passage = original
 	State.persistent_passage_marker_wrapper = wrapper
+	State.original_elevator_passage_done = original_done
+	State.persistent_passage_done_wrapper = done_wrapper
 	State.persistent_passage_marker_patch_version = GENERATOR_PATCH_VERSION
 	class.LinkThroughPassage = wrapper
+	class.Done = done_wrapper
 	HideExistingCompletedPassageIndicators("passage-marker patch installation")
 	return true
 end
@@ -5933,7 +6056,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 8
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 9
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
