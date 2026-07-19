@@ -436,11 +436,10 @@ config.AlwaysShowEntranceSign = true
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
 config.StretchDecorTopUp = false
 -- LOADING OPTIMIZATIONS. Defer the provisional blank-map buildability
--- calculation until native ResolveBuildable has generated terrain, defer MapGenerated's
+-- calculation until native ResolveBuildable has generated terrain, and defer MapGenerated's
 -- full-map bounds/buildable/passability rebuild because the stretch changes those grids moments
--- later, and avoid a provisional RebuildGrids request while the surface/underground stretch owns
--- an authoritative final passability/buildability synchronization point. Non-stretch paths are
--- untouched. The final sector geometry and max-object-radius refresh still run after stretching.
+-- later and performs the authoritative final rebuild. Non-stretch paths are untouched. The final
+-- sector geometry and max-object-radius refresh still run after stretching.
 config.OptimizeStretchDeferredRebuilds = true
 -- Use the engine's authoritative map:RebuildGrids once after stretching instead of first
 -- performing the same low-level height/type/passability rebuilds separately. Falls back to the
