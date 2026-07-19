@@ -2505,22 +2505,40 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local engine_set_current_slot = Global("EngineSetCurrentMapSlot")
 	local get_current_slot = Global("GetCurrentMapSlot")
 	local maps = Global("Maps")
-	local silent_switch_available = type(set_current_map) == "function"
-		and type(engine_set_current_slot) == "function"
+	local optimized_silent_switch = cfg_bool("OPTIMIZE_TEMPORARY_SOURCE_SILENT_SWITCH", true)
+	local silent_switch_available = type(engine_set_current_slot) == "function"
+		and (type(set_current_map) == "function" or optimized_silent_switch)
 	if type(change_map_in_slot) ~= "function"
 		or (not silent_switch_available and type(change_current_slot) ~= "function")
 		or type(get_current_slot) ~= "function" or type(maps) ~= "table" then
 		error("temporary source migration map-slot API unavailable")
 	end
 	local function SwitchGeneratorCurrentSlot(slot)
+		local switch_token = LoadingBegin("switch temporary generator current slot", maps[slot], {
+			target_slot = tostring(slot),
+		})
 		if silent_switch_available then
 			local target = maps[slot]
 			if not target then error("temporary source migration switch target is unavailable: " .. tostring(slot)) end
-			set_current_map(target)
+			local mode
+			if type(set_current_map) == "function" then
+				set_current_map(target)
+				mode = "engine SetCurrentMap"
+			else
+				-- SetCurrentMap is local in the shipped map.lua. These are its complete assignments;
+				-- the expensive public wrapper additionally changes render mode, audio, exposure, UI,
+				-- and broadcasts map-change messages that a hidden generator backing does not need.
+				rawset(_G, "CurrentMap", target)
+				rawset(_G, "CurrentMapName", target.name or "")
+				rawset(_G, "mapdata", target.mapdata or false)
+				mode = "mirrored private SetCurrentMap"
+			end
 			engine_set_current_slot(slot)
+			LoadingEnd(switch_token, { mode = mode, target_slot = tostring(slot) }, true)
 			return true
 		end
 		change_current_slot(slot, false)
+		LoadingEnd(switch_token, { mode = "ChangeCurrentMapSlot", target_slot = tostring(slot) }, true)
 		return true
 	end
 	local destination_slot = destination.slot or get_current_slot()
@@ -2629,18 +2647,30 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			results = PackValues(original_do_generate(generator, source,
 				Unpack(call_args, 1, call_args.n)))
 		end
+		local update_radius_token = LoadingBegin("refresh temporary source object radius", source)
 		local update_radius = Global("UpdateMapMaxObjRadius")
 		if type(update_radius) == "function" then update_radius(source) end
+		LoadingEnd(update_radius_token, nil, true)
+		local source_pass_flush_token = LoadingBegin("flush temporary source pass edits", source)
 		if type(source.ResumePassEdits) == "function" then source:ResumePassEdits("SuperBigMapVanillaSourceMigration") end
+		LoadingEnd(source_pass_flush_token, nil, true)
+		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
+		LoadingEnd(coordinate_capture_token, {
+			coordinate_count = tostring(source_generated_enrichments),
+		}, true)
 		local deposits = SuperBigMap.DepositRules
 		if not deposits or type(deposits.CaptureNativeEnrichmentRecords) ~= "function" then
 			error("native enrichment value-record capture API unavailable")
 		end
+		local record_capture_token = LoadingBegin("capture native enrichment value records", source)
 		native_enrichment_records, native_enrichment_excluded, native_enrichment_record_stats =
 			deposits.CaptureNativeEnrichmentRecords(
 				source, "temporary vanilla backing generation complete")
+		LoadingEnd(record_capture_token, {
+			record_count = tostring(native_enrichment_record_stats and native_enrichment_record_stats.count),
+		}, true)
 		LoadingStep("native enrichment records captured", {
 			coordinate_count = source_generated_enrichments,
 			record_count = native_enrichment_record_stats and native_enrichment_record_stats.count,
@@ -2658,8 +2688,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if not sectors or type(sectors.CaptureVanillaStartSelection) ~= "function" then
 			error("native start-sector annotation API unavailable")
 		end
+		local start_capture_token = LoadingBegin("capture vanilla initial sector", source)
 		local start_capture_ok, selection, selection_error = pcall(
 			sectors.CaptureVanillaStartSelection, source)
+		LoadingEnd(start_capture_token, { selection = tostring(selection) },
+			start_capture_ok and selection ~= nil)
 		if not (start_capture_ok and selection) then
 			error("native start-sector annotation failed: "
 				.. tostring(start_capture_ok and selection_error or selection))

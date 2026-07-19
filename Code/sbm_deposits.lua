@@ -80,6 +80,10 @@ local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k"
 -- snapshot, avoiding a second full DepositMarker enumeration. The cache is consumed immediately;
 -- weak keys also make an interrupted source transaction self-cleaning.
 local captured_native_enrichment_objects_by_map = setmetatable({}, { __mode = "k" })
+-- GetProperties returns class metadata. Native generation commonly creates hundreds of markers
+-- from only a handful of concrete classes, so filtering the same metadata for every instance is
+-- redundant. The cache contains metadata only (never map objects or property values).
+local portable_native_properties_by_class = {}
 
 local function CachedTopUpCandidates(map)
 	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return nil end
@@ -1896,6 +1900,26 @@ local function NativePropertyIsPortable(prop_meta)
 	return true
 end
 
+local function PortableNativeProperties(marker)
+	local optimize = cfg().OPTIMIZE_NATIVE_ENRICHMENT_RECORD_CAPTURE == true
+	local class = tostring(marker and marker.class or "")
+	if optimize and class ~= "" then
+		local cached = portable_native_properties_by_class[class]
+		if cached then return cached end
+	end
+	local ok_props, properties = pcall(marker.GetProperties, marker)
+	if not ok_props or type(properties) ~= "table" then return false end
+	local portable = {}
+	for i = 1, #properties do
+		local prop_meta = properties[i]
+		if NativePropertyIsPortable(prop_meta) then
+			portable[#portable + 1] = prop_meta
+		end
+	end
+	if optimize and class ~= "" then portable_native_properties_by_class[class] = portable end
+	return portable
+end
+
 -- Property metadata defaults are not always the live subclass value. In particular,
 -- SubsurfaceRareAnomalyMarker inherits the sequence_list property whose metadata default is
 -- GenericAnomalies, while the concrete class overrides the live field to its rare-anomaly list.
@@ -1911,17 +1935,15 @@ local function CaptureNativeMarkerProperties(marker)
 	if type(marker.GetProperties) ~= "function" or type(marker.GetProperty) ~= "function" then
 		return values, ids
 	end
-	local ok_props, properties = pcall(marker.GetProperties, marker)
-	if not ok_props or type(properties) ~= "table" then return values, ids end
+	local properties = PortableNativeProperties(marker)
+	if type(properties) ~= "table" then return values, ids end
 	for i = 1, #properties do
 		local prop_meta = properties[i]
-		if NativePropertyIsPortable(prop_meta) then
-			local id = prop_meta.id
-			local ok_value, value = pcall(marker.GetProperty, marker, id)
-			if ok_value and value ~= nil then
-				values[id] = CloneNativePropertyValue(marker, value, prop_meta)
-				ids[#ids + 1] = tostring(id)
-			end
+		local id = prop_meta.id
+		local ok_value, value = pcall(marker.GetProperty, marker, id)
+		if ok_value and value ~= nil then
+			values[id] = CloneNativePropertyValue(marker, value, prop_meta)
+			ids[#ids + 1] = tostring(id)
 		end
 	end
 	local captured_ids = {}
@@ -1994,20 +2016,25 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 	local function capture_marker(marker)
 		if not IsNativeEnrichmentMarker(marker) then return end
 		excluded[marker] = true
-		local pos = ObjectPos(marker)
-		if not (pos and type(pos.xy) == "function") then
-			missing_positions = missing_positions + 1
-			return
+		local x = marker.SuperBigMapNativeSourceX
+		local y = marker.SuperBigMapNativeSourceY
+		local z = marker.SuperBigMapNativeSourceZ
+		if cfg().OPTIMIZE_NATIVE_ENRICHMENT_RECORD_CAPTURE ~= true
+			or type(x) ~= "number" or type(y) ~= "number" then
+			local pos = ObjectPos(marker)
+			if not (pos and type(pos.xy) == "function") then
+				missing_positions = missing_positions + 1
+				return
+			end
+			x, y = pos:xy()
+			if type(pos.z) == "function" then
+				local ok_z, value = pcall(pos.z, pos)
+				if ok_z then z = value end
+			end
 		end
-		local x, y = pos:xy()
 		if type(x) ~= "number" or type(y) ~= "number" then
 			missing_positions = missing_positions + 1
 			return
-		end
-		local z
-		if type(pos.z) == "function" then
-			local ok_z, value = pcall(pos.z, pos)
-			if ok_z then z = value end
 		end
 		local properties, property_ids = CaptureNativeMarkerProperties(marker)
 		local record = {

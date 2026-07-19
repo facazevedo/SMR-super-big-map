@@ -669,6 +669,9 @@ RegisterOnce("PostNewMapLoaded", function(map, mapdata)
 	if not active() then
 		return
 	end
+	if map and map.SuperBigMapVanillaSourceMigration == true then
+		return
+	end
 	if HandleModEditorMap() then return end
 	LoadingLifecycle("PostNewMapLoaded", map, { mapdata = tostring(mapdata) })
 	local gen = SuperBigMap.MapGeneration
@@ -1255,6 +1258,9 @@ end)
 
 RegisterOnce("NewMapObject", function(map)
 	if not active() then
+		return
+	end
+	if map and map.SuperBigMapVanillaSourceMigration == true then
 		return
 	end
 	local gen = SuperBigMap.MapGeneration

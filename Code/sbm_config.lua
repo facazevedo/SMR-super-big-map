@@ -469,6 +469,14 @@ config.OptimizeSurfaceResourceSectorSampling = true
 -- candidates. This preserves the complete perimeter sector list and placement constraints while
 -- avoiding an unconditional 153,600-point terrain scan.
 config.OptimizeAnomalyCandidateSearch = true
+-- The native source is a hidden, short-lived map used only as generator input. Switch the engine's
+-- current slot and mirror vanilla's private SetCurrentMap assignments directly, without the two
+-- ChangeCurrentMapSlot renderer/UI/audio transactions that are only needed for a player-visible
+-- map change. Generator inputs and the resulting source map remain identical.
+config.OptimizeTemporarySourceSilentSwitch = true
+-- Reuse class-invariant DepositMarker property metadata and the immutable XYZ captured by stage 01
+-- while serializing native enrichment records from the temporary source.
+config.OptimizeNativeEnrichmentRecordCapture = true
 -- Optional experimental batching across underground decoration/marker relocation. The measured
 -- work is tiny, so keep this off by default to preserve native construction timing exactly. The
 -- explicit authoritative final passability and buildable-grid rebuilds are never skipped.
@@ -766,6 +774,10 @@ C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
 	as_bool(config.OptimizeSurfaceResourceSectorSampling)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
+C.OPTIMIZE_TEMPORARY_SOURCE_SILENT_SWITCH =
+	as_bool(config.OptimizeTemporarySourceSilentSwitch)
+C.OPTIMIZE_NATIVE_ENRICHMENT_RECORD_CAPTURE =
+	as_bool(config.OptimizeNativeEnrichmentRecordCapture)
 C.OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH = as_bool(config.OptimizeUndergroundPassEditBatch)
 C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01
 	and as_bool(config.LimitGeneratorToSource)
