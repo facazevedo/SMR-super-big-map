@@ -3686,7 +3686,8 @@ end
 -- never leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors;
 -- terrain is considered only after a sector is drawn. This keeps the lower-right perimeter fully
 -- eligible. Outer-ring top-ups deliberately use a simple custom spacing rule instead of vanilla
--- repulsion: unique hexes, at least 10 hexes between top-ups, and at most 2 top-ups per sector.
+-- repulsion: unique hexes, at least 20 hexes from every other anomaly, and at most 1 top-up
+-- per sector.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
@@ -3815,8 +3816,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
 	local CANDIDATE_SAMPLES_PER_SECTOR = 384
 	local MAX_PLANNING_ATTEMPTS = 64
-	local MIN_TOPUP_HEX_DISTANCE = 10
-	local MAX_TOPUPS_PER_SECTOR = 2
+	local MIN_TOPUP_HEX_DISTANCE = 20
+	local MAX_TOPUPS_PER_SECTOR = 1
 	local function random_between(first, past_last)
 		first, past_last = math.floor(first), math.floor(past_last)
 		local span = past_last - first
@@ -3876,14 +3877,16 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return false, stats
 	end
 
-	local fixed_anomaly_hexes = {}
+	local fixed_anomaly_hexes, fixed_anomalies = {}, {}
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if ignored[marker] == true then return end
 		local pos = marker and ObjectPos(marker)
 		if not (pos and type(pos.xy) == "function") then return end
 		local ok_hex, q, r = pcall(world_to_hex, pos)
 		if ok_hex and type(q) == "number" and type(r) == "number" then
-			fixed_anomaly_hexes[tostring(q) .. ":" .. tostring(r)] = true
+			local hex_key = tostring(q) .. ":" .. tostring(r)
+			fixed_anomaly_hexes[hex_key] = true
+			fixed_anomalies[#fixed_anomalies + 1] = { q = q, r = r, hex_key = hex_key }
 		end
 	end)
 	local function hex_distance(a, b)
@@ -3891,14 +3894,15 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 	end
 	local function new_attempt_tracker()
-		local occupied, selected, sector_counts = {}, {}, {}
+		local occupied, spaced_anomalies, sector_counts = {}, {}, {}
 		for key in pairs(fixed_anomaly_hexes) do occupied[key] = true end
+		for i = 1, #fixed_anomalies do spaced_anomalies[i] = fixed_anomalies[i] end
 		local function can_place(candidate)
 			if not candidate or occupied[candidate.hex_key] then return false end
 			if (sector_counts[candidate.target_sector] or 0) >= MAX_TOPUPS_PER_SECTOR then
 				return false
 			end
-			for _, prior in ipairs(selected) do
+			for _, prior in ipairs(spaced_anomalies) do
 				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
 			end
 			return true
@@ -3906,7 +3910,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		local function commit(candidate)
 			if not can_place(candidate) then return false end
 			occupied[candidate.hex_key] = true
-			selected[#selected + 1] = candidate
+			spaced_anomalies[#spaced_anomalies + 1] = candidate
 			sector_counts[candidate.target_sector] =
 				(sector_counts[candidate.target_sector] or 0) + 1
 			return true
@@ -3959,7 +3963,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 	end
 	if not plans then
-		stats.error = "no complete reachable 10-hex-spaced outer-ring plan after "
+		stats.error = "no complete reachable 20-hex-spaced outer-ring plan after "
 			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best=" .. tostring(best_planned)
 			.. "/" .. tostring(#moving) .. ", candidates=" .. tostring(candidate_count) .. ")"
 		return false, stats
@@ -4268,7 +4272,8 @@ end
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
 -- is a cluster of adjacent marker objects. Ordinary top-ups obey vanilla family repulsion. Surface
 -- outer-ring anomaly top-ups deliberately use their own rule: no vanilla repulsion, unique hexes,
--- and at least 10 hexes between two outer-ring top-ups. This runs after position corrections.
+-- and at least 20 hexes between an outer-ring top-up and every other anomaly. This runs after
+-- position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	map = map or Global("CurrentMap")
 	local point_fn = Global("point")
@@ -4284,7 +4289,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	end
 	local entries = {}
 	local underground = IsUndergroundMap(map)
-	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 10
+	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 20
 	local stats = {
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
@@ -4326,6 +4331,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
 		entries[#entries + 1] = {
 			marker = marker, topup = topup, outer_ring_topup = outer_ring_topup,
+			anomaly = IsAnomalyMarker(marker),
 			profile = profile, x = x, y = y,
 			q = ok_hex and type(q) == "number" and q or nil,
 			r = ok_hex and type(r) == "number" and r or nil,
@@ -4346,7 +4352,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
 				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
 				if a.outer_ring_topup or b.outer_ring_topup then
-					if a.outer_ring_topup and b.outer_ring_topup
+					if ((a.outer_ring_topup and b.anomaly) or (b.outer_ring_topup and a.anomaly))
 						and type(a.q) == "number" and type(a.r) == "number"
 						and type(b.q) == "number" and type(b.r) == "number" then
 						local dq, dr = a.q - b.q, a.r - b.r
@@ -4488,8 +4494,8 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		end
 	end)
 	for _, count in pairs(anomaly_topups_by_sector) do
-		if count > 2 then
-			local excess = count - 2
+		if count > 1 then
+			local excess = count - 1
 			stats.anomaly_sector_overflow = stats.anomaly_sector_overflow + excess
 			violation_count = violation_count + excess
 		end
