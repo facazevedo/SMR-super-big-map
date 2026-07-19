@@ -2822,6 +2822,9 @@ local function DeferredArtefactPreflight(map)
 		SpawnUndergroundPassage = Global("SpawnUndergroundPassage"),
 		ClearObstructions = Global("ClearObstructions"),
 		GetExtendedSpawnShape = Global("GetExtendedSpawnShape"),
+		GetEnclosedShape = Global("GetEnclosedShape"),
+		GetEntityOutlineShape = Global("GetEntityOutlineShape"),
+		ShrinkShape = Global("ShrinkShape"),
 		FlattenTerrainInBuildShape = Global("FlattenTerrainInBuildShape"),
 		HexShapeForEach = Global("HexShapeForEach"),
 		HexToWorld = Global("HexToWorld"),
@@ -2839,6 +2842,50 @@ local function DeferredArtefactPreflight(map)
 		or type(map.buildable) ~= "table" or type(map.buildable.GetZ) ~= "function" then
 		return false, "underground map grids or passage-edit methods are unavailable"
 	end
+	return true
+end
+
+-- Vanilla selects a wonder's flattening height while the untouched source build grid is still
+-- authoritative. Deferred materialization happens after the height terrain has been resampled and
+-- before the final expanded build-grid rebuild, so consulting map.buildable at that later point can
+-- return a stale source height that no longer matches the stretched terrain. Capture vanilla's
+-- exact first-buildable-cell result now and transform it with the terrain's stamped affine Z
+-- transform when the wonder is finally created.
+local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_class)
+	local templates = Global("BuildingTemplates")
+	local template = type(templates) == "table" and templates[wonder_class] or nil
+	local entity = type(template) == "table" and template.entity or nil
+	if type(entity) ~= "string" or entity == "" then
+		return false, "building template entity unavailable"
+	end
+	local shape = Global("GetEnclosedShape")(entity)
+	if type(shape) ~= "table" then
+		return false, "vanilla enclosed shape unavailable"
+	end
+	if #shape == 0 then
+		shape = Global("ShrinkShape")(Global("GetEntityOutlineShape")(entity), 2)
+	end
+	if type(shape) ~= "table" or #shape == 0 then
+		return false, "vanilla flatten shape is empty"
+	end
+	local unbuildable = Global("buildUnbuildableZ")()
+	local source_z, source_q, source_r, source_index
+	Global("HexShapeForEach")(shape, marker, function(q, r, index)
+		local z = map.buildable:GetZ(q, r)
+		if z ~= unbuildable then
+			source_z, source_q, source_r, source_index = z, q, r, index
+			return true
+		end
+	end)
+	if type(source_z) ~= "number" then
+		return false, "vanilla source flatten shape has no buildable cell"
+	end
+	marker.SuperBigMapNativeWonderEntity = entity
+	marker.SuperBigMapNativeWonderFlattenZ = source_z
+	marker.SuperBigMapNativeWonderFlattenQ = source_q
+	marker.SuperBigMapNativeWonderFlattenR = source_r
+	marker.SuperBigMapNativeWonderFlattenIndex = source_index
+	marker.SuperBigMapNativeWonderFlattenShapeHexes = #shape
 	return true
 end
 
@@ -2961,8 +3008,15 @@ local function BootstrapPassagesAndDeferWonders(env)
 					marker.SuperBigMapNativeSourceScale = marker_scale
 				end
 			end
-			marker.SuperBigMapDeferredWonderClass = wonder_classes[1 + ((index - 1) % #wonder_classes)]
+			local wonder_class = wonder_classes[1 + ((index - 1) % #wonder_classes)]
+			marker.SuperBigMapDeferredWonderClass = wonder_class
 			marker.SuperBigMapDeferredWonderIndex = index
+			local target_ok, target_error = CaptureDeferredWonderSourceFlattenTarget(
+				map, marker, wonder_class)
+			if target_ok ~= true then
+				return false, "failed to capture vanilla " .. tostring(wonder_class)
+					.. " flatten target: " .. tostring(target_error)
+			end
 		end
 	end
 	table_lib.shuffle(passage_markers, rand)
@@ -3188,7 +3242,7 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	return false, tostring(result)
 end
 
-local function FlattenDeferredWonder(wonder, ratios)
+local function FlattenDeferredWonder(wonder, marker, ratios)
 	local get_enclosed = Global("GetEnclosedShape")
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
@@ -3202,17 +3256,29 @@ local function FlattenDeferredWonder(wonder, ratios)
 		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
 	end
 	local clearance_mode = "scaled_vanilla_flatten_shape"
-	local buildable_z
-	local buildable_source = "expanded_buildable_grid"
+	local observed_buildable_z
 	for_each_hex(shape, wonder, function(q, r)
 		local z = map.buildable:GetZ(q, r)
-		if z ~= unbuildable then buildable_z = z return true end
+		if z ~= unbuildable then observed_buildable_z = z return true end
 	end)
+	local source_buildable_z = tonumber(marker and marker.SuperBigMapNativeWonderFlattenZ)
+	local z_mul = tonumber(map.SuperBigMapZScaleMul)
+		or (type(ratios) == "table" and tonumber(ratios.x_mul))
+	local z_div = tonumber(map.SuperBigMapZScaleDiv)
+		or (type(ratios) == "table" and tonumber(ratios.x_div))
+	local z_add = tonumber(map.SuperBigMapZScaleAdd) or 0
+	local buildable_z
+	local buildable_source
+	if type(source_buildable_z) == "number" and type(z_mul) == "number"
+		and type(z_div) == "number" and z_div > 0 then
+		buildable_z = math.floor(source_buildable_z * z_mul / z_div + z_add + 0.5)
+		buildable_source = "transformed_vanilla_source_buildable"
+	end
 	-- The consolidated revalidation inside StretchSourceToFull can complete its engine-side work
 	-- before the non-current underground map's Lua BuildableGrid exposes the new right/bottom area.
-	-- A deferred wonder must still be seated on the already-stretched terrain; the authoritative
-	-- synchronous passability/buildability rebuild immediately after wonder creation will then
-	-- derive its final grids from this terrain edit.
+	-- A deferred wonder must still be seated on the already-stretched terrain. The captured source
+	-- height above is authoritative; the center terrain fallback is retained only for old/hot-loaded
+	-- marker state that predates that capture.
 	if type(buildable_z) ~= "number" then
 		local terrain_api = Global("terrain")
 		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
@@ -3232,6 +3298,16 @@ local function FlattenDeferredWonder(wonder, ratios)
 			buildable_z = buildable_z,
 			buildable_source = buildable_source,
 			clearance_mode = clearance_mode,
+			source_buildable_z = source_buildable_z,
+			observed_buildable_z = observed_buildable_z,
+			z_mul = z_mul,
+			z_div = z_div,
+			z_add = z_add,
+			source_flatten_q = marker and marker.SuperBigMapNativeWonderFlattenQ,
+			source_flatten_r = marker and marker.SuperBigMapNativeWonderFlattenR,
+			source_flatten_index = marker and marker.SuperBigMapNativeWonderFlattenIndex,
+			source_flatten_shape_hexes = marker
+				and marker.SuperBigMapNativeWonderFlattenShapeHexes,
 		}
 	end
 	return false, "no terrain height is available for the expanded wonder footprint"
@@ -3278,7 +3354,7 @@ local function MaterializeDeferredUndergroundWonders(map)
 				error("failed to stretch " .. tostring(wonder_class) .. ": "
 					.. tostring(stretch_stats))
 			end
-			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, ratios)
+			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, marker, ratios)
 			if flatten_ok ~= true then
 				error("failed to prepare stretched terrain for " .. tostring(wonder_class)
 					.. ": " .. tostring(flatten_stats))
@@ -3307,6 +3383,17 @@ local function MaterializeDeferredUndergroundWonders(map)
 				flatten_z = flatten_stats and flatten_stats.buildable_z,
 				flatten_source = flatten_stats and flatten_stats.buildable_source,
 				clearance_mode = flatten_stats and flatten_stats.clearance_mode,
+				source_flatten_z = flatten_stats and flatten_stats.source_buildable_z,
+				stale_buildable_z_observed = flatten_stats
+					and flatten_stats.observed_buildable_z,
+				z_scale_mul = flatten_stats and flatten_stats.z_mul,
+				z_scale_div = flatten_stats and flatten_stats.z_div,
+				z_scale_add = flatten_stats and flatten_stats.z_add,
+				source_flatten_q = flatten_stats and flatten_stats.source_flatten_q,
+				source_flatten_r = flatten_stats and flatten_stats.source_flatten_r,
+				source_flatten_index = flatten_stats and flatten_stats.source_flatten_index,
+				source_flatten_shape_hexes = flatten_stats
+					and flatten_stats.source_flatten_shape_hexes,
 			}, map)
 		end
 	end)
