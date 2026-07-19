@@ -100,9 +100,10 @@ local function IsModMap(map)
 	return false
 end
 
--- TEMP test aid. hr.EnableDarknessReveal is process-global, so preserve the live value before
--- revealing any underground gameplay map and restore it on every surface/menu transition. This
--- aid intentionally remains available when expansion is disabled for a vanilla-mode test run.
+-- TEMP test aid. hr.EnableDarknessReveal is process-global, so it must be derived from the map
+-- environment on every transition. Capturing its live value after CurrentMapChangeDone is unsafe:
+-- vanilla has already set it to the underground value (90), and restoring that snapshot on the
+-- surface covers the entire terrain with the blue underground darkness mask.
 local function ApplyUndergroundDarknessState(map)
 	local hr = Global("hr")
 	if type(hr) ~= "table" then return false end
@@ -110,20 +111,27 @@ local function ApplyUndergroundDarknessState(map)
 	local environment = map and map.mapdata and map.mapdata.Environment
 	local should_reveal = environment == "Underground"
 		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
+	local before = hr.EnableDarknessReveal
+	-- Clear legacy snapshot state left by earlier versions. The correct non-test value is owned by
+	-- vanilla UpdateRevealDarkness(map), not by whichever process-global value happened to be live.
+	State.original_enable_darkness_reveal = nil
+	State.original_enable_darkness_reveal_captured = nil
 	if should_reveal then
-		if State.original_enable_darkness_reveal_captured ~= true then
-			State.original_enable_darkness_reveal = hr.EnableDarknessReveal
-			State.original_enable_darkness_reveal_captured = true
-		end
 		hr.EnableDarknessReveal = 0
-		return true
+	else
+		local update_reveal = Global("UpdateRevealDarkness")
+		if map and type(update_reveal) == "function" then
+			SafeCall(update_reveal, map)
+		else
+			-- No gameplay map means no underground darkness reveal.
+			hr.EnableDarknessReveal = 0
+		end
 	end
-	if State.original_enable_darkness_reveal_captured == true then
-		hr.EnableDarknessReveal = State.original_enable_darkness_reveal
-		State.original_enable_darkness_reveal = nil
-		State.original_enable_darkness_reveal_captured = nil
-	end
-	return false
+	LoadingLifecycle("UndergroundDarknessState", map, {
+		environment = tostring(environment), before = tostring(before),
+		after = tostring(hr.EnableDarknessReveal), forced_reveal = tostring(should_reveal),
+	})
+	return should_reveal
 end
 
 -- Correct shared state for a non-expanded map without uninstalling the transparent
