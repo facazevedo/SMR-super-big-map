@@ -6173,6 +6173,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
+				-- StretchSourceToFull may have deferred its intermediate RebuildGrids pass. Both final
+				-- authoritative gameplay grids now exist against the completed terrain/object layout.
+				map.SuperBigMapDeferredIntermediateTerrainRebuild = nil
 				if #elevator_migrations > 0 then
 					-- Reconstruction is never performed from inside the stretch pipeline. The records carry
 					-- a monotonic generation token into CurrentMapChangeDone (or the explicit already-current

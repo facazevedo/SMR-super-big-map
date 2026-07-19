@@ -3209,7 +3209,13 @@ function DepositRules.TopUpDeposits(map)
 	end
 	local underground = validation_context.underground == true
 	local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-	local sequential_underground = underground and optimize_placement_pool
+	-- Resource placement is demand-driven on both surfaces. The previous surface path first tried
+	-- to accumulate shortfall * 32 validated candidates (up to the global 8,000-point ceiling),
+	-- even though only one position is consumed by each missing marker. Underground already proved
+	-- that the same strict-terrain/vanilla-repulsion selectors can consume candidates as soon as
+	-- they validate; use that path on the surface too. The shared pool remains available to the
+	-- later anomaly/effect families, which can extend it on demand when its unused tail is exhausted.
+	local sequential_placement = optimize_placement_pool
 	local ignore_rubble_walls = underground
 		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
@@ -3237,7 +3243,7 @@ function DepositRules.TopUpDeposits(map)
 		-- most of the first-access load building a reserve that no selector could consume. Thirty-two
 		-- choices per missing marker matches the proven effect-top-up budget and leaves ample room for
 		-- terrain matching, vanilla repulsion, clone failures, and the well-spaced fallback.
-		candidate_pool_target = sequential_underground and 0
+		candidate_pool_target = sequential_placement and 0
 			or (optimize_placement_pool
 				and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL)
 		local function append_valid_candidate(x, y, sector, terrain_type, q, r)
@@ -3539,12 +3545,12 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
-		if sequential_underground then
+		if sequential_placement then
 			-- Validate positions only for the next missing marker. The old reserve-first path could spend
-			-- all 24,000 native connectivity checks trying to reach a pool target before placing anything.
+			-- all 24,000 native placement checks trying to reach a pool target before placing anything.
 			-- A strict candidate is now consumed as soon as it satisfies the same terrain and vanilla
 			-- repulsion rules. After a bounded strict search for that marker, retain a small random choice
-			-- set for the existing any-terrain and maximin-spacing completion rules.
+			-- set for the existing any-terrain completion rule and the underground maximin fallback.
 			local STRICT_SAMPLES_PER_PLACEMENT = 128
 			local FALLBACK_CHOICES_PER_PLACEMENT = 8
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
@@ -3659,7 +3665,7 @@ function DepositRules.TopUpDeposits(map)
 		candidate_samples = candidate_samples,
 		candidate_deferred = candidate_deferred_count,
 		candidate_deferred_promoted = candidate_deferred_promoted,
-		sequential_placement = sequential_underground,
+		sequential_placement = sequential_placement,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3674,7 +3680,7 @@ function DepositRules.TopUpDeposits(map)
 				.. " deferred=" .. tostring(candidate_deferred_count)
 				.. " promoted=" .. tostring(candidate_deferred_promoted)
 				.. " added=" .. tostring(added)
-				.. " sequential=" .. tostring(sequential_underground)
+				.. " sequential=" .. tostring(sequential_placement)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end

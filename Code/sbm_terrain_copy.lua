@@ -158,7 +158,7 @@ end
 -- Repaint/refresh the expanded terrain: the renderer may not stream textures into the expanded area
 -- until terrain is explicitly invalidated. Called after map generation and again
 -- on load (save preserves grid data but not the renderer's streamed state).
-local function ReinvalidateExpandedTerrain(map)
+local function ReinvalidateExpandedTerrain(map, defer_gameplay_rebuild)
 	local terrain_api = Global("terrain")
 	if type(terrain_api) ~= "table" then
 		return false
@@ -195,6 +195,21 @@ local function ReinvalidateExpandedTerrain(map)
 
 	local invalidate_box = FullMapInvalidateBox(map_width, map_height)
 	map.SuperBigMapRevalidationRebuiltGrids = false
+	-- StretchSourceToFull has just installed and invalidated the new height/type grids. During the
+	-- underground first-access transaction, decorations and wonders still have to move before the
+	-- authoritative RebuildPassability/RebuildBuildableGrid pair can run. RebuildGrids here rebuilt
+	-- those gameplay grids against an intermediate object layout, costing another full-map pass that
+	-- was always discarded a few seconds later. Preserve the cheap border/hash refresh but defer the
+	-- gameplay rebuild when the caller guarantees that final synchronization point.
+	if defer_gameplay_rebuild == true then
+		if type(terrain_api.FixHeightBorder) == "function" and invalidate_box then
+			pcall(terrain_api.FixHeightBorder, map, invalidate_box)
+		end
+		if type(terrain_api.HashGrids) == "function" then
+			pcall(terrain_api.HashGrids, map)
+		end
+		return true
+	end
 
 	-- RebuildGrids is the editor's authoritative post-height-edit entry point. It already
 	-- invalidates terrain and rebuilds passability/buildable/water/object-Z state, so running
@@ -748,9 +763,21 @@ local function StretchSourceToFull(map)
 			end
 		end
 	end
+	local mapdata = map and map.mapdata
+	local defer_intermediate_rebuild = cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true)
+		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
+		and type(mapdata) == "table" and mapdata.Environment == "Underground"
+		and map.SuperBigMapUndergroundStretchPending == true
+		and map.SuperBigMapStretchPipelinePending == true
 	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
-	ReinvalidateExpandedTerrain(map)
-	LoadingEnd(invalidate_token, nil, true)
+	local invalidate_ok = ReinvalidateExpandedTerrain(map, defer_intermediate_rebuild)
+	map.SuperBigMapDeferredIntermediateTerrainRebuild = defer_intermediate_rebuild or nil
+	LoadingEnd(invalidate_token, {
+		deferred_gameplay_rebuild = tostring(defer_intermediate_rebuild == true),
+	}, invalidate_ok == true)
+	if invalidate_ok ~= true then
+		error("expanded terrain revalidation failed")
+	end
 	LoadingStep("terrain stretch grid suite complete", {
 		completed_grids = done,
 		source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
