@@ -5040,9 +5040,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		-- LOADING PHASE starts only after dependencies are ready; waiting for engine events must
 		-- never hold the player behind a timing-dependent loading screen.
 		if type(SuperBigMap.ExpansionLoadingBegin) == "function" then
-			pcall(SuperBigMap.ExpansionLoadingBegin)
+			pcall(SuperBigMap.ExpansionLoadingBegin, "underground")
 			SetLoadingPhase("Expanding the underground map")
 		end
+		-- Yield once before terrain work so the dedicated first-access dialog is actually painted.
+		local sleep = Global("Sleep")
+		if type(sleep) == "function" then sleep(100) end
 		local pause_ild = Global("PauseInfiniteLoopDetection")
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
@@ -5574,6 +5577,191 @@ local function NeedsDeferredUndergroundPreparation(map)
 	return true, "deferred underground preparation required"
 end
 
+-- Unit:UseElevator normally transfers directly between two already-built map objects and never
+-- calls ChangeCurrentMapSlot. When the destination is our deferred underground, pause that command
+-- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
+-- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
+-- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 1
+local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
+
+local function DeferredUndergroundTargetForElevator(elevator)
+	local other = elevator and elevator.other or nil
+	local target = TraversalObjectMap(other)
+	if target and target.mapdata and target.mapdata.Environment == "Underground" then
+		return target
+	end
+	return nil
+end
+
+local function ShowDeferredUndergroundAccessFailure(reason)
+	local create_box = Global("CreateMessageBox")
+	if type(create_box) ~= "function" then return end
+	local untranslated = Global("Untranslated")
+	local wrap = type(untranslated) == "function" and untranslated or function(s) return s end
+	pcall(create_box, nil, wrap("Super Big Map"), wrap(
+		"The underground could not be prepared safely, so elevator access remains blocked."
+		.. "\n\n" .. tostring(reason or "Unknown error")))
+end
+
+local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
+	local State = SuperBigMap.State
+	local gate = State.change_current_map_slot_wrapper
+	local create_thread = Global("CreateRealTimeThread")
+	local wait_msg = Global("WaitMsg")
+	local msg = Global("Msg")
+	if type(gate) ~= "function" or type(create_thread) ~= "function"
+		or type(wait_msg) ~= "function" or type(msg) ~= "function" then
+		return false, "required first-access engine functions are unavailable"
+	end
+	if not target or target.slot == nil then
+		return false, "the linked underground map slot is unavailable"
+	end
+
+	State.deferred_elevator_access_sequence =
+		(tonumber(State.deferred_elevator_access_sequence) or 0) + 1
+	local request_id = State.deferred_elevator_access_sequence
+	local completion_message = "SuperBigMapElevatorUndergroundReady" .. tostring(request_id)
+	local request = { done = false, ok = false }
+	ElevatorTraversalAudit("FIRST_ACCESS_BEGIN", {
+		request = request_id, unit = tostring(unit), elevator = tostring(elevator),
+		target = tostring(target), target_slot = tostring(target.slot),
+	}, TraversalObjectMap(unit))
+
+	create_thread(function()
+		local call_ok, call_result = pcall(gate, target.slot, true, "idChangeCurrentMapSlot")
+		request.call_ok = call_ok
+		request.call_result = call_result
+		request.ok = call_ok and call_result ~= false
+			and target.SuperBigMapUndergroundPrepared == true
+			and target.SuperBigMapUndergroundStretchDone == true
+			and Global("CurrentMap") == target
+		request.reason = request.ok and "prepared and opened"
+			or (not call_ok and tostring(call_result))
+			or target.SuperBigMapUndergroundStretchFailed
+			or "the underground first-access gate did not complete"
+		request.done = true
+		pcall(msg, completion_message, request)
+	end)
+
+	if request.done ~= true then
+		wait_msg(completion_message, 300000)
+	end
+	if request.done ~= true then
+		request.reason = "timed out while preparing the underground map"
+	end
+	ElevatorTraversalAudit("FIRST_ACCESS_END", {
+		request = request_id, unit = tostring(unit), elevator = tostring(elevator),
+		target = tostring(target), target_slot = tostring(target.slot),
+		ok = tostring(request.ok == true), done = tostring(request.done == true),
+		current_map = tostring(Global("CurrentMap")),
+		prepared = tostring(target.SuperBigMapUndergroundPrepared == true),
+		reason = tostring(request.reason),
+	}, TraversalObjectMap(unit))
+	return request.ok == true, request.reason
+end
+
+local function RestoreDeferredUndergroundElevatorAccess()
+	local State = SuperBigMap.State
+	local patches = State.deferred_elevator_access_patches
+	if type(patches) == "table" then
+		for i = #patches, 1, -1 do
+			local patch = patches[i]
+			if patch.target and patch.target.UseElevator == patch.wrapper then
+				patch.target.UseElevator = patch.original
+			end
+		end
+	end
+	State.deferred_elevator_access_patches = nil
+	State.deferred_elevator_access_patch_version = nil
+end
+
+local function PatchDeferredUndergroundElevatorAccess(source)
+	local State = SuperBigMap.State
+	local installed = State.deferred_elevator_access_patches
+	local function patch_is_intact(patch)
+		if patch.target and patch.target.UseElevator == patch.wrapper then return true end
+		-- Runtime diagnostics intentionally wrap this gate. Treat the gate as intact when it is the
+		-- diagnostic wrapper's immediate predecessor; otherwise lifecycle re-verification would stack
+		-- a second first-access gate each time ApplyModBehavior runs.
+		for _, diagnostic in ipairs(State.elevator_traversal_diagnostic_patches or {}) do
+			if diagnostic.target == patch.target and diagnostic.method == "UseElevator"
+				and diagnostic.original == patch.wrapper
+				and patch.target.UseElevator == diagnostic.wrapper then
+				return true
+			end
+		end
+		return false
+	end
+	if State.deferred_elevator_access_patch_version == DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION
+		and type(installed) == "table" then
+		local intact = #installed > 0
+		for _, patch in ipairs(installed) do
+			if not patch_is_intact(patch) then
+				intact = false
+				break
+			end
+		end
+		if intact then return true end
+	end
+	RestoreDeferredUndergroundElevatorAccess()
+
+	local targets, seen = {}, setmetatable({}, { __mode = "k" })
+	local unit_class = Engine.ClassTable and Engine.ClassTable("Unit")
+	if type(unit_class) == "table" then targets[#targets + 1] = { name = "Unit", class = unit_class } end
+	local descendants = Global("ClassDescendants")
+	if type(descendants) == "function" then
+		pcall(descendants, "Unit", function(name, class, output)
+			if type(class) == "table" then output[#output + 1] = { name = name, class = class } end
+		end, targets)
+	end
+	local patches = {}
+	for _, entry in ipairs(targets) do
+		local class = entry.class
+		local original = class and class.UseElevator
+		if type(original) == "function" and not seen[class] then
+			seen[class] = true
+			local label = tostring(entry.name)
+			local wrapper = function(unit, elevator, ...)
+				if deferred_elevator_access_by_unit[unit] == true then
+					return original(unit, elevator, ...)
+				end
+				local target = DeferredUndergroundTargetForElevator(elevator)
+				local needs_prepare = target and NeedsDeferredUndergroundPreparation(target)
+				if needs_prepare ~= true then
+					return original(unit, elevator, ...)
+				end
+				deferred_elevator_access_by_unit[unit] = true
+				local call_ok, prepared, reason = pcall(
+					PrepareDeferredUndergroundForElevator, unit, elevator, target)
+				deferred_elevator_access_by_unit[unit] = nil
+				if not call_ok then
+					reason = prepared
+					prepared = false
+				end
+				if prepared ~= true then
+					ShowDeferredUndergroundAccessFailure(reason)
+					return false
+				end
+				-- The map switch can replace the underground counterpart while preserving the surface
+				-- elevator. Vanilla reads elevator.other only after walking to the entrance, so resume
+				-- with the original surface object and its freshly restored backlink.
+				return original(unit, elevator, ...)
+			end
+			class.UseElevator = wrapper
+			patches[#patches + 1] = {
+				target = class, original = original, wrapper = wrapper, label = label,
+			}
+		end
+	end
+	State.deferred_elevator_access_patches = patches
+	State.deferred_elevator_access_patch_version = DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION
+	ElevatorTraversalAudit("FIRST_ACCESS_PATCH_INSTALLED", {
+		source = tostring(source), patches = #patches,
+	}, Global("CurrentMap"))
+	return #patches > 0
+end
+
 local function ResolveHudUndergroundTarget(button)
 	local entry = button and button.context
 	local entry_source = "button.context"
@@ -5692,11 +5880,13 @@ local function PatchDeferredUndergroundAccess(source)
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
 		PatchDeferredUndergroundHudAccess(source)
+		RestoreDeferredUndergroundElevatorAccess()
 		return false
 	end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
 		PatchDeferredUndergroundHudAccess(source)
+		PatchDeferredUndergroundElevatorAccess(source)
 		return true
 	end
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
@@ -5815,6 +6005,7 @@ local function PatchDeferredUndergroundAccess(source)
 	State.change_current_map_slot_wrapper = wrapper
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
 	PatchDeferredUndergroundHudAccess(source)
+	PatchDeferredUndergroundElevatorAccess(source)
 	return true
 end
 
@@ -5897,15 +6088,18 @@ function MapGeneration.ApplyModBehavior()
 	-- exact-vanilla generation wrapper owned by stage 01.
 	if not transform_source then MapGeneration.RestoreVanillaBehavior() end
 	PatchRandomMapGenerator()
-	if cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
-		PatchElevatorTraversalDiagnostics()
-	else
-		RestoreElevatorTraversalDiagnostics()
-	end
+	-- Rebuild observational wrappers after the functional first-access gate. This makes the
+	-- diagnostic layer disposable without ever removing or duplicating the gate below it.
+	RestoreElevatorTraversalDiagnostics()
 	if transform_source then
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
 		PatchDeferredUndergroundAccess("ApplyModBehavior")
+	end
+	-- Keep diagnostics outermost so a first-access command is traced from the player's click,
+	-- through deferred preparation, to the eventual vanilla transfer.
+	if cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
+		PatchElevatorTraversalDiagnostics()
 	end
 	return true
 end
@@ -5914,6 +6108,7 @@ end
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
 	RestoreElevatorTraversalDiagnostics()
+	RestoreDeferredUndergroundElevatorAccess()
 	-- Restore process-shared MapData presets as part of the domain teardown too,
 	-- not only through the main-menu convenience path. This covers config disable,
 	-- hot reload, and any alternate session exit that calls Lifecycle.Disable.

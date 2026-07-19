@@ -333,8 +333,12 @@ local LOADING_TITLE = "Loading Super Big Map..."
 -- before any phase sets its message.
 local LOADING_BODY_TAGLINE = "3x more map, no extra fries."
 local LOADING_DEFAULT_STATUS = "Preparing the expanded map. Please wait."
+local UNDERGROUND_LOADING_TITLE = "Super Big Map"
+local UNDERGROUND_LOADING_BODY = "Building underground map."
+local UNDERGROUND_LOADING_STATUS = "Please Wait."
 local current_phase_body = LOADING_DEFAULT_STATUS
 local loading_on_welcome = false
+local loading_presentation = "surface"
 
 local WELCOME_VOICE_PATCH_VERSION = 1
 
@@ -456,6 +460,14 @@ end
 -- -> welcome flicker. We no longer touch the popup's text: we hide it and draw our own box,
 -- then re-show the popup once at the end so the player can read + dismiss it.
 local loading_box = false
+local loading_box_presentation = false
+
+local function LoadingPresentationText()
+	if loading_presentation == "underground" then
+		return UNDERGROUND_LOADING_TITLE, UNDERGROUND_LOADING_BODY, UNDERGROUND_LOADING_STATUS
+	end
+	return LOADING_TITLE, LOADING_BODY_TAGLINE, current_phase_body
+end
 
 local function LoadingBoxValid()
 	return loading_box
@@ -535,11 +547,12 @@ local function SetWelcomeLoading(active)
 				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
 				-- text (idText, middle) = the static tagline; ok_text (footer button, bottom) =
 				-- the live status line. So the status sits at the bottom-most position.
+				local title, body, status = LoadingPresentationText()
 				local ok, box = pcall(create_box, nil,
-					wrap(LOADING_TITLE), wrap(LOADING_BODY_TAGLINE),
-					wrap(current_phase_body))
+					wrap(title), wrap(body), wrap(status))
 				if ok and box then
 					loading_box = box
+					loading_box_presentation = loading_presentation
 				end
 			end
 		end
@@ -554,6 +567,7 @@ local function SetWelcomeLoading(active)
 			end
 		end
 		loading_box = false
+		loading_box_presentation = false
 		RestoreEngineLoadingScreenInstant()
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
@@ -586,6 +600,8 @@ function SuperBigMap.SetLoadingPhase(message)
 		text = text .. " Please wait."
 	end
 	current_phase_body = text
+	local display_text = loading_presentation == "underground"
+		and UNDERGROUND_LOADING_STATUS or text
 	-- Live-update the FOOTER BUTTON (bottom-most): set the Ok action's name and rebuild the
 	-- action bar (no box recreate -> no flicker). MarsMessageQuestionBox uses the same
 	-- action-name + UpdateActionViews pattern.
@@ -595,7 +611,7 @@ function SuperBigMap.SetLoadingPhase(message)
 		pcall(function()
 			for _, a in ipairs(loading_box.actions) do
 				if a.ActionToolbar == "ActionBar" then
-					a.ActionName = wrap(text)
+					a.ActionName = wrap(display_text)
 				end
 			end
 			if type(loading_box.GetActionBar) == "function" and type(loading_box.UpdateActionViews) == "function" then
@@ -612,7 +628,24 @@ end
 -- the LAST phase ends, so the game becomes interactive exactly when everything is done.
 local loading_refs = 0
 
-function SuperBigMap.ExpansionLoadingBegin()
+function SuperBigMap.ExpansionLoadingBegin(presentation)
+	local requested_presentation = presentation == "underground" and "underground" or "surface"
+	if loading_refs == 0 then
+		loading_presentation = requested_presentation
+	elseif requested_presentation == "underground" and loading_presentation ~= "underground" then
+		-- Underground first access is the user-visible operation now. If it overlaps a referenced
+		-- surface phase, replace only our message box so the shared loading state remains intact.
+		loading_presentation = "underground"
+		if LoadingBoxValid() and loading_box_presentation ~= loading_presentation then
+			if type(loading_box.Close) == "function" then
+				pcall(function() loading_box:Close() end)
+			elseif type(loading_box.delete) == "function" then
+				pcall(function() loading_box:delete() end)
+			end
+			loading_box = false
+			loading_box_presentation = false
+		end
+	end
 	loading_refs = loading_refs + 1
 	-- Reclaim the hook if a Lua/classes reload replaced the global since lifecycle activation.
 	PatchWelcomeVoiceTiming()
@@ -634,7 +667,7 @@ function SuperBigMap.ExpansionLoadingBegin()
 	create_thread(function()
 		local sleep = Global("Sleep")
 		local applied = false
-		for _ = 1, 2000 do -- ~60s backstop (30ms ticks)
+		for _ = 1, 6000 do -- ~180s backstop (30ms ticks)
 			if not loading_on_welcome then
 				return -- ended (expansion finished) before/while watching
 			end
@@ -673,6 +706,7 @@ function SuperBigMap.ExpansionLoadingEnd(force_all)
 	-- Always tear the loading box down (idempotent), even if the flag was cleared by a mid-load
 	-- mod reload -- so a stale box can never linger on screen waiting for an OK press.
 	SetWelcomeLoading(false)
+	loading_presentation = "surface"
 end
 
 -- The welcome-popup, restart-notice, and loading-box entry points are published on the SuperBigMap
