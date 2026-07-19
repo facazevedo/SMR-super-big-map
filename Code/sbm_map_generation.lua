@@ -5568,10 +5568,17 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
+				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
+				-- replacing the complete height/type terrain grids. The engine exposes no transformed
+				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
+				-- rover/building reachability. Identify it explicitly in timing output so it is not
+				-- mistaken for removable marker-movement overhead.
 				local pass_resume_token = LoadingBegin("surface resume combined pass edits", map)
 				local pass_resume_ok, pass_resume_err = ResumeCombinedPassEdits(
 					"after surface marker movement")
-				LoadingEnd(pass_resume_token, nil, pass_resume_ok == true)
+				LoadingEnd(pass_resume_token, {
+					authoritative_passability_rebuild = true,
+				}, pass_resume_ok == true)
 				if not pass_resume_ok then
 					error("surface combined ResumePassEdits failed: " .. tostring(pass_resume_err))
 				end

@@ -4815,6 +4815,58 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		or LEGACY_RANDOM_SAMPLES_PER_SECTOR
 	local MIN_TOPUP_HEX_DISTANCE = 10
 	local MAX_TOPUPS_PER_SECTOR = 1
+	-- The outer perimeter is mostly cliffs/void on stretched maps. Before this filter, sequential
+	-- placement still spent 128 complete Lua terrain/obstruction probes in every one of the 204
+	-- perimeter sectors merely to prove that most sectors contained no buildable hex at all. Ask the
+	-- finalized native buildable grid for presence once per sector, then preserve the exact same
+	-- randomized placement and validation rules inside every sector that can possibly accept an
+	-- anomaly. A high ratio scale prevents a sector with only a tiny buildable island from rounding
+	-- down to zero. API failures remain eligible, so this optimization can never reject a sector on
+	-- an inconclusive native query.
+	local outer_search_sectors = ring
+	local outer_ratio_filter_active = false
+	local outer_ratio_buildable, outer_ratio_empty, outer_ratio_unknown = 0, 0, 0
+	if optimized_candidate_search then
+		local ratio_fn = Global("BuildableGridRatio")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		local box_fn = Global("box")
+		local buildable_grid = map.buildable and map.buildable.z_grid
+		if type(ratio_fn) == "function" and type(unbuildable_fn) == "function"
+			and type(box_fn) == "function" and buildable_grid then
+			local ok_unbuildable, unbuildable_z = pcall(unbuildable_fn)
+			if ok_unbuildable and type(unbuildable_z) == "number" then
+				outer_ratio_filter_active = true
+				outer_search_sectors = {}
+				for _, sector in ipairs(ring) do
+					local ok_box, sector_box = pcall(box_fn, sector.area_x0, sector.area_y0,
+						sector.area_x1, sector.area_y1)
+					local ok_ratio, ratio = false, nil
+					if ok_box and sector_box then
+						-- Vanilla requests an integer percentage (scale 100). A sector contains fewer
+						-- than 10,000 hexes, so this finer scale still reports a single buildable hex.
+						ok_ratio, ratio = pcall(ratio_fn, buildable_grid, unbuildable_z,
+							10000, sector_box)
+					end
+					if ok_ratio and type(ratio) == "number" then
+						if ratio > 0 then
+							outer_search_sectors[#outer_search_sectors + 1] = sector
+							outer_ratio_buildable = outer_ratio_buildable + 1
+						else
+							outer_ratio_empty = outer_ratio_empty + 1
+						end
+					else
+						-- Conservative fallback: sample sectors whose native ratio could not be read.
+						outer_search_sectors[#outer_search_sectors + 1] = sector
+						outer_ratio_unknown = outer_ratio_unknown + 1
+					end
+				end
+			end
+		end
+	end
+	stats.outer_buildable_filter = outer_ratio_filter_active
+	stats.outer_buildable_sectors = outer_ratio_buildable
+	stats.outer_unbuildable_sectors = outer_ratio_empty
+	stats.outer_buildable_unknown = outer_ratio_unknown
 	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
 	if not RepulsionValuesAreValid(anomaly_values) then
 		stats.error = "vanilla anomaly repulsion profile unavailable for interior fallback"
@@ -4879,9 +4931,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 
 	-- The old implementation eagerly performed 384 complete terrain validations in all 204 outer
 	-- and 196 inner sectors (153,600 probes) before it knew which sectors planning would inspect.
-	-- Bootstrap every outer sector so the complete perimeter -- including bottom-right -- retains
-	-- an equal chance, then validate one additional batch only when a visited sector has no usable
-	-- candidate. Interior fallback normally consumes the resource pass's already-validated pool.
+	-- Discover eligible outer sectors on demand so the complete buildable perimeter -- including
+	-- bottom-right -- retains an equal chance, then validate one additional batch only when a visited
+	-- sector has no usable candidate. Interior fallback normally consumes the resource pass's
+	-- already-validated pool.
 	local candidate_states = {}
 	local sampled_hexes = {}
 	local outer_candidate_count, inner_candidate_count = 0, 0
@@ -5075,7 +5128,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	for i = 1, #moving do marker_order[i] = moving[i] end
 	shuffle(marker_order)
 	local available_outer = {}
-	for i = 1, #ring do available_outer[i] = ring[i] end
+	for i = 1, #outer_search_sectors do available_outer[i] = outer_search_sectors[i] end
 	local function remove_outer_sector(target)
 		for i = #available_outer, 1, -1 do
 			if available_outer[i] == target then
@@ -5245,6 +5298,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " outer_random_samples=" .. tostring(stats.outer_random_samples)
 			.. " inner_random_samples=" .. tostring(stats.inner_random_samples)
 			.. " inner_reused_candidates=" .. tostring(stats.inner_reused_candidates)
+			.. " buildable_filter=" .. tostring(stats.outer_buildable_filter)
+			.. " buildable_outer_sectors=" .. tostring(stats.outer_buildable_sectors)
+			.. " unbuildable_outer_sectors=" .. tostring(stats.outer_unbuildable_sectors)
+			.. " unknown_buildable_sectors=" .. tostring(stats.outer_buildable_unknown)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
