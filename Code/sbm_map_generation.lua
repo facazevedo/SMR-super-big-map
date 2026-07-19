@@ -182,7 +182,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 5
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 6
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -464,7 +464,6 @@ local function PatchElevatorTraversalDiagnostics()
 			local transferred = before_map ~= nil and after_map ~= nil and before_map ~= after_map
 			local outcome
 			if transferred then outcome = "transferred"
-			elseif before.has_power == "false" then outcome = "elevator_has_no_power"
 			elseif trace.same_map == false then outcome = "unit_elevator_map_mismatch"
 			elseif trace.entrance_valid == false then outcome = "elevator_entrance_invalid"
 			elseif trace.goto_entered == true and trace.goto_result ~= true then
@@ -5663,8 +5662,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 4
-local EXPANDED_ELEVATOR_POWER_GATE_VERSION = 1
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 5
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5674,21 +5672,6 @@ local function DeferredUndergroundTargetForElevator(elevator)
 		return target
 	end
 	return nil
-end
-
-local function ElevatorHasTraversalPower(elevator)
-	if not TraversalObjectValid(elevator) or type(elevator.HasPower) ~= "function" then
-		return false
-	end
-	return SafeCall(elevator.HasPower, elevator) == true
-end
-
-local function AuditElevatorPowerBlock(unit, elevator, stage, wrapper_target)
-	local data, map = TraversalSnapshot(unit, elevator, false)
-	data.stage = tostring(stage)
-	data.wrapper_target = tostring(wrapper_target)
-	data.reason = "neither linked Elevator side has power"
-	ElevatorTraversalAudit("VEHICLE_USE_BLOCKED_NO_POWER", data, map)
 end
 
 local function ShowDeferredUndergroundAccessFailure(reason)
@@ -5800,10 +5783,6 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	if not IsKindOfSafe(unit, "BaseRover") or not TraversalIsExpandedContext(unit, elevator) then
 		return original(unit, elevator, ...)
 	end
-	if not ElevatorHasTraversalPower(elevator) then
-		AuditElevatorPowerBlock(unit, elevator, "before Unit:UseElevator", "rover close-range gate")
-		return false
-	end
 	local before_map = TraversalObjectMap(unit)
 	local original_light_guard = BeginOffscreenVehicleLightTransfer(unit, elevator)
 	local protected_results = PackValues(pcall(original, unit, elevator, ...))
@@ -5857,13 +5836,6 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	if type(building_use) ~= "function" then
 		return Unpack(results, 1, results.n)
 	end
-	-- Power can disappear while the rover is travelling to the entrance. Recheck at the exact
-	-- fallback transfer boundary instead of relying only on the interaction-time state.
-	if not ElevatorHasTraversalPower(elevator) then
-		AuditElevatorPowerBlock(unit, elevator,
-			"before close-range ElevatorBase:UseElevator", "rover close-range gate")
-		return Unpack(results, 1, results.n)
-	end
 	ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_BEGIN", {
 		unit = tostring(unit), elevator = tostring(elevator),
 		distance = tostring(math.sqrt(distance_sq)), max_distance = tostring(max_distance),
@@ -5886,9 +5858,26 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 	return Unpack(results, 1, results.n)
 end
 
+-- Compatibility cleanup for version 628, which temporarily imposed a non-vanilla rover power
+-- requirement. Remove every stored wrapper on hot reload; no replacement is installed.
 local function RestoreExpandedElevatorPowerGate()
 	local State = SuperBigMap.State
 	local patches = State.expanded_elevator_power_gate_patches
+	local diagnostics_were_outer = false
+	if type(patches) == "table" then
+		for _, patch in ipairs(patches) do
+			for _, diagnostic in ipairs(State.elevator_traversal_diagnostic_patches or {}) do
+				if diagnostic.target == patch.target and diagnostic.method == "UseElevator"
+					and diagnostic.original == patch.wrapper
+					and patch.target.UseElevator == diagnostic.wrapper then
+					diagnostics_were_outer = true
+					break
+				end
+			end
+			if diagnostics_were_outer then break end
+		end
+	end
+	if diagnostics_were_outer then RestoreElevatorTraversalDiagnostics() end
 	if type(patches) == "table" then
 		for i = #patches, 1, -1 do
 			local patch = patches[i]
@@ -5899,70 +5888,7 @@ local function RestoreExpandedElevatorPowerGate()
 	end
 	State.expanded_elevator_power_gate_patches = nil
 	State.expanded_elevator_power_gate_version = nil
-end
-
-local function PatchExpandedElevatorPowerGate(source)
-	local State = SuperBigMap.State
-	local installed = State.expanded_elevator_power_gate_patches
-	local function patch_is_intact(patch)
-		if patch.target and patch.target.UseElevator == patch.wrapper then return true end
-		for _, diagnostic in ipairs(State.elevator_traversal_diagnostic_patches or {}) do
-			if diagnostic.target == patch.target and diagnostic.method == "UseElevator"
-				and diagnostic.original == patch.wrapper
-				and patch.target.UseElevator == diagnostic.wrapper then
-				return true
-			end
-		end
-		return false
-	end
-	if State.expanded_elevator_power_gate_version == EXPANDED_ELEVATOR_POWER_GATE_VERSION
-		and type(installed) == "table" then
-		local intact = #installed > 0
-		for _, patch in ipairs(installed) do
-			if not patch_is_intact(patch) then intact = false break end
-		end
-		if intact then return true end
-	end
-	RestoreExpandedElevatorPowerGate()
-
-	local targets, seen = {}, setmetatable({}, { __mode = "k" })
-	local base = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
-	if type(base) == "table" then targets[#targets + 1] = { name = "ElevatorBase", class = base } end
-	local descendants = Global("ClassDescendants")
-	if type(descendants) == "function" then
-		pcall(descendants, "ElevatorBase", function(name, class, output)
-			if type(class) == "table" then output[#output + 1] = { name = name, class = class } end
-		end, targets)
-	end
-	local patches = {}
-	for _, entry in ipairs(targets) do
-		local class = entry.class
-		local original = class and class.UseElevator
-		if type(original) == "function" and not seen[class] then
-			seen[class] = true
-			local label = tostring(entry.name)
-			local wrapper = function(elevator, unit, ...)
-				if IsKindOfSafe(unit, "BaseRover")
-					and TraversalIsExpandedContext(unit, elevator)
-					and not ElevatorHasTraversalPower(elevator) then
-					AuditElevatorPowerBlock(unit, elevator,
-						"before ElevatorBase:UseElevator transfer", label)
-					return false
-				end
-				return original(elevator, unit, ...)
-			end
-			class.UseElevator = wrapper
-			patches[#patches + 1] = {
-				target = class, original = original, wrapper = wrapper, label = label,
-			}
-		end
-	end
-	State.expanded_elevator_power_gate_patches = patches
-	State.expanded_elevator_power_gate_version = EXPANDED_ELEVATOR_POWER_GATE_VERSION
-	ElevatorTraversalAudit("POWER_GATE_PATCH_INSTALLED", {
-		source = tostring(source), patches = #patches,
-	}, Global("CurrentMap"))
-	return #patches > 0
+	return diagnostics_were_outer
 end
 
 local function CaptureDeferredElevatorCamera()
@@ -6318,18 +6244,25 @@ local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	PatchSupplyGridOverlayCopyGuard(source)
 	PatchElevatorSupplyTransactionBoundary(source)
-	PatchExpandedElevatorPowerGate(source)
+	local diagnostics_removed = RestoreExpandedElevatorPowerGate()
+	local function reapply_removed_diagnostics()
+		if diagnostics_removed and cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
+			PatchElevatorTraversalDiagnostics()
+		end
+	end
 	local State = SuperBigMap.State
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
 		PatchDeferredUndergroundHudAccess(source)
 		RestoreDeferredUndergroundElevatorAccess()
+		reapply_removed_diagnostics()
 		return false
 	end
 	if current == State.change_current_map_slot_wrapper
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
 		PatchDeferredUndergroundHudAccess(source)
 		PatchDeferredUndergroundElevatorAccess(source)
+		reapply_removed_diagnostics()
 		return true
 	end
 	-- Hot-reload upgrade: unwrap our previous closure before capturing the vanilla original.
@@ -6449,6 +6382,7 @@ local function PatchDeferredUndergroundAccess(source)
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
 	PatchDeferredUndergroundHudAccess(source)
 	PatchDeferredUndergroundElevatorAccess(source)
+	reapply_removed_diagnostics()
 	return true
 end
 
