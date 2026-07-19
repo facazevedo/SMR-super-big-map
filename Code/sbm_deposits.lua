@@ -4736,14 +4736,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local OUTER_BOOTSTRAP_SAMPLES = optimized_candidate_search and 32 or 384
 	local LAZY_SAMPLE_BATCH = optimized_candidate_search and 96 or 0
 	local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 384
-	local LEGACY_PLANNING_ATTEMPTS = 64
 	local random_sample_limit = optimized_candidate_search and 128
 		or LEGACY_RANDOM_SAMPLES_PER_SECTOR
-	-- The reduced pool is only a fast probe: either it finds an all-outer plan, or the code below
-	-- expands the outer pools and spends the complete historical 64-attempt planning budget there.
-	-- Avoid seeding/scanning 64 provisional repulsion trackers whose partial plans cannot be final.
-	local initial_planning_attempts = optimized_candidate_search and 8
-		or LEGACY_PLANNING_ATTEMPTS
 	local MIN_TOPUP_HEX_DISTANCE = 10
 	local MAX_TOPUPS_PER_SECTOR = 1
 	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
@@ -4884,8 +4878,12 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return added
 	end
 
-	for _, sector in ipairs(ring) do
-		sample_sector_candidates(sector, OUTER_BOOTSTRAP_SAMPLES)
+	-- The optimized path discovers sectors on demand while placing each anomaly. The rollback path
+	-- retains the historical eager pool for diagnostics/comparison.
+	if not optimized_candidate_search then
+		for _, sector in ipairs(ring) do
+			sample_sector_candidates(sector, OUTER_BOOTSTRAP_SAMPLES)
+		end
 	end
 	if optimized_candidate_search then
 		local inner_by_ref, inner_by_id = {}, {}
@@ -4953,7 +4951,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return can_place, commit
 	end
 
-	local function find_candidate(item, sectors, predicate)
+	local function find_candidate(item, sectors, predicate, allow_sampling)
 		local sector_order = {}
 		for i = 1, #sectors do sector_order[i] = sectors[i] end
 		shuffle(sector_order)
@@ -4978,7 +4976,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 				end
 				local winner = choose_from_current_pool()
 				if winner then return winner end
-				if optimized_candidate_search
+				if allow_sampling ~= false and optimized_candidate_search
 					and state.random_samples < random_sample_limit then
 					local batch = state.random_samples == 0 and OUTER_BOOTSTRAP_SAMPLES
 						or LAZY_SAMPLE_BATCH
@@ -4991,89 +4989,82 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return nil
 	end
 
-	local plans, best_outer_planned, best_outer_attempted, best_total_planned = nil, -1, 0, 0
-	local planning_attempts_run = 0
-	local function run_planning_attempts(attempt_count)
-		for _ = 1, attempt_count do
-			planning_attempts_run = planning_attempts_run + 1
-			local attempt = planning_attempts_run
-			local can_place_outer, commit_outer = new_outer_attempt_tracker()
-			local marker_order = {}
-			for i = 1, #moving do marker_order[i] = moving[i] end
-			shuffle(marker_order)
-			local outer_plans, remaining = {}, {}
-			for _, item in ipairs(marker_order) do
-				local winner = find_candidate(item, ring, can_place_outer)
-				if winner and commit_outer(winner) then
-					outer_plans[#outer_plans + 1] = {
-						item = item, candidate = winner, in_outer_ring = true,
-					}
-				else
-					remaining[#remaining + 1] = item
-				end
-			end
-			best_outer_attempted = math.max(best_outer_attempted, #outer_plans)
-
-			local attempt_plans, complete = {}, true
-			for _, plan in ipairs(outer_plans) do attempt_plans[#attempt_plans + 1] = plan end
-			if #remaining > 0 then
-				local repulsion = NewTopUpRepulsionTracker(
-					map, "inner-ring anomaly fallback attempt " .. tostring(attempt), ignored)
-				-- Outer-ring additions deliberately follow their explicit rules (unique hex,
-				-- one per sector, and ten-hex separation), not vanilla repulsion. Committing them
-				-- into the vanilla tracker incorrectly rejected otherwise valid outer plans and
-				-- forced a 384-sample scan of every interior sector. Interior additions still use
-				-- the unchanged vanilla tracker against every fixed native/resource/effect marker
-				-- and each previously committed interior addition; clears_outer_spacing below
-				-- keeps the required ten-hex separation from every selected outer addition.
-				local function clears_outer_spacing(candidate)
-					for _, plan in ipairs(outer_plans) do
-						if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then
-							return false
-						end
-					end
-					return true
-				end
-				for _, item in ipairs(remaining) do
-					local winner = find_candidate(item, inner, function(candidate)
-						return clears_outer_spacing(candidate)
-							and repulsion.CanPlace(candidate, anomaly_profile)
-					end)
-					if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
-						complete = false
-						break
-					end
-					attempt_plans[#attempt_plans + 1] = {
-						item = item, candidate = winner, in_outer_ring = false,
-					}
-				end
-			end
-			best_total_planned = math.max(best_total_planned, #attempt_plans)
-			if complete and #attempt_plans == #moving and #outer_plans > best_outer_planned then
-				plans = attempt_plans
-				best_outer_planned = #outer_plans
-				stats.selected_plan_attempt = attempt
-				if best_outer_planned == #moving then return true end
+	-- Direct sequential placement: choose a random sector/position for one anomaly, reserve it,
+	-- then continue with the next. This is the requested gameplay rule and avoids building and
+	-- comparing dozens of complete provisional maps. A second outer pass grows a visited sector
+	-- from 32 to 128 random probes before it is considered unavailable; the explicit rollback mode
+	-- has already populated the historical 384-probe pools above.
+	local plans, outer_plans, remaining = {}, {}, {}
+	local can_place_outer, commit_outer = new_outer_attempt_tracker()
+	local marker_order = {}
+	for i = 1, #moving do marker_order[i] = moving[i] end
+	shuffle(marker_order)
+	local available_outer = {}
+	for i = 1, #ring do available_outer[i] = ring[i] end
+	local function remove_outer_sector(target)
+		for i = #available_outer, 1, -1 do
+			if available_outer[i] == target then
+				table.remove(available_outer, i)
+				return
 			end
 		end
-		return false
 	end
-	run_planning_attempts(initial_planning_attempts)
-	if optimized_candidate_search and best_outer_planned < #moving then
-		-- The interior is only a fallback after the historical outer-ring search has been exhausted.
-		-- Preserve any complete fast plan while expanding every OUTER pool to 384 samples and running
-		-- a fresh full 64-attempt phase; a plan replaces the fast result only when it places more of the
-		-- moving anomalies in the outer ring. The much larger interior scan is needed only when there
-		-- is no complete plan yet, or the exhaustive outer pass demonstrates a higher partial outer
-		-- count that the reused/lazy interior pool could not complete.
-		random_sample_limit = LEGACY_RANDOM_SAMPLES_PER_SECTOR
-		for _, sector in ipairs(ring) do sample_sector_candidates(sector, random_sample_limit) end
-		stats.legacy_candidate_fallback = true
-		run_planning_attempts(LEGACY_PLANNING_ATTEMPTS)
-		if not plans or best_outer_attempted > best_outer_planned then
-			for _, sector in ipairs(inner) do sample_sector_candidates(sector, random_sample_limit) end
-			stats.legacy_inner_candidate_fallback = true
-			run_planning_attempts(LEGACY_PLANNING_ATTEMPTS)
+	local outer_exhausted_at
+	for marker_i, item in ipairs(marker_order) do
+		local winner
+		local passes = optimized_candidate_search and 2 or 1
+		for _ = 1, passes do
+			winner = find_candidate(item, available_outer, can_place_outer, true)
+			if winner then break end
+		end
+		if winner and commit_outer(winner) then
+			local plan = { item = item, candidate = winner, in_outer_ring = true }
+			plans[#plans + 1] = plan
+			outer_plans[#outer_plans + 1] = plan
+			remove_outer_sector(winner.target_sector)
+		else
+			outer_exhausted_at = marker_i
+			for rest_i = marker_i, #marker_order do
+				remaining[#remaining + 1] = marker_order[rest_i]
+			end
+			break
+		end
+	end
+	local best_outer_planned = #outer_plans
+	local best_total_planned = #plans
+	local planning_attempts_run = 1
+	stats.selected_plan_attempt = 1
+	stats.sequential_candidate_placement = true
+	stats.outer_exhausted_at = outer_exhausted_at or 0
+
+	if #remaining > 0 then
+		local repulsion = NewTopUpRepulsionTracker(map, "inner-ring sequential anomaly fallback", ignored)
+		local function inner_candidate_allowed(candidate)
+			for _, plan in ipairs(outer_plans) do
+				if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then return false end
+			end
+			return repulsion.CanPlace(candidate, anomaly_profile)
+		end
+		for _, item in ipairs(remaining) do
+			-- Consume the resource pass's fully validated cache first. Only if it cannot provide a
+			-- vanilla-spaced position do we sample fresh inner terrain, one bounded pass at a time.
+			local winner = find_candidate(item, inner, inner_candidate_allowed, false)
+			if not winner then
+				local passes = optimized_candidate_search and 5 or 1
+				if optimized_candidate_search then
+					random_sample_limit = LEGACY_RANDOM_SAMPLES_PER_SECTOR
+				end
+				for _ = 1, passes do
+					winner = find_candidate(item, inner, inner_candidate_allowed, true)
+					if winner then break end
+				end
+			end
+			if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
+				stats.error = "sequential inner vanilla fallback exhausted"
+				return false, stats
+			end
+			plans[#plans + 1] = { item = item, candidate = winner, in_outer_ring = false }
+			best_total_planned = #plans
 		end
 	end
 	stats.planning_attempts = planning_attempts_run
@@ -5083,9 +5074,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.inner_random_samples = fresh_inner_samples
 	stats.inner_reused_candidates = reused_inner_candidates
 	stats.candidate_search_optimized = optimized_candidate_search
-	if not plans then
-		stats.error = "no complete outer-plus-vanilla-interior anomaly plan after "
-			.. tostring(planning_attempts_run) .. " attempts (best="
+	if #plans ~= #moving then
+		stats.error = "no complete sequential outer-plus-vanilla-interior anomaly plan (best="
 			.. tostring(best_total_planned) .. "/" .. tostring(#moving)
 			.. ", outer_candidates=" .. tostring(outer_candidate_count)
 			.. ", inner_candidates=" .. tostring(inner_candidate_count) .. ")"
