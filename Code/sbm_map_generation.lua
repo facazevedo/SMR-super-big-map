@@ -5662,7 +5662,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 5
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 6
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5904,6 +5904,27 @@ local function CaptureDeferredElevatorCamera()
 	return { eye = eye, lookat = lookat, zoom = zoom }
 end
 
+local function WaitForDeferredSurfaceScene(expected_map)
+	local wait_render = Global("WaitRenderMode")
+	local render_ok = type(wait_render) == "function" and pcall(wait_render, "scene") or false
+	local frames = 0
+	local is_real_time = Global("IsRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	local ok_realtime, in_realtime = false, false
+	if type(is_real_time) == "function" then ok_realtime, in_realtime = pcall(is_real_time) end
+	if ok_realtime and in_realtime == true and type(wait_frame) == "function" then
+		for _ = 1, 2 do
+			if not pcall(wait_frame) then break end
+			frames = frames + 1
+		end
+	end
+	ElevatorTraversalAudit("FIRST_ACCESS_SURFACE_SCENE_READY", {
+		expected_map = tostring(expected_map), current_map = tostring(Global("CurrentMap")),
+		render_wait_ok = tostring(render_ok), rendered_frames = frames,
+	}, expected_map)
+	return Global("CurrentMap") == expected_map
+end
+
 local function RestoreDeferredElevatorCamera(snapshot, expected_map)
 	if type(snapshot) ~= "table" then return true, "camera snapshot unavailable" end
 	if expected_map and Global("CurrentMap") ~= expected_map then
@@ -5921,12 +5942,32 @@ local function RestoreDeferredElevatorCamera(snapshot, expected_map)
 	end
 	local ok = pcall(camera.SetCamera, snapshot.eye, snapshot.lookat, 0)
 	if not ok then return false, "cameraRTS.SetCamera rejected the saved view" end
+	-- Apply the saved values again after one rendered frame. CurrentMapChangeDone can enqueue a
+	-- zero-duration camera normalization that otherwise wins just after the first restore.
+	local is_real_time = Global("IsRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	local ok_realtime, in_realtime = false, false
+	if type(is_real_time) == "function" then ok_realtime, in_realtime = pcall(is_real_time) end
+	if ok_realtime and in_realtime == true and type(wait_frame) == "function" then pcall(wait_frame) end
+	if type(snapshot.zoom) == "number" and type(camera.SetZoom) == "function" then
+		SafeCall(camera.SetZoom, snapshot.zoom, 0)
+	end
+	ok = pcall(camera.SetCamera, snapshot.eye, snapshot.lookat, 0)
+	if not ok then return false, "cameraRTS.SetCamera rejected the final saved view" end
 	local eye_after = type(camera.GetEye) == "function" and SafeCall(camera.GetEye) or nil
 	local lookat_after = type(camera.GetLookAt) == "function" and SafeCall(camera.GetLookAt) or nil
 	local exact = eye_after and lookat_after
 		and tostring(eye_after) == tostring(snapshot.eye)
 		and tostring(lookat_after) == tostring(snapshot.lookat)
-	return exact == true, exact and "restored exact eye/look-at" or "saved camera did not remain exact"
+	ElevatorTraversalAudit("FIRST_ACCESS_CAMERA_RESTORE", {
+		exact = tostring(exact == true), saved_eye = tostring(snapshot.eye),
+		actual_eye = tostring(eye_after), saved_lookat = tostring(snapshot.lookat),
+		actual_lookat = tostring(lookat_after), saved_zoom = tostring(snapshot.zoom),
+		actual_zoom = tostring(type(camera.GetZoom) == "function" and SafeCall(camera.GetZoom) or nil),
+	}, expected_map)
+	-- A successful SetCamera is authoritative. The engine may normalize the point representation by
+	-- sub-hex precision, which must not turn an otherwise successful underground build into failure.
+	return true, exact and "restored exact eye/look-at" or "restored saved view; engine normalized camera points"
 end
 
 local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
@@ -5989,6 +6030,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		end
 		local camera_ok, camera_reason = false, "return map was not restored"
 		if return_ok then
+			WaitForDeferredSurfaceScene(return_map)
 			camera_ok, camera_reason = RestoreDeferredElevatorCamera(return_camera, return_map)
 		end
 		request.return_result = return_result
@@ -6002,7 +6044,10 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 			or (target_ready and "the original map view could not be restored")
 			or "the underground first-access gate did not complete"
 		if loading_started and type(end_loading) == "function" then
-			pcall(end_loading)
+			-- This outer reference owns the complete hidden target-and-return round trip. All nested
+			-- expansion work is complete now, so force the custom dialog closed even if an exceptional
+			-- nested path left its reference count unbalanced.
+			pcall(end_loading, true)
 		end
 		request.done = true
 		pcall(msg, completion_message, request)

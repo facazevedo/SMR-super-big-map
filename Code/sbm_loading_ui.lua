@@ -499,6 +499,9 @@ end
 local hidden_engine_loading = false
 local gameplay_interface_loading_state = false
 local underground_frozen_background = false
+local underground_frozen_background_resource = false
+local loading_refs = 0
+local loading_ui_sequence = 0
 local LOADING_BACKGROUND_ZORDER = 1000000010
 local LOADING_DIALOG_ZORDER = LOADING_BACKGROUND_ZORDER + 1
 
@@ -518,6 +521,50 @@ local function WindowVisible(dlg)
 		if ok then return visible == true end
 	end
 	return dlg.visible ~= false
+end
+
+-- Keep the first-access UI trace on the existing opt-in ElevatorTraversal channel. These are
+-- one-shot lifecycle records (never emitted by the 30 ms watcher), so the log captures reference
+-- ownership and the exact teardown order without adding frame-by-frame noise.
+local function LoadingUiAudit(event, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if type(diagnostics) ~= "table" or type(diagnostics.ElevatorTraversal) ~= "function" then
+		return false
+	end
+	loading_ui_sequence = loading_ui_sequence + 1
+	local out = {
+		ui_sequence = loading_ui_sequence,
+		refs = loading_refs,
+		active = tostring(loading_on_welcome == true),
+		presentation = tostring(loading_presentation),
+		box_valid = tostring(LoadingBoxValid() == true),
+		box_state = tostring(loading_box and loading_box.window_state),
+		background_valid = tostring(underground_frozen_background
+			and underground_frozen_background.window_state ~= "destroying"
+			and underground_frozen_background.window_state ~= "destroyed"),
+		background_state = tostring(underground_frozen_background
+			and underground_frozen_background.window_state),
+		background_resource = tostring(underground_frozen_background_resource),
+		hud_visible = tostring(WindowVisible(GameplayInterfaceDialog())),
+		hidden_engine_dialog = tostring(hidden_engine_loading),
+		hidden_engine_state = tostring(hidden_engine_loading and hidden_engine_loading.window_state),
+	}
+	if type(data) == "table" then
+		for key, value in pairs(data) do out[key] = value end
+	end
+	return diagnostics.ElevatorTraversal("LOADING_UI_" .. tostring(event), out, Global("CurrentMap"))
+end
+
+local function WaitRealTimeFrames(count)
+	local is_real_time = Global("IsRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	if type(is_real_time) ~= "function" or type(wait_frame) ~= "function" then return false end
+	local ok_realtime, in_realtime = pcall(is_real_time)
+	if not ok_realtime or in_realtime ~= true then return false end
+	for _ = 1, math.max(1, tonumber(count) or 1) do
+		if not pcall(wait_frame) then return false end
+	end
+	return true
 end
 
 local function SetGameplayInterfaceVisible(visible)
@@ -579,21 +626,21 @@ local function EnsureUndergroundFrozenBackground()
 	local capture = Global("CaptureScreenshotImage")
 	if not desktop or type(image_class) ~= "table" or type(image_class.new) ~= "function"
 		or type(capture) ~= "function" then
+		LoadingUiAudit("CAPTURE_UNAVAILABLE", {
+			desktop = tostring(desktop ~= nil), image_class = tostring(type(image_class)),
+			capture = tostring(type(capture)),
+		})
 		return false
 	end
+	LoadingUiAudit("CAPTURE_BEGIN")
 	-- Give ShowInGameInterface(false) one render boundary before taking the snapshot, otherwise
 	-- the selected-rover panel from the preceding frame can be baked into the frozen background.
-	local is_real_time = Global("IsRealTimeThread")
-	local wait_frame = Global("WaitNextFrame")
-	local ok_realtime, in_realtime = false, false
-	if type(is_real_time) == "function" then
-		ok_realtime, in_realtime = pcall(is_real_time)
-	end
-	if ok_realtime and in_realtime == true and type(wait_frame) == "function" then
-		pcall(wait_frame)
-	end
+	WaitRealTimeFrames(1)
 	local ok_capture, resource = pcall(capture)
-	if not ok_capture or not resource then return false end
+	if not ok_capture or not resource then
+		LoadingUiAudit("CAPTURE_FAILED", { capture_ok = tostring(ok_capture), resource = tostring(resource) })
+		return false
+	end
 	local ok_new, background = pcall(image_class.new, image_class, {
 		Dock = "box",
 		Image = resource,
@@ -608,20 +655,37 @@ local function EnsureUndergroundFrozenBackground()
 		end
 		if type(background.Open) == "function" then pcall(background.Open, background) end
 		underground_frozen_background = background
+		-- XImage does not guarantee that assigning Image takes an independent ownership reference.
+		-- Retain the screenshot resource for the full hidden map round trip; releasing it here allowed
+		-- the frozen surface frame to turn black when the renderer recycled the resource.
+		underground_frozen_background_resource = resource
 	end
-	if type(resource.ReleaseRef) == "function" then pcall(resource.ReleaseRef, resource) end
+	if not FrozenBackgroundValid() and type(resource.ReleaseRef) == "function" then
+		pcall(resource.ReleaseRef, resource)
+		if underground_frozen_background_resource == resource then
+			underground_frozen_background_resource = false
+		end
+	end
+	LoadingUiAudit(FrozenBackgroundValid() and "CAPTURE_READY" or "CAPTURE_CREATE_FAILED", {
+		new_ok = tostring(ok_new),
+		resource_retained = tostring(underground_frozen_background_resource == resource),
+	})
 	return FrozenBackgroundValid() == true
 end
 
 local function CloseUndergroundFrozenBackground()
 	local background = underground_frozen_background
+	local resource = underground_frozen_background_resource
 	underground_frozen_background = false
-	if not background or background.window_state == "destroyed" then return end
-	if type(background.delete) == "function" then
-		pcall(background.delete, background)
-	elseif type(background.Close) == "function" then
-		pcall(background.Close, background)
+	underground_frozen_background_resource = false
+	if background and background.window_state ~= "destroyed" then
+		if type(background.delete) == "function" then
+			pcall(background.delete, background)
+		elseif type(background.Close) == "function" then
+			pcall(background.Close, background)
+		end
 	end
+	if resource and type(resource.ReleaseRef) == "function" then pcall(resource.ReleaseRef, resource) end
 end
 
 local function HideEngineLoadingScreenInstant()
@@ -646,6 +710,21 @@ local function RestoreEngineLoadingScreenInstant()
 	elseif type(dlg.SetVisible) == "function" then
 		pcall(dlg.SetVisible, dlg, true)
 	end
+end
+
+-- During the hidden underground round trip the engine loading dialog is only an underlying
+-- synchronization surface. Re-showing it during custom-dialog teardown exposes its black frame.
+-- Leave it hidden and release our pointer; the engine still owns and closes its normal lifecycle.
+local function KeepEngineLoadingScreenHidden()
+	local dlg = hidden_engine_loading
+	hidden_engine_loading = false
+	if not dlg or dlg.window_state == "destroying" or dlg.window_state == "destroyed" then return true end
+	if type(dlg.SetVisibleInstant) == "function" then
+		return pcall(dlg.SetVisibleInstant, dlg, false)
+	elseif type(dlg.SetVisible) == "function" then
+		return pcall(dlg.SetVisible, dlg, false)
+	end
+	return true
 end
 
 local function DesktopReady()
@@ -687,38 +766,51 @@ local function SetWelcomeLoading(active)
 					end
 					loading_box = box
 					loading_box_presentation = loading_presentation
+					LoadingUiAudit("DIALOG_READY")
 				end
 			end
 		end
 		return LoadingBoxValid() == true
 	else
-		-- Restore the live surface scene beneath the still-visible frozen frame, then remove both
-		-- overlays together. Waiting only on a real-time thread avoids exposing a black transition
-		-- frame without changing game-time or map-generation synchronization.
-		RestoreEngineLoadingScreenInstant()
-		RestoreGameplayInterfaceAfterLoading()
-		if FrozenBackgroundValid() then
-			local is_real_time = Global("IsRealTimeThread")
-			local wait_frame = Global("WaitNextFrame")
-			local ok_realtime, in_realtime = false, false
-			if type(is_real_time) == "function" then
-				ok_realtime, in_realtime = pcall(is_real_time)
-			end
-			if ok_realtime and in_realtime == true and type(wait_frame) == "function" then
-				pcall(wait_frame, 2)
-			end
+		local underground_teardown = loading_presentation == "underground"
+			or FrozenBackgroundValid() or underground_frozen_background_resource ~= false
+		LoadingUiAudit("TEARDOWN_BEGIN", { underground = tostring(underground_teardown) })
+		-- Render the returned surface underneath the retained screenshot before either overlay
+		-- disappears. Restoring the engine loading dialog here used to expose its black layer, while
+		-- restoring the HUD exposed controls such as Place Elevator over the still-visible loader.
+		if underground_teardown then
+			local wait_render = Global("WaitRenderMode")
+			local render_ok = type(wait_render) == "function" and pcall(wait_render, "scene") or false
+			local frames_ok = WaitRealTimeFrames(2)
+			LoadingUiAudit("SURFACE_FRAME_READY", {
+				render_wait_ok = tostring(render_ok), frame_wait_ok = tostring(frames_ok),
+			})
+		else
+			RestoreEngineLoadingScreenInstant()
 		end
 		-- Remove our loading box.
+		local close_ok = true
 		if LoadingBoxValid() then
 			if type(loading_box.Close) == "function" then
-				pcall(function() loading_box:Close() end)
+				close_ok = pcall(function() loading_box:Close() end)
 			elseif type(loading_box.delete) == "function" then
-				pcall(function() loading_box:delete() end)
+				close_ok = pcall(function() loading_box:delete() end)
 			end
 		end
 		loading_box = false
 		loading_box_presentation = false
+		LoadingUiAudit("DIALOG_CLOSED", { close_ok = tostring(close_ok) })
+		-- Leave the frozen frame beneath the closed dialog for one render boundary. The player sees
+		-- the saved surface until the live surface is ready, never the empty map-switch backbuffer.
+		if underground_teardown then WaitRealTimeFrames(1) end
 		CloseUndergroundFrozenBackground()
+		LoadingUiAudit("BACKGROUND_CLOSED")
+		if underground_teardown then
+			KeepEngineLoadingScreenHidden()
+			WaitRealTimeFrames(1)
+		end
+		local hud_ok = RestoreGameplayInterfaceAfterLoading()
+		LoadingUiAudit("HUD_RESTORED", { hud_restore_ok = tostring(hud_ok) })
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
@@ -726,6 +818,7 @@ local function SetWelcomeLoading(active)
 			local shown = pcall(function() dlg:SetVisibleInstant(true) end)
 			if shown then PlayDeferredWelcomeVoice(dlg) end
 		end
+		LoadingUiAudit("TEARDOWN_DONE")
 		return true
 	end
 end
@@ -776,10 +869,9 @@ end
 -- end tore the box down as soon as IT finished). Every busy phase calls Begin/End in pairs
 -- (surface stretch branch, underground stretch thread); the box + popup-hiding stay up until
 -- the LAST phase ends, so the game becomes interactive exactly when everything is done.
-local loading_refs = 0
-
 function SuperBigMap.ExpansionLoadingBegin(presentation)
 	local requested_presentation = presentation == "underground" and "underground" or "surface"
+	local refs_before = loading_refs
 	if loading_refs == 0 then
 		loading_presentation = requested_presentation
 	elseif requested_presentation == "underground" and loading_presentation ~= "underground" then
@@ -797,6 +889,9 @@ function SuperBigMap.ExpansionLoadingBegin(presentation)
 		end
 	end
 	loading_refs = loading_refs + 1
+	LoadingUiAudit("BEGIN", {
+		requested = requested_presentation, refs_before = refs_before, refs_after = loading_refs,
+	})
 	-- Reclaim the hook if a Lua/classes reload replaced the global since lifecycle activation.
 	PatchWelcomeVoiceTiming()
 	if loading_on_welcome then
@@ -847,12 +942,19 @@ end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).
 function SuperBigMap.ExpansionLoadingEnd(force_all)
+	local refs_before = loading_refs
 	if force_all ~= true and loading_refs > 1 then
 		loading_refs = loading_refs - 1
+		LoadingUiAudit("END_DEFERRED", {
+			force_all = tostring(force_all == true), refs_before = refs_before, refs_after = loading_refs,
+		})
 		return
 	end
 	loading_refs = 0
 	loading_on_welcome = false
+	LoadingUiAudit("END_FINAL", {
+		force_all = tostring(force_all == true), refs_before = refs_before, refs_after = loading_refs,
+	})
 	-- Always tear the loading box down (idempotent), even if the flag was cleared by a mid-load
 	-- mod reload -- so a stale box can never linger on screen waiting for an OK press.
 	SetWelcomeLoading(false)
