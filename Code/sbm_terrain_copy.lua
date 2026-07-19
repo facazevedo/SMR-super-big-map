@@ -81,14 +81,15 @@ local function CaveInAuditEnabled(map)
 		and diagnostics.CaveInEnabled() == true
 end
 
--- Vanilla cave-ins are removable rock piles. Prefer the base-kind test, but retain the concrete
--- class-name fallback because some generated RemovableRocks variants are not fully registered
--- while the temporary underground source is being assembled.
+-- The wall-forming, selectable underground cave-ins are CaveInRubble objects. RemovableRocks are
+-- ordinary scatter/removal decorations and must not be used as a proxy: doing so made the audit
+-- report hundreds of correctly moved rocks while the actual cave-in walls (Buildings, and thus
+-- skipped by the cosmetic-decoration pass) stayed at their source positions and source size.
 local function IsCaveInObject(obj)
 	if not obj then return false end
-	if IsKindOfSafe(obj, "RemovableRocks") then return true end
+	if IsKindOfSafe(obj, "CaveInRubble") then return true end
 	local class = obj.class
-	return type(class) == "string" and string.find(class, "RemovableRocks", 1, true) == 1
+	return class == "CaveInRubble"
 end
 
 local function TerrainSize(map)
@@ -769,6 +770,149 @@ local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
 local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_snapshot_audit_by_map = setmetatable({}, { __mode = "k" })
+local cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
+
+local CAVE_IN_SHAPE_PATCH_VERSION = 1
+
+local function RoundSigned(value)
+	if value >= 0 then return math.floor(value + 0.5) end
+	return math.ceil(value - 0.5)
+end
+
+-- Rasterize a vanilla cave-in's axial-hex footprint through the same world-space transform used
+-- by the terrain. Mapping destination hex centers back into the source shape fills the additional
+-- cells introduced by the 4/3 expansion instead of merely spreading the original cells apart.
+local function ScaleCaveInHexShape(source_shape, scale_x, scale_y)
+	if type(source_shape) ~= "table" or #source_shape == 0
+		or type(scale_x) ~= "number" or type(scale_y) ~= "number"
+		or scale_x <= 1 or scale_y <= 1 then
+		return source_shape
+	end
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	if type(point_fn) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" then return source_shape end
+
+	local source_set = {}
+	local min_q, max_q, min_r, max_r
+	for _, shape_point in ipairs(source_shape) do
+		local q, r = PointXY(shape_point)
+		if type(q) == "number" and type(r) == "number" then
+			source_set[tostring(q) .. ":" .. tostring(r)] = true
+			local ok_world, wx, wy = pcall(hex_to_world, q, r)
+			if ok_world and type(wx) == "number" and type(wy) == "number" then
+				local target_point = point_fn(RoundSigned(wx * scale_x), RoundSigned(wy * scale_y))
+				local ok_hex, tq, tr = pcall(world_to_hex, target_point)
+				if ok_hex and type(tq) == "number" and type(tr) == "number" then
+					min_q = min_q and math.min(min_q, tq) or tq
+					max_q = max_q and math.max(max_q, tq) or tq
+					min_r = min_r and math.min(min_r, tr) or tr
+					max_r = max_r and math.max(max_r, tr) or tr
+				end
+			end
+		end
+	end
+	if not min_q then return source_shape end
+
+	-- Three cells of padding covers the largest supported terrain ratio while keeping this tiny:
+	-- CaveIn_Buildings has a compact local footprint and this runs only for generated cave walls.
+	min_q, max_q, min_r, max_r = min_q - 3, max_q + 3, min_r - 3, max_r + 3
+	local scaled = {}
+	for target_q = min_q, max_q do
+		for target_r = min_r, max_r do
+			local ok_world, target_x, target_y = pcall(hex_to_world, target_q, target_r)
+			if ok_world and type(target_x) == "number" and type(target_y) == "number" then
+				local source_point = point_fn(
+					RoundSigned(target_x / scale_x), RoundSigned(target_y / scale_y))
+				local ok_hex, source_q, source_r = pcall(world_to_hex, source_point)
+				if ok_hex and source_set[tostring(source_q) .. ":" .. tostring(source_r)] then
+					scaled[#scaled + 1] = point_fn(target_q, target_r)
+				end
+			end
+		end
+	end
+	return #scaled > 0 and scaled or source_shape
+end
+
+local function CaveInShapeScale(obj)
+	local x_mul = tonumber(obj and obj.SuperBigMapCaveInShapeScaleXMul)
+	local x_div = tonumber(obj and obj.SuperBigMapCaveInShapeScaleXDiv)
+	local y_mul = tonumber(obj and obj.SuperBigMapCaveInShapeScaleYMul)
+	local y_div = tonumber(obj and obj.SuperBigMapCaveInShapeScaleYDiv)
+	if not x_mul or not x_div or x_div <= 0 or not y_mul or not y_div or y_div <= 0 then
+		return nil
+	end
+	return (x_mul + 0.0) / x_div, (y_mul + 0.0) / y_div
+end
+
+local function CaveInShapePointCount(obj)
+	if not obj or type(obj.GetShapePoints) ~= "function" then return nil end
+	local shape = SafeCall(obj.GetShapePoints, obj)
+	return type(shape) == "table" and #shape or nil
+end
+
+-- CaveInRubble inherits GridObject:GetShapePoints, whose entity outline is not affected by
+-- CObject:SetScale. Keep vanilla behavior for every unstamped object; only source cave-ins that
+-- this mod stretches carry the ratio fields consumed by the wrapper.
+local function PatchCaveInShapePoints()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	local cls = Engine.ClassTable and Engine.ClassTable("CaveInRubble")
+	if type(cls) ~= "table" then return false end
+	local current = cls.GetShapePoints
+	if type(current) ~= "function" then
+		local grid_object = Engine.ClassTable and Engine.ClassTable("GridObject")
+		current = type(grid_object) == "table" and grid_object.GetShapePoints or nil
+	end
+	if current == State.cave_in_shape_points_wrapper
+		and State.cave_in_shape_patch_version == CAVE_IN_SHAPE_PATCH_VERSION then return true end
+	if current == State.cave_in_shape_points_wrapper
+		and type(State.original_cave_in_shape_points) == "function" then
+		current = State.original_cave_in_shape_points
+		cls.GetShapePoints = current
+	end
+	if type(current) ~= "function" then return false end
+	local original = current
+	local wrapper = function(obj, ...)
+		local source_shape = original(obj, ...)
+		local scale_x, scale_y = CaveInShapeScale(obj)
+		if not scale_x or scale_x <= 1 or not scale_y or scale_y <= 1 then
+			return source_shape
+		end
+		local cached = cave_in_scaled_shape_cache[obj]
+		if type(cached) == "table" and cached.source_shape == source_shape
+			and cached.scale_x == scale_x and cached.scale_y == scale_y then
+			return cached.shape
+		end
+		local shape = ScaleCaveInHexShape(source_shape, scale_x, scale_y)
+		cave_in_scaled_shape_cache[obj] = {
+			source_shape = source_shape,
+			scale_x = scale_x,
+			scale_y = scale_y,
+			shape = shape,
+		}
+		return shape
+	end
+	State.original_cave_in_shape_points = original
+	State.cave_in_shape_points_wrapper = wrapper
+	State.cave_in_shape_patch_version = CAVE_IN_SHAPE_PATCH_VERSION
+	cls.GetShapePoints = wrapper
+	return true
+end
+
+local function RestoreCaveInShapePointsPatch()
+	local State = SuperBigMap.State or {}
+	local cls = Engine.ClassTable and Engine.ClassTable("CaveInRubble")
+	if type(cls) == "table" and cls.GetShapePoints == State.cave_in_shape_points_wrapper
+		and type(State.original_cave_in_shape_points) == "function" then
+		cls.GetShapePoints = State.original_cave_in_shape_points
+	end
+	State.original_cave_in_shape_points = nil
+	State.cave_in_shape_points_wrapper = nil
+	State.cave_in_shape_patch_version = nil
+	cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
+end
 
 -- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
 -- (2147483647). Treating "numeric" as "explicit Z" converts that sentinel into a
@@ -967,6 +1111,8 @@ local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y
 		and math.max(1, math.min(500, math.floor(source_scale * scale_x + 0.5))) or nil
 	local actual_scale = obj and type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj) or nil
 	local actual_angle = obj and type(obj.GetAngle) == "function" and SafeCall(obj.GetAngle, obj) or nil
+	local actual_shape_hexes = CaveInShapePointCount(obj)
+	local expected_shape_hexes = record.expanded_shape_hexes
 	local source_radius = record.source_neighborhood and record.source_neighborhood.radius
 	local destination_radius = type(source_radius) == "number"
 		and math.floor(source_radius * scale_x + 0.5) or nil
@@ -1004,6 +1150,8 @@ local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y
 		parent = record.parent or "nil",
 		skipped_by_decor_transform = record.skip_object == true,
 		important_sector_object = record.important_object == true,
+		source_grids_applied = record.source_grids_applied == true,
+		actual_grids_applied = obj and obj.grids_applied == true,
 		scale_x = scale_x,
 		scale_y = scale_y,
 		z_scale = z_scale,
@@ -1027,6 +1175,12 @@ local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y
 			and actual_scale - record.post_move_scale or "nil",
 		scale_error = type(actual_scale) == "number" and type(expected_scale) == "number"
 			and actual_scale - expected_scale or "nil",
+		source_shape_hexes = record.source_shape_hexes or "nil",
+		expected_shape_hexes = expected_shape_hexes or "nil",
+		actual_shape_hexes = actual_shape_hexes or "nil",
+		shape_hex_error = type(actual_shape_hexes) == "number"
+			and type(expected_shape_hexes) == "number"
+			and actual_shape_hexes - expected_shape_hexes or "nil",
 		source_angle = record.source_angle or "nil",
 		actual_angle = actual_angle or "nil",
 		angle_error = type(actual_angle) == "number" and type(record.source_angle) == "number"
@@ -1100,6 +1254,7 @@ local function AuditCaveInSnapshot(map, mode, reason)
 					and SafeCall(obj.GetScale, obj) or nil,
 				actual_angle = type(obj.GetAngle) == "function"
 					and SafeCall(obj.GetAngle, obj) or nil,
+				actual_shape_hexes = CaveInShapePointCount(obj),
 				actual = DecorationPositionSnapshot(map, obj, pos),
 				actual_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
 			}
@@ -1145,9 +1300,10 @@ local function AuditCaveInSnapshot(map, mode, reason)
 		candidates = candidates,
 		records = #records,
 		record_errors = #errors,
-		removable_rocks_01 = 0,
-		removable_rocks_02 = 0,
+		cave_in_rubble = 0,
 		other_classes = 0,
+		total_shape_hexes = 0,
+		max_shape_hexes = 0,
 		attached = 0,
 		explicit_z = 0,
 		in_bounds = 0,
@@ -1178,18 +1334,21 @@ local function AuditCaveInSnapshot(map, mode, reason)
 			parent = record.parent,
 			actual_scale = record.actual_scale or "nil",
 			actual_angle = record.actual_angle or "nil",
+			actual_shape_hexes = record.actual_shape_hexes or "nil",
 			actual_dz = actual_dz or (actual_dz == 0 and 0 or "nil"),
 		}
 		DecorationAuditFields("actual_", actual, data)
 		CaveInNeighborhoodFields("actual_local_", neighborhood, data)
 		CaveInAudit("SNAPSHOT", data, map)
 
-		if record.class == "RemovableRocks_01" then
-			stats.removable_rocks_01 = stats.removable_rocks_01 + 1
-		elseif record.class == "RemovableRocks_02" then
-			stats.removable_rocks_02 = stats.removable_rocks_02 + 1
+		if record.class == "CaveInRubble" then
+			stats.cave_in_rubble = stats.cave_in_rubble + 1
 		else
 			stats.other_classes = stats.other_classes + 1
+		end
+		if type(record.actual_shape_hexes) == "number" then
+			stats.total_shape_hexes = stats.total_shape_hexes + record.actual_shape_hexes
+			stats.max_shape_hexes = math.max(stats.max_shape_hexes, record.actual_shape_hexes)
 		end
 		if record.attached then stats.attached = stats.attached + 1 end
 		if actual.explicit_z == true then stats.explicit_z = stats.explicit_z + 1 end
@@ -1248,14 +1407,14 @@ local function AuditCaveInSnapshot(map, mode, reason)
 end
 
 local function AnnotateDecorRelief(map)
-	if not map or not cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true) then return 0 end
+	if not map then return 0 end
 	if type(map.MapForEach) ~= "function" then return 0 end
+	local relief_enabled = cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true)
 	local terrain_api = Global("terrain")
 	local box_fn = Global("box")
-	if type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function"
-		or type(box_fn) ~= "function" then
-		return 0
-	end
+	local relief_terrain_available = type(terrain_api) == "table"
+		and type(terrain_api.GetHeight) == "function"
+	if type(box_fn) ~= "function" then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
 	local sw_tiles = map.SuperBigMapSourceWidthTiles or map.SuperBigMapGeneratorWidthTiles
@@ -1274,18 +1433,20 @@ local function AnnotateDecorRelief(map)
 	local audit_records = audit_on and setmetatable({}, { __mode = "k" }) or nil
 	local audit_list = audit_on and {} or nil
 	local cave_audit_on = CaveInAuditEnabled(map)
-	local cave_capture = cave_audit_on and {
-		by_object = setmetatable({}, { __mode = "k" }),
+	-- Placement correctness must never depend on diagnostic logging being enabled. Always capture
+	-- the real CaveInRubble objects; cave_audit_on controls only emission of the detailed records.
+	local cave_capture = {
 		list = {},
 		scale_x = nil,
 		scale_y = nil,
-	} or nil
-	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
+	}
+	local capture_traversal_ok, capture_traversal_err = pcall(
+		map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
-		if cave_audit_on and IsCaveInObject(obj) then
+		if IsCaveInObject(obj) then
 			local pos = ObjectPosition(obj)
 			if pos then
 				local parent
@@ -1311,10 +1472,11 @@ local function AnnotateDecorRelief(map)
 					important_object = important_object == true,
 					source_scale = source_scale,
 					source_angle = source_angle,
+					source_shape_hexes = CaveInShapePointCount(obj),
+					source_grids_applied = obj.grids_applied == true,
 					source = DecorationPositionSnapshot(map, obj, pos),
 					source_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
 				}
-				cave_capture.by_object[obj] = record
 				cave_capture.list[#cave_capture.list + 1] = record
 			end
 		end
@@ -1340,6 +1502,7 @@ local function AnnotateDecorRelief(map)
 				audit_list[#audit_list + 1] = record
 			end
 		end
+		if not relief_enabled or not relief_terrain_available then return end
 		-- Relief is consumed only by the decoration scaling pass. Avoid terrain-height calls for
 		-- buildings, markers, units, attached children, and other objects that pass never moves.
 		if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
@@ -1368,6 +1531,9 @@ local function AnnotateDecorRelief(map)
 		max_abs_relief = math.max(max_abs_relief, math.abs(dz))
 		annotated = annotated + 1
 	end)
+	cave_capture.capture_ok = capture_traversal_ok == true
+	cave_capture.capture_error = capture_traversal_ok ~= true
+		and tostring(capture_traversal_err) or nil
 	decor_relief_by_map[map] = relief
 	decor_position_audit_by_map[map] = audit_records
 	decor_relief_stats_by_map[map] = {
@@ -1406,6 +1572,8 @@ local function AnnotateDecorRelief(map)
 		CaveInAudit("CAPTURE_SUMMARY", {
 			captured = #cave_capture.list,
 			scanned = #objects,
+			capture_ok = cave_capture.capture_ok,
+			capture_error = cave_capture.capture_error or "nil",
 			scale_source_width_tiles = sw_tiles,
 			scale_source_height_tiles = sh_tiles,
 		}, map)
@@ -1422,6 +1590,8 @@ local function AnnotateDecorRelief(map)
 				important_sector_object = record.important_object,
 				source_scale = record.source_scale or "nil",
 				source_angle = record.source_angle or "nil",
+				source_shape_hexes = record.source_shape_hexes or "nil",
+				source_grids_applied = record.source_grids_applied,
 			}
 			DecorationAuditFields("source_", record.source, data)
 			CaveInNeighborhoodFields("source_local_", record.source_neighborhood, data)
@@ -1440,6 +1610,183 @@ local function ClearDecorRelief(map)
 		decor_position_audit_by_map[map] = nil
 		cave_in_position_audit_by_map[map] = nil
 	end
+end
+
+local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" then return nil end
+	if explicit_z == true and type(raw_z) == "number" then
+		return point_fn(x, y, raw_z)
+	end
+	local pos = point_fn(x, y)
+	if type(pos.SetInvalidZ) == "function" then
+		local ok, invalid_pos = pcall(pos.SetInvalidZ, pos)
+		if ok and invalid_pos then pos = invalid_pos end
+	end
+	return pos
+end
+
+-- CaveInRubble is a Building and is intentionally excluded from the cosmetic-decoration loop.
+-- Transform it explicitly, while its vanilla source coordinates are still captured, and update
+-- its GridObject registration around the move so the expanded visual wall and gameplay footprint
+-- continue to describe the same obstruction.
+local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_th, sw_tiles, sh_tiles)
+	local capture = cave_in_position_audit_by_map[map]
+	local stats = {
+		captured = type(capture) == "table" and type(capture.list) == "table"
+			and #capture.list or 0,
+		transformed = 0,
+		missing_objects = 0,
+		transform_failures = 0,
+		grid_remove_failures = 0,
+		grid_apply_failures = 0,
+		post_records = 0,
+		source_shape_hexes = 0,
+		expanded_shape_hexes = 0,
+		scale_x = scale_x,
+		scale_y = scale_y,
+	}
+	if type(capture) ~= "table" or type(capture.list) ~= "table" then
+		stats.error = "no cave-in source capture"
+		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
+		return false, stats
+	end
+	if capture.capture_ok ~= true then
+		stats.error = "cave-in source traversal failed: " .. tostring(capture.capture_error)
+		stats.transform_failures = #capture.list
+		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
+		return false, stats
+	end
+	capture.scale_x, capture.scale_y = scale_x, scale_y
+	if #capture.list == 0 then
+		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
+		return true, stats
+	end
+	if not PatchCaveInShapePoints() then
+		stats.error = "CaveInRubble.GetShapePoints patch unavailable"
+		stats.transform_failures = #capture.list
+		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
+		return false, stats
+	end
+
+	local is_valid = Global("IsValid")
+	local MAX_SCALE = 500
+	for _, record in ipairs(capture.list) do
+		local obj = record.object_ref
+		local live = obj ~= nil
+			and (type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true)
+		if not live then
+			stats.missing_objects = stats.missing_objects + 1
+		else
+			local source = record.source or {}
+			local source_x, source_y = tonumber(source.x), tonumber(source.y)
+			local old_scale = tonumber(record.source_scale)
+			local had_grids = obj.grids_applied == true
+			local removed_grids = false
+			local transform_ok, transform_err = pcall(function()
+				if type(source_x) ~= "number" or type(source_y) ~= "number" then
+					error("source position unavailable")
+				end
+				if had_grids then
+					if type(obj.RemoveFromGrids) ~= "function" then
+						stats.grid_remove_failures = stats.grid_remove_failures + 1
+						error("RemoveFromGrids unavailable")
+					end
+					obj:RemoveFromGrids()
+					if obj.grids_applied == true then
+						stats.grid_remove_failures = stats.grid_remove_failures + 1
+						error("old cave-in footprint remained registered")
+					end
+					removed_grids = true
+				end
+
+				-- Integer numerator/denominator fields survive save/load exactly and let the transparent
+				-- class wrapper rebuild the expanded outline without serializing a point-array cache.
+				obj.SuperBigMapCaveInShapeScaleXMul = full_tw
+				obj.SuperBigMapCaveInShapeScaleXDiv = sw_tiles
+				obj.SuperBigMapCaveInShapeScaleYMul = full_th
+				obj.SuperBigMapCaveInShapeScaleYDiv = sh_tiles
+				cave_in_scaled_shape_cache[obj] = nil
+
+				local target_x = math.floor(source_x * scale_x + 0.5)
+				local target_y = math.floor(source_y * scale_y + 0.5)
+				local target = CaveInTerrainGluedPoint(target_x, target_y)
+				if not target or type(obj.SetPos) ~= "function" then error("SetPos unavailable") end
+				obj:SetPos(target)
+				if type(old_scale) == "number" and old_scale > 0 then
+					if type(obj.SetScale) ~= "function" then error("SetScale unavailable") end
+					local target_scale = math.max(1,
+						math.min(MAX_SCALE, math.floor(old_scale * scale_x + 0.5)))
+					obj:SetScale(target_scale)
+				end
+				record.expanded_shape_hexes = CaveInShapePointCount(obj)
+				if type(record.expanded_shape_hexes) ~= "number"
+					or record.expanded_shape_hexes <= 0 then error("expanded shape unavailable") end
+
+				if had_grids then
+					if type(obj.ApplyToGrids) ~= "function" then
+						stats.grid_apply_failures = stats.grid_apply_failures + 1
+						error("ApplyToGrids unavailable")
+					end
+					obj:ApplyToGrids()
+					if obj.grids_applied ~= true then
+						stats.grid_apply_failures = stats.grid_apply_failures + 1
+						error("expanded cave-in footprint was not registered")
+					end
+				end
+			end)
+
+			if not transform_ok then
+				stats.transform_failures = stats.transform_failures + 1
+				-- Restore the original object/grid state before aborting the map transaction. This keeps
+				-- a protected failure from leaving a ghost blocker registered at either coordinate.
+				pcall(function()
+					if obj.grids_applied == true and type(obj.RemoveFromGrids) == "function" then
+						obj:RemoveFromGrids()
+					end
+					obj.SuperBigMapCaveInShapeScaleXMul = nil
+					obj.SuperBigMapCaveInShapeScaleXDiv = nil
+					obj.SuperBigMapCaveInShapeScaleYMul = nil
+					obj.SuperBigMapCaveInShapeScaleYDiv = nil
+					cave_in_scaled_shape_cache[obj] = nil
+					if type(old_scale) == "number" and type(obj.SetScale) == "function" then
+						obj:SetScale(old_scale)
+					end
+					local original_pos = CaveInTerrainGluedPoint(
+						source_x, source_y, source.raw_z, source.explicit_z)
+					if original_pos and type(obj.SetPos) == "function" then obj:SetPos(original_pos) end
+					if had_grids and type(obj.ApplyToGrids) == "function" then obj:ApplyToGrids() end
+				end)
+				CaveInAudit("POST_MOVE_ERROR", {
+					index = record.index,
+					object = record.object,
+					class = record.class,
+					error = tostring(transform_err),
+					had_grids = had_grids,
+					removed_grids = removed_grids,
+				}, map)
+			else
+				stats.transformed = stats.transformed + 1
+				stats.source_shape_hexes = stats.source_shape_hexes
+					+ (tonumber(record.source_shape_hexes) or 0)
+				stats.expanded_shape_hexes = stats.expanded_shape_hexes
+					+ (tonumber(record.expanded_shape_hexes) or 0)
+				local cave_pos = ObjectPosition(obj)
+				record.post_move = cave_pos
+					and DecorationPositionSnapshot(map, obj, cave_pos) or {}
+				record.post_move_scale = type(obj.GetScale) == "function"
+					and SafeCall(obj.GetScale, obj) or nil
+				stats.post_records = stats.post_records + 1
+				CaveInAudit("POST_MOVE", CaveInPositionAuditData(
+					map, record, obj, "post_move", scale_x, scale_y,
+					"immediately after dedicated CaveInRubble transform"), map)
+			end
+		end
+	end
+	stats.missing_post_records = stats.captured - stats.post_records
+	CaveInAudit("POST_MOVE_SUMMARY", stats, map)
+	local ok = stats.missing_objects == 0 and stats.transform_failures == 0
+	return ok, stats
 end
 
 -- STRETCH step 2 (decorations): the generator placed all its scatter/decor in the SOURCE corner
@@ -1481,11 +1828,6 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	-- (force FLOAT division -- this Lua does integer division on int/int).
 	local scale_x = (full_tw + 0.0) / sw_tiles
 	local scale_y = (full_th + 0.0) / sh_tiles
-	local cave_capture = cave_in_position_audit_by_map[map]
-	if type(cave_capture) == "table" then
-		cave_capture.scale_x = scale_x
-		cave_capture.scale_y = scale_y
-	end
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	-- Collect into a Lua list first (inline MapForEach -- avoids a forward reference to the
 	-- CollectObjectsInBox helper declared later in this file), so we mutate objects OUTSIDE the
@@ -1525,13 +1867,18 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local pass_batch = type(map.SuspendPassEdits) == "function" and type(map.ResumePassEdits) == "function"
 	local owns_pass_batch = pass_batch and pass_edits_already_suspended ~= true
 	if owns_pass_batch then pcall(map.SuspendPassEdits, map, "SuperBigMapStretchDecor") end
+	local cave_ok, cave_stats = ScaleCapturedCaveInsToFull(
+		map, scale_x, scale_y, full_tw, full_th, sw_tiles, sh_tiles)
+	if cave_ok ~= true then
+		if owns_pass_batch then pcall(map.ResumePassEdits, map, "SuperBigMapStretchDecor") end
+		error("dedicated CaveInRubble transform failed (captured="
+			.. tostring(cave_stats and cave_stats.captured or "?")
+			.. ", failures=" .. tostring(cave_stats and cave_stats.transform_failures or "?") .. ")")
+	end
 	local is_valid = Global("IsValid")
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = decor_position_audit_by_map[map]
 	local audit_post_count = 0
-	local cave_audit_on = CaveInAuditEnabled(map) and type(cave_capture) == "table"
-	local cave_records = cave_audit_on and cave_capture.by_object or nil
-	local cave_post_count = 0
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
@@ -1545,7 +1892,6 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 				local pos = ObjectPosition(obj)
 				if not pos then return end
 				local audit_record = audit_on and audit_records and audit_records[obj]
-				local cave_record = cave_records and cave_records[obj]
 				local before_snapshot = audit_on and DecorationPositionSnapshot(map, obj, pos) or nil
 				local ox, oy = PointXY(pos)
 				if type(ox) ~= "number" or type(oy) ~= "number" then return end
@@ -1655,17 +2001,6 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 						SafeCall(obj.SetScale, obj, ns)
 					end
 				end
-				if cave_record then
-					local cave_pos = ObjectPosition(obj)
-					cave_record.post_move = cave_pos
-						and DecorationPositionSnapshot(map, obj, cave_pos) or {}
-					cave_record.post_move_scale = type(obj.GetScale) == "function"
-						and SafeCall(obj.GetScale, obj) or nil
-					cave_post_count = cave_post_count + 1
-					CaveInAudit("POST_MOVE", CaveInPositionAuditData(
-						map, cave_record, obj, "post_move", scale_x, scale_y,
-						"immediately after decoration transform"), map)
-				end
 				-- Density top-up: chance to add one jittered clone of this decoration nearby.
 				if topup_on and rand_fn(1000) < topup_permille then
 					local jx = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
@@ -1714,19 +2049,12 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 			topup_clones = topup_clones,
 		}, map)
 	end
-	if cave_audit_on then
-		CaveInAudit("POST_MOVE_SUMMARY", {
-			captured = #cave_capture.list,
-			post_records = cave_post_count,
-			missing_post_records = #cave_capture.list - cave_post_count,
-			decorations_moved = moved,
-			scale_x = scale_x,
-			scale_y = scale_y,
-		}, map)
-	end
 	LoadingStep("decoration stretch placement complete", {
 		scanned = #objs,
 		moved = moved,
+		cave_ins_transformed = cave_stats and cave_stats.transformed or 0,
+		cave_in_source_shape_hexes = cave_stats and cave_stats.source_shape_hexes or 0,
+		cave_in_expanded_shape_hexes = cave_stats and cave_stats.expanded_shape_hexes or 0,
 		explicit_z_captured = capture.explicit_z or 0,
 		terrain_glued_captured = capture.terrain_glued or 0,
 		relief_placed = relief_placed,
@@ -1778,6 +2106,8 @@ local function AuditFinalCaveInPositions(map, reason)
 		xy_mismatches = 0,
 		z_mismatches = 0,
 		scale_mismatches = 0,
+		shape_mismatches = 0,
+		grid_registration_mismatches = 0,
 		moved_after_post = 0,
 		source_buildable_to_final_unbuildable = 0,
 		source_passable_to_final_unpassable = 0,
@@ -1823,6 +2153,12 @@ local function AuditFinalCaveInPositions(map, reason)
 				if type(data.scale_error) == "number" and data.scale_error ~= 0 then
 					stats.scale_mismatches = stats.scale_mismatches + 1
 				end
+				if type(data.shape_hex_error) == "number" and data.shape_hex_error ~= 0 then
+					stats.shape_mismatches = stats.shape_mismatches + 1
+				end
+				if record.source_grids_applied == true and data.actual_grids_applied ~= true then
+					stats.grid_registration_mismatches = stats.grid_registration_mismatches + 1
+				end
 				if (type(data.post_move_x_delta) == "number" and data.post_move_x_delta ~= 0)
 					or (type(data.post_move_y_delta) == "number" and data.post_move_y_delta ~= 0)
 					or (type(data.post_move_z_delta) == "number" and data.post_move_z_delta ~= 0) then
@@ -1863,6 +2199,8 @@ local function AuditFinalCaveInPositions(map, reason)
 		xy_mismatches = stats.xy_mismatches,
 		z_mismatches = stats.z_mismatches,
 		scale_mismatches = stats.scale_mismatches,
+		shape_mismatches = stats.shape_mismatches,
+		grid_registration_mismatches = stats.grid_registration_mismatches,
 		moved_after_post = stats.moved_after_post,
 		source_buildable_to_final_unbuildable = stats.source_buildable_to_final_unbuildable,
 		source_passable_to_final_unpassable = stats.source_passable_to_final_unpassable,
@@ -3742,6 +4080,8 @@ local TerrainCopy = {
 	PatchEntranceBadgePosition = PatchEntranceBadgePosition,
 	RestoreEntranceBadgePositionPatch = RestoreEntranceBadgePositionPatch,
 	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,
+	PatchCaveInShapePoints = PatchCaveInShapePoints,
+	RestoreCaveInShapePointsPatch = RestoreCaveInShapePointsPatch,
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,

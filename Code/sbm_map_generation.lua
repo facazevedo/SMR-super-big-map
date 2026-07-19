@@ -287,6 +287,8 @@ local AlignPassagePairsToSharedHex = TerrainCopy.AlignPassagePairsToSharedHex
 local PatchEntranceBadgePosition = TerrainCopy.PatchEntranceBadgePosition
 local RestoreEntranceBadgePositionPatch = TerrainCopy.RestoreEntranceBadgePositionPatch
 local RestoreEntranceBadgePositions = TerrainCopy.RestoreEntranceBadgePositions
+local PatchCaveInShapePoints = TerrainCopy.PatchCaveInShapePoints
+local RestoreCaveInShapePointsPatch = TerrainCopy.RestoreCaveInShapePointsPatch
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
@@ -294,7 +296,9 @@ local AuditFinalCaveInPositions = TerrainCopy.AuditFinalCaveInPositions
 local AuditCaveInSnapshot = TerrainCopy.AuditCaveInSnapshot
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 assert(type(ReinvalidateExpandedTerrain) == "function"
-	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function",
+	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function"
+	and type(PatchCaveInShapePoints) == "function"
+	and type(RestoreCaveInShapePointsPatch) == "function",
 	"sbm_map_generation: required TerrainCopy helpers missing (check sbm_terrain_copy exports)")
 
 local function StorePendingMap(map_name, pending)
@@ -4994,6 +4998,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				final_records = type(audit_result) == "table" and audit_result.final_records or nil,
 				xy_mismatches = type(audit_result) == "table" and audit_result.xy_mismatches or nil,
 				z_mismatches = type(audit_result) == "table" and audit_result.z_mismatches or nil,
+				scale_mismatches = type(audit_result) == "table" and audit_result.scale_mismatches or nil,
+				shape_mismatches = type(audit_result) == "table" and audit_result.shape_mismatches or nil,
+				grid_registration_mismatches = type(audit_result) == "table"
+					and audit_result.grid_registration_mismatches or nil,
 				moved_after_post = type(audit_result) == "table" and audit_result.moved_after_post or nil,
 			}, map)
 		end
@@ -5005,6 +5013,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				error = call_ok and "" or tostring(audit_ok),
 				records = type(audit_result) == "table" and audit_result.records or nil,
 				record_errors = type(audit_result) == "table" and audit_result.record_errors or nil,
+				cave_in_rubble = type(audit_result) == "table" and audit_result.cave_in_rubble or nil,
+				total_shape_hexes = type(audit_result) == "table"
+					and audit_result.total_shape_hexes or nil,
 			}, map)
 		end
 		LoadingEnd(underground_pipeline_token, {
@@ -5446,6 +5457,7 @@ MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
 MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
 MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
+MapGeneration.PatchCaveInShapePoints = PatchCaveInShapePoints
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
@@ -5467,6 +5479,7 @@ function MapGeneration.ApplyModBehavior()
 	PatchRandomMapGenerator()
 	if transform_source then
 		PatchEntranceBadgePosition()
+		PatchCaveInShapePoints()
 		PatchDeferredUndergroundAccess("ApplyModBehavior")
 	end
 	return true
@@ -5581,6 +5594,7 @@ function MapGeneration.RestoreVanillaBehavior()
 		underground_elevator_restore_tokens[key] = nil
 	end
 	RestoreEntranceBadgePositionPatch()
+	RestoreCaveInShapePointsPatch()
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -5602,6 +5616,7 @@ if module_config.ENABLE_MOD ~= false
 	PatchRandomMapGenerator()
 	if module_transform_source then
 		PatchEntranceBadgePosition()
+		PatchCaveInShapePoints()
 		PatchDeferredUndergroundAccess("module load")
 	end
 end

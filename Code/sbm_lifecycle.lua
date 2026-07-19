@@ -1127,6 +1127,9 @@ RegisterOnce("ClassesBuilt", function()
 		if type(gen.PatchEntranceBadgePosition) == "function" then
 			gen.PatchEntranceBadgePosition()
 		end
+		if type(gen.PatchCaveInShapePoints) == "function" then
+			gen.PatchCaveInShapePoints()
+		end
 	end
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.ApplyModBehavior) == "function" then
