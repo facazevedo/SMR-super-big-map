@@ -336,6 +336,118 @@ local LOADING_DEFAULT_STATUS = "Preparing the expanded map. Please wait."
 local current_phase_body = LOADING_DEFAULT_STATUS
 local loading_on_welcome = false
 
+local WELCOME_VOICE_PATCH_VERSION = 1
+
+local function IsWelcomeGameInfoContext(context)
+	if type(context) ~= "table" then return false end
+	if context.id == "WelcomeGameInfo" then return true end
+	-- Compatibility fallback for builds that do not copy the preset id into the per-popup context.
+	local presets = Global("PopupNotificationPresets")
+	local preset = type(presets) == "table" and presets.WelcomeGameInfo or nil
+	return type(preset) == "table"
+		and context.title == preset.title and context.voiced_text == preset.voiced_text
+end
+
+-- Vanilla starts a popup's narration from SetPopupNotificationText while the dialog is being
+-- constructed. The welcome popup is constructed during the long expansion and then immediately
+-- hidden behind our loading box, so its "Welcome to Mars!" line otherwise plays against the wrong
+-- display. Suppress only that one call while expansion is active and remember the exact localized
+-- voiced text for replay when the same popup becomes visible.
+local function PatchWelcomeVoiceTiming()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	local current = Global("SetPopupNotificationText")
+	if current == State.loading_ui_welcome_voice_wrapper
+		and State.loading_ui_welcome_voice_patch_version == WELCOME_VOICE_PATCH_VERSION then
+		return true
+	end
+	if current == State.loading_ui_welcome_voice_wrapper
+		and type(State.original_set_popup_notification_text) == "function" then
+		current = State.original_set_popup_notification_text
+		rawset(_G, "SetPopupNotificationText", current)
+	end
+	if type(current) ~= "function" then return false end
+	local original = current
+	local wrapper = function(dialog, context, ...)
+		local voiced_text = type(context) == "table" and context.voiced_text or nil
+		if loading_on_welcome and IsWelcomeGameInfoContext(context)
+			and voiced_text and voiced_text ~= "" then
+			-- Keep context.voiced_text intact so vanilla still includes the narrated sentence in
+			-- the popup's visible text. Intercept only the synchronous audio call made by the
+			-- original renderer, then restore the exact PlayVoicedText function immediately.
+			local play = Global("PlayVoicedText")
+			if type(play) ~= "function" then return original(dialog, context, ...) end
+			local suppressed = false
+			local suppress_welcome = function(text, ...)
+				if not suppressed and text == voiced_text then
+					suppressed = true
+					return
+				end
+				return play(text, ...)
+			end
+			rawset(_G, "PlayVoicedText", suppress_welcome)
+			local ok, result = pcall(original, dialog, context, ...)
+			if Global("PlayVoicedText") == suppress_welcome then
+				rawset(_G, "PlayVoicedText", play)
+			end
+			if not ok then error(result) end
+			if suppressed then
+				State.deferred_welcome_voice_pending = true
+				State.deferred_welcome_voice_text = voiced_text
+				State.deferred_welcome_voice_context = context
+			end
+			return result
+		end
+		return original(dialog, context, ...)
+	end
+	State.original_set_popup_notification_text = original
+	State.loading_ui_welcome_voice_wrapper = wrapper
+	State.loading_ui_welcome_voice_patch_version = WELCOME_VOICE_PATCH_VERSION
+	rawset(_G, "SetPopupNotificationText", wrapper)
+	return true
+end
+
+local function ClearDeferredWelcomeVoice()
+	local State = SuperBigMap.State or {}
+	State.deferred_welcome_voice_pending = nil
+	State.deferred_welcome_voice_text = nil
+	State.deferred_welcome_voice_context = nil
+end
+
+local function PlayDeferredWelcomeVoice(dialog)
+	local State = SuperBigMap.State or {}
+	if State.deferred_welcome_voice_pending ~= true then return false end
+	local context = dialog and dialog.context
+	if not IsWelcomeGameInfoContext(context)
+		or (State.deferred_welcome_voice_context
+			and context ~= State.deferred_welcome_voice_context) then return false end
+	local voiced_text = State.deferred_welcome_voice_text
+	local play = Global("PlayVoicedText")
+	if not voiced_text or voiced_text == "" or type(play) ~= "function" then return false end
+	-- Clear first so a context refresh caused by showing the dialog cannot schedule a duplicate.
+	ClearDeferredWelcomeVoice()
+	local ok = pcall(play, voiced_text)
+	if not ok then
+		State.deferred_welcome_voice_pending = true
+		State.deferred_welcome_voice_text = voiced_text
+		State.deferred_welcome_voice_context = context
+	end
+	return ok
+end
+
+local function RestoreWelcomeVoiceTimingPatch()
+	local State = SuperBigMap.State or {}
+	local wrapper = State.loading_ui_welcome_voice_wrapper
+	local original = State.original_set_popup_notification_text
+	if Global("SetPopupNotificationText") == wrapper and type(original) == "function" then
+		rawset(_G, "SetPopupNotificationText", original)
+	end
+	State.original_set_popup_notification_text = nil
+	State.loading_ui_welcome_voice_wrapper = nil
+	State.loading_ui_welcome_voice_patch_version = nil
+	ClearDeferredWelcomeVoice()
+end
+
 -- Our separate "Loading Super Big Map" message box (a standard message dialog), shown ON TOP of
 -- the HIDDEN welcome popup -- the same approach as ShowMessageOverWelcome, with a bright-gold
 -- "Please wait." footer button, auto-closed when the expansion finishes.
@@ -447,7 +559,8 @@ local function SetWelcomeLoading(active)
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
 		if dlg and type(dlg.SetVisibleInstant) == "function" then
-			pcall(function() dlg:SetVisibleInstant(true) end)
+			local shown = pcall(function() dlg:SetVisibleInstant(true) end)
+			if shown then PlayDeferredWelcomeVoice(dlg) end
 		end
 		return true
 	end
@@ -501,10 +614,13 @@ local loading_refs = 0
 
 function SuperBigMap.ExpansionLoadingBegin()
 	loading_refs = loading_refs + 1
+	-- Reclaim the hook if a Lua/classes reload replaced the global since lifecycle activation.
+	PatchWelcomeVoiceTiming()
 	if loading_on_welcome then
 		local ok, visible = pcall(SetWelcomeLoading, true)
 		return ok and visible == true
 	end
+	ClearDeferredWelcomeVoice()
 	loading_on_welcome = true
 	-- Create the dialog synchronously while the expansion thread is still at its final safe Lua
 	-- boundary. The caller yields one short frame immediately afterwards, which lets Windows paint
@@ -561,4 +677,14 @@ end
 
 -- The welcome-popup, restart-notice, and loading-box entry points are published on the SuperBigMap
 -- namespace above for runtime callers (sbm_map_generation, sbm_terrain_copy).
-SuperBigMap.LoadingUI = {}
+local LoadingUI = {}
+
+function LoadingUI.ApplyModBehavior()
+	return PatchWelcomeVoiceTiming()
+end
+
+function LoadingUI.RestoreVanillaBehavior()
+	RestoreWelcomeVoiceTimingPatch()
+end
+
+SuperBigMap.LoadingUI = LoadingUI

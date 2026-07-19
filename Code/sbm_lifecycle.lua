@@ -468,6 +468,7 @@ end
 -- Install order (dependencies first); restore is the exact reverse.
 local APPLY_ORDER = {
 	"PregameToggle",
+	"LoadingUI",
 	"MapGeneration",
 	"DepositRules",
 	"SectorGrid",
@@ -497,6 +498,7 @@ local RESTORE_ORDER = {
 	"SectorGrid",
 	"DepositRules",
 	"MapGeneration",
+	"LoadingUI",
 	"PregameToggle",
 }
 
