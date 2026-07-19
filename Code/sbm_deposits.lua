@@ -3208,6 +3208,8 @@ function DepositRules.TopUpDeposits(map)
 		return cached
 	end
 	local underground = validation_context.underground == true
+	local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	local sequential_underground = underground and optimize_placement_pool
 	local ignore_rubble_walls = underground
 		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
@@ -3235,8 +3237,9 @@ function DepositRules.TopUpDeposits(map)
 		-- most of the first-access load building a reserve that no selector could consume. Thirty-two
 		-- choices per missing marker matches the proven effect-top-up budget and leaves ample room for
 		-- terrain matching, vanilla repulsion, clone failures, and the well-spaced fallback.
-		candidate_pool_target = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-			and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL
+		candidate_pool_target = sequential_underground and 0
+			or (optimize_placement_pool
+				and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL)
 		local function append_valid_candidate(x, y, sector, terrain_type, q, r)
 			shared_candidates[#shared_candidates + 1] = {
 				x = x, y = y, terrain_type = terrain_type, sector = sector, sector_id = sector.id,
@@ -3268,15 +3271,17 @@ function DepositRules.TopUpDeposits(map)
 			append_valid_candidate(x, y, sector, tt, q, r)
 			return true
 		end
-		local function grow_candidate_pool(target, prefilter)
+		local function grow_candidate_pool(target, prefilter, maximum_samples)
 			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
-			while candidate_samples < MAX_SAMPLES and pool < target do
+			maximum_samples = math.min(MAX_SAMPLES,
+				math.max(candidate_samples, math.floor(maximum_samples or MAX_SAMPLES)))
+			while candidate_samples < maximum_samples and pool < target do
 				sample_valid_candidate(prefilter)
 			end
 			return pool
 		end
 		grow_candidate_pool(candidate_pool_target)
-		if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
+		if optimize_placement_pool then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
@@ -3534,45 +3539,59 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
-		if underground and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-			-- A bounded general reserve handles the common case. If strict placements remain, retain the
-			-- historical 24,000 random opportunities but prefilter impossible terrain/profile/repulsion
-			-- combinations before expensive native reachability validation. Relaxation still happens only
-			-- after that strict opportunity is exhausted, so the gameplay priority is unchanged.
-			place_strict_once("underground resources adaptive strict reserve")
+		if sequential_underground then
+			-- Validate positions only for the next missing marker. The old reserve-first path could spend
+			-- all 24,000 native connectivity checks trying to reach a pool target before placing anything.
+			-- A strict candidate is now consumed as soon as it satisfies the same terrain and vanilla
+			-- repulsion rules. After a bounded strict search for that marker, retain a small random choice
+			-- set for the existing any-terrain and maximin-spacing completion rules.
+			local STRICT_SAMPLES_PER_PLACEMENT = 128
+			local FALLBACK_CHOICES_PER_PLACEMENT = 8
 			while added < shortfall and pool < MAX_POOL and candidate_samples < MAX_SAMPLES do
-				local before = pool
-				grow_candidate_pool(math.min(MAX_POOL,
-					math.max(pool + 64, pool + (shortfall - added) * 16)),
-					strict_residual_prefilter())
-				if pool <= before then break end
-				place_strict_once("underground resources targeted strict residual")
-			end
-			place_relaxed_once("underground resources any-terrain residual")
-			while added < shortfall
-				and deferred_relaxation_cursor <= #deferred_relaxation_candidates
-				and pool < MAX_POOL do
-				local before = pool
-				promote_deferred_relaxation_candidates(math.min(MAX_POOL,
-					pool + math.max(64, (shortfall - added) * 16)))
-				if pool > before then
-					place_relaxed_once("underground resources targeted any-terrain residual")
+				local added_before = added
+				local strict_sample_limit = math.min(MAX_SAMPLES,
+					candidate_samples + STRICT_SAMPLES_PER_PLACEMENT)
+				local strict_prefilter = strict_residual_prefilter()
+				while added == added_before and pool < MAX_POOL
+					and candidate_samples < strict_sample_limit do
+					local pool_before = pool
+					grow_candidate_pool(pool + 1, strict_prefilter, strict_sample_limit)
+					if pool <= pool_before then break end
+					place_strict_once("underground resources sequential strict")
 				end
-				if pool <= before then break end
-			end
-			while added < shortfall
-				and deferred_unique_cursor <= #deferred_relaxation_candidates
-				and pool < MAX_POOL do
-				local before = pool
-				promote_deferred_unique_candidates(math.min(MAX_POOL,
-					pool + math.max(128, (shortfall - added) * 32)))
-				if pool > before then
+
+				if added == added_before
+					and deferred_relaxation_cursor <= #deferred_relaxation_candidates then
+					promote_deferred_relaxation_candidates(math.min(MAX_POOL,
+						pool + FALLBACK_CHOICES_PER_PLACEMENT))
+					place_relaxed_once("underground resources sequential any-terrain")
+				end
+
+				if added == added_before
+					and deferred_unique_cursor <= #deferred_relaxation_candidates then
+					promote_deferred_unique_candidates(math.min(MAX_POOL,
+						pool + FALLBACK_CHOICES_PER_PLACEMENT))
 					place_underground_fallback_once(
-						"underground resources targeted well-spaced residual")
+						"underground resources sequential well-spaced")
 				end
-				if pool <= before then break end
+
+				if added == added_before and candidate_samples < MAX_SAMPLES then
+					local fallback_sample_limit = math.min(MAX_SAMPLES,
+						candidate_samples + STRICT_SAMPLES_PER_PLACEMENT)
+					grow_candidate_pool(math.min(MAX_POOL,
+						pool + FALLBACK_CHOICES_PER_PLACEMENT), nil, fallback_sample_limit)
+					place_strict_once("underground resources sequential sampled strict retry")
+					if added == added_before then
+						place_relaxed_once("underground resources sequential sampled any-terrain")
+					end
+					if added == added_before then
+						place_underground_fallback_once(
+							"underground resources sequential sampled fallback")
+					end
+				end
+
+				if added == added_before and candidate_samples >= MAX_SAMPLES then break end
 			end
-			place_underground_fallback_once("underground resources well-spaced residual")
 		else
 			-- Surface behavior and the explicit optimization rollback retain the historical strict search
 			-- opportunity before any relaxation.
@@ -3640,6 +3659,7 @@ function DepositRules.TopUpDeposits(map)
 		candidate_samples = candidate_samples,
 		candidate_deferred = candidate_deferred_count,
 		candidate_deferred_promoted = candidate_deferred_promoted,
+		sequential_placement = sequential_underground,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3654,6 +3674,7 @@ function DepositRules.TopUpDeposits(map)
 				.. " deferred=" .. tostring(candidate_deferred_count)
 				.. " promoted=" .. tostring(candidate_deferred_promoted)
 				.. " added=" .. tostring(added)
+				.. " sequential=" .. tostring(sequential_underground)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
@@ -3872,9 +3893,12 @@ function DepositRules.TopUpAnomalies(map)
 	local density_fallback_added = 0
 	local fallback_selector_stats
 	local reused_pool = false
+	local candidate_pool_size, candidate_samples_total = 0, 0
 	local edge_ctx
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
+	local sequential_underground = underground
+		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
 	local low_area_percent = math.max(1, math.min(100,
 		math.floor(cfg().TOPUP_ANOMALY_LOW_AREA_PERCENT or 35)))
@@ -4006,8 +4030,9 @@ function DepositRules.TopUpAnomalies(map)
 			reused_pool = #candidates > 0
 		end
 		local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
-		local initial_candidate_target = optimize_placement_pool
-			and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL
+		local initial_candidate_target = sequential_underground and #candidates
+			or (optimize_placement_pool
+				and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL)
 		local candidate_samples = 0
 		local function random_between(first, past_last)
 			first, past_last = math.floor(first), math.floor(past_last)
@@ -4103,9 +4128,8 @@ function DepositRules.TopUpAnomalies(map)
 			end
 			return #candidates
 		end
-		-- A nonempty resource handoff is not automatically sufficient. Keep enough candidates per
-		-- missing anomaly for the same strict repulsion selector; top up only the deficit so the
-		-- common underground path still reuses almost all expensive reachability validation.
+		-- Surface and rollback behavior retain their reserve. The optimized underground path starts
+		-- with only the resource handoff and grows on demand in the placement loop below.
 		grow_candidate_pool(initial_candidate_target, MAX_SAMPLES)
 		-- Surface extras keep the dedicated outer-ring sector/side/layer scheduler. Underground
 		-- extras use the shared capacity-normalized selector across reachable cave-floor sectors.
@@ -4117,6 +4141,10 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		local whole_map_selector = new_whole_map_selector()
 		local relaxed_whole_map_selector
+		local function rebuild_whole_map_selectors()
+			whole_map_selector = new_whole_map_selector()
+			relaxed_whole_map_selector = nil
+		end
 		-- Stage one chooses sectors, not points. A randomized four-placement cycle covers every
 		-- physical side, while shuffled along-side bins and depth layers keep the whole three-sector
 		-- ring eligible. Terrain quality is deliberately ignored until after a sector has won.
@@ -4365,13 +4393,20 @@ function DepositRules.TopUpAnomalies(map)
 			else
 				c = whole_map_selector.Take(nil, anomaly_profile)
 				selected_whole_map_selector = c and whole_map_selector or nil
+				if not c and sequential_underground then
+					-- As on the surface outer ring, search only for the anomaly currently being
+					-- placed. Stop validating as soon as one strict candidate succeeds.
+					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
+					while not c and candidate_samples < strict_sample_limit do
+						local before = #candidates
+						grow_candidate_pool(before + 1, strict_sample_limit)
+						if #candidates <= before then break end
+						rebuild_whole_map_selectors()
+						c = whole_map_selector.Take(nil, anomaly_profile)
+						selected_whole_map_selector = c and whole_map_selector or nil
+					end
+				end
 				if not c and underground then
-					-- Resource placement already spent the complete strict-search budget and handed its
-					-- unused, fully validated candidates to this pass. Repeating up to 24,000 native
-					-- terrain/connectivity checks here cannot restore a strict position rejected by that
-					-- search; it only delays the established unique-hex, well-spaced completion pass.
-					-- Preserve the same strict-first ordering and density fallback, but consume the shared
-					-- validation result once.
 					relaxed_whole_map_selector = relaxed_whole_map_selector
 						or NewWellSpacedUndergroundFallbackSelector(
 							map, candidates, "underground anomaly residual",
@@ -4379,6 +4414,27 @@ function DepositRules.TopUpAnomalies(map)
 					c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
 					selected_whole_map_selector = c and relaxed_whole_map_selector or nil
 					density_fallback = c ~= nil
+					if not c and sequential_underground then
+						-- If the shared resource handoff contains no unique position, obtain a small
+						-- on-demand fallback choice set instead of precomputing a 512-point reserve.
+						local fallback_sample_limit = MAX_SAMPLES
+						while not c and candidate_samples < fallback_sample_limit do
+							local before = #candidates
+							grow_candidate_pool(before + 1, fallback_sample_limit)
+							if #candidates <= before then break end
+							rebuild_whole_map_selectors()
+							c = whole_map_selector.Take(nil, anomaly_profile)
+							selected_whole_map_selector = c and whole_map_selector or nil
+							if not c then
+								relaxed_whole_map_selector = NewWellSpacedUndergroundFallbackSelector(
+									map, candidates, "underground anomaly sequential residual",
+									function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+								c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
+								selected_whole_map_selector = c and relaxed_whole_map_selector or nil
+								density_fallback = c ~= nil
+							end
+						end
+					end
 				end
 				if not c then break end
 			end
@@ -4422,7 +4478,11 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
 					clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
 						and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
-					if density_fallback then density_fallback_added = density_fallback_added + 1 end
+					if density_fallback then
+						density_fallback_added = density_fallback_added + 1
+						fallback_selector_stats = selected_whole_map_selector
+							and selected_whole_map_selector.Stats() or fallback_selector_stats
+					end
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
 						if type(pt.SetTerrainZ) == "function" then
@@ -4460,8 +4520,10 @@ function DepositRules.TopUpAnomalies(map)
 			if not ok then error(stats and stats.error or "unknown redistribution failure") end
 		end
 		if relaxed_whole_map_selector then
-			fallback_selector_stats = relaxed_whole_map_selector.Stats()
+			local stats = relaxed_whole_map_selector.Stats()
+			if (stats.selected or 0) > 0 then fallback_selector_stats = stats end
 		end
+		candidate_pool_size, candidate_samples_total = #candidates, candidate_samples
 	end)
 	if not topup_ok then
 		error("anomaly top-up transaction failed: " .. tostring(topup_error))
@@ -4485,7 +4547,11 @@ function DepositRules.TopUpAnomalies(map)
 			.. " final=" .. CountMapString(final_by_kind)
 			.. " added=" .. CountMapString(added_by_kind)
 			.. " added_total=" .. tostring(added)
-			.. " remaining=" .. tostring(remaining_shortfall))
+			.. " remaining=" .. tostring(remaining_shortfall)
+			.. " candidates=" .. tostring(candidate_pool_size)
+			.. " sampled=" .. tostring(candidate_samples_total)
+			.. " reused=" .. tostring(reused_pool)
+			.. " sequential=" .. tostring(sequential_underground))
 	end
 	SetEnrichmentTopUpStatus(map, "anomalies", remaining_shortfall == 0, remaining_shortfall, {
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
@@ -4506,6 +4572,9 @@ function DepositRules.TopUpAnomalies(map)
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
 		inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
 		outer_ring_sector_count = redistribution_stats and redistribution_stats.ring_sectors or 0,
+		candidate_pool_size = candidate_pool_size,
+		candidate_samples = candidate_samples_total,
+		sequential_placement = sequential_underground,
 	})
 end
 
@@ -5301,8 +5370,11 @@ function DepositRules.TopUpEffectDeposits(map)
 	local density_fallback_added = 0
 	local fallback_selector_stats
 	local reused_pool = false
+	local candidate_pool_size, candidate_samples_total = 0, 0
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
+	local sequential_underground = underground
+		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 	local wall_free_density_suite = underground
 		and rubble_wall_suite_token_by_map[map] ~= nil
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
@@ -5311,11 +5383,13 @@ function DepositRules.TopUpEffectDeposits(map)
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates = {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
-		local target_pool = math.min(MAX_POOL, math.max(512, total_shortfall * 32))
+		local target_pool = sequential_underground and 0
+			or math.min(MAX_POOL, math.max(512, total_shortfall * 32))
+		local candidate_samples = 0
 		local cached = CachedTopUpCandidates(map)
 		if cached then
 			for _, c in ipairs(cached) do
-				if #candidates >= target_pool then break end
+				if not sequential_underground and #candidates >= target_pool then break end
 				if not c.used then
 					local pt = point(c.x, c.y)
 					local reserved_ring = not underground and IsInFinalOuterSectorRing(
@@ -5331,11 +5405,10 @@ function DepositRules.TopUpEffectDeposits(map)
 			end
 			reused_pool = #candidates > 0
 		end
-		-- Reuse the resource pool when it contains enough safe choices. If buildability or
-		-- obstruction filtering removed too many, top it up with fresh random samples.
-		local need_fresh = #candidates < target_pool
-		for _ = 1, need_fresh and MAX_SAMPLES or 0 do
-			if #candidates >= target_pool then break end
+		-- Surface and rollback behavior fill the historical reserve. The optimized underground path
+		-- reuses every safe handoff candidate, then samples only when the next effect needs a position.
+		local function sample_fresh_candidate()
+			candidate_samples = candidate_samples + 1
 			local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
 			local sector = SectorAtPoint(map, x, y)
 			local reserved_ring = not underground and IsInFinalOuterSectorRing(
@@ -5355,10 +5428,23 @@ function DepositRules.TopUpEffectDeposits(map)
 					}
 				end
 			end
+			return #candidates
 		end
-		local selector = NewSectorBalancedCandidateSelector(map, candidates, "effects",
-			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+		local need_fresh = not sequential_underground and #candidates < target_pool
+		for _ = 1, need_fresh and MAX_SAMPLES or 0 do
+			if #candidates >= target_pool then break end
+			sample_fresh_candidate()
+		end
+		local function new_strict_selector()
+			return NewSectorBalancedCandidateSelector(map, candidates, "effects",
+				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+		end
+		local selector = new_strict_selector()
 		local relaxed_selector
+		local function rebuild_effect_selectors()
+			selector = new_strict_selector()
+			relaxed_selector = nil
+		end
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
 			local shortfall = math.max(0,
@@ -5369,6 +5455,18 @@ function DepositRules.TopUpEffectDeposits(map)
 				local c = selector.Take(nil, effect_profile)
 				local active_selector = c and selector or nil
 				local density_fallback = false
+				if not c and sequential_underground then
+					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
+					while not c and candidate_samples < strict_sample_limit do
+						local before = #candidates
+						sample_fresh_candidate()
+						if #candidates > before then
+							rebuild_effect_selectors()
+							c = selector.Take(nil, effect_profile)
+							active_selector = c and selector or nil
+						end
+					end
+				end
 				if not c and underground then
 					relaxed_selector = relaxed_selector or NewWellSpacedUndergroundFallbackSelector(
 						map, candidates, "underground effect residual",
@@ -5376,6 +5474,26 @@ function DepositRules.TopUpEffectDeposits(map)
 					c = relaxed_selector.Take(nil, effect_profile)
 					active_selector = c and relaxed_selector or nil
 					density_fallback = c ~= nil
+					if not c and sequential_underground then
+						local fallback_sample_limit = MAX_SAMPLES
+						while not c and candidate_samples < fallback_sample_limit do
+							local before = #candidates
+							sample_fresh_candidate()
+							if #candidates > before then
+								rebuild_effect_selectors()
+								c = selector.Take(nil, effect_profile)
+								active_selector = c and selector or nil
+								if not c then
+									relaxed_selector = NewWellSpacedUndergroundFallbackSelector(
+										map, candidates, "underground effect sequential residual",
+										function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+									c = relaxed_selector.Take(nil, effect_profile)
+									active_selector = c and relaxed_selector or nil
+									density_fallback = c ~= nil
+								end
+							end
+						end
+					end
 				end
 				if not c then break end
 				local template = templates[RandInt(#templates) + 1]
@@ -5393,7 +5511,11 @@ function DepositRules.TopUpEffectDeposits(map)
 						clone.SuperBigMapUndergroundWellSpacedFallback = density_fallback or nil
 						clone.SuperBigMapUndergroundFallbackSpacingWorld = density_fallback
 							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
-						if density_fallback then density_fallback_added = density_fallback_added + 1 end
+						if density_fallback then
+							density_fallback_added = density_fallback_added + 1
+							fallback_selector_stats = active_selector
+								and active_selector.Stats() or fallback_selector_stats
+						end
 						added_by_type[deposit_type] = (added_by_type[deposit_type] or 0) + 1
 						if type(clone.SetPos) == "function" then
 							local pt = point(c.x, c.y)
@@ -5417,7 +5539,11 @@ function DepositRules.TopUpEffectDeposits(map)
 				end
 			end
 		end
-		if relaxed_selector then fallback_selector_stats = relaxed_selector.Stats() end
+		if relaxed_selector then
+			local stats = relaxed_selector.Stats()
+			if (stats.selected or 0) > 0 then fallback_selector_stats = stats end
+		end
+		candidate_pool_size, candidate_samples_total = #candidates, candidate_samples
 	end)
 	local final_by_type, remaining_shortfall = {}, 0
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
@@ -5445,7 +5571,21 @@ function DepositRules.TopUpEffectDeposits(map)
 			and fallback_selector_stats.max_additions_to_one_sector or 0,
 		underground_fallback_min_spacing_world = fallback_selector_stats
 			and fallback_selector_stats.minimum_selected_spacing_world or 0,
+		candidate_pool_size = candidate_pool_size,
+		candidate_samples = candidate_samples_total,
+		sequential_placement = sequential_underground,
 	})
+	if cfg().DEBUG_LOADING_TIMINGS == true then
+		local print_fn = Global("print")
+		if type(print_fn) == "function" then
+			print_fn("[Super Big Map][TopUpCandidatePool] kind=effects"
+				.. " valid=" .. tostring(candidate_pool_size)
+				.. " sampled=" .. tostring(candidate_samples_total)
+				.. " reused=" .. tostring(reused_pool)
+				.. " sequential=" .. tostring(sequential_underground)
+				.. " remaining=" .. tostring(remaining_shortfall))
+		end
+	end
 end
 
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
