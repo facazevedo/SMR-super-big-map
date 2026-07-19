@@ -5610,12 +5610,16 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	local create_thread = Global("CreateRealTimeThread")
 	local wait_msg = Global("WaitMsg")
 	local msg = Global("Msg")
+	local return_map = Global("CurrentMap")
 	if type(gate) ~= "function" or type(create_thread) ~= "function"
 		or type(wait_msg) ~= "function" or type(msg) ~= "function" then
 		return false, "required first-access engine functions are unavailable"
 	end
 	if not target or target.slot == nil then
 		return false, "the linked underground map slot is unavailable"
+	end
+	if not return_map or return_map.slot == nil then
+		return false, "the current map cannot be restored after underground preparation"
 	end
 
 	State.deferred_elevator_access_sequence =
@@ -5626,20 +5630,47 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	ElevatorTraversalAudit("FIRST_ACCESS_BEGIN", {
 		request = request_id, unit = tostring(unit), elevator = tostring(elevator),
 		target = tostring(target), target_slot = tostring(target.slot),
+		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
 	}, TraversalObjectMap(unit))
 
 	create_thread(function()
-		local call_ok, call_result = pcall(gate, target.slot, true, "idChangeCurrentMapSlot")
+		-- Own one outer reference across the complete hidden round trip. The preparation pipeline
+		-- acquires/releases a nested reference of its own; retaining this one prevents either the
+		-- underground view or the intermediate engine loading art from becoming visible before the
+		-- original surface view has been restored.
+		local begin_loading = SuperBigMap.ExpansionLoadingBegin
+		local end_loading = SuperBigMap.ExpansionLoadingEnd
+		local loading_started = false
+		if type(begin_loading) == "function" then
+			loading_started = pcall(begin_loading, "underground")
+			local sleep = Global("Sleep")
+			if type(sleep) == "function" then sleep(100) end
+		end
+		-- Our persistent custom dialog already covers both internal switches, so suppress the
+		-- vanilla map-switch artwork that would otherwise replace it for a frame.
+		local call_ok, call_result = pcall(gate, target.slot, false, "idChangeCurrentMapSlot")
 		request.call_ok = call_ok
 		request.call_result = call_result
-		request.ok = call_ok and call_result ~= false
+		local target_ready = call_ok and call_result ~= false
 			and target.SuperBigMapUndergroundPrepared == true
 			and target.SuperBigMapUndergroundStretchDone == true
 			and Global("CurrentMap") == target
-		request.reason = request.ok and "prepared and opened"
+		local return_ok, return_result = false, nil
+		if target_ready then
+			return_ok, return_result = pcall(
+				gate, return_map.slot, false, "idChangeCurrentMapSlot")
+			return_ok = return_ok and return_result ~= false and Global("CurrentMap") == return_map
+		end
+		request.return_result = return_result
+		request.ok = target_ready and return_ok
+		request.reason = request.ok and "prepared underground and restored original view"
 			or (not call_ok and tostring(call_result))
 			or target.SuperBigMapUndergroundStretchFailed
+			or (target_ready and "the original map view could not be restored")
 			or "the underground first-access gate did not complete"
+		if loading_started and type(end_loading) == "function" then
+			pcall(end_loading)
+		end
 		request.done = true
 		pcall(msg, completion_message, request)
 	end)
@@ -5656,6 +5687,8 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		ok = tostring(request.ok == true), done = tostring(request.done == true),
 		current_map = tostring(Global("CurrentMap")),
 		prepared = tostring(target.SuperBigMapUndergroundPrepared == true),
+		view_restored = tostring(Global("CurrentMap") == return_map),
+		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
 		reason = tostring(request.reason),
 	}, TraversalObjectMap(unit))
 	return request.ok == true, request.reason
