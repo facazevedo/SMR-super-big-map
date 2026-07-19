@@ -609,7 +609,7 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	return true
 end
 
-local function StretchSourceToFull(map)
+local function StretchSourceToFull(map, caller_guarantees_final_rebuild)
 	if not map then return false, 0 end
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
@@ -843,16 +843,25 @@ local function StretchSourceToFull(map)
 		end
 	end
 	local mapdata = map and map.mapdata
+	-- RebuildGrids only records another full-map edit while pass edits are suspended. On the
+	-- surface, the caller already owns one transaction spanning terrain replacement, enrichment
+	-- recreation, and marker movement; its ResumePassEdits plus the explicit final buildable-grid
+	-- rebuild are the authoritative synchronization point. Avoid queueing the provisional
+	-- all-grid request in that transaction, just as the underground path already does before its
+	-- final RebuildPassability/RebuildBuildableGrid pair.
+	local caller_defer = caller_guarantees_final_rebuild == true
 	local defer_intermediate_rebuild = cfg_bool("OPTIMIZE_STRETCH_DEFERRED_REBUILDS", true)
 		and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
-		and type(mapdata) == "table" and mapdata.Environment == "Underground"
-		and map.SuperBigMapUndergroundStretchPending == true
-		and map.SuperBigMapStretchPipelinePending == true
+		and (caller_defer
+			or (type(mapdata) == "table" and mapdata.Environment == "Underground"
+				and map.SuperBigMapUndergroundStretchPending == true
+				and map.SuperBigMapStretchPipelinePending == true))
 	local invalidate_token = LoadingBegin("invalidate expanded terrain", map)
 	local invalidate_ok = ReinvalidateExpandedTerrain(map, defer_intermediate_rebuild)
 	map.SuperBigMapDeferredIntermediateTerrainRebuild = defer_intermediate_rebuild or nil
 	LoadingEnd(invalidate_token, {
 		deferred_gameplay_rebuild = tostring(defer_intermediate_rebuild == true),
+		caller_guaranteed_final_rebuild = tostring(caller_defer),
 	}, invalidate_ok == true)
 	if invalidate_ok ~= true then
 		error("expanded terrain revalidation failed")

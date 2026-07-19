@@ -5530,7 +5530,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
 						map.SuperBigMapSurfaceBuildableCurrent = false
-						ok_stretch, n_grids = StretchSourceToFull(map)
+						-- ResumeCombinedPassEdits below is the final surface passability flush and the
+						-- following RebuildBuildableGrid is authoritative. Tell the terrain copier not
+						-- to enqueue an additional provisional full RebuildGrids request inside this
+						-- same transaction.
+						ok_stretch, n_grids = StretchSourceToFull(map, pass_batch_active)
 					else
 						ok_stretch, n_grids = true, 0
 					end
@@ -5603,6 +5607,16 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				}, pass_resume_ok == true)
 				if not pass_resume_ok then
 					error("surface combined ResumePassEdits failed: " .. tostring(pass_resume_err))
+				end
+				if map.SuperBigMapDeferredIntermediateTerrainRebuild == true then
+					-- The queued height/type invalidations were consumed by ResumePassEdits. Mark
+					-- that final synchronization complete; the buildable grid is finalized below.
+					map.SuperBigMapDeferredIntermediateTerrainRebuild = nil
+					map.SuperBigMapRevalidationRebuiltGrids = true
+					LoadingStep("surface deferred terrain rebuild finalized", {
+						passability_via = "ResumePassEdits",
+						buildability_via = "explicit final RebuildBuildableGrid",
+					}, map)
 				end
 				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
