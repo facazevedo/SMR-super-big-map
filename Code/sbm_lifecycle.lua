@@ -101,13 +101,14 @@ local function IsModMap(map)
 end
 
 -- TEMP test aid. hr.EnableDarknessReveal is process-global, so preserve the live value before
--- revealing an expanded underground map and restore it on every surface/menu transition.
+-- revealing any underground gameplay map and restore it on every surface/menu transition. This
+-- aid intentionally remains available when expansion is disabled for a vanilla-mode test run.
 local function ApplyUndergroundDarknessState(map)
 	local hr = Global("hr")
 	if type(hr) ~= "table" then return false end
 	local State = SuperBigMap.State
 	local environment = map and map.mapdata and map.mapdata.Environment
-	local should_reveal = IsModMap(map) and environment == "Underground"
+	local should_reveal = environment == "Underground"
 		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
 	if should_reveal then
 		if State.original_enable_darkness_reveal_captured ~= true then

@@ -374,9 +374,9 @@ config.StretchUnderground = true
 -- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
 -- recorded at startup, so deferral does not change which wonder belongs to each marker.
 config.DeferUndergroundExpansionUntilFirstAccess = true
--- TEMP test aid: remove the underground darkness blanket while an expanded underground map is
--- current, and restore the previous engine value on every surface/menu transition.
-config.UndergroundRevealAllDarkness = false
+-- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
+-- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
+config.UndergroundRevealAllDarkness = true
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
