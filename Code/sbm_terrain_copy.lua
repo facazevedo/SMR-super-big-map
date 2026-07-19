@@ -609,7 +609,11 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	return true
 end
 
-local function StretchSourceToFull(map)
+-- source_map is optional. When supplied, height/type are read directly from that native-sized
+-- map and written at full size to map, avoiding the old source -> destination-corner -> full-size
+-- round trip. terrain_only is used by temporary-source migration; the normal surface tail still
+-- owns MapGrid resampling and the authoritative gameplay-grid invalidation.
+local function StretchSourceToFull(map, source_map, terrain_only)
 	if not map then return false, 0 end
 	local terrain_api = Global("terrain")
 	local GridToCompute = Global("GridToCompute")
@@ -657,6 +661,8 @@ local function StretchSourceToFull(map)
 	-- GridToCompute so only the 6144^2 source cells are converted instead of all 8192^2 cells.
 	-- The original full-grid conversion remains the compatibility fallback. The 'raw' grid from
 	-- get_fn is left for the engine.
+	local direct_source = source_map and source_map ~= map
+	local terrain_source = direct_source and source_map or map
 	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
 		local grid_token = LoadingBegin("terrain grid stretch: " .. tostring(label), map, {
 			interpolate = tostring(interpolate == true),
@@ -666,7 +672,7 @@ local function StretchSourceToFull(map)
 			LoadingEnd(grid_token, { error = "terrain getter/setter unavailable" }, false)
 			return false
 		end
-		local ok_g, raw = pcall(get_fn, map)
+		local ok_g, raw = pcall(get_fn, terrain_source)
 		if not ok_g or not raw then
 			LoadingEnd(grid_token, { error = "terrain getter failed" }, false)
 			return false
@@ -681,11 +687,31 @@ local function StretchSourceToFull(map)
 				fw, fh = full_c:size()
 				extraction_path = "full_grid_compute_fallback"
 			end
+			local source_fw, source_fh = fw, fh
+			if direct_source then
+				local destination_raw = get_fn(map)
+				if not destination_raw or type(destination_raw.size) ~= "function" then
+					error("direct destination terrain grid unavailable")
+				end
+				local ok_destination_size, destination_fw, destination_fh =
+					pcall(destination_raw.size, destination_raw)
+				if not ok_destination_size or type(destination_fw) ~= "number"
+					or type(destination_fh) ~= "number" then
+					error("direct destination terrain grid size unavailable")
+				end
+				fw, fh = destination_fw, destination_fh
+			end
 			measured_fw, measured_fh = fw, fh
-			local scw = math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
-			local sch = math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
+			local scw = direct_source and source_fw
+				or math.max(1, math.min(fw, math.floor(fw * frac_w + 0.5)))
+			local sch = direct_source and source_fh
+				or math.max(1, math.min(fh, math.floor(fh * frac_h + 0.5)))
 			local src_sub, native_sub
-			if not full_c and type(raw.new_instance) == "function" then
+			if direct_source then
+				src_sub = full_c or GridToCompute(raw)
+				if not src_sub then error("direct source GridToCompute failed") end
+				extraction_path = "direct_source_compute"
+			elseif not full_c and type(raw.new_instance) == "function" then
 				local ok_corner = pcall(function()
 					native_sub = raw:new_instance(scw, sch)
 					if not native_sub or type(native_sub.copyrect) ~= "function" then
@@ -790,7 +816,7 @@ local function StretchSourceToFull(map)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
 			free_grid(src_sub)
 			if stretched ~= src_sub then free_grid(stretched) end
-			if full_c ~= raw then free_grid(full_c) end
+			if full_c ~= raw and full_c ~= src_sub then free_grid(full_c) end
 			return ok_set == true
 		end)
 		local success = ok_all and res == true
@@ -803,7 +829,14 @@ local function StretchSourceToFull(map)
 	end
 
 	local done = 0
-	if stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid,
+	local terrain_already_stretched = not direct_source
+		and map.SuperBigMapDirectSourceTerrainStretched == true
+	if terrain_already_stretched then
+		done = 2
+		LoadingStep("terrain grids already stretched directly from temporary source", {
+			height = true, terrain_type = true,
+		}, map)
+	elseif stretch_one("height", terrain_api.GetHeightGrid, terrain_api.SetHeightGrid,
 		terrain_api.InvalidateHeight, true, true) then
 		done = done + 1
 		-- Height VALUES just transformed (h*zmul/zdiv + zadd, stamped by stretch_one) -> the
@@ -814,8 +847,18 @@ local function StretchSourceToFull(map)
 			map.SuperBigMapZScaleDiv or sw_tiles,
 			map.SuperBigMapZScaleAdd or 0)
 	end
-	if stretch_one("type", terrain_api.GetTypeGrid, terrain_api.SetTypeGrid,
-		terrain_api.InvalidateType, false) then done = done + 1 end
+	if not terrain_already_stretched and stretch_one("type", terrain_api.GetTypeGrid,
+		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then
+		done = done + 1
+	end
+	if terrain_only == true then
+		LoadingStep("direct source terrain grid suite complete", {
+			completed_grids = done,
+			source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
+			destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
+		}, map)
+		return done > 0, done
+	end
 	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
 	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
 	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
@@ -1963,6 +2006,28 @@ local function ClearDecorRelief(map)
 		decor_position_audit_by_map[map] = nil
 		cave_in_position_audit_by_map[map] = nil
 	end
+end
+
+-- The temporary vanilla source owns the objects while their pre-stretch relief is sampled. Move
+-- the weak annotation tables to the expanded destination before transferring those same object
+-- instances, so the later decoration pass consumes exactly the snapshot it would have captured
+-- from a copied source corner.
+local function TransferDecorReliefAnnotations(source_map, destination_map)
+	if not source_map or not destination_map then return false end
+	decor_relief_by_map[destination_map] = decor_relief_by_map[source_map]
+	decor_objects_by_map[destination_map] = decor_objects_by_map[source_map]
+	decor_eligible_objects_by_map[destination_map] = decor_eligible_objects_by_map[source_map]
+	decor_relief_stats_by_map[destination_map] = decor_relief_stats_by_map[source_map]
+	decor_position_audit_by_map[destination_map] = decor_position_audit_by_map[source_map]
+	cave_in_position_audit_by_map[destination_map] = cave_in_position_audit_by_map[source_map]
+	decor_relief_by_map[source_map] = nil
+	decor_objects_by_map[source_map] = nil
+	decor_eligible_objects_by_map[source_map] = nil
+	decor_relief_stats_by_map[source_map] = nil
+	decor_position_audit_by_map[source_map] = nil
+	cave_in_position_audit_by_map[source_map] = nil
+	destination_map.SuperBigMapDecorReliefCapturedFromTemporarySource = true
+	return true
 end
 
 local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
@@ -4482,6 +4547,7 @@ local TerrainCopy = {
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
+	TransferDecorReliefAnnotations = TransferDecorReliefAnnotations,
 	AuditFinalCaveInPositions = AuditFinalCaveInPositions,
 	AuditCaveInSnapshot = AuditCaveInSnapshot,
 	ClearDecorRelief = ClearDecorRelief,

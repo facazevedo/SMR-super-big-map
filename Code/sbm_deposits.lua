@@ -628,10 +628,14 @@ local function BuildEnrichmentSectorLoads(map)
 	return loads
 end
 
-local function NewSectorBalancedCandidateSelector(map, candidates, label, candidate_filter)
+local function NewSectorBalancedCandidateSelector(map, candidates, label, candidate_filter,
+	shared_loads)
 	candidates = candidates or {}
 	local balanced = cfg().TOPUP_SECTOR_BALANCED_PLACEMENT ~= false
-	local loads = BuildEnrichmentSectorLoads(map)
+	-- Surface sequential placement used to enumerate every DepositMarker again whenever one new
+	-- candidate was consumed. A caller-owned load table is equivalent: Commit applies the only
+	-- mutation made by this transaction, while native markers are immutable throughout the pass.
+	local loads = shared_loads or BuildEnrichmentSectorLoads(map)
 	local capacity, capacity_by_terrain = {}, {}
 	-- Terrain-specific selection used to rescan the complete pool even though non-matching
 	-- candidates are skipped before every dynamic predicate. Preserve that exact subsequence in an
@@ -3206,6 +3210,7 @@ function DepositRules.TopUpDeposits(map)
 	end
 	local candidate_pool_target, candidate_pool_size, candidate_samples = 0, 0, 0
 	local candidate_deferred_count, candidate_deferred_promoted = 0, 0
+	local candidate_planned_sector_fast_path = 0
 
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
@@ -3379,20 +3384,34 @@ function DepositRules.TopUpDeposits(map)
 			end
 			-- Spread across the whole unscanned expanded destination, excluding only the scanned
 			-- start sector. The final surface perimeter remains reserved for anomaly extras.
-			local sector = SectorAtPoint(map, x, y)
-			if planned_sector and sector ~= planned_sector then return false end
-			local reserved_ring = not underground and IsInFinalOuterSectorRing(
-				map, x, y, ring_sectors, sector, ring_context)
-			if not (sector and (underground or not SectorIsScanned(sector)) and not reserved_ring) then
+			-- Filtered descriptors are canonical half-open sector rectangles captured from the final
+			-- 20x20 grid. Their sector is already known, unscanned, and outside the reserved ring;
+			-- repeating GetMapSectorXY plus the ring lookup for every rejected random point cannot
+			-- change the answer. The whole-map/underground path retains both authoritative queries.
+			local sector = planned_sector or SectorAtPoint(map, x, y)
+			if planned_sector then
+				candidate_planned_sector_fast_path = candidate_planned_sector_fast_path + 1
+			end
+			local reserved_ring = false
+			if not planned_sector and not underground then
+				reserved_ring = IsInFinalOuterSectorRing(
+					map, x, y, ring_sectors, sector, ring_context)
+			end
+			if not (sector and (planned_sector or underground or not SectorIsScanned(sector))
+				and not reserved_ring) then
 				return false
 			end
 			local pt = point(x, y)
-			if type(prefilter) == "function" and prefilter(x, y, pt, sector) ~= true then
-				return false
+			local prefiltered_terrain_type
+			if type(prefilter) == "function" then
+				local accepted, terrain_type = prefilter(x, y, pt, sector)
+				if accepted ~= true then return false end
+				prefiltered_terrain_type = terrain_type
 			end
 			local can_receive, _, _, _, q, r = CanReceiveDeposit(map, pt, validation_context)
 			if not can_receive then return false end
-			local tt = TerrainTypeAt(map, pt, validation_context) or -1
+			local tt = prefiltered_terrain_type
+			if tt == nil then tt = TerrainTypeAt(map, pt, validation_context) or -1 end
 			append_valid_candidate(x, y, sector, tt, q, r)
 			return true
 		end
@@ -3410,6 +3429,10 @@ function DepositRules.TopUpDeposits(map)
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
+		local surface_selector_loads = not underground
+			and cfg().OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE == true
+			and BuildEnrichmentSectorLoads(map) or nil
+		local surface_selector_load_cache_reuses = 0
 		local active_selector
 		local function take(tt, profile)
 			return active_selector.Take(tt, profile)
@@ -3527,16 +3550,24 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 		local function place_strict_once(label)
+			if surface_selector_loads then
+				surface_selector_load_cache_reuses = surface_selector_load_cache_reuses + 1
+			end
 			local strict_selector = NewSectorBalancedCandidateSelector(
 				map, shared_candidates, label or "resources strict reserve",
-				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end,
+				surface_selector_loads)
 			place_from(strict_selector, false, false)
 		end
 		local function place_relaxed_once(label)
 			if added >= shortfall then return end
+			if surface_selector_loads then
+				surface_selector_load_cache_reuses = surface_selector_load_cache_reuses + 1
+			end
 			local relaxed_selector = NewSectorBalancedCandidateSelector(
 				map, shared_candidates, label or "resources any-terrain residual",
-				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end,
+				surface_selector_loads)
 			place_from(relaxed_selector, false, true)
 		end
 		local function place_underground_fallback_once(label)
@@ -3580,7 +3611,7 @@ function DepositRules.TopUpDeposits(map)
 				for _, option in ipairs(options) do
 					if option.terrain_type == terrain_type
 						and repulsion.CanPlace(probe, option.profile) then
-						return true
+						return true, terrain_type
 					end
 				end
 				-- This coordinate cannot be a strict placement now (and repulsion only tightens), but it
@@ -3732,6 +3763,8 @@ function DepositRules.TopUpDeposits(map)
 			place_underground_fallback_once("underground resource residual")
 		end
 		candidate_pool_size = pool
+		map.SuperBigMapSurfaceResourceSelectorLoadCacheReuses =
+			surface_selector_load_cache_reuses
 	end)
 	local restore_ok, restore_err = true, nil
 	if rubble_token and owns_rubble_token then
@@ -3789,6 +3822,9 @@ function DepositRules.TopUpDeposits(map)
 		surface_buildable_sectors = surface_buildable_sectors,
 		surface_unbuildable_sectors = surface_unbuildable_sectors,
 		surface_buildable_unknown = surface_buildable_unknown,
+		surface_selector_load_cache_reuses =
+			map.SuperBigMapSurfaceResourceSelectorLoadCacheReuses or 0,
+		candidate_planned_sector_fast_path = candidate_planned_sector_fast_path,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3808,6 +3844,10 @@ function DepositRules.TopUpDeposits(map)
 				.. " buildable_sectors=" .. tostring(surface_buildable_sectors)
 				.. " unbuildable_sectors=" .. tostring(surface_unbuildable_sectors)
 				.. " unknown_sectors=" .. tostring(surface_buildable_unknown)
+				.. " selector_load_cache_reuses=" .. tostring(
+					map.SuperBigMapSurfaceResourceSelectorLoadCacheReuses or 0)
+				.. " planned_sector_fast_path=" .. tostring(
+					candidate_planned_sector_fast_path)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end

@@ -756,6 +756,7 @@ local ScaleHexShapeForExpansion = TerrainCopy.ScaleHexShapeForExpansion
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
+local TransferDecorReliefAnnotations = TerrainCopy.TransferDecorReliefAnnotations
 local AuditFinalCaveInPositions = TerrainCopy.AuditFinalCaveInPositions
 local AuditCaveInSnapshot = TerrainCopy.AuditCaveInSnapshot
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
@@ -2696,9 +2697,51 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		RestoreGeneratorTemplate()
 		SwitchGeneratorCurrentSlot(destination_slot)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
-		local terrain_copy_token = LoadingBegin("copy native terrain to destination", destination)
-		CopyMigratedTerrain(source, destination)
-		LoadingEnd(terrain_copy_token, nil, true)
+		local direct_terrain = cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true)
+			and cfg_bool("OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH", true)
+			and type(StretchSourceToFull) == "function"
+			and type(AnnotateDecorRelief) == "function"
+			and type(TransferDecorReliefAnnotations) == "function"
+		local direct_terrain_ok, direct_terrain_grids = false, 0
+		if direct_terrain then
+			-- Capture object-to-ground relief against the untouched native terrain. The same object
+			-- instances are transferred below, so moving these weak tables to the destination is
+			-- equivalent to capturing after the old source-corner copy.
+			source.SuperBigMapSourceWidthTiles = source_width
+			source.SuperBigMapSourceHeightTiles = source_height
+			source.SuperBigMapGeneratorWidthTiles = source_width
+			source.SuperBigMapGeneratorHeightTiles = source_height
+			source.SuperBigMapDesiredWidthTiles = desired_width
+			source.SuperBigMapDesiredHeightTiles = desired_height
+			local relief_token = LoadingBegin(
+				"capture destination decor relief from temporary source", source)
+			AnnotateDecorRelief(source)
+			LoadingEnd(relief_token, nil, true)
+			local direct_token = LoadingBegin(
+				"stretch temporary source terrain directly to destination", destination)
+			local call_ok, stretch_ok, stretched_grids = pcall(
+				StretchSourceToFull, destination, source, true)
+			direct_terrain_ok = call_ok and stretch_ok == true and stretched_grids == 2
+			direct_terrain_grids = tonumber(stretched_grids) or 0
+			LoadingEnd(direct_token, {
+				completed_grids = tostring(direct_terrain_grids),
+				error = call_ok and "" or tostring(stretch_ok),
+			}, direct_terrain_ok)
+		end
+		if direct_terrain_ok then
+			destination.SuperBigMapDirectSourceTerrainStretched = true
+			TransferDecorReliefAnnotations(source, destination)
+		else
+			-- Compatibility fallback also repairs a partially completed direct attempt: copying the
+			-- complete source corner gives the later normal stretch its canonical input again.
+			local terrain_copy_token = LoadingBegin("copy native terrain to destination", destination)
+			CopyMigratedTerrain(source, destination)
+			LoadingEnd(terrain_copy_token, {
+				direct_attempted = tostring(direct_terrain == true),
+				direct_completed_grids = tostring(direct_terrain_grids),
+			}, true)
+			destination.SuperBigMapDirectSourceTerrainStretched = nil
+		end
 		local state_copy_token = LoadingBegin("copy generated map state", destination)
 		CopyGeneratedMapState(source, destination)
 		LoadingEnd(state_copy_token, nil, true)
@@ -5523,8 +5566,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if type(StretchSourceToFull) == "function" then
 					-- Relief annotations MUST be captured BEFORE the terrain stretch (they record
 					-- each object's relationship to the PRE-stretch ground).
-					if type(AnnotateDecorRelief) == "function" then
+					if type(AnnotateDecorRelief) == "function"
+						and map.SuperBigMapDecorReliefCapturedFromTemporarySource ~= true then
 						AnnotateDecorRelief(map)
+					elseif map.SuperBigMapDecorReliefCapturedFromTemporarySource == true then
+						LoadingStep("using decor relief captured from temporary source", nil, map)
 					end
 					if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 						-- The next call mutates terrain heights, so the native source-grid buildability

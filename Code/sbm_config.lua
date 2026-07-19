@@ -458,6 +458,10 @@ config.OptimizePostLoadDeferredBounds = true
 -- destination already cover the identical complete grid. Falls back to editor.SetGrid whenever
 -- the destination is not a writable same-size grid.
 config.OptimizeMapGridDirectCopy = true
+-- Stretch height/type directly from the temporary 6144 terrain into the final 8192 backing.
+-- This removes the full-grid intermediate copy while retaining the same resampler, affine height
+-- transform, decoration-relief snapshot, and authoritative final gameplay-grid rebuild.
+config.OptimizeDirectSourceTerrainStretch = true
 -- Build resource top-up candidates adaptively, then reuse validated leftovers for anomaly/effect
 -- top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
@@ -465,6 +469,9 @@ config.OptimizeTopUpPlacementPools = true
 -- least one buildable hex, then draw resource candidates uniformly from only those sectors. Every
 -- selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion checks.
 config.OptimizeSurfaceResourceSectorSampling = true
+-- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
+-- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
+config.OptimizeSurfaceResourceSelectorLoadCache = true
 -- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe interior
 -- candidates. This preserves the complete perimeter sector list and placement constraints while
 -- avoiding an unconditional 153,600-point terrain scan.
@@ -765,9 +772,13 @@ C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
+C.OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH =
+	as_bool(config.OptimizeDirectSourceTerrainStretch)
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
 C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
 	as_bool(config.OptimizeSurfaceResourceSectorSampling)
+C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
+	as_bool(config.OptimizeSurfaceResourceSelectorLoadCache)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
 C.OPTIMIZE_NATIVE_ENRICHMENT_RECORD_CAPTURE =
 	as_bool(config.OptimizeNativeEnrichmentRecordCapture)
