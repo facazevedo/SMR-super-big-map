@@ -4878,18 +4878,44 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			do
 				local deposits = SuperBigMap.DepositRules
 				if deposits then
-					if type(deposits.TopUpDeposits) == "function" then
-						SetLoadingPhase("Distributing underground resources and anomalies")
-						TimedSafeCall("underground top-up resources", map,
-							deposits.TopUpDeposits, map)
+					if type(deposits.BeginUndergroundTopUpWallIgnore) ~= "function"
+						or type(deposits.EndUndergroundTopUpWallIgnore) ~= "function" then
+						error("underground rubble-wall density transaction is unavailable")
 					end
-					if type(deposits.TopUpAnomalies) == "function" then
-						TimedSafeCall("underground top-up anomalies", map,
-							deposits.TopUpAnomalies, map)
+					local wall_token = LoadingBegin("underground suspend removable rubble walls", map)
+					local wall_begin_ok, wall_begin_stats =
+						deposits.BeginUndergroundTopUpWallIgnore(map)
+					LoadingEnd(wall_token, wall_begin_stats, wall_begin_ok == true)
+					if wall_begin_ok ~= true then
+						error("underground rubble-wall suspension failed: "
+							.. tostring(wall_begin_stats and wall_begin_stats.error))
 					end
-					if type(deposits.TopUpEffectDeposits) == "function" then
-						TimedSafeCall("underground top-up effect deposits", map,
-							deposits.TopUpEffectDeposits, map)
+					local suite_ok, suite_err = pcall(function()
+						if type(deposits.TopUpDeposits) == "function" then
+							SetLoadingPhase("Distributing underground resources and anomalies")
+							TimedSafeCall("underground top-up resources", map,
+								deposits.TopUpDeposits, map)
+						end
+						if type(deposits.TopUpAnomalies) == "function" then
+							TimedSafeCall("underground top-up anomalies", map,
+								deposits.TopUpAnomalies, map)
+						end
+						if type(deposits.TopUpEffectDeposits) == "function" then
+							TimedSafeCall("underground top-up effect deposits", map,
+								deposits.TopUpEffectDeposits, map)
+						end
+					end)
+					local wall_restore_token = LoadingBegin(
+						"underground restore removable rubble walls", map)
+					local wall_restore_ok, wall_restore_stats =
+						deposits.EndUndergroundTopUpWallIgnore(map)
+					LoadingEnd(wall_restore_token, wall_restore_stats, wall_restore_ok == true)
+					if wall_restore_ok ~= true then
+						error("underground rubble-wall restoration failed: "
+							.. tostring(wall_restore_stats and wall_restore_stats.error))
+					end
+					if not suite_ok then
+						error("underground density suite failed: " .. tostring(suite_err))
 					end
 					if type(deposits.RegisterClonedMarkers) == "function" then
 						TimedSafeCall("underground register top-up markers", map,
@@ -4925,18 +4951,26 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						topups = repulsion_stats and repulsion_stats.topups,
 						density_status = repulsion_stats and repulsion_stats.density_status,
 						resource_shortfall = repulsion_stats and repulsion_stats.resource_shortfall,
+						anomaly_shortfall = repulsion_stats and repulsion_stats.anomaly_shortfall,
+						effect_shortfall = repulsion_stats and repulsion_stats.effect_shortfall,
 						resource_ignored_rubble_walls = repulsion_stats
 							and repulsion_stats.resource_ignored_rubble_walls,
 						wall_aware_shared_candidates = repulsion_stats
 							and repulsion_stats.wall_aware_shared_candidates,
 						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
+						underground_density_fallback_topups = repulsion_stats
+							and repulsion_stats.underground_density_fallback_topups,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="
 							.. tostring(repulsion_stats and repulsion_stats.density_failures)
 							.. " resource_shortfall="
 							.. tostring(repulsion_stats and repulsion_stats.resource_shortfall)
+							.. " anomaly_shortfall="
+							.. tostring(repulsion_stats and repulsion_stats.anomaly_shortfall)
+							.. " effect_shortfall="
+							.. tostring(repulsion_stats and repulsion_stats.effect_shortfall)
 							.. " duplicate_hex_pairs="
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 							.. " repulsion_violations="

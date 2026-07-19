@@ -62,6 +62,10 @@ end
 -- pass; anomaly/effect top-ups can consume its unused candidates instead of rebuilding
 -- equivalent pools. Weak map keys release abandoned-map entries automatically.
 local topup_candidate_pool_by_map = setmetatable({}, { __mode = "k" })
+-- The underground density suite temporarily removes only removable rubble-wall footprints from
+-- the gameplay grids. Keeping the token here lets resources, anomalies, and effects share one
+-- wall-free candidate space and guarantees that the exact live objects are restored afterwards.
+local rubble_wall_suite_token_by_map = setmetatable({}, { __mode = "k" })
 -- Final underground connectivity state, built only after the stretched passability/buildable
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
@@ -1461,6 +1465,31 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		return true
 	end
 
+	-- Used only after an underground family has exhausted every fully vanilla-spaced candidate.
+	-- The residual completion pass still forbids any two enrichments from sharing one hex.
+	local function can_place_unique(candidate)
+		stats.checks = stats.checks + 1
+		local x, y = candidate and candidate.x, candidate and candidate.y
+		if type(x) ~= "number" or type(y) ~= "number" then
+			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			return false
+		end
+		local hkey = candidate._sbm_repulsion_hex
+		if not hkey then
+			hkey = hex_key(x, y)
+			candidate._sbm_repulsion_hex = hkey
+		end
+		if not hkey then
+			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			return false
+		end
+		if occupied_hexes[hkey] then
+			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
+			return false
+		end
+		return true
+	end
+
 	local function commit(candidate, profile, marker)
 		if not candidate or not profile then return false end
 		if not add_entry(candidate.x, candidate.y, profile, marker, true) then return false end
@@ -1470,6 +1499,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 
 	return {
 		CanPlace = can_place,
+		CanPlaceUnique = can_place_unique,
 		Commit = commit,
 		Stats = function() return stats end,
 	}
@@ -2582,11 +2612,10 @@ local function IsUndergroundRubbleWall(obj)
 	return obj.class == "CaveInRubble" or obj.class == "TunnelBlockerRubble"
 end
 
--- Resource density must not depend on removable cave-in/collapsed-tunnel walls. Remove only those
--- objects from gameplay grids while the resource candidate pool is built, then restore the exact
--- same live objects before anomalies/effects run. Terrain, buildings, deposits, and every other
--- obstruction remain active. Connectivity/candidate caches are invalidated at both boundaries so
--- no wall-free result leaks into a later enrichment family.
+-- Underground density must not depend on removable cave-in/collapsed-tunnel walls. Remove only
+-- those objects from gameplay grids while the density candidate pools are built, then restore the
+-- exact same live objects after all three families run. Terrain, buildings, deposits, and every
+-- other obstruction remain active.
 local function SuspendRubbleWallGridsForResourceTopUp(map)
 	if not map or type(map.MapForEach) ~= "function" then
 		return nil, "map/MapForEach unavailable"
@@ -2661,6 +2690,43 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 	end
 	token.wall_aware_shared_candidates = #wall_aware_pool
 	return #failures == 0, table.concat(failures, "|")
+end
+
+-- The map-generation pipeline owns this transaction around resources, anomalies, and effects.
+-- TopUpDeposits retains a self-contained fallback for callers that invoke it independently.
+function DepositRules.BeginUndergroundTopUpWallIgnore(map)
+	map = map or Global("CurrentMap")
+	if not IsUndergroundMap(map)
+		or cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS ~= true then
+		return true, { active = false, walls = 0 }
+	end
+	local existing = rubble_wall_suite_token_by_map[map]
+	if existing then
+		return true, { active = true, walls = #existing.objects, already_active = true }
+	end
+	local token, err = SuspendRubbleWallGridsForResourceTopUp(map)
+	if not token then return false, { error = tostring(err), active = false, walls = 0 } end
+	token.density_suite = true
+	rubble_wall_suite_token_by_map[map] = token
+	return true, { active = true, walls = #token.objects, discovered = token.discovered }
+end
+
+function DepositRules.EndUndergroundTopUpWallIgnore(map)
+	map = map or Global("CurrentMap")
+	local token = map and rubble_wall_suite_token_by_map[map]
+	if not token then return true, { active = false, walls = 0 } end
+	rubble_wall_suite_token_by_map[map] = nil
+	local ok, err = RestoreRubbleWallGridsAfterResourceTopUp(map, token)
+	local density = map and map.SuperBigMapEnrichmentTopUpStatus
+	local resources = type(density) == "table" and density.resources or nil
+	if type(resources) == "table" then
+		resources.ignored_rubble_walls = #token.objects
+		resources.wall_aware_shared_candidates = token.wall_aware_shared_candidates or 0
+	end
+	return ok, {
+		active = true, walls = #token.objects, error = tostring(err or ""),
+		wall_aware_shared_candidates = token.wall_aware_shared_candidates or 0,
+	}
 end
 
 -- Breakthrough anomalies are preserved exactly from the vanilla source record set.
@@ -2747,20 +2813,25 @@ function DepositRules.TopUpDeposits(map)
 	end
 
 	local added_by_type = {}
+	local density_fallback_added = 0
 
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
 	local ignore_rubble_walls = underground
-		and cfg().UNDERGROUND_RESOURCE_TOPUPS_IGNORE_RUBBLE_WALLS == true
+		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
-	local rubble_token
+	local rubble_token = rubble_wall_suite_token_by_map[map]
+	local owns_rubble_token = false
 	if ignore_rubble_walls then
-		local suspend_err
-		rubble_token, suspend_err = SuspendRubbleWallGridsForResourceTopUp(map)
-		if not rubble_token then error("resource top-up could not ignore rubble walls: "
-			.. tostring(suspend_err)) end
+		if not rubble_token then
+			local suspend_err
+			rubble_token, suspend_err = SuspendRubbleWallGridsForResourceTopUp(map)
+			if not rubble_token then error("resource top-up could not ignore rubble walls: "
+				.. tostring(suspend_err)) end
+			owns_rubble_token = true
+		end
 	end
 	local placement_ok, placement_err = RunPaused("SuperBigMapDepositTopUp", function()
 		-- Shared validated pool. Selection preserves terrain type while preferring sectors with
@@ -2797,11 +2868,12 @@ function DepositRules.TopUpDeposits(map)
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
 		local selector = NewSectorBalancedCandidateSelector(map, shared_candidates, "resources",
 			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+		local active_selector = selector
 		local function take(tt, profile)
-			return selector.Take(tt, profile)
+			return active_selector.Take(tt, profile)
 		end
 		local function take_any(profile)
-			return selector.Take(nil, profile)
+			return active_selector.Take(nil, profile)
 		end
 
 		local function choose_needed_type()
@@ -2862,40 +2934,53 @@ function DepositRules.TopUpDeposits(map)
 
 		-- A candidate is reserved by Take. If cloning that candidate fails, keep trying unused
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
-		while added < shortfall and selector.Remaining() > 0 do
-			local c, template, tpos, profile = select_needed_placement()
-			if not c then break end
-			if tpos and type(tpos.xy) == "function" then
-				local tx, ty = tpos:xy()
-				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
-				if clone and type(clone) == "table" then
-					selector.Commit(c)
-					added = added + 1
-					local res = tostring(template.resource or template.class or "?")
-					clone.SuperBigMapResourceTopUp = true
-					clone.SuperBigMapResourceTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
-					added_by_type[res] = (added_by_type[res] or 0) + 1
-					if type(clone.SetPos) == "function" then
-						local pt = point(c.x, c.y)
-						if type(pt.SetTerrainZ) == "function" then
-							local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
-							if ok and snapped then pt = snapped end
+		local function place_from(active, density_fallback)
+			active_selector = active
+			while added < shortfall and active_selector.Remaining() > 0 do
+				local c, template, tpos, profile = select_needed_placement()
+				if not c then break end
+				if tpos and type(tpos.xy) == "function" then
+					local tx, ty = tpos:xy()
+					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
+					if clone and type(clone) == "table" then
+						active_selector.Commit(c)
+						added = added + 1
+						local res = tostring(template.resource or template.class or "?")
+						clone.SuperBigMapResourceTopUp = true
+						clone.SuperBigMapResourceTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
+						clone.SuperBigMapTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
+						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+						if density_fallback then density_fallback_added = density_fallback_added + 1 end
+						added_by_type[res] = (added_by_type[res] or 0) + 1
+						if type(clone.SetPos) == "function" then
+							local pt = point(c.x, c.y)
+							if type(pt.SetTerrainZ) == "function" then
+								local ok, snapped = pcall(pt.SetTerrainZ, pt, map)
+								if ok and snapped then pt = snapped end
+							end
+							pcall(clone.SetPos, clone, pt)
 						end
-						pcall(clone.SetPos, clone, pt)
-					end
-					repulsion.Commit(c, profile, clone)
-					if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true and not underground then
-						local sec = c.sector or SectorAtPoint(map, c.x, c.y)
-						if sec and type(sec.RegisterDeposit) == "function" then
-							pcall(sec.RegisterDeposit, sec, clone)
+						repulsion.Commit(c, profile, clone)
+						if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true and not underground then
+							local sec = c.sector or SectorAtPoint(map, c.x, c.y)
+							if sec and type(sec.RegisterDeposit) == "function" then
+								pcall(sec.RegisterDeposit, sec, clone)
+							end
 						end
 					end
 				end
 			end
 		end
+		place_from(selector, false)
+		if underground and added < shortfall then
+			local fallback_selector = NewSectorBalancedCandidateSelector(
+				map, shared_candidates, "underground resource residual",
+				function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+			place_from(fallback_selector, true)
+		end
 	end)
 	local restore_ok, restore_err = true, nil
-	if rubble_token then
+	if rubble_token and owns_rubble_token then
 		restore_ok, restore_err = RestoreRubbleWallGridsAfterResourceTopUp(map, rubble_token)
 	end
 	if not placement_ok then error("resource top-up placement failed: " .. tostring(placement_err)) end
@@ -2916,6 +3001,7 @@ function DepositRules.TopUpDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(src_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type), added_total = added,
+		underground_density_fallback_added = density_fallback_added,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3132,6 +3218,7 @@ function DepositRules.TopUpAnomalies(map)
 	end
 
 	local added = 0
+	local density_fallback_added = 0
 	local reused_pool = false
 	local edge_ctx
 	local validation_context = NewDepositValidationContext(map)
@@ -3355,6 +3442,7 @@ function DepositRules.TopUpAnomalies(map)
 			and NewSectorBalancedCandidateSelector(map, candidates,
 				underground and "underground anomalies" or "surface anomalies",
 				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end) or nil
+		local relaxed_whole_map_selector
 		-- Stage one chooses sectors, not points. A randomized four-placement cycle covers every
 		-- physical side, while shuffled along-side bins and depth layers keep the whole three-sector
 		-- ring eligible. Terrain quality is deliberately ignored until after a sector has won.
@@ -3576,14 +3664,14 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		local placement_n = 1
 		while placement_n <= shortfall do
-			if (surface_edge_ring and #available_sectors == 0)
-				or (not surface_edge_ring and whole_map_selector.Remaining() == 0) then break end
+			if surface_edge_ring and #available_sectors == 0 then break end
 			local preferred_side = surface_edge_ring and placement_side_schedule[placement_n] or nil
 			local occurrence = preferred_side and (side_occurrence[preferred_side] + 1) or nil
 			local target_bin = preferred_side and side_bin_order[preferred_side][occurrence] or nil
 			local target_layer = preferred_side and side_layer_order[preferred_side][occurrence] or nil
 			local c
 			local selected_sector, reserved_key
+			local selected_whole_map_selector, density_fallback
 			if surface_edge_ring then
 				-- A sector is drawn first. Only afterwards do we inspect that sector's terrain.
 				-- If it has no passable, unobstructed sampled hex, draw another sector;
@@ -3601,6 +3689,16 @@ function DepositRules.TopUpAnomalies(map)
 				c.used = true
 			else
 				c = whole_map_selector.Take(nil, anomaly_profile)
+				selected_whole_map_selector = c and whole_map_selector or nil
+				if not c and underground then
+					relaxed_whole_map_selector = relaxed_whole_map_selector
+						or NewSectorBalancedCandidateSelector(
+							map, candidates, "underground anomaly residual",
+							function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+					c = relaxed_whole_map_selector.Take(nil, anomaly_profile)
+					selected_whole_map_selector = c and relaxed_whole_map_selector or nil
+					density_fallback = c ~= nil
+				end
 				if not c then break end
 			end
 			local needed_kind = choose_needed_kind()
@@ -3623,7 +3721,7 @@ function DepositRules.TopUpAnomalies(map)
 				local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 				if clone and type(clone) == "table" then
 					placement_succeeded = true
-					if whole_map_selector then whole_map_selector.Commit(c) end
+					if selected_whole_map_selector then selected_whole_map_selector.Commit(c) end
 					added = added + 1
 					if needed_kind == "complete" or needed_kind == "unlock" then
 						clone.tech_action = needed_kind
@@ -3637,6 +3735,10 @@ function DepositRules.TopUpAnomalies(map)
 					added_by_kind[needed_kind] = (added_by_kind[needed_kind] or 0) + 1
 					clone.SuperBigMapAnomalyTopUp = true
 					clone.SuperBigMapEdgeTopUp = surface_edge_ring or nil
+					clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
+						and rubble_wall_suite_token_by_map[map] ~= nil or nil
+					clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+					if density_fallback then density_fallback_added = density_fallback_added + 1 end
 					if type(clone.SetPos) == "function" then
 						local pt = point(c.x, c.y)
 						if type(pt.SetTerrainZ) == "function" then
@@ -3701,6 +3803,7 @@ function DepositRules.TopUpAnomalies(map)
 		area_factor = area_factor, source_counts = CountMapString(source_by_kind),
 		target_counts = CountMapString(target_by_kind), final_counts = CountMapString(final_by_kind),
 		added_counts = CountMapString(added_by_kind), added_total = added,
+		underground_density_fallback_added = density_fallback_added,
 		surface_outer_ring = tostring(not IsUndergroundMap(map)),
 		outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
@@ -4349,6 +4452,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	}
 
 	local added_by_type = {}
+	local density_fallback_added = 0
 	local reused_pool = false
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
@@ -4396,6 +4500,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 		local selector = NewSectorBalancedCandidateSelector(map, candidates, "effects",
 			function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+		local relaxed_selector
 		for _, deposit_type in ipairs(types) do
 			local templates = templates_by_type[deposit_type]
 			local shortfall = math.max(0,
@@ -4403,8 +4508,17 @@ function DepositRules.TopUpEffectDeposits(map)
 			-- Continue after a failed clone. Take consumes one candidate, so this loop is
 			-- bounded by the validated pool even when every clone attempt fails.
 			while (added_by_type[deposit_type] or 0) < shortfall do
-				if selector.Remaining() == 0 then break end
 				local c = selector.Take(nil, effect_profile)
+				local active_selector = c and selector or nil
+				local density_fallback = false
+				if not c and underground then
+					relaxed_selector = relaxed_selector or NewSectorBalancedCandidateSelector(
+						map, candidates, "underground effect residual",
+						function(candidate) return repulsion.CanPlaceUnique(candidate) end)
+					c = relaxed_selector.Take(nil, effect_profile)
+					active_selector = c and relaxed_selector or nil
+					density_fallback = c ~= nil
+				end
 				if not c then break end
 				local template = templates[RandInt(#templates) + 1]
 				local tpos = ObjectPos(template)
@@ -4412,9 +4526,13 @@ function DepositRules.TopUpEffectDeposits(map)
 					local tx, ty = tpos:xy()
 					local clone = clone_fn(map, template, point(c.x - tx, c.y - ty, 0))
 					if clone and type(clone) == "table" then
-						selector.Commit(c)
+						active_selector.Commit(c)
 						clone.SuperBigMapEffectTopUp = true
 						clone.SuperBigMapEffectTopUpType = deposit_type
+						clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
+							and rubble_wall_suite_token_by_map[map] ~= nil or nil
+						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
+						if density_fallback then density_fallback_added = density_fallback_added + 1 end
 						added_by_type[deposit_type] = (added_by_type[deposit_type] or 0) + 1
 						if type(clone.SetPos) == "function" then
 							local pt = point(c.x, c.y)
@@ -4455,14 +4573,16 @@ function DepositRules.TopUpEffectDeposits(map)
 		area_factor = area_factor, source_counts = CountMapString(source_by_type),
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type),
+		underground_density_fallback_added = density_fallback_added,
 	})
 end
 
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
 -- is a cluster of adjacent marker objects. Ordinary top-ups obey vanilla family repulsion. Surface
 -- outer-ring anomaly top-ups deliberately use their own rule: no vanilla repulsion, unique hexes,
--- and at least 10 hexes between an outer-ring top-up and every other anomaly. This runs after
--- position corrections.
+-- and at least 10 hexes between an outer-ring top-up and every other anomaly. Underground residual
+-- completion markers are likewise exempt from family radius only after the strict selector is
+-- exhausted; duplicate-hex rejection remains universal. This runs after position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	map = map or Global("CurrentMap")
 	local point_fn = Global("point")
@@ -4484,7 +4604,9 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
 		outer_ring_spacing_violations = 0,
+		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
 		density_failures = 0, density_status = "", resource_shortfall = 0,
+		anomaly_shortfall = 0, effect_shortfall = 0,
 		resource_ignored_rubble_walls = 0, wall_aware_shared_candidates = 0,
 	}
 	do
@@ -4500,6 +4622,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				stats.resource_ignored_rubble_walls = tonumber(entry.ignored_rubble_walls) or 0
 				stats.wall_aware_shared_candidates =
 					tonumber(entry.wall_aware_shared_candidates) or 0
+			elseif kind == "anomalies" and type(entry) == "table" then
+				stats.anomaly_shortfall = tonumber(entry.remaining_shortfall) or 0
+			elseif kind == "effects" and type(entry) == "table" then
+				stats.effect_shortfall = tonumber(entry.remaining_shortfall) or 0
 			end
 		end
 		stats.density_status = table.concat(status, " ")
@@ -4523,6 +4649,8 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		local inner_ring_fallback = not underground
 			and marker.SuperBigMapAnomalyTopUp == true
 			and marker.SuperBigMapInnerRingFallback == true
+		local density_fallback = underground
+			and marker.SuperBigMapUndergroundDensityFallback == true
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		if topup and not outer_ring_topup and not profile then
 			stats.missing_topup_profiles = stats.missing_topup_profiles + 1
@@ -4531,6 +4659,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		entries[#entries + 1] = {
 			marker = marker, topup = topup, outer_ring_topup = outer_ring_topup,
 			inner_ring_fallback = inner_ring_fallback,
+			density_fallback = density_fallback,
 			anomaly = IsAnomalyMarker(marker),
 			profile = profile, x = x, y = y,
 			q = ok_hex and type(q) == "number" and q or nil,
@@ -4538,7 +4667,13 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			hex = ok_hex and type(q) == "number" and type(r) == "number"
 				and (tostring(q) .. ":" .. tostring(r)) or nil,
 		}
-		if topup then stats.topups = stats.topups + 1 end
+		if topup then
+			stats.topups = stats.topups + 1
+			if density_fallback then
+				stats.underground_density_fallback_topups =
+					stats.underground_density_fallback_topups + 1
+			end
+		end
 	end)
 	stats.markers = #entries
 	for i = 1, #entries - 1 do
@@ -4552,6 +4687,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
 				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
 				local has_outer_ring_topup = a.outer_ring_topup or b.outer_ring_topup
+				local has_density_fallback = a.density_fallback or b.density_fallback
 				if has_outer_ring_topup then
 					if ((a.outer_ring_topup and b.anomaly) or (b.outer_ring_topup and a.anomaly))
 						and type(a.q) == "number" and type(a.r) == "number"
@@ -4566,7 +4702,9 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				end
 				-- An interior fallback is a vanilla placement even when its pair is an outer-ring
 				-- top-up. Outer/outer and outer/native pairs remain exempt from vanilla repulsion.
-				if not has_outer_ring_topup or a.inner_ring_fallback or b.inner_ring_fallback then
+				if has_density_fallback then
+					stats.density_fallback_pairs_skipped = stats.density_fallback_pairs_skipped + 1
+				elseif not has_outer_ring_topup or a.inner_ring_fallback or b.inner_ring_fallback then
 					local required = PairRepulsionRadius(a.profile, b.profile)
 					local dx, dy = a.x - b.x, a.y - b.y
 					local distance_sq = dx * dx + dy * dy
@@ -4802,9 +4940,10 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	for _, marker in ipairs(markers) do
 		local pos = ObjectPos(marker)
-		local resource_ignores_rubble = marker
-			and marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true
-		if not pos or (not resource_ignores_rubble and not CanReceiveDeposit(map, pos)) then
+		local topup_ignores_rubble = marker and (
+			marker.SuperBigMapTopUpIgnoredRubbleWalls == true
+				or marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true)
+		if not pos or (not topup_ignores_rubble and not CanReceiveDeposit(map, pos)) then
 			invalid[#invalid + 1] = { marker = marker, pos = pos }
 		end
 	end
@@ -5093,9 +5232,10 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		local buildable = pos and IsBuildableAt(map, pos, true) or false
 		local unobstructed = pos and IsUnobstructedAt(map, pos, true) or false
 		local reachable = not underground or (pos and IsReachableFromUndergroundEntrance(map, pos) or false)
-		local resource_ignores_rubble = underground and family == "resource"
-			and marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true
-		local terrain_valid = resource_ignores_rubble or (passable and type(flatness) == "number"
+		local topup_ignores_rubble = underground and (
+			marker.SuperBigMapTopUpIgnoredRubbleWalls == true
+				or marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true)
+		local terrain_valid = topup_ignores_rubble or (passable and type(flatness) == "number"
 			and flatness >= TopUpFlatnessMinimum() and buildable and unobstructed and reachable
 		)
 		if topup and not terrain_valid then invalid_topups = invalid_topups + 1 end
@@ -5123,7 +5263,7 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 			sector = sector, sector_key = sector_key,
 			passable = passable, flatness = flatness, buildable = buildable,
 			unobstructed = unobstructed, reachable = reachable, terrain_valid = terrain_valid,
-			resource_ignores_rubble = resource_ignores_rubble,
+			resource_ignores_rubble = topup_ignores_rubble,
 			native_xy_match = native_xy_match,
 			placed_x = placed_x, placed_y = placed_y, placed_z = placed_z,
 		}
