@@ -48,6 +48,21 @@ local Global = Engine.Global
 local TryCall = Engine.TryCall
 local SafeCall = Engine.SafeCall
 local Unpack = Engine.Unpack
+local IsKindOfSafe = Engine.IsKindOf
+
+local function PointXY(pos)
+	if not pos then
+		return false
+	end
+	if type(pos.xy) == "function" then
+		local x, y = SafeCall(pos.xy, pos)
+		return x, y
+	end
+	if type(pos.x) == "number" and type(pos.y) == "number" then
+		return pos.x, pos.y
+	end
+	return false
+end
 
 local function cfg_bool(key, default)
 	local value = (SuperBigMap.Config or {})[key]
@@ -160,7 +175,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 1
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 2
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -611,23 +626,6 @@ local function TerrainSize(map)
 
 	return map and map.Width or 0, map and map.Height or 0
 end
-
-local IsKindOfSafe = Engine.IsKindOf
-
-local function PointXY(pos)
-	if not pos then
-		return false
-	end
-	if type(pos.xy) == "function" then
-		local x, y = SafeCall(pos.xy, pos)
-		return x, y
-	end
-	if type(pos.x) == "number" and type(pos.y) == "number" then
-		return pos.x, pos.y
-	end
-	return false
-end
-
 
 -- Terrain stretching + object transforms live in sbm_terrain_copy / sbm_object_clone,
 -- loaded before this module. Bind the helpers called below (and re-exported through
