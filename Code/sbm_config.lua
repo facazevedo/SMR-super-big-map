@@ -386,7 +386,7 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 config.UndergroundRevealAllDarkness = true
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
-config.RevealAllUndergroundEnrichmentsForTesting = false
+config.RevealAllUndergroundEnrichmentsForTesting = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
