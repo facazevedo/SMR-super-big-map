@@ -343,11 +343,6 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			pcall(function() if type(x.free) == "function" then x:free() end end)
 		end
 	end
-	-- GetGrid(from_box) is ALWAYS safe: the source region is within any grid's coverage.
-	local ok_s, src = pcall(editor_api.GetGrid, map, name, from_box)
-	if not ok_s or not src then
-		return false
-	end
 	-- SIZE GUARD: some MapGrids (e.g. BiomeGrid) are allocated only for the generated SOURCE region,
 	-- NOT the full expanded map. GetGrid(to_box = full) on such a grid overflows its storage and
 	-- trips a C assert (dtGrid.h: x2 <= src.m_width) that pcall CANNOT catch. Detect it without
@@ -366,6 +361,18 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		if not ok then return nil, nil end
 		return fmt, bits
 	end
+	-- GetGrid(from_box) is ALWAYS safe: the source region is within any grid's coverage. Keep this
+	-- separate from conversion/resampling so the next runtime log identifies the real BiomeGrid
+	-- bottleneck instead of reporting one opaque multi-second step.
+	local source_token = LoadingBegin("terrain map grid " .. tostring(name)
+		.. ": source extraction", map)
+	local ok_s, src = pcall(editor_api.GetGrid, map, name, from_box)
+	local src_w0, src_h0
+	if ok_s and src then src_w0, src_h0 = grid_size(src) end
+	LoadingEnd(source_token, {
+		source_cells = tostring(src_w0 or "?") .. "x" .. tostring(src_h0 or "?"),
+	}, ok_s and src ~= nil)
+	if not ok_s or not src then return false end
 	local frac = 1.0
 	if type(to_box.sizex) == "function" and type(from_box.sizex) == "function" then
 		local ok_t, tw = pcall(function() return to_box:sizex() end)
@@ -374,25 +381,36 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			frac = (fw + 0.0) / tw
 		end
 	end
-	local ref = (type(editor_api.GetGridRef) == "function") and SafeCall(editor_api.GetGridRef, map, name) or nil
+	local metadata_token = LoadingBegin("terrain map grid " .. tostring(name)
+		.. ": destination metadata", map)
+	local ref = (type(editor_api.GetGridRef) == "function")
+		and SafeCall(editor_api.GetGridRef, map, name) or nil
 	local ref_w, ref_h = grid_size(ref)
 	local src_w = grid_size(src)
+	local target_fmt, target_bits = grid_format(ref)
+	if not target_fmt then target_fmt, target_bits = grid_format(src) end
+	LoadingEnd(metadata_token, {
+		destination_cells = tostring(ref_w or "?") .. "x" .. tostring(ref_h or "?"),
+		target_format = tostring(target_fmt or "hierarchical"),
+		target_bits = tostring(target_bits or "?"),
+	}, true)
 	if type(ref_w) == "number" and ref_w > 0 and type(src_w) == "number"
 		and src_w > ref_w * (frac + 1.0) / 2 then
 		free_grid(src)
 		return false
 	end
 	local dw, dh = ref_w, ref_h
-	local target_fmt, target_bits = grid_format(ref)
-	if not target_fmt then target_fmt, target_bits = grid_format(src) end
 	local dst_ref
 	local metadata_source = "grid_ref"
 	-- A nil format is valid for ordinary/hierarchical grids: the old path also saw nil from
 	-- IsComputeGrid(dst_ref) and skipped GridRepack. Read the full destination only when its
 	-- dimensions are unavailable from GetGridRef.
 	if type(dw) ~= "number" or dw <= 0 or type(dh) ~= "number" or dh <= 0 then
+		local fallback_token = LoadingBegin("terrain map grid " .. tostring(name)
+			.. ": destination fallback read", map)
 		local ok_d
 		ok_d, dst_ref = pcall(editor_api.GetGrid, map, name, to_box)
+		LoadingEnd(fallback_token, nil, ok_d and dst_ref ~= nil)
 		if not ok_d or not dst_ref then
 			free_grid(src)
 			return false
@@ -401,23 +419,84 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 		if not target_fmt then target_fmt, target_bits = grid_format(dst_ref) end
 		metadata_source = "full_destination_fallback"
 	end
+	local src_c, stretched, out
+	local write_mode = "editor_set_grid"
 	local ok_all, res = pcall(function()
-		local src_c = GridToCompute(src)
-		local stretched = GridResample(src_c, dw, dh, interpolate == true)
-		local out = stretched
+		local convert_token = LoadingBegin("terrain map grid " .. tostring(name)
+			.. ": compute conversion", map)
+		local ok_convert, converted = pcall(GridToCompute, src)
+		LoadingEnd(convert_token, nil, ok_convert and converted ~= nil)
+		if not ok_convert or not converted then
+			error("MapGrid compute conversion failed: " .. tostring(converted))
+		end
+		src_c = converted
+
+		local resample_token = LoadingBegin("terrain map grid " .. tostring(name)
+			.. ": resample", map, {
+				destination_cells = tostring(dw) .. "x" .. tostring(dh),
+				interpolate = tostring(interpolate == true),
+			})
+		local ok_resample, resampled = pcall(GridResample, src_c, dw, dh,
+			interpolate == true)
+		LoadingEnd(resample_token, nil, ok_resample and resampled ~= nil)
+		if not ok_resample or not resampled then
+			error("MapGrid resample failed: " .. tostring(resampled))
+		end
+		stretched = resampled
+		out = stretched
 		local stretched_fmt, stretched_bits = grid_format(stretched)
 		if type(GridRepack) == "function" and target_fmt
 			and (stretched_fmt ~= target_fmt or stretched_bits ~= target_bits) then
-			out = GridRepack(stretched, target_fmt, target_bits)
+			local repack_token = LoadingBegin("terrain map grid " .. tostring(name)
+				.. ": format repack", map)
+			local ok_repack, repacked = pcall(GridRepack, stretched, target_fmt, target_bits)
+			LoadingEnd(repack_token, nil, ok_repack and repacked ~= nil)
+			if not ok_repack or not repacked then
+				error("MapGrid repack failed: " .. tostring(repacked))
+			end
+			out = repacked
 		end
-		local ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
-		if src_c ~= src then free_grid(src_c) end
-		if out ~= stretched then free_grid(out) end
-		free_grid(stretched)
+
+		local write_token = LoadingBegin("terrain map grid " .. tostring(name)
+			.. ": destination write", map)
+		local ok_set = false
+		local map_grid_get_ref = Global("MapGridGetRef")
+		local direct_ref = type(map_grid_get_ref) == "function"
+			and SafeCall(map_grid_get_ref, map, name) or nil
+		local out_w, out_h = grid_size(out)
+		local can_direct_copy = cfg_bool("OPTIMIZE_MAP_GRID_DIRECT_COPY", true)
+			and direct_ref and direct_ref == ref and type(ref.copy) == "function"
+			and out_w == ref_w and out_h == ref_h
+		if can_direct_copy then
+			ok_set = pcall(ref.copy, ref, out)
+			if ok_set then
+				write_mode = "vanilla_map_import_direct_copy"
+				local invalidate_overlay = Global("DbgInvalidateTerrainOverlay")
+				if type(invalidate_overlay) == "function" then
+					pcall(invalidate_overlay, to_box)
+				end
+				local msg = Global("Msg")
+				if type(msg) == "function" then pcall(msg, "OnMapGridChanged", map, name, to_box) end
+			end
+		end
+		if not ok_set then
+			write_mode = can_direct_copy and "editor_set_grid_after_direct_failure"
+				or "editor_set_grid"
+			ok_set = pcall(editor_api.SetGrid, map, name, out, to_box)
+		end
+		LoadingEnd(write_token, { mode = write_mode }, ok_set)
 		return ok_set == true
 	end)
+	if out and out ~= stretched then free_grid(out) end
+	if stretched and stretched ~= src_c then free_grid(stretched) end
+	if src_c and src_c ~= src then free_grid(src_c) end
 	free_grid(dst_ref)
 	free_grid(src)
+	if not ok_all then
+		LoadingStep("terrain map grid " .. tostring(name) .. ": pipeline error", {
+			error = tostring(res), metadata_source = metadata_source,
+		}, map)
+	end
 	return ok_all and res == true
 end
 

@@ -452,9 +452,19 @@ config.OptimizeStretchDecorTraversal = true
 -- rebuild bounds/passability that the stretch immediately invalidates. Defer only the duplicate
 -- NewMap buildable pass, then defer the later full Apply exactly like the MapGenerated hooks.
 config.OptimizePostLoadDeferredBounds = true
+-- Write a completed full-size color/biome MapGrid through the same direct destination-grid copy
+-- used by vanilla's GridOpMapImport, then emit the normal change notification. The generic editor
+-- SetGrid path converts the full world box and performs a copyrect even though source and
+-- destination already cover the identical complete grid. Falls back to editor.SetGrid whenever
+-- the destination is not a writable same-size grid.
+config.OptimizeMapGridDirectCopy = true
 -- Build resource top-up candidates adaptively, then reuse validated leftovers for anomaly/effect
 -- top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
+-- On the surface, ask the finalized native buildable grid which non-perimeter sectors contain at
+-- least one buildable hex, then draw resource candidates uniformly from only those sectors. Every
+-- selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion checks.
+config.OptimizeSurfaceResourceSectorSampling = true
 -- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe interior
 -- candidates. This preserves the complete perimeter sector list and placement constraints while
 -- avoiding an unconditional 153,600-point terrain scan.
@@ -751,7 +761,10 @@ C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredReb
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
+C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
 C.OPTIMIZE_TOPUP_PLACEMENT_POOLS = as_bool(config.OptimizeTopUpPlacementPools)
+C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
+	as_bool(config.OptimizeSurfaceResourceSectorSampling)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
 C.OPTIMIZE_UNDERGROUND_PASS_EDIT_BATCH = as_bool(config.OptimizeUndergroundPassEditBatch)
 C.LIMIT_GENERATOR_TO_SOURCE = expansion_step_01

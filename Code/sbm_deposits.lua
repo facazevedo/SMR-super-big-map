@@ -3220,6 +3220,83 @@ function DepositRules.TopUpDeposits(map)
 		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
+	-- Resource top-ups can only land on buildable terrain, yet the sequential sampler previously
+	-- drew from every interior sector and paid the complete Lua terrain/obstruction/repulsion cost
+	-- to reject points from wholly unbuildable sectors. Query the finalized native buildable grid
+	-- once per canonical non-perimeter sector and preserve the complete validation path inside every
+	-- sector that can contain a valid hex. Ratio/API failures remain eligible, so an inconclusive
+	-- optimization can never remove a possible placement area.
+	local surface_resource_sectors
+	local surface_sector_filter_active = false
+	local surface_buildable_sectors, surface_unbuildable_sectors = 0, 0
+	local surface_buildable_unknown = 0
+	if not underground and sequential_placement
+		and cfg().OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING == true
+		and type(BuildTopUpEdgeContext) == "function" then
+		local edge_ctx = BuildTopUpEdgeContext(map)
+		local ratio_fn = Global("BuildableGridRatio")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		local box_fn = Global("box")
+		local buildable_grid = map.buildable and map.buildable.z_grid
+		if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
+			and type(edge_ctx.min_col) == "number" and type(edge_ctx.max_col) == "number"
+			and type(edge_ctx.min_row) == "number" and type(edge_ctx.max_row) == "number"
+			and type(ratio_fn) == "function" and type(unbuildable_fn) == "function"
+			and type(box_fn) == "function" and buildable_grid then
+			local ok_unbuildable, unbuildable_z = pcall(unbuildable_fn)
+			if ok_unbuildable and type(unbuildable_z) == "number" then
+				local candidates = {}
+				local ring_n = math.max(0, math.floor(ring_sectors or 0))
+				for _, descriptor in ipairs(edge_ctx.sectors) do
+					local col, row = descriptor.col, descriptor.row
+					local in_ring = ring_n > 0 and (col < edge_ctx.min_col + ring_n
+						or row < edge_ctx.min_row + ring_n
+						or col > edge_ctx.max_col - ring_n
+						or row > edge_ctx.max_row - ring_n)
+					local sector = descriptor.sector_ref
+					if not in_ring and sector and not SectorIsScanned(sector) then
+						local x0 = math.max(lo_x, descriptor.area_x0 or lo_x)
+						local y0 = math.max(lo_y, descriptor.area_y0 or lo_y)
+						local x1 = math.min(lo_x + span_x, descriptor.area_x1 or (lo_x + span_x))
+						local y1 = math.min(lo_y + span_y, descriptor.area_y1 or (lo_y + span_y))
+						if x1 > x0 and y1 > y0 then
+							local ok_box, sector_box = pcall(box_fn, x0, y0, x1, y1)
+							local ok_ratio, ratio = false, nil
+							if ok_box and sector_box then
+								-- A 20x20 sector contains fewer than 10,000 hexes, so a single
+								-- buildable hex cannot be rounded down to zero at this scale.
+								ok_ratio, ratio = pcall(ratio_fn, buildable_grid,
+									unbuildable_z, 10000, sector_box)
+							end
+							if ok_ratio and type(ratio) == "number" then
+								if ratio > 0 then
+									candidates[#candidates + 1] = {
+										sector = sector, col = col, row = row,
+										x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+									}
+									surface_buildable_sectors = surface_buildable_sectors + 1
+								else
+									surface_unbuildable_sectors = surface_unbuildable_sectors + 1
+								end
+							else
+								candidates[#candidates + 1] = {
+									sector = sector, col = col, row = row,
+									x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+								}
+								surface_buildable_unknown = surface_buildable_unknown + 1
+							end
+						end
+					end
+				end
+				-- An empty result is treated as an inconclusive optimization and falls back to the
+				-- original whole-map sampler. On a valid expanded surface this list is non-empty.
+				if #candidates > 0 then
+					surface_resource_sectors = candidates
+					surface_sector_filter_active = true
+				end
+			end
+		end
+	end
 	local rubble_token = rubble_wall_suite_token_by_map[map]
 	local owns_rubble_token = false
 	if ignore_rubble_walls then
@@ -3257,11 +3334,26 @@ function DepositRules.TopUpDeposits(map)
 		end
 		local function sample_valid_candidate(prefilter)
 			candidate_samples = candidate_samples + 1
-			local x = lo_x + RandInt(span_x)
-			local y = lo_y + RandInt(span_y)
+			local x, y, planned_sector
+			if surface_sector_filter_active then
+				local candidate_sector = surface_resource_sectors[
+					RandInt(#surface_resource_sectors) + 1]
+				local first_x, first_y = math.floor(candidate_sector.x0),
+					math.floor(candidate_sector.y0)
+				local past_x, past_y = math.floor(candidate_sector.x1),
+					math.floor(candidate_sector.y1)
+				if past_x <= first_x or past_y <= first_y then return false end
+				x = first_x + RandInt(past_x - first_x)
+				y = first_y + RandInt(past_y - first_y)
+				planned_sector = candidate_sector.sector
+			else
+				x = lo_x + RandInt(span_x)
+				y = lo_y + RandInt(span_y)
+			end
 			-- Spread across the whole unscanned expanded destination, excluding only the scanned
 			-- start sector. The final surface perimeter remains reserved for anomaly extras.
 			local sector = SectorAtPoint(map, x, y)
+			if planned_sector and sector ~= planned_sector then return false end
 			local reserved_ring = not underground and IsInFinalOuterSectorRing(
 				map, x, y, ring_sectors, sector, ring_context)
 			if not (sector and (underground or not SectorIsScanned(sector)) and not reserved_ring) then
@@ -3666,6 +3758,10 @@ function DepositRules.TopUpDeposits(map)
 		candidate_deferred = candidate_deferred_count,
 		candidate_deferred_promoted = candidate_deferred_promoted,
 		sequential_placement = sequential_placement,
+		surface_sector_filter = surface_sector_filter_active,
+		surface_buildable_sectors = surface_buildable_sectors,
+		surface_unbuildable_sectors = surface_unbuildable_sectors,
+		surface_buildable_unknown = surface_buildable_unknown,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
 		wall_aware_shared_candidates = rubble_token
 			and rubble_token.wall_aware_shared_candidates or 0,
@@ -3681,6 +3777,10 @@ function DepositRules.TopUpDeposits(map)
 				.. " promoted=" .. tostring(candidate_deferred_promoted)
 				.. " added=" .. tostring(added)
 				.. " sequential=" .. tostring(sequential_placement)
+				.. " surface_sector_filter=" .. tostring(surface_sector_filter_active)
+				.. " buildable_sectors=" .. tostring(surface_buildable_sectors)
+				.. " unbuildable_sectors=" .. tostring(surface_unbuildable_sectors)
+				.. " unknown_sectors=" .. tostring(surface_buildable_unknown)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
