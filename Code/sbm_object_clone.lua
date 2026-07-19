@@ -58,6 +58,12 @@ local underground_access_clone_kinds = {
 
 local skip_clone_kinds = {
 	"Building",
+	-- Buried-wonder markers are gameplay placement records, not cosmetic rocks.  Their centers are
+	-- transformed exactly once by ScaleMarkersToFull and their vanilla scale is consumed later when
+	-- the assigned wonder is materialized.  Letting the decoration pass see them used to grow the
+	-- marker first (100 -> 133), then grow the spawned Jumbo Cave a second time (133 -> 177); it
+	-- could also create a random decoration top-up clone and therefore an extra buried wonder.
+	"BuriedWonderMarker",
 	"Colonist",
 	"ConstructionSite",
 	"DroneBase",

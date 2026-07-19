@@ -2932,6 +2932,35 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if #wonder_markers > 0 then
 		table_lib.shuffle(wonder_classes, rand)
 		for index, marker in ipairs(wonder_markers) do
+			-- Capture the authoritative vanilla transform while generation still exposes the untouched
+			-- source map.  These values survive TransferToMap and make the later stretch independent of
+			-- any cosmetic-object pass or hot-reload history.  In particular, visual scale must be
+			-- source_scale * map_ratio exactly once; using the marker's live post-stretch scale produced
+			-- 177%-sized Jumbo Caves on a 4/3 map instead of the intended 133%.
+			local marker_pos = type(marker.GetPos) == "function" and marker:GetPos() or nil
+			local marker_x, marker_y = PointXY(marker_pos)
+			if type(marker.SuperBigMapNativeSourceX) ~= "number"
+				and type(marker_x) == "number" then
+				marker.SuperBigMapNativeSourceX = marker_x
+			end
+			if type(marker.SuperBigMapNativeSourceY) ~= "number"
+				and type(marker_y) == "number" then
+				marker.SuperBigMapNativeSourceY = marker_y
+			end
+			if type(marker.SuperBigMapNativeSourceZ) ~= "number" and marker_pos then
+				local marker_z
+				pcall(function() marker_z = marker_pos:z() end)
+				if type(marker_z) == "number" then
+					marker.SuperBigMapNativeSourceZ = marker_z
+				end
+			end
+			if type(marker.SuperBigMapNativeSourceScale) ~= "number"
+				and type(marker.GetScale) == "function" then
+				local marker_scale = marker:GetScale()
+				if type(marker_scale) == "number" and marker_scale > 0 then
+					marker.SuperBigMapNativeSourceScale = marker_scale
+				end
+			end
 			marker.SuperBigMapDeferredWonderClass = wonder_classes[1 + ((index - 1) % #wonder_classes)]
 			marker.SuperBigMapDeferredWonderIndex = index
 		end
@@ -3048,13 +3077,16 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	if not PatchUndergroundWonderShapePoints() then
 		return false, "UndergroundWonder GetShapePoints patch unavailable"
 	end
-	local marker_scale = type(marker.GetScale) == "function" and marker:GetScale() or nil
-	if type(marker_scale) ~= "number" or marker_scale <= 0 then
+	local live_marker_scale = type(marker.GetScale) == "function" and marker:GetScale() or nil
+	local source_marker_scale = tonumber(marker.SuperBigMapNativeSourceScale)
+		or live_marker_scale
+	if type(source_marker_scale) ~= "number" or source_marker_scale <= 0 then
 		return false, "buried wonder marker scale unavailable"
 	end
 	local expected_scale = math.max(1,
-		math.min(500, math.floor(marker_scale * ratios.scale_x + 0.5)))
-	local old_scale = type(wonder.GetScale) == "function" and wonder:GetScale() or marker_scale
+		math.min(500, math.floor(source_marker_scale * ratios.scale_x + 0.5)))
+	local old_scale = type(wonder.GetScale) == "function" and wonder:GetScale()
+		or live_marker_scale or source_marker_scale
 	local had_grids = wonder.grids_applied == true
 	local old_fields = {
 		wonder.SuperBigMapWonderShapeScaleXMul,
@@ -3089,7 +3121,7 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 		wonder.SuperBigMapWonderShapeScaleXDiv = ratios.x_div
 		wonder.SuperBigMapWonderShapeScaleYMul = ratios.y_mul
 		wonder.SuperBigMapWonderShapeScaleYDiv = ratios.y_div
-		wonder.SuperBigMapWonderSourceScale = marker_scale
+		wonder.SuperBigMapWonderSourceScale = source_marker_scale
 		wonder.SuperBigMapWonderSourceX = marker.SuperBigMapNativeSourceX
 		wonder.SuperBigMapWonderSourceY = marker.SuperBigMapNativeSourceY
 		wonder.SuperBigMapWonderExpectedX = expected_x or marker_x
@@ -3121,6 +3153,8 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 				.. tostring(type(expected_shape) == "table" and #expected_shape or "nil"))
 		end
 		return {
+			source_scale = source_marker_scale,
+			live_marker_scale = live_marker_scale,
 			expected_scale = expected_scale,
 			shape_hexes = #actual_shape,
 			source_shape_hexes = type(source_shape) == "table" and #source_shape or 0,
@@ -3310,6 +3344,8 @@ local function MaterializeDeferredUndergroundWonders(map)
 				final_y = stretch_stats and stretch_stats.final_y,
 				source_shape_hexes = stretch_stats and stretch_stats.source_shape_hexes,
 				expanded_shape_hexes = stretch_stats and stretch_stats.shape_hexes,
+				source_scale = stretch_stats and stretch_stats.source_scale,
+				live_marker_scale = stretch_stats and stretch_stats.live_marker_scale,
 				expanded_scale = stretch_stats and stretch_stats.expected_scale,
 				flatten_shape_hexes = flatten_stats and flatten_stats.shape_hexes,
 				flatten_z = flatten_stats and flatten_stats.buildable_z,
