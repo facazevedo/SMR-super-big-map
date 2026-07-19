@@ -182,7 +182,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 6
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 7
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -238,6 +238,67 @@ local function TraversalCommand(unit)
 	if unit.command ~= nil then return tostring(unit.command) end
 	if type(unit.GetCommand) == "function" then return tostring(SafeCall(unit.GetCommand, unit)) end
 	return "nil"
+end
+
+local function TraversalAddMapLightState(data, prefix, map)
+	data[prefix .. "_map"] = tostring(map)
+	data[prefix .. "_night_lights_state"] = tostring(map and map.NightLightsState)
+	if not map or type(map.MapForEach) ~= "function" then return end
+	local light_count, real_time_count, visible_count = 0, 0, 0
+	local const_tbl = Global("const")
+	local real_time_flag = type(const_tbl) == "table" and const_tbl.gofRealTimeAnim or nil
+	local ok_scan = pcall(map.MapForEach, map, "map", "NightLightLight", function(light)
+		light_count = light_count + 1
+		if real_time_flag and type(light.GetGameFlags) == "function" then
+			local flags = SafeCall(light.GetGameFlags, light, real_time_flag)
+			if type(flags) == "number" and flags ~= 0 then real_time_count = real_time_count + 1 end
+		end
+		if type(light.GetVisible) == "function" and SafeCall(light.GetVisible, light) == true then
+			visible_count = visible_count + 1
+		end
+	end)
+	data[prefix .. "_scan_ok"] = tostring(ok_scan)
+	data[prefix .. "_night_light_count"] = light_count
+	data[prefix .. "_real_time_count"] = real_time_count
+	data[prefix .. "_visible_count"] = visible_count
+end
+
+local function TraversalAddUnitLightState(data, prefix, unit)
+	data[prefix .. "_night_light_object"] = tostring(IsKindOfSafe(unit, "NightLightObject"))
+	data[prefix .. "_deferred_target"] = tostring(deferred_vehicle_night_lights[unit])
+	if not unit then return end
+	if type(unit.IsNightLightPossible) == "function" then
+		data[prefix .. "_possible"] = tostring(SafeCall(unit.IsNightLightPossible, unit))
+	end
+	local const_tbl = Global("const")
+	local enabled_flag = type(const_tbl) == "table" and const_tbl.gofNightLightsEnabled or nil
+	if enabled_flag and type(unit.GetGameFlags) == "function" then
+		data[prefix .. "_enabled_flag"] = tostring(
+			SafeCall(unit.GetGameFlags, unit, enabled_flag))
+	end
+	local ok_attaches, attaches = false, nil
+	if type(unit.GetAttaches) == "function" then ok_attaches, attaches = pcall(unit.GetAttaches, unit) end
+	data[prefix .. "_attaches_ok"] = tostring(ok_attaches)
+	data[prefix .. "_attach_count"] = type(attaches) == "table" and #attaches or 0
+	local lights, details = 0, {}
+	for _, attach in ipairs(type(attaches) == "table" and attaches or {}) do
+		if IsKindOfSafe(attach, "NightLightLight") then
+			lights = lights + 1
+			if #details < 12 then
+				local entity = type(attach.GetEntity) == "function"
+					and SafeCall(attach.GetEntity, attach) or nil
+				local attach_map = TraversalObjectMap(attach)
+				local intensity = type(attach.GetIntensity) == "function"
+					and SafeCall(attach.GetIntensity, attach) or nil
+				details[#details + 1] = table.concat({
+					tostring(attach), TraversalClass(attach), tostring(entity),
+					"map=" .. tostring(attach_map), "intensity=" .. tostring(intensity),
+				}, ":")
+			end
+		end
+	end
+	data[prefix .. "_light_attach_count"] = lights
+	data[prefix .. "_light_attaches"] = table.concat(details, " | ")
 end
 
 local function TraversalSnapshot(unit, elevator, check_path)
@@ -320,6 +381,11 @@ local function TraversalSnapshot(unit, elevator, check_path)
 		type(other_chain) == "table" and #other_chain or 0)
 	data.map_night_lights = tostring(unit_map and unit_map.NightLightsState)
 	data.other_map_night_lights = tostring(other_map and other_map.NightLightsState)
+	TraversalAddUnitLightState(data, "unit_light", unit)
+	TraversalAddMapLightState(data, "unit_map_lights", unit_map)
+	if other_map and other_map ~= unit_map then
+		TraversalAddMapLightState(data, "other_map_lights", other_map)
+	end
 	if check_path and unit and entrance_pos then
 		-- HasPath_NoDestlock mutates temporary path flags and pushes a destructor. The engine asserts
 		-- unless it runs from this unit's command thread, so UI/interact diagnostics must never call it.
@@ -3216,32 +3282,93 @@ local function RefreshVanillaUndergroundPassageIndicators(map)
 		and stats.decals >= stats.unbuilt_markers, stats
 end
 
-local function HideCompletedPassageIndicator(passage)
+local function PassageObjectVisible(obj)
+	if not obj or type(obj.GetVisible) ~= "function" then return nil end
+	local ok, visible = pcall(obj.GetVisible, obj)
+	return ok and visible == true or false
+end
+
+-- SurfacePassageRocks / UndergroundPassageRocks are standalone WasteRockObstructors, not children
+-- of the passage carrier. Consequently passage:SetVisible(false) cannot hide them. They can be
+-- made visible again when the source map is reactivated after deferred underground construction.
+-- Suppress only marker-rock objects close to a passage that already owns a completed Elevator.
+local function HideCompletedPassageRocks(passage, reason)
+	local map = TraversalObjectMap(passage)
+	if not map then return 0, "" end
+	local anchor = Engine.ObjectPos(passage)
+	local ax, ay = PointXY(anchor)
+	if ax == false or ay == nil then return 0, "" end
+	local const_tbl = Global("const")
+	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
+	local max_distance = math.max(1000, (hex_size or 1000) * 12)
+	local max_distance_sq = max_distance * max_distance
+	local hidden, details = 0, {}
+	for _, class_name in ipairs({ "SurfacePassageRocks", "UndergroundPassageRocks" }) do
+		for _, rocks in ipairs(ArtefactMapGet(map, class_name)) do
+			local pos = Engine.ObjectPos(rocks)
+			local rx, ry = PointXY(pos)
+			if type(rx) == "number" and type(ry) == "number" then
+				local dx, dy = rx - ax, ry - ay
+				local distance_sq = dx * dx + dy * dy
+				if distance_sq <= max_distance_sq then
+					local visible_before = PassageObjectVisible(rocks)
+					local hide_ok = type(rocks.SetVisible) == "function"
+						and pcall(rocks.SetVisible, rocks, false) or false
+					if hide_ok then
+						rocks.SuperBigMapHiddenByCompletedElevator = true
+						hidden = hidden + 1
+					end
+					details[#details + 1] = table.concat({
+						tostring(rocks), class_name,
+						"distance=" .. tostring(math.sqrt(distance_sq)),
+						"before=" .. tostring(visible_before),
+						"after=" .. tostring(PassageObjectVisible(rocks)),
+						"hide_ok=" .. tostring(hide_ok),
+					}, ":")
+				end
+			end
+		end
+	end
+	ElevatorTraversalAudit("PASSAGE_ROCKS_ENFORCED", {
+		passage = tostring(passage), elevator = tostring(passage.elevator),
+		reason = tostring(reason), max_distance = max_distance,
+		hidden = hidden, rocks = table.concat(details, " | "),
+	}, map)
+	return hidden, table.concat(details, " | ")
+end
+
+local function HideCompletedPassageIndicator(passage, reason)
 	if not TraversalObjectValid(passage) then return 0, 0 end
 	local hidden = 0
 	if type(passage.SetVisible) == "function" then
 		pcall(passage.SetVisible, passage, false)
 		hidden = 1
 	end
-	-- Do not alter child visibility or opacity. Vanilla hides only the carrier hierarchy, allowing
-	-- its normal demolition lifecycle to reveal the same marker again later.
-	return hidden, 0
+	-- Child attachments still follow vanilla carrier visibility. Only the separate marker-rock
+	-- obstruction close to this completed passage needs its own visibility enforcement.
+	local rocks_hidden = HideCompletedPassageRocks(passage, reason)
+	return hidden, rocks_hidden
 end
 
 local function HideCompletedPassagePair(elevator, reason)
 	local passage = elevator and elevator.passage or nil
 	local map = TraversalObjectMap(passage)
 	if not passage or not TraversalIsExpandedMap(map) then return 0, 0 end
-	local hidden, attachments = HideCompletedPassageIndicator(passage)
-	local other_hidden, other_attachments = HideCompletedPassageIndicator(passage.other)
+	local hidden, rocks_hidden = HideCompletedPassageIndicator(passage, reason)
+	local other_hidden, other_rocks_hidden = HideCompletedPassageIndicator(passage.other, reason)
 	hidden = hidden + other_hidden
-	attachments = attachments + other_attachments
+	rocks_hidden = rocks_hidden + other_rocks_hidden
 	ExpansionAudit("BUILT_PASSAGE_MARKERS_HIDDEN", {
 		elevator = tostring(elevator), passage = tostring(passage),
 		other_passage = tostring(passage.other), reason = tostring(reason),
-		hidden = hidden, attachments_hidden = attachments,
+		hidden = hidden, rocks_hidden = rocks_hidden,
 	}, map)
-	return hidden, attachments
+	ElevatorTraversalAudit("BUILT_PASSAGE_MARKERS_ENFORCED", {
+		elevator = tostring(elevator), passage = tostring(passage),
+		other_passage = tostring(passage.other), reason = tostring(reason),
+		hidden = hidden, rocks_hidden = rocks_hidden,
+	}, map)
+	return hidden, rocks_hidden
 end
 
 local function HideExistingCompletedPassageIndicators(reason)
@@ -5662,7 +5789,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 6
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 7
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5690,6 +5817,28 @@ end
 -- destination leaves the renderer's light-index arrays out of sync. Temporarily suppress the
 -- destination map's night-light state for the transfer, then rebuild the unit's lights only after
 -- that destination has completed a real CurrentMapChangeDone lifecycle.
+local function VehicleLightTransitionAudit(event, unit, elevator, target, extra)
+	local data = {
+		unit = tostring(unit), unit_class = TraversalClass(unit), elevator = tostring(elevator),
+		current_map = tostring(Global("CurrentMap")), unit_map = tostring(TraversalObjectMap(unit)),
+		target = tostring(target), target_night_lights_state = tostring(target and target.NightLightsState),
+	}
+	TraversalAddUnitLightState(data, "unit_light", unit)
+	TraversalAddMapLightState(data, "current_map_lights", Global("CurrentMap"))
+	if target and target ~= Global("CurrentMap") then
+		TraversalAddMapLightState(data, "target_map_lights", target)
+	end
+	local deferred_count, suppression_count = 0, 0
+	for _ in pairs(deferred_vehicle_night_lights) do deferred_count = deferred_count + 1 end
+	for _ in pairs(offscreen_vehicle_light_suppressions) do suppression_count = suppression_count + 1 end
+	data.deferred_vehicle_count = deferred_count
+	data.suppressed_map_count = suppression_count
+	if type(extra) == "table" then
+		for key, value in pairs(extra) do data[key] = value end
+	end
+	ElevatorTraversalAudit(event, data, TraversalObjectMap(unit) or target or Global("CurrentMap"))
+end
+
 local function BeginOffscreenVehicleLightTransfer(unit, elevator)
 	if not IsKindOfSafe(unit, "NightLightObject") then return nil end
 	local target = TraversalObjectMap(elevator and elevator.other)
@@ -5699,15 +5848,27 @@ local function BeginOffscreenVehicleLightTransfer(unit, elevator)
 		record = { count = 0, previous = target.NightLightsState }
 		offscreen_vehicle_light_suppressions[target] = record
 	end
+	VehicleLightTransitionAudit("VEHICLE_LIGHT_GUARD_BEGIN", unit, elevator, target, {
+		guard_count_before = tostring(record.count), target_previous = tostring(record.previous),
+	})
 	record.count = (tonumber(record.count) or 0) + 1
 	target.NightLightsState = false
-	return { target = target, record = record, previous = record.previous }
+	VehicleLightTransitionAudit("VEHICLE_LIGHT_GUARD_SUPPRESSED", unit, elevator, target, {
+		guard_count_after = tostring(record.count), target_previous = tostring(record.previous),
+	})
+	return {
+		target = target, record = record, previous = record.previous,
+		unit = unit, elevator = elevator,
+	}
 end
 
 local function EndOffscreenVehicleLightTransfer(guard)
 	local target = guard and guard.target
 	local record = guard and guard.record
 	if not target or type(record) ~= "table" then return end
+	VehicleLightTransitionAudit("VEHICLE_LIGHT_GUARD_END_BEGIN", guard.unit, guard.elevator, target, {
+		guard_count_before = tostring(record.count), target_previous = tostring(record.previous),
+	})
 	record.count = math.max(0, (tonumber(record.count) or 1) - 1)
 	if record.count == 0 then
 		target.NightLightsState = record.previous
@@ -5715,6 +5876,9 @@ local function EndOffscreenVehicleLightTransfer(guard)
 			offscreen_vehicle_light_suppressions[target] = nil
 		end
 	end
+	VehicleLightTransitionAudit("VEHICLE_LIGHT_GUARD_END_DONE", guard.unit, guard.elevator, target, {
+		guard_count_after = tostring(record.count), target_previous = tostring(record.previous),
+	})
 end
 
 local function RestoreDeferredVehicleNightLights(map)
@@ -5730,6 +5894,9 @@ local function RestoreDeferredVehicleNightLights(map)
 			if type(set_possible) == "function" then
 				local malfunctioned = type(unit.IsMalfunctioned) == "function"
 					and SafeCall(unit.IsMalfunctioned, unit) == true
+				VehicleLightTransitionAudit("VEHICLE_NIGHT_LIGHT_RESTORE_BEGIN", unit, nil, target, {
+					malfunctioned = tostring(malfunctioned),
+				})
 				local ok = pcall(set_possible, unit, not malfunctioned)
 				if not ok then
 					ElevatorTraversalAudit("VEHICLE_NIGHT_LIGHT_RESTORE_FAILED", {
@@ -5739,6 +5906,9 @@ local function RestoreDeferredVehicleNightLights(map)
 				else
 					restored = restored + 1
 				end
+				VehicleLightTransitionAudit("VEHICLE_NIGHT_LIGHT_RESTORE_DONE", unit, nil, target, {
+					malfunctioned = tostring(malfunctioned), restore_ok = tostring(ok),
+				})
 			else
 				discarded = discarded + 1
 			end
@@ -5768,8 +5938,11 @@ local function RebuildExpandedElevatorWaypointChains(map, reason)
 		end
 	end)
 	if not ok_scan then failed = failed + 1 end
+	local passage_markers_hidden = HideExistingCompletedPassageIndicators(
+		tostring(reason) .. " passage-marker final boundary")
 	ElevatorTraversalAudit("ELEVATOR_WAYPOINT_CHAINS_REBUILT", {
 		rebuilt = rebuilt, failed = failed, reason = tostring(reason),
+		passage_markers_hidden = passage_markers_hidden,
 	}, map)
 	return rebuilt, failed
 end

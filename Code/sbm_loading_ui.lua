@@ -497,13 +497,14 @@ local function EngineLoadingScreenDialog()
 end
 
 local hidden_engine_loading = false
-local gameplay_interface_loading_state = false
 local underground_frozen_background = false
 local underground_frozen_background_resource = false
+local underground_blur_background = false
 local loading_refs = 0
 local loading_ui_sequence = 0
 local LOADING_BACKGROUND_ZORDER = 1000000010
-local LOADING_DIALOG_ZORDER = LOADING_BACKGROUND_ZORDER + 1
+local LOADING_BLUR_ZORDER = LOADING_BACKGROUND_ZORDER + 1
+local LOADING_DIALOG_ZORDER = LOADING_BLUR_ZORDER + 1
 
 local function GameplayInterfaceDialog()
 	local get_interface = Global("GetInGameInterface")
@@ -545,6 +546,11 @@ local function LoadingUiAudit(event, data)
 		background_state = tostring(underground_frozen_background
 			and underground_frozen_background.window_state),
 		background_resource = tostring(underground_frozen_background_resource),
+		blur_valid = tostring(underground_blur_background
+			and underground_blur_background.window_state ~= "destroying"
+			and underground_blur_background.window_state ~= "destroyed"),
+		blur_state = tostring(underground_blur_background
+			and underground_blur_background.window_state),
 		hud_visible = tostring(WindowVisible(GameplayInterfaceDialog())),
 		hidden_engine_dialog = tostring(hidden_engine_loading),
 		hidden_engine_state = tostring(hidden_engine_loading and hidden_engine_loading.window_state),
@@ -567,122 +573,125 @@ local function WaitRealTimeFrames(count)
 	return true
 end
 
-local function SetGameplayInterfaceVisible(visible)
-	local show_interface = Global("ShowInGameInterface")
-	if type(show_interface) == "function" then
-		return pcall(show_interface, visible, true)
-	end
-	local dlg = GameplayInterfaceDialog()
-	if not dlg then return false end
-	if type(dlg.SetVisibleInstant) == "function" then
-		return pcall(dlg.SetVisibleInstant, dlg, visible)
-	elseif type(dlg.SetVisible) == "function" then
-		return pcall(dlg.SetVisible, dlg, visible, true)
-	end
-	return false
-end
-
-local function HideGameplayInterfaceForUndergroundLoading()
-	if loading_presentation ~= "underground" then return true end
-	local dlg = GameplayInterfaceDialog()
-	if gameplay_interface_loading_state == false then
-		gameplay_interface_loading_state = {
-			was_visible = WindowVisible(dlg),
-		}
-	end
-	-- Map changes can refresh or recreate the gameplay interface while the loading dialog remains
-	-- active. The 30 ms loading watcher calls this repeatedly, keeping every HUD panel hidden.
-	if dlg and WindowVisible(dlg) then
-		return SetGameplayInterfaceVisible(false)
-	end
-	return true
-end
-
-local function RestoreGameplayInterfaceAfterLoading()
-	local state = gameplay_interface_loading_state
-	gameplay_interface_loading_state = false
-	if type(state) == "table" and state.was_visible == true then
-		return SetGameplayInterfaceVisible(true)
-	end
-	return true
-end
-
 local function FrozenBackgroundValid()
 	return underground_frozen_background
 		and underground_frozen_background.window_state ~= "destroying"
 		and underground_frozen_background.window_state ~= "destroyed"
 end
 
--- MarsBlur samples the live backbuffer. During the hidden surface -> underground -> surface
--- round trip there is intentionally no scene for several frames, so that sample turns black.
--- Freeze one HUD-free surface frame in a desktop XImage beneath the message dialog. This is not an
--- engine loading screen: it does not pause simulation, lock the camera, or alter map-switch state.
-local function EnsureUndergroundFrozenBackground()
+local function BlurBackgroundValid()
+	return underground_blur_background
+		and underground_blur_background.window_state ~= "destroying"
+		and underground_blur_background.window_state ~= "destroyed"
+end
+
+local function UndergroundBackdropValid()
+	return FrozenBackgroundValid() and BlurBackgroundValid()
+end
+
+-- Capture the complete desktop exactly as the player sees it, including the HUD and any open
+-- infopanels, then blur that retained frame. The snapshot prevents XBlurRect from sampling the
+-- renderer's empty black backbuffer during the hidden surface -> underground -> surface switch.
+-- Nothing in the gameplay interface is hidden or moved: it simply remains visually behind this
+-- blur, while the Super Big Map dialog is assigned the next higher Z-order and stays sharp.
+local function EnsureUndergroundBackdrop()
 	if loading_presentation ~= "underground" then return true end
-	if FrozenBackgroundValid() then return true end
+	if UndergroundBackdropValid() then return true end
 	local term = Global("terminal")
 	local desktop = term and term.desktop
 	local image_class = Global("XImage")
+	local blur_class = Global("XBlurRect")
 	local capture = Global("CaptureScreenshotImage")
 	if not desktop or type(image_class) ~= "table" or type(image_class.new) ~= "function"
+		or type(blur_class) ~= "table" or type(blur_class.new) ~= "function"
 		or type(capture) ~= "function" then
-		LoadingUiAudit("CAPTURE_UNAVAILABLE", {
+		LoadingUiAudit("BACKDROP_UNAVAILABLE", {
 			desktop = tostring(desktop ~= nil), image_class = tostring(type(image_class)),
-			capture = tostring(type(capture)),
+			blur_class = tostring(type(blur_class)), capture = tostring(type(capture)),
 		})
 		return false
 	end
-	LoadingUiAudit("CAPTURE_BEGIN")
-	-- Give ShowInGameInterface(false) one render boundary before taking the snapshot, otherwise
-	-- the selected-rover panel from the preceding frame can be baked into the frozen background.
-	WaitRealTimeFrames(1)
-	local ok_capture, resource = pcall(capture)
-	if not ok_capture or not resource then
-		LoadingUiAudit("CAPTURE_FAILED", { capture_ok = tostring(ok_capture), resource = tostring(resource) })
-		return false
-	end
-	local ok_new, background = pcall(image_class.new, image_class, {
-		Dock = "box",
-		Image = resource,
-		ImageFit = "stretch",
-		HandleMouse = false,
-		ChildrenHandleMouse = false,
-		ZOrder = LOADING_BACKGROUND_ZORDER,
-	}, desktop)
-	if ok_new and background then
-		if type(background.SetZOrder) == "function" then
-			pcall(background.SetZOrder, background, LOADING_BACKGROUND_ZORDER)
+
+	if not FrozenBackgroundValid() then
+		LoadingUiAudit("CAPTURE_BEGIN")
+		-- Let the current HUD and open panels finish painting before freezing the complete desktop.
+		WaitRealTimeFrames(1)
+		local ok_capture, resource = pcall(capture)
+		if not ok_capture or not resource then
+			LoadingUiAudit("CAPTURE_FAILED", {
+				capture_ok = tostring(ok_capture), resource = tostring(resource),
+			})
+			return false
 		end
-		if type(background.Open) == "function" then pcall(background.Open, background) end
-		underground_frozen_background = background
-		-- XImage does not guarantee that assigning Image takes an independent ownership reference.
-		-- Retain the screenshot resource for the full hidden map round trip; releasing it here allowed
-		-- the frozen surface frame to turn black when the renderer recycled the resource.
-		underground_frozen_background_resource = resource
-	end
-	if not FrozenBackgroundValid() and type(resource.ReleaseRef) == "function" then
-		pcall(resource.ReleaseRef, resource)
-		if underground_frozen_background_resource == resource then
-			underground_frozen_background_resource = false
+		local ok_new, background = pcall(image_class.new, image_class, {
+			Dock = "box",
+			Image = resource,
+			ImageFit = "stretch",
+			HandleMouse = false,
+			ChildrenHandleMouse = false,
+			ZOrder = LOADING_BACKGROUND_ZORDER,
+		}, desktop)
+		if ok_new and background then
+			if type(background.SetZOrder) == "function" then
+				pcall(background.SetZOrder, background, LOADING_BACKGROUND_ZORDER)
+			end
+			if type(background.Open) == "function" then pcall(background.Open, background) end
+			underground_frozen_background = background
+			-- Retain ownership until teardown; otherwise the renderer can recycle the screenshot and
+			-- turn the blurred background black during the map switch.
+			underground_frozen_background_resource = resource
 		end
+		if not FrozenBackgroundValid() and type(resource.ReleaseRef) == "function" then
+			pcall(resource.ReleaseRef, resource)
+			if underground_frozen_background_resource == resource then
+				underground_frozen_background_resource = false
+			end
+		end
+		LoadingUiAudit(FrozenBackgroundValid() and "CAPTURE_READY" or "CAPTURE_CREATE_FAILED", {
+			new_ok = tostring(ok_new),
+			resource_retained = tostring(underground_frozen_background_resource == resource),
+		})
 	end
-	LoadingUiAudit(FrozenBackgroundValid() and "CAPTURE_READY" or "CAPTURE_CREATE_FAILED", {
-		new_ok = tostring(ok_new),
-		resource_retained = tostring(underground_frozen_background_resource == resource),
-	})
-	return FrozenBackgroundValid() == true
+
+	if FrozenBackgroundValid() and not BlurBackgroundValid() then
+		local rgba = Global("RGBA")
+		local props = {
+			Dock = "box",
+			BlurRadius = 20,
+			HandleMouse = false,
+			ChildrenHandleMouse = false,
+			ZOrder = LOADING_BLUR_ZORDER,
+		}
+		if type(rgba) == "function" then props.TintColor = rgba(255, 255, 255, 255) end
+		local ok_blur, blur = pcall(blur_class.new, blur_class, props, desktop)
+		if ok_blur and blur then
+			if type(blur.SetZOrder) == "function" then
+				pcall(blur.SetZOrder, blur, LOADING_BLUR_ZORDER)
+			end
+			if type(blur.Open) == "function" then pcall(blur.Open, blur) end
+			underground_blur_background = blur
+		end
+		LoadingUiAudit(BlurBackgroundValid() and "BLUR_READY" or "BLUR_CREATE_FAILED", {
+			blur_new_ok = tostring(ok_blur), blur_radius = 20,
+		})
+	end
+	return UndergroundBackdropValid() == true
 end
 
-local function CloseUndergroundFrozenBackground()
+local function CloseUndergroundBackdrop()
+	local blur = underground_blur_background
 	local background = underground_frozen_background
 	local resource = underground_frozen_background_resource
+	underground_blur_background = false
 	underground_frozen_background = false
 	underground_frozen_background_resource = false
-	if background and background.window_state ~= "destroyed" then
-		if type(background.delete) == "function" then
-			pcall(background.delete, background)
-		elseif type(background.Close) == "function" then
-			pcall(background.Close, background)
+	for _, window in ipairs({ blur, background }) do
+		if window and window.window_state ~= "destroyed" then
+			if type(window.delete) == "function" then
+				pcall(window.delete, window)
+			elseif type(window.Close) == "function" then
+				pcall(window.Close, window)
+			end
 		end
 	end
 	if resource and type(resource.ReleaseRef) == "function" then pcall(resource.ReleaseRef, resource) end
@@ -736,11 +745,10 @@ local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
 		HideWelcomePopupInstant()
-		-- Runtime underground construction begins from a selected rover/elevator. Hide the whole
-		-- gameplay interface so its infopanel, HUD, pins, and other panels do not show through the
-		-- translucent loading background. The desktop-level message box remains visible.
-		HideGameplayInterfaceForUndergroundLoading()
-		EnsureUndergroundFrozenBackground()
+		-- Keep the gameplay interface exactly as it is. The retained screenshot and full-desktop
+		-- XBlurRect place the HUD, infopanels, pins, and any other open UI behind a stable blur; only
+		-- the loading dialog is raised above it and remains sharp.
+		EnsureUndergroundBackdrop()
 		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
 		-- remains open. Hiding rather than closing it preserves engine synchronization.
 		local engine_ready = HideEngineLoadingScreenInstant()
@@ -773,11 +781,11 @@ local function SetWelcomeLoading(active)
 		return LoadingBoxValid() == true
 	else
 		local underground_teardown = loading_presentation == "underground"
-			or FrozenBackgroundValid() or underground_frozen_background_resource ~= false
+			or FrozenBackgroundValid() or BlurBackgroundValid()
+			or underground_frozen_background_resource ~= false
 		LoadingUiAudit("TEARDOWN_BEGIN", { underground = tostring(underground_teardown) })
-		-- Render the returned surface underneath the retained screenshot before either overlay
-		-- disappears. Restoring the engine loading dialog here used to expose its black layer, while
-		-- restoring the HUD exposed controls such as Place Elevator over the still-visible loader.
+		-- Render the returned surface underneath the retained blurred screenshot before either
+		-- overlay disappears. No HUD visibility state is changed during this presentation.
 		if underground_teardown then
 			local wait_render = Global("WaitRenderMode")
 			local render_ok = type(wait_render) == "function" and pcall(wait_render, "scene") or false
@@ -803,14 +811,13 @@ local function SetWelcomeLoading(active)
 		-- Leave the frozen frame beneath the closed dialog for one render boundary. The player sees
 		-- the saved surface until the live surface is ready, never the empty map-switch backbuffer.
 		if underground_teardown then WaitRealTimeFrames(1) end
-		CloseUndergroundFrozenBackground()
-		LoadingUiAudit("BACKGROUND_CLOSED")
+		CloseUndergroundBackdrop()
+		LoadingUiAudit("BACKDROP_CLOSED")
 		if underground_teardown then
 			KeepEngineLoadingScreenHidden()
 			WaitRealTimeFrames(1)
 		end
-		local hud_ok = RestoreGameplayInterfaceAfterLoading()
-		LoadingUiAudit("HUD_RESTORED", { hud_restore_ok = tostring(hud_ok) })
+		LoadingUiAudit("INTERFACE_LEFT_UNCHANGED")
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
