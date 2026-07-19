@@ -5592,7 +5592,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 1
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 2
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5612,6 +5612,69 @@ local function ShowDeferredUndergroundAccessFailure(reason)
 	pcall(create_box, nil, wrap("Super Big Map"), wrap(
 		"The underground could not be prepared safely, so elevator access remains blocked."
 		.. "\n\n" .. tostring(reason or "Unknown error")))
+end
+
+-- Expanded-map rover pathfinding can reach the exact Elevator entrance and still return false from
+-- Unit:Goto_NoDestlock after the final grid rebuild. Vanilla then exits Unit:UseElevator before it
+-- calls ElevatorBase:UseElevator. Preserve vanilla first; only if it returned without transferring,
+-- and the rover is already within two hexes of a valid entrance, continue through the normal
+-- building-side Elevator method. Distant/unreachable rovers never qualify for this fallback.
+local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
+	if not IsKindOfSafe(unit, "BaseRover") or not TraversalIsExpandedContext(unit, elevator) then
+		return original(unit, elevator, ...)
+	end
+	local before_map = TraversalObjectMap(unit)
+	local results = PackValues(original(unit, elevator, ...))
+	local after_map = TraversalObjectMap(unit)
+	if before_map == nil or after_map ~= before_map then
+		return Unpack(results, 1, results.n)
+	end
+	if not TraversalObjectValid(unit) or not TraversalObjectValid(elevator)
+		or not TraversalObjectValid(elevator.other)
+		or TraversalObjectMap(elevator) ~= before_map then
+		return Unpack(results, 1, results.n)
+	end
+	local validate = Global("ValidateBuilding")
+	if type(validate) == "function" and SafeCall(validate, elevator) ~= elevator then
+		return Unpack(results, 1, results.n)
+	end
+	local entrance = type(elevator.GetEntrancePos) == "function"
+		and SafeCall(elevator.GetEntrancePos, elevator, unit) or nil
+	local unit_pos = Engine.ObjectPos(unit)
+	local ux, uy = PointXY(unit_pos)
+	local ex, ey = PointXY(entrance)
+	if ux == false or uy == nil or ex == false or ey == nil then
+		return Unpack(results, 1, results.n)
+	end
+	local dx, dy = ux - ex, uy - ey
+	local distance_sq = dx * dx + dy * dy
+	local const_tbl = Global("const")
+	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or nil
+	local max_distance = 2 * (hex_size or 1000)
+	if distance_sq > max_distance * max_distance then
+		ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_SKIPPED", {
+			unit = tostring(unit), elevator = tostring(elevator),
+			distance = tostring(math.sqrt(distance_sq)), max_distance = tostring(max_distance),
+			reason = "rover is not close enough to the entrance",
+		}, before_map)
+		return Unpack(results, 1, results.n)
+	end
+	local building_use = elevator.UseElevator
+	if type(building_use) ~= "function" then
+		return Unpack(results, 1, results.n)
+	end
+	ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_BEGIN", {
+		unit = tostring(unit), elevator = tostring(elevator),
+		distance = tostring(math.sqrt(distance_sq)), max_distance = tostring(max_distance),
+	}, before_map)
+	building_use(elevator, unit)
+	local final_map = TraversalObjectMap(unit)
+	ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_END", {
+		unit = tostring(unit), elevator = tostring(elevator),
+		transferred = tostring(final_map ~= nil and final_map ~= before_map),
+		final_map = tostring(final_map),
+	}, final_map or before_map)
+	return Unpack(results, 1, results.n)
 end
 
 local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
@@ -5767,12 +5830,12 @@ local function PatchDeferredUndergroundElevatorAccess(source)
 			local label = tostring(entry.name)
 			local wrapper = function(unit, elevator, ...)
 				if deferred_elevator_access_by_unit[unit] == true then
-					return original(unit, elevator, ...)
+					return UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
 				end
 				local target = DeferredUndergroundTargetForElevator(elevator)
 				local needs_prepare = target and NeedsDeferredUndergroundPreparation(target)
 				if needs_prepare ~= true then
-					return original(unit, elevator, ...)
+					return UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
 				end
 				deferred_elevator_access_by_unit[unit] = true
 				local call_ok, prepared, reason = pcall(
@@ -5789,7 +5852,7 @@ local function PatchDeferredUndergroundElevatorAccess(source)
 				-- The map switch can replace the underground counterpart while preserving the surface
 				-- elevator. Vanilla reads elevator.other only after walking to the entrance, so resume
 				-- with the original surface object and its freshly restored backlink.
-				return original(unit, elevator, ...)
+				return UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
 			end
 			class.UseElevator = wrapper
 			patches[#patches + 1] = {
