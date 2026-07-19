@@ -3154,10 +3154,31 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	return false, tostring(result)
 end
 
+local function MergeHexShapes(...)
+	local merged, seen = {}, {}
+	for index = 1, select("#", ...) do
+		local shape = select(index, ...)
+		if type(shape) == "table" then
+			for _, hex in ipairs(shape) do
+				local q, r = PointXY(hex)
+				if type(q) == "number" and type(r) == "number" then
+					local key = tostring(q) .. ":" .. tostring(r)
+					if not seen[key] then
+						seen[key] = true
+						merged[#merged + 1] = hex
+					end
+				end
+			end
+		end
+	end
+	return merged
+end
+
 local function FlattenDeferredWonder(wonder, ratios)
 	local get_enclosed = Global("GetEnclosedShape")
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
+	local get_peripheral = Global("GetPeripheralHexShape")
 	local for_each_hex = Global("HexShapeForEach")
 	local flatten = Global("FlattenTerrainInShape")
 	local unbuildable = Global("buildUnbuildableZ")()
@@ -3166,6 +3187,28 @@ local function FlattenDeferredWonder(wonder, ratios)
 	if #shape == 0 then shape = shrink(get_outline(wonder:GetEntity()), 2) end
 	if type(ratios) == "table" then
 		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
+	end
+	local clearance_mode = "scaled_vanilla_flatten_shape"
+	local scaled_outline_hexes, peripheral_hexes = 0, 0
+	if wonder.class == "CaveOfWonders" or IsKindOfSafe(wonder, "CaveOfWondersBase") then
+		-- WonderCrystalCave contains every visible crystal as part of one entity. Scaling that entity
+		-- correctly enlarges all formations, but the vanilla enclosed flatten shape is intentionally
+		-- smaller than their complete outline. After terrain resampling, cliff faces can therefore
+		-- slice through the enlarged crystals as a dark membrane. Clear the complete transformed
+		-- outline plus one hex of resampling tolerance; no unrelated crystal/mystery objects move.
+		local outline = get_outline(wonder:GetEntity())
+		local scaled_outline = ScaleHexShapeForExpansion(
+			outline, ratios.scale_x, ratios.scale_y)
+		local peripheral
+		if type(get_peripheral) == "function" and type(scaled_outline) == "table"
+			and #scaled_outline > 0 then
+			local peripheral_ok, value = pcall(get_peripheral, scaled_outline)
+			if peripheral_ok then peripheral = value end
+		end
+		scaled_outline_hexes = type(scaled_outline) == "table" and #scaled_outline or 0
+		peripheral_hexes = type(peripheral) == "table" and #peripheral or 0
+		shape = MergeHexShapes(shape, scaled_outline, peripheral)
+		clearance_mode = "cave_of_wonders_full_outline_plus_one_hex"
 	end
 	local buildable_z
 	local buildable_source = "expanded_buildable_grid"
@@ -3196,6 +3239,9 @@ local function FlattenDeferredWonder(wonder, ratios)
 			shape_hexes = #shape,
 			buildable_z = buildable_z,
 			buildable_source = buildable_source,
+			clearance_mode = clearance_mode,
+			scaled_outline_hexes = scaled_outline_hexes,
+			peripheral_hexes = peripheral_hexes,
 		}
 	end
 	return false, "no terrain height is available for the expanded wonder footprint"
@@ -3268,6 +3314,9 @@ local function MaterializeDeferredUndergroundWonders(map)
 				flatten_shape_hexes = flatten_stats and flatten_stats.shape_hexes,
 				flatten_z = flatten_stats and flatten_stats.buildable_z,
 				flatten_source = flatten_stats and flatten_stats.buildable_source,
+				clearance_mode = flatten_stats and flatten_stats.clearance_mode,
+				scaled_outline_hexes = flatten_stats and flatten_stats.scaled_outline_hexes,
+				peripheral_hexes = flatten_stats and flatten_stats.peripheral_hexes,
 			}, map)
 		end
 	end)
