@@ -3686,7 +3686,7 @@ end
 -- never leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors;
 -- terrain is considered only after a sector is drawn. This keeps the lower-right perimeter fully
 -- eligible. Outer-ring top-ups deliberately use a simple custom spacing rule instead of vanilla
--- repulsion: unique hexes, at least 20 hexes from every other anomaly, and at most 1 top-up
+-- repulsion: unique hexes, at least 10 hexes from every other anomaly, and at most 1 top-up
 -- per sector.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
@@ -3816,7 +3816,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
 	local CANDIDATE_SAMPLES_PER_SECTOR = 384
 	local MAX_PLANNING_ATTEMPTS = 64
-	local MIN_TOPUP_HEX_DISTANCE = 20
+	local MIN_TOPUP_HEX_DISTANCE = 10
 	local MAX_TOPUPS_PER_SECTOR = 1
 	local function random_between(first, past_last)
 		first, past_last = math.floor(first), math.floor(past_last)
@@ -3963,7 +3963,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 	end
 	if not plans then
-		stats.error = "no complete reachable 20-hex-spaced outer-ring plan after "
+		stats.error = "no complete reachable 10-hex-spaced outer-ring plan after "
 			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best=" .. tostring(best_planned)
 			.. "/" .. tostring(#moving) .. ", candidates=" .. tostring(candidate_count) .. ")"
 		return false, stats
@@ -4272,7 +4272,7 @@ end
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
 -- is a cluster of adjacent marker objects. Ordinary top-ups obey vanilla family repulsion. Surface
 -- outer-ring anomaly top-ups deliberately use their own rule: no vanilla repulsion, unique hexes,
--- and at least 20 hexes between an outer-ring top-up and every other anomaly. This runs after
+-- and at least 10 hexes between an outer-ring top-up and every other anomaly. This runs after
 -- position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	map = map or Global("CurrentMap")
@@ -4289,7 +4289,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	end
 	local entries = {}
 	local underground = IsUndergroundMap(map)
-	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 20
+	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 10
 	local stats = {
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
