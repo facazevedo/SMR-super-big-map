@@ -916,6 +916,17 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		gen.HandlePendingUndergroundElevatorRestore(
 			map_slot, map, "CurrentMapChangeDone after Lifecycle.Apply")
 	end
+	-- Existing underground Elevators are moved by the stretch pass, so their cached absolute
+	-- waypoint chains must be rebuilt after the final terrain/buildable lifecycle. Restore any
+	-- rover lights deferred while that destination was off-screen at this same renderer-safe point.
+	if IsModMap(map) and gen
+		and type(gen.RebuildExpandedElevatorWaypointChains) == "function" then
+		gen.RebuildExpandedElevatorWaypointChains(map,
+			"CurrentMapChangeDone after final Elevator restoration")
+	end
+	if gen and type(gen.RestoreDeferredVehicleNightLights) == "function" then
+		gen.RestoreDeferredVehicleNightLights(map)
+	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")
@@ -944,6 +955,10 @@ RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason
 	if gen and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
 		gen.HandlePendingUndergroundElevatorRestore(map and map.slot, map,
 			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " token=" .. tostring(token_id))
+	end
+	if gen and type(gen.RebuildExpandedElevatorWaypointChains) == "function" then
+		gen.RebuildExpandedElevatorWaypointChains(map,
+			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final geometry")
 	end
 end)
 

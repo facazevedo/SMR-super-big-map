@@ -498,6 +498,9 @@ end
 
 local hidden_engine_loading = false
 local gameplay_interface_loading_state = false
+local underground_frozen_background = false
+local LOADING_BACKGROUND_ZORDER = 1000000010
+local LOADING_DIALOG_ZORDER = LOADING_BACKGROUND_ZORDER + 1
 
 local function GameplayInterfaceDialog()
 	local get_interface = Global("GetInGameInterface")
@@ -557,6 +560,70 @@ local function RestoreGameplayInterfaceAfterLoading()
 	return true
 end
 
+local function FrozenBackgroundValid()
+	return underground_frozen_background
+		and underground_frozen_background.window_state ~= "destroying"
+		and underground_frozen_background.window_state ~= "destroyed"
+end
+
+-- MarsBlur samples the live backbuffer. During the hidden surface -> underground -> surface
+-- round trip there is intentionally no scene for several frames, so that sample turns black.
+-- Freeze one HUD-free surface frame in a desktop XImage beneath the message dialog. This is not an
+-- engine loading screen: it does not pause simulation, lock the camera, or alter map-switch state.
+local function EnsureUndergroundFrozenBackground()
+	if loading_presentation ~= "underground" then return true end
+	if FrozenBackgroundValid() then return true end
+	local term = Global("terminal")
+	local desktop = term and term.desktop
+	local image_class = Global("XImage")
+	local capture = Global("CaptureScreenshotImage")
+	if not desktop or type(image_class) ~= "table" or type(image_class.new) ~= "function"
+		or type(capture) ~= "function" then
+		return false
+	end
+	-- Give ShowInGameInterface(false) one render boundary before taking the snapshot, otherwise
+	-- the selected-rover panel from the preceding frame can be baked into the frozen background.
+	local is_real_time = Global("IsRealTimeThread")
+	local wait_frame = Global("WaitNextFrame")
+	local ok_realtime, in_realtime = false, false
+	if type(is_real_time) == "function" then
+		ok_realtime, in_realtime = pcall(is_real_time)
+	end
+	if ok_realtime and in_realtime == true and type(wait_frame) == "function" then
+		pcall(wait_frame)
+	end
+	local ok_capture, resource = pcall(capture)
+	if not ok_capture or not resource then return false end
+	local ok_new, background = pcall(image_class.new, image_class, {
+		Dock = "box",
+		Image = resource,
+		ImageFit = "stretch",
+		HandleMouse = false,
+		ChildrenHandleMouse = false,
+		ZOrder = LOADING_BACKGROUND_ZORDER,
+	}, desktop)
+	if ok_new and background then
+		if type(background.SetZOrder) == "function" then
+			pcall(background.SetZOrder, background, LOADING_BACKGROUND_ZORDER)
+		end
+		if type(background.Open) == "function" then pcall(background.Open, background) end
+		underground_frozen_background = background
+	end
+	if type(resource.ReleaseRef) == "function" then pcall(resource.ReleaseRef, resource) end
+	return FrozenBackgroundValid() == true
+end
+
+local function CloseUndergroundFrozenBackground()
+	local background = underground_frozen_background
+	underground_frozen_background = false
+	if not background or background.window_state == "destroyed" then return end
+	if type(background.delete) == "function" then
+		pcall(background.delete, background)
+	elseif type(background.Close) == "function" then
+		pcall(background.Close, background)
+	end
+end
+
 local function HideEngineLoadingScreenInstant()
 	local dlg = EngineLoadingScreenDialog()
 	if not dlg then return true end
@@ -594,6 +661,7 @@ local function SetWelcomeLoading(active)
 		-- gameplay interface so its infopanel, HUD, pins, and other panels do not show through the
 		-- translucent loading background. The desktop-level message box remains visible.
 		HideGameplayInterfaceForUndergroundLoading()
+		EnsureUndergroundFrozenBackground()
 		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
 		-- remains open. Hiding rather than closing it preserves engine synchronization.
 		local engine_ready = HideEngineLoadingScreenInstant()
@@ -614,6 +682,9 @@ local function SetWelcomeLoading(active)
 				local ok, box = pcall(create_box, nil,
 					wrap(title), wrap(body), wrap(status))
 				if ok and box then
+					if type(box.SetZOrder) == "function" then
+						pcall(box.SetZOrder, box, LOADING_DIALOG_ZORDER)
+					end
 					loading_box = box
 					loading_box_presentation = loading_presentation
 				end
@@ -621,6 +692,22 @@ local function SetWelcomeLoading(active)
 		end
 		return LoadingBoxValid() == true
 	else
+		-- Restore the live surface scene beneath the still-visible frozen frame, then remove both
+		-- overlays together. Waiting only on a real-time thread avoids exposing a black transition
+		-- frame without changing game-time or map-generation synchronization.
+		RestoreEngineLoadingScreenInstant()
+		RestoreGameplayInterfaceAfterLoading()
+		if FrozenBackgroundValid() then
+			local is_real_time = Global("IsRealTimeThread")
+			local wait_frame = Global("WaitNextFrame")
+			local ok_realtime, in_realtime = false, false
+			if type(is_real_time) == "function" then
+				ok_realtime, in_realtime = pcall(is_real_time)
+			end
+			if ok_realtime and in_realtime == true and type(wait_frame) == "function" then
+				pcall(wait_frame, 2)
+			end
+		end
 		-- Remove our loading box.
 		if LoadingBoxValid() then
 			if type(loading_box.Close) == "function" then
@@ -631,8 +718,7 @@ local function SetWelcomeLoading(active)
 		end
 		loading_box = false
 		loading_box_presentation = false
-		RestoreEngineLoadingScreenInstant()
-		RestoreGameplayInterfaceAfterLoading()
+		CloseUndergroundFrozenBackground()
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()

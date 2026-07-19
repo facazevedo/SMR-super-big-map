@@ -33,6 +33,10 @@ SuperBigMap.State.underground_elevator_restore_tokens =
 	SuperBigMap.State.underground_elevator_restore_tokens or {}
 SuperBigMap.State.underground_elevator_restore_epoch =
 	SuperBigMap.State.underground_elevator_restore_epoch or 0
+SuperBigMap.State.deferred_vehicle_night_lights =
+	SuperBigMap.State.deferred_vehicle_night_lights or setmetatable({}, { __mode = "k" })
+SuperBigMap.State.offscreen_vehicle_light_suppressions =
+	SuperBigMap.State.offscreen_vehicle_light_suppressions or setmetatable({}, { __mode = "k" })
 local pending_maps = SuperBigMap.State.expansion_pending_maps
 local blocked_maps = SuperBigMap.State.expansion_blocked_maps
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
@@ -40,6 +44,9 @@ local pending_underground_elevator_restores =
 	SuperBigMap.State.pending_underground_elevator_restores
 local underground_elevator_restore_tokens =
 	SuperBigMap.State.underground_elevator_restore_tokens
+local deferred_vehicle_night_lights = SuperBigMap.State.deferred_vehicle_night_lights
+local offscreen_vehicle_light_suppressions =
+	SuperBigMap.State.offscreen_vehicle_light_suppressions
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -175,7 +182,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 3
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 4
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -301,6 +308,18 @@ local function TraversalSnapshot(unit, elevator, check_path)
 			end
 		end
 	end
+	local other_entrance, other_chain
+	if other and type(other.GetEntrancePos) == "function" then
+		other_entrance, other_chain = SafeCall(other.GetEntrancePos, other, unit)
+	end
+	local other_entrance_pos, oex, oey =
+		TraversalAddPosition(data, "other_entrance", other_entrance)
+	data.other_entrance_valid = tostring(
+		other_entrance_pos ~= nil and oex ~= false and oey ~= nil)
+	data.other_entrance_chain_points = tostring(
+		type(other_chain) == "table" and #other_chain or 0)
+	data.map_night_lights = tostring(unit_map and unit_map.NightLightsState)
+	data.other_map_night_lights = tostring(other_map and other_map.NightLightsState)
 	if check_path and unit and entrance_pos then
 		-- HasPath_NoDestlock mutates temporary path flags and pushes a destructor. The engine asserts
 		-- unless it runs from this unit's command thread, so UI/interact diagnostics must never call it.
@@ -5598,7 +5617,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 2
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 3
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -5620,6 +5639,96 @@ local function ShowDeferredUndergroundAccessFailure(reason)
 		.. "\n\n" .. tostring(reason or "Unknown error")))
 end
 
+-- DroneBase recreates its NightLightLight attachments from OnTransferToMapDone. Vanilla normally
+-- changes the current map while those attachments move. The first-access rover path deliberately
+-- keeps the player's camera on the source map, so creating clustered lights in the off-screen
+-- destination leaves the renderer's light-index arrays out of sync. Temporarily suppress the
+-- destination map's night-light state for the transfer, then rebuild the unit's lights only after
+-- that destination has completed a real CurrentMapChangeDone lifecycle.
+local function BeginOffscreenVehicleLightTransfer(unit, elevator)
+	if not IsKindOfSafe(unit, "NightLightObject") then return nil end
+	local target = TraversalObjectMap(elevator and elevator.other)
+	if not target or target == Global("CurrentMap") then return nil end
+	local record = offscreen_vehicle_light_suppressions[target]
+	if type(record) ~= "table" then
+		record = { count = 0, previous = target.NightLightsState }
+		offscreen_vehicle_light_suppressions[target] = record
+	end
+	record.count = (tonumber(record.count) or 0) + 1
+	target.NightLightsState = false
+	return { target = target, record = record, previous = record.previous }
+end
+
+local function EndOffscreenVehicleLightTransfer(guard)
+	local target = guard and guard.target
+	local record = guard and guard.record
+	if not target or type(record) ~= "table" then return end
+	record.count = math.max(0, (tonumber(record.count) or 1) - 1)
+	if record.count == 0 then
+		target.NightLightsState = record.previous
+		if offscreen_vehicle_light_suppressions[target] == record then
+			offscreen_vehicle_light_suppressions[target] = nil
+		end
+	end
+end
+
+local function RestoreDeferredVehicleNightLights(map)
+	if not map or map ~= Global("CurrentMap") then return 0, 0 end
+	local restored, discarded = 0, 0
+	for unit, target in pairs(deferred_vehicle_night_lights) do
+		local unit_map = TraversalObjectMap(unit)
+		if not TraversalObjectValid(unit) or unit_map ~= target then
+			deferred_vehicle_night_lights[unit] = nil
+			discarded = discarded + 1
+		elseif target == map then
+			local set_possible = unit.SetIsNightLightPossible
+			if type(set_possible) == "function" then
+				local malfunctioned = type(unit.IsMalfunctioned) == "function"
+					and SafeCall(unit.IsMalfunctioned, unit) == true
+				local ok = pcall(set_possible, unit, not malfunctioned)
+				if not ok then
+					ElevatorTraversalAudit("VEHICLE_NIGHT_LIGHT_RESTORE_FAILED", {
+						unit = tostring(unit), unit_class = TraversalClass(unit),
+						target = tostring(target), malfunctioned = tostring(malfunctioned),
+					}, map)
+				else
+					restored = restored + 1
+				end
+			else
+				discarded = discarded + 1
+			end
+			deferred_vehicle_night_lights[unit] = nil
+		end
+	end
+	if restored > 0 or discarded > 0 then
+		ElevatorTraversalAudit("VEHICLE_NIGHT_LIGHTS_RESTORED", {
+			restored = restored, discarded = discarded,
+			night_lights_state = tostring(map.NightLightsState),
+		}, map)
+	end
+	return restored, discarded
+end
+
+-- Elevator waypoint chains contain absolute world positions. Stretching an already-built
+-- underground counterpart moves the building itself, but vanilla does not rebuild those cached
+-- points on SetPos. Rebuild every expanded-map Elevator after the final map lifecycle so rover
+-- disembark positions follow the stretched Elevator instead of the old source-sized coordinates.
+local function RebuildExpandedElevatorWaypointChains(map, reason)
+	if not TraversalIsExpandedMap(map) or type(map.MapForEach) ~= "function" then return 0, 0 end
+	local rebuilt, failed = 0, 0
+	local ok_scan = pcall(map.MapForEach, map, "map", "ElevatorBase", function(elevator)
+		if TraversalObjectValid(elevator) and type(elevator.BuildWaypointChains) == "function" then
+			local ok = pcall(elevator.BuildWaypointChains, elevator)
+			if ok then rebuilt = rebuilt + 1 else failed = failed + 1 end
+		end
+	end)
+	if not ok_scan then failed = failed + 1 end
+	ElevatorTraversalAudit("ELEVATOR_WAYPOINT_CHAINS_REBUILT", {
+		rebuilt = rebuilt, failed = failed, reason = tostring(reason),
+	}, map)
+	return rebuilt, failed
+end
+
 -- Expanded-map rover pathfinding can reach the exact Elevator entrance and still return false from
 -- Unit:Goto_NoDestlock after the final grid rebuild. Vanilla then exits Unit:UseElevator before it
 -- calls ElevatorBase:UseElevator. Preserve vanilla first; only if it returned without transferring,
@@ -5630,9 +5739,22 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 		return original(unit, elevator, ...)
 	end
 	local before_map = TraversalObjectMap(unit)
-	local results = PackValues(original(unit, elevator, ...))
+	local original_light_guard = BeginOffscreenVehicleLightTransfer(unit, elevator)
+	local protected_results = PackValues(pcall(original, unit, elevator, ...))
+	EndOffscreenVehicleLightTransfer(original_light_guard)
+	if protected_results[1] ~= true then error(protected_results[2]) end
+	local results = { n = math.max(0, protected_results.n - 1) }
+	for i = 2, protected_results.n do results[i - 1] = protected_results[i] end
 	local after_map = TraversalObjectMap(unit)
 	if before_map == nil or after_map ~= before_map then
+		if original_light_guard and after_map == original_light_guard.target then
+			deferred_vehicle_night_lights[unit] = after_map
+			ElevatorTraversalAudit("VEHICLE_NIGHT_LIGHT_DEFERRED", {
+				unit = tostring(unit), elevator = tostring(elevator),
+				final_map = tostring(after_map), transfer_path = "vanilla Unit:UseElevator",
+				target_night_lights_restored = tostring(original_light_guard.previous),
+			}, after_map or before_map)
+		end
 		return Unpack(results, 1, results.n)
 	end
 	if not TraversalObjectValid(unit) or not TraversalObjectValid(elevator)
@@ -5673,12 +5795,20 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 		unit = tostring(unit), elevator = tostring(elevator),
 		distance = tostring(math.sqrt(distance_sq)), max_distance = tostring(max_distance),
 	}, before_map)
-	building_use(elevator, unit)
+	local light_guard = BeginOffscreenVehicleLightTransfer(unit, elevator)
+	local call_ok, call_err = pcall(building_use, elevator, unit)
+	EndOffscreenVehicleLightTransfer(light_guard)
+	if not call_ok then error(call_err) end
 	local final_map = TraversalObjectMap(unit)
+	local night_lights_deferred = light_guard ~= nil and final_map == light_guard.target
+	if night_lights_deferred then
+		deferred_vehicle_night_lights[unit] = final_map
+	end
 	ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_END", {
 		unit = tostring(unit), elevator = tostring(elevator),
 		transferred = tostring(final_map ~= nil and final_map ~= before_map),
-		final_map = tostring(final_map),
+		final_map = tostring(final_map), night_lights_deferred = tostring(night_lights_deferred),
+		target_night_lights_restored = tostring(light_guard and light_guard.previous),
 	}, final_map or before_map)
 	return Unpack(results, 1, results.n)
 end
@@ -6183,6 +6313,8 @@ MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.PatchCaveInShapePoints = PatchCaveInShapePoints
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
+MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
+MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWaypointChains
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
@@ -6219,6 +6351,13 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	RestoreDeferredVehicleNightLights(Global("CurrentMap"))
+	for target, record in pairs(offscreen_vehicle_light_suppressions) do
+		if target and type(record) == "table" then
+			target.NightLightsState = record.previous
+		end
+		offscreen_vehicle_light_suppressions[target] = nil
+	end
 	RestoreElevatorTraversalDiagnostics()
 	RestoreDeferredUndergroundElevatorAccess()
 	-- Restore process-shared MapData presets as part of the domain teardown too,
