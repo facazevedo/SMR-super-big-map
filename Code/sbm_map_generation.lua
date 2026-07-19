@@ -4144,7 +4144,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			-- GameTime to match the value captured by SuspendPassEdits, so no Sleep/yield is allowed
 			-- inside that transaction.
 			local loading_visible = BeginSurfaceExpansionLoading(map,
-				"Stretching the surface terrain")
+				"Expanding surface terrain")
 			local sleep = Global("Sleep")
 			if type(sleep) == "function" then sleep(100) end
 			local visible_check = SuperBigMap.ExpansionLoadingVisible
