@@ -2628,6 +2628,7 @@ end
 
 local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 	if type(token) ~= "table" or type(token.objects) ~= "table" then return false, "invalid token" end
+	local resource_pool = topup_candidate_pool_by_map[map]
 	local failures = {}
 	for i = #token.objects, 1, -1 do
 		local obj = token.objects[i]
@@ -2640,10 +2641,25 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 			end
 		end
 	end
-	-- Force anomalies/effects and all post-placement checks to build their own normal, wall-aware
-	-- pools. Only resource top-up placement is allowed to observe the temporary grid state.
-	topup_candidate_pool_by_map[map] = nil
+	-- Revalidate the unused portion of the large shared resource pool after restoring the walls.
+	-- Anomalies/effects therefore retain the pre-existing 8k-pool handoff, but they can consume only
+	-- candidates that pass the normal wall-aware terrain, obstruction, and reachability rules.
 	underground_reachability_by_map[map] = nil
+	topup_candidate_pool_by_map[map] = nil
+	local wall_aware_pool = {}
+	local point_fn = Global("point")
+	if #failures == 0 and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+		and type(resource_pool) == "table" and type(point_fn) == "function" then
+		local validation_context = NewDepositValidationContext(map)
+		for _, candidate in ipairs(resource_pool) do
+			if not candidate.used and type(candidate.x) == "number" and type(candidate.y) == "number"
+				and CanReceiveDeposit(map, point_fn(candidate.x, candidate.y), validation_context) then
+				wall_aware_pool[#wall_aware_pool + 1] = candidate
+			end
+		end
+		topup_candidate_pool_by_map[map] = wall_aware_pool
+	end
+	token.wall_aware_shared_candidates = #wall_aware_pool
 	return #failures == 0, table.concat(failures, "|")
 end
 
@@ -2901,6 +2917,8 @@ function DepositRules.TopUpDeposits(map)
 		target_counts = CountMapString(target_by_type), final_counts = CountMapString(final_by_type),
 		added_counts = CountMapString(added_by_type), added_total = added,
 		ignored_rubble_walls = rubble_token and #rubble_token.objects or 0,
+		wall_aware_shared_candidates = rubble_token
+			and rubble_token.wall_aware_shared_candidates or 0,
 	})
 end
 
@@ -4467,7 +4485,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
 		outer_ring_spacing_violations = 0,
 		density_failures = 0, density_status = "", resource_shortfall = 0,
-		resource_ignored_rubble_walls = 0,
+		resource_ignored_rubble_walls = 0, wall_aware_shared_candidates = 0,
 	}
 	do
 		local density = map.SuperBigMapEnrichmentTopUpStatus
@@ -4480,6 +4498,8 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			if kind == "resources" and type(entry) == "table" then
 				stats.resource_shortfall = tonumber(entry.remaining_shortfall) or 0
 				stats.resource_ignored_rubble_walls = tonumber(entry.ignored_rubble_walls) or 0
+				stats.wall_aware_shared_candidates =
+					tonumber(entry.wall_aware_shared_candidates) or 0
 			end
 		end
 		stats.density_status = table.concat(status, " ")

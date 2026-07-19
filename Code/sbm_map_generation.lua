@@ -4927,6 +4927,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						resource_shortfall = repulsion_stats and repulsion_stats.resource_shortfall,
 						resource_ignored_rubble_walls = repulsion_stats
 							and repulsion_stats.resource_ignored_rubble_walls,
+						wall_aware_shared_candidates = repulsion_stats
+							and repulsion_stats.wall_aware_shared_candidates,
 						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
 					}, repulsion_ok == true)
