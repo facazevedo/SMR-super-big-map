@@ -756,7 +756,6 @@ local ScaleHexShapeForExpansion = TerrainCopy.ScaleHexShapeForExpansion
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
-local TransferDecorReliefAnnotations = TerrainCopy.TransferDecorReliefAnnotations
 local AuditFinalCaveInPositions = TerrainCopy.AuditFinalCaveInPositions
 local AuditCaveInSnapshot = TerrainCopy.AuditCaveInSnapshot
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
@@ -2701,22 +2700,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			and cfg_bool("OPTIMIZE_DIRECT_SOURCE_TERRAIN_STRETCH", true)
 			and type(StretchSourceToFull) == "function"
 			and type(AnnotateDecorRelief) == "function"
-			and type(TransferDecorReliefAnnotations) == "function"
 		local direct_terrain_ok, direct_terrain_grids = false, 0
 		if direct_terrain then
-			-- Capture object-to-ground relief against the untouched native terrain. The same object
-			-- instances are transferred below, so moving these weak tables to the destination is
-			-- equivalent to capturing after the old source-corner copy.
-			source.SuperBigMapSourceWidthTiles = source_width
-			source.SuperBigMapSourceHeightTiles = source_height
-			source.SuperBigMapGeneratorWidthTiles = source_width
-			source.SuperBigMapGeneratorHeightTiles = source_height
-			source.SuperBigMapDesiredWidthTiles = desired_width
-			source.SuperBigMapDesiredHeightTiles = desired_height
-			local relief_token = LoadingBegin(
-				"capture destination decor relief from temporary source", source)
-			AnnotateDecorRelief(source)
-			LoadingEnd(relief_token, nil, true)
 			local direct_token = LoadingBegin(
 				"stretch temporary source terrain directly to destination", destination)
 			local call_ok, stretch_ok, stretched_grids = pcall(
@@ -2730,7 +2715,6 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		end
 		if direct_terrain_ok then
 			destination.SuperBigMapDirectSourceTerrainStretched = true
-			TransferDecorReliefAnnotations(source, destination)
 		else
 			-- Compatibility fallback also repairs a partially completed direct attempt: copying the
 			-- complete source corner gives the later normal stretch its canonical input again.
@@ -2759,6 +2743,16 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		local transferred = TransferGeneratedObjects(source, destination, source_baseline,
 			native_enrichment_excluded)
 		LoadingEnd(object_transfer_token, { transferred = tostring(transferred) }, true)
+		if direct_terrain_ok then
+			-- Enumerate the destination only after transfer, exactly like the original surface tail.
+			-- Ground heights still come from the loaded native source, so the relief snapshot remains
+			-- pre-stretch without retaining any of the source backing's untransferred objects.
+			local relief_token = LoadingBegin(
+				"capture transferred decor relief from temporary terrain", destination)
+			AnnotateDecorRelief(destination, source)
+			destination.SuperBigMapDecorReliefCapturedFromTemporarySource = true
+			LoadingEnd(relief_token, nil, true)
+		end
 		-- The normal expanded-backing tail consumes these optional smoothing records immediately.
 		-- This path deliberately preserves the vanilla-generated height field, so discard their
 		-- temporary-map references instead of allowing a later map generation to consume stale pads.

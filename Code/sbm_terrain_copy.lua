@@ -1790,7 +1790,10 @@ local function AuditCaveInSnapshot(map, mode, reason)
 	return ok, stats
 end
 
-local function AnnotateDecorRelief(map)
+-- terrain_source_map is optional. Direct temporary-source stretching installs the final terrain
+-- before objects transfer, so its destination objects must be enumerated on map while their
+-- pre-stretch ground heights are still sampled from the untouched temporary source.
+local function AnnotateDecorRelief(map, terrain_source_map)
 	if not map then return 0 end
 	if type(map.MapForEach) ~= "function" then return 0 end
 	local relief_enabled = cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true)
@@ -1801,6 +1804,7 @@ local function AnnotateDecorRelief(map)
 	local box_fn = Global("box")
 	local relief_terrain_available = type(terrain_api) == "table"
 		and type(terrain_api.GetHeight) == "function"
+	local relief_terrain_map = terrain_source_map or map
 	if type(box_fn) ~= "function" then return 0 end
 	local const_tbl = Global("const")
 	local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -1915,7 +1919,7 @@ local function AnnotateDecorRelief(map)
 		local pz
 		pcall(function() pz = pos:z() end)
 		if type(pz) ~= "number" then return end
-		local ok_h, h = pcall(terrain_api.GetHeight, map, pos)
+		local ok_h, h = pcall(terrain_api.GetHeight, relief_terrain_map, pos)
 		if not ok_h or type(h) ~= "number" then
 			height_failures = height_failures + 1
 			return
@@ -1938,6 +1942,7 @@ local function AnnotateDecorRelief(map)
 		terrain_glued = terrain_glued,
 		height_failures = height_failures,
 		max_abs_relief = max_abs_relief,
+		terrain_source_is_destination = relief_terrain_map == map,
 	}
 	cave_in_position_audit_by_map[map] = cave_capture
 	if optimize_traversal then
@@ -2006,28 +2011,6 @@ local function ClearDecorRelief(map)
 		decor_position_audit_by_map[map] = nil
 		cave_in_position_audit_by_map[map] = nil
 	end
-end
-
--- The temporary vanilla source owns the objects while their pre-stretch relief is sampled. Move
--- the weak annotation tables to the expanded destination before transferring those same object
--- instances, so the later decoration pass consumes exactly the snapshot it would have captured
--- from a copied source corner.
-local function TransferDecorReliefAnnotations(source_map, destination_map)
-	if not source_map or not destination_map then return false end
-	decor_relief_by_map[destination_map] = decor_relief_by_map[source_map]
-	decor_objects_by_map[destination_map] = decor_objects_by_map[source_map]
-	decor_eligible_objects_by_map[destination_map] = decor_eligible_objects_by_map[source_map]
-	decor_relief_stats_by_map[destination_map] = decor_relief_stats_by_map[source_map]
-	decor_position_audit_by_map[destination_map] = decor_position_audit_by_map[source_map]
-	cave_in_position_audit_by_map[destination_map] = cave_in_position_audit_by_map[source_map]
-	decor_relief_by_map[source_map] = nil
-	decor_objects_by_map[source_map] = nil
-	decor_eligible_objects_by_map[source_map] = nil
-	decor_relief_stats_by_map[source_map] = nil
-	decor_position_audit_by_map[source_map] = nil
-	cave_in_position_audit_by_map[source_map] = nil
-	destination_map.SuperBigMapDecorReliefCapturedFromTemporarySource = true
-	return true
 end
 
 local function CaveInTerrainGluedPoint(x, y, raw_z, explicit_z)
@@ -4547,7 +4530,6 @@ local TerrainCopy = {
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
-	TransferDecorReliefAnnotations = TransferDecorReliefAnnotations,
 	AuditFinalCaveInPositions = AuditFinalCaveInPositions,
 	AuditCaveInSnapshot = AuditCaveInSnapshot,
 	ClearDecorRelief = ClearDecorRelief,
