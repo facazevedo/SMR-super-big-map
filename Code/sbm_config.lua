@@ -279,9 +279,9 @@ config.ShowRestartNotice = true
 --
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
--- TEMP vanilla-mode gate: disabling stage 01 cascades through every expansion stage while the
--- mod remains loaded for explicitly enabled standalone test aids such as Place Elevator.
-config.ExpansionStep01GenerateAndCaptureVanillaSource = false
+-- Expansion master gate: disabling stage 01 cascades through every expansion stage while the mod
+-- remains loaded for explicitly enabled standalone test aids such as Place Elevator.
+config.ExpansionStep01GenerateAndCaptureVanillaSource = true
 -- Run the single native RandomMapGenerator transaction on a real vanilla-sized temporary map.
 -- InitBuildableGrid, ProcessBuildableGrid, MaskBuildableGrid, GetPlayableArea, and native enrichment
 -- placement therefore all consume the same backing and object state as pure vanilla. Only after that
