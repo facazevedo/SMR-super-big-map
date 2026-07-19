@@ -3941,26 +3941,64 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return class_name == "Elevator" or IsKindOfSafe(obj.building_class_proto, "ElevatorBase")
 	end
 
+	-- Passage planning used to perform a complete CObject traversal for every endpoint of every
+	-- linked pair. On an expanded surface that means four full object scans merely to discover the
+	-- handful of indicator/site objects attached to two passages. Build one dependency index per map
+	-- and retain the exact same per-pair move order. This changes neither the dependency predicates
+	-- nor their destination coordinates; it only removes repeated enumeration.
+	local dependency_anchors_by_map = {}
+	local dependant_index_by_map = {}
+	local dependant_scan_stats = { scans = 0, objects = 0, matches = 0 }
+	local function build_dependant_index(map)
+		local by_anchor = {}
+		local anchors = dependency_anchors_by_map[map] or {}
+		for i = 1, #anchors do by_anchor[anchors[i]] = {} end
+		if map and type(map.MapForEach) == "function" and #anchors > 0 then
+			dependant_scan_stats.scans = dependant_scan_stats.scans + 1
+			pcall(map.MapForEach, map, "map", "CObject", function(obj)
+				if not obj then return end
+				dependant_scan_stats.objects = dependant_scan_stats.objects + 1
+				for i = 1, #anchors do
+					local anchor = anchors[i]
+					if obj ~= anchor then
+						local exact = (IsKindOfSafe(obj, "ElevatorBase") or is_elevator_site(obj))
+							and (obj.passage == anchor or obj.other == anchor
+								or obj.linked_obj == anchor
+								or obj.SuperBigMapDeferredElevatorPassage == anchor)
+						local relative = obj.spawner == anchor or obj.passage == anchor
+							or (obj.tunnel_marker and obj.tunnel_marker.spawner == anchor)
+						if exact or relative then
+							local list = by_anchor[anchor]
+							list[#list + 1] = { object = obj, exact = exact == true }
+							dependant_scan_stats.matches = dependant_scan_stats.matches + 1
+						end
+					end
+				end
+			end)
+		end
+		dependant_index_by_map[map] = by_anchor
+		return by_anchor
+	end
 	local function move_dependants(map, anchor, old_x, old_y, new_x, new_y)
 		local moved = 0
-		if not map or type(map.MapForEach) ~= "function" then return moved end
-		pcall(map.MapForEach, map, "map", "CObject", function(obj)
-			if not obj or obj == anchor then return end
-			local exact = (IsKindOfSafe(obj, "ElevatorBase") or is_elevator_site(obj))
-				and (obj.passage == anchor or obj.other == anchor or obj.linked_obj == anchor
-					or obj.SuperBigMapDeferredElevatorPassage == anchor)
-			local relative = obj.spawner == anchor or obj.passage == anchor
-				or (obj.tunnel_marker and obj.tunnel_marker.spawner == anchor)
-			if not exact and not relative then return end
+		if not map or not anchor then return moved end
+		local by_anchor = dependant_index_by_map[map] or build_dependant_index(map)
+		local dependants = by_anchor and by_anchor[anchor] or nil
+		for i = 1, #(dependants or {}) do
+			local entry = dependants[i]
+			local obj = entry.object
 			local x, y = new_x, new_y
-			if not exact then
+			if not entry.exact then
 				local pos = ObjectPosition(obj)
 				local ox, oy = PointXY(pos)
-				if type(ox) ~= "number" or type(oy) ~= "number" then return end
-				x, y = ox + (new_x - old_x), oy + (new_y - old_y)
+				if type(ox) == "number" and type(oy) == "number" then
+					x, y = ox + (new_x - old_x), oy + (new_y - old_y)
+				else
+					obj = nil
+				end
 			end
-			if move_object(obj, map, x, y) then moved = moved + 1 end
-		end)
+			if obj and move_object(obj, map, x, y) then moved = moved + 1 end
+		end
 		return moved
 	end
 
@@ -3984,6 +4022,21 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	end
 	if #linked_pairs == 0 then
 		return false, { error = "no linked ElevatorPassage pairs found", pairs = 0 }
+	end
+	for i = 1, #linked_pairs do
+		local pair = linked_pairs[i]
+		local underground_list = dependency_anchors_by_map[underground_map]
+		if not underground_list then
+			underground_list = {}
+			dependency_anchors_by_map[underground_map] = underground_list
+		end
+		underground_list[#underground_list + 1] = pair.underground
+		local surface_list = dependency_anchors_by_map[surface_map]
+		if not surface_list then
+			surface_list = {}
+			dependency_anchors_by_map[surface_map] = surface_list
+		end
+		surface_list[#surface_list + 1] = pair.surface
 	end
 
 	local source_width_tiles = tonumber(underground_map.SuperBigMapGeneratorWidthTiles)
@@ -4413,6 +4466,9 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 			committed_relocated = false,
 		}, underground_map)
 	end
+	stats.dependant_map_scans = dependant_scan_stats.scans
+	stats.dependant_objects_scanned = dependant_scan_stats.objects
+	stats.dependant_matches = dependant_scan_stats.matches
 	return true, stats
 end
 

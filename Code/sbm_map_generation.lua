@@ -4740,7 +4740,17 @@ local function PatchRandomMapGenerator()
 				proc_invoke_wrapper = function(tag, func, randless)
 					if tag == "PlaceArtefacts" then
 						return saved_proc_invoke(tag, function()
-							local bootstrap_ok, details = BootstrapPassagesAndDeferWonders(env)
+							local bootstrap_token = LoadingBegin(
+								"deferred underground passage bootstrap", map)
+							local bootstrap_results = PackValues(pcall(
+								BootstrapPassagesAndDeferWonders, env))
+							local bootstrap_ok = bootstrap_results[1] == true
+								and bootstrap_results[2] == true
+							local details = bootstrap_results[3]
+							LoadingEnd(bootstrap_token, type(details) == "table" and details or {
+								reason = tostring(details),
+							}, bootstrap_results[1] == true)
+							if not bootstrap_results[1] then error(bootstrap_results[2]) end
 							if bootstrap_ok ~= true then
 								local stock_results = PackValues(func())
 								local stock_passages = ArtefactMapGet(map, "SurfacePassage")

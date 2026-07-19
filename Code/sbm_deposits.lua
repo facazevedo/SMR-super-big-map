@@ -70,6 +70,12 @@ local rubble_wall_suite_token_by_map = setmetatable({}, { __mode = "k" })
 -- grids are synchronously rebuilt. Exact-hex results are cached because all three top-up passes
 -- and the final marker audit ask the same entrance-reachability question repeatedly.
 local underground_reachability_by_map = setmetatable({}, { __mode = "k" })
+-- One immutable, final-grid sampling index is shared by the underground resource, anomaly, and
+-- effect passes. It stores the authoritative validation context, sectors proven to contain at
+-- least one buildable hex, and every validated candidate hex already discovered by the suite.
+-- Later families therefore continue the same candidate stream instead of re-sampling empty rock
+-- sectors or repeating buildability/connectivity work for an already-seen coordinate.
+local underground_topup_sampling_by_map = setmetatable({}, { __mode = "k" })
 -- Stage 01 cannot keep the generated marker OBJECTS alive: they belong to the temporary vanilla
 -- map slot and are destroyed when that slot is unloaded. Retain an independent value-only record
 -- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
@@ -94,6 +100,7 @@ local function ClearTopUpPlacementPool(map)
 	if map then
 		topup_candidate_pool_by_map[map] = nil
 		underground_reachability_by_map[map] = nil
+		underground_topup_sampling_by_map[map] = nil
 	end
 end
 
@@ -2930,6 +2937,146 @@ local BuildTopUpEdgeContext
 local PerimeterCoordinate
 local RedistributeOuterRingTopUpAnomalies
 
+local function UndergroundTopUpSamplingState(map)
+	if not IsUndergroundMap(map) then return nil end
+	local state = underground_topup_sampling_by_map[map]
+	if state then return state end
+	state = {
+		validation_context = NewDepositValidationContext(map),
+		sectors = false,
+		seen_hexes = {},
+		samples = 0,
+		sector_samples = 0,
+		whole_map_samples = 0,
+		published_candidates = 0,
+	}
+	underground_topup_sampling_by_map[map] = state
+	return state
+end
+
+local function SharedTopUpValidationContext(map)
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then
+		return NewDepositValidationContext(map)
+	end
+	local state = UndergroundTopUpSamplingState(map)
+	return state and state.validation_context or NewDepositValidationContext(map)
+end
+
+local function BuildUndergroundTopUpSectorCache(map)
+	local state = UndergroundTopUpSamplingState(map)
+	if not state then return nil end
+	if state.sectors ~= false then return state end
+	local eligible = {}
+	local buildable_count, empty_count, unknown_count = 0, 0, 0
+	local edge_ctx = type(BuildTopUpEdgeContext) == "function"
+		and BuildTopUpEdgeContext(map) or nil
+	local ratio_fn = Global("BuildableGridRatio")
+	local unbuildable_fn = Global("buildUnbuildableZ")
+	local box_fn = Global("box")
+	local buildable_grid = map and map.buildable and map.buildable.z_grid
+	local ok_unbuildable, unbuildable_z = false, nil
+	if type(unbuildable_fn) == "function" then
+		ok_unbuildable, unbuildable_z = pcall(unbuildable_fn)
+	end
+	if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
+		and type(ratio_fn) == "function" and type(box_fn) == "function"
+		and buildable_grid and ok_unbuildable and type(unbuildable_z) == "number" then
+		for _, descriptor in ipairs(edge_ctx.sectors) do
+			local x0, y0 = descriptor.area_x0, descriptor.area_y0
+			local x1, y1 = descriptor.area_x1, descriptor.area_y1
+			if type(x0) == "number" and type(y0) == "number"
+				and type(x1) == "number" and type(y1) == "number"
+				and x1 > x0 and y1 > y0 then
+				local ok_box, sector_box = pcall(box_fn, x0, y0, x1, y1)
+				local ok_ratio, ratio = false, nil
+				if ok_box and sector_box then
+					-- A final 20x20 sector contains fewer than 10,000 hexes. At this scale a
+					-- positive result proves that at least one buildable hex is present.
+					ok_ratio, ratio = pcall(
+						ratio_fn, buildable_grid, unbuildable_z, 10000, sector_box)
+				end
+				if ok_ratio and type(ratio) == "number" then
+					if ratio > 0 then
+						descriptor._sbm_underground_buildable_ratio = ratio
+						eligible[#eligible + 1] = descriptor
+						buildable_count = buildable_count + 1
+					else
+						empty_count = empty_count + 1
+					end
+				else
+					-- Fail open: an inconclusive native query must never remove a legal sector.
+					eligible[#eligible + 1] = descriptor
+					unknown_count = unknown_count + 1
+				end
+			end
+		end
+	end
+	state.sectors = #eligible > 0 and eligible or nil
+	state.sector_filter_active = state.sectors ~= nil
+	state.buildable_sectors = buildable_count
+	state.empty_sectors = empty_count
+	state.unknown_sectors = unknown_count
+	local print_fn = cfg().DEBUG_LOADING_TIMINGS == true and Global("print") or nil
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][UndergroundTopUpCandidateCache] sectors="
+			.. tostring(state.sectors and #state.sectors or 0)
+			.. " buildable=" .. tostring(buildable_count)
+			.. " empty=" .. tostring(empty_count)
+			.. " unknown=" .. tostring(unknown_count)
+			.. " active=" .. tostring(state.sector_filter_active == true))
+	end
+	return state
+end
+
+local function SampleUndergroundTopUpPosition(map, lo_x, lo_y, span_x, span_y)
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then
+		return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
+	end
+	local state = BuildUndergroundTopUpSectorCache(map)
+	if not state then return nil end
+	state.samples = state.samples + 1
+	local sectors = state.sectors
+	if type(sectors) == "table" and #sectors > 0 then
+		local descriptor = sectors[RandInt(#sectors) + 1]
+		local x0 = math.max(lo_x, math.floor(descriptor.area_x0 or lo_x))
+		local y0 = math.max(lo_y, math.floor(descriptor.area_y0 or lo_y))
+		local x1 = math.min(lo_x + span_x, math.floor(descriptor.area_x1 or (lo_x + span_x)))
+		local y1 = math.min(lo_y + span_y, math.floor(descriptor.area_y1 or (lo_y + span_y)))
+		if x1 > x0 and y1 > y0 then
+			state.sector_samples = state.sector_samples + 1
+			return x0 + RandInt(x1 - x0), y0 + RandInt(y1 - y0),
+				descriptor.sector_ref, descriptor
+		end
+	end
+	state.whole_map_samples = state.whole_map_samples + 1
+	return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil, nil
+end
+
+local function ReserveUndergroundTopUpHex(map, q, r)
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return true end
+	if not IsUndergroundMap(map) or type(q) ~= "number" or type(r) ~= "number" then
+		return true
+	end
+	local state = UndergroundTopUpSamplingState(map)
+	local key = tostring(q) .. ":" .. tostring(r)
+	if state.seen_hexes[key] then return false end
+	state.seen_hexes[key] = true
+	return true
+end
+
+local function PublishUndergroundTopUpCandidate(map, candidate, owner)
+	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS ~= true then return end
+	if not IsUndergroundMap(map) or type(candidate) ~= "table" then return end
+	local shared = topup_candidate_pool_by_map[map]
+	if type(shared) ~= "table" then
+		shared = {}
+		topup_candidate_pool_by_map[map] = shared
+	end
+	if shared ~= owner then shared[#shared + 1] = candidate end
+	local state = UndergroundTopUpSamplingState(map)
+	state.published_candidates = state.published_candidates + 1
+end
+
 local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall, details)
 	if type(map) ~= "table" then return end
 	local status = map.SuperBigMapEnrichmentTopUpStatus
@@ -3015,6 +3162,7 @@ local function SuspendRubbleWallGridsForResourceTopUp(map)
 	end
 	topup_candidate_pool_by_map[map] = nil
 	underground_reachability_by_map[map] = nil
+	underground_topup_sampling_by_map[map] = nil
 	return token
 end
 
@@ -3038,6 +3186,7 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 	-- and effects have all consumed the wall-free pool; rebuilding it at suite teardown had no
 	-- consumer and repeated up to 8,000 full placement validations.
 	underground_reachability_by_map[map] = nil
+	underground_topup_sampling_by_map[map] = nil
 	topup_candidate_pool_by_map[map] = nil
 	local wall_aware_pool = {}
 	local point_fn = Global("point")
@@ -3213,7 +3362,8 @@ function DepositRules.TopUpDeposits(map)
 	local candidate_planned_sector_fast_path = 0
 
 	local added = 0
-	local validation_context = NewDepositValidationContext(map)
+	local validation_context = IsUndergroundMap(map)
+		and SharedTopUpValidationContext(map) or NewDepositValidationContext(map)
 	-- Templates are immutable throughout this top-up transaction. Resolve their position, terrain,
 	-- and vanilla repulsion profile at most once; the selection loop may revisit the same template
 	-- for every remaining marker, but its option identity cannot change.
@@ -3356,13 +3506,17 @@ function DepositRules.TopUpDeposits(map)
 			or (optimize_placement_pool
 				and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL)
 		local function append_valid_candidate(x, y, sector, terrain_type, q, r)
-			shared_candidates[#shared_candidates + 1] = {
+			if underground and not ReserveUndergroundTopUpHex(map, q, r) then return false end
+			local candidate = {
 				x = x, y = y, terrain_type = terrain_type, sector = sector, sector_id = sector.id,
 				q = q, r = r, _sbm_terrain_valid = true,
 				_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
 					and (tostring(q) .. ":" .. tostring(r)) or nil,
 			}
+			shared_candidates[#shared_candidates + 1] = candidate
 			pool = pool + 1
+			if underground then PublishUndergroundTopUpCandidate(map, candidate, shared_candidates) end
+			return true
 		end
 		local function sample_valid_candidate(prefilter)
 			candidate_samples = candidate_samples + 1
@@ -3378,6 +3532,9 @@ function DepositRules.TopUpDeposits(map)
 				x = first_x + RandInt(past_x - first_x)
 				y = first_y + RandInt(past_y - first_y)
 				planned_sector = candidate_sector.sector
+			elseif underground then
+				x, y, planned_sector = SampleUndergroundTopUpPosition(
+					map, lo_x, lo_y, span_x, span_y)
 			else
 				x = lo_x + RandInt(span_x)
 				y = lo_y + RandInt(span_y)
@@ -3412,8 +3569,7 @@ function DepositRules.TopUpDeposits(map)
 			if not can_receive then return false end
 			local tt = prefiltered_terrain_type
 			if tt == nil then tt = TerrainTypeAt(map, pt, validation_context) or -1 end
-			append_valid_candidate(x, y, sector, tt, q, r)
-			return true
+			return append_valid_candidate(x, y, sector, tt, q, r)
 		end
 		local function grow_candidate_pool(target, prefilter, maximum_samples)
 			target = math.min(MAX_POOL, math.max(pool, math.floor(target or pool)))
@@ -4068,7 +4224,8 @@ function DepositRules.TopUpAnomalies(map)
 	local reused_pool = false
 	local candidate_pool_size, candidate_samples_total = 0, 0
 	local edge_ctx
-	local validation_context = NewDepositValidationContext(map)
+	local validation_context = IsUndergroundMap(map)
+		and SharedTopUpValidationContext(map) or NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
 	local sequential_underground = underground
 		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
@@ -4215,6 +4372,11 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		local function sample_position(sample_n)
 			local expected = sampling_plan[sample_n]
+			if underground then
+				local x, y, sector, descriptor = SampleUndergroundTopUpPosition(
+					map, lo_x, lo_y, span_x, span_y)
+				return x, y, descriptor, sector
+			end
 			if not expected or not edge_ctx or type(edge_ctx.sector_step) ~= "number" then
 				return lo_x + RandInt(span_x), lo_y + RandInt(span_y), nil
 			end
@@ -4234,8 +4396,8 @@ function DepositRules.TopUpAnomalies(map)
 		local function sample_candidate()
 			candidate_samples = candidate_samples + 1
 			local sample_n = candidate_samples
-			local x, y, expected_sector = sample_position(sample_n)
-			local sector = SectorAtPoint(map, x, y)
+			local x, y, expected_sector, planned_sector = sample_position(sample_n)
+			local sector = planned_sector or SectorAtPoint(map, x, y)
 			local in_target_area = not surface_edge_ring or IsInFinalOuterSectorRing(
 				map, x, y, ring_sectors, sector, ring_context)
 			local scanned = sector and SectorIsScanned(sector) or false
@@ -4256,7 +4418,7 @@ function DepositRules.TopUpAnomalies(map)
 			else
 				local pt = point(x, y)
 				local evaluated_can_receive, evaluated_passable, evaluated_flatness,
-					evaluated_buildable, _, _, evaluated_unobstructed = CanReceiveDeposit(
+					evaluated_buildable, evaluated_q, evaluated_r, evaluated_unobstructed = CanReceiveDeposit(
 						map, pt, validation_context)
 				passable = evaluated_passable == true
 				flatness = evaluated_flatness or 0
@@ -4281,15 +4443,28 @@ function DepositRules.TopUpAnomalies(map)
 					local layer = surface_edge_ring and type(edge_ctx.sector_step) == "number"
 						and math.min(ring_sectors, math.floor((edge_depth or 0) / edge_ctx.sector_step) + 1)
 						or nil
-					candidates[#candidates + 1] = {
+					local duplicate = underground and not ReserveUndergroundTopUpHex(
+						map, evaluated_q, evaluated_r)
+					if duplicate then return end
+					local candidate = {
 						x = x, y = y, valley_score = valley_score, passable = passable,
 						flatness = flatness, buildable = buildable, unobstructed = unobstructed,
 						terrain_z = terrain_z, restriction_tier = restriction_tier,
+						terrain_type = underground and -1 or nil,
+						sector = sector, q = evaluated_q, r = evaluated_r,
+						_sbm_terrain_valid = true,
+						_sbm_repulsion_hex = type(evaluated_q) == "number"
+							and type(evaluated_r) == "number"
+							and (tostring(evaluated_q) .. ":" .. tostring(evaluated_r)) or nil,
 						sector_id = sector and sector.id, col = sector and sector.col,
 						row = sector and sector.row, sample_n = sample_n,
 						nearest_side = nearest_side,
 						edge_depth = edge_depth, layer = layer,
 					}
+					candidates[#candidates + 1] = candidate
+					if underground then
+						PublishUndergroundTopUpCandidate(map, candidate, candidates)
+					end
 				end
 			end
 		end
@@ -5601,7 +5776,8 @@ function DepositRules.TopUpEffectDeposits(map)
 	local fallback_selector_stats
 	local reused_pool = false
 	local candidate_pool_size, candidate_samples_total = 0, 0
-	local validation_context = NewDepositValidationContext(map)
+	local validation_context = IsUndergroundMap(map)
+		and SharedTopUpValidationContext(map) or NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
 	local sequential_underground = underground
 		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
@@ -5639,16 +5815,22 @@ function DepositRules.TopUpEffectDeposits(map)
 		-- reuses every safe handoff candidate, then samples only when the next effect needs a position.
 		local function sample_fresh_candidate()
 			candidate_samples = candidate_samples + 1
-			local x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
-			local sector = SectorAtPoint(map, x, y)
+			local x, y, planned_sector
+			if underground then
+				x, y, planned_sector = SampleUndergroundTopUpPosition(
+					map, lo_x, lo_y, span_x, span_y)
+			else
+				x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
+			end
+			local sector = planned_sector or SectorAtPoint(map, x, y)
 			local reserved_ring = not underground and IsInFinalOuterSectorRing(
 				map, x, y, ring_sectors, sector, ring_context)
 			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
 				local can_receive, _, _, _, q, r = CanReceiveDeposit(
 					map, pt, validation_context)
-				if can_receive then
-					candidates[#candidates + 1] = {
+				if can_receive and (not underground or ReserveUndergroundTopUpHex(map, q, r)) then
+					local candidate = {
 						x = x, y = y,
 						terrain_type = TerrainTypeAt(map, pt, validation_context) or -1,
 						sector = sector, sector_id = sector.id,
@@ -5656,6 +5838,10 @@ function DepositRules.TopUpEffectDeposits(map)
 						_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
 							and (tostring(q) .. ":" .. tostring(r)) or nil,
 					}
+					candidates[#candidates + 1] = candidate
+					if underground then
+						PublishUndergroundTopUpCandidate(map, candidate, candidates)
+					end
 				end
 			end
 			return #candidates
@@ -5804,15 +5990,28 @@ function DepositRules.TopUpEffectDeposits(map)
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
 		sequential_placement = sequential_underground,
+		shared_candidate_samples = underground
+			and UndergroundTopUpSamplingState(map).samples or 0,
+		shared_candidate_sector_samples = underground
+			and UndergroundTopUpSamplingState(map).sector_samples or 0,
+		shared_candidate_whole_map_samples = underground
+			and UndergroundTopUpSamplingState(map).whole_map_samples or 0,
 	})
 	if cfg().DEBUG_LOADING_TIMINGS == true then
 		local print_fn = Global("print")
 		if type(print_fn) == "function" then
+			local shared_state = underground and UndergroundTopUpSamplingState(map) or nil
 			print_fn("[Super Big Map][TopUpCandidatePool] kind=effects"
 				.. " valid=" .. tostring(candidate_pool_size)
 				.. " sampled=" .. tostring(candidate_samples_total)
 				.. " reused=" .. tostring(reused_pool)
 				.. " sequential=" .. tostring(sequential_underground)
+				.. " shared_samples=" .. tostring(shared_state and shared_state.samples or 0)
+				.. " sector_samples=" .. tostring(shared_state and shared_state.sector_samples or 0)
+				.. " whole_map_samples=" .. tostring(
+					shared_state and shared_state.whole_map_samples or 0)
+				.. " shared_published=" .. tostring(
+					shared_state and shared_state.published_candidates or 0)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
