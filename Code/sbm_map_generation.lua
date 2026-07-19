@@ -69,6 +69,35 @@ local function SetLoadingPhase(message)
 	end
 end
 
+-- One surface-expansion loading reference belongs to each live map. Keeping ownership here avoids
+-- duplicate Begin calls from readiness retries and guarantees every success/error exit releases the
+-- same UI phase exactly once. Weak keys keep this transient state out of saves.
+local surface_loading_ref_maps = setmetatable({}, { __mode = "k" })
+
+local function BeginSurfaceExpansionLoading(map, phase)
+	if not map then return false end
+	if surface_loading_ref_maps[map] == true then
+		if phase then SetLoadingPhase(phase) end
+		local visible = SuperBigMap.ExpansionLoadingVisible
+		return type(visible) == "function" and visible() == true
+	end
+	local begin_loading = SuperBigMap.ExpansionLoadingBegin
+	if type(begin_loading) ~= "function" then return false end
+	local ok, visible = pcall(begin_loading)
+	if not ok then return false end
+	surface_loading_ref_maps[map] = true
+	if phase then SetLoadingPhase(phase) end
+	return visible == true
+end
+
+local function EndSurfaceExpansionLoading(map)
+	if not map or surface_loading_ref_maps[map] ~= true then return false end
+	surface_loading_ref_maps[map] = nil
+	local end_loading = SuperBigMap.ExpansionLoadingEnd
+	if type(end_loading) == "function" then pcall(end_loading) end
+	return true
+end
+
 local function PackValues(...)
 	return { n = select("#", ...), ... }
 end
@@ -2268,7 +2297,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		end
 	end
 	SuperBigMap.State.vanilla_source_migration_active = false
-	if not ok then error("temporary vanilla source migration failed: " .. tostring(migration_error)) end
+	if not ok then
+		EndSurfaceExpansionLoading(destination)
+		error("temporary vanilla source migration failed: " .. tostring(migration_error))
+	end
 	SetLoadingPhase("Finishing the expanded map...")
 	LoadingStep("temporary source transaction complete", nil, destination)
 	return true, results
@@ -4001,6 +4033,7 @@ end
 local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	map = map or Global("CurrentMap")
 	if not cfg_bool("SURFACE_STRETCH_AT_START", false) then
+		EndSurfaceExpansionLoading(map)
 		return false
 	end
 	if not map then
@@ -4013,9 +4046,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		map.SuperBigMapSurfaceStretchAwaitingReadiness = false
 		map.SuperBigMapStretchPipelinePending = false
 		SignalExpansionReadinessChanged(map, "persisted surface expansion already complete")
+		EndSurfaceExpansionLoading(map)
 		return false
 	end
 	if map.SuperBigMapSurfaceStretchDone == true then
+		EndSurfaceExpansionLoading(map)
 		return false
 	end
 	-- Report an existing live schedule as success so the lifecycle caller does not run its
@@ -4035,6 +4070,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	local yield_protected_call = Global("sprocall")
 	if type(create_thread) ~= "function" or type(yield_protected_call) ~= "function" then
 		map.SuperBigMapStretchPipelinePending = false
+		EndSurfaceExpansionLoading(map)
 		return false
 	end
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
@@ -4043,18 +4079,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
 		-- readiness/setup errors take the normal full-rebuild fallback.
 		local thread_ok = yield_protected_call(function()
-		-- Loading screen: hide the welcome popup's Close button + show a loading message
-		-- while we expand, restored on completion (ExpansionLoadingBegin/End in lifecycle).
-		-- Begin as soon as the native generation-complete gate opens so the player cannot
-		-- start playing mid-expansion. Gated to real mod maps (not the PreGame preview).
-		local lc_name = tostring(map.name or (map.mapdata and map.mapdata.id) or "")
-		local lc_grid = SuperBigMap.SectorGrid
-		local lc_mod_map = type(lc_grid) == "table" and type(lc_grid.IsModMap) == "function"
-			and lc_grid.IsModMap(map) == true
-		if lc_name ~= "PreGame" and lc_mod_map and type(SuperBigMap.ExpansionLoadingBegin) == "function" then
-			SuperBigMap.ExpansionLoadingBegin()
-			SetLoadingPhase("Expanding the surface map")
-		end
 		local function end_loading()
 			-- Fail-safe: if the stretch exited before its final lightweight refresh, restore the
 			-- original full rebuild path rather than leave partially refreshed map state.
@@ -4065,9 +4089,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 				map.SuperBigMapStretchPipelinePending = false
 			end
-			if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
-				SuperBigMap.ExpansionLoadingEnd()
-			end
+			EndSurfaceExpansionLoading(map)
 		end
 		if map.SuperBigMapSurfaceStretchDone == true then
 			end_loading()
@@ -4140,7 +4162,21 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if type(AnnotateDecorRelief) == "function" then
 						AnnotateDecorRelief(map)
 					end
-					SetLoadingPhase("Stretching the surface terrain")
+					-- Create the dialog synchronously at the last safe Lua boundary, then yield one short
+					-- real-time frame so Windows renders it before the bounded terrain resampling begins.
+					local loading_visible = BeginSurfaceExpansionLoading(map,
+						"Stretching the surface terrain")
+					local sleep = Global("Sleep")
+					if type(sleep) == "function" then sleep(100) end
+					local visible_check = SuperBigMap.ExpansionLoadingVisible
+					if type(visible_check) == "function" then
+						loading_visible = visible_check() == true
+					end
+					LoadingStep("surface custom loading handoff", {
+						started = tostring(surface_loading_ref_maps[map] == true),
+						visible = tostring(loading_visible == true),
+						milestone = "before_terrain_stretch",
+					}, map)
 					if cfg_bool("EXPANSION_STEP_07_STRETCH_TERRAIN", true) then
 						-- The next call mutates terrain heights, so the native source-grid buildability
 						-- snapshot is no longer current until the explicit final rebuild below succeeds.
@@ -4294,9 +4330,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								deposits.ResolveBadgeMarkerOverlaps, map, "surface density suite")
 						end
 						if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
-							error("top-up vanilla repulsion audit is unavailable")
+							error("top-up spacing audit is unavailable")
 						end
-						local repulsion_token = LoadingBegin("surface hard repulsion audit", map)
+						local repulsion_token = LoadingBegin("surface hard top-up spacing audit", map)
 						local repulsion_ok, repulsion_stats =
 							deposits.AuditTopUpVanillaRepulsion(map, "surface final after density suite")
 						LoadingEnd(repulsion_token, {
@@ -4305,18 +4341,30 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							density_status = repulsion_stats and repulsion_stats.density_status,
 							duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 							violations = repulsion_stats and repulsion_stats.repulsion_violations,
+							outer_ring_spacing_violations = repulsion_stats
+								and repulsion_stats.outer_ring_spacing_violations,
 						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
-							error("surface top-up vanilla repulsion audit failed: density_failures="
+							error("surface top-up spacing audit failed: density_failures="
 								.. tostring(repulsion_stats and repulsion_stats.density_failures)
 								.. " duplicate_hex_pairs="
 								.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 								.. " repulsion_violations="
-								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations))
+								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
+								.. " outer_ring_spacing_violations="
+								.. tostring(repulsion_stats
+									and repulsion_stats.outer_ring_spacing_violations))
 						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
-							TimedSafeCall("surface audit outer-ring exclusivity", map,
+							local ring_ok, ring_stats = TimedSafeCall("surface audit outer-ring exclusivity", map,
 								deposits.AuditSurfaceTopUpRingExclusivity, map)
+							if ring_ok ~= true then
+								error("surface outer-ring anomaly audit failed: violations="
+									.. tostring(ring_stats and ring_stats.violations)
+									.. " overlap=" .. tostring(ring_stats and ring_stats.anomaly_overlap)
+									.. " sector_overflow="
+									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow))
+							end
 						end
 						if type(deposits.DebugAuditFinalEnrichments) == "function" then
 							local audit_token = LoadingBegin("diagnostic surface enrichment audit", map)
@@ -4417,9 +4465,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			end
 			map.SuperBigMapStretchPipelinePending = false
 			map.SuperBigMapSurfaceStretchScheduled = false
-			if type(SuperBigMap.ExpansionLoadingEnd) == "function" then
-				pcall(SuperBigMap.ExpansionLoadingEnd)
-			end
+			EndSurfaceExpansionLoading(map)
 			LoadingFinish("surface expansion thread failed", map,
 				{ error = tostring(thread_ok) }, false)
 		end
@@ -4427,6 +4473,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	if not schedule_ok then
 		map.SuperBigMapStretchPipelinePending = false
 		map.SuperBigMapSurfaceStretchScheduled = false
+		EndSurfaceExpansionLoading(map)
 	end
 	return schedule_ok == true
 end

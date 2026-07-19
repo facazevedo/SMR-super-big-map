@@ -502,13 +502,18 @@ local loading_refs = 0
 function SuperBigMap.ExpansionLoadingBegin()
 	loading_refs = loading_refs + 1
 	if loading_on_welcome then
-		return
+		local ok, visible = pcall(SetWelcomeLoading, true)
+		return ok and visible == true
 	end
 	loading_on_welcome = true
+	-- Create the dialog synchronously while the expansion thread is still at its final safe Lua
+	-- boundary. The caller yields one short frame immediately afterwards, which lets Windows paint
+	-- this box before terrain resampling occupies the main thread. The watcher below remains as a
+	-- fallback for a desktop/welcome dialog that appears later or for a box the player closes.
+	local initial_ok, initial_visible = pcall(SetWelcomeLoading, true)
 	local create_thread = Global("CreateRealTimeThread")
 	if type(create_thread) ~= "function" then
-		SetWelcomeLoading(true)
-		return
+		return initial_ok and initial_visible == true
 	end
 	create_thread(function()
 		local sleep = Global("Sleep")
@@ -534,6 +539,11 @@ function SuperBigMap.ExpansionLoadingBegin()
 			sleep(30)
 		end
 	end)
+	return initial_ok and initial_visible == true
+end
+
+function SuperBigMap.ExpansionLoadingVisible()
+	return LoadingBoxValid() == true
 end
 
 -- End the loading state: remove our loading box and re-show the welcome popup (once).

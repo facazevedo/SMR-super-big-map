@@ -3682,10 +3682,11 @@ BuildTopUpEdgeContext = function(map)
 end
 
 -- Replace every TOP-UP anomaly in the final N-sector perimeter ring. Native anomalies are never
--- selected or moved: their exact proportional vanilla positions seed the repulsion tracker as fixed
--- obstacles. First plan the complete top-up population, then move it, so a failed search can never
--- leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors; terrain
--- is considered only after a sector is drawn. This keeps the lower-right perimeter fully eligible.
+-- selected or moved. First plan the complete top-up population, then move it, so a failed search can
+-- never leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors;
+-- terrain is considered only after a sector is drawn. This keeps the lower-right perimeter fully
+-- eligible. Outer-ring top-ups deliberately use a simple custom spacing rule instead of vanilla
+-- repulsion: unique hexes, at least 10 hexes between top-ups, and at most 2 top-ups per sector.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
@@ -3809,22 +3810,13 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return true, stats
 	end
 
-	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
-	if not RepulsionValuesAreValid(anomaly_values) then
-		stats.error = "vanilla anomaly repulsion profile unavailable"
-		return false, stats
-	end
-	local anomaly_profile = {
-		layer = "subs", resource = "Anomaly", preset = anomaly_values.preset,
-		repulse_same = anomaly_values.repulse_same,
-		repulse_layer = anomaly_values.repulse_layer,
-		repulse_all = anomaly_values.repulse_all,
-	}
-	local repulsion = NewTopUpRepulsionTracker(map, "outer-ring anomaly redistribution", ignored)
 	local validation_context = NewDepositValidationContext(map)
 	local tile = edge_ctx.tile or select(3, MapWorldSize(map)) or 100
 	local margin = math.max(0, math.floor(cfg().DEPOSIT_EDGE_MARGIN_TILES or 4)) * tile
-	local SAMPLES_PER_SECTOR = 192
+	local CANDIDATE_SAMPLES_PER_SECTOR = 384
+	local MAX_PLANNING_ATTEMPTS = 64
+	local MIN_TOPUP_HEX_DISTANCE = 10
+	local MAX_TOPUPS_PER_SECTOR = 2
 	local function random_between(first, past_last)
 		first, past_last = math.floor(first), math.floor(past_last)
 		local span = past_last - first
@@ -3837,60 +3829,144 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			values[i], values[j] = values[j], values[i]
 		end
 	end
-	shuffle(moving)
-	local plans = {}
-	for _, item in ipairs(moving) do
-		local sector_order = {}
-		for i = 1, #ring do sector_order[i] = ring[i] end
-		shuffle(sector_order)
-		local winner
-		for _, sector in ipairs(sector_order) do
-			-- A concrete anomaly already exposed by the initial scan remains in scanned space.
-			-- Ordinary hidden markers may use every ring sector, including a scanned one (where
-			-- vanilla RevealDeposits is invoked after registration).
-			if not item.placed or SectorIsScanned(sector.sector_ref) then
-				local x0 = math.max(margin, sector.area_x0)
-				local y0 = math.max(margin, sector.area_y0)
-				local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
-				local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
-				for _ = 1, SAMPLES_PER_SECTOR do
-					local x, y = random_between(x0, x1), random_between(y0, y1)
-					if x and y then
-						local pt = point_fn(x, y)
-						if CanReceiveDepositTerrain(map, pt, validation_context)
-							and IsUnobstructedAt(map, pt, true, validation_context) then
-							local candidate = {
-								x = x, y = y, sector = sector.sector_ref,
-								sector_id = sector.id, col = sector.col, row = sector.row,
-							}
-							if repulsion.CanPlace(candidate, anomaly_profile) then
+
+	-- Terrain validity is independent of anomaly order. Sample it once, then retry the cheap custom
+	-- spacing selection with fresh randomized marker and sector orders. A single greedy pass can
+	-- strand the last few anomalies even when a complete arrangement exists; every attempt is
+	-- transactional and leaves native markers untouched.
+	local candidates_by_sector, candidate_count = {}, 0
+	local world_to_hex = Global("WorldToHex")
+	if type(world_to_hex) ~= "function" then
+		stats.error = "WorldToHex API unavailable for outer-ring anomaly spacing"
+		return false, stats
+	end
+	local sampled_hexes = {}
+	for _, sector in ipairs(ring) do
+		local candidates = {}
+		candidates_by_sector[sector] = candidates
+		local x0 = math.max(margin, sector.area_x0)
+		local y0 = math.max(margin, sector.area_y0)
+		local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
+		local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
+		for _ = 1, CANDIDATE_SAMPLES_PER_SECTOR do
+			local x, y = random_between(x0, x1), random_between(y0, y1)
+			if x and y then
+				local pt = point_fn(x, y)
+				if CanReceiveDepositTerrain(map, pt, validation_context)
+					and IsUnobstructedAt(map, pt, true, validation_context) then
+					local ok_hex, q, r = pcall(world_to_hex, pt)
+					local hex_key = ok_hex and type(q) == "number" and type(r) == "number"
+						and (tostring(q) .. ":" .. tostring(r)) or nil
+					if hex_key and not sampled_hexes[hex_key] then
+						sampled_hexes[hex_key] = true
+						candidates[#candidates + 1] = {
+							x = x, y = y, sector = sector.sector_ref,
+							sector_id = sector.id, col = sector.col, row = sector.row,
+							target_sector = sector, q = q, r = r, hex_key = hex_key,
+						}
+						candidate_count = candidate_count + 1
+					end
+				end
+			end
+		end
+	end
+	stats.reachable_candidates = candidate_count
+	if candidate_count < #moving then
+		stats.error = "outer-ring reachable candidate pool smaller than anomaly population"
+		return false, stats
+	end
+
+	local fixed_anomaly_hexes = {}
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if ignored[marker] == true then return end
+		local pos = marker and ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then return end
+		local ok_hex, q, r = pcall(world_to_hex, pos)
+		if ok_hex and type(q) == "number" and type(r) == "number" then
+			fixed_anomaly_hexes[tostring(q) .. ":" .. tostring(r)] = true
+		end
+	end)
+	local function hex_distance(a, b)
+		local dq, dr = a.q - b.q, a.r - b.r
+		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+	end
+	local function new_attempt_tracker()
+		local occupied, selected, sector_counts = {}, {}, {}
+		for key in pairs(fixed_anomaly_hexes) do occupied[key] = true end
+		local function can_place(candidate)
+			if not candidate or occupied[candidate.hex_key] then return false end
+			if (sector_counts[candidate.target_sector] or 0) >= MAX_TOPUPS_PER_SECTOR then
+				return false
+			end
+			for _, prior in ipairs(selected) do
+				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
+			end
+			return true
+		end
+		local function commit(candidate)
+			if not can_place(candidate) then return false end
+			occupied[candidate.hex_key] = true
+			selected[#selected + 1] = candidate
+			sector_counts[candidate.target_sector] =
+				(sector_counts[candidate.target_sector] or 0) + 1
+			return true
+		end
+		return can_place, commit
+	end
+
+	local plans, best_planned = nil, 0
+	for attempt = 1, MAX_PLANNING_ATTEMPTS do
+		local can_place, commit = new_attempt_tracker()
+		local marker_order = {}
+		for i = 1, #moving do marker_order[i] = moving[i] end
+		shuffle(marker_order)
+		local attempt_plans = {}
+		for _, item in ipairs(marker_order) do
+			local sector_order = {}
+			for i = 1, #ring do sector_order[i] = ring[i] end
+			shuffle(sector_order)
+			local winner
+			for _, sector in ipairs(sector_order) do
+				if not item.placed or SectorIsScanned(sector.sector_ref) then
+					local candidates = candidates_by_sector[sector]
+					if #candidates > 0 then
+						local first = RandInt(#candidates) + 1
+						for offset = 0, #candidates - 1 do
+							local candidate = candidates[((first + offset - 2) % #candidates) + 1]
+							if can_place(candidate) then
 								winner = candidate
 								break
 							end
 						end
 					end
 				end
+				if winner then break end
 			end
-			if winner then break end
+			if not winner or not commit(winner) then break end
+			attempt_plans[#attempt_plans + 1] = { item = item, candidate = winner }
 		end
-		if not winner then
-			stats.error = "no reachable vanilla-spaced position for outer-ring anomaly "
-				.. tostring(item.id)
-			return false, stats
+		best_planned = math.max(best_planned, #attempt_plans)
+		if #attempt_plans == #moving then
+			plans = {}
+			for _, plan in ipairs(attempt_plans) do
+				local item, winner = plan.item, plan.candidate
+				item.after_x, item.after_y = winner.x, winner.y
+				item.target_sector = winner.target_sector
+				plans[#plans + 1] = item
+			end
+			stats.planning_attempts = attempt
+			break
 		end
-		if not repulsion.Commit(winner, anomaly_profile, item.marker) then
-			stats.error = "failed to reserve outer-ring anomaly position"
-			return false, stats
-		end
-		item.after_x, item.after_y = winner.x, winner.y
-		item.target_sector = sector_at_canonical_position(winner.x, winner.y)
-		if not item.target_sector or not in_ring(item.target_sector) then
-			stats.error = "planned anomaly position escaped the final outer ring"
-			return false, stats
-		end
-		plans[#plans + 1] = item
+	end
+	if not plans then
+		stats.error = "no complete reachable 10-hex-spaced outer-ring plan after "
+			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best=" .. tostring(best_planned)
+			.. "/" .. tostring(#moving) .. ", candidates=" .. tostring(candidate_count) .. ")"
+		return false, stats
 	end
 	stats.planned = #plans
+	stats.minimum_hex_distance = MIN_TOPUP_HEX_DISTANCE
+	stats.maximum_per_sector = MAX_TOPUPS_PER_SECTOR
 
 	for _, item in ipairs(plans) do
 		local old_sector = item.source_sector and item.source_sector.sector_ref
@@ -3951,6 +4027,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " sectors=" .. tostring(#ring)
 			.. " bottom_sectors=" .. tostring(stats.bottom_sectors)
 			.. " right_sectors=" .. tostring(stats.right_sectors)
+			.. " reachable_candidates=" .. tostring(stats.reachable_candidates)
+			.. " planning_attempts=" .. tostring(stats.planning_attempts)
+			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
+			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
 			.. " positions=" .. format_positions(plans, true))
 	end
 	return true, stats
@@ -4186,9 +4266,9 @@ function DepositRules.TopUpEffectDeposits(map)
 end
 
 -- Final cross-pass invariant. Native/native pairs are excluded because a vanilla resource deposit
--- is a cluster of adjacent marker objects. Pairs involving at least one top-up or redistributed
--- outer-ring anomaly represent distinct post-generation selections and therefore must obey the
--- same family repulsion rule and occupy a unique hex. This runs after later position corrections.
+-- is a cluster of adjacent marker objects. Ordinary top-ups obey vanilla family repulsion. Surface
+-- outer-ring anomaly top-ups deliberately use their own rule: no vanilla repulsion, unique hexes,
+-- and at least 10 hexes between two outer-ring top-ups. This runs after position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	map = map or Global("CurrentMap")
 	local point_fn = Global("point")
@@ -4203,10 +4283,13 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			or marker.SuperBigMapEffectTopUp == true)
 	end
 	local entries = {}
+	local underground = IsUndergroundMap(map)
+	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 10
 	local stats = {
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
+		outer_ring_spacing_violations = 0,
 		density_failures = 0, density_status = "",
 	}
 	do
@@ -4233,11 +4316,19 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			if topup then stats.missing_positions = stats.missing_positions + 1 end
 			return
 		end
+		local outer_ring_topup = not underground
+			and marker.SuperBigMapAnomalyTopUp == true
+			and marker.SuperBigMapEdgeRedistributed == true
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
-		if topup and not profile then stats.missing_topup_profiles = stats.missing_topup_profiles + 1 end
+		if topup and not outer_ring_topup and not profile then
+			stats.missing_topup_profiles = stats.missing_topup_profiles + 1
+		end
 		local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
 		entries[#entries + 1] = {
-			marker = marker, topup = topup, profile = profile, x = x, y = y,
+			marker = marker, topup = topup, outer_ring_topup = outer_ring_topup,
+			profile = profile, x = x, y = y,
+			q = ok_hex and type(q) == "number" and q or nil,
+			r = ok_hex and type(r) == "number" and r or nil,
 			hex = ok_hex and type(q) == "number" and type(r) == "number"
 				and (tostring(q) .. ":" .. tostring(r)) or nil,
 		}
@@ -4254,13 +4345,26 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				stats.checked_pairs = stats.checked_pairs + 1
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
 				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
-				local required = PairRepulsionRadius(a.profile, b.profile)
-				local dx, dy = a.x - b.x, a.y - b.y
-				local distance_sq = dx * dx + dy * dy
-				local repulsion_violation = type(required) == "number"
-					and distance_sq <= required * required
-				if repulsion_violation then
-					stats.repulsion_violations = stats.repulsion_violations + 1
+				if a.outer_ring_topup or b.outer_ring_topup then
+					if a.outer_ring_topup and b.outer_ring_topup
+						and type(a.q) == "number" and type(a.r) == "number"
+						and type(b.q) == "number" and type(b.r) == "number" then
+						local dq, dr = a.q - b.q, a.r - b.r
+						local hex_distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+						if hex_distance < MIN_OUTER_RING_ANOMALY_HEX_DISTANCE then
+							stats.outer_ring_spacing_violations =
+								stats.outer_ring_spacing_violations + 1
+						end
+					end
+				else
+					local required = PairRepulsionRadius(a.profile, b.profile)
+					local dx, dy = a.x - b.x, a.y - b.y
+					local distance_sq = dx * dx + dy * dy
+					local repulsion_violation = type(required) == "number"
+						and distance_sq <= required * required
+					if repulsion_violation then
+						stats.repulsion_violations = stats.repulsion_violations + 1
+					end
 				end
 			end
 		end
@@ -4268,6 +4372,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	local ok = stats.density_failures == 0
 		and stats.missing_positions == 0 and stats.missing_topup_profiles == 0
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
+		and stats.outer_ring_spacing_violations == 0
 	return ok, stats
 end
 
@@ -4285,6 +4390,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		anomaly_topups = 0, resource_topups = 0, effect_topups = 0,
 		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
+		anomaly_sector_overflow = 0,
 		anomaly_not_mountain_base = 0, resource_obstructed = 0,
 		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
@@ -4302,6 +4408,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		return tostring(x) .. ":" .. tostring(y)
 	end
 	local occupied_anomaly_hexes = {}
+	local anomaly_topups_by_sector = {}
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not (marker and marker.SuperBigMapAnomalyTopUp) then
 			local pos = marker and ObjectPos(marker)
@@ -4329,6 +4436,12 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local hex_key = has_position and audit_hex_key(x, y) or nil
 		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
 		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
+		if family == "anomaly" and has_position then
+			local sector = SectorAtPoint(map, x, y)
+			if sector then
+				anomaly_topups_by_sector[sector] = (anomaly_topups_by_sector[sector] or 0) + 1
+			end
+		end
 		if family == "anomaly" and not buildable then
 			stats.anomaly_unbuildable = stats.anomaly_unbuildable + 1
 		end
@@ -4374,6 +4487,13 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 			inspect(marker, "anomaly", true)
 		end
 	end)
+	for _, count in pairs(anomaly_topups_by_sector) do
+		if count > 2 then
+			local excess = count - 2
+			stats.anomaly_sector_overflow = stats.anomaly_sector_overflow + excess
+			violation_count = violation_count + excess
+		end
+	end
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if marker and marker.SuperBigMapResourceTopUp then
 			stats.resource_topups = stats.resource_topups + 1
