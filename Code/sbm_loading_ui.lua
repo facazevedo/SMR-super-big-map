@@ -497,6 +497,65 @@ local function EngineLoadingScreenDialog()
 end
 
 local hidden_engine_loading = false
+local gameplay_interface_loading_state = false
+
+local function GameplayInterfaceDialog()
+	local get_interface = Global("GetInGameInterface")
+	if type(get_interface) ~= "function" then return nil end
+	local ok, dlg = pcall(get_interface)
+	if not ok or not dlg or dlg.window_state == "destroying"
+		or dlg.window_state == "destroyed" then return nil end
+	return dlg
+end
+
+local function WindowVisible(dlg)
+	if not dlg then return false end
+	if type(dlg.GetVisible) == "function" then
+		local ok, visible = pcall(dlg.GetVisible, dlg)
+		if ok then return visible == true end
+	end
+	return dlg.visible ~= false
+end
+
+local function SetGameplayInterfaceVisible(visible)
+	local show_interface = Global("ShowInGameInterface")
+	if type(show_interface) == "function" then
+		return pcall(show_interface, visible, true)
+	end
+	local dlg = GameplayInterfaceDialog()
+	if not dlg then return false end
+	if type(dlg.SetVisibleInstant) == "function" then
+		return pcall(dlg.SetVisibleInstant, dlg, visible)
+	elseif type(dlg.SetVisible) == "function" then
+		return pcall(dlg.SetVisible, dlg, visible, true)
+	end
+	return false
+end
+
+local function HideGameplayInterfaceForUndergroundLoading()
+	if loading_presentation ~= "underground" then return true end
+	local dlg = GameplayInterfaceDialog()
+	if gameplay_interface_loading_state == false then
+		gameplay_interface_loading_state = {
+			was_visible = WindowVisible(dlg),
+		}
+	end
+	-- Map changes can refresh or recreate the gameplay interface while the loading dialog remains
+	-- active. The 30 ms loading watcher calls this repeatedly, keeping every HUD panel hidden.
+	if dlg and WindowVisible(dlg) then
+		return SetGameplayInterfaceVisible(false)
+	end
+	return true
+end
+
+local function RestoreGameplayInterfaceAfterLoading()
+	local state = gameplay_interface_loading_state
+	gameplay_interface_loading_state = false
+	if type(state) == "table" and state.was_visible == true then
+		return SetGameplayInterfaceVisible(true)
+	end
+	return true
+end
 
 local function HideEngineLoadingScreenInstant()
 	local dlg = EngineLoadingScreenDialog()
@@ -531,6 +590,10 @@ local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
 		HideWelcomePopupInstant()
+		-- Runtime underground construction begins from a selected rover/elevator. Hide the whole
+		-- gameplay interface so its infopanel, HUD, pins, and other panels do not show through the
+		-- translucent loading background. The desktop-level message box remains visible.
+		HideGameplayInterfaceForUndergroundLoading()
 		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
 		-- remains open. Hiding rather than closing it preserves engine synchronization.
 		local engine_ready = HideEngineLoadingScreenInstant()
@@ -569,6 +632,7 @@ local function SetWelcomeLoading(active)
 		loading_box = false
 		loading_box_presentation = false
 		RestoreEngineLoadingScreenInstant()
+		RestoreGameplayInterfaceAfterLoading()
 		-- Re-show the welcome popup so the player can read + dismiss it (shown ONCE, after
 		-- loading -- no more welcome/loading/welcome flicker).
 		local dlg = WelcomeDialog()
