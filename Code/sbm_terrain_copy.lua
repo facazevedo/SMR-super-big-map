@@ -775,8 +775,11 @@ local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_snapshot_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
+local underground_wonder_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 
 local CAVE_IN_SHAPE_PATCH_VERSION = 2
+local UNDERGROUND_WONDER_SHAPE_PATCH_VERSION = 1
+local BOTTOMLESS_PIT_SPAWN_PATCH_VERSION = 1
 
 local function RoundSigned(value)
 	if value >= 0 then return math.floor(value + 0.5) end
@@ -950,6 +953,189 @@ local function RestoreCaveInShapePointsPatch()
 	end
 	State.cave_in_shape_patch_version = nil
 	cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
+end
+
+local function UndergroundWonderShapeScale(obj)
+	local x_mul = tonumber(obj and obj.SuperBigMapWonderShapeScaleXMul)
+	local x_div = tonumber(obj and obj.SuperBigMapWonderShapeScaleXDiv)
+	local y_mul = tonumber(obj and obj.SuperBigMapWonderShapeScaleYMul)
+	local y_div = tonumber(obj and obj.SuperBigMapWonderShapeScaleYDiv)
+	if not x_mul or not x_div or x_div <= 0 or not y_mul or not y_div or y_div <= 0 then
+		return nil
+	end
+	return (x_mul + 0.0) / x_div, (y_mul + 0.0) / y_div
+end
+
+local function PatchBottomlessPitSpawnStartPos(State)
+	local cls = Engine.ClassTable and Engine.ClassTable("BottomlessPit")
+	if type(cls) ~= "table" then return false end
+	local force_reinstall = State.bottomless_pit_spawn_patch_version
+		~= BOTTOMLESS_PIT_SPAWN_PATCH_VERSION
+	local previous_wrapper = State.bottomless_pit_spawn_start_wrapper
+	local previous_original = State.original_bottomless_pit_spawn_start
+	local current = cls.GetSpawnStartPos
+	if current == previous_wrapper and not force_reinstall then return true end
+	if current == previous_wrapper and type(previous_original) == "function" then
+		current = previous_original
+		cls.GetSpawnStartPos = current
+	end
+	if type(current) ~= "function" then return false end
+	local original = current
+	local wrapper = function(obj, ...)
+		local scale_x, scale_y = UndergroundWonderShapeScale(obj)
+		if not scale_x or scale_x <= 1 or not scale_y or scale_y <= 1 then
+			return original(obj, ...)
+		end
+		local get_peripheral = Global("GetPeripheralHexShape")
+		local for_each_hex = Global("HexShapeForEach")
+		local hex_to_world = Global("HexToWorld")
+		local terrain_api = Global("terrain")
+		local is_obstructed = Global("IsDepositObstructed")
+		local point_fn = Global("point")
+		local const_tbl = Global("const")
+		local table_lib = Global("table") or table
+		local guim = tonumber(Global("guim"))
+		if type(get_peripheral) ~= "function" or type(for_each_hex) ~= "function"
+			or type(hex_to_world) ~= "function" or type(terrain_api) ~= "table"
+			or type(terrain_api.GetHeight) ~= "function"
+			or type(terrain_api.IsPassable) ~= "function"
+			or type(is_obstructed) ~= "function" or type(point_fn) ~= "function"
+			or type(const_tbl) ~= "table"
+			or type(table_lib.shuffle) ~= "function" or not guim then
+			return original(obj, ...)
+		end
+		local outline = type(obj.GetShapePoints) == "function" and obj:GetShapePoints() or nil
+		local peripheral = type(outline) == "table" and get_peripheral(outline) or nil
+		if not peripheral then return obj:GetPos() end
+		table_lib.shuffle(peripheral)
+		local map = obj:GetMap()
+		local object_hex_grid = map and map.object_hex_grid
+		if not map or not object_hex_grid then return original(obj, ...) end
+		local max_z = terrain_api.GetHeight(map, obj:GetPos()) + 5 * guim
+		local result_pos
+		for_each_hex(peripheral, obj, function(q, r)
+			local x, y = hex_to_world(q, r)
+			if terrain_api.IsPassable(map, x, y)
+				and not is_obstructed(object_hex_grid, x, y,
+					const_tbl.DepositObstructMaxRadius)
+				and terrain_api.GetHeight(map, x, y) < max_z then
+				result_pos = point_fn(x, y)
+				return true
+			end
+		end)
+		return result_pos or obj:GetPos()
+	end
+	State.original_bottomless_pit_spawn_start = original
+	State.bottomless_pit_spawn_start_wrapper = wrapper
+	State.bottomless_pit_spawn_patch_version = BOTTOMLESS_PIT_SPAWN_PATCH_VERSION
+	cls.GetSpawnStartPos = wrapper
+	return true
+end
+
+-- Deferred buried wonders are Buildings, so the decoration pass deliberately skips them. Their
+-- marker centers are transformed separately before construction; this wrapper expands the live
+-- wonder's vanilla entity outline through the same world-space ratio. Untagged wonders (including
+-- every vanilla-map instance) continue to call the exact original method.
+local UNDERGROUND_WONDER_SHAPE_PATCHES = {
+	{ class = "AncientArtifact", original_key = "original_ancient_artifact_shape_points",
+		wrapper_key = "ancient_artifact_shape_points_wrapper" },
+	{ class = "CaveOfWonders", original_key = "original_cave_of_wonders_shape_points",
+		wrapper_key = "cave_of_wonders_shape_points_wrapper" },
+	{ class = "BottomlessPit", original_key = "original_bottomless_pit_shape_points",
+		wrapper_key = "bottomless_pit_shape_points_wrapper" },
+	{ class = "JumboCave", original_key = "original_jumbo_cave_shape_points",
+		wrapper_key = "jumbo_cave_shape_points_wrapper" },
+}
+
+local function PatchUndergroundWonderShapeClass(State, spec, force_reinstall)
+	local cls = Engine.ClassTable and Engine.ClassTable(spec.class)
+	if type(cls) ~= "table" then return false end
+	local previous_wrapper = State[spec.wrapper_key]
+	local previous_original = State[spec.original_key]
+	local current = cls.GetShapePoints
+	if current == previous_wrapper and not force_reinstall then return true end
+	if current == previous_wrapper and type(previous_original) == "function" then
+		current = previous_original
+		cls.GetShapePoints = current
+	end
+	if type(current) ~= "function" then
+		local grid_object = Engine.ClassTable and Engine.ClassTable("GridObject")
+		current = type(grid_object) == "table" and grid_object.GetShapePoints or nil
+	end
+	if type(current) ~= "function" then return false end
+	local original = current
+	local wrapper = function(obj, ...)
+		local source_shape = original(obj, ...)
+		local scale_x, scale_y = UndergroundWonderShapeScale(obj)
+		if not scale_x or scale_x <= 1 or not scale_y or scale_y <= 1 then
+			return source_shape
+		end
+		local entity = type(obj.GetEntity) == "function" and SafeCall(obj.GetEntity, obj)
+			or obj.entity
+		local cached = underground_wonder_scaled_shape_cache[obj]
+		if type(cached) == "table" and cached.source_shape == source_shape
+			and cached.entity == entity and cached.scale_x == scale_x
+			and cached.scale_y == scale_y then
+			return cached.shape
+		end
+		local shape = ScaleCaveInHexShape(source_shape, scale_x, scale_y)
+		underground_wonder_scaled_shape_cache[obj] = {
+			source_shape = source_shape,
+			entity = entity,
+			scale_x = scale_x,
+			scale_y = scale_y,
+			shape = shape,
+		}
+		return shape
+	end
+	State[spec.original_key] = original
+	State[spec.wrapper_key] = wrapper
+	cls.GetShapePoints = wrapper
+	return true
+end
+
+local function PatchUndergroundWonderShapePoints()
+	local State = SuperBigMap.State or {}
+	SuperBigMap.State = State
+	local force_reinstall = State.underground_wonder_shape_patch_version
+		~= UNDERGROUND_WONDER_SHAPE_PATCH_VERSION
+	local all_patched = true
+	for _, spec in ipairs(UNDERGROUND_WONDER_SHAPE_PATCHES) do
+		if not PatchUndergroundWonderShapeClass(State, spec, force_reinstall) then
+			all_patched = false
+		end
+	end
+	if not PatchBottomlessPitSpawnStartPos(State) then all_patched = false end
+	State.underground_wonder_shape_patch_version = all_patched
+		and UNDERGROUND_WONDER_SHAPE_PATCH_VERSION or nil
+	return all_patched
+end
+
+local function RestoreUndergroundWonderShapePointsPatch()
+	local State = SuperBigMap.State or {}
+	for _, spec in ipairs(UNDERGROUND_WONDER_SHAPE_PATCHES) do
+		local cls = Engine.ClassTable and Engine.ClassTable(spec.class)
+		local wrapper = State[spec.wrapper_key]
+		local original = State[spec.original_key]
+		if type(cls) == "table" and cls.GetShapePoints == wrapper
+			and type(original) == "function" then
+			cls.GetShapePoints = original
+		end
+		State[spec.original_key] = nil
+		State[spec.wrapper_key] = nil
+	end
+	State.underground_wonder_shape_patch_version = nil
+	local pit_cls = Engine.ClassTable and Engine.ClassTable("BottomlessPit")
+	local pit_wrapper = State.bottomless_pit_spawn_start_wrapper
+	local pit_original = State.original_bottomless_pit_spawn_start
+	if type(pit_cls) == "table" and pit_cls.GetSpawnStartPos == pit_wrapper
+		and type(pit_original) == "function" then
+		pit_cls.GetSpawnStartPos = pit_original
+	end
+	State.original_bottomless_pit_spawn_start = nil
+	State.bottomless_pit_spawn_start_wrapper = nil
+	State.bottomless_pit_spawn_patch_version = nil
+	underground_wonder_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 end
 
 -- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
@@ -2389,6 +2575,14 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 				local oz = type(capture_owner.SuperBigMapNativeSourceZ) == "number"
 					and capture_owner.SuperBigMapNativeSourceZ or nil
 				if oz == nil then pcall(function() oz = pos:z() end) end
+				-- Buried wonders are materialized only after this pass. Preserve their authoritative
+				-- native center just like staged enrichments so the proportional result is snapped to
+				-- the nearest destination hex, is idempotent, and can be validated after replacement.
+				if IsKindOfSafe(obj, "BuriedWonderMarker") then
+					capture_owner.SuperBigMapNativeSourceX = source_x
+					capture_owner.SuperBigMapNativeSourceY = source_y
+					if type(oz) == "number" then capture_owner.SuperBigMapNativeSourceZ = oz end
+				end
 				local raw_nx = math.floor(source_origin_x
 					+ (source_x - source_origin_x) * scale_x + 0.5)
 				local raw_ny = math.floor(source_origin_y
@@ -4176,6 +4370,9 @@ local TerrainCopy = {
 	RestoreEntranceBadgePositions = RestoreEntranceBadgePositions,
 	PatchCaveInShapePoints = PatchCaveInShapePoints,
 	RestoreCaveInShapePointsPatch = RestoreCaveInShapePointsPatch,
+	PatchUndergroundWonderShapePoints = PatchUndergroundWonderShapePoints,
+	RestoreUndergroundWonderShapePointsPatch = RestoreUndergroundWonderShapePointsPatch,
+	ScaleHexShapeForExpansion = ScaleCaveInHexShape,
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,

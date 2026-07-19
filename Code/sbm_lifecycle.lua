@@ -1155,6 +1155,9 @@ RegisterOnce("ClassesBuilt", function()
 		if type(gen.PatchCaveInShapePoints) == "function" then
 			gen.PatchCaveInShapePoints()
 		end
+		if type(gen.PatchUndergroundWonderShapePoints) == "function" then
+			gen.PatchUndergroundWonderShapePoints()
+		end
 	end
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.ApplyModBehavior) == "function" then

@@ -746,6 +746,9 @@ local RestoreEntranceBadgePositionPatch = TerrainCopy.RestoreEntranceBadgePositi
 local RestoreEntranceBadgePositions = TerrainCopy.RestoreEntranceBadgePositions
 local PatchCaveInShapePoints = TerrainCopy.PatchCaveInShapePoints
 local RestoreCaveInShapePointsPatch = TerrainCopy.RestoreCaveInShapePointsPatch
+local PatchUndergroundWonderShapePoints = TerrainCopy.PatchUndergroundWonderShapePoints
+local RestoreUndergroundWonderShapePointsPatch = TerrainCopy.RestoreUndergroundWonderShapePointsPatch
+local ScaleHexShapeForExpansion = TerrainCopy.ScaleHexShapeForExpansion
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
@@ -755,7 +758,10 @@ local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 assert(type(ReinvalidateExpandedTerrain) == "function"
 	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function"
 	and type(PatchCaveInShapePoints) == "function"
-	and type(RestoreCaveInShapePointsPatch) == "function",
+	and type(RestoreCaveInShapePointsPatch) == "function"
+	and type(PatchUndergroundWonderShapePoints) == "function"
+	and type(RestoreUndergroundWonderShapePointsPatch) == "function"
+	and type(ScaleHexShapeForExpansion) == "function",
 	"sbm_map_generation: required TerrainCopy helpers missing (check sbm_terrain_copy exports)")
 
 local function StorePendingMap(map_name, pending)
@@ -797,6 +803,8 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWondersDone = nil
 	map.SuperBigMapDeferredUndergroundWonderCount = nil
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
+	map.SuperBigMapDeferredUndergroundWondersStretched = nil
+	map.SuperBigMapDeferredBottomlessPitsStretched = nil
 	map.SuperBigMapDeferredTunnelSpawnsPending = nil
 	map.SuperBigMapDeferredTunnelSpawnCount = nil
 	map.SuperBigMapGeneratorWidth = nil
@@ -3005,7 +3013,148 @@ local function BootstrapPassagesAndDeferWonders(env)
 	}
 end
 
-local function FlattenDeferredWonder(wonder)
+local function DeferredWonderScaleRatios(map)
+	local source_width = tonumber(map and (map.SuperBigMapSourceWidthTiles
+		or map.SuperBigMapGeneratorWidthTiles))
+	local source_height = tonumber(map and (map.SuperBigMapSourceHeightTiles
+		or map.SuperBigMapGeneratorHeightTiles or source_width))
+	local full_width = tonumber(map and (map.SuperBigMapDesiredWidthTiles
+		or (map.mapdata and map.mapdata.Width)))
+	local full_height = tonumber(map and (map.SuperBigMapDesiredHeightTiles
+		or (map.mapdata and map.mapdata.Height) or full_width))
+	if not source_width or source_width <= 0 or not source_height or source_height <= 0
+		or not full_width or full_width <= 0 or not full_height or full_height <= 0 then
+		return nil, "underground wonder stretch dimensions are unavailable"
+	end
+	local scale_x = (full_width + 0.0) / source_width
+	local scale_y = (full_height + 0.0) / source_height
+	if scale_x <= 1 or scale_y <= 1 then
+		return nil, "underground wonder stretch ratio is not greater than one"
+	end
+	return {
+		scale_x = scale_x,
+		scale_y = scale_y,
+		x_mul = full_width,
+		x_div = source_width,
+		y_mul = full_height,
+		y_div = source_height,
+	}
+end
+
+local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
+	if not wonder or not marker or type(ratios) ~= "table" then
+		return false, "invalid underground wonder stretch arguments"
+	end
+	if not PatchUndergroundWonderShapePoints() then
+		return false, "UndergroundWonder GetShapePoints patch unavailable"
+	end
+	local marker_scale = type(marker.GetScale) == "function" and marker:GetScale() or nil
+	if type(marker_scale) ~= "number" or marker_scale <= 0 then
+		return false, "buried wonder marker scale unavailable"
+	end
+	local expected_scale = math.max(1,
+		math.min(500, math.floor(marker_scale * ratios.scale_x + 0.5)))
+	local old_scale = type(wonder.GetScale) == "function" and wonder:GetScale() or marker_scale
+	local had_grids = wonder.grids_applied == true
+	local old_fields = {
+		wonder.SuperBigMapWonderShapeScaleXMul,
+		wonder.SuperBigMapWonderShapeScaleXDiv,
+		wonder.SuperBigMapWonderShapeScaleYMul,
+		wonder.SuperBigMapWonderShapeScaleYDiv,
+	}
+	local ok, result = pcall(function()
+		local marker_pos = marker:GetPos()
+		local wonder_pos = wonder:GetPos()
+		local marker_x, marker_y = PointXY(marker_pos)
+		local wonder_x, wonder_y = PointXY(wonder_pos)
+		if type(marker_x) ~= "number" or type(marker_y) ~= "number"
+			or wonder_x ~= marker_x or wonder_y ~= marker_y then
+			error("replacement center mismatch: marker=" .. tostring(marker_x) .. ","
+				.. tostring(marker_y) .. " wonder=" .. tostring(wonder_x) .. ","
+				.. tostring(wonder_y))
+		end
+		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX)
+		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY)
+		if expected_x and expected_y and (marker_x ~= expected_x or marker_y ~= expected_y) then
+			error("marker center transform mismatch: expected=" .. tostring(expected_x) .. ","
+				.. tostring(expected_y) .. " actual=" .. tostring(marker_x) .. ","
+				.. tostring(marker_y))
+		end
+		if had_grids then
+			if type(wonder.RemoveFromGrids) ~= "function" then error("RemoveFromGrids unavailable") end
+			wonder:RemoveFromGrids()
+			if wonder.grids_applied == true then error("vanilla wonder footprint remained registered") end
+		end
+		wonder.SuperBigMapWonderShapeScaleXMul = ratios.x_mul
+		wonder.SuperBigMapWonderShapeScaleXDiv = ratios.x_div
+		wonder.SuperBigMapWonderShapeScaleYMul = ratios.y_mul
+		wonder.SuperBigMapWonderShapeScaleYDiv = ratios.y_div
+		wonder.SuperBigMapWonderSourceScale = marker_scale
+		wonder.SuperBigMapWonderSourceX = marker.SuperBigMapNativeSourceX
+		wonder.SuperBigMapWonderSourceY = marker.SuperBigMapNativeSourceY
+		wonder.SuperBigMapWonderExpectedX = expected_x or marker_x
+		wonder.SuperBigMapWonderExpectedY = expected_y or marker_y
+		if type(wonder.SetScale) ~= "function" then error("SetScale unavailable") end
+		wonder:SetScale(expected_scale)
+		if had_grids then
+			if type(wonder.ApplyToGrids) ~= "function" then error("ApplyToGrids unavailable") end
+			wonder:ApplyToGrids()
+			if wonder.grids_applied ~= true then error("expanded wonder footprint was not registered") end
+		end
+		local actual_scale = type(wonder.GetScale) == "function" and wonder:GetScale() or nil
+		if actual_scale ~= expected_scale then
+			error("visual scale mismatch: expected=" .. tostring(expected_scale)
+				.. " actual=" .. tostring(actual_scale))
+		end
+		local actual_shape = type(wonder.GetShapePoints) == "function"
+			and wonder:GetShapePoints() or nil
+		local get_outline = Global("GetEntityOutlineShape")
+		local source_shape = type(get_outline) == "function"
+			and get_outline(wonder:GetEntity()) or nil
+		local expected_shape = ScaleHexShapeForExpansion(
+			source_shape, ratios.scale_x, ratios.scale_y)
+		if type(actual_shape) ~= "table" or #actual_shape == 0
+			or type(expected_shape) ~= "table" or #actual_shape ~= #expected_shape then
+			error("expanded wonder footprint mismatch: actual="
+				.. tostring(type(actual_shape) == "table" and #actual_shape or "nil")
+				.. " expected="
+				.. tostring(type(expected_shape) == "table" and #expected_shape or "nil"))
+		end
+		return {
+			expected_scale = expected_scale,
+			shape_hexes = #actual_shape,
+			source_shape_hexes = type(source_shape) == "table" and #source_shape or 0,
+			grids_applied = wonder.grids_applied == true,
+			source_x = wonder.SuperBigMapWonderSourceX,
+			source_y = wonder.SuperBigMapWonderSourceY,
+			final_x = marker_x,
+			final_y = marker_y,
+		}
+	end)
+	if ok then return true, result end
+
+	-- This object has only just been created, but restore its vanilla footprint before reporting the
+	-- failure so the surrounding deferred-materialization transaction never leaves stale grid cells.
+	pcall(function()
+		if wonder.grids_applied == true and type(wonder.RemoveFromGrids) == "function" then
+			wonder:RemoveFromGrids()
+		end
+		wonder.SuperBigMapWonderShapeScaleXMul = old_fields[1]
+		wonder.SuperBigMapWonderShapeScaleXDiv = old_fields[2]
+		wonder.SuperBigMapWonderShapeScaleYMul = old_fields[3]
+		wonder.SuperBigMapWonderShapeScaleYDiv = old_fields[4]
+		wonder.SuperBigMapWonderSourceScale = nil
+		wonder.SuperBigMapWonderSourceX = nil
+		wonder.SuperBigMapWonderSourceY = nil
+		wonder.SuperBigMapWonderExpectedX = nil
+		wonder.SuperBigMapWonderExpectedY = nil
+		if type(wonder.SetScale) == "function" then wonder:SetScale(old_scale) end
+		if had_grids and type(wonder.ApplyToGrids) == "function" then wonder:ApplyToGrids() end
+	end)
+	return false, tostring(result)
+end
+
+local function FlattenDeferredWonder(wonder, ratios)
 	local get_enclosed = Global("GetEnclosedShape")
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
@@ -3015,16 +3164,41 @@ local function FlattenDeferredWonder(wonder)
 	local map = wonder:GetMap()
 	local shape = get_enclosed(wonder:GetEntity())
 	if #shape == 0 then shape = shrink(get_outline(wonder:GetEntity()), 2) end
+	if type(ratios) == "table" then
+		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
+	end
 	local buildable_z
+	local buildable_source = "expanded_buildable_grid"
 	for_each_hex(shape, wonder, function(q, r)
 		local z = map.buildable:GetZ(q, r)
 		if z ~= unbuildable then buildable_z = z return true end
 	end)
+	-- The consolidated revalidation inside StretchSourceToFull can complete its engine-side work
+	-- before the non-current underground map's Lua BuildableGrid exposes the new right/bottom area.
+	-- A deferred wonder must still be seated on the already-stretched terrain; the authoritative
+	-- synchronous passability/buildability rebuild immediately after wonder creation will then
+	-- derive its final grids from this terrain edit.
+	if type(buildable_z) ~= "number" then
+		local terrain_api = Global("terrain")
+		if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+			local ok_height, terrain_height = pcall(terrain_api.GetHeight, map, wonder:GetPos())
+			if ok_height and type(terrain_height) == "number" then
+				buildable_z = terrain_height
+				buildable_source = "stretched_terrain_center_fallback"
+			end
+		end
+	end
 	if buildable_z then
 		flatten(shape, wonder, map.buildable.z_grid, map.object_hex_grid,
 			Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, buildable_z)
 		ArtefactClearObstructions(wonder, map.obj_prefab_marker, nil, shape)
+		return true, {
+			shape_hexes = #shape,
+			buildable_z = buildable_z,
+			buildable_source = buildable_source,
+		}
 	end
+	return false, "no terrain height is available for the expanded wonder footprint"
 end
 
 local function MaterializeDeferredUndergroundWonders(map)
@@ -3050,15 +3224,51 @@ local function MaterializeDeferredUndergroundWonders(map)
 	for _, fn in ipairs(required) do
 		if type(fn) ~= "function" then return false, "deferred wonder helper is unavailable" end
 	end
+	local ratios, ratio_error = DeferredWonderScaleRatios(map)
+	if not ratios then return false, ratio_error end
 	local spawned = 0
+	local stretched = 0
+	local bottomless_pits = 0
+	local bottomless_pits_stretched = 0
+	local expanded_shape_hexes = 0
 	map:SuspendPassEdits("SuperBigMap_DeferredUndergroundWonders")
 	local ok, err = pcall(function()
 		for _, marker in ipairs(planned) do
-			local wonder = ArtefactSpawnMarkerBuilding(marker,
-				marker.SuperBigMapDeferredWonderClass, map)
-			FlattenDeferredWonder(wonder)
+			local wonder_class = marker.SuperBigMapDeferredWonderClass
+			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
+			local stretch_ok, stretch_stats = ApplyDeferredWonderStretch(
+				wonder, marker, map, ratios)
+			if stretch_ok ~= true then
+				error("failed to stretch " .. tostring(wonder_class) .. ": "
+					.. tostring(stretch_stats))
+			end
+			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, ratios)
+			if flatten_ok ~= true then
+				error("failed to prepare stretched terrain for " .. tostring(wonder_class)
+					.. ": " .. tostring(flatten_stats))
+			end
 			Global("DoneObject")(marker)
 			spawned = spawned + 1
+			stretched = stretched + 1
+			expanded_shape_hexes = expanded_shape_hexes
+				+ (stretch_stats and stretch_stats.shape_hexes or 0)
+			if wonder_class == "BottomlessPit" then
+				bottomless_pits = bottomless_pits + 1
+				bottomless_pits_stretched = bottomless_pits_stretched + 1
+			end
+			LoadingStep("underground buried wonder stretched", {
+				class = wonder_class,
+				source_x = stretch_stats and stretch_stats.source_x,
+				source_y = stretch_stats and stretch_stats.source_y,
+				final_x = stretch_stats and stretch_stats.final_x,
+				final_y = stretch_stats and stretch_stats.final_y,
+				source_shape_hexes = stretch_stats and stretch_stats.source_shape_hexes,
+				expanded_shape_hexes = stretch_stats and stretch_stats.shape_hexes,
+				expanded_scale = stretch_stats and stretch_stats.expected_scale,
+				flatten_shape_hexes = flatten_stats and flatten_stats.shape_hexes,
+				flatten_z = flatten_stats and flatten_stats.buildable_z,
+				flatten_source = flatten_stats and flatten_stats.buildable_source,
+			}, map)
 		end
 	end)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map,
@@ -3068,6 +3278,17 @@ local function MaterializeDeferredUndergroundWonders(map)
 	map.SuperBigMapDeferredUndergroundWondersPending = false
 	map.SuperBigMapDeferredUndergroundWondersDone = true
 	map.SuperBigMapDeferredUndergroundWondersSpawned = spawned
+	map.SuperBigMapDeferredUndergroundWondersStretched = stretched
+	map.SuperBigMapDeferredBottomlessPitsStretched = bottomless_pits_stretched
+	LoadingStep("underground buried wonders stretched", {
+		spawned = spawned,
+		stretched = stretched,
+		bottomless_pits = bottomless_pits,
+		bottomless_pits_stretched = bottomless_pits_stretched,
+		expanded_shape_hexes = expanded_shape_hexes,
+		scale_x = ratios.scale_x,
+		scale_y = ratios.scale_y,
+	}, map)
 	return spawned == #planned, spawned
 end
 
@@ -6936,6 +7157,7 @@ MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
 MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.PatchCaveInShapePoints = PatchCaveInShapePoints
+MapGeneration.PatchUndergroundWonderShapePoints = PatchUndergroundWonderShapePoints
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
@@ -6963,6 +7185,7 @@ function MapGeneration.ApplyModBehavior()
 	if transform_source then
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
+		PatchUndergroundWonderShapePoints()
 		PatchDeferredUndergroundAccess("ApplyModBehavior")
 	end
 	-- Keep diagnostics outermost so a first-access command is traced from the player's click,
@@ -7093,6 +7316,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	RestoreEntranceBadgePositionPatch()
 	RestoreCaveInShapePointsPatch()
+	RestoreUndergroundWonderShapePointsPatch()
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -7115,6 +7339,7 @@ if module_config.ENABLE_MOD ~= false
 	if module_transform_source then
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
+		PatchUndergroundWonderShapePoints()
 		PatchDeferredUndergroundAccess("module load")
 	end
 end
