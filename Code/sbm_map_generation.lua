@@ -156,6 +156,368 @@ local function ExpansionAudit(event, data, map)
 	end
 end
 
+-- Focused runtime traversal trace. Vanilla's manual Unit:UseElevator command has several silent
+-- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
+-- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
+-- descendants on expanded maps, and preserve the exact original argument/result tuples.
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 1
+local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
+
+local function ElevatorTraversalAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.ElevatorTraversal) == "function" then
+		diagnostics.ElevatorTraversal(event, data, map)
+	end
+end
+
+local function TraversalObjectMap(obj)
+	if obj and type(obj.GetMap) == "function" then
+		local map = SafeCall(obj.GetMap, obj)
+		if map then return map end
+	end
+	return obj and obj.city and obj.city.map or nil
+end
+
+local function TraversalObjectValid(obj)
+	if not obj then return false end
+	local is_valid = Global("IsValid")
+	return type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true
+end
+
+local function TraversalIsExpandedMap(map)
+	local grid = SuperBigMap.SectorGrid
+	return map and grid and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+end
+
+local function TraversalIsExpandedContext(unit, elevator)
+	return TraversalIsExpandedMap(TraversalObjectMap(unit))
+		or TraversalIsExpandedMap(TraversalObjectMap(elevator))
+end
+
+local function TraversalAddPosition(data, prefix, value)
+	local pos = value and Engine.ObjectPos(value) or nil
+	if value and type(value.xy) == "function" then pos = value end
+	local x, y = PointXY(pos)
+	data[prefix .. "_x"] = tostring(x)
+	data[prefix .. "_y"] = tostring(y)
+	local z
+	if pos and type(pos.z) == "function" then z = SafeCall(pos.z, pos) end
+	data[prefix .. "_z"] = tostring(z)
+	return pos, x, y
+end
+
+local function TraversalClass(obj)
+	return tostring(obj and (obj.class or obj.template_name) or "nil")
+end
+
+local function TraversalCommand(unit)
+	if not unit then return "nil" end
+	if unit.command ~= nil then return tostring(unit.command) end
+	if type(unit.GetCommand) == "function" then return tostring(SafeCall(unit.GetCommand, unit)) end
+	return "nil"
+end
+
+local function TraversalSnapshot(unit, elevator, check_path)
+	local unit_map, elevator_map = TraversalObjectMap(unit), TraversalObjectMap(elevator)
+	local other = elevator and elevator.other or nil
+	local other_map = TraversalObjectMap(other)
+	local passage = elevator and elevator.passage or nil
+	local data = {
+		unit = tostring(unit), unit_class = TraversalClass(unit),
+		unit_handle = tostring(unit and unit.handle), unit_command = TraversalCommand(unit),
+		unit_valid = tostring(TraversalObjectValid(unit)), unit_map = tostring(unit_map),
+		unit_map_slot = tostring(unit_map and unit_map.slot),
+		elevator = tostring(elevator), elevator_class = TraversalClass(elevator),
+		elevator_handle = tostring(elevator and elevator.handle),
+		elevator_valid = tostring(TraversalObjectValid(elevator)),
+		elevator_map = tostring(elevator_map), elevator_map_slot = tostring(elevator_map and elevator_map.slot),
+		same_map = tostring(unit_map ~= nil and unit_map == elevator_map),
+		elevator_destroyed = tostring(elevator and elevator.destroyed == true),
+		elevator_demolishing = tostring(elevator and elevator.demolishing == true),
+		elevator_working = tostring(elevator and elevator.working),
+		elevator_ui_working = tostring(elevator and elevator.ui_working),
+		elevator_grids_applied = tostring(elevator and elevator.grids_applied),
+		other = tostring(other), other_class = TraversalClass(other),
+		other_valid = tostring(TraversalObjectValid(other)),
+		other_map = tostring(other_map), other_map_slot = tostring(other_map and other_map.slot),
+		other_backlink = tostring(other and other.other == elevator),
+		passage = tostring(passage), passage_class = TraversalClass(passage),
+		passage_valid = tostring(TraversalObjectValid(passage)),
+		passage_points_to_elevator = tostring(passage and passage.elevator == elevator),
+	}
+	TraversalAddPosition(data, "unit_pos", unit)
+	TraversalAddPosition(data, "elevator_pos", elevator)
+	TraversalAddPosition(data, "other_pos", other)
+	local validate = Global("ValidateBuilding")
+	if type(validate) == "function" then
+		data.validate_building = tostring(SafeCall(validate, elevator) == elevator)
+	end
+	if elevator and type(elevator.HasPower) == "function" then
+		data.has_power = tostring(SafeCall(elevator.HasPower, elevator) == true)
+	end
+	if elevator and type(elevator.HasPowerThisSide) == "function" then
+		data.has_power_this_side = tostring(SafeCall(elevator.HasPowerThisSide, elevator) == true)
+	end
+	if other and type(other.HasPowerThisSide) == "function" then
+		data.other_has_power_this_side = tostring(SafeCall(other.HasPowerThisSide, other) == true)
+	end
+	local entrance, chain
+	if elevator and type(elevator.GetEntrancePos) == "function" then
+		entrance, chain = SafeCall(elevator.GetEntrancePos, elevator, unit)
+	end
+	local entrance_pos, ex, ey = TraversalAddPosition(data, "entrance", entrance)
+	data.entrance_valid = tostring(entrance_pos ~= nil and ex ~= false and ey ~= nil)
+	data.entrance_chain_points = tostring(type(chain) == "table" and #chain or 0)
+	if entrance_pos and elevator_map then
+		local terrain_api = Global("terrain")
+		if type(terrain_api) == "table" and type(terrain_api.IsPassable) == "function" then
+			data.entrance_passable = tostring(
+				SafeCall(terrain_api.IsPassable, elevator_map, entrance_pos) == true)
+		end
+		local world_to_hex = Global("WorldToHex")
+		if type(world_to_hex) == "function" then
+			local q, r = SafeCall(world_to_hex, entrance_pos)
+			data.entrance_q, data.entrance_r = tostring(q), tostring(r)
+			local buildable = elevator_map.buildable
+			if buildable and type(buildable.GetZ) == "function"
+				and type(q) == "number" and type(r) == "number" then
+				data.entrance_buildable_z = tostring(SafeCall(buildable.GetZ, buildable, q, r))
+			end
+		end
+	end
+	if check_path and unit and entrance_pos then
+		if type(unit.HasPath_NoDestlock) == "function" then
+			local path = SafeCall(unit.HasPath_NoDestlock, unit, entrance_pos)
+			data.has_path_no_destlock = tostring(path == true)
+			data.has_path_no_destlock_raw = tostring(path)
+		end
+		local pf_api = Global("pf")
+		if type(pf_api) == "table" and type(pf_api.HasPosPath) == "function" and unit_map then
+			local pfclass = unit.pfclass
+			if pfclass == nil and type(unit.GetProperty) == "function" then
+				pfclass = SafeCall(unit.GetProperty, unit, "pfclass")
+			end
+			local path = SafeCall(pf_api.HasPosPath, unit_map, unit, entrance_pos, pfclass or 0)
+			data.pf_has_pos_path = tostring(path == true)
+			data.pf_has_pos_path_raw = tostring(path)
+			data.pfclass = tostring(pfclass)
+		end
+	end
+	return data, unit_map
+end
+
+local function RestoreElevatorTraversalDiagnostics()
+	local State = SuperBigMap.State
+	local patches = State.elevator_traversal_diagnostic_patches
+	if type(patches) == "table" then
+		for i = #patches, 1, -1 do
+			local patch = patches[i]
+			if patch.target and patch.target[patch.method] == patch.wrapper then
+				patch.target[patch.method] = patch.original
+			end
+		end
+	end
+	State.elevator_traversal_diagnostic_patches = nil
+	State.elevator_traversal_diagnostic_version = nil
+end
+
+local function PatchElevatorTraversalDiagnostics()
+	local State = SuperBigMap.State
+	local installed = State.elevator_traversal_diagnostic_patches
+	if State.elevator_traversal_diagnostic_version == ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION
+		and type(installed) == "table" then
+		local intact = #installed > 0
+		for _, patch in ipairs(installed) do
+			if not patch.target or patch.target[patch.method] ~= patch.wrapper then
+				intact = false
+				break
+			end
+		end
+		if intact then return true end
+	end
+	RestoreElevatorTraversalDiagnostics()
+	local patches, seen = {}, setmetatable({}, { __mode = "k" })
+	local function install(target, method, label, make_wrapper)
+		if type(target) ~= "table" or type(target[method]) ~= "function" then return false end
+		local methods = seen[target]
+		if not methods then methods = {}; seen[target] = methods end
+		if methods[method] then return false end
+		methods[method] = true
+		local original = target[method]
+		local wrapper = make_wrapper(original, label)
+		target[method] = wrapper
+		patches[#patches + 1] = {
+			target = target, method = method, original = original, wrapper = wrapper, label = label,
+		}
+		return true
+	end
+	local function descendants_inclusive(base_name)
+		local targets = {}
+		local base = Engine.ClassTable and Engine.ClassTable(base_name)
+		if type(base) == "table" then targets[#targets + 1] = { name = base_name, class = base } end
+		local descendants = Global("ClassDescendants")
+		if type(descendants) == "function" then
+			pcall(descendants, base_name, function(name, class, output)
+				if type(class) == "table" then output[#output + 1] = { name = name, class = class } end
+			end, targets)
+		end
+		return targets
+	end
+	local function make_interaction_wrapper(original, label)
+		return function(unit, obj, interaction_mode, ...)
+			local trace = IsKindOfSafe(obj, "ElevatorBase")
+				and TraversalIsExpandedContext(unit, obj)
+			if trace then
+				local before = TraversalSnapshot(unit, obj, true)
+				before.wrapper_target = label
+				before.interaction_mode = tostring(interaction_mode)
+				ElevatorTraversalAudit("VEHICLE_INTERACT_BEGIN", before, TraversalObjectMap(unit))
+			end
+			local results = PackValues(original(unit, obj, interaction_mode, ...))
+			if trace then
+				ElevatorTraversalAudit("VEHICLE_INTERACT_END", {
+					wrapper_target = label, unit = tostring(unit), elevator = tostring(obj),
+					result_1 = tostring(results[1]), result_2 = tostring(results[2]),
+					unit_command = TraversalCommand(unit),
+				}, TraversalObjectMap(unit))
+			end
+			return Unpack(results, 1, results.n)
+		end
+	end
+	local function next_trace_id()
+		State.elevator_traversal_trace_sequence =
+			(tonumber(State.elevator_traversal_trace_sequence) or 0) + 1
+		return State.elevator_traversal_trace_sequence
+	end
+	local function make_vehicle_use_wrapper(original, label)
+		return function(unit, elevator, ...)
+			if not TraversalIsExpandedContext(unit, elevator) then
+				return original(unit, elevator, ...)
+			end
+			-- A descendant can explicitly call its BaseRover implementation. The outermost wrapper
+			-- owns the trace so that one command produces one BEGIN/END pair.
+			if elevator_traversal_by_unit[unit] then return original(unit, elevator, ...) end
+			local trace = {
+				id = next_trace_id(), building_use_entered = false,
+				goto_entered = false, elevator = elevator,
+			}
+			elevator_traversal_by_unit[unit] = trace
+			local before, before_map = TraversalSnapshot(unit, elevator, true)
+			trace.before_map = before_map
+			trace.same_map = before.same_map == "true"
+			trace.entrance_valid = before.entrance_valid == "true"
+			trace.path_available = before.has_path_no_destlock == "true"
+			trace.other_valid = before.other_valid == "true"
+			trace.building_valid = before.validate_building ~= "false"
+			before.trace = trace.id
+			before.wrapper_target = label
+			ElevatorTraversalAudit("VEHICLE_USE_BEGIN", before, before_map)
+			local results = PackValues(original(unit, elevator, ...))
+			local after, after_map = TraversalSnapshot(unit, elevator, false)
+			local transferred = before_map ~= nil and after_map ~= nil and before_map ~= after_map
+			local outcome
+			if transferred then outcome = "transferred"
+			elseif trace.same_map == false then outcome = "unit_elevator_map_mismatch"
+			elseif trace.entrance_valid == false then outcome = "elevator_entrance_invalid"
+			elseif trace.goto_entered == true and trace.goto_result ~= true then
+				outcome = "entrance_goto_failed"
+			elseif trace.path_available == false then outcome = "entrance_path_unavailable"
+			elseif trace.building_valid == false then outcome = "elevator_building_invalid"
+			elseif trace.other_valid == false then outcome = "linked_counterpart_invalid"
+			elseif trace.goto_entered ~= true then outcome = "entrance_goto_not_reached"
+			elseif trace.building_use_entered ~= true then outcome = "elevator_building_use_not_reached"
+			else outcome = "building_use_returned_without_map_transfer" end
+			after.trace = trace.id
+			after.wrapper_target = label
+			after.outcome = outcome
+			after.transferred = tostring(transferred)
+			after.building_use_entered = tostring(trace.building_use_entered == true)
+			after.goto_entered = tostring(trace.goto_entered == true)
+			after.goto_result = tostring(trace.goto_result)
+			after.result_1 = tostring(results[1])
+			ElevatorTraversalAudit("VEHICLE_USE_END", after, after_map or before_map)
+			elevator_traversal_by_unit[unit] = nil
+			return Unpack(results, 1, results.n)
+		end
+	end
+	local function make_vehicle_goto_wrapper(original, label)
+		return function(unit, destination, ...)
+			local trace = elevator_traversal_by_unit[unit]
+			if not trace or (trace.goto_depth or 0) > 0 then
+				return original(unit, destination, ...)
+			end
+			trace.goto_depth = 1
+			trace.goto_entered = true
+			local data = {
+				trace = trace.id, wrapper_target = label, unit = tostring(unit),
+				unit_class = TraversalClass(unit), unit_command = TraversalCommand(unit),
+			}
+			TraversalAddPosition(data, "unit_pos", unit)
+			TraversalAddPosition(data, "goto_destination", destination)
+			ElevatorTraversalAudit("VEHICLE_GOTO_BEGIN", data, TraversalObjectMap(unit))
+			local results = PackValues(original(unit, destination, ...))
+			trace.goto_result = results[1]
+			trace.goto_depth = 0
+			local after = {
+				trace = trace.id, wrapper_target = label, unit = tostring(unit),
+				result_1 = tostring(results[1]), unit_command = TraversalCommand(unit),
+			}
+			TraversalAddPosition(after, "unit_pos", unit)
+			ElevatorTraversalAudit("VEHICLE_GOTO_END", after, TraversalObjectMap(unit))
+			return Unpack(results, 1, results.n)
+		end
+	end
+	local function make_building_use_wrapper(original, label)
+		return function(elevator, unit, ...)
+			if not TraversalIsExpandedContext(unit, elevator) then
+				return original(elevator, unit, ...)
+			end
+			local trace = elevator_traversal_by_unit[unit]
+			local trace_id = trace and trace.id or next_trace_id()
+			if trace then trace.building_use_entered = true end
+			local before, before_map = TraversalSnapshot(unit, elevator, false)
+			before.trace = trace_id
+			before.wrapper_target = label
+			ElevatorTraversalAudit("BUILDING_USE_BEGIN", before, before_map)
+			local results = PackValues(original(elevator, unit, ...))
+			local after, after_map = TraversalSnapshot(unit, elevator, false)
+			after.trace = trace_id
+			after.wrapper_target = label
+			after.transferred = tostring(before_map ~= nil and after_map ~= nil and before_map ~= after_map)
+			after.result_1 = tostring(results[1])
+			ElevatorTraversalAudit("BUILDING_USE_END", after, after_map or before_map)
+			return Unpack(results, 1, results.n)
+		end
+	end
+
+	local base_rover = Engine.ClassTable and Engine.ClassTable("BaseRover")
+	install(base_rover, "InteractWithObject", "BaseRover", make_interaction_wrapper)
+	local rover_use_targets, rover_goto_targets = 0, 0
+	for _, entry in ipairs(descendants_inclusive("BaseRover")) do
+		if install(entry.class, "UseElevator", tostring(entry.name), make_vehicle_use_wrapper) then
+			rover_use_targets = rover_use_targets + 1
+		end
+		if install(entry.class, "Goto_NoDestlock", tostring(entry.name), make_vehicle_goto_wrapper) then
+			rover_goto_targets = rover_goto_targets + 1
+		end
+	end
+	local elevator_use_targets = 0
+	for _, entry in ipairs(descendants_inclusive("ElevatorBase")) do
+		if install(entry.class, "UseElevator", tostring(entry.name), make_building_use_wrapper) then
+			elevator_use_targets = elevator_use_targets + 1
+		end
+	end
+	State.elevator_traversal_diagnostic_patches = patches
+	State.elevator_traversal_diagnostic_version = ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION
+	ElevatorTraversalAudit("PATCH_INSTALLED", {
+		patches = #patches, rover_use_targets = rover_use_targets,
+		rover_goto_targets = rover_goto_targets,
+		elevator_use_targets = elevator_use_targets,
+	}, Global("CurrentMap"))
+	return rover_use_targets > 0 and elevator_use_targets > 0
+end
+
 -- Instrument the generator's own procedure dispatcher only while the load-timing gate is on.
 -- The wrapper is synchronous, restores env.ProcInvoke on every Lua success/error path, and returns
 -- the exact original result tuple. With diagnostics off this is a direct tail call.
@@ -5520,6 +5882,11 @@ function MapGeneration.ApplyModBehavior()
 	-- exact-vanilla generation wrapper owned by stage 01.
 	if not transform_source then MapGeneration.RestoreVanillaBehavior() end
 	PatchRandomMapGenerator()
+	if cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
+		PatchElevatorTraversalDiagnostics()
+	else
+		RestoreElevatorTraversalDiagnostics()
+	end
 	if transform_source then
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
@@ -5531,6 +5898,7 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	RestoreElevatorTraversalDiagnostics()
 	-- Restore process-shared MapData presets as part of the domain teardown too,
 	-- not only through the main-menu convenience path. This covers config disable,
 	-- hot reload, and any alternate session exit that calls Lifecycle.Disable.

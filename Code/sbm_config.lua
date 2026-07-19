@@ -18,6 +18,10 @@ local config = {}
 -- transaction. This is intentionally off for ordinary play because a complete marker dump is
 -- verbose and performs extra read-only validation passes.
 config.DebugEnrichmentAudit = false
+-- Focused runtime trace for manually sending a rover through an Elevator. Records interaction
+-- dispatch, entrance/path availability, linked counterpart state, building-use entry, map transfer,
+-- and final rover position without enabling the much larger enrichment audit above.
+config.DebugElevatorTraversal = true
 -- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
@@ -585,6 +589,7 @@ local expansion_step_21 = expansion_step_03
 -- Lifecycle / master
 C.ENABLE_MOD = true
 C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
+C.DEBUG_ELEVATOR_TRAVERSAL = as_bool(config.DebugElevatorTraversal)
 C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = as_bool(config.DebugUndergroundDecorationPositions)
 C.DEBUG_CAVE_IN_POSITIONS = as_bool(config.DebugCaveInPositions)
