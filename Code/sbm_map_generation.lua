@@ -175,7 +175,7 @@ end
 -- returns (different maps, unreachable entrance, invalid building, or missing counterpart), so a
 -- normal log cannot distinguish them. These wrappers are observational, apply only to BaseRover
 -- descendants on expanded maps, and preserve the exact original argument/result tuples.
-local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 2
+local ELEVATOR_TRAVERSAL_DIAGNOSTIC_VERSION = 3
 local elevator_traversal_by_unit = setmetatable({}, { __mode = "k" })
 
 local function ElevatorTraversalAudit(event, data, map)
@@ -302,6 +302,16 @@ local function TraversalSnapshot(unit, elevator, check_path)
 		end
 	end
 	if check_path and unit and entrance_pos then
+		-- HasPath_NoDestlock mutates temporary path flags and pushes a destructor. The engine asserts
+		-- unless it runs from this unit's command thread, so UI/interact diagnostics must never call it.
+		local is_command_thread = Global("IsCommandThread")
+		if type(is_command_thread) == "function"
+			and SafeCall(is_command_thread, unit) ~= true then
+			check_path = false
+			data.path_probe_skipped = "not_unit_command_thread"
+		end
+	end
+	if check_path and unit and entrance_pos then
 		if type(unit.HasPath_NoDestlock) == "function" then
 			local path = SafeCall(unit.HasPath_NoDestlock, unit, entrance_pos)
 			data.has_path_no_destlock = tostring(path == true)
@@ -384,7 +394,9 @@ local function PatchElevatorTraversalDiagnostics()
 			local trace = IsKindOfSafe(obj, "ElevatorBase")
 				and TraversalIsExpandedContext(unit, obj)
 			if trace then
-				local before = TraversalSnapshot(unit, obj, true)
+				-- Interact runs directly from the UI mouse handler, before GetCommandFunc starts
+				-- Unit:UseElevator. Record static state only; command-thread path probes happen later.
+				local before = TraversalSnapshot(unit, obj, false)
 				before.wrapper_target = label
 				before.interaction_mode = tostring(interaction_mode)
 				ElevatorTraversalAudit("VEHICLE_INTERACT_BEGIN", before, TraversalObjectMap(unit))
