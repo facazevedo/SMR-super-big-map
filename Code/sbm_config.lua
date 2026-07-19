@@ -279,7 +279,9 @@ config.ShowRestartNotice = true
 --
 -- 01: Generate and capture the source on a true vanilla backing, then promote its captured
 -- terrain into the expanded destination before any geometric transformation.
-config.ExpansionStep01GenerateAndCaptureVanillaSource = true
+-- TEMP vanilla-mode gate: disabling stage 01 cascades through every expansion stage while the
+-- mod remains loaded for explicitly enabled standalone test aids such as Place Elevator.
+config.ExpansionStep01GenerateAndCaptureVanillaSource = false
 -- Run the single native RandomMapGenerator transaction on a real vanilla-sized temporary map.
 -- InitBuildableGrid, ProcessBuildableGrid, MaskBuildableGrid, GetPlayableArea, and native enrichment
 -- placement therefore all consume the same backing and object state as pure vanilla. Only after that
@@ -374,10 +376,10 @@ config.StretchUnderground = true
 config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP test aid: remove the underground darkness blanket while an expanded underground map is
 -- current, and restore the previous engine value on every surface/menu transition.
-config.UndergroundRevealAllDarkness = true
+config.UndergroundRevealAllDarkness = false
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
-config.RevealAllUndergroundEnrichmentsForTesting = true
+config.RevealAllUndergroundEnrichmentsForTesting = false
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.

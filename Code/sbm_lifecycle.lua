@@ -150,7 +150,10 @@ local function NormalizeVanillaRuntimeState(map, reason)
 		zoom_option.RestoreVanillaBehavior()
 	end
 	local elevator_button = SuperBigMap.PlaceElevatorButton
-	if elevator_button and type(elevator_button.Hide) == "function" then
+	if (SuperBigMap.Config or {}).PLACE_ELEVATOR_BUTTON_ENABLED == true
+		and elevator_button and type(elevator_button.Show) == "function" then
+		SafeCall(elevator_button.Show)
+	elseif elevator_button and type(elevator_button.Hide) == "function" then
 		SafeCall(elevator_button.Hide)
 	end
 	ApplyUndergroundDarknessState(map)

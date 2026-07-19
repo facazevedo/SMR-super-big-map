@@ -1,7 +1,8 @@
 -- Super Big Map -- temporary free, instant Elevator placement button.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
--- the complete two-map construction group. It is enabled only by PLACE_ELEVATOR_BUTTON_ENABLED.
+-- the complete two-map construction group. It is available on either vanilla or expanded
+-- gameplay maps when PLACE_ELEVATOR_BUTTON_ENABLED is true.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -31,13 +32,21 @@ local function Color(red, green, blue, alpha)
 	return type(rgba) == "function" and rgba(red, green, blue, alpha) or 0
 end
 
-local function IsModMap(map)
-	local grid = SuperBigMap.SectorGrid
-	return grid and type(grid.IsModMap) == "function" and grid.IsModMap(map) == true
+local function CanUseOnMap(map)
+	if not Enabled() or type(map) ~= "table" then return false end
+	local is_mod_editor_map = Global("IsModEditorMap")
+	if type(is_mod_editor_map) == "function" and SafeCall(is_mod_editor_map) == true then
+		return false
+	end
+	local mapdata = map.mapdata
+	if type(mapdata) ~= "table" then return false end
+	local map_name = tostring(map.name or mapdata.id or "")
+	if map_name == "PreGame" then return false end
+	return mapdata.Environment == "Surface" or mapdata.Environment == "Underground"
 end
 
 local function StartElevatorPlacement()
-	if not Enabled() or not IsModMap(Global("CurrentMap")) then return false end
+	if not CanUseOnMap(Global("CurrentMap")) then return false end
 	local get_interface = Global("GetInGameInterface")
 	local interface = type(get_interface) == "function" and get_interface() or nil
 	if not interface or type(interface.SetMode) ~= "function" then return false end
@@ -242,7 +251,7 @@ end
 local PlaceElevatorButton = {}
 
 function PlaceElevatorButton.Show()
-	if not Enabled() or not IsModMap(Global("CurrentMap")) then
+	if not CanUseOnMap(Global("CurrentMap")) then
 		return PlaceElevatorButton.Hide()
 	end
 	local desktop = (Global("terminal") or {}).desktop
