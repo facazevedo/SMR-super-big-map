@@ -290,6 +290,7 @@ local RestoreEntranceBadgePositions = TerrainCopy.RestoreEntranceBadgePositions
 local BeginDeferredElevatorMigration = TerrainCopy.BeginDeferredElevatorMigration
 local RestoreDeferredElevatorMigration = TerrainCopy.RestoreDeferredElevatorMigration
 local AnnotateDecorRelief = TerrainCopy.AnnotateDecorRelief
+local AuditFinalCaveInPositions = TerrainCopy.AuditFinalCaveInPositions
 local ClearDecorRelief = TerrainCopy.ClearDecorRelief
 assert(type(ReinvalidateExpandedTerrain) == "function"
 	and type(SectorBoundary) == "function" and type(FindSectorByName) == "function",
@@ -4973,6 +4974,28 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
 		end)
+		local cave_audit_ok, cave_audit_err = true, ""
+		if type(AuditFinalCaveInPositions) == "function" then
+			local call_ok, audit_ok, audit_result = pcall(AuditFinalCaveInPositions, map,
+				ok_branch and "underground pipeline final state"
+				or "underground pipeline failed before final state")
+			cave_audit_ok = call_ok and audit_ok ~= false
+			if not call_ok then
+				cave_audit_err = tostring(audit_ok)
+			elseif audit_ok == false then
+				cave_audit_err = tostring(audit_result and audit_result.error
+					or "cave-in audit reported missing/error records")
+			end
+			LoadingStep("underground cave-in final audit", {
+				ok = tostring(cave_audit_ok),
+				error = cave_audit_err,
+				captured = type(audit_result) == "table" and audit_result.captured or nil,
+				final_records = type(audit_result) == "table" and audit_result.final_records or nil,
+				xy_mismatches = type(audit_result) == "table" and audit_result.xy_mismatches or nil,
+				z_mismatches = type(audit_result) == "table" and audit_result.z_mismatches or nil,
+				moved_after_post = type(audit_result) == "table" and audit_result.moved_after_post or nil,
+			}, map)
+		end
 		LoadingEnd(underground_pipeline_token, {
 			elevator_migrations = #elevator_migrations,
 			error = ok_branch and "" or tostring(branch_err),

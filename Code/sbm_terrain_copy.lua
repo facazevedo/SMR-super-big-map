@@ -66,6 +66,31 @@ local function UndergroundDecorationAuditEnabled(map)
 		and diagnostics.UndergroundDecorationEnabled() == true
 end
 
+local function CaveInAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.CaveIn) == "function" then
+		diagnostics.CaveIn(event, data, map)
+	end
+end
+
+local function CaveInAuditEnabled(map)
+	local mapdata = map and map.mapdata
+	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return false end
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics and type(diagnostics.CaveInEnabled) == "function"
+		and diagnostics.CaveInEnabled() == true
+end
+
+-- Vanilla cave-ins are removable rock piles. Prefer the base-kind test, but retain the concrete
+-- class-name fallback because some generated RemovableRocks variants are not fully registered
+-- while the temporary underground source is being assembled.
+local function IsCaveInObject(obj)
+	if not obj then return false end
+	if IsKindOfSafe(obj, "RemovableRocks") then return true end
+	local class = obj.class
+	return type(class) == "string" and string.find(class, "RemovableRocks", 1, true) == 1
+end
+
 local function TerrainSize(map)
 	-- Map size = mapdata tiles x const.HeightTileSize (world units per tile). This is
 	-- exactly how the engine reports map size (see MapData.lua) and is ASSERT-FREE.
@@ -742,6 +767,7 @@ local decor_relief_by_map = setmetatable({}, { __mode = "k" })
 local decor_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
 local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
+local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
 
 -- A terrain-glued CObject still returns a numeric z component: const.InvalidZ
 -- (2147483647). Treating "numeric" as "explicit Z" converts that sentinel into a
@@ -836,6 +862,201 @@ local function DecorationAuditFields(prefix, snapshot, out)
 	return out
 end
 
+local function CaveInNeighborhoodSnapshot(map, pos, radius_override)
+	local x, y = PointXY(pos)
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	if type(x) ~= "number" or type(y) ~= "number" or type(point_fn) ~= "function"
+		or type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function" then
+		return {}
+	end
+	local const_tbl = Global("const")
+	local radius = tonumber(radius_override)
+	if type(radius) ~= "number" then
+		radius = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or nil
+	end
+	radius = type(radius) == "number" and radius > 0 and radius or 1000
+	-- Nine deterministic samples expose whether an equivalent vanilla floor position became a
+	-- cliff edge after resampling without invoking any mutating placement/pathfinding API.
+	local offsets = {
+		{ 0, 0 }, { radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
+		{ radius, radius }, { radius, -radius }, { -radius, radius }, { -radius, -radius },
+	}
+	local min_height, max_height, center_height
+	local samples, in_bounds, passable = 0, 0, 0
+	for index, offset in ipairs(offsets) do
+		local sample = point_fn(x + offset[1], y + offset[2])
+		local bounded = true
+		if type(terrain_api.IsPointInBounds) == "function" then
+			local ok_b, value = pcall(terrain_api.IsPointInBounds, map, sample)
+			if ok_b then bounded = value == true end
+		end
+		if bounded then
+			in_bounds = in_bounds + 1
+			local ok_h, height = pcall(terrain_api.GetHeight, map, sample)
+			if ok_h and type(height) == "number" then
+				samples = samples + 1
+				if index == 1 then center_height = height end
+				min_height = min_height and math.min(min_height, height) or height
+				max_height = max_height and math.max(max_height, height) or height
+			end
+			if type(terrain_api.IsPassable) == "function" then
+				local ok_p, value = pcall(terrain_api.IsPassable, map, sample)
+				if ok_p and value == true then passable = passable + 1 end
+			end
+		end
+	end
+	return {
+		center_height = center_height,
+		min_height = min_height,
+		max_height = max_height,
+		height_range = type(min_height) == "number" and type(max_height) == "number"
+			and (max_height - min_height) or nil,
+		samples = samples,
+		in_bounds_samples = in_bounds,
+		passable_samples = passable,
+		radius = radius,
+	}
+end
+
+local function CaveInNeighborhoodFields(prefix, snapshot, out)
+	out = out or {}
+	snapshot = snapshot or {}
+	for _, key in ipairs({
+		"center_height", "min_height", "max_height", "height_range", "samples",
+		"in_bounds_samples", "passable_samples", "radius",
+	}) do
+		local value = snapshot[key]
+		out[prefix .. key] = value == nil and "nil" or value
+	end
+	return out
+end
+
+local function HexDistance(aq, ar, bq, br)
+	if type(aq) ~= "number" or type(ar) ~= "number"
+		or type(bq) ~= "number" or type(br) ~= "number" then return nil end
+	local dq, dr = aq - bq, ar - br
+	return (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
+end
+
+local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y, reason)
+	record = record or {}
+	local source = record.source or {}
+	local point_fn = Global("point")
+	local expected_x = type(source.x) == "number"
+		and math.floor(source.x * scale_x + 0.5) or nil
+	local expected_y = type(source.y) == "number"
+		and math.floor(source.y * scale_y + 0.5) or nil
+	local expected_pos = type(point_fn) == "function" and type(expected_x) == "number"
+		and type(expected_y) == "number" and point_fn(expected_x, expected_y) or nil
+	local expected = expected_pos and DecorationPositionSnapshot(map, nil, expected_pos) or {}
+	local actual_pos = obj and ObjectPosition(obj) or nil
+	local actual = actual_pos and DecorationPositionSnapshot(map, obj, actual_pos) or {}
+	local z_scale = (type(map.SuperBigMapZScaleMul) == "number"
+		and type(map.SuperBigMapZScaleDiv) == "number" and map.SuperBigMapZScaleDiv > 0)
+		and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
+	local source_dz = type(source.effective_z) == "number" and type(source.ground_z) == "number"
+		and source.explicit_z == true and (source.effective_z - source.ground_z) or nil
+	local expected_z = expected.ground_z
+	if type(source_dz) == "number" and type(expected.ground_z) == "number" then
+		expected_z = expected.ground_z + math.floor(source_dz * z_scale + 0.5)
+	end
+	local source_scale = record.source_scale
+	local expected_scale = type(source_scale) == "number"
+		and math.max(1, math.min(500, math.floor(source_scale * scale_x + 0.5))) or nil
+	local actual_scale = obj and type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj) or nil
+	local actual_angle = obj and type(obj.GetAngle) == "function" and SafeCall(obj.GetAngle, obj) or nil
+	local source_radius = record.source_neighborhood and record.source_neighborhood.radius
+	local destination_radius = type(source_radius) == "number"
+		and math.floor(source_radius * scale_x + 0.5) or nil
+	local expected_neighborhood = expected_pos
+		and CaveInNeighborhoodSnapshot(map, expected_pos, destination_radius) or {}
+	local actual_neighborhood = actual_pos
+		and CaveInNeighborhoodSnapshot(map, actual_pos, destination_radius) or {}
+	local post_move = record.post_move or {}
+	local source_range = record.source_neighborhood and record.source_neighborhood.height_range
+	local scaled_source_range = type(source_range) == "number"
+		and math.floor(source_range * z_scale + 0.5) or nil
+	local x_error = type(actual.x) == "number" and type(expected_x) == "number"
+		and actual.x - expected_x or nil
+	local y_error = type(actual.y) == "number" and type(expected_y) == "number"
+		and actual.y - expected_y or nil
+	local passable_changed, buildable_changed, terrain_changed
+	if type(source.passable) == "boolean" and type(actual.passable) == "boolean" then
+		passable_changed = source.passable ~= actual.passable
+	end
+	if type(source.buildable) == "boolean" and type(actual.buildable) == "boolean" then
+		buildable_changed = source.buildable ~= actual.buildable
+	end
+	if source.terrain_id ~= nil and actual.terrain_id ~= nil then
+		terrain_changed = source.terrain_id ~= actual.terrain_id
+	end
+	local data = {
+		stage = stage,
+		reason = tostring(reason or ""),
+		index = record.index or "uncaptured",
+		object = record.object or tostring(obj),
+		handle = record.handle or tostring(obj and obj.handle),
+		class = record.class or tostring(obj and obj.class or "?"),
+		entity = record.entity or tostring(obj and obj.entity or "?"),
+		attached = record.attached == nil and "uncaptured" or record.attached,
+		parent = record.parent or "nil",
+		skipped_by_decor_transform = record.skip_object == true,
+		important_sector_object = record.important_object == true,
+		scale_x = scale_x,
+		scale_y = scale_y,
+		z_scale = z_scale,
+		expected_x = expected_x or "nil",
+		expected_y = expected_y or "nil",
+		expected_z = expected_z or "nil",
+		x_error = x_error or (x_error == 0 and 0 or "nil"),
+		y_error = y_error or (y_error == 0 and 0 or "nil"),
+		xy_error_world = type(x_error) == "number" and type(y_error) == "number"
+			and math.floor(math.sqrt(x_error * x_error + y_error * y_error) + 0.5) or "nil",
+		hex_error = HexDistance(actual.q, actual.r, expected.q, expected.r) or "nil",
+		z_error = type(actual.effective_z) == "number" and type(expected_z) == "number"
+			and actual.effective_z - expected_z or "nil",
+		source_dz = source_dz or (source_dz == 0 and 0 or "nil"),
+		source_scale = source_scale or "nil",
+		expected_scale = expected_scale or "nil",
+		actual_scale = actual_scale or "nil",
+		post_move_scale = record.post_move_scale or "nil",
+		post_move_scale_delta = type(actual_scale) == "number"
+			and type(record.post_move_scale) == "number"
+			and actual_scale - record.post_move_scale or "nil",
+		scale_error = type(actual_scale) == "number" and type(expected_scale) == "number"
+			and actual_scale - expected_scale or "nil",
+		source_angle = record.source_angle or "nil",
+		actual_angle = actual_angle or "nil",
+		angle_error = type(actual_angle) == "number" and type(record.source_angle) == "number"
+			and actual_angle - record.source_angle or "nil",
+		post_move_x_delta = type(actual.x) == "number" and type(post_move.x) == "number"
+			and actual.x - post_move.x or "nil",
+		post_move_y_delta = type(actual.y) == "number" and type(post_move.y) == "number"
+			and actual.y - post_move.y or "nil",
+		post_move_z_delta = type(actual.effective_z) == "number"
+			and type(post_move.effective_z) == "number" and actual.effective_z - post_move.effective_z or "nil",
+		scaled_source_local_height_range = scaled_source_range or "nil",
+		local_height_range_error = type(expected_neighborhood.height_range) == "number"
+			and type(scaled_source_range) == "number"
+			and expected_neighborhood.height_range - scaled_source_range or "nil",
+		passable_changed_from_source = type(passable_changed) == "boolean"
+			and tostring(passable_changed) or "nil",
+		buildable_changed_from_source = type(buildable_changed) == "boolean"
+			and tostring(buildable_changed) or "nil",
+		terrain_changed_from_source = type(terrain_changed) == "boolean"
+			and tostring(terrain_changed) or "nil",
+	}
+	DecorationAuditFields("source_", source, data)
+	DecorationAuditFields("post_move_", post_move, data)
+	DecorationAuditFields("expected_terrain_", expected, data)
+	DecorationAuditFields("actual_", actual, data)
+	CaveInNeighborhoodFields("source_local_", record.source_neighborhood, data)
+	CaveInNeighborhoodFields("expected_local_", expected_neighborhood, data)
+	CaveInNeighborhoodFields("actual_local_", actual_neighborhood, data)
+	return data
+end
+
 local function AnnotateDecorRelief(map)
 	if not map or not cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true) then return 0 end
 	if type(map.MapForEach) ~= "function" then return 0 end
@@ -862,11 +1083,51 @@ local function AnnotateDecorRelief(map)
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = audit_on and setmetatable({}, { __mode = "k" }) or nil
 	local audit_list = audit_on and {} or nil
+	local cave_audit_on = CaveInAuditEnabled(map)
+	local cave_capture = cave_audit_on and {
+		by_object = setmetatable({}, { __mode = "k" }),
+		list = {},
+		scale_x = nil,
+		scale_y = nil,
+	} or nil
 	pcall(map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
+		if cave_audit_on and IsCaveInObject(obj) then
+			local pos = ObjectPosition(obj)
+			if pos then
+				local parent
+				if type(obj.GetParent) == "function" then
+					local ok_p, value = pcall(obj.GetParent, obj)
+					if ok_p then parent = value end
+				end
+				local source_scale = type(obj.GetScale) == "function"
+					and SafeCall(obj.GetScale, obj) or nil
+				local source_angle = type(obj.GetAngle) == "function"
+					and SafeCall(obj.GetAngle, obj) or nil
+				local record = {
+					index = #cave_capture.list + 1,
+					object_ref = obj,
+					object = tostring(obj),
+					handle = tostring(obj.handle),
+					class = tostring(obj.class or "?"),
+					entity = tostring(type(obj.GetEntity) == "function"
+						and SafeCall(obj.GetEntity, obj) or obj.entity or "?"),
+					attached = parent ~= nil,
+					parent = parent and tostring(parent) or "nil",
+					skip_object = skip_object == true,
+					important_object = important_object == true,
+					source_scale = source_scale,
+					source_angle = source_angle,
+					source = DecorationPositionSnapshot(map, obj, pos),
+					source_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
+				}
+				cave_capture.by_object[obj] = record
+				cave_capture.list[#cave_capture.list + 1] = record
+			end
+		end
 		if audit_on and not skip_object and not important_object then
 			local pos = ObjectPosition(obj)
 			if pos then
@@ -928,6 +1189,7 @@ local function AnnotateDecorRelief(map)
 		height_failures = height_failures,
 		max_abs_relief = max_abs_relief,
 	}
+	cave_in_position_audit_by_map[map] = cave_capture
 	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
 		decor_objects_by_map[map] = objects
 	end
@@ -950,6 +1212,32 @@ local function AnnotateDecorRelief(map)
 			UndergroundDecorationAudit("PRE", data, map)
 		end
 	end
+	if cave_audit_on then
+		CaveInAudit("CAPTURE_SUMMARY", {
+			captured = #cave_capture.list,
+			scanned = #objects,
+			scale_source_width_tiles = sw_tiles,
+			scale_source_height_tiles = sh_tiles,
+		}, map)
+		for _, record in ipairs(cave_capture.list) do
+			local data = {
+				index = record.index,
+				object = record.object,
+				handle = record.handle,
+				class = record.class,
+				entity = record.entity,
+				attached = record.attached,
+				parent = record.parent,
+				skipped_by_decor_transform = record.skip_object,
+				important_sector_object = record.important_object,
+				source_scale = record.source_scale or "nil",
+				source_angle = record.source_angle or "nil",
+			}
+			DecorationAuditFields("source_", record.source, data)
+			CaveInNeighborhoodFields("source_local_", record.source_neighborhood, data)
+			CaveInAudit("PRE", data, map)
+		end
+	end
 	LoadingStep("decoration relief capture complete", decor_relief_stats_by_map[map], map)
 	return annotated
 end
@@ -960,6 +1248,7 @@ local function ClearDecorRelief(map)
 		decor_objects_by_map[map] = nil
 		decor_relief_stats_by_map[map] = nil
 		decor_position_audit_by_map[map] = nil
+		cave_in_position_audit_by_map[map] = nil
 	end
 end
 
@@ -1002,6 +1291,11 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	-- (force FLOAT division -- this Lua does integer division on int/int).
 	local scale_x = (full_tw + 0.0) / sw_tiles
 	local scale_y = (full_th + 0.0) / sh_tiles
+	local cave_capture = cave_in_position_audit_by_map[map]
+	if type(cave_capture) == "table" then
+		cave_capture.scale_x = scale_x
+		cave_capture.scale_y = scale_y
+	end
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	-- Collect into a Lua list first (inline MapForEach -- avoids a forward reference to the
 	-- CollectObjectsInBox helper declared later in this file), so we mutate objects OUTSIDE the
@@ -1045,6 +1339,9 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = decor_position_audit_by_map[map]
 	local audit_post_count = 0
+	local cave_audit_on = CaveInAuditEnabled(map) and type(cave_capture) == "table"
+	local cave_records = cave_audit_on and cave_capture.by_object or nil
+	local cave_post_count = 0
 	for _, obj in ipairs(objs) do
 		if not obj then
 			-- nil entry, ignore
@@ -1058,6 +1355,7 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 				local pos = ObjectPosition(obj)
 				if not pos then return end
 				local audit_record = audit_on and audit_records and audit_records[obj]
+				local cave_record = cave_records and cave_records[obj]
 				local before_snapshot = audit_on and DecorationPositionSnapshot(map, obj, pos) or nil
 				local ox, oy = PointXY(pos)
 				if type(ox) ~= "number" or type(oy) ~= "number" then return end
@@ -1167,6 +1465,17 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 						SafeCall(obj.SetScale, obj, ns)
 					end
 				end
+				if cave_record then
+					local cave_pos = ObjectPosition(obj)
+					cave_record.post_move = cave_pos
+						and DecorationPositionSnapshot(map, obj, cave_pos) or {}
+					cave_record.post_move_scale = type(obj.GetScale) == "function"
+						and SafeCall(obj.GetScale, obj) or nil
+					cave_post_count = cave_post_count + 1
+					CaveInAudit("POST_MOVE", CaveInPositionAuditData(
+						map, cave_record, obj, "post_move", scale_x, scale_y,
+						"immediately after decoration transform"), map)
+				end
 				-- Density top-up: chance to add one jittered clone of this decoration nearby.
 				if topup_on and rand_fn(1000) < topup_permille then
 					local jx = rand_fn(2 * TOPUP_JITTER + 1) - TOPUP_JITTER
@@ -1215,6 +1524,16 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 			topup_clones = topup_clones,
 		}, map)
 	end
+	if cave_audit_on then
+		CaveInAudit("POST_MOVE_SUMMARY", {
+			captured = #cave_capture.list,
+			post_records = cave_post_count,
+			missing_post_records = #cave_capture.list - cave_post_count,
+			decorations_moved = moved,
+			scale_x = scale_x,
+			scale_y = scale_y,
+		}, map)
+	end
 	LoadingStep("decoration stretch placement complete", {
 		scanned = #objs,
 		moved = moved,
@@ -1227,6 +1546,144 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		topup_clones = topup_clones,
 	}, map)
 	return moved
+end
+
+-- Final cave-in checkpoint, deliberately separate from the immediate decoration POST_MOVE record.
+-- Underground finalization rebuilds passability/buildability and may modify entrance terrain after
+-- the objects have moved. Comparing both checkpoints reveals late drift or a locally non-equivalent
+-- stretched terrain profile even when the initial proportional X/Y transform itself was exact.
+local function AuditFinalCaveInPositions(map, reason)
+	if not CaveInAuditEnabled(map) then return false, { disabled = true } end
+	local capture = cave_in_position_audit_by_map[map]
+	if type(capture) ~= "table" or type(capture.list) ~= "table" then
+		CaveInAudit("FINAL_SUMMARY", {
+			reason = tostring(reason or ""),
+			captured = 0,
+			error = "no cave-in source capture",
+		}, map)
+		return false, { error = "no cave-in source capture" }
+	end
+	local scale_x = tonumber(capture.scale_x)
+	local scale_y = tonumber(capture.scale_y)
+	local sw_tiles = tonumber(map.SuperBigMapSourceWidthTiles
+		or map.SuperBigMapGeneratorWidthTiles)
+	local sh_tiles = tonumber(map.SuperBigMapSourceHeightTiles
+		or map.SuperBigMapGeneratorHeightTiles)
+	local full_tw = tonumber(map.SuperBigMapDesiredWidthTiles
+		or (map.mapdata and map.mapdata.Width))
+	local full_th = tonumber(map.SuperBigMapDesiredHeightTiles
+		or (map.mapdata and map.mapdata.Height))
+	if type(scale_x) ~= "number" and type(sw_tiles) == "number" and sw_tiles > 0
+		and type(full_tw) == "number" then scale_x = (full_tw + 0.0) / sw_tiles end
+	if type(scale_y) ~= "number" and type(sh_tiles) == "number" and sh_tiles > 0
+		and type(full_th) == "number" then scale_y = (full_th + 0.0) / sh_tiles end
+	scale_x = type(scale_x) == "number" and scale_x or 1
+	scale_y = type(scale_y) == "number" and scale_y or scale_x
+	local is_valid = Global("IsValid")
+	local stats = {
+		captured = #capture.list,
+		final_records = 0,
+		missing_objects = 0,
+		record_errors = 0,
+		xy_mismatches = 0,
+		z_mismatches = 0,
+		scale_mismatches = 0,
+		moved_after_post = 0,
+		source_buildable_to_final_unbuildable = 0,
+		source_passable_to_final_unpassable = 0,
+		steeper_than_scaled_source = 0,
+		max_xy_error_world = 0,
+		max_abs_z_error = 0,
+		max_abs_local_height_range_error = 0,
+	}
+	for _, record in ipairs(capture.list) do
+		local obj = record.object_ref
+		local live = obj ~= nil and (type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true)
+		if not live then
+			stats.missing_objects = stats.missing_objects + 1
+			CaveInAudit("FINAL_MISSING", {
+				reason = tostring(reason or ""),
+				index = record.index,
+				object = record.object,
+				handle = record.handle,
+				class = record.class,
+				entity = record.entity,
+			}, map)
+		else
+			local ok_data, data = pcall(CaveInPositionAuditData,
+				map, record, obj, "final", scale_x, scale_y, reason)
+			if not ok_data then
+				stats.record_errors = stats.record_errors + 1
+				CaveInAudit("FINAL_ERROR", {
+					reason = tostring(reason or ""),
+					index = record.index,
+					object = record.object,
+					class = record.class,
+					error = tostring(data),
+				}, map)
+			else
+				stats.final_records = stats.final_records + 1
+				if (type(data.x_error) == "number" and data.x_error ~= 0)
+					or (type(data.y_error) == "number" and data.y_error ~= 0) then
+					stats.xy_mismatches = stats.xy_mismatches + 1
+				end
+				if type(data.z_error) == "number" and data.z_error ~= 0 then
+					stats.z_mismatches = stats.z_mismatches + 1
+				end
+				if type(data.scale_error) == "number" and data.scale_error ~= 0 then
+					stats.scale_mismatches = stats.scale_mismatches + 1
+				end
+				if (type(data.post_move_x_delta) == "number" and data.post_move_x_delta ~= 0)
+					or (type(data.post_move_y_delta) == "number" and data.post_move_y_delta ~= 0)
+					or (type(data.post_move_z_delta) == "number" and data.post_move_z_delta ~= 0) then
+					stats.moved_after_post = stats.moved_after_post + 1
+				end
+				if record.source and record.source.buildable == true and data.actual_buildable == false then
+					stats.source_buildable_to_final_unbuildable =
+						stats.source_buildable_to_final_unbuildable + 1
+				end
+				if record.source and record.source.passable == true and data.actual_passable == false then
+					stats.source_passable_to_final_unpassable =
+						stats.source_passable_to_final_unpassable + 1
+				end
+				if type(data.local_height_range_error) == "number"
+					and data.local_height_range_error > 500 then
+					stats.steeper_than_scaled_source = stats.steeper_than_scaled_source + 1
+				end
+				if type(data.xy_error_world) == "number" then
+					stats.max_xy_error_world = math.max(stats.max_xy_error_world, data.xy_error_world)
+				end
+				if type(data.z_error) == "number" then
+					stats.max_abs_z_error = math.max(stats.max_abs_z_error, math.abs(data.z_error))
+				end
+				if type(data.local_height_range_error) == "number" then
+					stats.max_abs_local_height_range_error = math.max(
+						stats.max_abs_local_height_range_error, math.abs(data.local_height_range_error))
+				end
+				CaveInAudit("FINAL", data, map)
+			end
+		end
+	end
+	CaveInAudit("FINAL_SUMMARY", {
+		reason = tostring(reason or ""),
+		captured = stats.captured,
+		final_records = stats.final_records,
+		missing_objects = stats.missing_objects,
+		record_errors = stats.record_errors,
+		xy_mismatches = stats.xy_mismatches,
+		z_mismatches = stats.z_mismatches,
+		scale_mismatches = stats.scale_mismatches,
+		moved_after_post = stats.moved_after_post,
+		source_buildable_to_final_unbuildable = stats.source_buildable_to_final_unbuildable,
+		source_passable_to_final_unpassable = stats.source_passable_to_final_unpassable,
+		steeper_than_scaled_source = stats.steeper_than_scaled_source,
+		max_xy_error_world = stats.max_xy_error_world,
+		max_abs_z_error = stats.max_abs_z_error,
+		max_abs_local_height_range_error = stats.max_abs_local_height_range_error,
+		scale_x = scale_x,
+		scale_y = scale_y,
+	}, map)
+	return stats.missing_objects == 0 and stats.record_errors == 0, stats
 end
 
 -- STRETCH step 3 (markers): move the generated DEPOSIT / ANOMALY / EFFECT markers (and any
@@ -3098,6 +3555,7 @@ local TerrainCopy = {
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
+	AuditFinalCaveInPositions = AuditFinalCaveInPositions,
 	ClearDecorRelief = ClearDecorRelief,
 }
 SuperBigMap.TerrainCopy = TerrainCopy

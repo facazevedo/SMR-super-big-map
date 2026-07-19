@@ -27,7 +27,15 @@ config.DebugLoadingTimings = true
 -- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
 -- and buildable state. This can add thousands of log lines and materially slow the diagnostic
 -- run, so disable it again after the underground placement investigation.
-config.DebugUndergroundDecorationPositions = true
+config.DebugUndergroundDecorationPositions = false
+-- Focused cave-in transform audit. Cave-ins are the RemovableRocks objects placed by vanilla
+-- underground generation. When enabled, the log records every cave-in before the stretch,
+-- immediately after its decoration transform, and after the final underground terrain/grid and
+-- enrichment pipeline. Each record includes expected versus actual XYZ, hex displacement, object
+-- scale, terrain/buildability/passability, and the local terrain-height range around the pile.
+-- This replaces the much noisier all-decoration trace while the cave-in placement issue is under
+-- investigation.
+config.DebugCaveInPositions = true
 
 -- ============================================================================
 -- MAIN LAYOUT
@@ -570,6 +578,7 @@ C.ENABLE_MOD = true
 C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = as_bool(config.DebugUndergroundDecorationPositions)
+C.DEBUG_CAVE_IN_POSITIONS = as_bool(config.DebugCaveInPositions)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.

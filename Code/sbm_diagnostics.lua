@@ -99,6 +99,10 @@ function Diagnostics.UndergroundDecorationEnabled()
 	return Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
 
+function Diagnostics.CaveInEnabled()
+	return Config().DEBUG_CAVE_IN_POSITIONS == true
+end
+
 function Diagnostics.Audit(event, data, map)
 	if not Diagnostics.EnrichmentEnabled() then return false end
 	return Print("EnrichmentAudit", event, CopyData(data, map))
@@ -112,6 +116,11 @@ end
 function Diagnostics.UndergroundDecoration(event, data, map)
 	if not Diagnostics.UndergroundDecorationEnabled() then return false end
 	return Print("UndergroundDecoration", event, CopyData(data, map))
+end
+
+function Diagnostics.CaveIn(event, data, map)
+	if not Diagnostics.CaveInEnabled() then return false end
+	return Print("CaveInAudit", event, CopyData(data, map))
 end
 
 local function EnsureLoading(reason, map)
