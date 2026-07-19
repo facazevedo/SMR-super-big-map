@@ -769,6 +769,7 @@ end
 -- after the stretch branch (never savegame-persisted).
 local decor_relief_by_map = setmetatable({}, { __mode = "k" })
 local decor_objects_by_map = setmetatable({}, { __mode = "k" })
+local decor_eligible_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
 local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
@@ -973,21 +974,29 @@ local function ObjectHasExplicitZ(obj, pos)
 	return type(invalid_z) ~= "number" or pz ~= invalid_z
 end
 
-local function DecorationPositionSnapshot(map, obj, pos)
+local function ObjectTransformSourceSnapshot(obj, pos)
 	local x, y = PointXY(pos)
 	local data = { x = x, y = y }
 	if type(x) ~= "number" or type(y) ~= "number" then return data end
 	local raw_z
 	pcall(function() raw_z = pos:z() end)
 	local explicit_z = ObjectHasExplicitZ(obj, pos)
+	data.raw_z = raw_z
+	data.explicit_z = explicit_z
+	return data
+end
+
+local function DecorationPositionSnapshot(map, obj, pos)
+	local data = ObjectTransformSourceSnapshot(obj, pos)
+	local x, y = data.x, data.y
+	if type(x) ~= "number" or type(y) ~= "number" then return data end
+	local raw_z, explicit_z = data.raw_z, data.explicit_z
 	local terrain_api = Global("terrain")
 	local ground_z
 	if type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
 		local ok, value = pcall(terrain_api.GetHeight, map, pos)
 		if ok and type(value) == "number" then ground_z = value end
 	end
-	data.raw_z = raw_z
-	data.explicit_z = explicit_z
 	data.ground_z = ground_z
 	data.effective_z = explicit_z and raw_z or ground_z
 	if type(terrain_api) == "table" then
@@ -1450,6 +1459,9 @@ local function AnnotateDecorRelief(map)
 	if not map then return 0 end
 	if type(map.MapForEach) ~= "function" then return 0 end
 	local relief_enabled = cfg_bool("STRETCH_RELIEF_AWARE_DECOR", true)
+	local optimize_traversal = cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+	local cache_eligible_objects = optimize_traversal
+		and not (map.mapdata and map.mapdata.Environment == "Underground")
 	local terrain_api = Global("terrain")
 	local box_fn = Global("box")
 	local relief_terrain_available = type(terrain_api) == "table"
@@ -1464,6 +1476,7 @@ local function AnnotateDecorRelief(map)
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	local relief = setmetatable({}, { __mode = "k" })
 	local objects = {}
+	local eligible_objects = {}
 	local annotated = 0
 	local eligible = 0
 	local terrain_glued = 0
@@ -1487,6 +1500,9 @@ local function AnnotateDecorRelief(map)
 		objects[#objects + 1] = obj
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
+		if cache_eligible_objects and not skip_object and not important_object then
+			eligible_objects[#eligible_objects + 1] = obj
+		end
 		if IsCaveInObject(obj) then
 			local pos = ObjectPosition(obj)
 			if pos then
@@ -1515,8 +1531,10 @@ local function AnnotateDecorRelief(map)
 					source_angle = source_angle,
 					source_shape_hexes = CaveInShapePointCount(obj),
 					source_grids_applied = obj.grids_applied == true,
-					source = DecorationPositionSnapshot(map, obj, pos),
-					source_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
+					source = cave_audit_on and DecorationPositionSnapshot(map, obj, pos)
+						or ObjectTransformSourceSnapshot(obj, pos),
+					source_neighborhood = cave_audit_on
+						and CaveInNeighborhoodSnapshot(map, pos) or nil,
 				}
 				cave_capture.list[#cave_capture.list + 1] = record
 			end
@@ -1546,7 +1564,7 @@ local function AnnotateDecorRelief(map)
 		if not relief_enabled or not relief_terrain_available then return end
 		-- Relief is consumed only by the decoration scaling pass. Avoid terrain-height calls for
 		-- buildings, markers, units, attached children, and other objects that pass never moves.
-		if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+		if optimize_traversal
 			and (skip_object or important_object) then return end
 		if type(obj.GetParent) == "function" then
 			local ok_p, parent = pcall(obj.GetParent, obj)
@@ -1587,8 +1605,9 @@ local function AnnotateDecorRelief(map)
 		max_abs_relief = max_abs_relief,
 	}
 	cave_in_position_audit_by_map[map] = cave_capture
-	if cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true) then
+	if optimize_traversal then
 		decor_objects_by_map[map] = objects
+		if cache_eligible_objects then decor_eligible_objects_by_map[map] = eligible_objects end
 	end
 	if audit_on then
 		UndergroundDecorationAudit("CAPTURE_SUMMARY", {
@@ -1647,6 +1666,7 @@ local function ClearDecorRelief(map)
 	if map then
 		decor_relief_by_map[map] = nil
 		decor_objects_by_map[map] = nil
+		decor_eligible_objects_by_map[map] = nil
 		decor_relief_stats_by_map[map] = nil
 		decor_position_audit_by_map[map] = nil
 		cave_in_position_audit_by_map[map] = nil
@@ -1714,6 +1734,7 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 	end
 
 	local is_valid = Global("IsValid")
+	local cave_audit_on = CaveInAuditEnabled(map)
 	local MAX_SCALE = 500
 	for _, record in ipairs(capture.list) do
 		if record.class == "CaveInRubble" then
@@ -1820,15 +1841,17 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 					+ (tonumber(record.source_shape_hexes) or 0)
 				stats.expanded_shape_hexes = stats.expanded_shape_hexes
 					+ (tonumber(record.expanded_shape_hexes) or 0)
-				local cave_pos = ObjectPosition(obj)
-				record.post_move = cave_pos
-					and DecorationPositionSnapshot(map, obj, cave_pos) or {}
-				record.post_move_scale = type(obj.GetScale) == "function"
-					and SafeCall(obj.GetScale, obj) or nil
 				stats.post_records = stats.post_records + 1
-				CaveInAudit("POST_MOVE", CaveInPositionAuditData(
-					map, record, obj, "post_move", scale_x, scale_y,
-					"immediately after dedicated underground rubble-wall transform"), map)
+				if cave_audit_on then
+					local cave_pos = ObjectPosition(obj)
+					record.post_move = cave_pos
+						and DecorationPositionSnapshot(map, obj, cave_pos) or {}
+					record.post_move_scale = type(obj.GetScale) == "function"
+						and SafeCall(obj.GetScale, obj) or nil
+					CaveInAudit("POST_MOVE", CaveInPositionAuditData(
+						map, record, obj, "post_move", scale_x, scale_y,
+						"immediately after dedicated underground rubble-wall transform"), map)
+				end
 			end
 		end
 	end
@@ -1881,8 +1904,10 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	-- Collect into a Lua list first (inline MapForEach -- avoids a forward reference to the
 	-- CollectObjectsInBox helper declared later in this file), so we mutate objects OUTSIDE the
 	-- C callback (moving/scaling inside MapForEach is unsafe).
-	local objs = cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
-		and decor_objects_by_map[map] or nil
+	local optimized_traversal = cfg_bool("OPTIMIZE_STRETCH_DECOR_TRAVERSAL", true)
+	local objs = optimized_traversal and decor_eligible_objects_by_map[map] or nil
+	local preclassified = type(objs) == "table"
+	if not preclassified and optimized_traversal then objs = decor_objects_by_map[map] end
 	local reused_collection = type(objs) == "table"
 	if not reused_collection then
 		objs = {}
@@ -1934,8 +1959,8 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		elseif type(is_valid) == "function" and SafeCall(is_valid, obj) ~= true then
 			-- The cached pre-stretch traversal includes enrichment markers that staging has since
 			-- destroyed. Do not cross into any C object method through their stale Lua wrappers.
-		elseif ShouldSkipObject(obj) then
-		elseif IsImportantSectorObject(obj) then
+		elseif not preclassified and ShouldSkipObject(obj) then
+		elseif not preclassified and IsImportantSectorObject(obj) then
 		else
 			pcall(function()
 				local pos = ObjectPosition(obj)
@@ -2057,7 +2082,8 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 					local cx = math.max(0, math.min(full_wu - 1, nx + jx))
 					local cy = math.max(0, math.min(full_wu - 1, ny + jy))
 					-- obj is already AT np, so the clone offset is just the jitter (clamped).
-					local clone = CloneObjectAtOffset(map, obj, point_fn(cx - nx, cy - ny))
+					local clone = CloneObjectAtOffset(
+						map, obj, point_fn(cx - nx, cy - ny), true)
 					if clone then
 						topup_clones = topup_clones + 1
 						-- Snap the clone onto the surface at its jittered spot.
@@ -2099,7 +2125,7 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		}, map)
 	end
 	LoadingStep("decoration stretch placement complete", {
-		scanned = #objs,
+		scanned = capture.scanned or #objs,
 		moved = moved,
 		cave_ins_transformed = cave_stats and cave_stats.transformed or 0,
 		rubble_walls_transformed = cave_stats and cave_stats.transformed or 0,

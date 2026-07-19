@@ -1369,10 +1369,10 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local is_valid = Global("IsValid")
 	local roots, seen_roots = {}, {}
-	local function belongs_to_excluded_root(obj)
+	local function resolve_generated_root(obj)
 		local current, depth = obj, 0
 		while current and depth < 64 do
-			if excluded_objects and excluded_objects[current] then return true end
+			if excluded_objects and excluded_objects[current] then return nil, true end
 			if type(current.GetParent) ~= "function" then break end
 			local parent = SafeCall(current.GetParent, current)
 			local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
@@ -1380,22 +1380,15 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 			current = parent
 			depth = depth + 1
 		end
-		return false
+		return current, false
 	end
 	for i = 1, #objects do
 		local root = objects[i]
 		local valid = type(is_valid) ~= "function" or is_valid(root)
 		if valid and not (source_baseline and source_baseline[root]) then
-			if belongs_to_excluded_root(root) then
-			else
-				local parent_depth = 0
-				while type(root.GetParent) == "function" and parent_depth < 64 do
-					local parent = SafeCall(root.GetParent, root)
-					local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
-					if not parent_valid or (source_baseline and source_baseline[parent]) then break end
-					root = parent
-					parent_depth = parent_depth + 1
-				end
+			local excluded
+			root, excluded = resolve_generated_root(root)
+			if not excluded and root then
 				if not seen_roots[root] then
 					seen_roots[root] = true
 					roots[#roots + 1] = root
@@ -2678,7 +2671,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			error("native enrichment staging API unavailable")
 		end
 		local staged, stage_error = deposits.StageNativeEnrichmentRecords(destination,
-			native_enrichment_records, "temporary vanilla backing migrated to destination")
+			native_enrichment_records, "temporary vanilla backing migrated to destination",
+			native_enrichment_record_stats and native_enrichment_record_stats.signature)
 		if staged ~= true then error("native enrichment staging failed: " .. tostring(stage_error)) end
 		LoadingStep("native enrichment records staged on destination", {
 			record_count = #native_enrichment_records,

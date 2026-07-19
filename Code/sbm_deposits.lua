@@ -147,8 +147,10 @@ local UnregisterNativeMarker
 local function TerrainTypeAt(map, pt, context)
 	context = type(context) == "table" and context.map == map and context or nil
 	local t = context and context.terrain or Global("terrain")
-	if type(t) == "table" and type(t.GetTerrainType) == "function" then
-		local ok, v = pcall(t.GetTerrainType, map, pt)
+	local get_type = context and context.terrain_get_type
+		or (type(t) == "table" and t.GetTerrainType or nil)
+	if type(get_type) == "function" then
+		local ok, v = pcall(get_type, map, pt)
 		if ok then return v end
 	end
 	return nil
@@ -158,8 +160,10 @@ end
 local function FlatnessAt(map, pt, context)
 	context = type(context) == "table" and context.map == map and context or nil
 	local t = context and context.terrain or Global("terrain")
-	if type(t) == "table" and type(t.GetTerrainNormal) == "function" then
-		local ok, n = pcall(t.GetTerrainNormal, map, pt)
+	local get_normal = context and context.terrain_get_normal
+		or (type(t) == "table" and t.GetTerrainNormal or nil)
+	if type(get_normal) == "function" then
+		local ok, n = pcall(get_normal, map, pt)
 		if ok and n and type(n.z) == "function" then
 			local okz, z = pcall(n.z, n)
 			if okz and type(z) == "number" then return z end
@@ -171,8 +175,10 @@ end
 local function PassableAt(map, pt, context)
 	context = type(context) == "table" and context.map == map and context or nil
 	local t = context and context.terrain or Global("terrain")
-	if type(t) == "table" and type(t.IsPassable) == "function" then
-		local ok, v = pcall(t.IsPassable, map, pt)
+	local is_passable = context and context.terrain_is_passable
+		or (type(t) == "table" and t.IsPassable or nil)
+	if type(is_passable) == "function" then
+		local ok, v = pcall(is_passable, map, pt)
 		if ok then return v == true end
 	end
 	return true
@@ -198,10 +204,12 @@ end
 
 -- A density pass evaluates thousands of immutable terrain/grid queries. Resolve the native
 -- functions and constants once per pass rather than rebuilding the same lookup chain for every
--- random candidate. The query order and fail-open/fail-closed rules below remain unchanged.
+-- random candidate. Fail-open/fail-closed rules remain unchanged.
 local function NewDepositValidationContext(map)
 	local terrain_api = Global("terrain")
 	local world_to_hex = Global("WorldToHex")
+	local buildable = map and map.buildable
+	local object_hex_grid = map and map.object_hex_grid
 	local build_unbuildable = Global("buildUnbuildableZ")
 	local sentinel_ok, sentinel = false, nil
 	if type(build_unbuildable) == "function" then
@@ -211,11 +219,17 @@ local function NewDepositValidationContext(map)
 	return {
 		map = map,
 		terrain = terrain_api,
+		terrain_is_passable = type(terrain_api) == "table" and terrain_api.IsPassable or nil,
+		terrain_get_normal = type(terrain_api) == "table" and terrain_api.GetTerrainNormal or nil,
+		terrain_get_type = type(terrain_api) == "table" and terrain_api.GetTerrainType or nil,
 		world_to_hex = world_to_hex,
-		buildable = map and map.buildable,
+		buildable = buildable,
+		buildable_get_z = buildable and buildable.GetZ or nil,
+		buildable_by_hex = {},
 		build_unbuildable_ok = sentinel_ok,
 		build_unbuildable_z = sentinel,
-		object_hex_grid = map and map.object_hex_grid,
+		object_hex_grid = object_hex_grid,
+		get_build_obstructions = object_hex_grid and object_hex_grid.GetBuildObstructions or nil,
 		is_deposit_obstructed = Global("IsDepositObstructed"),
 		deposit_obstruct_radius = type(const_tbl) == "table"
 			and tonumber(const_tbl.DepositObstructMaxRadius) or nil,
@@ -227,9 +241,10 @@ end
 local function IsBuildableAt(map, pt, strict, context)
 	context = type(context) == "table" and context.map == map and context or nil
 	local buildable = context and context.buildable or (map and map.buildable)
+	local get_z = context and context.buildable_get_z or (buildable and buildable.GetZ)
 	local world_to_hex = context and context.world_to_hex or Global("WorldToHex")
 	local build_unbuildable = context and nil or Global("buildUnbuildableZ")
-	if not (buildable and type(buildable.GetZ) == "function" and type(world_to_hex) == "function"
+	if not (buildable and type(get_z) == "function" and type(world_to_hex) == "function"
 		and (context or type(build_unbuildable) == "function")) then
 		return strict ~= true -- surface keeps the historical fail-open behavior; underground is strict
 	end
@@ -242,8 +257,19 @@ local function IsBuildableAt(map, pt, strict, context)
 	if not ok_u then return strict ~= true end
 	local ok_h, q, r = pcall(world_to_hex, pt)
 	if not ok_h or type(q) ~= "number" then return strict ~= true end
-	local ok_z, z = pcall(buildable.GetZ, buildable, q, r)
-	return ok_z and z ~= nil and z ~= sentinel
+	local cached_by_q = context and type(r) == "number" and context.buildable_by_hex[q]
+	local cached = cached_by_q and cached_by_q[r]
+	if cached ~= nil then return cached == true, q, r end
+	local ok_z, z = pcall(get_z, buildable, q, r)
+	local result = ok_z and z ~= nil and z ~= sentinel
+	if context and type(r) == "number" then
+		if not cached_by_q then
+			cached_by_q = {}
+			context.buildable_by_hex[q] = cached_by_q
+		end
+		cached_by_q[r] = result == true
+	end
+	return result, q, r
 end
 
 local function IsUnobstructedAt(map, pt, strict, context)
@@ -274,7 +300,9 @@ local function IsUnobstructedAt(map, pt, strict, context)
 		end
 	end
 
-	if not (type(hex_grid.GetBuildObstructions) == "function"
+	local get_obstructions = context and context.get_build_obstructions
+		or hex_grid.GetBuildObstructions
+	if not (type(get_obstructions) == "function"
 		and type(world_to_hex) == "function") then
 		return strict ~= true
 	end
@@ -282,7 +310,7 @@ local function IsUnobstructedAt(map, pt, strict, context)
 	if not ok_h or type(q) ~= "number" or type(r) ~= "number" then
 		return strict ~= true
 	end
-	local ok_o, obstructions = pcall(hex_grid.GetBuildObstructions, hex_grid, q, r)
+	local ok_o, obstructions = pcall(get_obstructions, hex_grid, q, r)
 	if not ok_o then
 		return strict ~= true
 	end
@@ -300,6 +328,8 @@ local function BuildUndergroundReachability(map)
 	underground_reachability_by_map[map] = state
 	local connectivity_check = Global("ConnectivityCheck")
 	local pf_api = Global("pf")
+	state.connectivity_check = connectivity_check
+	state.pf_api = pf_api
 	if type(connectivity_check) == "function" then
 		state.method = "ConnectivityCheck"
 	elseif type(pf_api) == "table" and type(pf_api.HasPosPath) == "function" then
@@ -313,6 +343,7 @@ local function BuildUndergroundReachability(map)
 	local hex = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 0
 	local snap_radius = math.max(8000, hex * 12)
 	local world_to_hex = Global("WorldToHex")
+	state.world_to_hex = world_to_hex
 	local seed_hexes = {}
 	local function add_seed(obj)
 		local pos = ObjectPos(obj)
@@ -345,7 +376,7 @@ local function BuildUndergroundReachability(map)
 	return state
 end
 
-local function IsReachableFromUndergroundEntrance(map, pt)
+local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 	local state = BuildUndergroundReachability(map)
 	if not state or state.available ~= true or not pt then return false end
 	local target = pt
@@ -353,9 +384,10 @@ local function IsReachableFromUndergroundEntrance(map, pt)
 		local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
 		if ok_z and snapped then target = snapped end
 	end
-	local world_to_hex = Global("WorldToHex")
-	local key = tostring(target)
-	if type(world_to_hex) == "function" then
+	local world_to_hex = state.world_to_hex
+	local key = type(known_q) == "number" and type(known_r) == "number"
+		and (tostring(known_q) .. ":" .. tostring(known_r)) or tostring(target)
+	if type(known_q) ~= "number" and type(world_to_hex) == "function" then
 		local ok_h, q, r = pcall(world_to_hex, target)
 		if ok_h and type(q) == "number" and type(r) == "number" then
 			key = tostring(q) .. ":" .. tostring(r)
@@ -364,8 +396,8 @@ local function IsReachableFromUndergroundEntrance(map, pt)
 	local cached = state.results[key]
 	if cached ~= nil then return cached == true end
 	state.checks = state.checks + 1
-	local connectivity_check = Global("ConnectivityCheck")
-	local pf_api = Global("pf")
+	local connectivity_check = state.connectivity_check
+	local pf_api = state.pf_api
 	local reachable = false
 	for _, seed in ipairs(state.seeds) do
 		local ok, result
@@ -387,36 +419,63 @@ local function IsReachableFromUndergroundEntrance(map, pt)
 	return reachable
 end
 
-local function CanReceiveDepositTerrain(map, pt, context)
+-- Evaluate the immutable terrain predicates once and return the values needed by diagnostics and
+-- later placement indexes. Several anomaly paths used to call PassableAt/FlatnessAt/IsBuildableAt
+-- separately and then call CanReceiveDepositTerrain, repeating the same native grid queries for
+-- the identical point. Multiple return values preserve the old boolean API for existing callers.
+local function EvaluateDepositTerrain(map, pt, context, defer_reachability)
 	context = type(context) == "table" and context.map == map and context or nil
 	-- Top-ups use one terrain rule on both maps: passable, nearly horizontal, and accepted by the
 	-- engine's authoritative buildable grid. Mountain membership is irrelevant; a flat mountain
 	-- shelf is valid, while a passable slope is not. Native vanilla markers never pass through this
 	-- validator and remain at their exact proportional coordinates.
-	if not PassableAt(map, pt, context)
-		or (FlatnessAt(map, pt, context) or 0)
-			< (context and context.flatness_minimum or TopUpFlatnessMinimum())
-		or not IsBuildableAt(map, pt, true, context) then
-		return false
+	local passable = PassableAt(map, pt, context)
+	if not passable then return false, passable, 0, false end
+	local flatness = FlatnessAt(map, pt, context) or 0
+	if flatness < (context and context.flatness_minimum or TopUpFlatnessMinimum()) then
+		return false, passable, flatness, false
 	end
+	local buildable, q, r = IsBuildableAt(map, pt, true, context)
+	if not buildable then return false, passable, flatness, false, q, r end
 	-- UNDERGROUND: only the cavern floor is real accessible terrain; the surrounding rock/
 	-- void passes the passable+flat tests (the whole map is passable since the expansion
 	-- zeroes PassBorder, and the void is uniformly flat) -- which put topped-up anomalies
 	-- out in the black inaccessible area. Require the hex to be BUILDABLE (the game's own
 	-- accessibility measure: hills/rock/void are unbuildable, the floor is buildable), so
 	-- every top-up/respace/even-out pool samples only the playable floor.
-	if (context and context.underground == true) or (not context and IsUndergroundMap(map)) then
-		if not IsReachableFromUndergroundEntrance(map, pt) then return false end
+	if defer_reachability ~= true
+		and ((context and context.underground == true) or (not context and IsUndergroundMap(map))) then
+		if not IsReachableFromUndergroundEntrance(map, pt, q, r) then
+			return false, passable, flatness, buildable, q, r
+		end
 	end
-	return true
+	return true, passable, flatness, buildable, q, r
+end
+
+local function CanReceiveDepositTerrain(map, pt, context)
+	return EvaluateDepositTerrain(map, pt, context)
 end
 
 local function CanReceiveDeposit(map, pt, context)
+	context = type(context) == "table" and context.map == map and context or nil
 	-- Vanilla DepositMarker placement does not accept an obstructed coordinate: it searches for a
 	-- replacement through FindUnobstructedDepositPos. Top-up candidates are final coordinates, so
 	-- reject the same obstruction before cloning rather than relying on a later reveal-time move.
-	return CanReceiveDepositTerrain(map, pt, context)
-		and IsUnobstructedAt(map, pt, true, context)
+	local terrain_ok, passable, flatness, buildable, q, r =
+		EvaluateDepositTerrain(map, pt, context, true)
+	if not terrain_ok then
+		return false, passable, flatness, buildable, q, r, nil
+	end
+	local unobstructed = IsUnobstructedAt(map, pt, true, context)
+	if not unobstructed then
+		return false, passable, flatness, buildable, q, r, false
+	end
+	local underground = (context and context.underground == true)
+		or (not context and IsUndergroundMap(map))
+	if underground and not IsReachableFromUndergroundEntrance(map, pt, q, r) then
+		return false, passable, flatness, buildable, q, r, unobstructed
+	end
+	return true, passable, flatness, buildable, q, r, unobstructed
 end
 
 local function SectorAtPoint(map, x, y)
@@ -559,11 +618,21 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local balanced = cfg().TOPUP_SECTOR_BALANCED_PLACEMENT ~= false
 	local loads = BuildEnrichmentSectorLoads(map)
 	local capacity, capacity_by_terrain = {}, {}
+	-- Terrain-specific selection used to rescan the complete pool even though non-matching
+	-- candidates are skipped before every dynamic predicate. Preserve that exact subsequence in an
+	-- ordered index; whole-pool fallbacks still use the original candidate table.
+	local candidates_by_terrain = {}
 	local remaining, eligible_sector_set, eligible_sectors = 0, {}, 0
 	for _, candidate in ipairs(candidates) do
 		if not candidate.used then
 			local terrain_key = tostring(candidate.terrain_type)
 			candidate._sbm_selector_terrain_key = terrain_key
+			local terrain_candidates = candidates_by_terrain[terrain_key]
+			if not terrain_candidates then
+				terrain_candidates = {}
+				candidates_by_terrain[terrain_key] = terrain_candidates
+			end
+			terrain_candidates[#terrain_candidates + 1] = candidate
 			local _, key = CandidateSector(map, candidate)
 			if key then
 				remaining = remaining + 1
@@ -584,14 +653,17 @@ local function NewSectorBalancedCandidateSelector(map, candidates, label, candid
 	local function take(terrain_type, context)
 		local terrain_key = terrain_type ~= nil and tostring(terrain_type) or nil
 		local terrain_capacity = terrain_key and capacity_by_terrain[terrain_key] or nil
+		local source_candidates = terrain_key and candidates_by_terrain[terrain_key] or candidates
+		if not source_candidates then return nil end
 		local best, best_load, best_capacity = {}, nil, nil
-		for _, candidate in ipairs(candidates) do
+		for _, candidate in ipairs(source_candidates) do
 			if not candidate.used
 				and (terrain_key == nil or candidate._sbm_selector_terrain_key == terrain_key)
 				and (type(candidate_filter) ~= "function"
 					or candidate_filter(candidate, context) == true) then
 				local _, key = CandidateSector(map, candidate)
-				local candidate_capacity = key and ((terrain_capacity and terrain_capacity[key]) or capacity[key]) or 0
+				local candidate_capacity = key
+					and ((terrain_capacity and terrain_capacity[key]) or capacity[key]) or 0
 				if key and candidate_capacity > 0 then
 					local candidate_load = loads[key] or 0
 					local better = not best_load
@@ -934,7 +1006,7 @@ local function BadgeHexOccupied(occupied, q, r)
 end
 
 local function BadgeCandidateAllowed(marker, map, pt, x, y)
-	if not CanReceiveDeposit(map, pt) or not IsUnobstructedAt(map, pt, true) then return false end
+	if not CanReceiveDeposit(map, pt) then return false end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	if not IsUndergroundMap(map) and ring_sectors > 0 then
 		local in_ring = IsInFinalOuterSectorRing(map, x, y, ring_sectors)
@@ -1515,6 +1587,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 	local world_to_hex = Global("WorldToHex")
 	local BUCKET_SIZE = 65536
 	local buckets, occupied_hexes = {}, {}
+	local placement_cache, profile_keys, obstacle_generation = {}, {}, 0
 	local max_same, max_layer, max_all = 0, 0, 0
 	local stats = {
 		label = tostring(label or "top-up"), seeded = 0, committed = 0,
@@ -1562,6 +1635,38 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		return true
 	end
 
+	local function profile_cache_key(profile)
+		local cached = profile_keys[profile]
+		if cached then return cached end
+		cached = table.concat({
+			tostring(profile.layer), tostring(profile.resource),
+			tostring(profile.repulse_same), tostring(profile.repulse_layer),
+			tostring(profile.repulse_all),
+		}, ":")
+		profile_keys[profile] = cached
+		return cached
+	end
+
+	local function cached_verdict(candidate, profile_key)
+		local by_profile = placement_cache[candidate]
+		local cached = by_profile and by_profile[profile_key]
+		if not cached then return nil end
+		if cached.result == false or cached.generation == obstacle_generation then
+			return cached.result
+		end
+		return nil
+	end
+
+	local function remember_verdict(candidate, profile_key, result)
+		local by_profile = placement_cache[candidate]
+		if not by_profile then
+			by_profile = {}
+			placement_cache[candidate] = by_profile
+		end
+		by_profile[profile_key] = { result = result == true, generation = obstacle_generation }
+		return result
+	end
+
 	if map and type(map.MapForEach) == "function" then
 		pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 			if type(ignored_markers) == "table" and ignored_markers[marker] == true then return end
@@ -1605,9 +1710,12 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
 			return false
 		end
+		local profile_key = profile_cache_key(profile)
+		local cached = cached_verdict(candidate, profile_key)
+		if cached ~= nil then return cached end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
-			return false
+			return remember_verdict(candidate, profile_key, false)
 		end
 		local search_radius = math.max(
 			(profile.repulse_same or 0) + max_same,
@@ -1630,13 +1738,13 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 						if type(required) == "number"
 							and dx * dx + dy * dy <= required * required then
 							stats.repulsion_rejects = stats.repulsion_rejects + 1
-							return false
+							return remember_verdict(candidate, profile_key, false)
 						end
 					end
 				end
 			end
 		end
-		return true
+		return remember_verdict(candidate, profile_key, true)
 	end
 
 	-- Used only after an underground family has exhausted every fully vanilla-spaced candidate.
@@ -1667,6 +1775,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 	local function commit(candidate, profile, marker)
 		if not candidate or not profile then return false end
 		if not add_entry(candidate.x, candidate.y, profile, marker, true) then return false end
+		obstacle_generation = obstacle_generation + 1
 		stats.committed = stats.committed + 1
 		return true
 	end
@@ -1934,13 +2043,13 @@ function DepositRules.CaptureNativeEnrichmentRecords(map, reason)
 	return records, excluded, stats
 end
 
-function DepositRules.StageNativeEnrichmentRecords(map, records, reason)
+function DepositRules.StageNativeEnrichmentRecords(map, records, reason, known_signature)
 	if not map or type(records) ~= "table" then return false, "map/records unavailable" end
 	pending_native_enrichment_records_by_map[map] = records
 	map.SuperBigMapNativeEnrichmentCaptureDone = false
 	map.SuperBigMapNativeEnrichmentCapturePending = true
 	map.SuperBigMapNativeEnrichmentCaptureCount = #records
-	map.SuperBigMapNativeEnrichmentRecordSignature = NativeRecordSignature(records)
+	map.SuperBigMapNativeEnrichmentRecordSignature = known_signature or NativeRecordSignature(records)
 	return true
 end
 
@@ -1964,7 +2073,8 @@ function DepositRules.StageAndRemoveNativeEnrichmentsForStretch(map, reason)
 			removed = 0,
 		}
 	end
-	local staged, stage_error = DepositRules.StageNativeEnrichmentRecords(map, records, reason)
+	local staged, stage_error = DepositRules.StageNativeEnrichmentRecords(
+		map, records, reason, capture_stats and capture_stats.signature)
 	if staged ~= true then
 		return false, { error = tostring(stage_error), captured = #records, removed = 0 }
 	end
@@ -2080,13 +2190,14 @@ local function NativeRecordBaseGeometry(map, record)
 	}
 end
 
-local function NativeRecordFinalPoint(map, record)
+local function NativeRecordFinalPoint(map, record, planned_geometry)
 	local point_fn = Global("point")
 	local hex_to_world = Global("HexToWorld")
 	if type(point_fn) ~= "function" or type(hex_to_world) ~= "function" then
 		return nil, "point/HexToWorld API unavailable"
 	end
-	local geometry, geometry_error = NativeRecordBaseGeometry(map, record)
+	local geometry, geometry_error = planned_geometry, nil
+	if not geometry then geometry, geometry_error = NativeRecordBaseGeometry(map, record) end
 	if not geometry then return nil, geometry_error end
 	local q = tonumber(record.SuperBigMapResolvedFinalQ) or geometry.q
 	local r = tonumber(record.SuperBigMapResolvedFinalR) or geometry.r
@@ -2239,7 +2350,7 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 			end
 		end
 	end
-	return true, stats
+	return true, stats, plans
 end
 
 local function RegisterNativeMarkerWithFinalSector(map, marker, pos)
@@ -2530,7 +2641,8 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			end
 		end
 	end
-	local plan_ok, plan_stats = PrepareNativeRecordFinalPointPlan(map, records, reason)
+	local plan_ok, plan_stats, final_point_plans =
+		PrepareNativeRecordFinalPointPlan(map, records, reason)
 	stats.plan = plan_stats
 	if not plan_ok then
 		stats.error = tostring(plan_stats and plan_stats.error or "final-point plan failed")
@@ -2545,7 +2657,8 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			resolved_collisions = tostring(plan_stats and plan_stats.resolved),
 		}, map)
 		for i, record in ipairs(records) do
-			local final_point, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			local final_point, transform_error, geometry = NativeRecordFinalPoint(
+				map, record, final_point_plans and final_point_plans[i])
 			local final_x, final_y, final_z
 			if final_point and type(final_point.xy) == "function" then final_x, final_y = final_point:xy() end
 			if final_point and type(final_point.z) == "function" then final_z = final_point:z() end
@@ -2565,7 +2678,8 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 	local ok, recreate_error = pcall(function()
 		for i = 1, #records do
 			local record = records[i]
-			local final_point, transform_error, geometry = NativeRecordFinalPoint(map, record)
+			local final_point, transform_error, geometry = NativeRecordFinalPoint(
+				map, record, final_point_plans and final_point_plans[i])
 			if not final_point then error("record " .. tostring(i) .. ": " .. tostring(transform_error)) end
 			local constructor_properties = {}
 			for id, value in pairs(record.properties or {}) do constructor_properties[id] = value end
@@ -2777,7 +2891,8 @@ local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall
 		AuditEmit("TOPUP_STATUS", audit, map)
 	end
 	local fallback_added = tonumber(entry.underground_density_fallback_added) or 0
-	local print_fn = Global("print")
+	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+		and Global("print") or nil
 	if fallback_added > 0 and type(print_fn) == "function" then
 		print_fn("[Super Big Map][UndergroundTopUpFallback] kind=" .. tostring(kind)
 			.. " count=" .. tostring(fallback_added)
@@ -2855,14 +2970,16 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 			end
 		end
 	end
-	-- Revalidate the unused portion of the large shared resource pool after restoring the walls.
-	-- Anomalies/effects therefore retain the pre-existing 8k-pool handoff, but they can consume only
-	-- candidates that pass the normal wall-aware terrain, obstruction, and reachability rules.
+	-- A standalone resource call restores walls before later families and therefore rebuilds a
+	-- wall-aware handoff pool. The managed density suite restores only after resources, anomalies,
+	-- and effects have all consumed the wall-free pool; rebuilding it at suite teardown had no
+	-- consumer and repeated up to 8,000 full placement validations.
 	underground_reachability_by_map[map] = nil
 	topup_candidate_pool_by_map[map] = nil
 	local wall_aware_pool = {}
 	local point_fn = Global("point")
-	if #failures == 0 and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
+	if token.density_suite ~= true and #failures == 0
+		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 		and type(resource_pool) == "table" and type(point_fn) == "function" then
 		local validation_context = NewDepositValidationContext(map)
 		for _, candidate in ipairs(resource_pool) do
@@ -3003,6 +3120,31 @@ function DepositRules.TopUpDeposits(map)
 
 	local added = 0
 	local validation_context = NewDepositValidationContext(map)
+	-- Templates are immutable throughout this top-up transaction. Resolve their position, terrain,
+	-- and vanilla repulsion profile at most once; the selection loop may revisit the same template
+	-- for every remaining marker, but its option identity cannot change.
+	local template_option_cache = {}
+	local function template_option(template)
+		local cached = template_option_cache[template]
+		if cached ~= nil then return cached or nil end
+		local tpos = ObjectPos(template)
+		local profile = VanillaRepulsionProfileForMarker(map, template)
+		if not (tpos and type(tpos.xy) == "function" and profile) then
+			template_option_cache[template] = false
+			return nil
+		end
+		local terrain_type = TerrainTypeAt(map, tpos, validation_context) or -1
+		cached = {
+			position = tpos, profile = profile, terrain_type = terrain_type,
+			key = table.concat({
+				tostring(profile.layer), tostring(profile.resource), tostring(profile.repulse_same),
+				tostring(profile.repulse_layer), tostring(profile.repulse_all),
+				tostring(terrain_type),
+			}, ":"),
+		}
+		template_option_cache[template] = cached
+		return cached
+	end
 	local underground = validation_context.underground == true
 	local ignore_rubble_walls = underground
 		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
@@ -3038,10 +3180,16 @@ function DepositRules.TopUpDeposits(map)
 				map, x, y, ring_sectors, sector, ring_context)
 			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt, validation_context) then
+				local can_receive, _, _, _, q, r = CanReceiveDeposit(
+					map, pt, validation_context)
+				if can_receive then
 					local tt = TerrainTypeAt(map, pt, validation_context) or -1
 					local candidate = {
 						x = x, y = y, terrain_type = tt, sector = sector, sector_id = sector.id,
+						q = q, r = r,
+						_sbm_terrain_valid = true,
+						_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
+							and (tostring(q) .. ":" .. tostring(r)) or nil,
 					}
 					shared_candidates[#shared_candidates + 1] = candidate
 					pool = pool + 1
@@ -3098,19 +3246,13 @@ function DepositRules.TopUpDeposits(map)
 				local seen_options = {}
 				for offset = 0, #type_templates - 1 do
 					local template = type_templates[((start + offset - 1) % #type_templates) + 1]
-					local tpos = ObjectPos(template)
-					local profile = VanillaRepulsionProfileForMarker(map, template)
-					if tpos and type(tpos.xy) == "function" and profile then
-						local tt = TerrainTypeAt(map, tpos, validation_context) or -1
-						local option_key = table.concat({
-							tostring(profile.layer), tostring(profile.resource), tostring(profile.repulse_same),
-							tostring(profile.repulse_layer), tostring(profile.repulse_all), tostring(tt),
-						}, ":")
-						if not seen_options[option_key] then
-							seen_options[option_key] = true
-							local c = take(tt, profile)
-							if not c then c = take_any(profile) end
-							if c then return c, template, tpos, profile end
+					local option = template_option(template)
+					if option then
+						if not seen_options[option.key] then
+							seen_options[option.key] = true
+							local c = take(option.terrain_type, option.profile)
+							if not c then c = take_any(option.profile) end
+							if c then return c, template, option.position, option.profile end
 						end
 					end
 				end
@@ -3599,17 +3741,18 @@ function DepositRules.TopUpAnomalies(map)
 				rejection = "outside_target_final_ring"
 			else
 				local pt = point(x, y)
-				passable = PassableAt(map, pt, validation_context)
-				flatness = FlatnessAt(map, pt, validation_context) or 0
-				local terrain_allowed = CanReceiveDepositTerrain(map, pt, validation_context)
-				unobstructed = terrain_allowed
-					and IsUnobstructedAt(map, pt, true, validation_context) or false
-				can_receive = terrain_allowed and unobstructed
-				buildable = IsBuildableAt(map, pt, true, validation_context)
-				if not terrain_allowed then
-					rejection = "not_flat_buildable_terrain"
-				elseif not unobstructed then
+				local evaluated_can_receive, evaluated_passable, evaluated_flatness,
+					evaluated_buildable, _, _, evaluated_unobstructed = CanReceiveDeposit(
+						map, pt, validation_context)
+				passable = evaluated_passable == true
+				flatness = evaluated_flatness or 0
+				unobstructed = evaluated_unobstructed == true
+				can_receive = evaluated_can_receive == true
+				buildable = evaluated_buildable == true
+				if evaluated_unobstructed == false then
 					rejection = "build_obstructed"
+				elseif not can_receive then
+					rejection = "not_flat_buildable_terrain"
 				else
 					if surface_edge_ring then
 						-- Terrain never influences the stage-one sector lottery, but it is a hard
@@ -3745,10 +3888,11 @@ function DepositRules.TopUpAnomalies(map)
 				local x, y = random_between(x0, x1), random_between(y0, y1)
 				local live_sector = SectorAtPoint(map, x, y)
 				local pt = point(x, y)
-				local passable = PassableAt(map, pt, validation_context)
-				local flatness = FlatnessAt(map, pt, validation_context) or 0
-				local buildable = IsBuildableAt(map, pt, true, validation_context)
-				local terrain_allowed = CanReceiveDepositTerrain(map, pt, validation_context)
+				local terrain_allowed, passable, flatness, buildable =
+					EvaluateDepositTerrain(map, pt, validation_context)
+				flatness = flatness or 0
+				passable = passable == true
+				buildable = buildable == true
 				local unobstructed = terrain_allowed
 					and IsUnobstructedAt(map, pt, true, validation_context) or false
 				local can_receive = terrain_allowed and unobstructed
@@ -3996,7 +4140,8 @@ function DepositRules.TopUpAnomalies(map)
 		remaining_shortfall = remaining_shortfall
 			+ math.max(0, (target_by_kind[kind] or 0) - final_count)
 	end
-	local print_fn = Global("print")
+	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+		and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][AnomalyTopUp] source=" .. CountMapString(source_by_kind)
 			.. " target=" .. CountMapString(target_by_kind)
@@ -4230,7 +4375,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		return table.concat(values, "|")
 	end
-	local print_fn = Global("print")
+	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
+		and Global("print") or nil
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterRingTopUpAnomalies] BEFORE count=" .. tostring(#moving)
 			.. " sectors=" .. tostring(#ring)
@@ -4281,7 +4427,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	-- once, then retry the cheap selection rules with fresh randomized marker and sector orders.
 	-- Every attempt is transactional and leaves native markers untouched.
 	local candidates_by_sector = {}
-	local world_to_hex = Global("WorldToHex")
+	local world_to_hex = validation_context.world_to_hex
 	if type(world_to_hex) ~= "function" then
 		stats.error = "WorldToHex API unavailable for outer-ring anomaly spacing"
 		return false, stats
@@ -4300,12 +4446,13 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 				local x, y = random_between(x0, x1), random_between(y0, y1)
 				if x and y then
 					local pt = point_fn(x, y)
-					if CanReceiveDepositTerrain(map, pt, validation_context)
-						and IsUnobstructedAt(map, pt, true, validation_context) then
-						local ok_hex, q, r = pcall(world_to_hex, pt)
-						local hex_key = ok_hex and type(q) == "number" and type(r) == "number"
+					local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
+						map, pt, validation_context)
+					if terrain_ok then
+						local hex_key = type(q) == "number" and type(r) == "number"
 							and (tostring(q) .. ":" .. tostring(r)) or nil
-						if hex_key and not sampled_hexes[hex_key] then
+						if hex_key and not sampled_hexes[hex_key]
+							and IsUnobstructedAt(map, pt, true, validation_context) then
 							sampled_hexes[hex_key] = true
 							candidates[#candidates + 1] = {
 								x = x, y = y, sector = sector.sector_ref,
@@ -4345,15 +4492,28 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		local dq, dr = a.q - b.q, a.r - b.r
 		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 	end
+	local function clears_fixed_anomalies(candidate)
+		local cached = candidate and candidate._sbm_clears_fixed_anomalies
+		if cached ~= nil then return cached == true end
+		if not candidate then return false end
+		for _, fixed in ipairs(fixed_anomalies) do
+			if hex_distance(candidate, fixed) < MIN_TOPUP_HEX_DISTANCE then
+				candidate._sbm_clears_fixed_anomalies = false
+				return false
+			end
+		end
+		candidate._sbm_clears_fixed_anomalies = true
+		return true
+	end
 	local function new_outer_attempt_tracker()
 		local occupied, spaced_anomalies, sector_counts = {}, {}, {}
-		for key in pairs(fixed_anomaly_hexes) do occupied[key] = true end
-		for i = 1, #fixed_anomalies do spaced_anomalies[i] = fixed_anomalies[i] end
 		local function can_place(candidate)
-			if not candidate or occupied[candidate.hex_key] then return false end
+			if not candidate or fixed_anomaly_hexes[candidate.hex_key]
+				or occupied[candidate.hex_key] then return false end
 			if (sector_counts[candidate.target_sector] or 0) >= MAX_TOPUPS_PER_SECTOR then
 				return false
 			end
+			if not clears_fixed_anomalies(candidate) then return false end
 			for _, prior in ipairs(spaced_anomalies) do
 				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
 			end
@@ -4672,6 +4832,8 @@ function DepositRules.TopUpEffectDeposits(map)
 	local reused_pool = false
 	local validation_context = NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
+	local wall_free_density_suite = underground
+		and rubble_wall_suite_token_by_map[map] ~= nil
 	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
 	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
@@ -4687,7 +4849,11 @@ function DepositRules.TopUpEffectDeposits(map)
 					local pt = point(c.x, c.y)
 					local reserved_ring = not underground and IsInFinalOuterSectorRing(
 						map, c.x, c.y, ring_sectors, c.sector, ring_context)
-					if not reserved_ring and CanReceiveDeposit(map, pt, validation_context) then
+					local can_reuse = (not underground or wall_free_density_suite)
+						and c._sbm_terrain_valid == true
+						and IsUnobstructedAt(map, pt, true, validation_context)
+					if not reserved_ring and (can_reuse
+						or CanReceiveDeposit(map, pt, validation_context)) then
 						candidates[#candidates + 1] = c
 					end
 				end
@@ -4705,11 +4871,16 @@ function DepositRules.TopUpEffectDeposits(map)
 				map, x, y, ring_sectors, sector, ring_context)
 			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
 				local pt = point(x, y)
-				if CanReceiveDeposit(map, pt, validation_context) then
+				local can_receive, _, _, _, q, r = CanReceiveDeposit(
+					map, pt, validation_context)
+				if can_receive then
 					candidates[#candidates + 1] = {
 						x = x, y = y,
 						terrain_type = TerrainTypeAt(map, pt, validation_context) or -1,
 						sector = sector, sector_id = sector.id,
+						q = q, r = r, _sbm_terrain_valid = true,
+						_sbm_repulsion_hex = type(q) == "number" and type(r) == "number"
+							and (tostring(q) .. ":" .. tostring(r)) or nil,
 					}
 				end
 			end
@@ -5030,6 +5201,8 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	local violation_count = 0
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
+	local validation_context = NewDepositValidationContext(map)
+	local ring_context = NewFinalOuterSectorRingContext(map)
 	local function audit_hex_key(x, y)
 		if type(world_to_hex) == "function" and type(point_fn) == "function" then
 			local ok_h, q, r = pcall(world_to_hex, point_fn(x, y))
@@ -5058,20 +5231,28 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
 		local has_position = type(x) == "number" and type(y) == "number"
 		local pt = has_position and pos or nil
-		local in_ring = has_position and IsInFinalOuterSectorRing(map, x, y, ring_sectors) or false
+		local sector = has_position and SectorAtPoint(map, x, y) or nil
+		local in_ring = has_position and IsInFinalOuterSectorRing(
+			map, x, y, ring_sectors, sector, ring_context) or false
 		local inner_fallback = family == "anomaly"
 			and marker.SuperBigMapInnerRingFallback == true
-		local reachable = has_position and PassableAt(map, pt) or false
-		local even_terrain = has_position and CanReceiveDepositTerrain(map, pt) or false
-		local flatness = has_position and FlatnessAt(map, pt) or 0
-		local buildable = has_position and IsBuildableAt(map, pt, true) or false
-		local unobstructed = has_position and IsUnobstructedAt(map, pt, true) or false
-		local valley_score = has_position and ValleyScore(map, pt) or 0
-		local hex_key = has_position and audit_hex_key(x, y) or nil
+		local reachable = has_position and PassableAt(map, pt, validation_context) or false
+		local flatness = has_position and FlatnessAt(map, pt, validation_context) or 0
+		local buildable, q, r = false, nil, nil
+		if has_position then
+			buildable, q, r = IsBuildableAt(map, pt, true, validation_context)
+		end
+		local even_terrain = reachable
+			and flatness >= validation_context.flatness_minimum and buildable == true
+		local unobstructed = has_position
+			and IsUnobstructedAt(map, pt, true, validation_context) or false
+		local valley_score = family == "anomaly" and has_position and ValleyScore(map, pt) or 0
+		local hex_key = type(q) == "number" and type(r) == "number"
+			and (tostring(q) .. ":" .. tostring(r))
+			or (has_position and audit_hex_key(x, y) or nil)
 		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
 		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
 		if family == "anomaly" and has_position and not inner_fallback then
-			local sector = SectorAtPoint(map, x, y)
 			if sector then
 				anomaly_topups_by_sector[sector] = (anomaly_topups_by_sector[sector] or 0) + 1
 			end

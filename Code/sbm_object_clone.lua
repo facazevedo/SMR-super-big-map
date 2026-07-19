@@ -290,7 +290,7 @@ local function CopyObjectTransform(source, clone, offset)
 
 end
 
-local function CloneObjectAtOffset(map, source, offset)
+local function CloneObjectAtOffset(map, source, offset, skip_deposit_processing)
 	local place_object = Global("PlaceObject")
 	local pos = ObjectPosition(source)
 	if type(place_object) ~= "function" or not pos then
@@ -311,7 +311,8 @@ local function CloneObjectAtOffset(map, source, offset)
 	-- Deposit handling on the clone: scan-gate visibility (hide until its sector is
 	-- scanned) + optional reshuffle onto terrain matching the source. No-op for non-deposits.
 	local deposits = SuperBigMap.DepositRules
-	if deposits and type(deposits.ProcessClone) == "function" then
+	if skip_deposit_processing ~= true
+		and deposits and type(deposits.ProcessClone) == "function" then
 		deposits.ProcessClone(map, source, clone)
 	end
 	return clone

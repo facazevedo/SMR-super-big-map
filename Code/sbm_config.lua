@@ -21,11 +21,11 @@ config.DebugEnrichmentAudit = false
 -- Focused runtime trace for manually sending a rover through an Elevator. Records interaction
 -- dispatch, entrance/path availability, linked counterpart state, building-use entry, map transfer,
 -- and final rover position without enabling the much larger enrichment audit above.
-config.DebugElevatorTraversal = true
+config.DebugElevatorTraversal = false
 -- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
-config.DebugLoadingTimings = true
+config.DebugLoadingTimings = false
 -- Exhaustive underground decoration transform trace. When enabled, every decoration that the
 -- stretch pass may move gets a stable audit index plus PRE and POST records containing object
 -- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
@@ -41,7 +41,7 @@ config.DebugUndergroundDecorationPositions = false
 -- expected versus actual coordinates, shape size, and object-grid registration.
 -- This replaces the much noisier all-decoration trace while the cave-in placement issue is under
 -- investigation.
-config.DebugCaveInPositions = true
+config.DebugCaveInPositions = false
 
 -- ============================================================================
 -- MAIN LAYOUT
