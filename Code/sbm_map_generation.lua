@@ -37,6 +37,8 @@ SuperBigMap.State.deferred_vehicle_night_lights =
 	SuperBigMap.State.deferred_vehicle_night_lights or setmetatable({}, { __mode = "k" })
 SuperBigMap.State.offscreen_vehicle_light_suppressions =
 	SuperBigMap.State.offscreen_vehicle_light_suppressions or setmetatable({}, { __mode = "k" })
+SuperBigMap.State.underground_shared_wonder_texture_pins =
+	SuperBigMap.State.underground_shared_wonder_texture_pins or {}
 local pending_maps = SuperBigMap.State.expansion_pending_maps
 local blocked_maps = SuperBigMap.State.expansion_blocked_maps
 local underground_recovery_maps = SuperBigMap.State.underground_recovery_maps
@@ -47,6 +49,8 @@ local underground_elevator_restore_tokens =
 local deferred_vehicle_night_lights = SuperBigMap.State.deferred_vehicle_night_lights
 local offscreen_vehicle_light_suppressions =
 	SuperBigMap.State.offscreen_vehicle_light_suppressions
+local underground_shared_wonder_texture_pins =
+	SuperBigMap.State.underground_shared_wonder_texture_pins
 
 -- Generic engine helpers from sbm_engine (loaded before this module). Aliased to locals
 -- so existing call sites are unchanged; only the gen-time TerrainSize below stays local.
@@ -3313,6 +3317,137 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	return false, "no terrain height is available for the expanded wonder footprint"
 end
 
+-- CaveOfWonders, JumboCave, and BottomlessPit use several different materials that all reference
+-- the same 4096px vanilla normal map (Textures/3547001.dds). Deferred underground construction
+-- can create more than one of those materials in one protected Lua pass. If the texture is still
+-- only a fallback resource when the completed map becomes visible, the renderer can enqueue the
+-- same all-mip target twice and trip reAssetLODStreamer residentLevels == targetLevels. Resolve the
+-- shared resource once, before any of the deferred buildings is created, and retain that single
+-- reference for as long as the mod behavior is installed. This changes no material or visual; it
+-- only serializes the resource's first load.
+local SHARED_BURIED_WONDER_TEXTURE = "Textures/3547001.dds"
+local SHARED_BURIED_WONDER_CLASSES = {
+	BottomlessPit = true,
+	CaveOfWonders = true,
+	JumboCave = true,
+}
+
+local function ResourceRequestsRunning(resource_manager)
+	if type(resource_manager) ~= "table"
+		or type(resource_manager.HasRunningRequests) ~= "function" then
+		return nil
+	end
+	local running = SafeCall(resource_manager.HasRunningRequests)
+	return running == true
+end
+
+local function WaitForUndergroundResourceRequests(map, reason, timeout)
+	local wait_requests = Global("WaitResourceManagerRequests")
+	local resource_manager = Global("ResourceManager")
+	if type(wait_requests) ~= "function" then
+		return false, "WaitResourceManagerRequests unavailable"
+	end
+	local running_before = ResourceRequestsRunning(resource_manager)
+	local ok, elapsed = pcall(wait_requests, timeout or 15000, 3)
+	local running_after = ResourceRequestsRunning(resource_manager)
+	LoadingStep("underground renderer resources settled", {
+		reason = tostring(reason or "unspecified"),
+		wait_ok = tostring(ok),
+		wait_ms = tostring(elapsed),
+		running_before = tostring(running_before),
+		running_after = tostring(running_after),
+	}, map)
+	if not ok then return false, tostring(elapsed) end
+	if running_after == true then
+		return false, "resource requests remained active after " .. tostring(elapsed) .. "ms"
+	end
+	return true, elapsed
+end
+
+local function SettleUndergroundSceneResources(map, reason)
+	local settled, result = WaitForUndergroundResourceRequests(map, reason, 15000)
+	if settled then return true, result end
+	-- A large texture can still be completing disk IO at the first timeout. Keep the existing
+	-- loading screen in front for one bounded retry instead of exposing a half-streamed scene.
+	local retry_settled, retry_result = WaitForUndergroundResourceRequests(
+		map, tostring(reason or "underground scene") .. " retry", 15000)
+	return retry_settled, retry_settled and retry_result
+		or (tostring(result) .. "; retry: " .. tostring(retry_result))
+end
+
+local function ReleaseSharedBuriedWonderTexturePins()
+	for i = #underground_shared_wonder_texture_pins, 1, -1 do
+		local resource = underground_shared_wonder_texture_pins[i]
+		underground_shared_wonder_texture_pins[i] = nil
+		if resource and type(resource.ReleaseRef) == "function" then
+			SafeCall(resource.ReleaseRef, resource)
+		end
+	end
+	local State = SuperBigMap.State or {}
+	State.underground_shared_wonder_texture_ready = nil
+end
+
+local function PrewarmSharedBuriedWonderTexture(map, planned)
+	local classes = {}
+	for _, marker in ipairs(planned or {}) do
+		local class_name = marker and marker.SuperBigMapDeferredWonderClass
+		if SHARED_BURIED_WONDER_CLASSES[class_name] then classes[#classes + 1] = class_name end
+	end
+	if #classes == 0 then return true, { required = false } end
+
+	local State = SuperBigMap.State or {}
+	if State.underground_shared_wonder_texture_ready == true
+		and #underground_shared_wonder_texture_pins > 0 then
+		LoadingStep("underground shared wonder texture ready", {
+			texture = SHARED_BURIED_WONDER_TEXTURE,
+			classes = table.concat(classes, ","),
+			cached = true,
+			pins = #underground_shared_wonder_texture_pins,
+		}, map)
+		return true, { required = true, cached = true }
+	end
+
+	local resource_manager = Global("ResourceManager")
+	local async_get = Global("AsyncGetResource")
+	if type(resource_manager) ~= "table"
+		or type(resource_manager.GetResourceID) ~= "function"
+		or type(async_get) ~= "function" then
+		return false, "texture resource API unavailable"
+	end
+	local ok_id, resource_id = pcall(resource_manager.GetResourceID,
+		SHARED_BURIED_WONDER_TEXTURE)
+	if not ok_id or resource_id == nil then
+		return false, "shared wonder texture id unavailable: " .. tostring(resource_id)
+	end
+	local ok_load, resource = pcall(async_get, resource_id)
+	if not ok_load or not resource then
+		return false, "shared wonder texture load failed: " .. tostring(resource)
+	end
+	local has_object = type(resource.HasObject) ~= "function"
+		or SafeCall(resource.HasObject, resource) == true
+	if not has_object then
+		if type(resource.ReleaseRef) == "function" then SafeCall(resource.ReleaseRef, resource) end
+		return false, "shared wonder texture resource has no object"
+	end
+	underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins + 1] = resource
+	local settled, settle_result = WaitForUndergroundResourceRequests(
+		map, "shared buried-wonder texture prewarm", 15000)
+	if not settled then
+		underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins] = nil
+		if type(resource.ReleaseRef) == "function" then SafeCall(resource.ReleaseRef, resource) end
+		return false, "shared wonder texture did not settle: " .. tostring(settle_result)
+	end
+	State.underground_shared_wonder_texture_ready = true
+	LoadingStep("underground shared wonder texture ready", {
+		texture = SHARED_BURIED_WONDER_TEXTURE,
+		classes = table.concat(classes, ","),
+		cached = false,
+		pins = #underground_shared_wonder_texture_pins,
+		wait_ms = tostring(settle_result),
+	}, map)
+	return true, { required = true, cached = false, wait_ms = settle_result }
+end
+
 local function MaterializeDeferredUndergroundWonders(map)
 	local markers = ArtefactMapGet(map, "BuriedWonderMarker")
 	local planned = {}
@@ -3338,6 +3473,10 @@ local function MaterializeDeferredUndergroundWonders(map)
 	end
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if not ratios then return false, ratio_error end
+	local texture_ready, texture_error = PrewarmSharedBuriedWonderTexture(map, planned)
+	if texture_ready ~= true then
+		return false, "buried wonder shared texture prewarm failed: " .. tostring(texture_error)
+	end
 	local spawned = 0
 	local stretched = 0
 	local bottomless_pits = 0
@@ -7264,6 +7403,11 @@ local function PatchDeferredUndergroundAccess(source)
 		local switch_restore_token = CurrentElevatorRestoreToken(target)
 		local switch_restore_token_id = switch_restore_token and switch_restore_token.token_id
 		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
+		-- ChangeCurrentMapSlot only waits for scene mode; unlike a full ChangeMap it does not wait
+		-- for ResourceManager IO. Deferred wonders were created moments earlier, so keep our loading
+		-- screen alive until their first visible texture targets have become stable.
+		local renderer_settled, renderer_result = SettleUndergroundSceneResources(
+			target, "completed underground map became visible")
 		-- CurrentMapChangeDone is synchronous inside the original switch. It must have consumed the
 		-- queued token; never perform a post-return reconstruction here, because that would recreate
 		-- the old race with later engine lifecycle work.
@@ -7288,6 +7432,8 @@ local function PatchDeferredUndergroundAccess(source)
 		LoadingFinish("underground first access complete", target, {
 			elevator_token = tostring(switch_restore_token_id),
 			elevator_token_status = tostring(after_token and after_token.status or "consumed-or-none"),
+			renderer_resources_settled = tostring(renderer_settled),
+			renderer_resource_wait = tostring(renderer_result),
 		}, true)
 		return result
 	end
@@ -7327,13 +7473,22 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 		end
 		SetLoadingPhase("Preparing the underground map after a bypassed first-access switch")
 		local ok, err = RunUndergroundStretchIfEnabled(map, true)
+		local renderer_settled, renderer_result = true, "not-run"
+		if ok == true then
+			renderer_settled, renderer_result = SettleUndergroundSceneResources(
+				map, "already-current underground recovery completed")
+		end
 		if screen_open and type(close_screen) == "function" then
 			close_screen(screen_id, map_slot)
 			if type(wait_render) == "function" then wait_render("scene") end
 		end
 		underground_recovery_maps[map] = nil
 		LoadingFinish("underground bypass-recovery complete", map,
-			{ error = ok == true and "" or tostring(err) }, ok == true)
+			{
+				error = ok == true and "" or tostring(err),
+				renderer_resources_settled = tostring(renderer_settled),
+				renderer_resource_wait = tostring(renderer_result),
+			}, ok == true)
 		if ok ~= true then
 			local create_box = Global("CreateMessageBox")
 			if type(create_box) == "function" then
@@ -7402,6 +7557,7 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	ReleaseSharedBuriedWonderTexturePins()
 	RestoreDeferredVehicleNightLights(Global("CurrentMap"))
 	for target, record in pairs(offscreen_vehicle_light_suppressions) do
 		if target and type(record) == "table" then
