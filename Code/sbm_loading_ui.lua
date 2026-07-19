@@ -586,14 +586,28 @@ local function BlurBackgroundValid()
 end
 
 local function UndergroundBackdropValid()
-	return FrozenBackgroundValid() and BlurBackgroundValid()
+	-- The persistent backdrop must be a frozen image only. XBlurRect always samples the live
+	-- renderer backbuffer; that buffer is deliberately empty during the hidden map switches and
+	-- therefore turns an otherwise valid blur window black.
+	return FrozenBackgroundValid()
 end
 
--- Capture the complete desktop exactly as the player sees it, including the HUD and any open
--- infopanels, then blur that retained frame. The snapshot prevents XBlurRect from sampling the
--- renderer's empty black backbuffer during the hidden surface -> underground -> surface switch.
--- Nothing in the gameplay interface is hidden or moved: it simply remains visually behind this
--- blur, while the Super Big Map dialog is assigned the next higher Z-order and stays sharp.
+local function CloseUndergroundBlur()
+	local blur = underground_blur_background
+	underground_blur_background = false
+	if not blur or blur.window_state == "destroyed" then return true end
+	if type(blur.delete) == "function" then return pcall(blur.delete, blur) end
+	if type(blur.Close) == "function" then return pcall(blur.Close, blur) end
+	return false
+end
+
+-- Blur the complete live desktop first, including the HUD and every open panel, then capture that
+-- already-blurred composition and immediately remove the live XBlurRect. Only the frozen XImage
+-- survives the hidden surface -> underground -> surface switch. This matters because XBlurRect
+-- samples the engine backbuffer rather than sibling windows; keeping it alive across a map switch
+-- makes it correctly sample the temporarily empty (black) scene instead of the retained image.
+-- Nothing in the gameplay interface is hidden or moved, and the loading dialog is created only
+-- after the capture so it remains sharp above the frozen blurred frame.
 local function EnsureUndergroundBackdrop()
 	if loading_presentation ~= "underground" then return true end
 	if UndergroundBackdropValid() then return true end
@@ -613,16 +627,65 @@ local function EnsureUndergroundBackdrop()
 	end
 
 	if not FrozenBackgroundValid() then
-		LoadingUiAudit("CAPTURE_BEGIN")
-		-- Let the current HUD and open panels finish painting before freezing the complete desktop.
-		WaitRealTimeFrames(1)
-		local ok_capture, resource = pcall(capture)
-		if not ok_capture or not resource then
-			LoadingUiAudit("CAPTURE_FAILED", {
-				capture_ok = tostring(ok_capture), resource = tostring(resource),
+		if not BlurBackgroundValid() then
+			local props = {
+				Dock = "box",
+				BlurRadius = 30,
+				FrameLeft = 10,
+				FrameTop = 10,
+				FrameRight = 10,
+				FrameBottom = 10,
+				Desaturation = 50,
+				HandleMouse = false,
+				ChildrenHandleMouse = false,
+				ZOrder = LOADING_BLUR_ZORDER,
+			}
+			local ok_blur, blur = pcall(blur_class.new, blur_class, props, desktop)
+			if ok_blur and blur then
+				if type(blur.SetZOrder) == "function" then
+					pcall(blur.SetZOrder, blur, LOADING_BLUR_ZORDER)
+				end
+				if type(blur.Open) == "function" then pcall(blur.Open, blur) end
+				underground_blur_background = blur
+			end
+			LoadingUiAudit(BlurBackgroundValid() and "PREBLUR_READY" or "PREBLUR_CREATE_FAILED", {
+				blur_new_ok = tostring(ok_blur), blur_radius = 30,
+				blur_desaturation = 50,
+			})
+		end
+		if not BlurBackgroundValid() then return false end
+
+		-- Give the blur two complete UI render boundaries before CaptureScreenshotImage samples the
+		-- desktop. The resulting resource contains the blurred HUD and panels as ordinary pixels.
+		local preblur_frames_ok = WaitRealTimeFrames(2)
+		LoadingUiAudit("PREBLUR_CAPTURE_BEGIN", {
+			frame_wait_ok = tostring(preblur_frames_ok),
+		})
+		if not preblur_frames_ok then
+			-- The synchronous first call can originate outside a real-time thread. Leave the temporary
+			-- blur open and let the existing real-time watcher perform the capture on its next tick;
+			-- capturing before it has rendered would freeze an unblurred desktop.
+			LoadingUiAudit("PREBLUR_CAPTURE_DEFERRED", {
+				reason = "real-time render boundaries unavailable",
 			})
 			return false
 		end
+		local ok_capture, resource = pcall(capture)
+		if not ok_capture or not resource then
+			local close_ok = CloseUndergroundBlur()
+			LoadingUiAudit("PREBLUR_CAPTURE_FAILED", {
+				capture_ok = tostring(ok_capture), resource = tostring(resource),
+				preblur_close_ok = tostring(close_ok),
+			})
+			return false
+		end
+		LoadingUiAudit("PREBLUR_CAPTURE_READY", {
+			capture_ok = tostring(ok_capture), resource = tostring(resource),
+		})
+		local preblur_close_ok = CloseUndergroundBlur()
+		LoadingUiAudit("PREBLUR_CLOSED", {
+			preblur_close_ok = tostring(preblur_close_ok), resource = tostring(resource),
+		})
 		local ok_new, background = pcall(image_class.new, image_class, {
 			Dock = "box",
 			Image = resource,
@@ -647,45 +710,22 @@ local function EnsureUndergroundBackdrop()
 				underground_frozen_background_resource = false
 			end
 		end
-		LoadingUiAudit(FrozenBackgroundValid() and "CAPTURE_READY" or "CAPTURE_CREATE_FAILED", {
+		LoadingUiAudit(FrozenBackgroundValid()
+			and "FROZEN_BLURRED_BACKDROP_READY" or "FROZEN_BLURRED_BACKDROP_CREATE_FAILED", {
 			new_ok = tostring(ok_new),
 			resource_retained = tostring(underground_frozen_background_resource == resource),
-		})
-	end
-
-	if FrozenBackgroundValid() and not BlurBackgroundValid() then
-		local rgba = Global("RGBA")
-		local props = {
-			Dock = "box",
-			BlurRadius = 20,
-			HandleMouse = false,
-			ChildrenHandleMouse = false,
-			ZOrder = LOADING_BLUR_ZORDER,
-		}
-		if type(rgba) == "function" then props.TintColor = rgba(255, 255, 255, 255) end
-		local ok_blur, blur = pcall(blur_class.new, blur_class, props, desktop)
-		if ok_blur and blur then
-			if type(blur.SetZOrder) == "function" then
-				pcall(blur.SetZOrder, blur, LOADING_BLUR_ZORDER)
-			end
-			if type(blur.Open) == "function" then pcall(blur.Open, blur) end
-			underground_blur_background = blur
-		end
-		LoadingUiAudit(BlurBackgroundValid() and "BLUR_READY" or "BLUR_CREATE_FAILED", {
-			blur_new_ok = tostring(ok_blur), blur_radius = 20,
 		})
 	end
 	return UndergroundBackdropValid() == true
 end
 
 local function CloseUndergroundBackdrop()
-	local blur = underground_blur_background
 	local background = underground_frozen_background
 	local resource = underground_frozen_background_resource
-	underground_blur_background = false
+	CloseUndergroundBlur()
 	underground_frozen_background = false
 	underground_frozen_background_resource = false
-	for _, window in ipairs({ blur, background }) do
+	for _, window in ipairs({ background }) do
 		if window and window.window_state ~= "destroyed" then
 			if type(window.delete) == "function" then
 				pcall(window.delete, window)
@@ -748,7 +788,10 @@ local function SetWelcomeLoading(active)
 		-- Keep the gameplay interface exactly as it is. The retained screenshot and full-desktop
 		-- XBlurRect place the HUD, infopanels, pins, and any other open UI behind a stable blur; only
 		-- the loading dialog is raised above it and remains sharp.
-		EnsureUndergroundBackdrop()
+		local backdrop_ready = EnsureUndergroundBackdrop()
+		if loading_presentation == "underground" and backdrop_ready ~= true then
+			return false
+		end
 		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
 		-- remains open. Hiding rather than closing it preserves engine synchronization.
 		local engine_ready = HideEngineLoadingScreenInstant()

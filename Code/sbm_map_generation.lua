@@ -3288,10 +3288,144 @@ local function PassageObjectVisible(obj)
 	return ok and visible == true or false
 end
 
--- SurfacePassageRocks / UndergroundPassageRocks are standalone WasteRockObstructors, not children
--- of the passage carrier. Consequently passage:SetVisible(false) cannot hide them. They can be
--- made visible again when the source map is reactivated after deferred underground construction.
--- Suppress only marker-rock objects close to a passage that already owns a completed Elevator.
+local completed_passage_rock_entities = {
+	ElevatorBuildIndicator_SurfaceRocks = true,
+	ElevatorBuildIndicator_UndergroundRocks = true,
+}
+
+local function PassageObjectEntity(obj)
+	if not obj or type(obj.GetEntity) ~= "function" then return nil end
+	local ok, entity = pcall(obj.GetEntity, obj)
+	return ok and entity or nil
+end
+
+local function PassageObjectOpacity(obj)
+	if not obj or type(obj.GetOpacity) ~= "function" then return nil end
+	local ok, opacity = pcall(obj.GetOpacity, obj)
+	return ok and opacity or nil
+end
+
+local function PassageObjectParent(obj)
+	if not obj then return nil end
+	if type(obj.GetParent) == "function" then
+		local ok, parent = pcall(obj.GetParent, obj)
+		if ok and parent then return parent end
+	end
+	if type(obj.GetAttachParent) == "function" then
+		local ok, parent = pcall(obj.GetAttachParent, obj)
+		if ok then return parent end
+	end
+	return nil
+end
+
+local function PassageVisualRelevant(obj, entity)
+	entity = tostring(entity or PassageObjectEntity(obj) or "")
+	if completed_passage_rock_entities[entity] then return true end
+	local identity = (TraversalClass(obj) .. " " .. entity):lower()
+	return identity:find("elevator", 1, true) ~= nil
+		or identity:find("passage", 1, true) ~= nil
+		or identity:find("rock", 1, true) ~= nil
+		or identity:find("imprint", 1, true) ~= nil
+		or identity:find("indicator", 1, true) ~= nil
+end
+
+local function PassageVisualDetail(obj, role, depth, before, after, hide_ok)
+	local pos = Engine.ObjectPos(obj)
+	local x, y = PointXY(pos)
+	local attach_spot = type(obj.GetAttachSpot) == "function"
+		and SafeCall(obj.GetAttachSpot, obj) or nil
+	return table.concat({
+		"role=" .. tostring(role), "depth=" .. tostring(depth), "object=" .. tostring(obj),
+		"class=" .. TraversalClass(obj), "entity=" .. tostring(PassageObjectEntity(obj)),
+		"map=" .. tostring(TraversalObjectMap(obj)), "x=" .. tostring(x), "y=" .. tostring(y),
+		"parent=" .. tostring(PassageObjectParent(obj)), "spot=" .. tostring(attach_spot),
+		"visible_before=" .. tostring(before), "visible_after=" .. tostring(after),
+		"opacity=" .. tostring(PassageObjectOpacity(obj)), "hide_ok=" .. tostring(hide_ok),
+	}, ":")
+end
+
+local function HideCompletedPassageRockVisual(obj)
+	local entity = PassageObjectEntity(obj)
+	if not completed_passage_rock_entities[tostring(entity)] then return false, false end
+	local visible_ok = type(obj.SetVisible) == "function"
+		and pcall(obj.SetVisible, obj, false) or false
+	local opacity_ok = type(obj.SetOpacity) == "function"
+		and pcall(obj.SetOpacity, obj, 0) or false
+	local hide_ok = visible_ok or opacity_ok
+	if hide_ok then obj.SuperBigMapHiddenByCompletedElevator = true end
+	return true, hide_ok
+end
+
+-- Audit the complete auto-attachment tree because LinkThroughPassage rebuilds both the passage and
+-- Elevator attaches after it hides the marker carrier. In the failing run there were zero standalone
+-- SurfacePassageRocks / UndergroundPassageRocks, proving that the visible ramp rocks were outside the
+-- old class-only scan. Exact marker-rock entities are safe to suppress regardless of their runtime
+-- class; every other Elevator/passage/rock visual is logged but left untouched.
+local function AuditAndHidePassageVisualTree(root, role, seen, details, stats, depth)
+	if not TraversalObjectValid(root) or seen[root] then return end
+	seen[root] = true
+	depth = tonumber(depth) or 0
+	if depth == 0 and #details < 96 then
+		details[#details + 1] = PassageVisualDetail(root, role .. "-root", depth,
+			PassageObjectVisible(root), PassageObjectVisible(root), false)
+	end
+	if depth >= 6 or type(root.GetAttaches) ~= "function" then return end
+	local ok_attaches, attaches = pcall(root.GetAttaches, root)
+	if not ok_attaches or type(attaches) ~= "table" then
+		stats.attach_failures = stats.attach_failures + 1
+		return
+	end
+	for index, attach in ipairs(attaches) do
+		if TraversalObjectValid(attach) and not seen[attach] then
+			stats.attachments = stats.attachments + 1
+			local before = PassageObjectVisible(attach)
+			local marker_rock, hide_ok = HideCompletedPassageRockVisual(attach)
+			if marker_rock then
+				stats.marker_rocks = stats.marker_rocks + 1
+				if hide_ok then stats.hidden = stats.hidden + 1 end
+			end
+			local entity = PassageObjectEntity(attach)
+			if (PassageVisualRelevant(attach, entity) or marker_rock) and #details < 96 then
+				details[#details + 1] = PassageVisualDetail(attach,
+					role .. "-attach-" .. tostring(index), depth + 1, before,
+					PassageObjectVisible(attach), hide_ok)
+			end
+			AuditAndHidePassageVisualTree(attach, role, seen, details, stats, depth + 1)
+		end
+	end
+end
+
+local function AuditAndHideNearbyPassageVisuals(map, anchor, max_distance_sq, seen, details, stats)
+	if not map or type(map.MapForEach) ~= "function" then return false end
+	local ax, ay = PointXY(anchor)
+	if type(ax) ~= "number" or type(ay) ~= "number" then return false end
+	return pcall(map.MapForEach, map, anchor, math.sqrt(max_distance_sq), "CObject", function(obj)
+		stats.cobjects = stats.cobjects + 1
+		local pos = Engine.ObjectPos(obj)
+		local x, y = PointXY(pos)
+		if type(x) ~= "number" or type(y) ~= "number" then return end
+		local dx, dy = x - ax, y - ay
+		if dx * dx + dy * dy > max_distance_sq then return end
+		stats.nearby = stats.nearby + 1
+		local entity = PassageObjectEntity(obj)
+		if not PassageVisualRelevant(obj, entity) then return end
+		local before = PassageObjectVisible(obj)
+		local marker_rock, hide_ok = HideCompletedPassageRockVisual(obj)
+		if marker_rock and not seen[obj] then
+			stats.marker_rocks = stats.marker_rocks + 1
+			if hide_ok then stats.hidden = stats.hidden + 1 end
+		end
+		if #details < 96 then
+			details[#details + 1] = PassageVisualDetail(obj, "nearby-map-object", 0,
+				before, PassageObjectVisible(obj), hide_ok)
+		end
+		seen[obj] = true
+	end)
+end
+
+-- SurfacePassageRocks / UndergroundPassageRocks are normally standalone WasteRockObstructors, but
+-- depending on the LinkThroughPassage rebuild boundary the same rock entities can also survive as
+-- generic autoattachments. Scan both forms and run again after the first-access loader closes.
 local function HideCompletedPassageRocks(passage, reason)
 	local map = TraversalObjectMap(passage)
 	if not map then return 0, "" end
@@ -3302,7 +3436,12 @@ local function HideCompletedPassageRocks(passage, reason)
 	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
 	local max_distance = math.max(1000, (hex_size or 1000) * 12)
 	local max_distance_sq = max_distance * max_distance
-	local hidden, details = 0, {}
+	local details = {}
+	local seen = setmetatable({}, { __mode = "k" })
+	local stats = {
+		hidden = 0, marker_rocks = 0, attachments = 0, attach_failures = 0,
+		cobjects = 0, nearby = 0, standalone = 0,
+	}
 	for _, class_name in ipairs({ "SurfacePassageRocks", "UndergroundPassageRocks" }) do
 		for _, rocks in ipairs(ArtefactMapGet(map, class_name)) do
 			local pos = Engine.ObjectPos(rocks)
@@ -3312,29 +3451,34 @@ local function HideCompletedPassageRocks(passage, reason)
 				local distance_sq = dx * dx + dy * dy
 				if distance_sq <= max_distance_sq then
 					local visible_before = PassageObjectVisible(rocks)
-					local hide_ok = type(rocks.SetVisible) == "function"
-						and pcall(rocks.SetVisible, rocks, false) or false
-					if hide_ok then
-						rocks.SuperBigMapHiddenByCompletedElevator = true
-						hidden = hidden + 1
+					local marker_rock, hide_ok = HideCompletedPassageRockVisual(rocks)
+					stats.standalone = stats.standalone + 1
+					if marker_rock then stats.marker_rocks = stats.marker_rocks + 1 end
+					if hide_ok then stats.hidden = stats.hidden + 1 end
+					seen[rocks] = true
+					if #details < 96 then
+						details[#details + 1] = PassageVisualDetail(rocks,
+							"standalone-" .. class_name, 0, visible_before,
+							PassageObjectVisible(rocks), hide_ok)
 					end
-					details[#details + 1] = table.concat({
-						tostring(rocks), class_name,
-						"distance=" .. tostring(math.sqrt(distance_sq)),
-						"before=" .. tostring(visible_before),
-						"after=" .. tostring(PassageObjectVisible(rocks)),
-						"hide_ok=" .. tostring(hide_ok),
-					}, ":")
 				end
 			end
 		end
 	end
+	AuditAndHidePassageVisualTree(passage, "passage", seen, details, stats, 0)
+	AuditAndHidePassageVisualTree(passage.elevator, "elevator", seen, details, stats, 0)
+	local map_scan_ok = AuditAndHideNearbyPassageVisuals(
+		map, anchor, max_distance_sq, seen, details, stats)
 	ElevatorTraversalAudit("PASSAGE_ROCKS_ENFORCED", {
 		passage = tostring(passage), elevator = tostring(passage.elevator),
 		reason = tostring(reason), max_distance = max_distance,
-		hidden = hidden, rocks = table.concat(details, " | "),
+		hidden = stats.hidden, marker_rocks = stats.marker_rocks,
+		standalone = stats.standalone, attachments = stats.attachments,
+		attach_failures = stats.attach_failures, cobjects = stats.cobjects,
+		nearby = stats.nearby, map_scan_ok = tostring(map_scan_ok),
+		visuals = table.concat(details, " | "),
 	}, map)
-	return hidden, table.concat(details, " | ")
+	return stats.hidden, table.concat(details, " | ")
 end
 
 local function HideCompletedPassageIndicator(passage, reason)
@@ -3344,8 +3488,8 @@ local function HideCompletedPassageIndicator(passage, reason)
 		pcall(passage.SetVisible, passage, false)
 		hidden = 1
 	end
-	-- Child attachments still follow vanilla carrier visibility. Only the separate marker-rock
-	-- obstruction close to this completed passage needs its own visibility enforcement.
+	-- Enforce the same result on both standalone marker rocks and any exact rock entities retained
+	-- in the rebuilt passage/Elevator attachment trees.
 	local rocks_hidden = HideCompletedPassageRocks(passage, reason)
 	return hidden, rocks_hidden
 end
@@ -5789,7 +5933,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 7
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 8
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -6222,6 +6366,16 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 			-- nested path left its reference count unbalanced.
 			pcall(end_loading, true)
 		end
+		-- LinkThroughPassage rebuilds autoattachments while the target map is active, and map
+		-- reactivation can rebuild them once more. Audit and enforce the completed-passage visuals
+		-- only after the custom loading presentation has fully torn down, which is the exact boundary
+		-- at which the player previously saw the entrance rocks return.
+		local post_loading_markers_hidden = HideExistingCompletedPassageIndicators(
+			"first-access loading teardown final boundary")
+		ElevatorTraversalAudit("FIRST_ACCESS_POST_LOADING_PASSAGE_VISUALS", {
+			request = request_id, markers_hidden = post_loading_markers_hidden,
+			return_map = tostring(return_map), current_map = tostring(Global("CurrentMap")),
+		}, return_map)
 		request.done = true
 		pcall(msg, completion_message, request)
 	end)
