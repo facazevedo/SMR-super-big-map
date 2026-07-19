@@ -4363,6 +4363,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								error("surface outer-ring anomaly audit failed: violations="
 									.. tostring(ring_stats and ring_stats.violations)
 									.. " overlap=" .. tostring(ring_stats and ring_stats.anomaly_overlap)
+									.. " outside_ring="
+									.. tostring(ring_stats and ring_stats.anomaly_outside_ring)
+									.. " fallback_inside_ring="
+									.. tostring(ring_stats and ring_stats.anomaly_fallback_inside_ring)
 									.. " sector_overflow="
 									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow))
 							end

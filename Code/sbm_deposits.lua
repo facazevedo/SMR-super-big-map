@@ -2988,6 +2988,8 @@ function DepositRules.TopUpAnomalies(map)
 			target_counts = CountMapString(target_by_kind),
 			current_counts = CountMapString(current_by_kind), added_counts = "",
 			outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
+			outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
+			inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
 			outer_ring_sector_count = redistribution_stats and redistribution_stats.ring_sectors or 0,
 		})
 		return
@@ -3592,6 +3594,8 @@ function DepositRules.TopUpAnomalies(map)
 		added_counts = CountMapString(added_by_kind), added_total = added,
 		surface_outer_ring = tostring(not IsUndergroundMap(map)),
 		outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
+		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
+		inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
 		outer_ring_sector_count = redistribution_stats and redistribution_stats.ring_sectors or 0,
 	})
 end
@@ -3683,15 +3687,14 @@ end
 
 -- Replace every TOP-UP anomaly in the final N-sector perimeter ring. Native anomalies are never
 -- selected or moved. First plan the complete top-up population, then move it, so a failed search can
--- never leave a half-redistributed map. Each top-up receives a fresh shuffle of ALL ring sectors;
--- terrain is considered only after a sector is drawn. This keeps the lower-right perimeter fully
--- eligible. Outer-ring top-ups deliberately use a simple custom spacing rule instead of vanilla
--- repulsion: unique hexes, at least 10 hexes from every other anomaly, and at most 1 top-up
--- per sector.
+-- never leave a half-redistributed map. Outer-ring top-ups deliberately use a simple custom rule:
+-- unique hexes, at least 10 hexes from every other anomaly, and at most 1 top-up per sector. If the
+-- outer band cannot hold the full population, only the remainder falls back to reachable interior
+-- sectors and uses vanilla anomaly repulsion.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
-		bottom_sectors = 0, right_sectors = 0,
+		inner_sectors = 0, bottom_sectors = 0, right_sectors = 0,
 	}
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
 		stats.error = "surface map API unavailable"
@@ -3717,7 +3720,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			or sector.row <= edge_ctx.min_row + ring_sectors - 1
 			or sector.row >= edge_ctx.max_row - ring_sectors + 1)
 	end
-	local ring = {}
+	local ring, inner = {}, {}
 	for _, sector in ipairs(edge_ctx.sectors) do
 		if type(sector.area_x0) ~= "number" or type(sector.area_y0) ~= "number"
 			or type(sector.area_x1) ~= "number" or type(sector.area_y1) ~= "number" then
@@ -3732,9 +3735,12 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			if sector.col >= edge_ctx.max_col - ring_sectors + 1 then
 				stats.right_sectors = stats.right_sectors + 1
 			end
+		else
+			inner[#inner + 1] = sector
 		end
 	end
 	stats.ring_sectors = #ring
+	stats.inner_sectors = #inner
 	stats.expected_ring_sectors = edge_ctx.cols * edge_ctx.rows
 		- math.max(0, edge_ctx.cols - 2 * ring_sectors)
 			* math.max(0, edge_ctx.rows - 2 * ring_sectors)
@@ -3788,10 +3794,12 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			local x = use_after and item.after_x or item.before_x
 			local y = use_after and item.after_y or item.before_y
 			local sector = use_after and item.target_sector or item.source_sector
-			values[#values + 1] = string.format("%d:%s@%d,%d[%d,%d]", item.id,
+			local placement = use_after
+				and (item.in_outer_ring == true and "outer" or "inner-vanilla") or "source"
+			values[#values + 1] = string.format("%d:%s@%d,%d[%d,%d]{%s}", item.id,
 				tostring(item.marker.class or "SubsurfaceAnomalyMarker"),
 				math.floor(x or -1), math.floor(y or -1),
-				sector and sector.col or -1, sector and sector.row or -1)
+				sector and sector.col or -1, sector and sector.row or -1, placement)
 		end
 		return table.concat(values, "|")
 	end
@@ -3818,6 +3826,17 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local MAX_PLANNING_ATTEMPTS = 64
 	local MIN_TOPUP_HEX_DISTANCE = 10
 	local MAX_TOPUPS_PER_SECTOR = 1
+	local anomaly_values = GeneratorFamilyRepulsionValues(map, "Anomaly")
+	if not RepulsionValuesAreValid(anomaly_values) then
+		stats.error = "vanilla anomaly repulsion profile unavailable for interior fallback"
+		return false, stats
+	end
+	local anomaly_profile = {
+		layer = "subs", resource = "Anomaly", preset = anomaly_values.preset,
+		repulse_same = anomaly_values.repulse_same,
+		repulse_layer = anomaly_values.repulse_layer,
+		repulse_all = anomaly_values.repulse_all,
+	}
 	local function random_between(first, past_last)
 		first, past_last = math.floor(first), math.floor(past_last)
 		local span = past_last - first
@@ -3831,49 +3850,55 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 	end
 
-	-- Terrain validity is independent of anomaly order. Sample it once, then retry the cheap custom
-	-- spacing selection with fresh randomized marker and sector orders. A single greedy pass can
-	-- strand the last few anomalies even when a complete arrangement exists; every attempt is
-	-- transactional and leaves native markers untouched.
-	local candidates_by_sector, candidate_count = {}, 0
+	-- Terrain validity is independent of anomaly order. Sample both the outer band and its interior
+	-- once, then retry the cheap selection rules with fresh randomized marker and sector orders.
+	-- Every attempt is transactional and leaves native markers untouched.
+	local candidates_by_sector = {}
 	local world_to_hex = Global("WorldToHex")
 	if type(world_to_hex) ~= "function" then
 		stats.error = "WorldToHex API unavailable for outer-ring anomaly spacing"
 		return false, stats
 	end
 	local sampled_hexes = {}
-	for _, sector in ipairs(ring) do
-		local candidates = {}
-		candidates_by_sector[sector] = candidates
-		local x0 = math.max(margin, sector.area_x0)
-		local y0 = math.max(margin, sector.area_y0)
-		local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
-		local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
-		for _ = 1, CANDIDATE_SAMPLES_PER_SECTOR do
-			local x, y = random_between(x0, x1), random_between(y0, y1)
-			if x and y then
-				local pt = point_fn(x, y)
-				if CanReceiveDepositTerrain(map, pt, validation_context)
-					and IsUnobstructedAt(map, pt, true, validation_context) then
-					local ok_hex, q, r = pcall(world_to_hex, pt)
-					local hex_key = ok_hex and type(q) == "number" and type(r) == "number"
-						and (tostring(q) .. ":" .. tostring(r)) or nil
-					if hex_key and not sampled_hexes[hex_key] then
-						sampled_hexes[hex_key] = true
-						candidates[#candidates + 1] = {
-							x = x, y = y, sector = sector.sector_ref,
-							sector_id = sector.id, col = sector.col, row = sector.row,
-							target_sector = sector, q = q, r = r, hex_key = hex_key,
-						}
-						candidate_count = candidate_count + 1
+	local function sample_sector_candidates(sectors)
+		local count = 0
+		for _, sector in ipairs(sectors) do
+			local candidates = {}
+			candidates_by_sector[sector] = candidates
+			local x0 = math.max(margin, sector.area_x0)
+			local y0 = math.max(margin, sector.area_y0)
+			local x1 = math.min(edge_ctx.ring_w - margin, sector.area_x1)
+			local y1 = math.min(edge_ctx.ring_h - margin, sector.area_y1)
+			for _ = 1, CANDIDATE_SAMPLES_PER_SECTOR do
+				local x, y = random_between(x0, x1), random_between(y0, y1)
+				if x and y then
+					local pt = point_fn(x, y)
+					if CanReceiveDepositTerrain(map, pt, validation_context)
+						and IsUnobstructedAt(map, pt, true, validation_context) then
+						local ok_hex, q, r = pcall(world_to_hex, pt)
+						local hex_key = ok_hex and type(q) == "number" and type(r) == "number"
+							and (tostring(q) .. ":" .. tostring(r)) or nil
+						if hex_key and not sampled_hexes[hex_key] then
+							sampled_hexes[hex_key] = true
+							candidates[#candidates + 1] = {
+								x = x, y = y, sector = sector.sector_ref,
+								sector_id = sector.id, col = sector.col, row = sector.row,
+								target_sector = sector, q = q, r = r, hex_key = hex_key,
+							}
+							count = count + 1
+						end
 					end
 				end
 			end
 		end
+		return count
 	end
-	stats.reachable_candidates = candidate_count
-	if candidate_count < #moving then
-		stats.error = "outer-ring reachable candidate pool smaller than anomaly population"
+	local outer_candidate_count = sample_sector_candidates(ring)
+	local inner_candidate_count = sample_sector_candidates(inner)
+	stats.reachable_candidates = outer_candidate_count
+	stats.inner_reachable_candidates = inner_candidate_count
+	if outer_candidate_count + inner_candidate_count < #moving then
+		stats.error = "combined reachable candidate pools smaller than anomaly population"
 		return false, stats
 	end
 
@@ -3893,7 +3918,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		local dq, dr = a.q - b.q, a.r - b.r
 		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
 	end
-	local function new_attempt_tracker()
+	local function new_outer_attempt_tracker()
 		local occupied, spaced_anomalies, sector_counts = {}, {}, {}
 		for key in pairs(fixed_anomaly_hexes) do occupied[key] = true end
 		for i = 1, #fixed_anomalies do spaced_anomalies[i] = fixed_anomalies[i] end
@@ -3918,57 +3943,106 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		return can_place, commit
 	end
 
-	local plans, best_planned = nil, 0
+	local function find_candidate(item, sectors, predicate)
+		local sector_order = {}
+		for i = 1, #sectors do sector_order[i] = sectors[i] end
+		shuffle(sector_order)
+		for _, sector in ipairs(sector_order) do
+			if not item.placed or SectorIsScanned(sector.sector_ref) then
+				local candidates = candidates_by_sector[sector]
+				if candidates and #candidates > 0 then
+					local first = RandInt(#candidates) + 1
+					for offset = 0, #candidates - 1 do
+						local candidate = candidates[((first + offset - 2) % #candidates) + 1]
+						if predicate(candidate) then return candidate end
+					end
+				end
+			end
+		end
+		return nil
+	end
+
+	local plans, best_outer_planned, best_total_planned = nil, -1, 0
 	for attempt = 1, MAX_PLANNING_ATTEMPTS do
-		local can_place, commit = new_attempt_tracker()
+		local can_place_outer, commit_outer = new_outer_attempt_tracker()
 		local marker_order = {}
 		for i = 1, #moving do marker_order[i] = moving[i] end
 		shuffle(marker_order)
-		local attempt_plans = {}
+		local outer_plans, remaining = {}, {}
 		for _, item in ipairs(marker_order) do
-			local sector_order = {}
-			for i = 1, #ring do sector_order[i] = ring[i] end
-			shuffle(sector_order)
-			local winner
-			for _, sector in ipairs(sector_order) do
-				if not item.placed or SectorIsScanned(sector.sector_ref) then
-					local candidates = candidates_by_sector[sector]
-					if #candidates > 0 then
-						local first = RandInt(#candidates) + 1
-						for offset = 0, #candidates - 1 do
-							local candidate = candidates[((first + offset - 2) % #candidates) + 1]
-							if can_place(candidate) then
-								winner = candidate
-								break
-							end
-						end
+			local winner = find_candidate(item, ring, can_place_outer)
+			if winner and commit_outer(winner) then
+				outer_plans[#outer_plans + 1] = {
+					item = item, candidate = winner, in_outer_ring = true,
+				}
+			else
+				remaining[#remaining + 1] = item
+			end
+		end
+
+		local attempt_plans, complete = {}, true
+		for _, plan in ipairs(outer_plans) do attempt_plans[#attempt_plans + 1] = plan end
+		if #remaining > 0 then
+			local repulsion = NewTopUpRepulsionTracker(
+				map, "inner-ring anomaly fallback attempt " .. tostring(attempt), ignored)
+			for _, plan in ipairs(outer_plans) do
+				if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
+					complete = false
+					break
+				end
+			end
+			local function clears_outer_spacing(candidate)
+				for _, plan in ipairs(outer_plans) do
+					if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then
+						return false
 					end
 				end
-				if winner then break end
+				return true
 			end
-			if not winner or not commit(winner) then break end
-			attempt_plans[#attempt_plans + 1] = { item = item, candidate = winner }
+			if complete then
+				for _, item in ipairs(remaining) do
+					local winner = find_candidate(item, inner, function(candidate)
+						return clears_outer_spacing(candidate)
+							and repulsion.CanPlace(candidate, anomaly_profile)
+					end)
+					if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
+						complete = false
+						break
+					end
+					attempt_plans[#attempt_plans + 1] = {
+						item = item, candidate = winner, in_outer_ring = false,
+					}
+				end
+			end
 		end
-		best_planned = math.max(best_planned, #attempt_plans)
-		if #attempt_plans == #moving then
-			plans = {}
-			for _, plan in ipairs(attempt_plans) do
-				local item, winner = plan.item, plan.candidate
-				item.after_x, item.after_y = winner.x, winner.y
-				item.target_sector = winner.target_sector
-				plans[#plans + 1] = item
-			end
+		best_total_planned = math.max(best_total_planned, #attempt_plans)
+		if complete and #attempt_plans == #moving and #outer_plans > best_outer_planned then
+			plans = attempt_plans
+			best_outer_planned = #outer_plans
 			stats.planning_attempts = attempt
-			break
+			if best_outer_planned == #moving then break end
 		end
 	end
 	if not plans then
-		stats.error = "no complete reachable 10-hex-spaced outer-ring plan after "
-			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best=" .. tostring(best_planned)
-			.. "/" .. tostring(#moving) .. ", candidates=" .. tostring(candidate_count) .. ")"
+		stats.error = "no complete outer-plus-vanilla-interior anomaly plan after "
+			.. tostring(MAX_PLANNING_ATTEMPTS) .. " attempts (best="
+			.. tostring(best_total_planned) .. "/" .. tostring(#moving)
+			.. ", outer_candidates=" .. tostring(outer_candidate_count)
+			.. ", inner_candidates=" .. tostring(inner_candidate_count) .. ")"
 		return false, stats
 	end
+	local finalized_plans = {}
+	for _, plan in ipairs(plans) do
+		local item, winner = plan.item, plan.candidate
+		item.after_x, item.after_y = winner.x, winner.y
+		item.target_sector = winner.target_sector
+		item.in_outer_ring = plan.in_outer_ring == true
+		finalized_plans[#finalized_plans + 1] = item
+	end
+	plans = finalized_plans
 	stats.planned = #plans
+	stats.outer_planned = best_outer_planned
+	stats.inner_fallback = #plans - best_outer_planned
 	stats.minimum_hex_distance = MIN_TOPUP_HEX_DISTANCE
 	stats.maximum_per_sector = MAX_TOPUPS_PER_SECTOR
 
@@ -3998,12 +4072,12 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		local sector = item.target_sector.sector_ref
 		if not sector or type(sector.RegisterDeposit) ~= "function" then
-			stats.error = "target outer-ring sector cannot register anomaly"
+			stats.error = "target anomaly sector cannot register marker"
 			return false, stats
 		end
 		local register_ok, register_error = pcall(sector.RegisterDeposit, sector, item.marker)
 		if not register_ok then
-			stats.error = "target outer-ring sector registration failed: " .. tostring(register_error)
+			stats.error = "target anomaly sector registration failed: " .. tostring(register_error)
 			return false, stats
 		end
 		if not item.placed then
@@ -4013,17 +4087,19 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			if SectorIsScanned(sector) then
 				local reveal = Global("RevealDeposits")
 				if type(reveal) ~= "function" then
-					stats.error = "RevealDeposits unavailable for scanned outer-ring sector"
+					stats.error = "RevealDeposits unavailable for scanned anomaly sector"
 					return false, stats
 				end
 				local reveal_ok, reveal_error = pcall(reveal, { item.marker })
 				if not reveal_ok then
-					stats.error = "outer-ring anomaly reveal failed: " .. tostring(reveal_error)
+					stats.error = "redistributed anomaly reveal failed: " .. tostring(reveal_error)
 					return false, stats
 				end
 			end
 		end
 		item.marker.SuperBigMapEdgeRedistributed = true
+		item.marker.SuperBigMapOuterRingRedistributed = item.in_outer_ring == true or nil
+		item.marker.SuperBigMapInnerRingFallback = item.in_outer_ring ~= true or nil
 		stats.moved = stats.moved + 1
 	end
 	if type(print_fn) == "function" then
@@ -4031,7 +4107,11 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " sectors=" .. tostring(#ring)
 			.. " bottom_sectors=" .. tostring(stats.bottom_sectors)
 			.. " right_sectors=" .. tostring(stats.right_sectors)
-			.. " reachable_candidates=" .. tostring(stats.reachable_candidates)
+			.. " inner_sectors=" .. tostring(stats.inner_sectors)
+			.. " outer_count=" .. tostring(stats.outer_planned)
+			.. " inner_fallback_count=" .. tostring(stats.inner_fallback)
+			.. " outer_reachable_candidates=" .. tostring(stats.reachable_candidates)
+			.. " inner_reachable_candidates=" .. tostring(stats.inner_reachable_candidates)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
@@ -4323,7 +4403,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		end
 		local outer_ring_topup = not underground
 			and marker.SuperBigMapAnomalyTopUp == true
-			and marker.SuperBigMapEdgeRedistributed == true
+			and marker.SuperBigMapOuterRingRedistributed == true
+		local inner_ring_fallback = not underground
+			and marker.SuperBigMapAnomalyTopUp == true
+			and marker.SuperBigMapInnerRingFallback == true
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		if topup and not outer_ring_topup and not profile then
 			stats.missing_topup_profiles = stats.missing_topup_profiles + 1
@@ -4331,6 +4414,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
 		entries[#entries + 1] = {
 			marker = marker, topup = topup, outer_ring_topup = outer_ring_topup,
+			inner_ring_fallback = inner_ring_fallback,
 			anomaly = IsAnomalyMarker(marker),
 			profile = profile, x = x, y = y,
 			q = ok_hex and type(q) == "number" and q or nil,
@@ -4351,7 +4435,8 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				stats.checked_pairs = stats.checked_pairs + 1
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
 				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
-				if a.outer_ring_topup or b.outer_ring_topup then
+				local has_outer_ring_topup = a.outer_ring_topup or b.outer_ring_topup
+				if has_outer_ring_topup then
 					if ((a.outer_ring_topup and b.anomaly) or (b.outer_ring_topup and a.anomaly))
 						and type(a.q) == "number" and type(a.r) == "number"
 						and type(b.q) == "number" and type(b.r) == "number" then
@@ -4362,7 +4447,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 								stats.outer_ring_spacing_violations + 1
 						end
 					end
-				else
+				end
+				-- An interior fallback is a vanilla placement even when its pair is an outer-ring
+				-- top-up. Outer/outer and outer/native pairs remain exempt from vanilla repulsion.
+				if not has_outer_ring_topup or a.inner_ring_fallback or b.inner_ring_fallback then
 					local required = PairRepulsionRadius(a.profile, b.profile)
 					local dx, dy = a.x - b.x, a.y - b.y
 					local distance_sq = dx * dx + dy * dy
@@ -4384,8 +4472,10 @@ end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
--- passable, flat, engine-buildable, unobstructed terrain. Anomaly top-ups must additionally be in
--- the final outer ring and on unique hexes; resources and effects must remain outside that ring.
+-- passable, flat, engine-buildable, unobstructed terrain. Custom anomaly top-ups must be in the
+-- final outer ring; explicitly flagged vanilla fallbacks must be inside it. Anomalies occupy unique
+-- hexes, resources/effects remain outside the reserved outer band, and only custom outer placements
+-- are limited to one anomaly per sector.
 function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
@@ -4393,8 +4483,10 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	if ring_sectors <= 0 then return true end
 	local stats = {
-		anomaly_topups = 0, resource_topups = 0, effect_topups = 0,
+		anomaly_topups = 0, anomaly_inner_fallback = 0,
+		resource_topups = 0, effect_topups = 0,
 		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
+		anomaly_fallback_inside_ring = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
 		anomaly_sector_overflow = 0,
 		anomaly_not_mountain_base = 0, resource_obstructed = 0,
@@ -4426,13 +4518,15 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 			end
 		end
 	end)
-	local function inspect(marker, family, must_be_in_ring)
+	local function inspect(marker, family)
 		local pos = marker and ObjectPos(marker)
 		local x, y
 		if pos and type(pos.xy) == "function" then x, y = pos:xy() end
 		local has_position = type(x) == "number" and type(y) == "number"
 		local pt = has_position and pos or nil
 		local in_ring = has_position and IsInFinalOuterSectorRing(map, x, y, ring_sectors) or false
+		local inner_fallback = family == "anomaly"
+			and marker.SuperBigMapInnerRingFallback == true
 		local reachable = has_position and PassableAt(map, pt) or false
 		local even_terrain = has_position and CanReceiveDepositTerrain(map, pt) or false
 		local flatness = has_position and FlatnessAt(map, pt) or 0
@@ -4442,7 +4536,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local hex_key = has_position and audit_hex_key(x, y) or nil
 		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
 		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
-		if family == "anomaly" and has_position then
+		if family == "anomaly" and has_position and not inner_fallback then
 			local sector = SectorAtPoint(map, x, y)
 			if sector then
 				anomaly_topups_by_sector[sector] = (anomaly_topups_by_sector[sector] or 0) + 1
@@ -4463,7 +4557,10 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		if not has_position then
 			stats.missing_position = stats.missing_position + 1
 			violation = "missing_position"
-		elseif must_be_in_ring and not in_ring then
+		elseif family == "anomaly" and inner_fallback and in_ring then
+			stats.anomaly_fallback_inside_ring = stats.anomaly_fallback_inside_ring + 1
+			violation = "anomaly_vanilla_fallback_inside_outer_ring"
+		elseif family == "anomaly" and not inner_fallback and not in_ring then
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
 		elseif not even_terrain then
@@ -4478,7 +4575,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		elseif family == "anomaly" and overlap then
 			stats.anomaly_overlap = stats.anomaly_overlap + 1
 			violation = "anomaly_topup_hex_overlap"
-		elseif not must_be_in_ring and in_ring then
+		elseif family ~= "anomaly" and in_ring then
 			stats.non_anomaly_inside_ring = stats.non_anomaly_inside_ring + 1
 			violation = family .. "_topup_inside_reserved_ring"
 		elseif family == "effect" and not buildable then
@@ -4490,7 +4587,10 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if marker and marker.SuperBigMapAnomalyTopUp then
 			stats.anomaly_topups = stats.anomaly_topups + 1
-			inspect(marker, "anomaly", true)
+			if marker.SuperBigMapInnerRingFallback == true then
+				stats.anomaly_inner_fallback = stats.anomaly_inner_fallback + 1
+			end
+			inspect(marker, "anomaly")
 		end
 	end)
 	for _, count in pairs(anomaly_topups_by_sector) do
@@ -4503,13 +4603,13 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if marker and marker.SuperBigMapResourceTopUp then
 			stats.resource_topups = stats.resource_topups + 1
-			inspect(marker, "resource", false)
+			inspect(marker, "resource")
 		end
 	end)
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
 		if marker and marker.SuperBigMapEffectTopUp then
 			stats.effect_topups = stats.effect_topups + 1
-			inspect(marker, "effect", false)
+			inspect(marker, "effect")
 		end
 	end)
 	stats.violations = violation_count
