@@ -243,6 +243,11 @@ config.TopUpMinimumTerrainNormalZ = 4080
 -- lower-loaded sectors only as a secondary diversity rule. Surface anomaly extras keep their
 -- separate outer-ring routing below.
 config.TopUpSectorBalancedPlacement = true
+-- The underground density fallback is allowed to relax vanilla's much larger, resource-specific
+-- repulsion radii so the expanded map can retain the exact scaled population. It must still keep
+-- every fallback marker a meaningful distance from every other enrichment. Candidate sampling
+-- continues until this hard axial-hex clearance is met; it never drops to adjacent unique hexes.
+config.UndergroundFallbackMinimumHexDistance = 6
 -- Every eligible surface anomaly TOP-UP extra is reserved for this many sector rows/columns along
 -- all four edges of the FINAL expanded map. Eligible kinds remain exactly the previously selected
 -- standard categories: completed/free-tech rewards, technology unlocks, and event sequences
@@ -667,6 +672,8 @@ C.TOPUP_MORALE_VISTAS = expansion_step_13
 C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
 	as_number(config.TopUpMinimumTerrainNormalZ, 4080)))
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
+C.UNDERGROUND_FALLBACK_MINIMUM_HEX_DISTANCE = math.max(2,
+	math.floor(as_number(config.UndergroundFallbackMinimumHexDistance, 6)))
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)

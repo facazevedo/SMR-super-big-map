@@ -7772,6 +7772,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							and repulsion_stats.underground_fallback_actual_min_spacing_world,
 						underground_fallback_actual_min_hex_distance = repulsion_stats
 							and repulsion_stats.underground_fallback_actual_min_hex_distance,
+						underground_fallback_required_min_hex_distance = repulsion_stats
+							and repulsion_stats.underground_fallback_required_min_hex_distance,
+						underground_fallback_spacing_violations = repulsion_stats
+							and repulsion_stats.underground_fallback_spacing_violations,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="
@@ -7791,7 +7795,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 								and repulsion_stats.first_repulsion_violation)
 							.. " fallback_strategy_failures="
 							.. tostring(repulsion_stats
-								and repulsion_stats.underground_fallback_strategy_failures))
+								and repulsion_stats.underground_fallback_strategy_failures)
+							.. " fallback_spacing_violations="
+							.. tostring(repulsion_stats
+								and repulsion_stats.underground_fallback_spacing_violations))
 					end
 					if type(deposits.DebugAuditFinalEnrichments) == "function" then
 						local audit_token = LoadingBegin("diagnostic underground enrichment audit", map)
