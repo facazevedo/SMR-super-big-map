@@ -3350,6 +3350,26 @@ local function DeferredWonderScaleRatios(map)
 	}
 end
 
+local function ExactStretchedWonderXY(wonder, map, ratios)
+	local source_x = tonumber(wonder and wonder.SuperBigMapWonderSourceX)
+	local source_y = tonumber(wonder and wonder.SuperBigMapWonderSourceY)
+	if type(source_x) ~= "number" or type(source_y) ~= "number"
+		or type(ratios) ~= "table" then
+		return nil
+	end
+	local origin_x = tonumber(map and map.SuperBigMapSourceX) or 0
+	local origin_y = tonumber(map and map.SuperBigMapSourceY) or 0
+	local function transform(value, origin, mul, div)
+		mul, div = tonumber(mul), tonumber(div)
+		if type(mul) ~= "number" or type(div) ~= "number" or div <= 0 then return nil end
+		local scaled = (value - origin) * (mul + 0.0) / div
+		local rounded = scaled >= 0 and math.floor(scaled + 0.5) or math.ceil(scaled - 0.5)
+		return origin + rounded
+	end
+	return transform(source_x, origin_x, ratios.x_mul, ratios.x_div),
+		transform(source_y, origin_y, ratios.y_mul, ratios.y_div)
+end
+
 function WonderVerticalDiagnostics.NearbyWonderGeometrySummary(map, wonder, object_bbox)
 	local result = { count = 0, nearest = "" }
 	if type(map) ~= "table" or type(map.MapGet) ~= "function" or not object_bbox then
@@ -3696,6 +3716,8 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 			marker.SuperBigMapNativeWonderEntityBBoxSizeZ
 		wonder.SuperBigMapWonderExpectedX = expected_x or marker_x
 		wonder.SuperBigMapWonderExpectedY = expected_y or marker_y
+		wonder.SuperBigMapWonderXYTransformMode = marker.SuperBigMapXYTransformMode
+			or "exact_world_affine"
 		if type(wonder.SetScale) ~= "function" then error("SetScale unavailable") end
 		wonder:SetScale(expected_scale)
 		if had_grids then
@@ -3745,6 +3767,7 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 			wonder_angle = wonder_angle,
 			marker_mirrored = marker_mirrored,
 			wonder_mirrored = wonder_mirrored,
+			xy_transform_mode = marker.SuperBigMapXYTransformMode,
 		}
 	end)
 	if ok then return true, result end
@@ -3772,6 +3795,7 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 		wonder.SuperBigMapWonderSourceEntityBBoxSizeZ = nil
 		wonder.SuperBigMapWonderExpectedX = nil
 		wonder.SuperBigMapWonderExpectedY = nil
+		wonder.SuperBigMapWonderXYTransformMode = nil
 		if type(wonder.SetScale) == "function" then wonder:SetScale(old_scale) end
 		if had_grids and type(wonder.ApplyToGrids) == "function" then wonder:ApplyToGrids() end
 	end)
@@ -3895,6 +3919,19 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
 		local target_z = tonumber(wonder.SuperBigMapWonderFlattenZ)
 		if type(target_z) == "number" then
+			-- Recompute from the persisted vanilla source anchor instead of trusting an older
+			-- expected value: builds through v666 stored the nearest-hex coordinate here. This makes
+			-- the correction migrate existing expanded saves as well as newly generated maps.
+			local target_x, target_y = ExactStretchedWonderXY(wonder, map, ratios)
+			target_x = target_x or tonumber(wonder.SuperBigMapWonderExpectedX)
+			target_y = target_y or tonumber(wonder.SuperBigMapWonderExpectedY)
+			if type(target_x) ~= "number" or type(target_y) ~= "number" then
+				return false, "expanded wonder exact XY anchor unavailable for "
+					.. tostring(wonder.class)
+			end
+			wonder.SuperBigMapWonderExpectedX = target_x
+			wonder.SuperBigMapWonderExpectedY = target_y
+			wonder.SuperBigMapWonderXYTransformMode = "exact_world_affine"
 			local entity = type(wonder.GetEntity) == "function" and wonder:GetEntity() or nil
 			local shape = type(entity) == "string" and get_enclosed(entity) or nil
 			if type(shape) == "table" and #shape == 0 then
@@ -3905,13 +3942,12 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 					.. tostring(wonder.class or entity)
 			end
 			shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
-			local before = WonderVerticalDiagnostics.ShapeVerticalStats(
-				map, shape, wonder, target_z)
 			candidates[#candidates + 1] = {
 				wonder = wonder,
 				shape = shape,
+				target_x = target_x,
+				target_y = target_y,
 				target_z = target_z,
-				before = before,
 			}
 		end
 	end
@@ -3921,12 +3957,14 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 
 	local correction_reason = "SuperBigMap_CurrentUndergroundWonderReseat"
 	local suspended = false
-	local corrected_terrain, corrected_z = 0, 0
+	local corrected_terrain, corrected_xy, corrected_z = 0, 0, 0
 	local ok, err = pcall(function()
 		map:SuspendPassEdits(correction_reason)
 		suspended = true
 		for _, candidate in ipairs(candidates) do
 			local wonder = candidate.wonder
+			local target_x = candidate.target_x
+			local target_y = candidate.target_y
 			local target_z = candidate.target_z
 			local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
 			local x, y = PointXY(pos)
@@ -3934,12 +3972,28 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 				or type(wonder.SetPos) ~= "function" then
 				error("wonder position is unavailable for " .. tostring(wonder.class))
 			end
-			if WonderVerticalDiagnostics.SafePointZ(pos) ~= target_z then
-				wonder:SetPos(point_fn(x, y, target_z))
+			local xy_wrong = x ~= target_x or y ~= target_y
+			local z_wrong = WonderVerticalDiagnostics.SafePointZ(pos) ~= target_z
+			if xy_wrong or z_wrong then
+				local had_grids = wonder.grids_applied == true
+				if had_grids then
+					if type(wonder.RemoveFromGrids) ~= "function"
+						or type(wonder.ApplyToGrids) ~= "function" then
+						error("wonder grid migration helpers are unavailable for "
+							.. tostring(wonder.class))
+					end
+					wonder:RemoveFromGrids()
+				end
+				wonder:SetPos(point_fn(target_x, target_y, target_z))
+				if had_grids then wonder:ApplyToGrids() end
+				if xy_wrong then corrected_xy = corrected_xy + 1 end
+			end
+			if z_wrong then
 				corrected_z = corrected_z + 1
 			end
-			local before = candidate.before
-			if before.samples == 0 or before.terrain_at_target ~= before.samples then
+			local current = WonderVerticalDiagnostics.ShapeVerticalStats(
+				map, candidate.shape, wonder, target_z)
+			if current.samples == 0 or current.terrain_at_target ~= current.samples then
 				flatten(candidate.shape, wonder, map.buildable.z_grid, map.object_hex_grid,
 					Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, target_z)
 				corrected_terrain = corrected_terrain + 1
@@ -3958,6 +4012,7 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			reason = tostring(reason),
 			wonders = #candidates,
 			corrected_terrain = corrected_terrain,
+			corrected_xy = corrected_xy,
 			corrected_z = corrected_z,
 			error = failure,
 		}, map)
@@ -3970,13 +4025,19 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 		local after = WonderVerticalDiagnostics.ShapeVerticalStats(
 			map, candidate.shape, wonder, candidate.target_z)
 		local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+		local object_x, object_y = PointXY(pos)
 		local object_z = WonderVerticalDiagnostics.SafePointZ(pos)
 		local terrain_ok = after.samples > 0 and after.terrain_at_target == after.samples
+		local xy_ok = object_x == candidate.target_x and object_y == candidate.target_y
 		local object_ok = object_z == candidate.target_z
 		LoadingStep("underground buried wonder lifecycle reseat instance", {
 			reason = tostring(reason),
 			class = tostring(wonder.class),
+			target_x = candidate.target_x,
+			target_y = candidate.target_y,
 			target_z = candidate.target_z,
+			object_x = object_x,
+			object_y = object_y,
 			object_z = object_z,
 			footprint_samples = after.samples,
 			terrain_at_target = after.terrain_at_target,
@@ -3985,11 +4046,15 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			terrain_min_z = after.terrain_min_z,
 			terrain_max_z = after.terrain_max_z,
 			terrain_ok = terrain_ok,
+			xy_ok = xy_ok,
 			object_ok = object_ok,
 		}, map)
-		if not terrain_ok or not object_ok then
+		if not terrain_ok or not xy_ok or not object_ok then
 			local failure = "post-switch wonder terrain validation failed for "
-				.. tostring(wonder.class) .. ": object_z=" .. tostring(object_z)
+				.. tostring(wonder.class) .. ": object_xy=" .. tostring(object_x)
+				.. "," .. tostring(object_y) .. " target_xy="
+				.. tostring(candidate.target_x) .. "," .. tostring(candidate.target_y)
+				.. " object_z=" .. tostring(object_z)
 				.. " target_z=" .. tostring(candidate.target_z)
 				.. " terrain=" .. tostring(after.terrain_at_target)
 				.. "/" .. tostring(after.samples)
@@ -4004,12 +4069,14 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 		reason = tostring(reason),
 		wonders = #candidates,
 		corrected_terrain = corrected_terrain,
+		corrected_xy = corrected_xy,
 		corrected_z = corrected_z,
 		verified = verified,
 	}, map)
 	return true, {
 		wonders = #candidates,
 		corrected_terrain = corrected_terrain,
+		corrected_xy = corrected_xy,
 		corrected_z = corrected_z,
 		verified = verified,
 	}
@@ -4281,6 +4348,7 @@ local function MaterializeDeferredUndergroundWonders(map)
 				wonder_angle = stretch_stats and stretch_stats.wonder_angle,
 				marker_mirrored = stretch_stats and stretch_stats.marker_mirrored,
 				wonder_mirrored = stretch_stats and stretch_stats.wonder_mirrored,
+				xy_transform_mode = stretch_stats and stretch_stats.xy_transform_mode,
 				source_shape_hexes = stretch_stats and stretch_stats.source_shape_hexes,
 				expanded_shape_hexes = stretch_stats and stretch_stats.shape_hexes,
 				shape_area_ratio = stretch_stats and stretch_stats.shape_area_ratio,

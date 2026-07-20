@@ -2758,9 +2758,13 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 					and capture_owner.SuperBigMapNativeSourceZ or nil
 				if oz == nil then pcall(function() oz = pos:z() end) end
 				-- Buried wonders are materialized only after this pass. Preserve their authoritative
-				-- native center just like staged enrichments so the proportional result is snapped to
-				-- the nearest destination hex, is idempotent, and can be validated after replacement.
-				if IsKindOfSafe(obj, "BuriedWonderMarker") then
+				-- native center so their large authored meshes can use the exact world-space affine
+				-- transform. Unlike deposits, a buried-wonder anchor must NOT be moved to the nearest
+				-- destination hex: a source hex center multiplied by 4/3 normally falls between hex
+				-- centers, and that generic snap visibly separates Jumbo Cave's contact edge from the
+				-- stretched wall (and shifts Cave of Wonders relative to its opening).
+				local is_buried_wonder_marker = IsKindOfSafe(obj, "BuriedWonderMarker")
+				if is_buried_wonder_marker then
 					capture_owner.SuperBigMapNativeSourceX = source_x
 					capture_owner.SuperBigMapNativeSourceY = source_y
 					if type(oz) == "number" then capture_owner.SuperBigMapNativeSourceZ = oz end
@@ -2772,7 +2776,8 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 				local nx, ny = raw_nx, raw_ny
 				local captured_native = type(capture_owner.SuperBigMapNativeSourceX) == "number"
 					and type(capture_owner.SuperBigMapNativeSourceY) == "number"
-				if captured_native and type(world_to_hex) == "function"
+				if captured_native and not is_buried_wonder_marker
+					and type(world_to_hex) == "function"
 					and type(hex_to_world) == "function" then
 					local ok_h, q, r = pcall(world_to_hex, point_fn(raw_nx, raw_ny))
 					if ok_h and type(q) == "number" and type(r) == "number" then
@@ -2781,10 +2786,14 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 							nx, ny = aligned_x, aligned_y
 						end
 					end
+				end
+				if captured_native then
 					capture_owner.SuperBigMapRawStretchedX = raw_nx
 					capture_owner.SuperBigMapRawStretchedY = raw_ny
 					capture_owner.SuperBigMapExpectedStretchedX = nx
 					capture_owner.SuperBigMapExpectedStretchedY = ny
+					capture_owner.SuperBigMapXYTransformMode = is_buried_wonder_marker
+						and "exact_world_affine" or "nearest_destination_hex"
 				end
 				local np = type(oz) == "number" and point_fn(nx, ny, oz) or point_fn(nx, ny)
 				if cfg_bool("EXPANSION_STEP_09_RESNAP_ENRICHMENT_Z", true)
