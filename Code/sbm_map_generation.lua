@@ -6824,15 +6824,28 @@ local function PatchRandomMapGenerator()
 				if env == "Underground" then
 					local main_map = Global("MainMap")
 					local rebuild = Global("RebuildBuildableGrid")
-					if main_map and main_map ~= map and type(rebuild) == "function" and main_map.buildable then
-						if main_map.SuperBigMapSurfaceBuildablePairingReady ~= true then
-							local ok_rb, err_rb = pcall(rebuild, main_map)
-							if not ok_rb then
-								error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
-							end
-							main_map.SuperBigMapSurfaceBuildableCurrent = true
-							main_map.SuperBigMapSurfaceBuildablePairingReady = true
+					if not main_map or main_map == map then
+						error("surface passage pairing map is unavailable")
+					end
+					if type(rebuild) ~= "function" then
+						error("surface passage pairing-grid rebuild API is unavailable")
+					end
+					local buildable = main_map.buildable
+					local grid_missing = type(buildable) ~= "table" or not buildable.z_grid
+					if main_map.SuperBigMapSurfaceBuildablePairingReady ~= true or grid_missing then
+						local ok_rb, err_rb = pcall(rebuild, main_map)
+						if not ok_rb then
+							error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
 						end
+						buildable = main_map.buildable
+						if type(buildable) ~= "table" or not buildable.z_grid then
+							error("surface passage pairing-grid rebuild produced no buildable grid")
+						end
+						main_map.SuperBigMapSurfaceBuildableCurrent = true
+						main_map.SuperBigMapSurfaceBuildablePairingReady = true
+						LoadingStep("surface passage pairing grid ready", {
+							created = grid_missing,
+						}, main_map)
 					end
 				end
 			end
