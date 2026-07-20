@@ -8051,6 +8051,10 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					candidates_reused = audit_stats and audit_stats.candidates_reused,
 					relocation_attempts = audit_stats and audit_stats.relocation_attempts,
 					repulsion_rejected = audit_stats and audit_stats.repulsion_rejected,
+					fallback_clearance_relaxed_moves = audit_stats
+						and audit_stats.fallback_clearance_relaxed_moves,
+					fallback_clearance_minimum_move = audit_stats
+						and audit_stats.fallback_clearance_minimum_move,
 					missing_repulsion_profile = audit_stats
 						and audit_stats.missing_repulsion_profile,
 					moved_by_class = audit_stats and audit_stats.moved_by_class,
@@ -8142,6 +8146,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							and repulsion_stats.underground_density_fallback_topups,
 						underground_well_spaced_fallback_topups = repulsion_stats
 							and repulsion_stats.underground_well_spaced_fallback_topups,
+						underground_fallback_relaxed_topups = repulsion_stats
+							and repulsion_stats.underground_fallback_relaxed_topups,
 						underground_fallback_sectors = repulsion_stats
 							and repulsion_stats.underground_fallback_sectors,
 						underground_fallback_max_per_sector = repulsion_stats
@@ -8156,6 +8162,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							and repulsion_stats.underground_fallback_required_min_hex_distance,
 						underground_fallback_spacing_violations = repulsion_stats
 							and repulsion_stats.underground_fallback_spacing_violations,
+						first_underground_fallback_spacing_violation = repulsion_stats
+							and repulsion_stats.first_underground_fallback_spacing_violation,
 					}, repulsion_ok == true)
 					if repulsion_ok ~= true then
 						error("underground top-up vanilla repulsion audit failed: density_failures="

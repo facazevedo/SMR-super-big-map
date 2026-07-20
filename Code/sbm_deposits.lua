@@ -896,42 +896,49 @@ local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, 
 	local selected_count, selected_sector_set, selected_sectors = 0, {}, 0
 	local additions_by_sector, max_additions_to_sector = {}, 0
 	local minimum_selected_spacing_sq, minimum_selected_hex_distance
-	local clearance_rejections = 0
+	local clearance_rejections, clearance_relaxations, relaxed_selected = 0, 0, 0
 	local SPACING_BAND_PERCENT = 90
 
 	local function take(terrain_type, context)
 		local terrain_key = terrain_type ~= nil and tostring(terrain_type) or nil
-		local eligible, best_spacing_sq = {}, nil
+		local eligible, below_minimum, best_spacing_sq = {}, {}, nil
 		for _, candidate in ipairs(candidates) do
 			if not candidate.used
 				and (terrain_key == nil or tostring(candidate.terrain_type) == terrain_key)
 				and type(candidate._sbm_fallback_nearest_hex_distance) == "number"
-				and candidate._sbm_fallback_nearest_hex_distance >= minimum_hex_distance
 				and (type(candidate_filter) ~= "function"
 					or candidate_filter(candidate, context) == true) then
 				local _, key = CandidateSector(map, candidate)
 				if key then
 					local spacing_sq = candidate._sbm_fallback_nearest_distance_sq
 					if spacing_sq == nil then spacing_sq = math.huge end
-					eligible[#eligible + 1] = { candidate = candidate, key = key, spacing_sq = spacing_sq }
-					if best_spacing_sq == nil or spacing_sq > best_spacing_sq then
-						best_spacing_sq = spacing_sq
+					local entry = { candidate = candidate, key = key, spacing_sq = spacing_sq }
+					if candidate._sbm_fallback_nearest_hex_distance >= minimum_hex_distance then
+						eligible[#eligible + 1] = entry
+					else
+						below_minimum[#below_minimum + 1] = entry
 					end
 				end
 			end
 		end
-		if #eligible == 0 then
-			for _, candidate in ipairs(candidates) do
-				if not candidate.used
-					and (terrain_key == nil or tostring(candidate.terrain_type) == terrain_key)
-					and type(candidate._sbm_fallback_nearest_hex_distance) == "number"
-					and candidate._sbm_fallback_nearest_hex_distance < minimum_hex_distance then
-					clearance_rejections = clearance_rejections + 1
-				end
-			end
+		-- Six hexes is the preferred clearance, not a reason to leave the enlarged map below
+		-- its vanilla density. If every valid candidate is closer, retain the maximin policy and
+		-- choose the farthest available candidate below the preference.
+		local relaxed = false
+		if #eligible == 0 and #below_minimum > 0 then
+			eligible = below_minimum
+			relaxed = true
+			clearance_relaxations = clearance_relaxations + 1
+			clearance_rejections = clearance_rejections + #below_minimum
 		end
 		if #eligible == 0 then return nil end
+		for _, entry in ipairs(eligible) do
+			if best_spacing_sq == nil or entry.spacing_sq > best_spacing_sq then
+				best_spacing_sq = entry.spacing_sq
+			end
+		end
 		local threshold_sq = best_spacing_sq == math.huge and math.huge
+			or relaxed and best_spacing_sq
 			or best_spacing_sq * SPACING_BAND_PERCENT * SPACING_BAND_PERCENT / 10000
 		local best_load, sector_candidates, sector_keys = nil, {}, {}
 		for _, entry in ipairs(eligible) do
@@ -961,6 +968,7 @@ local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, 
 			candidate._sbm_fallback_nearest_distance_sq
 		candidate._sbm_selected_fallback_hex_distance =
 			candidate._sbm_fallback_nearest_hex_distance
+		candidate._sbm_fallback_spacing_relaxed = relaxed or nil
 		remaining = math.max(0, remaining - 1)
 		return candidate
 	end
@@ -1020,6 +1028,8 @@ local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, 
 			minimum_required_hex_distance = minimum_hex_distance,
 			minimum_selected_hex_distance = minimum_selected_hex_distance or 0,
 			clearance_rejections = clearance_rejections,
+			clearance_relaxations = clearance_relaxations,
+			relaxed_selected = relaxed_selected,
 		}
 	end
 
@@ -3296,7 +3306,9 @@ local function SetEnrichmentTopUpStatus(map, kind, complete, remaining_shortfall
 			.. " required_spacing_hex="
 			.. tostring(entry.underground_fallback_required_spacing_hex or 0)
 			.. " clearance_rejections="
-			.. tostring(entry.underground_fallback_clearance_rejections or 0))
+			.. tostring(entry.underground_fallback_clearance_rejections or 0)
+			.. " relaxed_selected="
+			.. tostring(entry.underground_fallback_relaxed_selected or 0))
 	end
 end
 
@@ -3530,6 +3542,8 @@ function DepositRules.TopUpDeposits(map)
 				minimum_required_hex_distance = next_stats.minimum_required_hex_distance
 					or UndergroundFallbackMinimumHexDistance(),
 				clearance_rejections = next_stats.clearance_rejections or 0,
+				clearance_relaxations = next_stats.clearance_relaxations or 0,
+				relaxed_selected = next_stats.relaxed_selected or 0,
 			}
 			return
 		end
@@ -3557,6 +3571,12 @@ function DepositRules.TopUpDeposits(map)
 		fallback_selector_stats.clearance_rejections =
 			(fallback_selector_stats.clearance_rejections or 0)
 			+ (next_stats.clearance_rejections or 0)
+		fallback_selector_stats.clearance_relaxations =
+			(fallback_selector_stats.clearance_relaxations or 0)
+			+ (next_stats.clearance_relaxations or 0)
+		fallback_selector_stats.relaxed_selected =
+			(fallback_selector_stats.relaxed_selected or 0)
+			+ (next_stats.relaxed_selected or 0)
 	end
 	local candidate_pool_target, candidate_pool_size, candidate_samples = 0, 0, 0
 	local candidate_deferred_count, candidate_deferred_promoted = 0, 0
@@ -3883,6 +3903,8 @@ function DepositRules.TopUpDeposits(map)
 							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 						clone.SuperBigMapUndergroundFallbackSpacingHex = density_fallback
 							and c._sbm_selected_fallback_hex_distance or nil
+						clone.SuperBigMapUndergroundFallbackSpacingRelaxed = density_fallback
+							and c._sbm_fallback_spacing_relaxed or nil
 						if density_fallback then
 							density_fallback_added = density_fallback_added + 1
 							local _, fallback_sector_key = CandidateSector(map, c)
@@ -4200,6 +4222,10 @@ function DepositRules.TopUpDeposits(map)
 			and fallback_selector_stats.minimum_required_hex_distance or 0,
 		underground_fallback_clearance_rejections = fallback_selector_stats
 			and fallback_selector_stats.clearance_rejections or 0,
+		underground_fallback_clearance_relaxations = fallback_selector_stats
+			and fallback_selector_stats.clearance_relaxations or 0,
+		underground_fallback_relaxed_selected = fallback_selector_stats
+			and fallback_selector_stats.relaxed_selected or 0,
 		candidate_pool_target = candidate_pool_target,
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples,
@@ -5081,6 +5107,8 @@ function DepositRules.TopUpAnomalies(map)
 						and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 					clone.SuperBigMapUndergroundFallbackSpacingHex = density_fallback
 						and c._sbm_selected_fallback_hex_distance or nil
+					clone.SuperBigMapUndergroundFallbackSpacingRelaxed = density_fallback
+						and c._sbm_fallback_spacing_relaxed or nil
 					if density_fallback then
 						density_fallback_added = density_fallback_added + 1
 						fallback_selector_stats = selected_whole_map_selector
@@ -5179,6 +5207,10 @@ function DepositRules.TopUpAnomalies(map)
 			and fallback_selector_stats.minimum_required_hex_distance or 0,
 		underground_fallback_clearance_rejections = fallback_selector_stats
 			and fallback_selector_stats.clearance_rejections or 0,
+		underground_fallback_clearance_relaxations = fallback_selector_stats
+			and fallback_selector_stats.clearance_relaxations or 0,
+		underground_fallback_relaxed_selected = fallback_selector_stats
+			and fallback_selector_stats.relaxed_selected or 0,
 		surface_outer_ring = tostring(not IsUndergroundMap(map)),
 		outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
@@ -6224,6 +6256,8 @@ function DepositRules.TopUpEffectDeposits(map)
 							and RoundedWorldDistance(c._sbm_selected_fallback_spacing_sq) or nil
 						clone.SuperBigMapUndergroundFallbackSpacingHex = density_fallback
 							and c._sbm_selected_fallback_hex_distance or nil
+						clone.SuperBigMapUndergroundFallbackSpacingRelaxed = density_fallback
+							and c._sbm_fallback_spacing_relaxed or nil
 						if density_fallback then
 							density_fallback_added = density_fallback_added + 1
 							fallback_selector_stats = active_selector
@@ -6290,6 +6324,10 @@ function DepositRules.TopUpEffectDeposits(map)
 			and fallback_selector_stats.minimum_required_hex_distance or 0,
 		underground_fallback_clearance_rejections = fallback_selector_stats
 			and fallback_selector_stats.clearance_rejections or 0,
+		underground_fallback_clearance_relaxations = fallback_selector_stats
+			and fallback_selector_stats.clearance_relaxations or 0,
+		underground_fallback_relaxed_selected = fallback_selector_stats
+			and fallback_selector_stats.relaxed_selected or 0,
 		candidate_pool_size = candidate_pool_size,
 		candidate_samples = candidate_samples_total,
 		sequential_placement = sequential_underground,
@@ -6331,7 +6369,9 @@ end
 -- outer-ring anomaly top-ups deliberately use their own rule: no vanilla repulsion, unique hexes,
 -- and at least 10 hexes between an outer-ring top-up and every other anomaly. Underground residual
 -- completion markers are likewise exempt from family radius only after the strict selector is
--- exhausted; duplicate-hex rejection remains universal. This runs after position corrections.
+-- exhausted; duplicate-hex rejection remains universal. Their six-hex separation is a maximin
+-- preference: if impossible, density wins and the farthest valid closer position is retained.
+-- This runs after position corrections.
 function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	map = map or Global("CurrentMap")
 	local point_fn = Global("point")
@@ -6356,6 +6396,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		outer_ring_spacing_violations = 0,
 		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
 		underground_well_spaced_fallback_topups = 0,
+		underground_fallback_relaxed_topups = 0,
 		underground_fallback_strategy_failures = 0,
 		underground_fallback_sectors = 0, underground_fallback_max_per_sector = 0,
 		underground_fallback_min_selected_spacing_world = 0,
@@ -6364,6 +6405,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		underground_fallback_required_min_hex_distance =
 			UndergroundFallbackMinimumHexDistance(),
 		underground_fallback_spacing_violations = 0,
+		first_underground_fallback_spacing_violation = "",
 		density_failures = 0, density_status = "", resource_shortfall = 0,
 		anomaly_shortfall = 0, effect_shortfall = 0,
 		resource_ignored_rubble_walls = 0, wall_aware_shared_candidates = 0,
@@ -6435,6 +6477,10 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			if density_fallback then
 				stats.underground_density_fallback_topups =
 					stats.underground_density_fallback_topups + 1
+				if marker.SuperBigMapUndergroundFallbackSpacingRelaxed == true then
+					stats.underground_fallback_relaxed_topups =
+						stats.underground_fallback_relaxed_topups + 1
+				end
 				if well_spaced_fallback then
 					stats.underground_well_spaced_fallback_topups =
 						stats.underground_well_spaced_fallback_topups + 1
@@ -6488,6 +6534,17 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 						if hex_distance < stats.underground_fallback_required_min_hex_distance then
 							stats.underground_fallback_spacing_violations =
 								stats.underground_fallback_spacing_violations + 1
+							if stats.first_underground_fallback_spacing_violation == "" then
+								stats.first_underground_fallback_spacing_violation = table.concat({
+									tostring(a.marker and a.marker.class or "?"),
+									tostring(a.hex),
+									tostring(b.marker and b.marker.class or "?"),
+									tostring(b.hex),
+									"preferred=" .. tostring(
+										stats.underground_fallback_required_min_hex_distance),
+									"actual=" .. tostring(hex_distance),
+								}, "|")
+							end
 						end
 					end
 				end
@@ -6540,8 +6597,9 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		and stats.missing_positions == 0 and stats.missing_topup_profiles == 0
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
 		and stats.outer_ring_spacing_violations == 0
-		and stats.underground_fallback_spacing_violations == 0
 		and stats.underground_fallback_strategy_failures == 0
+	-- Underground fallback spacing is a maximin preference, not a hard density gate. A closer
+	-- farthest-valid candidate is retained and reported when terrain cannot satisfy six hexes.
 	return ok, stats
 end
 
@@ -7398,22 +7456,86 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	local pool_built = #candidates
 
-	local function take_near(pos)
+	-- Reachability relocation runs after the density fallbacks were selected. Preserve their
+	-- preferred six-hex clearance while moving another enrichment. When the terrain/repulsion
+	-- constraints make six hexes impossible, rank the entire remaining pool by maximin clearance
+	-- and use the farthest valid candidate instead of dropping the marker.
+	local fallback_clearance_entries = {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not IsEnrichmentMarker(marker) then return end
+		local pos = ObjectPos(marker)
+		if not pos then return end
+		local ok_hex, q, r = pcall(world_to_hex, pos)
+		if ok_hex and type(q) == "number" and type(r) == "number" then
+			fallback_clearance_entries[#fallback_clearance_entries + 1] = {
+				marker = marker, q = q, r = r,
+				fallback = marker.SuperBigMapUndergroundDensityFallback == true,
+			}
+		end
+		if candidate._sbm_fallback_spacing_relaxed == true then
+			relaxed_selected = relaxed_selected + 1
+		end
+	end)
+	local function fallback_clearance_hex(candidate, moving_marker)
+		if type(candidate) ~= "table" then return nil end
+		local q, r = candidate.q, candidate.r
+		if (type(q) ~= "number" or type(r) ~= "number")
+			and type(candidate.x) == "number" and type(candidate.y) == "number" then
+			local ok_hex, hq, hr = pcall(world_to_hex, point(candidate.x, candidate.y))
+			if ok_hex then q, r = hq, hr end
+		end
+		if type(q) ~= "number" or type(r) ~= "number" then return nil end
+		local moving_is_fallback = moving_marker
+			and moving_marker.SuperBigMapUndergroundDensityFallback == true
+		local nearest
+		for _, entry in ipairs(fallback_clearance_entries) do
+			if entry.marker ~= moving_marker and (moving_is_fallback or entry.fallback) then
+				local distance = AxialHexDistance(q, r, entry.q, entry.r)
+				if type(distance) == "number"
+					and (nearest == nil or distance < nearest) then
+					nearest = distance
+				end
+			end
+		end
+		return nearest or math.huge, q, r
+	end
+	local function update_fallback_clearance_entry(marker, q, r)
+		if type(q) ~= "number" or type(r) ~= "number" then return false end
+		for _, entry in ipairs(fallback_clearance_entries) do
+			if entry.marker == marker then
+				entry.q, entry.r = q, r
+				return true
+			end
+		end
+		fallback_clearance_entries[#fallback_clearance_entries + 1] = {
+			marker = marker, q = q, r = r,
+			fallback = marker and marker.SuperBigMapUndergroundDensityFallback == true,
+		}
+		return true
+	end
+
+	local function take_near(pos, moving_marker)
 		if #candidates == 0 then return nil end
 		local ox, oy
 		if pos and type(pos.xy) == "function" then ox, oy = pos:xy() end
-		if type(ox) ~= "number" then
-			return table.remove(candidates, RandInt(#candidates) + 1)
-		end
-		local best_i, best_d
-		for _ = 1, math.min(16, #candidates) do
-			local i = RandInt(#candidates) + 1
+		local best_i, best_clearance, best_d
+		for i = 1, #candidates do
 			local c = candidates[i]
-			local dx, dy = c.x - ox, c.y - oy
-			local d = dx * dx + dy * dy
-			if not best_d or d < best_d then best_i, best_d = i, d end
+			local clearance = fallback_clearance_hex(c, moving_marker)
+			clearance = type(clearance) == "number" and clearance or -1
+			local d = 0
+			if type(ox) == "number" then
+				local dx, dy = c.x - ox, c.y - oy
+				d = dx * dx + dy * dy
+			end
+			if best_clearance == nil or clearance > best_clearance
+				or (clearance == best_clearance and (best_d == nil or d < best_d)) then
+				best_i, best_clearance, best_d = i, clearance, d
+			end
 		end
-		return table.remove(candidates, best_i)
+		local selected = table.remove(candidates, best_i)
+		if selected then selected._sbm_relocation_fallback_clearance_hex = best_clearance end
+		return selected
 	end
 
 	local moved, unresolved = 0, 0
@@ -7452,6 +7574,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local relocation_attempts, relocation_retries = 0, 0
 	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
 	local repulsion_rejected, missing_repulsion_profile = 0, 0
+	local fallback_clearance_relaxed_moves = 0
+	local fallback_clearance_minimum_move
 	for invalid_i, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
@@ -7484,7 +7608,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			local later_markers = #invalid - invalid_i
 			local max_attempts = math.min(64, math.max(0, #candidates - later_markers))
 			local attempts, success = 0, false
-			local successful_pos, successful_candidate
+			local successful_pos, successful_candidate, successful_fallback_clearance
 			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
 			local last_candidate = "none"
 			local last_repulsion_detail = ""
@@ -7492,7 +7616,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			local item_setpos_failed, item_postmove_rejected = 0, 0
 			local candidates_before = #candidates
 			while attempts < max_attempts and not success do
-				local c = take_near(old_pos)
+				local c = take_near(old_pos, marker)
 				if not c then
 					last_reason = "candidate pool exhausted"
 					break
@@ -7515,6 +7639,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
 				else
 					local candidate = { x = nx, y = ny }
+					local _, candidate_q, candidate_r =
+						fallback_clearance_hex(candidate, marker)
+					candidate.q, candidate.r = candidate_q, candidate_r
 					local spacing_ok, active_repulsion
 					if density_fallback then
 						active_repulsion = strict_repulsion
@@ -7545,6 +7672,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								ax, ay = actual_pos:xy()
 							end
 							local actual_candidate = { x = ax, y = ay }
+							local actual_fallback_clearance, actual_q, actual_r =
+								fallback_clearance_hex(actual_candidate, marker)
+							actual_candidate.q, actual_candidate.r = actual_q, actual_r
 							local actual_spacing_ok = ax == nx and ay == ny
 							if not actual_spacing_ok and type(ax) == "number" then
 								if density_fallback then
@@ -7563,6 +7693,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								success = true
 								successful_pos = actual_pos
 								successful_candidate = actual_candidate
+								successful_fallback_clearance = actual_fallback_clearance
 							else
 								postmove_rejected = postmove_rejected + 1
 								item_postmove_rejected = item_postmove_rejected + 1
@@ -7591,6 +7722,20 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					end
 				end
 				moved = moved + 1
+				if type(successful_fallback_clearance) == "number"
+					and successful_fallback_clearance < math.huge then
+					fallback_clearance_minimum_move = fallback_clearance_minimum_move == nil
+						and successful_fallback_clearance
+						or math.min(fallback_clearance_minimum_move, successful_fallback_clearance)
+					if successful_fallback_clearance < UndergroundFallbackMinimumHexDistance() then
+						fallback_clearance_relaxed_moves = fallback_clearance_relaxed_moves + 1
+						marker.SuperBigMapUndergroundFallbackSpacingRelaxed = true
+					end
+					marker.SuperBigMapReachabilityRelocationFallbackClearanceHex =
+						successful_fallback_clearance
+				end
+				update_fallback_clearance_entry(marker,
+					successful_candidate.q, successful_candidate.r)
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				local final_x, final_y
 				if successful_pos and type(successful_pos.xy) == "function" then
@@ -7603,6 +7748,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					.. ":repulsion_rejected=" .. tostring(item_repulsion_rejected)
 					.. ":setpos_failed=" .. tostring(item_setpos_failed)
 					.. ":postmove_rejected=" .. tostring(item_postmove_rejected)
+					.. ":fallback_clearance_hex="
+					.. tostring(successful_fallback_clearance)
 				marker.SuperBigMapReachabilityRelocated = true
 				if marker.SuperBigMapTransformWonderReservationResolved == true
 					and successful_pos and type(successful_pos.xy) == "function" then
@@ -7639,6 +7786,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		relocation_attempts = relocation_attempts, relocation_retries = relocation_retries,
 		snapped_rejected = snapped_rejected, setpos_failed = setpos_failed,
 		postmove_rejected = postmove_rejected, repulsion_rejected = repulsion_rejected,
+		fallback_clearance_relaxed_moves = fallback_clearance_relaxed_moves,
+		fallback_clearance_minimum_move = fallback_clearance_minimum_move or 0,
 		missing_repulsion_profile = missing_repulsion_profile,
 		candidates_remaining = #candidates,
 		seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
