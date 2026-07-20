@@ -5626,6 +5626,18 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 
 	if #remaining > 0 then
 		local repulsion = NewTopUpRepulsionTracker(map, "inner-ring sequential anomaly fallback", ignored)
+		-- Outer-ring placements deliberately use the custom one-per-sector/ten-hex rules, but an
+		-- anomaly that falls back into the inner ring must obey vanilla repulsion against *every*
+		-- anomaly, including the outer placements planned earlier in this transaction. The tracker
+		-- cannot see those destinations yet because the live markers have not moved, and all moving
+		-- markers are intentionally excluded from its source-position seed. Register the provisional
+		-- outer destinations explicitly before selecting the first inner fallback.
+		for _, plan in ipairs(outer_plans) do
+			if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
+				stats.error = "could not seed planned outer anomaly for inner vanilla fallback"
+				return false, stats
+			end
+		end
 		local function inner_candidate_allowed(candidate)
 			for _, plan in ipairs(outer_plans) do
 				if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then return false end

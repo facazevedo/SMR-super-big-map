@@ -6966,6 +6966,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							density_status = repulsion_stats and repulsion_stats.density_status,
 							duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 							violations = repulsion_stats and repulsion_stats.repulsion_violations,
+							first_repulsion_violation = repulsion_stats
+								and repulsion_stats.first_repulsion_violation,
 							outer_ring_spacing_violations = repulsion_stats
 								and repulsion_stats.outer_ring_spacing_violations,
 						}, repulsion_ok == true)
@@ -6978,7 +6980,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
 								.. " outer_ring_spacing_violations="
 								.. tostring(repulsion_stats
-									and repulsion_stats.outer_ring_spacing_violations))
+									and repulsion_stats.outer_ring_spacing_violations)
+								.. " first_repulsion_violation="
+								.. tostring(repulsion_stats
+									and repulsion_stats.first_repulsion_violation))
 						end
 						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
 							local ring_ok, ring_stats = TimedSafeCall("surface audit outer-ring exclusivity", map,
