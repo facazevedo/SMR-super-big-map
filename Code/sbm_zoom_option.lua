@@ -16,8 +16,8 @@
 --
 -- The value is a PERCENT of vanilla max zoom: 100% = exactly vanilla (ZoomPlus off),
 -- up to 1200%. It drives the camera through the mod's ZoomPlus far-zoom override
--- (sbm_zoomplus_integration), which applies on ANY map the mod is active on, so the
--- slider works for both vanilla scenarios and Super Big Map scenarios.
+-- (sbm_zoomplus_integration). The lifecycle installs both only for a game explicitly
+-- started with EXPAND MAP, so vanilla sessions never gain this property or camera patch.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -36,6 +36,12 @@ end
 
 local function Enabled()
 	return cfg().ENABLE_MAX_ZOOM_OPTION ~= false
+end
+
+local function ExpansionSessionActive()
+	local lifecycle = SuperBigMap.Lifecycle
+	return lifecycle and type(lifecycle.IsActive) == "function"
+		and SafeCall(lifecycle.IsActive) == true
 end
 
 local function DefaultPercent()
@@ -160,7 +166,7 @@ end
 -- Re-apply the saved zoom to the live camera via the ZoomPlus integration (which now
 -- reads ZoomOption.GetMultiplier()). Safe to call any time; no-op without a camera.
 function ZoomOption.Apply()
-	if not Enabled() or (SuperBigMap.State or {}).main_menu_vanilla == true then return end
+	if not Enabled() or not ExpansionSessionActive() then return end
 	local zi = SuperBigMap.ZoomPlusIntegration
 	if zi and type(zi.ApplyNormalZoom) == "function" then
 		SafeCall(zi.ApplyNormalZoom)
@@ -223,7 +229,7 @@ local function LiveEditedPercent(control)
 end
 
 function ZoomOption.StartRolloverWatcher(win, control)
-	if not Enabled() or not IsZoomRolloverControl(control) then return end
+	if not Enabled() or not ExpansionSessionActive() or not IsZoomRolloverControl(control) then return end
 	local create_thread = Global("CreateRealTimeThread")
 	local sleep = Global("Sleep")
 	if type(create_thread) ~= "function" or type(sleep) ~= "function" then return end
@@ -251,15 +257,25 @@ end
 
 SuperBigMap.ZoomOption = ZoomOption
 
--- Add the option now (OptionsObject exists once the engine has booted, which is before
--- mod Lua runs) and re-apply the saved value when options are applied or a save loads.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
-	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
-	ZoomOption.AppendOption()
-	Engine.ChainOnMsg("OptionsApply", function() ZoomOption.Apply() end)
-	Engine.ChainOnMsg("LoadGame", function() ZoomOption.Apply() end)
-	-- Live-update the rollover value while the Max Zoom Level slider is dragged.
+-- Message observers stay registered so an expanded session can apply its per-save value, but
+-- they delegate to the live module and are strictly session-gated. They never add the option;
+-- only Lifecycle.Enable -> ApplyModBehavior does that after EXPAND MAP is committed.
+local State = SuperBigMap.State or {}
+SuperBigMap.State = State
+if State.zoom_option_messages_registered ~= true then
+	State.zoom_option_messages_registered = true
+	Engine.ChainOnMsg("OptionsApply", function()
+		local live = SuperBigMap.ZoomOption
+		if live and type(live.Apply) == "function" then live.Apply() end
+	end)
+	Engine.ChainOnMsg("LoadGame", function()
+		local live = SuperBigMap.ZoomOption
+		if live and type(live.Apply) == "function" then live.Apply() end
+	end)
 	Engine.ChainOnMsg("CreateRolloverWindow", function(win, control)
-		ZoomOption.StartRolloverWatcher(win, control)
+		local live = SuperBigMap.ZoomOption
+		if live and type(live.StartRolloverWatcher) == "function" then
+			live.StartRolloverWatcher(win, control)
+		end
 	end)
 end

@@ -471,7 +471,18 @@ local function InstallLandingDialogAction(dialog)
 		local original_on_action = start_action.OnAction
 		start_action.SuperBigMapStartOriginalOnAction = original_on_action
 		start_action.OnAction = function(action, host, source, ...)
-			SetStartArmed(IsSelected(), "start")
+			local expand = IsSelected()
+			SetStartArmed(expand, "start")
+			-- START is the ownership boundary for every gameplay modification. Until this
+			-- exact moment only the pregame opt-in control exists; OFF explicitly keeps the
+			-- full lifecycle disabled, while ON installs the generation hooks before vanilla
+			-- enters NewGame/GenerateRandomMap.
+			local lifecycle = SuperBigMap.Lifecycle
+			if expand and lifecycle and type(lifecycle.BeginExpandedSession) == "function" then
+				SafeCall(lifecycle.BeginExpandedSession, "pregame START with EXPAND MAP")
+			elseif lifecycle and type(lifecycle.BeginVanillaSession) == "function" then
+				SafeCall(lifecycle.BeginVanillaSession, "pregame START without EXPAND MAP", false)
+			end
 			if type(original_on_action) == "function" then
 				return original_on_action(action, host, source, ...)
 			end

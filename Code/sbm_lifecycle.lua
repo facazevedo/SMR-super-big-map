@@ -18,9 +18,10 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local MAIN_MENU_GUARD_VERSION = 6
+local MAIN_MENU_GUARD_VERSION = 7
 local InstallRestoreInGameInterfaceGuard
 local UninstallRestoreInGameInterfaceGuard
+local EnsurePregameToggleInstalled
 
 local function LoadingLifecycle(event, map, data)
 	local diagnostics = SuperBigMap.Diagnostics
@@ -109,7 +110,8 @@ local function ApplyUndergroundDarknessState(map)
 	if type(hr) ~= "table" then return false end
 	local State = SuperBigMap.State
 	local environment = map and map.mapdata and map.mapdata.Environment
-	local should_reveal = environment == "Underground"
+	local should_reveal = State.expansion_session_active == true and IsModMap(map)
+		and environment == "Underground"
 		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
 	local before = hr.EnableDarknessReveal
 	-- Clear legacy snapshot state left by earlier versions. The correct non-test value is owned by
@@ -159,53 +161,12 @@ local function NormalizeVanillaRuntimeState(map, reason)
 		zoom_option.RestoreVanillaBehavior()
 	end
 	local elevator_button = SuperBigMap.PlaceElevatorButton
-	local cfg = SuperBigMap.Config or {}
-	local show_temporary_buttons = cfg.PLACE_ELEVATOR_BUTTON_ENABLED == true
-		or cfg.PLACE_BURIED_WONDER_TEST_BUTTONS_ENABLED == true
-		or cfg.UNDERGROUND_DARKNESS_TOGGLE_BUTTON_ENABLED == true
-	if show_temporary_buttons
-		and elevator_button and type(elevator_button.Show) == "function" then
-		SafeCall(elevator_button.Show)
-	elseif elevator_button and type(elevator_button.Hide) == "function" then
+	if elevator_button and type(elevator_button.Hide) == "function" then
 		SafeCall(elevator_button.Hide)
 	end
 	ApplyUndergroundDarknessState(map)
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
-	end
-	return true
-end
-
--- On loading a save that was NOT started with Super Big Map, warn once (per load)
--- that the expanded map needs a NEW game; the mod then stays completely inert and
--- the old save plays vanilla. The guard flag is TRANSIENT (set on the map instance,
--- which is rebuilt each load) so NOTHING is written into the save -- a vanilla save
--- must never gain mod markers, or it would look mod-started on the next load.
--- Returns true when the map is a non-mod save (so the caller skips all mod work).
-local function WarnOldSaveIfNeeded(map)
-	if IsModMap(map) then
-		return false
-	end
-
-	local cfg = SuperBigMap.Config or {}
-
-	if cfg.WARN_OLD_SAVE_NEEDS_NEW_GAME ~= true then
-		return true
-	end
-	if not map or map.SuperBigMapOldSaveWarned == true then
-		return true
-	end
-	map.SuperBigMapOldSaveWarned = true
-
-	local detail =
-		"This save was started without Super Big Map.\n\n" ..
-		"The expanded map only applies to games STARTED with the mod enabled, so " ..
-		"this save keeps its original size and the mod stays inactive here.\n\n" ..
-		"Start a NEW game to use Super Big Map. Otherwise this save will continue " ..
-		"to play normally."
-	local create_box = Global("CreateMessageBox")
-	if type(create_box) == "function" then
-		pcall(create_box, nil, "Super Big Map", detail)
 	end
 	return true
 end
@@ -274,11 +235,13 @@ local function ForceVanillaMainMenuState(reason)
 	-- Returning to the main menu reverses every gameplay patch. The pregame EXPAND MAP control is
 	-- intentionally retained: it is inert outside the colony-site dialog and must already be
 	-- installed when the next scenario constructs that dialog.
+	SuperBigMap.State.expansion_session_active = false
 	SuperBigMap.State.main_menu_vanilla = true
 	local lifecycle = SuperBigMap.Lifecycle
 	if lifecycle and type(lifecycle.Disable) == "function" then
 		SafeCall(lifecycle.Disable, true)
 	end
+	ApplyUndergroundDarknessState(nil)
 	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
 	end
@@ -346,17 +309,20 @@ local function InstallPreGameMainMenuResetGuard()
 	return true
 end
 
--- Full teardown on the main menu must not prevent the next game from using the mod. These
--- lifecycle-owned wrappers stay installed while every gameplay patch is removed, then restore
--- the complete apply phase immediately before vanilla starts or loads a game.
-local function ReactivateFromMainMenu(reason)
-	local State = SuperBigMap.State
-	if State.main_menu_vanilla ~= true then return false end
+-- The menu entry wrappers are lifecycle infrastructure only. They must never activate gameplay
+-- patches merely because a vanilla new game, preview generation, or save load started. The sole
+-- early activation signal is the START-armed EXPAND MAP flag; expanded saves reactivate later,
+-- as soon as their persisted per-map marker is available to the map-load messages.
+local function ActivateArmedExpansion(reason)
+	local toggle = SuperBigMap.PregameToggle
+	local armed = toggle and type(toggle.ShouldExpandNewMap) == "function"
+		and SafeCall(toggle.ShouldExpandNewMap) == true
+	if not armed then return false end
 	local lifecycle = SuperBigMap.Lifecycle
-	if not (lifecycle and type(lifecycle.Enable) == "function") then return false end
-	if SafeCall(lifecycle.Enable, true) ~= true then return false end
-	State.main_menu_vanilla = false
-	return true
+	if lifecycle and type(lifecycle.BeginExpandedSession) == "function" then
+		return SafeCall(lifecycle.BeginExpandedSession, tostring(reason or "armed expansion")) == true
+	end
+	return false
 end
 
 local function InstallGameEntryGuard(global_name)
@@ -374,8 +340,25 @@ local function InstallGameEntryGuard(global_name)
 	if type(current) ~= "function" then return false end
 	State[original_key] = current
 	local wrapper = function(...)
-		ReactivateFromMainMenu(global_name)
-		return State[original_key](...)
+		ActivateArmedExpansion(global_name)
+		local load_entry = global_name == "LoadGame" or global_name == "LoadGameFromMem"
+		if not load_entry then
+			return State[original_key](...)
+		end
+		State.load_game_entry_depth = (State.load_game_entry_depth or 0) + 1
+		if type(InstallRestoreInGameInterfaceGuard) == "function" then
+			InstallRestoreInGameInterfaceGuard()
+		end
+		local results = { pcall(State[original_key], ...) }
+		local ok = table.remove(results, 1)
+		State.load_game_entry_depth = math.max(0, (State.load_game_entry_depth or 1) - 1)
+		if State.load_game_entry_depth == 0 and not (SuperBigMap.Lifecycle
+			and SuperBigMap.Lifecycle.IsActive())
+			and type(UninstallRestoreInGameInterfaceGuard) == "function" then
+			UninstallRestoreInGameInterfaceGuard()
+		end
+		if not ok then error(results[1]) end
+		return (Engine.Unpack or unpack)(results)
 	end
 	State[wrapper_key] = wrapper
 	State[version_key] = MAIN_MENU_GUARD_VERSION
@@ -396,7 +379,8 @@ end
 local Lifecycle = {}
 
 function Lifecycle.IsActive()
-	return SuperBigMap.State.active == true
+	local State = SuperBigMap.State or {}
+	return State.active == true and State.expansion_session_active == true
 end
 
 -- Per-map application: bring the loaded map's bounds/sectors/overview into the
@@ -526,9 +510,12 @@ local function run_phase(order, method, skip_module)
 	end
 end
 
-function Lifecycle.Enable(force_from_main_menu)
+function Lifecycle.Enable(force_from_main_menu, reapply)
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then
+		return false
+	end
+	if SuperBigMap.State.expansion_session_active ~= true then
 		return false
 	end
 	if SuperBigMap.State.main_menu_vanilla == true and force_from_main_menu ~= true then
@@ -536,6 +523,13 @@ function Lifecycle.Enable(force_from_main_menu)
 	end
 
 	if Lifecycle.IsActive() then
+		if reapply == true then
+			run_phase(APPLY_ORDER, "ApplyModBehavior")
+			if type(InstallRestoreInGameInterfaceGuard) == "function" then
+				InstallRestoreInGameInterfaceGuard()
+			end
+			Lifecycle.Apply(Global("CurrentMap"), true)
+		end
 		return true
 	end
 
@@ -560,16 +554,54 @@ function Lifecycle.Disable(keep_pregame_toggle)
 	if elevator_button and type(elevator_button.Hide) == "function" then
 		SafeCall(elevator_button.Hide)
 	end
-	ApplyUndergroundDarknessState(nil)
+	ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or nil)
 	SuperBigMap.State.active = false
-	if type(UninstallRestoreInGameInterfaceGuard) == "function" then
+	if (SuperBigMap.State.load_game_entry_depth or 0) == 0
+		and type(UninstallRestoreInGameInterfaceGuard) == "function" then
 		UninstallRestoreInGameInterfaceGuard()
 	end
 	return true
 end
 
+function Lifecycle.BeginExpandedSession(reason, reapply)
+	local State = SuperBigMap.State
+	State.expansion_session_active = true
+	State.main_menu_vanilla = false
+	return Lifecycle.Enable(true, reapply == true)
+end
+
+function Lifecycle.BeginVanillaSession(reason, reset_toggle)
+	local State = SuperBigMap.State
+	State.expansion_session_active = false
+	State.main_menu_vanilla = true
+	Lifecycle.Disable(true)
+	NormalizeVanillaRuntimeState(ResolveLiveMap(Global("CurrentMap")) or nil,
+		tostring(reason or "vanilla session"))
+	if reset_toggle == true then
+		local toggle = SuperBigMap.PregameToggle
+		if toggle and type(toggle.ResetForVanillaSession) == "function" then
+			SafeCall(toggle.ResetForVanillaSession, tostring(reason or "vanilla session"))
+		end
+	end
+	return true
+end
+
+function Lifecycle.Bootstrap()
+	EnsurePregameToggleInstalled("Bootstrap")
+	local map = ResolveLiveMap(Global("CurrentMap"))
+	local game_loaded = Global("Game") ~= nil and Global("Game") ~= false
+	local toggle = SuperBigMap.PregameToggle
+	local armed = toggle and type(toggle.ShouldExpandNewMap) == "function"
+		and SafeCall(toggle.ShouldExpandNewMap) == true
+	if (game_loaded and IsModMap(map)) or armed then
+		return Lifecycle.BeginExpandedSession(game_loaded and IsModMap(map)
+			and "Bootstrap expanded map" or "Bootstrap armed new game", true)
+	end
+	return Lifecycle.BeginVanillaSession("Bootstrap vanilla default", false)
+end
+
 Lifecycle.ReturnToMainMenuVanilla = ForceVanillaMainMenuState
-Lifecycle.ReactivateFromMainMenu = ReactivateFromMainMenu
+Lifecycle.ActivateArmedExpansion = ActivateArmedExpansion
 
 SuperBigMap.Lifecycle = Lifecycle
 InstallMainMenuTransitionGuards()
@@ -580,6 +612,12 @@ InstallMainMenuTransitionGuards()
 -- ============================================================================
 local function active()
 	return Lifecycle.IsActive()
+end
+
+local function ActivatePersistedExpandedMap(map, reason)
+	if active() then return true end
+	if not IsModMap(map) then return false end
+	return Lifecycle.BeginExpandedSession(tostring(reason or "persisted expanded map")) == true
 end
 
 -- True on the MOD EDITOR test map -- the authoritative "leave everything vanilla"
@@ -634,6 +672,7 @@ RegisterOnce("PreNewMap", function(map, mapdata)
 end)
 
 RegisterOnce("NewMap", function(map, mapdata)
+	ActivatePersistedExpandedMap(map, "NewMap expanded save")
 	if not active() then
 		return
 	end
@@ -651,6 +690,7 @@ RegisterOnce("NewMap", function(map, mapdata)
 end)
 
 RegisterOnce("NewMapLoaded", function(map, mapdata)
+	ActivatePersistedExpandedMap(map, "NewMapLoaded expanded save")
 	if not active() then
 		return
 	end
@@ -670,6 +710,7 @@ RegisterOnce("NewMapLoaded", function(map, mapdata)
 end)
 
 RegisterOnce("PostNewMapLoaded", function(map, mapdata)
+	ActivatePersistedExpandedMap(map, "PostNewMapLoaded expanded save")
 	if not active() then
 		return
 	end
@@ -851,19 +892,14 @@ UninstallRestoreInGameInterfaceGuard = function()
 end
 
 RegisterOnce("LoadGame", function()
-	if not active() then
-		return
-	end
-	InstallRestoreInGameInterfaceGuard()
 	local current = Global("CurrentMap")
+	ActivatePersistedExpandedMap(current, "LoadGame expanded save")
 	if not IsModMap(current) then
-		NormalizeVanillaRuntimeState(current, "OnMsg.LoadGame non-mod save")
-	end
-	-- Old save not started with the mod: warn once, then do nothing (the mod must
-	-- not touch a vanilla save). Everything below is mod-map work, so bail out.
-	if WarnOldSaveIfNeeded(current) then
+		Lifecycle.BeginVanillaSession("LoadGame non-expanded save", false)
 		return
 	end
+	if not active() then return end
+	InstallRestoreInGameInterfaceGuard()
 	Lifecycle.Apply(current, true)
 	-- Sync mapdata to the actual (expanded) terrain grids FIRST. On load, mapdata reverts to
 	-- the preset's native tile count (e.g. 6144) while the saved terrain is the expanded size
@@ -921,6 +957,7 @@ end)
 RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- Reclaim both menu-boundary wrappers after any late game-Lua replacement.
 	InstallMainMenuTransitionGuards()
+	ActivatePersistedExpandedMap(map, "CurrentMapChangeDone expanded save")
 	if not active() then
 		return
 	end
@@ -1070,19 +1107,14 @@ RegisterOnce("RocketLanded", function(rocket)
 	end
 end)
 
--- The random-map generator hook must be installed whenever the mod is ENABLED, not only once
--- a mod map is active(): the pre-game landing-spot preview generates a random map
--- (PGMissionLandingSpotRemastered -> GenerateCurrentRandomMap) before any NewMap fires, so
--- active() (= State.active, set on per-map Apply) is still false at that point. Without the
--- hook, vanilla DoGenerate runs on the expanded-terrain-sized working grid and overflows the
--- engine limit -> assert "GridStableRandomPosSimple: size > 0 & size < GSRP_MAX_SIZE". The hook
--- is self-gating: its DoGenerate wrapper only caps OVERSIZED grids, so installing it while the
--- mod is merely enabled is transparent for normal vanilla-sized generation.
+-- The START action activates the lifecycle before expanded generation begins, so this hook can
+-- remain absent from vanilla previews and still cap the expanded working grid before DoGenerate
+-- reaches the engine's GSRP size limit.
 local function EnsureGeneratorHookInstalled()
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
-	if SuperBigMap.State.main_menu_vanilla == true then
+	if not Lifecycle.IsActive() then
 		return
 	end
 	local gen = SuperBigMap.MapGeneration
@@ -1097,7 +1129,7 @@ local function EnsureGeneratorHookInstalled()
 	end
 end
 
-local function EnsurePregameToggleInstalled(reason)
+EnsurePregameToggleInstalled = function(reason)
 	if (SuperBigMap.Config or {}).ENABLE_MOD == false then
 		return
 	end
@@ -1112,18 +1144,15 @@ local function EnsurePregameToggleInstalled(reason)
 end
 
 RegisterOnce("ClassesPostprocess", function()
-	-- Install the generator hook regardless of active() so it is ready before any pre-game
-	-- landing-spot preview generates a map (prevents the GSRP overflow crash).
+	-- The installer is session-gated: it does nothing for vanilla previews and repairs the
+	-- expanded generator wrapper after a class rebuild only when EXPAND MAP owns the session.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled("ClassesPostprocess")
 	if not active() then
 		return
 	end
-	-- Install the RestoreInGameInterfaceOnLoadGame guard at engine-init time so
-	-- it's in place BEFORE any save load can begin. Our LoadGame hook also
-	-- installs it as a safety net, but ClassesPostprocess fires very early --
-	-- this catches save loads triggered from the main menu before OnMsg.LoadGame
-	-- has fired.
+	-- An active expanded game keeps its load-interface guard across class rebuilds. Main-menu
+	-- loads install the same guard only for the duration of the LoadGame entry wrapper.
 	InstallRestoreInGameInterfaceGuard()
 	ApplyOverviewPatches()
 	local gen = SuperBigMap.MapGeneration
@@ -1137,8 +1166,7 @@ RegisterOnce("ClassesPostprocess", function()
 end)
 
 RegisterOnce("DataLoaded", function()
-	-- Ensure the generator hook is in place before any pre-game generation (independent of
-	-- active()); DataLoaded fires at boot before the landing-spot screen.
+	-- Re-verify expanded-session hooks after engine data reloads; inactive sessions remain vanilla.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled("DataLoaded")
 	if not active() then
@@ -1180,18 +1208,17 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 end)
 
 -- These wrappers sit on engine methods/functions that ClassesBuilt and Lua reloads recreate.
--- Reinstall them before the active-map gate: pre-game map previews and the first NewMap build
--- already use ConstructionController/BuildableGrid, so waiting for Lifecycle.Apply is too late.
+-- Reinstall them only after the session has opted in; the START wrapper activates early enough
+-- to cover the first expanded ConstructionController/BuildableGrid call.
 local function ReinstallTerrainCriticalPatches(reason)
 	local cfg = SuperBigMap.Config or {}
 	if cfg.ENABLE_MOD == false then
 		return false
 	end
-	if (SuperBigMap.State or {}).main_menu_vanilla == true then
+	if not Lifecycle.IsActive() then
 		return false
 	end
-	-- These hooks are transparent on non-expanded maps, so keeping them installed while the
-	-- main menu is visible avoids missing the first pre-active construction/grid call.
+	-- The session gate above is intentional even though the hooks are internally map-gated.
 	local bounds = SuperBigMap.MapBounds
 	local bounds_fn = bounds and (bounds.ReinstallGlobalHooks or bounds.ApplyModBehavior)
 	local bounds_ok, bounds_result = false, "module/function unavailable"
@@ -1208,8 +1235,8 @@ local function ReinstallTerrainCriticalPatches(reason)
 end
 
 RegisterOnce("ClassesBuilt", function()
-	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla. Re-install our hook even before a
-	-- mod map is active, so a pre-game landing-spot preview can't run vanilla DoGenerate.
+	-- ClassesBuilt rebuilds RandomMapGenerator to vanilla; the installer repairs it only for
+	-- an already-committed expanded session.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled("ClassesBuilt")
 	ReinstallTerrainCriticalPatches("ClassesBuilt")
@@ -1252,13 +1279,10 @@ RegisterOnce("ClassesBuilt", function()
 end)
 
 RegisterOnce("ModsReloaded", function()
-	-- The restart notice must fire regardless of the active() gate below (it has its own
-	-- gating), so try it first.
-	if type(SuperBigMap.ShowFreshRestartNotice) == "function" then
+	if active() and type(SuperBigMap.ShowFreshRestartNotice) == "function" then
 		SuperBigMap.ShowFreshRestartNotice()
 	end
-	-- Re-install the generator hook on reload regardless of active() (a mod reload resets the
-	-- RandomMapGenerator class to vanilla; the pre-game preview can run before any map is active).
+	-- A reload resets engine classes; session-gated installers repair only an expanded game.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled("ModsReloaded")
 	ReinstallTerrainCriticalPatches("ModsReloaded")
@@ -1296,13 +1320,12 @@ RegisterOnce("ModsReloaded", function()
 	if Lifecycle.IsActive() then
 		Lifecycle.Apply(Global("CurrentMap"), true)
 	end
-	-- (restart notice is fired at the TOP of this handler, before the active() gate)
 end)
 
 RegisterOnce("ChangingMap", function(map_slot, map_name, map_instance)
-	-- Re-verify the generator hook is installed before this map's generation, even when the
-	-- mod isn't active() yet (landing-spot previews regenerate without ClassesBuilt and before
-	-- any map is applied). This is the path that was overflowing GSRP into a crash.
+	ActivateArmedExpansion("ChangingMap armed expansion")
+	-- START arms and activates the session before real generation. Vanilla landing previews stay
+	-- unpatched; expanded generation gets the GSRP-safe wrapper before allocation begins.
 	EnsureGeneratorHookInstalled()
 	EnsurePregameToggleInstalled("ChangingMap")
 	ReinstallTerrainCriticalPatches("ChangingMap")
@@ -1340,6 +1363,7 @@ RegisterOnce("NewMapObject", function(map)
 end)
 
 RegisterOnce("MapGenerated", function(map)
+	ActivatePersistedExpandedMap(map, "MapGenerated expanded save")
 	if not active() then
 		return
 	end

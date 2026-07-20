@@ -442,7 +442,7 @@ end
 MapBounds.InstallBuildableGridPreGenerationOptimizer = InstallBuildableGridPreGenerationOptimizer
 MapBounds.UninstallBuildableGridPreGenerationOptimizer = UninstallBuildableGridPreGenerationOptimizer
 
--- Narrow reload-safe installer used before a map is active. It touches only transparent,
+-- Narrow reload-safe installer used after an expanded session is committed. It touches only
 -- map-gated engine hooks; no current-map grids, pass borders, or permissive policies.
 function MapBounds.ReinstallGlobalHooks()
 	local cfg = SuperBigMap.Config or {}
@@ -507,11 +507,3 @@ function MapBounds.RestoreVanillaBehavior()
 end
 
 SuperBigMap.MapBounds = MapBounds
-
--- Game Lua reloads can recreate BuildableGrid and the global rebuild function before a
--- mod map is active. Install the transparent, map-gated wrappers at module load; lifecycle
--- boundaries below re-verify their live identities after ClassesBuilt/ModsReloaded.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
-	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
-	MapBounds.ReinstallGlobalHooks()
-end

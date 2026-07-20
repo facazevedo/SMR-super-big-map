@@ -864,15 +864,3 @@ function RocketRules.RestoreVanillaBehavior()
 end
 
 SuperBigMap.RocketRules = RocketRules
-
--- Install the flatten wrap at MODULE LOAD too: the new-game Lua reload redefines the global
--- (wiping the wrapper) and re-executes this module, but Lifecycle.Enable early-returns when
--- State.active persisted -- so module load is the reliable reinstall point. Self-verifying.
-if (SuperBigMap.Config or {}).ENABLE_MOD ~= false
-	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
-	RocketRules.ReinstallGlobalHooks()
-	if RuntimeConfig().PREVENT_ELEVATOR_FLATTEN == true then
-		PatchElevatorBasePlaceConstructionSite()
-		PatchElevatorConstructionNoFlatten()
-	end
-end

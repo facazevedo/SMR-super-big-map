@@ -200,14 +200,6 @@ config.ClampHeatQueriesOnExpandedMap = true
 -- NOT make anything buildable on its own; it only lets the player reshape the new terrain.
 config.AllowLandscapingOnExpanded = true
 
--- When an OLD save that was NOT started with Super Big Map is loaded, show a
--- one-time (per load) modal explaining that the expanded map only applies to games
--- STARTED with the mod, and that this save will keep playing normally. The mod does
--- nothing else on such saves (no expansion, bounds, sector, or overview changes).
--- Nothing is written into the old save. Set false to suppress the popup entirely.
-config.WarnOldSaveNeedsNewGame = true
-
-
 -- Hide added or proportionally relocated scan-gated enrichments until their final
 -- expanded sector is scanned.
 config.HideClonedDepositsUntilScan = true
@@ -649,7 +641,6 @@ C.FULL_MAP_PLAYABLE = expansion_step_01
 	and as_bool(config.SuperBigMapFullMapPlayable)
 
 C.SURFACE_STRETCH_AT_START = expansion_step_07
-C.WARN_OLD_SAVE_NEEDS_NEW_GAME = as_bool(config.WarnOldSaveNeedsNewGame)
 C.SHOW_RESTART_NOTICE = as_bool(config.ShowRestartNotice)
 C.HIDE_CLONED_DEPOSITS_UNTIL_SCAN = as_bool(config.HideClonedDepositsUntilScan)
 C.CLEAR_INITIAL_CONCRETE_IMPRINT = as_bool(config.ClearInitialConcreteImprint)

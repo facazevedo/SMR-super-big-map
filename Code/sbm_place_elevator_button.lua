@@ -76,17 +76,28 @@ local function IsGameplayMap(map)
 	return mapdata.Environment == "Surface" or mapdata.Environment == "Underground"
 end
 
+local function IsExpandedSessionMap(map)
+	local lifecycle = SuperBigMap.Lifecycle
+	if not (lifecycle and type(lifecycle.IsActive) == "function"
+		and SafeCall(lifecycle.IsActive) == true) then
+		return false
+	end
+	local sectors = SuperBigMap.SectorGrid
+	return sectors and type(sectors.IsModMap) == "function"
+		and SafeCall(sectors.IsModMap, map) == true
+end
+
 local function CanUseOnMap(map)
-	return Enabled() and IsGameplayMap(map)
+	return Enabled() and IsGameplayMap(map) and IsExpandedSessionMap(map)
 end
 
 local function CanUseBuriedWonderButtons(map)
-	return BuriedWonderButtonsEnabled() and IsGameplayMap(map)
+	return BuriedWonderButtonsEnabled() and IsGameplayMap(map) and IsExpandedSessionMap(map)
 		and map.mapdata.Environment == "Underground"
 end
 
 local function CanUseDarknessToggleButton(map)
-	return DarknessToggleButtonEnabled() and IsGameplayMap(map)
+	return DarknessToggleButtonEnabled() and IsGameplayMap(map) and IsExpandedSessionMap(map)
 		and map.mapdata.Environment == "Underground"
 end
 
@@ -342,6 +353,7 @@ local function HandleBuriedWonderConstructionSitePlaced(site, class_name)
 end
 
 local function HandleConstructionSitePlaced(site, class_name)
+	if not IsExpandedSessionMap(Global("CurrentMap")) then return end
 	HandleElevatorConstructionSitePlaced(site, class_name)
 	HandleBuriedWonderConstructionSitePlaced(site, class_name)
 end
@@ -456,6 +468,7 @@ local function UpdateDarknessToggleButtonText(button)
 end
 
 local function ToggleUndergroundDarkness(button)
+	if not CanUseDarknessToggleButton(Global("CurrentMap")) then return false end
 	local hr = Global("hr")
 	if type(hr) ~= "table" then return false end
 	-- Exact vanilla cheat action: no saved preference, lifecycle override, or extra reveal work.
@@ -555,7 +568,8 @@ function PlaceElevatorButton.Show()
 end
 
 function PlaceElevatorButton.Hide()
-	local button = State.place_elevator_button_window
+	local desktop = (Global("terminal") or {}).desktop
+	local button = ResolveExistingButton(desktop)
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, false)
 	end

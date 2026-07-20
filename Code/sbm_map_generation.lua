@@ -9458,27 +9458,3 @@ function MapGeneration.RestoreVanillaBehavior()
 end
 
 SuperBigMap.MapGeneration = MapGeneration
-
--- Install the random-map generator hook NOW, at module load. Mods load their Lua AFTER the game
--- classes are built, so RandomMapGenerator already exists here -- and this runs BEFORE the
--- pre-game landing-spot preview generates a map. The OnMsg boot events (ClassesBuilt /
--- ClassesPostprocess / DataLoaded) can't cover that preview because they fire during engine boot,
--- before this mod's handlers are even registered; and ChangingMap fires only for a real map
--- change, after the preview. Without the hook here, vanilla DoGenerate runs on the expanded-size
--- grid and overflows GSRP ("GridStableRandomPosSimple: size < GSRP_MAX_SIZE"). The boot/ChangingMap
--- re-installs still handle later class rebuilds (which reset the methods to vanilla).
-local module_config = SuperBigMap.Config or {}
-local module_generate_source = module_config.EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE == true
-local module_transform_source = module_config.EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE == true
-if module_config.ENABLE_MOD ~= false
-	and module_generate_source
-	and (SuperBigMap.State or {}).main_menu_vanilla ~= true then
-	PatchRandomMapGenerator()
-	if module_transform_source then
-		PatchEntranceBadgePosition()
-		PatchCaveInShapePoints()
-		PatchUndergroundWonderShapePoints()
-		SuperBigMap.BuriedWonderDarkness.Patch()
-		PatchDeferredUndergroundAccess("module load")
-	end
-end
