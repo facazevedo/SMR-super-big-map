@@ -119,10 +119,6 @@ local function ReportFailure(reason, data, map)
 	data = type(data) == "table" and data or {}
 	data.reason = tostring(reason)
 	Audit("FAILED", data, map)
-	local print_fn = Global("print") or print
-	if type(print_fn) == "function" then
-		print_fn("[Super Big Map][Place Elevator] " .. tostring(reason))
-	end
 	return false
 end
 
