@@ -7674,10 +7674,28 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					missing_repulsion_profile = audit_stats
 						and audit_stats.missing_repulsion_profile,
 					moved_by_class = audit_stats and audit_stats.moved_by_class,
+					invalid_by_class = audit_stats and audit_stats.invalid_by_class,
+					invalid_by_resource = audit_stats and audit_stats.invalid_by_resource,
+					unresolved_by_class = audit_stats and audit_stats.unresolved_by_class,
+					unresolved_by_resource = audit_stats and audit_stats.unresolved_by_resource,
+					invalid_details = audit_stats and audit_stats.invalid_details,
+					relocation_details = audit_stats and audit_stats.relocation_details,
+					unresolved_details = audit_stats and audit_stats.unresolved_details,
+					strict_first_rejection = audit_stats and audit_stats.strict_first_rejection,
+					strict_last_rejection = audit_stats and audit_stats.strict_last_rejection,
+					topup_only_first_rejection = audit_stats
+						and audit_stats.topup_only_first_rejection,
+					topup_only_last_rejection = audit_stats
+						and audit_stats.topup_only_last_rejection,
 				}, audit_ok == true)
 					if audit_ok ~= true then
 						error("underground enrichment reachability audit left "
-							.. tostring(audit_stats and audit_stats.unresolved or "unknown") .. " unresolved markers")
+							.. tostring(audit_stats and audit_stats.unresolved or "unknown")
+							.. " unresolved markers: classes="
+							.. tostring(audit_stats and audit_stats.unresolved_by_class or "unknown")
+							.. " resources="
+							.. tostring(audit_stats and audit_stats.unresolved_by_resource or "unknown")
+							.. " (see unresolved_details in LoadingTiming log)")
 					end
 					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 						TimedSafeCall("underground resolve marker overlaps", map,

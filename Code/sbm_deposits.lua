@@ -1660,7 +1660,7 @@ end
 -- so those preserved native/native pairs are intentionally not rewritten. Every NEW top-up is,
 -- however, treated as a new selection and must clear every native marker and earlier top-up.
 -- Spatial buckets keep the check proportional to nearby markers instead of rescanning the map.
-local function NewTopUpRepulsionTracker(map, label, ignored_markers)
+local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rejections)
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local BUCKET_SIZE = 65536
@@ -1672,7 +1672,21 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		checks = 0, nearby_pair_checks = 0, duplicate_hex_rejects = 0,
 		repulsion_rejects = 0, missing_profile_rejects = 0,
 		invalid_position_rejects = 0, seed_missing_profile = 0,
+		first_rejection = "", last_rejection = "",
 	}
+	local function note_rejection(detail)
+		if capture_rejections ~= true then return end
+		detail = tostring(detail or "unknown")
+		stats.last_rejection = detail
+		if stats.first_rejection == "" then stats.first_rejection = detail end
+	end
+	local function marker_identity(marker, profile, is_topup)
+		return table.concat({
+			tostring(marker and marker.class or "?"),
+			tostring(marker and marker.resource or profile and profile.resource or "?"),
+			is_topup and "topup" or "native",
+		}, "/")
+	end
 
 	local function bucket_coordinate(value)
 		return math.floor((value + 0.0) / BUCKET_SIZE)
@@ -1772,11 +1786,15 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		stats.checks = stats.checks + 1
 		if not profile then
 			stats.missing_profile_rejects = stats.missing_profile_rejects + 1
+			if capture_rejections == true then note_rejection("missing_profile") end
 			return false
 		end
 		local x, y = candidate and candidate.x, candidate and candidate.y
 		if type(x) ~= "number" or type(y) ~= "number" then
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			if capture_rejections == true then
+				note_rejection("invalid_position=" .. tostring(x) .. "," .. tostring(y))
+			end
 			return false
 		end
 		local hkey = candidate._sbm_repulsion_hex
@@ -1786,6 +1804,9 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		end
 		if not hkey then
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			if capture_rejections == true then
+				note_rejection("invalid_hex@" .. tostring(x) .. "," .. tostring(y))
+			end
 			return false
 		end
 		local profile_key = profile_cache_key(profile)
@@ -1793,6 +1814,10 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		if cached ~= nil then return cached end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
+			if capture_rejections == true then
+				note_rejection("duplicate_hex=" .. tostring(hkey)
+					.. ":candidate=" .. tostring(profile.layer) .. "/" .. tostring(profile.resource))
+			end
 			return remember_verdict(candidate, profile_key, false)
 		end
 		local search_radius = math.max(
@@ -1816,6 +1841,17 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 						if type(required) == "number"
 							and dx * dx + dy * dy <= required * required then
 							stats.repulsion_rejects = stats.repulsion_rejects + 1
+							if capture_rejections == true then
+								note_rejection("repulsion:candidate="
+									.. tostring(profile.layer) .. "/" .. tostring(profile.resource)
+									.. "@" .. tostring(hkey)
+									.. ":blocker=" .. marker_identity(
+										entry.marker, entry.profile, entry.is_topup)
+									.. "@" .. tostring(hex_key(entry.x, entry.y))
+									.. ":required=" .. tostring(required)
+									.. ":actual=" .. tostring(
+										RoundedWorldDistance(dx * dx + dy * dy)))
+							end
 							return remember_verdict(candidate, profile_key, false)
 						end
 					end
@@ -1832,6 +1868,9 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		local x, y = candidate and candidate.x, candidate and candidate.y
 		if type(x) ~= "number" or type(y) ~= "number" then
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			if capture_rejections == true then
+				note_rejection("invalid_position=" .. tostring(x) .. "," .. tostring(y))
+			end
 			return false
 		end
 		local hkey = candidate._sbm_repulsion_hex
@@ -1841,10 +1880,16 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers)
 		end
 		if not hkey then
 			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			if capture_rejections == true then
+				note_rejection("invalid_hex@" .. tostring(x) .. "," .. tostring(y))
+			end
 			return false
 		end
 		if occupied_hexes[hkey] then
 			stats.duplicate_hex_rejects = stats.duplicate_hex_rejects + 1
+			if capture_rejections == true then
+				note_rejection("unique_duplicate_hex=" .. tostring(hkey))
+			end
 			return false
 		end
 		return true
@@ -7050,6 +7095,29 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		return false, { error = "entrance connectivity unavailable", seeds = reachable_state and #reachable_state.seeds or 0 }
 	end
 	local markers, invalid = {}, {}
+	local invalid_details, invalid_by_class, invalid_by_resource = {}, {}, {}
+	local function marker_flags(marker)
+		local flags = {}
+		local function add(enabled, name)
+			if enabled == true then flags[#flags + 1] = name end
+		end
+		add(marker and marker.SuperBigMapResourceTopUp, "resource_topup")
+		add(marker and marker.SuperBigMapAnomalyTopUp, "anomaly_topup")
+		add(marker and marker.SuperBigMapEffectTopUp, "effect_topup")
+		add(marker and marker.SuperBigMapEnrichmentClone, "native_clone")
+		add(marker and marker.SuperBigMapTransformWonderReservationResolved, "wonder_conflict")
+		add(marker and marker.SuperBigMapUndergroundDensityFallback, "density_fallback")
+		add(marker and marker.SuperBigMapTopUpIgnoredRubbleWalls, "ignored_rubble")
+		add(marker and marker.SuperBigMapResourceTopUpIgnoredRubbleWalls, "resource_ignored_rubble")
+		return #flags > 0 and table.concat(flags, "+") or "none"
+	end
+	local function point_z(pos)
+		if pos and type(pos.z) == "function" then
+			local ok, z = pcall(pos.z, pos)
+			if ok then return z end
+		end
+		return nil
+	end
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		local additional = marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
@@ -7097,8 +7165,51 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local topup_ignores_rubble = marker and (
 			marker.SuperBigMapTopUpIgnoredRubbleWalls == true
 				or marker.SuperBigMapResourceTopUpIgnoredRubbleWalls == true)
-		if not pos or (not topup_ignores_rubble and not CanReceiveDeposit(map, pos)) then
-			invalid[#invalid + 1] = { marker = marker, pos = pos }
+		local receive_ok = pos and (topup_ignores_rubble
+			or CanReceiveDeposit(map, pos) == true) or false
+		if not pos or (not topup_ignores_rubble and receive_ok ~= true) then
+			local x, y
+			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
+			local buildable, q, r = false, nil, nil
+			if pos then buildable, q, r = IsBuildableAt(map, pos, true) end
+			local passable = pos and PassableAt(map, pos) == true or false
+			local flatness = pos and FlatnessAt(map, pos) or 0
+			local unobstructed = pos and IsUnobstructedAt(map, pos, true) == true or false
+			local reachable = pos and type(q) == "number"
+				and IsReachableFromUndergroundEntrance(map, pos, q, r) == true or false
+			local reserved = type(q) == "number" and type(r) == "number"
+				and UndergroundWonderReservedHexes(map)
+				and UndergroundWonderReservedHexes(map)[CoordinateHexKey(q, r)] == true or false
+			local reason = not pos and "missing_position"
+				or buildable ~= true and "unbuildable"
+				or passable ~= true and "impassable"
+				or flatness < TopUpFlatnessMinimum() and "nonflat"
+				or reserved and "wonder_reserved"
+				or unobstructed ~= true and "obstructed"
+				or reachable ~= true and "entrance_unreachable"
+				or "validator_rejected"
+			local class = tostring(marker and marker.class or "?")
+			local resource = tostring(marker and marker.resource or "?")
+			invalid_by_class[class] = (invalid_by_class[class] or 0) + 1
+			invalid_by_resource[resource] = (invalid_by_resource[resource] or 0) + 1
+			local sector_key = type(x) == "number"
+				and EnrichmentSectorKey(SectorAtPoint(map, x, y)) or nil
+			local detail = table.concat({
+				class .. "/" .. resource,
+				"world=" .. tostring(x) .. "," .. tostring(y) .. "," .. tostring(point_z(pos)),
+				"hex=" .. tostring(q) .. "," .. tostring(r),
+				"sector=" .. tostring(sector_key),
+				"reason=" .. tostring(reason),
+				"flags=" .. marker_flags(marker),
+				"buildable=" .. tostring(buildable),
+				"passable=" .. tostring(passable),
+				"flatness=" .. tostring(flatness),
+				"unobstructed=" .. tostring(unobstructed),
+				"reachable=" .. tostring(reachable),
+				"reserved=" .. tostring(reserved),
+			}, ":")
+			invalid_details[#invalid_details + 1] = detail
+			invalid[#invalid + 1] = { marker = marker, pos = pos, diagnostic = detail }
 		end
 	end
 	if #invalid == 0 then
@@ -7185,7 +7296,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 
 	local moved, unresolved = 0, 0
-	local moved_by_class = {}
+	local moved_by_class, unresolved_by_class, unresolved_by_resource = {}, {}, {}
+	local relocation_details, unresolved_details = {}, {}
 	local ignored_for_strict_repulsion = {}
 	local ignored_for_topup_repulsion = {}
 	for _, item in ipairs(invalid) do
@@ -7213,26 +7325,36 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		end
 	end)
 	local strict_repulsion = NewTopUpRepulsionTracker(
-		map, "underground ordinary-top-up relocation", ignored_for_strict_repulsion)
+		map, "underground ordinary-top-up relocation", ignored_for_strict_repulsion, true)
 	local topup_only_repulsion = NewTopUpRepulsionTracker(
-		map, "underground native relocation versus top-ups", ignored_for_topup_repulsion)
+		map, "underground native relocation versus top-ups", ignored_for_topup_repulsion, true)
 	local relocation_attempts, relocation_retries = 0, 0
 	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
 	local repulsion_rejected, missing_repulsion_profile = 0, 0
 	for invalid_i, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
+		local resource = tostring(marker and marker.resource or "?")
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		local density_fallback = marker
 			and marker.SuperBigMapUndergroundDensityFallback == true
 		local marker_is_topup = ordinary_topup(marker)
 		local ox, oy
 		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
+		local diagnostic_prefix = tostring(item.diagnostic or (class .. "/" .. resource))
 		if not marker or type(marker.SetPos) ~= "function" then
 			unresolved = unresolved + 1
+			unresolved_by_class[class] = (unresolved_by_class[class] or 0) + 1
+			unresolved_by_resource[resource] = (unresolved_by_resource[resource] or 0) + 1
+			unresolved_details[#unresolved_details + 1] = diagnostic_prefix
+				.. ":failure=marker_or_SetPos_unavailable"
 		elseif not profile then
 			missing_repulsion_profile = missing_repulsion_profile + 1
 			unresolved = unresolved + 1
+			unresolved_by_class[class] = (unresolved_by_class[class] or 0) + 1
+			unresolved_by_resource[resource] = (unresolved_by_resource[resource] or 0) + 1
+			unresolved_details[#unresolved_details + 1] = diagnostic_prefix
+				.. ":failure=missing_repulsion_profile"
 		else
 			-- Leave at least one candidate for every marker still to process. A candidate was
 			-- reachable when sampled, but terrain-Z snapping or SetPos can alter the effective
@@ -7243,6 +7365,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			local attempts, success = 0, false
 			local successful_pos, successful_candidate
 			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
+			local last_candidate = "none"
+			local last_repulsion_detail = ""
+			local item_snapped_rejected, item_repulsion_rejected = 0, 0
+			local item_setpos_failed, item_postmove_rejected = 0, 0
+			local candidates_before = #candidates
 			while attempts < max_attempts and not success do
 				local c = take_near(old_pos)
 				if not c then
@@ -7259,26 +7386,36 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 				local nx, ny
 				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
+				last_candidate = "world=" .. tostring(nx) .. "," .. tostring(ny)
+					.. ":sample_hex=" .. tostring(c.q) .. "," .. tostring(c.r)
 				if not CanReceiveDeposit(map, new_pos, validation_context) then
 					snapped_rejected = snapped_rejected + 1
+					item_snapped_rejected = item_snapped_rejected + 1
 					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
 				else
 					local candidate = { x = nx, y = ny }
-					local spacing_ok
+					local spacing_ok, active_repulsion
 					if density_fallback then
+						active_repulsion = strict_repulsion
 						spacing_ok = strict_repulsion.CanPlaceUnique(candidate)
 					elseif marker_is_topup then
+						active_repulsion = strict_repulsion
 						spacing_ok = strict_repulsion.CanPlace(candidate, profile)
 					else
+						active_repulsion = topup_only_repulsion
 						spacing_ok = topup_only_repulsion.CanPlace(candidate, profile)
 					end
 					if not spacing_ok then
 						repulsion_rejected = repulsion_rejected + 1
+						item_repulsion_rejected = item_repulsion_rejected + 1
+						last_repulsion_detail = tostring(
+							active_repulsion and active_repulsion.Stats().last_rejection or "")
 						last_reason = "candidate violates enrichment repulsion"
 					else
 						local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
 						if not ok_move then
 							setpos_failed = setpos_failed + 1
+							item_setpos_failed = item_setpos_failed + 1
 							last_reason = "SetPos failed: " .. tostring(move_error)
 						else
 							local actual_pos = ObjectPos(marker)
@@ -7307,8 +7444,15 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 								successful_candidate = actual_candidate
 							else
 								postmove_rejected = postmove_rejected + 1
+								item_postmove_rejected = item_postmove_rejected + 1
 								if not actual_spacing_ok then
 									repulsion_rejected = repulsion_rejected + 1
+									item_repulsion_rejected = item_repulsion_rejected + 1
+									local active_repulsion = density_fallback
+										and strict_repulsion or marker_is_topup
+										and strict_repulsion or topup_only_repulsion
+									last_repulsion_detail = tostring(
+										active_repulsion.Stats().last_rejection or "")
 								end
 								last_reason = actual_pos
 									and "actual marker position failed terrain/repulsion validation"
@@ -7327,6 +7471,17 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 				moved = moved + 1
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
+				local final_x, final_y
+				if successful_pos and type(successful_pos.xy) == "function" then
+					final_x, final_y = successful_pos:xy()
+				end
+				relocation_details[#relocation_details + 1] = diagnostic_prefix
+					.. ":result=moved:attempts=" .. tostring(attempts)
+					.. ":to_world=" .. tostring(final_x) .. "," .. tostring(final_y)
+					.. ":snapped_rejected=" .. tostring(item_snapped_rejected)
+					.. ":repulsion_rejected=" .. tostring(item_repulsion_rejected)
+					.. ":setpos_failed=" .. tostring(item_setpos_failed)
+					.. ":postmove_rejected=" .. tostring(item_postmove_rejected)
 				marker.SuperBigMapReachabilityRelocated = true
 				if marker.SuperBigMapTransformWonderReservationResolved == true
 					and successful_pos and type(successful_pos.xy) == "function" then
@@ -7337,6 +7492,20 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 			else
 				unresolved = unresolved + 1
+				unresolved_by_class[class] = (unresolved_by_class[class] or 0) + 1
+				unresolved_by_resource[resource] = (unresolved_by_resource[resource] or 0) + 1
+				unresolved_details[#unresolved_details + 1] = diagnostic_prefix
+					.. ":failure=" .. tostring(last_reason)
+					.. ":attempts=" .. tostring(attempts)
+					.. ":max_attempts=" .. tostring(max_attempts)
+					.. ":candidates_before=" .. tostring(candidates_before)
+					.. ":candidates_after=" .. tostring(#candidates)
+					.. ":last_candidate=" .. tostring(last_candidate)
+					.. ":snapped_rejected=" .. tostring(item_snapped_rejected)
+					.. ":repulsion_rejected=" .. tostring(item_repulsion_rejected)
+					.. ":setpos_failed=" .. tostring(item_setpos_failed)
+					.. ":postmove_rejected=" .. tostring(item_postmove_rejected)
+					.. ":last_repulsion=" .. tostring(last_repulsion_detail)
 			end
 		end
 	end
@@ -7356,9 +7525,21 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		connectivity_rejected = reachable_state.rejected,
 		connectivity_failures = reachable_state.failures,
 		moved_by_class = TallyString(moved_by_class),
+		invalid_by_class = TallyString(invalid_by_class),
+		invalid_by_resource = TallyString(invalid_by_resource),
+		unresolved_by_class = TallyString(unresolved_by_class),
+		unresolved_by_resource = TallyString(unresolved_by_resource),
+		invalid_details = table.concat(invalid_details, ";"),
+		relocation_details = table.concat(relocation_details, ";"),
+		unresolved_details = table.concat(unresolved_details, ";"),
 		strict_repulsion_tracker = strict_repulsion.Stats(),
 		topup_only_repulsion_tracker = topup_only_repulsion.Stats(),
+		strict_first_rejection = strict_repulsion.Stats().first_rejection,
+		strict_last_rejection = strict_repulsion.Stats().last_rejection,
+		topup_only_first_rejection = topup_only_repulsion.Stats().first_rejection,
+		topup_only_last_rejection = topup_only_repulsion.Stats().last_rejection,
 	}
+	AuditEmit("UNDERGROUND_ENRICHMENT_REACHABILITY", stats, map)
 	return unresolved == 0, stats
 end
 
