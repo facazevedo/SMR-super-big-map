@@ -809,6 +809,9 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
 	map.SuperBigMapDeferredUndergroundWondersStretched = nil
 	map.SuperBigMapDeferredBottomlessPitsStretched = nil
+	map.SuperBigMapDeferredWonderAnomaliesDone = nil
+	map.SuperBigMapDeferredWonderAnomaliesSpawned = nil
+	map.SuperBigMapDeferredWonderAnomaliesAudited = nil
 	map.SuperBigMapWonderLifecycleReseatDone = nil
 	map.SuperBigMapWonderLifecycleReseatFailed = nil
 	map.SuperBigMapZScaleUniform = nil
@@ -4512,6 +4515,195 @@ local function MaterializeDeferredUndergroundWonders(map)
 	return spawned == #planned, spawned
 end
 
+-- Buried wonders normally exist when OnMsg.CityInitialized walks SpawnsOnCityInit and invokes
+-- UndergroundWonder:Spawn. Expanded underground generation deliberately postpones construction of
+-- the wonder objects until first access, so that one-shot message has already passed by the time
+-- MaterializeDeferredUndergroundWonders creates them. Activate the same vanilla Spawn method only
+-- after the authoritative final grids exist; FindUnobstructedDepositPos then sees matching object,
+-- passability, and buildable grids. The linked-marker scan makes this safe to retry after a hot
+-- reload without ever creating a second rare anomaly for the same wonder.
+function WonderVerticalDiagnostics.DeferredUndergroundWonderClasses()
+	local classes, seen = {}, {}
+	local const_tbl = Global("const")
+	for _, class_name in ipairs(type(const_tbl) == "table"
+		and type(const_tbl.BuriedWonders) == "table" and const_tbl.BuriedWonders or {}) do
+		if type(class_name) == "string" and class_name ~= "" and not seen[class_name] then
+			seen[class_name] = true
+			classes[#classes + 1] = class_name
+		end
+	end
+	-- The fallback is for diagnostics/hot reload only. These are the four vanilla classes and
+	-- therefore do not broaden the feature to unrelated SpawnsAnomalyOnCityInit objects.
+	if #classes == 0 then
+		classes = { "AncientArtifact", "CaveOfWonders", "BottomlessPit", "JumboCave" }
+	end
+	return classes
+end
+
+function WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map)
+	local wonders, seen, allowed = {}, {}, {}
+	for _, class_name in ipairs(WonderVerticalDiagnostics.DeferredUndergroundWonderClasses()) do
+		allowed[class_name] = true
+		for _, wonder in ipairs(ArtefactMapGet(map, class_name)) do
+			if wonder and not seen[wonder] then
+				seen[wonder] = true
+				wonders[#wonders + 1] = wonder
+			end
+		end
+	end
+	return wonders, allowed
+end
+
+function WonderVerticalDiagnostics.WonderCityLabelContains(map, wonder)
+	local class_name = wonder and tostring(wonder.class or "") or ""
+	local labels = map and map.City and map.City.labels
+	local label = type(labels) == "table" and labels[class_name] or nil
+	if type(label) ~= "table" then return false end
+	for _, candidate in pairs(label) do
+		if candidate == wonder then return true end
+	end
+	return false
+end
+
+function WonderVerticalDiagnostics.WonderScenarioExists(wonder)
+	local list_name = wonder and wonder.sequence_list
+	local sequence = wonder and wonder.sequence
+	local scenarios = Global("Scenarios")
+	local list = type(scenarios) == "table" and scenarios[list_name] or nil
+	if type(list_name) ~= "string" or list_name == ""
+		or type(sequence) ~= "string" or sequence == "" or type(list) ~= "table" then
+		return false
+	end
+	for _, entry in pairs(list) do
+		if type(entry) == "table" and entry.name == sequence then return true end
+	end
+	return false
+end
+
+function WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
+	local linked = {}
+	for _, marker in ipairs(ArtefactMapGet(map, "SubsurfaceAnomalyMarker")) do
+		local spawner = marker and marker.spawner
+		if spawner then
+			local list = linked[spawner]
+			if not list then list = {}; linked[spawner] = list end
+			list[#list + 1] = marker
+		end
+	end
+	return linked
+end
+
+function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
+	map, spawn_missing, reason)
+	local wonders, allowed = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map)
+	local expected = tonumber(map and map.SuperBigMapDeferredUndergroundWondersSpawned)
+		or tonumber(map and map.SuperBigMapDeferredUndergroundWonderCount) or #wonders
+	local stats = {
+		reason = tostring(reason or ""), expected = expected, wonders = #wonders,
+		existing = 0, spawned = 0, linked_markers = 0, failures = 0,
+	}
+	local failure_details, class_counts, marker_details = {}, {}, {}
+	local function fail(message)
+		stats.failures = stats.failures + 1
+		failure_details[#failure_details + 1] = tostring(message)
+	end
+	if #wonders ~= expected then
+		fail("wonder count " .. tostring(#wonders) .. " does not match expected "
+			.. tostring(expected))
+	end
+
+	local linked = WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
+	for _, wonder in ipairs(wonders) do
+		local class_name = tostring(wonder.class or "?")
+		class_counts[class_name] = (class_counts[class_name] or 0) + 1
+		if not allowed[class_name] or not IsKindOfSafe(wonder, "UndergroundWonder") then
+			fail(class_name .. " is not a vanilla UndergroundWonder")
+		end
+		if wonder.city ~= map.City then fail(class_name .. " has the wrong city") end
+		if not WonderVerticalDiagnostics.WonderCityLabelContains(map, wonder) then
+			fail(class_name .. " is absent from its city label")
+		end
+		if type(wonder.CompleteSequence) ~= "function"
+			or type(wonder.IsSequenceComplete) ~= "function" then
+			fail(class_name .. " is missing its vanilla completion API")
+		end
+		if not WonderVerticalDiagnostics.WonderScenarioExists(wonder) then
+			fail(class_name .. " scenario " .. tostring(wonder.sequence_list) .. "/"
+				.. tostring(wonder.sequence) .. " is unavailable")
+		end
+
+		local markers = linked[wonder] or {}
+		if #markers == 0 and spawn_missing == true then
+			if type(wonder.Spawn) ~= "function" then
+				fail(class_name .. " is missing SpawnsAnomalyOnCityInit:Spawn")
+			else
+				local spawn_ok, spawn_error = pcall(wonder.Spawn, wonder)
+				if not spawn_ok then
+					fail(class_name .. " rare-anomaly Spawn failed: " .. tostring(spawn_error))
+				else
+					stats.spawned = stats.spawned + 1
+					linked = WonderVerticalDiagnostics.LinkedWonderAnomalies(map)
+					markers = linked[wonder] or {}
+				end
+			end
+		elseif #markers == 1 then
+			stats.existing = stats.existing + 1
+		end
+
+		if #markers ~= 1 then
+			fail(class_name .. " has " .. tostring(#markers)
+				.. " linked rare-anomaly markers; expected exactly 1")
+		else
+			local marker = markers[1]
+			stats.linked_markers = stats.linked_markers + 1
+			if not IsKindOfSafe(marker, "SubsurfaceSpecialAnomalyMarker") then
+				fail(class_name .. " linked marker has class " .. tostring(marker.class))
+			end
+			if marker.spawner ~= wonder then fail(class_name .. " linked marker lost its spawner") end
+			if marker.sequence ~= wonder.sequence
+				or marker.sequence_list ~= wonder.sequence_list then
+				fail(class_name .. " linked marker has the wrong scenario")
+			end
+			if marker.rare ~= wonder.anomaly_rare or marker.rare ~= true then
+				fail(class_name .. " linked marker is not a rare anomaly")
+			end
+			if marker.SuperBigMapAnomalyTopUp == true
+				or marker.SuperBigMapEnrichmentClone == true then
+				fail(class_name .. " linked marker was incorrectly classified as a top-up")
+			end
+			if type(marker.GetMap) == "function" and SafeCall(marker.GetMap, marker) ~= map then
+				fail(class_name .. " linked marker is on the wrong map")
+			end
+			wonder.SuperBigMapDeferredWonderAnomalySpawned = true
+			marker.SuperBigMapDeferredWonderAnomaly = true
+			marker.SuperBigMapDeferredWonderClass = class_name
+			local pos = Engine.ObjectPos(marker)
+			local x, y = PointXY(pos)
+			marker_details[#marker_details + 1] = class_name .. "@"
+				.. tostring(x) .. "," .. tostring(y)
+		end
+	end
+
+	local classes = {}
+	for class_name, count in pairs(class_counts) do
+		classes[#classes + 1] = class_name .. "=" .. tostring(count)
+	end
+	table.sort(classes)
+	table.sort(marker_details)
+	stats.classes = table.concat(classes, ",")
+	stats.markers = table.concat(marker_details, ";")
+	stats.error = table.concat(failure_details, " | ")
+	local ok = stats.failures == 0 and stats.linked_markers == #wonders
+	if ok and map then
+		map.SuperBigMapDeferredWonderAnomaliesDone = true
+		map.SuperBigMapDeferredWonderAnomaliesSpawned = math.max(
+			tonumber(map.SuperBigMapDeferredWonderAnomaliesSpawned) or 0, stats.spawned)
+		map.SuperBigMapDeferredWonderAnomaliesAudited = stats.linked_markers
+	end
+	LoadingStep("underground buried wonder anomaly audit", stats, map)
+	return ok, stats
+end
+
 -- SurfacePassage is the underground half of a natural Elevator anchor. Its inherited
 -- SpawnsOnCityInit:Spawn creates the SurfaceTunnelMarker and immediately calls
 -- FindUnobstructedDepositPos, which requires the BuildableGrid and object hex grid to have
@@ -7223,6 +7415,21 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						built_markers = indicator_stats and indicator_stats.built_markers or 0,
 					}, map)
 				end
+				-- CityInitialized ran before deferred wonder construction, so restore the exact vanilla
+				-- SpawnsAnomalyOnCityInit action now that its unobstructed-position query can use the
+				-- authoritative underground grids. This covers all present buried-wonder classes.
+				SetLoadingPhase("Activating underground wonder anomalies")
+				local wonder_anomaly_token = LoadingBegin(
+					"underground activate buried wonder anomalies", map)
+				local wonder_anomaly_ok, wonder_anomaly_stats =
+					WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
+						map, true, "after final grids and passage activation")
+				LoadingEnd(wonder_anomaly_token, wonder_anomaly_stats, wonder_anomaly_ok == true)
+				if wonder_anomaly_ok ~= true then
+					error("deferred underground wonder anomaly activation failed: "
+						.. tostring(wonder_anomaly_stats and wonder_anomaly_stats.error
+							or "unknown error"))
+				end
 				local deposits = SuperBigMap.DepositRules
 				if not deposits then error("underground deposit rules are unavailable") end
 				if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -7327,6 +7534,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						error("underground wonder-enrichment exclusion failed: overlaps="
 							.. tostring(exclusion_stats and exclusion_stats.overlaps or "unknown")
 							.. " error=" .. tostring(exclusion_stats and exclusion_stats.error or ""))
+					end
+					local wonder_audit_token = LoadingBegin(
+						"underground final buried wonder anomaly audit", map)
+					local wonder_audit_ok, wonder_audit_stats =
+						WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
+							map, false, "after final enrichment relocation")
+					LoadingEnd(wonder_audit_token, wonder_audit_stats, wonder_audit_ok == true)
+					if wonder_audit_ok ~= true then
+						error("underground buried wonder anomaly audit failed: "
+							.. tostring(wonder_audit_stats and wonder_audit_stats.error
+								or "unknown error"))
 					end
 					if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
 						error("top-up vanilla repulsion audit is unavailable")
