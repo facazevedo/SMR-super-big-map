@@ -483,11 +483,10 @@ config.OptimizeNativeEnrichmentRecordCapture = true
 -- this engine asserts from map destruction unless every suspended PassEdits reason was resumed.
 -- Keep the required flush enabled; disabling it is not a valid optimization on the retail build.
 config.OptimizeDiscardTemporarySourcePassEdits = false
--- Underground candidate sampling first applies the identical buildable/passable/flat/unobstructed
--- predicates, but performs the expensive entrance ConnectivityCheck only after a repulsion/sector
--- selector chooses the candidate. Every selected position still passes the exact reachability gate
--- before an object is cloned, and the result is shared across resources, anomalies, and effects.
-config.OptimizeUndergroundDeferredCandidateReachability = true
+-- Experimental deferred reachability was slower in runtime testing because most candidates chosen
+-- by the spacing selectors were unreachable, forcing hundreds of rejected ConnectivityCheck calls.
+-- Keep reachability in the original candidate-validation path used by v658/308d89c.
+config.OptimizeUndergroundDeferredCandidateReachability = false
 -- Optional experimental batching across underground decoration/marker relocation. The measured
 -- work is tiny, so keep this off by default to preserve native construction timing exactly. The
 -- explicit authoritative final passability and buildable-grid rebuilds are never skipped.
