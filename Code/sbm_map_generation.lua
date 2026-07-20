@@ -3446,17 +3446,47 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	return false, "no terrain height is available for the expanded wonder footprint"
 end
 
--- Deferred wonder materialization has produced the same reAssetLODStreamer duplicate-target
--- assert for two separate vanilla texture resources: 3547001 on the three rock/crystal wonders,
--- and 1304001 when AncientArtifact/CaveOfWonders were materialized together. ResourceManager's
--- scene wait is insufficient because the duplicate request can be queued several seconds after it
--- reports idle. Resolve BOTH resources serially before creating any wonder and retain their refs
--- for the lifetime of the installed behavior. This changes no material or LOD target; it merely
--- makes each texture's first all-mip transition single-owner.
-local BURIED_WONDER_TEXTURES = {
+-- Deferred wonder materialization can schedule a second all-mip request well after ResourceManager
+-- reports idle. The resulting reAssetLODStreamer assert has now been observed on both members of
+-- the vanilla cave/pit texture family (3547000/3547001) and on the Ancient Artifact family. Resolve
+-- every member of the family used by the planned wonder classes, in a stable serial order, before
+-- creating any wonder; retain those refs for the lifetime of the installed behavior. The shipped
+-- Fallbacks/Textures packs contain exactly 3547000..1 and 1304000..2 for these two families.
+-- This changes no material, visual, or LOD target; it only makes the first all-mip transition have
+-- a single owner.
+local CAVE_BURIED_WONDER_TEXTURES = {
+	"Textures/3547000.dds",
 	"Textures/3547001.dds",
-	"Textures/1304001.dds",
 }
+local ANCIENT_ARTIFACT_TEXTURES = {
+	"Textures/1304000.dds",
+	"Textures/1304001.dds",
+	"Textures/1304002.dds",
+}
+local BURIED_WONDER_TEXTURES_BY_CLASS = {
+	AncientArtifact = ANCIENT_ARTIFACT_TEXTURES,
+	BottomlessPit = CAVE_BURIED_WONDER_TEXTURES,
+	CaveOfWonders = CAVE_BURIED_WONDER_TEXTURES,
+	JumboCave = CAVE_BURIED_WONDER_TEXTURES,
+}
+
+local function BuriedWonderTexturesForPlan(planned)
+	local classes, textures, seen = {}, {}, {}
+	for _, marker in ipairs(planned or {}) do
+		local class_name = marker and marker.SuperBigMapDeferredWonderClass
+		if type(class_name) == "string" and class_name ~= "" then
+			classes[#classes + 1] = class_name
+			for _, texture_path in ipairs(BURIED_WONDER_TEXTURES_BY_CLASS[class_name] or {}) do
+				if not seen[texture_path] then
+					seen[texture_path] = true
+					textures[#textures + 1] = texture_path
+				end
+			end
+		end
+	end
+	table.sort(textures)
+	return classes, textures
+end
 
 local function ResourceRequestsRunning(resource_manager)
 	if type(resource_manager) ~= "table"
@@ -3512,23 +3542,23 @@ local function ReleaseSharedBuriedWonderTexturePins()
 	local State = SuperBigMap.State or {}
 	State.underground_shared_wonder_texture_ready = nil
 	State.underground_buried_wonder_textures_ready = nil
+	State.underground_buried_wonder_texture_signature = nil
 end
 
 local function PrewarmSharedBuriedWonderTexture(map, planned)
-	local classes = {}
-	for _, marker in ipairs(planned or {}) do
-		local class_name = marker and marker.SuperBigMapDeferredWonderClass
-		if type(class_name) == "string" and class_name ~= "" then
-			classes[#classes + 1] = class_name
-		end
-	end
+	local classes, textures = BuriedWonderTexturesForPlan(planned)
 	if #classes == 0 then return true, { required = false } end
+	if #textures == 0 then
+		return false, "no texture family is registered for " .. table.concat(classes, ",")
+	end
+	local texture_signature = table.concat(textures, ",")
 
 	local State = SuperBigMap.State or {}
 	if State.underground_buried_wonder_textures_ready == true
-		and #underground_shared_wonder_texture_pins >= #BURIED_WONDER_TEXTURES then
+		and State.underground_buried_wonder_texture_signature == texture_signature
+		and #underground_shared_wonder_texture_pins >= #textures then
 		LoadingStep("underground buried-wonder textures ready", {
-			textures = table.concat(BURIED_WONDER_TEXTURES, ","),
+			textures = texture_signature,
 			classes = table.concat(classes, ","),
 			cached = true,
 			pins = #underground_shared_wonder_texture_pins,
@@ -3548,7 +3578,7 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 	-- set. They are extra ownership refs only; releasing them does not unload a live scene object.
 	ReleaseSharedBuriedWonderTexturePins()
 	local total_wait = 0
-	for _, texture_path in ipairs(BURIED_WONDER_TEXTURES) do
+	for _, texture_path in ipairs(textures) do
 		local ok_id, resource_id = pcall(resource_manager.GetResourceID, texture_path)
 		if not ok_id or resource_id == nil then
 			ReleaseSharedBuriedWonderTexturePins()
@@ -3585,8 +3615,9 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 	end
 	State.underground_shared_wonder_texture_ready = true
 	State.underground_buried_wonder_textures_ready = true
+	State.underground_buried_wonder_texture_signature = texture_signature
 	LoadingStep("underground buried-wonder textures ready", {
-		textures = table.concat(BURIED_WONDER_TEXTURES, ","),
+		textures = texture_signature,
 		classes = table.concat(classes, ","),
 		cached = false,
 		pins = #underground_shared_wonder_texture_pins,
