@@ -84,8 +84,18 @@ local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k"
 -- Buried wonders are selected while the vanilla underground still exists but are materialized
 -- only after the terrain and native enrichments have been transformed. Cache their final scaled
 -- visual footprints up front so both native reconstruction and all three top-up families can
--- reject those hexes without repeatedly walking the large wonder shapes.
-local underground_wonder_reserved_hexes_by_map = setmetatable({}, { __mode = "k" })
+-- reject those hexes without repeatedly walking the large wonder shapes. The cache must survive
+-- a game/module class rebuild inside first-access preparation: that rebuild replaces
+-- SuperBigMap.DepositRules while the running pipeline still holds the preceding module instance.
+-- Keep the weak-keyed table in shared mod state so both instances resolve the same reservation.
+SuperBigMap.State = SuperBigMap.State or {}
+local underground_wonder_reserved_hexes_by_map =
+	SuperBigMap.State.underground_wonder_reserved_hexes_by_map
+if type(underground_wonder_reserved_hexes_by_map) ~= "table" then
+	underground_wonder_reserved_hexes_by_map = setmetatable({}, { __mode = "k" })
+	SuperBigMap.State.underground_wonder_reserved_hexes_by_map =
+		underground_wonder_reserved_hexes_by_map
+end
 -- CaptureNativeEnrichmentPositions and CaptureNativeEnrichmentRecords run back-to-back on the
 -- generated source. Keep that first traversal's exact live marker list long enough for the value
 -- snapshot, avoiding a second full DepositMarker enumeration. The cache is consumed immediately;
