@@ -3350,9 +3350,8 @@ local function DeferredWonderScaleRatios(map)
 	}
 end
 
-local function ExactStretchedWonderXY(wonder, map, ratios)
-	local source_x = tonumber(wonder and wonder.SuperBigMapWonderSourceX)
-	local source_y = tonumber(wonder and wonder.SuperBigMapWonderSourceY)
+function WonderVerticalDiagnostics.ExactStretchedSourceXY(source_x, source_y, map, ratios)
+	source_x, source_y = tonumber(source_x), tonumber(source_y)
 	if type(source_x) ~= "number" or type(source_y) ~= "number"
 		or type(ratios) ~= "table" then
 		return nil
@@ -3368,6 +3367,117 @@ local function ExactStretchedWonderXY(wonder, map, ratios)
 	end
 	return transform(source_x, origin_x, ratios.x_mul, ratios.x_div),
 		transform(source_y, origin_y, ratios.y_mul, ratios.y_div)
+end
+
+function WonderVerticalDiagnostics.ExactStretchedWonderXY(wonder, map, ratios)
+	return WonderVerticalDiagnostics.ExactStretchedSourceXY(
+		wonder and wonder.SuperBigMapWonderSourceX,
+		wonder and wonder.SuperBigMapWonderSourceY,
+		map, ratios)
+end
+
+-- Publish the complete final visual footprint of every deferred buried wonder before native
+-- enrichments are recreated. The set is built once from the same scaled entity shapes and exact
+-- affine anchors used during materialization, then every deposit placement query performs only a
+-- single hash lookup. Unioning the enclosed and outline shapes covers both the playable interior
+-- and the authored wall/crystal geometry without adding an artificial clearance ring.
+function WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(map, deposit_rules)
+	if type(deposit_rules) ~= "table"
+		or type(deposit_rules.SetUndergroundWonderReservedHexes) ~= "function" then
+		return false, { error = "underground wonder reservation API is unavailable" }
+	end
+	local ratios, ratio_error = DeferredWonderScaleRatios(map)
+	if not ratios then return false, { error = tostring(ratio_error) } end
+	local templates = Global("BuildingTemplates")
+	local get_enclosed = Global("GetEnclosedShape")
+	local get_outline = Global("GetEntityOutlineShape")
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	local rotate = Global("HexRotate")
+	local angle_to_direction = Global("HexAngleToDirection")
+	if type(templates) ~= "table" or type(get_enclosed) ~= "function"
+		or type(get_outline) ~= "function" or type(point_fn) ~= "function"
+		or type(world_to_hex) ~= "function" or type(rotate) ~= "function"
+		or type(angle_to_direction) ~= "function"
+		or type(ScaleHexShapeForExpansion) ~= "function" then
+		return false, { error = "underground wonder footprint helpers are unavailable" }
+	end
+
+	local reserved, classes = {}, {}
+	local wonders, source_shape_hexes, scaled_shape_hexes = 0, 0, 0
+	for _, marker in ipairs(ArtefactMapGet(map, "BuriedWonderMarker")) do
+		local class_name = marker and marker.SuperBigMapDeferredWonderClass
+		if type(class_name) == "string" and class_name ~= "" then
+			local template = templates[class_name]
+			local entity = type(template) == "table" and template.entity or nil
+			if type(entity) ~= "string" or entity == "" then
+				return false, { error = "building entity unavailable for " .. tostring(class_name) }
+			end
+			local target_x, target_y = WonderVerticalDiagnostics.ExactStretchedSourceXY(
+				marker.SuperBigMapNativeSourceX, marker.SuperBigMapNativeSourceY,
+				map, ratios)
+			if type(target_x) ~= "number" or type(target_y) ~= "number" then
+				return false, { error = "exact transformed anchor unavailable for " .. class_name }
+			end
+			local ok_anchor, anchor_q, anchor_r = pcall(
+				world_to_hex, point_fn(target_x, target_y))
+			if not ok_anchor or type(anchor_q) ~= "number" or type(anchor_r) ~= "number" then
+				return false, { error = "transformed anchor hex unavailable for " .. class_name }
+			end
+			local ok_direction, direction = pcall(angle_to_direction, marker)
+			if not ok_direction or type(direction) ~= "number" then direction = 0 end
+			local shapes = { get_enclosed(entity), get_outline(entity) }
+			local instance_hexes = 0
+			for _, source_shape in ipairs(shapes) do
+				if type(source_shape) == "table" and #source_shape > 0 then
+					source_shape_hexes = source_shape_hexes + #source_shape
+					local scaled_shape = ScaleHexShapeForExpansion(
+						source_shape, ratios.scale_x, ratios.scale_y)
+					if type(scaled_shape) ~= "table" or #scaled_shape == 0 then
+						return false, { error = "scaled footprint is empty for " .. class_name }
+					end
+					scaled_shape_hexes = scaled_shape_hexes + #scaled_shape
+					for _, shape_point in ipairs(scaled_shape) do
+						local local_q, local_r = PointXY(shape_point)
+						if type(local_q) == "number" and type(local_r) == "number" then
+							local ok_rotate, rotated_q, rotated_r = pcall(
+								rotate, local_q, local_r, direction)
+							if ok_rotate and type(rotated_q) == "number"
+								and type(rotated_r) == "number" then
+								local key = tostring(anchor_q + rotated_q)
+									.. ":" .. tostring(anchor_r + rotated_r)
+								if not reserved[key] then
+									reserved[key] = true
+									instance_hexes = instance_hexes + 1
+								end
+							end
+						end
+					end
+				end
+			end
+			if instance_hexes == 0 then
+				return false, { error = "no footprint hexes resolved for " .. class_name }
+			end
+			wonders = wonders + 1
+			classes[class_name] = (classes[class_name] or 0) + 1
+		end
+	end
+	local class_names = {}
+	for class_name, count in pairs(classes) do
+		class_names[#class_names + 1] = class_name .. "=" .. tostring(count)
+	end
+	table.sort(class_names)
+	local stats = {
+		wonders = wonders,
+		classes = table.concat(class_names, ","),
+		source_shape_hexes = source_shape_hexes,
+		scaled_shape_hexes = scaled_shape_hexes,
+	}
+	local ok, result = deposit_rules.SetUndergroundWonderReservedHexes(map, reserved, stats)
+	if ok ~= true then return false, result end
+	stats.reserved_hexes = result and result.reserved_hexes or 0
+	LoadingStep("underground buried wonder enrichment reservation", stats, map)
+	return true, stats
 end
 
 function WonderVerticalDiagnostics.NearbyWonderGeometrySummary(map, wonder, object_bbox)
@@ -3922,7 +4032,8 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			-- Recompute from the persisted vanilla source anchor instead of trusting an older
 			-- expected value: builds through v666 stored the nearest-hex coordinate here. This makes
 			-- the correction migrate existing expanded saves as well as newly generated maps.
-			local target_x, target_y = ExactStretchedWonderXY(wonder, map, ratios)
+			local target_x, target_y = WonderVerticalDiagnostics.ExactStretchedWonderXY(
+				wonder, map, ratios)
 			target_x = target_x or tonumber(wonder.SuperBigMapWonderExpectedX)
 			target_y = target_y or tonumber(wonder.SuperBigMapWonderExpectedY)
 			if type(target_x) ~= "number" or type(target_y) ~= "number" then
@@ -6948,6 +7059,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				SetLoadingPhase("Repositioning underground rocks and decorations")
 				ScaleDecorationsToFull(map, transform_pass_batch_active)
 			end
+			SetLoadingPhase("Reserving underground wonder footprints")
+			local reservation_ok, reservation_stats =
+				WonderVerticalDiagnostics.ReserveDeferredUndergroundWonderFootprints(
+					map, position_deposits)
+			if reservation_ok ~= true then
+				error("underground wonder footprint reservation failed: "
+					.. tostring(reservation_stats and reservation_stats.error or "unknown error"))
+			end
 			-- Reconstruct every captured native marker directly at the identical proportional hex used
 			-- by the surface transaction. Constructor properties are restored before Init and the
 			-- complete class/property/coordinate record set is verified before top-ups can begin.
@@ -7187,6 +7306,20 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					if type(deposits.ResolveBadgeMarkerOverlaps) == "function" then
 						TimedSafeCall("underground resolve marker overlaps", map,
 							deposits.ResolveBadgeMarkerOverlaps, map, "underground reachable density suite")
+					end
+					if type(deposits.VerifyUndergroundWonderEnrichmentExclusion) ~= "function" then
+						error("underground wonder-enrichment exclusion audit is unavailable")
+					end
+					local exclusion_token = LoadingBegin(
+						"underground verify wonder-enrichment exclusion", map)
+					local exclusion_ok, exclusion_stats =
+						deposits.VerifyUndergroundWonderEnrichmentExclusion(
+							map, "underground final after density suite")
+					LoadingEnd(exclusion_token, exclusion_stats, exclusion_ok == true)
+					if exclusion_ok ~= true then
+						error("underground wonder-enrichment exclusion failed: overlaps="
+							.. tostring(exclusion_stats and exclusion_stats.overlaps or "unknown")
+							.. " error=" .. tostring(exclusion_stats and exclusion_stats.error or ""))
 					end
 					if type(deposits.AuditTopUpVanillaRepulsion) ~= "function" then
 						error("top-up vanilla repulsion audit is unavailable")

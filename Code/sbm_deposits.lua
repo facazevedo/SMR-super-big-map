@@ -81,6 +81,11 @@ local underground_topup_sampling_by_map = setmetatable({}, { __mode = "k" })
 -- set until stage 02 has stretched the destination terrain and recreated the markers there. Weak
 -- map keys ensure an abandoned generation cannot leak the (potentially large) property snapshots.
 local pending_native_enrichment_records_by_map = setmetatable({}, { __mode = "k" })
+-- Buried wonders are selected while the vanilla underground still exists but are materialized
+-- only after the terrain and native enrichments have been transformed. Cache their final scaled
+-- visual footprints up front so both native reconstruction and all three top-up families can
+-- reject those hexes without repeatedly walking the large wonder shapes.
+local underground_wonder_reserved_hexes_by_map = setmetatable({}, { __mode = "k" })
 -- CaptureNativeEnrichmentPositions and CaptureNativeEnrichmentRecords run back-to-back on the
 -- generated source. Keep that first traversal's exact live marker list long enough for the value
 -- snapshot, avoiding a second full DepositMarker enumeration. The cache is consumed immediately;
@@ -102,6 +107,15 @@ local function ClearTopUpPlacementPool(map)
 		underground_reachability_by_map[map] = nil
 		underground_topup_sampling_by_map[map] = nil
 	end
+end
+
+local function CoordinateHexKey(q, r)
+	return tostring(q) .. ":" .. tostring(r)
+end
+
+local function UndergroundWonderReservedHexes(map)
+	local state = map and underground_wonder_reserved_hexes_by_map[map]
+	return type(state) == "table" and state.hexes or nil
 end
 
 local function Enabled()
@@ -251,6 +265,7 @@ local function NewDepositValidationContext(map)
 			and tonumber(const_tbl.DepositObstructMaxRadius) or nil,
 		flatness_minimum = TopUpFlatnessMinimum(),
 		underground = IsUndergroundMap(map),
+		wonder_reserved_hexes = UndergroundWonderReservedHexes(map),
 	}
 end
 
@@ -293,6 +308,18 @@ local function IsUnobstructedAt(map, pt, strict, context)
 	context = type(context) == "table" and context.map == map and context or nil
 	local hex_grid = context and context.object_hex_grid or (map and map.object_hex_grid)
 	local world_to_hex = context and context.world_to_hex or Global("WorldToHex")
+	local q, r
+	if type(world_to_hex) == "function" then
+		local ok_h, hex_q, hex_r = pcall(world_to_hex, pt)
+		if ok_h and type(hex_q) == "number" and type(hex_r) == "number" then
+			q, r = hex_q, hex_r
+		end
+	end
+	local reserved = context and context.wonder_reserved_hexes
+		or UndergroundWonderReservedHexes(map)
+	if reserved and type(q) == "number" and reserved[CoordinateHexKey(q, r)] then
+		return false
+	end
 	if not hex_grid then
 		return strict ~= true
 	end
@@ -322,8 +349,7 @@ local function IsUnobstructedAt(map, pt, strict, context)
 		and type(world_to_hex) == "function") then
 		return strict ~= true
 	end
-	local ok_h, q, r = pcall(world_to_hex, pt)
-	if not ok_h or type(q) ~= "number" or type(r) ~= "number" then
+	if type(q) ~= "number" or type(r) ~= "number" then
 		return strict ~= true
 	end
 	local ok_o, obstructions = pcall(get_obstructions, hex_grid, q, r)
@@ -2315,6 +2341,8 @@ local function NativeRecordFinalPoint(map, record, planned_geometry)
 		end
 	end
 	geometry.collision_resolved = record.SuperBigMapTransformCollisionResolved == true
+	geometry.wonder_reservation_resolved =
+		record.SuperBigMapTransformWonderReservationResolved == true
 	geometry.resolution_radius = record.SuperBigMapTransformCollisionResolutionRadius
 	geometry.collision_owner_index = record.SuperBigMapTransformCollisionOwnerIndex
 	return terrain_point, nil, geometry
@@ -2348,15 +2376,18 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 	end
 	local map_w, map_h = MapWorldSize(map)
 	local plans, primary_keys = {}, {}
+	local wonder_reserved = UndergroundWonderReservedHexes(map)
 	local stats = {
 		records = #records, exact = 0, preserved_source_overlaps = 0,
 		introduced_collisions = 0, resolved = 0, failures = 0, max_resolution_radius = 0,
+		wonder_reservation_conflicts = 0, wonder_reservation_resolved = 0,
 	}
 	for i = 1, #records do
 		local record = records[i]
 		record.SuperBigMapResolvedFinalQ = nil
 		record.SuperBigMapResolvedFinalR = nil
 		record.SuperBigMapTransformCollisionResolved = nil
+		record.SuperBigMapTransformWonderReservationResolved = nil
 		record.SuperBigMapTransformCollisionResolutionRadius = nil
 		record.SuperBigMapTransformCollisionOwnerIndex = nil
 		local geometry, geometry_error = NativeRecordBaseGeometry(map, record)
@@ -2375,7 +2406,8 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 	local occupied = {}
 	local function candidate_for(q, r, raw_x, raw_y, radius)
 		local key = BadgeHexKey(q, r)
-		if occupied[key] or primary_keys[key] then return nil end
+		if occupied[key] or primary_keys[key]
+			or (wonder_reserved and wonder_reserved[CoordinateHexKey(q, r)]) then return nil end
 		local ok_world, x, y = pcall(hex_to_world, q, r)
 		if not ok_world or type(x) ~= "number" or type(y) ~= "number"
 			or (type(map_w) == "number" and (x < 0 or x >= map_w))
@@ -2392,14 +2424,17 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 		local record, geometry = records[i], plans[i]
 		local key = BadgeHexKey(geometry.q, geometry.r)
 		local owner_index = occupied[key]
-		if not owner_index then
+		local reserved_conflict = wonder_reserved
+			and wonder_reserved[CoordinateHexKey(geometry.q, geometry.r)] == true
+		if not owner_index and not reserved_conflict then
 			occupied[key] = i
 			stats.exact = stats.exact + 1
 		else
 			local owner_record = records[owner_index]
 			local owner_source_hex = NativeRecordSourceHexKey(owner_record)
 			local source_hex = NativeRecordSourceHexKey(record)
-			local source_overlap = owner_record and ((owner_source_hex and source_hex
+			local source_overlap = not reserved_conflict and owner_record
+				and ((owner_source_hex and source_hex
 				and owner_source_hex == source_hex)
 				or (not owner_source_hex and not source_hex
 					and owner_record.source_x == record.source_x
@@ -2407,7 +2442,11 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 			if source_overlap then
 				stats.preserved_source_overlaps = stats.preserved_source_overlaps + 1
 			else
-				stats.introduced_collisions = stats.introduced_collisions + 1
+				if reserved_conflict then
+					stats.wonder_reservation_conflicts = stats.wonder_reservation_conflicts + 1
+				else
+					stats.introduced_collisions = stats.introduced_collisions + 1
+				end
 				local selected
 				-- With N records, a radius of N is a derived finite bound: even a completely occupied
 				-- local cluster cannot contain every in-bounds hex in all N rings on these maps.
@@ -2438,10 +2477,15 @@ local function PrepareNativeRecordFinalPointPlan(map, records, reason)
 				record.SuperBigMapResolvedFinalQ = selected.q
 				record.SuperBigMapResolvedFinalR = selected.r
 				record.SuperBigMapTransformCollisionResolved = true
+				record.SuperBigMapTransformWonderReservationResolved =
+					reserved_conflict and true or nil
 				record.SuperBigMapTransformCollisionResolutionRadius = selected.radius
 				record.SuperBigMapTransformCollisionOwnerIndex = owner_index
 				occupied[BadgeHexKey(selected.q, selected.r)] = i
 				stats.resolved = stats.resolved + 1
+				if reserved_conflict then
+					stats.wonder_reservation_resolved = stats.wonder_reservation_resolved + 1
+				end
 				stats.max_resolution_radius = math.max(stats.max_resolution_radius, selected.radius)
 			end
 		end
@@ -2751,6 +2795,10 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			preserved_source_overlaps = tostring(plan_stats and plan_stats.preserved_source_overlaps),
 			introduced_collisions = tostring(plan_stats and plan_stats.introduced_collisions),
 			resolved_collisions = tostring(plan_stats and plan_stats.resolved),
+			wonder_reservation_conflicts = tostring(
+				plan_stats and plan_stats.wonder_reservation_conflicts),
+			wonder_reservation_resolved = tostring(
+				plan_stats and plan_stats.wonder_reservation_resolved),
 		}, map)
 		for i, record in ipairs(records) do
 			local final_point, transform_error, geometry = NativeRecordFinalPoint(
@@ -2766,6 +2814,8 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 				expected_x = final_x, expected_y = final_y, expected_z = final_z,
 				final_hex = geometry and (tostring(geometry.q) .. ":" .. tostring(geometry.r)) or "nil",
 				collision_resolved = tostring(geometry and geometry.collision_resolved == true),
+				wonder_reservation_resolved = tostring(
+					geometry and geometry.wonder_reservation_resolved == true),
 				resolution_radius = tostring(geometry and geometry.resolution_radius),
 				error = tostring(transform_error),
 			}, map)
@@ -2822,6 +2872,8 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			marker.SuperBigMapExpectedStretchedX = geometry.x
 			marker.SuperBigMapExpectedStretchedY = geometry.y
 			marker.SuperBigMapTransformCollisionResolved = geometry.collision_resolved
+			marker.SuperBigMapTransformWonderReservationResolved =
+				geometry.wonder_reservation_resolved
 			marker.SuperBigMapTransformCollisionResolutionRadius = geometry.resolution_radius
 			marker.SuperBigMapTransformCollisionOwnerIndex = geometry.collision_owner_index
 			marker.SuperBigMapNativeRecordIndex = i
@@ -6466,9 +6518,75 @@ function DepositRules.PrepareUndergroundReachability(map)
 	return state and state.available == true, state
 end
 
--- Final correctness audit for stage-03 additions only. Native stage-01 markers are immutable
--- after their verified stage-02 transform and therefore serve only as occupancy/repulsion input.
--- An added marker that is not reachable is moved to a validated reachable candidate.
+function DepositRules.SetUndergroundWonderReservedHexes(map, hexes, stats)
+	if not IsUndergroundMap(map) then
+		return false, { error = "target is not an underground map" }
+	end
+	if type(hexes) ~= "table" then
+		return false, { error = "reserved wonder hex set is unavailable" }
+	end
+	local count = 0
+	for _, reserved in pairs(hexes) do
+		if reserved == true then count = count + 1 end
+	end
+	underground_wonder_reserved_hexes_by_map[map] = {
+		hexes = hexes,
+		count = count,
+		stats = stats,
+	}
+	-- A validation context created before the wonder plan was published must never survive into
+	-- density placement with the old nil reservation.
+	underground_topup_sampling_by_map[map] = nil
+	return true, { reserved_hexes = count, wonders = stats and stats.wonders or nil }
+end
+
+function DepositRules.VerifyUndergroundWonderEnrichmentExclusion(map, reason)
+	map = map or Global("CurrentMap")
+	local reserved = UndergroundWonderReservedHexes(map)
+	if not IsUndergroundMap(map) or type(reserved) ~= "table" then
+		return false, { error = "underground wonder reservation is unavailable", checked = 0 }
+	end
+	local world_to_hex = Global("WorldToHex")
+	if type(map.MapForEach) ~= "function" or type(world_to_hex) ~= "function" then
+		return false, { error = "map/WorldToHex API unavailable", checked = 0 }
+	end
+	local stats = { checked = 0, overlaps = 0, native = 0, topups = 0 }
+	local seen = {}
+	local function inspect(marker)
+		if not IsEnrichmentMarker(marker) or seen[marker] then return end
+		seen[marker] = true
+		stats.checked = stats.checked + 1
+		local topup = marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true
+		if topup then stats.topups = stats.topups + 1 else stats.native = stats.native + 1 end
+		local pos = ObjectPos(marker)
+		local ok_hex, q, r = false, nil, nil
+		if pos then ok_hex, q, r = pcall(world_to_hex, pos) end
+		if ok_hex and type(q) == "number" and type(r) == "number"
+			and reserved[CoordinateHexKey(q, r)] then
+			stats.overlaps = stats.overlaps + 1
+		end
+	end
+	local ok_deposits, deposit_error = pcall(
+		map.MapForEach, map, "map", "DepositMarker", inspect)
+	local ok_effects, effect_error = pcall(
+		map.MapForEach, map, "map", "EffectDepositMarker", inspect)
+	stats.error = not ok_deposits and tostring(deposit_error)
+		or not ok_effects and tostring(effect_error) or nil
+	AuditEmit("UNDERGROUND_WONDER_ENRICHMENT_EXCLUSION", {
+		reason = tostring(reason), checked = stats.checked,
+		native = stats.native, topups = stats.topups, overlaps = stats.overlaps,
+		reserved_hexes = underground_wonder_reserved_hexes_by_map[map]
+			and underground_wonder_reserved_hexes_by_map[map].count or 0,
+		error = tostring(stats.error or ""),
+	}, map)
+	return ok_deposits and ok_effects and stats.overlaps == 0, stats
+end
+
+-- Final correctness audit for stage-03 additions and the small subset of native markers whose
+-- proportional destination intersected a reserved wonder footprint. A marker that is not on
+-- reachable/buildable/unobstructed terrain is moved to a validated candidate.
 function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	if not ExpansionStepEnabled(3)
 		or not ExpansionStepEnabled(11)
@@ -6489,7 +6607,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local additional = marker and (marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
 			or marker.SuperBigMapEffectTopUp == true
-			or marker.SuperBigMapEnrichmentClone == true)
+			or marker.SuperBigMapEnrichmentClone == true
+			or marker.SuperBigMapTransformWonderReservationResolved == true)
 		if additional and IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
 	-- At first underground access no rover or drone has explored this map yet, so no enrichment
@@ -6557,6 +6676,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	end
 	local candidates, seen = {}, {}
 	local world_to_hex = Global("WorldToHex")
+	local occupied_badges = BuildBadgeOccupancy(map, nil, nil, false)
 	local target_pool = math.min(6000, math.max(512, #invalid * 10))
 	local max_samples = math.max(24000, target_pool * 30)
 	for _ = 1, max_samples do
@@ -6565,13 +6685,16 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local pt = point(x, y)
 		if CanReceiveDeposit(map, pt) then
 			local key = tostring(x) .. ":" .. tostring(y)
+			local candidate_q, candidate_r
 			if type(world_to_hex) == "function" then
 				local ok_h, q, r = pcall(world_to_hex, pt)
 				if ok_h and type(q) == "number" and type(r) == "number" then
+					candidate_q, candidate_r = q, r
 					key = tostring(q) .. ":" .. tostring(r)
 				end
 			end
-			if not seen[key] then
+			if not seen[key] and (type(candidate_q) ~= "number"
+				or not BadgeHexOccupied(occupied_badges, candidate_q, candidate_r)) then
 				seen[key] = true
 				candidates[#candidates + 1] = { x = x, y = y }
 			end
@@ -6660,6 +6783,13 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				moved = moved + 1
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				marker.SuperBigMapReachabilityRelocated = true
+				if marker.SuperBigMapTransformWonderReservationResolved == true
+					and successful_pos and type(successful_pos.xy) == "function" then
+					local final_x, final_y = successful_pos:xy()
+					marker.SuperBigMapExpectedStretchedX = final_x
+					marker.SuperBigMapExpectedStretchedY = final_y
+					marker.SuperBigMapWonderConflictRelocated = true
+				end
 			else
 				unresolved = unresolved + 1
 			end
@@ -6931,6 +7061,10 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 			actual_hash = tostring(entry.hash), hex = tostring(entry.q) .. ":" .. tostring(entry.r),
 			native_xy_match = tostring(entry.native_xy_match),
 			collision_resolved = tostring(marker.SuperBigMapTransformCollisionResolved == true),
+			wonder_reservation_resolved = tostring(
+				marker.SuperBigMapTransformWonderReservationResolved == true),
+			wonder_conflict_relocated = tostring(
+				marker.SuperBigMapWonderConflictRelocated == true),
 			resolution_radius = tostring(marker.SuperBigMapTransformCollisionResolutionRadius),
 			sector = entry.sector_key,
 			sector_status = tostring(entry.sector and entry.sector.status),
