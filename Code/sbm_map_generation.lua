@@ -415,18 +415,22 @@ local function ElevatorTraversalAudit(event, data, map)
 	end
 end
 
-local function TraversalObjectMap(obj)
-	if obj and type(obj.GetMap) == "function" then
-		local map = SafeCall(obj.GetMap, obj)
-		if map then return map end
-	end
-	return obj and obj.city and obj.city.map or nil
-end
-
 local function TraversalObjectValid(obj)
 	if not obj then return false end
 	local is_valid = Global("IsValid")
 	return type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true
+end
+
+local function TraversalObjectMap(obj)
+	-- A destroyed engine object retains its Lua methods long enough for delayed map-change
+	-- cleanup to encounter it. Calling GameObject:GetMap on that stale shell asserts before
+	-- pcall can make the engine call harmless, so validity must be the first boundary.
+	if not TraversalObjectValid(obj) then return nil end
+	if type(obj.GetMap) == "function" then
+		local map = SafeCall(obj.GetMap, obj)
+		if map then return map end
+	end
+	return obj.city and obj.city.map or nil
 end
 
 local function TraversalIsExpandedMap(map)
@@ -8518,8 +8522,11 @@ local function RestoreDeferredVehicleNightLights(map)
 	if not map or map ~= Global("CurrentMap") then return 0, 0 end
 	local restored, discarded = 0, 0
 	for unit, target in pairs(deferred_vehicle_night_lights) do
-		local unit_map = TraversalObjectMap(unit)
-		if not TraversalObjectValid(unit) or unit_map ~= target then
+		-- Main-menu ChangeMap can destroy the vehicle before CurrentMapChangeDone drains this
+		-- weak table. Never ask a stale GameObject for its map.
+		local unit_valid = TraversalObjectValid(unit)
+		local unit_map = unit_valid and TraversalObjectMap(unit) or nil
+		if not unit_valid or unit_map ~= target then
 			deferred_vehicle_night_lights[unit] = nil
 			discarded = discarded + 1
 		elseif target == map then
