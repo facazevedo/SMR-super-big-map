@@ -2947,7 +2947,9 @@ end
 -- return a stale source height that no longer matches the stretched terrain. Capture vanilla's
 -- exact first-buildable-cell result now and transform it with the terrain's stamped affine Z
 -- transform when the wonder is finally created.
-local WonderVerticalDiagnostics = {}
+local WonderVerticalDiagnostics = {
+	Classes = { "BottomlessPit", "AncientArtifact", "CaveOfWonders", "JumboCave" },
+}
 
 function WonderVerticalDiagnostics.SafePointZ(pos)
 	if not pos or type(pos.z) ~= "function" then return nil end
@@ -3229,6 +3231,9 @@ local function BootstrapPassagesAndDeferWonders(env)
 					.. " flatten target: " .. tostring(target_error)
 			end
 		end
+	end
+	if type(WonderVerticalDiagnostics.LogCoverage) == "function" then
+		WonderVerticalDiagnostics.LogCoverage(map, "source_plan")
 	end
 	table_lib.shuffle(passage_markers, rand)
 
@@ -3548,8 +3553,54 @@ function WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stat
 	return ok
 end
 
+function WonderVerticalDiagnostics.LogCoverage(map, phase)
+	local planned = {}
+	for _, marker in ipairs(ArtefactMapGet(map, "BuriedWonderMarker")) do
+		local class_name = marker.SuperBigMapDeferredWonderClass
+		if type(class_name) == "string" and class_name ~= "" then
+			planned[class_name] = (planned[class_name] or 0) + 1
+		end
+	end
+	local live = {}
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		local class_name = tostring(wonder.class or "")
+		live[class_name] = (live[class_name] or 0) + 1
+	end
+	local templates = Global("BuildingTemplates")
+	local get_entity_bbox = Global("GetEntityBBox")
+	for _, class_name in ipairs(WonderVerticalDiagnostics.Classes) do
+		local template = type(templates) == "table" and templates[class_name] or nil
+		local entity = type(template) == "table" and template.entity or nil
+		local entity_bbox
+		if type(get_entity_bbox) == "function" and type(entity) == "string" then
+			local ok_bbox, bbox = pcall(get_entity_bbox, entity)
+			if ok_bbox then
+				entity_bbox = WonderVerticalDiagnostics.SafeBoxZStats(bbox)
+			end
+		end
+		local planned_count = planned[class_name] or 0
+		local live_count = live[class_name] or 0
+		LoadingStep("underground buried wonder class coverage", {
+			phase = phase,
+			class = class_name,
+			entity = entity,
+			planned_instances = planned_count,
+			live_instances = live_count,
+			selected_on_map = planned_count > 0 or live_count > 0,
+			status = live_count > 0 and "live"
+				or planned_count > 0 and "planned_not_materialized"
+				or "not_selected_by_vanilla_for_this_map",
+			entity_bbox_min_z = entity_bbox and entity_bbox.min_z,
+			entity_bbox_max_z = entity_bbox and entity_bbox.max_z,
+			entity_bbox_size_z = entity_bbox and entity_bbox.size_z,
+		}, map)
+	end
+	return live
+end
+
 function WonderVerticalDiagnostics.LogAll(map, phase)
 	local ratios = DeferredWonderScaleRatios(map)
+	WonderVerticalDiagnostics.LogCoverage(map, phase)
 	if type(ratios) ~= "table" then return 0 end
 	local count = 0
 	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
@@ -4096,6 +4147,7 @@ local function MaterializeDeferredUndergroundWonders(map)
 		WonderVerticalDiagnostics.Log(wonder, nil, map, ratios, nil,
 			"after_wonder_resume")
 	end
+	WonderVerticalDiagnostics.LogCoverage(map, "after_wonder_resume")
 	map.SuperBigMapDeferredUndergroundWondersPending = false
 	map.SuperBigMapDeferredUndergroundWondersDone = true
 	map.SuperBigMapDeferredUndergroundWondersSpawned = spawned
@@ -7982,7 +8034,9 @@ local function PatchDeferredUndergroundAccess(source)
 		-- after ChangeCurrentMapSlot has switched maps and waited for scene rendering.
 		local switch_restore_token = CurrentElevatorRestoreToken(target)
 		local switch_restore_token_id = switch_restore_token and switch_restore_token.token_id
+		WonderVerticalDiagnostics.LogAll(target, "before_underground_map_switch")
 		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
+		WonderVerticalDiagnostics.LogAll(target, "immediately_after_underground_map_switch")
 		-- ChangeCurrentMapSlot only waits for scene mode; unlike a full ChangeMap it does not wait
 		-- for ResourceManager IO. Deferred wonders were created moments earlier, so keep our loading
 		-- screen alive until their first visible texture targets have become stable.
