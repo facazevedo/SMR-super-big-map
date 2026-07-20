@@ -6598,9 +6598,14 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		unresolved = 0, unreachable = 0, terrain_invalid = 0, too_far = 0,
 		overlaps = 0, candidates_tested = 0, connectivity_checks = 0,
 		entrance_disconnected = 0, terrain_fallbacks = 0,
+		candidate_out_of_bounds = 0, candidate_badge_occupied = 0,
+		candidate_reserved = 0, candidate_unbuildable = 0,
+		candidate_impassable = 0, candidate_nonflat = 0,
+		candidate_terrain_valid = 0, candidate_obstructed = 0,
+		candidate_strict_valid = 0,
 		max_search_radius = DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS,
 	}
-	local details = {}
+	local details, ring_diagnostics = {}, {}
 	local validation_context = SharedTopUpValidationContext(map)
 	-- Resource top-ups must stay out of every reserved wonder footprint. A wonder's own rare
 	-- anomaly is different: vanilla starts it at the wonder and searches the local footprint.
@@ -6615,6 +6620,68 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 	local get_sector = Global("GetMapSectorXY")
 	local done_object = Global("DoneObject")
 	local is_valid = Global("IsValid")
+	local diagnostic_radii = {
+		[0] = true, [1] = true, [2] = true, [4] = true, [8] = true,
+		[16] = true, [24] = true, [32] = true, [48] = true, [64] = true,
+		[96] = true, [128] = true, [160] = true,
+	}
+
+	local function raw_buildable_z(q, r)
+		local buildable = wonder_validation_context.buildable
+		local get_z = wonder_validation_context.buildable_get_z
+		if not buildable or type(get_z) ~= "function"
+			or type(q) ~= "number" or type(r) ~= "number" then return nil end
+		local ok_z, z = pcall(get_z, buildable, q, r)
+		return ok_z and z or nil
+	end
+
+	local function terrain_diagnostic(pt, include_obstruction)
+		local buildable, q, r = IsBuildableAt(
+			map, pt, true, wonder_validation_context)
+		local passable = PassableAt(map, pt, wonder_validation_context)
+		local flatness = FlatnessAt(map, pt, wonder_validation_context) or 0
+		local flat_ok = flatness >= wonder_validation_context.flatness_minimum
+		local unobstructed
+		if include_obstruction == true then
+			unobstructed = IsUnobstructedAt(
+				map, pt, true, wonder_validation_context) == true
+		end
+		return {
+			buildable = buildable == true, q = q, r = r,
+			buildable_z = raw_buildable_z(q, r),
+			unbuildable_z = wonder_validation_context.build_unbuildable_z,
+			passable = passable == true, flatness = flatness, flat_ok = flat_ok,
+			unobstructed = unobstructed,
+		}
+	end
+
+	local function point_xy_text(pt)
+		if pt and type(pt.xy) == "function" then
+			local ok_xy, x, y = pcall(pt.xy, pt)
+			if ok_xy then return tostring(x) .. "," .. tostring(y) end
+		end
+		return "?,?"
+	end
+
+	local function state_diagnostic_text(state)
+		local diagnostic = state.diagnostic or {}
+		return "marker_world=" .. point_xy_text(state.marker_pos)
+			.. ":spawner_world=" .. point_xy_text(state.spawner_pos)
+			.. ":marker_hex=" .. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
+			.. ":spawner_hex=" .. tostring(state.spawner_q) .. "," .. tostring(state.spawner_r)
+			.. ":distance=" .. tostring(state.distance)
+			.. ":terrain_ok=" .. tostring(state.terrain_ok)
+			.. ":buildable=" .. tostring(diagnostic.buildable)
+			.. ":buildable_z=" .. tostring(diagnostic.buildable_z)
+			.. ":unbuildable_z=" .. tostring(diagnostic.unbuildable_z)
+			.. ":passable=" .. tostring(diagnostic.passable)
+			.. ":flatness=" .. tostring(diagnostic.flatness)
+			.. ":flat_min=" .. tostring(wonder_validation_context.flatness_minimum)
+			.. ":unobstructed=" .. tostring(diagnostic.unobstructed)
+			.. ":reserved=" .. tostring(state.reserved_overlap)
+			.. ":badge_overlap=" .. tostring(state.overlap)
+			.. ":entrance_connected=" .. tostring(state.reachable)
+	end
 
 	local function marker_state(marker, occupied)
 		local spawner = marker and marker.spawner
@@ -6648,6 +6715,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			and reserved[CoordinateHexKey(marker_q, marker_r)] == true
 		local accepted_terrain_fallback =
 			marker.SuperBigMapDeferredWonderAnomalyLocalTerrainFallback == true
+		local diagnostic = terrain_diagnostic(marker_pos, true)
 		return terrain_ok and (base_ok or accepted_terrain_fallback)
 			and local_ok and not overlap, {
 			marker_pos = marker_pos, spawner_pos = spawner_pos,
@@ -6657,10 +6725,13 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			unobstructed = unobstructed, reachable = reachable,
 			local_ok = local_ok, overlap = overlap, reserved_overlap = reserved_overlap,
 			accepted_terrain_fallback = accepted_terrain_fallback,
+			diagnostic = diagnostic,
 		}
 	end
 
 	local function find_local_candidate(marker, state, occupied)
+		local diagnostic_class = tostring(marker.SuperBigMapDeferredWonderClass
+			or marker.spawner and marker.spawner.class or "?")
 		local spawner_sector
 		if type(get_sector) == "function" and map.City and state.spawner_pos
 			and type(state.spawner_pos.xy) == "function" then
@@ -6670,22 +6741,62 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		end
 		local first_other_sector, first_terrain_fallback
 		for radius = 0, DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS do
+			local ring = {
+				radius = radius, tested = 0, out_of_bounds = 0, badge_occupied = 0,
+				reserved = 0, unbuildable = 0, impassable = 0, nonflat = 0,
+				terrain_valid = 0, obstructed = 0, strict_valid = 0,
+			}
 			local same_sector_candidates = {}
 			local other_sector_candidates = {}
 			local terrain_fallback_candidates = {}
 			ForEachHexInRing(state.spawner_q, state.spawner_r, radius, function(q, r)
-				if BadgeHexOccupied(occupied, q, r) then return end
+				if type(reserved) == "table" and reserved[CoordinateHexKey(q, r)] == true then
+					ring.reserved = ring.reserved + 1
+					stats.candidate_reserved = stats.candidate_reserved + 1
+				end
+				if BadgeHexOccupied(occupied, q, r) then
+					ring.badge_occupied = ring.badge_occupied + 1
+					stats.candidate_badge_occupied = stats.candidate_badge_occupied + 1
+					return
+				end
 				local ok_world, x, y = pcall(hex_to_world, q, r)
 				if not ok_world or type(x) ~= "number" or type(y) ~= "number"
 					or (type(map_w) == "number" and (x < 0 or x >= map_w))
-					or (type(map_h) == "number" and (y < 0 or y >= map_h)) then return end
+					or (type(map_h) == "number" and (y < 0 or y >= map_h)) then
+					ring.out_of_bounds = ring.out_of_bounds + 1
+					stats.candidate_out_of_bounds = stats.candidate_out_of_bounds + 1
+					return
+				end
 				stats.candidates_tested = stats.candidates_tested + 1
+				ring.tested = ring.tested + 1
 				local candidate_point = point_fn(x, y)
 				local terrain_ok = EvaluateDepositTerrain(
 					map, candidate_point, wonder_validation_context, true)
-				if not terrain_ok then return end
+				if not terrain_ok then
+					local diagnostic = terrain_diagnostic(candidate_point, false)
+					if not diagnostic.buildable then
+						ring.unbuildable = ring.unbuildable + 1
+						stats.candidate_unbuildable = stats.candidate_unbuildable + 1
+					elseif not diagnostic.passable then
+						ring.impassable = ring.impassable + 1
+						stats.candidate_impassable = stats.candidate_impassable + 1
+					elseif not diagnostic.flat_ok then
+						ring.nonflat = ring.nonflat + 1
+						stats.candidate_nonflat = stats.candidate_nonflat + 1
+					end
+					return
+				end
+				ring.terrain_valid = ring.terrain_valid + 1
+				stats.candidate_terrain_valid = stats.candidate_terrain_valid + 1
 				local unobstructed = IsUnobstructedAt(
 					map, candidate_point, true, wonder_validation_context) == true
+				if unobstructed then
+					ring.strict_valid = ring.strict_valid + 1
+					stats.candidate_strict_valid = stats.candidate_strict_valid + 1
+				else
+					ring.obstructed = ring.obstructed + 1
+					stats.candidate_obstructed = stats.candidate_obstructed + 1
+				end
 				if type(candidate_point.SetTerrainZ) == "function" then
 					local ok_z, snapped = pcall(candidate_point.SetTerrainZ,
 						candidate_point, map)
@@ -6709,6 +6820,20 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 					other_sector_candidates[#other_sector_candidates + 1] = candidate
 				end
 			end)
+			if diagnostic_radii[radius] then
+				ring_diagnostics[#ring_diagnostics + 1] = diagnostic_class
+					.. ":r" .. tostring(radius)
+					.. "{tested=" .. tostring(ring.tested)
+					.. ",out=" .. tostring(ring.out_of_bounds)
+					.. ",occupied=" .. tostring(ring.badge_occupied)
+					.. ",reserved=" .. tostring(ring.reserved)
+					.. ",unbuildable=" .. tostring(ring.unbuildable)
+					.. ",impassable=" .. tostring(ring.impassable)
+					.. ",nonflat=" .. tostring(ring.nonflat)
+					.. ",terrain=" .. tostring(ring.terrain_valid)
+					.. ",obstructed=" .. tostring(ring.obstructed)
+					.. ",strict=" .. tostring(ring.strict_valid) .. "}"
+			end
 			if #same_sector_candidates > 0 then
 				return same_sector_candidates[RandInt(#same_sector_candidates) + 1]
 			end
@@ -6740,9 +6865,8 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			end
 			marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = true
 			marker.SuperBigMapDeferredWonderAnomalyDistanceHex = state.distance
-			details[#details + 1] = class_name .. "=valid@"
-				.. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
-				.. ":distance=" .. tostring(state.distance)
+			details[#details + 1] = class_name .. "=valid:"
+				.. state_diagnostic_text(state)
 		else
 			stats.invalid = stats.invalid + 1
 			if state.terrain_ok ~= true then
@@ -6756,8 +6880,8 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			if not candidate or type(marker.SetPos) ~= "function" then
 				stats.unresolved = stats.unresolved + 1
 				marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = nil
-				details[#details + 1] = class_name .. "=unresolved:distance="
-					.. tostring(state.distance) .. ":reachable=" .. tostring(state.reachable)
+				details[#details + 1] = class_name .. "=unresolved:"
+					.. state_diagnostic_text(state)
 			else
 				local old_pos = state.marker_pos
 				local old_x, old_y = old_pos:xy()
@@ -6804,6 +6928,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		end
 	end
 	stats.details = table.concat(details, ";")
+	stats.ring_diagnostics = table.concat(ring_diagnostics, ";")
 	stats.connectivity_cache_checks = reachability.checks
 	stats.connectivity_cache_rejected = reachability.rejected
 	stats.connectivity_failures = reachability.failures
