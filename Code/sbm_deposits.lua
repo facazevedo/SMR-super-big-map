@@ -6539,9 +6539,11 @@ end
 -- final reachability pass deliberately skipped them.
 --
 -- Keep the vanilla ownership/scenario marker, but repair only its coordinate. The replacement is
--- the nearest free hex around its own wonder which is buildable, unobstructed, outside every
--- reserved wonder footprint, and connected to a real underground entrance. A finite local bound
--- prevents a rare anomaly from being silently scattered elsewhere on the map again.
+-- the nearest free playable cave-floor hex around its own wonder. Unlike density top-ups, it may
+-- occupy its own wonder's reserved footprint: vanilla deliberately starts it there. Entrance
+-- connectivity is recorded but is not a veto because vanilla cave systems are separated by
+-- collapsed tunnels and become mutually reachable later. A finite local bound prevents a rare
+-- anomaly from being silently scattered into the black rock/void elsewhere on the map again.
 local DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS = 160
 
 local function HexDistance(q1, r1, q2, r2)
@@ -6595,10 +6597,19 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		markers = #markers, checked = 0, valid = 0, invalid = 0, moved = 0,
 		unresolved = 0, unreachable = 0, terrain_invalid = 0, too_far = 0,
 		overlaps = 0, candidates_tested = 0, connectivity_checks = 0,
+		entrance_disconnected = 0, terrain_fallbacks = 0,
 		max_search_radius = DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS,
 	}
 	local details = {}
 	local validation_context = SharedTopUpValidationContext(map)
+	-- Resource top-ups must stay out of every reserved wonder footprint. A wonder's own rare
+	-- anomaly is different: vanilla starts it at the wonder and searches the local footprint.
+	-- Retain every cached native API from the shared context but remove only that reservation.
+	local wonder_validation_context = {}
+	for key, value in pairs(validation_context) do
+		wonder_validation_context[key] = value
+	end
+	wonder_validation_context.wonder_reserved_hexes = {}
 	local reserved = UndergroundWonderReservedHexes(map)
 	local map_w, map_h = MapWorldSize(map)
 	local get_sector = Global("GetMapSectorXY")
@@ -6618,9 +6629,16 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			or type(spawner_r) ~= "number" then
 			return false, { reason = "marker/spawner hex unavailable" }
 		end
-		local base_ok, _, _, _, q, r =
-			CanReceiveDeposit(map, marker_pos, validation_context, true)
-		local reachable = base_ok and IsReachableFromUndergroundEntrance(
+		local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
+			map, marker_pos, wonder_validation_context, true)
+		local unobstructed = terrain_ok and IsUnobstructedAt(
+			map, marker_pos, true, wonder_validation_context) == true
+		local base_ok = terrain_ok and unobstructed
+		-- Underground cave systems are intentionally separated by collapsed tunnels. A rare
+		-- anomaly next to a wonder in another cavern is vanilla-correct and becomes accessible
+		-- when that tunnel is opened; entrance connectivity is therefore diagnostic, not a
+		-- placement veto. Terrain validity prevents the actual bug: a marker in black rock/void.
+		local reachable = IsReachableFromUndergroundEntrance(
 			map, marker_pos, q or marker_q, r or marker_r) == true
 		local distance = HexDistance(spawner_q, spawner_r, marker_q, marker_r)
 		local local_ok = type(distance) == "number"
@@ -6628,12 +6646,17 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local overlap = BadgeHexOccupied(occupied, marker_q, marker_r)
 		local reserved_overlap = type(reserved) == "table"
 			and reserved[CoordinateHexKey(marker_q, marker_r)] == true
-		return base_ok and reachable and local_ok and not overlap and not reserved_overlap, {
+		local accepted_terrain_fallback =
+			marker.SuperBigMapDeferredWonderAnomalyLocalTerrainFallback == true
+		return terrain_ok and (base_ok or accepted_terrain_fallback)
+			and local_ok and not overlap, {
 			marker_pos = marker_pos, spawner_pos = spawner_pos,
 			marker_q = marker_q, marker_r = marker_r,
 			spawner_q = spawner_q, spawner_r = spawner_r,
-			distance = distance, base_ok = base_ok, reachable = reachable,
+			distance = distance, terrain_ok = terrain_ok, base_ok = base_ok,
+			unobstructed = unobstructed, reachable = reachable,
 			local_ok = local_ok, overlap = overlap, reserved_overlap = reserved_overlap,
+			accepted_terrain_fallback = accepted_terrain_fallback,
 		}
 	end
 
@@ -6645,14 +6668,12 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 			local ok_sector, sector = pcall(get_sector, map.City, sx, sy)
 			if ok_sector then spawner_sector = sector end
 		end
-		local first_other_sector
+		local first_other_sector, first_terrain_fallback
 		for radius = 0, DEFERRED_WONDER_ANOMALY_MAX_LOCAL_RADIUS do
 			local same_sector_candidates = {}
 			local other_sector_candidates = {}
+			local terrain_fallback_candidates = {}
 			ForEachHexInRing(state.spawner_q, state.spawner_r, radius, function(q, r)
-				if type(reserved) == "table" and reserved[CoordinateHexKey(q, r)] == true then
-					return
-				end
 				if BadgeHexOccupied(occupied, q, r) then return end
 				local ok_world, x, y = pcall(hex_to_world, q, r)
 				if not ok_world or type(x) ~= "number" or type(y) ~= "number"
@@ -6660,12 +6681,11 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 					or (type(map_h) == "number" and (y < 0 or y >= map_h)) then return end
 				stats.candidates_tested = stats.candidates_tested + 1
 				local candidate_point = point_fn(x, y)
-				local base_ok, _, _, _, known_q, known_r =
-					CanReceiveDeposit(map, candidate_point, validation_context, true)
-				if not base_ok then return end
-				stats.connectivity_checks = stats.connectivity_checks + 1
-				if not IsReachableFromUndergroundEntrance(
-					map, candidate_point, known_q or q, known_r or r) then return end
+				local terrain_ok = EvaluateDepositTerrain(
+					map, candidate_point, wonder_validation_context, true)
+				if not terrain_ok then return end
+				local unobstructed = IsUnobstructedAt(
+					map, candidate_point, true, wonder_validation_context) == true
 				if type(candidate_point.SetTerrainZ) == "function" then
 					local ok_z, snapped = pcall(candidate_point.SetTerrainZ,
 						candidate_point, map)
@@ -6679,8 +6699,11 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				local candidate = {
 					point = candidate_point, x = x, y = y, q = q, r = r,
 					radius = radius, sector = candidate_sector,
+					terrain_fallback = not unobstructed,
 				}
-				if not spawner_sector or candidate_sector == spawner_sector then
+				if not unobstructed then
+					terrain_fallback_candidates[#terrain_fallback_candidates + 1] = candidate
+				elseif not spawner_sector or candidate_sector == spawner_sector then
 					same_sector_candidates[#same_sector_candidates + 1] = candidate
 				else
 					other_sector_candidates[#other_sector_candidates + 1] = candidate
@@ -6693,8 +6716,12 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				first_other_sector = other_sector_candidates[
 					RandInt(#other_sector_candidates) + 1]
 			end
+			if not first_terrain_fallback and #terrain_fallback_candidates > 0 then
+				first_terrain_fallback = terrain_fallback_candidates[
+					RandInt(#terrain_fallback_candidates) + 1]
+			end
 		end
-		return first_other_sector
+		return first_other_sector or first_terrain_fallback
 	end
 
 	for _, marker in ipairs(markers) do
@@ -6703,8 +6730,14 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local valid, state = marker_state(marker, occupied)
 		local class_name = tostring(marker.SuperBigMapDeferredWonderClass
 			or marker.spawner and marker.spawner.class or "?")
+		if state.reachable ~= true then
+			stats.entrance_disconnected = stats.entrance_disconnected + 1
+		end
 		if valid then
 			stats.valid = stats.valid + 1
+			if state.accepted_terrain_fallback == true then
+				stats.terrain_fallbacks = stats.terrain_fallbacks + 1
+			end
 			marker.SuperBigMapDeferredWonderAnomalyReachabilityValidated = true
 			marker.SuperBigMapDeferredWonderAnomalyDistanceHex = state.distance
 			details[#details + 1] = class_name .. "=valid@"
@@ -6712,12 +6745,12 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				.. ":distance=" .. tostring(state.distance)
 		else
 			stats.invalid = stats.invalid + 1
-			if state.reachable ~= true then stats.unreachable = stats.unreachable + 1 end
-			if state.base_ok ~= true then stats.terrain_invalid = stats.terrain_invalid + 1 end
-			if state.local_ok ~= true then stats.too_far = stats.too_far + 1 end
-			if state.overlap == true or state.reserved_overlap == true then
-				stats.overlaps = stats.overlaps + 1
+			if state.terrain_ok ~= true then
+				stats.unreachable = stats.unreachable + 1
+				stats.terrain_invalid = stats.terrain_invalid + 1
 			end
+			if state.local_ok ~= true then stats.too_far = stats.too_far + 1 end
+			if state.overlap == true then stats.overlaps = stats.overlaps + 1 end
 			local candidate = repair_invalid == true and state.spawner_q
 				and find_local_candidate(marker, state, occupied) or nil
 			if not candidate or type(marker.SetPos) ~= "function" then
@@ -6736,6 +6769,8 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				marker.placed_obj = false
 				marker.is_placed = false
 				SetRevealedState(marker, false)
+				marker.SuperBigMapDeferredWonderAnomalyLocalTerrainFallback =
+					candidate.terrain_fallback == true and true or nil
 				local moved = MoveBadgeMarker(marker, map, candidate, old_sector)
 				if moved and not old_sector and candidate.sector
 					and type(candidate.sector.RegisterDeposit) == "function" then
@@ -6752,6 +6787,9 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 					marker.SuperBigMapDeferredWonderAnomalyOriginalY = old_y
 					marker.SuperBigMapDeferredWonderAnomalyDistanceHex = post_state.distance
 					marker.SuperBigMapDeferredWonderAnomalySearchRadius = candidate.radius
+					if candidate.terrain_fallback == true then
+						stats.terrain_fallbacks = stats.terrain_fallbacks + 1
+					end
 					StampResolvedBadgeHex(marker, candidate.q, candidate.r)
 					details[#details + 1] = class_name .. "=moved@"
 						.. tostring(state.marker_q) .. "," .. tostring(state.marker_r)
