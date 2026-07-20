@@ -997,6 +997,9 @@ local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, 
 				and selected_hex_distance
 				or math.min(minimum_selected_hex_distance, selected_hex_distance)
 		end
+		if candidate._sbm_fallback_spacing_relaxed == true then
+			relaxed_selected = relaxed_selected + 1
+		end
 		for _, other in ipairs(candidates) do
 			if not other.used and type(other.x) == "number" and type(other.y) == "number" then
 				local dx, dy = other.x - candidate.x, other.y - candidate.y
@@ -7471,9 +7474,6 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				marker = marker, q = q, r = r,
 				fallback = marker.SuperBigMapUndergroundDensityFallback == true,
 			}
-		end
-		if candidate._sbm_fallback_spacing_relaxed == true then
-			relaxed_selected = relaxed_selected + 1
 		end
 	end)
 	local function fallback_clearance_hex(candidate, moving_marker)
