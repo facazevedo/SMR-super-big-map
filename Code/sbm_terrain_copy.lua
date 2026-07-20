@@ -750,7 +750,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- sculpted into relief ended up floating). Height grid only -- type/colour/biome are
 			-- CATEGORICAL values and must never be scaled.
 			--
-			-- HEIGHT BUDGET (user decision, "shift + adaptive z-scale"): the grid is 16-bit
+			-- HEIGHT BUDGET (surface only, "shift + adaptive z-scale"): the grid is 16-bit
 			-- (0..cap=65535). High-relief maps overflow at x4/3 (60657*4/3 = 80876) and clip
 			-- into flat-top plateaus. Two gated remedies, applied as ONE affine GridMulDivAdd
 			-- (h' = h*zmul/zdiv + zadd):
@@ -763,7 +763,10 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- resampled grid's minimum includes the border-ring interpolation artifact (~33),
 			-- which would nullify the shift. The applied transform is STAMPED on the map
 			-- (SuperBigMapZScaleMul/Div/Add) for the height-range scaling and the relief-dz
-			-- consumers. Both flags false = exactly the old behavior (x full/source, add 0).
+			-- consumers. Underground terrain is different: buried wonders and their sculpted
+			-- openings require a true similarity transform, so its Z ratio always remains exactly
+			-- the same as X/Y. A constant Z translation is harmless because it does not alter
+			-- proportions. Both flags false = exactly the old behavior (x full/source, add 0).
 			if scale_values and cfg_bool("STRETCH_SCALE_HEIGHTS", true) then
 				local grid_muldivadd = Global("GridMulDivAdd")
 				local grid_minmax = Global("GridMinMax")
@@ -781,12 +784,20 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						cap = math.floor(const_tbl.MaxTerrainHeight / const_tbl.TerrainHeightScale)
 					end
 					local FLOOR_MARGIN = 1000 -- 1 m of bottom headroom (resample undershoot buffer)
+					local environment = type(map.mapdata) == "table"
+						and map.mapdata.Environment or nil
+					local uniform_underground = environment == "Underground"
 					local zmul, zdiv, zadd = full_tw, sw_tiles, 0
 					if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
 						local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
-						if shift and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
+						if not uniform_underground and shift
+							and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
 							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
 							zmul, zdiv = cap - FLOOR_MARGIN, max0 - min0
+						end
+						if uniform_underground
+							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
+							error("uniform underground height stretch exceeds the terrain height budget")
 						end
 						if shift then
 							zadd = FLOOR_MARGIN - math.floor(min0 * zmul / zdiv)
@@ -797,6 +808,17 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					map.SuperBigMapZScaleMul = zmul
 					map.SuperBigMapZScaleDiv = zdiv
 					map.SuperBigMapZScaleAdd = zadd
+					map.SuperBigMapZScaleUniform = uniform_underground == true
+					LoadingStep("terrain height similarity transform", {
+						environment = tostring(environment),
+						xy_scale_mul = full_tw,
+						xy_scale_div = sw_tiles,
+						z_scale_mul = zmul,
+						z_scale_div = zdiv,
+						z_scale_add = zadd,
+						uniform_required = tostring(uniform_underground),
+						uniform_applied = tostring(zmul * sw_tiles == zdiv * full_tw),
+					}, map)
 					local min1, max1
 					if type(grid_minmax) == "function" then
 						local ok_mm2, a2, b2 = pcall(grid_minmax, stretched)

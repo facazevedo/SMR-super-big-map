@@ -173,6 +173,13 @@ config.PreventElevatorFlatten = true
 -- unlocks the template, and quick-builds the next placed Elevator for free.
 config.PlaceElevatorButtonEnabled = true
 
+-- TEMP buried-wonder test aids: show four additional bottom-right buttons on the Underground
+-- map. Each opens the building's normal construction cursor (including its vanilla Dome/snap
+-- restrictions) and quick-builds the next valid placement for free. These are deliberately
+-- separate from the map-expansion master switch so the interactions can also be compared on a
+-- vanilla-sized test map.
+config.PlaceBuriedWonderTestButtonsEnabled = true
+
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
 -- the map edge / non-rendered frame -- is never trapped (the behavior fixed long ago by
@@ -668,6 +675,8 @@ C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
 C.PREVENT_LANDING_PAD_FLATTEN = as_bool(config.PreventLandingPadFlatten)
 C.PREVENT_ELEVATOR_FLATTEN = as_bool(config.PreventElevatorFlatten)
 C.PLACE_ELEVATOR_BUTTON_ENABLED = as_bool(config.PlaceElevatorButtonEnabled)
+C.PLACE_BURIED_WONDER_TEST_BUTTONS_ENABLED =
+	as_bool(config.PlaceBuriedWonderTestButtonsEnabled)
 C.EXPANDED_MAP_EDGE_BORDER = (type(config.ExpandedMapEdgeBorder) == "number" and config.ExpandedMapEdgeBorder >= 0)
 	and math.floor(config.ExpandedMapEdgeBorder) or false
 C.CLAMP_HEAT_QUERIES = as_bool(config.ClampHeatQueriesOnExpandedMap)

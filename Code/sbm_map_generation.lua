@@ -809,6 +809,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
 	map.SuperBigMapDeferredUndergroundWondersStretched = nil
 	map.SuperBigMapDeferredBottomlessPitsStretched = nil
+	map.SuperBigMapZScaleUniform = nil
 	map.SuperBigMapDeferredTunnelSpawnsPending = nil
 	map.SuperBigMapDeferredTunnelSpawnCount = nil
 	map.SuperBigMapGeneratorWidth = nil
@@ -3209,13 +3210,21 @@ local function DeferredWonderScaleRatios(map)
 	if scale_x <= 1 or scale_y <= 1 then
 		return nil, "underground wonder stretch ratio is not greater than one"
 	end
+	-- Buried-wonder entities expose only one CObject scale. Allowing different X/Y map ratios
+	-- would necessarily distort either their visual or their gameplay footprint. The underground
+	-- pipeline is therefore a strict similarity transform even when a surface map uses a different
+	-- aspect/height compensation strategy.
+	if full_width * source_height ~= full_height * source_width then
+		return nil, "underground wonder stretch is not uniform in X/Y"
+	end
 	return {
 		scale_x = scale_x,
-		scale_y = scale_y,
+		scale_y = scale_x,
+		uniform_scale = scale_x,
 		x_mul = full_width,
 		x_div = source_width,
-		y_mul = full_height,
-		y_div = source_height,
+		y_mul = full_width,
+		y_div = source_width,
 	}
 end
 
@@ -3232,8 +3241,9 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	if type(source_marker_scale) ~= "number" or source_marker_scale <= 0 then
 		return false, "buried wonder marker scale unavailable"
 	end
+	local uniform_scale = tonumber(ratios.uniform_scale) or ratios.scale_x
 	local expected_scale = math.max(1,
-		math.min(500, math.floor(source_marker_scale * ratios.scale_x + 0.5)))
+		math.min(500, math.floor(source_marker_scale * uniform_scale + 0.5)))
 	local old_scale = type(wonder.GetScale) == "function" and wonder:GetScale()
 		or live_marker_scale or source_marker_scale
 	local had_grids = wonder.grids_applied == true
@@ -3254,8 +3264,24 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 				.. tostring(marker_y) .. " wonder=" .. tostring(wonder_x) .. ","
 				.. tostring(wonder_y))
 		end
+		local marker_angle = type(marker.GetAngle) == "function" and marker:GetAngle() or nil
+		local wonder_angle = type(wonder.GetAngle) == "function" and wonder:GetAngle() or nil
+		if marker_angle ~= wonder_angle then
+			error("replacement angle mismatch: marker=" .. tostring(marker_angle)
+				.. " wonder=" .. tostring(wonder_angle))
+		end
+		local marker_mirrored = type(marker.GetMirrored) == "function"
+			and marker:GetMirrored() or nil
+		local wonder_mirrored = type(wonder.GetMirrored) == "function"
+			and wonder:GetMirrored() or nil
+		if marker_mirrored ~= wonder_mirrored then
+			error("replacement mirror mismatch: marker=" .. tostring(marker_mirrored)
+				.. " wonder=" .. tostring(wonder_mirrored))
+		end
 		local expected_x = tonumber(marker.SuperBigMapExpectedStretchedX)
 		local expected_y = tonumber(marker.SuperBigMapExpectedStretchedY)
+		local raw_x = tonumber(marker.SuperBigMapRawStretchedX)
+		local raw_y = tonumber(marker.SuperBigMapRawStretchedY)
 		if expected_x and expected_y and (marker_x ~= expected_x or marker_y ~= expected_y) then
 			error("marker center transform mismatch: expected=" .. tostring(expected_x) .. ","
 				.. tostring(expected_y) .. " actual=" .. tostring(marker_x) .. ","
@@ -3305,13 +3331,25 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 			source_scale = source_marker_scale,
 			live_marker_scale = live_marker_scale,
 			expected_scale = expected_scale,
+			uniform_scale = uniform_scale,
 			shape_hexes = #actual_shape,
 			source_shape_hexes = type(source_shape) == "table" and #source_shape or 0,
+			shape_area_ratio = type(source_shape) == "table" and #source_shape > 0
+				and ((#actual_shape + 0.0) / #source_shape) or nil,
+			expected_area_ratio = uniform_scale * uniform_scale,
 			grids_applied = wonder.grids_applied == true,
 			source_x = wonder.SuperBigMapWonderSourceX,
 			source_y = wonder.SuperBigMapWonderSourceY,
+			raw_x = raw_x,
+			raw_y = raw_y,
 			final_x = marker_x,
 			final_y = marker_y,
+			hex_snap_dx = type(raw_x) == "number" and marker_x - raw_x or nil,
+			hex_snap_dy = type(raw_y) == "number" and marker_y - raw_y or nil,
+			marker_angle = marker_angle,
+			wonder_angle = wonder_angle,
+			marker_mirrored = marker_mirrored,
+			wonder_mirrored = wonder_mirrored,
 		}
 	end)
 	if ok then return true, result end
@@ -3408,19 +3446,16 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	return false, "no terrain height is available for the expanded wonder footprint"
 end
 
--- CaveOfWonders, JumboCave, and BottomlessPit use several different materials that all reference
--- the same 4096px vanilla normal map (Textures/3547001.dds). Deferred underground construction
--- can create more than one of those materials in one protected Lua pass. If the texture is still
--- only a fallback resource when the completed map becomes visible, the renderer can enqueue the
--- same all-mip target twice and trip reAssetLODStreamer residentLevels == targetLevels. Resolve the
--- shared resource once, before any of the deferred buildings is created, and retain that single
--- reference for as long as the mod behavior is installed. This changes no material or visual; it
--- only serializes the resource's first load.
-local SHARED_BURIED_WONDER_TEXTURE = "Textures/3547001.dds"
-local SHARED_BURIED_WONDER_CLASSES = {
-	BottomlessPit = true,
-	CaveOfWonders = true,
-	JumboCave = true,
+-- Deferred wonder materialization has produced the same reAssetLODStreamer duplicate-target
+-- assert for two separate vanilla texture resources: 3547001 on the three rock/crystal wonders,
+-- and 1304001 when AncientArtifact/CaveOfWonders were materialized together. ResourceManager's
+-- scene wait is insufficient because the duplicate request can be queued several seconds after it
+-- reports idle. Resolve BOTH resources serially before creating any wonder and retain their refs
+-- for the lifetime of the installed behavior. This changes no material or LOD target; it merely
+-- makes each texture's first all-mip transition single-owner.
+local BURIED_WONDER_TEXTURES = {
+	"Textures/3547001.dds",
+	"Textures/1304001.dds",
 }
 
 local function ResourceRequestsRunning(resource_manager)
@@ -3476,21 +3511,24 @@ local function ReleaseSharedBuriedWonderTexturePins()
 	end
 	local State = SuperBigMap.State or {}
 	State.underground_shared_wonder_texture_ready = nil
+	State.underground_buried_wonder_textures_ready = nil
 end
 
 local function PrewarmSharedBuriedWonderTexture(map, planned)
 	local classes = {}
 	for _, marker in ipairs(planned or {}) do
 		local class_name = marker and marker.SuperBigMapDeferredWonderClass
-		if SHARED_BURIED_WONDER_CLASSES[class_name] then classes[#classes + 1] = class_name end
+		if type(class_name) == "string" and class_name ~= "" then
+			classes[#classes + 1] = class_name
+		end
 	end
 	if #classes == 0 then return true, { required = false } end
 
 	local State = SuperBigMap.State or {}
-	if State.underground_shared_wonder_texture_ready == true
-		and #underground_shared_wonder_texture_pins > 0 then
-		LoadingStep("underground shared wonder texture ready", {
-			texture = SHARED_BURIED_WONDER_TEXTURE,
+	if State.underground_buried_wonder_textures_ready == true
+		and #underground_shared_wonder_texture_pins >= #BURIED_WONDER_TEXTURES then
+		LoadingStep("underground buried-wonder textures ready", {
+			textures = table.concat(BURIED_WONDER_TEXTURES, ","),
 			classes = table.concat(classes, ","),
 			cached = true,
 			pins = #underground_shared_wonder_texture_pins,
@@ -3505,38 +3543,56 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 		or type(async_get) ~= "function" then
 		return false, "texture resource API unavailable"
 	end
-	local ok_id, resource_id = pcall(resource_manager.GetResourceID,
-		SHARED_BURIED_WONDER_TEXTURE)
-	if not ok_id or resource_id == nil then
-		return false, "shared wonder texture id unavailable: " .. tostring(resource_id)
-	end
-	local ok_load, resource = pcall(async_get, resource_id)
-	if not ok_load or not resource then
-		return false, "shared wonder texture load failed: " .. tostring(resource)
-	end
-	local has_object = type(resource.HasObject) ~= "function"
-		or SafeCall(resource.HasObject, resource) == true
-	if not has_object then
-		if type(resource.ReleaseRef) == "function" then SafeCall(resource.ReleaseRef, resource) end
-		return false, "shared wonder texture resource has no object"
-	end
-	underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins + 1] = resource
-	local settled, settle_result = WaitForUndergroundResourceRequests(
-		map, "shared buried-wonder texture prewarm", 15000)
-	if not settled then
-		underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins] = nil
-		if type(resource.ReleaseRef) == "function" then SafeCall(resource.ReleaseRef, resource) end
-		return false, "shared wonder texture did not settle: " .. tostring(settle_result)
+
+	-- Discard refs retained by an older one-texture implementation before rebuilding the complete
+	-- set. They are extra ownership refs only; releasing them does not unload a live scene object.
+	ReleaseSharedBuriedWonderTexturePins()
+	local total_wait = 0
+	for _, texture_path in ipairs(BURIED_WONDER_TEXTURES) do
+		local ok_id, resource_id = pcall(resource_manager.GetResourceID, texture_path)
+		if not ok_id or resource_id == nil then
+			ReleaseSharedBuriedWonderTexturePins()
+			return false, "wonder texture id unavailable for " .. tostring(texture_path)
+		end
+		local ok_load, resource = pcall(async_get, resource_id)
+		if not ok_load or not resource then
+			ReleaseSharedBuriedWonderTexturePins()
+			return false, "wonder texture load failed for " .. tostring(texture_path)
+		end
+		local has_object = type(resource.HasObject) ~= "function"
+			or SafeCall(resource.HasObject, resource) == true
+		if not has_object then
+			if type(resource.ReleaseRef) == "function" then SafeCall(resource.ReleaseRef, resource) end
+			ReleaseSharedBuriedWonderTexturePins()
+			return false, "wonder texture resource has no object: " .. tostring(texture_path)
+		end
+		underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins + 1] = resource
+		local settled, settle_result = WaitForUndergroundResourceRequests(
+			map, "buried-wonder texture prewarm " .. tostring(texture_path), 15000)
+		if not settled then
+			ReleaseSharedBuriedWonderTexturePins()
+			return false, "wonder texture did not settle for " .. tostring(texture_path)
+				.. ": " .. tostring(settle_result)
+		end
+		total_wait = total_wait + (tonumber(settle_result) or 0)
+		LoadingStep("underground buried-wonder texture ready", {
+			texture = texture_path,
+			classes = table.concat(classes, ","),
+			cached = false,
+			pins = #underground_shared_wonder_texture_pins,
+			wait_ms = tostring(settle_result),
+		}, map)
 	end
 	State.underground_shared_wonder_texture_ready = true
-	LoadingStep("underground shared wonder texture ready", {
-		texture = SHARED_BURIED_WONDER_TEXTURE,
+	State.underground_buried_wonder_textures_ready = true
+	LoadingStep("underground buried-wonder textures ready", {
+		textures = table.concat(BURIED_WONDER_TEXTURES, ","),
 		classes = table.concat(classes, ","),
 		cached = false,
 		pins = #underground_shared_wonder_texture_pins,
-		wait_ms = tostring(settle_result),
+		wait_ms = tostring(total_wait),
 	}, map)
-	return true, { required = true, cached = false, wait_ms = settle_result }
+	return true, { required = true, cached = false, wait_ms = total_wait }
 end
 
 local function MaterializeDeferredUndergroundWonders(map)
@@ -3564,6 +3620,12 @@ local function MaterializeDeferredUndergroundWonders(map)
 	end
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if not ratios then return false, ratio_error end
+	local z_mul = tonumber(map.SuperBigMapZScaleMul) or ratios.x_mul
+	local z_div = tonumber(map.SuperBigMapZScaleDiv) or ratios.x_div
+	if not z_mul or not z_div or z_div <= 0
+		or z_mul * ratios.x_div ~= z_div * ratios.x_mul then
+		return false, "underground wonder X/Y/Z stretch ratios are not uniform"
+	end
 	local texture_ready, texture_error = PrewarmSharedBuriedWonderTexture(map, planned)
 	if texture_ready ~= true then
 		return false, "buried wonder shared texture prewarm failed: " .. tostring(texture_error)
@@ -3602,10 +3664,21 @@ local function MaterializeDeferredUndergroundWonders(map)
 				class = wonder_class,
 				source_x = stretch_stats and stretch_stats.source_x,
 				source_y = stretch_stats and stretch_stats.source_y,
+				raw_x = stretch_stats and stretch_stats.raw_x,
+				raw_y = stretch_stats and stretch_stats.raw_y,
 				final_x = stretch_stats and stretch_stats.final_x,
 				final_y = stretch_stats and stretch_stats.final_y,
+				hex_snap_dx = stretch_stats and stretch_stats.hex_snap_dx,
+				hex_snap_dy = stretch_stats and stretch_stats.hex_snap_dy,
+				marker_angle = stretch_stats and stretch_stats.marker_angle,
+				wonder_angle = stretch_stats and stretch_stats.wonder_angle,
+				marker_mirrored = stretch_stats and stretch_stats.marker_mirrored,
+				wonder_mirrored = stretch_stats and stretch_stats.wonder_mirrored,
 				source_shape_hexes = stretch_stats and stretch_stats.source_shape_hexes,
 				expanded_shape_hexes = stretch_stats and stretch_stats.shape_hexes,
+				shape_area_ratio = stretch_stats and stretch_stats.shape_area_ratio,
+				expected_area_ratio = stretch_stats and stretch_stats.expected_area_ratio,
+				uniform_scale = stretch_stats and stretch_stats.uniform_scale,
 				source_scale = stretch_stats and stretch_stats.source_scale,
 				live_marker_scale = stretch_stats and stretch_stats.live_marker_scale,
 				expanded_scale = stretch_stats and stretch_stats.expected_scale,

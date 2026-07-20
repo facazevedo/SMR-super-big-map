@@ -17,9 +17,35 @@ local State = SuperBigMap.State or {}
 SuperBigMap.State = State
 
 local WINDOW_ID = "SBMPlaceElevator"
+local BURIED_WONDER_TEST_BUILDINGS = {
+	{
+		id = "SBMPlaceArtifactInterface",
+		template = "AncientArtifactInterface",
+		text = "Place Artifact Interface",
+	},
+	{
+		id = "SBMPlaceBottomlessPitLab",
+		template = "BottomlessPitResearchCenter",
+		text = "Place Bottomless Pit Lab",
+	},
+	{
+		id = "SBMPlaceWondrousCrystals",
+		template = "CrystalDecoration",
+		text = "Place Wondrous Crystals",
+	},
+	{
+		id = "SBMPlaceJumboCaveReinforcements",
+		template = "JumboCaveReinforcementStructure",
+		text = "Place Jumbo Cave Reinforcements",
+	},
+}
 
 local function Enabled()
 	return (SuperBigMap.Config or {}).PLACE_ELEVATOR_BUTTON_ENABLED == true
+end
+
+local function BuriedWonderButtonsEnabled()
+	return (SuperBigMap.Config or {}).PLACE_BURIED_WONDER_TEST_BUTTONS_ENABLED == true
 end
 
 local function WindowLive(window)
@@ -32,8 +58,8 @@ local function Color(red, green, blue, alpha)
 	return type(rgba) == "function" and rgba(red, green, blue, alpha) or 0
 end
 
-local function CanUseOnMap(map)
-	if not Enabled() or type(map) ~= "table" then return false end
+local function IsGameplayMap(map)
+	if type(map) ~= "table" then return false end
 	local is_mod_editor_map = Global("IsModEditorMap")
 	if type(is_mod_editor_map) == "function" and SafeCall(is_mod_editor_map) == true then
 		return false
@@ -43,6 +69,15 @@ local function CanUseOnMap(map)
 	local map_name = tostring(map.name or mapdata.id or "")
 	if map_name == "PreGame" then return false end
 	return mapdata.Environment == "Surface" or mapdata.Environment == "Underground"
+end
+
+local function CanUseOnMap(map)
+	return Enabled() and IsGameplayMap(map)
+end
+
+local function CanUseBuriedWonderButtons(map)
+	return BuriedWonderButtonsEnabled() and IsGameplayMap(map)
+		and map.mapdata.Environment == "Underground"
 end
 
 local function StartElevatorPlacement()
@@ -59,8 +94,33 @@ local function StartElevatorPlacement()
 		template.only_build_on_snapped_locations = true
 	end
 
+	State.place_buried_wonder_test_button_armed = nil
 	State.place_elevator_button_armed = true
 	SafeCall(interface.SetMode, interface, "construction", { template = "Elevator" })
+	return true
+end
+
+local function StartBuriedWonderTestPlacement(spec)
+	local map = Global("CurrentMap")
+	if type(spec) ~= "table" or not CanUseBuriedWonderButtons(map) then return false end
+	local template_name = spec.template
+	local templates = Global("BuildingTemplates")
+	if type(template_name) ~= "string" or type(templates) ~= "table"
+		or type(templates[template_name]) ~= "table" then
+		return false
+	end
+	local get_interface = Global("GetInGameInterface")
+	local interface = type(get_interface) == "function" and get_interface() or nil
+	if not interface or type(interface.SetMode) ~= "function" then return false end
+
+	-- This is an explicitly temporary testing aid. UnlockBuilding makes the normal construction
+	-- cursor available; Complete("quick_build") below supplies the no-cost/no-time behavior without
+	-- mutating the shared template's prices or build points.
+	local unlock = Global("UnlockBuilding")
+	if type(unlock) == "function" then pcall(unlock, template_name) end
+	State.place_elevator_button_armed = nil
+	State.place_buried_wonder_test_button_armed = template_name
+	SafeCall(interface.SetMode, interface, "construction", { template = template_name })
 	return true
 end
 
@@ -139,7 +199,7 @@ local function PassageForSite(site)
 	return nil
 end
 
-local function HandleConstructionSitePlaced(site, class_name)
+local function HandleElevatorConstructionSitePlaced(site, class_name)
 	if State.place_elevator_button_armed ~= true then return end
 	if not Enabled() then
 		State.place_elevator_button_armed = nil
@@ -206,6 +266,76 @@ local function HandleConstructionSitePlaced(site, class_name)
 	create_thread(finish)
 end
 
+local function IsBuildingSite(site, class_name, expected_class)
+	if class_name == expected_class then return true end
+	if type(site) ~= "table" then return false end
+	if site.building_class == expected_class or site.template_name == expected_class then return true end
+	if type(site.GetBuildingClass) == "function" then
+		return SafeCall(site.GetBuildingClass, site) == expected_class
+	end
+	return false
+end
+
+local function ObjectScale(obj)
+	if not IsLiveObject(obj) or type(obj.GetScale) ~= "function" then return nil end
+	return SafeCall(obj.GetScale, obj)
+end
+
+local function ObjectClass(obj)
+	return IsLiveObject(obj) and tostring(obj.class or "?") or "none"
+end
+
+local function ReportBuriedWonderTest(event, template_name, detail)
+	local print_fn = Global("print") or print
+	if type(print_fn) ~= "function" then return end
+	print_fn("[Super Big Map][Buried Wonder Test] " .. tostring(event)
+		.. " template=" .. tostring(template_name) .. " " .. tostring(detail or ""))
+end
+
+local function HandleBuriedWonderConstructionSitePlaced(site, class_name)
+	local armed = State.place_buried_wonder_test_button_armed
+	if type(armed) ~= "string" then return end
+	if not BuriedWonderButtonsEnabled() then
+		State.place_buried_wonder_test_button_armed = nil
+		return
+	end
+	if not IsBuildingSite(site, class_name, armed) then return end
+	State.place_buried_wonder_test_button_armed = nil
+
+	local snapped_to = type(site) == "table" and rawget(site, "snapped_to") or nil
+	ReportBuriedWonderTest("SITE_PLACED", armed,
+		"snap_target=" .. ObjectClass(snapped_to)
+		.. " snap_scale=" .. tostring(ObjectScale(snapped_to)))
+	local function finish()
+		if not IsLiveObject(site) or type(site.Complete) ~= "function" then
+			return ReportBuriedWonderTest("FAILED", armed,
+				"construction site became unavailable before quick-build")
+		end
+		local ok, building = pcall(site.Complete, site, "quick_build")
+		if not ok or not IsLiveObject(building) then
+			return ReportBuriedWonderTest("FAILED", armed,
+				"quick-build error=" .. tostring(building))
+		end
+		ReportBuriedWonderTest("COMPLETE", armed,
+			"building=" .. ObjectClass(building)
+			.. " building_scale=" .. tostring(ObjectScale(building))
+			.. " snap_target=" .. ObjectClass(snapped_to)
+			.. " snap_scale=" .. tostring(ObjectScale(snapped_to)))
+		return true
+	end
+	local create_thread = Global("CreateGameTimeThread")
+	if type(create_thread) == "function" then
+		create_thread(finish)
+	else
+		finish()
+	end
+end
+
+local function HandleConstructionSitePlaced(site, class_name)
+	HandleElevatorConstructionSitePlaced(site, class_name)
+	HandleBuriedWonderConstructionSitePlaced(site, class_name)
+end
+
 local function ResolveExistingButton(desktop)
 	local window = State.place_elevator_button_window
 	if WindowLive(window) then return window end
@@ -248,6 +378,70 @@ local function BuildButton()
 	return button
 end
 
+local function ResolveBuriedWonderButton(desktop, spec)
+	State.place_buried_wonder_test_button_windows =
+		State.place_buried_wonder_test_button_windows or {}
+	local window = State.place_buried_wonder_test_button_windows[spec.template]
+	if WindowLive(window) then return window end
+	if desktop and type(desktop.ResolveId) == "function" then
+		local resolved = SafeCall(desktop.ResolveId, desktop, spec.id)
+		if WindowLive(resolved) then return resolved end
+	end
+	return nil
+end
+
+local function BuildBuriedWonderButton(desktop, spec, index)
+	local button_class = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(button_class) ~= "table" or type(box) ~= "function" then return nil end
+	local button = button_class:new({
+		Id = spec.id,
+		Text = spec.text,
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 70 + index * 36),
+		Padding = box(12, 4, 12, 4),
+		Background = Color(45, 62, 78, 235),
+		RolloverBackground = Color(66, 91, 115, 235),
+		PressedBackground = Color(34, 47, 60, 235),
+		RolloverTextColor = Color(236, 236, 238, 255),
+		DisabledTextColor = Color(236, 236, 238, 255),
+		DisabledRolloverTextColor = Color(236, 236, 238, 255),
+		ZOrder = 100000,
+		OnPress = function() StartBuriedWonderTestPlacement(spec) end,
+	}, desktop)
+	State.place_buried_wonder_test_button_windows =
+		State.place_buried_wonder_test_button_windows or {}
+	State.place_buried_wonder_test_button_windows[spec.template] = button
+	if WindowLive(button) and type(button.SetTextColor) == "function" then
+		button:SetTextColor(Color(236, 236, 238, 255))
+	end
+	if WindowLive(button) and type(button.Open) == "function" then pcall(button.Open, button) end
+	return button
+end
+
+local function SetBuriedWonderButtonsVisible(visible)
+	local map = Global("CurrentMap")
+	local show = visible == true and CanUseBuriedWonderButtons(map)
+	local desktop = (Global("terminal") or {}).desktop
+	local all_live = true
+	for index, spec in ipairs(BURIED_WONDER_TEST_BUILDINGS) do
+		local button = ResolveBuriedWonderButton(desktop, spec)
+		if show and not WindowLive(button) then
+			button = BuildBuriedWonderButton(desktop, spec, index)
+		end
+		if WindowLive(button) and type(button.SetVisible) == "function" then
+			SafeCall(button.SetVisible, button, show)
+		elseif show then
+			all_live = false
+		end
+	end
+	if not show then State.place_buried_wonder_test_button_armed = nil end
+	return not show or all_live
+end
+
 local PlaceElevatorButton = {}
 
 function PlaceElevatorButton.Show()
@@ -259,7 +453,7 @@ function PlaceElevatorButton.Show()
 	if not WindowLive(button) then return false end
 	State.place_elevator_button_window = button
 	if type(button.SetVisible) == "function" then SafeCall(button.SetVisible, button, true) end
-	return true
+	return SetBuriedWonderButtonsVisible(true)
 end
 
 function PlaceElevatorButton.Hide()
@@ -267,7 +461,9 @@ function PlaceElevatorButton.Hide()
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, false)
 	end
+	SetBuriedWonderButtonsVisible(false)
 	State.place_elevator_button_armed = nil
+	State.place_buried_wonder_test_button_armed = nil
 	return true
 end
 
