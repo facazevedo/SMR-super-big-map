@@ -1,8 +1,8 @@
--- Super Big Map -- temporary free, instant Elevator placement button.
+-- Super Big Map -- temporary gameplay test buttons.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
--- the complete two-map construction group. It is available on either vanilla or expanded
--- gameplay maps when PLACE_ELEVATOR_BUTTON_ENABLED is true.
+-- the complete two-map construction group. It also owns the underground buried-wonder placement
+-- buttons and the vanilla-style darkness-blanket toggle. Each control has its own config gate.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -17,6 +17,7 @@ local State = SuperBigMap.State or {}
 SuperBigMap.State = State
 
 local WINDOW_ID = "SBMPlaceElevator"
+local DARKNESS_TOGGLE_WINDOW_ID = "SBMToggleUndergroundDarkness"
 local BURIED_WONDER_TEST_BUILDINGS = {
 	{
 		id = "SBMPlaceArtifactInterface",
@@ -48,6 +49,10 @@ local function BuriedWonderButtonsEnabled()
 	return (SuperBigMap.Config or {}).PLACE_BURIED_WONDER_TEST_BUTTONS_ENABLED == true
 end
 
+local function DarknessToggleButtonEnabled()
+	return (SuperBigMap.Config or {}).UNDERGROUND_DARKNESS_TOGGLE_BUTTON_ENABLED == true
+end
+
 local function WindowLive(window)
 	return type(window) == "table"
 		and window.window_state ~= "destroying" and window.window_state ~= "destroyed"
@@ -77,6 +82,11 @@ end
 
 local function CanUseBuriedWonderButtons(map)
 	return BuriedWonderButtonsEnabled() and IsGameplayMap(map)
+		and map.mapdata.Environment == "Underground"
+end
+
+local function CanUseDarknessToggleButton(map)
+	return DarknessToggleButtonEnabled() and IsGameplayMap(map)
 		and map.mapdata.Environment == "Underground"
 end
 
@@ -422,6 +432,74 @@ local function BuildBuriedWonderButton(desktop, spec, index)
 	return button
 end
 
+local function ResolveDarknessToggleButton(desktop)
+	local window = State.underground_darkness_toggle_button_window
+	if WindowLive(window) then return window end
+	if desktop and type(desktop.ResolveId) == "function" then
+		local resolved = SafeCall(desktop.ResolveId, desktop, DARKNESS_TOGGLE_WINDOW_ID)
+		if WindowLive(resolved) then return resolved end
+	end
+	return nil
+end
+
+local function DarknessCurrentlyRevealed()
+	local hr = Global("hr")
+	return type(hr) == "table" and tonumber(hr.EnableDarknessReveal) == 0
+end
+
+local function UpdateDarknessToggleButtonText(button)
+	if not WindowLive(button) or type(button.SetText) ~= "function" then return false end
+	local text = DarknessCurrentlyRevealed()
+		and "Restore Exploration Darkness" or "Reveal All Underground"
+	SafeCall(button.SetText, button, text)
+	return true
+end
+
+local function ToggleUndergroundDarkness(button)
+	local hr = Global("hr")
+	if type(hr) ~= "table" then return false end
+	-- Exact vanilla cheat action: no saved preference, lifecycle override, or extra reveal work.
+	hr.EnableDarknessReveal = 90 - hr.EnableDarknessReveal
+	UpdateDarknessToggleButtonText(button)
+	local print_fn = Global("print") or print
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][Darkness Toggle] blanket="
+			.. (DarknessCurrentlyRevealed() and "hidden" or "visible"))
+	end
+	return true
+end
+
+local function BuildDarknessToggleButton(desktop)
+	local button_class = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(button_class) ~= "table" or type(box) ~= "function" then return nil end
+	local button = button_class:new({
+		Id = DARKNESS_TOGGLE_WINDOW_ID,
+		Text = "Reveal All Underground",
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 70 + (#BURIED_WONDER_TEST_BUILDINGS + 1) * 36),
+		Padding = box(12, 4, 12, 4),
+		Background = Color(68, 45, 78, 235),
+		RolloverBackground = Color(98, 65, 113, 235),
+		PressedBackground = Color(51, 34, 60, 235),
+		RolloverTextColor = Color(236, 236, 238, 255),
+		DisabledTextColor = Color(236, 236, 238, 255),
+		DisabledRolloverTextColor = Color(236, 236, 238, 255),
+		ZOrder = 100000,
+		OnPress = function(self) ToggleUndergroundDarkness(self) end,
+	}, desktop)
+	State.underground_darkness_toggle_button_window = button
+	if WindowLive(button) and type(button.SetTextColor) == "function" then
+		button:SetTextColor(Color(236, 236, 238, 255))
+	end
+	UpdateDarknessToggleButtonText(button)
+	if WindowLive(button) and type(button.Open) == "function" then pcall(button.Open, button) end
+	return button
+end
+
 local function SetBuriedWonderButtonsVisible(visible)
 	local map = Global("CurrentMap")
 	local show = visible == true and CanUseBuriedWonderButtons(map)
@@ -442,18 +520,38 @@ local function SetBuriedWonderButtonsVisible(visible)
 	return not show or all_live
 end
 
+local function SetDarknessToggleButtonVisible(visible)
+	local map = Global("CurrentMap")
+	local show = visible == true and CanUseDarknessToggleButton(map)
+	local desktop = (Global("terminal") or {}).desktop
+	local button = ResolveDarknessToggleButton(desktop)
+	if show and not WindowLive(button) then button = BuildDarknessToggleButton(desktop) end
+	if not WindowLive(button) then return not show end
+	if show then UpdateDarknessToggleButtonText(button) end
+	if type(button.SetVisible) == "function" then SafeCall(button.SetVisible, button, show) end
+	return true
+end
+
 local PlaceElevatorButton = {}
 
 function PlaceElevatorButton.Show()
-	if not CanUseOnMap(Global("CurrentMap")) then
+	local map = Global("CurrentMap")
+	if not IsGameplayMap(map) then
 		return PlaceElevatorButton.Hide()
 	end
 	local desktop = (Global("terminal") or {}).desktop
-	local button = ResolveExistingButton(desktop) or BuildButton()
-	if not WindowLive(button) then return false end
-	State.place_elevator_button_window = button
-	if type(button.SetVisible) == "function" then SafeCall(button.SetVisible, button, true) end
-	return SetBuriedWonderButtonsVisible(true)
+	local elevator_ok = true
+	local button = ResolveExistingButton(desktop)
+	local show_elevator = CanUseOnMap(map)
+	if show_elevator and not WindowLive(button) then button = BuildButton() end
+	if WindowLive(button) and type(button.SetVisible) == "function" then
+		SafeCall(button.SetVisible, button, show_elevator)
+	elseif show_elevator then
+		elevator_ok = false
+	end
+	local buried_ok = SetBuriedWonderButtonsVisible(true)
+	local darkness_ok = SetDarknessToggleButtonVisible(true)
+	return elevator_ok and buried_ok and darkness_ok
 end
 
 function PlaceElevatorButton.Hide()
@@ -462,6 +560,7 @@ function PlaceElevatorButton.Hide()
 		SafeCall(button.SetVisible, button, false)
 	end
 	SetBuriedWonderButtonsVisible(false)
+	SetDarknessToggleButtonVisible(false)
 	State.place_elevator_button_armed = nil
 	State.place_buried_wonder_test_button_armed = nil
 	return true
@@ -470,6 +569,7 @@ end
 PlaceElevatorButton.ApplyModBehavior = PlaceElevatorButton.Show
 PlaceElevatorButton.RestoreVanillaBehavior = PlaceElevatorButton.Hide
 PlaceElevatorButton.HandleConstructionSitePlaced = HandleConstructionSitePlaced
+PlaceElevatorButton.ToggleUndergroundDarkness = ToggleUndergroundDarkness
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
 
 State.place_elevator_button_message_handler = HandleConstructionSitePlaced

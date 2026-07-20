@@ -159,7 +159,11 @@ local function NormalizeVanillaRuntimeState(map, reason)
 		zoom_option.RestoreVanillaBehavior()
 	end
 	local elevator_button = SuperBigMap.PlaceElevatorButton
-	if (SuperBigMap.Config or {}).PLACE_ELEVATOR_BUTTON_ENABLED == true
+	local cfg = SuperBigMap.Config or {}
+	local show_temporary_buttons = cfg.PLACE_ELEVATOR_BUTTON_ENABLED == true
+		or cfg.PLACE_BURIED_WONDER_TEST_BUTTONS_ENABLED == true
+		or cfg.UNDERGROUND_DARKNESS_TOGGLE_BUTTON_ENABLED == true
+	if show_temporary_buttons
 		and elevator_button and type(elevator_button.Show) == "function" then
 		SafeCall(elevator_button.Show)
 	elseif elevator_button and type(elevator_button.Hide) == "function" then

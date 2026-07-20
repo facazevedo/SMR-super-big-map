@@ -405,6 +405,9 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
+-- TEMP test aid: show an underground-only button that directly invokes the vanilla renderer
+-- toggle: fully reveal the map, then restore the normal exploration-shaped darkness mask.
+config.UndergroundDarknessToggleButtonEnabled = true
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
@@ -791,6 +794,8 @@ C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
+C.UNDERGROUND_DARKNESS_TOGGLE_BUTTON_ENABLED =
+	as_bool(config.UndergroundDarknessToggleButtonEnabled)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
 C.CONCEAL_BURIED_WONDERS_IN_DARKNESS = as_bool(config.ConcealBuriedWondersInDarkness)
