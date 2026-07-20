@@ -7298,6 +7298,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				LoadingEnd(reachability_token, {
 					moved = audit_stats and audit_stats.moved,
 					unresolved = audit_stats and audit_stats.unresolved,
+					candidates_built = audit_stats and audit_stats.candidates_built,
+					candidates_reused = audit_stats and audit_stats.candidates_reused,
+					relocation_attempts = audit_stats and audit_stats.relocation_attempts,
+					repulsion_rejected = audit_stats and audit_stats.repulsion_rejected,
+					moved_by_class = audit_stats and audit_stats.moved_by_class,
 				}, audit_ok == true)
 					if audit_ok ~= true then
 						error("underground enrichment reachability audit left "
@@ -7340,6 +7345,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							and repulsion_stats.wall_aware_shared_candidates,
 						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
+						first_violation = repulsion_stats
+							and repulsion_stats.first_repulsion_violation,
 						underground_density_fallback_topups = repulsion_stats
 							and repulsion_stats.underground_density_fallback_topups,
 						underground_well_spaced_fallback_topups = repulsion_stats
@@ -7368,6 +7375,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
 							.. " repulsion_violations="
 							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
+							.. " first_violation="
+							.. tostring(repulsion_stats
+								and repulsion_stats.first_repulsion_violation)
 							.. " fallback_strategy_failures="
 							.. tostring(repulsion_stats
 								and repulsion_stats.underground_fallback_strategy_failures))

@@ -6182,6 +6182,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
+		first_repulsion_violation = "",
 		outer_ring_spacing_violations = 0,
 		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
 		underground_well_spaced_fallback_topups = 0,
@@ -6337,6 +6338,18 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 						and distance_sq <= required * required
 					if repulsion_violation then
 						stats.repulsion_violations = stats.repulsion_violations + 1
+						if stats.first_repulsion_violation == "" then
+							stats.first_repulsion_violation = table.concat({
+								tostring(a.marker and a.marker.class or "?"),
+								a.topup and "topup" or "native",
+								tostring(a.hex),
+								tostring(b.marker and b.marker.class or "?"),
+								b.topup and "topup" or "native",
+								tostring(b.hex),
+								"required=" .. tostring(required),
+								"actual=" .. tostring(RoundedWorldDistance(distance_sq)),
+							}, "|")
+						end
 					end
 				end
 			end
@@ -6677,28 +6690,45 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	local candidates, seen = {}, {}
 	local world_to_hex = Global("WorldToHex")
 	local occupied_badges = BuildBadgeOccupancy(map, nil, nil, false)
-	local target_pool = math.min(6000, math.max(512, #invalid * 10))
-	local max_samples = math.max(24000, target_pool * 30)
+	local validation_context = SharedTopUpValidationContext(map)
+	local function append_candidate(x, y, known_q, known_r)
+		if type(x) ~= "number" or type(y) ~= "number" then return false end
+		local pt = point(x, y)
+		if not CanReceiveDeposit(map, pt, validation_context) then return false end
+		local q, r = known_q, known_r
+		if (type(q) ~= "number" or type(r) ~= "number")
+			and type(world_to_hex) == "function" then
+			local ok_h, hex_q, hex_r = pcall(world_to_hex, pt)
+			if ok_h and type(hex_q) == "number" and type(hex_r) == "number" then
+				q, r = hex_q, hex_r
+			end
+		end
+		local key = type(q) == "number" and type(r) == "number"
+			and CoordinateHexKey(q, r) or (tostring(x) .. ":" .. tostring(y))
+		if seen[key] or (type(q) == "number" and BadgeHexOccupied(occupied_badges, q, r)) then
+			return false
+		end
+		seen[key] = true
+		candidates[#candidates + 1] = { x = x, y = y, q = q, r = r }
+		return true
+	end
+
+	-- The density suite has already paid to validate and cache unused reachable candidates. Reuse
+	-- them before sampling anything new; this removes the former 18-second, 512-position rebuild
+	-- when only one wonder-conflicting marker needs correction.
+	local cached_candidates = topup_candidate_pool_by_map[map]
+	if type(cached_candidates) == "table" then
+		for _, candidate in ipairs(cached_candidates) do
+			append_candidate(candidate.x, candidate.y, candidate.q, candidate.r)
+		end
+	end
+	local pool_reused = #candidates
+	local target_pool = math.min(512, math.max(pool_reused, 64, #invalid * 32))
+	local max_samples = math.max(2048, target_pool * 30)
 	for _ = 1, max_samples do
 		if #candidates >= target_pool then break end
 		local x, y = margin + RandInt(span_x), margin + RandInt(span_y)
-		local pt = point(x, y)
-		if CanReceiveDeposit(map, pt) then
-			local key = tostring(x) .. ":" .. tostring(y)
-			local candidate_q, candidate_r
-			if type(world_to_hex) == "function" then
-				local ok_h, q, r = pcall(world_to_hex, pt)
-				if ok_h and type(q) == "number" and type(r) == "number" then
-					candidate_q, candidate_r = q, r
-					key = tostring(q) .. ":" .. tostring(r)
-				end
-			end
-			if not seen[key] and (type(candidate_q) ~= "number"
-				or not BadgeHexOccupied(occupied_badges, candidate_q, candidate_r)) then
-				seen[key] = true
-				candidates[#candidates + 1] = { x = x, y = y }
-			end
-		end
+		append_candidate(x, y)
 	end
 	local pool_built = #candidates
 
@@ -6722,14 +6752,27 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 
 	local moved, unresolved = 0, 0
 	local moved_by_class = {}
+	local ignored_for_repulsion = {}
+	for _, item in ipairs(invalid) do
+		if item.marker then ignored_for_repulsion[item.marker] = true end
+	end
+	local relocation_repulsion = NewTopUpRepulsionTracker(
+		map, "underground enrichment relocation", ignored_for_repulsion)
 	local relocation_attempts, relocation_retries = 0, 0
 	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
+	local repulsion_rejected, missing_repulsion_profile = 0, 0
 	for invalid_i, item in ipairs(invalid) do
 		local marker, old_pos = item.marker, item.pos
 		local class = tostring(marker and marker.class or "?")
+		local profile = VanillaRepulsionProfileForMarker(map, marker)
+		local density_fallback = marker
+			and marker.SuperBigMapUndergroundDensityFallback == true
 		local ox, oy
 		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
 		if not marker or type(marker.SetPos) ~= "function" then
+			unresolved = unresolved + 1
+		elseif not profile then
+			missing_repulsion_profile = missing_repulsion_profile + 1
 			unresolved = unresolved + 1
 		else
 			-- Leave at least one candidate for every marker still to process. A candidate was
@@ -6737,9 +6780,9 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			-- point. The old single-attempt path therefore produced a false unresolved result
 			-- despite hundreds of alternatives remaining in the pool.
 			local later_markers = #invalid - invalid_i
-			local max_attempts = math.min(32, math.max(0, #candidates - later_markers))
+			local max_attempts = math.min(64, math.max(0, #candidates - later_markers))
 			local attempts, success = 0, false
-			local successful_pos
+			local successful_pos, successful_candidate
 			local last_reason = max_attempts > 0 and "no candidate attempted" or "candidate pool exhausted"
 			while attempts < max_attempts and not success do
 				local c = take_near(old_pos)
@@ -6757,29 +6800,62 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 				local nx, ny
 				if new_pos and type(new_pos.xy) == "function" then nx, ny = new_pos:xy() end
-				if not CanReceiveDeposit(map, new_pos) then
+				if not CanReceiveDeposit(map, new_pos, validation_context) then
 					snapped_rejected = snapped_rejected + 1
 					last_reason = "terrain-snapped candidate not reachable/buildable/unobstructed"
 				else
-					local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
-					if not ok_move then
-						setpos_failed = setpos_failed + 1
-						last_reason = "SetPos failed: " .. tostring(move_error)
+					local candidate = { x = nx, y = ny }
+					local spacing_ok
+					if density_fallback then
+						spacing_ok = relocation_repulsion.CanPlaceUnique(candidate)
 					else
-						local actual_pos = ObjectPos(marker)
-						local ax, ay
-						if actual_pos and type(actual_pos.xy) == "function" then ax, ay = actual_pos:xy() end
-						if actual_pos and CanReceiveDeposit(map, actual_pos) then
-							success = true
-							successful_pos = actual_pos
+						spacing_ok = relocation_repulsion.CanPlace(candidate, profile)
+					end
+					if not spacing_ok then
+						repulsion_rejected = repulsion_rejected + 1
+						last_reason = "candidate violates enrichment repulsion"
+					else
+						local ok_move, move_error = pcall(marker.SetPos, marker, new_pos)
+						if not ok_move then
+							setpos_failed = setpos_failed + 1
+							last_reason = "SetPos failed: " .. tostring(move_error)
 						else
-							postmove_rejected = postmove_rejected + 1
-							last_reason = actual_pos and "actual marker position not reachable/buildable/unobstructed" or "actual marker position unavailable"
+							local actual_pos = ObjectPos(marker)
+							local ax, ay
+							if actual_pos and type(actual_pos.xy) == "function" then
+								ax, ay = actual_pos:xy()
+							end
+							local actual_candidate = { x = ax, y = ay }
+							local actual_spacing_ok = ax == nx and ay == ny
+							if not actual_spacing_ok and type(ax) == "number" then
+								if density_fallback then
+									actual_spacing_ok = relocation_repulsion.CanPlaceUnique(actual_candidate)
+								else
+									actual_spacing_ok = relocation_repulsion.CanPlace(
+										actual_candidate, profile)
+								end
+							end
+							if actual_pos and CanReceiveDeposit(
+								map, actual_pos, validation_context)
+								and actual_spacing_ok then
+								success = true
+								successful_pos = actual_pos
+								successful_candidate = actual_candidate
+							else
+								postmove_rejected = postmove_rejected + 1
+								if not actual_spacing_ok then
+									repulsion_rejected = repulsion_rejected + 1
+								end
+								last_reason = actual_pos
+									and "actual marker position failed terrain/repulsion validation"
+									or "actual marker position unavailable"
+							end
 						end
 					end
 				end
 			end
 			if success then
+				relocation_repulsion.Commit(successful_candidate, profile, marker)
 				moved = moved + 1
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				marker.SuperBigMapReachabilityRelocated = true
@@ -6800,14 +6876,18 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		checked = #markers, invalid = #invalid, moved = moved,
 		unrevealed_placed = unrevealed_placed,
 		unresolved = unresolved, candidates_built = pool_built,
+		candidates_reused = pool_reused,
 		relocation_attempts = relocation_attempts, relocation_retries = relocation_retries,
 		snapped_rejected = snapped_rejected, setpos_failed = setpos_failed,
-		postmove_rejected = postmove_rejected, candidates_remaining = #candidates,
+		postmove_rejected = postmove_rejected, repulsion_rejected = repulsion_rejected,
+		missing_repulsion_profile = missing_repulsion_profile,
+		candidates_remaining = #candidates,
 		seeds = #reachable_state.seeds, connectivity_checks = reachable_state.checks,
 		connectivity_reachable = reachable_state.reachable,
 		connectivity_rejected = reachable_state.rejected,
 		connectivity_failures = reachable_state.failures,
 		moved_by_class = TallyString(moved_by_class),
+		repulsion_tracker = relocation_repulsion.Stats(),
 	}
 	return unresolved == 0, stats
 end
