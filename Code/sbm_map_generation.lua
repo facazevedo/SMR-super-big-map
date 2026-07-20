@@ -2947,6 +2947,78 @@ end
 -- return a stale source height that no longer matches the stretched terrain. Capture vanilla's
 -- exact first-buildable-cell result now and transform it with the terrain's stamped affine Z
 -- transform when the wonder is finally created.
+local WonderVerticalDiagnostics = {}
+
+function WonderVerticalDiagnostics.SafePointZ(pos)
+	if not pos or type(pos.z) ~= "function" then return nil end
+	local ok, z = pcall(pos.z, pos)
+	return ok and type(z) == "number" and z or nil
+end
+
+function WonderVerticalDiagnostics.SafeBoxZStats(bbox)
+	if not bbox then return nil end
+	local ok, min_z, max_z, size_z = pcall(function()
+		return bbox:minz(), bbox:maxz(), bbox:sizez()
+	end)
+	if not ok then return nil end
+	return { min_z = min_z, max_z = max_z, size_z = size_z }
+end
+
+function WonderVerticalDiagnostics.ShapeVerticalStats(map, shape, object, target_z)
+	local stats = {
+		samples = 0, terrain_min_z = nil, terrain_max_z = nil,
+		buildable_min_z = nil, buildable_max_z = nil,
+		terrain_at_target = 0, terrain_above_target = 0, terrain_below_target = 0,
+		buildable_at_target = 0, buildable_above_target = 0, buildable_below_target = 0,
+	}
+	local for_each = Global("HexShapeForEach")
+	local hex_to_world = Global("HexToWorld")
+	local point_fn = Global("point")
+	local terrain_api = Global("terrain")
+	local unbuildable_fn = Global("buildUnbuildableZ")
+	if type(shape) ~= "table" or type(for_each) ~= "function"
+		or type(hex_to_world) ~= "function" or type(point_fn) ~= "function"
+		or type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function" then
+		return stats
+	end
+	local unbuildable = type(unbuildable_fn) == "function" and unbuildable_fn() or nil
+	for_each(shape, object, function(q, r)
+		local world = point_fn(hex_to_world(q, r))
+		local ok_height, terrain_z = pcall(terrain_api.GetHeight, map, world)
+		if ok_height and type(terrain_z) == "number" then
+			stats.samples = stats.samples + 1
+			stats.terrain_min_z = not stats.terrain_min_z and terrain_z
+				or math.min(stats.terrain_min_z, terrain_z)
+			stats.terrain_max_z = not stats.terrain_max_z and terrain_z
+				or math.max(stats.terrain_max_z, terrain_z)
+			if type(target_z) == "number" then
+				if terrain_z == target_z then stats.terrain_at_target = stats.terrain_at_target + 1
+				elseif terrain_z > target_z then stats.terrain_above_target = stats.terrain_above_target + 1
+				else stats.terrain_below_target = stats.terrain_below_target + 1 end
+			end
+		end
+		local buildable = type(map) == "table" and map.buildable or nil
+		local buildable_z = type(buildable) == "table" and type(buildable.GetZ) == "function"
+			and buildable:GetZ(q, r) or nil
+		if type(buildable_z) == "number" and buildable_z ~= unbuildable then
+			stats.buildable_min_z = not stats.buildable_min_z and buildable_z
+				or math.min(stats.buildable_min_z, buildable_z)
+			stats.buildable_max_z = not stats.buildable_max_z and buildable_z
+				or math.max(stats.buildable_max_z, buildable_z)
+			if type(target_z) == "number" then
+				if buildable_z == target_z then
+					stats.buildable_at_target = stats.buildable_at_target + 1
+				elseif buildable_z > target_z then
+					stats.buildable_above_target = stats.buildable_above_target + 1
+				else
+					stats.buildable_below_target = stats.buildable_below_target + 1
+				end
+			end
+		end
+	end)
+	return stats
+end
+
 local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_class)
 	local templates = Global("BuildingTemplates")
 	local template = type(templates) == "table" and templates[wonder_class] or nil
@@ -2982,6 +3054,49 @@ local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_clas
 	marker.SuperBigMapNativeWonderFlattenR = source_r
 	marker.SuperBigMapNativeWonderFlattenIndex = source_index
 	marker.SuperBigMapNativeWonderFlattenShapeHexes = #shape
+	local entity_bbox
+	local get_entity_bbox = Global("GetEntityBBox")
+	if type(get_entity_bbox) == "function" then
+		local ok_bbox, bbox = pcall(get_entity_bbox, entity)
+		if ok_bbox then entity_bbox = WonderVerticalDiagnostics.SafeBoxZStats(bbox) end
+	end
+	local marker_pos = type(marker.GetPos) == "function" and marker:GetPos() or nil
+	local terrain_api = Global("terrain")
+	local center_terrain_z
+	if marker_pos and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+		local ok_height, height = pcall(terrain_api.GetHeight, map, marker_pos)
+		if ok_height and type(height) == "number" then center_terrain_z = height end
+	end
+	local shape_stats = WonderVerticalDiagnostics.ShapeVerticalStats(
+		map, shape, marker, source_z)
+	marker.SuperBigMapNativeWonderEntityBBoxMinZ = entity_bbox and entity_bbox.min_z
+	marker.SuperBigMapNativeWonderEntityBBoxMaxZ = entity_bbox and entity_bbox.max_z
+	marker.SuperBigMapNativeWonderEntityBBoxSizeZ = entity_bbox and entity_bbox.size_z
+	marker.SuperBigMapNativeWonderSourceTerrainZ = center_terrain_z
+	marker.SuperBigMapNativeWonderSourceTerrainMinZ = shape_stats.terrain_min_z
+	marker.SuperBigMapNativeWonderSourceTerrainMaxZ = shape_stats.terrain_max_z
+	LoadingStep("underground buried wonder source vertical geometry", {
+		class = wonder_class,
+		entity = entity,
+		marker_z = WonderVerticalDiagnostics.SafePointZ(marker_pos),
+		marker_scale = type(marker.GetScale) == "function" and marker:GetScale() or nil,
+		source_flatten_z = source_z,
+		center_terrain_z = center_terrain_z,
+		entity_bbox_min_z = entity_bbox and entity_bbox.min_z,
+		entity_bbox_max_z = entity_bbox and entity_bbox.max_z,
+		entity_bbox_size_z = entity_bbox and entity_bbox.size_z,
+		footprint_samples = shape_stats.samples,
+		footprint_terrain_min_z = shape_stats.terrain_min_z,
+		footprint_terrain_max_z = shape_stats.terrain_max_z,
+		footprint_terrain_at_flatten = shape_stats.terrain_at_target,
+		footprint_terrain_above_flatten = shape_stats.terrain_above_target,
+		footprint_terrain_below_flatten = shape_stats.terrain_below_target,
+		footprint_buildable_min_z = shape_stats.buildable_min_z,
+		footprint_buildable_max_z = shape_stats.buildable_max_z,
+		footprint_buildable_at_flatten = shape_stats.buildable_at_target,
+		footprint_buildable_above_flatten = shape_stats.buildable_above_target,
+		footprint_buildable_below_flatten = shape_stats.buildable_below_target,
+	}, map)
 	return true
 end
 
@@ -3228,6 +3343,222 @@ local function DeferredWonderScaleRatios(map)
 	}
 end
 
+function WonderVerticalDiagnostics.NearbyWonderGeometrySummary(map, wonder, object_bbox)
+	local result = { count = 0, nearest = "" }
+	if type(map) ~= "table" or type(map.MapGet) ~= "function" or not object_bbox then
+		return result
+	end
+	local search_box
+	pcall(function() search_box = object_bbox:grow(5000) end)
+	if not search_box then return result end
+	local ok_objects, objects = pcall(map.MapGet, map, search_box,
+		"attached", false, "CObject")
+	if not ok_objects or type(objects) ~= "table" then return result end
+	local wonder_x, wonder_y = PointXY(type(wonder.GetPos) == "function" and wonder:GetPos())
+	local rows = {}
+	for _, object in ipairs(objects) do
+		if object ~= wonder and type(object) == "table"
+			and type(object.GetObjectBBox) == "function" then
+			local ok_bbox, bbox = pcall(object.GetObjectBBox, object)
+			local bbox_z = ok_bbox and WonderVerticalDiagnostics.SafeBoxZStats(bbox) or nil
+			if bbox_z then
+				local object_pos = type(object.GetPos) == "function" and object:GetPos() or nil
+				local object_x, object_y = PointXY(object_pos)
+				local dx = type(wonder_x) == "number" and type(object_x) == "number"
+					and object_x - wonder_x or 0
+				local dy = type(wonder_y) == "number" and type(object_y) == "number"
+					and object_y - wonder_y or 0
+				rows[#rows + 1] = {
+					dist2 = dx * dx + dy * dy,
+					text = tostring(object.class or "CObject")
+						.. "/" .. tostring(type(object.GetEntity) == "function"
+							and object:GetEntity() or "?")
+						.. "@z" .. tostring(WonderVerticalDiagnostics.SafePointZ(object_pos))
+						.. "[" .. tostring(bbox_z.min_z) .. "," .. tostring(bbox_z.max_z) .. "]"
+						.. "s" .. tostring(type(object.GetScale) == "function"
+							and object:GetScale() or "?"),
+				}
+			end
+		end
+	end
+	table.sort(rows, function(a, b) return a.dist2 < b.dist2 end)
+	result.count = #rows
+	local nearest = {}
+	for index = 1, math.min(12, #rows) do nearest[index] = rows[index].text end
+	result.nearest = table.concat(nearest, "|")
+	return result
+end
+
+function WonderVerticalDiagnostics.AttachmentSummary(wonder)
+	local result = { count = 0, entries = "" }
+	if not wonder or type(wonder.GetAttaches) ~= "function" then return result end
+	local ok_attaches, attaches = pcall(wonder.GetAttaches, wonder)
+	if not ok_attaches or type(attaches) ~= "table" then return result end
+	local entries = {}
+	for index, attach in ipairs(attaches) do
+		if index > 24 then break end
+		local pos = type(attach.GetPos) == "function" and attach:GetPos() or nil
+		local bbox_z
+		if type(attach.GetObjectBBox) == "function" then
+			local ok_bbox, bbox = pcall(attach.GetObjectBBox, attach)
+			if ok_bbox then bbox_z = WonderVerticalDiagnostics.SafeBoxZStats(bbox) end
+		end
+		entries[index] = tostring(attach.class or "CObject")
+			.. "/" .. tostring(type(attach.GetEntity) == "function"
+				and attach:GetEntity() or "?")
+			.. "@z" .. tostring(WonderVerticalDiagnostics.SafePointZ(pos))
+			.. "[" .. tostring(bbox_z and bbox_z.min_z) .. ","
+			.. tostring(bbox_z and bbox_z.max_z) .. "]"
+			.. "s" .. tostring(type(attach.GetScale) == "function"
+				and attach:GetScale() or "?")
+	end
+	result.count = #attaches
+	result.entries = table.concat(entries, "|")
+	return result
+end
+
+function WonderVerticalDiagnostics.Snapshot(wonder, marker, map, ratios, flatten_stats, phase)
+	local entity = type(wonder.GetEntity) == "function" and wonder:GetEntity() or nil
+	local position = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+	local visual_position = type(wonder.GetVisualPos) == "function"
+		and wonder:GetVisualPos() or nil
+	local object_bbox
+	if type(wonder.GetObjectBBox) == "function" then
+		local ok_bbox, bbox = pcall(wonder.GetObjectBBox, wonder)
+		if ok_bbox then object_bbox = bbox end
+	end
+	local entity_bbox
+	local get_entity_bbox = Global("GetEntityBBox")
+	if type(get_entity_bbox) == "function" and type(entity) == "string" then
+		local ok_bbox, bbox = pcall(get_entity_bbox, entity)
+		if ok_bbox then entity_bbox = bbox end
+	end
+	local object_bbox_z = WonderVerticalDiagnostics.SafeBoxZStats(object_bbox)
+	local entity_bbox_z = WonderVerticalDiagnostics.SafeBoxZStats(entity_bbox)
+	local terrain_api = Global("terrain")
+	local center_terrain_z
+	if position and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
+		local ok_height, height = pcall(terrain_api.GetHeight, map, position)
+		if ok_height and type(height) == "number" then center_terrain_z = height end
+	end
+	local center_buildable_z
+	local world_to_hex = Global("WorldToHex")
+	if type(world_to_hex) == "function" and type(map.buildable) == "table"
+		and type(map.buildable.GetZ) == "function" then
+		local ok_hex, q, r = pcall(world_to_hex, wonder)
+		if ok_hex then
+			local ok_z, z = pcall(map.buildable.GetZ, map.buildable, q, r)
+			if ok_z and type(z) == "number" then center_buildable_z = z end
+		end
+	end
+	local shape
+	local get_enclosed = Global("GetEnclosedShape")
+	local get_outline = Global("GetEntityOutlineShape")
+	local shrink = Global("ShrinkShape")
+	if type(entity) == "string" and type(get_enclosed) == "function" then
+		shape = get_enclosed(entity)
+		if type(shape) == "table" and #shape == 0
+			and type(get_outline) == "function" and type(shrink) == "function" then
+			shape = shrink(get_outline(entity), 2)
+		end
+		if type(shape) == "table" and type(ratios) == "table" then
+			shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
+		end
+	end
+	local target_z = flatten_stats and flatten_stats.buildable_z
+		or tonumber(wonder.SuperBigMapWonderFlattenZ)
+		or (marker and tonumber(marker.SuperBigMapNativeWonderFlattenZ))
+	local shape_stats = WonderVerticalDiagnostics.ShapeVerticalStats(
+		map, shape, wonder, target_z)
+	local scale = type(wonder.GetScale) == "function" and wonder:GetScale() or nil
+	local source_scale = tonumber(wonder.SuperBigMapWonderSourceScale)
+		or (marker and tonumber(marker.SuperBigMapNativeSourceScale)) or 100
+	local source_bbox_size_z = tonumber(wonder.SuperBigMapWonderSourceEntityBBoxSizeZ)
+		or (marker and tonumber(marker.SuperBigMapNativeWonderEntityBBoxSizeZ))
+	local source_flatten_z = tonumber(wonder.SuperBigMapWonderSourceFlattenZ)
+		or (marker and tonumber(marker.SuperBigMapNativeWonderFlattenZ))
+	local expected_bbox_size_from_object_scale = type(source_bbox_size_z) == "number"
+		and type(scale) == "number" and source_scale > 0
+		and source_bbox_size_z * scale / source_scale or nil
+	local expected_bbox_size_from_map_scale = type(source_bbox_size_z) == "number"
+		and type(ratios) == "table" and source_bbox_size_z * ratios.uniform_scale or nil
+	local nearby = WonderVerticalDiagnostics.NearbyWonderGeometrySummary(
+		map, wonder, object_bbox)
+	local attachments = WonderVerticalDiagnostics.AttachmentSummary(wonder)
+	return {
+		phase = phase,
+		class = tostring(wonder.class or marker and marker.SuperBigMapDeferredWonderClass or "?"),
+		entity = entity,
+		object_scale = scale,
+		object_z = WonderVerticalDiagnostics.SafePointZ(position),
+		visual_z = WonderVerticalDiagnostics.SafePointZ(visual_position),
+		center_terrain_z = center_terrain_z,
+		center_buildable_z = center_buildable_z,
+		flatten_z = target_z,
+		source_flatten_z = source_flatten_z,
+		object_bbox_min_z = object_bbox_z and object_bbox_z.min_z,
+		object_bbox_max_z = object_bbox_z and object_bbox_z.max_z,
+		object_bbox_size_z = object_bbox_z and object_bbox_z.size_z,
+		entity_bbox_min_z = entity_bbox_z and entity_bbox_z.min_z,
+		entity_bbox_max_z = entity_bbox_z and entity_bbox_z.max_z,
+		entity_bbox_size_z = entity_bbox_z and entity_bbox_z.size_z,
+		source_entity_bbox_min_z = tonumber(wonder.SuperBigMapWonderSourceEntityBBoxMinZ)
+			or (marker and tonumber(marker.SuperBigMapNativeWonderEntityBBoxMinZ)),
+		source_entity_bbox_max_z = tonumber(wonder.SuperBigMapWonderSourceEntityBBoxMaxZ)
+			or (marker and tonumber(marker.SuperBigMapNativeWonderEntityBBoxMaxZ)),
+		source_entity_bbox_size_z = source_bbox_size_z,
+		expected_bbox_size_from_object_scale = expected_bbox_size_from_object_scale,
+		expected_bbox_size_from_map_scale = expected_bbox_size_from_map_scale,
+		bbox_bottom_minus_flatten = object_bbox_z and type(target_z) == "number"
+			and object_bbox_z.min_z - target_z or nil,
+		bbox_top_minus_flatten = object_bbox_z and type(target_z) == "number"
+			and object_bbox_z.max_z - target_z or nil,
+		bbox_bottom_minus_center_terrain = object_bbox_z and type(center_terrain_z) == "number"
+			and object_bbox_z.min_z - center_terrain_z or nil,
+		footprint_samples = shape_stats.samples,
+		footprint_terrain_min_z = shape_stats.terrain_min_z,
+		footprint_terrain_max_z = shape_stats.terrain_max_z,
+		footprint_terrain_at_flatten = shape_stats.terrain_at_target,
+		footprint_terrain_above_flatten = shape_stats.terrain_above_target,
+		footprint_terrain_below_flatten = shape_stats.terrain_below_target,
+		footprint_buildable_min_z = shape_stats.buildable_min_z,
+		footprint_buildable_max_z = shape_stats.buildable_max_z,
+		footprint_buildable_at_flatten = shape_stats.buildable_at_target,
+		footprint_buildable_above_flatten = shape_stats.buildable_above_target,
+		footprint_buildable_below_flatten = shape_stats.buildable_below_target,
+		nearby_geometry_count = nearby.count,
+		nearby_geometry = nearby.nearest,
+		attachment_count = attachments.count,
+		attachments = attachments.entries,
+	}
+end
+
+function WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stats, phase)
+	local ok, payload = pcall(WonderVerticalDiagnostics.Snapshot,
+		wonder, marker, map, ratios, flatten_stats, phase)
+	if not ok then
+		payload = {
+			phase = phase,
+			class = tostring(wonder and wonder.class
+				or marker and marker.SuperBigMapDeferredWonderClass or "?"),
+			diagnostic_error = tostring(payload),
+		}
+	end
+	LoadingStep("underground buried wonder vertical geometry", payload, map)
+	return ok
+end
+
+function WonderVerticalDiagnostics.LogAll(map, phase)
+	local ratios = DeferredWonderScaleRatios(map)
+	if type(ratios) ~= "table" then return 0 end
+	local count = 0
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		WonderVerticalDiagnostics.Log(wonder, nil, map, ratios, nil, phase)
+		count = count + 1
+	end
+	return count
+end
+
 local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	if not wonder or not marker or type(ratios) ~= "table" then
 		return false, "invalid underground wonder stretch arguments"
@@ -3299,6 +3630,17 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 		wonder.SuperBigMapWonderSourceScale = source_marker_scale
 		wonder.SuperBigMapWonderSourceX = marker.SuperBigMapNativeSourceX
 		wonder.SuperBigMapWonderSourceY = marker.SuperBigMapNativeSourceY
+		wonder.SuperBigMapWonderSourceZ = marker.SuperBigMapNativeSourceZ
+		wonder.SuperBigMapWonderSourceFlattenZ = marker.SuperBigMapNativeWonderFlattenZ
+		wonder.SuperBigMapWonderSourceTerrainZ = marker.SuperBigMapNativeWonderSourceTerrainZ
+		wonder.SuperBigMapWonderSourceTerrainMinZ = marker.SuperBigMapNativeWonderSourceTerrainMinZ
+		wonder.SuperBigMapWonderSourceTerrainMaxZ = marker.SuperBigMapNativeWonderSourceTerrainMaxZ
+		wonder.SuperBigMapWonderSourceEntityBBoxMinZ =
+			marker.SuperBigMapNativeWonderEntityBBoxMinZ
+		wonder.SuperBigMapWonderSourceEntityBBoxMaxZ =
+			marker.SuperBigMapNativeWonderEntityBBoxMaxZ
+		wonder.SuperBigMapWonderSourceEntityBBoxSizeZ =
+			marker.SuperBigMapNativeWonderEntityBBoxSizeZ
 		wonder.SuperBigMapWonderExpectedX = expected_x or marker_x
 		wonder.SuperBigMapWonderExpectedY = expected_y or marker_y
 		if type(wonder.SetScale) ~= "function" then error("SetScale unavailable") end
@@ -3367,6 +3709,14 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 		wonder.SuperBigMapWonderSourceScale = nil
 		wonder.SuperBigMapWonderSourceX = nil
 		wonder.SuperBigMapWonderSourceY = nil
+		wonder.SuperBigMapWonderSourceZ = nil
+		wonder.SuperBigMapWonderSourceFlattenZ = nil
+		wonder.SuperBigMapWonderSourceTerrainZ = nil
+		wonder.SuperBigMapWonderSourceTerrainMinZ = nil
+		wonder.SuperBigMapWonderSourceTerrainMaxZ = nil
+		wonder.SuperBigMapWonderSourceEntityBBoxMinZ = nil
+		wonder.SuperBigMapWonderSourceEntityBBoxMaxZ = nil
+		wonder.SuperBigMapWonderSourceEntityBBoxSizeZ = nil
 		wonder.SuperBigMapWonderExpectedX = nil
 		wonder.SuperBigMapWonderExpectedY = nil
 		if type(wonder.SetScale) == "function" then wonder:SetScale(old_scale) end
@@ -3666,6 +4016,7 @@ local function MaterializeDeferredUndergroundWonders(map)
 	local bottomless_pits = 0
 	local bottomless_pits_stretched = 0
 	local expanded_shape_hexes = 0
+	local vertical_audits = {}
 	map:SuspendPassEdits("SuperBigMap_DeferredUndergroundWonders")
 	local ok, err = pcall(function()
 		for _, marker in ipairs(planned) do
@@ -3677,11 +4028,17 @@ local function MaterializeDeferredUndergroundWonders(map)
 				error("failed to stretch " .. tostring(wonder_class) .. ": "
 					.. tostring(stretch_stats))
 			end
+			WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, nil,
+				"after_scale_before_flatten")
 			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, marker, ratios)
 			if flatten_ok ~= true then
 				error("failed to prepare stretched terrain for " .. tostring(wonder_class)
 					.. ": " .. tostring(flatten_stats))
 			end
+			wonder.SuperBigMapWonderFlattenZ = flatten_stats and flatten_stats.buildable_z
+			WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stats,
+				"after_flatten_before_resume")
+			vertical_audits[#vertical_audits + 1] = wonder
 			Global("DoneObject")(marker)
 			spawned = spawned + 1
 			stretched = stretched + 1
@@ -3735,6 +4092,10 @@ local function MaterializeDeferredUndergroundWonders(map)
 		"SuperBigMap_DeferredUndergroundWonders")
 	if not ok then return false, tostring(err) end
 	if not resume_ok then return false, "ResumePassEdits failed: " .. tostring(resume_err) end
+	for _, wonder in ipairs(vertical_audits) do
+		WonderVerticalDiagnostics.Log(wonder, nil, map, ratios, nil,
+			"after_wonder_resume")
+	end
 	map.SuperBigMapDeferredUndergroundWondersPending = false
 	map.SuperBigMapDeferredUndergroundWondersDone = true
 	map.SuperBigMapDeferredUndergroundWondersSpawned = spawned
@@ -6388,6 +6749,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
 				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
 				map.SuperBigMapRevalidationRebuiltGrids = true
+				WonderVerticalDiagnostics.LogAll(map, "after_final_grid_rebuild")
 				-- StretchSourceToFull may have deferred its intermediate RebuildGrids pass. Both final
 				-- authoritative gameplay grids now exist against the completed terrain/object layout.
 				map.SuperBigMapDeferredIntermediateTerrainRebuild = nil
@@ -7626,6 +7988,7 @@ local function PatchDeferredUndergroundAccess(source)
 		-- screen alive until their first visible texture targets have become stable.
 		local renderer_settled, renderer_result = SettleUndergroundSceneResources(
 			target, "completed underground map became visible")
+		WonderVerticalDiagnostics.LogAll(target, "after_underground_became_visible")
 		-- CurrentMapChangeDone is synchronous inside the original switch. It must have consumed the
 		-- queued token; never perform a post-return reconstruction here, because that would recreate
 		-- the old race with later engine lifecycle work.
