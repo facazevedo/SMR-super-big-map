@@ -4565,6 +4565,11 @@ function WonderVerticalDiagnostics.WonderCityLabelContains(map, wonder)
 	return false
 end
 
+function WonderVerticalDiagnostics.WonderGameInitPending(wonder)
+	local threads = Global("GameInitThreads")
+	return type(threads) == "table" and wonder ~= nil and threads[wonder] ~= nil
+end
+
 function WonderVerticalDiagnostics.WonderScenarioExists(wonder)
 	local list_name = wonder and wonder.sequence_list
 	local sequence = wonder and wonder.sequence
@@ -4601,6 +4606,7 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 	local stats = {
 		reason = tostring(reason or ""), expected = expected, wonders = #wonders,
 		existing = 0, spawned = 0, linked_markers = 0, failures = 0,
+		city_labels_ready = 0, city_labels_pending_gameinit = 0,
 	}
 	local failure_details, class_counts, marker_details = {}, {}, {}
 	local function fail(message)
@@ -4620,8 +4626,16 @@ function WonderVerticalDiagnostics.AuditDeferredUndergroundWonderAnomalies(
 			fail(class_name .. " is not a vanilla UndergroundWonder")
 		end
 		if wonder.city ~= map.City then fail(class_name .. " has the wrong city") end
-		if not WonderVerticalDiagnostics.WonderCityLabelContains(map, wonder) then
-			fail(class_name .. " is absent from its city label")
+		if WonderVerticalDiagnostics.WonderCityLabelContains(map, wonder) then
+			stats.city_labels_ready = stats.city_labels_ready + 1
+		elseif WonderVerticalDiagnostics.WonderGameInitPending(wonder) then
+			-- PlaceBuildingIn schedules GameInit on a game-time thread. First-access underground
+			-- construction runs while game time is paused, so vanilla has not registered the class
+			-- label yet. Accept only this proven pending state; GameInit will perform the normal
+			-- idempotent label registration as soon as the loading transaction releases game time.
+			stats.city_labels_pending_gameinit = stats.city_labels_pending_gameinit + 1
+		else
+			fail(class_name .. " is absent from its city label with no GameInit pending")
 		end
 		if type(wonder.CompleteSequence) ~= "function"
 			or type(wonder.IsSequenceComplete) ~= "function" then
