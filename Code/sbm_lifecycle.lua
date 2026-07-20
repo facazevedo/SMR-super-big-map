@@ -1049,6 +1049,12 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 			end
 		end
 	end
+	if IsModMap(map) then
+		local deposits = SuperBigMap.DepositRules
+		if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
+			SafeCall(deposits.AuditEnrichmentBadgeVisuals, map, "CurrentMapChangeDone", true)
+		end
+	end
 end)
 
 -- Already-current recovery never performs an artificial map switch, so it has no
@@ -1194,6 +1200,9 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.OnSectorScanned) == "function" then
 		deposits.OnSectorScanned(status, sector)
+	end
+	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
+		SafeCall(deposits.AuditEnrichmentBadgeVisuals, sector_map, "SectorScanned", true)
 	end
 	-- Revealing an underground entrance completes a vanilla scenario that may create or refresh
 	-- its sign. Re-assert the exact post-expansion starting XYZ after the reveal has run.
@@ -1432,6 +1441,11 @@ RegisterOnce("OverviewMode", function(enabled)
 		NormalizeVanillaRuntimeState(current_map, "OverviewMode non-mod map")
 		return
 	end
+	local deposits = SuperBigMap.DepositRules
+	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
+		SafeCall(deposits.AuditEnrichmentBadgeVisuals, current_map,
+			"OverviewMode(" .. tostring(enabled == true) .. ")", true)
+	end
 	-- Underground sectors are data-only: keep their hover context but suppress all grid decals.
 	local highlight = SuperBigMap.SectorHighlight
 	if highlight and type(highlight.UpdateUndergroundOverviewVisuals) == "function" then
@@ -1505,6 +1519,10 @@ RegisterOnce("CameraTransitionEnd", function()
 	if not IsModMap(current_map) then
 		NormalizeVanillaRuntimeState(current_map, "CameraTransitionEnd non-mod map")
 		return
+	end
+	local deposits = SuperBigMap.DepositRules
+	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
+		SafeCall(deposits.AuditEnrichmentBadgeVisuals, current_map, "CameraTransitionEnd", true)
 	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom then
