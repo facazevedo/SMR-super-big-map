@@ -6752,12 +6752,36 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 
 	local moved, unresolved = 0, 0
 	local moved_by_class = {}
-	local ignored_for_repulsion = {}
+	local ignored_for_strict_repulsion = {}
+	local ignored_for_topup_repulsion = {}
 	for _, item in ipairs(invalid) do
-		if item.marker then ignored_for_repulsion[item.marker] = true end
+		if item.marker then
+			ignored_for_strict_repulsion[item.marker] = true
+			ignored_for_topup_repulsion[item.marker] = true
+		end
 	end
-	local relocation_repulsion = NewTopUpRepulsionTracker(
-		map, "underground enrichment relocation", ignored_for_repulsion)
+	local function ordinary_topup(marker)
+		return marker and marker.SuperBigMapUndergroundDensityFallback ~= true
+			and (marker.SuperBigMapResourceTopUp == true
+				or marker.SuperBigMapAnomalyTopUp == true
+				or marker.SuperBigMapEffectTopUp == true)
+	end
+	-- The final invariant excludes native/native pairs and every pair containing a density-
+	-- fallback marker. Mirror that exact rule here instead of over-constraining native deposit
+	-- clusters: ordinary top-ups see natives+ordinary top-ups, while a relocated native sees only
+	-- ordinary top-ups.
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if marker.SuperBigMapUndergroundDensityFallback == true then
+			ignored_for_strict_repulsion[marker] = true
+		end
+		if not ordinary_topup(marker) then
+			ignored_for_topup_repulsion[marker] = true
+		end
+	end)
+	local strict_repulsion = NewTopUpRepulsionTracker(
+		map, "underground ordinary-top-up relocation", ignored_for_strict_repulsion)
+	local topup_only_repulsion = NewTopUpRepulsionTracker(
+		map, "underground native relocation versus top-ups", ignored_for_topup_repulsion)
 	local relocation_attempts, relocation_retries = 0, 0
 	local snapped_rejected, setpos_failed, postmove_rejected = 0, 0, 0
 	local repulsion_rejected, missing_repulsion_profile = 0, 0
@@ -6767,6 +6791,7 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		local profile = VanillaRepulsionProfileForMarker(map, marker)
 		local density_fallback = marker
 			and marker.SuperBigMapUndergroundDensityFallback == true
+		local marker_is_topup = ordinary_topup(marker)
 		local ox, oy
 		if old_pos and type(old_pos.xy) == "function" then ox, oy = old_pos:xy() end
 		if not marker or type(marker.SetPos) ~= "function" then
@@ -6807,9 +6832,11 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 					local candidate = { x = nx, y = ny }
 					local spacing_ok
 					if density_fallback then
-						spacing_ok = relocation_repulsion.CanPlaceUnique(candidate)
+						spacing_ok = strict_repulsion.CanPlaceUnique(candidate)
+					elseif marker_is_topup then
+						spacing_ok = strict_repulsion.CanPlace(candidate, profile)
 					else
-						spacing_ok = relocation_repulsion.CanPlace(candidate, profile)
+						spacing_ok = topup_only_repulsion.CanPlace(candidate, profile)
 					end
 					if not spacing_ok then
 						repulsion_rejected = repulsion_rejected + 1
@@ -6829,9 +6856,12 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 							local actual_spacing_ok = ax == nx and ay == ny
 							if not actual_spacing_ok and type(ax) == "number" then
 								if density_fallback then
-									actual_spacing_ok = relocation_repulsion.CanPlaceUnique(actual_candidate)
+									actual_spacing_ok = strict_repulsion.CanPlaceUnique(actual_candidate)
+								elseif marker_is_topup then
+									actual_spacing_ok = strict_repulsion.CanPlace(
+										actual_candidate, profile)
 								else
-									actual_spacing_ok = relocation_repulsion.CanPlace(
+									actual_spacing_ok = topup_only_repulsion.CanPlace(
 										actual_candidate, profile)
 								end
 							end
@@ -6855,7 +6885,12 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 				end
 			end
 			if success then
-				relocation_repulsion.Commit(successful_candidate, profile, marker)
+				if not density_fallback then
+					strict_repulsion.Commit(successful_candidate, profile, marker)
+					if marker_is_topup then
+						topup_only_repulsion.Commit(successful_candidate, profile, marker)
+					end
+				end
 				moved = moved + 1
 				moved_by_class[class] = (moved_by_class[class] or 0) + 1
 				marker.SuperBigMapReachabilityRelocated = true
@@ -6887,7 +6922,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 		connectivity_rejected = reachable_state.rejected,
 		connectivity_failures = reachable_state.failures,
 		moved_by_class = TallyString(moved_by_class),
-		repulsion_tracker = relocation_repulsion.Stats(),
+		strict_repulsion_tracker = strict_repulsion.Stats(),
+		topup_only_repulsion_tracker = topup_only_repulsion.Stats(),
 	}
 	return unresolved == 0, stats
 end

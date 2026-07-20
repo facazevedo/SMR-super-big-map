@@ -7302,6 +7302,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					candidates_reused = audit_stats and audit_stats.candidates_reused,
 					relocation_attempts = audit_stats and audit_stats.relocation_attempts,
 					repulsion_rejected = audit_stats and audit_stats.repulsion_rejected,
+					missing_repulsion_profile = audit_stats
+						and audit_stats.missing_repulsion_profile,
 					moved_by_class = audit_stats and audit_stats.moved_by_class,
 				}, audit_ok == true)
 					if audit_ok ~= true then
