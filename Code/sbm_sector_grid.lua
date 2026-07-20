@@ -444,6 +444,26 @@ local function SectorName(row, col, count, orient)
 	return IndexToLetters(col) .. tostring(row - 1)
 end
 
+-- Visible labels are intentionally separate from MapSector.id. Vanilla names the
+-- letter axis from right to left; keep that stable internal identity for queues,
+-- saves, and diagnostics, but present the expanded grid in the conventional
+-- left-to-right order requested by the player. OverviewOrientation changes which
+-- world axis is horizontal, so mirror the letter component for each rotation while
+-- leaving vanilla's row-number direction untouched.
+local function SectorDisplayName(row, col, count, orient)
+	if orient == 0 then
+		return IndexToLetters(col) .. tostring(row - 1)
+	elseif orient == 90 then
+		return IndexToLetters(row) .. tostring(count - col)
+	elseif orient == 180 then
+		return IndexToLetters(count - col + 1) .. tostring(count - row)
+	elseif orient == 270 then
+		return IndexToLetters(count - row + 1) .. tostring(col - 1)
+	end
+
+	return IndexToLetters(col) .. tostring(row - 1)
+end
+
 local function SectorBounds(layout, col, row)
 	local x1 = layout.border + Round((col - 1) * layout.step_x)
 	local y1 = layout.border + Round((row - 1) * layout.step_y)
@@ -471,6 +491,7 @@ SectorGrid.NormalizeVanillaSectorCount = NormalizeVanillaSectorCount
 SectorGrid.VanillaSectorCount = function() return VANILLA_SECTOR_COUNT end
 SectorGrid.ForEachSector = ForEachSector
 SectorGrid.SectorName = SectorName
+SectorGrid.SectorDisplayName = SectorDisplayName
 SectorGrid.SectorBounds = SectorBounds
 
 -- This module patches nothing at enable time; const.SectorCount is configured

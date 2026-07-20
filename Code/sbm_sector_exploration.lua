@@ -258,9 +258,10 @@ local function BuildSector(map, city, row, col, layout, orient, unbuildable_z, e
 	local buildable_grid = map.buildable
 	local heat_grid = map.heat_grid
 	local name = Grid.SectorName(row, col, layout.count, orient)
+	local display_name = Grid.SectorDisplayName(row, col, layout.count, orient)
 	local sector_data = {
 		id = name,
-		display_name = name,
+		display_name = display_name,
 		area = bbox,
 		play_ratio = BuildableGridRatio(buildable_grid.z_grid, unbuildable_z, 100, bbox),
 		avg_heat = heat_grid and heat_grid:GetAverageHeatIn(bbox) or const.MaxHeat,
@@ -272,6 +273,31 @@ local function BuildSector(map, city, row, col, layout, orient, unbuildable_z, e
 	local sector = map_sector_class:new(sector_data, map.slot)
 	InitSector(map, sector, eligible_sectors)
 	return sector
+end
+
+-- Existing expanded saves may already contain a correctly-sized MapSectors grid
+-- with the old right-to-left visible labels. Relabel those sector objects in place:
+-- display_name is presentation only, while id remains untouched so exploration
+-- queues, deposits, and serialized object references keep their original identity.
+local function RefreshSectorDisplayNames(map)
+	if not Grid.UseCustomSectorsForMap(map) then return 0 end
+	local city = map and map.City
+	if not city or type(city.MapSectors) ~= "table"
+		or type(Grid.SectorDisplayName) ~= "function" then return 0 end
+
+	local count = Grid.ResolveSectorCount(map)
+	if type(count) ~= "number" or count <= 0 then return 0 end
+	local mapdata = map.mapdata
+	local orient = type(mapdata) == "table" and mapdata.OverviewOrientation or 0
+	local changed = 0
+	Grid.ForEachSector(city, function(sector, col, row)
+		local display_name = Grid.SectorDisplayName(row, col, count, orient)
+		if sector.display_name ~= display_name then
+			sector.display_name = display_name
+			changed = changed + 1
+		end
+	end)
+	return changed
 end
 
 local SectorDecalClasses = { "SectorUnexplored", "SectorScanned" }
@@ -1270,7 +1296,8 @@ local function EnsureSectorsBuilt(map, reason)
 
 
 	if cols == expected and rows == expected and size_ok then
-		return true, "matches"
+		local relabeled = RefreshSectorDisplayNames(map)
+		return true, relabeled > 0 and "matches; relabeled" or "matches"
 	end
 
 	-- The rebuild only produces the correct size if it runs through the mod's CUSTOM
@@ -1313,6 +1340,7 @@ local function EnsureSectorsBuilt(map, reason)
 	if type(exploration_class.InitMapArea) == "function" then
 		pcall(exploration_class.InitMapArea, city)
 	end
+	RefreshSectorDisplayNames(map)
 
 	return true, "rebuilt"
 end
@@ -1351,6 +1379,7 @@ end
 local SectorExploration = {}
 
 SectorExploration.RefreshSectorDecals = RefreshSectorDecals
+SectorExploration.RefreshSectorDisplayNames = RefreshSectorDisplayNames
 
 SectorExploration.InstallSectorPatch = InstallSectorPatch
 SectorExploration.PatchInitialExplore = PatchInitialExplore
