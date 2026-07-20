@@ -318,12 +318,6 @@ local function ProbeNativeClutterAccess(map, stage)
 	for _, alias in ipairs({ "clutter", "clutter_density", "grass_density" }) do
 		probe_ref("editor.map." .. alias,
 			type(editor_api) == "table" and editor_api.GetGridRef, map, alias)
-		probe_ref("editor.slot." .. alias,
-			type(editor_api) == "table" and editor_api.GetGridRef, map.slot, alias)
-		if current_map == map then
-			probe_ref("editor.current." .. alias,
-				type(editor_api) == "table" and editor_api.GetGridRef, nil, alias)
-		end
 		probe_ref("orig.map." .. alias, Global("origGetGridRef"), map, alias)
 	end
 	local grid_names = {}
