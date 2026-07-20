@@ -6968,11 +6968,27 @@ function DepositRules.VerifyUndergroundWonderEnrichmentExclusion(map, reason)
 	if type(map.MapForEach) ~= "function" or type(world_to_hex) ~= "function" then
 		return false, { error = "map/WorldToHex API unavailable", checked = 0 }
 	end
-	local stats = { checked = 0, overlaps = 0, native = 0, topups = 0 }
+	local stats = {
+		checked = 0, overlaps = 0, native = 0, topups = 0,
+		wonder_owned_rare_anomalies = 0,
+	}
 	local seen = {}
 	local function inspect(marker)
 		if not IsEnrichmentMarker(marker) or seen[marker] then return end
 		seen[marker] = true
+		-- A buried wonder's own SubsurfaceSpecialAnomalyMarker is deliberately spawned by
+		-- vanilla at/near that wonder and is validated separately for linkage, locality and
+		-- playable terrain. The reserved footprint excludes unrelated enrichments; it must not
+		-- reject the wonder-owned gameplay trigger itself.
+		local wonder_owned_rare_anomaly =
+			marker.SuperBigMapDeferredWonderAnomaly == true
+			and IsKindOfSafe(marker, "SubsurfaceSpecialAnomalyMarker")
+			and marker.spawner ~= nil
+			and IsKindOfSafe(marker.spawner, "UndergroundWonder")
+		if wonder_owned_rare_anomaly then
+			stats.wonder_owned_rare_anomalies = stats.wonder_owned_rare_anomalies + 1
+			return
+		end
 		stats.checked = stats.checked + 1
 		local topup = marker.SuperBigMapResourceTopUp == true
 			or marker.SuperBigMapAnomalyTopUp == true
@@ -6995,6 +7011,7 @@ function DepositRules.VerifyUndergroundWonderEnrichmentExclusion(map, reason)
 	AuditEmit("UNDERGROUND_WONDER_ENRICHMENT_EXCLUSION", {
 		reason = tostring(reason), checked = stats.checked,
 		native = stats.native, topups = stats.topups, overlaps = stats.overlaps,
+		wonder_owned_rare_anomalies = stats.wonder_owned_rare_anomalies,
 		reserved_hexes = underground_wonder_reserved_hexes_by_map[map]
 			and underground_wonder_reserved_hexes_by_map[map].count or 0,
 		error = tostring(stats.error or ""),
