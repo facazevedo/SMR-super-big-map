@@ -155,22 +155,33 @@ local function LoadingEnd(token, data, ok)
 	end
 end
 
+local function FunctionEnvironment(fn)
+	if type(fn) ~= "function" then return nil end
+	local getfenv_fn = Global("getfenv")
+	if type(getfenv_fn) == "function" then
+		local ok, env = pcall(getfenv_fn, fn)
+		if ok and type(env) == "table" then return env end
+	end
+	local debug_lib = Global("debug")
+	if type(debug_lib) == "table" and type(debug_lib.getfenv) == "function" then
+		local ok, env = pcall(debug_lib.getfenv, fn)
+		if ok and type(env) == "table" then return env end
+	end
+	return nil
+end
+
 -- Native clutter has a public writer but no reliable reader while random-map generation is
 -- running on a temporary/non-current map slot. Capture vanilla's final write synchronously, while
--- the source compute grid is still alive, so the later stretch pass can resample the exact data.
--- ClearClutterGrid is captured too: some map sequences legitimately finish with a uniform value.
+-- the source compute grid is still alive. The game can compile map-gen methods against private
+-- function environments, so instrument every distinct terrain table visible from those methods,
+-- not only _G. ClearClutterGrid is captured too for uniform-grid sequences.
 local function CallWithClutterCapture(map, callable, ...)
-	local terrain_api = Global("terrain")
-	local original_set = type(terrain_api) == "table" and terrain_api.SetClutterGrid or nil
-	local original_clear = type(terrain_api) == "table" and terrain_api.ClearClutterGrid or nil
-	if type(original_set) ~= "function" or type(original_clear) ~= "function" then
-		return callable(...)
-	end
-
-	local set_wrapper
-	local clear_wrapper
 	local write_count = 0
 	local capture_error
+	local candidate_descriptions = {}
+	local write_sources = {}
+	local patches = {}
+	local seen_terrain_tables = {}
 	local function free_grid(grid)
 		if grid then pcall(function() if type(grid.free) == "function" then grid:free() end end) end
 	end
@@ -193,33 +204,77 @@ local function CallWithClutterCapture(map, callable, ...)
 		map.SuperBigMapCapturedClutterFill = nil
 		return clone ~= nil
 	end
-
-	set_wrapper = function(target, grid, ...)
-		local results = PackValues(original_set(target, grid, ...))
-		if target == map and results[1] then
-			write_count = write_count + 1
-			replace_grid_capture(grid)
-		end
-		return Unpack(results, 1, results.n)
+	local function target_matches(target)
+		if target == map then return true end
+		local target_slot = type(target) == "table" and target.slot or target
+		return map and map.slot ~= nil and target_slot == map.slot
 	end
-	clear_wrapper = function(target, value, ...)
-		local results = PackValues(original_clear(target, value, ...))
-		if target == map and results[1] then
-			write_count = write_count + 1
-			free_grid(map.SuperBigMapCapturedClutterGrid)
-			map.SuperBigMapCapturedClutterGrid = nil
-			map.SuperBigMapCapturedClutterFill = value
-			capture_error = nil
+	local function install_candidate(label, terrain_api)
+		candidate_descriptions[#candidate_descriptions + 1] = label .. "=" .. tostring(terrain_api)
+		if type(terrain_api) ~= "table" or seen_terrain_tables[terrain_api] then return end
+		seen_terrain_tables[terrain_api] = true
+		local record = {
+			label = label,
+			api = terrain_api,
+			original_set = terrain_api.SetClutterGrid,
+			original_clear = terrain_api.ClearClutterGrid,
+			writes = 0,
+		}
+		if type(record.original_set) == "function" then
+			record.set_wrapper = function(target, grid, ...)
+				local results = PackValues(record.original_set(target, grid, ...))
+				if target_matches(target) and results[1] then
+					write_count = write_count + 1
+					record.writes = record.writes + 1
+					replace_grid_capture(grid)
+				end
+				return Unpack(results, 1, results.n)
+			end
+			terrain_api.SetClutterGrid = record.set_wrapper
 		end
-		return Unpack(results, 1, results.n)
+		if type(record.original_clear) == "function" then
+			record.clear_wrapper = function(target, value, ...)
+				local results = PackValues(record.original_clear(target, value, ...))
+				if target_matches(target) and results[1] then
+					write_count = write_count + 1
+					record.writes = record.writes + 1
+					free_grid(map.SuperBigMapCapturedClutterGrid)
+					map.SuperBigMapCapturedClutterGrid = nil
+					map.SuperBigMapCapturedClutterFill = value
+					capture_error = nil
+				end
+				return Unpack(results, 1, results.n)
+			end
+			terrain_api.ClearClutterGrid = record.clear_wrapper
+		end
+		if record.set_wrapper or record.clear_wrapper then patches[#patches + 1] = record end
+	end
+	local function install_environment_candidate(label, fn)
+		local env = FunctionEnvironment(fn)
+		install_candidate(label, type(env) == "table" and env.terrain or nil)
 	end
 
-	terrain_api.SetClutterGrid = set_wrapper
-	terrain_api.ClearClutterGrid = clear_wrapper
+	install_candidate("global", Global("terrain"))
+	install_environment_candidate("DoGenerate_env", callable)
+	local import_class = Global("GridOpMapImport")
+	local reset_class = Global("GridOpMapReset")
+	local export_class = Global("GridOpMapExport")
+	install_environment_candidate("MapImport_env", type(import_class) == "table" and import_class.SetGridInput)
+	install_environment_candidate("MapReset_env", type(reset_class) == "table" and reset_class.Run)
+	install_environment_candidate("MapExport_env", type(export_class) == "table" and export_class.GetGridOutput)
+
 	local results = PackValues(pcall(callable, ...))
-	-- Always restore the exact functions that preceded this synchronous transaction.
-	terrain_api.SetClutterGrid = original_set
-	terrain_api.ClearClutterGrid = original_clear
+	-- Always restore every exact function that preceded this synchronous transaction.
+	for patch_index = #patches, 1, -1 do
+		local record = patches[patch_index]
+		if record.set_wrapper and record.api.SetClutterGrid == record.set_wrapper then
+			record.api.SetClutterGrid = record.original_set
+		end
+		if record.clear_wrapper and record.api.ClearClutterGrid == record.clear_wrapper then
+			record.api.ClearClutterGrid = record.original_clear
+		end
+		write_sources[#write_sources + 1] = record.label .. ":" .. tostring(record.writes)
+	end
 	local captured_grid = map and map.SuperBigMapCapturedClutterGrid
 	local captured_w, captured_h
 	if captured_grid and type(captured_grid.size) == "function" then
@@ -230,10 +285,99 @@ local function CallWithClutterCapture(map, callable, ...)
 		writes = write_count,
 		kind = captured_grid and "grid" or map.SuperBigMapCapturedClutterFill ~= nil and "uniform" or "none",
 		grid_cells = captured_w and (tostring(captured_w) .. "x" .. tostring(captured_h)) or "none",
+		terrain_candidates = table.concat(candidate_descriptions, " | "),
+		write_sources = table.concat(write_sources, " | "),
 		error = capture_error or "",
 	}, map)
 	if not results[1] then error(results[2]) end
 	return Unpack(results, 2, results.n)
+end
+
+-- Read-only diagnostic for the write-only native clutter grid. Keep every access protected and
+-- report identities/sizes as strings so a failed route cannot interrupt map generation.
+local function ProbeNativeClutterAccess(map, stage)
+	if not map then return false end
+	local editor_api = Global("editor")
+	local terrain_api = Global("terrain")
+	local current_map = Global("CurrentMap")
+	local probes = {}
+	local function grid_shape(grid)
+		if not grid then return "nil" end
+		if type(grid.size) ~= "function" then return tostring(grid) .. ":no-size" end
+		local ok, width, height = pcall(grid.size, grid)
+		return ok and (tostring(width) .. "x" .. tostring(height)) or (tostring(grid) .. ":size-error")
+	end
+	local function probe_ref(label, fn, owner, name)
+		if type(fn) ~= "function" then
+			probes[#probes + 1] = label .. "=missing"
+			return
+		end
+		local ok, grid = pcall(fn, owner, name)
+		probes[#probes + 1] = label .. "=" .. (ok and grid_shape(grid) or ("error:" .. tostring(grid)))
+	end
+	for _, alias in ipairs({ "clutter", "clutter_density", "grass_density" }) do
+		probe_ref("editor.map." .. alias,
+			type(editor_api) == "table" and editor_api.GetGridRef, map, alias)
+		probe_ref("editor.slot." .. alias,
+			type(editor_api) == "table" and editor_api.GetGridRef, map.slot, alias)
+		if current_map == map then
+			probe_ref("editor.current." .. alias,
+				type(editor_api) == "table" and editor_api.GetGridRef, nil, alias)
+		end
+		probe_ref("orig.map." .. alias, Global("origGetGridRef"), map, alias)
+	end
+	local grid_names = {}
+	if type(editor_api) == "table" and type(editor_api.GetGridNames) == "function" then
+		local ok, names = pcall(editor_api.GetGridNames)
+		if ok and type(names) == "table" then
+			for _, name in ipairs(names) do
+				local lower = string.lower(tostring(name))
+				if string.find(lower, "clutter", 1, true) or string.find(lower, "grass", 1, true) then
+					grid_names[#grid_names + 1] = tostring(name)
+				end
+			end
+		end
+	end
+	local map_fields = {}
+	pcall(function()
+		for key, value in pairs(map) do
+			local lower = string.lower(tostring(key))
+			if string.find(lower, "clutter", 1, true) or string.find(lower, "grass", 1, true) then
+				map_fields[#map_fields + 1] = tostring(key) .. "=" .. tostring(value)
+			end
+		end
+	end)
+	local samples = {}
+	local get_density = type(terrain_api) == "table" and terrain_api.GetClutterDensity
+	local point_fn = Global("point")
+	local const_tbl = Global("const")
+	local height_tile = type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize) or 0
+	if current_map == map and type(get_density) == "function" and type(point_fn) == "function" then
+		local world_w = tonumber(map.mapdata and map.mapdata.Width) and map.mapdata.Width * height_tile or 0
+		local world_h = tonumber(map.mapdata and map.mapdata.Height) and map.mapdata.Height * height_tile or 0
+		for label, pos in pairs({ origin = point_fn(0, 0), center = point_fn(world_w / 2, world_h / 2) }) do
+			local ok, value = pcall(get_density, map, pos)
+			samples[#samples + 1] = label .. "=" .. (ok and tostring(value) or ("error:" .. tostring(value)))
+		end
+	end
+	local import_class = Global("GridOpMapImport")
+	local reset_class = Global("GridOpMapReset")
+	local import_env = FunctionEnvironment(type(import_class) == "table" and import_class.SetGridInput)
+	local reset_env = FunctionEnvironment(type(reset_class) == "table" and reset_class.Run)
+	LoadingStep("native clutter access probe", {
+		stage = tostring(stage),
+		map_is_current = tostring(current_map == map),
+		global_terrain = tostring(terrain_api),
+		map_import_terrain = tostring(type(import_env) == "table" and import_env.terrain),
+		map_reset_terrain = tostring(type(reset_env) == "table" and reset_env.terrain),
+		clutter_tile_size = tostring(type(const_tbl) == "table" and const_tbl.ClutterTileSize),
+		height_tile_size = tostring(height_tile),
+		grid_names = #grid_names > 0 and table.concat(grid_names, ",") or "none",
+		map_fields = #map_fields > 0 and table.concat(map_fields, " | ") or "none",
+		refs = table.concat(probes, " | "),
+		samples = #samples > 0 and table.concat(samples, " | ") or "not-current-or-unavailable",
+	}, map)
+	return true
 end
 
 local function LoadingFinish(reason, map, data, ok)
@@ -872,6 +1016,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapCapturedClutterGrid = nil
 	map.SuperBigMapCapturedClutterFill = nil
 	map.SuperBigMapClutterGridStretched = nil
+	map.SuperBigMapClutterGridStretchUnavailable = nil
 	map.SuperBigMapExpansionPending = nil
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
@@ -2702,6 +2847,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
 		if source.City ~= nil then rawset(_G, "MainCity", source.City) end
+		ProbeNativeClutterAccess(source, "temporary source before DoGenerate")
 		-- RandomMapGenerator:GetMapSize reads MapData[self.BlankMap] directly rather than the
 		-- supplied map. Keep that last generator input native-sized for exactly this transaction;
 		-- the destination's engine backing remains expanded and its template is restored before
@@ -2732,6 +2878,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			results = PackValues(CallWithClutterCapture(source, original_do_generate, generator, source,
 				Unpack(call_args, 1, call_args.n)))
 		end
+		ProbeNativeClutterAccess(source, "temporary source after DoGenerate")
 		local update_radius_token = LoadingBegin("refresh temporary source object radius", source)
 		local update_radius = Global("UpdateMapMaxObjRadius")
 		if type(update_radius) == "function" then update_radius(source) end
@@ -6699,7 +6846,9 @@ local function PatchRandomMapGenerator()
 			State.rmg_placement_active_map = map
 			local expanded_backing_token = LoadingBegin(
 				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
+			ProbeNativeClutterAccess(map, "expanded backing before underground DoGenerate")
 			local results = { pcall(CallWithClutterCapture, map, original_do_generate, self, map, ...) }
+			ProbeNativeClutterAccess(map, "expanded backing after underground DoGenerate")
 			LoadingEnd(expanded_backing_token, nil, results[1] == true)
 			-- Restore the cached MapVars before bridge cleanup can run. The
 			-- pcall above covers both the successful and failing native-generation paths, so an

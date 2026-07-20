@@ -1025,7 +1025,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		return done > 0, done
 	end
 	if clutter_ok ~= true then
-		error("expanded native terrain clutter grid stretch failed")
+		map.SuperBigMapClutterGridStretchUnavailable = true
+		LoadingStep("terrain clutter grid unavailable; continuing diagnostic generation", {
+			source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
+			destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
+			direct_source = tostring(direct_source == true),
+		}, map)
 	end
 	if clutter_changed then done = done + 1 end
 	-- Colour and biome are compute-backed editor MapGrids. Clutter was handled through its native
