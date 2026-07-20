@@ -9322,25 +9322,30 @@ local function PatchDeferredUndergroundAccess(source)
 		end
 
 		local screen_id = loading_screen_id or "idChangeCurrentMapSlot"
-		local screen_open = loading_screen ~= false
+		local screen_open = false
 		local open_screen = Global("LoadingScreenOpen")
 		local close_screen = Global("LoadingScreenClose")
 		local wait_render = Global("WaitRenderMode")
-		if screen_open and type(open_screen) == "function" then
-			open_screen(screen_id, map_slot)
-			if type(wait_render) == "function" then wait_render("ui") end
-		else
-			screen_open = false
-		end
 		-- Own one reference outside the nested underground pipeline. The pipeline releases only its
-		-- own reference when terrain work ends; this outer reference keeps either the custom frozen
-		-- backdrop or the still-open engine loading screen over the subsequent map switch until the
-		-- destination blanket has been synchronously confirmed.
+		-- own reference when terrain work ends. Establish the custom "Building underground map"
+		-- presentation while the live Surface is still visible; opening vanilla's black loading
+		-- screen first creates the exact black interval this cover is meant to eliminate.
 		local first_access_cover_started = false
+		local first_access_cover_visible = false
 		local begin_first_access_cover = SuperBigMap.ExpansionLoadingBegin
 		local end_first_access_cover = SuperBigMap.ExpansionLoadingEnd
 		if type(begin_first_access_cover) == "function" then
-			first_access_cover_started = pcall(begin_first_access_cover, "underground")
+			local begin_ok, visible = pcall(begin_first_access_cover, "underground")
+			first_access_cover_started = begin_ok
+			first_access_cover_visible = begin_ok and visible == true
+		end
+		-- A renderer that cannot create the frozen custom backdrop keeps vanilla's screen as a
+		-- state-based fallback. It stays behind any custom dialog that becomes ready later.
+		if not first_access_cover_visible and type(open_screen) == "function" then
+			screen_open = pcall(open_screen, screen_id, map_slot)
+			if screen_open and type(wait_render) == "function" then
+				pcall(wait_render, "ui")
+			end
 		end
 		local function release_first_access_cover()
 			if not first_access_cover_started then return end
@@ -9385,7 +9390,13 @@ local function PatchDeferredUndergroundAccess(source)
 		local switch_restore_token = CurrentElevatorRestoreToken(target)
 		local switch_restore_token_id = switch_restore_token and switch_restore_token.token_id
 		WonderVerticalDiagnostics.LogAll(target, "before_underground_map_switch")
-		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
+		local original_loading_screen = loading_screen
+		if first_access_cover_started or screen_open then
+			-- Lua's `condition and false or value` cannot produce false. Assign explicitly so vanilla
+			-- cannot open a second black loading screen over the retained SBM presentation.
+			original_loading_screen = false
+		end
+		local result = original(map_slot, original_loading_screen, loading_screen_id)
 		WonderVerticalDiagnostics.LogAll(target, "immediately_after_underground_map_switch")
 		local darkness_confirmed, darkness_confirm_reason =
 			SuperBigMap.EnsureVanillaDarknessReady(target)
