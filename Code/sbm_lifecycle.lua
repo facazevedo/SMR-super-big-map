@@ -1049,12 +1049,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 			end
 		end
 	end
-	if IsModMap(map) then
-		local deposits = SuperBigMap.DepositRules
-		if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
-			SafeCall(deposits.AuditEnrichmentBadgeVisuals, map, "CurrentMapChangeDone", true)
-		end
-	end
+	-- Internal native-backing generation visits the underground and lets vanilla set this
+	-- process-global renderer value to 90. The player-facing map is current again now, so derive
+	-- the final value from it exactly as vanilla does: Surface=0 and Underground=90.
+	ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or map)
 end)
 
 -- Already-current recovery never performs an artificial map switch, so it has no
@@ -1200,9 +1198,6 @@ RegisterOnce("SectorScanned", function(status, sector, _old_status)
 	local deposits = SuperBigMap.DepositRules
 	if deposits and type(deposits.OnSectorScanned) == "function" then
 		deposits.OnSectorScanned(status, sector)
-	end
-	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
-		SafeCall(deposits.AuditEnrichmentBadgeVisuals, sector_map, "SectorScanned", true)
 	end
 	-- Revealing an underground entrance completes a vanilla scenario that may create or refresh
 	-- its sign. Re-assert the exact post-expansion starting XYZ after the reveal has run.
@@ -1421,6 +1416,11 @@ RegisterOnce("MapGenerated", function(map)
 	if gen and type(gen.NotifyGenerationMilestone) == "function" then
 		gen.NotifyGenerationMilestone(map, "MapGenerated", "MapGenerated-handler-complete")
 	end
+	if mod_map then
+		-- FinalizeExpandedMap may temporarily generate the opposite environment as a native backing
+		-- map. Restore the global renderer state for the actual player-facing map afterwards.
+		ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or map)
+	end
 	if not mod_map then
 		NormalizeVanillaRuntimeState(map, "MapGenerated non-mod map")
 	end
@@ -1440,11 +1440,6 @@ RegisterOnce("OverviewMode", function(enabled)
 	if not IsModMap(current_map) then
 		NormalizeVanillaRuntimeState(current_map, "OverviewMode non-mod map")
 		return
-	end
-	local deposits = SuperBigMap.DepositRules
-	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
-		SafeCall(deposits.AuditEnrichmentBadgeVisuals, current_map,
-			"OverviewMode(" .. tostring(enabled == true) .. ")", true)
 	end
 	-- Underground sectors are data-only: keep their hover context but suppress all grid decals.
 	local highlight = SuperBigMap.SectorHighlight
@@ -1519,10 +1514,6 @@ RegisterOnce("CameraTransitionEnd", function()
 	if not IsModMap(current_map) then
 		NormalizeVanillaRuntimeState(current_map, "CameraTransitionEnd non-mod map")
 		return
-	end
-	local deposits = SuperBigMap.DepositRules
-	if deposits and type(deposits.AuditEnrichmentBadgeVisuals) == "function" then
-		SafeCall(deposits.AuditEnrichmentBadgeVisuals, current_map, "CameraTransitionEnd", true)
 	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom then

@@ -34,10 +34,6 @@ config.DebugLoadingTimings = false
 -- and buildable state. This can add thousands of log lines and materially slow the diagnostic
 -- run, so disable it again after the underground placement investigation.
 config.DebugUndergroundDecorationPositions = false
--- TEMPORARY, narrowly scoped badge-render audit. This remains independent from the master
--- diagnostic gate so a reproduction records only live resource-sign state (including duplicate
--- signs at one hex) without restoring the large generation/audit log channels above.
-config.DebugEnrichmentBadgeVisuals = true
 
 -- ============================================================================
 -- MAIN LAYOUT
@@ -171,7 +167,7 @@ config.PreventElevatorFlatten = true
 
 -- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
 -- unlocks the template, and quick-builds the next placed Elevator for free.
-config.PlaceElevatorButtonEnabled = false
+config.PlaceElevatorButtonEnabled = true
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
@@ -633,7 +629,6 @@ C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugEleva
 C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
-C.DEBUG_ENRICHMENT_BADGE_VISUALS = as_bool(config.DebugEnrichmentBadgeVisuals)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
