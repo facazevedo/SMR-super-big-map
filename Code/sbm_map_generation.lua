@@ -155,6 +155,87 @@ local function LoadingEnd(token, data, ok)
 	end
 end
 
+-- Native clutter has a public writer but no reliable reader while random-map generation is
+-- running on a temporary/non-current map slot. Capture vanilla's final write synchronously, while
+-- the source compute grid is still alive, so the later stretch pass can resample the exact data.
+-- ClearClutterGrid is captured too: some map sequences legitimately finish with a uniform value.
+local function CallWithClutterCapture(map, callable, ...)
+	local terrain_api = Global("terrain")
+	local original_set = type(terrain_api) == "table" and terrain_api.SetClutterGrid or nil
+	local original_clear = type(terrain_api) == "table" and terrain_api.ClearClutterGrid or nil
+	if type(original_set) ~= "function" or type(original_clear) ~= "function" then
+		return callable(...)
+	end
+
+	local set_wrapper
+	local clear_wrapper
+	local write_count = 0
+	local capture_error
+	local function free_grid(grid)
+		if grid then pcall(function() if type(grid.free) == "function" then grid:free() end end) end
+	end
+	local function replace_grid_capture(grid)
+		local clone
+		local ok, err = pcall(function()
+			if not grid or type(grid.clone) ~= "function" then
+				error("generated clutter grid is not cloneable")
+			end
+			clone = grid:clone()
+			if not clone then error("generated clutter grid clone returned nil") end
+		end)
+		if not ok then
+			capture_error = tostring(err)
+			free_grid(clone)
+			clone = nil
+		end
+		free_grid(map.SuperBigMapCapturedClutterGrid)
+		map.SuperBigMapCapturedClutterGrid = clone
+		map.SuperBigMapCapturedClutterFill = nil
+		return clone ~= nil
+	end
+
+	set_wrapper = function(target, grid, ...)
+		local results = PackValues(original_set(target, grid, ...))
+		if target == map and results[1] then
+			write_count = write_count + 1
+			replace_grid_capture(grid)
+		end
+		return Unpack(results, 1, results.n)
+	end
+	clear_wrapper = function(target, value, ...)
+		local results = PackValues(original_clear(target, value, ...))
+		if target == map and results[1] then
+			write_count = write_count + 1
+			free_grid(map.SuperBigMapCapturedClutterGrid)
+			map.SuperBigMapCapturedClutterGrid = nil
+			map.SuperBigMapCapturedClutterFill = value
+			capture_error = nil
+		end
+		return Unpack(results, 1, results.n)
+	end
+
+	terrain_api.SetClutterGrid = set_wrapper
+	terrain_api.ClearClutterGrid = clear_wrapper
+	local results = PackValues(pcall(callable, ...))
+	-- Always restore the exact functions that preceded this synchronous transaction.
+	terrain_api.SetClutterGrid = original_set
+	terrain_api.ClearClutterGrid = original_clear
+	local captured_grid = map and map.SuperBigMapCapturedClutterGrid
+	local captured_w, captured_h
+	if captured_grid and type(captured_grid.size) == "function" then
+		local size_ok, width, height = pcall(captured_grid.size, captured_grid)
+		if size_ok then captured_w, captured_h = width, height end
+	end
+	LoadingStep("captured vanilla native clutter operation", {
+		writes = write_count,
+		kind = captured_grid and "grid" or map.SuperBigMapCapturedClutterFill ~= nil and "uniform" or "none",
+		grid_cells = captured_w and (tostring(captured_w) .. "x" .. tostring(captured_h)) or "none",
+		error = capture_error or "",
+	}, map)
+	if not results[1] then error(results[2]) end
+	return Unpack(results, 2, results.n)
+end
+
 local function LoadingFinish(reason, map, data, ok)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.LoadingFinish) == "function" then
@@ -782,6 +863,15 @@ local function ClearPreparedMapInstance(map)
 	if type(map) ~= "table" then
 		return false
 	end
+	local captured_clutter = map.SuperBigMapCapturedClutterGrid
+	if captured_clutter then
+		pcall(function()
+			if type(captured_clutter.free) == "function" then captured_clutter:free() end
+		end)
+	end
+	map.SuperBigMapCapturedClutterGrid = nil
+	map.SuperBigMapCapturedClutterFill = nil
+	map.SuperBigMapClutterGridStretched = nil
 	map.SuperBigMapExpansionPending = nil
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
@@ -2629,7 +2719,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(source.SuspendPassEdits) == "function" then source:SuspendPassEdits("SuperBigMapVanillaSourceMigration") end
 		local generator_token = LoadingBegin("vanilla RandomMapGenerator.DoGenerate", source)
 		if generator_token then
-			local timed_results = PackValues(pcall(original_do_generate, generator, source,
+			local timed_results = PackValues(pcall(CallWithClutterCapture,
+				source, original_do_generate, generator, source,
 				Unpack(call_args, 1, call_args.n)))
 			LoadingEnd(generator_token, nil, timed_results[1] == true)
 			if not timed_results[1] then error(timed_results[2]) end
@@ -2638,7 +2729,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 				results[result_index - 1] = timed_results[result_index]
 			end
 		else
-			results = PackValues(original_do_generate(generator, source,
+			results = PackValues(CallWithClutterCapture(source, original_do_generate, generator, source,
 				Unpack(call_args, 1, call_args.n)))
 		end
 		local update_radius_token = LoadingBegin("refresh temporary source object radius", source)
@@ -6608,7 +6699,7 @@ local function PatchRandomMapGenerator()
 			State.rmg_placement_active_map = map
 			local expanded_backing_token = LoadingBegin(
 				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
-			local results = { pcall(original_do_generate, self, map, ...) }
+			local results = { pcall(CallWithClutterCapture, map, original_do_generate, self, map, ...) }
 			LoadingEnd(expanded_backing_token, nil, results[1] == true)
 			-- Restore the cached MapVars before bridge cleanup can run. The
 			-- pcall above covers both the successful and failing native-generation paths, so an

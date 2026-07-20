@@ -649,18 +649,18 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	-- get_fn is left for the engine.
 	local direct_source = source_map and source_map ~= map
 	local terrain_source = direct_source and source_map or map
-	-- Relaunched stores terrain clutter in the native "clutter" grid. It is not an editor MapGrid
-	-- named "clutter_density" (that stale editor alias returns nil at runtime), and grass-like ground
-	-- scatter is part of this clutter/object layer rather than a separate "grass_density" grid.
-	-- Read the authoritative grid reference, resample the native source (or the source corner when the
-	-- map was generated in-place), and install it through terrain.SetClutterGrid just like MapGen.
+	-- Relaunched stores terrain clutter in a native grid with a public writer but no reliable reader
+	-- during generation on a temporary/non-current map slot. The generator wrapper captures vanilla's
+	-- final SetClutterGrid input (or ClearClutterGrid value) while it is alive. Prefer that exact
+	-- capture, retaining editor.GetGridRef only as a compatibility fallback for engine builds that do
+	-- expose the native grid. Grass-like ground scatter is part of this clutter/object layer rather
+	-- than a separate "grass_density" grid.
 	local function stretch_clutter()
 		if map.SuperBigMapClutterGridStretched == true then
 			return true, false
 		end
 		local editor_api = Global("editor")
-		if type(editor_api) ~= "table" or type(editor_api.GetGridRef) ~= "function"
-			or type(terrain_api.SetClutterGrid) ~= "function" then
+		if type(terrain_api.SetClutterGrid) ~= "function" then
 			return false, false
 		end
 		local function grid_size(grid)
@@ -672,6 +672,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			return width, height
 		end
 		local function clutter_ref(owner)
+			if type(editor_api) ~= "table" or type(editor_api.GetGridRef) ~= "function" then return nil end
 			for _, alias in ipairs({ "clutter", "clutter_density" }) do
 				local ref = SafeCall(editor_api.GetGridRef, owner, alias)
 				if ref then return ref, alias end
@@ -681,27 +682,60 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		local token = LoadingBegin("terrain clutter grid stretch", map, {
 			direct_source = tostring(direct_source == true),
 		})
-		local source_ref, source_alias = clutter_ref(terrain_source)
+		local captured_grid = terrain_source.SuperBigMapCapturedClutterGrid
+		local captured_fill = terrain_source.SuperBigMapCapturedClutterFill
+		local source_ref, source_alias
+		if captured_grid then
+			source_ref, source_alias = captured_grid, "captured_SetClutterGrid"
+		else
+			source_ref, source_alias = clutter_ref(terrain_source)
+		end
 		local destination_ref, destination_alias = clutter_ref(map)
 		local source_w, source_h = grid_size(source_ref)
 		local destination_w, destination_h = grid_size(destination_ref)
+		if captured_fill ~= nil and not source_ref then
+			local clear_ok, clear_result = pcall(terrain_api.ClearClutterGrid, map, captured_fill)
+			local success = clear_ok and clear_result == true
+			if success then map.SuperBigMapClutterGridStretched = true end
+			terrain_source.SuperBigMapCapturedClutterFill = nil
+			LoadingEnd(token, {
+				source_alias = "captured_ClearClutterGrid",
+				destination_alias = "native_clear",
+				source_cells = "uniform",
+				destination_cells = "uniform",
+				extraction_path = "uniform_native_clear",
+				error = success and "" or tostring(clear_result),
+			}, success)
+			return success, success
+		end
+		if source_w and source_h and (not destination_w or not destination_h) then
+			destination_w = math.max(1, math.floor((source_w * full_tw + 0.0) / sw_tiles + 0.5))
+			destination_h = math.max(1, math.floor((source_h * full_th + 0.0) / sh_tiles + 0.5))
+			destination_alias = "scaled_source_dimensions"
+		end
 		if not source_w or not source_h or not destination_w or not destination_h then
 			LoadingEnd(token, {
-				error = "native clutter grid reference unavailable",
+				error = "captured/native clutter source unavailable",
 				source_alias = source_alias or "none",
 				destination_alias = destination_alias or "none",
 			}, false)
+			if captured_grid then
+				terrain_source.SuperBigMapCapturedClutterGrid = nil
+				free_grid(captured_grid)
+			end
 			return false, false
 		end
 
-		local source_cells_w = direct_source and source_w
+		local source_is_captured = captured_grid ~= nil
+		local source_cells_w = (direct_source or source_is_captured) and source_w
 			or math.max(1, math.min(source_w, math.floor(destination_w * frac_w + 0.5)))
-		local source_cells_h = direct_source and source_h
+		local source_cells_h = (direct_source or source_is_captured) and source_h
 			or math.max(1, math.min(source_h, math.floor(destination_h * frac_h + 0.5)))
 		local native_sub, source_compute, full_compute, stretched
-		local extraction_path = direct_source and "direct_source_ref" or "unknown"
+		local extraction_path = source_is_captured and "captured_generator_grid"
+			or direct_source and "direct_source_ref" or "unknown"
 		local ok_all, result = pcall(function()
-			if direct_source then
+			if direct_source or source_is_captured then
 				source_compute = GridToCompute(source_ref)
 				if not source_compute then error("native source clutter conversion failed") end
 			elseif type(source_ref.new_instance) == "function" then
@@ -752,6 +786,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			free_grid(source_compute)
 		end
 		if full_compute and full_compute ~= source_ref then free_grid(full_compute) end
+		if captured_grid then
+			if terrain_source.SuperBigMapCapturedClutterGrid == captured_grid then
+				terrain_source.SuperBigMapCapturedClutterGrid = nil
+			end
+			free_grid(captured_grid)
+		end
 		local success = ok_all and result == true
 		if success then map.SuperBigMapClutterGridStretched = true end
 		LoadingEnd(token, {
