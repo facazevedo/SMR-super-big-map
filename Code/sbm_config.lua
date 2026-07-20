@@ -141,7 +141,7 @@ config.PreventElevatorFlatten = true
 
 -- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
 -- unlocks the template, and quick-builds the next placed Elevator for free.
-config.PlaceElevatorButtonEnabled = true
+config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
