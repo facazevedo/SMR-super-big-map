@@ -874,6 +874,14 @@ RegisterOnce("LoadGame", function()
 	if gen and type(gen.SyncMapDataToGrids) == "function" and current then
 		gen.SyncMapDataToGrids(current)
 	end
+	if gen and type(gen.ReseatExpandedUndergroundWonders) == "function" and current then
+		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(current,
+			"LoadGame after Lifecycle.Apply and mapdata synchronization")
+		if reseat_ok ~= true then
+			current.SuperBigMapUndergroundPreparationFailed = true
+			current.SuperBigMapUndergroundStretchFailed = tostring(reseat_result)
+		end
+	end
 	-- Save load preserves the city's MapSectors from save data; if its grid
 	-- size doesn't match what our layout expects (e.g. saved at 10x10 vanilla,
 	-- now expecting 20x20), rebuild here -- now that mapdata is synced to the real size.
@@ -915,6 +923,15 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
 	end
 	Lifecycle.Apply(map, not defer_rebuild and not skip_final_underground_rebuild)
+	if IsModMap(map) and gen
+		and type(gen.ReseatExpandedUndergroundWonders) == "function" then
+		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(
+			map, "CurrentMapChangeDone after Lifecycle.Apply")
+		if reseat_ok ~= true then
+			map.SuperBigMapUndergroundPreparationFailed = true
+			map.SuperBigMapUndergroundStretchFailed = tostring(reseat_result)
+		end
+	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors and type(sectors.EnsureSectorsBuilt) == "function" and map then
 		sectors.EnsureSectorsBuilt(map, "CurrentMapChangeDone")
@@ -963,6 +980,15 @@ RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason
 		token = tostring(token_id), reason = tostring(reason),
 	})
 	local gen = SuperBigMap.MapGeneration
+	if gen and type(gen.ReseatExpandedUndergroundWonders) == "function" then
+		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(
+			map, tostring(reason or "SuperBigMapUndergroundSupplyReady"))
+		if reseat_ok ~= true then
+			map.SuperBigMapUndergroundPreparationFailed = true
+			map.SuperBigMapUndergroundStretchFailed = tostring(reseat_result)
+			return
+		end
+	end
 	if gen and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
 		gen.HandlePendingUndergroundElevatorRestore(map and map.slot, map,
 			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " token=" .. tostring(token_id))

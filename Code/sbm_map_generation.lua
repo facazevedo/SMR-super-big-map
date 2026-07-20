@@ -809,6 +809,8 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapDeferredUndergroundWondersSpawned = nil
 	map.SuperBigMapDeferredUndergroundWondersStretched = nil
 	map.SuperBigMapDeferredBottomlessPitsStretched = nil
+	map.SuperBigMapWonderLifecycleReseatDone = nil
+	map.SuperBigMapWonderLifecycleReseatFailed = nil
 	map.SuperBigMapZScaleUniform = nil
 	map.SuperBigMapDeferredTunnelSpawnsPending = nil
 	map.SuperBigMapDeferredTunnelSpawnCount = nil
@@ -3826,6 +3828,18 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	if buildable_z then
 		flatten(shape, wonder, map.buildable.z_grid, map.object_hex_grid,
 			Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, buildable_z)
+		-- SpawnMarkerBuilding deliberately copied the vanilla marker's InvalidZ. Vanilla resolves it
+		-- immediately against this floor because the generated underground is already current; SBM's
+		-- destination is still off-screen here. Resolve it explicitly now so the later map activation
+		-- cannot snap the wonder onto pre-flatten relief before the lifecycle reseat runs.
+		local position = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+		local position_x, position_y = PointXY(position)
+		local point_fn = Global("point")
+		if type(position_x) ~= "number" or type(position_y) ~= "number"
+			or type(point_fn) ~= "function" or type(wonder.SetPos) ~= "function" then
+			return false, "cannot resolve the stretched wonder's explicit floor position"
+		end
+		wonder:SetPos(point_fn(position_x, position_y, buildable_z))
 		ArtefactClearObstructions(wonder, map.obj_prefab_marker, nil, shape)
 		return true, {
 			shape_hexes = #shape,
@@ -3845,6 +3859,160 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 		}
 	end
 	return false, "no terrain height is available for the expanded wonder footprint"
+end
+
+-- Vanilla leaves a newly spawned buried wonder at InvalidZ and flattens its terrain immediately.
+-- That is safe while vanilla generates the current underground map: the object resolves against
+-- the freshly flattened floor. SBM materializes the wonders while the underground is off-screen.
+-- EngineSetCurrentMapSlot can then discard that off-screen flatten before resolving InvalidZ,
+-- raising a wonder onto restored relief and allowing the relief to intersect its entity. Reapply
+-- only the stored vanilla-derived footprint once the map is current, and make floor Z explicit.
+function WonderVerticalDiagnostics.ReseatAll(map, reason)
+	if type(map) ~= "table" or type(map.mapdata) ~= "table"
+		or map.mapdata.Environment ~= "Underground"
+		or map.SuperBigMapUndergroundStretchDone ~= true then
+		return true, { skipped = true, reason = "not a completed expanded underground" }
+	end
+	if Global("CurrentMap") ~= map then
+		return false, "expanded underground wonder reseat requires the current map"
+	end
+	local ratios, ratio_error = DeferredWonderScaleRatios(map)
+	if type(ratios) ~= "table" then return false, tostring(ratio_error) end
+	local get_enclosed = Global("GetEnclosedShape")
+	local get_outline = Global("GetEntityOutlineShape")
+	local shrink = Global("ShrinkShape")
+	local flatten = Global("FlattenTerrainInShape")
+	local point_fn = Global("point")
+	if type(get_enclosed) ~= "function" or type(get_outline) ~= "function"
+		or type(shrink) ~= "function" or type(flatten) ~= "function"
+		or type(point_fn) ~= "function" or type(map.SuspendPassEdits) ~= "function"
+		or type(map.ResumePassEdits) ~= "function" or type(map.buildable) ~= "table"
+		or not map.buildable.z_grid or not map.object_hex_grid then
+		return false, "current-map wonder reseat helpers are unavailable"
+	end
+
+	local candidates = {}
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		local target_z = tonumber(wonder.SuperBigMapWonderFlattenZ)
+		if type(target_z) == "number" then
+			local entity = type(wonder.GetEntity) == "function" and wonder:GetEntity() or nil
+			local shape = type(entity) == "string" and get_enclosed(entity) or nil
+			if type(shape) == "table" and #shape == 0 then
+				shape = shrink(get_outline(entity), 2)
+			end
+			if type(shape) ~= "table" or #shape == 0 then
+				return false, "expanded flatten shape unavailable for "
+					.. tostring(wonder.class or entity)
+			end
+			shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
+			local before = WonderVerticalDiagnostics.ShapeVerticalStats(
+				map, shape, wonder, target_z)
+			candidates[#candidates + 1] = {
+				wonder = wonder,
+				shape = shape,
+				target_z = target_z,
+				before = before,
+			}
+		end
+	end
+	if #candidates == 0 then
+		return true, { skipped = true, reason = "no stretched underground wonders" }
+	end
+
+	local correction_reason = "SuperBigMap_CurrentUndergroundWonderReseat"
+	local suspended = false
+	local corrected_terrain, corrected_z = 0, 0
+	local ok, err = pcall(function()
+		map:SuspendPassEdits(correction_reason)
+		suspended = true
+		for _, candidate in ipairs(candidates) do
+			local wonder = candidate.wonder
+			local target_z = candidate.target_z
+			local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+			local x, y = PointXY(pos)
+			if type(x) ~= "number" or type(y) ~= "number"
+				or type(wonder.SetPos) ~= "function" then
+				error("wonder position is unavailable for " .. tostring(wonder.class))
+			end
+			if WonderVerticalDiagnostics.SafePointZ(pos) ~= target_z then
+				wonder:SetPos(point_fn(x, y, target_z))
+				corrected_z = corrected_z + 1
+			end
+			local before = candidate.before
+			if before.samples == 0 or before.terrain_at_target ~= before.samples then
+				flatten(candidate.shape, wonder, map.buildable.z_grid, map.object_hex_grid,
+					Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, target_z)
+				corrected_terrain = corrected_terrain + 1
+			end
+		end
+	end)
+	local resume_ok, resume_err = true, nil
+	if suspended then
+		resume_ok, resume_err = pcall(map.ResumePassEdits, map, correction_reason)
+	end
+	if not ok or not resume_ok then
+		local failure = not ok and tostring(err)
+			or ("ResumePassEdits failed: " .. tostring(resume_err))
+		map.SuperBigMapWonderLifecycleReseatFailed = failure
+		LoadingStep("underground buried wonder lifecycle reseat", {
+			reason = tostring(reason),
+			wonders = #candidates,
+			corrected_terrain = corrected_terrain,
+			corrected_z = corrected_z,
+			error = failure,
+		}, map)
+		return false, failure
+	end
+
+	local verified = 0
+	for _, candidate in ipairs(candidates) do
+		local wonder = candidate.wonder
+		local after = WonderVerticalDiagnostics.ShapeVerticalStats(
+			map, candidate.shape, wonder, candidate.target_z)
+		local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+		local object_z = WonderVerticalDiagnostics.SafePointZ(pos)
+		local terrain_ok = after.samples > 0 and after.terrain_at_target == after.samples
+		local object_ok = object_z == candidate.target_z
+		LoadingStep("underground buried wonder lifecycle reseat instance", {
+			reason = tostring(reason),
+			class = tostring(wonder.class),
+			target_z = candidate.target_z,
+			object_z = object_z,
+			footprint_samples = after.samples,
+			terrain_at_target = after.terrain_at_target,
+			terrain_above_target = after.terrain_above_target,
+			terrain_below_target = after.terrain_below_target,
+			terrain_min_z = after.terrain_min_z,
+			terrain_max_z = after.terrain_max_z,
+			terrain_ok = terrain_ok,
+			object_ok = object_ok,
+		}, map)
+		if not terrain_ok or not object_ok then
+			local failure = "post-switch wonder terrain validation failed for "
+				.. tostring(wonder.class) .. ": object_z=" .. tostring(object_z)
+				.. " target_z=" .. tostring(candidate.target_z)
+				.. " terrain=" .. tostring(after.terrain_at_target)
+				.. "/" .. tostring(after.samples)
+			map.SuperBigMapWonderLifecycleReseatFailed = failure
+			return false, failure
+		end
+		verified = verified + 1
+	end
+	map.SuperBigMapWonderLifecycleReseatFailed = nil
+	map.SuperBigMapWonderLifecycleReseatDone = true
+	LoadingStep("underground buried wonder lifecycle reseat", {
+		reason = tostring(reason),
+		wonders = #candidates,
+		corrected_terrain = corrected_terrain,
+		corrected_z = corrected_z,
+		verified = verified,
+	}, map)
+	return true, {
+		wonders = #candidates,
+		corrected_terrain = corrected_terrain,
+		corrected_z = corrected_z,
+		verified = verified,
+	}
 end
 
 -- Deferred wonder materialization can schedule a second all-mip request well after ResourceManager
@@ -8050,16 +8218,18 @@ local function PatchDeferredUndergroundAccess(source)
 			target, switch_restore_token_id) or nil
 		local lifecycle_failed = after_token and after_token.status == "failed"
 		local lifecycle_missed = after_token and after_token.status == "queued"
-		if lifecycle_failed or lifecycle_missed then
-			local restored_result = after_token.failure or
+		local wonder_reseat_failure = target.SuperBigMapWonderLifecycleReseatFailed
+		if lifecycle_failed or lifecycle_missed or wonder_reseat_failure then
+			local restored_result = wonder_reseat_failure
+				or after_token and after_token.failure or
 				"CurrentMapChangeDone did not consume Elevator restore token "
 				.. tostring(switch_restore_token_id)
 			target.SuperBigMapUndergroundPreparationFailed = true
 			target.SuperBigMapUndergroundStretchFailed = tostring(restored_result)
 			if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
-			show_failure("Underground Elevator restoration failed at the map lifecycle boundary: "
+			show_failure("Underground map finalization failed at the lifecycle boundary: "
 				.. tostring(restored_result))
-			LoadingFinish("underground map switch or Elevator restoration failed", target,
+			LoadingFinish("underground map-switch finalization failed", target,
 				{ error = tostring(restored_result), token = tostring(switch_restore_token_id) }, false)
 			return false
 		end
@@ -8151,6 +8321,7 @@ MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.PatchCaveInShapePoints = PatchCaveInShapePoints
 MapGeneration.PatchUndergroundWonderShapePoints = PatchUndergroundWonderShapePoints
+MapGeneration.ReseatExpandedUndergroundWonders = WonderVerticalDiagnostics.ReseatAll
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
