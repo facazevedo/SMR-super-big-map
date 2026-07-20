@@ -1389,13 +1389,6 @@ RegisterOnce("MapGenerated", function(map)
 		gen.NotifyGenerationMilestone(map, "MapGenerated", "MapGenerated-handler-complete")
 	end
 	if not mod_map then
-		local environment = map and map.mapdata and map.mapdata.Environment
-		local terrain_copy = SuperBigMap.TerrainCopy
-		if environment == "Underground" and terrain_copy
-			and type(terrain_copy.AuditCaveInSnapshot) == "function" then
-			pcall(terrain_copy.AuditCaveInSnapshot, map, "vanilla",
-				"vanilla underground MapGenerated final state")
-		end
 		NormalizeVanillaRuntimeState(map, "MapGenerated non-mod map")
 	end
 end)

@@ -66,21 +66,6 @@ local function UndergroundDecorationAuditEnabled(map)
 		and diagnostics.UndergroundDecorationEnabled() == true
 end
 
-local function CaveInAudit(event, data, map)
-	local diagnostics = SuperBigMap.Diagnostics
-	if diagnostics and type(diagnostics.CaveIn) == "function" then
-		diagnostics.CaveIn(event, data, map)
-	end
-end
-
-local function CaveInAuditEnabled(map)
-	local mapdata = map and map.mapdata
-	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return false end
-	local diagnostics = SuperBigMap.Diagnostics
-	return diagnostics and type(diagnostics.CaveInEnabled) == "function"
-		and diagnostics.CaveInEnabled() == true
-end
-
 -- The wall-forming, selectable underground blockers are CaveInRubble and TunnelBlockerRubble
 -- objects. The latter are the live "Collapsed Tunnel" objects spawned from TunnelBlockerMarker.
 -- RemovableRocks are ordinary scatter/removal decorations and must not be used as a proxy: doing
@@ -321,7 +306,7 @@ local function SectorBoundary(map, a_name, b_name, axis)
 	return math.max(ay1, by1)
 end
 
--- Resample one EDITOR MapGrid (colour / biome / clutter / grass) from the source region (from_box)
+-- Resample one EDITOR MapGrid (colour / biome) from the source region (from_box)
 -- up to the full map (to_box). These are compute-backed grids, so editor.GetGrid returns a
 -- resample-able grid directly (unlike the NATIVE height/type grids, which need the terrain API and
 -- assert in GridResample). GridToCompute guards the odd case. Destination dimensions come from
@@ -343,6 +328,7 @@ local function ResampleMapGrid(map, name, from_box, to_box, interpolate)
 			pcall(function() if type(x.free) == "function" then x:free() end end)
 		end
 	end
+
 	-- SIZE GUARD: some MapGrids (e.g. BiomeGrid) are allocated only for the generated SOURCE region,
 	-- NOT the full expanded map. GetGrid(to_box = full) on such a grid overflows its storage and
 	-- trips a C assert (dtGrid.h: x2 <= src.m_width) that pcall CANNOT catch. Detect it without
@@ -663,6 +649,121 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 	-- get_fn is left for the engine.
 	local direct_source = source_map and source_map ~= map
 	local terrain_source = direct_source and source_map or map
+	-- Relaunched stores terrain clutter in the native "clutter" grid. It is not an editor MapGrid
+	-- named "clutter_density" (that stale editor alias returns nil at runtime), and grass-like ground
+	-- scatter is part of this clutter/object layer rather than a separate "grass_density" grid.
+	-- Read the authoritative grid reference, resample the native source (or the source corner when the
+	-- map was generated in-place), and install it through terrain.SetClutterGrid just like MapGen.
+	local function stretch_clutter()
+		if map.SuperBigMapClutterGridStretched == true then
+			return true, false
+		end
+		local editor_api = Global("editor")
+		if type(editor_api) ~= "table" or type(editor_api.GetGridRef) ~= "function"
+			or type(terrain_api.SetClutterGrid) ~= "function" then
+			return false, false
+		end
+		local function grid_size(grid)
+			if not grid or type(grid.size) ~= "function" then return nil, nil end
+			local ok, width, height = pcall(grid.size, grid)
+			if not ok or type(width) ~= "number" or type(height) ~= "number" then
+				return nil, nil
+			end
+			return width, height
+		end
+		local function clutter_ref(owner)
+			for _, alias in ipairs({ "clutter", "clutter_density" }) do
+				local ref = SafeCall(editor_api.GetGridRef, owner, alias)
+				if ref then return ref, alias end
+			end
+		end
+
+		local token = LoadingBegin("terrain clutter grid stretch", map, {
+			direct_source = tostring(direct_source == true),
+		})
+		local source_ref, source_alias = clutter_ref(terrain_source)
+		local destination_ref, destination_alias = clutter_ref(map)
+		local source_w, source_h = grid_size(source_ref)
+		local destination_w, destination_h = grid_size(destination_ref)
+		if not source_w or not source_h or not destination_w or not destination_h then
+			LoadingEnd(token, {
+				error = "native clutter grid reference unavailable",
+				source_alias = source_alias or "none",
+				destination_alias = destination_alias or "none",
+			}, false)
+			return false, false
+		end
+
+		local source_cells_w = direct_source and source_w
+			or math.max(1, math.min(source_w, math.floor(destination_w * frac_w + 0.5)))
+		local source_cells_h = direct_source and source_h
+			or math.max(1, math.min(source_h, math.floor(destination_h * frac_h + 0.5)))
+		local native_sub, source_compute, full_compute, stretched
+		local extraction_path = direct_source and "direct_source_ref" or "unknown"
+		local ok_all, result = pcall(function()
+			if direct_source then
+				source_compute = GridToCompute(source_ref)
+				if not source_compute then error("native source clutter conversion failed") end
+			elseif type(source_ref.new_instance) == "function" then
+				local corner_ok = pcall(function()
+					native_sub = source_ref:new_instance(source_cells_w, source_cells_h)
+					if not native_sub or type(native_sub.copyrect) ~= "function" then
+						error("native clutter corner allocation failed")
+					end
+					native_sub:copyrect(source_ref,
+						box_fn(0, 0, source_cells_w, source_cells_h), point_fn(0, 0))
+					source_compute = GridToCompute(native_sub)
+					if not source_compute then error("native clutter corner conversion failed") end
+				end)
+				if corner_ok then
+					extraction_path = "native_corner_then_compute"
+				else
+					if source_compute and source_compute ~= native_sub then free_grid(source_compute) end
+					source_compute = nil
+					free_grid(native_sub)
+					native_sub = nil
+				end
+			end
+			if not source_compute then
+				full_compute = GridToCompute(source_ref)
+				if not full_compute then error("full clutter grid conversion failed") end
+				local format, bits = IsComputeGrid(full_compute)
+				source_compute = NewComputeGrid(source_cells_w, source_cells_h, format, bits)
+				if not source_compute then error("compute clutter corner allocation failed") end
+				source_compute:copyrect(full_compute,
+					box_fn(0, 0, source_cells_w, source_cells_h), point_fn(0, 0))
+				extraction_path = "full_compute_then_corner"
+			end
+
+			stretched = GridResample(source_compute, destination_w, destination_h, true)
+			if not stretched then error("clutter resample failed") end
+			local set_ok, set_result = pcall(terrain_api.SetClutterGrid, map, stretched)
+			if not set_ok or set_result ~= true then
+				error("terrain.SetClutterGrid failed: " .. tostring(set_result))
+			end
+			local msg = Global("Msg")
+			if type(msg) == "function" then pcall(msg, "OnMapGridChanged", map, "clutter", false) end
+			return true
+		end)
+		if native_sub then free_grid(native_sub) end
+		if stretched and stretched ~= source_compute then free_grid(stretched) end
+		if source_compute and source_compute ~= source_ref and source_compute ~= full_compute
+			and source_compute ~= native_sub then
+			free_grid(source_compute)
+		end
+		if full_compute and full_compute ~= source_ref then free_grid(full_compute) end
+		local success = ok_all and result == true
+		if success then map.SuperBigMapClutterGridStretched = true end
+		LoadingEnd(token, {
+			source_alias = source_alias,
+			destination_alias = destination_alias,
+			source_cells = tostring(source_cells_w) .. "x" .. tostring(source_cells_h),
+			destination_cells = tostring(destination_w) .. "x" .. tostring(destination_h),
+			extraction_path = extraction_path,
+			error = ok_all and "" or tostring(result),
+		}, success)
+		return success, success
+	end
 	local function stretch_one(label, get_fn, set_fn, invalidate_fn, interpolate, scale_values)
 		local grid_token = LoadingBegin("terrain grid stretch: " .. tostring(label), map, {
 			interpolate = tostring(interpolate == true),
@@ -873,18 +974,22 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then
 		done = done + 1
 	end
+	local clutter_ok, clutter_changed = stretch_clutter()
 	if terrain_only == true then
 		LoadingStep("direct source terrain grid suite complete", {
 			completed_grids = done,
+			clutter = tostring(clutter_ok == true),
 			source_tiles = tostring(sw_tiles) .. "x" .. tostring(sh_tiles),
 			destination_tiles = tostring(full_tw) .. "x" .. tostring(full_th),
 		}, map)
 		return done > 0, done
 	end
-	-- Colour / biome / clutter / grass MapGrids: without these the expanded area shows relief but
-	-- renders GREY (no Mars tint). They are compute-backed editor grids, so the editor.GetGrid/
-	-- SetGrid + resample path works for them (the native height/type grids above needed the terrain
-	-- API). editor.GetGrid with a WORLD box returns exactly the source region, so no corner extract.
+	if clutter_ok ~= true then
+		error("expanded native terrain clutter grid stretch failed")
+	end
+	if clutter_changed then done = done + 1 end
+	-- Colour and biome are compute-backed editor MapGrids. Clutter was handled through its native
+	-- terrain grid above; Relaunched has no standalone grass-density grid.
 	do
 		local const_tbl = Global("const")
 		local hts = (type(const_tbl) == "table" and type(const_tbl.HeightTileSize) == "number") and const_tbl.HeightTileSize or 1
@@ -895,8 +1000,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			local map_grids = {
 				{ name = "colorize",        interp = false },
 				{ name = "BiomeGrid",       interp = false },
-				{ name = "clutter_density", interp = true  },
-				{ name = "grass_density",   interp = true  },
 			}
 			for _, mg in ipairs(map_grids) do
 				local grid_token = LoadingBegin("terrain map grid stretch: " .. mg.name, map,
@@ -943,8 +1046,7 @@ local decor_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_eligible_objects_by_map = setmetatable({}, { __mode = "k" })
 local decor_relief_stats_by_map = setmetatable({}, { __mode = "k" })
 local decor_position_audit_by_map = setmetatable({}, { __mode = "k" })
-local cave_in_position_audit_by_map = setmetatable({}, { __mode = "k" })
-local cave_in_snapshot_audit_by_map = setmetatable({}, { __mode = "k" })
+local cave_in_transform_capture_by_map = setmetatable({}, { __mode = "k" })
 local cave_in_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 local underground_wonder_scaled_shape_cache = setmetatable({}, { __mode = "k" })
 
@@ -1410,407 +1512,6 @@ local function DecorationAuditFields(prefix, snapshot, out)
 	return out
 end
 
-local function CaveInNeighborhoodSnapshot(map, pos, radius_override)
-	local x, y = PointXY(pos)
-	local terrain_api = Global("terrain")
-	local point_fn = Global("point")
-	if type(x) ~= "number" or type(y) ~= "number" or type(point_fn) ~= "function"
-		or type(terrain_api) ~= "table" or type(terrain_api.GetHeight) ~= "function" then
-		return {}
-	end
-	local const_tbl = Global("const")
-	local radius = tonumber(radius_override)
-	if type(radius) ~= "number" then
-		radius = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or nil
-	end
-	radius = type(radius) == "number" and radius > 0 and radius or 1000
-	-- Nine deterministic samples expose whether an equivalent vanilla floor position became a
-	-- cliff edge after resampling without invoking any mutating placement/pathfinding API.
-	local offsets = {
-		{ 0, 0 }, { radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
-		{ radius, radius }, { radius, -radius }, { -radius, radius }, { -radius, -radius },
-	}
-	local min_height, max_height, center_height
-	local samples, in_bounds, passable = 0, 0, 0
-	for index, offset in ipairs(offsets) do
-		local sample = point_fn(x + offset[1], y + offset[2])
-		local bounded = true
-		if type(terrain_api.IsPointInBounds) == "function" then
-			local ok_b, value = pcall(terrain_api.IsPointInBounds, map, sample)
-			if ok_b then bounded = value == true end
-		end
-		if bounded then
-			in_bounds = in_bounds + 1
-			local ok_h, height = pcall(terrain_api.GetHeight, map, sample)
-			if ok_h and type(height) == "number" then
-				samples = samples + 1
-				if index == 1 then center_height = height end
-				min_height = min_height and math.min(min_height, height) or height
-				max_height = max_height and math.max(max_height, height) or height
-			end
-			if type(terrain_api.IsPassable) == "function" then
-				local ok_p, value = pcall(terrain_api.IsPassable, map, sample)
-				if ok_p and value == true then passable = passable + 1 end
-			end
-		end
-	end
-	return {
-		center_height = center_height,
-		min_height = min_height,
-		max_height = max_height,
-		height_range = type(min_height) == "number" and type(max_height) == "number"
-			and (max_height - min_height) or nil,
-		samples = samples,
-		in_bounds_samples = in_bounds,
-		passable_samples = passable,
-		radius = radius,
-	}
-end
-
-local function CaveInNeighborhoodFields(prefix, snapshot, out)
-	out = out or {}
-	snapshot = snapshot or {}
-	for _, key in ipairs({
-		"center_height", "min_height", "max_height", "height_range", "samples",
-		"in_bounds_samples", "passable_samples", "radius",
-	}) do
-		local value = snapshot[key]
-		out[prefix .. key] = value == nil and "nil" or value
-	end
-	return out
-end
-
-local function HexDistance(aq, ar, bq, br)
-	if type(aq) ~= "number" or type(ar) ~= "number"
-		or type(bq) ~= "number" or type(br) ~= "number" then return nil end
-	local dq, dr = aq - bq, ar - br
-	return (math.abs(dq) + math.abs(dr) + math.abs(dq + dr)) / 2
-end
-
-local function CaveInPositionAuditData(map, record, obj, stage, scale_x, scale_y, reason)
-	record = record or {}
-	local source = record.source or {}
-	local point_fn = Global("point")
-	local expected_x = type(source.x) == "number"
-		and math.floor(source.x * scale_x + 0.5) or nil
-	local expected_y = type(source.y) == "number"
-		and math.floor(source.y * scale_y + 0.5) or nil
-	local expected_pos = type(point_fn) == "function" and type(expected_x) == "number"
-		and type(expected_y) == "number" and point_fn(expected_x, expected_y) or nil
-	local expected = expected_pos and DecorationPositionSnapshot(map, nil, expected_pos) or {}
-	local actual_pos = obj and ObjectPosition(obj) or nil
-	local actual = actual_pos and DecorationPositionSnapshot(map, obj, actual_pos) or {}
-	local z_scale = (type(map.SuperBigMapZScaleMul) == "number"
-		and type(map.SuperBigMapZScaleDiv) == "number" and map.SuperBigMapZScaleDiv > 0)
-		and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
-	local source_dz = type(source.effective_z) == "number" and type(source.ground_z) == "number"
-		and source.explicit_z == true and (source.effective_z - source.ground_z) or nil
-	local expected_z = expected.ground_z
-	if type(source_dz) == "number" and type(expected.ground_z) == "number" then
-		expected_z = expected.ground_z + math.floor(source_dz * z_scale + 0.5)
-	end
-	local source_scale = record.source_scale
-	local expected_scale = type(source_scale) == "number"
-		and math.max(1, math.min(500, math.floor(source_scale * scale_x + 0.5))) or nil
-	local actual_scale = obj and type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj) or nil
-	local actual_angle = obj and type(obj.GetAngle) == "function" and SafeCall(obj.GetAngle, obj) or nil
-	local actual_shape_hexes = CaveInShapePointCount(obj)
-	local expected_shape_hexes = record.expanded_shape_hexes
-	local source_radius = record.source_neighborhood and record.source_neighborhood.radius
-	local destination_radius = type(source_radius) == "number"
-		and math.floor(source_radius * scale_x + 0.5) or nil
-	local expected_neighborhood = expected_pos
-		and CaveInNeighborhoodSnapshot(map, expected_pos, destination_radius) or {}
-	local actual_neighborhood = actual_pos
-		and CaveInNeighborhoodSnapshot(map, actual_pos, destination_radius) or {}
-	local post_move = record.post_move or {}
-	local source_range = record.source_neighborhood and record.source_neighborhood.height_range
-	local scaled_source_range = type(source_range) == "number"
-		and math.floor(source_range * z_scale + 0.5) or nil
-	local x_error = type(actual.x) == "number" and type(expected_x) == "number"
-		and actual.x - expected_x or nil
-	local y_error = type(actual.y) == "number" and type(expected_y) == "number"
-		and actual.y - expected_y or nil
-	local passable_changed, buildable_changed, terrain_changed
-	if type(source.passable) == "boolean" and type(actual.passable) == "boolean" then
-		passable_changed = source.passable ~= actual.passable
-	end
-	if type(source.buildable) == "boolean" and type(actual.buildable) == "boolean" then
-		buildable_changed = source.buildable ~= actual.buildable
-	end
-	if source.terrain_id ~= nil and actual.terrain_id ~= nil then
-		terrain_changed = source.terrain_id ~= actual.terrain_id
-	end
-	local data = {
-		stage = stage,
-		reason = tostring(reason or ""),
-		index = record.index or "uncaptured",
-		object = record.object or tostring(obj),
-		handle = record.handle or tostring(obj and obj.handle),
-		class = record.class or tostring(obj and obj.class or "?"),
-		entity = record.entity or tostring(obj and obj.entity or "?"),
-		attached = record.attached == nil and "uncaptured" or record.attached,
-		parent = record.parent or "nil",
-		skipped_by_decor_transform = record.skip_object == true,
-		important_sector_object = record.important_object == true,
-		source_grids_applied = record.source_grids_applied == true,
-		actual_grids_applied = obj and obj.grids_applied == true,
-		scale_x = scale_x,
-		scale_y = scale_y,
-		z_scale = z_scale,
-		expected_x = expected_x or "nil",
-		expected_y = expected_y or "nil",
-		expected_z = expected_z or "nil",
-		x_error = x_error or (x_error == 0 and 0 or "nil"),
-		y_error = y_error or (y_error == 0 and 0 or "nil"),
-		xy_error_world = type(x_error) == "number" and type(y_error) == "number"
-			and math.floor(math.sqrt(x_error * x_error + y_error * y_error) + 0.5) or "nil",
-		hex_error = HexDistance(actual.q, actual.r, expected.q, expected.r) or "nil",
-		z_error = type(actual.effective_z) == "number" and type(expected_z) == "number"
-			and actual.effective_z - expected_z or "nil",
-		source_dz = source_dz or (source_dz == 0 and 0 or "nil"),
-		source_scale = source_scale or "nil",
-		expected_scale = expected_scale or "nil",
-		actual_scale = actual_scale or "nil",
-		post_move_scale = record.post_move_scale or "nil",
-		post_move_scale_delta = type(actual_scale) == "number"
-			and type(record.post_move_scale) == "number"
-			and actual_scale - record.post_move_scale or "nil",
-		scale_error = type(actual_scale) == "number" and type(expected_scale) == "number"
-			and actual_scale - expected_scale or "nil",
-		source_shape_hexes = record.source_shape_hexes or "nil",
-		expected_shape_hexes = expected_shape_hexes or "nil",
-		actual_shape_hexes = actual_shape_hexes or "nil",
-		shape_hex_error = type(actual_shape_hexes) == "number"
-			and type(expected_shape_hexes) == "number"
-			and actual_shape_hexes - expected_shape_hexes or "nil",
-		source_angle = record.source_angle or "nil",
-		actual_angle = actual_angle or "nil",
-		angle_error = type(actual_angle) == "number" and type(record.source_angle) == "number"
-			and actual_angle - record.source_angle or "nil",
-		post_move_x_delta = type(actual.x) == "number" and type(post_move.x) == "number"
-			and actual.x - post_move.x or "nil",
-		post_move_y_delta = type(actual.y) == "number" and type(post_move.y) == "number"
-			and actual.y - post_move.y or "nil",
-		post_move_z_delta = type(actual.effective_z) == "number"
-			and type(post_move.effective_z) == "number" and actual.effective_z - post_move.effective_z or "nil",
-		scaled_source_local_height_range = scaled_source_range or "nil",
-		local_height_range_error = type(expected_neighborhood.height_range) == "number"
-			and type(scaled_source_range) == "number"
-			and expected_neighborhood.height_range - scaled_source_range or "nil",
-		passable_changed_from_source = type(passable_changed) == "boolean"
-			and tostring(passable_changed) or "nil",
-		buildable_changed_from_source = type(buildable_changed) == "boolean"
-			and tostring(buildable_changed) or "nil",
-		terrain_changed_from_source = type(terrain_changed) == "boolean"
-			and tostring(terrain_changed) or "nil",
-	}
-	DecorationAuditFields("source_", source, data)
-	DecorationAuditFields("post_move_", post_move, data)
-	DecorationAuditFields("expected_terrain_", expected, data)
-	DecorationAuditFields("actual_", actual, data)
-	CaveInNeighborhoodFields("source_local_", record.source_neighborhood, data)
-	CaveInNeighborhoodFields("expected_local_", expected_neighborhood, data)
-	CaveInNeighborhoodFields("actual_local_", actual_neighborhood, data)
-	return data
-end
-
--- Mode-neutral final-state inventory used for direct vanilla/expanded comparisons. Unlike the
--- transform audit above, this records only live facts from the current completed map, with exactly
--- the same schema in both modes. It is observational: no object, terrain, or grid state is changed.
-local function AuditCaveInSnapshot(map, mode, reason)
-	mode = mode == "expanded" and "expanded" or "vanilla"
-	if not CaveInAuditEnabled(map) then return false, { disabled = true, mode = mode } end
-	if type(map.MapForEach) ~= "function" then
-		local stats = { mode = mode, error = "MapForEach unavailable", records = 0 }
-		CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
-		return false, stats
-	end
-	local previous = cave_in_snapshot_audit_by_map[map]
-	if type(previous) == "table" and previous.mode == mode then
-		return previous.ok, previous.stats
-	end
-
-	local records, errors = {}, {}
-	local scanned, candidates = 0, 0
-	local traversal_ok, traversal_err = pcall(map.MapForEach, map, "map", "CObject", function(obj)
-		scanned = scanned + 1
-		if not IsCaveInObject(obj) then return end
-		candidates = candidates + 1
-		local record_ok, record_or_err = pcall(function()
-			local pos = ObjectPosition(obj)
-			if not pos then error("position unavailable") end
-			local parent
-			if type(obj.GetParent) == "function" then
-				local ok_parent, value = pcall(obj.GetParent, obj)
-				if ok_parent then parent = value end
-			end
-			return {
-				object = tostring(obj),
-				handle = tostring(obj.handle),
-				class = tostring(obj.class or "?"),
-				entity = tostring(type(obj.GetEntity) == "function"
-					and SafeCall(obj.GetEntity, obj) or obj.entity or "?"),
-				attached = parent ~= nil,
-				parent = parent and tostring(parent) or "nil",
-				actual_scale = type(obj.GetScale) == "function"
-					and SafeCall(obj.GetScale, obj) or nil,
-				actual_angle = type(obj.GetAngle) == "function"
-					and SafeCall(obj.GetAngle, obj) or nil,
-				actual_shape_hexes = CaveInShapePointCount(obj),
-				actual = DecorationPositionSnapshot(map, obj, pos),
-				actual_neighborhood = CaveInNeighborhoodSnapshot(map, pos),
-			}
-		end)
-		if record_ok and type(record_or_err) == "table" then
-			records[#records + 1] = record_or_err
-		else
-			errors[#errors + 1] = {
-				object = tostring(obj),
-				class = tostring(obj and obj.class or "?"),
-				error = tostring(record_or_err),
-			}
-		end
-	end)
-	if not traversal_ok then
-		local stats = {
-			mode = mode,
-			reason = tostring(reason or ""),
-			error = tostring(traversal_err),
-			scanned = scanned,
-			candidates = candidates,
-			records = #records,
-			record_errors = #errors,
-		}
-		CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
-		return false, stats
-	end
-
-	table.sort(records, function(a, b)
-		local aa, bb = a.actual or {}, b.actual or {}
-		local ax, bx = tonumber(aa.x) or math.huge, tonumber(bb.x) or math.huge
-		if ax ~= bx then return ax < bx end
-		local ay, by = tonumber(aa.y) or math.huge, tonumber(bb.y) or math.huge
-		if ay ~= by then return ay < by end
-		if a.class ~= b.class then return a.class < b.class end
-		return a.object < b.object
-	end)
-
-	local stats = {
-		mode = mode,
-		reason = tostring(reason or ""),
-		scanned = scanned,
-		candidates = candidates,
-		records = #records,
-		record_errors = #errors,
-		cave_in_rubble = 0,
-		tunnel_blocker_rubble = 0,
-		other_classes = 0,
-		total_shape_hexes = 0,
-		max_shape_hexes = 0,
-		attached = 0,
-		explicit_z = 0,
-		in_bounds = 0,
-		out_of_bounds = 0,
-		bounds_unknown = 0,
-		passable = 0,
-		passability_unknown = 0,
-		buildable = 0,
-		buildability_unknown = 0,
-		local_height_samples = 0,
-		local_height_range_sum = 0,
-		max_local_height_range = 0,
-	}
-	for index, record in ipairs(records) do
-		local actual = record.actual or {}
-		local neighborhood = record.actual_neighborhood or {}
-		local actual_dz = type(actual.effective_z) == "number" and type(actual.ground_z) == "number"
-			and actual.effective_z - actual.ground_z or nil
-		local data = {
-			mode = mode,
-			reason = tostring(reason or ""),
-			index = index,
-			object = record.object,
-			handle = record.handle,
-			class = record.class,
-			entity = record.entity,
-			attached = record.attached,
-			parent = record.parent,
-			actual_scale = record.actual_scale or "nil",
-			actual_angle = record.actual_angle or "nil",
-			actual_shape_hexes = record.actual_shape_hexes or "nil",
-			actual_dz = actual_dz or (actual_dz == 0 and 0 or "nil"),
-		}
-		DecorationAuditFields("actual_", actual, data)
-		CaveInNeighborhoodFields("actual_local_", neighborhood, data)
-		CaveInAudit("SNAPSHOT", data, map)
-
-		if record.class == "CaveInRubble" then
-			stats.cave_in_rubble = stats.cave_in_rubble + 1
-		elseif record.class == "TunnelBlockerRubble" then
-			stats.tunnel_blocker_rubble = stats.tunnel_blocker_rubble + 1
-		else
-			stats.other_classes = stats.other_classes + 1
-		end
-		if type(record.actual_shape_hexes) == "number" then
-			stats.total_shape_hexes = stats.total_shape_hexes + record.actual_shape_hexes
-			stats.max_shape_hexes = math.max(stats.max_shape_hexes, record.actual_shape_hexes)
-		end
-		if record.attached then stats.attached = stats.attached + 1 end
-		if actual.explicit_z == true then stats.explicit_z = stats.explicit_z + 1 end
-		if actual.in_bounds == true then
-			stats.in_bounds = stats.in_bounds + 1
-		elseif actual.in_bounds == false then
-			stats.out_of_bounds = stats.out_of_bounds + 1
-		else
-			stats.bounds_unknown = stats.bounds_unknown + 1
-		end
-		if actual.passable == true then
-			stats.passable = stats.passable + 1
-		elseif actual.passable == nil then
-			stats.passability_unknown = stats.passability_unknown + 1
-		end
-		if actual.buildable == true then
-			stats.buildable = stats.buildable + 1
-		elseif actual.buildable == nil then
-			stats.buildability_unknown = stats.buildability_unknown + 1
-		end
-		if type(actual.x) == "number" then
-			stats.min_x = stats.min_x and math.min(stats.min_x, actual.x) or actual.x
-			stats.max_x = stats.max_x and math.max(stats.max_x, actual.x) or actual.x
-		end
-		if type(actual.y) == "number" then
-			stats.min_y = stats.min_y and math.min(stats.min_y, actual.y) or actual.y
-			stats.max_y = stats.max_y and math.max(stats.max_y, actual.y) or actual.y
-		end
-		if type(actual_dz) == "number" then
-			stats.min_dz = stats.min_dz and math.min(stats.min_dz, actual_dz) or actual_dz
-			stats.max_dz = stats.max_dz and math.max(stats.max_dz, actual_dz) or actual_dz
-		end
-		if type(neighborhood.height_range) == "number" then
-			stats.local_height_samples = stats.local_height_samples + 1
-			stats.local_height_range_sum = stats.local_height_range_sum + neighborhood.height_range
-			stats.max_local_height_range = math.max(
-				stats.max_local_height_range, neighborhood.height_range)
-		end
-	end
-	for index, record in ipairs(errors) do
-		CaveInAudit("SNAPSHOT_ERROR", {
-			mode = mode,
-			reason = tostring(reason or ""),
-			index = index,
-			object = record.object,
-			class = record.class,
-			error = record.error,
-		}, map)
-	end
-	stats.average_local_height_range = stats.local_height_samples > 0
-		and math.floor(stats.local_height_range_sum / stats.local_height_samples + 0.5) or 0
-	CaveInAudit("SNAPSHOT_SUMMARY", stats, map)
-	local ok = stats.record_errors == 0 and stats.records == stats.candidates
-	cave_in_snapshot_audit_by_map[map] = { mode = mode, ok = ok, stats = stats }
-	return ok, stats
-end
 
 -- terrain_source_map is optional. Direct temporary-source stretching installs the final terrain
 -- before objects transfer, so its destination objects must be enumerated on map while their
@@ -1849,14 +1550,11 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = audit_on and setmetatable({}, { __mode = "k" }) or nil
 	local audit_list = audit_on and {} or nil
-	local cave_audit_on = CaveInAuditEnabled(map)
-	-- Placement correctness must never depend on diagnostic logging being enabled. Always capture
-	-- the real CaveInRubble/TunnelBlockerRubble objects; cave_audit_on controls only emission of
-	-- the detailed records.
+	-- CaveInRubble and TunnelBlockerRubble are gameplay blockers, not cosmetic decorations. Keep a
+	-- compact transform capture for the dedicated expansion pass; this is required state, not an
+	-- audit record.
 	local cave_capture = {
 		list = {},
-		scale_x = nil,
-		scale_y = nil,
 	}
 	local capture_traversal_ok, capture_traversal_err = pcall(
 		map.MapForEach, map, src_box, "CObject", function(obj)
@@ -1870,35 +1568,16 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		if IsCaveInObject(obj) then
 			local pos = ObjectPosition(obj)
 			if pos then
-				local parent
-				if type(obj.GetParent) == "function" then
-					local ok_p, value = pcall(obj.GetParent, obj)
-					if ok_p then parent = value end
-				end
 				local source_scale = type(obj.GetScale) == "function"
 					and SafeCall(obj.GetScale, obj) or nil
-				local source_angle = type(obj.GetAngle) == "function"
-					and SafeCall(obj.GetAngle, obj) or nil
 				local record = {
 					index = #cave_capture.list + 1,
 					object_ref = obj,
 					object = tostring(obj),
-					handle = tostring(obj.handle),
 					class = tostring(obj.class or "?"),
-					entity = tostring(type(obj.GetEntity) == "function"
-						and SafeCall(obj.GetEntity, obj) or obj.entity or "?"),
-					attached = parent ~= nil,
-					parent = parent and tostring(parent) or "nil",
-					skip_object = skip_object == true,
-					important_object = important_object == true,
 					source_scale = source_scale,
-					source_angle = source_angle,
 					source_shape_hexes = CaveInShapePointCount(obj),
-					source_grids_applied = obj.grids_applied == true,
-					source = cave_audit_on and DecorationPositionSnapshot(map, obj, pos)
-						or ObjectTransformSourceSnapshot(obj, pos),
-					source_neighborhood = cave_audit_on
-						and CaveInNeighborhoodSnapshot(map, pos) or nil,
+					source = ObjectTransformSourceSnapshot(obj, pos),
 				}
 				cave_capture.list[#cave_capture.list + 1] = record
 			end
@@ -1969,7 +1648,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		max_abs_relief = max_abs_relief,
 		terrain_source_is_destination = relief_terrain_map == map,
 	}
-	cave_in_position_audit_by_map[map] = cave_capture
+	cave_in_transform_capture_by_map[map] = cave_capture
 	if optimize_traversal then
 		decor_objects_by_map[map] = objects
 		if cache_eligible_objects then decor_eligible_objects_by_map[map] = eligible_objects end
@@ -1993,36 +1672,6 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 			UndergroundDecorationAudit("PRE", data, map)
 		end
 	end
-	if cave_audit_on then
-		CaveInAudit("CAPTURE_SUMMARY", {
-			captured = #cave_capture.list,
-			scanned = #objects,
-			capture_ok = cave_capture.capture_ok,
-			capture_error = cave_capture.capture_error or "nil",
-			scale_source_width_tiles = sw_tiles,
-			scale_source_height_tiles = sh_tiles,
-		}, map)
-		for _, record in ipairs(cave_capture.list) do
-			local data = {
-				index = record.index,
-				object = record.object,
-				handle = record.handle,
-				class = record.class,
-				entity = record.entity,
-				attached = record.attached,
-				parent = record.parent,
-				skipped_by_decor_transform = record.skip_object,
-				important_sector_object = record.important_object,
-				source_scale = record.source_scale or "nil",
-				source_angle = record.source_angle or "nil",
-				source_shape_hexes = record.source_shape_hexes or "nil",
-				source_grids_applied = record.source_grids_applied,
-			}
-			DecorationAuditFields("source_", record.source, data)
-			CaveInNeighborhoodFields("source_local_", record.source_neighborhood, data)
-			CaveInAudit("PRE", data, map)
-		end
-	end
 	LoadingStep("decoration relief capture complete", decor_relief_stats_by_map[map], map)
 	return annotated
 end
@@ -2034,7 +1683,7 @@ local function ClearDecorRelief(map)
 		decor_eligible_objects_by_map[map] = nil
 		decor_relief_stats_by_map[map] = nil
 		decor_position_audit_by_map[map] = nil
-		cave_in_position_audit_by_map[map] = nil
+		cave_in_transform_capture_by_map[map] = nil
 	end
 end
 
@@ -2057,7 +1706,7 @@ end
 -- still captured, updating GridObject registration around each move so every expanded visual wall
 -- and gameplay footprint continues to describe the same obstruction.
 local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_th, sw_tiles, sh_tiles)
-	local capture = cave_in_position_audit_by_map[map]
+	local capture = cave_in_transform_capture_by_map[map]
 	local stats = {
 		captured = type(capture) == "table" and type(capture.list) == "table"
 			and #capture.list or 0,
@@ -2066,7 +1715,6 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 		transform_failures = 0,
 		grid_remove_failures = 0,
 		grid_apply_failures = 0,
-		post_records = 0,
 		cave_in_rubble = 0,
 		tunnel_blocker_rubble = 0,
 		source_shape_hexes = 0,
@@ -2076,30 +1724,24 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 	}
 	if type(capture) ~= "table" or type(capture.list) ~= "table" then
 		stats.error = "no underground rubble-wall source capture"
-		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
 	end
 	if capture.capture_ok ~= true then
 		stats.error = "underground rubble-wall source traversal failed: "
 			.. tostring(capture.capture_error)
 		stats.transform_failures = #capture.list
-		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
 	end
-	capture.scale_x, capture.scale_y = scale_x, scale_y
 	if #capture.list == 0 then
-		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return true, stats
 	end
 	if not PatchCaveInShapePoints() then
 		stats.error = "underground rubble-wall GetShapePoints patch unavailable"
 		stats.transform_failures = #capture.list
-		CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 		return false, stats
 	end
 
 	local is_valid = Global("IsValid")
-	local cave_audit_on = CaveInAuditEnabled(map)
 	local MAX_SCALE = 500
 	for _, record in ipairs(capture.list) do
 		if record.class == "CaveInRubble" then
@@ -2117,7 +1759,6 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 			local source_x, source_y = tonumber(source.x), tonumber(source.y)
 			local old_scale = tonumber(record.source_scale)
 			local had_grids = obj.grids_applied == true
-			local removed_grids = false
 			local transform_ok, transform_err = pcall(function()
 				if type(source_x) ~= "number" or type(source_y) ~= "number" then
 					error("source position unavailable")
@@ -2132,7 +1773,6 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 						stats.grid_remove_failures = stats.grid_remove_failures + 1
 						error("old underground rubble-wall footprint remained registered")
 					end
-					removed_grids = true
 				end
 
 				-- Integer numerator/denominator fields survive save/load exactly and let the transparent
@@ -2192,36 +1832,17 @@ local function ScaleCapturedCaveInsToFull(map, scale_x, scale_y, full_tw, full_t
 					if original_pos and type(obj.SetPos) == "function" then obj:SetPos(original_pos) end
 					if had_grids and type(obj.ApplyToGrids) == "function" then obj:ApplyToGrids() end
 				end)
-				CaveInAudit("POST_MOVE_ERROR", {
-					index = record.index,
-					object = record.object,
-					class = record.class,
-					error = tostring(transform_err),
-					had_grids = had_grids,
-					removed_grids = removed_grids,
-				}, map)
+				stats.first_error = stats.first_error or (tostring(record.class)
+					.. " " .. tostring(record.object) .. ": " .. tostring(transform_err))
 			else
 				stats.transformed = stats.transformed + 1
 				stats.source_shape_hexes = stats.source_shape_hexes
 					+ (tonumber(record.source_shape_hexes) or 0)
 				stats.expanded_shape_hexes = stats.expanded_shape_hexes
 					+ (tonumber(record.expanded_shape_hexes) or 0)
-				stats.post_records = stats.post_records + 1
-				if cave_audit_on then
-					local cave_pos = ObjectPosition(obj)
-					record.post_move = cave_pos
-						and DecorationPositionSnapshot(map, obj, cave_pos) or {}
-					record.post_move_scale = type(obj.GetScale) == "function"
-						and SafeCall(obj.GetScale, obj) or nil
-					CaveInAudit("POST_MOVE", CaveInPositionAuditData(
-						map, record, obj, "post_move", scale_x, scale_y,
-						"immediately after dedicated underground rubble-wall transform"), map)
-				end
 			end
 		end
 	end
-	stats.missing_post_records = stats.captured - stats.post_records
-	CaveInAudit("POST_MOVE_SUMMARY", stats, map)
 	local ok = stats.missing_objects == 0 and stats.transform_failures == 0
 	return ok, stats
 end
@@ -2512,153 +2133,6 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	return moved
 end
 
--- Final rubble-wall checkpoint, deliberately separate from the immediate decoration POST_MOVE
--- record. Underground finalization rebuilds passability/buildability and may modify entrance
--- terrain after the objects have moved. Comparing both checkpoints reveals late drift or a locally
--- non-equivalent stretched terrain profile even when the proportional X/Y transform was exact.
-local function AuditFinalCaveInPositions(map, reason)
-	if not CaveInAuditEnabled(map) then return false, { disabled = true } end
-	local capture = cave_in_position_audit_by_map[map]
-	if type(capture) ~= "table" or type(capture.list) ~= "table" then
-		CaveInAudit("FINAL_SUMMARY", {
-			reason = tostring(reason or ""),
-			captured = 0,
-			error = "no underground rubble-wall source capture",
-		}, map)
-		return false, { error = "no underground rubble-wall source capture" }
-	end
-	local scale_x = tonumber(capture.scale_x)
-	local scale_y = tonumber(capture.scale_y)
-	local sw_tiles = tonumber(map.SuperBigMapSourceWidthTiles
-		or map.SuperBigMapGeneratorWidthTiles)
-	local sh_tiles = tonumber(map.SuperBigMapSourceHeightTiles
-		or map.SuperBigMapGeneratorHeightTiles)
-	local full_tw = tonumber(map.SuperBigMapDesiredWidthTiles
-		or (map.mapdata and map.mapdata.Width))
-	local full_th = tonumber(map.SuperBigMapDesiredHeightTiles
-		or (map.mapdata and map.mapdata.Height))
-	if type(scale_x) ~= "number" and type(sw_tiles) == "number" and sw_tiles > 0
-		and type(full_tw) == "number" then scale_x = (full_tw + 0.0) / sw_tiles end
-	if type(scale_y) ~= "number" and type(sh_tiles) == "number" and sh_tiles > 0
-		and type(full_th) == "number" then scale_y = (full_th + 0.0) / sh_tiles end
-	scale_x = type(scale_x) == "number" and scale_x or 1
-	scale_y = type(scale_y) == "number" and scale_y or scale_x
-	local is_valid = Global("IsValid")
-	local stats = {
-		captured = #capture.list,
-		final_records = 0,
-		missing_objects = 0,
-		record_errors = 0,
-		xy_mismatches = 0,
-		z_mismatches = 0,
-		scale_mismatches = 0,
-		shape_mismatches = 0,
-		grid_registration_mismatches = 0,
-		moved_after_post = 0,
-		source_buildable_to_final_unbuildable = 0,
-		source_passable_to_final_unpassable = 0,
-		steeper_than_scaled_source = 0,
-		max_xy_error_world = 0,
-		max_abs_z_error = 0,
-		max_abs_local_height_range_error = 0,
-	}
-	for _, record in ipairs(capture.list) do
-		local obj = record.object_ref
-		local live = obj ~= nil and (type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true)
-		if not live then
-			stats.missing_objects = stats.missing_objects + 1
-			CaveInAudit("FINAL_MISSING", {
-				reason = tostring(reason or ""),
-				index = record.index,
-				object = record.object,
-				handle = record.handle,
-				class = record.class,
-				entity = record.entity,
-			}, map)
-		else
-			local ok_data, data = pcall(CaveInPositionAuditData,
-				map, record, obj, "final", scale_x, scale_y, reason)
-			if not ok_data then
-				stats.record_errors = stats.record_errors + 1
-				CaveInAudit("FINAL_ERROR", {
-					reason = tostring(reason or ""),
-					index = record.index,
-					object = record.object,
-					class = record.class,
-					error = tostring(data),
-				}, map)
-			else
-				stats.final_records = stats.final_records + 1
-				if (type(data.x_error) == "number" and data.x_error ~= 0)
-					or (type(data.y_error) == "number" and data.y_error ~= 0) then
-					stats.xy_mismatches = stats.xy_mismatches + 1
-				end
-				if type(data.z_error) == "number" and data.z_error ~= 0 then
-					stats.z_mismatches = stats.z_mismatches + 1
-				end
-				if type(data.scale_error) == "number" and data.scale_error ~= 0 then
-					stats.scale_mismatches = stats.scale_mismatches + 1
-				end
-				if type(data.shape_hex_error) == "number" and data.shape_hex_error ~= 0 then
-					stats.shape_mismatches = stats.shape_mismatches + 1
-				end
-				if record.source_grids_applied == true and data.actual_grids_applied ~= true then
-					stats.grid_registration_mismatches = stats.grid_registration_mismatches + 1
-				end
-				if (type(data.post_move_x_delta) == "number" and data.post_move_x_delta ~= 0)
-					or (type(data.post_move_y_delta) == "number" and data.post_move_y_delta ~= 0)
-					or (type(data.post_move_z_delta) == "number" and data.post_move_z_delta ~= 0) then
-					stats.moved_after_post = stats.moved_after_post + 1
-				end
-				if record.source and record.source.buildable == true and data.actual_buildable == false then
-					stats.source_buildable_to_final_unbuildable =
-						stats.source_buildable_to_final_unbuildable + 1
-				end
-				if record.source and record.source.passable == true and data.actual_passable == false then
-					stats.source_passable_to_final_unpassable =
-						stats.source_passable_to_final_unpassable + 1
-				end
-				if type(data.local_height_range_error) == "number"
-					and data.local_height_range_error > 500 then
-					stats.steeper_than_scaled_source = stats.steeper_than_scaled_source + 1
-				end
-				if type(data.xy_error_world) == "number" then
-					stats.max_xy_error_world = math.max(stats.max_xy_error_world, data.xy_error_world)
-				end
-				if type(data.z_error) == "number" then
-					stats.max_abs_z_error = math.max(stats.max_abs_z_error, math.abs(data.z_error))
-				end
-				if type(data.local_height_range_error) == "number" then
-					stats.max_abs_local_height_range_error = math.max(
-						stats.max_abs_local_height_range_error, math.abs(data.local_height_range_error))
-				end
-				CaveInAudit("FINAL", data, map)
-			end
-		end
-	end
-	CaveInAudit("FINAL_SUMMARY", {
-		reason = tostring(reason or ""),
-		captured = stats.captured,
-		final_records = stats.final_records,
-		missing_objects = stats.missing_objects,
-		record_errors = stats.record_errors,
-		xy_mismatches = stats.xy_mismatches,
-		z_mismatches = stats.z_mismatches,
-		scale_mismatches = stats.scale_mismatches,
-		shape_mismatches = stats.shape_mismatches,
-		grid_registration_mismatches = stats.grid_registration_mismatches,
-		moved_after_post = stats.moved_after_post,
-		source_buildable_to_final_unbuildable = stats.source_buildable_to_final_unbuildable,
-		source_passable_to_final_unpassable = stats.source_passable_to_final_unpassable,
-		steeper_than_scaled_source = stats.steeper_than_scaled_source,
-		max_xy_error_world = stats.max_xy_error_world,
-		max_abs_z_error = stats.max_abs_z_error,
-		max_abs_local_height_range_error = stats.max_abs_local_height_range_error,
-		scale_x = scale_x,
-		scale_y = scale_y,
-	}, map)
-	return stats.missing_objects == 0 and stats.record_errors == 0, stats
-end
 
 -- STRETCH step 3 (markers): move the generated DEPOSIT / ANOMALY / EFFECT markers (and any
 -- already-spawned deposits/anomalies, e.g. the start sector's revealed ones) to their scaled spot
@@ -4623,8 +4097,6 @@ local TerrainCopy = {
 	BeginDeferredElevatorMigration = BeginDeferredElevatorMigration,
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
-	AuditFinalCaveInPositions = AuditFinalCaveInPositions,
-	AuditCaveInSnapshot = AuditCaveInSnapshot,
 	ClearDecorRelief = ClearDecorRelief,
 }
 SuperBigMap.TerrainCopy = TerrainCopy

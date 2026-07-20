@@ -32,16 +32,6 @@ config.DebugLoadingTimings = true
 -- and buildable state. This can add thousands of log lines and materially slow the diagnostic
 -- run, so disable it again after the underground placement investigation.
 config.DebugUndergroundDecorationPositions = false
--- Focused underground rubble-wall audit. Cave-ins are CaveInRubble buildings spawned from
--- CaveInMarker; collapsed tunnels are TunnelBlockerRubble buildings spawned from
--- TunnelBlockerMarker. Both vanilla and expanded maps emit the same
--- SNAPSHOT/SNAPSHOT_SUMMARY records with a mode label, position, class/entity, angle/scale,
--- occupied hex count, terrain/buildability/passability, ground-relative height, and local terrain
--- neighborhood. Expanded maps additionally retain PRE/POST_MOVE/FINAL transform records with
--- expected versus actual coordinates, shape size, and object-grid registration.
--- This replaces the much noisier all-decoration trace while the cave-in placement issue is under
--- investigation.
-config.DebugCaveInPositions = false
 
 -- ============================================================================
 -- MAIN LAYOUT
@@ -652,7 +642,6 @@ C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_ELEVATOR_TRAVERSAL = as_bool(config.DebugElevatorTraversal)
 C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = as_bool(config.DebugUndergroundDecorationPositions)
-C.DEBUG_CAVE_IN_POSITIONS = as_bool(config.DebugCaveInPositions)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
