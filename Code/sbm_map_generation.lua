@@ -8645,6 +8645,47 @@ local function UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, 
 		}, before_map)
 		return Unpack(results, 1, results.n)
 	end
+	-- Calling ElevatorBase:UseElevator directly is allowed to bypass only the failed final
+	-- Goto_NoDestlock step. It must not bypass RCRover:Unsiege's ownership invariant: every
+	-- controlled drone has to finish RecallToRover and be attached before OnTransferToMap runs.
+	-- Otherwise vanilla abandons a still-recalling surface drone while its queued command retains
+	-- the now-underground rover argument, leading to Drone:RecallToRover's command-center assert.
+	if IsKindOfSafe(unit, "RCRover") then
+		local drones = type(unit.drones) == "table" and unit.drones or nil
+		local attached = type(unit.attached_drones) == "table" and unit.attached_drones or nil
+		local ready = drones ~= nil and attached ~= nil
+		local reason = ready and "" or "rover drone ownership tables are unavailable"
+		if ready then
+			for _, drone in ipairs(drones) do
+				local is_attached = false
+				for _, attached_drone in ipairs(attached) do
+					if attached_drone == drone then
+						is_attached = true
+						break
+					end
+				end
+				if not TraversalObjectValid(drone) or drone.command_center ~= unit
+					or drone.command == "RecallToRover" or not is_attached then
+					ready = false
+					reason = "a controlled drone has not finished embarking"
+					break
+				end
+			end
+		end
+		if ready and ((type(unit.drones_waiting_to_embark) == "table"
+				and #unit.drones_waiting_to_embark > 0)
+			or (type(unit.embarking_drones) == "table" and #unit.embarking_drones > 0)
+			or unit.guided_drone) then
+			ready = false
+			reason = "the rover still has a pending drone embark operation"
+		end
+		if not ready then
+			ElevatorTraversalAudit("VEHICLE_CLOSE_RANGE_FALLBACK_SKIPPED", {
+				unit = tostring(unit), elevator = tostring(elevator), reason = reason,
+			}, before_map)
+			return Unpack(results, 1, results.n)
+		end
+	end
 	local building_use = elevator.UseElevator
 	if type(building_use) ~= "function" then
 		return Unpack(results, 1, results.n)
