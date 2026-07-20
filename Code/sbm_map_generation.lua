@@ -3233,6 +3233,13 @@ local WonderVerticalDiagnostics = {
 	Classes = { "BottomlessPit", "AncientArtifact", "CaveOfWonders", "JumboCave" },
 }
 
+local function WonderGeometryDiagnosticsEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	return diagnostics
+		and type(diagnostics.UndergroundDecorationEnabled) == "function"
+		and diagnostics.UndergroundDecorationEnabled() == true
+end
+
 function WonderVerticalDiagnostics.SafePointZ(pos)
 	if not pos or type(pos.z) ~= "function" then return nil end
 	local ok, z = pcall(pos.z, pos)
@@ -3338,49 +3345,54 @@ local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_clas
 	marker.SuperBigMapNativeWonderFlattenR = source_r
 	marker.SuperBigMapNativeWonderFlattenIndex = source_index
 	marker.SuperBigMapNativeWonderFlattenShapeHexes = #shape
-	local entity_bbox
-	local get_entity_bbox = Global("GetEntityBBox")
-	if type(get_entity_bbox) == "function" then
-		local ok_bbox, bbox = pcall(get_entity_bbox, entity)
-		if ok_bbox then entity_bbox = WonderVerticalDiagnostics.SafeBoxZStats(bbox) end
-	end
 	local marker_pos = type(marker.GetPos) == "function" and marker:GetPos() or nil
-	local terrain_api = Global("terrain")
-	local center_terrain_z
-	if marker_pos and type(terrain_api) == "table" and type(terrain_api.GetHeight) == "function" then
-		local ok_height, height = pcall(terrain_api.GetHeight, map, marker_pos)
-		if ok_height and type(height) == "number" then center_terrain_z = height end
-	end
-	local shape_stats = WonderVerticalDiagnostics.ShapeVerticalStats(
-		map, shape, marker, source_z)
-	marker.SuperBigMapNativeWonderEntityBBoxMinZ = entity_bbox and entity_bbox.min_z
-	marker.SuperBigMapNativeWonderEntityBBoxMaxZ = entity_bbox and entity_bbox.max_z
-	marker.SuperBigMapNativeWonderEntityBBoxSizeZ = entity_bbox and entity_bbox.size_z
-	marker.SuperBigMapNativeWonderSourceTerrainZ = center_terrain_z
-	marker.SuperBigMapNativeWonderSourceTerrainMinZ = shape_stats.terrain_min_z
-	marker.SuperBigMapNativeWonderSourceTerrainMaxZ = shape_stats.terrain_max_z
-	LoadingStep("underground buried wonder source vertical geometry", {
+	local payload = {
 		class = wonder_class,
 		entity = entity,
 		marker_z = WonderVerticalDiagnostics.SafePointZ(marker_pos),
 		marker_scale = type(marker.GetScale) == "function" and marker:GetScale() or nil,
 		source_flatten_z = source_z,
-		center_terrain_z = center_terrain_z,
-		entity_bbox_min_z = entity_bbox and entity_bbox.min_z,
-		entity_bbox_max_z = entity_bbox and entity_bbox.max_z,
-		entity_bbox_size_z = entity_bbox and entity_bbox.size_z,
-		footprint_samples = shape_stats.samples,
-		footprint_terrain_min_z = shape_stats.terrain_min_z,
-		footprint_terrain_max_z = shape_stats.terrain_max_z,
-		footprint_terrain_at_flatten = shape_stats.terrain_at_target,
-		footprint_terrain_above_flatten = shape_stats.terrain_above_target,
-		footprint_terrain_below_flatten = shape_stats.terrain_below_target,
-		footprint_buildable_min_z = shape_stats.buildable_min_z,
-		footprint_buildable_max_z = shape_stats.buildable_max_z,
-		footprint_buildable_at_flatten = shape_stats.buildable_at_target,
-		footprint_buildable_above_flatten = shape_stats.buildable_above_target,
-		footprint_buildable_below_flatten = shape_stats.buildable_below_target,
-	}, map)
+		flatten_shape_hexes = #shape,
+	}
+	if WonderGeometryDiagnosticsEnabled() then
+		local entity_bbox
+		local get_entity_bbox = Global("GetEntityBBox")
+		if type(get_entity_bbox) == "function" then
+			local ok_bbox, bbox = pcall(get_entity_bbox, entity)
+			if ok_bbox then entity_bbox = WonderVerticalDiagnostics.SafeBoxZStats(bbox) end
+		end
+		local terrain_api = Global("terrain")
+		local center_terrain_z
+		if marker_pos and type(terrain_api) == "table"
+			and type(terrain_api.GetHeight) == "function" then
+			local ok_height, height = pcall(terrain_api.GetHeight, map, marker_pos)
+			if ok_height and type(height) == "number" then center_terrain_z = height end
+		end
+		local shape_stats = WonderVerticalDiagnostics.ShapeVerticalStats(
+			map, shape, marker, source_z)
+		marker.SuperBigMapNativeWonderEntityBBoxMinZ = entity_bbox and entity_bbox.min_z
+		marker.SuperBigMapNativeWonderEntityBBoxMaxZ = entity_bbox and entity_bbox.max_z
+		marker.SuperBigMapNativeWonderEntityBBoxSizeZ = entity_bbox and entity_bbox.size_z
+		marker.SuperBigMapNativeWonderSourceTerrainZ = center_terrain_z
+		marker.SuperBigMapNativeWonderSourceTerrainMinZ = shape_stats.terrain_min_z
+		marker.SuperBigMapNativeWonderSourceTerrainMaxZ = shape_stats.terrain_max_z
+		payload.center_terrain_z = center_terrain_z
+		payload.entity_bbox_min_z = entity_bbox and entity_bbox.min_z
+		payload.entity_bbox_max_z = entity_bbox and entity_bbox.max_z
+		payload.entity_bbox_size_z = entity_bbox and entity_bbox.size_z
+		payload.footprint_samples = shape_stats.samples
+		payload.footprint_terrain_min_z = shape_stats.terrain_min_z
+		payload.footprint_terrain_max_z = shape_stats.terrain_max_z
+		payload.footprint_terrain_at_flatten = shape_stats.terrain_at_target
+		payload.footprint_terrain_above_flatten = shape_stats.terrain_above_target
+		payload.footprint_terrain_below_flatten = shape_stats.terrain_below_target
+		payload.footprint_buildable_min_z = shape_stats.buildable_min_z
+		payload.footprint_buildable_max_z = shape_stats.buildable_max_z
+		payload.footprint_buildable_at_flatten = shape_stats.buildable_at_target
+		payload.footprint_buildable_above_flatten = shape_stats.buildable_above_target
+		payload.footprint_buildable_below_flatten = shape_stats.buildable_below_target
+	end
+	LoadingStep("underground buried wonder source vertical geometry", payload, map)
 	return true
 end
 
@@ -3951,6 +3963,7 @@ function WonderVerticalDiagnostics.Snapshot(wonder, marker, map, ratios, flatten
 end
 
 function WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stats, phase)
+	if not WonderGeometryDiagnosticsEnabled() then return true end
 	local ok, payload = pcall(WonderVerticalDiagnostics.Snapshot,
 		wonder, marker, map, ratios, flatten_stats, phase)
 	if not ok then
@@ -3966,6 +3979,7 @@ function WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stat
 end
 
 function WonderVerticalDiagnostics.LogCoverage(map, phase)
+	if not WonderGeometryDiagnosticsEnabled() then return {} end
 	local planned = {}
 	for _, marker in ipairs(ArtefactMapGet(map, "BuriedWonderMarker")) do
 		local class_name = marker.SuperBigMapDeferredWonderClass
@@ -4011,6 +4025,7 @@ function WonderVerticalDiagnostics.LogCoverage(map, phase)
 end
 
 function WonderVerticalDiagnostics.LogAll(map, phase)
+	if not WonderGeometryDiagnosticsEnabled() then return 0 end
 	local ratios = DeferredWonderScaleRatios(map)
 	WonderVerticalDiagnostics.LogCoverage(map, phase)
 	if type(ratios) ~= "table" then return 0 end
@@ -4863,7 +4878,7 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 	-- Discard refs retained by an older one-texture implementation before rebuilding the complete
 	-- set. They are extra ownership refs only; releasing them does not unload a live scene object.
 	ReleaseSharedBuriedWonderTexturePins()
-	local total_wait = 0
+	local requested = {}
 	for _, texture_path in ipairs(textures) do
 		local ok_id, resource_id = pcall(resource_manager.GetResourceID, texture_path)
 		if not ok_id or resource_id == nil then
@@ -4883,20 +4898,34 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 			return false, "wonder texture resource has no object: " .. tostring(texture_path)
 		end
 		underground_shared_wonder_texture_pins[#underground_shared_wonder_texture_pins + 1] = resource
-		local settled, settle_result = WaitForUndergroundResourceRequests(
-			map, "buried-wonder texture prewarm " .. tostring(texture_path), 15000)
-		if not settled then
+		requested[#requested + 1] = { path = texture_path, resource = resource }
+	end
+	-- Queue the complete deterministic texture set first, then wait once for the same global
+	-- ResourceManager idle boundary. Waiting after every individual request paid the engine's
+	-- minimum settle window five times even when no request remained active. Every resource is still
+	-- pinned before construction, and no wonder is created until the single batch boundary succeeds.
+	local settled, settle_result = WaitForUndergroundResourceRequests(
+		map, "buried-wonder texture prewarm batch", 15000)
+	if not settled then
+		ReleaseSharedBuriedWonderTexturePins()
+		return false, "wonder texture batch did not settle: " .. tostring(settle_result)
+	end
+	local total_wait = tonumber(settle_result) or 0
+	for _, entry in ipairs(requested) do
+		local resource = entry.resource
+		local has_object = type(resource.HasObject) ~= "function"
+			or SafeCall(resource.HasObject, resource) == true
+		if not has_object then
 			ReleaseSharedBuriedWonderTexturePins()
-			return false, "wonder texture did not settle for " .. tostring(texture_path)
-				.. ": " .. tostring(settle_result)
+			return false, "wonder texture resource has no object after settle: "
+				.. tostring(entry.path)
 		end
-		total_wait = total_wait + (tonumber(settle_result) or 0)
 		LoadingStep("underground buried-wonder texture ready", {
-			texture = texture_path,
+			texture = entry.path,
 			classes = table.concat(classes, ","),
 			cached = false,
 			pins = #underground_shared_wonder_texture_pins,
-			wait_ms = tostring(settle_result),
+			batch_wait_ms = tostring(total_wait),
 		}, map)
 	end
 	State.underground_shared_wonder_texture_ready = true

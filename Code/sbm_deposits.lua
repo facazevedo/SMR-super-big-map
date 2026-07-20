@@ -3393,9 +3393,10 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 		end
 	end
 	-- A standalone resource call restores walls before later families and therefore rebuilds a
-	-- wall-aware handoff pool. The managed density suite restores only after resources, anomalies,
-	-- and effects have all consumed the wall-free pool; rebuilding it at suite teardown had no
-	-- consumer and repeated up to 8,000 full placement validations.
+	-- wall-aware handoff pool. The managed density suite hands its remaining pool to the immediately
+	-- following reachability relocation audit. That audit revalidates every reused coordinate after
+	-- the walls are restored, so retaining the value-only candidates avoids a second random search
+	-- without accepting a coordinate that a restored wall now blocks.
 	underground_reachability_by_map[map] = nil
 	underground_topup_sampling_by_map[map] = nil
 	topup_candidate_pool_by_map[map] = nil
@@ -3412,6 +3413,17 @@ local function RestoreRubbleWallGridsAfterResourceTopUp(map, token)
 			end
 		end
 		topup_candidate_pool_by_map[map] = wall_aware_pool
+	elseif token.density_suite == true and #failures == 0
+		and type(resource_pool) == "table" then
+		local relocation_pool = {}
+		for _, candidate in ipairs(resource_pool) do
+			-- Every selector marks a committed coordinate as used. Such a coordinate would be
+			-- rejected by the relocation audit's live occupancy check, so omit it before the
+			-- more expensive terrain, obstruction, and connectivity revalidation.
+			if not candidate.used then relocation_pool[#relocation_pool + 1] = candidate end
+		end
+		topup_candidate_pool_by_map[map] = relocation_pool
+		token.relocation_handoff_candidates = #relocation_pool
 	end
 	token.wall_aware_shared_candidates = #wall_aware_pool
 	return #failures == 0, table.concat(failures, "|")
@@ -3447,10 +3459,12 @@ function DepositRules.EndUndergroundTopUpWallIgnore(map)
 	if type(resources) == "table" then
 		resources.ignored_rubble_walls = #token.objects
 		resources.wall_aware_shared_candidates = token.wall_aware_shared_candidates or 0
+		resources.relocation_handoff_candidates = token.relocation_handoff_candidates or 0
 	end
 	return ok, {
 		active = true, walls = #token.objects, error = tostring(err or ""),
 		wall_aware_shared_candidates = token.wall_aware_shared_candidates or 0,
+		relocation_handoff_candidates = token.relocation_handoff_candidates or 0,
 	}
 end
 
@@ -5426,7 +5440,6 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.anomalies = #moving
 
 	local function format_positions(items, use_after)
-		table.sort(items, function(a, b) return a.id < b.id end)
 		local values = {}
 		for _, item in ipairs(items) do
 			local x = use_after and item.after_x or item.before_x
@@ -5441,6 +5454,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		return table.concat(values, "|")
 	end
+	-- Keep placement order deterministic regardless of whether diagnostics are enabled. Previously
+	-- the verbose formatter performed this sort as a side effect only while logging was active.
+	table.sort(moving, function(a, b) return a.id < b.id end)
+	local include_positions = AuditEnabled()
 	local print_fn = (AuditEnabled() or cfg().DEBUG_LOADING_TIMINGS == true)
 		and Global("print") or nil
 	if type(print_fn) == "function" then
@@ -5448,7 +5465,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " sectors=" .. tostring(#ring)
 			.. " bottom_sectors=" .. tostring(stats.bottom_sectors)
 			.. " right_sectors=" .. tostring(stats.right_sectors)
-			.. " positions=" .. format_positions(moving, false))
+			.. (include_positions and (" positions=" .. format_positions(moving, false)) or ""))
 	end
 	if #moving == 0 then
 		if type(print_fn) == "function" then
@@ -5971,7 +5988,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
-			.. " positions=" .. format_positions(plans, true))
+			.. (include_positions and (" positions=" .. format_positions(plans, true)) or ""))
 	end
 	return true, stats
 end
