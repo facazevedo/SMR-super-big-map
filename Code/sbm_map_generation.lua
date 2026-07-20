@@ -2806,8 +2806,13 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local source_generated_enrichments
 	local vanilla_start_selection
 	local source_pass_edits_deferred = false
-	local saved_main_map = Global("MainMap")
-	local saved_main_city = Global("MainCity")
+	-- NewMap only assigns MainMap when the previous GameVar is false. A second pre-game map
+	-- generation in the same process can therefore enter this transaction with MainMap still
+	-- pointing at the surface object that ChangeMap just destroyed. The destination in slot 1 is
+	-- the authoritative new surface for this transaction and for the additional-map phase that
+	-- follows; never restore the stale object after temporarily publishing the vanilla backing.
+	local destination_main_map = destination
+	local destination_main_city = destination and destination.City or false
 	local results
 	SuperBigMap.State.vanilla_source_migration_active = true
 	local ok, migration_error = pcall(function()
@@ -2840,7 +2845,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 
 		SwitchGeneratorCurrentSlot(source_slot)
 		rawset(_G, "MainMap", source)
-		if source.City ~= nil then rawset(_G, "MainCity", source.City) end
+		rawset(_G, "MainCity", source.City or false)
 		ProbeNativeClutterAccess(source, "temporary source before DoGenerate")
 		-- RandomMapGenerator:GetMapSize reads MapData[self.BlankMap] directly rather than the
 		-- supplied map. Keep that last generator input native-sized for exactly this transaction;
@@ -2943,8 +2948,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			selection = tostring(selection),
 		}, source)
 
-		rawset(_G, "MainMap", saved_main_map)
-		rawset(_G, "MainCity", saved_main_city)
+		rawset(_G, "MainMap", destination_main_map)
+		rawset(_G, "MainCity", destination_main_city)
 		RestoreGeneratorTemplate()
 		SwitchGeneratorCurrentSlot(destination_slot)
 		SetLoadingPhase("Migrating the vanilla source into the expanded terrain...")
@@ -3023,8 +3028,8 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 
 	-- Always restore the real surface as current and release the temporary slot. This also keeps
 	-- the slot available for the vanilla additional-map/underground phase that follows Generate.
-	rawset(_G, "MainMap", saved_main_map)
-	rawset(_G, "MainCity", saved_main_city)
+	rawset(_G, "MainMap", destination_main_map)
+	rawset(_G, "MainCity", destination_main_city)
 	RestoreGeneratorTemplate()
 	if get_current_slot() ~= destination_slot then
 		pcall(SwitchGeneratorCurrentSlot, destination_slot)
@@ -6822,7 +6827,21 @@ local function PatchRandomMapGenerator()
 				local env = (type(mapdata) == "table" and mapdata.Environment)
 					or (template and template.Environment)
 				if env == "Underground" then
-					local main_map = Global("MainMap")
+					local published_main_map = Global("MainMap")
+					local maps = Global("Maps")
+					local slot_one_map = type(maps) == "table" and maps[1] or nil
+					local slot_one_is_surface = slot_one_map and slot_one_map ~= map
+						and type(slot_one_map.mapdata) == "table"
+						and slot_one_map.mapdata.Environment == "Surface"
+					local main_map = slot_one_is_surface and slot_one_map or published_main_map
+					if main_map ~= published_main_map then
+						rawset(_G, "MainMap", main_map)
+						rawset(_G, "MainCity", main_map.City or false)
+						LoadingStep("surface main-map identity repaired before passage pairing", {
+							previous = tostring(published_main_map),
+							replacement = tostring(main_map),
+						}, main_map)
+					end
 					local rebuild = Global("RebuildBuildableGrid")
 					if not main_map or main_map == map then
 						error("surface passage pairing map is unavailable")
