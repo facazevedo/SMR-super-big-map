@@ -2642,7 +2642,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(update_radius) == "function" then update_radius(source) end
 		LoadingEnd(update_radius_token, nil, true)
 		local discard_source_pass_edits = cfg_bool(
-			"OPTIMIZE_DISCARD_TEMPORARY_SOURCE_PASS_EDITS", true)
+			"OPTIMIZE_DISCARD_TEMPORARY_SOURCE_PASS_EDITS", false)
 		local source_pass_flush_token = LoadingBegin("finalize temporary source pass edits", source, {
 			mode = discard_source_pass_edits and "discard_on_unload" or "flush",
 		})

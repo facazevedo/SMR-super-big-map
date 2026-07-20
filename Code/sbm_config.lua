@@ -479,12 +479,10 @@ config.OptimizeAnomalyCandidateSearch = true
 -- Reuse class-invariant DepositMarker property metadata and the immutable XYZ captured by stage 01
 -- while serializing native enrichment records from the temporary source.
 config.OptimizeNativeEnrichmentRecordCapture = true
--- The temporary surface source is never entered and its passability is never queried: terrain is
--- read directly, marker values are captured, objects are transferred, and the map is immediately
--- unloaded. Keep its queued pass edits suspended through unload instead of spending ~2 seconds
--- rebuilding a grid that cannot be observed. The unload path resumes and retries automatically if
--- an engine build rejects disposal of a suspended map.
-config.OptimizeDiscardTemporarySourcePassEdits = true
+-- Experimental only. Although the temporary surface source's passability grid is never consumed,
+-- this engine asserts from map destruction unless every suspended PassEdits reason was resumed.
+-- Keep the required flush enabled; disabling it is not a valid optimization on the retail build.
+config.OptimizeDiscardTemporarySourcePassEdits = false
 -- Underground candidate sampling first applies the identical buildable/passable/flat/unobstructed
 -- predicates, but performs the expensive entrance ConnectivityCheck only after a repulsion/sector
 -- selector chooses the candidate. Every selected position still passes the exact reachability gate
