@@ -21,6 +21,10 @@ local function Config()
 	return SuperBigMap.Config or {}
 end
 
+local function Enabled()
+	return Config().DEBUG_LOGGING_ENABLED == true
+end
+
 local function Now()
 	local fn = Global("GetPreciseTicks") or Global("RealTime")
 	if type(fn) == "function" then
@@ -84,7 +88,7 @@ end
 local Diagnostics = {}
 
 function Diagnostics.LoadingEnabled()
-	return Config().DEBUG_LOADING_TIMINGS == true
+	return Enabled() and Config().DEBUG_LOADING_TIMINGS == true
 end
 
 function Diagnostics.LoadingActive()
@@ -92,15 +96,15 @@ function Diagnostics.LoadingActive()
 end
 
 function Diagnostics.EnrichmentEnabled()
-	return Config().DEBUG_ENRICHMENT_AUDIT == true
+	return Enabled() and Config().DEBUG_ENRICHMENT_AUDIT == true
 end
 
 function Diagnostics.ElevatorTraversalEnabled()
-	return Config().DEBUG_ELEVATOR_TRAVERSAL == true
+	return Enabled() and Config().DEBUG_ELEVATOR_TRAVERSAL == true
 end
 
 function Diagnostics.UndergroundDecorationEnabled()
-	return Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
+	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
 
 function Diagnostics.Audit(event, data, map)

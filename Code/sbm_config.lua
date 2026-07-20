@@ -12,6 +12,8 @@ local config = {}
 -- ============================================================================
 -- OPT-IN DIAGNOSTICS
 -- ============================================================================
+-- Master gate for every optional log/audit channel. Keep this disabled for normal releases.
+config.DebugLoggingEnabled = false
 -- Exhaustive enrichment/Elevator audit. When enabled, the log contains every native source
 -- marker, its proportional destination, every final native/top-up marker, per-family targets,
 -- per-sector density, placement validity, repulsion results, and the tokenized Elevator supply
@@ -25,7 +27,7 @@ config.DebugElevatorTraversal = false
 -- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
 -- source allocation/migration, surface and underground stretch phases, individual phase durations,
 -- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
-config.DebugLoadingTimings = true
+config.DebugLoadingTimings = false
 -- Exhaustive underground decoration transform trace. When enabled, every decoration that the
 -- stretch pass may move gets a stable audit index plus PRE and POST records containing object
 -- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
@@ -165,7 +167,7 @@ config.PreventElevatorFlatten = true
 
 -- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
 -- unlocks the template, and quick-builds the next placed Elevator for free.
-config.PlaceElevatorButtonEnabled = true
+config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
@@ -620,10 +622,13 @@ local expansion_step_21 = expansion_step_03
 
 -- Lifecycle / master
 C.ENABLE_MOD = true
-C.DEBUG_ENRICHMENT_AUDIT = as_bool(config.DebugEnrichmentAudit)
-C.DEBUG_ELEVATOR_TRAVERSAL = as_bool(config.DebugElevatorTraversal)
-C.DEBUG_LOADING_TIMINGS = as_bool(config.DebugLoadingTimings)
-C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = as_bool(config.DebugUndergroundDecorationPositions)
+local debug_logging_enabled = as_bool(config.DebugLoggingEnabled)
+C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
+C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
+C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
+C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
+C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
+	and as_bool(config.DebugUndergroundDecorationPositions)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
