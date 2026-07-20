@@ -3745,6 +3745,144 @@ function WonderVerticalDiagnostics.LogAll(map, phase)
 	return count
 end
 
+-- The vanilla darkness renderer still draws bright/emissive buried-wonder materials, which makes
+-- the Cave of Wonders visible before its cavern is uncovered. Expanded wonders are deliberately
+-- present off-screen before first access, so conceal only their visual mesh while preserving the
+-- live object, grids, rare-anomaly spawner, and scenario state. UndergroundWonder already receives
+-- vanilla UpdateRevealObject calls every two seconds; wrapping that inherited method gives us the
+-- authoritative IsRevealed transition without adding another polling loop.
+local WONDER_DARKNESS_VISIBILITY_PATCH_VERSION = 1
+
+local function WonderDarknessMapEnabled(map)
+	if cfg_bool("CONCEAL_BURIED_WONDERS_IN_DARKNESS", true) ~= true
+		or not map or not map.mapdata or map.mapdata.Environment ~= "Underground" then
+		return false
+	end
+	local grid = SuperBigMap.SectorGrid
+	return type(grid) == "table" and type(grid.IsModMap) == "function"
+		and grid.IsModMap(map) == true
+end
+
+local function BuriedWonderMap(wonder, fallback)
+	if wonder and type(wonder.GetMap) == "function" then
+		local map = SafeCall(wonder.GetMap, wonder)
+		if map then return map end
+	end
+	return fallback
+end
+
+local function RestoreBuriedWonderVisibility(wonder, reason, force)
+	if not wonder then return false end
+	local was_concealed = wonder.SuperBigMapConcealedByDarkness == true
+	-- efVisible can survive a save even when our transient Lua bookkeeping does not. Force one
+	-- visible write after load/reload for revealed wonders so a save made under the blanket can
+	-- never leave a discovered wonder permanently hidden.
+	if not was_concealed and force ~= true
+		and wonder.SuperBigMapDarknessVisibilityRestored == true then return false end
+	if type(wonder.SetVisible) == "function" then
+		pcall(wonder.SetVisible, wonder, true)
+	end
+	wonder.SuperBigMapConcealedByDarkness = nil
+	wonder.SuperBigMapDarknessVisibilityRestored = true
+	wonder.SuperBigMapDarknessVisibilityReason = tostring(reason or "restored")
+	return was_concealed
+end
+
+local function SyncBuriedWonderDarknessVisibility(wonder, map, reason)
+	map = BuriedWonderMap(wonder, map)
+	if not WonderDarknessMapEnabled(map) then
+		return RestoreBuriedWonderVisibility(wonder, reason or "feature inactive")
+	end
+	-- A deliberate engine/cheat reveal disables the process-global blanket. Only consult it for the
+	-- current map; while the underground is off-screen the surface correctly owns the global value 0.
+	local blanket_disabled = false
+	if Global("CurrentMap") == map then
+		local hr = Global("hr")
+		blanket_disabled = type(hr) == "table" and tonumber(hr.EnableDarknessReveal) == 0
+	end
+	local revealed = blanket_disabled
+	if not revealed and wonder and type(wonder.IsRevealed) == "function" then
+		revealed = SafeCall(wonder.IsRevealed, wonder, wonder) == true
+	end
+	if revealed then
+		return RestoreBuriedWonderVisibility(wonder, reason or "darkness revealed")
+	end
+	if not wonder or type(wonder.SetVisible) ~= "function" then return false end
+	local ok = pcall(wonder.SetVisible, wonder, false)
+	if not ok then return false end
+	wonder.SuperBigMapConcealedByDarkness = true
+	wonder.SuperBigMapDarknessVisibilityRestored = nil
+	wonder.SuperBigMapDarknessVisibilityReason = tostring(reason or "darkness concealed")
+	return true
+end
+
+local function RefreshBuriedWonderDarknessVisibility(map, reason)
+	if not map then return 0 end
+	local changed = 0
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		if SyncBuriedWonderDarknessVisibility(wonder, map, reason) then changed = changed + 1 end
+	end
+	return changed
+end
+
+local function PatchBuriedWonderDarknessVisibility()
+	local State = SuperBigMap.State or {}
+	local class = Engine.ClassTable and Engine.ClassTable("UndergroundWonder")
+	if type(class) ~= "table" then return false end
+	if State.buried_wonder_darkness_patch_version == WONDER_DARKNESS_VISIBILITY_PATCH_VERSION
+		and class.UpdateRevealObject == State.buried_wonder_darkness_update_wrapper then
+		return true
+	end
+	if State.buried_wonder_darkness_update_wrapper
+		and class.UpdateRevealObject == State.buried_wonder_darkness_update_wrapper then
+		if State.buried_wonder_darkness_update_had_raw_method == true then
+			class.UpdateRevealObject = State.original_buried_wonder_update_reveal_object
+		else
+			class.UpdateRevealObject = nil
+		end
+	end
+	local original = class.UpdateRevealObject
+	if type(original) ~= "function" then return false end
+	local had_raw_method = rawget(class, "UpdateRevealObject") ~= nil
+	local wrapper = function(self, ...)
+		original(self, ...)
+		SyncBuriedWonderDarknessVisibility(self, nil, "vanilla UpdateRevealObject")
+	end
+	State.original_buried_wonder_update_reveal_object = original
+	State.buried_wonder_darkness_update_had_raw_method = had_raw_method
+	State.buried_wonder_darkness_update_wrapper = wrapper
+	State.buried_wonder_darkness_patch_version = WONDER_DARKNESS_VISIBILITY_PATCH_VERSION
+	class.UpdateRevealObject = wrapper
+	return true
+end
+
+local function RestoreBuriedWonderDarknessVisibilityPatch()
+	local State = SuperBigMap.State or {}
+	local maps = Global("Maps")
+	if type(maps) == "table" then
+		for _, map in pairs(maps) do
+			if type(map) == "table" then
+				for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+					RestoreBuriedWonderVisibility(wonder, "mod behavior restored", true)
+				end
+			end
+		end
+	end
+	local class = Engine.ClassTable and Engine.ClassTable("UndergroundWonder")
+	if type(class) == "table"
+		and class.UpdateRevealObject == State.buried_wonder_darkness_update_wrapper then
+		if State.buried_wonder_darkness_update_had_raw_method == true then
+			class.UpdateRevealObject = State.original_buried_wonder_update_reveal_object
+		else
+			class.UpdateRevealObject = nil
+		end
+	end
+	State.original_buried_wonder_update_reveal_object = nil
+	State.buried_wonder_darkness_update_had_raw_method = nil
+	State.buried_wonder_darkness_update_wrapper = nil
+	State.buried_wonder_darkness_patch_version = nil
+end
+
 local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	if not wonder or not marker or type(ratios) ~= "table" then
 		return false, "invalid underground wonder stretch arguments"
@@ -4552,6 +4690,8 @@ local function MaterializeDeferredUndergroundWonders(map)
 			WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stats,
 				"after_flatten_before_resume")
 			vertical_audits[#vertical_audits + 1] = wonder
+			SyncBuriedWonderDarknessVisibility(wonder, map,
+				"materialized before underground access")
 			Global("DoneObject")(marker)
 			spawned = spawned + 1
 			stretched = stretched + 1
@@ -8951,6 +9091,8 @@ MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
 MapGeneration.PatchCaveInShapePoints = PatchCaveInShapePoints
 MapGeneration.PatchUndergroundWonderShapePoints = PatchUndergroundWonderShapePoints
 MapGeneration.ReseatExpandedUndergroundWonders = WonderVerticalDiagnostics.ReseatAll
+MapGeneration.PatchBuriedWonderDarknessVisibility = PatchBuriedWonderDarknessVisibility
+MapGeneration.RefreshBuriedWonderDarknessVisibility = RefreshBuriedWonderDarknessVisibility
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
@@ -8979,6 +9121,8 @@ function MapGeneration.ApplyModBehavior()
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
 		PatchUndergroundWonderShapePoints()
+		PatchBuriedWonderDarknessVisibility()
+		RefreshBuriedWonderDarknessVisibility(Global("CurrentMap"), "ApplyModBehavior")
 		PatchDeferredUndergroundAccess("ApplyModBehavior")
 	end
 	-- Keep diagnostics outermost so a first-access command is traced from the player's click,
@@ -9111,6 +9255,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	RestoreEntranceBadgePositionPatch()
 	RestoreCaveInShapePointsPatch()
 	RestoreUndergroundWonderShapePointsPatch()
+	RestoreBuriedWonderDarknessVisibilityPatch()
 end
 
 SuperBigMap.MapGeneration = MapGeneration
@@ -9134,6 +9279,7 @@ if module_config.ENABLE_MOD ~= false
 		PatchEntranceBadgePosition()
 		PatchCaveInShapePoints()
 		PatchUndergroundWonderShapePoints()
+		PatchBuriedWonderDarknessVisibility()
 		PatchDeferredUndergroundAccess("module load")
 	end
 end

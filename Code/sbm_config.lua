@@ -116,6 +116,10 @@ config.TakeoverOverviewExit = true
 -- height) before the descent, so the zoom-in is smooth instead of teleporting
 -- sideways. 0 = instant (teleport). ~200-300 feels like a quick smooth glide.
 config.OverviewExitPanTime = 250
+-- Every completed Surface <-> Underground transfer opens the destination in overview instead of
+-- restoring that city's last selection/overview mode. Other map changes (asteroids, load, editor,
+-- generation backing maps) retain vanilla behavior.
+config.EnterOverviewAfterSurfaceUndergroundSwitch = true
 
 -- Overview camera distance and field of view.
 -- Percent values scale from the loaded terrain size.
@@ -404,6 +408,10 @@ config.UndergroundRevealAllDarkness = false
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
+-- The vanilla darkness shader dims emissive buried-wonder meshes but does not fully conceal them.
+-- Keep expanded buried wonders invisible until vanilla IsRevealed reports that their location has
+-- been uncovered. Their gameplay grids and rare-anomaly spawners remain active while concealed.
+config.ConcealBuriedWondersInDarkness = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -704,6 +712,8 @@ C.SEED_OVERVIEW_RETURN_UP = as_number(config.SeedOverviewReturnUp, 67000)
 C.PRE_AIM_OVERVIEW_EXIT = as_bool(config.PreAimOverviewExit)
 C.OVERVIEW_EXIT_PAN_TIME = as_number(config.OverviewExitPanTime, 250)
 C.TAKEOVER_OVERVIEW_EXIT = as_bool(config.TakeoverOverviewExit)
+C.ENTER_OVERVIEW_AFTER_SURFACE_UNDERGROUND_SWITCH =
+	as_bool(config.EnterOverviewAfterSurfaceUndergroundSwitch)
 
 -- Overview camera / curtains / render distance
 C.OVERVIEW_ZOOM_DISTANCE_PERCENT = as_number(config.OverviewZoomDistancePercent, 140)
@@ -783,6 +793,7 @@ C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergrou
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
+C.CONCEAL_BURIED_WONDERS_IN_DARKNESS = as_bool(config.ConcealBuriedWondersInDarkness)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08

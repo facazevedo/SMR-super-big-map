@@ -49,6 +49,8 @@ end
 
 -- Token so a new exit takeover cancels any still-running one.
 local exit_takeover_token = 0
+-- Token so only the newest Surface <-> Underground transfer may request overview.
+local map_switch_overview_token = 0
 
 -- Map liveness / terrain size are intentionally NOT in sbm_engine (their resolution
 -- order is context-specific); each consumer keeps its own copy.
@@ -608,6 +610,67 @@ function OverviewCamera.ReframeFinalizedDestination(map, source)
 	return ScheduleOverviewCameraRefresh(map, "destination-finalized:" .. tostring(source or "?"))
 end
 
+-- Open the destination of an actual Surface <-> Underground transfer in overview. Vanilla stores
+-- a separate DialogType on each city and restores it after a map switch; this user-facing default
+-- deliberately replaces that restored mode, while leaving loads, startup, asteroids, editor maps,
+-- and internal generation-backing switches untouched. Retry only until the first successful entry
+-- so a player's immediate manual exit is never overridden by a later timer tick.
+function OverviewCamera.EnterAfterSurfaceUndergroundSwitch(map, source)
+	local cfg = SuperBigMap.Config or {}
+	if cfg.ENTER_OVERVIEW_AFTER_SURFACE_UNDERGROUND_SWITCH ~= true then
+		return false
+	end
+	map = ResolveLiveMap(map)
+	local ready = CameraDestinationStatus(map, true)
+	if not ready then return false end
+	local environment = map and map.mapdata and map.mapdata.Environment
+	if environment ~= "Surface" and environment ~= "Underground" then return false end
+	if environment == "Underground"
+		and map.mapdata.IsAllowedToEnterOverview ~= true then return false end
+
+	local create_thread = Global("CreateRealTimeThread")
+	if type(create_thread) ~= "function" then return false end
+	map_switch_overview_token = map_switch_overview_token + 1
+	local token = map_switch_overview_token
+	SafeCall(create_thread, function()
+		local sleep = Global("Sleep")
+		local delays = { 0, 50, 150, 350, 700, 1200, 2000, 3500, 6000 }
+		local elapsed = 0
+		for i = 1, #delays do
+			if token ~= map_switch_overview_token or Global("CurrentMap") ~= map then return end
+			local delay = delays[i]
+			local wait = delay - elapsed
+			if wait > 0 and type(sleep) == "function" then sleep(wait) end
+			elapsed = delay
+			if token ~= map_switch_overview_token or Global("CurrentMap") ~= map then return end
+			if not Global("ChangingMap") then
+				local destination_ready = CameraDestinationStatus(map, true)
+				local get_interface = Global("GetInGameInterface")
+				local igi = destination_ready and SafeCall(get_interface) or nil
+				if igi and type(igi.IsInMode) == "function" then
+					local entered = SafeCall(igi.IsInMode, igi, "overview") == true
+					if not entered then
+						if map.City then map.City.DialogType = "overview" end
+						if type(igi.SetDialogMode) == "function" then
+							SafeCall(igi.SetDialogMode, igi, "overview")
+						elseif type(igi.SetMode) == "function" then
+							SafeCall(igi.SetMode, igi, "overview",
+								{ no_camera_transition_time_once = true })
+						end
+						entered = SafeCall(igi.IsInMode, igi, "overview") == true
+					end
+					if entered then
+						ScheduleOverviewCameraRefresh(map,
+							"map-switch:" .. tostring(source or "Surface<->Underground"))
+						return
+					end
+				end
+			end
+		end
+	end)
+	return true
+end
+
 -- Invalidate any pending scheduled refresh (called when leaving overview mode).
 function OverviewCamera.CancelScheduledRefresh()
 	overview_reset_token = overview_reset_token + 1
@@ -722,6 +785,7 @@ function OverviewCamera.RestoreVanillaBehavior()
 	-- Cancel an in-flight first-overview exit takeover too; otherwise its real-time
 	-- thread can write one last expanded camera pose after the main menu is open.
 	exit_takeover_token = exit_takeover_token + 1
+	map_switch_overview_token = map_switch_overview_token + 1
 end
 
 SuperBigMap.OverviewCamera = OverviewCamera

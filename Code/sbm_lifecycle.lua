@@ -897,6 +897,23 @@ RegisterOnce("LoadGame", function()
 	end
 end)
 
+-- Vanilla remembers selection/overview independently on each city. Capture only a real expanded
+-- gameplay map being left; internal temporary-source switches run under the migration guard and
+-- must neither replace nor consume this pending user-facing transition.
+RegisterOnce("CurrentMapChange", function(map_slot, map)
+	if not active() or editor_active() then return end
+	local State = SuperBigMap.State or {}
+	if State.vanilla_source_migration_active == true then return end
+	local environment = map and map.mapdata and map.mapdata.Environment
+	if IsModMap(map) and (environment == "Surface" or environment == "Underground") then
+		State.overview_switch_source_map = map
+		State.overview_switch_source_environment = environment
+	else
+		State.overview_switch_source_map = nil
+		State.overview_switch_source_environment = nil
+	end
+end)
+
 RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- Reclaim both menu-boundary wrappers after any late game-Lua replacement.
 	InstallMainMenuTransitionGuards()
@@ -955,6 +972,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if gen and type(gen.RestoreDeferredVehicleNightLights) == "function" then
 		gen.RestoreDeferredVehicleNightLights(map)
 	end
+	if IsModMap(map) and gen
+		and type(gen.RefreshBuriedWonderDarknessVisibility) == "function" then
+		SafeCall(gen.RefreshBuriedWonderDarknessVisibility, map, "CurrentMapChangeDone")
+	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")
@@ -968,6 +989,24 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	end
 	if not IsModMap(map) then
 		NormalizeVanillaRuntimeState(map, "CurrentMapChangeDone non-mod map")
+	end
+	local State = SuperBigMap.State or {}
+	if State.vanilla_source_migration_active ~= true then
+		local source_map = State.overview_switch_source_map
+		local source_environment = State.overview_switch_source_environment
+		State.overview_switch_source_map = nil
+		State.overview_switch_source_environment = nil
+		local target_environment = map and map.mapdata and map.mapdata.Environment
+		local surface_underground_switch = source_map and source_map ~= map
+			and ((source_environment == "Surface" and target_environment == "Underground")
+				or (source_environment == "Underground" and target_environment == "Surface"))
+		if surface_underground_switch and IsModMap(map) then
+			local camera = SuperBigMap.OverviewCamera
+			if camera and type(camera.EnterAfterSurfaceUndergroundSwitch) == "function" then
+				SafeCall(camera.EnterAfterSurfaceUndergroundSwitch, map,
+					tostring(source_environment) .. "->" .. tostring(target_environment))
+			end
+		end
 	end
 end)
 
