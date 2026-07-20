@@ -3998,6 +3998,119 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	return false, "no terrain height is available for the expanded wonder footprint"
 end
 
+-- Deferred wonder GameInit/lifecycle work can run after materialization and reapply the map's
+-- 4/3 transform to the already-stretched object. Its rare anomaly then correctly spawns at the
+-- wonder's now double-scaled, unbuildable coordinate. The underground is still off-screen at this
+-- point, so the current-map ReseatAll transaction below cannot run yet. Restore only the object's
+-- recorded final XYZ (and its vanilla grids) immediately before SpawnsAnomalyOnCityInit executes;
+-- the already-verified terrain footprint remains unchanged.
+function WonderVerticalDiagnostics.RestoreExpectedPositionsBeforeAnomalySpawn(map, reason)
+	if type(map) ~= "table" or type(map.mapdata) ~= "table"
+		or map.mapdata.Environment ~= "Underground" then
+		return false, { error = "target is not an underground map" }
+	end
+	local ratios, ratio_error = DeferredWonderScaleRatios(map)
+	local point_fn = Global("point")
+	if type(ratios) ~= "table" or type(point_fn) ~= "function"
+		or type(map.SuspendPassEdits) ~= "function"
+		or type(map.ResumePassEdits) ~= "function" then
+		return false, { error = tostring(ratio_error or "wonder reseat APIs unavailable") }
+	end
+	local candidates, details = {}, {}
+	for _, wonder in ipairs(ArtefactMapGet(map, "UndergroundWonder")) do
+		local target_z = tonumber(wonder.SuperBigMapWonderFlattenZ)
+		if type(target_z) == "number" then
+			local target_x, target_y = WonderVerticalDiagnostics.ExactStretchedWonderXY(
+				wonder, map, ratios)
+			target_x = target_x or tonumber(wonder.SuperBigMapWonderExpectedX)
+			target_y = target_y or tonumber(wonder.SuperBigMapWonderExpectedY)
+			local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+			local before_x, before_y = PointXY(pos)
+			local before_z = WonderVerticalDiagnostics.SafePointZ(pos)
+			if type(target_x) ~= "number" or type(target_y) ~= "number"
+				or type(before_x) ~= "number" or type(before_y) ~= "number"
+				or type(wonder.SetPos) ~= "function" then
+				return false, { error = "buried wonder expected/live position unavailable for "
+					.. tostring(wonder.class) }
+			end
+			local wrong = before_x ~= target_x or before_y ~= target_y or before_z ~= target_z
+			candidates[#candidates + 1] = {
+				wonder = wonder, target_x = target_x, target_y = target_y, target_z = target_z,
+				before_x = before_x, before_y = before_y, before_z = before_z, wrong = wrong,
+			}
+		end
+	end
+	local stats = {
+		reason = tostring(reason or "before rare-anomaly spawn"),
+		checked = #candidates, corrected = 0, grid_migrations = 0,
+	}
+	if #candidates == 0 then
+		stats.error = "no stretched underground wonders"
+		return false, stats
+	end
+
+	local correction_reason = "SuperBigMap_PreWonderAnomalyReseat"
+	local suspended = false
+	local ok, correction_error = pcall(function()
+		map:SuspendPassEdits(correction_reason)
+		suspended = true
+		for _, candidate in ipairs(candidates) do
+			local wonder = candidate.wonder
+			if candidate.wrong then
+				local had_grids = wonder.grids_applied == true
+				if had_grids then
+					if type(wonder.RemoveFromGrids) ~= "function"
+						or type(wonder.ApplyToGrids) ~= "function" then
+						error("wonder grid migration unavailable for " .. tostring(wonder.class))
+					end
+					wonder:RemoveFromGrids()
+				end
+				wonder:SetPos(point_fn(
+					candidate.target_x, candidate.target_y, candidate.target_z))
+				if had_grids then
+					wonder:ApplyToGrids()
+					stats.grid_migrations = stats.grid_migrations + 1
+				end
+				stats.corrected = stats.corrected + 1
+			end
+		end
+	end)
+	local resume_ok, resume_error = true, nil
+	if suspended then
+		resume_ok, resume_error = pcall(
+			map.ResumePassEdits, map, correction_reason, ok ~= true)
+	end
+	if not ok or not resume_ok then
+		stats.error = not ok and tostring(correction_error)
+			or ("ResumePassEdits failed: " .. tostring(resume_error))
+		LoadingStep("underground pre-anomaly wonder reseat", stats, map)
+		return false, stats
+	end
+
+	local failures = 0
+	for _, candidate in ipairs(candidates) do
+		local wonder = candidate.wonder
+		local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+		local after_x, after_y = PointXY(pos)
+		local after_z = WonderVerticalDiagnostics.SafePointZ(pos)
+		local valid = after_x == candidate.target_x and after_y == candidate.target_y
+			and after_z == candidate.target_z
+		if not valid then failures = failures + 1 end
+		wonder.SuperBigMapWonderPreAnomalyReseatDone = valid and true or nil
+		details[#details + 1] = tostring(wonder.class)
+			.. "@" .. tostring(candidate.before_x) .. "," .. tostring(candidate.before_y)
+			.. "," .. tostring(candidate.before_z)
+			.. "->" .. tostring(after_x) .. "," .. tostring(after_y) .. "," .. tostring(after_z)
+			.. ":target=" .. tostring(candidate.target_x) .. ","
+			.. tostring(candidate.target_y) .. "," .. tostring(candidate.target_z)
+			.. ":valid=" .. tostring(valid)
+	end
+	stats.failures = failures
+	stats.details = table.concat(details, ";")
+	LoadingStep("underground pre-anomaly wonder reseat", stats, map)
+	return failures == 0, stats
+end
+
 -- Vanilla leaves a newly spawned buried wonder at InvalidZ and flattens its terrain immediately.
 -- That is safe while vanilla generates the current underground map: the object resolves against
 -- the freshly flattened floor. SBM materializes the wonders while the underground is off-screen.
@@ -7432,6 +7545,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				-- CityInitialized ran before deferred wonder construction, so restore the exact vanilla
 				-- SpawnsAnomalyOnCityInit action now that its unobstructed-position query can use the
 				-- authoritative underground grids. This covers all present buried-wonder classes.
+				SetLoadingPhase("Restoring buried-wonder positions")
+				local pre_anomaly_reseat_token = LoadingBegin(
+					"underground reseat wonders before rare anomalies", map)
+				local pre_anomaly_reseat_ok, pre_anomaly_reseat_stats =
+					WonderVerticalDiagnostics.RestoreExpectedPositionsBeforeAnomalySpawn(
+						map, "after final grids immediately before rare-anomaly spawn")
+				LoadingEnd(pre_anomaly_reseat_token, pre_anomaly_reseat_stats,
+					pre_anomaly_reseat_ok == true)
+				if pre_anomaly_reseat_ok ~= true then
+					error("buried-wonder pre-anomaly reseat failed: "
+						.. tostring(pre_anomaly_reseat_stats
+							and pre_anomaly_reseat_stats.error or "unknown error"))
+				end
 				SetLoadingPhase("Activating underground wonder anomalies")
 				local wonder_anomaly_token = LoadingBegin(
 					"underground activate buried wonder anomalies", map)
