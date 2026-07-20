@@ -10,32 +10,6 @@
 local config = {}
 
 -- ============================================================================
--- OPT-IN DIAGNOSTICS
--- ============================================================================
--- Master gate for every optional log/audit channel. Keep this disabled for normal releases.
-config.DebugLoggingEnabled = false
--- Exhaustive enrichment/Elevator audit. When enabled, the log contains every native source
--- marker, its proportional destination, every final native/top-up marker, per-family targets,
--- per-sector density, placement validity, repulsion results, and the tokenized Elevator supply
--- transaction. This is intentionally off for ordinary play because a complete marker dump is
--- verbose and performs extra read-only validation passes.
-config.DebugEnrichmentAudit = false
--- Focused runtime trace for manually sending a rover through an Elevator. Records interaction
--- dispatch, entrance/path availability, linked counterpart state, building-use entry, map transfer,
--- and final rover position without enabling the much larger enrichment audit above.
-config.DebugElevatorTraversal = false
--- Detailed load profiler. Records lifecycle milestones, every private random-map procedure,
--- source allocation/migration, surface and underground stretch phases, individual phase durations,
--- cumulative totals, and measured diagnostic-print overhead. It never sleeps or changes ordering.
-config.DebugLoadingTimings = false
--- Exhaustive underground decoration transform trace. When enabled, every decoration that the
--- stretch pass may move gets a stable audit index plus PRE and POST records containing object
--- identity, parent attachment, XYZ, expected proportional XYZ, terrain height/type, passability,
--- and buildable state. This can add thousands of log lines and materially slow the diagnostic
--- run, so disable it again after the underground placement investigation.
-config.DebugUndergroundDecorationPositions = false
-
--- ============================================================================
 -- MAIN LAYOUT
 -- ============================================================================
 -- The mod has one supported layout: generate a native vanilla source, stretch it
@@ -564,6 +538,9 @@ if type(SuperBigMap) ~= "table" then
 	SuperBigMap = {}
 	rawset(_G, "SuperBigMap", SuperBigMap)
 end
+-- The optional development logger was retired from the release. Clear an older in-process copy
+-- during a hot reload so no stale diagnostic closure can emit after this configuration is loaded.
+SuperBigMap.Diagnostics = nil
 
 local function as_bool(value)
 	return value == true
@@ -619,13 +596,6 @@ local expansion_step_21 = expansion_step_03
 
 -- Lifecycle / master
 C.ENABLE_MOD = true
-local debug_logging_enabled = as_bool(config.DebugLoggingEnabled)
-C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
-C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
-C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
-C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
-C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
-	and as_bool(config.DebugUndergroundDecorationPositions)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.

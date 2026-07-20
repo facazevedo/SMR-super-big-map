@@ -477,6 +477,28 @@ local function ResetOverviewCamera(map, transition_time, source)
 	return false
 end
 
+-- Vanilla hides a city's exploration decals when that map is left and restores them from
+-- CurrentMapChangeDone only when the interface already reports overview mode at that exact
+-- boundary. During an Underground -> Surface switch the destination city and interface can settle
+-- in the opposite order, leaving the camera in overview with hidden sector lines. Repair this at
+-- the confirmed overview boundary for the exact destination city. Both operations are idempotent:
+-- recreate only missing decals, then run the patched vanilla show helper.
+local function EnsureSurfaceSectorGridVisible(map, source)
+	map = ResolveLiveMap(map)
+	if not IsModMap(map) or not map.mapdata or map.mapdata.Environment ~= "Surface" then
+		return false
+	end
+	local city = map.City
+	if not city then return false end
+	local sectors = SuperBigMap.SectorExploration
+	if sectors and type(sectors.RefreshSectorDecals) == "function" then
+		SafeCall(sectors.RefreshSectorDecals, city)
+	end
+	local show = Global("ShowExploration_Sectors")
+	if type(show) ~= "function" then return false end
+	return pcall(show, city, 0) == true
+end
+
 -- Put the vanilla overview FOV back (the widened value is a global const, so it
 -- must be actively restored when overview is entered on a non-mod map). Leaves the
 -- saved-original markers in place so a later mod-map entry can re-widen.
@@ -529,6 +551,9 @@ local function RefreshOverviewCamera(source, expected_map)
 	if not (Global("IsOverviewMode") and IsOverviewMode()) then
 		return false
 	end
+	-- This covers the already-in-overview switch path, where vanilla does not reopen the
+	-- OverviewModeDialog and consequently has no second chance to show the target city's decals.
+	EnsureSurfaceSectorGridVisible(map, source)
 
 	if render then
 		render.Apply(true)
@@ -660,6 +685,10 @@ function OverviewCamera.EnterAfterSurfaceUndergroundSwitch(map, source)
 						entered = SafeCall(igi.IsInMode, igi, "overview") == true
 					end
 					if entered then
+						-- Vanilla's earlier CurrentMapChangeDone visibility test may have run before
+						-- the interface adopted or restored overview mode for this destination city.
+						EnsureSurfaceSectorGridVisible(map,
+							"map-switch:" .. tostring(source or "Surface<->Underground"))
 						ScheduleOverviewCameraRefresh(map,
 							"map-switch:" .. tostring(source or "Surface<->Underground"))
 						return
