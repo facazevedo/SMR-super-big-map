@@ -601,13 +601,43 @@ local function CloseUndergroundBlur()
 	return false
 end
 
+-- Create the sharp status dialog before waiting for the blurred desktop capture. Creating both
+-- windows in the same synchronous UI pass means the first rendered blurred frame already contains
+-- the "Building underground map" presentation; the two capture-boundary waits are therefore no
+-- longer an empty blur-only delay. The live dialog stays above the later frozen image.
+local function EnsureLoadingDialog()
+	if LoadingBoxValid() then return true end
+	local term = Global("terminal")
+	if not (term and term.desktop) then return false end
+	local create_box = Global("CreateMessageBox")
+	if type(create_box) ~= "function" then return false end
+	local untranslated = Global("Untranslated")
+	local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
+	-- Build a normal message dialog (image + title + body + footer button), just like the game's
+	-- own welcome popup. The footer button remains enabled so it keeps the vanilla bright-gold
+	-- appearance. ExpansionLoadingEnd closes it automatically; if the player closes it first, the
+	-- watcher recreates it while expansion remains active.
+	local title, body, status = LoadingPresentationText()
+	local ok, box = pcall(create_box, nil, wrap(title), wrap(body), wrap(status))
+	if ok and box then
+		if type(box.SetZOrder) == "function" then
+			pcall(box.SetZOrder, box, LOADING_DIALOG_ZORDER)
+		end
+		loading_box = box
+		loading_box_presentation = loading_presentation
+		LoadingUiAudit("DIALOG_READY")
+	end
+	return LoadingBoxValid() == true
+end
+
 -- Blur the complete live desktop first, including the HUD and every open panel, then capture that
 -- already-blurred composition and immediately remove the live XBlurRect. Only the frozen XImage
 -- survives the hidden surface -> underground -> surface switch. This matters because XBlurRect
 -- samples the engine backbuffer rather than sibling windows; keeping it alive across a map switch
 -- makes it correctly sample the temporarily empty (black) scene instead of the retained image.
--- Nothing in the gameplay interface is hidden or moved, and the loading dialog is created only
--- after the capture so it remains sharp above the frozen blurred frame.
+-- Nothing in the gameplay interface is hidden or moved. The loading dialog is created in the same
+-- pass as the blur and remains as a live, sharp window above the frozen frame. If the screenshot API
+-- includes UI windows, its identical static copy is fully covered by that live dialog.
 local function EnsureUndergroundBackdrop()
 	if loading_presentation ~= "underground" then return true end
 	if UndergroundBackdropValid() then return true end
@@ -654,9 +684,16 @@ local function EnsureUndergroundBackdrop()
 			})
 		end
 		if not BlurBackgroundValid() then return false end
+		-- Do this before either render-boundary wait. The blur and dialog consequently become visible
+		-- together on the first frame instead of showing an unexplained blur while capture catches up.
+		if not EnsureLoadingDialog() then
+			LoadingUiAudit("EARLY_DIALOG_CREATE_DEFERRED")
+			return false
+		end
 
 		-- Give the blur two complete UI render boundaries before CaptureScreenshotImage samples the
-		-- desktop. The resulting resource contains the blurred HUD and panels as ordinary pixels.
+		-- desktop. The dialog is already visible throughout this wait. The resulting resource contains
+		-- the blurred HUD and panels as ordinary pixels.
 		local preblur_frames_ok = WaitRealTimeFrames(2)
 		LoadingUiAudit("PREBLUR_CAPTURE_BEGIN", {
 			frame_wait_ok = tostring(preblur_frames_ok),
@@ -785,6 +822,9 @@ local function SetWelcomeLoading(active)
 	if active then
 		-- Hide the welcome popup while we expand (it stays open/modal underneath, invisible).
 		HideWelcomePopupInstant()
+		-- Open the presentation before preparing its retained backdrop. EnsureUndergroundBackdrop may
+		-- wait for two rendered frames, and those frames must already show the full dialog.
+		local dialog_ready = EnsureLoadingDialog()
 		-- Keep the gameplay interface exactly as it is. The retained screenshot and full-desktop
 		-- XBlurRect place the HUD, infopanels, pins, and any other open UI behind a stable blur; only
 		-- the loading dialog is raised above it and remains sharp.
@@ -795,33 +835,10 @@ local function SetWelcomeLoading(active)
 		-- Take over visually as soon as the desktop exists, even if the engine loading artwork
 		-- remains open. Hiding rather than closing it preserves engine synchronization.
 		local engine_ready = HideEngineLoadingScreenInstant()
-		if engine_ready and DesktopReady() and not LoadingBoxValid() then
-			local create_box = Global("CreateMessageBox")
-			if type(create_box) == "function" then
-				local untranslated = Global("Untranslated")
-				local wrap = (type(untranslated) == "function") and untranslated or function(s) return s end
-				-- Build a normal message dialog (image + title + body + footer button), just like
-				-- the game's own welcome popup. The footer button reads "Please wait." and is left
-				-- ENABLED so it renders in the bright GOLD of the vanilla Close button (a disabled
-				-- action greys out). The player never NEEDS to press it -- ExpansionLoadingEnd tears
-				-- the box down when the map is ready -- and if it IS pressed, the watch loop simply
-				-- recreates the box next tick, so the welcome popup can't be reached mid-expansion.
-				-- text (idText, middle) = the static tagline; ok_text (footer button, bottom) =
-				-- the live status line. So the status sits at the bottom-most position.
-				local title, body, status = LoadingPresentationText()
-				local ok, box = pcall(create_box, nil,
-					wrap(title), wrap(body), wrap(status))
-				if ok and box then
-					if type(box.SetZOrder) == "function" then
-						pcall(box.SetZOrder, box, LOADING_DIALOG_ZORDER)
-					end
-					loading_box = box
-					loading_box_presentation = loading_presentation
-					LoadingUiAudit("DIALOG_READY")
-				end
-			end
+		if engine_ready and DesktopReady() and not dialog_ready then
+			dialog_ready = EnsureLoadingDialog()
 		end
-		return LoadingBoxValid() == true
+		return dialog_ready and LoadingBoxValid() == true
 	else
 		local underground_teardown = loading_presentation == "underground"
 			or FrozenBackgroundValid() or BlurBackgroundValid()
