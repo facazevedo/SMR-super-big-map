@@ -444,24 +444,12 @@ local function SectorName(row, col, count, orient)
 	return IndexToLetters(col) .. tostring(row - 1)
 end
 
--- Visible labels are intentionally separate from MapSector.id. Vanilla names the
--- letter axis from right to left; keep that stable internal identity for queues,
--- saves, and diagnostics, but present the expanded grid in the conventional
--- left-to-right order requested by the player. OverviewOrientation changes which
--- world axis is horizontal, so mirror the letter component for each rotation while
--- leaving vanilla's row-number direction untouched.
+-- Keep visible labels separate from MapSector.id so loaded grids can be corrected
+-- without changing their serialized identity. The overview camera reverses/rotates
+-- the world axes according to OverviewOrientation; SectorName already applies the
+-- matching transform, which puts A on the LEFT of the rendered overview.
 local function SectorDisplayName(row, col, count, orient)
-	if orient == 0 then
-		return IndexToLetters(col) .. tostring(row - 1)
-	elseif orient == 90 then
-		return IndexToLetters(row) .. tostring(count - col)
-	elseif orient == 180 then
-		return IndexToLetters(count - col + 1) .. tostring(count - row)
-	elseif orient == 270 then
-		return IndexToLetters(count - row + 1) .. tostring(col - 1)
-	end
-
-	return IndexToLetters(col) .. tostring(row - 1)
+	return SectorName(row, col, count, orient)
 end
 
 local function SectorBounds(layout, col, row)
