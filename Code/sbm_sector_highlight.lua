@@ -53,7 +53,8 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 	local const_tbl = Engine.Global("const")
 	local overview_scale = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraScaleUp
 	local overview_opacity = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraOpacityUp
-	local always_show_sign = (SuperBigMap.Config or {}).ALWAYS_SHOW_ENTRANCE_SIGN ~= false
+	local normal_scale = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraScaleDown
+	local normal_opacity = type(const_tbl) == "table" and const_tbl.SignsOverviewCameraOpacityDown
 	local seen = {}
 	local stats = {
 		badges = 0,
@@ -76,18 +77,17 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		if seen[sign] or not valid(sign) then return end
 		seen[sign] = true
 		stats.badges = stats.badges + 1
-		if overview_active == true then
-			if type(overview_scale) == "number" then invoke(sign, "SetScale", overview_scale) end
-			if type(overview_opacity) == "number" then invoke(sign, "SetOpacity", overview_opacity) end
-			invoke(sign, "SetNoDepthTest", true)
-			invoke(sign, "SetVisible", true)
-		elseif always_show_sign then
-			-- Keep the normal-camera scale chosen by vanilla, but retain the mod option that
-			-- prevents the terrain from hiding the entrance badge at close zoom.
-			invoke(sign, "SetNoDepthTest", true)
-			invoke(sign, "SetVisible", true)
-			invoke(sign, "SetOpacity", 100)
+		local overview = overview_active == true
+		local scale = overview and overview_scale or normal_scale
+		local opacity = overview and overview_opacity or normal_opacity
+		if type(scale) == "number" then invoke(sign, "SetScale", scale) end
+		if type(opacity) == "number" then invoke(sign, "SetOpacity", opacity) end
+		invoke(sign, "SetNoDepthTest", overview)
+		local signs_visible = Engine.Global("g_SignsVisible") ~= false
+		if not overview and Engine.Global("g_ResourceIconsVisible") == false then
+			signs_visible = false
 		end
+		invoke(sign, "SetVisible", signs_visible and sign.revealed ~= false)
 	end
 	local function prepare_passage(obj)
 		if seen[obj] or not valid(obj) then return end
@@ -349,10 +349,10 @@ local function Install()
 		return r1, r2
 	end
 
-	-- Preserve the vanilla animation. The lifecycle's CameraTransitionEnd handler applies
-	-- the persistent close-camera badge option once the engine reports completion, avoiding
-	-- the old transition-duration + 60 ms guess. On overview entry, initialize immediately
-	-- as well so a late-migrated entrance never waits for a second zoom event.
+	-- Preserve the vanilla animation. The lifecycle's CameraTransitionEnd handler reapplies the
+	-- exact final vanilla scale/opacity/depth state once the engine reports completion. On overview
+	-- entry, initialize immediately as well so a late-migrated entrance never waits for a second
+	-- zoom event.
 	if type(overview_class.ScaleSmallObjects) == "function"
 		and overview_class.ScaleSmallObjects ~= State.scale_small_objects_wrapper then
 		State.original_scale_small_objects = overview_class.ScaleSmallObjects

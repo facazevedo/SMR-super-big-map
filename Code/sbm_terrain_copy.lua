@@ -3003,19 +3003,6 @@ local function MoveEntranceVisualsToScale(map)
 		if ok_set and obj.SuperBigMapDeferredElevatorPassage then
 			obj.SuperBigMapDeferredElevatorPassage = nil
 		end
-		-- ENTRANCE SIGN always visible (user report: badge vanishes when the camera comes
-		-- close). Vanilla's ScaleSmallObjects sets these signs depth-tested (disableZ=false) in
-		-- the close/normal camera, so terrain occludes the ground badge; in overview it uses
-		-- SetNoDepthTest(true) to render on top. Make the entrance sign ALWAYS render on top +
-		-- visible so it shows at every zoom. (ScaleSmallObjects re-asserts depth test on
-		-- overview transitions -- that is re-corrected by the OverviewModeDialog.ScaleSmallObjects
-		-- wrapper in sbm_sector_highlight.)
-		if ok_set and cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true)
-			and IsKindOfSafe(obj, "SurfaceUndergroundTunnelSign") then
-			if type(obj.SetNoDepthTest) == "function" then pcall(obj.SetNoDepthTest, obj, true) end
-			if type(obj.SetVisible) == "function" then pcall(obj.SetVisible, obj, true) end
-			if type(obj.SetOpacity) == "function" then pcall(obj.SetOpacity, obj, 100) end
-		end
 	end
 	-- Sweep 1: everything the skip-list recognizes as an underground-access object.
 	pcall(map.MapForEach, map, "map", "CObject", function(obj)
@@ -3231,11 +3218,6 @@ local function MoveEntranceVisualsToScale(map)
 				edge_distance = side.edge_distance,
 				center_distance = side.center_distance,
 			}, map)
-			if cfg_bool("ALWAYS_SHOW_ENTRANCE_SIGN", true) then
-				if type(sign.SetNoDepthTest) == "function" then pcall(sign.SetNoDepthTest, sign, true) end
-				if type(sign.SetVisible) == "function" then pcall(sign.SetVisible, sign, true) end
-				if type(sign.SetOpacity) == "function" then pcall(sign.SetOpacity, sign, 100) end
-			end
 		else
 			CaptureEntranceBadgePosition(marker, sign, "initial position; anchor SetPos failed")
 		end

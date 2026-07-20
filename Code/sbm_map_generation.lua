@@ -8422,7 +8422,7 @@ end
 -- at its first safe boundary, run the authoritative map-switch gate on a real-time thread, and only
 -- resume vanilla elevator use after CurrentMapChangeDone has restored the underground counterpart.
 -- This covers rovers, colonists, and any other Unit descendant that uses the vanilla command.
-local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 9
+local DEFERRED_ELEVATOR_ACCESS_PATCH_VERSION = 10
 local deferred_elevator_access_by_unit = setmetatable({}, { __mode = "k" })
 
 local function DeferredUndergroundTargetForElevator(elevator)
@@ -8807,6 +8807,21 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	}, TraversalObjectMap(unit))
 
 	create_thread(function()
+		-- The two map switches below are a hidden preparation round trip, not the rover's real
+		-- Surface -> Underground transfer. Keep this token set through both synchronous
+		-- CurrentMapChangeDone handlers and the exact camera restore so lifecycle cannot schedule
+		-- overview on either intermediate destination. The original UseElevator resumes only after
+		-- this token is cleared; its later player-facing transfer therefore still opens overview.
+		State.deferred_elevator_hidden_roundtrip_active = request_id
+		State.overview_switch_source_map = nil
+		State.overview_switch_source_environment = nil
+		local function finish_hidden_roundtrip()
+			if State.deferred_elevator_hidden_roundtrip_active == request_id then
+				State.deferred_elevator_hidden_roundtrip_active = nil
+			end
+			State.overview_switch_source_map = nil
+			State.overview_switch_source_environment = nil
+		end
 		-- Own one outer reference across the complete hidden round trip. The preparation pipeline
 		-- acquires/releases a nested reference of its own; retaining this one prevents either the
 		-- underground view or the intermediate engine loading art from becoming visible before the
@@ -8849,6 +8864,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 			or (return_ok and not camera_ok and tostring(camera_reason))
 			or (target_ready and "the original map view could not be restored")
 			or "the underground first-access gate did not complete"
+		finish_hidden_roundtrip()
 		if loading_started and type(end_loading) == "function" then
 			-- This outer reference owns the complete hidden target-and-return round trip. All nested
 			-- expansion work is complete now, so force the custom dialog closed even if an exceptional
@@ -8903,6 +8919,7 @@ local function RestoreDeferredUndergroundElevatorAccess()
 	end
 	State.deferred_elevator_access_patches = nil
 	State.deferred_elevator_access_patch_version = nil
+	State.deferred_elevator_hidden_roundtrip_active = nil
 end
 
 local function PatchDeferredUndergroundElevatorAccess(source)

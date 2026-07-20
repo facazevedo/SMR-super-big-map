@@ -423,11 +423,8 @@ config.StretchMoveEntranceVisuals = true
 -- Keep the underground-entrance badge seated on the live terrain directly under its side
 -- anchor. Nearby relief must not raise the badge; reveal-time sign creation and overview
 -- refreshes may update appearance but cannot change its final XY or lift it off the ground.
--- Keep the underground-entrance badge visible at ALL zoom levels. Vanilla renders these
--- signs depth-tested in the close/normal camera (so terrain occludes them; the badge
--- "disappears when you come closer") and on-top only in overview. When true the mod forces
--- the entrance sign to no-depth-test + visible always, so it shows at every zoom.
-config.AlwaysShowEntranceSign = true
+-- Its visibility, scale, and depth testing remain vanilla: depth-tested in normal view and
+-- no-depth-test only while overview is active, exactly like the resource badges.
 -- DecorTopUp restores per-area decor density by cloning each moved decoration (adds ~5-6k extra
 -- objects), but that clone burst noticeably slows the load. OFF by default -- the spread decor is
 -- usually dense enough; set true if the map feels sparse and you'll accept the slower load.
@@ -774,7 +771,6 @@ C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 	and as_bool(config.StretchMoveEntranceVisuals)
-C.ALWAYS_SHOW_ENTRANCE_SIGN = as_bool(config.AlwaysShowEntranceSign)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)

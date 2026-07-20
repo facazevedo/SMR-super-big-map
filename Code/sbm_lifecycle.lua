@@ -944,6 +944,14 @@ RegisterOnce("CurrentMapChange", function(map_slot, map)
 	if not active() or editor_active() then return end
 	local State = SuperBigMap.State or {}
 	if State.vanilla_source_migration_active == true then return end
+	-- First-time rover access temporarily switches to the underground and back solely to build it.
+	-- That hidden round trip owns an exact camera snapshot/restore and must not be interpreted as a
+	-- player-facing Surface <-> Underground transition.
+	if State.deferred_elevator_hidden_roundtrip_active ~= nil then
+		State.overview_switch_source_map = nil
+		State.overview_switch_source_environment = nil
+		return
+	end
 	local environment = map and map.mapdata and map.mapdata.Environment
 	if IsModMap(map) and (environment == "Surface" or environment == "Underground") then
 		State.overview_switch_source_map = map
@@ -1032,7 +1040,8 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		NormalizeVanillaRuntimeState(map, "CurrentMapChangeDone non-mod map")
 	end
 	local State = SuperBigMap.State or {}
-	if State.vanilla_source_migration_active ~= true then
+	if State.vanilla_source_migration_active ~= true
+		and State.deferred_elevator_hidden_roundtrip_active == nil then
 		local source_map = State.overview_switch_source_map
 		local source_environment = State.overview_switch_source_environment
 		State.overview_switch_source_map = nil
@@ -1048,6 +1057,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 					tostring(source_environment) .. "->" .. tostring(target_environment))
 			end
 		end
+	else
+		-- Never let an earlier real transition's source survive into a hidden preparation switch.
+		State.overview_switch_source_map = nil
+		State.overview_switch_source_environment = nil
 	end
 	-- Internal native-backing generation visits the underground and lets vanilla set this
 	-- process-global renderer value to 90. The player-facing map is current again now, so derive
