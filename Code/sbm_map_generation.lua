@@ -7457,6 +7457,23 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground entrance connectivity could not be initialized (seeds="
 						.. tostring(reach_state and #reach_state.seeds or 0) .. ")")
 				end
+				if type(deposits.EnsureDeferredUndergroundWonderAnomaliesReachable)
+					~= "function" then
+					error("underground wonder-anomaly reachability repair is unavailable")
+				end
+				SetLoadingPhase("Positioning buried-wonder anomalies on reachable terrain")
+				local wonder_reachability_token = LoadingBegin(
+					"underground repair buried wonder anomaly reachability", map)
+				local wonder_reachability_ok, wonder_reachability_stats =
+					deposits.EnsureDeferredUndergroundWonderAnomaliesReachable(map, true)
+				LoadingEnd(wonder_reachability_token, wonder_reachability_stats,
+					wonder_reachability_ok == true)
+				if wonder_reachability_ok ~= true then
+					error("underground wonder-anomaly reachability repair left "
+						.. tostring(wonder_reachability_stats
+							and wonder_reachability_stats.unresolved or "unknown")
+						.. " unresolved markers")
+				end
 			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
 			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
 			-- density too. The factor is correct per buildable area because the buildable floor
@@ -7548,6 +7565,17 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						error("underground wonder-enrichment exclusion failed: overlaps="
 							.. tostring(exclusion_stats and exclusion_stats.overlaps or "unknown")
 							.. " error=" .. tostring(exclusion_stats and exclusion_stats.error or ""))
+					end
+					local wonder_reachability_audit_token = LoadingBegin(
+						"underground final buried wonder anomaly reachability audit", map)
+					local wonder_reachability_audit_ok, wonder_reachability_audit_stats =
+						deposits.EnsureDeferredUndergroundWonderAnomaliesReachable(map, false)
+					LoadingEnd(wonder_reachability_audit_token,
+						wonder_reachability_audit_stats, wonder_reachability_audit_ok == true)
+					if wonder_reachability_audit_ok ~= true then
+						error("underground final wonder-anomaly reachability audit failed: unresolved="
+							.. tostring(wonder_reachability_audit_stats
+								and wonder_reachability_audit_stats.unresolved or "unknown"))
 					end
 					local wonder_audit_token = LoadingBegin(
 						"underground final buried wonder anomaly audit", map)
