@@ -83,6 +83,44 @@ local function cfg_bool(key, default)
 	return default
 end
 
+-- Establish the exact vanilla darkness renderer state as a synchronous transition boundary.
+-- ChangeCurrentMapSlot changes the engine map before it emits CurrentMapChangeDone; relying only
+-- on that later message leaves a render-thread-sized window in which a newly current Underground
+-- map can inherit Surface's value (0). Call this only while a loading/backdrop cover is already
+-- owned. Correctness depends on the observed renderer value, never a delay or frame count.
+function SuperBigMap.EnsureVanillaDarknessReady(map)
+	if not map or not map.mapdata then return false, "map data unavailable" end
+	local environment = map.mapdata.Environment
+	if environment ~= "Surface" and environment ~= "Underground" then
+		return true, "environment does not use underground darkness"
+	end
+	local expected = environment == "Underground" and 90 or 0
+	local platform = Global("Platform")
+	local is_editor_active = Global("IsEditorActive")
+	if type(platform) == "table" and platform.editor == true
+		and type(is_editor_active) == "function"
+		and SafeCall(is_editor_active) == true then
+		expected = 0
+	end
+	local update_reveal = Global("UpdateRevealDarkness")
+	local update_ok = type(update_reveal) == "function"
+		and pcall(update_reveal, map) or false
+	local hr = Global("hr")
+	if type(hr) ~= "table" then return false, "darkness renderer settings unavailable" end
+	-- UpdateRevealDarkness is authoritative. The scalar assignment is its exact vanilla effect and
+	-- is a fail-safe if another handler replaced/failed the function during an in-session reload.
+	if tonumber(hr.EnableDarknessReveal) ~= expected then
+		hr.EnableDarknessReveal = expected
+	end
+	local actual = tonumber(hr.EnableDarknessReveal)
+	if actual ~= expected then
+		return false, "expected darkness value " .. tostring(expected)
+			.. ", observed " .. tostring(actual)
+	end
+	return true, update_ok and "vanilla darkness state ready"
+		or "vanilla darkness scalar restored directly"
+end
+
 -- Update the loading box's live status line (see sbm_loading_ui SetLoadingPhase). Safe no-op
 -- if the loading UI isn't present; " Please wait." is appended by SetLoadingPhase.
 local function SetLoadingPhase(message)
@@ -7729,9 +7767,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			pcall(SuperBigMap.ExpansionLoadingBegin, "underground")
 			SetLoadingPhase("Expanding the underground map")
 		end
-		-- Yield once before terrain work so the dedicated first-access dialog is actually painted.
-		local sleep = Global("Sleep")
-		if type(sleep) == "function" then sleep(100) end
+		-- ExpansionLoadingBegin establishes its UI at render boundaries. Do not gate correctness on
+		-- a fixed millisecond delay; the caller's retained cover remains authoritative throughout.
 		local pause_ild = Global("PauseInfiniteLoopDetection")
 		local resume_ild = Global("ResumeInfiniteLoopDetection")
 		if type(pause_ild) == "function" then SafeCall(pause_ild, "SuperBigMapUndergroundStretch") end
@@ -8877,10 +8914,24 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		local begin_loading = SuperBigMap.ExpansionLoadingBegin
 		local end_loading = SuperBigMap.ExpansionLoadingEnd
 		local loading_started = false
+		local fallback_screen_open = false
+		local fallback_screen_id = "idSuperBigMapElevatorUndergroundPreparation"
 		if type(begin_loading) == "function" then
-			loading_started = pcall(begin_loading, "underground")
-			local sleep = Global("Sleep")
-			if type(sleep) == "function" then sleep(100) end
+			local begin_ok, visible = pcall(begin_loading, "underground")
+			loading_started = begin_ok
+			if visible ~= true then
+				-- If the custom frozen backdrop cannot be constructed on this renderer, retain
+				-- vanilla's loading screen instead. Proceed only after its UI render mode is active.
+				local open_screen = Global("LoadingScreenOpen")
+				local wait_render = Global("WaitRenderMode")
+				if type(open_screen) == "function" then
+					fallback_screen_open = pcall(
+						open_screen, fallback_screen_id, return_map.slot)
+					if fallback_screen_open and type(wait_render) == "function" then
+						pcall(wait_render, "ui")
+					end
+				end
+			end
 		end
 		-- Our persistent custom dialog already covers both internal switches, so suppress the
 		-- vanilla map-switch artwork that would otherwise replace it for a frame.
@@ -8892,27 +8943,50 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 			and target.SuperBigMapUndergroundStretchDone == true
 			and Global("CurrentMap") == target
 		local return_ok, return_result = false, nil
+		local return_darkness_ok, return_darkness_reason = false,
+			"return map darkness was not prepared"
 		if target_ready then
-			return_ok, return_result = pcall(
-				gate, return_map.slot, false, "idChangeCurrentMapSlot")
-			return_ok = return_ok and return_result ~= false and Global("CurrentMap") == return_map
+			-- The retained frozen surface covers this write. Prime Surface's vanilla value before
+			-- EngineSetCurrentMapSlot can expose it, then confirm the same value after the switch.
+			return_darkness_ok, return_darkness_reason =
+				SuperBigMap.EnsureVanillaDarknessReady(return_map)
+			if return_darkness_ok then
+				return_ok, return_result = pcall(
+					gate, return_map.slot, false, "idChangeCurrentMapSlot")
+				return_ok = return_ok and return_result ~= false
+					and Global("CurrentMap") == return_map
+				if return_ok then
+					return_darkness_ok, return_darkness_reason =
+						SuperBigMap.EnsureVanillaDarknessReady(return_map)
+				end
+			end
 		end
 		local camera_ok, camera_reason = false, "return map was not restored"
-		if return_ok then
+		if return_ok and return_darkness_ok then
 			WaitForDeferredSurfaceScene(return_map)
 			camera_ok, camera_reason = RestoreDeferredElevatorCamera(return_camera, return_map)
 		end
 		request.return_result = return_result
+		request.return_darkness_ok = return_darkness_ok
+		request.return_darkness_reason = return_darkness_reason
 		request.camera_ok = camera_ok
 		request.camera_reason = camera_reason
-		request.ok = target_ready and return_ok and camera_ok
+		request.ok = target_ready and return_ok and return_darkness_ok and camera_ok
 		request.reason = request.ok and "prepared underground and restored original view"
 			or (not call_ok and tostring(call_result))
 			or target.SuperBigMapUndergroundStretchFailed
+			or (target_ready and not return_darkness_ok and tostring(return_darkness_reason))
 			or (return_ok and not camera_ok and tostring(camera_reason))
 			or (target_ready and "the original map view could not be restored")
 			or "the underground first-access gate did not complete"
 		finish_hidden_roundtrip()
+		if fallback_screen_open then
+			local close_screen = Global("LoadingScreenClose")
+			if type(close_screen) == "function" then
+				pcall(close_screen, fallback_screen_id, return_map.slot)
+			end
+			fallback_screen_open = false
+		end
 		if loading_started and type(end_loading) == "function" then
 			-- This outer reference owns the complete hidden target-and-return round trip. All nested
 			-- expansion work is complete now, so force the custom dialog closed even if an exceptional
@@ -8949,6 +9023,8 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
 		camera_restored = tostring(request.camera_ok == true),
 		camera_reason = tostring(request.camera_reason),
+		return_darkness_ready = tostring(request.return_darkness_ok == true),
+		return_darkness_reason = tostring(request.return_darkness_reason),
 		reason = tostring(request.reason),
 	}, TraversalObjectMap(unit))
 	return request.ok == true, request.reason
@@ -9256,6 +9332,23 @@ local function PatchDeferredUndergroundAccess(source)
 		else
 			screen_open = false
 		end
+		-- Own one reference outside the nested underground pipeline. The pipeline releases only its
+		-- own reference when terrain work ends; this outer reference keeps either the custom frozen
+		-- backdrop or the still-open engine loading screen over the subsequent map switch until the
+		-- destination blanket has been synchronously confirmed.
+		local first_access_cover_started = false
+		local begin_first_access_cover = SuperBigMap.ExpansionLoadingBegin
+		local end_first_access_cover = SuperBigMap.ExpansionLoadingEnd
+		if type(begin_first_access_cover) == "function" then
+			first_access_cover_started = pcall(begin_first_access_cover, "underground")
+		end
+		local function release_first_access_cover()
+			if not first_access_cover_started then return end
+			first_access_cover_started = false
+			if type(end_first_access_cover) == "function" then
+				pcall(end_first_access_cover)
+			end
+		end
 
 		SetLoadingPhase("Preparing the underground map for first access")
 		local ok, err = RunUndergroundStretchIfEnabled(target, true)
@@ -9264,9 +9357,25 @@ local function PatchDeferredUndergroundAccess(source)
 				if type(close_screen) == "function" then close_screen(screen_id, map_slot) end
 				if type(wait_render) == "function" then wait_render("scene") end
 			end
+			release_first_access_cover()
 			show_failure(err or target.SuperBigMapUndergroundStretchFailed or "Preparation did not complete")
 			LoadingFinish("underground first-access preparation failed", target,
 				{ error = tostring(err or target.SuperBigMapUndergroundStretchFailed) }, false)
+			return false
+		end
+		-- The loading cover is already owned. Make the destination's vanilla blanket state a
+		-- prerequisite of exposing the completed map, rather than repairing it after a frame.
+		local darkness_ready, darkness_reason =
+			SuperBigMap.EnsureVanillaDarknessReady(target)
+		if darkness_ready ~= true then
+			if screen_open and type(close_screen) == "function" then
+				close_screen(screen_id, map_slot)
+			end
+			release_first_access_cover()
+			show_failure("Underground darkness initialization failed: "
+				.. tostring(darkness_reason))
+			LoadingFinish("underground first-access darkness preparation failed", target,
+				{ error = tostring(darkness_reason) }, false)
 			return false
 		end
 
@@ -9278,6 +9387,26 @@ local function PatchDeferredUndergroundAccess(source)
 		WonderVerticalDiagnostics.LogAll(target, "before_underground_map_switch")
 		local result = original(map_slot, screen_open and false or loading_screen, loading_screen_id)
 		WonderVerticalDiagnostics.LogAll(target, "immediately_after_underground_map_switch")
+		local darkness_confirmed, darkness_confirm_reason =
+			SuperBigMap.EnsureVanillaDarknessReady(target)
+		if darkness_confirmed and SuperBigMap.BuriedWonderDarkness
+			and type(SuperBigMap.BuriedWonderDarkness.Refresh) == "function" then
+			SuperBigMap.BuriedWonderDarkness.Refresh(
+				target, "first-access darkness-ready boundary")
+		end
+		if darkness_confirmed ~= true then
+			target.SuperBigMapUndergroundPreparationFailed = true
+			target.SuperBigMapUndergroundStretchFailed = tostring(darkness_confirm_reason)
+			if screen_open and type(close_screen) == "function" then
+				close_screen(screen_id, map_slot)
+			end
+			release_first_access_cover()
+			show_failure("Underground darkness finalization failed: "
+				.. tostring(darkness_confirm_reason))
+			LoadingFinish("underground map-switch darkness finalization failed", target,
+				{ error = tostring(darkness_confirm_reason) }, false)
+			return false
+		end
 		-- ChangeCurrentMapSlot only waits for scene mode; unlike a full ChangeMap it does not wait
 		-- for ResourceManager IO. Deferred wonders were created moments earlier, so keep our loading
 		-- screen alive until their first visible texture targets have become stable.
@@ -9300,6 +9429,7 @@ local function PatchDeferredUndergroundAccess(source)
 			target.SuperBigMapUndergroundPreparationFailed = true
 			target.SuperBigMapUndergroundStretchFailed = tostring(restored_result)
 			if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+			release_first_access_cover()
 			show_failure("Underground map finalization failed at the lifecycle boundary: "
 				.. tostring(restored_result))
 			LoadingFinish("underground map-switch finalization failed", target,
@@ -9307,11 +9437,14 @@ local function PatchDeferredUndergroundAccess(source)
 			return false
 		end
 		if screen_open and type(close_screen) == "function" then close_screen(screen_id, map_slot) end
+		release_first_access_cover()
 		LoadingFinish("underground first access complete", target, {
 			elevator_token = tostring(switch_restore_token_id),
 			elevator_token_status = tostring(after_token and after_token.status or "consumed-or-none"),
 			renderer_resources_settled = tostring(renderer_settled),
 			renderer_resource_wait = tostring(renderer_result),
+			darkness_ready = tostring(darkness_confirmed == true),
+			darkness_reason = tostring(darkness_confirm_reason),
 		}, true)
 		return result
 	end
@@ -9353,8 +9486,20 @@ local function HandleDeferredUndergroundMapChange(map_slot, map)
 		local ok, err = RunUndergroundStretchIfEnabled(map, true)
 		local renderer_settled, renderer_result = true, "not-run"
 		if ok == true then
-			renderer_settled, renderer_result = SettleUndergroundSceneResources(
-				map, "already-current underground recovery completed")
+			local darkness_ready, darkness_reason =
+				SuperBigMap.EnsureVanillaDarknessReady(map)
+			if darkness_ready ~= true then
+				ok, err = false, "underground darkness initialization failed: "
+					.. tostring(darkness_reason)
+			else
+				if SuperBigMap.BuriedWonderDarkness
+					and type(SuperBigMap.BuriedWonderDarkness.Refresh) == "function" then
+					SuperBigMap.BuriedWonderDarkness.Refresh(
+						map, "first-access recovery darkness-ready boundary")
+				end
+				renderer_settled, renderer_result = SettleUndergroundSceneResources(
+					map, "already-current underground recovery completed")
+			end
 		end
 		if screen_open and type(close_screen) == "function" then
 			close_screen(screen_id, map_slot)
