@@ -3310,6 +3310,57 @@ function WonderVerticalDiagnostics.ShapeVerticalStats(map, shape, object, target
 	return stats
 end
 
+-- The lifecycle reseat only needs to know whether every terrain sample still equals the captured
+-- vanilla flatten height. Keep the exhaustive terrain/buildable statistics for the opt-in geometry
+-- diagnostic channel, but use one protected shape traversal with an early mismatch exit during
+-- ordinary play. This retains the authoritative full-footprint check while avoiding thousands of
+-- per-hex protected calls when no repair is necessary.
+function WonderVerticalDiagnostics.ShapeTerrainTargetStats(map, shape, object, target_z)
+	local stats = {
+		samples = 0, terrain_min_z = nil, terrain_max_z = nil,
+		terrain_at_target = 0, terrain_above_target = 0, terrain_below_target = 0,
+		complete = false, error = nil,
+	}
+	local for_each = Global("HexShapeForEach")
+	local hex_to_world = Global("HexToWorld")
+	local point_fn = Global("point")
+	local terrain_api = Global("terrain")
+	local get_height = type(terrain_api) == "table" and terrain_api.GetHeight or nil
+	if type(shape) ~= "table" or type(for_each) ~= "function"
+		or type(hex_to_world) ~= "function" or type(point_fn) ~= "function"
+		or type(get_height) ~= "function"
+		or type(target_z) ~= "number" then
+		stats.error = "terrain target helpers are unavailable"
+		return stats
+	end
+	local mismatch = false
+	local ok, err = pcall(for_each, shape, object, function(q, r)
+		local terrain_z = get_height(map, point_fn(hex_to_world(q, r)))
+		if type(terrain_z) ~= "number" then
+			error("terrain height unavailable")
+		end
+		stats.samples = stats.samples + 1
+		stats.terrain_min_z = not stats.terrain_min_z and terrain_z
+			or math.min(stats.terrain_min_z, terrain_z)
+		stats.terrain_max_z = not stats.terrain_max_z and terrain_z
+			or math.max(stats.terrain_max_z, terrain_z)
+		if terrain_z == target_z then
+			stats.terrain_at_target = stats.terrain_at_target + 1
+		else
+			mismatch = true
+			if terrain_z > target_z then
+				stats.terrain_above_target = stats.terrain_above_target + 1
+			else
+				stats.terrain_below_target = stats.terrain_below_target + 1
+			end
+			return true
+		end
+	end)
+	if not ok then stats.error = tostring(err) end
+	stats.complete = ok and not mismatch and stats.samples > 0
+	return stats
+end
+
 local function CaptureDeferredWonderSourceFlattenTarget(map, marker, wonder_class)
 	local templates = Global("BuildingTemplates")
 	local template = type(templates) == "table" and templates[wonder_class] or nil
@@ -4621,11 +4672,12 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	end
 
 	local correction_reason = "SuperBigMap_CurrentUndergroundWonderReseat"
+	local geometry_diagnostics_enabled = WonderGeometryDiagnosticsEnabled()
+	local flat_inner, flat_outer = Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter")
 	local suspended = false
 	local corrected_terrain, corrected_xy, corrected_z = 0, 0, 0
 	local ok, err = pcall(function()
-		map:SuspendPassEdits(correction_reason)
-		suspended = true
+		local position_correction_needed = false
 		for _, candidate in ipairs(candidates) do
 			local wonder = candidate.wonder
 			local target_x = candidate.target_x
@@ -4637,30 +4689,52 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 				or type(wonder.SetPos) ~= "function" then
 				error("wonder position is unavailable for " .. tostring(wonder.class))
 			end
-			local xy_wrong = x ~= target_x or y ~= target_y
-			local z_wrong = WonderVerticalDiagnostics.SafePointZ(pos) ~= target_z
-			if xy_wrong or z_wrong then
-				local had_grids = wonder.grids_applied == true
-				if had_grids then
-					if type(wonder.RemoveFromGrids) ~= "function"
-						or type(wonder.ApplyToGrids) ~= "function" then
-						error("wonder grid migration helpers are unavailable for "
-							.. tostring(wonder.class))
+			candidate.xy_wrong = x ~= target_x or y ~= target_y
+			candidate.z_wrong = WonderVerticalDiagnostics.SafePointZ(pos) ~= target_z
+			if candidate.xy_wrong or candidate.z_wrong then
+				position_correction_needed = true
+			end
+		end
+		if position_correction_needed then
+			map:SuspendPassEdits(correction_reason)
+			suspended = true
+			for _, candidate in ipairs(candidates) do
+				local wonder = candidate.wonder
+				local target_x = candidate.target_x
+				local target_y = candidate.target_y
+				local target_z = candidate.target_z
+				local xy_wrong = candidate.xy_wrong
+				local z_wrong = candidate.z_wrong
+				if xy_wrong or z_wrong then
+					local had_grids = wonder.grids_applied == true
+					if had_grids then
+						if type(wonder.RemoveFromGrids) ~= "function"
+							or type(wonder.ApplyToGrids) ~= "function" then
+							error("wonder grid migration helpers are unavailable for "
+								.. tostring(wonder.class))
+						end
+						wonder:RemoveFromGrids()
 					end
-					wonder:RemoveFromGrids()
+					wonder:SetPos(point_fn(target_x, target_y, target_z))
+					if had_grids then wonder:ApplyToGrids() end
+					if xy_wrong then corrected_xy = corrected_xy + 1 end
 				end
-				wonder:SetPos(point_fn(target_x, target_y, target_z))
-				if had_grids then wonder:ApplyToGrids() end
-				if xy_wrong then corrected_xy = corrected_xy + 1 end
+				if z_wrong then corrected_z = corrected_z + 1 end
 			end
-			if z_wrong then
-				corrected_z = corrected_z + 1
-			end
-			local current = WonderVerticalDiagnostics.ShapeVerticalStats(
+		end
+		for _, candidate in ipairs(candidates) do
+			local wonder = candidate.wonder
+			local target_z = candidate.target_z
+			local current = WonderVerticalDiagnostics.ShapeTerrainTargetStats(
 				map, candidate.shape, wonder, target_z)
-			if current.samples == 0 or current.terrain_at_target ~= current.samples then
+			candidate.terrain_precheck = current
+			if current.complete ~= true then
+				if not suspended then
+					map:SuspendPassEdits(correction_reason)
+					suspended = true
+				end
 				flatten(candidate.shape, wonder, map.buildable.z_grid, map.object_hex_grid,
-					Global("g_NCF_FlatInner"), Global("g_NCF_FlatOuter"), -1, target_z)
+					flat_inner, flat_outer, -1, target_z)
 				corrected_terrain = corrected_terrain + 1
 			end
 		end
@@ -4687,12 +4761,23 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 	local verified = 0
 	for _, candidate in ipairs(candidates) do
 		local wonder = candidate.wonder
-		local after = WonderVerticalDiagnostics.ShapeVerticalStats(
-			map, candidate.shape, wonder, candidate.target_z)
+		local after
+		if geometry_diagnostics_enabled then
+			after = WonderVerticalDiagnostics.ShapeVerticalStats(
+				map, candidate.shape, wonder, candidate.target_z)
+		elseif corrected_terrain > 0 then
+			-- Any flatten can touch feathered outer cells; after a repair, revalidate every wonder
+			-- rather than assuming non-overlap. The no-repair path reuses the authoritative scan.
+			after = WonderVerticalDiagnostics.ShapeTerrainTargetStats(
+				map, candidate.shape, wonder, candidate.target_z)
+		else
+			after = candidate.terrain_precheck
+		end
 		local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
 		local object_x, object_y = PointXY(pos)
 		local object_z = WonderVerticalDiagnostics.SafePointZ(pos)
 		local terrain_ok = after.samples > 0 and after.terrain_at_target == after.samples
+			and (after.complete == nil or after.complete == true)
 		local xy_ok = object_x == candidate.target_x and object_y == candidate.target_y
 		local object_ok = object_z == candidate.target_z
 		LoadingStep("underground buried wonder lifecycle reseat instance", {
@@ -4710,6 +4795,7 @@ function WonderVerticalDiagnostics.ReseatAll(map, reason)
 			terrain_below_target = after.terrain_below_target,
 			terrain_min_z = after.terrain_min_z,
 			terrain_max_z = after.terrain_max_z,
+			terrain_error = after.error,
 			terrain_ok = terrain_ok,
 			xy_ok = xy_ok,
 			object_ok = object_ok,

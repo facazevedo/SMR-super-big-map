@@ -1983,6 +1983,12 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 	local is_valid = Global("IsValid")
 	local audit_on = UndergroundDecorationAuditEnabled(map)
 	local audit_records = decor_position_audit_by_map[map]
+	local relief = decor_relief_by_map[map]
+	local terrain_get_height = type(terrain_api_g) == "table" and terrain_api_g.GetHeight or nil
+	local z_scale = (type(map.SuperBigMapZScaleMul) == "number"
+		and type(map.SuperBigMapZScaleDiv) == "number"
+		and map.SuperBigMapZScaleDiv > 0)
+		and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
 	local audit_post_count = 0
 	for _, obj in ipairs(objs) do
 		if not obj then
@@ -2008,20 +2014,14 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 				-- Relief-aware Z: reproduce the object's pre-stretch relationship to the ground
 				-- (dz annotated before the terrain stretch), scaled by the same factor, on top of
 				-- the ACTUAL stretched terrain height at the destination.
-				local relief = decor_relief_by_map[map]
 				local dz = relief and relief[obj]
-				if type(dz) == "number" and type(terrain_api_g) == "table"
-					and type(terrain_api_g.GetHeight) == "function" then
-					local ok_h, h = pcall(terrain_api_g.GetHeight, map, np)
+				if type(dz) == "number" and type(terrain_get_height) == "function" then
+					local ok_h, h = pcall(terrain_get_height, map, np)
 					if ok_h and type(h) == "number" then
 						-- dz scales by the Z factor (which the shift+adaptive height transform
 						-- may have set below the XY factor; the shift offset cancels in a
 						-- difference). Fallback: the XY factor when no stamp (heights unscaled).
-						local zs = (type(map.SuperBigMapZScaleMul) == "number"
-							and type(map.SuperBigMapZScaleDiv) == "number"
-							and map.SuperBigMapZScaleDiv > 0)
-							and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
-						np = point_fn(nx, ny, h + math.floor(dz * zs + 0.5))
+						np = point_fn(nx, ny, h + math.floor(dz * z_scale + 0.5))
 						z_ok = true
 						z_mode = "relief"
 						relief_placed = relief_placed + 1
@@ -2062,11 +2062,7 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 						and source.explicit_z == true
 						and (source.effective_z - source.ground_z) or nil
 					if type(source_dz) == "number" and type(expected.ground_z) == "number" then
-						local zs = (type(map.SuperBigMapZScaleMul) == "number"
-							and type(map.SuperBigMapZScaleDiv) == "number"
-							and map.SuperBigMapZScaleDiv > 0)
-							and ((map.SuperBigMapZScaleMul + 0.0) / map.SuperBigMapZScaleDiv) or scale_x
-						expected_z = expected.ground_z + math.floor(source_dz * zs + 0.5)
+						expected_z = expected.ground_z + math.floor(source_dz * z_scale + 0.5)
 					end
 					expected.effective_z = expected_z
 					local attached = "uncaptured"

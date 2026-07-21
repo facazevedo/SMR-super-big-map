@@ -313,13 +313,15 @@ local function IsBuildableAt(map, pt, strict, context)
 	return result, q, r
 end
 
-local function IsUnobstructedAt(map, pt, strict, context)
+local function IsUnobstructedAt(map, pt, strict, context, known_q, known_r)
 	if not map or not pt then return strict ~= true end
 	context = type(context) == "table" and context.map == map and context or nil
 	local hex_grid = context and context.object_hex_grid or (map and map.object_hex_grid)
 	local world_to_hex = context and context.world_to_hex or Global("WorldToHex")
-	local q, r
-	if type(world_to_hex) == "function" then
+	local q = type(known_q) == "number" and known_q or nil
+	local r = type(known_r) == "number" and known_r or nil
+	if (type(q) ~= "number" or type(r) ~= "number")
+		and type(world_to_hex) == "function" then
 		local ok_h, hex_q, hex_r = pcall(world_to_hex, pt)
 		if ok_h and type(hex_q) == "number" and type(hex_r) == "number" then
 			q, r = hex_q, hex_r
@@ -356,7 +358,8 @@ local function IsUnobstructedAt(map, pt, strict, context)
 	local get_obstructions = context and context.get_build_obstructions
 		or hex_grid.GetBuildObstructions
 	if not (type(get_obstructions) == "function"
-		and type(world_to_hex) == "function") then
+		and ((type(q) == "number" and type(r) == "number")
+			or type(world_to_hex) == "function")) then
 		return strict ~= true
 	end
 	if type(q) ~= "number" or type(r) ~= "number" then
@@ -431,15 +434,20 @@ end
 local function IsReachableFromUndergroundEntrance(map, pt, known_q, known_r)
 	local state = BuildUndergroundReachability(map)
 	if not state or state.available ~= true or not pt then return false end
+	local has_known_hex = type(known_q) == "number" and type(known_r) == "number"
+	local key = has_known_hex and (tostring(known_q) .. ":" .. tostring(known_r)) or nil
+	if key then
+		local cached = state.results[key]
+		if cached ~= nil then return cached == true end
+	end
 	local target = pt
 	if type(pt.SetTerrainZ) == "function" then
 		local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
 		if ok_z and snapped then target = snapped end
 	end
 	local world_to_hex = state.world_to_hex
-	local key = type(known_q) == "number" and type(known_r) == "number"
-		and (tostring(known_q) .. ":" .. tostring(known_r)) or tostring(target)
-	if type(known_q) ~= "number" and type(world_to_hex) == "function" then
+	key = key or tostring(target)
+	if not has_known_hex and type(world_to_hex) == "function" then
 		local ok_h, q, r = pcall(world_to_hex, target)
 		if ok_h and type(q) == "number" and type(r) == "number" then
 			key = tostring(q) .. ":" .. tostring(r)
@@ -524,7 +532,7 @@ local function CanReceiveDeposit(map, pt, context, defer_reachability)
 	if not terrain_ok then
 		return false, passable, flatness, buildable, q, r, nil
 	end
-	local unobstructed = IsUnobstructedAt(map, pt, true, context)
+	local unobstructed = IsUnobstructedAt(map, pt, true, context, q, r)
 	if not unobstructed then
 		return false, passable, flatness, buildable, q, r, false
 	end
@@ -4901,13 +4909,13 @@ function DepositRules.TopUpAnomalies(map)
 				local x, y = random_between(x0, x1), random_between(y0, y1)
 				local live_sector = SectorAtPoint(map, x, y)
 				local pt = point(x, y)
-				local terrain_allowed, passable, flatness, buildable =
+				local terrain_allowed, passable, flatness, buildable, q, r =
 					EvaluateDepositTerrain(map, pt, validation_context)
 				flatness = flatness or 0
 				passable = passable == true
 				buildable = buildable == true
 				local unobstructed = terrain_allowed
-					and IsUnobstructedAt(map, pt, true, validation_context) or false
+					and IsUnobstructedAt(map, pt, true, validation_context, q, r) or false
 				local can_receive = terrain_allowed and unobstructed
 				local rejection
 				if not live_sector or live_sector.id ~= sector.id then rejection = "sector_mapping_mismatch"
@@ -5663,7 +5671,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 						local hex_key = type(q) == "number" and type(r) == "number"
 							and (tostring(q) .. ":" .. tostring(r)) or nil
 						if hex_key and not sampled_hexes[hex_key]
-							and IsUnobstructedAt(map, pt, true, validation_context) then
+							and IsUnobstructedAt(map, pt, true, validation_context, q, r) then
 							if append_candidate(sector, {
 								x = x, y = y, sector = sector.sector_ref,
 								sector_id = sector.id, col = sector.col, row = sector.row,
@@ -5766,7 +5774,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 						local source = candidate._sbm_shared_source
 						if source and candidate._sbm_current_obstruction_ok == nil then
 							candidate._sbm_current_obstruction_ok = IsUnobstructedAt(
-								map, point_fn(candidate.x, candidate.y), true, validation_context) == true
+								map, point_fn(candidate.x, candidate.y), true, validation_context,
+								candidate.q, candidate.r) == true
 						end
 						if (not source or candidate._sbm_current_obstruction_ok == true)
 							and predicate(candidate) then return candidate end
@@ -6146,7 +6155,7 @@ function DepositRules.TopUpEffectDeposits(map)
 						map, c.x, c.y, ring_sectors, c.sector, ring_context)
 					local can_reuse = (not underground or wall_free_density_suite)
 						and c._sbm_terrain_valid == true
-						and IsUnobstructedAt(map, pt, true, validation_context)
+						and IsUnobstructedAt(map, pt, true, validation_context, c.q, c.r)
 					if not reserved_ring and (can_reuse
 						or CanReceiveDeposit(map, pt, validation_context,
 							defer_candidate_reachability)) then
@@ -6703,7 +6712,7 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		local even_terrain = reachable
 			and flatness >= validation_context.flatness_minimum and buildable == true
 		local unobstructed = has_position
-			and IsUnobstructedAt(map, pt, true, validation_context) or false
+			and IsUnobstructedAt(map, pt, true, validation_context, q, r) or false
 		local valley_score = family == "anomaly" and has_position and ValleyScore(map, pt) or 0
 		local hex_key = type(q) == "number" and type(r) == "number"
 			and (tostring(q) .. ":" .. tostring(r))
@@ -6910,7 +6919,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local unobstructed
 		if include_obstruction == true then
 			unobstructed = IsUnobstructedAt(
-				map, pt, true, wonder_validation_context) == true
+				map, pt, true, wonder_validation_context, q, r) == true
 		end
 		return {
 			buildable = buildable == true, q = q, r = r,
@@ -6965,7 +6974,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 		local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
 			map, marker_pos, wonder_validation_context, true)
 		local unobstructed = terrain_ok and IsUnobstructedAt(
-			map, marker_pos, true, wonder_validation_context) == true
+			map, marker_pos, true, wonder_validation_context, q, r) == true
 		local base_ok = terrain_ok and unobstructed
 		-- Underground cave systems are intentionally separated by collapsed tunnels. A rare
 		-- anomaly next to a wonder in another cavern is vanilla-correct and becomes accessible
@@ -7036,7 +7045,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				stats.candidates_tested = stats.candidates_tested + 1
 				ring.tested = ring.tested + 1
 				local candidate_point = point_fn(x, y)
-				local terrain_ok = EvaluateDepositTerrain(
+				local terrain_ok, _, _, _, q, r = EvaluateDepositTerrain(
 					map, candidate_point, wonder_validation_context, true)
 				if not terrain_ok then
 					local diagnostic = terrain_diagnostic(candidate_point, false)
@@ -7055,7 +7064,7 @@ function DepositRules.EnsureDeferredUndergroundWonderAnomaliesReachable(map, rep
 				ring.terrain_valid = ring.terrain_valid + 1
 				stats.candidate_terrain_valid = stats.candidate_terrain_valid + 1
 				local unobstructed = IsUnobstructedAt(
-					map, candidate_point, true, wonder_validation_context) == true
+					map, candidate_point, true, wonder_validation_context, q, r) == true
 				if unobstructed then
 					ring.strict_valid = ring.strict_valid + 1
 					stats.candidate_strict_valid = stats.candidate_strict_valid + 1
@@ -7383,7 +7392,8 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 			if pos then buildable, q, r = IsBuildableAt(map, pos, true) end
 			local passable = pos and PassableAt(map, pos) == true or false
 			local flatness = pos and FlatnessAt(map, pos) or 0
-			local unobstructed = pos and IsUnobstructedAt(map, pos, true) == true or false
+			local unobstructed = pos and IsUnobstructedAt(
+				map, pos, true, nil, q, r) == true or false
 			local reachable = pos and type(q) == "number"
 				and IsReachableFromUndergroundEntrance(map, pos, q, r) == true or false
 			local reserved = type(q) == "number" and type(r) == "number"
@@ -7976,7 +7986,7 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		local passable = pos and PassableAt(map, pos) or false
 		local flatness = pos and FlatnessAt(map, pos) or nil
 		local buildable = pos and IsBuildableAt(map, pos, true) or false
-		local unobstructed = pos and IsUnobstructedAt(map, pos, true) or false
+		local unobstructed = pos and IsUnobstructedAt(map, pos, true, nil, q, r) or false
 		local reachable = not underground or (pos and IsReachableFromUndergroundEntrance(map, pos) or false)
 		local topup_ignores_rubble = underground and (
 			marker.SuperBigMapTopUpIgnoredRubbleWalls == true
