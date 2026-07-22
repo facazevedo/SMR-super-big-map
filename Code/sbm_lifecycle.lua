@@ -955,6 +955,42 @@ RegisterOnce("LoadGame", function()
 	end
 end)
 
+-- ConstructionComplete is emitted before a newly placed building's queued GameInit has finished.
+-- Reconcile on the next game-time task so a consumer built beside an Elevator is incorporated into
+-- the current-side fragment, then reassert the cross-map electricity/water merge. This also covers
+-- instant/quick-build paths, while load and map-change boundaries repair already-saved buildings.
+RegisterOnce("ConstructionComplete", function(building)
+	if not active() or not building then return end
+	local map = type(building.GetMap) == "function" and SafeCall(building.GetMap, building) or nil
+	if not IsModMap(map) then return end
+	local State = SuperBigMap.State or {}
+	State.elevator_supply_repair_scheduled = State.elevator_supply_repair_scheduled
+		or setmetatable({}, { __mode = "k" })
+	if State.elevator_supply_repair_scheduled[map] then return end
+	State.elevator_supply_repair_scheduled[map] = true
+	local function repair_after_game_init()
+		State.elevator_supply_repair_scheduled[map] = nil
+		-- Supply-grid rebuilds are map-sensitive. If the player changed maps before
+		-- this task ran, CurrentMapChangeDone will reconcile that destination safely.
+		if not active() or not IsModMap(map) or Global("CurrentMap") ~= map then return end
+		local gen = SuperBigMap.MapGeneration
+		if gen and type(gen.RepairExpandedElevatorSupplyNetworks) == "function" then
+			gen.RepairExpandedElevatorSupplyNetworks(map,
+				"ConstructionComplete after queued building GameInit")
+		end
+	end
+	if type(map.CreateGameTimeThread) == "function" then
+		map:CreateGameTimeThread(repair_after_game_init)
+	else
+		local create_thread = Global("CreateGameTimeThread")
+		if type(create_thread) == "function" then
+			create_thread(repair_after_game_init)
+		else
+			State.elevator_supply_repair_scheduled[map] = nil
+		end
+	end
+end)
+
 -- Vanilla remembers selection/overview independently on each city. Capture only a real expanded
 -- gameplay map being left; internal temporary-source switches run under the migration guard and
 -- must neither replace nor consume this pending user-facing transition.

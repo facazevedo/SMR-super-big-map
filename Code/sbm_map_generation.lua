@@ -2629,14 +2629,39 @@ end
 --
 -- Enforce the actual transfer invariant synchronously once the pair exists. The same helper is run
 -- at load/map lifecycle boundaries so saves made with already-separated fragments are repaired
--- without rebuilding the Elevator or changing either local network's production/consumption.
+-- without rebuilding the Elevator or changing either local network's production/consumption. At
+-- those stable boundaries it also invokes vanilla's rebuild-only topology pass on the current
+-- side, so consumers completed beside an already-merged Elevator join the shared fragment.
 -- Keep the helper alias inside a closed lexical scope: this intentionally large module runs close
 -- to the engine compiler's 200-active-local limit.
 SuperBigMap.ElevatorSupplyRepair = {}
 do
 local ElevatorSupplyRepair = SuperBigMap.ElevatorSupplyRepair
 
-function ElevatorSupplyRepair.Pair(elevator, reason)
+function ElevatorSupplyRepair.RebuildLocal(elevator, resource, rebuild_map)
+	if not rebuild_map or SupplyObjectMap(elevator) ~= rebuild_map then
+		return true, "not requested for this map"
+	end
+	local element = type(elevator) == "table" and rawget(elevator, resource) or nil
+	local grid = type(element) == "table" and rawget(element, "grid") or nil
+	if not element or not grid then return false, "missing local supply fragment" end
+	local grid_class = resource == "electricity" and Global("ElectricityGrid")
+		or resource == "water" and Global("WaterGrid") or nil
+	local rebuild = rawget(elevator, "SupplyGridDisconnectElement")
+		or elevator.SupplyGridDisconnectElement
+	if type(grid_class) ~= "table" or type(rebuild) ~= "function" then
+		return false, "local supply rebuild API unavailable"
+	end
+	-- Vanilla's rebuild-only path republishes this Elevator footprint in the owning
+	-- map's connection grid, discovers newly completed adjacent consumers, and merges
+	-- their fragments without removing the Elevator element. This is the authoritative
+	-- operation used after grid topology changes; suppress only the split notification.
+	local ok, rebuild_error = pcall(rebuild, elevator, element, grid_class,
+		false, true, true)
+	return ok, ok and "rebuilt" or tostring(rebuild_error)
+end
+
+function ElevatorSupplyRepair.Pair(elevator, reason, rebuild_map)
 	local other = type(elevator) == "table" and rawget(elevator, "other") or nil
 	if not TraversalObjectValid(elevator) or not TraversalObjectValid(other) then
 		return true, { skipped = "unlinked or invalid Elevator pair" }
@@ -2652,6 +2677,9 @@ function ElevatorSupplyRepair.Pair(elevator, reason)
 		map = tostring(map), other_map = tostring(other_map), repaired = 0, failed = 0,
 	}
 	for _, resource in ipairs({ "electricity", "water" }) do
+		local local_rebuild_ok, local_rebuild_result =
+			ElevatorSupplyRepair.RebuildLocal(elevator, resource, rebuild_map)
+		result[resource .. "_local_rebuild"] = tostring(local_rebuild_result)
 		local element = rawget(elevator, resource)
 		local other_element = rawget(other, resource)
 		local grid = type(element) == "table" and rawget(element, "grid") or nil
@@ -2677,7 +2705,11 @@ function ElevatorSupplyRepair.Pair(elevator, reason)
 		other_grid = type(other_element) == "table" and rawget(other_element, "grid") or nil
 		local shared = grid ~= nil and other_grid ~= nil and grid == other_grid
 		result[resource .. "_after_shared"] = tostring(shared)
-		if shared and result[resource .. "_before_shared"] ~= "true" then
+		if not local_rebuild_ok then
+			result.failed = result.failed + 1
+			result[resource .. "_error"] = "local supply rebuild failed: "
+				.. tostring(local_rebuild_result)
+		elseif shared and result[resource .. "_before_shared"] ~= "true" then
 			result.repaired = result.repaired + 1
 		elseif not shared then
 			result.failed = result.failed + 1
@@ -2693,6 +2725,7 @@ function ElevatorSupplyRepair.Networks(map, reason)
 	local stats = {
 		reason = tostring(reason), pairs = 0, repaired = 0, failed = 0,
 		electricity_failed = 0, water_failed = 0,
+		local_electricity_rebuilt = 0, local_water_rebuilt = 0,
 	}
 	if not IsExpandedSupplyContext(map) or type(map.MapForEach) ~= "function" then
 		stats.skipped = "map is not an expanded gameplay map"
@@ -2707,14 +2740,22 @@ function ElevatorSupplyRepair.Networks(map, reason)
 			if not TraversalObjectValid(other) then return end
 			seen[other] = true
 			stats.pairs = stats.pairs + 1
-			local pair_ok, pair = ElevatorSupplyRepair.Pair(elevator, reason)
+			local pair_ok, pair = ElevatorSupplyRepair.Pair(elevator, reason, map)
 			stats.repaired = stats.repaired + (tonumber(pair and pair.repaired) or 0)
+			if pair and pair.electricity_local_rebuild == "rebuilt" then
+				stats.local_electricity_rebuilt = stats.local_electricity_rebuilt + 1
+			end
+			if pair and pair.water_local_rebuild == "rebuilt" then
+				stats.local_water_rebuilt = stats.local_water_rebuilt + 1
+			end
 			if not pair_ok then
 				stats.failed = stats.failed + 1
-				if pair and pair.electricity_after_shared ~= "true" then
+				if pair and (pair.electricity_after_shared ~= "true"
+					or pair.electricity_error ~= nil) then
 					stats.electricity_failed = stats.electricity_failed + 1
 				end
-				if pair and pair.water_after_shared ~= "true" then
+				if pair and (pair.water_after_shared ~= "true"
+					or pair.water_error ~= nil) then
 					stats.water_failed = stats.water_failed + 1
 				end
 			end
