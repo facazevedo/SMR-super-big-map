@@ -2665,6 +2665,10 @@ function ElevatorSupplyRepair.RebuildLocal(elevator, resource, rebuild_map)
 	local disconnect_ok, disconnect_error = pcall(disconnect, elevator, element, grid_class,
 		false, false, true)
 	if not disconnect_ok then
+		-- A class hot reload can replace a native method while the disconnect is in progress. It may
+		-- already have detached the element before reporting the error, so make a best-effort native
+		-- rollback rather than leaving the live building with electricity/grid == false.
+		if not rawget(element, "grid") then pcall(connect, elevator, element, grid_class) end
 		return false, "native disconnect failed: " .. tostring(disconnect_error)
 	end
 	if rawget(element, "grid") then
@@ -2853,15 +2857,11 @@ function ElevatorSupplyRepair.CargoPair(elevator, reason)
 		end
 	end
 
-	-- Refresh the two local coverage lists first. MapPassageLinked forwards their additions/removals
-	-- to the shared depot, after which the explicit depot reconnect republishes every cargo request
-	-- to both command-center queues (including a hub newly built beside an old Elevator).
+	-- Refresh the two local coverage lists first. ConnectToCommandCenters is additive and natively
+	-- deduplicated, so it discovers a hub newly built beside an old Elevator without interrupting
+	-- existing tasks or traversing MapPassageLinked's removal path during a class reload. The
+	-- explicit depot reconnect then republishes every cargo request to the combined center set.
 	local refresh_ok, refresh_error = pcall(function()
-		for _, half in ipairs({ parent, counterpart }) do
-			if type(half.DisconnectFromCommandCenters) == "function" then
-				half:DisconnectFromCommandCenters()
-			end
-		end
 		for _, half in ipairs({ parent, counterpart }) do
 			if type(half.ConnectToCommandCenters) == "function" then
 				half:ConnectToCommandCenters()
@@ -10180,10 +10180,11 @@ function MapGeneration.ApplyModBehavior()
 	if cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
 		PatchElevatorTraversalDiagnostics()
 	end
-	SuperBigMap.ElevatorSupplyRepair.Networks(Global("CurrentMap"),
-		"ApplyModBehavior existing-save and hot-reload repair")
-	SuperBigMap.ElevatorSupplyRepair.CargoNetworks(Global("CurrentMap"),
-		"ApplyModBehavior existing-save and hot-reload cargo repair")
+	-- FileSystemChanged can call Apply while native class tables are still being rebuilt. Defer the
+	-- actual native disconnect/connect and command-center refresh to the next game-time task; load
+	-- and map lifecycle handlers still run their authoritative synchronous old-save repairs.
+	SuperBigMap.ElevatorSupplyRepair.Schedule(Global("CurrentMap"),
+		"ApplyModBehavior stable-boundary Elevator repair")
 	return true
 end
 
