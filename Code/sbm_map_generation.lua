@@ -2805,6 +2805,133 @@ function ElevatorSupplyRepair.Networks(map, reason)
 	return stats.failed == 0, stats
 end
 
+-- Elevator cargo is not carried through the map transition by one drone. Vanilla exposes one
+-- MapSharedDepot on both maps and registers its requests with the command centers covering each
+-- Elevator half. Rebuild those transient registrations through the native APIs so moved Elevators
+-- and saves made before this patch recover without replacing the depot or touching stored cargo.
+function ElevatorSupplyRepair.CargoPair(elevator, reason)
+	local other = type(elevator) == "table" and rawget(elevator, "other") or nil
+	if not TraversalObjectValid(elevator) or not TraversalObjectValid(other) then
+		return true, { skipped = "unlinked or invalid Elevator pair" }
+	end
+	local map, other_map = SupplyObjectMap(elevator), SupplyObjectMap(other)
+	if not IsExpandedSupplyContext(map) and not IsExpandedSupplyContext(other_map) then
+		return true, { skipped = "non-expanded Elevator pair" }
+	end
+	local depot = rawget(elevator, "shared_depot") or rawget(other, "shared_depot")
+	if not TraversalObjectValid(depot) then
+		return false, { error = "linked Elevator pair has no valid MapSharedDepot" }
+	end
+	local parent = rawget(depot, "parent_building")
+	if parent ~= elevator and parent ~= other then
+		return false, { error = "MapSharedDepot parent is not either Elevator half" }
+	end
+	local counterpart = parent == elevator and other or elevator
+	local add_map_source = Global("AddRequestMapSource")
+	local result = {
+		reason = tostring(reason), elevator = tostring(elevator), other = tostring(other),
+		depot = tostring(depot), parent = tostring(parent), map = tostring(map),
+		other_map = tostring(other_map), failed = 0,
+		before_parent_centers = tostring(type(rawget(parent, "command_centers")) == "table"
+			and #parent.command_centers or nil),
+		before_other_centers = tostring(type(rawget(counterpart, "command_centers")) == "table"
+			and #counterpart.command_centers or nil),
+		before_depot_centers = tostring(type(rawget(depot, "command_centers")) == "table"
+			and #depot.command_centers or nil),
+	}
+	if type(add_map_source) ~= "function" then
+		result.failed = result.failed + 1
+		result.map_source_error = "AddRequestMapSource unavailable"
+	else
+		local source_ok, source_error = pcall(function()
+			add_map_source(parent, SupplyObjectMap(parent), parent)
+			add_map_source(parent, SupplyObjectMap(counterpart), counterpart)
+		end)
+		if not source_ok then
+			result.failed = result.failed + 1
+			result.map_source_error = tostring(source_error)
+		end
+	end
+
+	-- Refresh the two local coverage lists first. MapPassageLinked forwards their additions/removals
+	-- to the shared depot, after which the explicit depot reconnect republishes every cargo request
+	-- to both command-center queues (including a hub newly built beside an old Elevator).
+	local refresh_ok, refresh_error = pcall(function()
+		for _, half in ipairs({ parent, counterpart }) do
+			if type(half.DisconnectFromCommandCenters) == "function" then
+				half:DisconnectFromCommandCenters()
+			end
+		end
+		for _, half in ipairs({ parent, counterpart }) do
+			if type(half.ConnectToCommandCenters) == "function" then
+				half:ConnectToCommandCenters()
+			end
+		end
+		if type(depot.SetRequestsSource) == "function" then depot:SetRequestsSource(parent) end
+		if type(depot.DisconnectFromCommandCenters) == "function" then
+			depot:DisconnectFromCommandCenters()
+		end
+		if type(depot.ConnectToCommandCenters) == "function" then
+			depot:ConnectToCommandCenters()
+		end
+	end)
+	if not refresh_ok then
+		result.failed = result.failed + 1
+		result.registration_error = tostring(refresh_error)
+	end
+	result.after_parent_centers = tostring(type(rawget(parent, "command_centers")) == "table"
+		and #parent.command_centers or nil)
+	result.after_other_centers = tostring(type(rawget(counterpart, "command_centers")) == "table"
+		and #counterpart.command_centers or nil)
+	result.after_depot_centers = tostring(type(rawget(depot, "command_centers")) == "table"
+		and #depot.command_centers or nil)
+	local map_sources = type(Global("RequestToMapSource")) == "table"
+		and Global("RequestToMapSource")[parent] or nil
+	result.parent_map_source_ok = tostring(type(map_sources) == "table"
+		and map_sources[SupplyObjectMap(parent)] == parent)
+	result.other_map_source_ok = tostring(type(map_sources) == "table"
+		and map_sources[SupplyObjectMap(counterpart)] == counterpart)
+	if result.parent_map_source_ok ~= "true" or result.other_map_source_ok ~= "true" then
+		result.failed = result.failed + 1
+		result.map_source_validation_error = "Elevator request source mapping was not restored"
+	end
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.ElevatorLogistics) == "function" then
+		diagnostics.ElevatorLogistics("ELEVATOR_CARGO_REGISTRATION_REPAIR", result, map or other_map)
+	end
+	return result.failed == 0, result
+end
+
+function ElevatorSupplyRepair.CargoNetworks(map, reason)
+	local stats = { reason = tostring(reason), pairs = 0, repaired = 0, failed = 0 }
+	if not IsExpandedSupplyContext(map) or type(map.MapForEach) ~= "function" then
+		stats.skipped = "map is not an expanded gameplay map"
+		return true, stats
+	end
+	local seen = setmetatable({}, { __mode = "k" })
+	local scan_ok, scan_error = pcall(map.MapForEach, map, "map", "ElevatorBase",
+		function(elevator)
+			if seen[elevator] then return end
+			seen[elevator] = true
+			local other = TraversalObjectValid(elevator) and rawget(elevator, "other") or nil
+			if not TraversalObjectValid(other) then return end
+			seen[other] = true
+			stats.pairs = stats.pairs + 1
+			local pair_ok = ElevatorSupplyRepair.CargoPair(elevator, reason)
+			if pair_ok then stats.repaired = stats.repaired + 1
+			else stats.failed = stats.failed + 1 end
+		end)
+	if not scan_ok then
+		stats.failed = stats.failed + 1
+		stats.scan_error = tostring(scan_error)
+	end
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.ElevatorLogistics) == "function" then
+		diagnostics.ElevatorLogistics("ELEVATOR_CARGO_NETWORK_AUDIT", stats, map)
+	end
+	return stats.failed == 0, stats
+end
+
 function ElevatorSupplyRepair.Schedule(map, reason)
 	if not IsExpandedSupplyContext(map) then return false end
 	local State = SuperBigMap.State
@@ -2828,6 +2955,8 @@ function ElevatorSupplyRepair.Schedule(map, reason)
 		end
 		ElevatorSupplyRepair.Networks(map,
 			"scheduled after supply connection: " .. tostring(scheduled_reason))
+		ElevatorSupplyRepair.CargoNetworks(map,
+			"scheduled after local connection: " .. tostring(scheduled_reason))
 	end
 	if type(map.CreateGameTimeThread) == "function" then
 		map:CreateGameTimeThread(run)
@@ -6292,6 +6421,8 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	local wrapper = function(self, ...)
 		local result = PackValues(original(self, ...))
 		SuperBigMap.ElevatorSupplyRepair.Pair(self,
+			"ElevatorBase:LinkThroughPassage completed")
+		SuperBigMap.ElevatorSupplyRepair.CargoPair(self,
 			"ElevatorBase:LinkThroughPassage completed")
 		HideCompletedPassagePair(self, "ElevatorBase:LinkThroughPassage")
 		return Unpack(result, 1, result.n)
@@ -10011,7 +10142,9 @@ MapGeneration.RefreshBuriedWonderDarknessVisibility = SuperBigMap.BuriedWonderDa
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.RepairExpandedElevatorSupplyNetworks = SuperBigMap.ElevatorSupplyRepair.Networks
+MapGeneration.RepairExpandedElevatorCargoNetworks = SuperBigMap.ElevatorSupplyRepair.CargoNetworks
 MapGeneration.ScheduleExpandedElevatorSupplyRepair = SuperBigMap.ElevatorSupplyRepair.Schedule
+MapGeneration.RepairExpandedElevatorPassageVisuals = HideExistingCompletedPassageIndicators
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
 MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWaypointChains
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
@@ -10049,6 +10182,8 @@ function MapGeneration.ApplyModBehavior()
 	end
 	SuperBigMap.ElevatorSupplyRepair.Networks(Global("CurrentMap"),
 		"ApplyModBehavior existing-save and hot-reload repair")
+	SuperBigMap.ElevatorSupplyRepair.CargoNetworks(Global("CurrentMap"),
+		"ApplyModBehavior existing-save and hot-reload cargo repair")
 	return true
 end
 

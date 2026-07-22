@@ -107,6 +107,14 @@ function Diagnostics.ElevatorSupplyEnabled()
 	return Enabled() and Config().DEBUG_ELEVATOR_SUPPLY == true
 end
 
+function Diagnostics.ElevatorLogisticsEnabled()
+	return Enabled() and Config().DEBUG_ELEVATOR_LOGISTICS == true
+end
+
+function Diagnostics.ElevatorRocksEnabled()
+	return Enabled() and Config().DEBUG_ELEVATOR_ROCKS == true
+end
+
 function Diagnostics.UndergroundDecorationEnabled()
 	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
@@ -124,6 +132,16 @@ end
 function Diagnostics.ElevatorTraversal(event, data, map)
 	if not Diagnostics.ElevatorTraversalEnabled() then return false end
 	return Print("ElevatorTraversal", event, CopyData(data, map))
+end
+
+function Diagnostics.ElevatorLogistics(event, data, map)
+	if not Diagnostics.ElevatorLogisticsEnabled() then return false end
+	return Print("ElevatorLogistics", event, CopyData(data, map))
+end
+
+function Diagnostics.ElevatorRocks(event, data, map)
+	if not Diagnostics.ElevatorRocksEnabled() then return false end
+	return Print("ElevatorRocks", event, CopyData(data, map))
 end
 
 function Diagnostics.UndergroundDecoration(event, data, map)

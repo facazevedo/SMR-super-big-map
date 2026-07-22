@@ -477,6 +477,7 @@ local APPLY_ORDER = {
 	"PregameToggle",
 	"LoadingUI",
 	"MapGeneration",
+	"ElevatorDebug",
 	"DepositRules",
 	"SectorGrid",
 	"SectorExploration",
@@ -504,6 +505,7 @@ local RESTORE_ORDER = {
 	"SectorExploration",
 	"SectorGrid",
 	"DepositRules",
+	"ElevatorDebug",
 	"MapGeneration",
 	"LoadingUI",
 	"PregameToggle",
@@ -932,6 +934,14 @@ RegisterOnce("LoadGame", function()
 		gen.RepairExpandedElevatorSupplyNetworks(current,
 			"LoadGame backward-compatible Elevator supply repair")
 	end
+	if gen and type(gen.RepairExpandedElevatorCargoNetworks) == "function" and current then
+		gen.RepairExpandedElevatorCargoNetworks(current,
+			"LoadGame backward-compatible Elevator cargo repair")
+	end
+	if gen and type(gen.RepairExpandedElevatorPassageVisuals) == "function" and current then
+		gen.RepairExpandedElevatorPassageVisuals(
+			"LoadGame backward-compatible completed-passage visual repair")
+	end
 	if gen and type(gen.ReseatExpandedUndergroundWonders) == "function" and current then
 		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(current,
 			"LoadGame after Lifecycle.Apply and mapdata synchronization")
@@ -973,6 +983,10 @@ RegisterOnce("ConstructionComplete", function(building)
 	if gen and type(gen.ScheduleExpandedElevatorSupplyRepair) == "function" then
 		gen.ScheduleExpandedElevatorSupplyRepair(map,
 			"ConstructionComplete " .. tostring(building.class))
+	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ScheduleAudit) == "function" then
+		elevator_debug.ScheduleAudit(map, "ConstructionComplete " .. tostring(building.class))
 	end
 end)
 
@@ -1054,6 +1068,11 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		gen.RepairExpandedElevatorSupplyNetworks(map,
 			"CurrentMapChangeDone after final Elevator restoration")
 	end
+	if IsModMap(map) and gen
+		and type(gen.RepairExpandedElevatorCargoNetworks) == "function" then
+		gen.RepairExpandedElevatorCargoNetworks(map,
+			"CurrentMapChangeDone after final Elevator restoration")
+	end
 	-- Existing underground Elevators are moved by the stretch pass, so their cached absolute
 	-- waypoint chains must be rebuilt after the final terrain/buildable lifecycle. Restore any
 	-- rover lights deferred while that destination was off-screen at this same renderer-safe point.
@@ -1110,6 +1129,10 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	-- process-global renderer value to 90. The player-facing map is current again now, so derive
 	-- the final value from it exactly as vanilla does: Surface=0 and Underground=90.
 	ApplyUndergroundDarknessState(ResolveLiveMap(Global("CurrentMap")) or map)
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if IsModMap(map) and elevator_debug and type(elevator_debug.ScheduleAudit) == "function" then
+		elevator_debug.ScheduleAudit(map, "CurrentMapChangeDone final boundary")
+	end
 end)
 
 -- Already-current recovery never performs an artificial map switch, so it has no
@@ -1138,9 +1161,18 @@ RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason
 		gen.RepairExpandedElevatorSupplyNetworks(map,
 			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final supply audit")
 	end
+	if gen and type(gen.RepairExpandedElevatorCargoNetworks) == "function" then
+		gen.RepairExpandedElevatorCargoNetworks(map,
+			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final cargo audit")
+	end
 	if gen and type(gen.RebuildExpandedElevatorWaypointChains) == "function" then
 		gen.RebuildExpandedElevatorWaypointChains(map,
 			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final geometry")
+	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ScheduleAudit) == "function" then
+		elevator_debug.ScheduleAudit(map,
+			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final boundary")
 	end
 end)
 
@@ -1224,6 +1256,10 @@ RegisterOnce("ClassesPostprocess", function()
 	if gen then
 		gen.PatchRandomMapGenerator()
 	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
+		SafeCall(elevator_debug.ApplyModBehavior)
+	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
 		sectors.InstallSectorPatch()
@@ -1241,6 +1277,10 @@ RegisterOnce("DataLoaded", function()
 	local gen = SuperBigMap.MapGeneration
 	if gen then
 		gen.PatchRandomMapGenerator()
+	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
+		SafeCall(elevator_debug.ApplyModBehavior)
 	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
@@ -1341,6 +1381,10 @@ RegisterOnce("ClassesBuilt", function()
 	if rockets and type(rockets.ApplyModBehavior) == "function" then
 		SafeCall(rockets.ApplyModBehavior)
 	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
+		SafeCall(elevator_debug.ApplyModBehavior)
+	end
 end)
 
 RegisterOnce("ModsReloaded", function()
@@ -1357,6 +1401,10 @@ RegisterOnce("ModsReloaded", function()
 	local gen = SuperBigMap.MapGeneration
 	if gen then
 		gen.PatchRandomMapGenerator()
+	end
+	local elevator_debug = SuperBigMap.ElevatorDebug
+	if elevator_debug and type(elevator_debug.ApplyModBehavior) == "function" then
+		SafeCall(elevator_debug.ApplyModBehavior)
 	end
 	local sectors = SuperBigMap.SectorExploration
 	if sectors then
