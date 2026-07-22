@@ -12,17 +12,16 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Targeted camera diagnostics for the old-save zoom-limit investigation. Keep unrelated
--- channels off so the resulting Mars log stays small and mechanically readable.
-config.DebugLoggingEnabled = true
+-- Diagnostics remain available for targeted troubleshooting but stay off in published builds.
+config.DebugLoggingEnabled = false
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
 config.DebugElevatorLogistics = false
 config.DebugElevatorRocks = false
-config.DebugZoom = true
-config.DebugOverviewCamera = true
+config.DebugZoom = false
+config.DebugOverviewCamera = false
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
