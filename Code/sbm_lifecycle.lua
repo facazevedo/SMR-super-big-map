@@ -18,7 +18,7 @@ SuperBigMap.State = SuperBigMap.State or {}
 local Engine = SuperBigMap.Engine
 local Global = Engine.Global
 local SafeCall = Engine.SafeCall
-local MAIN_MENU_GUARD_VERSION = 7
+local MAIN_MENU_GUARD_VERSION = 8
 local InstallRestoreInGameInterfaceGuard
 local UninstallRestoreInGameInterfaceGuard
 local EnsurePregameToggleInstalled
@@ -340,6 +340,17 @@ local function InstallGameEntryGuard(global_name)
 	if type(current) ~= "function" then return false end
 	State[original_key] = current
 	local wrapper = function(...)
+		if global_name == "GenerateCurrentRandomMap" then
+			-- Reset process-shared presets at the last reliable boundary before the
+			-- engine allocates a new surface map. This preserves the START-armed toggle
+			-- while removing dimensions/annotations republished by an older loaded save.
+			local generation = SuperBigMap.MapGeneration
+			if generation
+				and type(generation.RestorePreparedMapDataForVanillaSession) == "function" then
+				SafeCall(generation.RestorePreparedMapDataForVanillaSession,
+					"GenerateCurrentRandomMap preflight")
+			end
+		end
 		ActivateArmedExpansion(global_name)
 		local load_entry = global_name == "LoadGame" or global_name == "LoadGameFromMem"
 		if not load_entry then

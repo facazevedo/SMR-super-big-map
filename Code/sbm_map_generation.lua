@@ -1114,8 +1114,16 @@ local function RestorePreparedMapData(map_name, mapdata)
 	end
 	local original_width = mapdata.SuperBigMapOriginalWidthTiles
 		or mapdata.SuperBigMapOriginalMapDataWidth
+		-- Older expanded saves can republish their shared MapData preset without the
+		-- original-size annotation while retaining the equivalent source/generator
+		-- dimensions. Use those legacy fields to recover the vanilla preset instead
+		-- of leaving an orphaned 8192 allocation in the next new-game session.
+		or mapdata.SuperBigMapSourceWidthTiles
+		or mapdata.SuperBigMapGeneratorWidthTiles
 	local original_height = mapdata.SuperBigMapOriginalHeightTiles
 		or mapdata.SuperBigMapOriginalMapDataHeight
+		or mapdata.SuperBigMapSourceHeightTiles
+		or mapdata.SuperBigMapGeneratorHeightTiles
 	if type(original_width) == "number" and original_width > 0 then
 		mapdata.Width = original_width
 	end
@@ -1327,6 +1335,16 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	if not mapdata and type(map_data_table) == "table" then
 		mapdata = map_data_table[map_name or false]
 		map_instance.mapdata = mapdata
+	end
+	-- A Lua/session reload can discard the name-keyed pending record while an older
+	-- expanded save republishes its annotated 8192 MapData preset. Normalize that
+	-- orphan before eligibility/source-size decisions. A live pending record (or an
+	-- explicitly prepared instance) belongs to the current generation and is kept.
+	local pending_key = map_name or false
+	if map_instance.RandomMapGenObject
+		and map_instance.SuperBigMapExpansionPending ~= true
+		and pending_maps[pending_key] == nil then
+		RestorePreparedMapData(map_name, mapdata)
 	end
 	-- Keep the landing-site preview lightweight and vanilla-sized. Every real random
 	-- map created after New Game uses the stretch-only expanded allocation below.
