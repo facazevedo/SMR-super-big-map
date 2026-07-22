@@ -10,20 +10,18 @@
 local config = {}
 
 -- ============================================================================
--- LOADING PROFILER
+-- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Observational timing only: emit stable, machine-readable records for each instrumented step of
--- initial expanded-map generation and deferred underground construction. The logger adds no waits
--- or gameplay mutations and reports its own print overhead in each session summary.
-config.DebugLoggingEnabled = true
-config.DebugLoadingTimings = true
--- Keep every unrelated diagnostic channel disabled while profiling loading performance.
+-- Keep diagnostics disabled in published builds. Individual switches remain available
+-- for targeted troubleshooting after enabling the master logging switch.
+config.DebugLoggingEnabled = false
+config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
-config.DebugElevatorTraversal = true
-config.DebugElevatorSupply = true
-config.DebugElevatorLogistics = true
-config.DebugElevatorRocks = true
-config.DebugOverviewCamera = true
+config.DebugElevatorTraversal = false
+config.DebugElevatorSupply = false
+config.DebugElevatorLogistics = false
+config.DebugElevatorRocks = false
+config.DebugOverviewCamera = false
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -158,7 +156,7 @@ config.PreventElevatorFlatten = true
 
 -- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
 -- unlocks the template, and quick-builds the next placed Elevator for free.
-config.PlaceElevatorButtonEnabled = true
+config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
