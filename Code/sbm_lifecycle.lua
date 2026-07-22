@@ -914,6 +914,13 @@ RegisterOnce("LoadGame", function()
 	if gen and type(gen.SyncMapDataToGrids) == "function" and current then
 		gen.SyncMapDataToGrids(current)
 	end
+	-- Older saves may contain a completed Elevator whose two halves missed vanilla's queued
+	-- post-link supply merge. Repair both electricity and water fragments immediately on load;
+	-- the same invariant is checked again after every map-change lifecycle below.
+	if gen and type(gen.RepairExpandedElevatorSupplyNetworks) == "function" and current then
+		gen.RepairExpandedElevatorSupplyNetworks(current,
+			"LoadGame backward-compatible Elevator supply repair")
+	end
 	if gen and type(gen.ReseatExpandedUndergroundWonders) == "function" and current then
 		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(current,
 			"LoadGame after Lifecycle.Apply and mapdata synchronization")
@@ -1010,6 +1017,11 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		gen.HandlePendingUndergroundElevatorRestore(
 			map_slot, map, "CurrentMapChangeDone after Lifecycle.Apply")
 	end
+	if IsModMap(map) and gen
+		and type(gen.RepairExpandedElevatorSupplyNetworks) == "function" then
+		gen.RepairExpandedElevatorSupplyNetworks(map,
+			"CurrentMapChangeDone after final Elevator restoration")
+	end
 	-- Existing underground Elevators are moved by the stretch pass, so their cached absolute
 	-- waypoint chains must be rebuilt after the final terrain/buildable lifecycle. Restore any
 	-- rover lights deferred while that destination was off-screen at this same renderer-safe point.
@@ -1089,6 +1101,10 @@ RegisterOnce("SuperBigMapUndergroundSupplyReady", function(map, token_id, reason
 	if gen and type(gen.HandlePendingUndergroundElevatorRestore) == "function" then
 		gen.HandlePendingUndergroundElevatorRestore(map and map.slot, map,
 			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " token=" .. tostring(token_id))
+	end
+	if gen and type(gen.RepairExpandedElevatorSupplyNetworks) == "function" then
+		gen.RepairExpandedElevatorSupplyNetworks(map,
+			tostring(reason or "SuperBigMapUndergroundSupplyReady") .. " final supply audit")
 	end
 	if gen and type(gen.RebuildExpandedElevatorWaypointChains) == "function" then
 		gen.RebuildExpandedElevatorWaypointChains(map,

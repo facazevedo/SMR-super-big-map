@@ -2603,6 +2603,113 @@ local function PatchElevatorSupplyTransactionBoundary(source)
 	return true
 end
 
+-- Elevator utility transfer is represented by one supply fragment shared by the two map halves.
+-- Vanilla asks each freshly attached element to Notify("MergePassageGrids"), but those queued
+-- notifications can both run before LinkThroughPassage has finished linking the pair. Nothing
+-- retries the merge afterward, leaving a valid-looking Elevator whose surface and underground
+-- electricity fragments (and, through the identical path, water fragments) remain isolated.
+--
+-- Enforce the actual transfer invariant synchronously once the pair exists. The same helper is run
+-- at load/map lifecycle boundaries so saves made with already-separated fragments are repaired
+-- without rebuilding the Elevator or changing either local network's production/consumption.
+-- Keep the helper alias inside a closed lexical scope: this intentionally large module runs close
+-- to the engine compiler's 200-active-local limit.
+SuperBigMap.ElevatorSupplyRepair = {}
+do
+local ElevatorSupplyRepair = SuperBigMap.ElevatorSupplyRepair
+
+function ElevatorSupplyRepair.Pair(elevator, reason)
+	local other = type(elevator) == "table" and rawget(elevator, "other") or nil
+	if not TraversalObjectValid(elevator) or not TraversalObjectValid(other) then
+		return true, { skipped = "unlinked or invalid Elevator pair" }
+	end
+	local map = SupplyObjectMap(elevator)
+	local other_map = SupplyObjectMap(other)
+	if not IsExpandedSupplyContext(map) and not IsExpandedSupplyContext(other_map) then
+		return true, { skipped = "non-expanded Elevator pair" }
+	end
+
+	local result = {
+		reason = tostring(reason), elevator = tostring(elevator), other = tostring(other),
+		map = tostring(map), other_map = tostring(other_map), repaired = 0, failed = 0,
+	}
+	for _, resource in ipairs({ "electricity", "water" }) do
+		local element = rawget(elevator, resource)
+		local other_element = rawget(other, resource)
+		local grid = type(element) == "table" and rawget(element, "grid") or nil
+		local other_grid = type(other_element) == "table" and rawget(other_element, "grid") or nil
+		result[resource .. "_before_shared"] = tostring(
+			grid ~= nil and other_grid ~= nil and grid == other_grid)
+		local resource_error
+		if not element or not other_element then
+			resource_error = "missing supply element"
+		elseif not grid or not other_grid then
+			resource_error = "missing supply fragment"
+		elseif grid ~= other_grid then
+			local merge = rawget(elevator, "MergeGrids") or elevator.MergeGrids
+			if type(merge) ~= "function" then
+				resource_error = "MergeGrids unavailable"
+			else
+				local merge_ok, merge_err = pcall(merge, elevator, resource)
+				if not merge_ok then resource_error = tostring(merge_err) end
+			end
+		end
+
+		grid = type(element) == "table" and rawget(element, "grid") or nil
+		other_grid = type(other_element) == "table" and rawget(other_element, "grid") or nil
+		local shared = grid ~= nil and other_grid ~= nil and grid == other_grid
+		result[resource .. "_after_shared"] = tostring(shared)
+		if shared and result[resource .. "_before_shared"] ~= "true" then
+			result.repaired = result.repaired + 1
+		elseif not shared then
+			result.failed = result.failed + 1
+			result[resource .. "_error"] = tostring(resource_error
+				or "Elevator halves still reference different supply fragments")
+		end
+	end
+	ExpansionAudit("ELEVATOR_SUPPLY_PAIR_REPAIR", result, map or other_map)
+	return result.failed == 0, result
+end
+
+function ElevatorSupplyRepair.Networks(map, reason)
+	local stats = {
+		reason = tostring(reason), pairs = 0, repaired = 0, failed = 0,
+		electricity_failed = 0, water_failed = 0,
+	}
+	if not IsExpandedSupplyContext(map) or type(map.MapForEach) ~= "function" then
+		stats.skipped = "map is not an expanded gameplay map"
+		return true, stats
+	end
+	local seen = setmetatable({}, { __mode = "k" })
+	local scan_ok, scan_error = pcall(map.MapForEach, map, "map", "ElevatorBase",
+		function(elevator)
+			if seen[elevator] then return end
+			seen[elevator] = true
+			local other = TraversalObjectValid(elevator) and rawget(elevator, "other") or nil
+			if not TraversalObjectValid(other) then return end
+			seen[other] = true
+			stats.pairs = stats.pairs + 1
+			local pair_ok, pair = ElevatorSupplyRepair.Pair(elevator, reason)
+			stats.repaired = stats.repaired + (tonumber(pair and pair.repaired) or 0)
+			if not pair_ok then
+				stats.failed = stats.failed + 1
+				if pair and pair.electricity_after_shared ~= "true" then
+					stats.electricity_failed = stats.electricity_failed + 1
+				end
+				if pair and pair.water_after_shared ~= "true" then
+					stats.water_failed = stats.water_failed + 1
+				end
+			end
+		end)
+	if not scan_ok then
+		stats.failed = stats.failed + 1
+		stats.scan_error = tostring(scan_error)
+	end
+	ExpansionAudit("ELEVATOR_SUPPLY_NETWORK_AUDIT", stats, map)
+	return stats.failed == 0, stats
+end
+end
+
 -- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
 -- overlay and connection grids disagree. Keep vanilla untouched for normal maps, but fail closed
 -- on an expanded map if a future lifecycle regression presents incompatible MapVars. The ordering
@@ -5954,6 +6061,8 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	end
 	local wrapper = function(self, ...)
 		local result = PackValues(original(self, ...))
+		SuperBigMap.ElevatorSupplyRepair.Pair(self,
+			"ElevatorBase:LinkThroughPassage completed")
 		HideCompletedPassagePair(self, "ElevatorBase:LinkThroughPassage")
 		return Unpack(result, 1, result.n)
 	end
@@ -9670,6 +9779,7 @@ MapGeneration.PatchBuriedWonderDarknessVisibility = SuperBigMap.BuriedWonderDark
 MapGeneration.RefreshBuriedWonderDarknessVisibility = SuperBigMap.BuriedWonderDarkness.Refresh
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
+MapGeneration.RepairExpandedElevatorSupplyNetworks = SuperBigMap.ElevatorSupplyRepair.Networks
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
 MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWaypointChains
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
@@ -9705,6 +9815,8 @@ function MapGeneration.ApplyModBehavior()
 	if cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
 		PatchElevatorTraversalDiagnostics()
 	end
+	SuperBigMap.ElevatorSupplyRepair.Networks(Global("CurrentMap"),
+		"ApplyModBehavior existing-save and hot-reload repair")
 	return true
 end
 
