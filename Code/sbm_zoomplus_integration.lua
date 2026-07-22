@@ -32,6 +32,12 @@ local function PointXYZ(point)
 	return SafeCall(point.x, point), SafeCall(point.y, point), SafeCall(point.z, point)
 end
 
+local function PointValid(point)
+	if not point then return false end
+	local ok_method, is_valid = pcall(function() return point.IsValid end)
+	return ok_method and type(is_valid) == "function" and SafeCall(is_valid, point) == true
+end
+
 -- Scalar snapshot of every value needed to diagnose an incorrect far-zoom limit.
 -- All engine calls are protected because this also runs during save-load transitions.
 local function CameraSnapshot()
@@ -57,14 +63,19 @@ local function CameraSnapshot()
 		out.max_zoom = tostring(max_zoom)
 		local eye = SafeCall(camera.GetEye)
 		local lookat = SafeCall(camera.GetLookAt)
-		local ex, ey, ez = PointXYZ(eye)
-		local lx, ly, lz = PointXYZ(lookat)
+		local eye_valid = PointValid(eye)
+		local lookat_valid = PointValid(lookat)
+		out.eye_valid = tostring(eye_valid)
+		out.lookat_valid = tostring(lookat_valid)
+		local ex, ey, ez
+		local lx, ly, lz
+		if eye_valid then ex, ey, ez = PointXYZ(eye) end
+		if lookat_valid then lx, ly, lz = PointXYZ(lookat) end
 		out.eye_x, out.eye_y, out.eye_z = tostring(ex), tostring(ey), tostring(ez)
 		out.lookat_x, out.lookat_y, out.lookat_z = tostring(lx), tostring(ly), tostring(lz)
-		if eye and lookat then
-			local ok, distance = pcall(function() return eye:Dist(lookat) end)
-			out.eye_distance = tostring(ok and distance or nil)
-		end
+		-- Never call the engine point-distance method here: the debug runtime asserts before pcall can
+		-- contain it when either startup point is invalid. The scalar coordinates
+		-- above are sufficient to reconstruct distance from a captured log.
 	end
 	return out
 end
