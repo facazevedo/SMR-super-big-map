@@ -20,6 +20,7 @@ config.DebugLoadingTimings = true
 -- Keep every unrelated diagnostic channel disabled while profiling loading performance.
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
+config.DebugElevatorSupply = true
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -610,6 +611,7 @@ C.DEBUG_LOGGING_ENABLED = debug_logging_enabled
 C.DEBUG_LOADING_TIMINGS = debug_logging_enabled and as_bool(config.DebugLoadingTimings)
 C.DEBUG_ENRICHMENT_AUDIT = debug_logging_enabled and as_bool(config.DebugEnrichmentAudit)
 C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugElevatorTraversal)
+C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 

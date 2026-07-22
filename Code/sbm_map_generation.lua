@@ -2705,6 +2705,24 @@ function ElevatorSupplyRepair.Pair(elevator, reason, rebuild_map)
 		other_grid = type(other_element) == "table" and rawget(other_element, "grid") or nil
 		local shared = grid ~= nil and other_grid ~= nil and grid == other_grid
 		result[resource .. "_after_shared"] = tostring(shared)
+		result[resource .. "_grid"] = tostring(grid)
+		result[resource .. "_other_grid"] = tostring(other_grid)
+		result[resource .. "_elements"] = tostring(type(grid) == "table"
+			and type(rawget(grid, "elements")) == "table" and #grid.elements or nil)
+		result[resource .. "_cities"] = tostring(type(grid) == "table"
+			and type(rawget(grid, "cities")) == "table" and #grid.cities or nil)
+		result[resource .. "_production"] = tostring(type(grid) == "table"
+			and rawget(grid, "production") or nil)
+		result[resource .. "_current_production"] = tostring(type(grid) == "table"
+			and rawget(grid, "current_production") or nil)
+		result[resource .. "_consumption"] = tostring(type(grid) == "table"
+			and rawget(grid, "consumption") or nil)
+		result[resource .. "_current_consumption"] = tostring(type(grid) == "table"
+			and rawget(grid, "current_consumption") or nil)
+		result[resource .. "_element_demand"] = tostring(type(element) == "table"
+			and rawget(element, "consumption") or nil)
+		result[resource .. "_element_supplied"] = tostring(type(element) == "table"
+			and rawget(element, "current_consumption") or nil)
 		if not local_rebuild_ok then
 			result.failed = result.failed + 1
 			result[resource .. "_error"] = "local supply rebuild failed: "
@@ -2767,6 +2785,140 @@ function ElevatorSupplyRepair.Networks(map, reason)
 	ExpansionAudit("ELEVATOR_SUPPLY_NETWORK_AUDIT", stats, map)
 	return stats.failed == 0, stats
 end
+
+function ElevatorSupplyRepair.Schedule(map, reason)
+	if not IsExpandedSupplyContext(map) then return false end
+	local State = SuperBigMap.State
+	State.elevator_supply_repair_scheduled = State.elevator_supply_repair_scheduled
+		or setmetatable({}, { __mode = "k" })
+	if State.elevator_supply_repair_scheduled[map] then
+		ExpansionAudit("ELEVATOR_SUPPLY_REPAIR_COALESCED", {
+			reason = tostring(reason),
+		}, map)
+		return true
+	end
+	State.elevator_supply_repair_scheduled[map] = tostring(reason)
+	local function run()
+		local scheduled_reason = State.elevator_supply_repair_scheduled[map]
+		State.elevator_supply_repair_scheduled[map] = nil
+		if Global("CurrentMap") ~= map or not IsExpandedSupplyContext(map) then
+			ExpansionAudit("ELEVATOR_SUPPLY_REPAIR_SKIPPED", {
+				reason = tostring(scheduled_reason), current_map = tostring(Global("CurrentMap")),
+			}, map)
+			return
+		end
+		ElevatorSupplyRepair.Networks(map,
+			"scheduled after supply connection: " .. tostring(scheduled_reason))
+	end
+	if type(map.CreateGameTimeThread) == "function" then
+		map:CreateGameTimeThread(run)
+		return true
+	end
+	local create = Global("CreateGameTimeThread")
+	if type(create) ~= "function" then
+		State.elevator_supply_repair_scheduled[map] = nil
+		ExpansionAudit("ELEVATOR_SUPPLY_REPAIR_SCHEDULE_FAILED", {
+			reason = tostring(reason), error = "game-time thread API unavailable",
+		}, map)
+		return false
+	end
+	create(run)
+	return true
+end
+end
+
+-- Supply consumers finish creating their element after ConstructionComplete. Hook the
+-- authoritative connection boundary so the Elevator topology repair cannot run early. The
+-- wrapper is inert on vanilla maps. Patch every compiled descendant with its own inherited copy
+-- of this method; concrete building classes do not necessarily dispatch through the base table.
+-- MapPassageLinked descendants are excluded because the Elevator restore transaction has its own
+-- stricter class-level boundary above.
+function SuperBigMap.ElevatorSupplyRepair.PatchConsumerConnection(source)
+	local State = SuperBigMap.State
+	local supply_class = Engine.ClassTable and Engine.ClassTable("SupplyGridObject")
+	if type(supply_class) ~= "table" or type(supply_class.SupplyGridConnectElement) ~= "function" then
+		return false
+	end
+	local installed = State.expanded_supply_consumer_connect_patches
+	if State.expanded_supply_consumer_connect_patch_version == GENERATOR_PATCH_VERSION
+		and type(installed) == "table" and #installed > 0 then
+		local intact = true
+		for _, patch in ipairs(installed) do
+			if patch.class.SupplyGridConnectElement ~= patch.wrapper then
+				intact = false
+				break
+			end
+		end
+		if intact then return true end
+	end
+	for _, patch in ipairs(type(installed) == "table" and installed or {}) do
+		if patch.class.SupplyGridConnectElement == patch.wrapper then
+			patch.class.SupplyGridConnectElement = patch.original
+		end
+	end
+
+	local passage_classes = setmetatable({}, { __mode = "k" })
+	local passage_class = Engine.ClassTable and Engine.ClassTable("MapPassageLinked")
+	if type(passage_class) == "table" then passage_classes[passage_class] = true end
+	local descendants = Global("ClassDescendants")
+	if type(descendants) == "function" then
+		pcall(descendants, "MapPassageLinked", function(_, class, output)
+			if type(class) == "table" then output[class] = true end
+		end, passage_classes)
+	end
+
+	local targets = { supply_class }
+	if type(descendants) == "function" then
+		pcall(descendants, "SupplyGridObject", function(_, class, output)
+			if type(class) == "table" then output[#output + 1] = class end
+		end, targets)
+	end
+	local patches, seen = {}, setmetatable({}, { __mode = "k" })
+	local function make_wrapper(original, class_name)
+		return function(building, element, grid_class, ...)
+			local results = PackValues(original(building, element, grid_class, ...))
+			local map = SupplyObjectMap(building)
+			local resource = type(grid_class) == "table" and grid_class.supply_resource or nil
+			if IsExpandedSupplyContext(map)
+				and (resource == "electricity" or resource == "water") then
+				local grid = type(element) == "table" and rawget(element, "grid") or nil
+				ExpansionAudit("SUPPLY_CONSUMER_CONNECT_COMPLETE", {
+					source = tostring(source), wrapper_class = tostring(class_name),
+					class = tostring(building and building.class), building = tostring(building),
+					resource = resource, grid = tostring(grid),
+					grid_elements = tostring(type(grid) == "table"
+						and type(rawget(grid, "elements")) == "table" and #grid.elements or nil),
+					grid_production = tostring(type(grid) == "table"
+						and rawget(grid, "production") or nil),
+					grid_consumption = tostring(type(grid) == "table"
+						and rawget(grid, "consumption") or nil),
+					element_demand = tostring(type(element) == "table"
+						and rawget(element, "consumption") or nil),
+					element_supplied = tostring(type(element) == "table"
+						and rawget(element, "current_consumption") or nil),
+				}, map)
+				SuperBigMap.ElevatorSupplyRepair.Schedule(map,
+					"SupplyGridConnectElement " .. tostring(building and building.class)
+						.. " " .. tostring(resource))
+			end
+			return Unpack(results, 1, results.n)
+		end
+	end
+	for _, class in ipairs(targets) do
+		local original = type(class) == "table" and rawget(class, "SupplyGridConnectElement") or nil
+		if not seen[class] and not passage_classes[class] and type(original) == "function" then
+			seen[class] = true
+			local wrapper = make_wrapper(original, rawget(class, "class"))
+			class.SupplyGridConnectElement = wrapper
+			patches[#patches + 1] = { class = class, original = original, wrapper = wrapper }
+		end
+	end
+	State.expanded_supply_consumer_connect_patches = patches
+	State.expanded_supply_consumer_connect_patch_version = GENERATOR_PATCH_VERSION
+	ExpansionAudit("SUPPLY_CONSUMER_CONNECTION_PATCHED", {
+		source = tostring(source), classes = #patches,
+	}, Global("CurrentMap"))
+	return #patches > 0
 end
 
 -- Native CopySupplyFragmentToOverlayGrid asserts in C instead of returning a Lua error when its
@@ -9529,6 +9681,7 @@ local function PatchDeferredUndergroundAccess(source)
 	if not cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false) then return false end
 	PatchSupplyGridOverlayCopyGuard(source)
 	PatchElevatorSupplyTransactionBoundary(source)
+	SuperBigMap.ElevatorSupplyRepair.PatchConsumerConnection(source)
 	local diagnostics_removed = RestoreExpandedElevatorPowerGate()
 	local function reapply_removed_diagnostics()
 		if diagnostics_removed and cfg_bool("DEBUG_ELEVATOR_TRAVERSAL", false) then
@@ -9839,6 +9992,7 @@ MapGeneration.RefreshBuriedWonderDarknessVisibility = SuperBigMap.BuriedWonderDa
 MapGeneration.HandleDeferredUndergroundMapChange = HandleDeferredUndergroundMapChange
 MapGeneration.HandlePendingUndergroundElevatorRestore = HandlePendingUndergroundElevatorRestore
 MapGeneration.RepairExpandedElevatorSupplyNetworks = SuperBigMap.ElevatorSupplyRepair.Networks
+MapGeneration.ScheduleExpandedElevatorSupplyRepair = SuperBigMap.ElevatorSupplyRepair.Schedule
 MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLights
 MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWaypointChains
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
@@ -9970,6 +10124,17 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.elevator_passage_merge_wrapper = nil
 	State.original_elevator_passage_merge_grids = nil
 	State.elevator_supply_boundary_patch_version = nil
+	for _, patch in ipairs(type(State.expanded_supply_consumer_connect_patches) == "table"
+		and State.expanded_supply_consumer_connect_patches or {}) do
+		if type(patch) == "table" and type(patch.class) == "table"
+			and patch.class.SupplyGridConnectElement == patch.wrapper
+			and type(patch.original) == "function" then
+			patch.class.SupplyGridConnectElement = patch.original
+		end
+	end
+	State.expanded_supply_consumer_connect_patches = nil
+	State.expanded_supply_consumer_connect_patch_version = nil
+	State.elevator_supply_repair_scheduled = nil
 	if State.supply_grid_overlay_copy_wrapper
 		and Global("CopySupplyFragmentToOverlayGrid") == State.supply_grid_overlay_copy_wrapper
 		and type(State.original_supply_grid_overlay_copy) == "function" then

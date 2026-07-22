@@ -103,6 +103,10 @@ function Diagnostics.ElevatorTraversalEnabled()
 	return Enabled() and Config().DEBUG_ELEVATOR_TRAVERSAL == true
 end
 
+function Diagnostics.ElevatorSupplyEnabled()
+	return Enabled() and Config().DEBUG_ELEVATOR_SUPPLY == true
+end
+
 function Diagnostics.UndergroundDecorationEnabled()
 	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
@@ -113,8 +117,8 @@ function Diagnostics.Audit(event, data, map)
 end
 
 function Diagnostics.Elevator(event, data, map)
-	if not Diagnostics.EnrichmentEnabled() then return false end
-	return Print("ElevatorAudit", event, CopyData(data, map))
+	if not Diagnostics.EnrichmentEnabled() and not Diagnostics.ElevatorSupplyEnabled() then return false end
+	return Print("ElevatorSupply", event, CopyData(data, map))
 end
 
 function Diagnostics.ElevatorTraversal(event, data, map)
