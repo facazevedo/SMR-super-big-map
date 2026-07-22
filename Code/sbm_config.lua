@@ -23,6 +23,7 @@ config.DebugElevatorTraversal = true
 config.DebugElevatorSupply = true
 config.DebugElevatorLogistics = true
 config.DebugElevatorRocks = true
+config.DebugOverviewCamera = true
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -616,6 +617,7 @@ C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugEleva
 C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)
 C.DEBUG_ELEVATOR_LOGISTICS = debug_logging_enabled and as_bool(config.DebugElevatorLogistics)
 C.DEBUG_ELEVATOR_ROCKS = debug_logging_enabled and as_bool(config.DebugElevatorRocks)
+C.DEBUG_OVERVIEW_CAMERA = debug_logging_enabled and as_bool(config.DebugOverviewCamera)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 

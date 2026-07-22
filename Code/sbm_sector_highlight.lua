@@ -93,8 +93,21 @@ local function EnsureEntranceVisualsReady(map, overview_active, reason)
 		if seen[obj] or not valid(obj) then return end
 		seen[obj] = true
 		stats.passages = stats.passages + 1
+		-- A completed Elevator deliberately hides its consumed passage marker and rock artwork.
+		-- Preserve that state across load, map switch, and overview initialization. Older saves may
+		-- not have our hidden tag yet, so the live passage.elevator link (or its counterpart's link)
+		-- is authoritative as well.
+		local other = obj.other
+		local completed = obj.SuperBigMapHiddenByCompletedElevator == true
+			or valid(obj.elevator) or valid(other and other.elevator)
+		if completed then
+			invoke(obj, "SetVisible", false)
+			invoke(obj, "SetOpacity", 0)
+			obj.SuperBigMapHiddenByCompletedElevator = true
+			return
+		end
 		-- Temporary-source migration can preserve a hidden enum state. Physical
-		-- entrance objects are real map content and must be visible in every camera mode.
+		-- unlinked entrance objects are real map content and must be visible in every camera mode.
 		invoke(obj, "SetVisible", true)
 		invoke(obj, "SetOpacity", 100)
 	end
@@ -353,11 +366,15 @@ local function Install()
 	-- exact final vanilla scale/opacity/depth state once the engine reports completion. On overview
 	-- entry, initialize immediately as well so a late-migrated entrance never waits for a second
 	-- zoom event.
-	if type(overview_class.ScaleSmallObjects) == "function"
-		and overview_class.ScaleSmallObjects ~= State.scale_small_objects_wrapper then
-		State.original_scale_small_objects = overview_class.ScaleSmallObjects
+	local original_scale = overview_class.ScaleSmallObjects
+	if original_scale == State.scale_small_objects_wrapper
+		and type(State.original_scale_small_objects) == "function" then
+		original_scale = State.original_scale_small_objects
+	end
+	if type(original_scale) == "function" then
+		State.original_scale_small_objects = original_scale
 		local wrapper = function(self, time, direction, ...)
-			local r = State.original_scale_small_objects(self, time, direction, ...)
+			local r = original_scale(self, time, direction, ...)
 			if direction == "up" then
 				EnsureEntranceVisualsReady(Engine.Global("CurrentMap"), true,
 					"OverviewModeDialog.ScaleSmallObjects(up)")

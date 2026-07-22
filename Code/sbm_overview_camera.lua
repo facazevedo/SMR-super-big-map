@@ -26,6 +26,48 @@ local function PointXYZ(p)
 	return SafeCall(p.x, p), SafeCall(p.y, p), SafeCall(p.z, p)
 end
 
+local function OverviewCameraAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.OverviewCamera) == "function" then
+		diagnostics.OverviewCamera(event, data, map)
+	end
+end
+
+-- CameraObj is snapped to the live camera every render. The engine requires that object's Z to
+-- stay strictly inside const.SanePosMaxZ, but a 140%-of-terrain overview on an 8192-tile map can
+-- request an eye above that limit (about 1.18M on a raised surface). Clamp only the eye's Z with a
+-- small interpolation margin; look-at, XY framing, FOV, and every vanilla-size map remain intact.
+local function ClampOverviewEyeToSaneZ(pos, lookat, map, source)
+	local x, y, z = PointXYZ(pos)
+	local lx, ly, lz = PointXYZ(lookat)
+	local const_tbl = Global("const")
+	local sane_z = type(const_tbl) == "table" and tonumber(const_tbl.SanePosMaxZ) or nil
+	local applied_z = z
+	local clamped = false
+	if type(z) == "number" and type(sane_z) == "number" and sane_z > 2000
+		and type(pos.SetZ) == "function" then
+		local margin = math.max(1000, math.floor(sane_z / 100))
+		local max_z = sane_z - margin
+		applied_z = math.max(-max_z, math.min(max_z, z))
+		if applied_z ~= z then
+			local ok, value = pcall(pos.SetZ, pos, applied_z)
+			if ok and value then
+				pos = value
+				clamped = true
+			else
+				applied_z = z
+			end
+		end
+	end
+	OverviewCameraAudit("OVERVIEW_CAMERA_CALC", {
+		source = tostring(source or "?"), requested_x = tostring(x), requested_y = tostring(y),
+		requested_z = tostring(z), applied_z = tostring(applied_z), clamped = tostring(clamped),
+		lookat_x = tostring(lx), lookat_y = tostring(ly), lookat_z = tostring(lz),
+		sane_z = tostring(sane_z), current_map = tostring(Global("CurrentMap")),
+	}, map)
+	return pos, lookat
+end
+
 
 -- Integer-safe component interpolation: a + (b-a)*num/den. This runtime's `/` is
 -- integer division, so multiply BEFORE dividing (the product stays well within
@@ -344,7 +386,8 @@ local function PatchOverviewCamera()
 				lookat = center
 				pos = center + point_fn(new_dx, new_dy, new_z)
 				pos, lookat = ApplyOverviewNudge(pos, lookat, size)
-				return pos, lookat
+				return ClampOverviewEyeToSaneZ(
+					pos, lookat, map, "CalcOverviewCameraPos expanded-center")
 			end
 		end
 
@@ -358,7 +401,8 @@ local function PatchOverviewCamera()
 		end
 
 		pos, lookat = ApplyOverviewNudge(pos, lookat, size)
-		return pos, lookat
+		return ClampOverviewEyeToSaneZ(
+			pos, lookat, map, "CalcOverviewCameraPos expanded-fallback")
 	end
 
 	overview_camera_wrapper = wrapper
@@ -471,8 +515,16 @@ local function ResetOverviewCamera(map, transition_time, source)
 		-- overview eye on the first entry (see EnsureOverviewZoomOutLimit).
 		EnsureOverviewZoomOutLimit(camera)
 		ApplyLiveOverviewFov(transition_time or 0, source)
-		SafeCall(camera.SetCamera, pos, lookat, transition_time or 0)
-		return true
+		local applied = pcall(camera.SetCamera, pos, lookat, transition_time or 0)
+		local px, py, pz = PointXYZ(pos)
+		local lx, ly, lz = PointXYZ(lookat)
+		OverviewCameraAudit("OVERVIEW_CAMERA_APPLY", {
+			source = tostring(source), transition_time = tostring(transition_time or 0),
+			eye_x = tostring(px), eye_y = tostring(py), eye_z = tostring(pz),
+			lookat_x = tostring(lx), lookat_y = tostring(ly), lookat_z = tostring(lz),
+			applied = tostring(applied), current_map = tostring(Global("CurrentMap")),
+		}, map)
+		return applied
 	end
 	return false
 end

@@ -115,6 +115,10 @@ function Diagnostics.ElevatorRocksEnabled()
 	return Enabled() and Config().DEBUG_ELEVATOR_ROCKS == true
 end
 
+function Diagnostics.OverviewCameraEnabled()
+	return Enabled() and Config().DEBUG_OVERVIEW_CAMERA == true
+end
+
 function Diagnostics.UndergroundDecorationEnabled()
 	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
@@ -142,6 +146,11 @@ end
 function Diagnostics.ElevatorRocks(event, data, map)
 	if not Diagnostics.ElevatorRocksEnabled() then return false end
 	return Print("ElevatorRocks", event, CopyData(data, map))
+end
+
+function Diagnostics.OverviewCamera(event, data, map)
+	if not Diagnostics.OverviewCameraEnabled() then return false end
+	return Print("OverviewCamera", event, CopyData(data, map))
 end
 
 function Diagnostics.UndergroundDecoration(event, data, map)
