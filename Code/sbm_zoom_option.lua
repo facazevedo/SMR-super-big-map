@@ -34,6 +34,14 @@ local function cfg()
 	return SuperBigMap.Config or {}
 end
 
+local function ZoomAudit(event, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.Zoom) == "function" then
+		return diagnostics.Zoom(event, data or {}, Global("CurrentMap"))
+	end
+	return false
+end
+
 local function Enabled()
 	return cfg().ENABLE_MAX_ZOOM_OPTION ~= false
 end
@@ -95,7 +103,9 @@ end
 
 -- Camera far-zoom multiplier (>= 1.0). 100% -> 1.0 (vanilla; ZoomPlus stays off).
 function ZoomOption.GetMultiplier()
-	return ZoomOption.GetPercent() / 100
+	-- Force real division: this runtime otherwise truncates integer division, which
+	-- would make 925%, 950%, and 975% all behave like 900%.
+	return ZoomOption.GetPercent() / 100.0
 end
 
 local function as_text(s)
@@ -165,16 +175,46 @@ end
 
 -- Re-apply the saved zoom to the live camera via the ZoomPlus integration (which now
 -- reads ZoomOption.GetMultiplier()). Safe to call any time; no-op without a camera.
-function ZoomOption.Apply()
-	if not Enabled() or not ExpansionSessionActive() then return end
+function ZoomOption.Apply(source)
+	source = tostring(source or "unspecified")
+	local enabled = Enabled()
+	local active = ExpansionSessionActive()
+	local session_options = Global("g_SessionOptions")
+	local raw_percent = type(session_options) == "table" and session_options[OPTION_ID] or nil
+	local percent = ZoomOption.GetPercent()
+	ZoomAudit("OPTION_APPLY_BEGIN", {
+		source = source,
+		enabled = tostring(enabled),
+		expansion_active = tostring(active),
+		raw_saved_percent = tostring(raw_percent),
+		effective_percent = tostring(percent),
+		effective_multiplier = tostring(percent / 100.0),
+		session_options = tostring(session_options),
+	})
+	if not enabled or not active then
+		ZoomAudit("OPTION_APPLY_SKIPPED", {
+			source = source,
+			reason = not enabled and "option_disabled" or "expansion_inactive",
+		})
+		return
+	end
 	local zi = SuperBigMap.ZoomPlusIntegration
 	if zi and type(zi.ApplyNormalZoom) == "function" then
-		SafeCall(zi.ApplyNormalZoom)
+		local result = SafeCall(zi.ApplyNormalZoom, "ZoomOption:" .. source)
+		ZoomAudit("OPTION_APPLY_END", { source = source, result = tostring(result) })
+	else
+		ZoomAudit("OPTION_APPLY_SKIPPED", { source = source, reason = "integration_missing" })
 	end
 end
 
 function ZoomOption.ApplyModBehavior()
-	ZoomOption.AppendOption()
+	local appended = ZoomOption.AppendOption()
+	ZoomAudit("OPTION_INSTALL", {
+		appended = tostring(appended),
+		raw_saved_percent = tostring(type(Global("g_SessionOptions")) == "table"
+			and Global("g_SessionOptions")[OPTION_ID] or nil),
+		effective_percent = tostring(ZoomOption.GetPercent()),
+	})
 end
 
 function ZoomOption.RestoreVanillaBehavior()
@@ -266,11 +306,15 @@ if State.zoom_option_messages_registered ~= true then
 	State.zoom_option_messages_registered = true
 	Engine.ChainOnMsg("OptionsApply", function()
 		local live = SuperBigMap.ZoomOption
-		if live and type(live.Apply) == "function" then live.Apply() end
+		if live and type(live.Apply) == "function" then live.Apply("OptionsApply") end
 	end)
 	Engine.ChainOnMsg("LoadGame", function()
 		local live = SuperBigMap.ZoomOption
-		if live and type(live.Apply) == "function" then live.Apply() end
+		if live and type(live.Apply) == "function" then live.Apply("LoadGame") end
+	end)
+	Engine.ChainOnMsg("PostLoadGame", function()
+		local live = SuperBigMap.ZoomOption
+		if live and type(live.Apply) == "function" then live.Apply("PostLoadGame") end
 	end)
 	Engine.ChainOnMsg("CreateRolloverWindow", function(win, control)
 		local live = SuperBigMap.ZoomOption

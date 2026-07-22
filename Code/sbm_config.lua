@@ -12,16 +12,17 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Keep diagnostics disabled in published builds. Individual switches remain available
--- for targeted troubleshooting after enabling the master logging switch.
-config.DebugLoggingEnabled = false
+-- Targeted camera diagnostics for the old-save zoom-limit investigation. Keep unrelated
+-- channels off so the resulting Mars log stays small and mechanically readable.
+config.DebugLoggingEnabled = true
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
 config.DebugElevatorLogistics = false
 config.DebugElevatorRocks = false
-config.DebugOverviewCamera = false
+config.DebugZoom = true
+config.DebugOverviewCamera = true
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -615,6 +616,7 @@ C.DEBUG_ELEVATOR_TRAVERSAL = debug_logging_enabled and as_bool(config.DebugEleva
 C.DEBUG_ELEVATOR_SUPPLY = debug_logging_enabled and as_bool(config.DebugElevatorSupply)
 C.DEBUG_ELEVATOR_LOGISTICS = debug_logging_enabled and as_bool(config.DebugElevatorLogistics)
 C.DEBUG_ELEVATOR_ROCKS = debug_logging_enabled and as_bool(config.DebugElevatorRocks)
+C.DEBUG_ZOOM = debug_logging_enabled and as_bool(config.DebugZoom)
 C.DEBUG_OVERVIEW_CAMERA = debug_logging_enabled and as_bool(config.DebugOverviewCamera)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)

@@ -27,6 +27,80 @@ local OVERVIEW_EXIT_PAN_TIME = (type(Config.OVERVIEW_EXIT_PAN_TIME) == "number")
 -- baseline instead of stacking on the previous far distance.
 local last_applied_multiplier = false
 
+local function PointXYZ(point)
+	if not point then return nil, nil, nil end
+	return SafeCall(point.x, point), SafeCall(point.y, point), SafeCall(point.z, point)
+end
+
+-- Scalar snapshot of every value needed to diagnose an incorrect far-zoom limit.
+-- All engine calls are protected because this also runs during save-load transitions.
+local function CameraSnapshot()
+	local out = {}
+	local camera = Global("cameraRTS")
+	local props = type(camera) == "table" and SafeCall(camera.GetProperties, 1) or nil
+	local const_tbl = Global("const")
+	local defaults = type(const_tbl) == "table" and const_tbl.DefaultCameraRTS or nil
+	out.live_zoom_out = tostring(type(props) == "table" and props.LookatDistZoomOut or nil)
+	out.default_zoom_out = tostring(type(defaults) == "table" and defaults.LookatDistZoomOut or nil)
+	out.sane_z = tostring(type(const_tbl) == "table" and const_tbl.SanePosMaxZ or nil)
+	out.interface_mode = tostring(SafeCall(Global("GetInGameInterfaceMode")))
+	out.overview_active = tostring(SafeCall(Global("IsOverviewMode")) == true)
+	out.transition_active = tostring(Global("CameraTransitionThread") ~= nil
+		and Global("CameraTransitionThread") ~= false)
+	out.changing_map = tostring(Global("ChangingMap") ~= nil and Global("ChangingMap") ~= false)
+	if type(camera) == "table" then
+		local zoom = SafeCall(camera.GetZoom)
+		local min_zoom, max_zoom = SafeCall(camera.GetZoomLimits)
+		out.zoom = tostring(zoom)
+		out.zoom_scaled = tostring(type(zoom) == "number" and zoom * 1000 or nil)
+		out.min_zoom = tostring(min_zoom)
+		out.max_zoom = tostring(max_zoom)
+		local eye = SafeCall(camera.GetEye)
+		local lookat = SafeCall(camera.GetLookAt)
+		local ex, ey, ez = PointXYZ(eye)
+		local lx, ly, lz = PointXYZ(lookat)
+		out.eye_x, out.eye_y, out.eye_z = tostring(ex), tostring(ey), tostring(ez)
+		out.lookat_x, out.lookat_y, out.lookat_z = tostring(lx), tostring(ly), tostring(lz)
+		if eye and lookat then
+			local ok, distance = pcall(function() return eye:Dist(lookat) end)
+			out.eye_distance = tostring(ok and distance or nil)
+		end
+	end
+	return out
+end
+
+local function ZoomAudit(event, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if not diagnostics or type(diagnostics.Zoom) ~= "function" then return false end
+	local out = CameraSnapshot()
+	local zoom_plus = Global("SuperBigMapZoomPlus")
+	if type(zoom_plus) == "table" and type(zoom_plus.GetDebugState) == "function" then
+		local state = SafeCall(zoom_plus.GetDebugState)
+		if type(state) == "table" then
+			for key, value in pairs(state) do out["zp_" .. tostring(key)] = value end
+		end
+	end
+	if type(data) == "table" then
+		for key, value in pairs(data) do out[key] = value end
+	end
+	return diagnostics.Zoom(event, out, Global("CurrentMap"))
+end
+
+local function AttachZoomAudit(zoom_plus)
+	if type(zoom_plus) ~= "table" then return end
+	zoom_plus.Config = type(zoom_plus.Config) == "table" and zoom_plus.Config or {}
+	local diagnostics = SuperBigMap.Diagnostics
+	local enabled = diagnostics and type(diagnostics.ZoomEnabled) == "function"
+		and diagnostics.ZoomEnabled() == true
+	if enabled then
+		zoom_plus.Config.AUDIT = function(event, data)
+			ZoomAudit("ZOOMPLUS_" .. tostring(event), data)
+		end
+	else
+		zoom_plus.Config.AUDIT = nil
+	end
+end
+
 -- True on the MOD EDITOR test map -- Super Big Map must leave the camera vanilla there.
 local function InModEditor()
 	local fn = Global("IsModEditorMap")
@@ -51,11 +125,13 @@ local function ShouldUseModZoom()
 	return false
 end
 
-local function DisableZoomPlus(zoom_plus)
+local function DisableZoomPlus(zoom_plus, source)
+	ZoomAudit("DISABLE_BEGIN", { source = tostring(source or "?") })
 	if type(zoom_plus) == "table" and type(zoom_plus.Disable) == "function" then
 		SafeCall(zoom_plus.Disable)
 	end
 	last_applied_multiplier = false
+	ZoomAudit("DISABLE_END", { source = tostring(source or "?") })
 end
 
 -- The far-zoom multiplier to use: the per-save "Max Zoom Level" option when present
@@ -71,25 +147,30 @@ local function EffectiveMultiplier()
 	return NORMAL_ZOOM_MULTIPLIER
 end
 
-local function ApplyNormalZoom()
+local function ApplyNormalZoom(source)
+	source = tostring(source or "unspecified")
 	if not NORMAL_ZOOM_ENABLED then
+		ZoomAudit("APPLY_SKIPPED", { source = source, reason = "config_disabled" })
 		return false
 	end
 
 	local zoom_plus = Global("SuperBigMapZoomPlus")
 	if type(zoom_plus) ~= "table" then
+		ZoomAudit("APPLY_SKIPPED", { source = source, reason = "zoomplus_missing" })
 		return false
 	end
+	AttachZoomAudit(zoom_plus)
 
-	if not ShouldUseModZoom() then
-		DisableZoomPlus(zoom_plus)
+	local should_use = ShouldUseModZoom()
+	if not should_use then
+		DisableZoomPlus(zoom_plus, source .. ":not_mod_map")
 		return false
 	end
 
 	-- In the mod editor, stay VANILLA: disable ZoomPlus instead of applying it, so the
 	-- editor camera/zoom is stock. (ZoomPlus re-applies normally on real game maps.)
 	if InModEditor() then
-		DisableZoomPlus(zoom_plus)
+		DisableZoomPlus(zoom_plus, source .. ":mod_editor")
 		return false
 	end
 
@@ -98,6 +179,11 @@ local function ApplyNormalZoom()
 	zoom_plus.Config.OVERVIEW_EXIT_PAN_TIME = OVERVIEW_EXIT_PAN_TIME
 
 	local multiplier = EffectiveMultiplier()
+	ZoomAudit("APPLY_BEGIN", {
+		source = source,
+		effective_multiplier = tostring(multiplier),
+		last_applied_multiplier = tostring(last_applied_multiplier),
+	})
 
 	-- 100% / vanilla: ensure ZoomPlus is OFF so the camera's max zoom-out is exactly
 	-- stock (ZoomPlus.SetMultiplier rejects <= 1, so "vanilla" must mean disabled).
@@ -107,6 +193,9 @@ local function ApplyNormalZoom()
 			SafeCall(zoom_plus.Disable)
 		end
 		last_applied_multiplier = 1.0
+		ZoomAudit("APPLY_END", {
+			source = source, effective_multiplier = tostring(multiplier), result = "vanilla",
+		})
 		return true
 	end
 
@@ -115,6 +204,11 @@ local function ApplyNormalZoom()
 	-- the original zoom-out once and applies original * multiplier, so disable first
 	-- (restores baseline + unpatches const) then re-enable with the new multiplier.
 	if enabled and last_applied_multiplier ~= multiplier then
+		ZoomAudit("APPLY_MULTIPLIER_CHANGED", {
+			source = source,
+			previous_multiplier = tostring(last_applied_multiplier),
+			effective_multiplier = tostring(multiplier),
+		})
 		if type(zoom_plus.Disable) == "function" then
 			SafeCall(zoom_plus.Disable)
 		end
@@ -137,20 +231,28 @@ local function ApplyNormalZoom()
 		result = false
 	end
 	last_applied_multiplier = multiplier
+	ZoomAudit("APPLY_END", {
+		source = source,
+		effective_multiplier = tostring(multiplier),
+		was_enabled = tostring(enabled),
+		result = tostring(result == true),
+	})
 	return result == true
 end
 
 local ZoomPlusIntegration = {}
 
 ZoomPlusIntegration.ApplyNormalZoom = ApplyNormalZoom
+ZoomPlusIntegration.DebugSnapshot = CameraSnapshot
 
 function ZoomPlusIntegration.ApplyModBehavior()
-	ApplyNormalZoom()
+	ApplyNormalZoom("ApplyModBehavior")
 end
 
 function ZoomPlusIntegration.RestoreVanillaBehavior()
 	local zoom_plus = Global("SuperBigMapZoomPlus")
-	DisableZoomPlus(zoom_plus)
+	AttachZoomAudit(zoom_plus)
+	DisableZoomPlus(zoom_plus, "RestoreVanillaBehavior")
 end
 
 SuperBigMap.ZoomPlusIntegration = ZoomPlusIntegration

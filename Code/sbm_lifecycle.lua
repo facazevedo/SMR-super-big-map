@@ -175,7 +175,7 @@ local TerrainSize = Engine.TerrainSize
 
 -- Re-install the static overview patches (FOV widen, camera override, curtain stubs)
 -- and re-apply ZoomPlus. Delegates to the extracted domain modules.
-local function ApplyOverviewPatches()
+local function ApplyOverviewPatches(source)
 	local camera = SuperBigMap.OverviewCamera
 	local curtains = SuperBigMap.OverviewCurtains
 	local zoom = SuperBigMap.ZoomPlusIntegration
@@ -188,7 +188,7 @@ local function ApplyOverviewPatches()
 		curtains.PatchOverviewCurtains()
 	end
 	if zoom then
-		zoom.ApplyNormalZoom()
+		zoom.ApplyNormalZoom(source or "ApplyOverviewPatches")
 	end
 end
 
@@ -405,7 +405,7 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 	-- Keep the global overview patches installed (idempotent) so they are ready
 	-- for when a mod map loads -- but they are internally gated to mod maps, so on
 	-- a non-mod map they stay vanilla.
-	ApplyOverviewPatches()
+	ApplyOverviewPatches("Lifecycle.Apply")
 
 	-- New-game-only / mod-map-only gate: do NO per-map work (bounds, sector refit,
 	-- overview reshaping) on vanilla maps or old saves not started with the mod.
@@ -1251,7 +1251,7 @@ RegisterOnce("ClassesPostprocess", function()
 	-- An active expanded game keeps its load-interface guard across class rebuilds. Main-menu
 	-- loads install the same guard only for the duration of the LoadGame entry wrapper.
 	InstallRestoreInGameInterfaceGuard()
-	ApplyOverviewPatches()
+	ApplyOverviewPatches("ClassesPostprocess")
 	local gen = SuperBigMap.MapGeneration
 	if gen then
 		gen.PatchRandomMapGenerator()
@@ -1273,7 +1273,7 @@ RegisterOnce("DataLoaded", function()
 	if not active() then
 		return
 	end
-	ApplyOverviewPatches()
+	ApplyOverviewPatches("DataLoaded")
 	local gen = SuperBigMap.MapGeneration
 	if gen then
 		gen.PatchRandomMapGenerator()
@@ -1567,7 +1567,7 @@ RegisterOnce("OverviewMode", function(enabled)
 		-- (ApplyNormalZoom + reframe), is what "fixes" it.
 		local zoom = SuperBigMap.ZoomPlusIntegration
 		if zoom then
-			zoom.ApplyNormalZoom()
+			zoom.ApplyNormalZoom("OverviewMode(true)")
 		end
 		if camera then
 			camera.RefreshOverviewCamera()
@@ -1626,7 +1626,7 @@ RegisterOnce("CameraTransitionEnd", function()
 	end
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom then
-		zoom.ApplyNormalZoom()
+		zoom.ApplyNormalZoom("CameraTransitionEnd")
 	end
 	local camera = SuperBigMap.OverviewCamera
 	if camera then
@@ -1672,7 +1672,7 @@ RegisterOnce("GameExitEditor", function()
 	if not active() then
 		return
 	end
-	ApplyOverviewPatches()
+	ApplyOverviewPatches("GameExitEditor")
 	local zoom = SuperBigMap.ZoomPlusIntegration
 	if zoom and type(zoom.ApplyModBehavior) == "function" then zoom.ApplyModBehavior() end
 	local map = Global("CurrentMap")

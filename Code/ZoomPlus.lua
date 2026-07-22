@@ -53,6 +53,15 @@ local ZoomPlus_RemoveOverviewReturnCameraHook
 local ZoomPlus_InstallZoomOutOverviewTriggerHook
 local ZoomPlus_RemoveZoomOutOverviewTriggerHook
 
+-- Optional, host-supplied observational callback. Keeping this as a plain Config
+-- callback preserves ZoomPlus as a self-contained module with no SuperBigMap dependency.
+local function ZoomPlus_Audit(event, data)
+	local audit = type(ZP.Config) == "table" and ZP.Config.AUDIT or nil
+	if type(audit) == "function" then
+		pcall(audit, event, data or {})
+	end
+end
+
 local function ZoomPlus_CanModifyCamera()
 	-- Super Big Map owns this instance and decides when it is enabled/disabled (the
 	-- integration disables it where vanilla camera is wanted, e.g. the editor), so the
@@ -187,23 +196,66 @@ end
 -- Store the original RTS camera properties once. Keep the full table: the engine uses
 -- fields such as ZoomStep/ZoomTime for normal mouse-wheel zoom.
 local function ZoomPlus_CaptureOriginalZoomProperties()
+	local defaults = ZoomPlus_GetDefaultRTSCameraProperties()
+	local default_zoom_out = defaults and tonumber(defaults.LookatDistZoomOut) or nil
+	local preserved_default = tonumber(ZP.original_default_zoom_out)
+	local baseline_zoom_out = preserved_default or default_zoom_out
+	local baseline_source = preserved_default and "captured_default" or "const_default"
+	local actual_live = ZoomPlus_GetRTSCameraProperties()
+	local live = ZoomPlus_GetNormalRTSCameraProperties()
+	local live_zoom_out = type(actual_live) == "table" and tonumber(actual_live.LookatDistZoomOut) or nil
+	local candidate_zoom_out = type(live) == "table" and tonumber(live.LookatDistZoomOut) or nil
+
 	if ZP.original_properties then
 		local normalized = ZoomPlus_NormalizeCameraProperties(ZP.original_properties)
 		if normalized and type(normalized.LookatDistZoomOut) == "number" then
+			-- A save resumed in overview can expose the temporary live overview limit
+			-- (20000) before the interface reports overview mode. Never preserve that as
+			-- the normal baseline: the stable default is the vanilla selection limit (600).
+			if type(baseline_zoom_out) == "number" and baseline_zoom_out > 0 then
+				normalized.LookatDistZoomOut = baseline_zoom_out
+			end
 			ZP.original_properties = normalized
+			ZP.last_capture_live_zoom_out = live_zoom_out
+			ZP.last_capture_default_zoom_out = default_zoom_out
+			ZP.last_capture_baseline_zoom_out = normalized.LookatDistZoomOut
+			ZP.last_capture_baseline_source = baseline_source .. ":repair_existing"
+			ZoomPlus_Audit("BASELINE_CAPTURE", {
+				live_zoom_out = live_zoom_out,
+				candidate_zoom_out = candidate_zoom_out,
+				default_zoom_out = default_zoom_out,
+				baseline_zoom_out = normalized.LookatDistZoomOut,
+				baseline_source = ZP.last_capture_baseline_source,
+			})
 			return ZP.original_properties
 		end
 	end
 
-	local props = ZoomPlus_NormalizeCameraProperties(ZoomPlus_GetNormalRTSCameraProperties())
+	local props = ZoomPlus_NormalizeCameraProperties(live)
 	if not props or type(props.LookatDistZoomOut) ~= "number" then
+		ZoomPlus_Audit("BASELINE_CAPTURE_FAILED", {
+			live_zoom_out = live_zoom_out,
+			candidate_zoom_out = candidate_zoom_out,
+			default_zoom_out = default_zoom_out,
+		})
 		return false
 	end
 
-	if type(ZP.original_default_zoom_out) == "number" then
-		props.LookatDistZoomOut = ZP.original_default_zoom_out
+	if type(baseline_zoom_out) == "number" and baseline_zoom_out > 0 then
+		props.LookatDistZoomOut = baseline_zoom_out
 	end
 	ZP.original_properties = props
+	ZP.last_capture_live_zoom_out = live_zoom_out
+	ZP.last_capture_default_zoom_out = default_zoom_out
+	ZP.last_capture_baseline_zoom_out = props.LookatDistZoomOut
+	ZP.last_capture_baseline_source = baseline_source
+	ZoomPlus_Audit("BASELINE_CAPTURE", {
+		live_zoom_out = live_zoom_out,
+		candidate_zoom_out = candidate_zoom_out,
+		default_zoom_out = default_zoom_out,
+		baseline_zoom_out = props.LookatDistZoomOut,
+		baseline_source = baseline_source,
+	})
 	return ZP.original_properties
 end
 
@@ -772,6 +824,7 @@ function ZP.Enable(preserve_camera)
 	end
 	local original = ZoomPlus_CaptureOriginalZoomProperties()
 	if not original or type(original.LookatDistZoomOut) ~= "number" then
+		ZoomPlus_Audit("ENABLE_FAILED", { reason = "missing_original_zoom_out" })
 		return false
 	end
 
@@ -781,6 +834,12 @@ function ZP.Enable(preserve_camera)
 	local props = ZoomPlus_CopyTable(original)
 	-- Zoom+ intentionally changes only zoom-out; zoom-in and overview exit targeting stay vanilla.
 	props.LookatDistZoomOut = original.LookatDistZoomOut * multiplier
+	ZoomPlus_Audit("ENABLE_TARGET", {
+		baseline_zoom_out = original.LookatDistZoomOut,
+		multiplier = multiplier,
+		target_zoom_out = props.LookatDistZoomOut,
+		preserve_camera = tostring(preserve_camera),
+	})
 	ZoomPlus_SetDefaultZoomOut(props.LookatDistZoomOut)
 
 	ZP.last_multiplier = multiplier
@@ -799,6 +858,7 @@ function ZP.Enable(preserve_camera)
 	-- camera so the disable path can clamp it back to vanilla on exit.
 	if overview_active then
 		ZoomPlus_CacheVanillaOverviewSavedCamera()
+		ZoomPlus_Audit("ENABLE_DEFERRED", { reason = "overview_active" })
 		return true
 	end
 
@@ -808,6 +868,7 @@ function ZP.Enable(preserve_camera)
 	-- produce a visible snap. const has already been patched, so the new far
 	-- limit is in effect for any post-transition zoom.
 	if transition_active then
+		ZoomPlus_Audit("ENABLE_DEFERRED", { reason = "camera_transition" })
 		return true
 	end
 
@@ -830,6 +891,7 @@ function ZP.Enable(preserve_camera)
 		ZoomPlus_RestoreDefaultZoomOut()
 		ZoomPlus_RemoveOverviewReturnCameraHook()
 		ZoomPlus_RemoveZoomOutOverviewTriggerHook()
+		ZoomPlus_Audit("ENABLE_FAILED", { reason = "set_properties" })
 		return false
 	end
 
@@ -840,6 +902,11 @@ function ZP.Enable(preserve_camera)
 	else
 		ZoomPlus_ReapplyCurrentCameraForZoomProperties()
 	end
+	ZoomPlus_Audit("ENABLE_APPLIED", {
+		baseline_zoom_out = original.LookatDistZoomOut,
+		multiplier = multiplier,
+		target_zoom_out = props.LookatDistZoomOut,
+	})
 	return true
 end
 
@@ -1030,8 +1097,13 @@ ZoomPlus_InstallZoomOutOverviewTriggerHook = function()
 			return ZP.original_selection_check_above_zoom_limit(self, ...)
 		end
 
-		local _, max_zoom = get_zoom_limits()
+		local min_zoom, max_zoom = get_zoom_limits()
 		local zoom = get_zoom() * 1000
+		ZoomPlus_Audit("ZOOM_OUT_CHECK", {
+			zoom = zoom,
+			min_zoom = min_zoom,
+			max_zoom = max_zoom,
+		})
 		if type(max_zoom) == "number" and zoom >= max_zoom then
 			local now_fn = rawget(_G, "now")
 			local t = type(now_fn) == "function" and now_fn() or 0
@@ -1042,6 +1114,11 @@ ZoomPlus_InstallZoomOutOverviewTriggerHook = function()
 			end
 			ZP.last_overview_zoom_out = t
 			if ZP.overview_zoom_out_count > ZOOM_OUT_OVERVIEW_REPEAT_COUNT and self.parent then
+				ZoomPlus_Audit("ZOOM_OUT_ENTER_OVERVIEW", {
+					zoom = zoom,
+					max_zoom = max_zoom,
+					repeat_count = ZP.overview_zoom_out_count,
+				})
 				self.parent:SetMode("overview")
 				return "break"
 			end
@@ -1093,6 +1170,24 @@ function ZP.Reapply()
 		return true
 	end
 	return ZP.Enable("preserve camera")
+end
+
+-- Read-only state used by the host's targeted diagnostics. Values are kept scalar
+-- so the diagnostic formatter never walks engine tables or point userdata.
+function ZP.GetDebugState()
+	local original = ZP.original_properties
+	return {
+		enabled = tostring(ZP.enabled == true),
+		configured_multiplier = tostring(ZP.GetMultiplier()),
+		last_multiplier = tostring(ZP.last_multiplier),
+		last_zoom_out = tostring(ZP.last_zoom_out),
+		original_zoom_out = tostring(type(original) == "table" and original.LookatDistZoomOut or nil),
+		original_default_zoom_out = tostring(ZP.original_default_zoom_out),
+		capture_live_zoom_out = tostring(ZP.last_capture_live_zoom_out),
+		capture_default_zoom_out = tostring(ZP.last_capture_default_zoom_out),
+		capture_baseline_zoom_out = tostring(ZP.last_capture_baseline_zoom_out),
+		capture_baseline_source = tostring(ZP.last_capture_baseline_source),
+	}
 end
 
 -- Initialize Zoom+ lifecycle hooks.

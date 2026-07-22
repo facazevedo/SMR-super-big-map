@@ -115,6 +115,10 @@ function Diagnostics.ElevatorRocksEnabled()
 	return Enabled() and Config().DEBUG_ELEVATOR_ROCKS == true
 end
 
+function Diagnostics.ZoomEnabled()
+	return Enabled() and Config().DEBUG_ZOOM == true
+end
+
 function Diagnostics.OverviewCameraEnabled()
 	return Enabled() and Config().DEBUG_OVERVIEW_CAMERA == true
 end
@@ -146,6 +150,11 @@ end
 function Diagnostics.ElevatorRocks(event, data, map)
 	if not Diagnostics.ElevatorRocksEnabled() then return false end
 	return Print("ElevatorRocks", event, CopyData(data, map))
+end
+
+function Diagnostics.Zoom(event, data, map)
+	if not Diagnostics.ZoomEnabled() then return false end
+	return Print("Zoom", event, CopyData(data, map))
 end
 
 function Diagnostics.OverviewCamera(event, data, map)
