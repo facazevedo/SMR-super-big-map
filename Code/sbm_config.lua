@@ -12,8 +12,8 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Diagnostics remain available for targeted troubleshooting and stay off in published builds.
-config.DebugLoggingEnabled = false
+-- TEMP night/overview-grid investigation: keep only the focused visual channel enabled.
+config.DebugLoggingEnabled = true
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
@@ -23,6 +23,7 @@ config.DebugElevatorRocks = false
 config.DebugZoom = false
 config.DebugOverviewCamera = false
 config.DebugSectorInteraction = false
+config.DebugOverviewGridVisuals = true
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -619,6 +620,7 @@ C.DEBUG_ELEVATOR_ROCKS = debug_logging_enabled and as_bool(config.DebugElevatorR
 C.DEBUG_ZOOM = debug_logging_enabled and as_bool(config.DebugZoom)
 C.DEBUG_OVERVIEW_CAMERA = debug_logging_enabled and as_bool(config.DebugOverviewCamera)
 C.DEBUG_SECTOR_INTERACTION = debug_logging_enabled and as_bool(config.DebugSectorInteraction)
+C.DEBUG_OVERVIEW_GRID_VISUALS = debug_logging_enabled and as_bool(config.DebugOverviewGridVisuals)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 

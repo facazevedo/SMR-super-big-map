@@ -1535,6 +1535,59 @@ RegisterOnce("MapGenerated", function(map)
 	end
 end)
 
+RegisterOnce("NewHour", function(hour)
+	if not active() or editor_active() then return end
+	local map = Global("CurrentMap")
+	if not IsModMap(map) then return end
+	local sectors = SuperBigMap.SectorExploration
+	if sectors and type(sectors.AuditOverviewGridVisuals) == "function" then
+		local city = Global("UICity") or Global("MainCity")
+		local repairs = type(sectors.RepairSectorVisualGeometry) == "function"
+			and sectors.RepairSectorVisualGeometry(city) or {}
+		local orphan_count, _, orphan_samples = 0, 0, "unavailable"
+		if type(sectors.PruneOrphanSectorDecals) == "function" then
+			orphan_count, _, orphan_samples = sectors.PruneOrphanSectorDecals(city, map)
+		end
+		sectors.AuditOverviewGridVisuals(city, "NewHour", {
+			new_hour = tostring(hour),
+			repaired_sector_positions = tostring(repairs.sector_positions),
+			repaired_decal_positions = tostring(repairs.decal_positions),
+			repaired_decal_scales = tostring(repairs.decal_scales),
+			repaired_scan_positions = tostring(repairs.scan_positions),
+			pruned_orphan_decals = tostring(orphan_count),
+			pruned_orphan_samples = tostring(orphan_samples),
+		})
+	end
+end)
+
+RegisterOnce("SectorScanned", function(status, col, row)
+	if not active() or editor_active() then return end
+	local map = Global("CurrentMap")
+	if not IsModMap(map) then return end
+	local sectors = SuperBigMap.SectorExploration
+	if sectors and type(sectors.RepairSectorVisualGeometry) == "function" then
+		local city = Global("UICity") or Global("MainCity")
+		local repairs = sectors.RepairSectorVisualGeometry(city)
+		local orphan_count, _, orphan_samples = 0, 0, "unavailable"
+		if type(sectors.PruneOrphanSectorDecals) == "function" then
+			orphan_count, _, orphan_samples = sectors.PruneOrphanSectorDecals(city, map)
+		end
+		if type(sectors.AuditOverviewGridVisuals) == "function" then
+			sectors.AuditOverviewGridVisuals(city, "SectorScanned", {
+				scanned_status = tostring(status),
+				scanned_col = tostring(col),
+				scanned_row = tostring(row),
+				repaired_sector_positions = tostring(repairs.sector_positions),
+				repaired_decal_positions = tostring(repairs.decal_positions),
+				repaired_decal_scales = tostring(repairs.decal_scales),
+				repaired_scan_positions = tostring(repairs.scan_positions),
+				pruned_orphan_decals = tostring(orphan_count),
+				pruned_orphan_samples = tostring(orphan_samples),
+			})
+		end
+	end
+end)
+
 RegisterOnce("OverviewMode", function(enabled)
 	if SuperBigMap.State and SuperBigMap.State.vanilla_source_migration_active == true then
 		return
@@ -1585,6 +1638,12 @@ RegisterOnce("OverviewMode", function(enabled)
 		if sectors and type(sectors.HideSectorVisuals) == "function" then
 			sectors.HideSectorVisuals(Global("UICity"), "OverviewMode(false)")
 		end
+	end
+	local sectors = SuperBigMap.SectorExploration
+	if sectors and type(sectors.AuditOverviewGridVisuals) == "function" then
+		sectors.AuditOverviewGridVisuals(Global("UICity") or Global("MainCity"), "OverviewMode", {
+			overview_enabled = tostring(enabled),
+		})
 	end
 end)
 

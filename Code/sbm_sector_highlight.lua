@@ -314,10 +314,16 @@ local function Install()
 		local original_update_decal = State.original_map_sector_update_decal or map_sector_class.UpdateDecal
 		State.original_map_sector_update_decal = original_update_decal
 		map_sector_class.UpdateDecal = function(self, ...)
+			local ok_map, map = pcall(function() return self:GetMap() end)
+			map = ok_map and map or Engine.Global("CurrentMap")
+			local exploration = SuperBigMap.SectorExploration
+			local normalize = exploration and exploration.NormalizeSectorVisualGeometry
+			if IsModMap(map) and type(normalize) == "function" then
+				normalize(self)
+			end
 			local underground = false
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
-				local ok, map = pcall(function() return self:GetMap() end)
-				underground = ok and IsModMap(map)
+				underground = ok_map and IsModMap(map)
 					and map.mapdata and map.mapdata.Environment == "Underground"
 			end
 			if underground then
@@ -328,7 +334,38 @@ local function Install()
 				self.decal = nil
 				return
 			end
-			return original_update_decal(self, ...)
+			local r1, r2 = original_update_decal(self, ...)
+			if IsModMap(map) and type(normalize) == "function" then
+				normalize(self)
+			end
+			return r1, r2
+		end
+	end
+	if map_sector_class and type(map_sector_class.SetScanFx) == "function" then
+		local original_scan_fx = State.original_map_sector_set_scan_fx or map_sector_class.SetScanFx
+		State.original_map_sector_set_scan_fx = original_scan_fx
+		map_sector_class.SetScanFx = function(self, enable, ...)
+			local ok_map, map = pcall(function() return self:GetMap() end)
+			map = ok_map and map or Engine.Global("CurrentMap")
+			local exploration = SuperBigMap.SectorExploration
+			local normalize = exploration and exploration.NormalizeSectorVisualGeometry
+			if IsModMap(map) and type(normalize) == "function" then
+				normalize(self)
+			end
+			local r1, r2 = original_scan_fx(self, enable, ...)
+			if IsModMap(map) and type(normalize) == "function" then
+				local repairs = normalize(self)
+				local audit = exploration and exploration.AuditOverviewGridVisuals
+				if type(audit) == "function" then
+					audit(self.city, "MapSector:SetScanFx", {
+						scan_fx_enable = tostring(enable),
+						scan_fx_sector_id = tostring(self.id),
+						repaired_sector_positions = tostring(repairs.sector_positions),
+						repaired_scan_positions = tostring(repairs.scan_positions),
+					})
+				end
+			end
+			return r1, r2
 		end
 	end
 	if map_sector_class and type(map_sector_class.QueueForExploration) == "function" then
@@ -553,11 +590,15 @@ function SectorHighlight.RestoreVanillaBehavior()
 	if map_sector_class and State and type(State.original_map_sector_update_decal) == "function" then
 		map_sector_class.UpdateDecal = State.original_map_sector_update_decal
 	end
+	if map_sector_class and State and type(State.original_map_sector_set_scan_fx) == "function" then
+		map_sector_class.SetScanFx = State.original_map_sector_set_scan_fx
+	end
 	if State then
 		State.original_overview_select_sector = nil
 		State.original_overview_generate_rollover = nil
 		State.original_sector_queue_for_exploration = nil
 		State.original_map_sector_update_decal = nil
+		State.original_map_sector_set_scan_fx = nil
 		State.scale_small_objects_wrapper = nil
 		State.original_scale_small_objects = nil
 		State.overview_highlight_patch_version = nil

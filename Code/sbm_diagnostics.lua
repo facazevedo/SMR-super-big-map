@@ -127,6 +127,10 @@ function Diagnostics.SectorInteractionEnabled()
 	return Enabled() and Config().DEBUG_SECTOR_INTERACTION == true
 end
 
+function Diagnostics.OverviewGridEnabled()
+	return Enabled() and Config().DEBUG_OVERVIEW_GRID_VISUALS == true
+end
+
 function Diagnostics.UndergroundDecorationEnabled()
 	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
@@ -169,6 +173,11 @@ end
 function Diagnostics.SectorInteraction(event, data, map)
 	if not Diagnostics.SectorInteractionEnabled() then return false end
 	return Print("SectorInteraction", event, CopyData(data, map))
+end
+
+function Diagnostics.OverviewGrid(event, data, map)
+	if not Diagnostics.OverviewGridEnabled() then return false end
+	return Print("OverviewGrid", event, CopyData(data, map))
 end
 
 function Diagnostics.UndergroundDecoration(event, data, map)

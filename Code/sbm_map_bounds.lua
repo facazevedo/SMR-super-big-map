@@ -231,6 +231,11 @@ local function RefreshSectors(map)
 				if sector then
 					local y = (i - 1) * tile
 					sector.area = box_fn(x, y, x + tile, y + tile)
+					-- MapSector is a saved object separate from .area. Vanilla's scan FX and
+					-- UpdateDecal use GetPos(), so keep it synchronized whenever bounds move.
+					if type(sector.SetPos) == "function" then
+						SafeCall(sector.SetPos, sector, sector.area:Center())
+					end
 
 					if type(build_ratio) == "function" and map.buildable and map.buildable.z_grid and unbuildable_z then
 						sector.play_ratio = SafeCall(build_ratio, map.buildable.z_grid, unbuildable_z, 100, sector.area) or sector.play_ratio

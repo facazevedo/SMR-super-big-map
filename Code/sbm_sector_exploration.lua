@@ -254,6 +254,20 @@ local function SectorInteractionAudit(event, data, map)
 	end
 end
 
+local function OverviewGridEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	return type(diagnostics) == "table"
+		and type(diagnostics.OverviewGridEnabled) == "function"
+		and diagnostics.OverviewGridEnabled() == true
+end
+
+local function OverviewGridAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if type(diagnostics) == "table" and type(diagnostics.OverviewGrid) == "function" then
+		diagnostics.OverviewGrid(event, data, map)
+	end
+end
+
 local function SectorDiagnosticData(sector, data)
 	data = type(data) == "table" and data or {}
 	if not sector then
@@ -572,6 +586,284 @@ local function ForEachSectorDecalObject(map, callback, reason)
 
 	local fallback_count = ForEachMapObjectByClass(map, { "Decal" }, callback, reason, IsSectorDecalEntity)
 	return fallback_count
+end
+
+local function PointXY(value)
+	if not value then return nil end
+	local ok, x, y = pcall(function() return value:x(), value:y() end)
+	if ok and type(x) == "number" and type(y) == "number" then
+		return x, y
+	end
+	return nil
+end
+
+local function PositionMatches(obj, target)
+	if not obj or not target or type(obj.GetPos) ~= "function" then return false end
+	local pos = SafeCall(obj.GetPos, obj)
+	local x, y = PointXY(pos)
+	local target_x, target_y = PointXY(target)
+	return x ~= nil and target_x ~= nil and x == target_x and y == target_y
+end
+
+local function ExpectedSectorDecalScale(sector)
+	local area = sector and sector.area
+	if not area or type(area.sizex) ~= "function" then return nil end
+	local size = SafeCall(area.sizex, area)
+	if type(size) ~= "number" or size <= 0 then return nil end
+	local guim = Global("guim")
+	guim = type(guim) == "number" and guim > 0 and guim or 100
+	local mul_div_round = Global("MulDivRound")
+	local scale = type(mul_div_round) == "function"
+		and SafeCall(mul_div_round, size, 100, 100 * guim)
+		or math.floor(size / guim + 0.5)
+	return type(scale) == "number" and scale + 1 or nil
+end
+
+-- MapSector is a saved game object separate from its serialized .area. Old saves can therefore
+-- hold a correct 20x20 area table while the object itself still sits at a pre-repair position.
+-- Vanilla places the active scan effect and refreshed decal at MapSector:GetPos(), while queue
+-- numbers use area:Center(); keeping the two sources synchronized prevents the huge displaced
+-- scan/grid rectangle seen when the queue became active around nightfall.
+local function NormalizeSectorVisualGeometry(sector)
+	local stats = {
+		sectors = 0, sector_positions = 0, decal_positions = 0, decal_scales = 0,
+		scan_positions = 0, queue_text_positions = 0,
+	}
+	if not sector or not sector.area or type(sector.area.Center) ~= "function" then return stats end
+	local center = SafeCall(sector.area.Center, sector.area)
+	if not center then return stats end
+	stats.sectors = 1
+
+	if type(sector.SetPos) == "function" and not PositionMatches(sector, center) then
+		if pcall(sector.SetPos, sector, center) then stats.sector_positions = 1 end
+	end
+
+	local decal = sector.decal
+	if IsValid(decal) then
+		if type(decal.SetPos) == "function" and not PositionMatches(decal, center) then
+			if pcall(decal.SetPos, decal, center) then stats.decal_positions = 1 end
+		end
+		local expected_scale = ExpectedSectorDecalScale(sector)
+		local current_scale = type(decal.GetScale) == "function" and SafeCall(decal.GetScale, decal)
+		if expected_scale and current_scale ~= expected_scale and type(decal.SetScale) == "function" then
+			if pcall(decal.SetScale, decal, expected_scale) then stats.decal_scales = 1 end
+		end
+	end
+
+	local scan_obj = sector.scan_obj
+	if IsValid(scan_obj) and type(scan_obj.SetPos) == "function"
+		and not PositionMatches(scan_obj, center) then
+		if pcall(scan_obj.SetPos, scan_obj, center) then stats.scan_positions = 1 end
+	end
+
+	local queue_text = sector.queue_text
+	if IsValid(queue_text) and type(queue_text.SetPos) == "function"
+		and not PositionMatches(queue_text, center) then
+		if pcall(queue_text.SetPos, queue_text, center) then stats.queue_text_positions = 1 end
+	end
+	return stats
+end
+
+local function RepairSectorVisualGeometry(city)
+	local totals = {
+		sectors = 0, sector_positions = 0, decal_positions = 0, decal_scales = 0,
+		scan_positions = 0, queue_text_positions = 0,
+	}
+	Grid.ForEachSector(city, function(sector)
+		local stats = NormalizeSectorVisualGeometry(sector)
+		for key, value in pairs(stats) do totals[key] = (totals[key] or 0) + value end
+	end)
+	return totals
+end
+
+-- SectorUnexplored/SectorScanned are exclusively MapSector-owned visuals. Remove only objects
+-- that are not referenced by any live saved sector; no MapSector, scan state, queue, deposit, or
+-- gameplay object is replaced.
+local function PruneOrphanSectorDecals(city, map)
+	map = ResolveVisualMap(city, map)
+	local referenced = {}
+	Grid.ForEachSector(city, function(sector)
+		if IsValid(sector.decal) then referenced[sector.decal] = true end
+	end)
+	local done_object = Global("DoneObject")
+	local orphan_count, object_count = 0, 0
+	local orphan_samples = {}
+	ForEachSectorDecalObject(map, function(obj)
+		object_count = object_count + 1
+		if not referenced[obj] and type(done_object) == "function" then
+			if #orphan_samples < 12 then
+				orphan_samples[#orphan_samples + 1] = table.concat({
+					tostring(obj),
+					tostring(type(obj.GetEntity) == "function" and SafeCall(obj.GetEntity, obj)),
+					tostring(type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj)),
+					tostring(type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj)),
+				}, "@")
+			end
+			done_object(obj)
+			orphan_count = orphan_count + 1
+		end
+	end, "PruneOrphanSectorDecals")
+	return orphan_count, object_count,
+		#orphan_samples > 0 and table.concat(orphan_samples, "|") or "none"
+end
+
+local function AuditOverviewGridVisuals(city, event, extra)
+	if not OverviewGridEnabled() then return false end
+	city = city or Global("UICity") or Global("MainCity")
+	local map = ResolveVisualMap(city)
+	if not city or not map or not Grid.UseCustomSectorsForMap(map) then return false end
+
+	local referenced = {}
+	local data = type(extra) == "table" and extra or {}
+	local mismatch_samples = {}
+	local expected_decal_scale
+	data.reason = tostring(event)
+	data.city = tostring(city)
+	data.city_map_area = tostring(city.MapArea)
+	data.const_sector_count = tostring(Global("const") and const.SectorCount)
+	data.map_world_size = tostring(map.Width) .. "x" .. tostring(map.Height)
+	data.map_night_lights_state = tostring(map.NightLightsState)
+	data.exploration_queue_count = tostring(
+		type(city.ExplorationQueue) == "table" and #city.ExplorationQueue or nil)
+	data.canonical_decal_count = 0
+	data.canonical_decal_visible = 0
+	data.sector_position_mismatches = 0
+	data.decal_position_mismatches = 0
+	data.decal_scale_mismatches = 0
+	data.scan_object_count = 0
+	data.scan_position_mismatches = 0
+	data.queue_text_count = 0
+	data.queue_text_position_mismatches = 0
+
+	local function AddMismatch(kind, sector, value, expected)
+		if #mismatch_samples >= 12 then return end
+		mismatch_samples[#mismatch_samples + 1] = table.concat({
+			tostring(kind), tostring(sector and sector.id), tostring(value), tostring(expected),
+		}, ":")
+	end
+
+	Grid.ForEachSector(city, function(sector)
+		local center = sector.area and type(sector.area.Center) == "function"
+			and SafeCall(sector.area.Center, sector.area)
+		if center and not PositionMatches(sector, center) then
+			data.sector_position_mismatches = data.sector_position_mismatches + 1
+			AddMismatch("sector_pos", sector,
+				type(sector.GetPos) == "function" and SafeCall(sector.GetPos, sector), center)
+		end
+		local decal = sector.decal
+		if IsValid(decal) then
+			referenced[decal] = true
+			data.canonical_decal_count = data.canonical_decal_count + 1
+			if type(decal.GetVisible) == "function" and SafeCall(decal.GetVisible, decal) == true then
+				data.canonical_decal_visible = data.canonical_decal_visible + 1
+			end
+			if center and not PositionMatches(decal, center) then
+				data.decal_position_mismatches = data.decal_position_mismatches + 1
+				AddMismatch("decal_pos", sector, SafeCall(decal.GetPos, decal), center)
+			end
+			local expected_scale = ExpectedSectorDecalScale(sector)
+			expected_decal_scale = expected_decal_scale or expected_scale
+			local scale = type(decal.GetScale) == "function" and SafeCall(decal.GetScale, decal)
+			if expected_scale and scale ~= expected_scale then
+				data.decal_scale_mismatches = data.decal_scale_mismatches + 1
+				AddMismatch("decal_scale", sector, scale, expected_scale)
+			end
+		end
+		local scan_obj = sector.scan_obj
+		if IsValid(scan_obj) then
+			data.scan_object_count = data.scan_object_count + 1
+			if center and not PositionMatches(scan_obj, center) then
+				data.scan_position_mismatches = data.scan_position_mismatches + 1
+				AddMismatch("scan_pos", sector, SafeCall(scan_obj.GetPos, scan_obj), center)
+			end
+			data.scan_sector_id = tostring(sector.id)
+			data.scan_sector_pos = tostring(type(sector.GetPos) == "function"
+				and SafeCall(sector.GetPos, sector))
+			data.scan_object = tostring(scan_obj)
+			data.scan_object_pos = tostring(type(scan_obj.GetPos) == "function"
+				and SafeCall(scan_obj.GetPos, scan_obj))
+			data.scan_object_scale = tostring(type(scan_obj.GetScale) == "function"
+				and SafeCall(scan_obj.GetScale, scan_obj))
+			data.scan_object_entity = tostring(type(scan_obj.GetEntity) == "function"
+				and SafeCall(scan_obj.GetEntity, scan_obj))
+			data.scan_object_visible = tostring(type(scan_obj.GetVisible) == "function"
+				and SafeCall(scan_obj.GetVisible, scan_obj))
+			data.scan_sector_status = tostring(sector.status)
+			data.scan_sector_progress = tostring(sector.scan_progress)
+			data.scan_sector_area = tostring(sector.area)
+		end
+		local queue_text = sector.queue_text
+		if IsValid(queue_text) then
+			data.queue_text_count = data.queue_text_count + 1
+			if center and not PositionMatches(queue_text, center) then
+				data.queue_text_position_mismatches = data.queue_text_position_mismatches + 1
+				AddMismatch("queue_text_pos", sector, SafeCall(queue_text.GetPos, queue_text), center)
+			end
+		end
+	end)
+
+	data.expected_decal_scale = tostring(expected_decal_scale)
+	data.mismatch_samples = #mismatch_samples > 0 and table.concat(mismatch_samples, "|") or "none"
+	data.map_sector_decal_objects = 0
+	data.orphan_sector_decal_objects = 0
+	local decal_object_samples = {}
+	ForEachSectorDecalObject(map, function(obj)
+		data.map_sector_decal_objects = data.map_sector_decal_objects + 1
+		if not referenced[obj] then
+			data.orphan_sector_decal_objects = data.orphan_sector_decal_objects + 1
+		end
+		if #decal_object_samples < 12 then
+			decal_object_samples[#decal_object_samples + 1] = table.concat({
+				tostring(obj),
+				tostring(type(obj.GetEntity) == "function" and SafeCall(obj.GetEntity, obj)),
+				tostring(type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj)),
+				tostring(type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj)),
+				tostring(referenced[obj] == true),
+			}, "@")
+		end
+	end, "AuditOverviewGridVisuals")
+	data.sector_decal_object_samples = #decal_object_samples > 0
+		and table.concat(decal_object_samples, "|") or "none"
+
+	local selection_samples = {}
+	data.selection_object_count = ForEachMapObjectByClass(map, SectorSelectionClasses, function(obj)
+		if #selection_samples < 12 then
+			selection_samples[#selection_samples + 1] = table.concat({
+				tostring(obj),
+				tostring(type(obj.GetEntity) == "function" and SafeCall(obj.GetEntity, obj)),
+				tostring(type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj)),
+				tostring(type(obj.GetScale) == "function" and SafeCall(obj.GetScale, obj)),
+				tostring(type(obj.GetVisible) == "function" and SafeCall(obj.GetVisible, obj)),
+			}, "@")
+		end
+	end, "AuditOverviewGridVisuals selections")
+	data.selection_object_samples = #selection_samples > 0
+		and table.concat(selection_samples, "|") or "none"
+
+	local get_time = Global("GetTimeOfDay")
+	if type(get_time) == "function" then
+		local hour, minute = SafeCall(get_time)
+		data.time_of_day = tostring(hour) .. ":" .. tostring(minute)
+	end
+	local get_lightmodel = Global("GetLightmodel")
+	if type(get_lightmodel) == "function" then
+		data.lightmodel = tostring(SafeCall(get_lightmodel, 1))
+	end
+	local current_lightmodel_list = Global("GetCurrentLightmodelList")
+	if type(current_lightmodel_list) == "function" then
+		data.lightmodel_list = tostring(SafeCall(current_lightmodel_list))
+	end
+	local is_overview = Global("IsOverviewMode")
+	data.overview_active = tostring(type(is_overview) == "function" and SafeCall(is_overview) == true)
+	local hr = Global("hr")
+	if type(hr) == "table" then
+		data.hr_far_z = tostring(hr.FarZ)
+		data.hr_shadow_range_override = tostring(hr.ShadowRangeOverride)
+		data.hr_shadow_fade_percent = tostring(hr.ShadowFadeOutRangePercent)
+		data.hr_tod_force_time = tostring(hr.TODForceTime)
+	end
+	OverviewGridAudit("VISUAL_SNAPSHOT", data, map)
+	return true
 end
 
 local function HideSectorDecals(city, reason)
@@ -1421,6 +1713,8 @@ local function InstallSectorPatch()
 			local original = State.original_show_exploration_sectors
 			if type(original) == "function" then return original(city, time) end
 		end
+		local visual_repairs = RepairSectorVisualGeometry(city)
+		local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city)
 		AuditSectorGrid(city, "ShowExploration_Sectors", true)
 		-- Underground MapSectors are data-only: keep them for hover names and buildable ratios,
 		-- but never re-show their grid decals when overview mode opens.
@@ -1434,6 +1728,14 @@ local function InstallSectorPatch()
 				decal:SetEnumFlags(const.efVisible)
 			end
 		end)
+		AuditOverviewGridVisuals(city, "ShowExploration_Sectors", {
+			repaired_sector_positions = tostring(visual_repairs.sector_positions),
+			repaired_decal_positions = tostring(visual_repairs.decal_positions),
+			repaired_decal_scales = tostring(visual_repairs.decal_scales),
+			repaired_scan_positions = tostring(visual_repairs.scan_positions),
+			pruned_orphan_decals = tostring(orphan_decals),
+			pruned_orphan_samples = tostring(orphan_samples),
+		})
 	end
 
 	if State.original_hide_exploration_sectors == nil then
@@ -1465,6 +1767,17 @@ local function InstallSectorPatch()
 				sector:UpdateDecal()
 			end
 		end)
+		local visual_repairs = RepairSectorVisualGeometry(city)
+		local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city)
+		AuditOverviewGridVisuals(city, "UpdateScannedSectorVisuals", {
+			status_filter = tostring(status),
+			repaired_sector_positions = tostring(visual_repairs.sector_positions),
+			repaired_decal_positions = tostring(visual_repairs.decal_positions),
+			repaired_decal_scales = tostring(visual_repairs.decal_scales),
+			repaired_scan_positions = tostring(visual_repairs.scan_positions),
+			pruned_orphan_decals = tostring(orphan_decals),
+			pruned_orphan_samples = tostring(orphan_samples),
+		})
 	end
 
 	State.sector_patch_version = SECTOR_PATCH_VERSION
@@ -1553,7 +1866,18 @@ local function EnsureSectorsBuilt(map, reason)
 			Grid.ConfigureGlobalSectorCount(map,
 				tostring(reason or "EnsureSectorsBuilt") .. " live grid", live_layout.count)
 		end
+		local visual_repairs = RepairSectorVisualGeometry(city)
+		local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city, map)
 		local relabeled = RefreshSectorDisplayNames(map)
+		AuditOverviewGridVisuals(city, "EnsureSectorsBuilt:matches", {
+			lifecycle_reason = tostring(reason),
+			repaired_sector_positions = tostring(visual_repairs.sector_positions),
+			repaired_decal_positions = tostring(visual_repairs.decal_positions),
+			repaired_decal_scales = tostring(visual_repairs.decal_scales),
+			repaired_scan_positions = tostring(visual_repairs.scan_positions),
+			pruned_orphan_decals = tostring(orphan_decals),
+			pruned_orphan_samples = tostring(orphan_samples),
+		})
 		AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": matches", false)
 		return true, relabeled > 0 and "matches; relabeled" or "matches"
 	end
@@ -1605,7 +1929,18 @@ local function EnsureSectorsBuilt(map, reason)
 		Grid.ConfigureGlobalSectorCount(map,
 			tostring(reason or "EnsureSectorsBuilt") .. " rebuilt grid", rebuilt_layout.count)
 	end
+	local visual_repairs = RepairSectorVisualGeometry(city)
+	local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city, map)
 	RefreshSectorDisplayNames(map)
+	AuditOverviewGridVisuals(city, "EnsureSectorsBuilt:rebuilt", {
+		lifecycle_reason = tostring(reason),
+		repaired_sector_positions = tostring(visual_repairs.sector_positions),
+		repaired_decal_positions = tostring(visual_repairs.decal_positions),
+		repaired_decal_scales = tostring(visual_repairs.decal_scales),
+		repaired_scan_positions = tostring(visual_repairs.scan_positions),
+		pruned_orphan_decals = tostring(orphan_decals),
+		pruned_orphan_samples = tostring(orphan_samples),
+	})
 	AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": rebuilt", true)
 
 	return true, "rebuilt"
@@ -1639,6 +1974,8 @@ local function RefreshSectorDecals(city)
 			recreated = recreated + 1
 		end
 	end)
+	RepairSectorVisualGeometry(city)
+	PruneOrphanSectorDecals(city)
 	return recreated
 end
 
@@ -1646,6 +1983,10 @@ local SectorExploration = {}
 
 SectorExploration.RefreshSectorDecals = RefreshSectorDecals
 SectorExploration.RefreshSectorDisplayNames = RefreshSectorDisplayNames
+SectorExploration.NormalizeSectorVisualGeometry = NormalizeSectorVisualGeometry
+SectorExploration.RepairSectorVisualGeometry = RepairSectorVisualGeometry
+SectorExploration.PruneOrphanSectorDecals = PruneOrphanSectorDecals
+SectorExploration.AuditOverviewGridVisuals = AuditOverviewGridVisuals
 
 SectorExploration.InstallSectorPatch = InstallSectorPatch
 SectorExploration.PatchInitialExplore = PatchInitialExplore
