@@ -22,7 +22,7 @@ config.DebugElevatorSupply = false
 config.DebugElevatorLogistics = false
 config.DebugElevatorRocks = false
 config.DebugZoom = false
-config.DebugOverviewCamera = true
+config.DebugOverviewCamera = false
 -- TEMP test_grid investigation: trace the overview cursor projection, sector lookup, the
 -- off-map suppression decision, and scan-queue outcome at each sector transition.
 config.DebugSectorInteraction = true

@@ -355,13 +355,19 @@ local function DescribeMap(map)
 	)
 end
 
-local function ConfigureGlobalSectorCount(map, reason)
+local function ConfigureGlobalSectorCount(map, reason, live_count)
 	local const = Global("const")
 	if type(const) ~= "table" then
 		return false
 	end
 
-	local count = ResolveSectorCount(map)
+	-- A loaded city's serialized MapSectors table is more authoritative than a map lookup:
+	-- during overview entry city:GetMap() can briefly resolve through a different map preset.
+	-- Callers repairing an existing grid may therefore provide its validated live count.
+	local min_count, max_count = SectorCountBounds()
+	local count = type(live_count) == "number"
+		and ClampNumber(Round(live_count), min_count, max_count)
+		or ResolveSectorCount(map)
 	if not count then
 		return false
 	end

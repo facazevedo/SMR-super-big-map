@@ -52,9 +52,87 @@ end
 -- GetMapSectorXY is called from engine hex searches once per tested hex. Recomputing the full
 -- layout there can execute tens of thousands of Lua instructions during one deposit placement and
 -- trip the engine's infinite-loop detector. Cache the immutable lookup layout after the live grid
--- is complete. The MapSectors table plus its first/last sector objects form the invalidation key,
--- so InitSectors rebuilds and save-loaded grids automatically force one fresh resolution.
+-- is complete. The serialized MapSectors table is authoritative on load: map preset resolution can
+-- briefly report another map's 15x15 layout while this city still owns a valid 20x20 grid.
 local sector_lookup_layout_cache = setmetatable({}, { __mode = "k" })
+
+local function LiveSectorGridDimensions(sectors)
+	if type(sectors) ~= "table" then return 0, 0 end
+	local count_x = 0
+	while type(sectors[count_x + 1]) == "table" do
+		count_x = count_x + 1
+	end
+	if count_x <= 0 then return 0, 0 end
+
+	local count_y = false
+	for col = 1, count_x do
+		local column = sectors[col]
+		local rows = 0
+		while column[rows + 1] ~= nil do
+			rows = rows + 1
+		end
+		if rows <= 0 or (count_y and rows ~= count_y) then
+			return 0, 0
+		end
+		count_y = rows
+	end
+	return count_x, count_y or 0
+end
+
+local function BuildLiveSectorLookupLayout(city)
+	local sectors = city and city.MapSectors
+	local count_x, count_y = LiveSectorGridDimensions(sectors)
+	if count_x <= 0 or count_y <= 0 then return nil end
+
+	local first_sector = sectors[1] and sectors[1][1]
+	local last_sector = sectors[count_x] and sectors[count_x][count_y]
+	if not first_sector or not last_sector or not first_sector.area or not last_sector.area then
+		return nil
+	end
+
+	local ok, min_point, max_point, min_x, min_y, max_x, max_y = pcall(function()
+		local first_min = first_sector.area:min()
+		local last_max = last_sector.area:max()
+		return first_min, last_max, first_min:x(), first_min:y(), last_max:x(), last_max:y()
+	end)
+	if not ok then return nil end
+
+	local width, height = max_x - min_x, max_y - min_y
+	if width <= 0 or height <= 0 then return nil end
+	return {
+		border = min_x,
+		origin_x = min_x,
+		origin_y = min_y,
+		count_x = count_x,
+		count_y = count_y,
+		count = math.max(count_x, count_y),
+		step_x = width / count_x,
+		step_y = height / count_y,
+		uniform = true,
+		usable_width = width,
+		usable_height = height,
+		width = width,
+		height = height,
+		min_point = min_point,
+		max_point = max_point,
+		first_sector = first_sector,
+		last_sector = last_sector,
+	}
+end
+
+local function CacheLiveSectorLookupLayout(city, layout)
+	if not city or not layout then return layout end
+	sector_lookup_layout_cache[city] = {
+		sectors = city.MapSectors,
+		first_sector = layout.first_sector,
+		last_sector = layout.last_sector,
+		count_x = layout.count_x,
+		count_y = layout.count_y,
+		layout = layout,
+	}
+	return layout
+end
+
 local function GetLiveCachedSectorLookupLayout(city)
 	local sectors = city and city.MapSectors
 	local cached = city and sector_lookup_layout_cache[city]
@@ -62,7 +140,9 @@ local function GetLiveCachedSectorLookupLayout(city)
 		local first_col = sectors[1]
 		local last_col = sectors[cached.count_x]
 		if first_col and first_col[1] == cached.first_sector
-			and last_col and last_col[cached.count_y] == cached.last_sector then
+			and first_col[cached.count_y + 1] == nil
+			and last_col and last_col[cached.count_y] == cached.last_sector
+			and sectors[cached.count_x + 1] == nil then
 			return cached.layout
 		end
 	end
@@ -72,9 +152,16 @@ end
 local function GetCachedSectorLookupLayout(city, map)
 	local live = GetLiveCachedSectorLookupLayout(city)
 	if live then return live end
-	local sectors = city and city.MapSectors
 
-	local layout = Grid.ResolveSectorLayout(map)
+	-- Prefer geometry reconstructed from the actual saved grid. This preserves old save state
+	-- and prevents a transient/wrong map preset from shrinking lookup to 15x15.
+	local layout = BuildLiveSectorLookupLayout(city)
+	if layout then
+		return CacheLiveSectorLookupLayout(city, layout)
+	end
+
+	local sectors = city and city.MapSectors
+	layout = Grid.ResolveSectorLayout(map)
 	if city and type(sectors) == "table" and layout then
 		local first_col = sectors[1]
 		local last_col = sectors[layout.count_x]
@@ -232,6 +319,7 @@ local function AuditSectorGrid(city, event, detail)
 	if not SectorInteractionEnabled() then return end
 	local map = CityMap(city)
 	local layout = map and Grid.ResolveSectorLayout(map)
+	local live_layout = BuildLiveSectorLookupLayout(city)
 	local sectors = city and city.MapSectors
 	local cols = 0
 	if type(sectors) == "table" then
@@ -253,6 +341,12 @@ local function AuditSectorGrid(city, event, detail)
 		layout_count = tostring(layout and layout.count_x) .. "x" .. tostring(layout and layout.count_y),
 		layout_step = tostring(layout and layout.step_x) .. "x" .. tostring(layout and layout.step_y),
 		layout_size = tostring(layout and layout.width) .. "x" .. tostring(layout and layout.height),
+		live_layout_count = tostring(live_layout and live_layout.count_x)
+			.. "x" .. tostring(live_layout and live_layout.count_y),
+		live_layout_step = tostring(live_layout and live_layout.step_x)
+			.. "x" .. tostring(live_layout and live_layout.step_y),
+		live_layout_size = tostring(live_layout and live_layout.width)
+			.. "x" .. tostring(live_layout and live_layout.height),
 		const_sector_count = tostring(Global("const") and const.SectorCount),
 	}
 	SectorInteractionAudit("GRID_SUMMARY", data, map)
@@ -403,7 +497,8 @@ local function RefreshSectorDisplayNames(map)
 	if not city or type(city.MapSectors) ~= "table"
 		or type(Grid.SectorDisplayName) ~= "function" then return 0 end
 
-	local count = Grid.ResolveSectorCount(map)
+	local live_layout = BuildLiveSectorLookupLayout(city)
+	local count = live_layout and live_layout.count or Grid.ResolveSectorCount(map)
 	if type(count) ~= "number" or count <= 0 then return 0 end
 	local mapdata = map.mapdata
 	local orient = type(mapdata) == "table" and mapdata.OverviewOrientation or 0
@@ -619,8 +714,10 @@ local function InstallBasicSectorPatch()
 			end
 			layout = GetCachedSectorLookupLayout(city, map)
 		end
-		local x = mx - layout.border
-		local y = my - layout.border
+		local origin_x = layout.origin_x or layout.border
+		local origin_y = layout.origin_y or layout.border
+		local x = mx - origin_x
+		local y = my - origin_y
 		local raw_col = 1 + math.floor(x / layout.step_x)
 		local raw_row = 1 + math.floor(y / layout.step_y)
 		local col = ClampNumber(raw_col, 1, layout.count_x)
@@ -648,6 +745,7 @@ local function InstallBasicSectorPatch()
 						clamped_row = tostring(row),
 						was_clamped = tostring(raw_col ~= col or raw_row ~= row),
 						layout_border = tostring(layout.border),
+						layout_origin = tostring(origin_x) .. "," .. tostring(origin_y),
 						layout_step = tostring(layout.step_x) .. "x" .. tostring(layout.step_y),
 						layout_count = tostring(layout.count_x) .. "x" .. tostring(layout.count_y),
 						layout_size = tostring(layout.width) .. "x" .. tostring(layout.height),
@@ -1417,21 +1515,7 @@ local function EnsureSectorsBuilt(map, reason)
 	end
 
 	local sectors = type(city.MapSectors) == "table" and city.MapSectors or false
-	-- #city.MapSectors counts the numerically-indexed columns. We also store the
-	-- sector object itself as a key (boolean true) so length-operator on a sparse
-	-- mix is unreliable; count columns explicitly.
-	local cols = 0
-	if sectors then
-		while type(sectors[cols + 1]) == "table" do
-			cols = cols + 1
-		end
-	end
-	local rows = 0
-	if cols > 0 and type(sectors[1]) == "table" then
-		while sectors[1][rows + 1] ~= nil do
-			rows = rows + 1
-		end
-	end
+	local cols, rows = LiveSectorGridDimensions(sectors)
 
 	-- SIZE check (count alone is not enough). A 20x20 grid built early with the
 	-- vanilla mapWidth/10 tile size passes the count test but is 2x oversized (the
@@ -1443,10 +1527,32 @@ local function EnsureSectorsBuilt(map, reason)
 	local live_size = LiveSectorSize(city)
 	local size_ok = (type(expected_step) ~= "number") or (type(live_size) ~= "number")
 		or (math.abs(live_size - expected_step) <= 2)
+	local live_layout = BuildLiveSectorLookupLayout(city)
+	local covers_live_terrain = live_layout
+		and type(map.Width) == "number" and type(map.Height) == "number"
+		and math.abs(live_layout.width - map.Width) <= 2
+		and math.abs(live_layout.height - map.Height) <= 2
 
-
-
-	if cols == expected and rows == expected and size_ok then
+	-- A complete, vanilla-sector-sized saved grid that covers the live terrain is already
+	-- correct even if ResolveSectorCount briefly sees another map preset. Preserve its objects,
+	-- scan states, queue, deposits, and decals; repair only the derived runtime state.
+	if size_ok and ((cols == expected and rows == expected) or covers_live_terrain) then
+		sector_lookup_layout_cache[city] = nil
+		live_layout = BuildLiveSectorLookupLayout(city) or live_layout
+		if live_layout then
+			CacheLiveSectorLookupLayout(city, live_layout)
+			city.SuperBigMapSectorCount = live_layout.count
+			city.SuperBigMapSectorTargetSize = live_layout.step_x
+			local box_fn = Global("box")
+			if type(box_fn) == "function" then
+				local ok_area, repaired_area = pcall(box_fn, live_layout.min_point, live_layout.max_point)
+				if ok_area and repaired_area then
+					city.MapArea = repaired_area
+				end
+			end
+			Grid.ConfigureGlobalSectorCount(map,
+				tostring(reason or "EnsureSectorsBuilt") .. " live grid", live_layout.count)
+		end
 		local relabeled = RefreshSectorDisplayNames(map)
 		AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": matches", false)
 		return true, relabeled > 0 and "matches; relabeled" or "matches"
@@ -1491,6 +1597,13 @@ local function EnsureSectorsBuilt(map, reason)
 	-- bounds and overview match the freshly-built grid.
 	if type(exploration_class.InitMapArea) == "function" then
 		pcall(exploration_class.InitMapArea, city)
+	end
+	sector_lookup_layout_cache[city] = nil
+	local rebuilt_layout = BuildLiveSectorLookupLayout(city)
+	if rebuilt_layout then
+		CacheLiveSectorLookupLayout(city, rebuilt_layout)
+		Grid.ConfigureGlobalSectorCount(map,
+			tostring(reason or "EnsureSectorsBuilt") .. " rebuilt grid", rebuilt_layout.count)
 	end
 	RefreshSectorDisplayNames(map)
 	AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": rebuilt", true)

@@ -364,22 +364,17 @@ local function Install()
 	end
 
 
-	-- Off-map cursor test (both maps): GetTerrainCursor CLAMPS to the map edge and GetMapSectorXY
-	-- CLAMPS into 1..count, so pointing into the black beyond the map still resolves a border
-	-- sector and lights it up. Detect it by round-tripping the clamped terrain cursor back to
-	-- screen (GameToScreen) and comparing to the real mouse position: on-map they coincide;
-	-- off-map the clamp pins the cursor to the edge while the mouse is out in the black, so the
-	-- screen positions diverge. Beyond a small pixel threshold -> treat as off-map (no highlight,
-	-- no tooltip). Mouse-only; forced/gamepad selections skip this.
+	-- Off-map cursor test (both maps): GetTerrainCursor clamps to the terrain edge. Rely only on
+	-- GameToScreen's explicit validity result. Comparing the projected terrain point to the mouse
+	-- is not valid over relief in the overview camera: test_grid showed valid sectors diverging by
+	-- 50-193 pixels, which suppressed their highlight and made them impossible to scan.
 	local function CursorOffMap()
-		local gtc, g2s, term = Engine.Global("GetTerrainCursor"), Engine.Global("GameToScreen"), Engine.Global("terminal")
+		local gtc, g2s = Engine.Global("GetTerrainCursor"), Engine.Global("GameToScreen")
 		local data = {
-			threshold_pixels = 40,
 			get_terrain_cursor = tostring(gtc),
 			game_to_screen = tostring(g2s),
-			terminal = tostring(term),
 		}
-		if type(gtc) ~= "function" or type(g2s) ~= "function" or type(term) ~= "table" then
+		if type(gtc) ~= "function" or type(g2s) ~= "function" then
 			data.reason = "cursor API unavailable"
 			return false, data
 		end
@@ -406,39 +401,9 @@ local function Install()
 			data.reason = "GameToScreen failed"
 			return false, data
 		end
-		local spt = b or a -- GameToScreen returns (success, pt)
-		local ok_m, mpt = pcall(term.GetMousePos)
-		data.mouse_pos_ok = tostring(ok_m)
-		data.mouse_pos = tostring(mpt)
-		data.projected_screen_pos = tostring(spt)
-		if not ok_m or not mpt then
-			data.reason = "mouse position unavailable"
-			return false, data
-		end
-		local function xy(p)
-			if type(p) ~= "table" and type(p) ~= "userdata" then return nil end
-			local ok, x, y = pcall(function() return p:x(), p:y() end)
-			if ok and type(x) == "number" and type(y) == "number" then return x, y end
-			return nil
-		end
-		local sx, sy = xy(spt)
-		local mx, my = xy(mpt)
-		if not sx or not mx then
-			data.reason = "screen coordinates unavailable"
-			return false, data
-		end
-		local dx, dy = sx - mx, sy - my
-		local distance_squared = dx * dx + dy * dy
-		local off_map = distance_squared > (40 * 40)
-		data.projected_screen_x = tostring(sx)
-		data.projected_screen_y = tostring(sy)
-		data.mouse_x = tostring(mx)
-		data.mouse_y = tostring(my)
-		data.delta_x = tostring(dx)
-		data.delta_y = tostring(dy)
-		data.distance_squared = tostring(distance_squared)
+		local off_map = a == false
 		data.off_map = tostring(off_map)
-		data.reason = off_map and "projection delta exceeds threshold" or "projection delta within threshold"
+		data.reason = off_map and "terrain projection explicitly invalid" or "terrain projection valid"
 		return off_map, data
 	end
 
