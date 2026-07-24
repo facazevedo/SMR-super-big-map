@@ -12,9 +12,8 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Diagnostics remain available for targeted troubleshooting and stay off in published builds
--- except while an explicitly marked investigation below is active.
-config.DebugLoggingEnabled = true
+-- Diagnostics remain available for targeted troubleshooting and stay off in published builds.
+config.DebugLoggingEnabled = false
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
@@ -23,9 +22,7 @@ config.DebugElevatorLogistics = false
 config.DebugElevatorRocks = false
 config.DebugZoom = false
 config.DebugOverviewCamera = false
--- TEMP test_grid investigation: trace the overview cursor projection, sector lookup, the
--- off-map suppression decision, and scan-queue outcome at each sector transition.
-config.DebugSectorInteraction = true
+config.DebugSectorInteraction = false
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
