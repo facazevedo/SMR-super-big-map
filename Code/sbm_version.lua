@@ -16,5 +16,5 @@ end
 -- monkey-patching domain modules so apply/restore share one place (no _G globals).
 SuperBigMap.State = SuperBigMap.State or {}
 -- Patch identities for the current sector/exploration and map-generation wrappers.
-SuperBigMap.SECTOR_PATCH_VERSION = 62
+SuperBigMap.SECTOR_PATCH_VERSION = 63
 SuperBigMap.GENERATOR_PATCH_VERSION = 192

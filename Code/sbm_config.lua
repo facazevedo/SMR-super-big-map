@@ -12,8 +12,9 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- Diagnostics remain available for targeted troubleshooting but stay off in published builds.
-config.DebugLoggingEnabled = false
+-- Diagnostics remain available for targeted troubleshooting and stay off in published builds
+-- except while an explicitly marked investigation below is active.
+config.DebugLoggingEnabled = true
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
@@ -21,7 +22,10 @@ config.DebugElevatorSupply = false
 config.DebugElevatorLogistics = false
 config.DebugElevatorRocks = false
 config.DebugZoom = false
-config.DebugOverviewCamera = false
+config.DebugOverviewCamera = true
+-- TEMP test_grid investigation: trace the overview cursor projection, sector lookup, the
+-- off-map suppression decision, and scan-queue outcome at each sector transition.
+config.DebugSectorInteraction = true
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
@@ -617,6 +621,7 @@ C.DEBUG_ELEVATOR_LOGISTICS = debug_logging_enabled and as_bool(config.DebugEleva
 C.DEBUG_ELEVATOR_ROCKS = debug_logging_enabled and as_bool(config.DebugElevatorRocks)
 C.DEBUG_ZOOM = debug_logging_enabled and as_bool(config.DebugZoom)
 C.DEBUG_OVERVIEW_CAMERA = debug_logging_enabled and as_bool(config.DebugOverviewCamera)
+C.DEBUG_SECTOR_INTERACTION = debug_logging_enabled and as_bool(config.DebugSectorInteraction)
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 

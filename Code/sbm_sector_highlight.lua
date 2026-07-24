@@ -24,6 +24,69 @@ local function IsModMap(map)
 		and grid.IsModMap(map) == true
 end
 
+local function SectorInteractionEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	return type(diagnostics) == "table"
+		and type(diagnostics.SectorInteractionEnabled) == "function"
+		and diagnostics.SectorInteractionEnabled() == true
+end
+
+local function SectorInteractionAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if type(diagnostics) == "table" and type(diagnostics.SectorInteraction) == "function" then
+		diagnostics.SectorInteraction(event, data, map)
+	end
+end
+
+local function SectorDiagnosticData(sector, data)
+	data = type(data) == "table" and data or {}
+	if not sector then
+		data.sector = "nil"
+		return data
+	end
+	data.sector = tostring(sector)
+	data.sector_id = tostring(sector.id)
+	data.sector_display_name = tostring(sector.display_name)
+	data.sector_col = tostring(sector.col)
+	data.sector_row = tostring(sector.row)
+	data.sector_status = tostring(sector.status)
+	data.sector_play_ratio = tostring(sector.play_ratio)
+	data.sector_area = tostring(sector.area)
+	if sector.area then
+		local ok, area_min, area_max, area_center = pcall(function()
+			return sector.area:min(), sector.area:max(), sector.area:Center()
+		end)
+		if ok then
+			data.sector_area_min = tostring(area_min)
+			data.sector_area_max = tostring(area_max)
+			data.sector_area_center = tostring(area_center)
+		end
+	end
+	if type(sector.CanBeScanned) == "function" then
+		data.sector_can_scan = tostring(Engine.SafeCall(sector.CanBeScanned, sector))
+	end
+	if type(sector.HasBlockers) == "function" then
+		data.sector_has_blockers = tostring(Engine.SafeCall(sector.HasBlockers, sector))
+	end
+	local city = sector.city
+	local queue = city and city.ExplorationQueue
+	data.queue_count = tostring(type(queue) == "table" and #queue or nil)
+	local decal = sector.decal
+	local is_valid = Engine.Global("IsValid")
+	data.sector_decal = tostring(decal)
+	data.sector_decal_valid = tostring(decal
+		and (type(is_valid) ~= "function" or Engine.SafeCall(is_valid, decal) == true))
+	if decal then
+		data.sector_decal_pos = tostring(type(decal.GetPos) == "function"
+			and Engine.SafeCall(decal.GetPos, decal))
+		data.sector_decal_scale = tostring(type(decal.GetScale) == "function"
+			and Engine.SafeCall(decal.GetScale, decal))
+		data.sector_decal_visible = tostring(type(decal.GetVisible) == "function"
+			and Engine.SafeCall(decal.GetVisible, decal))
+	end
+	return data
+end
+
 
 -- Vanilla initializes deposit/sign visibility only for the objects that exist when
 -- OverviewModeDialog:ScaleSmallObjects runs. The stretch pipeline migrates the
@@ -272,13 +335,31 @@ local function Install()
 		local original_queue = State.original_sector_queue_for_exploration or map_sector_class.QueueForExploration
 		State.original_sector_queue_for_exploration = original_queue
 		map_sector_class.QueueForExploration = function(self, ...)
+			local debug_enabled = SectorInteractionEnabled()
+			local ok_map, map = pcall(function() return self:GetMap() end)
+			map = ok_map and map or Engine.Global("CurrentMap")
+			local queue = self.city and self.city.ExplorationQueue
+			local before_count = type(queue) == "table" and #queue or nil
 			if (SuperBigMap.Config or {}).UNDERGROUND_EXPLORATION_UI == true then
-				local ok, map = pcall(function() return self:GetMap() end)
-				if ok and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground" then
+				if ok_map and IsModMap(map) and map.mapdata and map.mapdata.Environment == "Underground" then
+					if debug_enabled then
+						SectorInteractionAudit("QUEUE_BLOCKED_UNDERGROUND", SectorDiagnosticData(self, {
+							queue_before = tostring(before_count),
+						}), map)
+					end
 					return
 				end
 			end
-			return original_queue(self, ...)
+			local result = original_queue(self, ...)
+			if debug_enabled then
+				queue = self.city and self.city.ExplorationQueue
+				SectorInteractionAudit("QUEUE_RESULT", SectorDiagnosticData(self, {
+					queue_before = tostring(before_count),
+					queue_after = tostring(type(queue) == "table" and #queue or nil),
+					result = tostring(result),
+				}), map)
+			end
+			return result
 		end
 	end
 
@@ -292,14 +373,48 @@ local function Install()
 	-- no tooltip). Mouse-only; forced/gamepad selections skip this.
 	local function CursorOffMap()
 		local gtc, g2s, term = Engine.Global("GetTerrainCursor"), Engine.Global("GameToScreen"), Engine.Global("terminal")
-		if type(gtc) ~= "function" or type(g2s) ~= "function" or type(term) ~= "table" then return false end
+		local data = {
+			threshold_pixels = 40,
+			get_terrain_cursor = tostring(gtc),
+			game_to_screen = tostring(g2s),
+			terminal = tostring(term),
+		}
+		if type(gtc) ~= "function" or type(g2s) ~= "function" or type(term) ~= "table" then
+			data.reason = "cursor API unavailable"
+			return false, data
+		end
 		local ok_c, cur = pcall(gtc)
-		if not ok_c or not cur then return false end
+		data.terrain_cursor_ok = tostring(ok_c)
+		data.terrain_cursor = tostring(cur)
+		if not ok_c or not cur then
+			data.reason = "terrain cursor unavailable"
+			return false, data
+		end
+		local ok_w, world_x, world_y, world_z = pcall(function()
+			return cur:x(), cur:y(), cur:z()
+		end)
+		if ok_w then
+			data.terrain_cursor_x = tostring(world_x)
+			data.terrain_cursor_y = tostring(world_y)
+			data.terrain_cursor_z = tostring(world_z)
+		end
 		local ok_s, a, b = pcall(g2s, cur)
-		if not ok_s then return false end
+		data.game_to_screen_ok = tostring(ok_s)
+		data.game_to_screen_primary = tostring(a)
+		data.game_to_screen_secondary = tostring(b)
+		if not ok_s then
+			data.reason = "GameToScreen failed"
+			return false, data
+		end
 		local spt = b or a -- GameToScreen returns (success, pt)
 		local ok_m, mpt = pcall(term.GetMousePos)
-		if not ok_m or not mpt then return false end
+		data.mouse_pos_ok = tostring(ok_m)
+		data.mouse_pos = tostring(mpt)
+		data.projected_screen_pos = tostring(spt)
+		if not ok_m or not mpt then
+			data.reason = "mouse position unavailable"
+			return false, data
+		end
 		local function xy(p)
 			if type(p) ~= "table" and type(p) ~= "userdata" then return nil end
 			local ok, x, y = pcall(function() return p:x(), p:y() end)
@@ -308,9 +423,23 @@ local function Install()
 		end
 		local sx, sy = xy(spt)
 		local mx, my = xy(mpt)
-		if not sx or not mx then return false end
+		if not sx or not mx then
+			data.reason = "screen coordinates unavailable"
+			return false, data
+		end
 		local dx, dy = sx - mx, sy - my
-		return (dx * dx + dy * dy) > (40 * 40)
+		local distance_squared = dx * dx + dy * dy
+		local off_map = distance_squared > (40 * 40)
+		data.projected_screen_x = tostring(sx)
+		data.projected_screen_y = tostring(sy)
+		data.mouse_x = tostring(mx)
+		data.mouse_y = tostring(my)
+		data.delta_x = tostring(dx)
+		data.delta_y = tostring(dy)
+		data.distance_squared = tostring(distance_squared)
+		data.off_map = tostring(off_map)
+		data.reason = off_map and "projection delta exceeds threshold" or "projection delta within threshold"
+		return off_map, data
 	end
 
 	overview_class.SelectSector = function(self, sector, rollover_pos, forced, ...)
@@ -323,9 +452,14 @@ local function Install()
 		if not IsModMap(viewed_map) then
 			return original_select_sector(self, sector, rollover_pos, forced, ...)
 		end
+		local input_sector = sector
+		local off_map, cursor_data = false, { reason = "forced selection; cursor test skipped" }
+		if not forced then
+			off_map, cursor_data = CursorOffMap()
+		end
 		-- Suppress highlight + tooltip when the mouse is off the map (mouse-driven calls only;
 		-- a `forced` selection e.g. overview exit_to has no meaningful cursor).
-		if sector and not forced and CursorOffMap() then
+		if sector and not forced and off_map then
 			sector = false
 		end
 		-- Guard against a destroyed hover-highlight object. self.sector_obj is the
@@ -342,6 +476,41 @@ local function Install()
 			pcall(function() self:EnsureSectorObjPresent() end)
 		end
 		local r1, r2 = original_select_sector(self, sector, rollover_pos, forced, ...)
+		if SectorInteractionEnabled() then
+			local signature = tostring(viewed_map) .. ":" .. tostring(input_sector and input_sector.id)
+				.. ":" .. tostring(off_map) .. ":" .. tostring(forced)
+			if State.sector_interaction_select_signature ~= signature then
+				State.sector_interaction_select_signature = signature
+				local data = SectorDiagnosticData(input_sector, cursor_data)
+				local is_valid_sector_obj = self.sector_obj
+				if self.sector_obj and type(is_valid) == "function" then
+					is_valid_sector_obj = is_valid(self.sector_obj)
+				end
+				local available_sectors = Engine.Global("IsExplorationAvailable_Sectors")
+				local available_queue = Engine.Global("IsExplorationAvailable_Queue")
+				data.forced = tostring(forced)
+				data.rollover_pos = tostring(rollover_pos)
+				data.input_sector_suppressed = tostring(input_sector and sector == false or false)
+				data.dialog_sector_id = tostring(self.sector_id)
+				data.dialog_current_sector = tostring(self.current_sector)
+				data.sector_obj = tostring(self.sector_obj)
+				data.sector_obj_valid = tostring(is_valid_sector_obj)
+				data.sector_obj_pos = tostring(self.sector_obj and type(self.sector_obj.GetPos) == "function"
+					and Engine.SafeCall(self.sector_obj.GetPos, self.sector_obj))
+				data.sector_obj_scale = tostring(self.sector_obj and type(self.sector_obj.GetScale) == "function"
+					and Engine.SafeCall(self.sector_obj.GetScale, self.sector_obj))
+				data.sector_obj_visible = tostring(self.sector_obj and type(self.sector_obj.GetVisible) == "function"
+					and Engine.SafeCall(self.sector_obj.GetVisible, self.sector_obj))
+				data.camera_transition_thread = tostring(Engine.Global("CameraTransitionThread"))
+				data.exploration_sectors_available = tostring(type(available_sectors) == "function"
+					and Engine.SafeCall(available_sectors, uicity))
+				data.exploration_queue_available = tostring(type(available_queue) == "function"
+					and Engine.SafeCall(available_queue, uicity))
+				data.original_result_1 = tostring(r1)
+				data.original_result_2 = tostring(r2)
+				SectorInteractionAudit("SELECT_SECTOR_RESULT", data, viewed_map)
+			end
+		end
 		-- UNDERGROUND: retain the rollover created by vanilla, but hide every visual selection
 		-- object and sector decal. Sector resolution and play_ratio remain available as data.
 		if UndergroundUiActive() then

@@ -153,6 +153,124 @@ local function CityMap(city)
 	return nil
 end
 
+local function SectorInteractionEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	return type(diagnostics) == "table"
+		and type(diagnostics.SectorInteractionEnabled) == "function"
+		and diagnostics.SectorInteractionEnabled() == true
+end
+
+local function SectorInteractionAudit(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if type(diagnostics) == "table" and type(diagnostics.SectorInteraction) == "function" then
+		diagnostics.SectorInteraction(event, data, map)
+	end
+end
+
+local function SectorDiagnosticData(sector, data)
+	data = type(data) == "table" and data or {}
+	if not sector then
+		data.sector = "nil"
+		return data
+	end
+	data.sector = tostring(sector)
+	data.sector_id = tostring(sector.id)
+	data.sector_display_name = tostring(sector.display_name)
+	data.sector_col = tostring(sector.col)
+	data.sector_row = tostring(sector.row)
+	data.sector_status = tostring(sector.status)
+	data.sector_play_ratio = tostring(sector.play_ratio)
+	data.sector_area = tostring(sector.area)
+	if sector.area then
+		local ok, area_min, area_max, area_center, area_size_x, area_size_y = pcall(function()
+			return sector.area:min(), sector.area:max(), sector.area:Center(),
+				sector.area:sizex(), sector.area:sizey()
+		end)
+		if ok then
+			data.sector_area_min = tostring(area_min)
+			data.sector_area_max = tostring(area_max)
+			data.sector_area_center = tostring(area_center)
+			data.sector_area_size = tostring(area_size_x) .. "x" .. tostring(area_size_y)
+		end
+	end
+	if type(sector.CanBeScanned) == "function" then
+		data.sector_can_scan = tostring(SafeCall(sector.CanBeScanned, sector))
+	end
+	if type(sector.HasBlockers) == "function" then
+		data.sector_has_blockers = tostring(SafeCall(sector.HasBlockers, sector))
+	end
+	local city = sector.city
+	local queue = city and city.ExplorationQueue
+	data.queue_count = tostring(type(queue) == "table" and #queue or nil)
+	if type(queue) == "table" then
+		for i = 1, #queue do
+			if queue[i] == sector then
+				data.queue_index = tostring(i)
+				break
+			end
+		end
+	end
+	local decal = sector.decal
+	local is_valid = Global("IsValid")
+	data.sector_decal = tostring(decal)
+	data.sector_decal_valid = tostring(decal
+		and (type(is_valid) ~= "function" or SafeCall(is_valid, decal) == true))
+	if decal then
+		data.sector_decal_pos = tostring(type(decal.GetPos) == "function"
+			and SafeCall(decal.GetPos, decal))
+		data.sector_decal_scale = tostring(type(decal.GetScale) == "function"
+			and SafeCall(decal.GetScale, decal))
+		data.sector_decal_visible = tostring(type(decal.GetVisible) == "function"
+			and SafeCall(decal.GetVisible, decal))
+		data.sector_decal_enum_flags = tostring(type(decal.GetEnumFlags) == "function"
+			and SafeCall(decal.GetEnumFlags, decal))
+	end
+	return data
+end
+
+local function AuditSectorGrid(city, event, detail)
+	if not SectorInteractionEnabled() then return end
+	local map = CityMap(city)
+	local layout = map and Grid.ResolveSectorLayout(map)
+	local sectors = city and city.MapSectors
+	local cols = 0
+	if type(sectors) == "table" then
+		while type(sectors[cols + 1]) == "table" do cols = cols + 1 end
+	end
+	local rows = 0
+	if cols > 0 then
+		while sectors[1][rows + 1] ~= nil do rows = rows + 1 end
+	end
+	local data = {
+		reason = tostring(event),
+		grid_columns = tostring(cols),
+		grid_rows = tostring(rows),
+		city = tostring(city),
+		city_map_area = tostring(city and city.MapArea),
+		map_world_size = tostring(map and map.Width) .. "x" .. tostring(map and map.Height),
+		map_pass_border = tostring(map and map.mapdata and map.mapdata.PassBorder),
+		layout_border = tostring(layout and layout.border),
+		layout_count = tostring(layout and layout.count_x) .. "x" .. tostring(layout and layout.count_y),
+		layout_step = tostring(layout and layout.step_x) .. "x" .. tostring(layout and layout.step_y),
+		layout_size = tostring(layout and layout.width) .. "x" .. tostring(layout and layout.height),
+		const_sector_count = tostring(Global("const") and const.SectorCount),
+	}
+	SectorInteractionAudit("GRID_SUMMARY", data, map)
+	if detail ~= true or type(sectors) ~= "table" then return end
+	local samples = {
+		{ 1, 1 }, { 5, 13 }, { 5, 14 }, { 6, 13 }, { 6, 14 },
+		{ 6, 20 }, { 20, 1 }, { 20, 13 }, { 20, 14 }, { 20, 20 },
+	}
+	for i = 1, #samples do
+		local col, row = samples[i][1], samples[i][2]
+		local sector = sectors[col] and sectors[col][row]
+		SectorInteractionAudit("GRID_SAMPLE", SectorDiagnosticData(sector, {
+			reason = tostring(event),
+			sample = tostring(col) .. "," .. tostring(row),
+		}), map)
+	end
+end
+
 local function UsesCustomCitySectors(city)
 	return Grid.UseCustomSectorsForMap(CityMap(city)) == true
 end
@@ -492,9 +610,10 @@ local function InstallBasicSectorPatch()
 	function GetMapSectorXY(city, mx, my)
 		-- The completed expanded grid is the steady-state hot path. Avoid even resolving the map
 		-- or re-running the custom-map predicate for every hex tested by HexGridFindBuildable.
+		local map
 		local layout = GetLiveCachedSectorLookupLayout(city)
 		if not layout then
-			local map = city and city.GetMap and city:GetMap()
+			map = city and city.GetMap and city:GetMap()
 			if not Grid.UseCustomSectorsForMap(map) then
 				return original_sector_xy(city, mx, my)
 			end
@@ -502,10 +621,41 @@ local function InstallBasicSectorPatch()
 		end
 		local x = mx - layout.border
 		local y = my - layout.border
-		local col = ClampNumber(1 + math.floor(x / layout.step_x), 1, layout.count_x)
-		local row = ClampNumber(1 + math.floor(y / layout.step_y), 1, layout.count_y)
+		local raw_col = 1 + math.floor(x / layout.step_x)
+		local raw_row = 1 + math.floor(y / layout.step_y)
+		local col = ClampNumber(raw_col, 1, layout.count_x)
+		local row = ClampNumber(raw_row, 1, layout.count_y)
 		local sector_col = city.MapSectors and city.MapSectors[col]
 		local sector = sector_col and sector_col[row]
+		if SectorInteractionEnabled() then
+			local is_overview = Global("IsOverviewMode")
+			local overview = type(is_overview) == "function" and SafeCall(is_overview) == true
+			if overview then
+				map = map or CityMap(city)
+				local State = SuperBigMap.State or {}
+				local signature = tostring(map) .. ":" .. tostring(raw_col) .. ":" .. tostring(raw_row)
+					.. ":" .. tostring(sector and sector.id)
+				if State.sector_interaction_lookup_signature ~= signature then
+					State.sector_interaction_lookup_signature = signature
+					SectorInteractionAudit("SECTOR_LOOKUP", SectorDiagnosticData(sector, {
+						input_world_x = tostring(mx),
+						input_world_y = tostring(my),
+						adjusted_x = tostring(x),
+						adjusted_y = tostring(y),
+						raw_col = tostring(raw_col),
+						raw_row = tostring(raw_row),
+						clamped_col = tostring(col),
+						clamped_row = tostring(row),
+						was_clamped = tostring(raw_col ~= col or raw_row ~= row),
+						layout_border = tostring(layout.border),
+						layout_step = tostring(layout.step_x) .. "x" .. tostring(layout.step_y),
+						layout_count = tostring(layout.count_x) .. "x" .. tostring(layout.count_y),
+						layout_size = tostring(layout.width) .. "x" .. tostring(layout.height),
+						city_map_area = tostring(city and city.MapArea),
+					}), map)
+				end
+			end
+		end
 		return sector
 	end
 
@@ -1173,6 +1323,7 @@ local function InstallSectorPatch()
 			local original = State.original_show_exploration_sectors
 			if type(original) == "function" then return original(city, time) end
 		end
+		AuditSectorGrid(city, "ShowExploration_Sectors", true)
 		-- Underground MapSectors are data-only: keep them for hover names and buildable ratios,
 		-- but never re-show their grid decals when overview mode opens.
 		if UndergroundExplorationUiOn(city) then
@@ -1297,6 +1448,7 @@ local function EnsureSectorsBuilt(map, reason)
 
 	if cols == expected and rows == expected and size_ok then
 		local relabeled = RefreshSectorDisplayNames(map)
+		AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": matches", false)
 		return true, relabeled > 0 and "matches; relabeled" or "matches"
 	end
 
@@ -1341,6 +1493,7 @@ local function EnsureSectorsBuilt(map, reason)
 		pcall(exploration_class.InitMapArea, city)
 	end
 	RefreshSectorDisplayNames(map)
+	AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": rebuilt", true)
 
 	return true, "rebuilt"
 end
