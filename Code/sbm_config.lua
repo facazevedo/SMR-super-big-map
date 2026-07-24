@@ -12,8 +12,9 @@ local config = {}
 -- ============================================================================
 -- RELEASE DIAGNOSTICS
 -- ============================================================================
--- TEMP night/overview-grid investigation: keep only the focused visual channel enabled.
-config.DebugLoggingEnabled = true
+-- Diagnostic channels remain available for targeted troubleshooting and stay
+-- disabled in published builds.
+config.DebugLoggingEnabled = false
 config.DebugLoadingTimings = false
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
@@ -23,7 +24,7 @@ config.DebugElevatorRocks = false
 config.DebugZoom = false
 config.DebugOverviewCamera = false
 config.DebugSectorInteraction = false
-config.DebugOverviewGridVisuals = true
+config.DebugOverviewGridVisuals = false
 config.DebugUndergroundDecorationPositions = false
 
 -- ============================================================================
