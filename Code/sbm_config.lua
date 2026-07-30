@@ -324,7 +324,7 @@ config.ExpansionStep19CreateEnrichmentMarkers = true
 -- 20 (former 18): Register surface markers and configure underground proximity reveal.
 config.ExpansionStep20RegisterAndRevealMarkers = true
 -- 21 (former 19): Audit counts, coordinates, hexes, repulsion, and category regions.
-config.ExpansionStep21AuditFinalEnrichments = true
+config.ExpansionStep21AuditFinalEnrichments = false
 
 -- Stretch-only expanded-map allocation. A native source is generated once and
 -- proportionally resampled over this destination; no terrain is tiled or mirrored.

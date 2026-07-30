@@ -57,6 +57,34 @@ do
 	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapUndergroundPreparationFailed"] == nil) then
 		register("SuperBigMapUndergroundPreparationFailed", false)
 	end
+	-- Generation readiness used to live only as transient fields on the map instance. That works
+	-- during a new-game generation transaction, but a save made before first underground access has
+	-- no new MapGenerated/CityInitialized messages after load. Persist both milestones so deferred
+	-- preparation can resume safely in future saves. The version bit lets the load migration
+	-- distinguish a legacy save (no readiness schema) from a current save whose state is genuinely
+	-- incomplete and must remain blocked.
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapNativeGenerationComplete"] == nil) then
+		register("SuperBigMapNativeGenerationComplete", false)
+	end
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapNativeGenerationCompleteSource"] == nil) then
+		register("SuperBigMapNativeGenerationCompleteSource", false)
+	end
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapCityInitializationComplete"] == nil) then
+		register("SuperBigMapCityInitializationComplete", false)
+	end
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapGenerationReadinessVersion"] == nil) then
+		register("SuperBigMapGenerationReadinessVersion", false)
+	end
+	-- The random-generator object is not serialized. Keep the exact vanilla resource/anomaly/effect
+	-- repulsion values needed if an underground expansion is deferred across save/load.
+	registry = Global("MapVarValues")
+	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapVanillaRepulsionProfiles"] == nil) then
+		register("SuperBigMapVanillaRepulsionProfiles", false)
+	end
 end
 
 local function MapData(map)

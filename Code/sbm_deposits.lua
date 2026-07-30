@@ -1674,6 +1674,18 @@ local function FindResourceRepulsionValues(map, resource)
 	if (preset_id == nil or preset_id == "") and type(generator) == "table" then
 		preset_id = generator["ResPreset_" .. tostring(resource)]
 	end
+	-- RandomMapGenObject is deliberately transient. Deferred underground work can first run after
+	-- loading a save, but the authored RandomMapPreset id remains on mapdata and is the same source
+	-- vanilla used to configure the generator.
+	if preset_id == nil or preset_id == "" then
+		local random_presets = Global("RandomMapPresets")
+		local random_preset_id = map and map.mapdata and map.mapdata.RandomMapPreset
+		local random_preset = type(random_presets) == "table"
+			and random_presets[random_preset_id] or nil
+		if type(random_preset) == "table" then
+			preset_id = random_preset["ResPreset_" .. tostring(resource)]
+		end
+	end
 	local presets = Global("Presets")
 	local list = type(presets) == "table" and presets.ResourcePreset
 		and presets.ResourcePreset.Default or nil
@@ -1686,7 +1698,17 @@ local function FindResourceRepulsionValues(map, resource)
 					repulse_layer = preset.RepulseSameLayer,
 					repulse_all = preset.RepulseAll,
 				}
-				if RepulsionValuesAreValid(values) then return values end
+				if RepulsionValuesAreValid(values) then
+					if type(map) == "table" then
+						captured = type(map.SuperBigMapVanillaRepulsionProfiles) == "table"
+							and map.SuperBigMapVanillaRepulsionProfiles or {}
+						captured.resources = type(captured.resources) == "table"
+							and captured.resources or {}
+						captured.resources[resource] = values
+						map.SuperBigMapVanillaRepulsionProfiles = captured
+					end
+					return values
+				end
 			end
 		end
 	end
@@ -1698,21 +1720,38 @@ local function GeneratorFamilyRepulsionValues(map, family)
 	local values = type(captured) == "table" and captured[family] or nil
 	if RepulsionValuesAreValid(values) then return values end
 	local generator = map and map.RandomMapGenObject
-	if type(generator) ~= "table" then return nil end
-	if family == "Anomaly" then
-		values = {
-			repulse_same = generator.AnomalySpacing,
-			repulse_layer = generator.AnomalyRepulseSubs,
-			repulse_all = generator.AnomalyRepulseAll,
-		}
-	elseif family == "Effects" then
-		values = {
-			repulse_same = generator.EffectDepSpacing,
-			repulse_layer = generator.EffectDepRepulse,
-			repulse_all = generator.EffectDepRepulseAll,
-		}
+	local function read(source)
+		if type(source) ~= "table" then return nil end
+		if family == "Anomaly" then
+			return {
+				repulse_same = source.AnomalySpacing,
+				repulse_layer = source.AnomalyRepulseSubs,
+				repulse_all = source.AnomalyRepulseAll,
+			}
+		elseif family == "Effects" then
+			return {
+				repulse_same = source.EffectDepSpacing,
+				repulse_layer = source.EffectDepRepulse,
+				repulse_all = source.EffectDepRepulseAll,
+			}
+		end
+		return nil
 	end
-	return RepulsionValuesAreValid(values) and values or nil
+	values = read(generator)
+	if not RepulsionValuesAreValid(values) then
+		local random_presets = Global("RandomMapPresets")
+		local random_preset_id = map and map.mapdata and map.mapdata.RandomMapPreset
+		values = read(type(random_presets) == "table"
+			and random_presets[random_preset_id] or nil)
+	end
+	if not RepulsionValuesAreValid(values) then return nil end
+	if type(map) == "table" then
+		captured = type(map.SuperBigMapVanillaRepulsionProfiles) == "table"
+			and map.SuperBigMapVanillaRepulsionProfiles or {}
+		captured[family] = values
+		map.SuperBigMapVanillaRepulsionProfiles = captured
+	end
+	return values
 end
 
 local function VanillaRepulsionProfileForMarker(map, marker)

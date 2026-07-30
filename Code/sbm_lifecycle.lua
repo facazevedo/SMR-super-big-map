@@ -921,6 +921,13 @@ RegisterOnce("LoadGame", function()
 	-- and the overview grid only covers part of the map. SyncMapDataToGrids sets mapdata.Width
 	-- to match the real terrain, so it MUST run before EnsureSectorsBuilt.
 	local gen = SuperBigMap.MapGeneration
+	-- Readiness milestones became persisted MapVars after deferred underground expansion shipped.
+	-- Older saves necessarily lack those fields even though their saved underground city and sector
+	-- grid prove native generation completed. Reconstruct only that validated legacy state before
+	-- installing the first-access gate; the migration never stretches or otherwise mutates terrain.
+	if gen and type(gen.RecoverLoadedUndergroundReadiness) == "function" then
+		gen.RecoverLoadedUndergroundReadiness("LoadGame")
+	end
 	if gen and type(gen.PatchDeferredUndergroundAccess) == "function" then
 		gen.PatchDeferredUndergroundAccess("LoadGame")
 	end

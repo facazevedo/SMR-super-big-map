@@ -18,6 +18,8 @@ if type(SuperBigMap) ~= "table" then
 end
 
 local GENERATOR_PATCH_VERSION = SuperBigMap.GENERATOR_PATCH_VERSION or 2
+SuperBigMap.GenerationReadiness = SuperBigMap.GenerationReadiness or {}
+SuperBigMap.GenerationReadiness.VERSION = 1
 
 -- Pending/blocked per-map state shared across this module's hooks (kept in the
 -- shared State table rather than _G globals).
@@ -1057,6 +1059,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
 	map.SuperBigMapCityInitializationComplete = nil
+	map.SuperBigMapGenerationReadinessVersion = nil
 	map.SuperBigMapSurfaceStretchDone = nil
 	map.SuperBigMapSurfaceStretchScheduled = nil
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
@@ -1271,6 +1274,7 @@ local function AttachPendingMapState(map)
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
 	map.SuperBigMapCityInitializationComplete = nil
+	map.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
 	map.SuperBigMapSourceWidth = pending.source_width
 	map.SuperBigMapSourceHeight = pending.source_height
 	map.SuperBigMapSourceX = pending.source_x or 0
@@ -1472,6 +1476,7 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	map_instance.SuperBigMapNativeGenerationComplete = nil
 	map_instance.SuperBigMapNativeGenerationCompleteSource = nil
 	map_instance.SuperBigMapCityInitializationComplete = nil
+	map_instance.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
 	map_instance.SuperBigMapSourceWidth = pending.source_width
 	map_instance.SuperBigMapSourceHeight = pending.source_height
 	map_instance.SuperBigMapSourceX = source_x
@@ -7173,6 +7178,8 @@ local function PatchRandomMapGenerator()
 				params.mapdata = params.mapdata or instance.mapdata
 				params.RandomMapGenObject = params.RandomMapGenObject or self
 				params.SuperBigMapExpansionPending = instance.SuperBigMapExpansionPending
+				params.SuperBigMapGenerationReadinessVersion =
+					SuperBigMap.GenerationReadiness.VERSION
 				params.SuperBigMapSourceWidth = instance.SuperBigMapSourceWidth
 				params.SuperBigMapSourceHeight = instance.SuperBigMapSourceHeight
 				params.SuperBigMapOriginalWidthTiles = instance.SuperBigMapOriginalWidthTiles
@@ -8244,6 +8251,138 @@ end
 -- final surface and commits the nearest valid surface-only fallback when the exact footprint is
 -- uneven, blocked, or unbuildable. Triggered from PostNewMapLoaded for Environment=="Underground"
 -- maps; gates on the expansion sizes stamped by the DoGenerate wrapper (desired > generator).
+function SuperBigMap.GenerationReadiness.LegacyUndergroundEvidence(map)
+	if type(map) ~= "table" then
+		return false, "underground map object is unavailable"
+	end
+	local mapdata = map.mapdata
+	if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then
+		return false, "map is not underground"
+	end
+	if map.SuperBigMapUndergroundPreparationFailed == true then
+		return false, "saved underground records a failed preparation"
+	end
+	local grid = SuperBigMap.SectorGrid
+	if type(grid) ~= "table" or type(grid.IsModMap) ~= "function"
+		or grid.IsModMap(map) ~= true then
+		return false, "map is not a Super Big Map underground"
+	end
+
+	-- A previously completed underground is authoritative even if it predates the readiness
+	-- MapVars. This branch only normalizes the new persistence schema; it never runs terrain work.
+	if map.SuperBigMapUndergroundPrepared == true or map.SuperBigMapExpanded == true then
+		return true, "legacy underground already records completed preparation"
+	end
+
+	-- Unprepared legacy saves need stronger evidence. The expanded preset must retain its native
+	-- source dimensions and the saved underground city must own a complete rectangular exploration
+	-- grid. InitExploration builds that grid immediately before CityInitialized, after native random
+	-- generation has returned, so this is persisted proof of both missing milestones. Merely having
+	-- an allocated 8192 map is insufficient and deliberately does not pass this check.
+	-- Deferred geometry was already persisted by the affected releases. Prefer live stamps, but
+	-- validate directly against that MapVar when load has not yet restored its transient copies.
+	local geometry = map.SuperBigMapUndergroundDeferredGeometry
+	geometry = type(geometry) == "table" and geometry or {}
+	local source_width = map.SuperBigMapSourceWidthTiles
+		or geometry.source_width_tiles or mapdata.SuperBigMapSourceWidthTiles
+	local source_height = map.SuperBigMapSourceHeightTiles
+		or geometry.source_height_tiles or mapdata.SuperBigMapSourceHeightTiles
+	local desired_width = map.SuperBigMapDesiredWidthTiles
+		or geometry.desired_width_tiles or mapdata.Width
+	local desired_height = map.SuperBigMapDesiredHeightTiles
+		or geometry.desired_height_tiles or mapdata.Height
+	if type(source_width) ~= "number" or type(source_height) ~= "number"
+		or source_width <= 0 or source_height <= 0 then
+		return false, "saved native source dimensions are missing"
+	end
+	if type(desired_width) ~= "number" or type(desired_height) ~= "number"
+		or desired_width <= source_width or desired_height <= source_height then
+		return false, "saved underground is not an expanded deferred geometry"
+	end
+
+	local city = map.City
+	local sectors = city and city.MapSectors
+	if type(sectors) ~= "table" or #sectors <= 0 then
+		return false, "saved underground exploration grid is missing"
+	end
+	local count_x = #sectors
+	local count_y = type(sectors[1]) == "table" and #sectors[1] or 0
+	if count_y <= 0 then
+		return false, "saved underground exploration grid has no rows"
+	end
+	for col = 1, count_x do
+		if type(sectors[col]) ~= "table" or #sectors[col] ~= count_y then
+			return false, "saved underground exploration grid is incomplete"
+		end
+	end
+	for col = 1, count_x do
+		for row = 1, count_y do
+			local sector = sectors[col][row]
+			if not sector or not sector.area then
+				return false, "saved underground sector geometry is incomplete"
+			end
+		end
+	end
+	return true, "legacy save contains a complete underground city and sector grid"
+end
+
+function SuperBigMap.GenerationReadiness.RecoverPersistedUnderground(map, source)
+	if type(map) ~= "table" then return false, "map unavailable" end
+	if map.SuperBigMapNativeGenerationComplete == true
+		and map.SuperBigMapCityInitializationComplete == true then
+		-- Saves made after the persistence fix already carry both bits. Stamp the schema if this
+		-- session hot-reloaded across the version boundary, but otherwise leave them untouched.
+		map.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
+		return false, "generation readiness already complete"
+	end
+	if map.SuperBigMapGenerationReadinessVersion == SuperBigMap.GenerationReadiness.VERSION then
+		-- A current-schema save explicitly persisted incomplete state. Do not reinterpret it as a
+		-- legacy omission: keeping the safety gate closed is the only non-destructive response.
+		return false, "current readiness schema records incomplete generation"
+	end
+
+	local valid, evidence = SuperBigMap.GenerationReadiness.LegacyUndergroundEvidence(map)
+	if not valid then return false, evidence end
+	map.SuperBigMapNativeGenerationComplete = true
+	map.SuperBigMapNativeGenerationCompleteSource =
+		"legacy save recovery: " .. tostring(source or "LoadGame")
+	map.SuperBigMapCityInitializationComplete = true
+	map.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
+	SignalExpansionReadinessChanged(map, map.SuperBigMapNativeGenerationCompleteSource)
+	LoadingStep("legacy underground generation readiness recovered", {
+		source = tostring(source or "LoadGame"), evidence = tostring(evidence),
+	}, map)
+	return true, evidence
+end
+
+function SuperBigMap.GenerationReadiness.RecoverLoadedUnderground(source)
+	local seen = {}
+	local recovered = 0
+	local inspected = 0
+	local function inspect(map)
+		if type(map) ~= "table" or seen[map] then return end
+		seen[map] = true
+		local mapdata = map.mapdata
+		if type(mapdata) ~= "table" or mapdata.Environment ~= "Underground" then return end
+		inspected = inspected + 1
+		if SuperBigMap.GenerationReadiness.RecoverPersistedUnderground(map, source) == true then
+			recovered = recovered + 1
+		end
+	end
+
+	local loaded_maps = Global("LoadedMaps")
+	if type(loaded_maps) == "table" then
+		for _, map in ipairs(loaded_maps) do inspect(map) end
+	end
+	local maps = Global("Maps")
+	if type(maps) == "table" then
+		for _, map in pairs(maps) do inspect(map) end
+	end
+	inspect(Global("CurrentMap"))
+	inspect(Global("MainMap"))
+	return recovered, inspected
+end
+
 local function UndergroundExpansionReadiness(map)
 	if map.SuperBigMapNativeGenerationComplete ~= true then
 		return false, "underground native generation has not completed"
@@ -9009,6 +9148,9 @@ local function NotifyGenerationMilestone(map, milestone, source)
 	else
 		return false
 	end
+	-- Stamp the schema as soon as either current-code milestone is observed. A save made between
+	-- milestones must remain distinguishable from a legacy save whose fields were absent entirely.
+	map.SuperBigMapGenerationReadinessVersion = SuperBigMap.GenerationReadiness.VERSION
 	SignalExpansionReadinessChanged(map, tostring(milestone) .. ": " .. tostring(source or milestone))
 
 	local env = map.mapdata and map.mapdata.Environment
@@ -10150,6 +10292,10 @@ MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWay
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
+MapGeneration.RecoverPersistedUndergroundReadiness =
+	SuperBigMap.GenerationReadiness.RecoverPersistedUnderground
+MapGeneration.RecoverLoadedUndergroundReadiness =
+	SuperBigMap.GenerationReadiness.RecoverLoadedUnderground
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
 
