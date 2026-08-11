@@ -1726,6 +1726,7 @@ local function RestoreTransferredPrefabFeatureGameLogic(map)
 	local sights = ExactClassObjects("SafariSight")
 	local used_sights = {}
 	local expected_safari, created_safari, matched_safari, replayed_markers = 0, 0, 0, 0
+	local removed_orphan_safari = 0
 	local source_w = tonumber(map.SuperBigMapSourceWidthTiles)
 		or tonumber(map.SuperBigMapGeneratorWidthTiles)
 	local destination_w = tonumber(map.SuperBigMapDesiredWidthTiles)
@@ -1805,6 +1806,27 @@ local function RestoreTransferredPrefabFeatureGameLogic(map)
 			end
 		end
 	end
+	-- A temporary native source can run PrefabFeatureMarker:GameInit before its marker is
+	-- transferred.  The resulting SafariSight keeps the source coordinate and loses its marker
+	-- parent when that temporary map is discarded.  Replaying GameLogic at the transformed marker
+	-- then creates the required destination sight but otherwise leaves a second, orphaned sight in
+	-- the expanded map.  Exact-class SafariSight objects are exclusively prefab-feature products;
+	-- keep the one matched to each live marker and remove only unmatched products.  This is also an
+	-- idempotent migration for expanded saves produced by the affected versions.
+	local done_object = Global("DoneObject")
+	if type(done_object) ~= "function" then
+		return false, { error = "DoneObject unavailable for SafariSight correspondence" }
+	end
+	for i = 1, #sights do
+		local sight = sights[i]
+		if sight and not used_sights[sight] then
+			local remove_ok = pcall(done_object, sight)
+			if not remove_ok then
+				return false, { error = "could not remove unmatched SafariSight" }
+			end
+			removed_orphan_safari = removed_orphan_safari + 1
+		end
+	end
 	local final_sights = ExactClassObjects("SafariSight")
 	local stats = {
 		markers = #markers,
@@ -1812,6 +1834,7 @@ local function RestoreTransferredPrefabFeatureGameLogic(map)
 		actual_safari = #final_sights,
 		matched_safari = matched_safari,
 		created_safari = created_safari,
+		removed_orphan_safari = removed_orphan_safari,
 		replayed_markers = replayed_markers,
 	}
 	LoadingStep("prefab feature game logic correspondence", stats, map)
