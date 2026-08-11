@@ -4025,6 +4025,27 @@ function SuperBigMap.RecreateDeferredWonderMarker(map, record)
 	return marker
 end
 
+function SuperBigMap.CleanupPendingNativeWonders(map, reason)
+	local pending = map and map.SuperBigMapPendingNativeWonderCleanup
+	if type(pending) ~= "table" then return true, 0 end
+	local done_object = Global("DoneObject")
+	if type(done_object) ~= "function" then return false, "DoneObject unavailable" end
+	local cleaned = 0
+	for _, wonder in ipairs(pending) do
+		local ok, err = pcall(done_object, wonder)
+		if not ok then
+			return false, "temporary native wonder cleanup failed: " .. tostring(err)
+		end
+		cleaned = cleaned + 1
+	end
+	map.SuperBigMapPendingNativeWonderCleanup = nil
+	LoadingStep("temporary native underground wonders removed", {
+		cleaned = cleaned,
+		reason = tostring(reason or "unspecified"),
+	}, map)
+	return true, cleaned
+end
+
 local function ArtefactSpawnMarkerBuilding(marker, class_name, map)
 	local place_building = Global("PlaceBuildingIn")
 	local building = place_building(class_name, map)
@@ -4580,14 +4601,17 @@ local function BootstrapPassagesAndDeferWonders(env)
 		end
 		for _, marker in ipairs(passage_markers) do done_object(marker) end
 	end)
-	local cleanup_ok, cleanup_err = pcall(function()
-		for _, wonder in ipairs(native_wonders) do done_object(wonder) end
-	end)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
 	RestoreSurfaceBuildableBridge()
-	if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
-	if not cleanup_ok then error("temporary native wonder cleanup failed: " .. tostring(cleanup_err)) end
-	if not resume_ok then error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err)) end
+	if not ok or not resume_ok then
+		for _, wonder in ipairs(native_wonders) do pcall(done_object, wonder) end
+		if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
+		error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err))
+	end
+	-- Stock actual wonders remain live through the later PlaceAnomalies and PlaceObstructions
+	-- procedures. Keep these temporary source-domain objects until the ProcInvoke wrapper consumes
+	-- the PlaceObstructions boundary, then remove them before the generated map is published.
+	map.SuperBigMapPendingNativeWonderCleanup = native_wonders
 	if type(AlignPassagePairsToSharedHex) ~= "function" then
 		error("passage bootstrap common-hex planner is unavailable")
 	end
@@ -8018,6 +8042,20 @@ local function PatchRandomMapGenerator()
 							return details
 						end, randless)
 					end
+					if tag == "PlaceObstructions" then
+						return saved_proc_invoke(tag, function()
+							local obstruction_results
+							local obstruction_ok, obstruction_error = pcall(function()
+								obstruction_results = PackValues(func())
+							end)
+							local cleanup_ok, cleanup_result =
+								SuperBigMap.CleanupPendingNativeWonders(
+									map, "after stock PlaceObstructions")
+							if cleanup_ok ~= true then error(cleanup_result) end
+							if not obstruction_ok then error(obstruction_error) end
+							return Unpack(obstruction_results, 1, obstruction_results.n)
+						end, randless)
+					end
 					return saved_proc_invoke(tag, func, randless)
 				end
 				env.ProcInvoke = proc_invoke_wrapper
@@ -8163,6 +8201,15 @@ local function PatchRandomMapGenerator()
 			end
 			if proc_invoke_wrapper and env.ProcInvoke == proc_invoke_wrapper then
 				env.ProcInvoke = saved_proc_invoke
+			end
+			if type(map.SuperBigMapPendingNativeWonderCleanup) == "table" then
+				local cleanup_ok, cleanup_result = SuperBigMap.CleanupPendingNativeWonders(
+					map, "generator-exit fail-closed fallback")
+				if results[1] then
+					results = { false, "temporary native wonders missed the PlaceObstructions cleanup boundary" }
+				elseif cleanup_ok ~= true then
+					results[2] = tostring(results[2]) .. "; cleanup failed: " .. tostring(cleanup_result)
+				end
 			end
 			if env.GetPlayableArea ~= saved_get_playable_area then
 				env.GetPlayableArea = saved_get_playable_area
