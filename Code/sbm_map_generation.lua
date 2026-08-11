@@ -947,6 +947,27 @@ function SuperBigMap.CaptureRockParityObjectSet(map, phase)
 	return { phase = tostring(phase), count = #tuples, tuples = tuples }
 end
 
+function SuperBigMap.CaptureRockParityBoundary(map, phase)
+	local boundary = SuperBigMap.CaptureRockParityObjectSet(map, phase)
+	local class_counts = {}
+	local objects = map:MapGet("map") or {}
+	for _, object in ipairs(objects) do
+		local class_name = object and object.class or "?"
+		class_counts[class_name] = (class_counts[class_name] or 0) + 1
+	end
+	local class_names = {}
+	for class_name in pairs(class_counts) do class_names[#class_names + 1] = class_name end
+	table.sort(class_names)
+	local census = {}
+	for _, class_name in ipairs(class_names) do
+		census[#census + 1] = tostring(class_name) .. "=" .. tostring(class_counts[class_name])
+	end
+	boundary.object_count = #objects
+	boundary.class_count = #class_names
+	boundary.class_census = census
+	return boundary
+end
+
 function SuperBigMap.BeginRockParityTrace(map, env)
 	if not SuperBigMap.RockParityTraceEnabled(map)
 		or type(env) ~= "table" or type(env.rhelpers) ~= "table" then
@@ -1008,18 +1029,162 @@ function SuperBigMap.WrapRockParityProcInvoke(saved_proc, map, trace)
 		end
 		return saved_proc(tag, function(...)
 			trace.boundaries[#trace.boundaries + 1] =
-				SuperBigMap.CaptureRockParityObjectSet(map, "before")
+				SuperBigMap.CaptureRockParityBoundary(map, "before")
 			trace.active = true
 			local results = PackValues(pcall(func, ...))
 			trace.active = false
 			trace.boundaries[#trace.boundaries + 1] =
-				SuperBigMap.CaptureRockParityObjectSet(map, "after")
+				SuperBigMap.CaptureRockParityBoundary(map, "after")
 			trace.captured_helper_calls = #trace.helper_calls
 			trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
 			if not results[1] then error(results[2]) end
 			return Unpack(results, 2, results.n)
 		end, randless)
 	end
+end
+
+-- Proc_PlaceDecors is a local closure invoked inside stock DoGenerate before
+-- OnGenerateLogic receives its environment table. This default-off seam observes that exact local
+-- call through Lua's debug hook. It never replaces a random helper, invokes a helper, or consumes
+-- RNG: call events only record the helper function identity and its already-supplied scalar args.
+function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
+	if not SuperBigMap.RockParityTraceEnabled(map) then
+		return original(self, map, ...)
+	end
+	local trace = {
+		schema = "smr.sbm.underground_rock_parity_trace",
+		schema_version = 2,
+		boundary_scope = "DoGenerate-local Proc_PlaceDecors",
+		active = false,
+		in_progress = true,
+		helper_calls = {},
+		helper_call_count = 0,
+		helper_call_cap = 12000,
+		boundaries = {},
+		target_call_count = 0,
+	}
+	local history = map.SuperBigMapRockParityTraces
+	if type(history) ~= "table" then
+		history = {}
+		map.SuperBigMapRockParityTraces = history
+	end
+	trace.invocation = #history + 1
+	history[#history + 1] = trace
+	map.SuperBigMapRockParityTrace = trace
+
+	local debug_lib = Global("debug")
+	local getinfo = type(debug_lib) == "table" and debug_lib.getinfo or nil
+	local getlocal = type(debug_lib) == "table" and debug_lib.getlocal or nil
+	local gethook = type(debug_lib) == "table" and debug_lib.gethook or nil
+	local sethook = type(debug_lib) == "table" and debug_lib.sethook or nil
+	if type(getinfo) ~= "function" or type(getlocal) ~= "function"
+		or type(gethook) ~= "function" or type(sethook) ~= "function" then
+		trace.in_progress = false
+		trace.attachment_error = "debug hook API unavailable"
+		return original(self, map, ...)
+	end
+
+	local saved_hook, saved_mask, saved_count = gethook()
+	trace.previous_hook_present = type(saved_hook) == "function"
+	local target_func
+	local helper_names = {}
+	local boundary_before_captured = false
+	local function describe_call_args(level)
+		local values = { n = 0 }
+		for index = 1, 24 do
+			local name, value = getlocal(level, index)
+			if name == nil then break end
+			values.n = values.n + 1
+			values[values.n] = tostring(name) .. "=" .. type(value) .. ":" .. tostring(value)
+		end
+		return table.concat(values, "|")
+	end
+	local function inspect_do_generate_frame()
+		for level = 2, 16 do
+			local info = getinfo(level, "f")
+			if info and info.func == original then
+				local found_target
+				for index = 1, 512 do
+					local name, value = getlocal(level, index)
+					if name == nil then break end
+					if name == "Proc_PlaceDecors" and type(value) == "function" then
+						found_target = value
+					elseif (name == "rand" or name == "rrand" or name == "trand"
+						or name == "crand" or name == "grand") and type(value) == "function" then
+						helper_names[value] = name
+					end
+				end
+				return found_target
+			end
+		end
+		return nil
+	end
+	local function hook(event)
+		if not target_func and event == "line" then
+			target_func = inspect_do_generate_frame()
+			if target_func then
+				trace.target_discovered = true
+				trace.helper_identity_count = 0
+				for _ in pairs(helper_names) do
+					trace.helper_identity_count = trace.helper_identity_count + 1
+				end
+			end
+		elseif event == "call" then
+			local info = getinfo(2, "f")
+			local func = info and info.func
+			if func == target_func then
+				-- A call hook runs after the target frame is entered but before its first Lua
+				-- instruction, making this the exact pre-PlaceDecors object boundary even when
+				-- the local closure became discoverable hundreds of source lines earlier.
+				trace.boundaries[#trace.boundaries + 1] =
+					SuperBigMap.CaptureRockParityBoundary(map, "before")
+				boundary_before_captured = true
+				trace.target_call_count = trace.target_call_count + 1
+				trace.active = true
+			elseif trace.active and helper_names[func] then
+				trace.helper_call_count = trace.helper_call_count + 1
+				if #trace.helper_calls < trace.helper_call_cap then
+					trace.helper_calls[#trace.helper_calls + 1] = {
+						ordinal = trace.helper_call_count,
+						helper = helper_names[func],
+						args = describe_call_args(2),
+					}
+				end
+			end
+		elseif (event == "return" or event == "tail return") and trace.active then
+			local info = getinfo(2, "f")
+			if info and info.func == target_func then
+				trace.active = false
+				trace.boundaries[#trace.boundaries + 1] =
+					SuperBigMap.CaptureRockParityBoundary(map, "after")
+				trace.captured_helper_calls = #trace.helper_calls
+				trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
+			end
+		end
+	end
+
+	local installed, install_error = pcall(sethook, hook, "crl")
+	if not installed then
+		trace.in_progress = false
+		trace.attachment_error = "debug hook install failed: " .. tostring(install_error)
+		return original(self, map, ...)
+	end
+	local results = PackValues(pcall(original, self, map, ...))
+	local restored, restore_error = pcall(sethook, saved_hook, saved_mask, saved_count)
+	trace.in_progress = false
+	trace.hook_restored = restored == true
+	if not restored then trace.restore_error = tostring(restore_error) end
+	if boundary_before_captured and #trace.boundaries == 1 then
+		trace.boundaries[#trace.boundaries + 1] =
+			SuperBigMap.CaptureRockParityBoundary(map, "after_unwind")
+	end
+	trace.captured_helper_calls = #trace.helper_calls
+	trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
+	if not restored and results[1] then
+		results = { n = 2, false, "DoGenerate parity trace hook restoration failed: " .. tostring(restore_error) }
+	end
+	if not results[1] then error(results[2]) end
+	return Unpack(results, 2, results.n)
 end
 
 -- Instrument the generator's own procedure dispatcher while either focused tracing gate is on.
@@ -1029,7 +1194,14 @@ local function CallOnGenerateLogicTimed(original, self, env, map, ...)
 	local diagnostics = SuperBigMap.Diagnostics
 	local loading_enabled = diagnostics and type(diagnostics.LoadingEnabled) == "function"
 		and diagnostics.LoadingEnabled() == true
-	local rock_trace, original_helpers = SuperBigMap.BeginRockParityTrace(map, env)
+	local retained_do_generate_trace = type(map) == "table"
+		and type(map.SuperBigMapRockParityTrace) == "table"
+		and map.SuperBigMapRockParityTrace.in_progress == true
+		and map.SuperBigMapRockParityTrace.boundary_scope == "DoGenerate-local Proc_PlaceDecors"
+	local rock_trace, original_helpers
+	if not retained_do_generate_trace then
+		rock_trace, original_helpers = SuperBigMap.BeginRockParityTrace(map, env)
+	end
 	if not loading_enabled and not rock_trace then
 		return original(self, env, ...)
 	end
@@ -7734,6 +7906,10 @@ local function PatchRandomMapGenerator()
 	local original_generate = State.generator_original_generate
 	local original_do_generate = State.generator_original_do_generate
 	local original_on_generate_logic = State.generator_original_on_generate_logic
+	local function call_original_do_generate(generator, map, ...)
+		return SuperBigMap.CallDoGenerateWithRockParityTrace(
+			original_do_generate, generator, map, ...)
+	end
 
 	-- OnGenerateLogic exposes the private buildable-grid transaction and underground
 	-- artefact procedure needed by the supported stretch pipeline.
@@ -8457,7 +8633,7 @@ local function PatchRandomMapGenerator()
 				or State.vanilla_source_migration_active == true
 			if not expansion_transaction then
 			-- Exact vanilla fast path: no temporary-source migration or expansion behavior.
-				return original_do_generate(self, map, ...)
+				return call_original_do_generate(self, map, ...)
 			end
 			if map and map.SuperBigMapVanillaSourceMigration ~= true then
 				-- Persisted provenance distinguishes freshly generated strict-correspondence maps
@@ -8465,7 +8641,7 @@ local function PatchRandomMapGenerator()
 				map.SuperBigMapOneToOneGenerationVersion = 1
 			end
 			if not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
-				return original_do_generate(self, map, ...)
+				return call_original_do_generate(self, map, ...)
 			end
 			local loading_diagnostics = SuperBigMap.Diagnostics
 			local loading_session_already_active = loading_diagnostics
@@ -8525,7 +8701,7 @@ local function PatchRandomMapGenerator()
 				local native_token = LoadingBegin("native-sized RandomMapGenerator.DoGenerate", map, {
 					map_tiles = tostring(cur_w_tiles) .. "x" .. tostring(cur_h_tiles),
 				})
-				local results = PackValues(original_do_generate(self, map, ...))
+				local results = PackValues(call_original_do_generate(self, map, ...))
 				LoadingEnd(native_token, nil, true)
 				CaptureGeneratedNativeEnrichments(map, "DoGenerate native complete")
 				if loading_session_already_active then
@@ -8549,7 +8725,7 @@ local function PatchRandomMapGenerator()
 				generator_limit_tiles = max_random_tiles,
 			}, map)
 			local migrated, migrated_results = GenerateOnTemporaryVanillaBacking(
-				self, map, original_do_generate, ...)
+				self, map, call_original_do_generate, ...)
 			if migrated then
 				return Unpack(migrated_results, 1, migrated_results.n)
 			end
@@ -8763,7 +8939,7 @@ local function PatchRandomMapGenerator()
 			local expanded_backing_token = LoadingBegin(
 				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
 			ProbeNativeClutterAccess(map, "expanded backing before underground DoGenerate")
-			local results = { pcall(CallWithClutterCapture, map, original_do_generate, self, map, ...) }
+			local results = { pcall(CallWithClutterCapture, map, call_original_do_generate, self, map, ...) }
 			local seed_trace = State.underground_seed_reservation_trace
 			if type(seed_trace) == "table" and seed_trace.generator == self
 				and type(mapdata) == "table" and mapdata.Environment == "Underground" then
