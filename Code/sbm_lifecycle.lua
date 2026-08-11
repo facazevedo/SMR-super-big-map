@@ -414,6 +414,22 @@ function Lifecycle.Apply(map, rebuild, skip_buildable_rebuild)
 		return false, "not a mod map"
 	end
 
+	-- Strict correspondence is also an old-save migration: remove only explicitly stamped
+	-- density additions and restore feature GameLogic objects (notably SafariSight) that temporary
+	-- source migration could not create. Both operations are provenance-gated and idempotent.
+	local config = SuperBigMap.Config or {}
+	if config.EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS ~= true then
+		local deposits = SuperBigMap.DepositRules
+		if deposits and type(deposits.RemoveExpansionAdditions) == "function" then
+			SafeCall(deposits.RemoveExpansionAdditions, map,
+				"Lifecycle.Apply strict one-to-one migration")
+		end
+	end
+	local generation = SuperBigMap.MapGeneration
+	if generation and type(generation.RestoreTransferredPrefabFeatureGameLogic) == "function" then
+		SafeCall(generation.RestoreTransferredPrefabFeatureGameLogic, map)
+	end
+
 	local bounds = SuperBigMap.MapBounds
 	if bounds then
 		bounds.ResetMapDataBounds(map, map.mapdata)

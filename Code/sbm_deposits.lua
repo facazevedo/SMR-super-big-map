@@ -2709,6 +2709,76 @@ UnregisterNativeMarker = function(map, marker)
 	end
 end
 
+-- Versions before strict correspondence could persist density top-up markers in saves. Remove
+-- only objects carrying an explicit top-up provenance flag; SuperBigMapEnrichmentClone alone is
+-- intentionally insufficient because scan gating also uses it on native vanilla objects.
+function DepositRules.RemoveExpansionAdditions(map, reason)
+	map = map or Global("CurrentMap")
+	if not map or type(map.MapForEach) ~= "function" then
+		return false, { error = "map enumeration unavailable" }
+	end
+	local additions = {}
+	local enum_ok, enum_err = pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if marker and (marker.SuperBigMapResourceTopUp == true
+			or marker.SuperBigMapAnomalyTopUp == true
+			or marker.SuperBigMapEffectTopUp == true) then
+			additions[#additions + 1] = marker
+		end
+	end)
+	if not enum_ok then return false, { error = tostring(enum_err) } end
+	local is_valid = Global("IsValid")
+	local done_object = Global("DoneObject")
+	if #additions > 0 and type(done_object) ~= "function" then
+		return false, { error = "DoneObject unavailable", found = #additions }
+	end
+	local stats = {
+		reason = tostring(reason or "strict one-to-one correspondence"),
+		found = #additions,
+		removed = 0,
+		placed_objects_removed = 0,
+		concrete_imprints_cleared = 0,
+		by_class = {},
+	}
+	local concrete_moves = {}
+	for i = 1, #additions do
+		local marker = additions[i]
+		local valid = type(is_valid) ~= "function" or SafeCall(is_valid, marker) == true
+		if valid then
+			UnregisterNativeMarker(map, marker)
+			local placed = marker.placed_obj
+			local placed_valid = placed
+				and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
+			local pos = ObjectPos(marker)
+			if (marker.is_placed == true or placed_valid)
+				and IsConcreteTerrainDepositMarker(marker)
+				and pos and type(pos.xy) == "function" then
+				local x, y = pos:xy()
+				if type(x) == "number" and type(y) == "number" then
+					concrete_moves[#concrete_moves + 1] = {
+						from = { x = x, y = y }, to = { x = x, y = y }, paint_now = false,
+					}
+				end
+			end
+			if placed_valid then
+				pcall(done_object, placed)
+				stats.placed_objects_removed = stats.placed_objects_removed + 1
+			end
+			marker.placed_obj = false
+			marker.is_placed = false
+			local class_name = tostring(marker.class or "?")
+			stats.by_class[class_name] = (stats.by_class[class_name] or 0) + 1
+			pcall(done_object, marker)
+			stats.removed = stats.removed + 1
+		end
+	end
+	if #concrete_moves > 0 then
+		MoveConcreteImprints(map, concrete_moves)
+		stats.concrete_imprints_cleared = #concrete_moves
+	end
+	ClearTopUpPlacementPool(map)
+	return true, stats
+end
+
 function DepositRules.VerifyRecreatedNativeEnrichments(map, records, reason)
 	map = map or Global("CurrentMap")
 	records = records or (map and pending_native_enrichment_records_by_map[map])

@@ -1666,6 +1666,154 @@ local function MapObjects(map)
 	return objects
 end
 
+-- PrefabFeatureMarker:GameInit normally materializes feature-side game logic after native map
+-- creation. The temporary surface source deliberately has no game logic, so transferred markers
+-- never receive that callback on the destination. Replay the exact preset callback once after the
+-- marker reaches its final transformed coordinate. This restores SafariSight and preserves any
+-- other vanilla feature callback (currently geyser logic) without inventing content.
+local function RestoreTransferredPrefabFeatureGameLogic(map)
+	if not map then return false, { error = "map unavailable" } end
+	local function ExactClassObjects(class_name)
+		if type(map.MapGet) ~= "function" then return {} end
+		local ok, objects = pcall(map.MapGet, map, "map", class_name)
+		if not ok or type(objects) ~= "table" then return {} end
+		local exact = {}
+		for i = 1, #objects do
+			local obj = objects[i]
+			if obj and obj.class == class_name then exact[#exact + 1] = obj end
+		end
+		return exact
+	end
+	local function ObjectVisualXYZ(obj)
+		if not obj then return nil end
+		if type(obj.GetVisualPosXYZ) == "function" then
+			local ok, x, y, z = pcall(obj.GetVisualPosXYZ, obj)
+			if ok and type(x) == "number" and type(y) == "number" then return x, y, z end
+		end
+		local pos = type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or nil
+		local x, y = PointXY(pos)
+		local z
+		if pos and type(pos.z) == "function" then
+			local ok_z, value = pcall(pos.z, pos)
+			if ok_z then z = value end
+		end
+		return x, y, z
+	end
+	local function SafariSightMatchesMarker(sight, marker, char)
+		if not sight or sight.class ~= "SafariSight" then return false end
+		local sx, sy = ObjectVisualXYZ(sight)
+		local mx, my = ObjectVisualXYZ(marker)
+		return sx == mx and sy == my
+			and sight.sight_name == char.sight_name
+			and sight.sight_category == char.sight_category
+			and sight.sight_satisfaction == char.sight_satisfaction
+			and sight.sight_visible_size == char.sight_visible_size
+	end
+	local feature_presets = Global("PrefabFeaturePresets")
+	local char_presets = Global("PrefabFeatureCharPresets")
+	if type(feature_presets) ~= "table" or type(char_presets) ~= "table" then
+		return false, { error = "prefab feature presets unavailable" }
+	end
+	local markers = ExactClassObjects("PrefabFeatureMarker")
+	local sights = ExactClassObjects("SafariSight")
+	local used_sights = {}
+	local expected_safari, created_safari, matched_safari, replayed_markers = 0, 0, 0, 0
+	local source_w = tonumber(map.SuperBigMapSourceWidthTiles)
+		or tonumber(map.SuperBigMapGeneratorWidthTiles)
+	local destination_w = tonumber(map.SuperBigMapDesiredWidthTiles)
+		or (map.mapdata and tonumber(map.mapdata.Width))
+	local object_scale = source_w and destination_w and source_w > 0
+		and (destination_w + 0.0) / source_w or 1
+	for i = 1, #markers do
+		local marker = markers[i]
+		local feature = feature_presets[marker.FeatureType]
+		local chars = feature and feature.chars
+		if type(chars) == "table" then
+			local replay_all = marker.SuperBigMapTransferredFromNativeSource == true
+				and marker.SuperBigMapPrefabFeatureGameLogicReplayed ~= true
+			for j = 1, #chars do
+				local char = char_presets[chars[j]]
+				if char then
+					local is_safari = char.class == "PrefabFeatureCharPreset_SafariSight"
+					local matching_sight
+					if is_safari then
+						expected_safari = expected_safari + 1
+						for k = 1, #sights do
+							local sight = sights[k]
+							if not used_sights[sight] and SafariSightMatchesMarker(sight, marker, char) then
+								matching_sight = sight
+								used_sights[sight] = true
+								matched_safari = matched_safari + 1
+								break
+							end
+						end
+					end
+					-- Older expanded saves lack the transfer stamp. Repair only their provably
+					-- missing Safari sight so an already-running geyser thread is never duplicated.
+					local should_call = replay_all or (is_safari and not matching_sight)
+					if should_call and not (is_safari and matching_sight) then
+						if type(char.GameLogic) ~= "function" then
+							error("prefab feature GameLogic unavailable for " .. tostring(chars[j]))
+						end
+						local before = is_safari and ExactClassObjects("SafariSight") or nil
+						local before_set = {}
+						if before then for k = 1, #before do before_set[before[k]] = true end end
+						local call_ok, call_err = pcall(char.GameLogic, char, marker)
+						if not call_ok then
+							error("prefab feature GameLogic failed for " .. tostring(chars[j])
+								.. ": " .. tostring(call_err))
+						end
+						if is_safari then
+							local after = ExactClassObjects("SafariSight")
+							local created
+							for k = 1, #after do
+								if not before_set[after[k]] then created = after[k] break end
+							end
+							if not created or #after ~= #before + 1 then
+								error("SafariSight recreation did not create exactly one object")
+							end
+							local mx, my, mz = ObjectVisualXYZ(marker)
+							created.SuperBigMapNativeSourceX = marker.SuperBigMapNativeSourceX
+								or (type(mx) == "number" and math.floor(mx / object_scale + 0.5) or nil)
+							created.SuperBigMapNativeSourceY = marker.SuperBigMapNativeSourceY
+								or (type(my) == "number" and math.floor(my / object_scale + 0.5) or nil)
+							created.SuperBigMapNativeSourceZ = marker.SuperBigMapNativeSourceZ or mz
+							created.SuperBigMapNativeSourceScale = 100
+							created.SuperBigMapNativeSourceClass = "SafariSight"
+							if type(created.SetScale) == "function" then
+								SafeCall(created.SetScale, created,
+									math.max(1, math.min(500, math.floor(100 * object_scale + 0.5))))
+							end
+							sights[#sights + 1] = created
+							used_sights[created] = true
+							created_safari = created_safari + 1
+						end
+					end
+				end
+			end
+			if replay_all then
+				marker.SuperBigMapPrefabFeatureGameLogicReplayed = true
+				replayed_markers = replayed_markers + 1
+			end
+		end
+	end
+	local final_sights = ExactClassObjects("SafariSight")
+	local stats = {
+		markers = #markers,
+		expected_safari = expected_safari,
+		actual_safari = #final_sights,
+		matched_safari = matched_safari,
+		created_safari = created_safari,
+		replayed_markers = replayed_markers,
+	}
+	LoadingStep("prefab feature game logic correspondence", stats, map)
+	if #final_sights ~= expected_safari then
+		stats.error = "SafariSight count differs from vanilla feature count"
+		return false, stats
+	end
+	return true, stats
+end
+
 local function SnapshotMapObjectSet(map)
 	local objects, err = MapObjects(map)
 	if not objects then error("could not snapshot map objects: " .. tostring(err)) end
@@ -1733,6 +1881,36 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 			local obj = roots[i]
 			local valid = type(is_valid) ~= "function" or is_valid(obj)
 			if valid then
+				-- Stamp the immutable vanilla transform and a stable source ordinal before map
+				-- ownership changes. The decoration pass also stamps attached children, which are
+				-- not separate transfer roots.
+				local source_pos = type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or nil
+				local source_x, source_y = PointXY(source_pos)
+				if type(source_x) == "number" then obj.SuperBigMapNativeSourceX = source_x end
+				if type(source_y) == "number" then obj.SuperBigMapNativeSourceY = source_y end
+				if source_pos and type(source_pos.z) == "function" then
+					local ok_z, source_z = pcall(source_pos.z, source_pos)
+					if ok_z and type(source_z) == "number" then
+						obj.SuperBigMapNativeSourceZ = source_z
+					end
+				end
+				if type(obj.GetScale) == "function" then
+					local source_scale = SafeCall(obj.GetScale, obj)
+					if type(source_scale) == "number" then
+						obj.SuperBigMapNativeSourceScale = source_scale
+					end
+				end
+				if type(obj.GetAngle) == "function" then
+					local source_angle = SafeCall(obj.GetAngle, obj)
+					if type(source_angle) == "number" then
+						obj.SuperBigMapNativeSourceAngle = source_angle
+					end
+				end
+				obj.SuperBigMapNativeSourceClass = tostring(obj.class or "?")
+				obj.SuperBigMapNativeSourceOrdinal = i
+				if obj.class == "PrefabFeatureMarker" then
+					obj.SuperBigMapTransferredFromNativeSource = true
+				end
 				if type(obj.TransferToMap) ~= "function" then
 					failed = failed + 1
 					if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
@@ -1793,6 +1971,7 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 		error(string.format("temporary source object migration failed for %d objects: %s",
 			failed + remaining_generated, table.concat(failures, " | ")))
 	end
+	destination.SuperBigMapNativeSourceObjectsTransferred = true
 	return transferred
 end
 
@@ -6479,11 +6658,100 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	return true
 end
 
+local function PatchAdditionalMapSeedReservation()
+	local State = SuperBigMap.State
+	local current_additional = Global("GenerateAdditionalMaps")
+	local current_fill = Global("FillRandomMapGen")
+	if type(current_additional) ~= "function" or type(current_fill) ~= "function" then
+		return false
+	end
+	if State.additional_map_seed_patch_version == GENERATOR_PATCH_VERSION
+		and current_additional == State.generate_additional_maps_wrapper
+		and current_fill == State.fill_random_map_gen_wrapper then
+		return true
+	end
+	if current_additional ~= State.generate_additional_maps_wrapper then
+		State.original_generate_additional_maps = current_additional
+	end
+	if current_fill ~= State.fill_random_map_gen_wrapper then
+		State.original_fill_random_map_gen = current_fill
+	end
+	local original_additional = State.original_generate_additional_maps
+	local original_fill = State.original_fill_random_map_gen
+	if type(original_additional) ~= "function" or type(original_fill) ~= "function" then
+		return false
+	end
+
+	local additional_wrapper = function(...)
+		local map = Global("CurrentMap")
+		local environment = map and map.mapdata and map.mapdata.Environment
+		local grid = SuperBigMap.SectorGrid
+		local expanded = map and type(grid) == "table" and type(grid.IsModMap) == "function"
+			and grid.IsModMap(map) == true
+		local no_underground = Global("IsGameRuleActive")
+		no_underground = type(no_underground) == "function"
+			and SafeCall(no_underground, "NoUndergroundAndAsteroids") == true
+		if expanded and environment == "Surface" and not no_underground
+			and not Global("UndergroundMap") then
+			local async_rand = Global("AsyncRand")
+			if type(async_rand) ~= "function" then
+				error("AsyncRand unavailable while reserving the vanilla underground seed")
+			end
+			State.pending_vanilla_underground_seed = {
+				seed = async_rand(),
+				surface = map,
+			}
+		end
+		local results = PackValues(pcall(original_additional, ...))
+		if not results[1] then
+			State.pending_vanilla_underground_seed = nil
+			error(results[2])
+		end
+		local pending = State.pending_vanilla_underground_seed
+		if pending then
+			local next_map = Global("GenerateNextMap")
+			if type(next_map) ~= "table" or next_map.map_slot ~= 2 then
+				State.pending_vanilla_underground_seed = nil
+			end
+		end
+		return Unpack(results, 2, results.n)
+	end
+
+	local fill_wrapper = function(gen, map_name, params)
+		local pending = State.pending_vanilla_underground_seed
+		local map_data_table = Global("MapData")
+		local map_data = type(map_data_table) == "table" and map_data_table[map_name] or nil
+		local environment = map_data and map_data.Environment
+		if not pending or environment ~= "Underground" then
+			return original_fill(gen, map_name, params)
+		end
+		local source_params = params or Global("g_CurrentMapParams") or {}
+		local seeded_params = {}
+		for key, value in pairs(source_params) do seeded_params[key] = value end
+		seeded_params.Seed = pending.seed
+		local previous_randomize = map_data.map_randomizeseed
+		map_data.map_randomizeseed = false
+		State.pending_vanilla_underground_seed = nil
+		local results = PackValues(pcall(original_fill, gen, map_name, seeded_params))
+		map_data.map_randomizeseed = previous_randomize
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
+	end
+
+	State.generate_additional_maps_wrapper = additional_wrapper
+	State.fill_random_map_gen_wrapper = fill_wrapper
+	State.additional_map_seed_patch_version = GENERATOR_PATCH_VERSION
+	rawset(_G, "GenerateAdditionalMaps", additional_wrapper)
+	rawset(_G, "FillRandomMapGen", fill_wrapper)
+	return true
+end
+
 local function PatchRandomMapGenerator()
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
 	PatchDeferredUndergroundTunnelSpawn()
 	PatchPersistentBuiltUndergroundPassageMarker()
+	PatchAdditionalMapSeedReservation()
 	if not cfg_bool("PATCH_RANDOM_MAP_GENERATOR", true) then
 		return false
 	end
@@ -7221,6 +7489,11 @@ local function PatchRandomMapGenerator()
 			-- Exact vanilla fast path: no temporary-source migration or expansion behavior.
 				return original_do_generate(self, map, ...)
 			end
+			if map and map.SuperBigMapVanillaSourceMigration ~= true then
+				-- Persisted provenance distinguishes freshly generated strict-correspondence maps
+				-- from older saves whose underground was intentionally left deferred.
+				map.SuperBigMapOneToOneGenerationVersion = 1
+			end
 			if not cfg_bool("LIMIT_GENERATOR_TO_SOURCE", true) then
 				return original_do_generate(self, map, ...)
 			end
@@ -7876,6 +8149,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SetLoadingPhase("Repositioning surface rocks and decorations")
 					ScaleDecorationsToFull(map, pass_batch_active)
 				end
+				local feature_ok, feature_stats = RestoreTransferredPrefabFeatureGameLogic(map)
+				if feature_ok ~= true then
+					error("surface prefab feature correspondence failed: "
+						.. tostring(feature_stats and feature_stats.error or "unknown error"))
+				end
 				if has_staged_records then
 					if ok_stretch ~= true then
 						error("cannot recreate staged native enrichments before a successful terrain stretch")
@@ -7982,13 +8260,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						TimedSafeCall("surface enforce scan gate", map,
 							deposits.EnforceScanGateAfterStretch, map)
 					end
-					-- Step 6: DENSITY NORMALIZATION after proportional marker movement:
-					--   TopUpDeposits     raise the TOTAL to vanilla density x area (~1.78x),
-					--                     stretch-aware baseline (all markers are generator output);
-					--   RegisterCloned    register the top-up clones with their sectors;
-					-- Net effect: proportionally MORE enrichments for the 20x20, at vanilla
-					-- per-sector density -- no crowding.
-					if deposits then
+					-- Strict one-to-one mode never enters the legacy density suite. Besides creating
+					-- extra markers, its overlap resolver could move a native source marker away from
+					-- its authoritative proportional coordinate.
+					if deposits
+						and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 						SetLoadingPhase("Distributing surface resources and anomalies")
 						if type(deposits.TopUpDeposits) == "function" then
 							TimedSafeCall("surface top-up resources", map,
@@ -8465,7 +8741,13 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	-- is not current. ChangeCurrentMapSlot is wrapped below and forces the complete pipeline before
 	-- access; Elevator placement remains available meanwhile through the verified surface anchors.
 	local current_map = Global("CurrentMap")
-	if force_now ~= true and cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
+	-- A pre-v740 save can contain the deliberately deferred v739 underground source. Do not turn
+	-- loading that save into an uninterruptible full 8192-grid migration; retain its first-access
+	-- boundary. Newly generated v740 games remain eager, so their saved object set is complete.
+	local loading_legacy_save = map.SuperBigMapOneToOneGenerationVersion ~= 1
+		and map.SuperBigMapUndergroundStretchDone ~= true
+	if force_now ~= true and (cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
+		or loading_legacy_save)
 		and current_map ~= map then
 		map.SuperBigMapUndergroundStretchPending = true
 		map.SuperBigMapUndergroundStretchFailed = nil
@@ -8572,6 +8854,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			if type(ScaleDecorationsToFull) == "function" then
 				SetLoadingPhase("Repositioning underground rocks and decorations")
 				ScaleDecorationsToFull(map, transform_pass_batch_active)
+			end
+			local feature_ok, feature_stats = RestoreTransferredPrefabFeatureGameLogic(map)
+			if feature_ok ~= true then
+				error("underground prefab feature correspondence failed: "
+					.. tostring(feature_stats and feature_stats.error or "unknown error"))
 			end
 			SetLoadingPhase("Reserving underground wonder footprints")
 			local reservation_ok, reservation_stats =
@@ -8795,15 +9082,12 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							and wonder_reachability_stats.unresolved or "unknown")
 						.. " unresolved markers")
 				end
-			-- DENSITY NORMALIZATION (same suite as the surface stretch branch): the underground
-			-- grew by the same x1.78 area, so its enrichments must be topped up to vanilla
-			-- density too. The factor is correct per buildable area because the buildable floor
-			-- stretches by the same factor as the map.
-			-- Placement pools are buildable-floor-only underground (CanReceiveDeposit), so no
-			-- enrichment lands in the inaccessible rock/void.
+			-- The legacy density/relocation suite is disabled in strict one-to-one mode. It both
+			-- created extra enrichments and could relocate native underground markers.
 			do
 				local deposits = SuperBigMap.DepositRules
-				if deposits then
+				if deposits
+					and cfg_bool("EXPANSION_STEP_13_CALCULATE_ENRICHMENT_ADDITIONS", false) then
 					if type(deposits.BeginUndergroundTopUpWallIgnore) ~= "function"
 						or type(deposits.EndUndergroundTopUpWallIgnore) ~= "function" then
 						error("underground rubble-wall density transaction is unavailable")
@@ -10304,6 +10588,8 @@ MapGeneration.RestoreDeferredVehicleNightLights = RestoreDeferredVehicleNightLig
 MapGeneration.RebuildExpandedElevatorWaypointChains = RebuildExpandedElevatorWaypointChains
 MapGeneration.SyncMapDataToGrids = SyncMapDataToGrids
 MapGeneration.RunSurfaceStretchIfEnabled = RunSurfaceStretchIfEnabled
+MapGeneration.RestoreTransferredPrefabFeatureGameLogic =
+	RestoreTransferredPrefabFeatureGameLogic
 MapGeneration.NotifyGenerationMilestone = NotifyGenerationMilestone
 MapGeneration.RecoverPersistedUndergroundReadiness =
 	SuperBigMap.GenerationReadiness.RecoverPersistedUnderground
@@ -10377,6 +10663,22 @@ function MapGeneration.RestoreVanillaBehavior()
 			generator_class.OnGenerateLogic = State.generator_original_on_generate_logic
 		end
 	end
+	if State.generate_additional_maps_wrapper
+		and Global("GenerateAdditionalMaps") == State.generate_additional_maps_wrapper
+		and type(State.original_generate_additional_maps) == "function" then
+		rawset(_G, "GenerateAdditionalMaps", State.original_generate_additional_maps)
+	end
+	if State.fill_random_map_gen_wrapper
+		and Global("FillRandomMapGen") == State.fill_random_map_gen_wrapper
+		and type(State.original_fill_random_map_gen) == "function" then
+		rawset(_G, "FillRandomMapGen", State.original_fill_random_map_gen)
+	end
+	State.original_generate_additional_maps = nil
+	State.original_fill_random_map_gen = nil
+	State.generate_additional_maps_wrapper = nil
+	State.fill_random_map_gen_wrapper = nil
+	State.pending_vanilla_underground_seed = nil
+	State.additional_map_seed_patch_version = nil
 	State.generator_original_generate = nil
 	State.generator_original_do_generate = nil
 	State.generator_original_on_generate_logic = nil

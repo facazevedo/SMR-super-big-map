@@ -707,6 +707,41 @@ local function PruneOrphanSectorDecals(city, map)
 		#orphan_samples > 0 and table.concat(orphan_samples, "|") or "none"
 end
 
+local function MapSectorObjects(map)
+	local objects = {}
+	if not map or type(map.MapForEach) ~= "function" then return objects end
+	pcall(map.MapForEach, map, "map", "MapSector", function(obj)
+		if obj and obj.class == "MapSector" then objects[#objects + 1] = obj end
+	end)
+	return objects
+end
+
+local function DestroyMapSectorObjects(map, keep)
+	local done_object = Global("DoneObject")
+	local is_valid = Global("IsValid")
+	if type(done_object) ~= "function" then return 0, 0 end
+	local objects = MapSectorObjects(map)
+	local removed = 0
+	for i = 1, #objects do
+		local sector = objects[i]
+		local valid = type(is_valid) ~= "function" or SafeCall(is_valid, sector) == true
+		if valid and not (keep and keep[sector]) then
+			pcall(done_object, sector)
+			removed = removed + 1
+		end
+	end
+	return removed, #objects
+end
+
+-- Rebuilding self.MapSectors used to discard only the Lua table and decals, leaving each old
+-- saved MapSector object on the map. Prune those unreferenced structural objects on load, and
+-- destroy the complete old set before an intentional rebuild.
+local function PruneOrphanMapSectors(city, map)
+	local keep = {}
+	Grid.ForEachSector(city, function(sector) keep[sector] = true end)
+	return DestroyMapSectorObjects(ResolveVisualMap(city, map), keep)
+end
+
 local function AuditOverviewGridVisuals(city, event, extra)
 	if not OverviewGridEnabled() then return false end
 	city = city or Global("UICity") or Global("MainCity")
@@ -1568,6 +1603,7 @@ local function InstallSectorPatch()
 		end
 
 		DestroyExistingSectorVisuals(self, map, "InitSectors")
+		DestroyMapSectorObjects(map)
 		Grid.ConfigureGlobalSectorCount(map, "InitSectors")
 		local layout = Grid.ResolveSectorLayout(map)
 		local orient = map.mapdata.OverviewOrientation
@@ -1868,6 +1904,7 @@ local function EnsureSectorsBuilt(map, reason)
 		end
 		local visual_repairs = RepairSectorVisualGeometry(city)
 		local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city, map)
+		local orphan_sectors, sector_objects = PruneOrphanMapSectors(city, map)
 		local relabeled = RefreshSectorDisplayNames(map)
 		AuditOverviewGridVisuals(city, "EnsureSectorsBuilt:matches", {
 			lifecycle_reason = tostring(reason),
@@ -1877,6 +1914,8 @@ local function EnsureSectorsBuilt(map, reason)
 			repaired_scan_positions = tostring(visual_repairs.scan_positions),
 			pruned_orphan_decals = tostring(orphan_decals),
 			pruned_orphan_samples = tostring(orphan_samples),
+			pruned_orphan_map_sectors = tostring(orphan_sectors),
+			map_sector_objects = tostring(sector_objects),
 		})
 		AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": matches", false)
 		return true, relabeled > 0 and "matches; relabeled" or "matches"
@@ -1931,6 +1970,7 @@ local function EnsureSectorsBuilt(map, reason)
 	end
 	local visual_repairs = RepairSectorVisualGeometry(city)
 	local orphan_decals, _, orphan_samples = PruneOrphanSectorDecals(city, map)
+	local orphan_sectors, sector_objects = PruneOrphanMapSectors(city, map)
 	RefreshSectorDisplayNames(map)
 	AuditOverviewGridVisuals(city, "EnsureSectorsBuilt:rebuilt", {
 		lifecycle_reason = tostring(reason),
@@ -1940,6 +1980,8 @@ local function EnsureSectorsBuilt(map, reason)
 		repaired_scan_positions = tostring(visual_repairs.scan_positions),
 		pruned_orphan_decals = tostring(orphan_decals),
 		pruned_orphan_samples = tostring(orphan_samples),
+		pruned_orphan_map_sectors = tostring(orphan_sectors),
+		map_sector_objects = tostring(sector_objects),
 	})
 	AuditSectorGrid(city, tostring(reason or "EnsureSectorsBuilt") .. ": rebuilt", true)
 
@@ -1986,6 +2028,7 @@ SectorExploration.RefreshSectorDisplayNames = RefreshSectorDisplayNames
 SectorExploration.NormalizeSectorVisualGeometry = NormalizeSectorVisualGeometry
 SectorExploration.RepairSectorVisualGeometry = RepairSectorVisualGeometry
 SectorExploration.PruneOrphanSectorDecals = PruneOrphanSectorDecals
+SectorExploration.PruneOrphanMapSectors = PruneOrphanMapSectors
 SectorExploration.AuditOverviewGridVisuals = AuditOverviewGridVisuals
 
 SectorExploration.InstallSectorPatch = InstallSectorPatch

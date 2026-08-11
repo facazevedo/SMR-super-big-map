@@ -193,17 +193,19 @@ config.HideClonedDepositsUntilScan = true
 -- Keep added deposits at least this many tiles away from the map's outer border (no
 -- deposit is placed within this margin of the edge).
 config.DepositEdgeMarginTiles = 4
--- ENRICHMENT TOP-UP SWITCHES. Each expanded-map population can be controlled independently.
-config.TopUpResources = true
+-- Strict source correspondence: the expansion transforms the one vanilla population and never
+-- creates density extras. Every resource, anomaly, effect site, and decoration therefore has one
+-- and only one counterpart on the expanded map.
+config.TopUpResources = false
 -- Underground additions are density content that may legitimately sit behind removable cave-in/
 -- collapsed-tunnel walls. Temporarily exclude only CaveInRubble and TunnelBlockerRubble grid
 -- footprints while the complete resource/anomaly/effect top-up suite runs, then restore every
 -- wall before final audits. The legacy option name is retained for save/config compatibility.
 config.UndergroundResourceTopUpsIgnoreRubbleWalls = true
-config.TopUpAnomalies = true
-config.TopUpVistas = true
-config.TopUpResearchSites = true
-config.TopUpMoraleVistas = true
+config.TopUpAnomalies = false
+config.TopUpVistas = false
+config.TopUpResearchSites = false
+config.TopUpMoraleVistas = false
 -- Hard terrain-evenness rule for every added enrichment on both maps. terrain normal Z uses
 -- 4096 for perfectly horizontal ground; 4080 limits accepted top-up positions to approximately
 -- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
@@ -307,8 +309,8 @@ config.ExpansionStep10VerifyNativeScale = true
 config.ExpansionStep11RebuildGameplayGrids = true
 -- 12 (former 10): Build the coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
 config.ExpansionStep12BuildEnrichmentOccupancy = true
--- 13 (former 11): Calculate resource, effect, and eligible ordinary-anomaly additions.
-config.ExpansionStep13CalculateEnrichmentAdditions = true
+-- 13 (former 11): Retired for strict one-to-one expansion; no enrichment additions are allowed.
+config.ExpansionStep13CalculateEnrichmentAdditions = false
 -- 14 (former 12): Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
 config.ExpansionStep14ValidateEnrichmentCandidates = true
 -- 15 (former 13): Restrict each family to its configured region, including the anomaly outer ring.
@@ -364,13 +366,10 @@ config.StretchRelocateStartSector = true
 -- the pair by object reference -- equal transforms on both maps preserve that correspondence).
 -- Underground enrichment density is restored after the final buildable grid exists.
 config.StretchUnderground = true
--- Keep the two vanilla passage pairs and Elevator snap anchors eager, but postpone buried-wonder
--- construction plus the expensive underground stretch/post-processing until first access. The
--- underground passage's child SurfaceTunnelMarker is also postponed because its vanilla spawn
--- requires the final buildable and object grids to have matching dimensions; the linked passage
--- itself remains available for Elevator placement. Vanilla's wonder shuffle is consumed and
--- recorded at startup, so deferral does not change which wonder belongs to each marker.
-config.DeferUndergroundExpansionUntilFirstAccess = true
+-- Complete the same proportional transformation underground during initial generation. Keeping
+-- this eager ensures saves contain the real vanilla-corresponding wonders, passages, markers, and
+-- decorations rather than a temporary set of deferred placeholders.
+config.DeferUndergroundExpansionUntilFirstAccess = false
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false

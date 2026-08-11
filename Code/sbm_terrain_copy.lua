@@ -1605,6 +1605,43 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		map.MapForEach, map, src_box, "CObject", function(obj)
 		if not obj then return end
 		objects[#objects + 1] = obj
+		-- Persist the immutable vanilla transform before any parent, attachment, transfer, or
+		-- destination operation can change it. Attached children follow their parent during the
+		-- parent's move; deriving their transform later from that already-moved position applies the
+		-- expansion twice. These stamps make every object use its one original source coordinate and
+		-- source scale, on both the surface and underground paths.
+		local source_pos = ObjectPosition(obj)
+		if source_pos then
+			local source_x, source_y = PointXY(source_pos)
+			if type(source_x) == "number" and type(obj.SuperBigMapNativeSourceX) ~= "number" then
+				obj.SuperBigMapNativeSourceX = source_x
+			end
+			if type(source_y) == "number" and type(obj.SuperBigMapNativeSourceY) ~= "number" then
+				obj.SuperBigMapNativeSourceY = source_y
+			end
+			if type(obj.SuperBigMapNativeSourceZ) ~= "number" and type(source_pos.z) == "function" then
+				local ok_z, source_z = pcall(source_pos.z, source_pos)
+				if ok_z and type(source_z) == "number" then
+					obj.SuperBigMapNativeSourceZ = source_z
+				end
+			end
+		end
+		if type(obj.SuperBigMapNativeSourceScale) ~= "number"
+			and type(obj.GetScale) == "function" then
+			local source_scale = SafeCall(obj.GetScale, obj)
+			if type(source_scale) == "number" then
+				obj.SuperBigMapNativeSourceScale = source_scale
+			end
+		end
+		if type(obj.SuperBigMapNativeSourceAngle) ~= "number"
+			and type(obj.GetAngle) == "function" then
+			local source_angle = SafeCall(obj.GetAngle, obj)
+			if type(source_angle) == "number" then
+				obj.SuperBigMapNativeSourceAngle = source_angle
+			end
+		end
+		obj.SuperBigMapNativeSourceClass = obj.SuperBigMapNativeSourceClass
+			or tostring(obj.class or "?")
 		local skip_object = ShouldSkipObject(obj)
 		local important_object = IsImportantSectorObject(obj)
 		if cache_eligible_objects and not skip_object and not important_object then
@@ -2006,8 +2043,12 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 				local before_snapshot = audit_on and DecorationPositionSnapshot(map, obj, pos) or nil
 				local ox, oy = PointXY(pos)
 				if type(ox) ~= "number" or type(oy) ~= "number" then return end
-				local nx = math.floor(ox * scale_x + 0.5)
-				local ny = math.floor(oy * scale_y + 0.5)
+				local source_x = type(obj.SuperBigMapNativeSourceX) == "number"
+					and obj.SuperBigMapNativeSourceX or ox
+				local source_y = type(obj.SuperBigMapNativeSourceY) == "number"
+					and obj.SuperBigMapNativeSourceY or oy
+				local nx = math.floor(source_x * scale_x + 0.5)
+				local ny = math.floor(source_y * scale_y + 0.5)
 				local np = point_fn(nx, ny)
 				local z_ok = false
 				local z_mode = "snap"
@@ -2095,7 +2136,8 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 				end
 				-- Grow the object to match the enlarged terrain features.
 				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
-					local s = SafeCall(obj.GetScale, obj)
+					local s = type(obj.SuperBigMapNativeSourceScale) == "number"
+						and obj.SuperBigMapNativeSourceScale or SafeCall(obj.GetScale, obj)
 					if type(s) == "number" and s > 0 then
 						local ns = math.floor(s * scale_x + 0.5)
 						if ns > MAX_SCALE then ns = MAX_SCALE elseif ns < 1 then ns = 1 end
