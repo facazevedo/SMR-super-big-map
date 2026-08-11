@@ -166,7 +166,7 @@ config.PreventElevatorFlatten = true
 -- TEMP test aids: show bottom-right buttons that (1) open the normal Elevator placement cursor,
 -- unlock and quick-build the next placed Elevator, and (2) follow the normal underground map
 -- switch path to finish deferred generation and remove the darkness blanket for inspection.
-config.PlaceElevatorButtonEnabled = false
+config.PlaceElevatorButtonEnabled = true
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
 -- passability (0) so a rover unloaded from a rocket that lands anywhere -- including near
