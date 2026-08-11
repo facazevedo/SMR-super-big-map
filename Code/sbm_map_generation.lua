@@ -3520,6 +3520,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local destination_main_city = destination and destination.City or false
 	local results
 	SuperBigMap.State.vanilla_source_migration_active = true
+	SuperBigMap.State.pending_vanilla_underground_seed = nil
 	local ok, migration_error = pcall(function()
 		local allocation_token = LoadingBegin("allocate temporary vanilla backing", destination,
 			{ source_slot = source_slot })
@@ -3605,6 +3606,23 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		LoadingEnd(source_pass_flush_token, {
 			mode = source_pass_edits_deferred and "discard_on_unload" or "flushed",
 		}, true)
+		-- Vanilla reserves the underground seed after the complete surface RandomMapGenerate tail.
+		-- Reserve at the equivalent temporary-source boundary, before any expansion-only capture,
+		-- terrain stretch, object transfer, or destination-grid work can consume the global stream.
+		local is_game_rule_active = Global("IsGameRuleActive")
+		local no_underground = type(is_game_rule_active) == "function"
+			and SafeCall(is_game_rule_active, "NoUndergroundAndAsteroids") == true
+		if not no_underground and not Global("UndergroundMap") then
+			local async_rand = Global("AsyncRand")
+			if type(async_rand) ~= "function" then
+				error("AsyncRand unavailable while reserving the vanilla underground seed")
+			end
+			SuperBigMap.State.pending_vanilla_underground_seed = {
+				seed = async_rand(),
+				surface = destination,
+				boundary = "temporary_source_vanilla_tail",
+			}
+		end
 		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
 			source, "temporary vanilla backing generation complete")
@@ -3792,6 +3810,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		end
 	end
 	if not ok then
+		local pending = SuperBigMap.State.pending_vanilla_underground_seed
+		if type(pending) ~= "table" or pending.surface == destination then
+			SuperBigMap.State.pending_vanilla_underground_seed = nil
+		end
 		local deposits = SuperBigMap.DepositRules
 		if deposits and type(deposits.ClearStagedNativeEnrichmentRecords) == "function" then
 			pcall(deposits.ClearStagedNativeEnrichmentRecords, destination,
@@ -6693,14 +6715,22 @@ local function PatchAdditionalMapSeedReservation()
 			and SafeCall(no_underground, "NoUndergroundAndAsteroids") == true
 		if expanded and environment == "Surface" and not no_underground
 			and not Global("UndergroundMap") then
-			local async_rand = Global("AsyncRand")
-			if type(async_rand) ~= "function" then
-				error("AsyncRand unavailable while reserving the vanilla underground seed")
+			local pending = State.pending_vanilla_underground_seed
+			if type(pending) ~= "table" or pending.surface ~= map then
+				-- Compatibility fallback for an eligible expanded generation path that did not use
+				-- the temporary-source transaction. It still consumes exactly the shipped one draw.
+				local async_rand = Global("AsyncRand")
+				if type(async_rand) ~= "function" then
+					error("AsyncRand unavailable while reserving the vanilla underground seed")
+				end
+				State.pending_vanilla_underground_seed = {
+					seed = async_rand(),
+					surface = map,
+					boundary = "generate_additional_maps_fallback",
+				}
 			end
-			State.pending_vanilla_underground_seed = {
-				seed = async_rand(),
-				surface = map,
-			}
+		else
+			State.pending_vanilla_underground_seed = nil
 		end
 		local results = PackValues(pcall(original_additional, ...))
 		if not results[1] then
