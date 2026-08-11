@@ -7041,9 +7041,98 @@ local function PatchAdditionalMapSeedReservation()
 	return true
 end
 
+-- The temporary vanilla surface is unloaded before GenerateRandomMapsFinishing, so its anomaly
+-- markers cannot participate in City:InitBreakThroughAnomalies at the normal boundary. The
+-- expanded destination deliberately keeps those markers as staged value records until after the
+-- terrain stretch. Defer only this one City initializer and invoke the shipped method once the
+-- complete marker set has been recreated. This preserves vanilla's marker order, shuffle, tech
+-- cap, planetary reservation, and (including Chaos Theory) random-stream cardinality exactly.
+function SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
+	local State = SuperBigMap.State
+	local city_class = Engine.ClassTable and Engine.ClassTable("City") or Global("City")
+	if type(city_class) ~= "table"
+		or type(city_class.InitBreakThroughAnomalies) ~= "function" then
+		return false
+	end
+	if State.breakthrough_init_patch_version == GENERATOR_PATCH_VERSION
+		and city_class.InitBreakThroughAnomalies == State.breakthrough_init_wrapper then
+		return true
+	end
+	if city_class.InitBreakThroughAnomalies ~= State.breakthrough_init_wrapper then
+		State.original_city_init_breakthrough_anomalies =
+			city_class.InitBreakThroughAnomalies
+	end
+	local original = State.original_city_init_breakthrough_anomalies
+	if type(original) ~= "function" then return false end
+	local wrapper = function(self, ...)
+		local map = self and type(self.GetMap) == "function" and SafeCall(self.GetMap, self)
+		local mapdata = map and map.mapdata
+		local desired = map and tonumber(map.SuperBigMapDesiredWidthTiles)
+		local source = map and (tonumber(map.SuperBigMapSourceWidthTiles)
+			or tonumber(map.SuperBigMapGeneratorWidthTiles))
+		local expanded_surface = mapdata and mapdata.Environment == "Surface"
+			and desired and source and desired > source
+		local deposits = SuperBigMap.DepositRules
+		local has_staged = false
+		if expanded_surface and deposits
+			and type(deposits.HasStagedNativeEnrichmentRecords) == "function" then
+			has_staged = deposits.HasStagedNativeEnrichmentRecords(map) == true
+		end
+		if has_staged then
+			map.SuperBigMapBreakthroughInitializationDeferred = true
+			map.SuperBigMapBreakthroughInitializationComplete = nil
+			return
+		end
+		return original(self, ...)
+	end
+	city_class.InitBreakThroughAnomalies = wrapper
+	State.breakthrough_init_wrapper = wrapper
+	State.breakthrough_init_patch_version = GENERATOR_PATCH_VERSION
+	return true
+end
+
+function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reason)
+	if not map or map.SuperBigMapBreakthroughInitializationDeferred ~= true then
+		return true, { deferred = false, before = 0, after = 0, removed = 0 }
+	end
+	local city = map.City
+	local original = SuperBigMap.State.original_city_init_breakthrough_anomalies
+	if not city or type(original) ~= "function" then
+		return false, { error = "vanilla breakthrough initializer unavailable" }
+	end
+	local function count_breakthrough_markers()
+		local count = 0
+		if type(map.MapForEach) == "function" then
+			pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+				if marker and marker.tech_action == "breakthrough" then count = count + 1 end
+			end)
+		end
+		return count
+	end
+	local before = count_breakthrough_markers()
+	local ok, init_error = pcall(original, city)
+	if not ok then
+		return false, { error = tostring(init_error), before = before }
+	end
+	local after = count_breakthrough_markers()
+	map.SuperBigMapBreakthroughInitializationDeferred = nil
+	map.SuperBigMapBreakthroughInitializationComplete = true
+	map.SuperBigMapBreakthroughMarkersBeforePruning = before
+	map.SuperBigMapBreakthroughMarkersAfterPruning = after
+	LoadingStep("deferred vanilla breakthrough initialization complete", {
+		reason = tostring(reason), before = before, after = after,
+		removed = math.max(0, before - after),
+	}, map)
+	return true, {
+		deferred = true, before = before, after = after,
+		removed = math.max(0, before - after),
+	}
+end
+
 local function PatchRandomMapGenerator()
 	-- This class hook is independent from the generator wrapper identity. Re-verify it before the
 	-- version guard because ClassesBuilt can replace class methods without replacing the generator.
+	SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
 	PatchDeferredUndergroundTunnelSpawn()
 	PatchPersistentBuiltUndergroundPassageMarker()
 	PatchAdditionalMapSeedReservation()
@@ -8479,6 +8568,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					if recreated ~= true then
 						error("native enrichment recreation after stretch failed: "
 							.. tostring(recreate_stats and recreate_stats.error or "unknown"))
+					end
+					local breakthrough_ok, breakthrough_stats =
+						SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(
+							map, "surface after native enrichment recreation")
+					if breakthrough_ok ~= true then
+						error("deferred vanilla breakthrough initialization failed: "
+							.. tostring(breakthrough_stats and breakthrough_stats.error or "unknown"))
 					end
 				end
 				-- Step 3: move the deposit/anomaly/effect markers to their scaled spots too
@@ -10895,6 +10991,10 @@ MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
 MapGeneration.AttachPendingMapState = AttachPendingMapState
 MapGeneration.PrepareMapDataForExpansion = PrepareMapDataForExpansion
 MapGeneration.PatchRandomMapGenerator = PatchRandomMapGenerator
+MapGeneration.PatchDeferredBreakthroughAnomalyInitialization =
+	SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization
+MapGeneration.FinalizeDeferredBreakthroughAnomalyInitialization =
+	SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization
 MapGeneration.PatchDeferredUndergroundAccess = PatchDeferredUndergroundAccess
 MapGeneration.PatchEntranceBadgePosition = PatchEntranceBadgePosition
 MapGeneration.RestoreEntranceBadgePositions = RestoreEntranceBadgePositions
@@ -10976,6 +11076,15 @@ function MapGeneration.RestoreVanillaBehavior()
 	-- not only through the main-menu convenience path. This covers config disable,
 	-- hot reload, and any alternate session exit that calls Lifecycle.Disable.
 	RestorePreparedMapDataForVanillaSession("MapGeneration.RestoreVanillaBehavior")
+	local city_class = Engine.ClassTable and Engine.ClassTable("City") or Global("City")
+	if type(city_class) == "table" and State.breakthrough_init_wrapper
+		and city_class.InitBreakThroughAnomalies == State.breakthrough_init_wrapper
+		and type(State.original_city_init_breakthrough_anomalies) == "function" then
+		city_class.InitBreakThroughAnomalies = State.original_city_init_breakthrough_anomalies
+	end
+	State.breakthrough_init_wrapper = nil
+	State.original_city_init_breakthrough_anomalies = nil
+	State.breakthrough_init_patch_version = nil
 	local generator_class = Global("RandomMapGenerator")
 	if type(generator_class) == "table" then
 		if type(State.generator_original_generate) == "function" then
