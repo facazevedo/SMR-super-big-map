@@ -369,10 +369,10 @@ config.StretchRelocateStartSector = true
 -- the pair by object reference -- equal transforms on both maps preserve that correspondence).
 -- Underground enrichment density is restored after the final buildable grid exists.
 config.StretchUnderground = true
--- Complete the same proportional transformation underground during initial generation. Keeping
--- this eager ensures saves contain the real vanilla-corresponding wonders, passages, markers, and
--- decorations rather than a temporary set of deferred placeholders.
-config.DeferUndergroundExpansionUntilFirstAccess = false
+-- Preserve the cheap generated underground source/plan at START. The existing first-access gate
+-- completes the proportional transformation, wonders, passages, markers, and decorations only
+-- when the player presses Place Elevator.
+config.DeferUndergroundExpansionUntilFirstAccess = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false

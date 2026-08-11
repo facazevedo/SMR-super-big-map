@@ -9032,7 +9032,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 	local current_map = Global("CurrentMap")
 	-- A pre-v740 save can contain the deliberately deferred v739 underground source. Do not turn
 	-- loading that save into an uninterruptible full 8192-grid migration; retain its first-access
-	-- boundary. Newly generated v740 games remain eager, so their saved object set is complete.
+	-- boundary. Newly generated games use the same configured first-access boundary.
 	local loading_legacy_save = map.SuperBigMapOneToOneGenerationVersion ~= 1
 		and map.SuperBigMapUndergroundStretchDone ~= true
 	if force_now ~= true and (cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
