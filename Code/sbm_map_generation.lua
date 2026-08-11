@@ -6740,20 +6740,28 @@ local function PatchAdditionalMapSeedReservation()
 	end
 	local function add_environment_bridge(label, env)
 		if type(env) ~= "table" then return end
-		local ok, metatable = pcall(getmetatable, env)
-		if not ok or type(metatable) ~= "table" then return end
-		local index = rawget(metatable, "__index")
-		local newindex = rawget(metatable, "__newindex")
-		if type(index) ~= "function" or type(newindex) ~= "function" then return end
+		-- Relaunched deliberately hides the sandbox metatable from code compiled inside it. Exercise
+		-- the public __index/__newindex behavior through ordinary access instead: temporarily remove
+		-- the raw sandbox shadow, read/write the inherited existing global, then restore the shadow.
+		-- Every transaction is synchronous and verified before it returns.
 		local function read(name)
-			local read_ok, value = pcall(index, env, name)
+			local direct = rawget(env, name)
+			rawset(env, name, nil)
+			local read_ok, value = pcall(function() return env[name] end)
+			rawset(env, name, direct)
 			return read_ok and value or nil
 		end
 		local function write(name, value)
-			local write_ok = pcall(newindex, env, name, value)
-			return write_ok and read(name) == value
+			local direct = rawget(env, name)
+			rawset(env, name, nil)
+			local write_ok = pcall(function() env[name] = value end)
+			local unexpected_direct = rawget(env, name)
+			rawset(env, name, nil)
+			local read_ok, inherited = pcall(function() return env[name] end)
+			rawset(env, name, direct)
+			return write_ok and unexpected_direct == nil and read_ok and inherited == value
 		end
-		add_target(label, env, read, write, newindex)
+		add_target(label, env, read, write, label)
 	end
 	-- Mod code runs in a sandbox whose inherited globals can live in a distinct engine table.
 	-- Function environments alone can therefore resolve back to the sandbox even while shipped
@@ -6781,10 +6789,10 @@ local function PatchAdditionalMapSeedReservation()
 	-- environment, not the mod sandbox. GenerateRandomMap/FillRandomMapProps resolve
 	-- FillRandomMapGen there too. Mod sandboxes inherit that table through __index, so walk
 	-- each bounded environment chain and patch every distinct table that directly owns both
-	-- consumers. Relaunched's mod sandbox exposes neither getfenv nor debug.getupvalue, but its
-	-- public __index/__newindex pair reads and writes existing shipped globals in their real owner
-	-- table. Register that bridge explicitly instead of bypassing it with rawset. Retain the raw
-	-- sandbox target for reload/diagnostic symmetry.
+	-- consumers. Relaunched's mod sandbox exposes neither getfenv/debug.getupvalue nor its own
+	-- metatable, but ordinary reads/writes still route through the public __index/__newindex pair to
+	-- existing shipped globals in their real owner table. Register that verified behavior instead
+	-- of bypassing it with rawset. Retain the raw sandbox target for reload/diagnostic symmetry.
 	add_environment_chain("engine_generator", FunctionEnvironment(generator_callable))
 	add_environment_chain("engine_generate_random_map", FunctionEnvironment(Global("GenerateRandomMap")))
 	add_environment_chain("engine_fill_random_map_props", FunctionEnvironment(Global("FillRandomMapProps")))
