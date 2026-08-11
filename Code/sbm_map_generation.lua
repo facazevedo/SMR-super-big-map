@@ -182,6 +182,14 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+function SuperBigMap.TraceUndergroundSeedReservation(stage, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.UndergroundSeedReservation) == "function" then
+		return diagnostics.UndergroundSeedReservation(stage, data, map)
+	end
+	return false
+end
+
 local function LoadingBegin(name, map, data)
 	local diagnostics = SuperBigMap.Diagnostics
 	return diagnostics and type(diagnostics.LoadingBegin) == "function"
@@ -3521,6 +3529,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	local results
 	SuperBigMap.State.vanilla_source_migration_active = true
 	SuperBigMap.State.pending_vanilla_underground_seed = nil
+	SuperBigMap.State.underground_seed_reservation_trace = nil
 	local ok, migration_error = pcall(function()
 		local allocation_token = LoadingBegin("allocate temporary vanilla backing", destination,
 			{ source_slot = source_slot })
@@ -3617,11 +3626,20 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			if type(async_rand) ~= "function" then
 				error("AsyncRand unavailable while reserving the vanilla underground seed")
 			end
-			SuperBigMap.State.pending_vanilla_underground_seed = {
+			local pending = {
 				seed = async_rand(),
 				surface = destination,
 				boundary = "temporary_source_vanilla_tail",
 			}
+			SuperBigMap.State.pending_vanilla_underground_seed = pending
+			SuperBigMap.State.underground_seed_reservation_trace = {
+				boundary = pending.boundary,
+				reserved_seed = pending.seed,
+			}
+			SuperBigMap.TraceUndergroundSeedReservation("RESERVATION", {
+				boundary = pending.boundary,
+				reserved_seed = tostring(pending.seed),
+			}, destination)
 		end
 		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
@@ -6723,18 +6741,29 @@ local function PatchAdditionalMapSeedReservation()
 				if type(async_rand) ~= "function" then
 					error("AsyncRand unavailable while reserving the vanilla underground seed")
 				end
-				State.pending_vanilla_underground_seed = {
+				pending = {
 					seed = async_rand(),
 					surface = map,
 					boundary = "generate_additional_maps_fallback",
 				}
+				State.pending_vanilla_underground_seed = pending
+				State.underground_seed_reservation_trace = {
+					boundary = pending.boundary,
+					reserved_seed = pending.seed,
+				}
+				SuperBigMap.TraceUndergroundSeedReservation("RESERVATION", {
+					boundary = pending.boundary,
+					reserved_seed = tostring(pending.seed),
+				}, map)
 			end
 		else
 			State.pending_vanilla_underground_seed = nil
+			State.underground_seed_reservation_trace = nil
 		end
 		local results = PackValues(pcall(original_additional, ...))
 		if not results[1] then
 			State.pending_vanilla_underground_seed = nil
+			State.underground_seed_reservation_trace = nil
 			error(results[2])
 		end
 		local pending = State.pending_vanilla_underground_seed
@@ -6742,6 +6771,7 @@ local function PatchAdditionalMapSeedReservation()
 			local next_map = Global("GenerateNextMap")
 			if type(next_map) ~= "table" or next_map.map_slot ~= 2 then
 				State.pending_vanilla_underground_seed = nil
+				State.underground_seed_reservation_trace = nil
 			end
 		end
 		return Unpack(results, 2, results.n)
@@ -6752,19 +6782,63 @@ local function PatchAdditionalMapSeedReservation()
 		local map_data_table = Global("MapData")
 		local map_data = type(map_data_table) == "table" and map_data_table[map_name] or nil
 		local environment = map_data and map_data.Environment
-		if not pending or environment ~= "Underground" then
+		if environment ~= "Underground" then
 			return original_fill(gen, map_name, params)
+		end
+		local trace = State.underground_seed_reservation_trace
+		if not pending then
+			if type(trace) ~= "table" then
+				return original_fill(gen, map_name, params)
+			end
+			local results = PackValues(pcall(original_fill, gen, map_name, params))
+			trace.generator = gen
+			trace.consumer_seed = gen and gen.Seed
+			trace.consumer_status = "pending_missing"
+			SuperBigMap.TraceUndergroundSeedReservation("CONSUMER", {
+				boundary = tostring(trace.boundary),
+				reserved_seed = tostring(trace.reserved_seed),
+				seeded_params_seed = "pending_missing",
+				consumer_seed = tostring(trace.consumer_seed),
+				consumer_status = trace.consumer_status,
+				fill_ok = tostring(results[1] == true),
+			}, Global("CurrentMap"))
+			if not results[1] then
+				State.underground_seed_reservation_trace = nil
+				error(results[2])
+			end
+			return Unpack(results, 2, results.n)
 		end
 		local source_params = params or Global("g_CurrentMapParams") or {}
 		local seeded_params = {}
 		for key, value in pairs(source_params) do seeded_params[key] = value end
 		seeded_params.Seed = pending.seed
+		if type(trace) ~= "table" then
+			trace = {}
+			State.underground_seed_reservation_trace = trace
+		end
+		trace.boundary = pending.boundary
+		trace.reserved_seed = pending.seed
+		trace.seeded_params_seed = seeded_params.Seed
+		trace.generator = gen
+		trace.consumer_status = "pending_injected"
 		local previous_randomize = map_data.map_randomizeseed
 		map_data.map_randomizeseed = false
 		State.pending_vanilla_underground_seed = nil
 		local results = PackValues(pcall(original_fill, gen, map_name, seeded_params))
 		map_data.map_randomizeseed = previous_randomize
-		if not results[1] then error(results[2]) end
+		trace.consumer_seed = gen and gen.Seed
+		SuperBigMap.TraceUndergroundSeedReservation("CONSUMER", {
+			boundary = tostring(trace.boundary),
+			reserved_seed = tostring(trace.reserved_seed),
+			seeded_params_seed = tostring(trace.seeded_params_seed),
+			consumer_seed = tostring(trace.consumer_seed),
+			consumer_status = trace.consumer_status,
+			fill_ok = tostring(results[1] == true),
+		}, Global("CurrentMap"))
+		if not results[1] then
+			State.underground_seed_reservation_trace = nil
+			error(results[2])
+		end
 		return Unpack(results, 2, results.n)
 	end
 
@@ -7824,6 +7898,23 @@ local function PatchRandomMapGenerator()
 				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
 			ProbeNativeClutterAccess(map, "expanded backing before underground DoGenerate")
 			local results = { pcall(CallWithClutterCapture, map, original_do_generate, self, map, ...) }
+			local seed_trace = State.underground_seed_reservation_trace
+			if type(seed_trace) == "table" and seed_trace.generator == self
+				and type(mapdata) == "table" and mapdata.Environment == "Underground" then
+				local get_holder = Global("GetRandomMapGeneratorHolder")
+				local holder = type(get_holder) == "function" and SafeCall(get_holder, map) or nil
+				SuperBigMap.TraceUndergroundSeedReservation("HOLDER", {
+					boundary = tostring(seed_trace.boundary),
+					reserved_seed = tostring(seed_trace.reserved_seed),
+					seeded_params_seed = tostring(seed_trace.seeded_params_seed),
+					consumer_seed = tostring(seed_trace.consumer_seed),
+					consumer_status = tostring(seed_trace.consumer_status),
+					holder_seed = tostring(holder and holder.Seed),
+					holder_generation_hash = tostring(holder and holder.GenerationHash),
+					generation_ok = tostring(results[1] == true),
+				}, map)
+				State.underground_seed_reservation_trace = nil
+			end
 			ProbeNativeClutterAccess(map, "expanded backing after underground DoGenerate")
 			LoadingEnd(expanded_backing_token, nil, results[1] == true)
 			-- Restore the cached MapVars before bridge cleanup can run. The
@@ -10708,6 +10799,7 @@ function MapGeneration.RestoreVanillaBehavior()
 	State.generate_additional_maps_wrapper = nil
 	State.fill_random_map_gen_wrapper = nil
 	State.pending_vanilla_underground_seed = nil
+	State.underground_seed_reservation_trace = nil
 	State.additional_map_seed_patch_version = nil
 	State.generator_original_generate = nil
 	State.generator_original_do_generate = nil

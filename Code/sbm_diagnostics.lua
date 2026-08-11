@@ -135,6 +135,10 @@ function Diagnostics.UndergroundDecorationEnabled()
 	return Enabled() and Config().DEBUG_UNDERGROUND_DECORATION_POSITIONS == true
 end
 
+function Diagnostics.UndergroundSeedReservationEnabled()
+	return Config().TRACE_UNDERGROUND_SEED_RESERVATION == true
+end
+
 function Diagnostics.Audit(event, data, map)
 	if not Diagnostics.EnrichmentEnabled() then return false end
 	return Print("EnrichmentAudit", event, CopyData(data, map))
@@ -183,6 +187,14 @@ end
 function Diagnostics.UndergroundDecoration(event, data, map)
 	if not Diagnostics.UndergroundDecorationEnabled() then return false end
 	return Print("UndergroundDecoration", event, CopyData(data, map))
+end
+
+-- Dedicated deterministic-parity trace. This deliberately does not enable or depend on the broad
+-- release-debug switch: only the three scalar seed handoff boundaries call it, and it performs no
+-- random or generation operation.
+function Diagnostics.UndergroundSeedReservation(event, data, map)
+	if not Diagnostics.UndergroundSeedReservationEnabled() then return false end
+	return Print("UndergroundSeedReservation", event, CopyData(data, map))
 end
 
 local function EnsureLoading(reason, map)
