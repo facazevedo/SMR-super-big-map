@@ -905,36 +905,156 @@ local function PatchElevatorTraversalDiagnostics()
 	return rover_use_targets > 0 and elevator_use_targets > 0
 end
 
--- Instrument the generator's own procedure dispatcher only while the load-timing gate is on.
--- The wrapper is synchronous, restores env.ProcInvoke on every Lua success/error path, and returns
--- the exact original result tuple. With diagnostics off this is a direct tail call.
+function SuperBigMap.RockParityTraceEnabled(map)
+	local config = SuperBigMap.Config or {}
+	return config.TRACE_UNDERGROUND_ROCK_PARITY == true
+		and type(map) == "table" and type(map.mapdata) == "table"
+		and map.mapdata.Environment == "Underground"
+end
+
+function SuperBigMap.RockParityDescribeValues(values, first)
+	local parts = {}
+	for index = first or 1, tonumber(values and values.n) or 0 do
+		local value = values[index]
+		local value_type = type(value)
+		if value_type == "nil" or value_type == "number" or value_type == "boolean"
+			or value_type == "string" then
+			parts[#parts + 1] = value_type .. ":" .. tostring(value)
+		else
+			parts[#parts + 1] = value_type .. ":" .. tostring(value)
+		end
+	end
+	return table.concat(parts, "|")
+end
+
+function SuperBigMap.CaptureRockParityObjectSet(map, phase)
+	local classes = { "Rocks_04", "RemovableRocks_01", "RemovableRocks_02" }
+	local tuples = {}
+	for _, class_name in ipairs(classes) do
+		local objects = map:MapGet("map", class_name) or {}
+		for _, object in ipairs(objects) do
+			local pos = object:GetPos()
+			local x, y = PointXY(pos)
+			local z
+			pcall(function() z = pos:z() end)
+			tuples[#tuples + 1] = table.concat({
+				class_name, tostring(x), tostring(y), tostring(z),
+				tostring(object:GetScale()), tostring(object:GetAngle()),
+			}, "|")
+		end
+	end
+	table.sort(tuples)
+	return { phase = tostring(phase), count = #tuples, tuples = tuples }
+end
+
+function SuperBigMap.BeginRockParityTrace(map, env)
+	if not SuperBigMap.RockParityTraceEnabled(map)
+		or type(env) ~= "table" or type(env.rhelpers) ~= "table" then
+		return nil
+	end
+	local trace = {
+		schema = "smr.sbm.underground_rock_parity_trace",
+		schema_version = 1,
+		active = false,
+		helper_calls = {},
+		helper_call_count = 0,
+		helper_call_cap = 12000,
+		boundaries = {},
+	}
+	local original_helpers = env.rhelpers
+	local wrapped_helpers = {}
+	for helper_index, helper in ipairs(original_helpers) do
+		if type(helper) == "function" then
+			local traced_helper_index = helper_index
+			local original_helper = helper
+			wrapped_helpers[traced_helper_index] = function(...)
+				local args = PackValues(...)
+				local results = PackValues(pcall(original_helper, Unpack(args, 1, args.n)))
+				if trace.active then
+					trace.helper_call_count = trace.helper_call_count + 1
+					if #trace.helper_calls < trace.helper_call_cap then
+						trace.helper_calls[#trace.helper_calls + 1] = {
+							ordinal = trace.helper_call_count,
+							helper = traced_helper_index,
+							args = SuperBigMap.RockParityDescribeValues(args, 1),
+							results = SuperBigMap.RockParityDescribeValues(results, 2),
+						}
+					end
+				end
+				if not results[1] then error(results[2]) end
+				return Unpack(results, 2, results.n)
+			end
+		else
+			wrapped_helpers[helper_index] = helper
+		end
+	end
+	env.rhelpers = wrapped_helpers
+	map.SuperBigMapRockParityTrace = trace
+	return trace, original_helpers
+end
+
+function SuperBigMap.WrapRockParityProcInvoke(saved_proc, map, trace)
+	return function(tag, func, randless)
+		if tag ~= "PlaceDecors" or type(func) ~= "function" then
+			return saved_proc(tag, func, randless)
+		end
+		return saved_proc(tag, function(...)
+			trace.boundaries[#trace.boundaries + 1] =
+				SuperBigMap.CaptureRockParityObjectSet(map, "before")
+			trace.active = true
+			local results = PackValues(pcall(func, ...))
+			trace.active = false
+			trace.boundaries[#trace.boundaries + 1] =
+				SuperBigMap.CaptureRockParityObjectSet(map, "after")
+			trace.captured_helper_calls = #trace.helper_calls
+			trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
+			if not results[1] then error(results[2]) end
+			return Unpack(results, 2, results.n)
+		end, randless)
+	end
+end
+
+-- Instrument the generator's own procedure dispatcher while either focused tracing gate is on.
+-- The wrapper is synchronous, restores env.ProcInvoke/rhelpers on every Lua success/error path,
+-- and returns the exact original result tuple. With diagnostics off this is a direct tail call.
 local function CallOnGenerateLogicTimed(original, self, env, map, ...)
 	local diagnostics = SuperBigMap.Diagnostics
-	if not (diagnostics and type(diagnostics.LoadingEnabled) == "function"
-		and diagnostics.LoadingEnabled() == true) then
+	local loading_enabled = diagnostics and type(diagnostics.LoadingEnabled) == "function"
+		and diagnostics.LoadingEnabled() == true
+	local rock_trace, original_helpers = SuperBigMap.BeginRockParityTrace(map, env)
+	if not loading_enabled and not rock_trace then
 		return original(self, env, ...)
 	end
 	local saved_proc = type(env) == "table" and env.ProcInvoke or nil
 	local timed_proc
 	if type(saved_proc) == "function" then
-		timed_proc = function(tag, func, randless)
-			if type(func) ~= "function" then return saved_proc(tag, func, randless) end
-			return saved_proc(tag, function(...)
-				local token = LoadingBegin("RandomMap procedure: " .. tostring(tag), map, {
-					tag = tostring(tag), randless = tostring(randless),
-				})
-				local result = PackValues(pcall(func, ...))
-				LoadingEnd(token, { tag = tostring(tag) }, result[1] == true)
-				if not result[1] then error(result[2]) end
-				return Unpack(result, 2, result.n)
-			end, randless)
+		local wrapped_proc = saved_proc
+		if loading_enabled then
+			local loading_proc = wrapped_proc
+			wrapped_proc = function(tag, func, randless)
+				if type(func) ~= "function" then return loading_proc(tag, func, randless) end
+				return loading_proc(tag, function(...)
+					local token = LoadingBegin("RandomMap procedure: " .. tostring(tag), map, {
+						tag = tostring(tag), randless = tostring(randless),
+					})
+					local result = PackValues(pcall(func, ...))
+					LoadingEnd(token, { tag = tostring(tag) }, result[1] == true)
+					if not result[1] then error(result[2]) end
+					return Unpack(result, 2, result.n)
+				end, randless)
+			end
 		end
+		if rock_trace then
+			wrapped_proc = SuperBigMap.WrapRockParityProcInvoke(wrapped_proc, map, rock_trace)
+		end
+		timed_proc = wrapped_proc
 		env.ProcInvoke = timed_proc
 	end
-	local token = LoadingBegin("RandomMapGenerator.OnGenerateLogic", map)
+	local token = loading_enabled and LoadingBegin("RandomMapGenerator.OnGenerateLogic", map) or nil
 	local result = PackValues(pcall(original, self, env, ...))
 	if timed_proc and env.ProcInvoke == timed_proc then env.ProcInvoke = saved_proc end
-	LoadingEnd(token, nil, result[1] == true)
+	if original_helpers and env.rhelpers ~= original_helpers then env.rhelpers = original_helpers end
+	if loading_enabled then LoadingEnd(token, nil, result[1] == true) end
 	if not result[1] then error(result[2]) end
 	return Unpack(result, 2, result.n)
 end

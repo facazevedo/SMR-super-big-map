@@ -29,6 +29,9 @@ config.DebugUndergroundDecorationPositions = false
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
+-- Focused one-run parity trace. This is deliberately default-off; the Ralph harness may enable the
+-- runtime constant before a fresh generation to compare the stock and expanded PlaceDecors calls.
+config.TraceUndergroundRockParity = false
 
 -- ============================================================================
 -- MAIN LAYOUT
@@ -628,6 +631,7 @@ C.DEBUG_OVERVIEW_GRID_VISUALS = debug_logging_enabled and as_bool(config.DebugOv
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 C.TRACE_UNDERGROUND_SEED_RESERVATION = as_bool(config.TraceUndergroundSeedReservation)
+C.TRACE_UNDERGROUND_ROCK_PARITY = as_bool(config.TraceUndergroundRockParity)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored
 -- expanded sector grid. Expansion step 01 is the allocation and generation master gate.
