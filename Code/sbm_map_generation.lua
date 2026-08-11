@@ -3626,10 +3626,21 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			if type(async_rand) ~= "function" then
 				error("AsyncRand unavailable while reserving the vanilla underground seed")
 			end
+			local reserved_seed = async_rand()
+			local twin_override = SuperBigMap.State.test_twin_underground_seed
+			local boundary = "temporary_source_vanilla_tail"
+			local authority_tag
+			if type(twin_override) == "table" and type(twin_override.seed) == "number" then
+				reserved_seed = twin_override.seed
+				authority_tag = twin_override.authority_tag
+				boundary = "fresh_vanilla_twin_test_seam"
+				SuperBigMap.State.test_twin_underground_seed = nil
+			end
 			local pending = {
-				seed = async_rand(),
+				seed = reserved_seed,
 				surface = destination,
-				boundary = "temporary_source_vanilla_tail",
+				boundary = boundary,
+				authority_tag = authority_tag,
 			}
 			SuperBigMap.State.pending_vanilla_underground_seed = pending
 			SuperBigMap.State.underground_seed_reservation_trace = {
@@ -3639,7 +3650,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			SuperBigMap.TraceUndergroundSeedReservation("RESERVATION", {
 				boundary = pending.boundary,
 				reserved_seed = tostring(pending.seed),
+				authority_tag = tostring(pending.authority_tag or "production"),
 			}, destination)
+		else
+			SuperBigMap.State.test_twin_underground_seed = nil
 		end
 		local coordinate_capture_token = LoadingBegin("capture native enrichment coordinates", source)
 		source_generated_enrichments = CaptureGeneratedNativeEnrichments(
@@ -3832,6 +3846,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		if type(pending) ~= "table" or pending.surface == destination then
 			SuperBigMap.State.pending_vanilla_underground_seed = nil
 		end
+		SuperBigMap.State.test_twin_underground_seed = nil
 		local deposits = SuperBigMap.DepositRules
 		if deposits and type(deposits.ClearStagedNativeEnrichmentRecords) == "function" then
 			pcall(deposits.ClearStagedNativeEnrichmentRecords, destination,
@@ -6700,27 +6715,65 @@ end
 
 local function PatchAdditionalMapSeedReservation()
 	local State = SuperBigMap.State
-	local current_additional = Global("GenerateAdditionalMaps")
-	local current_fill = Global("FillRandomMapGen")
-	if type(current_additional) ~= "function" or type(current_fill) ~= "function" then
+	local generator_class = Global("RandomMapGenerator")
+	local generator_callable = State.generator_original_generate
+		or (type(generator_class) == "table" and generator_class.Generate)
+	local targets = {}
+	local seen = {}
+	local function add_target(label, env)
+		if type(env) ~= "table" or seen[env] then return end
+		local additional = rawget(env, "GenerateAdditionalMaps")
+		local fill = rawget(env, "FillRandomMapGen")
+		if type(additional) ~= "function" or type(fill) ~= "function" then return end
+		seen[env] = true
+		targets[#targets + 1] = {
+			label = label,
+			env = env,
+			additional = additional,
+			fill = fill,
+		}
+	end
+	-- RandomMapGenerator.Generate resolves GenerateAdditionalMaps in the shipped engine
+	-- environment, not the mod sandbox. GenerateRandomMap/FillRandomMapProps resolve
+	-- FillRandomMapGen there too. Patch those callable environments as the authority and
+	-- retain the sandbox target only for reload/diagnostic symmetry.
+	add_target("engine_generator", FunctionEnvironment(generator_callable))
+	add_target("engine_generate_random_map", FunctionEnvironment(Global("GenerateRandomMap")))
+	add_target("engine_fill_random_map_props", FunctionEnvironment(Global("FillRandomMapProps")))
+	add_target("mod_sandbox", _G)
+	if #targets == 0 then
 		return false
 	end
-	if State.additional_map_seed_patch_version == GENERATOR_PATCH_VERSION
-		and current_additional == State.generate_additional_maps_wrapper
-		and current_fill == State.fill_random_map_gen_wrapper then
-		return true
-	end
-	if current_additional ~= State.generate_additional_maps_wrapper then
-		State.original_generate_additional_maps = current_additional
-	end
-	if current_fill ~= State.fill_random_map_gen_wrapper then
-		State.original_fill_random_map_gen = current_fill
+	if State.additional_map_seed_patch_version == GENERATOR_PATCH_VERSION then
+		local installed = true
+		for _, target in ipairs(targets) do
+			installed = installed
+				and target.additional == State.generate_additional_maps_wrapper
+				and target.fill == State.fill_random_map_gen_wrapper
+		end
+		if installed then return true end
 	end
 	local original_additional = State.original_generate_additional_maps
 	local original_fill = State.original_fill_random_map_gen
+	local previous_additional_wrapper = State.generate_additional_maps_wrapper
+	local previous_fill_wrapper = State.fill_random_map_gen_wrapper
+	for _, target in ipairs(targets) do
+		if target.additional ~= previous_additional_wrapper then
+			original_additional = target.additional
+		end
+		if target.fill ~= previous_fill_wrapper then
+			original_fill = target.fill
+		end
+		if target.label ~= "mod_sandbox"
+			and type(original_additional) == "function" and type(original_fill) == "function" then
+			break
+		end
+	end
 	if type(original_additional) ~= "function" or type(original_fill) ~= "function" then
 		return false
 	end
+	State.original_generate_additional_maps = original_additional
+	State.original_fill_random_map_gen = original_fill
 
 	local additional_wrapper = function(...)
 		local map = Global("CurrentMap")
@@ -6741,10 +6794,21 @@ local function PatchAdditionalMapSeedReservation()
 				if type(async_rand) ~= "function" then
 					error("AsyncRand unavailable while reserving the vanilla underground seed")
 				end
+				local reserved_seed = async_rand()
+				local twin_override = State.test_twin_underground_seed
+				local boundary = "generate_additional_maps_fallback"
+				local authority_tag
+				if type(twin_override) == "table" and type(twin_override.seed) == "number" then
+					reserved_seed = twin_override.seed
+					authority_tag = twin_override.authority_tag
+					boundary = "fresh_vanilla_twin_test_seam_fallback"
+					State.test_twin_underground_seed = nil
+				end
 				pending = {
-					seed = async_rand(),
+					seed = reserved_seed,
 					surface = map,
-					boundary = "generate_additional_maps_fallback",
+					boundary = boundary,
+					authority_tag = authority_tag,
 				}
 				State.pending_vanilla_underground_seed = pending
 				State.underground_seed_reservation_trace = {
@@ -6754,11 +6818,13 @@ local function PatchAdditionalMapSeedReservation()
 				SuperBigMap.TraceUndergroundSeedReservation("RESERVATION", {
 					boundary = pending.boundary,
 					reserved_seed = tostring(pending.seed),
+					authority_tag = tostring(pending.authority_tag or "production"),
 				}, map)
 			end
 		else
 			State.pending_vanilla_underground_seed = nil
 			State.underground_seed_reservation_trace = nil
+			State.test_twin_underground_seed = nil
 		end
 		local results = PackValues(pcall(original_additional, ...))
 		if not results[1] then
@@ -6845,8 +6911,25 @@ local function PatchAdditionalMapSeedReservation()
 	State.generate_additional_maps_wrapper = additional_wrapper
 	State.fill_random_map_gen_wrapper = fill_wrapper
 	State.additional_map_seed_patch_version = GENERATOR_PATCH_VERSION
-	rawset(_G, "GenerateAdditionalMaps", additional_wrapper)
-	rawset(_G, "FillRandomMapGen", fill_wrapper)
+	State.additional_map_seed_patch_targets = {}
+	for _, target in ipairs(targets) do
+		local original_target_additional = target.additional
+		local original_target_fill = target.fill
+		if original_target_additional == previous_additional_wrapper then
+			original_target_additional = original_additional
+		end
+		if original_target_fill == previous_fill_wrapper then
+			original_target_fill = original_fill
+		end
+		State.additional_map_seed_patch_targets[#State.additional_map_seed_patch_targets + 1] = {
+			label = target.label,
+			env = target.env,
+			original_additional = original_target_additional,
+			original_fill = original_target_fill,
+		}
+		rawset(target.env, "GenerateAdditionalMaps", additional_wrapper)
+		rawset(target.env, "FillRandomMapGen", fill_wrapper)
+	end
 	return true
 end
 
@@ -10685,6 +10768,19 @@ end
 
 local MapGeneration = {}
 
+-- Scenario-agnostic one-shot twin seam used only by the parity harness. Ordinary gameplay never
+-- calls this method and therefore retains the production AsyncRand reservation. The expanded path
+-- still consumes that one production draw to preserve stream cardinality, then substitutes the
+-- freshly captured vanilla twin input at the same pending-seed consumer transaction.
+function MapGeneration.SetTwinUndergroundSeedForTest(seed, authority_tag)
+	if type(seed) ~= "number" then return false, "seed must be numeric" end
+	SuperBigMap.State.test_twin_underground_seed = {
+		seed = seed,
+		authority_tag = tostring(authority_tag or "fresh_vanilla_twin"),
+	}
+	return true
+end
+
 MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled
 MapGeneration.ShouldDeferStretchRebuilds = ShouldDeferStretchRebuilds
 MapGeneration.FinalizeExpandedMap = FinalizeExpandedMap
@@ -10784,22 +10880,27 @@ function MapGeneration.RestoreVanillaBehavior()
 			generator_class.OnGenerateLogic = State.generator_original_on_generate_logic
 		end
 	end
-	if State.generate_additional_maps_wrapper
-		and Global("GenerateAdditionalMaps") == State.generate_additional_maps_wrapper
-		and type(State.original_generate_additional_maps) == "function" then
-		rawset(_G, "GenerateAdditionalMaps", State.original_generate_additional_maps)
-	end
-	if State.fill_random_map_gen_wrapper
-		and Global("FillRandomMapGen") == State.fill_random_map_gen_wrapper
-		and type(State.original_fill_random_map_gen) == "function" then
-		rawset(_G, "FillRandomMapGen", State.original_fill_random_map_gen)
+	for _, target in ipairs(State.additional_map_seed_patch_targets or {}) do
+		local env = type(target) == "table" and target.env or nil
+		if type(env) == "table" then
+			if rawget(env, "GenerateAdditionalMaps") == State.generate_additional_maps_wrapper
+				and type(target.original_additional) == "function" then
+				rawset(env, "GenerateAdditionalMaps", target.original_additional)
+			end
+			if rawget(env, "FillRandomMapGen") == State.fill_random_map_gen_wrapper
+				and type(target.original_fill) == "function" then
+				rawset(env, "FillRandomMapGen", target.original_fill)
+			end
+		end
 	end
 	State.original_generate_additional_maps = nil
 	State.original_fill_random_map_gen = nil
 	State.generate_additional_maps_wrapper = nil
 	State.fill_random_map_gen_wrapper = nil
+	State.additional_map_seed_patch_targets = nil
 	State.pending_vanilla_underground_seed = nil
 	State.underground_seed_reservation_trace = nil
+	State.test_twin_underground_seed = nil
 	State.additional_map_seed_patch_version = nil
 	State.generator_original_generate = nil
 	State.generator_original_do_generate = nil
