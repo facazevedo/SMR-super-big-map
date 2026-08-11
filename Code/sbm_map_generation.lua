@@ -3964,6 +3964,67 @@ local function ArtefactApplyMarkerProperties(object, marker)
 	end
 end
 
+-- Deferred wonder markers must not remain live after their stock PlaceArtefacts boundary: the
+-- engine destroys each one immediately after flattening its assigned wonder, before passage and
+-- obstruction generation continue. Preserve only scalar/value state through START, then recreate
+-- the markers at first underground access when their deferred buildings are actually needed.
+SuperBigMap.DEFERRED_WONDER_MARKER_FIELDS = {
+	"SuperBigMapDeferredWonderClass",
+	"SuperBigMapDeferredWonderIndex",
+	"SuperBigMapNativeSourceX",
+	"SuperBigMapNativeSourceY",
+	"SuperBigMapNativeSourceZ",
+	"SuperBigMapNativeSourceScale",
+	"SuperBigMapNativeWonderClearanceDone",
+	"SuperBigMapNativeWonderEntity",
+	"SuperBigMapNativeWonderEntityBBoxMaxZ",
+	"SuperBigMapNativeWonderEntityBBoxMinZ",
+	"SuperBigMapNativeWonderEntityBBoxSizeZ",
+	"SuperBigMapNativeWonderFlattenIndex",
+	"SuperBigMapNativeWonderFlattenQ",
+	"SuperBigMapNativeWonderFlattenR",
+	"SuperBigMapNativeWonderFlattenShapeHexes",
+	"SuperBigMapNativeWonderFlattenZ",
+	"SuperBigMapNativeWonderSourceTerrainMaxZ",
+	"SuperBigMapNativeWonderSourceTerrainMinZ",
+	"SuperBigMapNativeWonderSourceTerrainZ",
+	"SuperBigMapTransferredFromNativeSource",
+}
+
+function SuperBigMap.CaptureDeferredWonderMarkerRecord(marker)
+	local record = {
+		pos = marker:GetPos(),
+		mirrored = marker:GetMirrored(),
+		axis = marker:GetAxis(),
+		angle = marker:GetAngle(),
+		scale = marker:GetScale(),
+		color_modifier = marker:GetColorModifier(),
+		editor_text_color = marker.editor_text_color,
+	}
+	for _, field in ipairs(SuperBigMap.DEFERRED_WONDER_MARKER_FIELDS) do
+		record[field] = marker[field]
+	end
+	return record
+end
+
+function SuperBigMap.RecreateDeferredWonderMarker(map, record)
+	local place_object = Global("PlaceObjectIn")
+	if type(place_object) ~= "function" then return nil, "PlaceObjectIn unavailable" end
+	local marker = place_object("BuriedWonderMarker", map)
+	if not marker then return nil, "BuriedWonderMarker construction failed" end
+	marker:SetPos(record.pos)
+	marker:SetMirrored(record.mirrored)
+	marker:SetAxis(record.axis)
+	marker:SetAngle(record.angle)
+	marker:SetScale(record.scale)
+	marker:SetColorModifier(record.color_modifier)
+	marker.editor_text_color = record.editor_text_color
+	for _, field in ipairs(SuperBigMap.DEFERRED_WONDER_MARKER_FIELDS) do
+		marker[field] = record[field]
+	end
+	return marker
+end
+
 local function ArtefactSpawnMarkerBuilding(marker, class_name, map)
 	local place_building = Global("PlaceBuildingIn")
 	local building = place_building(class_name, map)
@@ -4365,10 +4426,12 @@ local function BootstrapPassagesAndDeferWonders(env)
 		end
 	end
 	-- Stock PlaceArtefacts constructs and clears assigned wonders before it shuffles/clears the
-	-- passage anchors. Preserve that native obstruction transaction now, but keep the created
-	-- objects only through passage clearing: assigned markers survive for first-access construction,
-	-- and no actual wonder survives the START boundary.
+	-- passage anchors. Preserve that native obstruction transaction now and destroy each live marker
+	-- at the same boundary as stock. Only value records survive through START; temporary wonders live
+	-- through passage clearance and are then removed, so neither kind of live wonder object can alter
+	-- later obstruction generation.
 	local native_wonders = {}
+	local deferred_wonder_records = {}
 	map:SuspendPassEdits("SuperBigMap_NativeWonderClearance")
 	local native_clear_ok, native_clear_err = pcall(function()
 		for _, marker in ipairs(wonder_markers) do
@@ -4383,6 +4446,9 @@ local function BootstrapPassagesAndDeferWonders(env)
 			end
 			marker.SuperBigMapNativeWonderClearanceDone = true
 			marker.SuperBigMapNativeWonderFlattenZ = flatten_stats.buildable_z
+			deferred_wonder_records[#deferred_wonder_records + 1] =
+				SuperBigMap.CaptureDeferredWonderMarkerRecord(marker)
+			Global("DoneObject")(marker)
 			LoadingStep("native underground wonder footprint cleared", {
 				class = wonder_class,
 				flatten_z = flatten_stats.buildable_z,
@@ -4397,6 +4463,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 		error("native bootstrap wonder clearance failed: "
 			.. tostring(native_clear_ok and native_resume_err or native_clear_err))
 	end
+	map.SuperBigMapDeferredUndergroundWonderRecords = deferred_wonder_records
 	if type(WonderVerticalDiagnostics.LogCoverage) == "function" then
 		WonderVerticalDiagnostics.LogCoverage(map, "source_plan")
 	end
@@ -4533,13 +4600,13 @@ local function BootstrapPassagesAndDeferWonders(env)
 		error("passage bootstrap did not create two valid committed linked Elevator anchors")
 	end
 
-	map.SuperBigMapDeferredUndergroundWondersPending = #wonder_markers > 0
-	map.SuperBigMapDeferredUndergroundWondersDone = #wonder_markers == 0
-	map.SuperBigMapDeferredUndergroundWonderCount = #wonder_markers
+	map.SuperBigMapDeferredUndergroundWondersPending = #deferred_wonder_records > 0
+	map.SuperBigMapDeferredUndergroundWondersDone = #deferred_wonder_records == 0
+	map.SuperBigMapDeferredUndergroundWonderCount = #deferred_wonder_records
 	map.SuperBigMapPassageBootstrapComplete = true
 	map.SuperBigMapPassageBootstrapCount = #successful
 	return true, {
-		passages = #successful, wonders_deferred = #wonder_markers,
+		passages = #successful, wonders_deferred = #deferred_wonder_records,
 		planned_pairs = plan_stats and plan_stats.pairs or 0,
 	}
 end
@@ -4923,6 +4990,15 @@ function WonderVerticalDiagnostics.LogCoverage(map, phase)
 		local class_name = marker.SuperBigMapDeferredWonderClass
 		if type(class_name) == "string" and class_name ~= "" then
 			planned[class_name] = (planned[class_name] or 0) + 1
+		end
+	end
+	if next(planned) == nil then
+		for _, record in ipairs(type(map.SuperBigMapDeferredUndergroundWonderRecords) == "table"
+			and map.SuperBigMapDeferredUndergroundWonderRecords or {}) do
+			local class_name = record.SuperBigMapDeferredWonderClass
+			if type(class_name) == "string" and class_name ~= "" then
+				planned[class_name] = (planned[class_name] or 0) + 1
+			end
 		end
 	end
 	local live = {}
@@ -5925,6 +6001,25 @@ end
 
 function WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource(map)
 	local markers = ArtefactMapGet(map, "BuriedWonderMarker")
+	local staged_records = map.SuperBigMapDeferredUndergroundWonderRecords
+	if type(staged_records) == "table" and #staged_records > 0 then
+		if #markers > 0 then
+			return false, "staged deferred wonder records coexist with live markers"
+		end
+		markers = {}
+		for _, record in ipairs(staged_records) do
+			local marker, recreate_error = SuperBigMap.RecreateDeferredWonderMarker(map, record)
+			if not marker then
+				return false, "deferred wonder marker recreation failed: "
+					.. tostring(recreate_error)
+			end
+			markers[#markers + 1] = marker
+		end
+		map.SuperBigMapDeferredUndergroundWonderRecords = nil
+		LoadingStep("deferred underground wonder markers recreated for first access", {
+			recreated = #markers,
+		}, map)
+	end
 	local planned = {}
 	for _, marker in ipairs(markers) do
 		if type(marker.SuperBigMapDeferredWonderClass) == "string"
