@@ -4153,22 +4153,82 @@ function SuperBigMap.RecreateDeferredWonderMarker(map, record)
 	return marker
 end
 
+SuperBigMap.DEFERRED_WONDER_FLIGHT_QUEUE_FIELDS = {
+	"objects_to_mark",
+	"objects_to_unmark",
+	"marked_objects",
+}
+
+function SuperBigMap.PrepareDeferredWonderFlightQueues(map)
+	local flight_system = map and map.FlightSystem
+	if type(flight_system) ~= "table" then
+		return nil, "FlightSystem unavailable before native wonder cleanup"
+	end
+	local token = {
+		flight_system = flight_system,
+		replaced = {},
+	}
+	for _, field in ipairs(SuperBigMap.DEFERRED_WONDER_FLIGHT_QUEUE_FIELDS) do
+		local previous = flight_system[field]
+		if type(previous) ~= "table" then
+			local replacement = {}
+			token.replaced[#token.replaced + 1] = {
+				field = field,
+				previous = previous,
+				replacement = replacement,
+			}
+			flight_system[field] = replacement
+		end
+	end
+	return token
+end
+
+function SuperBigMap.RestoreDeferredWonderFlightQueues(token)
+	if type(token) ~= "table" or type(token.flight_system) ~= "table" then
+		return false, "temporary FlightSystem queue token unavailable"
+	end
+	local flight_system = token.flight_system
+	local restore_error
+	for index = #token.replaced, 1, -1 do
+		local record = token.replaced[index]
+		if flight_system[record.field] ~= record.replacement then
+			restore_error = restore_error
+				or "temporary FlightSystem queue was replaced during cleanup: "
+					.. tostring(record.field)
+		else
+			flight_system[record.field] = record.previous
+		end
+	end
+	if restore_error then return false, restore_error end
+	return true
+end
+
 function SuperBigMap.CleanupPendingNativeWonders(map, reason)
 	local pending = map and map.SuperBigMapPendingNativeWonderCleanup
 	if type(pending) ~= "table" then return true, 0 end
 	local done_object = Global("DoneObject")
 	if type(done_object) ~= "function" then return false, "DoneObject unavailable" end
+	local flight_token, flight_error = SuperBigMap.PrepareDeferredWonderFlightQueues(map)
+	if not flight_token then return false, flight_error end
 	local cleaned = 0
+	local cleanup_error
 	for _, wonder in ipairs(pending) do
 		local ok, err = pcall(done_object, wonder)
 		if not ok then
-			return false, "temporary native wonder cleanup failed: " .. tostring(err)
+			cleanup_error = "temporary native wonder cleanup failed: " .. tostring(err)
+			break
 		end
 		cleaned = cleaned + 1
 	end
+	local restore_ok, restore_error = SuperBigMap.RestoreDeferredWonderFlightQueues(flight_token)
+	if restore_ok ~= true then
+		return false, restore_error
+	end
+	if cleanup_error then return false, cleanup_error end
 	map.SuperBigMapPendingNativeWonderCleanup = nil
 	LoadingStep("temporary native underground wonders removed", {
 		cleaned = cleaned,
+		temporary_flight_queues = #flight_token.replaced,
 		reason = tostring(reason or "unspecified"),
 	}, map)
 	return true, cleaned
