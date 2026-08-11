@@ -1853,6 +1853,46 @@ local function SnapshotMapObjectSet(map)
 	return set, #objects
 end
 
+function SuperBigMap.FreeOwnedGrid(grid)
+	if grid and type(grid.free) == "function" then
+		pcall(grid.free, grid)
+	end
+end
+
+-- Surface passage placement happens during underground generation, after the temporary vanilla
+-- surface map has been unloaded. Preserve the completed native buildable grid as value state so
+-- SpawnUndergroundPassage can later make the same selection as vanilla. The retained grid is
+-- short-lived: BootstrapPassagesAndDeferWonders consumes and frees it during the same new-game
+-- generation transaction, and it is never persisted in a save.
+function SuperBigMap.CaptureNativeSurfacePassageBuildable(source, destination)
+	local buildable = source and source.buildable
+	local grid = type(buildable) == "table" and buildable.z_grid or nil
+	if not grid or type(grid.clone) ~= "function" or type(grid.size) ~= "function" then
+		error("native surface passage buildable grid is unavailable")
+	end
+	local ok_size, width, height = pcall(grid.size, grid)
+	height = height or width
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width <= 0 or height <= 0 then
+		error("native surface passage buildable dimensions are unavailable")
+	end
+	local ok_clone, clone = pcall(grid.clone, grid)
+	if not ok_clone or not clone then
+		error("native surface passage buildable clone failed: " .. tostring(clone))
+	end
+	local previous = destination.SuperBigMapPendingNativeSurfacePassageBuildable
+	if type(previous) == "table" then SuperBigMap.FreeOwnedGrid(previous.grid) end
+	destination.SuperBigMapPendingNativeSurfacePassageBuildable = {
+		grid = clone,
+		width = width,
+		height = height,
+	}
+	LoadingStep("native surface passage buildable retained", {
+		width = width, height = height,
+	}, destination)
+	return true
+end
+
 local function TransferGeneratedObjects(source, destination, source_baseline, excluded_objects)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
@@ -3645,6 +3685,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		local no_underground = type(is_game_rule_active) == "function"
 			and SafeCall(is_game_rule_active, "NoUndergroundAndAsteroids") == true
 		if not no_underground and not Global("UndergroundMap") then
+			SuperBigMap.CaptureNativeSurfacePassageBuildable(source, destination)
 			local async_rand = Global("AsyncRand")
 			if type(async_rand) ~= "function" then
 				error("AsyncRand unavailable while reserving the vanilla underground seed")
@@ -3880,6 +3921,11 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			pcall(sectors.ClearPendingVanillaStartSelection, destination,
 				"temporary source migration failed")
 		end
+		local pending_buildable = destination.SuperBigMapPendingNativeSurfacePassageBuildable
+		if type(pending_buildable) == "table" then
+			SuperBigMap.FreeOwnedGrid(pending_buildable.grid)
+		end
+		destination.SuperBigMapPendingNativeSurfacePassageBuildable = nil
 	end
 	SuperBigMap.State.vanilla_source_migration_active = false
 	if not ok then
@@ -4330,6 +4376,68 @@ local function BootstrapPassagesAndDeferWonders(env)
 	local world_to_hex = Global("WorldToHex")
 	local unbuildable_z = Global("buildUnbuildableZ")()
 	local done_object = Global("DoneObject")
+	local pending_surface_buildable =
+		surface_map.SuperBigMapPendingNativeSurfacePassageBuildable
+	if type(pending_surface_buildable) ~= "table"
+		or not pending_surface_buildable.grid then
+		error("native surface passage buildable grid was not retained")
+	end
+	local stock_surface_grid = surface_map.buildable and surface_map.buildable.z_grid
+	if not stock_surface_grid or type(stock_surface_grid.size) ~= "function" then
+		error("expanded surface passage buildable grid is unavailable")
+	end
+	local ok_stock_size, expanded_hex_w, expanded_hex_h = pcall(
+		stock_surface_grid.size, stock_surface_grid)
+	expanded_hex_h = expanded_hex_h or expanded_hex_w
+	local source_hex_w = tonumber(pending_surface_buildable.width)
+	local source_hex_h = tonumber(pending_surface_buildable.height)
+	if not ok_stock_size or type(expanded_hex_w) ~= "number"
+		or type(expanded_hex_h) ~= "number" or type(source_hex_w) ~= "number"
+		or type(source_hex_h) ~= "number" or expanded_hex_w < source_hex_w
+		or expanded_hex_h < source_hex_h then
+		error("native/expanded surface passage buildable dimensions are invalid")
+	end
+	local new_grid = Global("NewGrid")
+	if type(new_grid) ~= "function" then
+		error("NewGrid unavailable for surface passage buildable bridge")
+	end
+	local padded_surface_grid = new_grid(expanded_hex_w, expanded_hex_h, 16, unbuildable_z)
+	if not padded_surface_grid or type(padded_surface_grid.set) ~= "function"
+		or type(pending_surface_buildable.grid.get) ~= "function" then
+		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
+		error("surface passage buildable bridge allocation failed")
+	end
+	local pause_ild = Global("PauseInfiniteLoopDetection")
+	local resume_ild = Global("ResumeInfiniteLoopDetection")
+	if type(pause_ild) == "function" then
+		pcall(pause_ild, "SBMNativeSurfacePassageBuildableBridge")
+	end
+	local copy_ok, copy_error = pcall(function()
+		for y = 0, source_hex_h - 1 do
+			for x = 0, source_hex_w - 1 do
+				padded_surface_grid:set(x, y, pending_surface_buildable.grid:get(x, y))
+			end
+		end
+	end)
+	if type(resume_ild) == "function" then
+		pcall(resume_ild, "SBMNativeSurfacePassageBuildableBridge")
+	end
+	if not copy_ok then
+		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
+		error("surface passage buildable bridge copy failed: " .. tostring(copy_error))
+	end
+	surface_map.buildable.z_grid = padded_surface_grid
+	local function RestoreSurfaceBuildableBridge()
+		surface_map.buildable.z_grid = stock_surface_grid
+		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
+		SuperBigMap.FreeOwnedGrid(pending_surface_buildable.grid)
+		pending_surface_buildable.grid = nil
+		surface_map.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+	end
+	LoadingStep("native surface passage buildable bridge installed", {
+		source_width = source_hex_w, source_height = source_hex_h,
+		expanded_width = expanded_hex_w, expanded_height = expanded_hex_h,
+	}, surface_map)
 	local successful = {}
 	map:SuspendPassEdits("SuperBigMap_PassageBootstrap")
 	local ok, err = pcall(function()
@@ -4373,6 +4481,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 		for _, marker in ipairs(passage_markers) do done_object(marker) end
 	end)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
+	RestoreSurfaceBuildableBridge()
 	if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
 	if not resume_ok then error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err)) end
 	if type(AlignPassagePairsToSharedHex) ~= "function" then
