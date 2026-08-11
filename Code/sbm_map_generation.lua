@@ -4376,7 +4376,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
 			native_wonders[#native_wonders + 1] = wonder
 			local flatten_ok, flatten_stats =
-				WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, nil)
+				WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, nil, true)
 			if flatten_ok ~= true then
 				error("failed native bootstrap clearance for " .. tostring(wonder_class)
 					.. ": " .. tostring(flatten_stats))
@@ -5291,7 +5291,8 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	return false, tostring(result)
 end
 
-function WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, ratios)
+function WonderVerticalDiagnostics.FlattenDeferredWonder(
+	wonder, marker, ratios, preserve_stock_invalid_z)
 	local get_enclosed = Global("GetEnclosedShape")
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
@@ -5319,7 +5320,10 @@ function WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, ratios)
 	local z_add = type(ratios) == "table" and (tonumber(map.SuperBigMapZScaleAdd) or 0) or 0
 	local buildable_z
 	local buildable_source
-	if type(source_buildable_z) == "number" and type(z_mul) == "number"
+	if type(ratios) ~= "table" and type(observed_buildable_z) == "number" then
+		buildable_z = observed_buildable_z
+		buildable_source = "observed_native_buildable"
+	elseif type(source_buildable_z) == "number" and type(z_mul) == "number"
 		and type(z_div) == "number" and z_div > 0 then
 		buildable_z = math.floor(source_buildable_z * z_mul / z_div + z_add + 0.5)
 		buildable_source = type(ratios) == "table"
@@ -5347,20 +5351,23 @@ function WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, ratios)
 		-- immediately against this floor because the generated underground is already current; SBM's
 		-- destination is still off-screen here. Resolve it explicitly now so the later map activation
 		-- cannot snap the wonder onto pre-flatten relief before the lifecycle reseat runs.
-		local position = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
-		local position_x, position_y = PointXY(position)
-		local point_fn = Global("point")
-		if type(position_x) ~= "number" or type(position_y) ~= "number"
-			or type(point_fn) ~= "function" or type(wonder.SetPos) ~= "function" then
-			return false, "cannot resolve the stretched wonder's explicit floor position"
+		if preserve_stock_invalid_z ~= true then
+			local position = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+			local position_x, position_y = PointXY(position)
+			local point_fn = Global("point")
+			if type(position_x) ~= "number" or type(position_y) ~= "number"
+				or type(point_fn) ~= "function" or type(wonder.SetPos) ~= "function" then
+				return false, "cannot resolve the stretched wonder's explicit floor position"
+			end
+			wonder:SetPos(point_fn(position_x, position_y, buildable_z))
 		end
-		wonder:SetPos(point_fn(position_x, position_y, buildable_z))
 		ArtefactClearObstructions(wonder, map.obj_prefab_marker, nil, shape)
 		return true, {
 			shape_hexes = #shape,
 			buildable_z = buildable_z,
 			buildable_source = buildable_source,
 			clearance_mode = clearance_mode,
+			preserved_stock_invalid_z = preserve_stock_invalid_z == true,
 			source_buildable_z = source_buildable_z,
 			observed_buildable_z = observed_buildable_z,
 			z_mul = z_mul,
