@@ -6733,14 +6733,37 @@ local function PatchAdditionalMapSeedReservation()
 			fill = fill,
 		}
 	end
+	-- Mod code runs in a sandbox whose inherited globals can live in a distinct engine table.
+	-- Function environments alone can therefore resolve back to the sandbox even while shipped
+	-- generation resolves these consumers through the sandbox's __index chain. Follow only
+	-- explicit environment links; add_target still requires direct ownership of both functions.
+	local function parent_environment(env)
+		if type(env) ~= "table" then return nil end
+		local ok, metatable = pcall(getmetatable, env)
+		if not ok or type(metatable) ~= "table" then return nil end
+		local parent = rawget(metatable, "__index")
+		if type(parent) == "table" then return parent end
+		if type(parent) == "function" then return FunctionEnvironment(parent) end
+		return nil
+	end
+	local function add_environment_chain(label, env)
+		local visited = {}
+		for depth = 0, 7 do
+			if type(env) ~= "table" or visited[env] then return end
+			visited[env] = true
+			add_target(depth == 0 and label or string.format("%s_parent_%d", label, depth), env)
+			env = parent_environment(env)
+		end
+	end
 	-- RandomMapGenerator.Generate resolves GenerateAdditionalMaps in the shipped engine
 	-- environment, not the mod sandbox. GenerateRandomMap/FillRandomMapProps resolve
-	-- FillRandomMapGen there too. Patch those callable environments as the authority and
-	-- retain the sandbox target only for reload/diagnostic symmetry.
-	add_target("engine_generator", FunctionEnvironment(generator_callable))
-	add_target("engine_generate_random_map", FunctionEnvironment(Global("GenerateRandomMap")))
-	add_target("engine_fill_random_map_props", FunctionEnvironment(Global("FillRandomMapProps")))
-	add_target("mod_sandbox", _G)
+	-- FillRandomMapGen there too. Mod sandboxes inherit that table through __index, so walk
+	-- each bounded environment chain and patch every distinct table that directly owns both
+	-- consumers. Retain the sandbox target for reload/diagnostic symmetry.
+	add_environment_chain("engine_generator", FunctionEnvironment(generator_callable))
+	add_environment_chain("engine_generate_random_map", FunctionEnvironment(Global("GenerateRandomMap")))
+	add_environment_chain("engine_fill_random_map_props", FunctionEnvironment(Global("FillRandomMapProps")))
+	add_environment_chain("mod_sandbox", _G)
 	if #targets == 0 then
 		return false
 	end
