@@ -6759,7 +6759,8 @@ local function PatchAdditionalMapSeedReservation()
 			rawset(env, name, nil)
 			local read_ok, inherited = pcall(function() return env[name] end)
 			rawset(env, name, direct)
-			return write_ok and unexpected_direct == nil and read_ok and inherited == value
+			local direct_expected = unexpected_direct == nil or unexpected_direct == value
+			return write_ok and direct_expected and read_ok and inherited == value
 		end
 		add_target(label, env, read, write, label)
 	end
