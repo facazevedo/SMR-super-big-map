@@ -4364,6 +4364,39 @@ local function BootstrapPassagesAndDeferWonders(env)
 			end
 		end
 	end
+	-- Stock PlaceArtefacts constructs and clears assigned wonders before it shuffles/clears the
+	-- passage anchors. Preserve that native obstruction transaction now, but keep the created
+	-- objects only through passage clearing: assigned markers survive for first-access construction,
+	-- and no actual wonder survives the START boundary.
+	local native_wonders = {}
+	map:SuspendPassEdits("SuperBigMap_NativeWonderClearance")
+	local native_clear_ok, native_clear_err = pcall(function()
+		for _, marker in ipairs(wonder_markers) do
+			local wonder_class = marker.SuperBigMapDeferredWonderClass
+			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
+			native_wonders[#native_wonders + 1] = wonder
+			local flatten_ok, flatten_stats =
+				WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, nil)
+			if flatten_ok ~= true then
+				error("failed native bootstrap clearance for " .. tostring(wonder_class)
+					.. ": " .. tostring(flatten_stats))
+			end
+			marker.SuperBigMapNativeWonderClearanceDone = true
+			marker.SuperBigMapNativeWonderFlattenZ = flatten_stats.buildable_z
+			LoadingStep("native underground wonder footprint cleared", {
+				class = wonder_class,
+				flatten_z = flatten_stats.buildable_z,
+				clearance_mode = flatten_stats.clearance_mode,
+			}, map)
+		end
+	end)
+	local native_resume_ok, native_resume_err = pcall(
+		map.ResumePassEdits, map, "SuperBigMap_NativeWonderClearance")
+	if not native_clear_ok or not native_resume_ok then
+		for _, wonder in ipairs(native_wonders) do pcall(Global("DoneObject"), wonder) end
+		error("native bootstrap wonder clearance failed: "
+			.. tostring(native_clear_ok and native_resume_err or native_clear_err))
+	end
 	if type(WonderVerticalDiagnostics.LogCoverage) == "function" then
 		WonderVerticalDiagnostics.LogCoverage(map, "source_plan")
 	end
@@ -4480,9 +4513,13 @@ local function BootstrapPassagesAndDeferWonders(env)
 		end
 		for _, marker in ipairs(passage_markers) do done_object(marker) end
 	end)
+	local cleanup_ok, cleanup_err = pcall(function()
+		for _, wonder in ipairs(native_wonders) do done_object(wonder) end
+	end)
 	local resume_ok, resume_err = pcall(map.ResumePassEdits, map, "SuperBigMap_PassageBootstrap")
 	RestoreSurfaceBuildableBridge()
 	if not ok then error("passage-only artefact bootstrap failed: " .. tostring(err)) end
+	if not cleanup_ok then error("temporary native wonder cleanup failed: " .. tostring(cleanup_err)) end
 	if not resume_ok then error("passage bootstrap ResumePassEdits failed: " .. tostring(resume_err)) end
 	if type(AlignPassagePairsToSharedHex) ~= "function" then
 		error("passage bootstrap common-hex planner is unavailable")
@@ -5254,7 +5291,7 @@ local function ApplyDeferredWonderStretch(wonder, marker, map, ratios)
 	return false, tostring(result)
 end
 
-local function FlattenDeferredWonder(wonder, marker, ratios)
+function WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, ratios)
 	local get_enclosed = Global("GetEnclosedShape")
 	local shrink = Global("ShrinkShape")
 	local get_outline = Global("GetEntityOutlineShape")
@@ -5912,7 +5949,31 @@ function WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource
 		for _, marker in ipairs(planned) do
 			local wonder_class = marker.SuperBigMapDeferredWonderClass
 			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
-			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, marker, nil)
+			local flatten_ok, flatten_stats
+			if marker.SuperBigMapNativeWonderClearanceDone == true then
+				flatten_ok, flatten_stats = true, {
+					buildable_z = tonumber(marker.SuperBigMapNativeWonderFlattenZ),
+					buildable_source = "native_bootstrap_clearance_floor",
+					clearance_mode = "native_bootstrap_clearance_no_replay",
+					source_buildable_z = tonumber(marker.SuperBigMapNativeWonderFlattenZ),
+				}
+				local point_fn = Global("point")
+				local pos = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+				local x, y = PointXY(pos)
+				if type(flatten_stats.buildable_z) ~= "number" or type(point_fn) ~= "function"
+					or type(x) ~= "number" or type(y) ~= "number"
+					or type(wonder.SetPos) ~= "function" then
+					flatten_ok, flatten_stats = false,
+						"native bootstrap wonder floor is unavailable"
+				else
+					wonder:SetPos(point_fn(x, y, flatten_stats.buildable_z))
+				end
+			else
+				-- Legacy deferred saves predate native-bootstrap clearance and still need the one source
+				-- transaction when first accessed. Fresh games never enter this compatibility branch.
+				flatten_ok, flatten_stats =
+					WonderVerticalDiagnostics.FlattenDeferredWonder(wonder, marker, nil)
+			end
 			if flatten_ok ~= true then
 				error("failed to prepare native terrain for " .. tostring(wonder_class)
 					.. ": " .. tostring(flatten_stats))
