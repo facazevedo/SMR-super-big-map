@@ -1706,6 +1706,7 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 			end
 		end
 	end
+	local transferred = 0
 	local failed = 0
 	local failures = {}
 	-- TransferToMap removes the object from one map and inserts it into the other. With live
@@ -1736,11 +1737,22 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 					failed = failed + 1
 					if #failures < 8 then failures[#failures + 1] = tostring(obj.class) .. ":TransferToMap unavailable" end
 				else
-					-- TransferToMap preserves the current position when no replacement position is supplied
-					-- (the vanilla rocket/unit call sites use this form). Avoid GetPos + GetMap around every
-					-- object; one post-batch source audit below verifies the complete transaction instead.
-					local ok, transfer_error = pcall(obj.TransferToMap, obj, destination)
-					if not ok then
+					-- The position argument is mandatory for static map objects. Omitting it is valid for
+					-- rocket/unit flows that reposition after arrival, but it clears the position of terrain
+					-- decorations. Those objects then disappear from spatial queries and are omitted from
+					-- saves even though TransferToMap changed their map ownership successfully.
+					local pos = type(obj.GetPos) == "function" and SafeCall(obj.GetPos, obj) or nil
+					local ok, transfer_error = false, "position unavailable"
+					if pos then
+						ok, transfer_error = pcall(obj.TransferToMap, obj, destination, pos)
+					end
+					local landed = ok
+					if landed and type(obj.GetMap) == "function" then
+						landed = SafeCall(obj.GetMap, obj) == destination
+					end
+					if landed then
+						transferred = transferred + 1
+					else
 						failed = failed + 1
 						if #failures < 8 then
 							failures[#failures + 1] = tostring(obj.class) .. ":" .. tostring(transfer_error or "wrong destination")
@@ -1781,6 +1793,7 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 		error(string.format("temporary source object migration failed for %d objects: %s",
 			failed + remaining_generated, table.concat(failures, " | ")))
 	end
+	return transferred
 end
 
 local function FindTemporarySourceSlot(destination_slot)
