@@ -6720,18 +6720,40 @@ local function PatchAdditionalMapSeedReservation()
 		or (type(generator_class) == "table" and generator_class.Generate)
 	local targets = {}
 	local seen = {}
-	local function add_target(label, env)
-		if type(env) ~= "table" or seen[env] then return end
-		local additional = rawget(env, "GenerateAdditionalMaps")
-		local fill = rawget(env, "FillRandomMapGen")
+	local function add_target(label, env, reader, writer, identity)
+		identity = identity or env
+		if type(env) ~= "table" or seen[identity] then return end
+		local additional = type(reader) == "function"
+			and reader("GenerateAdditionalMaps") or rawget(env, "GenerateAdditionalMaps")
+		local fill = type(reader) == "function"
+			and reader("FillRandomMapGen") or rawget(env, "FillRandomMapGen")
 		if type(additional) ~= "function" or type(fill) ~= "function" then return end
-		seen[env] = true
+		seen[identity] = true
 		targets[#targets + 1] = {
 			label = label,
 			env = env,
 			additional = additional,
 			fill = fill,
+			reader = reader,
+			writer = writer,
 		}
+	end
+	local function add_environment_bridge(label, env)
+		if type(env) ~= "table" then return end
+		local ok, metatable = pcall(getmetatable, env)
+		if not ok or type(metatable) ~= "table" then return end
+		local index = rawget(metatable, "__index")
+		local newindex = rawget(metatable, "__newindex")
+		if type(index) ~= "function" or type(newindex) ~= "function" then return end
+		local function read(name)
+			local read_ok, value = pcall(index, env, name)
+			return read_ok and value or nil
+		end
+		local function write(name, value)
+			local write_ok = pcall(newindex, env, name, value)
+			return write_ok and read(name) == value
+		end
+		add_target(label, env, read, write, newindex)
 	end
 	-- Mod code runs in a sandbox whose inherited globals can live in a distinct engine table.
 	-- Function environments alone can therefore resolve back to the sandbox even while shipped
@@ -6759,20 +6781,35 @@ local function PatchAdditionalMapSeedReservation()
 	-- environment, not the mod sandbox. GenerateRandomMap/FillRandomMapProps resolve
 	-- FillRandomMapGen there too. Mod sandboxes inherit that table through __index, so walk
 	-- each bounded environment chain and patch every distinct table that directly owns both
-	-- consumers. Retain the sandbox target for reload/diagnostic symmetry.
+	-- consumers. Relaunched's mod sandbox exposes neither getfenv nor debug.getupvalue, but its
+	-- public __index/__newindex pair reads and writes existing shipped globals in their real owner
+	-- table. Register that bridge explicitly instead of bypassing it with rawset. Retain the raw
+	-- sandbox target for reload/diagnostic symmetry.
 	add_environment_chain("engine_generator", FunctionEnvironment(generator_callable))
 	add_environment_chain("engine_generate_random_map", FunctionEnvironment(Global("GenerateRandomMap")))
 	add_environment_chain("engine_fill_random_map_props", FunctionEnvironment(Global("FillRandomMapProps")))
 	add_environment_chain("mod_sandbox", _G)
+	add_environment_bridge("mod_sandbox_inherited", _G)
 	if #targets == 0 then
 		return false
+	end
+	local function current_target_value(target, name)
+		if type(target.reader) == "function" then return target.reader(name) end
+		return rawget(target.env, name)
+	end
+	local function write_target_value(target, name, value)
+		if type(target.writer) == "function" then return target.writer(name, value) end
+		rawset(target.env, name, value)
+		return rawget(target.env, name) == value
 	end
 	if State.additional_map_seed_patch_version == GENERATOR_PATCH_VERSION then
 		local installed = true
 		for _, target in ipairs(targets) do
 			installed = installed
-				and target.additional == State.generate_additional_maps_wrapper
-				and target.fill == State.fill_random_map_gen_wrapper
+				and current_target_value(target, "GenerateAdditionalMaps")
+					== State.generate_additional_maps_wrapper
+				and current_target_value(target, "FillRandomMapGen")
+					== State.fill_random_map_gen_wrapper
 		end
 		if installed then return true end
 	end
@@ -6931,10 +6968,7 @@ local function PatchAdditionalMapSeedReservation()
 		return Unpack(results, 2, results.n)
 	end
 
-	State.generate_additional_maps_wrapper = additional_wrapper
-	State.fill_random_map_gen_wrapper = fill_wrapper
-	State.additional_map_seed_patch_version = GENERATOR_PATCH_VERSION
-	State.additional_map_seed_patch_targets = {}
+	local installed_targets = {}
 	for _, target in ipairs(targets) do
 		local original_target_additional = target.additional
 		local original_target_fill = target.fill
@@ -6944,15 +6978,34 @@ local function PatchAdditionalMapSeedReservation()
 		if original_target_fill == previous_fill_wrapper then
 			original_target_fill = original_fill
 		end
-		State.additional_map_seed_patch_targets[#State.additional_map_seed_patch_targets + 1] = {
+		local record = {
 			label = target.label,
 			env = target.env,
+			reader = target.reader,
+			writer = target.writer,
 			original_additional = original_target_additional,
 			original_fill = original_target_fill,
 		}
-		rawset(target.env, "GenerateAdditionalMaps", additional_wrapper)
-		rawset(target.env, "FillRandomMapGen", fill_wrapper)
+		local additional_installed = write_target_value(
+			target, "GenerateAdditionalMaps", additional_wrapper)
+		local fill_installed = additional_installed and write_target_value(
+			target, "FillRandomMapGen", fill_wrapper)
+		if not additional_installed or not fill_installed then
+			write_target_value(target, "GenerateAdditionalMaps", original_target_additional)
+			write_target_value(target, "FillRandomMapGen", original_target_fill)
+			for index = #installed_targets, 1, -1 do
+				local installed = installed_targets[index]
+				write_target_value(installed, "GenerateAdditionalMaps", installed.original_additional)
+				write_target_value(installed, "FillRandomMapGen", installed.original_fill)
+			end
+			return false
+		end
+		installed_targets[#installed_targets + 1] = record
 	end
+	State.generate_additional_maps_wrapper = additional_wrapper
+	State.fill_random_map_gen_wrapper = fill_wrapper
+	State.additional_map_seed_patch_version = GENERATOR_PATCH_VERSION
+	State.additional_map_seed_patch_targets = installed_targets
 	return true
 end
 
@@ -10906,13 +10959,22 @@ function MapGeneration.RestoreVanillaBehavior()
 	for _, target in ipairs(State.additional_map_seed_patch_targets or {}) do
 		local env = type(target) == "table" and target.env or nil
 		if type(env) == "table" then
-			if rawget(env, "GenerateAdditionalMaps") == State.generate_additional_maps_wrapper
-				and type(target.original_additional) == "function" then
-				rawset(env, "GenerateAdditionalMaps", target.original_additional)
+			local function read(name)
+				if type(target.reader) == "function" then return target.reader(name) end
+				return rawget(env, name)
 			end
-			if rawget(env, "FillRandomMapGen") == State.fill_random_map_gen_wrapper
+			local function write(name, value)
+				if type(target.writer) == "function" then return target.writer(name, value) end
+				rawset(env, name, value)
+				return rawget(env, name) == value
+			end
+			if read("GenerateAdditionalMaps") == State.generate_additional_maps_wrapper
+				and type(target.original_additional) == "function" then
+				write("GenerateAdditionalMaps", target.original_additional)
+			end
+			if read("FillRandomMapGen") == State.fill_random_map_gen_wrapper
 				and type(target.original_fill) == "function" then
-				rawset(env, "FillRandomMapGen", target.original_fill)
+				write("FillRandomMapGen", target.original_fill)
 			end
 		end
 	end
