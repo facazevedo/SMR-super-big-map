@@ -961,6 +961,14 @@ function SuperBigMap.BeginRockParityTrace(map, env)
 		helper_call_cap = 12000,
 		boundaries = {},
 	}
+	local history = map.SuperBigMapRockParityTraces
+	if type(history) ~= "table" then
+		history = {}
+		map.SuperBigMapRockParityTraces = history
+	end
+	trace.invocation = #history + 1
+	trace.proc_invoke_type = type(env.ProcInvoke)
+	history[#history + 1] = trace
 	local original_helpers = env.rhelpers
 	local wrapped_helpers = {}
 	for helper_index, helper in ipairs(original_helpers) do
