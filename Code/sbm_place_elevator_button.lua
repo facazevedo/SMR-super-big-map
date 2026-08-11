@@ -1,8 +1,9 @@
 -- Super Big Map -- temporary Elevator placement button.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
--- the complete two-map construction group. Retired buried-wonder placement and underground
--- darkness-reveal controls are removed on reload so Place Elevator is the only test button.
+-- the complete two-map construction group. A second temporary button follows the normal map
+-- switch path so deferred underground generation finishes, opens the underground, and removes
+-- its darkness blanket for visual parity inspection.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -17,6 +18,7 @@ local State = SuperBigMap.State or {}
 SuperBigMap.State = State
 
 local WINDOW_ID = "SBMPlaceElevator"
+local SWITCH_WINDOW_ID = "SBMSwitchToUnderground"
 local RETIRED_WINDOW_IDS = {
 	"SBMPlaceArtifactInterface",
 	"SBMPlaceBottomlessPitLab",
@@ -120,6 +122,50 @@ local function ReportFailure(reason, data, map)
 	data.reason = tostring(reason)
 	Audit("FAILED", data, map)
 	return false
+end
+
+local function SwitchToUnderground()
+	local current_map = Global("CurrentMap")
+	if not CanUseOnMap(current_map) then return false end
+	local underground = Global("UndergroundMap")
+	if not IsGameplayMap(underground) or not IsExpandedSessionMap(underground) then
+		return ReportFailure("expanded underground map is unavailable", {}, current_map)
+	end
+	local change_map = Global("ChangeCurrentMapSlot")
+	local create_thread = Global("CreateRealTimeThread")
+	if type(change_map) ~= "function" or type(create_thread) ~= "function" then
+		return ReportFailure("normal underground map-switch API is unavailable", {}, current_map)
+	end
+
+	-- ApplyUndergroundDarknessState reads this test-only state during CurrentMapChangeDone.
+	-- Hide clears it, and the lifecycle immediately restores vanilla darkness for the live map.
+	State.switch_to_underground_button_force_reveal = true
+	create_thread(function()
+		Audit("UNDERGROUND_SWITCH_REQUESTED", {
+			from_map = tostring(current_map), target_slot = tostring(underground.slot),
+		}, current_map)
+		local ok, switch_error = pcall(change_map, underground.slot, true)
+		if not ok then
+			State.switch_to_underground_button_force_reveal = nil
+			return ReportFailure("underground map switch failed: " .. tostring(switch_error), {}, current_map)
+		end
+
+		-- Keep the visual postcondition explicit even if a future engine build changes the
+		-- ordering of CurrentMapChangeDone relative to ChangeCurrentMapSlot's return.
+		local hr = Global("hr")
+		if type(hr) == "table" then hr.EnableDarknessReveal = 0 end
+		local darkness = SuperBigMap.BuriedWonderDarkness
+		if darkness and type(darkness.Refresh) == "function" then
+			SafeCall(darkness.Refresh, underground, "temporary underground switch button")
+		end
+		Audit("UNDERGROUND_SWITCH_COMPLETE", {
+			current_map = tostring(Global("CurrentMap")),
+			stretch_done = tostring(underground.SuperBigMapUndergroundStretchDone == true),
+			darkness = type(hr) == "table" and tostring(hr.EnableDarknessReveal) or "unavailable",
+		}, underground)
+		return true
+	end)
+	return true
 end
 
 local function ResolveElevatorConstructionGroup(site)
@@ -240,6 +286,16 @@ local function ResolveExistingButton(desktop)
 	return nil
 end
 
+local function ResolveExistingSwitchButton(desktop)
+	local window = State.switch_to_underground_button_window
+	if WindowLive(window) then return window end
+	if desktop and type(desktop.ResolveId) == "function" then
+		local resolved = SafeCall(desktop.ResolveId, desktop, SWITCH_WINDOW_ID)
+		if WindowLive(resolved) then return resolved end
+	end
+	return nil
+end
+
 local function BuildButton()
 	local desktop = (Global("terminal") or {}).desktop
 	local button_class = Global("XTextButton")
@@ -265,6 +321,38 @@ local function BuildButton()
 		OnPress = function() StartElevatorPlacement() end,
 	}, desktop)
 	State.place_elevator_button_window = button
+	if WindowLive(button) and type(button.SetTextColor) == "function" then
+		button:SetTextColor(Color(236, 236, 238, 255))
+	end
+	if WindowLive(button) and type(button.Open) == "function" then pcall(button.Open, button) end
+	return button
+end
+
+local function BuildSwitchButton()
+	local desktop = (Global("terminal") or {}).desktop
+	local button_class = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(button_class) ~= "table" or type(box) ~= "function" then return nil end
+
+	local button = button_class:new({
+		Id = SWITCH_WINDOW_ID,
+		Text = "Switch to Underground",
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 30),
+		Padding = box(12, 4, 12, 4),
+		Background = Color(45, 50, 70, 235),
+		RolloverBackground = Color(65, 75, 105, 235),
+		PressedBackground = Color(35, 40, 58, 235),
+		RolloverTextColor = Color(236, 236, 238, 255),
+		DisabledTextColor = Color(236, 236, 238, 255),
+		DisabledRolloverTextColor = Color(236, 236, 238, 255),
+		ZOrder = 100000,
+		OnPress = function() SwitchToUnderground() end,
+	}, desktop)
+	State.switch_to_underground_button_window = button
 	if WindowLive(button) and type(button.SetTextColor) == "function" then
 		button:SetTextColor(Color(236, 236, 238, 255))
 	end
@@ -312,10 +400,17 @@ function PlaceElevatorButton.Show()
 	RemoveRetiredTestButtons(desktop)
 	local elevator_ok = true
 	local button = ResolveExistingButton(desktop)
+	local switch_button = ResolveExistingSwitchButton(desktop)
 	local show_elevator = CanUseOnMap(map)
 	if show_elevator and not WindowLive(button) then button = BuildButton() end
+	if show_elevator and not WindowLive(switch_button) then switch_button = BuildSwitchButton() end
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, show_elevator)
+	elseif show_elevator then
+		elevator_ok = false
+	end
+	if WindowLive(switch_button) and type(switch_button.SetVisible) == "function" then
+		SafeCall(switch_button.SetVisible, switch_button, show_elevator)
 	elseif show_elevator then
 		elevator_ok = false
 	end
@@ -326,16 +421,22 @@ function PlaceElevatorButton.Hide()
 	local desktop = (Global("terminal") or {}).desktop
 	RemoveRetiredTestButtons(desktop)
 	local button = ResolveExistingButton(desktop)
+	local switch_button = ResolveExistingSwitchButton(desktop)
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, false)
 	end
+	if WindowLive(switch_button) and type(switch_button.SetVisible) == "function" then
+		SafeCall(switch_button.SetVisible, switch_button, false)
+	end
 	State.place_elevator_button_armed = nil
+	State.switch_to_underground_button_force_reveal = nil
 	return true
 end
 
 PlaceElevatorButton.ApplyModBehavior = PlaceElevatorButton.Show
 PlaceElevatorButton.RestoreVanillaBehavior = PlaceElevatorButton.Hide
 PlaceElevatorButton.HandleConstructionSitePlaced = HandleConstructionSitePlaced
+PlaceElevatorButton.SwitchToUnderground = SwitchToUnderground
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
 
 State.place_elevator_button_message_handler = HandleConstructionSitePlaced

@@ -112,7 +112,8 @@ local function ApplyUndergroundDarknessState(map)
 	local environment = map and map.mapdata and map.mapdata.Environment
 	local should_reveal = State.expansion_session_active == true and IsModMap(map)
 		and environment == "Underground"
-		and (SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
+		and ((SuperBigMap.Config or {}).UNDERGROUND_REVEAL_ALL_DARKNESS == true
+			or State.switch_to_underground_button_force_reveal == true)
 	local before = hr.EnableDarknessReveal
 	-- Clear legacy snapshot state left by earlier versions. The correct non-test value is owned by
 	-- vanilla UpdateRevealDarkness(map), not by whichever process-global value happened to be live.

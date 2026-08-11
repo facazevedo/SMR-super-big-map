@@ -160,8 +160,9 @@ config.PreventLandingPadFlatten = true
 -- any Elevator cursor/site fallback through the no-flatten path on Super Big Map maps.
 config.PreventElevatorFlatten = true
 
--- TEMP test aid: show a bottom-right button that opens the normal Elevator placement cursor,
--- unlocks the template, and quick-builds the next placed Elevator for free.
+-- TEMP test aids: show bottom-right buttons that (1) open the normal Elevator placement cursor,
+-- unlock and quick-build the next placed Elevator, and (2) follow the normal underground map
+-- switch path to finish deferred generation and remove the darkness blanket for inspection.
 config.PlaceElevatorButtonEnabled = false
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full
