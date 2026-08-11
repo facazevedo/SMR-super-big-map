@@ -5267,24 +5267,26 @@ local function FlattenDeferredWonder(wonder, marker, ratios)
 	if type(ratios) == "table" then
 		shape = ScaleHexShapeForExpansion(shape, ratios.scale_x, ratios.scale_y)
 	end
-	local clearance_mode = "scaled_vanilla_flatten_shape"
+	local clearance_mode = type(ratios) == "table"
+		and "scaled_vanilla_flatten_shape" or "native_vanilla_flatten_shape"
 	local observed_buildable_z
 	for_each_hex(shape, wonder, function(q, r)
 		local z = map.buildable:GetZ(q, r)
 		if z ~= unbuildable then observed_buildable_z = z return true end
 	end)
 	local source_buildable_z = tonumber(marker and marker.SuperBigMapNativeWonderFlattenZ)
-	local z_mul = tonumber(map.SuperBigMapZScaleMul)
-		or (type(ratios) == "table" and tonumber(ratios.x_mul))
-	local z_div = tonumber(map.SuperBigMapZScaleDiv)
-		or (type(ratios) == "table" and tonumber(ratios.x_div))
-	local z_add = tonumber(map.SuperBigMapZScaleAdd) or 0
+	local z_mul = type(ratios) == "table"
+		and (tonumber(map.SuperBigMapZScaleMul) or tonumber(ratios.x_mul)) or 1
+	local z_div = type(ratios) == "table"
+		and (tonumber(map.SuperBigMapZScaleDiv) or tonumber(ratios.x_div)) or 1
+	local z_add = type(ratios) == "table" and (tonumber(map.SuperBigMapZScaleAdd) or 0) or 0
 	local buildable_z
 	local buildable_source
 	if type(source_buildable_z) == "number" and type(z_mul) == "number"
 		and type(z_div) == "number" and z_div > 0 then
 		buildable_z = math.floor(source_buildable_z * z_mul / z_div + z_add + 0.5)
-		buildable_source = "transformed_vanilla_source_buildable"
+		buildable_source = type(ratios) == "table"
+			and "transformed_vanilla_source_buildable" or "native_vanilla_source_buildable"
 	end
 	-- The consolidated revalidation inside StretchSourceToFull can complete its engine-side work
 	-- before the non-current underground map's Lua BuildableGrid exposes the new right/bottom area.
@@ -5877,7 +5879,7 @@ local function PrewarmSharedBuriedWonderTexture(map, planned)
 	return true, { required = true, cached = false, wait_ms = total_wait }
 end
 
-local function MaterializeDeferredUndergroundWonders(map)
+function WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource(map)
 	local markers = ArtefactMapGet(map, "BuriedWonderMarker")
 	local planned = {}
 	for _, marker in ipairs(markers) do
@@ -5895,10 +5897,76 @@ local function MaterializeDeferredUndergroundWonders(map)
 	local required = {
 		Global("PlaceBuildingIn"), Global("GetEnclosedShape"), Global("ShrinkShape"),
 		Global("GetEntityOutlineShape"), Global("HexShapeForEach"),
-		Global("FlattenTerrainInShape"), Global("buildUnbuildableZ"), Global("DoneObject"),
+		Global("FlattenTerrainInShape"), Global("buildUnbuildableZ"),
 	}
 	for _, fn in ipairs(required) do
-		if type(fn) ~= "function" then return false, "deferred wonder helper is unavailable" end
+		if type(fn) ~= "function" then return false, "source wonder helper is unavailable" end
+	end
+	local texture_ready, texture_error = PrewarmSharedBuriedWonderTexture(map, planned)
+	if texture_ready ~= true then
+		return false, "buried wonder shared texture prewarm failed: " .. tostring(texture_error)
+	end
+	local materialized = {}
+	map:SuspendPassEdits("SuperBigMap_SourceUndergroundWonders")
+	local ok, err = pcall(function()
+		for _, marker in ipairs(planned) do
+			local wonder_class = marker.SuperBigMapDeferredWonderClass
+			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
+			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, marker, nil)
+			if flatten_ok ~= true then
+				error("failed to prepare native terrain for " .. tostring(wonder_class)
+					.. ": " .. tostring(flatten_stats))
+			end
+			local source_grids_applied = wonder.grids_applied == true
+			if source_grids_applied then
+				if type(wonder.RemoveFromGrids) ~= "function" then
+					error("RemoveFromGrids unavailable for native " .. tostring(wonder_class))
+				end
+				wonder:RemoveFromGrids()
+				if wonder.grids_applied == true then
+					error("native wonder footprint remained registered")
+				end
+			end
+			wonder.SuperBigMapWonderSourceFlattenZ = flatten_stats and flatten_stats.buildable_z
+			SuperBigMap.BuriedWonderDarkness.SyncVisibility(wonder, map,
+				"materialized on native source before underground stretch")
+			materialized[#materialized + 1] = {
+				marker = marker,
+				wonder = wonder,
+				class = wonder_class,
+				source_grids_applied = source_grids_applied,
+				source_flatten_z = flatten_stats and flatten_stats.buildable_z,
+			}
+			LoadingStep("underground buried wonder cleared on native source", {
+				class = wonder_class,
+				flatten_shape_hexes = flatten_stats and flatten_stats.shape_hexes,
+				flatten_z = flatten_stats and flatten_stats.buildable_z,
+				flatten_source = flatten_stats and flatten_stats.buildable_source,
+				clearance_mode = flatten_stats and flatten_stats.clearance_mode,
+				grids_detached = source_grids_applied,
+			}, map)
+		end
+	end)
+	local resume_ok, resume_err = pcall(map.ResumePassEdits, map,
+		"SuperBigMap_SourceUndergroundWonders")
+	if not ok then return false, tostring(err) end
+	if not resume_ok then return false, "ResumePassEdits failed: " .. tostring(resume_err) end
+	map.SuperBigMapSourceMaterializedDeferredWonders = materialized
+	map.SuperBigMapDeferredUndergroundWondersSourceCleared = true
+	LoadingStep("underground buried wonders cleared on native source", {
+		materialized = #materialized,
+	}, map)
+	return #materialized == #planned, #materialized
+end
+
+local function MaterializeDeferredUndergroundWonders(map)
+	local materialized = map.SuperBigMapSourceMaterializedDeferredWonders
+	if type(materialized) ~= "table" then
+		return false, "native-domain deferred wonder materialization record is unavailable"
+	end
+	if #materialized == 0 then return true, 0 end
+	if type(Global("DoneObject")) ~= "function" then
+		return false, "DoneObject unavailable for deferred wonder markers"
 	end
 	local ratios, ratio_error = DeferredWonderScaleRatios(map)
 	if not ratios then return false, ratio_error end
@@ -5908,21 +5976,16 @@ local function MaterializeDeferredUndergroundWonders(map)
 		or z_mul * ratios.x_div ~= z_div * ratios.x_mul then
 		return false, "underground wonder X/Y/Z stretch ratios are not uniform"
 	end
-	local texture_ready, texture_error = PrewarmSharedBuriedWonderTexture(map, planned)
-	if texture_ready ~= true then
-		return false, "buried wonder shared texture prewarm failed: " .. tostring(texture_error)
-	end
-	local spawned = 0
-	local stretched = 0
-	local bottomless_pits = 0
-	local bottomless_pits_stretched = 0
+	local spawned, stretched, bottomless_pits, bottomless_pits_stretched = 0, 0, 0, 0
 	local expanded_shape_hexes = 0
 	local vertical_audits = {}
 	map:SuspendPassEdits("SuperBigMap_DeferredUndergroundWonders")
 	local ok, err = pcall(function()
-		for _, marker in ipairs(planned) do
-			local wonder_class = marker.SuperBigMapDeferredWonderClass
-			local wonder = ArtefactSpawnMarkerBuilding(marker, wonder_class, map)
+		for _, record in ipairs(materialized) do
+			local marker, wonder = record.marker, record.wonder
+			local wonder_class = record.class
+			if not marker or not wonder then error("native wonder record lost its live objects") end
+			ArtefactApplyMarkerProperties(wonder, marker)
 			local stretch_ok, stretch_stats = ApplyDeferredWonderStretch(
 				wonder, marker, map, ratios)
 			if stretch_ok ~= true then
@@ -5930,15 +5993,26 @@ local function MaterializeDeferredUndergroundWonders(map)
 					.. tostring(stretch_stats))
 			end
 			WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, nil,
-				"after_scale_before_flatten")
-			local flatten_ok, flatten_stats = FlattenDeferredWonder(wonder, marker, ratios)
+				"after_scale_before_native_floor_seat")
+			local flatten_ok, flatten_stats =
+				WonderVerticalDiagnostics.SeatDeferredWonderWithoutClearance(
+				wonder, marker, map, record.source_flatten_z)
 			if flatten_ok ~= true then
-				error("failed to prepare stretched terrain for " .. tostring(wonder_class)
+				error("failed to seat stretched " .. tostring(wonder_class)
 					.. ": " .. tostring(flatten_stats))
 			end
-			wonder.SuperBigMapWonderFlattenZ = flatten_stats and flatten_stats.buildable_z
+			if record.source_grids_applied == true then
+				if type(wonder.ApplyToGrids) ~= "function" then
+					error("ApplyToGrids unavailable for stretched " .. tostring(wonder_class))
+				end
+				wonder:ApplyToGrids()
+				if wonder.grids_applied ~= true then
+					error("stretched wonder footprint was not registered")
+				end
+			end
+			wonder.SuperBigMapWonderFlattenZ = flatten_stats.buildable_z
 			WonderVerticalDiagnostics.Log(wonder, marker, map, ratios, flatten_stats,
-				"after_flatten_before_resume")
+				"after_native_clearance_floor_seat")
 			vertical_audits[#vertical_audits + 1] = wonder
 			SuperBigMap.BuriedWonderDarkness.SyncVisibility(wonder, map,
 				"materialized before underground access")
@@ -5955,40 +6029,14 @@ local function MaterializeDeferredUndergroundWonders(map)
 				class = wonder_class,
 				source_x = stretch_stats and stretch_stats.source_x,
 				source_y = stretch_stats and stretch_stats.source_y,
-				raw_x = stretch_stats and stretch_stats.raw_x,
-				raw_y = stretch_stats and stretch_stats.raw_y,
 				final_x = stretch_stats and stretch_stats.final_x,
 				final_y = stretch_stats and stretch_stats.final_y,
-				hex_snap_dx = stretch_stats and stretch_stats.hex_snap_dx,
-				hex_snap_dy = stretch_stats and stretch_stats.hex_snap_dy,
-				marker_angle = stretch_stats and stretch_stats.marker_angle,
-				wonder_angle = stretch_stats and stretch_stats.wonder_angle,
-				marker_mirrored = stretch_stats and stretch_stats.marker_mirrored,
-				wonder_mirrored = stretch_stats and stretch_stats.wonder_mirrored,
-				xy_transform_mode = stretch_stats and stretch_stats.xy_transform_mode,
-				source_shape_hexes = stretch_stats and stretch_stats.source_shape_hexes,
 				expanded_shape_hexes = stretch_stats and stretch_stats.shape_hexes,
-				shape_area_ratio = stretch_stats and stretch_stats.shape_area_ratio,
-				expected_area_ratio = stretch_stats and stretch_stats.expected_area_ratio,
-				uniform_scale = stretch_stats and stretch_stats.uniform_scale,
-				source_scale = stretch_stats and stretch_stats.source_scale,
-				live_marker_scale = stretch_stats and stretch_stats.live_marker_scale,
 				expanded_scale = stretch_stats and stretch_stats.expected_scale,
-				flatten_shape_hexes = flatten_stats and flatten_stats.shape_hexes,
 				flatten_z = flatten_stats and flatten_stats.buildable_z,
 				flatten_source = flatten_stats and flatten_stats.buildable_source,
 				clearance_mode = flatten_stats and flatten_stats.clearance_mode,
 				source_flatten_z = flatten_stats and flatten_stats.source_buildable_z,
-				stale_buildable_z_observed = flatten_stats
-					and flatten_stats.observed_buildable_z,
-				z_scale_mul = flatten_stats and flatten_stats.z_mul,
-				z_scale_div = flatten_stats and flatten_stats.z_div,
-				z_scale_add = flatten_stats and flatten_stats.z_add,
-				source_flatten_q = flatten_stats and flatten_stats.source_flatten_q,
-				source_flatten_r = flatten_stats and flatten_stats.source_flatten_r,
-				source_flatten_index = flatten_stats and flatten_stats.source_flatten_index,
-				source_flatten_shape_hexes = flatten_stats
-					and flatten_stats.source_flatten_shape_hexes,
 			}, map)
 		end
 	end)
@@ -5997,10 +6045,10 @@ local function MaterializeDeferredUndergroundWonders(map)
 	if not ok then return false, tostring(err) end
 	if not resume_ok then return false, "ResumePassEdits failed: " .. tostring(resume_err) end
 	for _, wonder in ipairs(vertical_audits) do
-		WonderVerticalDiagnostics.Log(wonder, nil, map, ratios, nil,
-			"after_wonder_resume")
+		WonderVerticalDiagnostics.Log(wonder, nil, map, ratios, nil, "after_wonder_resume")
 	end
 	WonderVerticalDiagnostics.LogCoverage(map, "after_wonder_resume")
+	map.SuperBigMapSourceMaterializedDeferredWonders = nil
 	map.SuperBigMapDeferredUndergroundWondersPending = false
 	map.SuperBigMapDeferredUndergroundWondersDone = true
 	map.SuperBigMapDeferredUndergroundWondersSpawned = spawned
@@ -6015,13 +6063,13 @@ local function MaterializeDeferredUndergroundWonders(map)
 		scale_x = ratios.scale_x,
 		scale_y = ratios.scale_y,
 	}, map)
-	return spawned == #planned, spawned
+	return spawned == #materialized, spawned
 end
 
 -- Buried wonders normally exist when OnMsg.CityInitialized walks SpawnsOnCityInit and invokes
 -- UndergroundWonder:Spawn. Expanded underground generation deliberately postpones construction of
 -- the wonder objects until first access, so that one-shot message has already passed by the time
--- MaterializeDeferredUndergroundWonders creates them. Activate the same vanilla Spawn method only
+-- MaterializeDeferredUndergroundWonders finishes them. Activate the same vanilla Spawn method only
 -- after the authoritative final grids exist; FindUnobstructedDepositPos then sees matching object,
 -- passability, and buildable grids. The linked-marker scan makes this safe to retry after a hot
 -- reload without ever creating a second rare anomaly for the same wonder.
@@ -7148,6 +7196,37 @@ local function PatchAdditionalMapSeedReservation()
 	State.additional_map_seed_patch_version = GENERATOR_PATCH_VERSION
 	State.additional_map_seed_patch_targets = installed_targets
 	return true
+end
+
+function WonderVerticalDiagnostics.SeatDeferredWonderWithoutClearance(
+	wonder, marker, map, source_flatten_z)
+	local z_mul = tonumber(map.SuperBigMapZScaleMul)
+	local z_div = tonumber(map.SuperBigMapZScaleDiv)
+	local z_add = tonumber(map.SuperBigMapZScaleAdd) or 0
+	local source_z = tonumber(source_flatten_z)
+		or tonumber(marker and marker.SuperBigMapNativeWonderFlattenZ)
+	if type(source_z) ~= "number" or type(z_mul) ~= "number"
+		or type(z_div) ~= "number" or z_div <= 0 then
+		return false, "native wonder floor transform is unavailable"
+	end
+	local buildable_z = math.floor(source_z * z_mul / z_div + z_add + 0.5)
+	local position = type(wonder.GetPos) == "function" and wonder:GetPos() or nil
+	local position_x, position_y = PointXY(position)
+	local point_fn = Global("point")
+	if type(position_x) ~= "number" or type(position_y) ~= "number"
+		or type(point_fn) ~= "function" or type(wonder.SetPos) ~= "function" then
+		return false, "cannot seat the stretched wonder at its transformed native floor"
+	end
+	wonder:SetPos(point_fn(position_x, position_y, buildable_z))
+	return true, {
+		buildable_z = buildable_z,
+		buildable_source = "transformed_native_clearance_floor",
+		clearance_mode = "native_clearance_before_stretch_no_replay",
+		source_buildable_z = source_z,
+		z_mul = z_mul,
+		z_div = z_div,
+		z_add = z_add,
+	}
 end
 
 -- The temporary vanilla surface is unloaded before GenerateRandomMapsFinishing, so its anomaly
@@ -9331,6 +9410,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				error("deferred Elevator migration helpers are unavailable")
 			end
 			elevator_migrations = BeginDeferredElevatorMigration(map)
+			-- Vanilla constructs, flattens, and clears buried-wonder footprints on the native map.
+			-- Deferred construction must preserve that transaction domain: create and clear now, while
+			-- actual access has begun but before any relief annotation or 6144->8192 transform. The live
+			-- wonder objects remain detached from grids until their markers reach final coordinates.
+			do
+				SetLoadingPhase("Preparing native underground wonder footprints")
+				local source_wonder_ok, source_wonder_result =
+					WonderVerticalDiagnostics.MaterializeDeferredUndergroundWondersOnSource(map)
+				if source_wonder_ok ~= true then
+					error("native-domain deferred wonder materialization failed: "
+						.. tostring(source_wonder_result))
+				end
+			end
 			-- Renderer bounds must cover the full 8192 grid (same fix as the surface).
 			SafeCall( SyncMapDataToGrids, map)
 			-- Relief annotations BEFORE the underground terrain stretch (same as the surface).
@@ -9423,10 +9515,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					error("underground combined ResumePassEdits failed: " .. tostring(resume_err))
 				end
 			end
-			-- The vanilla wonder-class shuffle was consumed and recorded during generation, but
-			-- construction was intentionally postponed. The markers have now received the same
-			-- proportional transform as the terrain, so materialize each assigned wonder at its final
-			-- location before the authoritative passability/buildability rebuilds below.
+			-- Construction and vanilla obstruction clearing ran on the native source above. The markers
+			-- have now received the same proportional transform as the terrain, so align, stretch, and
+			-- seat each retained wonder without replaying clearance on the expanded object population.
 			do
 				SetLoadingPhase("Creating underground wonders")
 				local wonder_ok, wonder_result = MaterializeDeferredUndergroundWonders(map)
