@@ -930,6 +930,7 @@ end
 function SuperBigMap.CaptureRockParityObjectSet(map, phase)
 	local classes = { "Rocks_04", "RemovableRocks_01", "RemovableRocks_02" }
 	local tuples = {}
+	local rocks = {}
 	for _, class_name in ipairs(classes) do
 		local objects = map:MapGet("map", class_name) or {}
 		for _, object in ipairs(objects) do
@@ -937,14 +938,30 @@ function SuperBigMap.CaptureRockParityObjectSet(map, phase)
 			local x, y = PointXY(pos)
 			local z
 			pcall(function() z = pos:z() end)
-			tuples[#tuples + 1] = table.concat({
-				class_name, tostring(x), tostring(y), tostring(z),
-				tostring(object:GetScale()), tostring(object:GetAngle()),
+			local rock = {
+				class = tostring(class_name),
+				x = tostring(x), y = tostring(y), z = tostring(z),
+				scale = tostring(object:GetScale()), angle = tostring(object:GetAngle()),
+			}
+			rock.key = table.concat({
+				rock.class, rock.x, rock.y, rock.z, rock.scale, rock.angle,
 			}, "|")
+			rocks[#rocks + 1] = rock
 		end
 	end
-	table.sort(tuples)
-	return { phase = tostring(phase), count = #tuples, tuples = tuples }
+	table.sort(rocks, function(a, b) return a.key < b.key end)
+	local multiplicities = {}
+	for _, rock in ipairs(rocks) do
+		multiplicities[rock.key] = (multiplicities[rock.key] or 0) + 1
+	end
+	local ordinals = {}
+	for _, rock in ipairs(rocks) do
+		ordinals[rock.key] = (ordinals[rock.key] or 0) + 1
+		rock.tuple_multiplicity = multiplicities[rock.key]
+		rock.tuple_ordinal = ordinals[rock.key]
+		tuples[#tuples + 1] = rock.key
+	end
+	return { phase = tostring(phase), count = #rocks, tuples = tuples, rocks = rocks }
 end
 
 function SuperBigMap.CaptureRockParityBoundary(map, phase)
@@ -966,6 +983,121 @@ function SuperBigMap.CaptureRockParityBoundary(map, phase)
 	boundary.class_count = #class_names
 	boundary.class_census = census
 	return boundary
+end
+
+function SuperBigMap.RockParityTraceMode(map)
+	if type(map) ~= "table" then return "vanilla" end
+	if map.SuperBigMapVanillaSourceMigration == true then return "expanded_source" end
+	if map.SuperBigMapExpansionPending == true
+		or map.SuperBigMapDesiredWidthTiles ~= nil
+		or map.SuperBigMapOneToOneGenerationVersion ~= nil then
+		return "expanded"
+	end
+	return "vanilla"
+end
+
+function SuperBigMap.RockParityTraceScalar(value, unavailable)
+	if value == nil or value == false then return unavailable or "unavailable" end
+	local text = tostring(value):gsub("[\r\n]+", " ")
+	return text
+end
+
+function SuperBigMap.EmitRockParityTrace(event, data)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.RockParity) == "function" then
+		local ok, emitted = pcall(diagnostics.RockParity, event, data)
+		return ok and emitted == true
+	end
+	return false
+end
+
+function SuperBigMap.RockParityTraceContext(trace, map, generator, procedure, ordinal)
+	local mapdata = type(map) == "table" and map.mapdata or nil
+	return {
+		trace_schema = tostring(trace and trace.schema_version or 4),
+		trace_invocation = tostring(trace and trace.invocation or 0),
+		mode = tostring(trace and trace.mode or SuperBigMap.RockParityTraceMode(map)),
+		environment = tostring(type(mapdata) == "table" and mapdata.Environment or "?"),
+		procedure = tostring(procedure or "?"),
+		procedure_ordinal = tostring(ordinal or 0),
+		holder_seed = SuperBigMap.RockParityTraceScalar(
+			type(generator) == "table" and generator.Seed or nil),
+		holder_hash = SuperBigMap.RockParityTraceScalar(
+			type(generator) == "table" and generator.GenerationHash or nil, "pending"),
+	}
+end
+
+function SuperBigMap.RockParityTraceRecord(context, extra)
+	local record = {}
+	for key, value in pairs(type(context) == "table" and context or {}) do record[key] = value end
+	for key, value in pairs(type(extra) == "table" and extra or {}) do record[key] = value end
+	return record
+end
+
+function SuperBigMap.EmitRockParityRock(event, context, rock)
+	if type(rock) ~= "table" then return false end
+	return SuperBigMap.EmitRockParityTrace(event,
+		SuperBigMap.RockParityTraceRecord(context, {
+			class = rock.class, x = rock.x, y = rock.y, z = rock.z,
+			scale = rock.scale, angle = rock.angle,
+			tuple_multiplicity = tostring(rock.tuple_multiplicity or 0),
+			tuple_ordinal = tostring(rock.tuple_ordinal or 0),
+		}))
+end
+
+function SuperBigMap.EmitRockParityDelta(context, before, after)
+	local before_by_key, after_by_key, keys = {}, {}, {}
+	for _, rock in ipairs(type(before) == "table" and before.rocks or {}) do
+		local item = before_by_key[rock.key]
+		if not item then
+			item = { rock = rock, count = 0 }
+			before_by_key[rock.key] = item
+			keys[rock.key] = true
+		end
+		item.count = item.count + 1
+	end
+	for _, rock in ipairs(type(after) == "table" and after.rocks or {}) do
+		local item = after_by_key[rock.key]
+		if not item then
+			item = { rock = rock, count = 0 }
+			after_by_key[rock.key] = item
+			keys[rock.key] = true
+		end
+		item.count = item.count + 1
+	end
+	local ordered_keys = {}
+	for key in pairs(keys) do ordered_keys[#ordered_keys + 1] = key end
+	table.sort(ordered_keys)
+	local added, removed = 0, 0
+	for _, key in ipairs(ordered_keys) do
+		local before_item, after_item = before_by_key[key], after_by_key[key]
+		local before_count = before_item and before_item.count or 0
+		local after_count = after_item and after_item.count or 0
+		if after_count > before_count then
+			for ordinal = before_count + 1, after_count do
+				local rock = after_item.rock
+				rock = {
+					class = rock.class, x = rock.x, y = rock.y, z = rock.z,
+					scale = rock.scale, angle = rock.angle,
+					tuple_multiplicity = after_count, tuple_ordinal = ordinal,
+				}
+				SuperBigMap.EmitRockParityRock("ROCK_ADDED", context, rock)
+				added = added + 1
+			end
+		elseif before_count > after_count then
+			for ordinal = after_count + 1, before_count do
+				local rock = before_item.rock
+				rock = {
+					class = rock.class, x = rock.x, y = rock.y, z = rock.z,
+					scale = rock.scale, angle = rock.angle,
+					tuple_multiplicity = before_count, tuple_ordinal = ordinal,
+				}
+				SuperBigMap.EmitRockParityRock("ROCK_REMOVED", context, rock)
+				removed = removed + 1
+			end
+		end
+	end
+	return added, removed
 end
 
 function SuperBigMap.BeginRockParityTrace(map, env)
@@ -1043,27 +1175,24 @@ function SuperBigMap.WrapRockParityProcInvoke(saved_proc, map, trace)
 	end
 end
 
--- Proc_PlaceDecors is a local closure invoked inside stock DoGenerate before
--- OnGenerateLogic receives its environment table. Stock ProcInvoke synchronously brackets the
--- closure with self:ProcStart("PlaceDecors") and self:ProcEnd("PlaceDecors"). This default-off seam
--- temporarily wraps those public method boundaries for only the active generator instance. It
--- neither invokes nor replaces a random helper and restores both class methods after every call.
+-- Stock ProcInvoke synchronously brackets every generator procedure with ProcStart/ProcEnd. This
+-- default-off seam temporarily wraps those public boundaries for only the active generator
+-- instance. It captures sorted rock records and prints deterministic one-line deltas without
+-- invoking/replacing random helpers or mutating generated objects, then restores both methods.
 function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	if not SuperBigMap.RockParityTraceEnabled(map) then
 		return original(self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 3,
-		boundary_scope = "DoGenerate ProcStart/ProcEnd PlaceDecors",
+		schema_version = 4,
+		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
-		active = false,
 		in_progress = true,
-		helper_calls = {},
-		helper_call_count = 0,
-		helper_call_cap = 12000,
 		boundaries = {},
-		target_call_count = 0,
+		procedures = {},
+		procedure_count = 0,
+		mode = SuperBigMap.RockParityTraceMode(map),
 	}
 	local history = map.SuperBigMapRockParityTraces
 	if type(history) ~= "table" then
@@ -1073,6 +1202,12 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	trace.invocation = #history + 1
 	history[#history + 1] = trace
 	map.SuperBigMapRockParityTrace = trace
+	SuperBigMap.EmitRockParityTrace("TRACE_BEGIN",
+		SuperBigMap.RockParityTraceRecord(
+			SuperBigMap.RockParityTraceContext(trace, map, self, "DoGenerate", 0), {
+				boundary_scope = trace.boundary_scope,
+				attachment_method = trace.attachment_method,
+			}))
 
 	local generator_class = Global("RandomMapGenerator")
 	local saved_proc_start = type(generator_class) == "table" and generator_class.ProcStart or nil
@@ -1083,15 +1218,20 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 		return original(self, map, ...)
 	end
 
-	local boundary_before_captured = false
-	local function capture_boundary(phase)
+	local function capture_boundary(phase, procedure, ordinal)
 		local result = PackValues(pcall(SuperBigMap.CaptureRockParityBoundary, map, phase))
 		if result[1] then
-			trace.boundaries[#trace.boundaries + 1] = result[2]
-			return true
+			local boundary = result[2]
+			boundary.procedure = tostring(procedure)
+			boundary.procedure_ordinal = ordinal
+			trace.boundaries[#trace.boundaries + 1] = boundary
+			return boundary
 		end
-		trace.capture_error = tostring(result[2])
-		return false
+		trace.capture_errors = trace.capture_errors or {}
+		trace.capture_errors[#trace.capture_errors + 1] = table.concat({
+			tostring(procedure), tostring(ordinal), tostring(phase), tostring(result[2]),
+		}, "|")
+		return nil
 	end
 	local function read_last_rng_state(generator)
 		local state = type(generator) == "table" and generator.rand_state or nil
@@ -1105,21 +1245,71 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	proc_start_wrapper = function(generator, tag, ...)
 		local results = PackValues(pcall(saved_proc_start, generator, tag, ...))
 		if not results[1] then error(results[2]) end
-		if generator == self and tag == "PlaceDecors" then
-			trace.target_discovered = true
-			trace.target_call_count = trace.target_call_count + 1
-			trace.rng_state_before = read_last_rng_state(generator)
-			boundary_before_captured = capture_boundary("before")
-			trace.active = true
+		if generator == self then
+			trace.procedure_count = trace.procedure_count + 1
+			local ordinal = trace.procedure_count
+			local procedure = tostring(tag)
+			local item = {
+				procedure = procedure,
+				ordinal = ordinal,
+				rng_before = read_last_rng_state(generator),
+			}
+			item.before = capture_boundary("before", procedure, ordinal)
+			trace.procedures[#trace.procedures + 1] = item
+			local context = SuperBigMap.RockParityTraceContext(
+				trace, map, generator, procedure, ordinal)
+			SuperBigMap.EmitRockParityTrace("PROC_BOUNDARY",
+				SuperBigMap.RockParityTraceRecord(context, {
+					boundary = "start",
+					pre_rock_count = tostring(item.before and item.before.count or "capture_error"),
+					post_rock_count = "pending",
+					pre_rng_last = SuperBigMap.RockParityTraceScalar(item.rng_before),
+					post_rng_last = "pending",
+				}))
 		end
 		return Unpack(results, 2, results.n)
 	end
 	local proc_end_wrapper
 	proc_end_wrapper = function(generator, tag, ...)
-		if generator == self and tag == "PlaceDecors" and trace.active then
-			trace.rng_state_after = read_last_rng_state(generator)
-			capture_boundary("after")
-			trace.active = false
+		if generator == self then
+			local item
+			for index = #trace.procedures, 1, -1 do
+				local candidate = trace.procedures[index]
+				if candidate and candidate.completed ~= true
+					and candidate.procedure == tostring(tag) then
+					item = candidate
+					break
+				end
+			end
+			if item then
+				item.rng_after = read_last_rng_state(generator)
+				item.after = capture_boundary("after", item.procedure, item.ordinal)
+				item.completed = true
+				local context = SuperBigMap.RockParityTraceContext(
+					trace, map, generator, item.procedure, item.ordinal)
+				local delta_result = PackValues(pcall(
+					SuperBigMap.EmitRockParityDelta, context, item.before, item.after))
+				local added, removed = 0, 0
+				if delta_result[1] then
+					added, removed = delta_result[2] or 0, delta_result[3] or 0
+				else
+					trace.log_errors = trace.log_errors or {}
+					trace.log_errors[#trace.log_errors + 1] = table.concat({
+						item.procedure, tostring(item.ordinal), "delta", tostring(delta_result[2]),
+					}, "|")
+				end
+				item.rocks_added = added
+				item.rocks_removed = removed
+				SuperBigMap.EmitRockParityTrace("PROC_BOUNDARY",
+					SuperBigMap.RockParityTraceRecord(context, {
+						boundary = "end",
+						pre_rock_count = tostring(item.before and item.before.count or "capture_error"),
+						post_rock_count = tostring(item.after and item.after.count or "capture_error"),
+						pre_rng_last = SuperBigMap.RockParityTraceScalar(item.rng_before),
+						post_rng_last = SuperBigMap.RockParityTraceScalar(item.rng_after),
+						rocks_added = tostring(added), rocks_removed = tostring(removed),
+					}))
+			end
 		end
 		local results = PackValues(pcall(saved_proc_end, generator, tag, ...))
 		if not results[1] then error(results[2]) end
@@ -1143,11 +1333,40 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	trace.in_progress = false
 	trace.boundary_methods_restored = restored == true
 	if not restored then trace.restore_error = tostring(restore_error) end
-	if boundary_before_captured and #trace.boundaries == 1 then
-		capture_boundary("after_unwind")
+	local final_result = PackValues(pcall(SuperBigMap.CaptureRockParityObjectSet,
+		map, "final_manifest"))
+	if final_result[1] and type(final_result[2]) == "table" then
+		trace.final_manifest = final_result[2]
+		local manifest_context = SuperBigMap.RockParityTraceContext(
+			trace, map, self, "DoGenerateFinal", trace.procedure_count + 1)
+		local emit_result = PackValues(pcall(function()
+			SuperBigMap.EmitRockParityTrace("ROCK_MANIFEST_BEGIN",
+				SuperBigMap.RockParityTraceRecord(manifest_context, {
+					focused_rock_count = tostring(trace.final_manifest.count),
+				}))
+			for _, rock in ipairs(trace.final_manifest.rocks or {}) do
+				SuperBigMap.EmitRockParityRock("ROCK_MANIFEST", manifest_context, rock)
+			end
+			SuperBigMap.EmitRockParityTrace("ROCK_MANIFEST_END",
+				SuperBigMap.RockParityTraceRecord(manifest_context, {
+					focused_rock_count = tostring(trace.final_manifest.count),
+				}))
+		end))
+		if not emit_result[1] then trace.log_error = tostring(emit_result[2]) end
+	else
+		trace.final_manifest_error = tostring(final_result[2])
 	end
-	trace.captured_helper_calls = #trace.helper_calls
-	trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
+	local trace_context = SuperBigMap.RockParityTraceContext(
+		trace, map, self, "DoGenerate", trace.procedure_count)
+	pcall(SuperBigMap.EmitRockParityTrace, "TRACE_END",
+		SuperBigMap.RockParityTraceRecord(trace_context, {
+			procedure_count = tostring(trace.procedure_count),
+			boundary_count = tostring(#trace.boundaries),
+			boundary_methods_restored = tostring(trace.boundary_methods_restored == true),
+			capture_error_count = tostring(#(trace.capture_errors or {})),
+			log_error_count = tostring(#(trace.log_errors or {}) + (trace.log_error and 1 or 0)),
+			final_rock_count = tostring(trace.final_manifest and trace.final_manifest.count or "capture_error"),
+		}))
 	if not restored and results[1] then
 		results = { n = 2, false,
 			"DoGenerate parity trace boundary restoration failed: " .. tostring(restore_error) }
@@ -1167,7 +1386,7 @@ local function CallOnGenerateLogicTimed(original, self, env, map, ...)
 		and type(map.SuperBigMapRockParityTrace) == "table"
 		and map.SuperBigMapRockParityTrace.in_progress == true
 		and map.SuperBigMapRockParityTrace.boundary_scope
-			== "DoGenerate ProcStart/ProcEnd PlaceDecors"
+			== "DoGenerate ProcStart/ProcEnd all procedures"
 	local rock_trace, original_helpers
 	if not retained_do_generate_trace then
 		rock_trace, original_helpers = SuperBigMap.BeginRockParityTrace(map, env)

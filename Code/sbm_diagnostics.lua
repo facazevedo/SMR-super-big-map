@@ -139,6 +139,10 @@ function Diagnostics.UndergroundSeedReservationEnabled()
 	return Config().TRACE_UNDERGROUND_SEED_RESERVATION == true
 end
 
+function Diagnostics.RockParityEnabled()
+	return Config().TRACE_UNDERGROUND_ROCK_PARITY == true
+end
+
 function Diagnostics.Audit(event, data, map)
 	if not Diagnostics.EnrichmentEnabled() then return false end
 	return Print("EnrichmentAudit", event, CopyData(data, map))
@@ -195,6 +199,13 @@ end
 function Diagnostics.UndergroundSeedReservation(event, data, map)
 	if not Diagnostics.UndergroundSeedReservationEnabled() then return false end
 	return Print("UndergroundSeedReservation", event, CopyData(data, map))
+end
+
+-- Dedicated deterministic rock-parity trace. Keep this independent from broad debug logging so
+-- one process-only flag produces the same stable record schema in vanilla and expanded runs.
+function Diagnostics.RockParity(event, data)
+	if not Diagnostics.RockParityEnabled() then return false end
+	return Print("RockParity", event, data)
 end
 
 local function EnsureLoading(reason, map)

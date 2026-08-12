@@ -30,7 +30,7 @@ config.DebugUndergroundDecorationPositions = false
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
 -- Focused one-run parity trace. This is deliberately default-off; the Ralph harness may enable the
--- runtime constant before a fresh generation to compare the stock and expanded PlaceDecors calls.
+-- runtime constant before fresh twins to compare every stock generator procedure and rock delta.
 config.TraceUndergroundRockParity = false
 
 -- ============================================================================
