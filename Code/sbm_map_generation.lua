@@ -9674,7 +9674,47 @@ local function PatchRandomMapGenerator()
 			local expanded_backing_token = LoadingBegin(
 				"source-view RandomMapGenerator.DoGenerate on expanded backing", map)
 			ProbeNativeClutterAccess(map, "expanded backing before underground DoGenerate")
-			local results = { pcall(CallWithClutterCapture, map, call_original_do_generate, self, map, ...) }
+			-- Stock prefab rasterization launches PrefabRasterParallelDiv squared real-time tasks.
+			-- Those tasks share the placement-mark grid used by Proc_RemoveOverlappedObjects. On a
+			-- physically expanded backing, task completion order can choose a different owner for an
+			-- overlap even though the logical source view, prefab list, positions, and RNG are all
+			-- vanilla-identical. Run this one source-capture transaction through stock's documented
+			-- single-task path, then restore the exact constant before any expanded-map work. This is
+			-- scenario-agnostic and changes neither raster order nor predicates; it only removes the
+			-- shared-grid write race while the native source is being generated.
+			local raster_const = closure_global("const", Global("const"))
+			local saved_raster_parallel_div = type(raster_const) == "table"
+				and raster_const.PrefabRasterParallelDiv or nil
+			if type(saved_raster_parallel_div) ~= "number" or saved_raster_parallel_div < 1 then
+				error("prefab raster parallelism constant is unavailable")
+			end
+			local serial_install_ok, serial_install_error = pcall(function()
+				raster_const.PrefabRasterParallelDiv = 1
+				if raster_const.PrefabRasterParallelDiv ~= 1 then
+					error("prefab raster single-task write did not persist")
+				end
+			end)
+			if not serial_install_ok then
+				error("prefab raster single-task transaction unavailable: "
+					.. tostring(serial_install_error))
+			end
+			local results = { pcall(CallWithClutterCapture, map,
+				call_original_do_generate, self, map, ...) }
+			local serial_restore_ok, serial_restore_error = pcall(function()
+				raster_const.PrefabRasterParallelDiv = saved_raster_parallel_div
+				if raster_const.PrefabRasterParallelDiv ~= saved_raster_parallel_div then
+					error("prefab raster parallelism restoration did not persist")
+				end
+			end)
+			if not serial_restore_ok then
+				error("prefab raster parallelism restoration failed: "
+					.. tostring(serial_restore_error))
+			end
+			LoadingStep("source prefab raster transaction serialized", {
+				previous_parallel_div = saved_raster_parallel_div,
+				restored_parallel_div = raster_const.PrefabRasterParallelDiv,
+				generation_ok = results[1] == true,
+			}, map)
 			local seed_trace = State.underground_seed_reservation_trace
 			if type(seed_trace) == "table" and seed_trace.generator == self
 				and type(mapdata) == "table" and mapdata.Environment == "Underground" then
