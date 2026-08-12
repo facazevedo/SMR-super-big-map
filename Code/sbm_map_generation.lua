@@ -1246,15 +1246,17 @@ end
 -- default-off seam temporarily wraps those public boundaries for only the active generator
 -- instance. It captures sorted rock records and prints deterministic one-line deltas without
 -- invoking/replacing random helpers or mutating generated objects. At exact ordinal 13 it also
--- observes the stock overlap-removal MapForEach callback and the subsequent collection cascade,
--- then restores every temporary method on all outer success/error paths.
+-- observes the stock overlap-removal MapForEach callback and the subsequent collection cascade.
+-- It also proxies only the stock callback's already-issued GridGetMark/GetCollectionIndex calls
+-- and reconstructs its persistent prefab-marker inputs without adding RNG or object operations,
+-- then restores every temporary method/global on all outer success/error paths.
 function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	if not SuperBigMap.RockParityTraceEnabled(map) then
 		return original(self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-  schema_version = 5,
+		schema_version = 6,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
@@ -1288,10 +1290,14 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
  end
 
  local active_overlap_trace
- local function overlap_scalar(value, unavailable)
-  if value == nil then return unavailable or "unavailable" end
-  return tostring(value)
- end
+	local function overlap_scalar(value, unavailable)
+		if value == nil then return unavailable or "unavailable" end
+		return tostring(value)
+	end
+	local function overlap_predicate(value, available)
+		if available ~= true then return nil end
+		return value == true
+	end
  local function overlap_is_valid(object)
   local is_valid = Global("IsValid")
   if type(is_valid) ~= "function" then return nil end
@@ -1299,15 +1305,139 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
   if result[1] then return result[2] == true end
   return nil
  end
- local function overlap_collection_index(object)
+	local function overlap_collection_index(object)
   local get_collection_index = Global("GetCollectionIndex")
   if type(get_collection_index) ~= "function" then return nil end
   local result = PackValues(pcall(get_collection_index, object))
   if result[1] then return result[2] end
-  return nil
- end
- local function restore_overlap_map_for_each(overlap)
-  if type(overlap) ~= "table" or overlap.map_for_each_restored ~= nil then return end
+		return nil
+	end
+	local function overlap_capture_prefab_inputs(entry)
+		if type(entry) ~= "table" then return end
+		local object = entry.object
+		local object_prefab_markers = type(map.obj_prefab_marker) == "table"
+			and map.obj_prefab_marker or nil
+		local prefab_marker = object_prefab_markers and object_prefab_markers[object] or nil
+		entry.prefab_marker_present = prefab_marker ~= nil
+		entry.prefab_marker_zone = prefab_marker and prefab_marker.zone or nil
+		entry.own_mark_from_prefab_marker = prefab_marker and prefab_marker.place_mark or nil
+		local ancestors_result = PackValues(pcall(function()
+			return object and object.__ancestors
+		end))
+		local ancestors = ancestors_result[1] and ancestors_result[2] or nil
+		entry.has_prefab_obj_ancestor = type(ancestors) == "table"
+			and not not ancestors.PrefabObj or false
+		local zone_allows_removal = Global("ZoneAllowsRemoval")
+		if type(zone_allows_removal) == "function" and entry.prefab_marker_zone ~= nil then
+			local removal_result = PackValues(pcall(
+				zone_allows_removal, entry.prefab_marker_zone))
+			if removal_result[1] then
+				entry.zone_allows_removal = removal_result[2] == true
+			else
+				entry.prefab_input_error = tostring(removal_result[2])
+			end
+		end
+		if entry.zone_allows_removal ~= nil then
+			entry.removable_from_stock_inputs = entry.zone_allows_removal == true
+				and entry.has_prefab_obj_ancestor ~= true
+		end
+	end
+	local function restore_overlap_predicate_globals(overlap)
+		if type(overlap) ~= "table" or overlap.predicate_globals_restored ~= nil then return end
+		if overlap.predicate_globals_installed ~= true then
+			overlap.predicate_globals_restored = false
+			return
+		end
+		local restored, restore_error = pcall(function()
+			rawset(overlap.predicate_environment, "GridGetMark",
+				overlap.previous_raw_grid_get_mark)
+			rawset(overlap.predicate_environment, "GetCollectionIndex",
+				overlap.previous_raw_get_collection_index)
+		end)
+		if restored then
+			restored = rawget(overlap.predicate_environment, "GridGetMark")
+				== overlap.previous_raw_grid_get_mark
+				and rawget(overlap.predicate_environment, "GetCollectionIndex")
+					== overlap.previous_raw_get_collection_index
+		end
+		overlap.predicate_globals_restored = restored == true
+		if not restored then overlap.predicate_restore_error = tostring(restore_error) end
+	end
+	local function install_overlap_predicate_globals(overlap, callback)
+		if type(overlap) ~= "table" or overlap.predicate_globals_attempted == true then return end
+		overlap.predicate_globals_attempted = true
+		local environment = FunctionEnvironment(callback)
+		if type(environment) ~= "table" then
+			overlap.predicate_attach_error = "callback environment unavailable"
+			return
+		end
+		local read_ok, original_grid_get_mark, original_get_collection_index = pcall(function()
+			return environment.GridGetMark, environment.GetCollectionIndex
+		end)
+		if not read_ok or type(original_grid_get_mark) ~= "function"
+			or type(original_get_collection_index) ~= "function" then
+			overlap.predicate_attach_error = "callback predicate API unavailable"
+			return
+		end
+		overlap.predicate_environment = environment
+		overlap.previous_raw_grid_get_mark = rawget(environment, "GridGetMark")
+		overlap.previous_raw_get_collection_index = rawget(environment, "GetCollectionIndex")
+		local wrapped_grid_get_mark = function(...)
+			local args = PackValues(...)
+			local results = PackValues(pcall(original_grid_get_mark, Unpack(args, 1, args.n)))
+			local entry = overlap.active_predicate_entry
+			if entry then
+				entry.grid_get_mark_call_count = (entry.grid_get_mark_call_count or 0) + 1
+				entry.grid_get_mark_object_matches = args[2] == entry.object
+				if results[1] then
+					if entry.current_mark == nil then entry.current_mark = results[2] end
+				else
+					entry.grid_get_mark_error = tostring(results[2])
+				end
+			end
+			if not results[1] then error(results[2]) end
+			return Unpack(results, 2, results.n)
+		end
+		local wrapped_get_collection_index = function(...)
+			local args = PackValues(...)
+			local results = PackValues(pcall(original_get_collection_index,
+				Unpack(args, 1, args.n)))
+			local entry = overlap.active_predicate_entry
+			if entry then
+				entry.callback_collection_lookup_count =
+					(entry.callback_collection_lookup_count or 0) + 1
+				entry.callback_collection_object_matches = args[1] == entry.object
+				if results[1] then
+					if entry.callback_collection_index == nil then
+						entry.callback_collection_index = results[2]
+					end
+				else
+					entry.callback_collection_error = tostring(results[2])
+				end
+			end
+			if not results[1] then error(results[2]) end
+			return Unpack(results, 2, results.n)
+		end
+		local installed, install_error = pcall(function()
+			rawset(environment, "GridGetMark", wrapped_grid_get_mark)
+			rawset(environment, "GetCollectionIndex", wrapped_get_collection_index)
+		end)
+		if not installed then
+			overlap.predicate_attach_error = tostring(install_error)
+			pcall(function()
+				rawset(environment, "GridGetMark", overlap.previous_raw_grid_get_mark)
+				rawset(environment, "GetCollectionIndex",
+					overlap.previous_raw_get_collection_index)
+			end)
+			return
+		end
+		overlap.predicate_globals_installed = true
+		overlap.wrapped_grid_get_mark = wrapped_grid_get_mark
+		overlap.wrapped_get_collection_index = wrapped_get_collection_index
+	end
+	local function restore_overlap_map_for_each(overlap)
+		if type(overlap) ~= "table" or overlap.map_for_each_restored ~= nil then return end
+		restore_overlap_predicate_globals(overlap)
   local restored, restore_error = pcall(function()
    rawset(map, "MapForEach", overlap.previous_raw_map_for_each)
   end)
@@ -1373,8 +1503,45 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
      valid_at_proc_end = overlap_scalar(entry.valid_at_proc_end),
      removed_by_callback = tostring(entry.removed_by_callback == true),
      removed_by_collection_cascade = tostring(entry.removed_by_collection_cascade == true),
-     collection_index = overlap_scalar(entry.collection_index, "unavailable"),
-    }))
+				collection_index = overlap_scalar(entry.collection_index, "unavailable"),
+				prefab_marker_present = tostring(entry.prefab_marker_present == true),
+				prefab_marker_zone = overlap_scalar(entry.prefab_marker_zone),
+				own_mark_from_prefab_marker = overlap_scalar(
+					entry.own_mark_from_prefab_marker),
+				has_prefab_obj_ancestor = tostring(entry.has_prefab_obj_ancestor == true),
+				zone_allows_removal = overlap_scalar(entry.zone_allows_removal),
+				removable_from_stock_inputs = overlap_scalar(
+					entry.removable_from_stock_inputs),
+				current_mark = overlap_scalar(entry.current_mark),
+				current_mark_nonzero = overlap_scalar(overlap_predicate(
+					entry.current_mark ~= 0, entry.current_mark ~= nil)),
+				own_mark_present = tostring(entry.own_mark_from_prefab_marker ~= nil),
+				own_mark_differs = overlap_scalar(overlap_predicate(
+					entry.own_mark_from_prefab_marker ~= entry.current_mark,
+					entry.current_mark ~= nil
+						and entry.own_mark_from_prefab_marker ~= nil)),
+				reconstructed_callback_predicates_pass = overlap_scalar(
+					overlap_predicate(entry.current_mark ~= 0
+						and entry.prefab_marker_present == true
+						and entry.removable_from_stock_inputs == true
+						and entry.own_mark_from_prefab_marker ~= nil
+						and entry.own_mark_from_prefab_marker ~= entry.current_mark,
+						entry.current_mark ~= nil
+							and entry.removable_from_stock_inputs ~= nil)),
+				grid_get_mark_call_count = tostring(entry.grid_get_mark_call_count or 0),
+				grid_get_mark_object_matches = tostring(
+					entry.grid_get_mark_object_matches == true),
+				callback_collection_lookup_count = tostring(
+					entry.callback_collection_lookup_count or 0),
+				callback_collection_index = overlap_scalar(
+					entry.callback_collection_index, "not_called"),
+				callback_collection_object_matches = tostring(
+					entry.callback_collection_object_matches == true),
+				prefab_input_error = overlap_scalar(entry.prefab_input_error, "none"),
+				grid_get_mark_error = overlap_scalar(entry.grid_get_mark_error, "none"),
+				callback_collection_error = overlap_scalar(
+					entry.callback_collection_error, "none"),
+			}))
   end
   SuperBigMap.EmitRockParityTrace("OVERLAP_TRACE_END",
    SuperBigMap.RockParityTraceRecord(context, {
@@ -1383,8 +1550,18 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
     callback_removed_count = tostring(callback_removed_count),
     collection_cascade_removed_count = tostring(cascade_removed_count),
     map_for_each_call_count = tostring(overlap.map_for_each_call_count or 0),
-    map_for_each_restored = tostring(overlap.map_for_each_restored == true),
-    attach_error = overlap_scalar(overlap.attach_error, "none"),
+			map_for_each_restored = tostring(overlap.map_for_each_restored == true),
+			predicate_globals_attempted = tostring(
+				overlap.predicate_globals_attempted == true),
+			predicate_globals_installed = tostring(
+				overlap.predicate_globals_installed == true),
+			predicate_globals_restored = tostring(
+				overlap.predicate_globals_restored == true),
+			attach_error = overlap_scalar(overlap.attach_error, "none"),
+			predicate_attach_error = overlap_scalar(
+				overlap.predicate_attach_error, "none"),
+			predicate_restore_error = overlap_scalar(
+				overlap.predicate_restore_error, "none"),
     callback_error = overlap_scalar(overlap.callback_error, "none"),
     traversal_error = overlap_scalar(overlap.traversal_error, "none"),
     restore_error = overlap_scalar(overlap.restore_error, "none"),
@@ -1411,9 +1588,10 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
   end
   overlap.entries = capture_result[2]
   overlap.by_object = capture_result[3]
-  for _, entry in ipairs(overlap.entries or {}) do
-   entry.collection_index = overlap_collection_index(entry.object)
-  end
+		for _, entry in ipairs(overlap.entries or {}) do
+			entry.collection_index = overlap_collection_index(entry.object)
+			overlap_capture_prefab_inputs(entry)
+		end
   local saved_map_for_each = map.MapForEach
   if type(saved_map_for_each) ~= "function" then
    overlap.attach_error = "map MapForEach unavailable"
@@ -1432,11 +1610,12 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
      break
     end
    end
-   if overlap.map_for_each_call_count == 1 and callback_index then
-    local saved_callback = args[callback_index]
-    overlap.callback_wrapped = true
-    args[callback_index] = function(object, ...)
-     local entry = overlap.by_object and overlap.by_object[object]
+		if overlap.map_for_each_call_count == 1 and callback_index then
+			local saved_callback = args[callback_index]
+			install_overlap_predicate_globals(overlap, saved_callback)
+			overlap.callback_wrapped = true
+			args[callback_index] = function(object, ...)
+				local entry = overlap.by_object and overlap.by_object[object]
      if entry then
       entry.visited_by_first_map_for_each = true
       entry.visit_count = (entry.visit_count or 0) + 1
@@ -1445,9 +1624,11 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
       end
       if entry.collection_index == nil then
        entry.collection_index = overlap_collection_index(object)
-      end
-     end
-     local results = PackValues(pcall(saved_callback, object, ...))
+					end
+				end
+				overlap.active_predicate_entry = entry
+				local results = PackValues(pcall(saved_callback, object, ...))
+				overlap.active_predicate_entry = nil
      if entry then
       entry.valid_after_callback = overlap_is_valid(object)
       entry.removed_by_callback = entry.valid_before_callback == true
@@ -1460,8 +1641,9 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
      return Unpack(results, 2, results.n)
     end
    end
-   local results = PackValues(pcall(saved_map_for_each, target, Unpack(args, 1, args.n)))
-   if overlap.map_for_each_call_count == 1 then
+		local results = PackValues(pcall(saved_map_for_each, target, Unpack(args, 1, args.n)))
+		if overlap.map_for_each_call_count == 1 then
+			restore_overlap_predicate_globals(overlap)
     overlap.first_pass_completed = results[1] == true
     for _, entry in ipairs(overlap.entries or {}) do
      entry.valid_after_first_pass = overlap_is_valid(entry.object)
