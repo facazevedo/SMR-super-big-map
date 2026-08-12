@@ -1271,7 +1271,7 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 9,
+		schema_version = 10,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
@@ -1391,6 +1391,22 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 			predicate_write = function(name, value) rawset(environment, name, value) end
 			overlap.predicate_attachment_method = "function_environment"
 		else
+			local state = SuperBigMap.State
+			local bridge_factory = type(state) == "table"
+				and state.rock_parity_callback_upvalue_bridge or nil
+			local bridge_ok, bridge = false, nil
+			if type(bridge_factory) == "function" then
+				bridge_ok, bridge = pcall(bridge_factory, callback)
+			end
+			if bridge_ok and type(bridge) == "table"
+				and type(bridge.read) == "function" and type(bridge.write) == "function" then
+				environment = bridge
+				predicate_read = bridge.read
+				predicate_write = bridge.write
+				overlap.predicate_attachment_method = "callback_upvalue_bridge"
+			end
+		end
+		if type(predicate_read) ~= "function" or type(predicate_write) ~= "function" then
 			-- Relaunched hides the shipped callback's environment APIs from mod sandboxes.
 			-- Use the same verified public __index/__newindex bridge as the additional-map seed
 			-- patch: remove only our raw shadow while reading/writing the existing inherited
