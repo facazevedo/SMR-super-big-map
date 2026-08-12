@@ -215,6 +215,13 @@ local function FunctionEnvironment(fn)
 		local ok, env = pcall(debug_lib.getfenv, fn)
 		if ok and type(env) == "table" then return env end
 	end
+	if type(debug_lib) == "table" and type(debug_lib.getupvalue) == "function" then
+		for i = 1, 64 do
+			local ok, name, value = pcall(debug_lib.getupvalue, fn, i)
+			if not ok or name == nil then break end
+			if name == "_ENV" and type(value) == "table" then return value end
+		end
+	end
 	return nil
 end
 
@@ -1256,7 +1263,7 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 6,
+		schema_version = 7,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
