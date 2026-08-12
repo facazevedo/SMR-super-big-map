@@ -9356,6 +9356,14 @@ local function PatchRandomMapGenerator()
 	State.generator_generate_wrapper = generate_wrapper
 
 	if type(original_do_generate) == "function" then
+		local do_generate_closure_env = FunctionEnvironment(original_do_generate)
+		local function do_generate_closure_global(name, fallback)
+			if type(do_generate_closure_env) == "table" then
+				local ok_value, value = pcall(function() return do_generate_closure_env[name] end)
+				if ok_value and value ~= nil then return value end
+			end
+			return fallback
+		end
 		local do_generate_wrapper = function(self, map, ...)
 			local mapdata = map and map.mapdata
 			local expansion_transaction = map and (
@@ -9682,7 +9690,7 @@ local function PatchRandomMapGenerator()
 			-- single-task path, then restore the exact constant before any expanded-map work. This is
 			-- scenario-agnostic and changes neither raster order nor predicates; it only removes the
 			-- shared-grid write race while the native source is being generated.
-			local raster_const = closure_global("const", Global("const"))
+			local raster_const = do_generate_closure_global("const", Global("const"))
 			local saved_raster_parallel_div = type(raster_const) == "table"
 				and raster_const.PrefabRasterParallelDiv or nil
 			if type(saved_raster_parallel_div) ~= "number" or saved_raster_parallel_div < 1 then
