@@ -2037,6 +2037,16 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 		elseif not preclassified and IsImportantSectorObject(obj) then
 		else
 			pcall(function()
+				-- Passage bootstrap can create a committed final-domain passage before this pass.
+				-- Its attached indicator decal already follows that final parent, so transforming
+				-- the child independently would apply a second 4/3 move.
+				if type(obj.GetParent) == "function" then
+					local ok_parent, parent = pcall(obj.GetParent, obj)
+					if ok_parent and type(parent) == "table"
+						and parent.SuperBigMapCommittedPassageLocked == true then
+						return
+					end
+				end
 				local pos = ObjectPosition(obj)
 				if not pos then return end
 				local audit_record = audit_on and audit_records and audit_records[obj]
