@@ -927,30 +927,66 @@ function SuperBigMap.RockParityDescribeValues(values, first)
 	return table.concat(parts, "|")
 end
 
+function SuperBigMap.DescribeRockParityObject(object, class_name)
+ local pos = object:GetPos()
+ local x, y = PointXY(pos)
+ local z
+ pcall(function() z = pos:z() end)
+ local rock = {
+  class = tostring(class_name or object.class),
+  x = tostring(x), y = tostring(y), z = tostring(z),
+  scale = tostring(object:GetScale()), angle = tostring(object:GetAngle()),
+ }
+ rock.key = table.concat({
+  rock.class, rock.x, rock.y, rock.z, rock.scale, rock.angle,
+ }, "|")
+ return rock
+end
+
+function SuperBigMap.CaptureRockParityObjectEntries(map)
+ local classes = { "Rocks_04", "RemovableRocks_01", "RemovableRocks_02" }
+ local entries = {}
+ local by_object = {}
+ local capture_index = 0
+ for _, class_name in ipairs(classes) do
+  local objects = map:MapGet("map", class_name) or {}
+  for _, object in ipairs(objects) do
+   capture_index = capture_index + 1
+   local entry = {
+    object = object,
+    rock = SuperBigMap.DescribeRockParityObject(object, class_name),
+    capture_index = capture_index,
+   }
+   entries[#entries + 1] = entry
+   by_object[object] = entry
+  end
+ end
+ table.sort(entries, function(a, b)
+  if a.rock.key == b.rock.key then return a.capture_index < b.capture_index end
+  return a.rock.key < b.rock.key
+ end)
+ local multiplicities = {}
+ for _, entry in ipairs(entries) do
+  local rock = entry.rock
+  multiplicities[rock.key] = (multiplicities[rock.key] or 0) + 1
+ end
+ local ordinals = {}
+ for _, entry in ipairs(entries) do
+  local rock = entry.rock
+  ordinals[rock.key] = (ordinals[rock.key] or 0) + 1
+  rock.tuple_multiplicity = multiplicities[rock.key]
+  rock.tuple_ordinal = ordinals[rock.key]
+ end
+ return entries, by_object
+end
+
 function SuperBigMap.CaptureRockParityObjectSet(map, phase)
-	local classes = { "Rocks_04", "RemovableRocks_01", "RemovableRocks_02" }
-	local tuples = {}
-	local rocks = {}
-	for _, class_name in ipairs(classes) do
-		local objects = map:MapGet("map", class_name) or {}
-		for _, object in ipairs(objects) do
-			local pos = object:GetPos()
-			local x, y = PointXY(pos)
-			local z
-			pcall(function() z = pos:z() end)
-			local rock = {
-				class = tostring(class_name),
-				x = tostring(x), y = tostring(y), z = tostring(z),
-				scale = tostring(object:GetScale()), angle = tostring(object:GetAngle()),
-			}
-			rock.key = table.concat({
-				rock.class, rock.x, rock.y, rock.z, rock.scale, rock.angle,
-			}, "|")
-			rocks[#rocks + 1] = rock
-		end
-	end
-	table.sort(rocks, function(a, b) return a.key < b.key end)
-	local multiplicities = {}
+ local tuples = {}
+ local rocks = {}
+ local entries = SuperBigMap.CaptureRockParityObjectEntries(map)
+ for _, entry in ipairs(entries) do rocks[#rocks + 1] = entry.rock end
+ table.sort(rocks, function(a, b) return a.key < b.key end)
+ local multiplicities = {}
 	for _, rock in ipairs(rocks) do
 		multiplicities[rock.key] = (multiplicities[rock.key] or 0) + 1
 	end
@@ -962,6 +998,37 @@ function SuperBigMap.CaptureRockParityObjectSet(map, phase)
 		tuples[#tuples + 1] = rock.key
 	end
 	return { phase = tostring(phase), count = #rocks, tuples = tuples, rocks = rocks }
+end
+
+function SuperBigMap.CaptureRockParityMapDimensions(map)
+ local dimensions = {
+  reported_world_width = nil, reported_world_height = nil,
+  source_view_world_width = map and map.Width,
+  source_view_world_height = map and map.Height,
+  source_view_hex_width = map and map.hex_width,
+  source_view_hex_height = map and map.hex_height,
+  retained_world_width = map and map.SuperBigMapExpandedWorldWidth,
+  retained_world_height = map and map.SuperBigMapExpandedWorldHeight,
+  retained_hex_width = map and map.SuperBigMapExpandedHexWidth,
+  retained_hex_height = map and map.SuperBigMapExpandedHexHeight,
+  mapdata_width_tiles = map and map.mapdata and map.mapdata.Width,
+  mapdata_height_tiles = map and map.mapdata and map.mapdata.Height,
+  generator_width_tiles = map and map.SuperBigMapGeneratorWidthTiles,
+  generator_height_tiles = map and map.SuperBigMapGeneratorHeightTiles,
+  desired_width_tiles = map and map.SuperBigMapDesiredWidthTiles,
+  desired_height_tiles = map and map.SuperBigMapDesiredHeightTiles,
+ }
+ local get_map_size = map and map.GetMapSize
+ if type(get_map_size) == "function" then
+  local result = PackValues(pcall(get_map_size, map))
+  if result[1] then
+   dimensions.reported_world_width = result[2]
+   dimensions.reported_world_height = result[3]
+  else
+   dimensions.get_map_size_error = tostring(result[2])
+  end
+ end
+ return dimensions
 end
 
 function SuperBigMap.CaptureRockParityBoundary(map, phase)
@@ -1014,7 +1081,7 @@ end
 function SuperBigMap.RockParityTraceContext(trace, map, generator, procedure, ordinal)
 	local mapdata = type(map) == "table" and map.mapdata or nil
 	return {
-		trace_schema = tostring(trace and trace.schema_version or 4),
+  trace_schema = tostring(trace and trace.schema_version or 5),
 		trace_invocation = tostring(trace and trace.invocation or 0),
 		mode = tostring(trace and trace.mode or SuperBigMap.RockParityTraceMode(map)),
 		environment = tostring(type(mapdata) == "table" and mapdata.Environment or "?"),
@@ -1178,14 +1245,16 @@ end
 -- Stock ProcInvoke synchronously brackets every generator procedure with ProcStart/ProcEnd. This
 -- default-off seam temporarily wraps those public boundaries for only the active generator
 -- instance. It captures sorted rock records and prints deterministic one-line deltas without
--- invoking/replacing random helpers or mutating generated objects, then restores both methods.
+-- invoking/replacing random helpers or mutating generated objects. At exact ordinal 13 it also
+-- observes the stock overlap-removal MapForEach callback and the subsequent collection cascade,
+-- then restores every temporary method on all outer success/error paths.
 function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	if not SuperBigMap.RockParityTraceEnabled(map) then
 		return original(self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 4,
+  schema_version = 5,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
@@ -1209,16 +1278,210 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 				attachment_method = trace.attachment_method,
 			}))
 
-	local generator_class = Global("RandomMapGenerator")
-	local saved_proc_start = type(generator_class) == "table" and generator_class.ProcStart or nil
-	local saved_proc_end = type(generator_class) == "table" and generator_class.ProcEnd or nil
+ local generator_class = Global("RandomMapGenerator")
+ local saved_proc_start = type(generator_class) == "table" and generator_class.ProcStart or nil
+ local saved_proc_end = type(generator_class) == "table" and generator_class.ProcEnd or nil
 	if type(saved_proc_start) ~= "function" or type(saved_proc_end) ~= "function" then
 		trace.in_progress = false
 		trace.attachment_error = "generator procedure boundary API unavailable"
-		return original(self, map, ...)
-	end
+  return original(self, map, ...)
+ end
 
-	local function capture_boundary(phase, procedure, ordinal)
+ local active_overlap_trace
+ local function overlap_scalar(value, unavailable)
+  if value == nil then return unavailable or "unavailable" end
+  return tostring(value)
+ end
+ local function overlap_is_valid(object)
+  local is_valid = Global("IsValid")
+  if type(is_valid) ~= "function" then return nil end
+  local result = PackValues(pcall(is_valid, object))
+  if result[1] then return result[2] == true end
+  return nil
+ end
+ local function overlap_collection_index(object)
+  local get_collection_index = Global("GetCollectionIndex")
+  if type(get_collection_index) ~= "function" then return nil end
+  local result = PackValues(pcall(get_collection_index, object))
+  if result[1] then return result[2] end
+  return nil
+ end
+ local function restore_overlap_map_for_each(overlap)
+  if type(overlap) ~= "table" or overlap.map_for_each_restored ~= nil then return end
+  local restored, restore_error = pcall(function()
+   rawset(map, "MapForEach", overlap.previous_raw_map_for_each)
+  end)
+  overlap.map_for_each_restored = restored == true
+  if not restored then overlap.restore_error = tostring(restore_error) end
+  if active_overlap_trace == overlap then active_overlap_trace = nil end
+ end
+ local function emit_overlap_trace(item, procedure_completed)
+  local overlap = type(item) == "table" and item.overlap_trace or nil
+  if type(overlap) ~= "table" or overlap.emitted == true then return end
+  overlap.emitted = true
+  local dimensions_after = SuperBigMap.CaptureRockParityMapDimensions(map)
+  local context = SuperBigMap.RockParityTraceContext(
+   trace, map, self, item.procedure, item.ordinal)
+  local dimensions = overlap.dimensions_before or {}
+  SuperBigMap.EmitRockParityTrace("OVERLAP_TRACE_BEGIN",
+   SuperBigMap.RockParityTraceRecord(context, {
+    focused_object_count = tostring(#(overlap.entries or {})),
+    map_for_each_call_count = tostring(overlap.map_for_each_call_count or 0),
+    callback_wrapped = tostring(overlap.callback_wrapped == true),
+    first_pass_completed = tostring(overlap.first_pass_completed == true),
+    procedure_completed = tostring(procedure_completed == true),
+    reported_world_width = overlap_scalar(dimensions.reported_world_width),
+    reported_world_height = overlap_scalar(dimensions.reported_world_height),
+    source_view_world_width = overlap_scalar(dimensions.source_view_world_width),
+    source_view_world_height = overlap_scalar(dimensions.source_view_world_height),
+    source_view_hex_width = overlap_scalar(dimensions.source_view_hex_width),
+    source_view_hex_height = overlap_scalar(dimensions.source_view_hex_height),
+    retained_world_width = overlap_scalar(dimensions.retained_world_width, "native_backing"),
+    retained_world_height = overlap_scalar(dimensions.retained_world_height, "native_backing"),
+    retained_hex_width = overlap_scalar(dimensions.retained_hex_width, "native_backing"),
+    retained_hex_height = overlap_scalar(dimensions.retained_hex_height, "native_backing"),
+    mapdata_width_tiles = overlap_scalar(dimensions.mapdata_width_tiles),
+    mapdata_height_tiles = overlap_scalar(dimensions.mapdata_height_tiles),
+    generator_width_tiles = overlap_scalar(dimensions.generator_width_tiles, "native_backing"),
+    generator_height_tiles = overlap_scalar(dimensions.generator_height_tiles, "native_backing"),
+    desired_width_tiles = overlap_scalar(dimensions.desired_width_tiles, "native_backing"),
+    desired_height_tiles = overlap_scalar(dimensions.desired_height_tiles, "native_backing"),
+   }))
+  local visited_count, callback_removed_count, cascade_removed_count = 0, 0, 0
+  for _, entry in ipairs(overlap.entries or {}) do
+   local final_valid = overlap_is_valid(entry.object)
+   entry.valid_at_proc_end = final_valid
+   entry.removed_by_collection_cascade = entry.valid_after_first_pass == true
+    and final_valid == false
+   if entry.visited_by_first_map_for_each then visited_count = visited_count + 1 end
+   if entry.removed_by_callback then callback_removed_count = callback_removed_count + 1 end
+   if entry.removed_by_collection_cascade then cascade_removed_count = cascade_removed_count + 1 end
+   local rock = entry.rock or {}
+   SuperBigMap.EmitRockParityTrace("OVERLAP_OBJECT",
+    SuperBigMap.RockParityTraceRecord(context, {
+     class = rock.class, x = rock.x, y = rock.y, z = rock.z,
+     scale = rock.scale, angle = rock.angle,
+     tuple_multiplicity = tostring(rock.tuple_multiplicity or 0),
+     tuple_ordinal = tostring(rock.tuple_ordinal or 0),
+     visited_by_first_map_for_each = tostring(entry.visited_by_first_map_for_each == true),
+     visit_count = tostring(entry.visit_count or 0),
+     valid_before_callback = overlap_scalar(entry.valid_before_callback,
+      entry.visited_by_first_map_for_each and "unavailable" or "not_visited"),
+     valid_after_callback = overlap_scalar(entry.valid_after_callback,
+      entry.visited_by_first_map_for_each and "unavailable" or "not_visited"),
+     valid_after_first_pass = overlap_scalar(entry.valid_after_first_pass),
+     valid_at_proc_end = overlap_scalar(entry.valid_at_proc_end),
+     removed_by_callback = tostring(entry.removed_by_callback == true),
+     removed_by_collection_cascade = tostring(entry.removed_by_collection_cascade == true),
+     collection_index = overlap_scalar(entry.collection_index, "unavailable"),
+    }))
+  end
+  SuperBigMap.EmitRockParityTrace("OVERLAP_TRACE_END",
+   SuperBigMap.RockParityTraceRecord(context, {
+    focused_object_count = tostring(#(overlap.entries or {})),
+    visited_count = tostring(visited_count),
+    callback_removed_count = tostring(callback_removed_count),
+    collection_cascade_removed_count = tostring(cascade_removed_count),
+    map_for_each_call_count = tostring(overlap.map_for_each_call_count or 0),
+    map_for_each_restored = tostring(overlap.map_for_each_restored == true),
+    attach_error = overlap_scalar(overlap.attach_error, "none"),
+    callback_error = overlap_scalar(overlap.callback_error, "none"),
+    traversal_error = overlap_scalar(overlap.traversal_error, "none"),
+    restore_error = overlap_scalar(overlap.restore_error, "none"),
+    reported_world_width_after = overlap_scalar(dimensions_after.reported_world_width),
+    reported_world_height_after = overlap_scalar(dimensions_after.reported_world_height),
+   }))
+ end
+ local function finish_overlap_trace(item, procedure_completed)
+  local overlap = type(item) == "table" and item.overlap_trace or nil
+  if type(overlap) ~= "table" then return end
+  restore_overlap_map_for_each(overlap)
+  emit_overlap_trace(item, procedure_completed)
+ end
+ local function attach_overlap_trace(item)
+  local overlap = {
+   dimensions_before = SuperBigMap.CaptureRockParityMapDimensions(map),
+   map_for_each_call_count = 0,
+  }
+  item.overlap_trace = overlap
+  local capture_result = PackValues(pcall(SuperBigMap.CaptureRockParityObjectEntries, map))
+  if not capture_result[1] then
+   overlap.attach_error = "focused object capture failed: " .. tostring(capture_result[2])
+   return
+  end
+  overlap.entries = capture_result[2]
+  overlap.by_object = capture_result[3]
+  for _, entry in ipairs(overlap.entries or {}) do
+   entry.collection_index = overlap_collection_index(entry.object)
+  end
+  local saved_map_for_each = map.MapForEach
+  if type(saved_map_for_each) ~= "function" then
+   overlap.attach_error = "map MapForEach unavailable"
+   return
+  end
+  overlap.previous_raw_map_for_each = rawget(map, "MapForEach")
+  overlap.saved_map_for_each = saved_map_for_each
+  local wrapped_map_for_each
+  wrapped_map_for_each = function(target, ...)
+   local args = PackValues(...)
+   overlap.map_for_each_call_count = overlap.map_for_each_call_count + 1
+   local callback_index
+   for index = args.n, 1, -1 do
+    if type(args[index]) == "function" then
+     callback_index = index
+     break
+    end
+   end
+   if overlap.map_for_each_call_count == 1 and callback_index then
+    local saved_callback = args[callback_index]
+    overlap.callback_wrapped = true
+    args[callback_index] = function(object, ...)
+     local entry = overlap.by_object and overlap.by_object[object]
+     if entry then
+      entry.visited_by_first_map_for_each = true
+      entry.visit_count = (entry.visit_count or 0) + 1
+      if entry.valid_before_callback == nil then
+       entry.valid_before_callback = overlap_is_valid(object)
+      end
+      if entry.collection_index == nil then
+       entry.collection_index = overlap_collection_index(object)
+      end
+     end
+     local results = PackValues(pcall(saved_callback, object, ...))
+     if entry then
+      entry.valid_after_callback = overlap_is_valid(object)
+      entry.removed_by_callback = entry.valid_before_callback == true
+       and entry.valid_after_callback == false
+     end
+     if not results[1] then
+      overlap.callback_error = tostring(results[2])
+      error(results[2])
+     end
+     return Unpack(results, 2, results.n)
+    end
+   end
+   local results = PackValues(pcall(saved_map_for_each, target, Unpack(args, 1, args.n)))
+   if overlap.map_for_each_call_count == 1 then
+    overlap.first_pass_completed = results[1] == true
+    for _, entry in ipairs(overlap.entries or {}) do
+     entry.valid_after_first_pass = overlap_is_valid(entry.object)
+    end
+   end
+   if not results[1] then
+    overlap.traversal_error = tostring(results[2])
+    error(results[2])
+   end
+   return Unpack(results, 2, results.n)
+  end
+  local installed, install_error = pcall(rawset, map, "MapForEach", wrapped_map_for_each)
+  if not installed then
+   overlap.attach_error = "MapForEach install failed: " .. tostring(install_error)
+   return
+  end
+  active_overlap_trace = overlap
+ end
+
+ local function capture_boundary(phase, procedure, ordinal)
 		local result = PackValues(pcall(SuperBigMap.CaptureRockParityBoundary, map, phase))
 		if result[1] then
 			local boundary = result[2]
@@ -1254,9 +1517,16 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 				ordinal = ordinal,
 				rng_before = read_last_rng_state(generator),
 			}
-			item.before = capture_boundary("before", procedure, ordinal)
-			trace.procedures[#trace.procedures + 1] = item
-			local context = SuperBigMap.RockParityTraceContext(
+   item.before = capture_boundary("before", procedure, ordinal)
+   trace.procedures[#trace.procedures + 1] = item
+   if ordinal == 13 and procedure == "ApplyTerrain" then
+    local overlap_result = PackValues(pcall(attach_overlap_trace, item))
+    if not overlap_result[1] then
+     item.overlap_trace = item.overlap_trace or {}
+     item.overlap_trace.attach_error = tostring(overlap_result[2])
+    end
+   end
+   local context = SuperBigMap.RockParityTraceContext(
 				trace, map, generator, procedure, ordinal)
 			SuperBigMap.EmitRockParityTrace("PROC_BOUNDARY",
 				SuperBigMap.RockParityTraceRecord(context, {
@@ -1280,9 +1550,18 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 					item = candidate
 					break
 				end
-			end
-			if item then
-				item.rng_after = read_last_rng_state(generator)
+   end
+   if item then
+    if item.ordinal == 13 and item.procedure == "ApplyTerrain" then
+     local overlap_result = PackValues(pcall(finish_overlap_trace, item, true))
+     if not overlap_result[1] then
+      trace.log_errors = trace.log_errors or {}
+      trace.log_errors[#trace.log_errors + 1] = table.concat({
+       item.procedure, tostring(item.ordinal), "overlap", tostring(overlap_result[2]),
+      }, "|")
+     end
+    end
+    item.rng_after = read_last_rng_state(generator)
 				item.after = capture_boundary("after", item.procedure, item.ordinal)
 				item.completed = true
 				local context = SuperBigMap.RockParityTraceContext(
@@ -1324,9 +1603,17 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 		trace.in_progress = false
 		trace.attachment_error = "procedure boundary install failed: " .. tostring(install_error)
 		return original(self, map, ...)
-	end
-	local results = PackValues(pcall(original, self, map, ...))
-	local restored, restore_error = pcall(function()
+ end
+ local results = PackValues(pcall(original, self, map, ...))
+ if active_overlap_trace then
+  local restored, restore_error = pcall(restore_overlap_map_for_each, active_overlap_trace)
+  if not restored then
+   trace.restore_error = table.concat({
+    tostring(trace.restore_error or ""), "overlap MapForEach: ", tostring(restore_error),
+   })
+  end
+ end
+ local restored, restore_error = pcall(function()
 		generator_class.ProcStart = saved_proc_start
 		generator_class.ProcEnd = saved_proc_end
 	end)
