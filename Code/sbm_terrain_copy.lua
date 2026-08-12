@@ -2297,6 +2297,15 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 				if obj.SuperBigMapNativeRecreatedAtFinal == true then
 					return
 				end
+				-- Passage bootstrap runs against the already expanded surface and commits the surface
+				-- anchor before this marker pass. Its tunnel marker and attached decal are therefore
+				-- already in final-domain coordinates; scaling that marker again moves both visuals by
+				-- a second 4/3 transform while leaving the committed passage/sign behind.
+				if IsKindOfSafe(obj, "SurfaceUndergroundTunnelMarker")
+					and type(obj.spawner) == "table"
+					and obj.spawner.SuperBigMapCommittedPassageLocked == true then
+					return
+				end
 				local pos = ObjectPosition(obj)
 				if not pos then return end
 				local ox, oy = PointXY(pos)
