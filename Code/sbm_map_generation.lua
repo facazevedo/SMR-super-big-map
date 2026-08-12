@@ -1263,7 +1263,7 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 7,
+		schema_version = 8,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
@@ -1356,16 +1356,18 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 			return
 		end
 		local restored, restore_error = pcall(function()
-			rawset(overlap.predicate_environment, "GridGetMark",
-				overlap.previous_raw_grid_get_mark)
-			rawset(overlap.predicate_environment, "GetCollectionIndex",
-				overlap.previous_raw_get_collection_index)
+			overlap.predicate_write("GridGetMark", overlap.restore_grid_get_mark)
+			overlap.predicate_write("GetCollectionIndex",
+				overlap.restore_get_collection_index)
 		end)
 		if restored then
-			restored = rawget(overlap.predicate_environment, "GridGetMark")
-				== overlap.previous_raw_grid_get_mark
-				and rawget(overlap.predicate_environment, "GetCollectionIndex")
-					== overlap.previous_raw_get_collection_index
+			local read_ok, grid_get_mark, get_collection_index = pcall(function()
+				return overlap.predicate_read("GridGetMark"),
+					overlap.predicate_read("GetCollectionIndex")
+			end)
+			restored = read_ok
+				and grid_get_mark == overlap.original_grid_get_mark
+				and get_collection_index == overlap.original_get_collection_index
 		end
 		overlap.predicate_globals_restored = restored == true
 		if not restored then overlap.predicate_restore_error = tostring(restore_error) end
@@ -1374,12 +1376,46 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 		if type(overlap) ~= "table" or overlap.predicate_globals_attempted == true then return end
 		overlap.predicate_globals_attempted = true
 		local environment = FunctionEnvironment(callback)
-		if type(environment) ~= "table" then
-			overlap.predicate_attach_error = "callback environment unavailable"
-			return
+		local predicate_read
+		local predicate_write
+		if type(environment) == "table" then
+			predicate_read = function(name) return environment[name] end
+			predicate_write = function(name, value) rawset(environment, name, value) end
+			overlap.predicate_attachment_method = "function_environment"
+		else
+			-- Relaunched hides the shipped callback's environment APIs from mod sandboxes.
+			-- Use the same verified public __index/__newindex bridge as the additional-map seed
+			-- patch: remove only our raw shadow while reading/writing the existing inherited
+			-- global, then restore that shadow. Every write is synchronously read back.
+			environment = _G
+			predicate_read = function(name)
+				local direct = rawget(environment, name)
+				rawset(environment, name, nil)
+				local ok, value = pcall(function() return environment[name] end)
+				rawset(environment, name, direct)
+				if not ok then error(value) end
+				return value
+			end
+			predicate_write = function(name, value)
+				local direct = rawget(environment, name)
+				rawset(environment, name, nil)
+				local write_ok, write_error = pcall(function() environment[name] = value end)
+				local unexpected_direct = rawget(environment, name)
+				rawset(environment, name, nil)
+				local read_ok, inherited = pcall(function() return environment[name] end)
+				rawset(environment, name, direct)
+				if not write_ok then error(write_error) end
+				if unexpected_direct ~= nil and unexpected_direct ~= value then
+					error("sandbox bridge created an unexpected raw global")
+				end
+				if not read_ok or inherited ~= value then
+					error("sandbox bridge write verification failed")
+				end
+			end
+			overlap.predicate_attachment_method = "sandbox_inherited_bridge"
 		end
 		local read_ok, original_grid_get_mark, original_get_collection_index = pcall(function()
-			return environment.GridGetMark, environment.GetCollectionIndex
+			return predicate_read("GridGetMark"), predicate_read("GetCollectionIndex")
 		end)
 		if not read_ok or type(original_grid_get_mark) ~= "function"
 			or type(original_get_collection_index) ~= "function" then
@@ -1387,8 +1423,17 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 			return
 		end
 		overlap.predicate_environment = environment
-		overlap.previous_raw_grid_get_mark = rawget(environment, "GridGetMark")
-		overlap.previous_raw_get_collection_index = rawget(environment, "GetCollectionIndex")
+		overlap.predicate_read = predicate_read
+		overlap.predicate_write = predicate_write
+		overlap.original_grid_get_mark = original_grid_get_mark
+		overlap.original_get_collection_index = original_get_collection_index
+		if overlap.predicate_attachment_method == "function_environment" then
+			overlap.restore_grid_get_mark = rawget(environment, "GridGetMark")
+			overlap.restore_get_collection_index = rawget(environment, "GetCollectionIndex")
+		else
+			overlap.restore_grid_get_mark = original_grid_get_mark
+			overlap.restore_get_collection_index = original_get_collection_index
+		end
 		local wrapped_grid_get_mark = function(...)
 			local args = PackValues(...)
 			local results = PackValues(pcall(original_grid_get_mark, Unpack(args, 1, args.n)))
@@ -1426,15 +1471,14 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 			return Unpack(results, 2, results.n)
 		end
 		local installed, install_error = pcall(function()
-			rawset(environment, "GridGetMark", wrapped_grid_get_mark)
-			rawset(environment, "GetCollectionIndex", wrapped_get_collection_index)
+			predicate_write("GridGetMark", wrapped_grid_get_mark)
+			predicate_write("GetCollectionIndex", wrapped_get_collection_index)
 		end)
 		if not installed then
 			overlap.predicate_attach_error = tostring(install_error)
 			pcall(function()
-				rawset(environment, "GridGetMark", overlap.previous_raw_grid_get_mark)
-				rawset(environment, "GetCollectionIndex",
-					overlap.previous_raw_get_collection_index)
+				predicate_write("GridGetMark", overlap.restore_grid_get_mark)
+				predicate_write("GetCollectionIndex", overlap.restore_get_collection_index)
 			end)
 			return
 		end
@@ -1564,6 +1608,8 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 				overlap.predicate_globals_installed == true),
 			predicate_globals_restored = tostring(
 				overlap.predicate_globals_restored == true),
+			predicate_attachment_method = overlap_scalar(
+				overlap.predicate_attachment_method, "none"),
 			attach_error = overlap_scalar(overlap.attach_error, "none"),
 			predicate_attach_error = overlap_scalar(
 				overlap.predicate_attach_error, "none"),
