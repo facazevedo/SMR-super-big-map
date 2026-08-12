@@ -1044,17 +1044,19 @@ function SuperBigMap.WrapRockParityProcInvoke(saved_proc, map, trace)
 end
 
 -- Proc_PlaceDecors is a local closure invoked inside stock DoGenerate before
--- OnGenerateLogic receives its environment table. This default-off seam observes that exact local
--- call through Lua's debug hook. It never replaces a random helper, invokes a helper, or consumes
--- RNG: call events only record the helper function identity and its already-supplied scalar args.
+-- OnGenerateLogic receives its environment table. Stock ProcInvoke synchronously brackets the
+-- closure with self:ProcStart("PlaceDecors") and self:ProcEnd("PlaceDecors"). This default-off seam
+-- temporarily wraps those public method boundaries for only the active generator instance. It
+-- neither invokes nor replaces a random helper and restores both class methods after every call.
 function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	if not SuperBigMap.RockParityTraceEnabled(map) then
 		return original(self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 2,
-		boundary_scope = "DoGenerate-local Proc_PlaceDecors",
+		schema_version = 3,
+		boundary_scope = "DoGenerate ProcStart/ProcEnd PlaceDecors",
+		attachment_method = "generator ProcStart/ProcEnd",
 		active = false,
 		in_progress = true,
 		helper_calls = {},
@@ -1072,116 +1074,83 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	history[#history + 1] = trace
 	map.SuperBigMapRockParityTrace = trace
 
-	local debug_lib = Global("debug")
-	local getinfo = type(debug_lib) == "table" and debug_lib.getinfo or nil
-	local getlocal = type(debug_lib) == "table" and debug_lib.getlocal or nil
-	local gethook = type(debug_lib) == "table" and debug_lib.gethook or nil
-	local sethook = type(debug_lib) == "table" and debug_lib.sethook or nil
-	if type(getinfo) ~= "function" or type(getlocal) ~= "function"
-		or type(gethook) ~= "function" or type(sethook) ~= "function" then
+	local generator_class = Global("RandomMapGenerator")
+	local saved_proc_start = type(generator_class) == "table" and generator_class.ProcStart or nil
+	local saved_proc_end = type(generator_class) == "table" and generator_class.ProcEnd or nil
+	if type(saved_proc_start) ~= "function" or type(saved_proc_end) ~= "function" then
 		trace.in_progress = false
-		trace.attachment_error = "debug hook API unavailable"
+		trace.attachment_error = "generator procedure boundary API unavailable"
 		return original(self, map, ...)
 	end
 
-	local saved_hook, saved_mask, saved_count = gethook()
-	trace.previous_hook_present = type(saved_hook) == "function"
-	local target_func
-	local helper_names = {}
 	local boundary_before_captured = false
-	local function describe_call_args(level)
-		local values = { n = 0 }
-		for index = 1, 24 do
-			local name, value = getlocal(level, index)
-			if name == nil then break end
-			values.n = values.n + 1
-			values[values.n] = tostring(name) .. "=" .. type(value) .. ":" .. tostring(value)
+	local function capture_boundary(phase)
+		local result = PackValues(pcall(SuperBigMap.CaptureRockParityBoundary, map, phase))
+		if result[1] then
+			trace.boundaries[#trace.boundaries + 1] = result[2]
+			return true
 		end
-		return table.concat(values, "|")
+		trace.capture_error = tostring(result[2])
+		return false
 	end
-	local function inspect_do_generate_frame()
-		for level = 2, 16 do
-			local info = getinfo(level, "f")
-			if info and info.func == original then
-				local found_target
-				for index = 1, 512 do
-					local name, value = getlocal(level, index)
-					if name == nil then break end
-					if name == "Proc_PlaceDecors" and type(value) == "function" then
-						found_target = value
-					elseif (name == "rand" or name == "rrand" or name == "trand"
-						or name == "crand" or name == "grand") and type(value) == "function" then
-						helper_names[value] = name
-					end
-				end
-				return found_target
-			end
-		end
+	local function read_last_rng_state(generator)
+		local state = type(generator) == "table" and generator.rand_state or nil
+		local last = state and state.Last
+		if type(last) ~= "function" then return nil end
+		local ok, value = pcall(last, state)
+		if ok then return value end
 		return nil
 	end
-	local function hook(event)
-		if not target_func and event == "line" then
-			target_func = inspect_do_generate_frame()
-			if target_func then
-				trace.target_discovered = true
-				trace.helper_identity_count = 0
-				for _ in pairs(helper_names) do
-					trace.helper_identity_count = trace.helper_identity_count + 1
-				end
-			end
-		elseif event == "call" then
-			local info = getinfo(2, "f")
-			local func = info and info.func
-			if func == target_func then
-				-- A call hook runs after the target frame is entered but before its first Lua
-				-- instruction, making this the exact pre-PlaceDecors object boundary even when
-				-- the local closure became discoverable hundreds of source lines earlier.
-				trace.boundaries[#trace.boundaries + 1] =
-					SuperBigMap.CaptureRockParityBoundary(map, "before")
-				boundary_before_captured = true
-				trace.target_call_count = trace.target_call_count + 1
-				trace.active = true
-			elseif trace.active and helper_names[func] then
-				trace.helper_call_count = trace.helper_call_count + 1
-				if #trace.helper_calls < trace.helper_call_cap then
-					trace.helper_calls[#trace.helper_calls + 1] = {
-						ordinal = trace.helper_call_count,
-						helper = helper_names[func],
-						args = describe_call_args(2),
-					}
-				end
-			end
-		elseif (event == "return" or event == "tail return") and trace.active then
-			local info = getinfo(2, "f")
-			if info and info.func == target_func then
-				trace.active = false
-				trace.boundaries[#trace.boundaries + 1] =
-					SuperBigMap.CaptureRockParityBoundary(map, "after")
-				trace.captured_helper_calls = #trace.helper_calls
-				trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
-			end
+	local proc_start_wrapper
+	proc_start_wrapper = function(generator, tag, ...)
+		local results = PackValues(pcall(saved_proc_start, generator, tag, ...))
+		if not results[1] then error(results[2]) end
+		if generator == self and tag == "PlaceDecors" then
+			trace.target_discovered = true
+			trace.target_call_count = trace.target_call_count + 1
+			trace.rng_state_before = read_last_rng_state(generator)
+			boundary_before_captured = capture_boundary("before")
+			trace.active = true
 		end
+		return Unpack(results, 2, results.n)
+	end
+	local proc_end_wrapper
+	proc_end_wrapper = function(generator, tag, ...)
+		if generator == self and tag == "PlaceDecors" and trace.active then
+			trace.rng_state_after = read_last_rng_state(generator)
+			capture_boundary("after")
+			trace.active = false
+		end
+		local results = PackValues(pcall(saved_proc_end, generator, tag, ...))
+		if not results[1] then error(results[2]) end
+		return Unpack(results, 2, results.n)
 	end
 
-	local installed, install_error = pcall(sethook, hook, "crl")
+	local installed, install_error = pcall(function()
+		generator_class.ProcStart = proc_start_wrapper
+		generator_class.ProcEnd = proc_end_wrapper
+	end)
 	if not installed then
 		trace.in_progress = false
-		trace.attachment_error = "debug hook install failed: " .. tostring(install_error)
+		trace.attachment_error = "procedure boundary install failed: " .. tostring(install_error)
 		return original(self, map, ...)
 	end
 	local results = PackValues(pcall(original, self, map, ...))
-	local restored, restore_error = pcall(sethook, saved_hook, saved_mask, saved_count)
+	local restored, restore_error = pcall(function()
+		generator_class.ProcStart = saved_proc_start
+		generator_class.ProcEnd = saved_proc_end
+	end)
 	trace.in_progress = false
-	trace.hook_restored = restored == true
+	trace.boundary_methods_restored = restored == true
 	if not restored then trace.restore_error = tostring(restore_error) end
 	if boundary_before_captured and #trace.boundaries == 1 then
-		trace.boundaries[#trace.boundaries + 1] =
-			SuperBigMap.CaptureRockParityBoundary(map, "after_unwind")
+		capture_boundary("after_unwind")
 	end
 	trace.captured_helper_calls = #trace.helper_calls
 	trace.helper_calls_truncated = trace.helper_call_count > #trace.helper_calls
 	if not restored and results[1] then
-		results = { n = 2, false, "DoGenerate parity trace hook restoration failed: " .. tostring(restore_error) }
+		results = { n = 2, false,
+			"DoGenerate parity trace boundary restoration failed: " .. tostring(restore_error) }
 	end
 	if not results[1] then error(results[2]) end
 	return Unpack(results, 2, results.n)
@@ -1197,7 +1166,8 @@ local function CallOnGenerateLogicTimed(original, self, env, map, ...)
 	local retained_do_generate_trace = type(map) == "table"
 		and type(map.SuperBigMapRockParityTrace) == "table"
 		and map.SuperBigMapRockParityTrace.in_progress == true
-		and map.SuperBigMapRockParityTrace.boundary_scope == "DoGenerate-local Proc_PlaceDecors"
+		and map.SuperBigMapRockParityTrace.boundary_scope
+			== "DoGenerate ProcStart/ProcEnd PlaceDecors"
 	local rock_trace, original_helpers
 	if not retained_do_generate_trace then
 		rock_trace, original_helpers = SuperBigMap.BeginRockParityTrace(map, env)
