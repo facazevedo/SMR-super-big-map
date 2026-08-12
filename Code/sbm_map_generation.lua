@@ -222,6 +222,14 @@ local function FunctionEnvironment(fn)
 			if name == "_ENV" and type(value) == "table" then return value end
 		end
 	end
+	local state = SuperBigMap.State
+	local external_inspector = type(state) == "table"
+		and state.rock_parity_function_environment or nil
+	if SuperBigMap.Config and SuperBigMap.Config.TRACE_UNDERGROUND_ROCK_PARITY == true
+		and type(external_inspector) == "function" then
+		local ok, env = pcall(external_inspector, fn)
+		if ok and type(env) == "table" then return env end
+	end
 	return nil
 end
 
@@ -1263,7 +1271,7 @@ function SuperBigMap.CallDoGenerateWithRockParityTrace(original, self, map, ...)
 	end
 	local trace = {
 		schema = "smr.sbm.underground_rock_parity_trace",
-		schema_version = 8,
+		schema_version = 9,
 		boundary_scope = "DoGenerate ProcStart/ProcEnd all procedures",
 		attachment_method = "generator ProcStart/ProcEnd",
 		in_progress = true,
