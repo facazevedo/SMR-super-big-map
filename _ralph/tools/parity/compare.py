@@ -323,6 +323,23 @@ def main():
         summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines)
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
+        # Machine-readable gate inputs (seed/hash equality is a contract gate and must
+        # not have to be re-read out of the prose report).
+        s = summary[tag]
+        s["vanilla_seed"] = vmeta[tag].get("gen_seed")
+        s["expanded_seed"] = emeta[tag].get("gen_seed")
+        s["vanilla_hash"] = vmeta[tag].get("gen_hash")
+        s["expanded_hash"] = emeta[tag].get("gen_hash")
+        s["seed_equal"] = (s["vanilla_seed"] is not None
+                           and s["vanilla_seed"] == s["expanded_seed"])
+        s["hash_equal"] = (s["vanilla_hash"] is not None
+                           and s["vanilla_hash"] == s["expanded_hash"])
+        s["vanilla_tiles"] = vw
+        s["expanded_tiles"] = ew
+        s["bijection_ok"] = (s["provenance_unmatched_expanded"] == 0
+                             and s["provenance_unstamped_expanded"] == 0
+                             and s["provenance_unconsumed_vanilla"] == 0
+                             and s["vanilla_objects"] == s["expanded_objects"])
 
     text = "\n".join(lines)
     print(text)
