@@ -1407,8 +1407,20 @@ MARK_PROBE_BLOCK = """		do
 				return string.format("%s#%s/%s", tostring(md and md.Environment or "?"),
 					tostring(map.slot), tostring(md and md.Width or "?"))
 			end
+			-- `placed_objects` keeps entries the removal pass has already destroyed; calling GetPos
+			-- or GridGetMark on one raises a NATIVE "Expected luaGameObject" error that the Lua
+			-- pcall cannot suppress from the game log, so validity is checked first.
+			local function mark_live(obj)
+				if type(obj) ~= "table" then return false end
+				local isv = rawget(_G, "IsValid")
+				if type(isv) == "function" then
+					local ok, live = pcall(isv, obj)
+					if not ok or live ~= true then return false end
+				end
+				return true
+			end
 			local function mark_xy(obj)
-				if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return nil end
+				if not mark_live(obj) or type(obj.GetPos) ~= "function" then return nil end
 				local ok, x, y = pcall(function()
 					local p = obj:GetPos()
 					return p:x(), p:y()
@@ -1503,7 +1515,7 @@ MARK_PROBE_BLOCK = """		do
 				end
 				local native_mark = function(obj)
 					local getter = rawget(_G, "GridGetMark")
-					if type(getter) ~= "function" then return nil end
+					if type(getter) ~= "function" or not mark_live(obj) then return nil end
 					local ok, v = pcall(getter, grid, obj)
 					if ok and type(v) == "number" then return v end
 					return nil
@@ -1681,7 +1693,7 @@ MARK_PROBE_BLOCK = """		do
 				site_hits = site_hits + 1
 				local getter = rawget(_G, "GridGetMark")
 				local nm
-				if type(getter) == "function" then
+				if type(getter) == "function" and mark_live(obj) then
 					local okm, v = pcall(getter, ups.mark_grid, obj)
 					nm = okm and v or nil
 				end
