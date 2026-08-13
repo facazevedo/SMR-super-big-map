@@ -5,7 +5,11 @@ Five independent tests per map (surface, underground):
   A. Census      - per-class object counts must match exactly (the 1:1 claim).
   B. Provenance  - every expanded object's stamped SuperBigMapNativeSource(X,Y)
                    must correspond to exactly one vanilla object of the same class
-                   at exactly that position (bijection by identity).
+                   at exactly that position (bijection by identity).  Three stages:
+                   the source stamp, then the donor root for objects vanilla derives
+                   away from their donor, then the FX anchor for standalone action-FX
+                   carriers, which have no creation chain on either twin
+                   (FX_CARRIER_CLASSES).
   C. Geometry    - independent of the stamps: match vanilla -> expanded per class
                    purely by predicted position (vanilla_xy * ratio) and report the
                    residual distance distribution (proportional placement).
@@ -39,6 +43,70 @@ import hexgrid_analyze
 
 INVALID_Z = 2147483647
 MAPS = ("surface", "underground")
+
+# ---------------------------------------------------------------------------
+# STANDALONE ACTION-FX CARRIERS  (matching stage 3, see `provenance`)
+#
+# An ActionFXParticles preset without `Attach` creates a FREE map object: the engine
+# places a `ParSystem` at `actor pose + preset Offset` with the actor's angle and never
+# parents it to the actor (Data/FXPreset/ActionFXParticles.lua; the stock `Revealed`
+# preset Particles_1LtXWp8i uses Offset = point(0,0,100), Target = "ignore").  Such a
+# carrier therefore has NO creation chain at all - no attach parent, no `marker`,
+# `tunnel_marker` or `spawner` field - so neither the mod's provenance walker nor the
+# dump's root walk can name the object it belongs to, on EITHER twin.
+#
+# Its position, however, IS its identity: the only placement rule the engine applies is
+# "the pose of the object that played the FX".  So the carrier is identified by the
+# object it sits on, discovered geometrically and IDENTICALLY on both twins from the dump
+# rows alone (never from mod-side instrumentation, which exists on one twin only):
+#
+#   * the anchor candidates are the non-carrier rows at EXACTLY the carrier's (x, y)
+#     whose angle equals the carrier's angle (the FX copies the actor's angle, which is
+#     what separates a passage from its differently-rotated decal attachment);
+#   * a candidate must be z-plausible: the carrier sits at or above it, by at most
+#     Z_ANCHOR_MAX (the preset offset plus terrain snap) - a row with no dumped z (an
+#     object the engine keeps off the height grid) is accepted on the xy/angle evidence;
+#   * every surviving candidate must agree on ONE donor-root key, which is then the
+#     carrier's identity; an empty or disagreeing candidate set leaves the carrier
+#     unidentified, so it stays in the residue and keeps its gate RED.
+#
+# Restricted to the carrier classes below so the rule can never rescue an unmatched
+# ordinary object that merely happens to share a coordinate with something.
+# ---------------------------------------------------------------------------
+FX_CARRIER_CLASSES = {"ParSystem"}
+FX_ANCHOR_MAX_Z = 200
+
+
+def annotate_fx_anchors(rows):
+    """Resolve each standalone FX carrier's anchor identity from the dump rows alone.
+
+    Must run over the COMPLETE row list of a map side, before any content/residue
+    filtering: the anchor is usually a matched object that the filtered pools exclude.
+    """
+    by_xy = defaultdict(list)
+    for r in rows:
+        if r["class"] not in FX_CARRIER_CLASSES and r["x"] is not None:
+            by_xy[(r["x"], r["y"])].append(r)
+    resolved = 0
+    for r in rows:
+        r["fx_anchor"] = None
+        if r["class"] not in FX_CARRIER_CLASSES or r["x"] is None:
+            continue
+        keys = set()
+        for c in by_xy.get((r["x"], r["y"]), ()):
+            if c["angle"] != r["angle"]:
+                continue
+            if c["z"] is not None and r["z"] is not None:
+                dz = r["z"] - c["z"]
+                if dz < 0 or dz > FX_ANCHOR_MAX_Z:
+                    continue
+            keys.add((c["root_class"], c["root_x"], c["root_y"]))
+        if len(keys) == 1:
+            key = keys.pop()
+            if key[1] is not None:
+                r["fx_anchor"] = key
+                resolved += 1
+    return resolved
 
 # ---------------------------------------------------------------------------
 # INFRASTRUCTURE ENUMERATION  (task matrix case `infrastructure-enumerated`)
@@ -449,6 +517,33 @@ def provenance(vrows, erows):
         else:
             still_unmatched.append(r)
     unmatched = still_unmatched
+    # Stage 3, STANDALONE ACTION-FX CARRIERS only (see FX_CARRIER_CLASSES). These objects
+    # have no creation chain on either twin, so stages 1-2 can never see them; their
+    # identity is the object they were played on, resolved geometrically and identically
+    # on both twins by `annotate_fx_anchors`. A carrier whose anchor could not be
+    # resolved - the exact state of an expanded FX left behind when its actor moved -
+    # is NOT rescued here and stays in the residue.
+    fx_pool = defaultdict(list)
+    for i, r in enumerate(vrows):
+        if (i not in used and r["class"] in FX_CARRIER_CLASSES
+                and r.get("fx_anchor") is not None):
+            fx_pool[(r["class"], r["fx_anchor"])].append(i)
+    matched_by_fx_anchor = 0
+
+    def claim_by_fx_anchor(r):
+        nonlocal matched, matched_by_fx_anchor
+        if r["class"] not in FX_CARRIER_CLASSES or r.get("fx_anchor") is None:
+            return False
+        bucket = fx_pool.get((r["class"], r["fx_anchor"]))
+        if not bucket:
+            return False
+        matched += 1
+        matched_by_fx_anchor += 1
+        used.add(bucket.pop())
+        return True
+
+    unstamped = [r for r in unstamped if not claim_by_fx_anchor(r)]
+    unmatched = [r for r in unmatched if not claim_by_fx_anchor(r)]
     unconsumed = [vrows[i] for i in range(len(vrows)) if i not in used]
     return {
         "stamped": stamped,
@@ -459,6 +554,7 @@ def provenance(vrows, erows):
         "stamped_by_kind": dict(by_kind),
         "matched_by_kind": dict(matched_by_kind),
         "matched_by_root": matched_by_root,
+        "matched_by_fx_anchor": matched_by_fx_anchor,
     }
 
 
@@ -555,6 +651,12 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     w(f"  {tag.upper()}   vanilla={len(vrows)} objects   expanded={len(erows)} objects")
     w(f"{'=' * 78}")
 
+    # Resolve standalone FX-carrier anchors over the COMPLETE row lists first: the anchor
+    # is normally a matched object that the section F/G pools filter out, and the same row
+    # dicts flow into every pool, so one annotation serves A/B, F and G identically.
+    fx_v = annotate_fx_anchors(vrows)
+    fx_e = annotate_fx_anchors(erows)
+
     vc, ec, same, diff = census(vrows, erows)
     w(f"\n-- A. CLASS CENSUS --")
     w(f"   total objects       : vanilla {len(vrows)} vs expanded {len(erows)}  "
@@ -572,6 +674,10 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     w(f"   expanded objects carrying a source stamp : {prov['stamped']}")
     w(f"   ... matched to a distinct vanilla object : {prov['matched']}")
     w(f"   ... of those, paired by donor root       : {prov['matched_by_root']}")
+    w(f"   standalone FX carriers (anchor resolved) : vanilla {fx_v} / expanded {fx_e} "
+      f"of {sum(1 for r in vrows if r['class'] in FX_CARRIER_CLASSES)} / "
+      f"{sum(1 for r in erows if r['class'] in FX_CARRIER_CLASSES)}")
+    w(f"   ... additionally paired by FX anchor     : {prov['matched_by_fx_anchor']}")
     w(f"   ... stamp with no vanilla counterpart    : {len(prov['unmatched_expanded'])}")
     w(f"   expanded objects with NO source stamp    : {len(prov['unstamped'])}")
     if prov["stamped_by_kind"]:
@@ -780,6 +886,15 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
         "provenance_unstamped_expanded": len(prov["unstamped"]),
         "provenance_unconsumed_vanilla": len(prov["unconsumed_vanilla"]),
         "provenance_matched_by_root": prov["matched_by_root"],
+        "provenance_matched_by_fx_anchor": prov["matched_by_fx_anchor"],
+        "content_matched_by_fx_anchor": cprov["matched_by_fx_anchor"],
+        "unexplained_matched_by_fx_anchor": uprov["matched_by_fx_anchor"],
+        "fx_carriers_vanilla": sum(1 for r in vrows
+                                   if r["class"] in FX_CARRIER_CLASSES),
+        "fx_carriers_expanded": sum(1 for r in erows
+                                    if r["class"] in FX_CARRIER_CLASSES),
+        "fx_carriers_anchored_vanilla": fx_v,
+        "fx_carriers_anchored_expanded": fx_e,
         "provenance_stamped_by_kind": prov["stamped_by_kind"],
         "provenance_matched_by_kind": prov["matched_by_kind"],
         "stretch_max_residual": max(allres) if allres else None,
