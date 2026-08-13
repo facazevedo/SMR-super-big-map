@@ -91,6 +91,8 @@ Create `DONE.md` only when: all phase-1 cases pass with machine-readable evidenc
 
 Class-count equality alone never satisfies a bijection gate; matching must be record-level with duplicate-provenance rejection.
 
+Ratchet: maintain `artifacts/best.json` with the best-yet score per gate (matched/unmatched counts per map, seed/hash equality, extras). Every twin run compares against it; a result worse than best on ANY gate is a regression — the iteration records `Progress: no`, and the regressing change is fixed or reverted before new work. Improvements update the file in the same checkpoint. Measurement-tool changes never relax a gate: widening tolerances, adding class exemptions, or skipping records requires the infrastructure-enumeration justification in DONE.md, and silently weakening `compare.py` or the dump to make a gate pass is a contract violation.
+
 ## Blockers
 
 Human input is required only for scope changes, corrupt/inaccessible protected reference data that a freshly generated deterministic control cannot replace, or a persistent external platform failure reproduced identically across three iterations after one clean infrastructure restart with preserved diagnostics. Slow generation, a hard mismatch, or the need for new diagnostics is never a blocker.
