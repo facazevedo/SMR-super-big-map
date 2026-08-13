@@ -354,7 +354,9 @@ DECAL_PROBE_BLOCK = """		do
 					end
 					for i = 1, #(rawget(_G, "Maps") or {}) do
 						local m = Maps[i]
-						if m and type(m.MapGet) == "function" then
+						-- Skip a map that is loading or being destroyed: MapGet before the native
+						-- map is mounted trips luaQuery.cpp ASSERT(m_pMap) (seen in iteration 011).
+						if m and type(m.MapGet) == "function" and not m.changing then
 							local ok_d, decals = pcall(m.MapGet, m, "map", "SectorUnexplored")
 							local ok_s, scanned = pcall(m.MapGet, m, "map", "SectorScanned")
 							local ok_m, sectors = pcall(m.MapGet, m, "map", "MapSector")
@@ -485,13 +487,21 @@ CAMERA_PROBE_BLOCK = """		do
 				cam_log("wrapped DoneObject")
 			end
 
+			-- MapGet on a map whose native map is not mounted yet trips the engine's
+			-- luaQuery.cpp ASSERT(m_pMap); Map.changing is "loading" from ChangeMapInSlot until
+			-- Map:Load finishes (CommonLua/Core/map.lua:339/376) and "destroying" during
+			-- teardown, so skip those windows entirely.
+			local function cam_queryable(m)
+				return m and type(m.MapGet) == "function" and not m.changing
+			end
+
 			CreateRealTimeThread(function()
 				local last = {}
 				while true do
 					local status = tostring(rawget(_G, "g_ParityStatus"))
 					for i = 1, #(rawget(_G, "Maps") or {}) do
 						local m = Maps[i]
-						if m and type(m.MapGet) == "function" then
+						if cam_queryable(m) then
 							local ok_c, cams = pcall(m.MapGet, m, "map", "CameraObj")
 							local n = ok_c and #(cams or {}) or -1
 							local key = cam_key(m)
@@ -509,7 +519,7 @@ CAMERA_PROBE_BLOCK = """		do
 				cam_log(string.format("SUMMARY constructions=%d", created))
 				for i = 1, #(rawget(_G, "Maps") or {}) do
 					local m = Maps[i]
-					if m and type(m.MapGet) == "function" then
+					if cam_queryable(m) then
 						local ok_c, cams = pcall(m.MapGet, m, "map", "CameraObj")
 						cams = ok_c and cams or {}
 						cam_log(string.format("postmortem %s cameras=%d live_g_CameraObj=%s",
