@@ -1,6 +1,6 @@
 """Compare the 30S146E vanilla and expanded object dumps.
 
-Three independent tests per map (surface, underground):
+Five independent tests per map (surface, underground):
 
   A. Census      - per-class object counts must match exactly (the 1:1 claim).
   B. Provenance  - every expanded object's stamped SuperBigMapNativeSource(X,Y)
@@ -9,6 +9,13 @@ Three independent tests per map (surface, underground):
   C. Geometry    - independent of the stamps: match vanilla -> expanded per class
                    purely by predicted position (vanilla_xy * ratio) and report the
                    residual distance distribution (proportional placement).
+  E. Infrastructure - the enumerated engine/mod infrastructure classes, each with the
+                   rule that fixes its expected cardinality and a verdict.
+  F. Content     - A+B recomputed over CONTENT ONLY (everything not enumerated in E),
+                   which is the population the bijection gates actually govern.
+
+A + B stay defined over EVERY record so their gate numbers remain comparable with
+every earlier run; E/F are additive.
 
 Usage: python compare.py [out_dir]
 """
@@ -21,6 +28,90 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 INVALID_Z = 2147483647
+
+# ---------------------------------------------------------------------------
+# INFRASTRUCTURE ENUMERATION  (task matrix case `infrastructure-enumerated`)
+#
+# A class may live here ONLY if it is engine or mod INFRASTRUCTURE - an object the
+# engine/mod creates to run the map, whose count is fixed by the map's structure and
+# not by generated content - AND its expected cardinality is stated as a rule below.
+# Content (PrefabMarker, every decoration, deposit, marker, feature product, passage
+# or wonder object) must never be listed here; it is governed by the bijection.
+#
+# Every class carries: reason (why it is not content) and a cardinality rule. A class
+# whose rule cannot fix a number is scored `unproven`, never `ok`, so the
+# infrastructure gate can never go green on an unexplained count.
+# ---------------------------------------------------------------------------
+VANILLA_SECTOR_GRID = 10   # vanilla const.SectorCount -> 10x10 MapSector objects
+EXPANDED_SECTOR_GRID = 20  # mod grid (contract case `sector-integrity`) -> 20x20
+
+INFRASTRUCTURE = {
+    "MapSector": (
+        "Exploration sector-grid object (Exploration:InitSectors). One per sector "
+        "cell; it carries no generated content, it partitions the map."),
+    "SectorUnexplored": (
+        "MapSector-owned overview decal placed by MapSector:UpdateDecal "
+        "(PlaceObjectIn) for every sector still 'unexplored'. UI overlay, not content."),
+    "SectorScanned": (
+        "MapSector-owned overview decal for a scanned sector; UpdateDecal places it "
+        "only while g_Consts.DeepScanAvailable ~= 0, so a fresh game has none."),
+    "RandomMapGeneratorHolder": (
+        "Generator bookkeeping object holding the map's seed and generation hash; "
+        "exactly one is created per generated map."),
+    "CameraObj": (
+        "Engine ActionFX camera helper (CommonLua/Classes/ActionFX.lua); created by "
+        "camera activation, not by map generation."),
+    "GridObjectList": (
+        "Engine hex-grid collision bucket created implicitly by HexGridShapeAddObject "
+        "when two or more object shapes occupy one hex node (Lua/GridObject.lua); "
+        "invisible, non-colliding bookkeeping."),
+}
+
+
+def infrastructure_enumeration(vc, ec):
+    """Enumerate every infrastructure class with its expected cardinality + verdict.
+
+    vc/ec are class->count Counters for the vanilla and expanded twin of one map.
+    """
+    v_unexplored = vc.get("SectorUnexplored", 0)
+    # Sectors the vanilla control does NOT show as unexplored (vanilla's initial reveal).
+    # The expanded twin must reveal the same number of sectors out of its larger grid.
+    revealed = VANILLA_SECTOR_GRID ** 2 - v_unexplored
+
+    def entry(cls, exp_v, exp_e, rule):
+        obs_v, obs_e = vc.get(cls, 0), ec.get(cls, 0)
+        if exp_v is None or exp_e is None:
+            verdict = "unproven"
+        elif obs_v == exp_v and obs_e == exp_e:
+            verdict = "ok"
+        else:
+            verdict = "MISMATCH"
+        return {
+            "class": cls, "reason": INFRASTRUCTURE[cls], "rule": rule,
+            "vanilla": obs_v, "expanded": obs_e,
+            "expected_vanilla": exp_v, "expected_expanded": exp_e,
+            "verdict": verdict,
+        }
+
+    out = [
+        entry("MapSector", VANILLA_SECTOR_GRID ** 2, EXPANDED_SECTOR_GRID ** 2,
+              f"one per sector cell: {VANILLA_SECTOR_GRID}x{VANILLA_SECTOR_GRID} vanilla, "
+              f"{EXPANDED_SECTOR_GRID}x{EXPANDED_SECTOR_GRID} expanded"),
+        entry("SectorUnexplored",
+              VANILLA_SECTOR_GRID ** 2 - revealed,
+              EXPANDED_SECTOR_GRID ** 2 - revealed if 0 <= revealed else None,
+              f"one per unexplored sector: sectors - revealed({revealed}, measured on "
+              f"the vanilla control)"),
+        entry("SectorScanned", 0, 0,
+              "none in a fresh game (DeepScanAvailable == 0 at colony start)"),
+        entry("RandomMapGeneratorHolder", 1, 1, "exactly one per generated map"),
+        entry("CameraObj", None, None,
+              "UNCONSTRAINED: engine camera helper, cardinality not fixed by the map"),
+        entry("GridObjectList", None, None,
+              "UNCONSTRAINED: implicit hex-node collision buckets; count follows hex "
+              "occupancy, not the object population"),
+    ]
+    return out, revealed
 
 
 def parse_dump(path):
@@ -315,9 +406,65 @@ def report_map(tag, vrows, erows, rx, ry, out):
             n = sum(1 for d in alld if d <= thr)
             w(f"     within {thr:>6} wu : {n}/{len(alld)} ({100.0 * n / len(alld):.3f}%)")
 
+    infra, revealed = infrastructure_enumeration(vc, ec)
+    w(f"\n-- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --")
+    w("     class                                   vanilla  expanded  expect_v  expect_e  verdict")
+    for e in infra:
+        ev = "-" if e["expected_vanilla"] is None else e["expected_vanilla"]
+        ee = "-" if e["expected_expanded"] is None else e["expected_expanded"]
+        w(f"     {e['class'][:38]:<38} {e['vanilla']:>8} {e['expanded']:>9} "
+          f"{str(ev):>9} {str(ee):>9}  {e['verdict']}")
+    for e in infra:
+        if e["verdict"] != "ok":
+            w(f"     {e['class']}: {e['verdict']} - rule: {e['rule']}")
+    infra_ok = all(e["verdict"] == "ok" for e in infra)
+    w(f"   infrastructure gate  : {'GREEN' if infra_ok else 'RED'} "
+      f"(ok={sum(1 for e in infra if e['verdict'] == 'ok')}/{len(infra)}, "
+      f"initial reveal measured on the vanilla control = {revealed} sector(s))")
+
+    cv = [r for r in vrows if r["class"] not in INFRASTRUCTURE]
+    ce = [r for r in erows if r["class"] not in INFRASTRUCTURE]
+    cvc, cec, csame, cdiff = census(cv, ce)
+    cprov = provenance(cv, ce)
+    w(f"\n-- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --")
+    w(f"   content objects      : vanilla {len(cv)} vs expanded {len(ce)}  "
+      f"{'MATCH' if len(cv) == len(ce) else 'MISMATCH (' + str(len(ce) - len(cv)) + ')'}")
+    w(f"   classes differing    : {len(cdiff)}")
+    for c, v, e in sorted(cdiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
+        w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
+    w(f"   matched              : {cprov['matched']}")
+    w(f"   unmatched expanded   : {len(cprov['unmatched_expanded'])}")
+    w(f"   unstamped expanded   : {len(cprov['unstamped'])}")
+    w(f"   unclaimed vanilla    : {len(cprov['unconsumed_vanilla'])}")
+    for label, recs in (("unstamped expanded", cprov["unstamped"]),
+                        ("unmatched expanded", cprov["unmatched_expanded"]),
+                        ("unclaimed vanilla", cprov["unconsumed_vanilla"])):
+        if recs:
+            w(f"   {label} classes:")
+            for c, n in Counter(r["class"] for r in recs).most_common(15):
+                w(f"     {c[:44]:<44} {n:>7}")
+
     return {
         "vanilla_objects": len(vrows),
         "expanded_objects": len(erows),
+        "infrastructure": infra,
+        "infrastructure_ok": infra_ok,
+        "infrastructure_unproven": sum(1 for e in infra if e["verdict"] == "unproven"),
+        "infrastructure_mismatch": sum(1 for e in infra if e["verdict"] == "MISMATCH"),
+        "initial_revealed_sectors": revealed,
+        "content_vanilla_objects": len(cv),
+        "content_expanded_objects": len(ce),
+        "content_classes_differing": len(cdiff),
+        "content_class_diffs": [{"class": c, "vanilla": v, "expanded": e}
+                                for c, v, e in cdiff],
+        "content_matched": cprov["matched"],
+        "content_unmatched_expanded": len(cprov["unmatched_expanded"]),
+        "content_unstamped_expanded": len(cprov["unstamped"]),
+        "content_unconsumed_vanilla": len(cprov["unconsumed_vanilla"]),
+        "content_bijection_ok": (len(cprov["unmatched_expanded"]) == 0
+                                 and len(cprov["unstamped"]) == 0
+                                 and len(cprov["unconsumed_vanilla"]) == 0
+                                 and len(cv) == len(ce)),
         "classes_matching": len(same),
         "classes_differing": len(diff),
         "class_diffs": [{"class": c, "vanilla": v, "expanded": e} for c, v, e in diff],

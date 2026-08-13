@@ -15,6 +15,17 @@ sign convention below, so a regression can never be hidden by a tolerance change
   object_count_delta             : -|expanded_objects - vanilla_objects|
   classes_differing              : negated
 
+The raw gates above cover EVERY record, including the enumerated infrastructure
+classes whose expanded cardinality legitimately differs (400 MapSector vs 100), so
+they can never reach 0.  The content_* gates below repeat them over the population
+the bijection actually governs, and infrastructure_ok scores the enumeration itself.
+Both sets are kept: the raw gates stay comparable with every earlier run, and no gate
+is ever redefined to move a number.
+
+  infrastructure_ok              : bool  -> 1/0 (every enumerated class proven)
+  content_matched                : higher better
+  neg_content_*                  : negated content counts
+
 Usage:
   python _ralph/tools/parity/ratchet.py <parity_summary.json> <best.json> [--update]
 """
@@ -39,6 +50,17 @@ def score(map_summary):
             s.get("expanded_objects", 0) - s.get("vanilla_objects", 0)
         ),
         "neg_classes_differing": -s.get("classes_differing", 0),
+        "infrastructure_ok": 1 if s.get("infrastructure_ok") else 0,
+        "neg_infrastructure_unresolved": -(s.get("infrastructure_unproven", 0)
+                                           + s.get("infrastructure_mismatch", 0)),
+        "content_matched": s.get("content_matched", 0),
+        "neg_content_unmatched_expanded": -s.get("content_unmatched_expanded", 0),
+        "neg_content_unstamped_expanded": -s.get("content_unstamped_expanded", 0),
+        "neg_content_unconsumed_vanilla": -s.get("content_unconsumed_vanilla", 0),
+        "neg_content_object_count_delta": -abs(
+            s.get("content_expanded_objects", 0) - s.get("content_vanilla_objects", 0)
+        ),
+        "neg_content_classes_differing": -s.get("content_classes_differing", 0),
     }
 
 
@@ -49,6 +71,20 @@ def main():
     summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     best_path = Path(sys.argv[2])
     update = "--update" in sys.argv[3:]
+
+    # A missing field must never score as a perfect gate: refuse to score a summary
+    # that predates (or silently dropped) the content/infrastructure fields.
+    required = ("content_matched", "content_unmatched_expanded",
+                "content_unstamped_expanded", "content_unconsumed_vanilla",
+                "content_expanded_objects", "infrastructure_ok")
+    for m in MAPS:
+        if m not in summary:
+            continue
+        missing = [k for k in required if k not in summary[m]]
+        if missing:
+            print(f"{sys.argv[1]}: {m} summary is missing {missing}; "
+                  "re-run compare.py with the current tool", file=sys.stderr)
+            return 2
 
     current = {m: score(summary[m]) for m in MAPS if m in summary}
     best = {}
