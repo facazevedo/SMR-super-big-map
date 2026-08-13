@@ -137,6 +137,25 @@ SERIAL_RASTER_BLOCK = """		-- Match the mod's source-capture transaction: stock 
 		end"""
 
 
+# Diagnostic only, opt-in with the "entranceaudit" argument.  Turns on the mod's own gated
+# elevator audit channel (sbm_diagnostics.lua: DEBUG_LOGGING_ENABLED + DEBUG_ELEVATOR_SUPPLY)
+# so the passage planner's PASSAGE_PLAN_* records reach the game log.  It only flips two
+# config booleans that gate print() calls - no wrapper, no object touched, no RNG consumed -
+# so the dump must stay byte-identical to a run without it.
+ENTRANCE_AUDIT_BLOCK = """		do
+			local C = SBM.Config
+			if type(C) ~= "table" then error("SuperBigMap.Config unavailable for the entrance audit") end
+			C.DEBUG_LOGGING_ENABLED = true
+			C.DEBUG_ELEVATOR_SUPPLY = true
+			local D = SBM.Diagnostics
+			if type(D) ~= "table" or type(D.ElevatorSupplyEnabled) ~= "function"
+				or D.ElevatorSupplyEnabled() ~= true then
+				error("entrance audit channel did not turn on")
+			end
+			g_ParityEntranceAudit = true
+		end"""
+
+
 # Diagnostic only, opt-in with the "probe" argument.  The expanded underground dumps zero
 # SectorUnexplored overview decals while its surface dumps 399.  Iteration 005 ruled out
 # destruction (no DoneObject on an underground decal, census never saw one exist), so the
@@ -1734,7 +1753,8 @@ MARK_PROBE_BLOCK = """		do
 
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
-             fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False):
+             fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
+             entrance_audit=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -1766,6 +1786,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     extras = []
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
+    if entrance_audit:
+        extras.append(ENTRANCE_AUDIT_BLOCK)
     probe_path = OUT / f"probe-{tag}.log"
     if decal_probe:
         if probe_path.exists():
@@ -1961,6 +1983,7 @@ def main():
         pitprobe = "pitprobe" in sys.argv[5:]
         decorprobe = "decorprobe" in sys.argv[5:]
         markprobe = "markprobe" in sys.argv[5:]
+        entranceaudit = "entranceaudit" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -1972,11 +1995,12 @@ def main():
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
-            f"mark_probe={markprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"mark_probe={markprobe} entrance_audit={entranceaudit} hexgrid={hexgrid} "
+            f"lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
-                        mark_probe=markprobe)
+                        mark_probe=markprobe, entrance_audit=entranceaudit)
         log(f"result: {json.dumps(info)}")
         return
 
