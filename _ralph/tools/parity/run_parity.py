@@ -405,8 +405,142 @@ DECAL_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "cameraprobe" argument.  `CameraObj` is the last
+# infrastructure class without a proven cardinality rule: the engine creates exactly one per
+# map (MapVar "g_CameraObj", CommonLua/Classes/ActionFX.lua:4322, initialized from
+# OnMsg.NewMap through InitMapVarValue in CommonLua/Core/lib.lua:995), yet the expanded
+# surface dumps TWO - one at the vanilla-twin camera pose carrying a self-stamp from the
+# pre-stretch capture, one at the expanded pose with no stamp - while every other map dumps
+# one.  Either a second engine-side MapVar initialization happens on that map (orphaning the
+# first object) or something creates a CameraObj directly.  This block names the creator: it
+# wraps CameraObj:Init to log a traceback per construction, wraps DoneObject to see any
+# destruction, samples per-map CameraObj counts plus the identity of map.g_CameraObj so a
+# silent replacement is visible, and enumerates every surviving instance at the end (pose,
+# whether it is the live g_CameraObj, stamp, flags).  It creates no object, consumes no map
+# RNG, and changes no generation input.
+CAMERA_PROBE_BLOCK = """		do
+			local cam_lines = {}
+			local function cam_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local cam_t0 = cam_ticks()
+			local function cam_log(text)
+				if #cam_lines >= 4000 then return end
+				cam_lines[#cam_lines + 1] = string.format(
+					"[%7dms][%s] %s", cam_ticks() - cam_t0,
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityCamLines = cam_lines
+			g_ParityCamProbeStatus = "running"
+
+			local function cam_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function cam_key(map)
+				if not map then return "nomap" end
+				local env = map.mapdata and map.mapdata.Environment or "?"
+				return tostring(env) .. "#" .. tostring(map.slot)
+			end
+			local function cam_pos(obj)
+				local ok, pos = pcall(obj.GetPos, obj)
+				if not ok or not pos then return "nopos" end
+				local ok_a, angle = pcall(obj.GetAngle, obj)
+				return string.format("%s angle=%s", tostring(pos), ok_a and tostring(angle) or "?")
+			end
+
+			local cam_class = rawget(_G, "g_Classes") and g_Classes.CameraObj
+			local created = 0
+			if cam_class then
+				local original_init = cam_class.Init
+				cam_class.Init = function(self, ...)
+					local a, b
+					if type(original_init) == "function" then a, b = original_init(self, ...) end
+					created = created + 1
+					cam_log(string.format("CameraObj Init #%d obj=%s map=%s\\n%s",
+						created, tostring(self), cam_key(cam_map_of(self)),
+						debug.traceback("", 2)))
+					return a, b
+				end
+				cam_log("wrapped CameraObj:Init")
+			else
+				cam_log("CameraObj class unavailable - creation not instrumented")
+			end
+
+			local original_done = rawget(_G, "DoneObject")
+			if type(original_done) == "function" then
+				local destroyed = 0
+				DoneObject = function(obj, ...)
+					if type(obj) == "table" and obj.class == "CameraObj" then
+						destroyed = destroyed + 1
+						cam_log(string.format("DoneObject CameraObj #%d obj=%s map=%s %s\\n%s",
+							destroyed, tostring(obj), cam_key(cam_map_of(obj)), cam_pos(obj),
+							debug.traceback("", 2)))
+					end
+					return original_done(obj, ...)
+				end
+				cam_log("wrapped DoneObject")
+			end
+
+			CreateRealTimeThread(function()
+				local last = {}
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					for i = 1, #(rawget(_G, "Maps") or {}) do
+						local m = Maps[i]
+						if m and type(m.MapGet) == "function" then
+							local ok_c, cams = pcall(m.MapGet, m, "map", "CameraObj")
+							local n = ok_c and #(cams or {}) or -1
+							local key = cam_key(m)
+							local cur = string.format("%d/%s", n, tostring(m.g_CameraObj))
+							if last[key] ~= cur then
+								cam_log(string.format("census %s cameras=%d g_CameraObj=%s",
+									key, n, tostring(m.g_CameraObj)))
+								last[key] = cur
+							end
+						end
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(400)
+				end
+				cam_log(string.format("SUMMARY constructions=%d", created))
+				for i = 1, #(rawget(_G, "Maps") or {}) do
+					local m = Maps[i]
+					if m and type(m.MapGet) == "function" then
+						local ok_c, cams = pcall(m.MapGet, m, "map", "CameraObj")
+						cams = ok_c and cams or {}
+						cam_log(string.format("postmortem %s cameras=%d live_g_CameraObj=%s",
+							cam_key(m), #cams, tostring(m.g_CameraObj)))
+						for j = 1, #cams do
+							local obj = cams[j]
+							local perm, vis = "?", "?"
+							if type(const) == "table" and type(obj.GetGameFlags) == "function" then
+								local ok_p, v = pcall(obj.GetGameFlags, obj, const.gofPermanent)
+								perm = ok_p and tostring(v) or "err"
+							end
+							if type(const) == "table" and type(obj.GetEnumFlags) == "function" then
+								local ok_v, v = pcall(obj.GetEnumFlags, obj, const.efVisible)
+								vis = ok_v and tostring(v) or "err"
+							end
+							cam_log(string.format(
+								"  [%d] obj=%s %s is_live=%s valid=%s stamped=%s permanent=%s visible=%s",
+								j, tostring(obj), cam_pos(obj), tostring(obj == m.g_CameraObj),
+								tostring(IsValid(obj)), tostring(obj.SuperBigMapNativeSourceX),
+								perm, vis))
+						end
+					end
+				end
+				local werr = AsyncStringToFile("__CAM_OUT__", table.concat(cam_lines, "\\n"))
+				g_ParityCamProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
-             pin_seed=None, decal_probe=False, hexgrid=False):
+             pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -443,6 +577,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if probe_path.exists():
             probe_path.unlink()
         extras.append(DECAL_PROBE_BLOCK.replace("__PROBE_OUT__", cli.lua_path(probe_path)))
+    cam_path = OUT / f"cameraprobe-{tag}.log"
+    if camera_probe:
+        if cam_path.exists():
+            cam_path.unlink()
+        extras.append(CAMERA_PROBE_BLOCK.replace("__CAM_OUT__", cli.lua_path(cam_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -492,6 +631,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             except RuntimeError as exc:
                 probe_status = f"unavailable ({exc})"
             log(f"decal probe: {probe_status} -> {probe_path}")
+
+        if camera_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                cam_status = poll_status(
+                    client, "g_ParityCamProbeStatus", {"complete"}, set(), 120, f"camera-{tag}"
+                )
+            except RuntimeError as exc:
+                cam_status = f"unavailable ({exc})"
+            log(f"camera probe: {cam_status} -> {cam_path}")
 
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
@@ -563,6 +712,7 @@ def main():
         seed = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] not in ("-", "") else None
         serial = "serial" in sys.argv[5:]
         probe = "probe" in sys.argv[5:]
+        camera = "cameraprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -572,10 +722,10 @@ def main():
             if extra.startswith("lat="): lat = int(extra[4:])
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
-            f"serial_raster={serial} decal_probe={probe} hexgrid={hexgrid} "
-            f"lat={lat} lon={lon} ===")
+            f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
+            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
-                        pin_seed=pin, decal_probe=probe, hexgrid=hexgrid)
+                        pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera)
         log(f"result: {json.dumps(info)}")
         return
 
