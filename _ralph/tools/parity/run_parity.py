@@ -1024,9 +1024,317 @@ PIT_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "decorprobe" argument.  The last underground content residue
+# is ten deterministic one-object sites (iteration 034): five prefab decor objects the expanded
+# twin has and vanilla does not, five vanilla has and the expanded twin does not, spread over
+# RemovableRocks_01/02, Rocks_04 and SoundSource.  Every stock pass that can add or drop exactly
+# one prefab object funnels through DoneObject - PlaceZonePrefab's IsOutsider cull
+# (RandomMapGenerator.lua:2306), remove_overlapping_object and delete_on_steep_slope (both through
+# `local remove_object = DoneObject`, :2686, bound when Generate runs, so a wrapper installed
+# before generation is captured), and the end-of-generation PrefabObj sweep (:2910).  This block
+# therefore wraps DoneObject/DoneObjects and logs class, map, position and a full traceback for
+# every watched-class destruction near one of the ten sites, wraps PlacePrefab (plus
+# PlaceObject/PlaceObjectIn) so the creation side of each site is visible independently of who
+# culls it, samples a change-only per-map census of the four classes, and ends with a per-site
+# post-mortem that reports the nearest surviving watched object to both the source coordinate and
+# its 4/3 stretch image.  Identical Lua runs on BOTH twins.  It creates no object, consumes no map
+# RNG and changes no generation input; inertness is proven by a byte-identical dump.
+DECOR_PROBE_BLOCK = """		do
+			local decor_lines = {}
+			local decor_dropped = 0
+			local decor_tracebacks = 0
+			local function decor_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local decor_t0 = decor_ticks()
+			local function decor_log(text)
+				if #decor_lines >= 40000 then
+					decor_dropped = decor_dropped + 1
+					return
+				end
+				decor_lines[#decor_lines + 1] = string.format(
+					"[%7dms][%s] %s", decor_ticks() - decor_t0,
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityDecorLines = decor_lines
+			g_ParityDecorProbeStatus = "running"
+
+			local WATCHED = {
+				RemovableRocks_01 = true, RemovableRocks_02 = true,
+				Rocks_04 = true, SoundSource = true,
+			}
+			-- The ten residue sites, in SOURCE (vanilla) coordinates.  "E" = present on the
+			-- expanded twin only, "V" = present on the vanilla twin only (iteration 034).
+			local SITES = {
+				{"E", "Rocks_04", 169118, 305372},
+				{"E", "SoundSource", 401972, 340705},
+				{"E", "RemovableRocks_02", 271913, 343717},
+				{"E", "RemovableRocks_02", 272833, 373485},
+				{"E", "RemovableRocks_02", 288823, 385739},
+				{"V", "SoundSource", 154540, 196242},
+				{"V", "SoundSource", 336786, 397864},
+				{"V", "RemovableRocks_02", 346164, 337898},
+				{"V", "RemovableRocks_02", 164909, 387965},
+				{"V", "RemovableRocks_01", 144912, 386496},
+			}
+			local SITE_R = 600
+
+			local function decor_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function decor_env(map)
+				if not map then return "nomap" end
+				local md = map.mapdata
+				return string.format("%s#%s/%s", tostring(md and md.Environment or "?"),
+					tostring(map.slot), tostring(md and md.Width or "?"))
+			end
+			local function decor_xy(obj)
+				if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return nil end
+				local ok, x, y = pcall(function()
+					local p = obj:GetPos()
+					return p:x(), p:y()
+				end)
+				if ok and type(x) == "number" then return x, y end
+				return nil
+			end
+			-- Position-only (never class-filtered): a site whose object changed class would
+			-- otherwise go unseen.  The expected class travels in the tag instead.
+			local function decor_site(x, y)
+				if type(x) ~= "number" or type(y) ~= "number" then return nil end
+				for i = 1, #SITES do
+					local s = SITES[i]
+					local dx, dy = x - s[3], y - s[4]
+					if dx < 0 then dx = -dx end
+					if dy < 0 then dy = -dy end
+					if dx <= SITE_R and dy <= SITE_R then
+						return string.format("%s%02d:%s(%d,%d)", s[1], i, s[2], s[3], s[4])
+					end
+				end
+				return nil
+			end
+
+			-- Creation side.
+			local place_calls, place_watched = 0, 0
+			local created_by_class, created_samples = {}, {}
+			local function decor_note_create(obj, via, extra)
+				local cls = type(obj) == "table" and obj.class
+				if not cls or not WATCHED[cls] then return end
+				local key = decor_env(decor_map_of(obj)) .. "/" .. tostring(cls)
+				created_by_class[key] = (created_by_class[key] or 0) + 1
+				local x, y = decor_xy(obj)
+				local site = decor_site(x, y)
+				local sample = (created_samples[key] or 0) < 2
+				if sample then created_samples[key] = (created_samples[key] or 0) + 1 end
+				local want_tb = (site ~= nil or sample) and decor_tracebacks < 160
+				if want_tb then decor_tracebacks = decor_tracebacks + 1 end
+				decor_log(string.format("PLACE %s %s (%s,%s) via=%s%s n=%d%s%s",
+					key, tostring(cls), tostring(x), tostring(y), tostring(via),
+					extra and (" " .. extra) or "", created_by_class[key],
+					site and (" SITE=" .. site) or "",
+					want_tb and ("\\n" .. debug.traceback("", 3)) or ""))
+			end
+
+			local original_place_prefab = rawget(_G, "PlacePrefab")
+			if type(original_place_prefab) == "function" then
+				_G.PlacePrefab = function(map, name, ...)
+					local a, b, c = original_place_prefab(map, name, ...)
+					place_calls = place_calls + 1
+					if type(b) == "table" then
+						for i = 1, #b do
+							local obj = b[i]
+							local cls = type(obj) == "table" and obj.class
+							if cls and WATCHED[cls] then
+								place_watched = place_watched + 1
+								decor_note_create(obj, "PlacePrefab",
+									"prefab=" .. tostring(name) .. " call=" .. tostring(place_calls))
+							end
+						end
+					end
+					return a, b, c
+				end
+				decor_log("wrapped PlacePrefab")
+			else
+				decor_log("PlacePrefab unavailable - prefab creation not instrumented")
+			end
+
+			local original_place_in = rawget(_G, "PlaceObjectIn")
+			if type(original_place_in) == "function" then
+				_G.PlaceObjectIn = function(class, target, ...)
+					local obj = original_place_in(class, target, ...)
+					if WATCHED[class] then decor_note_create(obj, "PlaceObjectIn") end
+					return obj
+				end
+				decor_log("wrapped PlaceObjectIn")
+			end
+			local original_place_object = rawget(_G, "PlaceObject")
+			if type(original_place_object) == "function" then
+				_G.PlaceObject = function(class, ...)
+					local obj = original_place_object(class, ...)
+					if WATCHED[class] then decor_note_create(obj, "PlaceObject") end
+					return obj
+				end
+				decor_log("wrapped PlaceObject")
+			end
+
+			-- Destruction side: the pass that decides each site.
+			local destroyed_by_class, destroyed_samples = {}, {}
+			local destroyed_total = 0
+			local function decor_note_destroy(obj, via)
+				local cls = type(obj) == "table" and obj.class
+				if not cls or not WATCHED[cls] then return end
+				destroyed_total = destroyed_total + 1
+				local key = decor_env(decor_map_of(obj)) .. "/" .. tostring(cls)
+				destroyed_by_class[key] = (destroyed_by_class[key] or 0) + 1
+				local x, y = decor_xy(obj)
+				local site = decor_site(x, y)
+				local sample = (destroyed_samples[key] or 0) < 3
+				if sample then destroyed_samples[key] = (destroyed_samples[key] or 0) + 1 end
+				-- Site hits ALWAYS carry a traceback; they are the point of the probe.
+				local want_tb = site ~= nil or (sample and decor_tracebacks < 160)
+				if want_tb then decor_tracebacks = decor_tracebacks + 1 end
+				decor_log(string.format("DONE %s %s (%s,%s) via=%s n=%d%s%s",
+					key, tostring(cls), tostring(x), tostring(y), tostring(via),
+					destroyed_by_class[key], site and (" SITE=" .. site) or "",
+					want_tb and ("\\n" .. debug.traceback("", 3)) or ""))
+			end
+
+			local our_done_wrapper, our_done_objects_wrapper
+			local function decor_wrap_done()
+				local original = rawget(_G, "DoneObject")
+				if type(original) ~= "function" or original == our_done_wrapper then return false end
+				our_done_wrapper = function(obj, ...)
+					decor_note_destroy(obj, "DoneObject")
+					return original(obj, ...)
+				end
+				_G.DoneObject = our_done_wrapper
+				return true
+			end
+			local function decor_wrap_done_objects()
+				local original = rawget(_G, "DoneObjects")
+				if type(original) ~= "function" or original == our_done_objects_wrapper then
+					return false
+				end
+				our_done_objects_wrapper = function(objs, ...)
+					if type(objs) == "table" then
+						for i = 1, #objs do decor_note_destroy(objs[i], "DoneObjects") end
+					end
+					return original(objs, ...)
+				end
+				_G.DoneObjects = our_done_objects_wrapper
+				return true
+			end
+			decor_log(decor_wrap_done() and "wrapped DoneObject" or "DoneObject unavailable")
+			decor_log(decor_wrap_done_objects() and "wrapped DoneObjects" or "DoneObjects unavailable")
+
+			-- MapGet before the native map is mounted trips luaQuery.cpp ASSERT(m_pMap) (iter 011).
+			local function decor_queryable(m)
+				return m and type(m.MapGet) == "function" and not m.changing
+			end
+			local function decor_count(m, cls)
+				local ok, objs = pcall(m.MapGet, m, "map", cls)
+				return ok and #(objs or {}) or -1
+			end
+
+			CreateRealTimeThread(function()
+				local last = {}
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					-- A load-time wrapper can be orphaned by a later global swap; re-assert.
+					if decor_wrap_done() then decor_log("DoneObject was REPLACED; re-wrapped") end
+					if decor_wrap_done_objects() then
+						decor_log("DoneObjects was REPLACED; re-wrapped")
+					end
+					for i = 1, #(rawget(_G, "Maps") or {}) do
+						local m = Maps[i]
+						if decor_queryable(m) then
+							local key = decor_env(m)
+							local parts = {}
+							for cls in pairs(WATCHED) do
+								parts[#parts + 1] = cls .. "=" .. tostring(decor_count(m, cls))
+							end
+							table.sort(parts)
+							local cur = table.concat(parts, " ")
+							if last[key] ~= cur then
+								decor_log(string.format("census %s %s", key, cur))
+								last[key] = cur
+							end
+						end
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(400)
+				end
+
+				local function decor_summary(name, tbl)
+					local parts = {}
+					for key, value in pairs(tbl or {}) do
+						parts[#parts + 1] = string.format("%s=%s", tostring(key), tostring(value))
+					end
+					table.sort(parts)
+					decor_log(string.format("SUMMARY %s: %s", name,
+						#parts > 0 and table.concat(parts, " ") or "(none)"))
+				end
+				decor_log(string.format(
+					"SUMMARY PlacePrefab calls=%d watched_objects=%d destroyed_watched=%d dropped_lines=%d",
+					place_calls, place_watched, destroyed_total, decor_dropped))
+				decor_summary("created", created_by_class)
+				decor_summary("destroyed", destroyed_by_class)
+
+				-- Per-site post-mortem: nearest surviving watched object to the source coordinate
+				-- and to its 4/3 stretch image (the expanded twin's objects are stretched by then).
+				for i = 1, #(rawget(_G, "Maps") or {}) do
+					local m = Maps[i]
+					if decor_queryable(m) then
+						local key = decor_env(m)
+						local objs = {}
+						for cls in pairs(WATCHED) do
+							local ok, list = pcall(m.MapGet, m, "map", cls)
+							list = ok and list or {}
+							for j = 1, #list do objs[#objs + 1] = list[j] end
+						end
+						decor_log(string.format("postmortem %s watched_objects=%d", key, #objs))
+						for s_i = 1, #SITES do
+							local s = SITES[s_i]
+							-- math.floor keeps these integers: Lua 5.3's "/" yields a float and
+							-- string.format("%d", float) then raises.
+							local targets = {
+								{"src", s[3], s[4]},
+								{"x4/3", math.floor((s[3] * 4) / 3), math.floor((s[4] * 4) / 3)},
+							}
+							for t = 1, #targets do
+								local tgt = targets[t]
+								local best, best_d2, best_dx, best_dy = nil, nil, nil, nil
+								for j = 1, #objs do
+									local x, y = decor_xy(objs[j])
+									if x then
+										local dx, dy = x - tgt[2], y - tgt[3]
+										local d2 = dx * dx + dy * dy
+										if not best_d2 or d2 < best_d2 then
+											best, best_d2, best_dx, best_dy = objs[j], d2, dx, dy
+										end
+									end
+								end
+								decor_log(string.format(
+									"  site %s%02d %s %s target=(%d,%d) nearest=%s delta=(%s,%s)",
+									s[1], s_i, s[2], tgt[1], tgt[2], tgt[3],
+									best and tostring(best.class) or "none",
+									tostring(best_dx), tostring(best_dy)))
+							end
+						end
+					end
+				end
+				local werr = AsyncStringToFile("__DECOR_OUT__", table.concat(decor_lines, "\\n"))
+				g_ParityDecorProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
-             fx_probe=False, pit_probe=False):
+             fx_probe=False, pit_probe=False, decor_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -1078,6 +1386,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if pit_path.exists():
             pit_path.unlink()
         extras.append(PIT_PROBE_BLOCK.replace("__PIT_OUT__", cli.lua_path(pit_path)))
+    decor_path = OUT / f"decorprobe-{tag}.log"
+    if decor_probe:
+        if decor_path.exists():
+            decor_path.unlink()
+        extras.append(DECOR_PROBE_BLOCK.replace("__DECOR_OUT__", cli.lua_path(decor_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -1147,6 +1460,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             except RuntimeError as exc:
                 pit_status = f"unavailable ({exc})"
             log(f"pit probe: {pit_status} -> {pit_path}")
+
+        if decor_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                decor_status = poll_status(
+                    client, "g_ParityDecorProbeStatus", {"complete"}, set(), 180, f"decor-{tag}"
+                )
+            except RuntimeError as exc:
+                decor_status = f"unavailable ({exc})"
+            log(f"decor probe: {decor_status} -> {decor_path}")
 
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
@@ -1221,6 +1544,7 @@ def main():
         camera = "cameraprobe" in sys.argv[5:]
         fxprobe = "fxprobe" in sys.argv[5:]
         pitprobe = "pitprobe" in sys.argv[5:]
+        decorprobe = "decorprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -1231,10 +1555,11 @@ def main():
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
-            f"fx_probe={fxprobe} pit_probe={pitprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
+            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
-                        fx_probe=fxprobe, pit_probe=pitprobe)
+                        fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe)
         log(f"result: {json.dumps(info)}")
         return
 
