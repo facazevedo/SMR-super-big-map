@@ -549,8 +549,207 @@ CAMERA_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "fxprobe" argument.  The remaining surface content residue is
+# 5 ParSystem (5 vanilla unclaimed vs 5 expanded unstamped).  Offline row algebra on iteration
+# 028's dumps shows they are unattached `Revealed` ActionFXParticles (Data/FXPreset/
+# ActionFXParticles.lua `Particles_1LtXWp8i`: Action "Revealed", Moment "true", Offset
+# point(0,0,100), Target "ignore", no Actor filter), played from SubsurfaceDeposit:SetRevealed
+# (Lua/Buildings/SubsurfaceDeposit.lua:132), and that the two expanded surface ones belonging to
+# entrance #1 sit at the expanded UNDERGROUND anchor's XY (549000/554000, 322152) rather than at
+# their own expanded surface anchor (553000/558000, 329080).  Two candidate mechanisms remain:
+# the surface actor was at that XY when the FX fired and moved afterwards, or the FX of an
+# underground actor landed in the surface map.  This block separates them: it wraps PlayFX
+# (filtered to "Revealed") to record the actor's class, map and pose AT CALL TIME, wraps
+# PlaceParticles to bind each created ParSystem to that actor plus a creation traceback, samples
+# a change-only position timeline of every passage/tunnel/deposit anchor per map, and enumerates
+# every surviving ParSystem at the end (pose, scale, angle, particle name, parent, stamps).  It
+# creates no object, consumes no map RNG and changes no generation input.
+FX_PROBE_BLOCK = """		do
+			local fx_lines = {}
+			local function fx_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local fx_t0 = fx_ticks()
+			local function fx_log(text)
+				if #fx_lines >= 6000 then return end
+				fx_lines[#fx_lines + 1] = string.format(
+					"[%7dms][%s] %s", fx_ticks() - fx_t0,
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityFxLines = fx_lines
+			g_ParityFxProbeStatus = "running"
+
+			local TRACKED = {
+				"UndergroundPassage", "UndergroundTunnelMarker", "SurfaceUndergroundTunnelSign",
+				"SurfacePassage", "SurfaceTunnelMarker", "SubsurfaceDepositMetals",
+				"SubsurfaceDepositMarker", "BottomlessPit",
+			}
+
+			local function fx_map_key(m)
+				if not m then return "nomap" end
+				local env = m.mapdata and m.mapdata.Environment or "?"
+				return tostring(env) .. "#" .. tostring(m.slot)
+			end
+			local function fx_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function fx_desc(obj)
+				if type(obj) ~= "table" then return tostring(obj) end
+				local cls = rawget(obj, "class") or (obj.class) or "?"
+				local pos, angle = "nopos", "?"
+				if type(obj.GetPos) == "function" then
+					local ok, p = pcall(obj.GetPos, obj)
+					if ok then pos = tostring(p) end
+				end
+				if type(obj.GetAngle) == "function" then
+					local ok, a = pcall(obj.GetAngle, obj)
+					if ok then angle = tostring(a) end
+				end
+				return string.format("%s[%s] map=%s pos=%s angle=%s", tostring(cls), tostring(obj),
+					fx_map_key(fx_map_of(obj)), pos, angle)
+			end
+
+			-- Binds a ParSystem created inside a Revealed FX to the actor that played it.
+			local fx_current_actor, fx_current_moment = nil, nil
+			local revealed_calls, par_creations = 0, 0
+			local par_records = {}
+
+			local original_playfx = rawget(_G, "PlayFX")
+			if type(original_playfx) == "function" then
+				_G.PlayFX = function(cls, moment, actor, target, action_pos, action_dir, ...)
+					if cls == "Revealed" then
+						revealed_calls = revealed_calls + 1
+						local desc = fx_desc(actor)
+						if revealed_calls <= 40 then
+							fx_log(string.format(
+								"PlayFX Revealed #%d moment=%s action_pos=%s\\n    actor=%s\\n    target=%s\\n%s",
+								revealed_calls, tostring(moment), tostring(action_pos), desc,
+								fx_desc(target), debug.traceback("", 2)))
+						end
+						local prev_actor, prev_moment = fx_current_actor, fx_current_moment
+						fx_current_actor, fx_current_moment = desc, tostring(moment)
+						local a, b, c = original_playfx(cls, moment, actor, target, action_pos, action_dir, ...)
+						fx_current_actor, fx_current_moment = prev_actor, prev_moment
+						return a, b, c
+					end
+					return original_playfx(cls, moment, actor, target, action_pos, action_dir, ...)
+				end
+				fx_log("wrapped PlayFX")
+			else
+				fx_log("PlayFX unavailable - reveal actors not instrumented")
+			end
+
+			local original_place_particles = rawget(_G, "PlaceParticles")
+			if type(original_place_particles) == "function" then
+				_G.PlaceParticles = function(map, name, class, components)
+					local o = original_place_particles(map, name, class, components)
+					par_creations = par_creations + 1
+					if #par_records < 300 then
+						par_records[#par_records + 1] = {
+							index = par_creations, obj = o, name = tostring(name),
+							map_key = fx_map_key(map), actor = fx_current_actor,
+							moment = fx_current_moment,
+							traceback = par_creations <= 40 and debug.traceback("", 2) or nil,
+						}
+					end
+					return o
+				end
+				fx_log("wrapped PlaceParticles")
+			else
+				fx_log("PlaceParticles unavailable - particle creation not instrumented")
+			end
+
+			-- MapGet before the native map is mounted trips luaQuery.cpp ASSERT(m_pMap) (iter 011).
+			local function fx_queryable(m)
+				return m and type(m.MapGet) == "function" and not m.changing
+			end
+
+			CreateRealTimeThread(function()
+				local last = {}
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					for i = 1, #(rawget(_G, "Maps") or {}) do
+						local m = Maps[i]
+						if fx_queryable(m) then
+							local key = fx_map_key(m)
+							for _, cls in ipairs(TRACKED) do
+								local ok, objs = pcall(m.MapGet, m, "map", cls)
+								objs = ok and objs or {}
+								if #objs > 0 then
+									local parts = {}
+									for j = 1, #objs do
+										local ok_p, p = pcall(objs[j].GetPos, objs[j])
+										parts[#parts + 1] = ok_p and tostring(p) or "nopos"
+									end
+									table.sort(parts)
+									local sig = table.concat(parts, " ")
+									local slot = key .. "/" .. cls
+									if last[slot] ~= sig then
+										fx_log(string.format("timeline %s n=%d %s", slot, #objs, sig))
+										last[slot] = sig
+									end
+								end
+							end
+						end
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(400)
+				end
+				fx_log(string.format("SUMMARY Revealed PlayFX calls=%d PlaceParticles calls=%d recorded=%d",
+					revealed_calls, par_creations, #par_records))
+				for i = 1, #(rawget(_G, "Maps") or {}) do
+					local m = Maps[i]
+					if fx_queryable(m) then
+						local ok, pars = pcall(m.MapGet, m, "map", "ParSystem")
+						pars = ok and pars or {}
+						fx_log(string.format("postmortem %s ParSystem=%d", fx_map_key(m), #pars))
+						for j = 1, #pars do
+							local obj = pars[j]
+							local name, parent, scale = "?", "?", "?"
+							if type(obj.GetProperty) == "function" then
+								local ok_n, v = pcall(obj.GetProperty, obj, "ParticlesName")
+								name = ok_n and tostring(v) or "err"
+							end
+							if type(obj.GetParent) == "function" then
+								local ok_p, v = pcall(obj.GetParent, obj)
+								parent = ok_p and fx_desc(v) or "err"
+							end
+							if type(obj.GetScale) == "function" then
+								local ok_s, v = pcall(obj.GetScale, obj)
+								scale = ok_s and tostring(v) or "err"
+							end
+							fx_log(string.format(
+								"  [%d] %s scale=%s particles=%s native=%s,%s prov=%s,%s parent=%s",
+								j, fx_desc(obj), scale, name,
+								tostring(obj.SuperBigMapNativeSourceX),
+								tostring(obj.SuperBigMapNativeSourceY),
+								tostring(obj.SuperBigMapProvenanceSourceX),
+								tostring(obj.SuperBigMapProvenanceSourceY), parent))
+						end
+					end
+				end
+				for i = 1, #par_records do
+					local rec = par_records[i]
+					local obj = rec.obj
+					local live = "gone"
+					if type(obj) == "table" and IsValid(obj) then live = fx_desc(obj) end
+					fx_log(string.format("creation #%d map=%s particles=%s moment=%s\\n    now=%s\\n    actor=%s%s",
+						rec.index, rec.map_key, rec.name, tostring(rec.moment), live,
+						tostring(rec.actor), rec.traceback and ("\\n" .. rec.traceback) or ""))
+				end
+				local werr = AsyncStringToFile("__FX_OUT__", table.concat(fx_lines, "\\n"))
+				g_ParityFxProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
-             pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False):
+             pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
+             fx_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -592,6 +791,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if cam_path.exists():
             cam_path.unlink()
         extras.append(CAMERA_PROBE_BLOCK.replace("__CAM_OUT__", cli.lua_path(cam_path)))
+    fx_path = OUT / f"fxprobe-{tag}.log"
+    if fx_probe:
+        if fx_path.exists():
+            fx_path.unlink()
+        extras.append(FX_PROBE_BLOCK.replace("__FX_OUT__", cli.lua_path(fx_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -723,6 +927,7 @@ def main():
         serial = "serial" in sys.argv[5:]
         probe = "probe" in sys.argv[5:]
         camera = "cameraprobe" in sys.argv[5:]
+        fxprobe = "fxprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -733,9 +938,10 @@ def main():
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
-            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"fx_probe={fxprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
-                        pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera)
+                        pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+                        fx_probe=fxprobe)
         log(f"result: {json.dumps(info)}")
         return
 
