@@ -6,6 +6,10 @@ behind iterations 67-69).  The vanilla underground seed is carried across proces
 through a JSON file and injected into the expanded twin with
 SuperBigMap.MapGeneration.SetTwinUndergroundSeedForTest.
 
+The vanilla control's own underground seed is a fresh AsyncRand draw, so it is pinned
+to REFERENCE_UNDERGROUND_SEED (see below) to keep the underground control identical
+across runs; both twins of a pair therefore share one fixed reference underground.
+
 Surface seed parity needs no injection: GetOverlayValues(1800, 8760) sets
 g_CurrentMapParams.Seed = xxhash(lat, long), so both twins derive the same surface
 seed from the coordinate alone.
@@ -31,6 +35,38 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 GEN_TEMPLATE = HERE / "gen_template.lua"
 DUMP_TEMPLATE = HERE / "dump_template.lua"
+
+# The stock underground seed is drawn from AsyncRand inside FillRandomMapGen
+# (ModTools PreGameMenus.lua:166, because MapData["BlankUnderground_0X"].map_randomizeseed
+# is true), so three identical vanilla runs generated three different undergrounds
+# (6504 / 6327 / 6560 objects) and no underground gate could be scored across runs.
+# Pin the control to one fixed reference underground instead.  The value below is a real
+# AsyncRand draw captured from the iteration-001 vanilla twin, which is the underground the
+# ratchet baseline in artifacts/best.json was measured on, so pinned runs compare directly
+# against it.
+REFERENCE_UNDERGROUND_SEED = 6074387974731471656
+
+# Vanilla control only: let the stock draw happen (the RNG stream keeps its cardinality,
+# exactly as the mod's expanded seam does), then substitute the reference seed for the
+# underground map alone.  The surface FillRandomMapGen call is untouched.
+UNDERGROUND_PIN_BLOCK = """		do
+			local original_fill = FillRandomMapGen
+			if type(original_fill) ~= "function" then
+				error("FillRandomMapGen unavailable; cannot pin the reference underground")
+			end
+			g_ParityUndergroundPin = {seed}
+			FillRandomMapGen = function(gen, map, params)
+				local result = original_fill(gen, map, params)
+				local map_data = MapData and MapData[map]
+				local environment = map_data and map_data.Environment
+				if environment == "Underground"
+					or (type(map) == "string" and map:find("Underground", 1, true)) then
+					gen.Seed = {seed}
+					g_ParityUndergroundPinApplied = true
+				end
+				return result
+			end
+		end"""
 
 TWIN_SEED_BLOCK = """		if type(SBM.MapGeneration) == "table"
 			and type(SBM.MapGeneration.SetTwinUndergroundSeedForTest) == "function" then
@@ -100,8 +136,14 @@ SERIAL_RASTER_BLOCK = """		-- Match the mod's source-capture transaction: stock 
 		end"""
 
 
-def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760):
-    """Boot a fresh game, generate the twin, dump all objects.  Returns metadata."""
+def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
+             pin_seed=None):
+    """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
+
+    `pin_seed` applies only to a vanilla control and forces its underground holder seed to
+    that fixed value; the expanded twin receives the same value through the mod's
+    SetTwinUndergroundSeedForTest seam (`twin_seed`).
+    """
     csv_path = OUT / f"objects-{tag}.csv"
     if csv_path.exists():
         csv_path.unlink()
@@ -118,6 +160,12 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         )
     else:
         gen_src = gen_src.replace("__TWIN_SEED_BLOCK__", "")
+    if expand or pin_seed is None:
+        gen_src = gen_src.replace("__UNDERGROUND_PIN_BLOCK__", "")
+    else:
+        gen_src = gen_src.replace(
+            "__UNDERGROUND_PIN_BLOCK__", UNDERGROUND_PIN_BLOCK.format(seed=int(pin_seed))
+        )
     gen_src = gen_src.replace(
         "__EXTRA_SETUP__", SERIAL_RASTER_BLOCK if serial_raster else ""
     )
@@ -154,6 +202,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         _, surface_seed = cli.marshal_value(client, "g_ParitySurfaceSeed", timeout=60.0)
         _, underground_seed = cli.marshal_value(client, "g_ParityUndergroundSeed", timeout=60.0)
         log(f"  surface seed={surface_seed}  underground seed={underground_seed}")
+        if pin_seed is not None and not expand and underground_seed != int(pin_seed):
+            raise RuntimeError(
+                f"vanilla underground pin not honoured ({tag}): holder seed "
+                f"{underground_seed} != pin {int(pin_seed)}"
+            )
 
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
@@ -176,6 +229,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "expand": expand,
             "surface_seed": surface_seed,
             "underground_seed": underground_seed,
+            "underground_pin": None if (expand or pin_seed is None) else int(pin_seed),
             "rows": rows,
             "csv": str(csv_path),
         }
@@ -200,12 +254,17 @@ def main():
         expand = sys.argv[3] == "1"
         seed = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] not in ("-", "") else None
         serial = "serial" in sys.argv[5:]
+        # A vanilla control is pinned to the reference underground unless "nopin" is passed;
+        # an explicit seed argument overrides which underground it is pinned to.
+        pin = None if expand or "nopin" in sys.argv[5:] else (seed or REFERENCE_UNDERGROUND_SEED)
         lat, lon = 1800, 8760
         for extra in sys.argv[5:]:
             if extra.startswith("lat="): lat = int(extra[4:])
             if extra.startswith("lon="): lon = int(extra[4:])
-        log(f"=== twin '{tag}' expand={expand} seed={seed} serial_raster={serial} lat={lat} lon={lon} ===")
-        info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon)
+        log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
+            f"serial_raster={serial} lat={lat} lon={lon} ===")
+        info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                        pin_seed=pin)
         log(f"result: {json.dumps(info)}")
         return
 
@@ -221,8 +280,10 @@ def main():
         log(f"metadata -> {meta_path}")
         return
 
-    log("=== 30S146E parity run: VANILLA twin ===")
-    vanilla = run_twin("vanilla", expand=False, twin_seed=None)
+    log(f"=== 30S146E parity run: VANILLA twin (underground pinned to "
+        f"{REFERENCE_UNDERGROUND_SEED}) ===")
+    vanilla = run_twin("vanilla", expand=False, twin_seed=None,
+                       pin_seed=REFERENCE_UNDERGROUND_SEED)
 
     if not isinstance(vanilla["underground_seed"], (int, float)):
         raise RuntimeError(

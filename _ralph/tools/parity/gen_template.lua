@@ -14,6 +14,8 @@ g_ParityStatus = "initializing"
 g_ParityError = false
 g_ParitySurfaceSeed = false
 g_ParityUndergroundSeed = false
+g_ParityUndergroundPin = false
+g_ParityUndergroundPinApplied = false
 
 CreateRealTimeThread(function()
 	local ok, err = xpcall(function()
@@ -66,6 +68,8 @@ CreateRealTimeThread(function()
 		g_CurrentMapParams.SuperBigMapExpandMap = __EXPAND__ or nil
 
 __TWIN_SEED_BLOCK__
+
+__UNDERGROUND_PIN_BLOCK__
 
 __EXTRA_SETUP__
 
@@ -130,6 +134,19 @@ __EXTRA_SETUP__
 		local u_holder = GetRandomMapGenerator(ug)
 		g_ParitySurfaceSeed = s_holder and s_holder.Seed or g_ParitySurfaceSeed
 		g_ParityUndergroundSeed = u_holder and u_holder.Seed or false
+
+		-- A silently unapplied pin would produce an unpinned control that still looks like a
+		-- valid run, so fail the twin loudly instead.
+		if g_ParityUndergroundPin then
+			if g_ParityUndergroundPinApplied ~= true then
+				error("reference underground pin never fired (FillRandomMapGen wrap not reached)")
+			end
+			if g_ParityUndergroundSeed ~= g_ParityUndergroundPin then
+				error("reference underground pin ignored: holder seed "
+					.. tostring(g_ParityUndergroundSeed) .. " ~= pin "
+					.. tostring(g_ParityUndergroundPin))
+			end
+		end
 
 		g_ParityStatus = "complete"
 	end, debug.traceback)
