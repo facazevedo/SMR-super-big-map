@@ -9816,19 +9816,44 @@ local function PatchRandomMapGenerator()
 			-- corner, and the marks quantize exactly as they do on a vanilla map. The mark grid is
 			-- never combined with another grid -- it is only rasterized into, sampled through
 			-- GridGetMark and freed -- so its dimensions are free to differ from work_size.
+			-- The generator resolves NewComputeGrid as a plain global from the SHIPPED environment,
+			-- which mod code cannot inspect (FunctionEnvironment needs getfenv/debug, neither of
+			-- which Relaunched exposes to the sandbox -- that is why the raster-parallelism override
+			-- above can only work through a table mutated by reference). Rebind it exactly the way
+			-- PatchAdditionalMapSeedReservation rebinds its shipped consumers: drop any raw sandbox
+			-- shadow, do an ORDINARY write so the sandbox __newindex routes it to the real owner
+			-- table, verify through the inherited read, then restore the shadow.
+			local function mark_grid_bridge_read(name)
+				local direct = rawget(_G, name)
+				rawset(_G, name, nil)
+				local read_ok, value = pcall(function() return _G[name] end)
+				rawset(_G, name, direct)
+				return read_ok and value or nil
+			end
+			local function mark_grid_bridge_write(name, value)
+				local direct = rawget(_G, name)
+				rawset(_G, name, nil)
+				local write_ok = pcall(function() _G[name] = value end)
+				local unexpected_direct = rawget(_G, name)
+				rawset(_G, name, nil)
+				local read_ok, inherited = pcall(function() return _G[name] end)
+				rawset(_G, name, direct)
+				return write_ok and (unexpected_direct == nil or unexpected_direct == value)
+					and read_ok and inherited == value
+			end
+
 			local mark_grid_class = Global("RandomMapGenerator")
-			local mark_grid_env = type(do_generate_closure_env) == "table" and do_generate_closure_env or nil
 			local mark_grid_saved_new_compute, mark_grid_new_compute_wrapper
 			local mark_grid_saved_proc_start, mark_grid_saved_proc_end
 			local mark_grid_proc_start_wrapper, mark_grid_proc_end_wrapper
 			local mark_grid_stats = { phases = 0, scaled = 0, unscaled = 0, cells = "none" }
 			if cfg_bool("UNDERGROUND_MARK_GRID_BACKING_SCALE", true)
-				and mark_grid_env and type(mark_grid_class) == "table"
+				and type(mark_grid_class) == "table"
 				and type(saved_map_width) == "number" and saved_map_width > gen_world_w
 				and type(saved_map_height) == "number" and saved_map_height > gen_world_h
 				and gen_world_w > 0 and gen_world_h > 0 then
-				mark_grid_saved_new_compute =
-					do_generate_closure_global("NewComputeGrid", Global("NewComputeGrid"))
+				mark_grid_saved_new_compute = mark_grid_bridge_read("NewComputeGrid")
+					or Global("NewComputeGrid")
 				mark_grid_saved_proc_start = mark_grid_class.ProcStart
 				mark_grid_saved_proc_end = mark_grid_class.ProcEnd
 				if type(mark_grid_saved_new_compute) ~= "function"
@@ -9877,17 +9902,12 @@ local function PatchRandomMapGenerator()
 				end
 				mark_grid_class.ProcStart = mark_grid_proc_start_wrapper
 				mark_grid_class.ProcEnd = mark_grid_proc_end_wrapper
-				local mark_install_ok, mark_install_error = pcall(function()
-					mark_grid_env.NewComputeGrid = mark_grid_new_compute_wrapper
-				end)
-				if not mark_install_ok
-					or do_generate_closure_global("NewComputeGrid", nil) ~= mark_grid_new_compute_wrapper then
+				if not mark_grid_bridge_write("NewComputeGrid", mark_grid_new_compute_wrapper) then
 					mark_grid_class.ProcStart = mark_grid_saved_proc_start
 					mark_grid_class.ProcEnd = mark_grid_saved_proc_end
-					pcall(function() mark_grid_env.NewComputeGrid = mark_grid_saved_new_compute end)
+					mark_grid_bridge_write("NewComputeGrid", mark_grid_saved_new_compute)
 					mark_grid_new_compute_wrapper = nil
-					error("underground mark-grid projection override could not be installed: "
-						.. tostring(mark_install_error))
+					error("underground mark-grid projection override could not be installed")
 				end
 			end
 
@@ -9897,19 +9917,15 @@ local function PatchRandomMapGenerator()
 			-- Restore the grid allocator and both procedure boundaries on every path, exactly as
 			-- they were, before any other expanded-map work can allocate a generator grid.
 			if mark_grid_new_compute_wrapper then
-				local mark_restore_ok, mark_restore_error = pcall(function()
-					mark_grid_env.NewComputeGrid = mark_grid_saved_new_compute
-				end)
+				local mark_restore_ok = mark_grid_bridge_write("NewComputeGrid", mark_grid_saved_new_compute)
 				if mark_grid_class.ProcStart == mark_grid_proc_start_wrapper then
 					mark_grid_class.ProcStart = mark_grid_saved_proc_start
 				end
 				if mark_grid_class.ProcEnd == mark_grid_proc_end_wrapper then
 					mark_grid_class.ProcEnd = mark_grid_saved_proc_end
 				end
-				if not mark_restore_ok
-					or do_generate_closure_global("NewComputeGrid", nil) ~= mark_grid_saved_new_compute then
-					error("underground mark-grid projection restoration failed: "
-						.. tostring(mark_restore_error))
+				if not mark_restore_ok then
+					error("underground mark-grid projection restoration failed")
 				end
 				LoadingStep("underground mark grid allocated at backing scale", {
 					mark_phases = mark_grid_stats.phases,
