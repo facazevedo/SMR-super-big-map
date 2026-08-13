@@ -3457,8 +3457,106 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return shape, false
 	end
 
+	-- A standalone action-FX carrier is a FREE map object: an ActionFXParticles preset without
+	-- `Attach` (the stock `Revealed` FX Particles_1LtXWp8i is one) places its ParSystem at
+	-- `actor pose + preset offset` with the actor's angle and never parents it to the actor, so
+	-- nothing carries it when that actor is moved afterwards. Vanilla never moves an actor after
+	-- its reveal FX is played; this planner does, which left two expanded surface carriers stranded
+	-- ~8000 wu from entrance #1 while the entrance kept none (iteration 029 evidence:
+	-- _ralph/runs/full-object-parity/artifacts/run_iter029_parsystem/parsystem_verdict.md).
+	--
+	-- Carry them with the object they sit on. Eligibility is deliberately narrow so nothing else
+	-- can be displaced: a live PARENTLESS ParSystem with no source record in EITHER namespace (the
+	-- mod's own stretched copies always carry one) sitting on exactly that object's pre-move XY.
+	-- Collect into a Lua list first -- moving objects inside MapForEach is unsafe.
+	local fx_carriers_moved = 0
+	local fx_carrier_index_by_map = {}
+	local function fx_carrier_key(x, y)
+		return tostring(x) .. "," .. tostring(y)
+	end
+	local function finite_z(value)
+		if type(value) ~= "number" then return nil end
+		-- The engine's invalid-Z sentinel is max_int; only a real height may be offset.
+		if value <= -1000000000 or value >= 1000000000 then return nil end
+		return value
+	end
+	local function fx_carrier_bucket(by_xy, x, y)
+		local key = fx_carrier_key(x, y)
+		local list = by_xy[key]
+		if not list then
+			list = {}
+			by_xy[key] = list
+		end
+		return list
+	end
+	local function build_fx_carrier_index(map)
+		local by_xy = {}
+		fx_carrier_index_by_map[map] = by_xy
+		if not map or type(map.MapForEach) ~= "function" then return by_xy end
+		local carriers = {}
+		pcall(map.MapForEach, map, "map", "ParSystem", function(obj)
+			carriers[#carriers + 1] = obj
+		end)
+		for i = 1, #carriers do
+			local obj = carriers[i]
+			if IsLiveGameObject(obj)
+				and type(obj.SuperBigMapNativeSourceX) ~= "number"
+				and type(obj.SuperBigMapProvenanceX) ~= "number"
+				and (type(obj.GetParent) ~= "function" or SafeCall(obj.GetParent, obj) == nil) then
+				local cx, cy = PointXY(ObjectPosition(obj))
+				if type(cx) == "number" and type(cy) == "number" then
+					local list = fx_carrier_bucket(by_xy, cx, cy)
+					list[#list + 1] = obj
+				end
+			end
+		end
+		return by_xy
+	end
+	local function carry_fx_carriers(map, old_x, old_y, old_z, new_x, new_y, new_z)
+		local by_xy = fx_carrier_index_by_map[map] or build_fx_carrier_index(map)
+		local key = fx_carrier_key(old_x, old_y)
+		local list = by_xy[key]
+		if not list then return 0 end
+		by_xy[key] = nil
+		local moved = 0
+		for i = 1, #list do
+			local obj = list[i]
+			local cx, cy, cz
+			if IsLiveGameObject(obj) and type(obj.SetPos) == "function" then
+				local pos = ObjectPosition(obj)
+				cx, cy = PointXY(pos)
+				cz = (pos and type(pos.z) == "function") and finite_z(SafeCall(pos.z, pos)) or nil
+			end
+			if type(cx) == "number" and type(cy) == "number" then
+				local tx, ty = cx + (new_x - old_x), cy + (new_y - old_y)
+				local destination
+				if cz and old_z and new_z then
+					-- Keep the preset's own vertical offset above the actor on the new terrain.
+					destination = point_fn(tx, ty, new_z + (cz - old_z))
+				else
+					destination = point_fn(tx, ty)
+					if type(destination.SetTerrainZ) == "function" then
+						local ok_z, snapped = pcall(destination.SetTerrainZ, destination, map)
+						if ok_z and snapped then destination = snapped end
+					end
+				end
+				if pcall(obj.SetPos, obj, destination) then
+					moved = moved + 1
+					local dest = fx_carrier_bucket(by_xy, tx, ty)
+					dest[#dest + 1] = obj
+				end
+			end
+		end
+		fx_carriers_moved = fx_carriers_moved + moved
+		return moved
+	end
+
 	local function move_object(obj, map, x, y)
 		if not IsLiveGameObject(obj) or type(obj.SetPos) ~= "function" then return false end
+		local before_pos = ObjectPosition(obj)
+		local before_x, before_y = PointXY(before_pos)
+		local before_z = (before_pos and type(before_pos.z) == "function")
+			and finite_z(SafeCall(before_pos.z, before_pos)) or nil
 		local destination = point_fn(x, y)
 		if type(destination.SetTerrainZ) == "function" then
 			local ok_z, snapped = pcall(destination.SetTerrainZ, destination, map)
@@ -3482,6 +3580,16 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		-- one registration at its final position so Elevator snapping sees the visible anchor.
 		if shape and type(add_shape) == "function" then
 			add_ok = pcall(add_shape, map.object_hex_grid, obj, shape)
+		end
+		if ok_set and type(before_x) == "number" and type(before_y) == "number" then
+			local after_pos = ObjectPosition(obj)
+			local after_x, after_y = PointXY(after_pos)
+			local after_z = (after_pos and type(after_pos.z) == "function")
+				and finite_z(SafeCall(after_pos.z, after_pos)) or nil
+			if type(after_x) == "number" and type(after_y) == "number"
+				and (after_x ~= before_x or after_y ~= before_y) then
+				carry_fx_carriers(map, before_x, before_y, before_z, after_x, after_y, after_z)
+			end
 		end
 		return remove_ok and ok_set and add_ok
 	end
@@ -4064,6 +4172,7 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 	stats.dependant_map_scans = dependant_scan_stats.scans
 	stats.dependant_objects_scanned = dependant_scan_stats.objects
 	stats.dependant_matches = dependant_scan_stats.matches
+	stats.moved_fx_carriers = fx_carriers_moved
 	return true, stats
 end
 
