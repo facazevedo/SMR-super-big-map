@@ -233,6 +233,212 @@ def hexgrid_evidence(out_dir):
 
 
 # ---------------------------------------------------------------------------
+# PER-CLASS SCALE EXPECTATION  (task matrix case `class-scale-expected`)
+#
+# Scale is gated for EVERY class, per run, from the twin dumps.  The task contract
+# fixes the expectation:
+#
+#   * a class named in the SETTLED allowlist below passes by scaling WITH the stretch
+#     (its vanilla scale times this run's measured ratio), because the expansion is a
+#     similarity transform and a feature that grew with the terrain it sits on is
+#     consistent;
+#   * EVERY other class must carry its vanilla scale unchanged.  The entrance family is
+#     explicitly in this second group (SurfacePassage/UndergroundPassage 100,
+#     Surface/UndergroundTunnelMarker 110, SurfaceUndergroundTunnelSign 100, both
+#     ElevatorBuildIndicator_* 100) and this workspace rewrites entrance placement, so
+#     the gate exists to keep them there; deposit markers likewise stay at their vanilla
+#     values.
+#
+# The comparison is per class over the MULTISET of dumped scale values, because the
+# bijection gates prove the content population is 1:1 - so a single object moving off its
+# expected scale changes the multiset and is caught, which a distinct-value-set
+# comparison would miss.  A class whose cardinality legitimately differs (an enumerated
+# infrastructure class that earned its `ok` verdict on THIS run, e.g. 400 MapSector vs
+# 100) can only ever be judged on its value SET; that relaxation is bought by the same
+# per-run evidence as the enumeration itself and is refused to every other class.
+#
+# The engine clamps a scale it sets to SCALE_ENGINE_MAX, which the expanded twin's own
+# rows show (vanilla DecCrater_01 542 -> expanded 500), so the stretched expectation is
+# clamped the same way; the clamp can only ever LOWER an expected value.
+# ---------------------------------------------------------------------------
+SCALE_STRETCH_ALLOWLIST = {
+    "PrefabFeatureMarker",   # geysers and every other prefab feature
+    "CaveInRubble",
+    "TunnelBlockerRubble",
+    "BottomlessPit",
+    "JumboCave",
+}
+SCALE_ENGINE_MAX = 500
+
+# Contract-stated absolute expectations for the entrance family: checked on BOTH twins,
+# so the gate proves the stated constant as well as the vanilla-scale rule.
+PROTECTED_CLASS_SCALES = {
+    "SurfacePassage": 100,
+    "UndergroundPassage": 100,
+    "SurfaceTunnelMarker": 110,
+    "UndergroundTunnelMarker": 110,
+    "SurfaceUndergroundTunnelSign": 100,
+    "ElevatorBuildIndicator_SurfaceDecal": 100,
+    "ElevatorBuildIndicator_UndergroundPassageImprint": 100,
+}
+
+
+def scale_counts(rows):
+    """class -> Counter of dumped scale values."""
+    out = defaultdict(Counter)
+    for r in rows:
+        out[r["class"]][r["scale"]] += 1
+    return out
+
+
+def fmt_scales(counter):
+    if not counter:
+        return "-"
+    parts = []
+    for value in sorted(counter, key=lambda v: (v is None, v)):
+        n = counter[value]
+        parts.append(f"{value}x{n}" if n > 1 else f"{value}")
+    text = ",".join(parts)
+    return text if len(text) <= 60 else text[:57] + "..."
+
+
+def scale_section(vrows, erows, ratio, infra, out):
+    """Section H: per-class vanilla-vs-expanded scale census with a verdict per class."""
+    def w(s=""):
+        out.append(s)
+
+    ok_infra = {e["class"] for e in infra if e["verdict"] == "ok"}
+    vs, es = scale_counts(vrows), scale_counts(erows)
+    records = []
+    for cls in sorted(set(vs) | set(es)):
+        v, e = vs.get(cls, Counter()), es.get(cls, Counter())
+        stretched = cls in SCALE_STRETCH_ALLOWLIST
+        expected = Counter()
+        for value, n in v.items():
+            if value is None:
+                expected[None] += n
+            elif stretched:
+                expected[min(SCALE_ENGINE_MAX, rnd(value * ratio))] += n
+            else:
+                expected[value] += n
+        # What the class ACTUALLY does, measured independently of what it is expected to
+        # do, so a failing class states its own behaviour instead of only its verdict.
+        image, clamped = Counter(), False
+        for value, n in v.items():
+            if value is None:
+                image[None] += n
+            else:
+                target = rnd(value * ratio)
+                clamped = clamped or target > SCALE_ENGINE_MAX
+                image[min(SCALE_ENGINE_MAX, target)] += n
+        if e == v:
+            behaviour = "identical"
+        elif e == image:
+            behaviour = "stretched_clamped" if clamped else "stretched"
+        elif set(e) == set(v):
+            behaviour = "identical_values_counts_differ"
+        elif set(e) <= (set(v) | set(image)):
+            behaviour = "partly_stretched"
+        else:
+            behaviour = "mixed"
+        rec = {
+            "class": cls,
+            "rule": "stretched with the terrain (SETTLED allowlist)" if stretched
+                    else "vanilla scale unchanged",
+            "observed_behaviour": behaviour,
+            "vanilla": {str(k): n for k, n in v.items()},
+            "expanded": {str(k): n for k, n in e.items()},
+            "expected_expanded": {str(k): n for k, n in expected.items()},
+        }
+        if not v or not e:
+            rec["verdict"] = "unscoreable"
+            rec["why"] = "class absent on one twin; the bijection gates decide it"
+        elif e == expected:
+            rec["verdict"] = "ok"
+        elif set(e) == set(expected) and cls in ok_infra:
+            # Enumerated infrastructure that proved its cardinality rule on THIS run:
+            # its object count legitimately differs, so only the value set can be judged.
+            rec["verdict"] = "ok_cardinality"
+            rec["why"] = ("enumerated infrastructure with an `ok` cardinality rule on this "
+                          "run; scale VALUES identical, counts fixed by the rule")
+        else:
+            rec["verdict"] = "MISMATCH"
+            unexpected = {str(k): e[k] - expected.get(k, 0)
+                          for k in e if e[k] > expected.get(k, 0)}
+            missing = {str(k): expected[k] - e.get(k, 0)
+                       for k in expected if expected[k] > e.get(k, 0)}
+            rec["unexpected_values"] = unexpected
+            rec["missing_values"] = missing
+        records.append(rec)
+
+    mismatched = [r for r in records if r["verdict"] == "MISMATCH"]
+    unscoreable = [r for r in records if r["verdict"] == "unscoreable"]
+    behaviour_groups = defaultdict(list)
+    for r in mismatched:
+        behaviour_groups[r["observed_behaviour"]].append(r["class"])
+
+    # The contract's named entrance constants, proven on both twins.
+    protected = []
+    for cls, want in sorted(PROTECTED_CLASS_SCALES.items()):
+        v, e = vs.get(cls, Counter()), es.get(cls, Counter())
+        if not v and not e:
+            continue
+        good = (set(v) == {want} and set(e) == {want})
+        protected.append({"class": cls, "expected": want,
+                          "vanilla": {str(k): n for k, n in v.items()},
+                          "expanded": {str(k): n for k, n in e.items()},
+                          "verdict": "ok" if good else "MISMATCH"})
+    protected_ok = all(p["verdict"] == "ok" for p in protected)
+
+    w(f"\n-- H. PER-CLASS SCALE  (`class-scale-expected`, ratio {ratio:.6f}) --")
+    w(f"   allowlist (stretched with the terrain): "
+      f"{', '.join(sorted(SCALE_STRETCH_ALLOWLIST))}")
+    w("     class                                  vanilla scales                "
+      "expanded scales               verdict")
+    for r in records:
+        w(f"     {r['class'][:38]:<38} {fmt_scales(vs.get(r['class'], Counter()))[:29]:<29} "
+          f"{fmt_scales(es.get(r['class'], Counter()))[:29]:<29} "
+          f"{r['verdict']:<14} {r['observed_behaviour']}")
+    if mismatched:
+        w("   mismatched classes, by measured behaviour:")
+        for behaviour, group in sorted(behaviour_groups.items()):
+            w(f"     {behaviour:<30} {len(group):>4}  {', '.join(group[:8])}"
+              + (f", +{len(group) - 8} more" if len(group) > 8 else ""))
+        w("   per-class detail (expected vs observed):")
+        for r in mismatched:
+            if r["observed_behaviour"].startswith("stretched"):
+                continue  # uniformly stretched: the two multisets above say it all
+            w(f"     {r['class']}: unexpected {r.get('unexpected_values')}  "
+              f"missing {r.get('missing_values')}")
+    if protected:
+        w("   contract-stated entrance-family constants (both twins):")
+        for p in protected:
+            w(f"     {p['class'][:44]:<44} expect {p['expected']:>4}  "
+              f"vanilla {fmt_scales(vs.get(p['class'], Counter())):<14} "
+              f"expanded {fmt_scales(es.get(p['class'], Counter())):<14} {p['verdict']}")
+    w(f"   GATE class-scale-expected: classes={len(records)} "
+      f"ok={sum(1 for r in records if r['verdict'].startswith('ok'))} "
+      f"mismatched={len(mismatched)} unscoreable={len(unscoreable)} "
+      f"-> {'PASS' if not mismatched and not unscoreable and protected_ok else 'FAIL'}")
+    return {
+        "scale_ratio": ratio,
+        "scale_classes_total": len(records),
+        "scale_classes_ok": sum(1 for r in records if r["verdict"] == "ok"),
+        "scale_classes_ok_cardinality": sum(1 for r in records
+                                            if r["verdict"] == "ok_cardinality"),
+        "scale_classes_mismatched": len(mismatched),
+        "scale_classes_unscoreable": len(unscoreable),
+        "scale_mismatched_classes": [r["class"] for r in mismatched],
+        "scale_mismatched_by_behaviour": {k: sorted(v)
+                                          for k, v in behaviour_groups.items()},
+        "scale_protected_ok": protected_ok,
+        "scale_protected": protected,
+        "scale_expected_ok": (not mismatched and not unscoreable and protected_ok),
+        "scale_table": records,
+    }
+
+
+# ---------------------------------------------------------------------------
 # PER-RUN EVIDENCE FOR THE `CameraObj` CARDINALITY RULE
 #
 # The engine builds exactly ONE camera helper per LOADED map: the MapVar declared in
@@ -1027,7 +1233,10 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     for a in anomalies:
         w(f"     ANOMALY {a}")
 
+    scale = scale_section(vrows, erows, rx, infra, out)
+
     return {
+        **scale,
         "vanilla_objects": len(vrows),
         "expanded_objects": len(erows),
         "infrastructure": infra,

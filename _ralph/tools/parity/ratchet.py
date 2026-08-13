@@ -187,6 +187,13 @@ def score(map_summary):
         ),
         "neg_unexplained_classes_differing": -s.get("unexplained_classes_differing", 0),
         "neg_partition_anomalies": -len(s.get("partition_anomalies", [])),
+        # `class-scale-expected` (compare.py section H): every class carries its vanilla
+        # scale, except the SETTLED allowlist which scales with the terrain. Counts are
+        # class counts, so the gates stay coordinate-independent across the sweep.
+        "scale_expected_ok": 1 if s.get("scale_expected_ok") else 0,
+        "neg_scale_classes_mismatched": -s.get("scale_classes_mismatched", 0),
+        "neg_scale_classes_unscoreable": -s.get("scale_classes_unscoreable", 0),
+        "scale_protected_ok": 1 if s.get("scale_protected_ok") else 0,
     }
 
 
@@ -229,7 +236,11 @@ def main():
                 "unexplained_matched", "unexplained_unmatched_expanded",
                 "unexplained_unstamped_expanded", "unexplained_unconsumed_vanilla",
                 "unexplained_expanded_objects", "unexplained_vanilla_objects",
-                "unexplained_classes_differing", "partition_anomalies")
+                "unexplained_classes_differing", "partition_anomalies",
+                # A summary written before the per-class scale census existed must not
+                # score a perfect `class-scale-expected` gate by omission.
+                "scale_expected_ok", "scale_classes_mismatched",
+                "scale_classes_unscoreable", "scale_protected_ok")
     for m in MAPS:
         if m not in summary:
             continue
