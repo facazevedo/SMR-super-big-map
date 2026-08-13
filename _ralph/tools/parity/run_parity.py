@@ -1751,10 +1751,154 @@ MARK_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "proctrace" argument.  Localizes vanilla's residual draw
+# race (two identical serial vanilla runs at 45S82E differ by 34 rows) to ONE generator
+# procedure.  RandomMapGenerator brackets every procedure with the public ProcStart/ProcEnd
+# pair (Lua/RandomMap/RandomMapGenerator.lua:948-994, invoked from ProcInvoke:1109) and each
+# procedure re-seeds the shared rand_state from xxhash(Seed, tag), so a divergence is confined
+# to the procedure that produced it.  This block wraps those two class methods plus DoGenerate
+# (to learn which map is generating, and to skip the underground one), and at every procedure
+# END records for the surface map:
+#   * the full per-class census and total object count;
+#   * the shared rand_state cursor (rand_state:Last()), which shows a differing number of
+#     consumed rands even when the object census still agrees;
+#   * every object inside a box around the contested slate cluster at (211056,169078)
+#     (class|x|y|z|scale|angle, sorted), which is the population that flips between variants.
+# Diffing two runs' logs by ordinal therefore names the FIRST procedure whose output differs.
+# It is read-only: no object is created or destroyed, no map RNG is consumed, no generation
+# input changes.  It does allocate, so it can perturb timing - which is itself informative if
+# two instrumented runs stop wobbling.
+PROC_TRACE_BLOCK = """		do
+			local trace_lines = {}
+			local trace_dropped = 0
+			local function trace_log(text)
+				if #trace_lines >= 60000 then
+					trace_dropped = trace_dropped + 1
+					return
+				end
+				trace_lines[#trace_lines + 1] = tostring(text)
+			end
+			g_ParityProcTraceStatus = "running"
+
+			local SITE_X, SITE_Y, SITE_HALF = 211056, 169078, 4000
+			local trace_map = false
+			local ordinal = 0
+
+			-- One capture walks every object on the map, so this stays allocation-free: it
+			-- pcalls the methods directly instead of building a closure per object.
+			local function trace_xy(obj)
+				local getter = type(obj) == "table" and obj.GetPos
+				if type(getter) ~= "function" then return nil, nil end
+				local ok, pos = pcall(getter, obj)
+				if not ok or not pos then return nil, nil end
+				local okxy, x, y = pcall(pos.xy, pos)
+				if not okxy then return nil, nil end
+				return x, y
+			end
+
+			local function trace_tuple(obj, cls, x, y)
+				local ok, text = pcall(function()
+					local z = "novalidz"
+					pcall(function() z = tostring(obj:GetPos():z()) end)
+					return string.format("%s|%d|%d|%s|%s|%s", tostring(cls), x, y, z,
+						tostring(obj:GetScale()), tostring(obj:GetAngle()))
+				end)
+				if ok then return text end
+				return string.format("%s|%d|%d|error", tostring(cls), x, y)
+			end
+
+			local function trace_capture(tag, phase, gen)
+				local map = trace_map
+				if not map then return end
+				local objs = map:MapGet("map") or {}
+				local counts, site = {}, {}
+				for i = 1, #objs do
+					local obj = objs[i]
+					local cls = obj and obj.class or "?"
+					counts[cls] = (counts[cls] or 0) + 1
+					local x, y = trace_xy(obj)
+					if x and y and x >= SITE_X - SITE_HALF and x <= SITE_X + SITE_HALF
+						and y >= SITE_Y - SITE_HALF and y <= SITE_Y + SITE_HALF then
+						site[#site + 1] = trace_tuple(obj, cls, x, y)
+					end
+				end
+				local names = {}
+				for cls in pairs(counts) do names[#names + 1] = cls end
+				table.sort(names)
+				local census = {}
+				for _, cls in ipairs(names) do
+					census[#census + 1] = tostring(cls) .. "=" .. tostring(counts[cls])
+				end
+				table.sort(site)
+				local rs = "unavailable"
+				pcall(function() rs = tostring(gen.rand_state:Last()) end)
+				trace_log(string.format("#%04d %-5s %-46s objs=%6d classes=%4d rand_last=%s site=%d",
+					ordinal, tostring(phase), tostring(tag), #objs, #names, rs, #site))
+				trace_log("  census " .. table.concat(census, " "))
+				for i = 1, #site do trace_log("  site " .. site[i]) end
+			end
+
+			local gen_class = rawget(_G, "RandomMapGenerator")
+			if type(gen_class) ~= "table" then
+				error("RandomMapGenerator class unavailable for the procedure trace")
+			end
+			local saved_start, saved_end = gen_class.ProcStart, gen_class.ProcEnd
+			local saved_do = gen_class.DoGenerate
+			if type(saved_start) ~= "function" or type(saved_end) ~= "function"
+				or type(saved_do) ~= "function" then
+				error("generator procedure boundary API unavailable for the procedure trace")
+			end
+
+			gen_class.ProcStart = function(self, tag, ...)
+				if trace_map and ordinal == 0 then
+					ordinal = 1
+					pcall(trace_capture, "<baseline>", "begin", self)
+				end
+				return saved_start(self, tag, ...)
+			end
+			gen_class.ProcEnd = function(self, tag, ...)
+				local a, b, c = saved_end(self, tag, ...)
+				if trace_map then
+					ordinal = ordinal + 1
+					pcall(trace_capture, tag, "end", self)
+				end
+				return a, b, c
+			end
+			gen_class.DoGenerate = function(self, map, ...)
+				local mapdata = type(map) == "table" and map.mapdata or nil
+				local env = type(mapdata) == "table" and mapdata.Environment or "?"
+				if env ~= "Underground" then
+					trace_map = map
+					trace_log(string.format("DOGENERATE env=%s seed=%s width=%s",
+						tostring(env), tostring(type(self) == "table" and self.Seed or "?"),
+						tostring(mapdata and mapdata.Width or "?")))
+				end
+				local a, b, c = saved_do(self, map, ...)
+				trace_map = false
+				trace_log("DOGENERATE returned, boundaries=" .. tostring(ordinal))
+				return a, b, c
+			end
+
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					if status == "complete" or status == "error" then break end
+					Sleep(300)
+				end
+				gen_class.ProcStart, gen_class.ProcEnd = saved_start, saved_end
+				gen_class.DoGenerate = saved_do
+				trace_log(string.format("SUMMARY boundaries=%d dropped_lines=%d",
+					ordinal, trace_dropped))
+				local werr = AsyncStringToFile("__PROC_OUT__", table.concat(trace_lines, "\\n"))
+				g_ParityProcTraceStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
-             entrance_audit=False):
+             entrance_audit=False, proc_trace=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -1818,6 +1962,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if mark_path.exists():
             mark_path.unlink()
         extras.append(MARK_PROBE_BLOCK.replace("__MARK_OUT__", cli.lua_path(mark_path)))
+    proc_path = OUT / f"proctrace-{tag}.log"
+    if proc_trace:
+        if proc_path.exists():
+            proc_path.unlink()
+        extras.append(PROC_TRACE_BLOCK.replace("__PROC_OUT__", cli.lua_path(proc_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -1908,6 +2057,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 mark_status = f"unavailable ({exc})"
             log(f"mark probe: {mark_status} -> {mark_path}")
 
+        if proc_trace:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                proc_status = poll_status(
+                    client, "g_ParityProcTraceStatus", {"complete"}, set(), 180, f"proctrace-{tag}"
+                )
+            except RuntimeError as exc:
+                proc_status = f"unavailable ({exc})"
+            log(f"procedure trace: {proc_status} -> {proc_path}")
+
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
             raise RuntimeError(f"dump script failed to load: {load_err[2]}")
@@ -1984,6 +2143,7 @@ def main():
         decorprobe = "decorprobe" in sys.argv[5:]
         markprobe = "markprobe" in sys.argv[5:]
         entranceaudit = "entranceaudit" in sys.argv[5:]
+        proctrace = "proctrace" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -1995,12 +2155,12 @@ def main():
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
-            f"mark_probe={markprobe} entrance_audit={entranceaudit} hexgrid={hexgrid} "
-            f"lat={lat} lon={lon} ===")
+            f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
+            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
-                        mark_probe=markprobe, entrance_audit=entranceaudit)
+                        mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace)
         log(f"result: {json.dumps(info)}")
         return
 
