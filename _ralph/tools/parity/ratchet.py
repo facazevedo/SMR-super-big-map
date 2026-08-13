@@ -90,6 +90,16 @@ def main():
         if best_path.exists():
             prev = json.loads(best_path.read_text(encoding="utf-8"))
             payload = {**prev, "gates": merged}
+        payload.setdefault("note", (
+            "Gates are monotone (higher is better); neg_* fields are negated counts. "
+            "Never relax compare.py or the dump to move a gate."
+        ))
+        # Record which run last wrote the file and which gates it moved, so the file's
+        # provenance can never claim a baseline it no longer holds.
+        payload["last_update"] = {
+            "summary": str(Path(sys.argv[1]).resolve()),
+            "improved_gates": improvements,
+        }
         best_path.parent.mkdir(parents=True, exist_ok=True)
         best_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"\nbest.json updated -> {best_path}")
