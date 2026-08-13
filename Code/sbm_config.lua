@@ -579,6 +579,17 @@ config.StretchAdaptiveZScale = true
 -- again over that small set and exactly its first result is revealed. This replaces legacy
 -- start-sector relocation and never preserves vanilla's optional second concrete sector.
 config.StretchVanillaStartSector = true
+-- WHOLE-FOOTPRINT INITIAL DEPOSITS (sbm_sector_exploration RevealVanillaStartSectors). Destination
+-- sectors keep their physical size while the map grows, so vanilla's winner sector stretches to 4/3
+-- of one of them and scanning the single winning destination sector reveals only part of the
+-- footprint. Vanilla places the deposit of EVERY surface marker in its winner sector, so the ones
+-- in the remainder are simply never created: measured at 45S82E as 2 missing SurfaceDepositMetals
+-- and 1 missing TerrainDepositConcrete, the entire surface residue there. When true, the markers
+-- inside the transformed winner box that the scan missed are placed with vanilla's own
+-- RevealDeposits and the spawn positions InitialReveal already computed. The box is the exact
+-- stretched image of vanilla's sector, so the placed set is vanilla's placed set - unlike scanning
+-- every overlapping sector, which would cover far more ground than vanilla revealed.
+config.StartSectorFootprintDeposits = true
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
 -- complete expanded terrain.
 config.SectorFastInitialReveal = true
@@ -854,6 +865,8 @@ C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
+C.START_SECTOR_FOOTPRINT_DEPOSITS = expansion_step_20
+	and as_bool(config.StartSectorFootprintDeposits)
 C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
 -- Fixed expanded sector layout and initial exploration behavior.

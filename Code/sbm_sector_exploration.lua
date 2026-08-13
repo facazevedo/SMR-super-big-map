@@ -1508,6 +1508,61 @@ local function RevealVanillaStartSectors(map)
 			table.concat(blocked_targets, "+")))
 	end
 
+	-- A destination sector keeps its PHYSICAL size while the map grows, so vanilla's winner sector
+	-- stretches to 4/3 of one destination sector and the single scan above covers only part of the
+	-- footprint. Vanilla placed the deposit of EVERY surface marker in its winner sector, so the
+	-- markers that fall in the footprint's remainder must be placed too, or the expanded map is
+	-- short exactly those deposits (measured at 45S82E: 2 SurfaceDepositMetals + 1
+	-- TerrainDepositConcrete, artifacts/start_sector_footprint_verdict.md). The footprint box is the
+	-- exact stretched image of vanilla's sector, so placing over it - and never over the whole
+	-- overlapping sectors, which cover far more ground - reproduces vanilla's placed set exactly.
+	-- Vanilla's own RevealDeposits does the work, with the spawn positions InitialReveal already
+	-- computed for every candidate sector's markers.
+	if (SuperBigMap.Config or {}).START_SECTOR_FOOTPRINT_DEPOSITS == true then
+		local reveal_deposits = Global("RevealDeposits")
+		if type(reveal_deposits) ~= "function" then
+			error("vanilla RevealDeposits unavailable for the stretched start footprint")
+		end
+		local placed_extra = 0
+		for i = 1, #overlaps do
+			local sector = overlaps[i].sector
+			local markers = sector and sector.markers and sector.markers.surface
+			local pending = {}
+			for j = 1, type(markers) == "table" and #markers or 0 do
+				local marker = markers[j]
+				if marker and not marker.is_placed and type(marker.GetVisualPosXYZ) == "function" then
+					local ok_pos, mx, my = pcall(marker.GetVisualPosXYZ, marker)
+					if ok_pos and type(mx) == "number" and type(my) == "number"
+						and mx >= x0 and mx < x1 and my >= y0 and my < y1 then
+						pending[#pending + 1] = marker
+					end
+				end
+			end
+			if #pending > 0 then
+				local amounts = sector.deposits and sector.deposits.surface or nil
+				local revealed_list = sector.revealed_surf
+				local ok_reveal, count = pcall(reveal_deposits, pending, amounts, nil, revealed_list,
+					spawn_positions)
+				if not ok_reveal then
+					error(string.format("stretched start footprint deposit placement failed in %s: %s",
+						tostring(sector.id), tostring(count)))
+				end
+				placed_extra = placed_extra + (tonumber(count) or 0)
+			end
+		end
+		if placed_extra > 0 then
+			-- Vanilla's own tail for a reveal that spawned deposits (MapSector:Scan).
+			pcall(function()
+				local delayed = Global("DelayedCall")
+				local on_spawned = Global("OnDepositsSpawned")
+				if type(delayed) == "function" and type(on_spawned) == "function" then
+					delayed(0, on_spawned, city)
+				end
+			end)
+		end
+		map.SuperBigMapStartFootprintDeposits = placed_extra
+	end
+
 	if selected then
 		-- Vanilla tail: overview exit_to + forced SelectSector on the deterministic anchor.
 		pcall(function()
