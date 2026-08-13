@@ -139,6 +139,26 @@ def raw_score(map_summary):
     }
 
 
+def entrance_score(entrance_summary):
+    """Score the linked-passage co-location gate (task gate `entrance-colocation`).
+
+    Deliberately coordinate-independent: only failure counts and the pair-count identity
+    are scored, so a differently seeded map cannot read as a regression merely for having
+    a different number of passages.  `pairs_colocated` itself stays out of the gates for
+    that reason; the report and the per-pair records carry it.
+    """
+    s = entrance_summary
+    return {
+        "colocation_ok": 1 if s.get("colocation_ok") else 0,
+        "neg_entrance_pairs_differing": -s.get("pairs_differing", 0),
+        "neg_entrance_pairs_unlinked": -s.get("pairs_unlinked", 0),
+        "neg_entrance_max_hex_delta": -s.get("max_hex_delta", 0),
+        "neg_entrance_pair_count_delta": -abs(
+            s.get("expanded_pairs", 0) - s.get("vanilla_pairs", 0)
+        ),
+    }
+
+
 def score(map_summary):
     s = map_summary
     return {
@@ -219,7 +239,15 @@ def main():
                   "re-run compare.py with the current tool", file=sys.stderr)
             return 2
 
+    # A summary produced before the entrance measurement existed must not score a perfect
+    # co-location gate by omission either.
+    if "entrance" not in summary:
+        print(f"{sys.argv[1]}: summary is missing the entrance section; "
+              "re-run compare.py with the current tool", file=sys.stderr)
+        return 2
+
     current = {m: score(summary[m]) for m in MAPS if m in summary}
+    current["entrance"] = entrance_score(summary["entrance"])
     current_raw = {m: raw_score(summary[m]) for m in MAPS if m in summary}
 
     stored = {}
