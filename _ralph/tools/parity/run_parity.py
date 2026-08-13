@@ -1751,6 +1751,125 @@ MARK_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "passprobe" argument.  The surface generator is proven
+# deterministic (iter-001b: identical at all 49 procedure boundaries) and every seed the harness
+# controls is pinned, yet controls still land on two variants that differ only by the SECOND
+# underground passage's site and the decor its ClearObjObstructions destroys.  The site is chosen
+# by FindPassageSpawnPos (Lua/Buildings/SurfacePassage.lua:67-124), whose retry loop falls back to
+# GetRandomPassableAroundOnMap / GetRandomPassable (Lua/Pathfinding.lua:163-170, :1-6) - both of
+# which draw from SessionRandom, a session-wide stream, NOT from the map generator's rand.  The
+# seed of that stream is already pinned (gen_template.lua:54-57), so what can still differ is the
+# stream's POSITION at the moment of the call, or whether the fallback is reached at all.
+# This block wraps the four globals on that path and records, per call, the arguments, the result
+# and the SessionRandom cursor (rand_state:Last()) before and after; a sampler thread additionally
+# logs every cursor movement it observes during generation, which names any OTHER consumer that
+# shifts the stream.  Diffing a variant-A log against a variant-B log therefore names the first
+# call that diverges.  The wrappers are pass-through: they consume no rand, create and destroy
+# nothing, and change no generation input.
+PASSAGE_PROBE_BLOCK = """		do
+			local pass_lines = {}
+			local pass_dropped = 0
+			local function pass_log(text)
+				if #pass_lines >= 40000 then
+					pass_dropped = pass_dropped + 1
+					return
+				end
+				pass_lines[#pass_lines + 1] = tostring(text)
+			end
+			g_ParityPassProbeStatus = "running"
+
+			-- The session stream's cursor.  GameRandom keeps its state in rand_state
+			-- (Lua/GameRandom.lua:1-12); rand_state:Last() is the same accessor the procedure
+			-- trace uses on the generator's rand, and reading it consumes nothing.
+			local function sr_last()
+				local sr = rawget(_G, "SessionRandom")
+				local v = "unavailable"
+				pcall(function() v = tostring(sr.rand_state:Last()) end)
+				return v
+			end
+
+			local function pass_pt(p)
+				if p == nil then return "nil" end
+				local ok, text = pcall(function()
+					local x, y, z = p:xyz()
+					return string.format("(%s,%s,%s)", tostring(x), tostring(y), tostring(z))
+				end)
+				if ok then return text end
+				local ok2, text2 = pcall(function()
+					local x, y = p:xy()
+					return string.format("(%s,%s)", tostring(x), tostring(y))
+				end)
+				if ok2 then return text2 end
+				return tostring(p)
+			end
+
+			local calls = 0
+			local function pass_wrap(name, describe)
+				local original = rawget(_G, name)
+				if type(original) ~= "function" then
+					pass_log("MISSING " .. name)
+					return
+				end
+				_G[name] = function(...)
+					calls = calls + 1
+					local n = calls
+					local before = sr_last()
+					-- `...` cannot cross into the pcall closure, so pack once and reuse the
+					-- same argument list for the description and for the real call.
+					local argv = table.pack(...)
+					local args = "?"
+					pcall(function() args = describe(table.unpack(argv, 1, argv.n)) end)
+					pass_log(string.format("CALL #%04d %-30s sr=%s %s", n, name, before, args))
+					-- table.pack/unpack with an explicit count so a nil first result (the
+					-- "no site found" case, which is exactly what we are hunting) still returns
+					-- the same arity the caller would have seen without the wrapper.
+					local results = table.pack(original(table.unpack(argv, 1, argv.n)))
+					pass_log(string.format("RET  #%04d %-30s sr=%s -> %s", n, name, sr_last(),
+						pass_pt(results[1])))
+					return table.unpack(results, 1, results.n)
+				end
+			end
+
+			pass_wrap("SpawnUndergroundPassage", function(map, pos, angle, min_dist, passages)
+				return string.format("pos=%s angle=%s min_dist=%s placed=%d", pass_pt(pos),
+					tostring(angle), tostring(min_dist), #(passages or ""))
+			end)
+			pass_wrap("FindPassageSpawnPos", function(map, ohg, buildable, pos, angle, shape, min_dist, passages)
+				return string.format("pos=%s angle=%s min_dist=%s placed=%d", pass_pt(pos),
+					tostring(angle), tostring(min_dist), #(passages or ""))
+			end)
+			pass_wrap("GetRandomPassableAroundOnMap", function(map, center, max_radius, min_radius, random)
+				return string.format("center=%s max_r=%s min_r=%s own_random=%s", pass_pt(center),
+					tostring(max_radius), tostring(min_radius), tostring(random ~= nil))
+			end)
+			pass_wrap("GetRandomPassable", function(map)
+				return "map=" .. tostring(map and map.mapdata and map.mapdata.Environment)
+			end)
+
+			-- Any cursor movement NOT bracketed by the wrappers above is another consumer of the
+			-- session stream, which is the mechanism that would defeat a seed-only pin.
+			CreateRealTimeThread(function()
+				local seen = sr_last()
+				pass_log(string.format("START g_SessionSeed=%s sr=%s",
+					tostring(rawget(_G, "g_SessionSeed")), seen))
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					local now = sr_last()
+					if now ~= seen then
+						pass_log(string.format("MOVE  sr %s -> %s (status=%s)", seen, now, status))
+						seen = now
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(50)
+				end
+				pass_log(string.format("SUMMARY calls=%d final_sr=%s dropped_lines=%d",
+					calls, sr_last(), pass_dropped))
+				local werr = AsyncStringToFile("__PASS_OUT__", table.concat(pass_lines, "\\n"))
+				g_ParityPassProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 # Diagnostic only, opt-in with the "proctrace" argument.  Localizes vanilla's residual draw
 # race (two identical serial vanilla runs at 45S82E differ by 34 rows) to ONE generator
 # procedure.  RandomMapGenerator brackets every procedure with the public ProcStart/ProcEnd
@@ -1898,7 +2017,7 @@ PROC_TRACE_BLOCK = """		do
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
-             entrance_audit=False, proc_trace=False):
+             entrance_audit=False, proc_trace=False, pass_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -1967,6 +2086,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if proc_path.exists():
             proc_path.unlink()
         extras.append(PROC_TRACE_BLOCK.replace("__PROC_OUT__", cli.lua_path(proc_path)))
+    pass_path = OUT / f"passprobe-{tag}.log"
+    if pass_probe:
+        if pass_path.exists():
+            pass_path.unlink()
+        extras.append(PASSAGE_PROBE_BLOCK.replace("__PASS_OUT__", cli.lua_path(pass_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -2067,6 +2191,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 proc_status = f"unavailable ({exc})"
             log(f"procedure trace: {proc_status} -> {proc_path}")
 
+        if pass_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                pass_status = poll_status(
+                    client, "g_ParityPassProbeStatus", {"complete"}, set(), 180, f"passprobe-{tag}"
+                )
+            except RuntimeError as exc:
+                pass_status = f"unavailable ({exc})"
+            log(f"passage probe: {pass_status} -> {pass_path}")
+
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
             raise RuntimeError(f"dump script failed to load: {load_err[2]}")
@@ -2144,6 +2278,7 @@ def main():
         markprobe = "markprobe" in sys.argv[5:]
         entranceaudit = "entranceaudit" in sys.argv[5:]
         proctrace = "proctrace" in sys.argv[5:]
+        passprobe = "passprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -2156,11 +2291,12 @@ def main():
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
-            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"pass_probe={passprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
-                        mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace)
+                        mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
+                        pass_probe=passprobe)
         log(f"result: {json.dumps(info)}")
         return
 
