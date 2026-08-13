@@ -200,6 +200,76 @@ PASSAGE_PIN_BLOCK = """		do
 			end
 		end"""
 
+# Opt-in with the "pointprobe" argument.  iter-008 left one defect at 45S82E: with the IDENTICAL
+# center (180500,298770), the IDENTICAL resolved radius (307200, after the mod's GetMapSize shadow)
+# and the IDENTICAL pinned seed (777998755), map:GetRandomPassablePoint returns (283625,152875) on
+# the 614400 control and (239275,266625) on the 819200 expanded map.  That leaves two possibilities:
+# the native chooser indexes the same passable set differently because it is bound to the map's real
+# extent (=> only retaining the native surface map through passage selection can fix it), or the two
+# maps' passability fields simply differ inside the source square and some seeds still agree
+# (=> a much cheaper passability-side alignment exists).
+#
+# This block decides it in ONE run per twin.  It wraps the global AFTER the passage pin installed
+# its wrapper, and on the same caller-less redirected call it sweeps a fixed seed list through
+# map:GetRandomPassablePoint with the radius vanilla itself would resolve (Pathfinding.lua:165),
+# recording each seed's point.  It draws from no stream, passes explicit seeds, and calls through
+# to the pinned wrapper unchanged, so a probed run's dump must stay byte-identical to an unprobed
+# pinned one - which is the inertness check.  PROBE_POINT_SEEDS[1] is the real pinned seed, so the
+# probe reproduces the recorded call and proves itself before any new seed is believed.
+PROBE_POINT_SEEDS = [
+    777998755, 1, 2, 3, 7, 42, 1000, 65537,
+    123456789, 314159265, 271828182, 161803398, 141421356, 236067977,
+    500000000, 999999999,
+]
+
+POINT_PROBE_BLOCK = """		do
+			local probe_seeds = {__PROBE_SEEDS__}
+			g_ParityPointProbe = {}
+			g_ParityPointProbeCalls = 0
+
+			local function probe_point_text(p)
+				if p == nil or p == false then return tostring(p) end
+				local ok, x, y = pcall(function() return p:xyz() end)
+				if ok and x then return string.format("(%s,%s)", tostring(x), tostring(y)) end
+				return tostring(p)
+			end
+
+			local probe_original = rawget(_G, "GetRandomPassableAroundOnMap")
+			if type(probe_original) ~= "function" then
+				error("GetRandomPassableAroundOnMap unavailable; cannot probe the point chooser")
+			end
+			_G.GetRandomPassableAroundOnMap = function(map, center, max_radius, min_radius, random,
+					filter, ...)
+				local records = rawget(_G, "g_ParityPointProbe")
+				if random == nil and type(map) == "table" and type(records) == "table"
+					and #records < 400
+					and type(map.GetRandomPassablePoint) == "function" then
+					g_ParityPointProbeCalls = (rawget(_G, "g_ParityPointProbeCalls") or 0) + 1
+					-- Exactly the expression Pathfinding.lua:165 uses, evaluated at the same
+					-- moment, so the expanded twin sees whatever the mod's shadow presents.
+					local resolved_max = max_radius or Max(map:GetMapSize()) / 2
+					local resolved_min = min_radius or 0
+					local w, h = map:GetMapSize()
+					records[#records + 1] = string.format(
+						"call#%02d status=%s size=%sx%s center=%s max_radius=%s min_radius=%s",
+						rawget(_G, "g_ParityPointProbeCalls"),
+						tostring(rawget(_G, "g_ParityStatus")), tostring(w), tostring(h),
+						probe_point_text(center), tostring(resolved_max), tostring(resolved_min))
+					for i = 1, #probe_seeds do
+						local seed = probe_seeds[i]
+						local ok, pt = pcall(function()
+							return map:GetRandomPassablePoint(center, resolved_max, resolved_min,
+								seed, 0)
+						end)
+						records[#records + 1] = string.format("  call#%02d seed=%s -> %s",
+							rawget(_G, "g_ParityPointProbeCalls"), tostring(seed),
+							ok and probe_point_text(pt) or ("ERROR " .. tostring(pt)))
+					end
+				end
+				return probe_original(map, center, max_radius, min_radius, random, filter, ...)
+			end
+		end"""
+
 TWIN_SEED_BLOCK = """		if type(SBM.MapGeneration) == "table"
 			and type(SBM.MapGeneration.SetTwinUndergroundSeedForTest) == "function" then
 			local applied, why = SBM.MapGeneration.SetTwinUndergroundSeedForTest(
@@ -2259,7 +2329,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
-             passage_pin=False):
+             passage_pin=False, point_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2295,6 +2365,13 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     if passage_pin:
         extras.append(
             PASSAGE_PIN_BLOCK.replace("__PIN_SEED__", str(int(PASSAGE_FALLBACK_PIN_SEED)))
+        )
+    # After the pin, so the probe wraps the pinned wrapper and observes the redirected call.
+    if point_probe:
+        extras.append(
+            POINT_PROBE_BLOCK.replace(
+                "__PROBE_SEEDS__", ", ".join(str(int(s)) for s in PROBE_POINT_SEEDS)
+            )
         )
     if entrance_audit:
         extras.append(ENTRANCE_AUDIT_BLOCK)
@@ -2409,6 +2486,23 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 for line in pin_calls:
                     log(f"  pin call {line}")
                 log(f"  passage-fallback pin calls -> {pin_calls_path}")
+
+        if point_probe:
+            # The seed sweep at the fallback call site.  A silent zero-call sweep would look
+            # like agreement, so fail the twin when the probe never saw the redirected call.
+            _, probe_calls = cli.marshal_value(client, "g_ParityPointProbeCalls", timeout=60.0)
+            _, probe_rows = cli.marshal_value(client, "g_ParityPointProbe", timeout=60.0)
+            if not probe_calls:
+                raise RuntimeError(
+                    f"point probe never saw a caller-less fallback call ({tag}): "
+                    f"g_ParityPointProbeCalls={probe_calls!r}"
+                )
+            point_path = OUT / f"pointprobe-{tag}.log"
+            point_path.write_text(
+                "\n".join(str(line) for line in (probe_rows or [])) + "\n", encoding="utf-8"
+            )
+            log(f"point probe: {probe_calls} call(s), {len(probe_rows or [])} records "
+                f"-> {point_path}")
 
         if decal_probe:
             # Diagnostic only: never fail the twin because the probe file lagged.
@@ -2574,6 +2668,7 @@ def main():
         passprobe = "passprobe" in sys.argv[5:]
         drawprobe = "drawprobe" in sys.argv[5:]
         passagepin = "passagepin" in sys.argv[5:]
+        pointprobe = "pointprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -2587,12 +2682,13 @@ def main():
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
             f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
-            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"point_probe={pointprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
-                        pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin)
+                        pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
+                        point_probe=pointprobe)
         log(f"result: {json.dumps(info)}")
         return
 
