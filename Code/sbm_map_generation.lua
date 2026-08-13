@@ -2932,11 +2932,27 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
 	local is_valid = Global("IsValid")
+	-- Engine MapVar helpers belong to whichever map loaded them, not to generated content:
+	-- OnMsg.NewMap -> InitMapVarValue builds exactly one CameraObj per LOADED map
+	-- (CommonLua/Classes/ActionFX.lua, CommonLua/Core/lib.lua). The temporary vanilla backing
+	-- therefore owns one of its own. It is constructed without a position, so the baseline
+	-- snapshot taken right after ChangeMapInSlot cannot enumerate it, and by transfer time it has
+	-- a camera pose and looks like a generated root - which left the expanded surface with two
+	-- cameras where the vanilla twin has one.
+	local transfer_excluded = excluded_objects
+	local source_camera = source and rawget(source, "g_CameraObj") or nil
+	if source_camera and (type(is_valid) ~= "function" or is_valid(source_camera)) then
+		transfer_excluded = {}
+		if excluded_objects then
+			for object, flag in pairs(excluded_objects) do transfer_excluded[object] = flag end
+		end
+		transfer_excluded[source_camera] = true
+	end
 	local roots, seen_roots = {}, {}
 	local function resolve_generated_root(obj)
 		local current, depth = obj, 0
 		while current and depth < 64 do
-			if excluded_objects and excluded_objects[current] then return nil, true end
+			if transfer_excluded and transfer_excluded[current] then return nil, true end
 			if type(current.GetParent) ~= "function" then break end
 			local parent = SafeCall(current.GetParent, current)
 			local parent_valid = parent and (type(is_valid) ~= "function" or is_valid(parent))
