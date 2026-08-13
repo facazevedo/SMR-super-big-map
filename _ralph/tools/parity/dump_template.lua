@@ -22,6 +22,26 @@ CreateRealTimeThread(function()
 			emit("#meta," .. map_tag .. "," .. tostring(key) .. "," .. tostring(value))
 		end
 
+		-- Provenance comes from two mod-side namespaces: SuperBigMapNativeSource* for objects that
+		-- existed when the native population was handed over, SuperBigMapProvenance* for the ones
+		-- vanilla created later from those objects (CityInit spawns, revealed deposits, attaches).
+		-- Both name a single vanilla object; the src_kind column keeps them distinguishable.
+		local function src_num(obj, native_field, prov_field)
+			local v = obj[native_field]
+			if type(v) == "number" then return tostring(v) end
+			v = obj[prov_field]
+			if type(v) == "number" then return tostring(v) end
+			return ""
+		end
+
+		local function src_kind(obj)
+			if type(obj.SuperBigMapNativeSourceX) == "number" then return "native" end
+			if type(obj.SuperBigMapProvenanceX) == "number" then
+				return tostring(obj.SuperBigMapProvenanceKind or "derived")
+			end
+			return ""
+		end
+
 		local function safe_call(fn, obj)
 			if type(fn) ~= "function" then return nil end
 			local ok_c, v = pcall(fn, obj)
@@ -53,6 +73,7 @@ CreateRealTimeThread(function()
 				"SuperBigMapZScaleMul", "SuperBigMapZScaleDiv", "SuperBigMapZScaleAdd",
 				"SuperBigMapSurfaceStretchDone", "SuperBigMapUndergroundPrepared",
 				"SuperBigMapStrictNativeObjectCorrespondence",
+				"SuperBigMapProvenanceDerived", "SuperBigMapProvenanceUnresolved",
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end
@@ -85,13 +106,16 @@ CreateRealTimeThread(function()
 						x, y, z,
 						num(safe_call(obj.GetScale, obj)),
 						num(safe_call(obj.GetAngle, obj)),
-						num(obj.SuperBigMapNativeSourceX),
-						num(obj.SuperBigMapNativeSourceY),
-						num(obj.SuperBigMapNativeSourceZ),
+						src_num(obj, "SuperBigMapNativeSourceX", "SuperBigMapProvenanceX"),
+						src_num(obj, "SuperBigMapNativeSourceY", "SuperBigMapProvenanceY"),
+						src_num(obj, "SuperBigMapNativeSourceZ", "SuperBigMapProvenanceZ"),
 						num(obj.SuperBigMapNativeSourceScale),
 						num(obj.SuperBigMapNativeSourceAngle),
-						tostring(obj.SuperBigMapNativeSourceClass or ""),
+						tostring(obj.SuperBigMapNativeSourceClass
+							or obj.SuperBigMapProvenanceClass or ""),
 						obj.SuperBigMapTransferredFromNativeSource == true and "1" or "0",
+						src_kind(obj),
+						tostring(obj.SuperBigMapProvenanceFrom or ""),
 					}, ","))
 					rows = rows + 1
 				end
@@ -111,7 +135,7 @@ CreateRealTimeThread(function()
 			if env == "Underground" and not underground then underground = m end
 		end
 
-		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred")
+		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from")
 		dump_map(surface, "surface")
 		dump_map(underground, "underground")
 

@@ -5663,9 +5663,23 @@ local function BootstrapPassagesAndDeferWonders(env)
 				marker:GetPos(), marker:GetAngle(), const_tbl.RandomMap.UndergroundPassagesMinDistance,
 				successful)
 			if surface_anchor then
+				-- The bootstrap runs SpawnUndergroundPassage against the source buildable data
+				-- bridged into the expanded grid, so the anchor lands on the SAME coordinate the
+				-- vanilla twin's passage occupies. Record it before the later final commitment moves
+				-- the anchor into the expanded domain; the CityInit tunnel marker, its sign, and the
+				-- attached decal then inherit this record through their creation chain.
+				local provenance = SuperBigMap.Provenance
+				if provenance and type(provenance.RecordNativeSpawn) == "function" then
+					SafeCall(provenance.RecordNativeSpawn, surface_anchor,
+						"native_spawn", "SpawnUndergroundPassage")
+				end
 				ArtefactClearObstructions(surface_anchor, surface_map.obj_prefab_marker,
 					surface_anchor:GetPos(), surface_shape)
 				local underground_anchor = ArtefactSpawnMarkerBuilding(marker, "SurfacePassage", map)
+				if provenance and type(provenance.RecordNativeSpawn) == "function" then
+					SafeCall(provenance.RecordNativeSpawn, underground_anchor,
+						"native_spawn", "ArtefactSpawnMarkerBuilding")
+				end
 				underground_anchor:Link(surface_anchor)
 				successful[#successful + 1] = underground_anchor
 
@@ -10374,6 +10388,16 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			if ok_branch and map.SuperBigMapStretchPipelinePending == true then
 				FinalizeDeferredStretchState(map, "surface")
 			end
+			-- CityInit spawned the tunnel markers, their signs, the revealed deposits, and every
+			-- attached effect AFTER the native population was transferred, so none of them carry a
+			-- native stamp. Record which vanilla object each one derives from now that they are all
+			-- placed; this only writes SuperBigMapProvenance* fields and moves nothing.
+			do
+				local provenance = SuperBigMap.Provenance
+				if provenance and type(provenance.Propagate) == "function" then
+					SafeCall(provenance.Propagate, map, "surface stretch complete")
+				end
+			end
 			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
 			-- never hangs on the loading screen.
 			map.SuperBigMapSurfaceStretchDone = true
@@ -11336,6 +11360,14 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			map.SuperBigMapStretchPipelinePending = false
 		end
 		if ok_branch then
+			-- Same derived-object record as the surface, for the underground CityInit spawns
+			-- (SurfaceTunnelMarker, SubsurfaceSpecialAnomalyMarker, attached passage imprints).
+			do
+				local provenance = SuperBigMap.Provenance
+				if provenance and type(provenance.Propagate) == "function" then
+					SafeCall(provenance.Propagate, map, "underground preparation complete")
+				end
+			end
 			map.SuperBigMapUndergroundStretchDone = true
 			map.SuperBigMapUndergroundPrepared = true
 			map.SuperBigMapExpanded = true

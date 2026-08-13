@@ -42,6 +42,9 @@ def parse_dump(path):
                 continue
             (map_tag, cls, x, y, z, scale, angle,
              sx, sy, sz, sscale, sangle, sclass, transferred) = parts[:14]
+            # Optional provenance-kind columns (older dumps do not have them).
+            skind = parts[14] if len(parts) > 14 else ""
+            sfrom = parts[15] if len(parts) > 15 else ""
 
             def fnum(v):
                 if v == "":
@@ -62,6 +65,8 @@ def parse_dump(path):
                 "src_scale": fnum(sscale), "src_angle": fnum(sangle),
                 "src_class": sclass or None,
                 "transferred": transferred == "1",
+                "src_kind": skind or "",
+                "src_from": sfrom or "",
             })
     return meta, rows
 
@@ -95,15 +100,19 @@ def provenance(vrows, erows):
     stamped = 0
     unstamped = []
     unmatched = []
+    by_kind = Counter()
+    matched_by_kind = Counter()
     for r in erows:
         if r["src_x"] is None or r["src_y"] is None:
             unstamped.append(r)
             continue
         stamped += 1
+        by_kind[r["src_kind"] or "native"] += 1
         key = (r["src_class"] or r["class"], r["src_x"], r["src_y"])
         bucket = pool.get(key)
         if bucket:
             matched += 1
+            matched_by_kind[r["src_kind"] or "native"] += 1
             used.add(bucket.pop())
         else:
             unmatched.append(r)
@@ -114,6 +123,8 @@ def provenance(vrows, erows):
         "matched": matched,
         "unmatched_expanded": unmatched,
         "unconsumed_vanilla": unconsumed,
+        "stamped_by_kind": dict(by_kind),
+        "matched_by_kind": dict(matched_by_kind),
     }
 
 
@@ -228,6 +239,11 @@ def report_map(tag, vrows, erows, rx, ry, out):
     w(f"   ... matched to a distinct vanilla object : {prov['matched']}")
     w(f"   ... stamp with no vanilla counterpart    : {len(prov['unmatched_expanded'])}")
     w(f"   expanded objects with NO source stamp    : {len(prov['unstamped'])}")
+    if prov["stamped_by_kind"]:
+        w("   stamp provenance kind (stamped / matched):")
+        for kind in sorted(prov["stamped_by_kind"]):
+            w(f"     {kind:<22} {prov['stamped_by_kind'][kind]:>7} /"
+              f" {prov['matched_by_kind'].get(kind, 0):>7}")
     w(f"   vanilla objects never claimed by a stamp : {len(prov['unconsumed_vanilla'])}")
     if prov["unstamped"]:
         w("   unstamped expanded classes (top 15):")
@@ -279,6 +295,8 @@ def report_map(tag, vrows, erows, rx, ry, out):
         "provenance_unmatched_expanded": len(prov["unmatched_expanded"]),
         "provenance_unstamped_expanded": len(prov["unstamped"]),
         "provenance_unconsumed_vanilla": len(prov["unconsumed_vanilla"]),
+        "provenance_stamped_by_kind": prov["stamped_by_kind"],
+        "provenance_matched_by_kind": prov["matched_by_kind"],
         "stretch_max_residual": max(allres) if allres else None,
         "geometric_matched": tot_m,
         "geometric_unmatched_vanilla": tot_u,
