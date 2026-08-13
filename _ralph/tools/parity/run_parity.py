@@ -1870,6 +1870,116 @@ PASSAGE_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "drawprobe" argument.  The passage probe (passprobe,
+# artifacts/passage_probe_verdict.md) proved the 45S82E variant split is ONE SessionRandom draw
+# made during generation, before any passage call: all runs start at the pinned cursor, take the
+# same first draw, then land on different values on the NEXT move, after which the passage
+# fallback (FindPassageSpawnPos L119) merely converts the shifted cursor into a different site.
+# Wrapping the CALLERS therefore cannot name the culprit; this block wraps the DRAW.  It replaces
+# the SessionRandom instance's Random with a pass-through that logs, per call, the arguments, the
+# cursor before/after, the returned value and a one-line stack traceback naming the consumer
+# (GameRandom:TableRand routes through Random, so a single wrap covers both entry points).
+# A 50 ms thread additionally re-installs the wrapper whenever the instance is replaced (it is
+# rebuilt from the pinned seed at map change) and reports any cursor movement NOT attributable to
+# a wrapped draw, which is exactly the signature of a consumer reaching rand_state directly.
+# It is pass-through: it consumes no rand, creates and destroys nothing, changes no input.
+DRAW_PROBE_BLOCK = """		do
+			local draw_lines = {}
+			local draw_dropped = 0
+			local function draw_log(text)
+				if #draw_lines >= 40000 then
+					draw_dropped = draw_dropped + 1
+					return
+				end
+				draw_lines[#draw_lines + 1] = tostring(text)
+			end
+			g_ParityDrawProbeStatus = "running"
+
+			-- rand_state:Last() is the cursor accessor the procedure and passage probes already
+			-- use; reading it consumes nothing.
+			local function draw_last(sr)
+				local v = "unavailable"
+				pcall(function() v = tostring(sr.rand_state:Last()) end)
+				return v
+			end
+
+			-- One line per traceback: the consumer's identity is the frame list, and a
+			-- multi-line dump would make the variant-A vs variant-B diff unreadable.
+			-- Level 3 starts the trace at the CALLER of the wrapper (1 = this function,
+			-- 2 = the wrapper itself).
+			local function draw_where()
+				if type(debug) ~= "table" or type(debug.traceback) ~= "function" then
+					return "no debug.traceback"
+				end
+				local tb = tostring(debug.traceback("", 3))
+				tb = tb:gsub("stack traceback:", "")
+				tb = tb:gsub("%s+", " ")
+				if #tb > 600 then tb = tb:sub(1, 600) .. " ..." end
+				return tb
+			end
+
+			local draws = 0
+			local installs = 0
+			local last_known = false
+
+			local function draw_install()
+				local sr = rawget(_G, "SessionRandom")
+				if type(sr) ~= "table" then return false end
+				if rawget(sr, "ParityDrawWrapped") then return false end
+				-- Resolves to GameRandom.Random through the instance metatable; taking it per
+				-- install keeps a re-wrap after the map change correct.
+				local original = sr.Random
+				if type(original) ~= "function" then return false end
+				rawset(sr, "ParityDrawWrapped", true)
+				rawset(sr, "Random", function(self, min, max)
+					draws = draws + 1
+					local n = draws
+					local before = draw_last(self)
+					local value = original(self, min, max)
+					local after = draw_last(self)
+					last_known = after
+					draw_log(string.format("DRAW #%05d %-20s min=%s max=%s sr %s -> %s = %s",
+						n, tostring(rawget(_G, "g_ParityStatus")), tostring(min), tostring(max),
+						before, after, tostring(value)))
+					draw_log("   at " .. draw_where())
+					return value
+				end)
+				installs = installs + 1
+				last_known = draw_last(sr)
+				draw_log(string.format("INSTALL #%d g_SessionSeed=%s sr=%s status=%s",
+					installs, tostring(rawget(_G, "g_SessionSeed")), last_known,
+					tostring(rawget(_G, "g_ParityStatus"))))
+				return true
+			end
+
+			if not draw_install() then
+				draw_log("INSTALL failed: SessionRandom unavailable or already wrapped")
+			end
+
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					draw_install()
+					local sr = rawget(_G, "SessionRandom")
+					if type(sr) == "table" then
+						local now = draw_last(sr)
+						if now ~= last_known then
+							draw_log(string.format("UNWRAPPED sr %s -> %s (status=%s)",
+								tostring(last_known), now, status))
+							last_known = now
+						end
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(50)
+				end
+				draw_log(string.format("SUMMARY draws=%d installs=%d dropped_lines=%d",
+					draws, installs, draw_dropped))
+				local werr = AsyncStringToFile("__DRAW_OUT__", table.concat(draw_lines, "\\n"))
+				g_ParityDrawProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 # Diagnostic only, opt-in with the "proctrace" argument.  Localizes vanilla's residual draw
 # race (two identical serial vanilla runs at 45S82E differ by 34 rows) to ONE generator
 # procedure.  RandomMapGenerator brackets every procedure with the public ProcStart/ProcEnd
@@ -2017,7 +2127,7 @@ PROC_TRACE_BLOCK = """		do
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
-             entrance_audit=False, proc_trace=False, pass_probe=False):
+             entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2091,6 +2201,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if pass_path.exists():
             pass_path.unlink()
         extras.append(PASSAGE_PROBE_BLOCK.replace("__PASS_OUT__", cli.lua_path(pass_path)))
+    draw_path = OUT / f"drawprobe-{tag}.log"
+    if draw_probe:
+        if draw_path.exists():
+            draw_path.unlink()
+        extras.append(DRAW_PROBE_BLOCK.replace("__DRAW_OUT__", cli.lua_path(draw_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -2201,6 +2316,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 pass_status = f"unavailable ({exc})"
             log(f"passage probe: {pass_status} -> {pass_path}")
 
+        if draw_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                draw_status = poll_status(
+                    client, "g_ParityDrawProbeStatus", {"complete"}, set(), 180, f"drawprobe-{tag}"
+                )
+            except RuntimeError as exc:
+                draw_status = f"unavailable ({exc})"
+            log(f"draw probe: {draw_status} -> {draw_path}")
+
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
             raise RuntimeError(f"dump script failed to load: {load_err[2]}")
@@ -2279,6 +2404,7 @@ def main():
         entranceaudit = "entranceaudit" in sys.argv[5:]
         proctrace = "proctrace" in sys.argv[5:]
         passprobe = "passprobe" in sys.argv[5:]
+        drawprobe = "drawprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -2291,12 +2417,13 @@ def main():
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
-            f"pass_probe={passprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"pass_probe={passprobe} draw_probe={drawprobe} hexgrid={hexgrid} "
+            f"lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
-                        pass_probe=passprobe)
+                        pass_probe=passprobe, draw_probe=drawprobe)
         log(f"result: {json.dumps(info)}")
         return
 
