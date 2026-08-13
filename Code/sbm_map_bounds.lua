@@ -381,6 +381,16 @@ local function InstallBuildableGridPreGenerationOptimizer()
 	end
 	local State = SuperBigMap.State or {}
 	local current = cls.Build
+	-- A map-generation transaction may own this class method for the duration of one
+	-- OnGenerateLogic call (sbm_map_generation installs a source/backing-size bridge on it and
+	-- restores this module's wrapper on exit). Any map slot changed inside that window -- an
+	-- unloaded temporary backing, for instance -- fires ChangingMap, whose handler reinstalls the
+	-- global hooks; wrapping the transaction's hook there would both break its restore check and
+	-- leave this module's wrapper delegating to a dead generation closure afterwards. Leave the
+	-- transaction's hook alone: it restores this wrapper itself.
+	if current ~= nil and current == State.buildable_grid_generation_hook then
+		return true
+	end
 	local legacy_original = rawget(_G, "BMOriginal_BuildableGrid_Build")
 	if State.buildable_grid_build_wrapper == nil
 		and type(legacy_original) == "function" and current ~= legacy_original

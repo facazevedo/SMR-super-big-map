@@ -9568,6 +9568,11 @@ local function PatchRandomMapGenerator()
 				rebuild_buildable_grid_installed = ok_install
 					and rawget(buildable_grid_class, "Build") == rebuild_buildable_grid_wrapper
 			end
+			-- Publish the transaction's ownership of BuildableGrid.Build so a map-slot change made
+			-- inside this window (the retained native backing is unloaded here) cannot make the
+			-- ChangingMap hook reinstall wrap this temporary closure permanently.
+			State.buildable_grid_generation_hook =
+				rebuild_buildable_grid_installed and rebuild_buildable_grid_wrapper or nil
 
 			local results
 			if rebuild_buildable_grid_required and not rebuild_buildable_grid_installed then
@@ -9588,6 +9593,7 @@ local function PatchRandomMapGenerator()
 
 			local rebuild_restore_ok = true
 			local rebuild_restore_reason = "not-installed"
+			State.buildable_grid_generation_hook = nil
 			if rebuild_buildable_grid_installed and type(buildable_grid_class) == "table" then
 				local current = rawget(buildable_grid_class, "Build")
 				if current == rebuild_buildable_grid_wrapper then
