@@ -15,16 +15,46 @@ sign convention below, so a regression can never be hidden by a tolerance change
   object_count_delta             : -|expanded_objects - vanilla_objects|
   classes_differing              : negated
 
-The raw gates above cover EVERY record, including the enumerated infrastructure
-classes whose expanded cardinality legitimately differs (400 MapSector vs 100), so
-they can never reach 0.  The content_* gates below repeat them over the population
-the bijection actually governs, and infrastructure_ok scores the enumeration itself.
-Both sets are kept: the raw gates stay comparable with every earlier run, and no gate
-is ever redefined to move a number.
+===========================================================================
+WHY THE RAW A/B GATES ARE INFORMATIONAL (read this before touching the scoring)
+===========================================================================
+The raw gates listed above count EVERY record, including the enumerated
+infrastructure classes whose expanded cardinality legitimately differs: the 20x20
+sector grid means 400 `MapSector` where vanilla has 100, and stock
+`MapSector:UpdateDecal` gives each of those sectors its own `SectorUnexplored`
+overview decal.  A perfectly correct expanded map therefore carries ~800 records
+with no vanilla counterpart, so `neg_unstamped_expanded` and
+`neg_object_count_delta` can NEVER reach 0, and any correct fix that restores a
+missing infrastructure class reads as a ratchet REGRESSION (iteration 007: the
+400 restored underground decals, attributed row-by-row in that run's
+`attribution.json`, moved two raw gates 400 worse while no content gate moved).
+
+The contract's Ratchet clause allows exactly this exemption - "adding class
+exemptions requires the infrastructure-enumeration justification in DONE.md" -
+and forbids relaxing a content gate.  So:
+
+  * The raw A/B numbers are still computed, still stored, and still tracked
+    best-yet, under `informational` in best.json.  They no longer decide
+    regression, because their target is unreachable.
+  * The scored set gains the `unexplained_*` gates: A/B recomputed over content
+    PLUS every infrastructure class whose cardinality rule is NOT proven `ok` on
+    this run (compare.py section G).  A class buys its exemption per run by
+    satisfying its stated rule, not by being listed in the registry.
+  * `neg_partition_anomalies` scores compare.py's own proof that
+    raw == unexplained + records of the `ok` infrastructure classes.  A raw
+    number that worsens for any reason other than an `ok` infrastructure class is
+    consequently still caught, either by an `unexplained_*` gate or by this one.
+
+Net effect on strictness: the `unexplained_*` gates are TIGHTER than the
+`content_*` gates (content exempts every registry class unconditionally; G
+exempts only proven ones), and no gate's definition was widened.
 
   infrastructure_ok              : bool  -> 1/0 (every enumerated class proven)
   content_matched                : higher better
   neg_content_*                  : negated content counts
+  unexplained_matched            : higher better
+  neg_unexplained_*              : negated unexplained-residue counts
+  neg_partition_anomalies        : negated count of raw/unexplained identity failures
 
 Usage:
   python _ralph/tools/parity/ratchet.py <parity_summary.json> <best.json> [--update]
@@ -36,12 +66,33 @@ from pathlib import Path
 
 MAPS = ("surface", "underground")
 
+# Raw A/B gates: tracked best-yet for continuity with every run since iteration 001,
+# but NOT regression-gating - see the module docstring for the justification.
+INFORMATIONAL = (
+    "matched",
+    "neg_unmatched_expanded",
+    "neg_unstamped_expanded",
+    "neg_unconsumed_vanilla",
+    "neg_object_count_delta",
+    "neg_classes_differing",
+)
 
-def score(map_summary):
+JUSTIFICATION = (
+    "Raw A/B gates count enumerated infrastructure (400 MapSector and ~400 "
+    "SectorUnexplored decals on a 20x20 expanded grid vs 100/100 vanilla), so their "
+    "target is unreachable on a correct map and a correct infrastructure fix reads as "
+    "a regression. They are tracked here as informational only. Regression is decided "
+    "by the content_* gates plus the unexplained_* gates (compare.py section G: "
+    "content + every infrastructure class whose cardinality rule is not proven `ok` on "
+    "that run) plus neg_partition_anomalies, which proves raw == unexplained + records "
+    "of the `ok` infrastructure classes. Restate this in DONE.md as the contract's "
+    "infrastructure-enumeration justification."
+)
+
+
+def raw_score(map_summary):
     s = map_summary
     return {
-        "seed_equal": 1 if s.get("seed_equal") else 0,
-        "hash_equal": 1 if s.get("hash_equal") else 0,
         "matched": s.get("provenance_matched", 0),
         "neg_unmatched_expanded": -s.get("provenance_unmatched_expanded", 0),
         "neg_unstamped_expanded": -s.get("provenance_unstamped_expanded", 0),
@@ -50,6 +101,14 @@ def score(map_summary):
             s.get("expanded_objects", 0) - s.get("vanilla_objects", 0)
         ),
         "neg_classes_differing": -s.get("classes_differing", 0),
+    }
+
+
+def score(map_summary):
+    s = map_summary
+    return {
+        "seed_equal": 1 if s.get("seed_equal") else 0,
+        "hash_equal": 1 if s.get("hash_equal") else 0,
         "infrastructure_ok": 1 if s.get("infrastructure_ok") else 0,
         "neg_infrastructure_unresolved": -(s.get("infrastructure_unproven", 0)
                                            + s.get("infrastructure_mismatch", 0)),
@@ -61,7 +120,43 @@ def score(map_summary):
             s.get("content_expanded_objects", 0) - s.get("content_vanilla_objects", 0)
         ),
         "neg_content_classes_differing": -s.get("content_classes_differing", 0),
+        "unexplained_matched": s.get("unexplained_matched", 0),
+        "neg_unexplained_unmatched_expanded":
+            -s.get("unexplained_unmatched_expanded", 0),
+        "neg_unexplained_unstamped_expanded":
+            -s.get("unexplained_unstamped_expanded", 0),
+        "neg_unexplained_unconsumed_vanilla":
+            -s.get("unexplained_unconsumed_vanilla", 0),
+        "neg_unexplained_object_count_delta": -abs(
+            s.get("unexplained_expanded_objects", 0)
+            - s.get("unexplained_vanilla_objects", 0)
+        ),
+        "neg_unexplained_classes_differing": -s.get("unexplained_classes_differing", 0),
+        "neg_partition_anomalies": -len(s.get("partition_anomalies", [])),
     }
+
+
+def compare(current, best, label):
+    """Return (verdicts, regressions, improvements, merged) for one gate family."""
+    verdicts, regressions, improvements, merged = {}, [], [], {}
+    for m, gates in current.items():
+        merged[m] = dict(best.get(m, {}))
+        verdicts[m] = {}
+        for k, v in gates.items():
+            b = best.get(m, {}).get(k)
+            if b is None:
+                verdicts[m][k] = "NEW"
+                merged[m][k] = v
+            elif v > b:
+                verdicts[m][k] = f"IMPROVED {b} -> {v}"
+                improvements.append(f"{label}{m}.{k} {b}->{v}")
+                merged[m][k] = v
+            elif v < b:
+                verdicts[m][k] = f"REGRESSION {b} -> {v}"
+                regressions.append(f"{label}{m}.{k} {b}->{v}")
+            else:
+                verdicts[m][k] = "SAME"
+    return verdicts, regressions, improvements, merged
 
 
 def main():
@@ -73,10 +168,14 @@ def main():
     update = "--update" in sys.argv[3:]
 
     # A missing field must never score as a perfect gate: refuse to score a summary
-    # that predates (or silently dropped) the content/infrastructure fields.
+    # that predates (or silently dropped) the content/infrastructure/unexplained fields.
     required = ("content_matched", "content_unmatched_expanded",
                 "content_unstamped_expanded", "content_unconsumed_vanilla",
-                "content_expanded_objects", "infrastructure_ok")
+                "content_expanded_objects", "infrastructure_ok",
+                "unexplained_matched", "unexplained_unmatched_expanded",
+                "unexplained_unstamped_expanded", "unexplained_unconsumed_vanilla",
+                "unexplained_expanded_objects", "unexplained_vanilla_objects",
+                "unexplained_classes_differing", "partition_anomalies")
     for m in MAPS:
         if m not in summary:
             continue
@@ -87,29 +186,30 @@ def main():
             return 2
 
     current = {m: score(summary[m]) for m in MAPS if m in summary}
-    best = {}
-    if best_path.exists():
-        best = json.loads(best_path.read_text(encoding="utf-8")).get("gates", {})
+    current_raw = {m: raw_score(summary[m]) for m in MAPS if m in summary}
 
-    verdicts, regressions, improvements = {}, [], []
-    merged = {}
-    for m, gates in current.items():
-        merged[m] = dict(best.get(m, {}))
-        verdicts[m] = {}
-        for k, v in gates.items():
-            b = best.get(m, {}).get(k)
-            if b is None:
-                verdicts[m][k] = "NEW"
-                merged[m][k] = v
-            elif v > b:
-                verdicts[m][k] = f"IMPROVED {b} -> {v}"
-                improvements.append(f"{m}.{k} {b}->{v}")
-                merged[m][k] = v
-            elif v < b:
-                verdicts[m][k] = f"REGRESSION {b} -> {v}"
-                regressions.append(f"{m}.{k} {b}->{v}")
-            else:
-                verdicts[m][k] = "SAME"
+    stored = {}
+    if best_path.exists():
+        stored = json.loads(best_path.read_text(encoding="utf-8"))
+    best = dict(stored.get("gates", {}))
+    best_raw = dict(stored.get("informational", {}))
+
+    # One-time migration: the raw gates used to live in `gates`. Move the recorded
+    # best-yet values into `informational` instead of dropping or re-baselining them,
+    # so their history survives the demotion.
+    migrated = []
+    for m, gates in list(best.items()):
+        for k in INFORMATIONAL:
+            if k in gates:
+                best_raw.setdefault(m, {})
+                if k not in best_raw[m]:
+                    best_raw[m][k] = gates[k]
+                    migrated.append(f"{m}.{k}={gates[k]}")
+                del gates[k]
+
+    verdicts, regressions, improvements, merged = compare(current, best, "")
+    raw_verdicts, raw_regressions, raw_improvements, merged_raw = compare(
+        current_raw, best_raw, "informational:")
 
     out = {
         "current": current,
@@ -118,29 +218,46 @@ def main():
         "regressions": regressions,
         "improvements": improvements,
         "regressed": bool(regressions),
+        "informational": {
+            "justification": JUSTIFICATION,
+            "current": current_raw,
+            "best_before": best_raw,
+            "verdicts": raw_verdicts,
+            "regressions": raw_regressions,
+            "improvements": raw_improvements,
+            "note": "not regression-gating; see the module docstring",
+        },
+        "migrated_to_informational": migrated,
     }
     print(json.dumps(out, indent=2))
 
     if update and not regressions:
-        payload = {"gates": merged}
-        if best_path.exists():
-            prev = json.loads(best_path.read_text(encoding="utf-8"))
-            payload = {**prev, "gates": merged}
-        payload.setdefault("note", (
+        payload = {**stored, "gates": merged, "informational": merged_raw}
+        payload["note"] = (
             "Gates are monotone (higher is better); neg_* fields are negated counts. "
-            "Never relax compare.py or the dump to move a gate."
-        ))
+            "Never relax compare.py or the dump to move a gate. `gates` decides "
+            "regression; `informational` holds the raw A/B numbers, whose target is "
+            "unreachable on a correct expanded map (see justification)."
+        )
+        payload["informational_justification"] = JUSTIFICATION
         # Record which run last wrote the file and which gates it moved, so the file's
         # provenance can never claim a baseline it no longer holds.
         payload["last_update"] = {
             "summary": str(Path(sys.argv[1]).resolve()),
             "improved_gates": improvements,
+            "improved_informational": raw_improvements,
+            "migrated_to_informational": migrated,
         }
         best_path.parent.mkdir(parents=True, exist_ok=True)
         best_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"\nbest.json updated -> {best_path}")
     elif update and regressions:
         print("\nbest.json NOT updated: regression present", file=sys.stderr)
+
+    if raw_regressions:
+        print(f"\ninformational raw gates read worse ({', '.join(raw_regressions)}); "
+              "not gating - the scored unexplained_*/partition gates above decide.",
+              file=sys.stderr)
 
     return 1 if regressions else 0
 

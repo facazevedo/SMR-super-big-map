@@ -13,9 +13,14 @@ Five independent tests per map (surface, underground):
                    rule that fixes its expected cardinality and a verdict.
   F. Content     - A+B recomputed over CONTENT ONLY (everything not enumerated in E),
                    which is the population the bijection gates actually govern.
+  G. Unexplained - A+B recomputed over every record the tool cannot yet explain:
+                   content PLUS every infrastructure class whose verdict is not `ok`.
+                   This is the population that must reach zero for a correct map, and
+                   section G also proves the raw A/B numbers equal G plus the records
+                   of the `ok` infrastructure classes (`partition_anomalies`).
 
 A + B stay defined over EVERY record so their gate numbers remain comparable with
-every earlier run; E/F are additive.
+every earlier run; E/F/G are additive.
 
 Usage: python compare.py [out_dir]
 """
@@ -444,6 +449,72 @@ def report_map(tag, vrows, erows, rx, ry, out):
             for c, n in Counter(r["class"] for r in recs).most_common(15):
                 w(f"     {c[:44]:<44} {n:>7}")
 
+    # ---- G. UNEXPLAINED RESIDUE -------------------------------------------------
+    # Content is exempt from nothing; an infrastructure class is exempt only while its
+    # cardinality rule is PROVEN on this run (verdict `ok`). Every other record - content
+    # or infrastructure whose rule is `unproven`/`MISMATCH` - is unexplained and must
+    # reach zero. This population is therefore a strict superset of F and a strict
+    # subset of A/B, and it is the only one of the three that a correct expanded map can
+    # drive to zero (400 MapSector vs 100 makes the raw totals permanently nonzero).
+    ok_infra = {e["class"] for e in infra if e["verdict"] == "ok"}
+    uv = [r for r in vrows if r["class"] not in ok_infra]
+    ue = [r for r in erows if r["class"] not in ok_infra]
+    _, _, _, udiff = census(uv, ue)
+    uprov = provenance(uv, ue)
+    ok_v, ok_e = len(vrows) - len(uv), len(erows) - len(ue)
+    ok_e_unstamped = sum(1 for r in erows
+                         if r["class"] in ok_infra and r["src_x"] is None)
+
+    # The demotion of the raw A/B gates to informational is only honest if the raw
+    # numbers are fully recoverable as "unexplained + records of ok infrastructure
+    # classes". Prove that identity here instead of asserting it in prose; any residue
+    # the partition cannot account for is a scored anomaly, never a silent exemption.
+    anomalies = []
+    exp_unstamped = len(prov["unstamped"]) - len(uprov["unstamped"])
+    if not 0 <= exp_unstamped <= ok_e_unstamped:
+        anomalies.append(f"unstamped_expanded: raw-unexplained={exp_unstamped} outside "
+                         f"[0,{ok_e_unstamped}] unstamped ok-infrastructure records")
+    exp_unmatched = len(prov["unmatched_expanded"]) - len(uprov["unmatched_expanded"])
+    if not 0 <= exp_unmatched <= ok_e:
+        anomalies.append(f"unmatched_expanded: raw-unexplained={exp_unmatched} outside "
+                         f"[0,{ok_e}] expanded ok-infrastructure records")
+    exp_unconsumed = (len(prov["unconsumed_vanilla"])
+                      - len(uprov["unconsumed_vanilla"]))
+    if not 0 <= exp_unconsumed <= ok_v:
+        anomalies.append(f"unconsumed_vanilla: raw-unexplained={exp_unconsumed} outside "
+                         f"[0,{ok_v}] vanilla ok-infrastructure records")
+    if (len(erows) - len(vrows)) - (len(ue) - len(uv)) != ok_e - ok_v:
+        anomalies.append("object_count_delta: raw delta minus unexplained delta != "
+                         "ok-infrastructure delta")
+    if {c for c, _, _ in udiff} != {c for c, _, _ in diff} - ok_infra:
+        anomalies.append("classes_differing: unexplained differing classes are not the "
+                         "raw differing classes minus the ok-infrastructure classes")
+
+    w(f"\n-- G. UNEXPLAINED RESIDUE (content + infrastructure whose rule is not proven) --")
+    w(f"   ok-infrastructure classes exempted here : "
+      f"{', '.join(sorted(ok_infra)) if ok_infra else '(none)'}")
+    w(f"   records exempted     : vanilla {ok_v} / expanded {ok_e}")
+    w(f"   unexplained objects  : vanilla {len(uv)} vs expanded {len(ue)}  "
+      f"{'MATCH' if len(uv) == len(ue) else 'MISMATCH (' + str(len(ue) - len(uv)) + ')'}")
+    w(f"   classes differing    : {len(udiff)}")
+    for c, v, e in sorted(udiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
+        w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
+    w(f"   matched              : {uprov['matched']}")
+    w(f"   unmatched expanded   : {len(uprov['unmatched_expanded'])}")
+    w(f"   unstamped expanded   : {len(uprov['unstamped'])}")
+    w(f"   unclaimed vanilla    : {len(uprov['unconsumed_vanilla'])}")
+    for label, recs in (("unstamped expanded", uprov["unstamped"]),
+                        ("unmatched expanded", uprov["unmatched_expanded"]),
+                        ("unclaimed vanilla", uprov["unconsumed_vanilla"])):
+        if recs:
+            w(f"   {label} classes:")
+            for c, n in Counter(r["class"] for r in recs).most_common(15):
+                w(f"     {c[:44]:<44} {n:>7}")
+    w(f"   raw/unexplained partition : "
+      f"{'CONSISTENT' if not anomalies else 'ANOMALOUS'}")
+    for a in anomalies:
+        w(f"     ANOMALY {a}")
+
     return {
         "vanilla_objects": len(vrows),
         "expanded_objects": len(erows),
@@ -465,6 +536,23 @@ def report_map(tag, vrows, erows, rx, ry, out):
                                  and len(cprov["unstamped"]) == 0
                                  and len(cprov["unconsumed_vanilla"]) == 0
                                  and len(cv) == len(ce)),
+        "ok_infrastructure_classes": sorted(ok_infra),
+        "ok_infrastructure_vanilla_objects": ok_v,
+        "ok_infrastructure_expanded_objects": ok_e,
+        "unexplained_vanilla_objects": len(uv),
+        "unexplained_expanded_objects": len(ue),
+        "unexplained_classes_differing": len(udiff),
+        "unexplained_class_diffs": [{"class": c, "vanilla": v, "expanded": e}
+                                    for c, v, e in udiff],
+        "unexplained_matched": uprov["matched"],
+        "unexplained_unmatched_expanded": len(uprov["unmatched_expanded"]),
+        "unexplained_unstamped_expanded": len(uprov["unstamped"]),
+        "unexplained_unconsumed_vanilla": len(uprov["unconsumed_vanilla"]),
+        "unexplained_bijection_ok": (len(uprov["unmatched_expanded"]) == 0
+                                     and len(uprov["unstamped"]) == 0
+                                     and len(uprov["unconsumed_vanilla"]) == 0
+                                     and len(uv) == len(ue)),
+        "partition_anomalies": anomalies,
         "classes_matching": len(same),
         "classes_differing": len(diff),
         "class_diffs": [{"class": c, "vanilla": v, "expanded": e} for c, v, e in diff],
