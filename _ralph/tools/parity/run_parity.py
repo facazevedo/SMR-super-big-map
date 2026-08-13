@@ -136,8 +136,143 @@ SERIAL_RASTER_BLOCK = """		-- Match the mod's source-capture transaction: stock 
 		end"""
 
 
+# Diagnostic only, opt-in with the "probe" argument.  The expanded underground dumps zero
+# SectorUnexplored overview decals while its surface dumps 399, and the raw dump cannot say
+# whether they are never created or created and then destroyed.  This block wraps
+# MapSector:UpdateDecal (creation outcome), DoneObject/DoneObjects (destruction, with a
+# traceback for the first few sector decals) and samples a per-map census, then writes the
+# timeline beside the run logs.  It changes no generation input and consumes no map RNG.
+DECAL_PROBE_BLOCK = """		do
+			local probe_lines = {}
+			local probe_tracebacks = 0
+			local function probe_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local probe_t0 = probe_ticks()
+			local function probe_log(text)
+				if #probe_lines >= 4000 then return end
+				probe_lines[#probe_lines + 1] = string.format(
+					"[%7dms][%s] %s", probe_ticks() - probe_t0,
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityProbeLines = probe_lines
+			g_ParityProbeStatus = "running"
+
+			local function probe_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function probe_env(map)
+				if not map then return "nomap" end
+				local env = map.mapdata and map.mapdata.Environment or "?"
+				return tostring(env) .. "#" .. tostring(map.slot)
+			end
+			local function probe_is_decal(obj)
+				if type(obj) ~= "table" then return false end
+				local cls = obj.class
+				return cls == "SectorUnexplored" or cls == "SectorScanned"
+			end
+
+			local sector_class = rawget(_G, "g_Classes") and g_Classes.MapSector
+			if sector_class and type(sector_class.UpdateDecal) == "function" then
+				local original_update = sector_class.UpdateDecal
+				local update_calls, update_with_decal = {}, {}
+				g_ParityProbeUpdateCalls = update_calls
+				sector_class.UpdateDecal = function(self, ...)
+					local result = original_update(self, ...)
+					local key = probe_env(probe_map_of(self))
+					update_calls[key] = (update_calls[key] or 0) + 1
+					if IsValid(self.decal) then
+						update_with_decal[key] = (update_with_decal[key] or 0) + 1
+					end
+					if (update_calls[key] % 100) == 1 then
+						probe_log(string.format("UpdateDecal %s calls=%d with_decal=%d status=%s",
+							key, update_calls[key], update_with_decal[key] or 0,
+							tostring(self.status)))
+					end
+					return result
+				end
+				probe_log("wrapped MapSector:UpdateDecal")
+			else
+				probe_log("MapSector:UpdateDecal unavailable - creation side not instrumented")
+			end
+
+			local original_done = rawget(_G, "DoneObject")
+			if type(original_done) == "function" then
+				local destroyed = {}
+				g_ParityProbeDestroyed = destroyed
+				DoneObject = function(obj, ...)
+					if probe_is_decal(obj) then
+						local key = probe_env(probe_map_of(obj)) .. "/" .. tostring(obj.class)
+						destroyed[key] = (destroyed[key] or 0) + 1
+						if probe_tracebacks < 10 then
+							probe_tracebacks = probe_tracebacks + 1
+							probe_log(string.format("DoneObject %s n=%d\\n%s",
+								key, destroyed[key], debug.traceback("", 2)))
+						elseif (destroyed[key] % 100) == 1 then
+							probe_log(string.format("DoneObject %s n=%d", key, destroyed[key]))
+						end
+					end
+					return original_done(obj, ...)
+				end
+				probe_log("wrapped DoneObject")
+			end
+
+			local original_done_objects = rawget(_G, "DoneObjects")
+			if type(original_done_objects) == "function" then
+				DoneObjects = function(list, ...)
+					if type(list) == "table" then
+						local hits = 0
+						for i = 1, #list do
+							if probe_is_decal(list[i]) then hits = hits + 1 end
+						end
+						if hits > 0 then
+							probe_log(string.format("DoneObjects list hits=%d of %d\\n%s",
+								hits, #list, debug.traceback("", 2)))
+						end
+					end
+					return original_done_objects(list, ...)
+				end
+				probe_log("wrapped DoneObjects")
+			end
+
+			CreateRealTimeThread(function()
+				local last = {}
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					for i = 1, #(rawget(_G, "Maps") or {}) do
+						local m = Maps[i]
+						if m and type(m.MapGet) == "function" then
+							local ok_d, decals = pcall(m.MapGet, m, "map", "SectorUnexplored")
+							local ok_s, scanned = pcall(m.MapGet, m, "map", "SectorScanned")
+							local ok_m, sectors = pcall(m.MapGet, m, "map", "MapSector")
+							local nd = ok_d and #(decals or {}) or -1
+							local ns = ok_s and #(scanned or {}) or -1
+							local nm = ok_m and #(sectors or {}) or -1
+							local key = probe_env(m)
+							local cur = string.format("%d/%d/%d", nd, ns, nm)
+							if last[key] ~= cur then
+								probe_log(string.format(
+									"census %s unexplored=%d scanned=%d sectors=%d", key, nd, ns, nm))
+								last[key] = cur
+							end
+						end
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(400)
+				end
+				probe_log("final census taken; writing probe log")
+				local werr = AsyncStringToFile("__PROBE_OUT__", table.concat(probe_lines, "\\n"))
+				g_ParityProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
-             pin_seed=None):
+             pin_seed=None, decal_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -166,9 +301,15 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         gen_src = gen_src.replace(
             "__UNDERGROUND_PIN_BLOCK__", UNDERGROUND_PIN_BLOCK.format(seed=int(pin_seed))
         )
-    gen_src = gen_src.replace(
-        "__EXTRA_SETUP__", SERIAL_RASTER_BLOCK if serial_raster else ""
-    )
+    extras = []
+    if serial_raster:
+        extras.append(SERIAL_RASTER_BLOCK)
+    probe_path = OUT / f"probe-{tag}.log"
+    if decal_probe:
+        if probe_path.exists():
+            probe_path.unlink()
+        extras.append(DECAL_PROBE_BLOCK.replace("__PROBE_OUT__", cli.lua_path(probe_path)))
+    gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
 
@@ -207,6 +348,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 f"vanilla underground pin not honoured ({tag}): holder seed "
                 f"{underground_seed} != pin {int(pin_seed)}"
             )
+
+        if decal_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                probe_status = poll_status(
+                    client, "g_ParityProbeStatus", {"complete"}, set(), 120, f"probe-{tag}"
+                )
+            except RuntimeError as exc:
+                probe_status = f"unavailable ({exc})"
+            log(f"decal probe: {probe_status} -> {probe_path}")
 
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
@@ -254,6 +405,7 @@ def main():
         expand = sys.argv[3] == "1"
         seed = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] not in ("-", "") else None
         serial = "serial" in sys.argv[5:]
+        probe = "probe" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
         pin = None if expand or "nopin" in sys.argv[5:] else (seed or REFERENCE_UNDERGROUND_SEED)
@@ -262,9 +414,9 @@ def main():
             if extra.startswith("lat="): lat = int(extra[4:])
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
-            f"serial_raster={serial} lat={lat} lon={lon} ===")
+            f"serial_raster={serial} decal_probe={probe} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
-                        pin_seed=pin)
+                        pin_seed=pin, decal_probe=probe)
         log(f"result: {json.dumps(info)}")
         return
 
