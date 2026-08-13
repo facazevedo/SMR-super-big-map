@@ -1,0 +1,172 @@
+{
+  "sweep-01": {
+    "case": "sweep-01",
+    "label": "31S4W",
+    "lat": 1860,
+    "lon": -240,
+    "vanilla_underground_seed": 6074387974731471656,
+    "verdict": "EXPANDED_FAILED",
+    "error": "n, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 167, in connect\n    c = DapClient()\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 49, in __init__\n    raise DapClosed(f\"connect to {host}:{port} failed: {e}\")\ndap.DapClosed: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 2051, in <module>\n    main()\n    ~~~~^^\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 2000, in main\n    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,\n                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,\n                    fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,\n                    mark_probe=markprobe, entrance_audit=entranceaudit)\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 1833, in run_twin\n    client = dap.connect(retry_timeout=180.0)\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 173, in connect\n    raise DapClosed(f\"could not connect+handshake: {last}\")\ndap.DapClosed: could not connect+handshake: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it\n"
+  },
+  "sweep-02": {
+    "case": "sweep-02",
+    "label": "24S97W",
+    "lat": 1440,
+    "lon": -5820,
+    "vanilla_underground_seed": 6074387974731471656,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 13328,
+        "expanded_objects": 13927,
+        "classes_differing": 3,
+        "provenance_matched": 13115,
+        "provenance_unmatched_expanded": 10,
+        "provenance_unstamped_expanded": 802,
+        "provenance_unconsumed_vanilla": 213
+      },
+      "underground": {
+        "vanilla_objects": 4972,
+        "expanded_objects": 5737,
+        "classes_differing": 3,
+        "provenance_matched": 4548,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 964,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-03": {
+    "case": "sweep-03",
+    "label": "33S163E",
+    "lat": 1980,
+    "lon": 9780,
+    "vanilla_underground_seed": 6074387974731471656,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 30932,
+        "expanded_objects": 31531,
+        "classes_differing": 3,
+        "provenance_matched": 30731,
+        "provenance_unmatched_expanded": 0,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 201
+      },
+      "underground": {
+        "vanilla_objects": 4972,
+        "expanded_objects": 5737,
+        "classes_differing": 3,
+        "provenance_matched": 4548,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 964,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-04": {
+    "case": "sweep-04",
+    "label": "17N122W",
+    "lat": -1020,
+    "lon": -7320,
+    "vanilla_underground_seed": 6074387974731471656,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 11184,
+        "expanded_objects": 11781,
+        "classes_differing": 4,
+        "provenance_matched": 10981,
+        "provenance_unmatched_expanded": 0,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 203
+      },
+      "underground": {
+        "vanilla_objects": 6151,
+        "expanded_objects": 6997,
+        "classes_differing": 5,
+        "provenance_matched": 5655,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1117,
+        "provenance_unconsumed_vanilla": 496
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-05": {
+    "case": "sweep-05",
+    "label": "21N70W",
+    "lat": -1260,
+    "lon": -4200,
+    "verdict": "VANILLA_FAILED",
+    "error": "n, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 167, in connect\n    c = DapClient()\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 49, in __init__\n    raise DapClosed(f\"connect to {host}:{port} failed: {e}\")\ndap.DapClosed: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 2051, in <module>\n    main()\n    ~~~~^^\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 2000, in main\n    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,\n                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,\n                    fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,\n                    mark_probe=markprobe, entrance_audit=entranceaudit)\n  File \"D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\run_parity.py\", line 1833, in run_twin\n    client = dap.connect(retry_timeout=180.0)\n  File \"D:\\PROJS\\SMR\\smr-harness\\dap.py\", line 173, in connect\n    raise DapClosed(f\"could not connect+handshake: {last}\")\ndap.DapClosed: could not connect+handshake: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it\n"
+  }
+}

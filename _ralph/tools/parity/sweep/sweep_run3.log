@@ -1,0 +1,7 @@
+[13:05:18] === sweep-01 31S4W lat=1860 lon=-240 ===
+[13:05:55]   vanilla FAILED rc=1
+[13:05:55] === sweep-02 24S97W lat=1440 lon=-5820 ===
+[13:06:33]   vanilla FAILED rc=1
+[13:06:33] === sweep-03 33S163E lat=1980 lon=9780 ===
+[13:07:48]   vanilla FAILED rc=1
+[13:07:48] === sweep-04 17N122W lat=-1020 lon=-7320 ===

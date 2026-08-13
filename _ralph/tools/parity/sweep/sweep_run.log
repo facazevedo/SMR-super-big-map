@@ -1,0 +1,18 @@
+[11:30:28] === sweep-01 31S4W lat=1860 lon=-240 ===
+[11:31:23]   vanilla ok, ug seed 6074387974731471656
+[11:54:21]   expanded FAILED rc=1
+[11:54:21] === sweep-02 24S97W lat=1440 lon=-5820 ===
+[12:09:57]   vanilla ok, ug seed 6074387974731471656
+[12:11:52]   expanded ok
+[12:11:56]   compared; wonders: ['BottomlessPit', 'JumboCave']
+[12:11:56] === sweep-03 33S163E lat=1980 lon=9780 ===
+[12:12:49]   vanilla ok, ug seed 6074387974731471656
+[12:14:39]   expanded ok
+[12:14:50]   compared; wonders: ['BottomlessPit', 'JumboCave']
+[12:14:50] === sweep-04 17N122W lat=-1020 lon=-7320 ===
+[12:15:45]   vanilla ok, ug seed 6074387974731471656
+[12:17:36]   expanded ok
+[12:17:56]   compared; wonders: ['BottomlessPit', 'JumboCave']
+[12:17:56] === sweep-05 21N70W lat=-1260 lon=-4200 ===
+[12:21:44]   vanilla FAILED rc=1
+[12:21:44] === sweep-06 52S159W lat=3120 lon=-9540 ===

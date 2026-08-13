@@ -1,0 +1,42 @@
+[13:11:43] === sweep-01 31S4W lat=1860 lon=-240 ===
+[13:12:40]   vanilla ok, ug seed 7935646327543774994
+[13:14:34]   expanded ok
+[13:14:39]   compared; wonders: ['AncientArtifact', 'BottomlessPit']
+[13:14:39] === sweep-02 24S97W lat=1440 lon=-5820 ===
+[13:15:32]   vanilla ok, ug seed 1599570134647606785
+[13:17:29]   expanded ok
+[13:17:33]   compared; wonders: ['CaveOfWonders', 'JumboCave']
+[13:17:33] === sweep-03 33S163E lat=1980 lon=9780 ===
+[13:18:28]   vanilla ok, ug seed 630260075749712949
+[13:20:18]   expanded ok
+[13:20:29]   compared; wonders: ['BottomlessPit', 'JumboCave']
+[13:20:29] === sweep-04 17N122W lat=-1020 lon=-7320 ===
+[13:21:25]   vanilla ok, ug seed 6943626096367146313
+[13:23:18]   expanded ok
+[13:23:22]   compared; wonders: ['AncientArtifact', 'BottomlessPit']
+[13:23:22] === sweep-05 21N70W lat=-1260 lon=-4200 ===
+[13:24:16]   vanilla ok, ug seed 7986390377215104579
+[13:26:31]   expanded ok
+[13:26:35]   compared; wonders: ['AncientArtifact', 'CaveOfWonders']
+[13:26:35] === sweep-06 52S159W lat=3120 lon=-9540 ===
+[13:27:30]   vanilla ok, ug seed 8502202077073297587
+[13:29:36]   expanded ok
+[13:29:43]   compared; wonders: ['AncientArtifact', 'JumboCave']
+[13:29:43] === sweep-07 45S82E lat=2700 lon=4920 ===
+[13:30:39]   vanilla ok, ug seed 8006206060218582800
+[13:32:42]   expanded ok
+[13:32:46]   compared; wonders: ['AncientArtifact', 'BottomlessPit']
+[13:32:46] === sweep-08 18S141E lat=1080 lon=8460 ===
+[13:33:40]   vanilla ok, ug seed 5987098997272424480
+[13:35:29]   expanded ok
+[13:35:36]   compared; wonders: ['AncientArtifact', 'JumboCave']
+[13:35:36] === sweep-09 62N13W lat=-3720 lon=-780 ===
+[13:36:30]   vanilla ok, ug seed 3058402873055010754
+[13:38:32]   expanded ok
+[13:38:36]   compared; wonders: ['CaveOfWonders', 'JumboCave']
+[13:38:36] === sweep-10 35S120W lat=2100 lon=-7200 ===
+[13:39:30]   vanilla ok, ug seed 353339822349731179
+[13:41:19]   expanded ok
+[13:41:27]   compared; wonders: ['AncientArtifact', 'BottomlessPit']
+[13:41:27] wonder classes seen so far: ['AncientArtifact', 'BottomlessPit', 'CaveOfWonders', 'JumboCave']  missing: []
+[13:41:27] results -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\sweep\sweep_results.json

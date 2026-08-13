@@ -261,6 +261,27 @@ def hexgrid_evidence(out_dir):
 # rows show (vanilla DecCrater_01 542 -> expanded 500), so the stretched expectation is
 # clamped the same way; the clamp can only ever LOWER an expected value.
 # ---------------------------------------------------------------------------
+# The expansion is a similarity transform, so COSMETIC DECORATION scales with the terrain
+# it sits on - that is the default and it covers most classes (Cliff*, Dec*, Rocks*,
+# Stones*, Underground_Arch*, ...).  Only FUNCTIONAL objects keep their vanilla scale,
+# because their size is gameplay (deposit scan radius, entrance/elevator hex footprint,
+# sector extent) rather than art.  An earlier revision of this gate had the rule inverted -
+# it expected every class outside a five-name allowlist to keep vanilla scale - which
+# failed 39 of 56 surface classes on every sweep map by calling correct decoration
+# stretching a defect.  The categories below are the real rule.
+SCALE_UNSTRETCHED_KINDS = (
+    "DepositMarker", "Deposit", "Anomaly", "Marker", "Passage", "Tunnel", "Sign",
+    "Elevator", "MapSector", "Sector", "GridObjectList", "RandomMapGeneratorHolder",
+    "CameraObj", "ParSystem", "SoundSource",
+)
+SCALE_UNSTRETCHED_EXACT = {
+    "SurfacePassage", "UndergroundPassage", "SurfaceTunnelMarker",
+    "UndergroundTunnelMarker", "SurfaceUndergroundTunnelSign",
+    "ElevatorBuildIndicator_SurfaceDecal",
+    "ElevatorBuildIndicator_UndergroundPassageImprint",
+}
+# Functional classes that DO scale anyway, by explicit decision (see the task contract's
+# settled clause): they are sculpted into the terrain, so they grow with it.
 SCALE_STRETCH_ALLOWLIST = {
     "PrefabFeatureMarker",   # geysers and every other prefab feature
     "CaveInRubble",
@@ -268,6 +289,15 @@ SCALE_STRETCH_ALLOWLIST = {
     "BottomlessPit",
     "JumboCave",
 }
+
+
+def class_scales_with_terrain(cls):
+    """True when this class is expected to scale by the stretch ratio."""
+    if cls in SCALE_STRETCH_ALLOWLIST:
+        return True                      # explicit exception, checked first
+    if cls in SCALE_UNSTRETCHED_EXACT:
+        return False
+    return not any(k in cls for k in SCALE_UNSTRETCHED_KINDS)
 SCALE_ENGINE_MAX = 500
 
 # Contract-stated absolute expectations for the entrance family: checked on BOTH twins,
@@ -312,7 +342,7 @@ def scale_section(vrows, erows, ratio, infra, out):
     records = []
     for cls in sorted(set(vs) | set(es)):
         v, e = vs.get(cls, Counter()), es.get(cls, Counter())
-        stretched = cls in SCALE_STRETCH_ALLOWLIST
+        stretched = class_scales_with_terrain(cls)
         expected = Counter()
         for value, n in v.items():
             if value is None:
@@ -343,8 +373,8 @@ def scale_section(vrows, erows, ratio, infra, out):
             behaviour = "mixed"
         rec = {
             "class": cls,
-            "rule": "stretched with the terrain (SETTLED allowlist)" if stretched
-                    else "vanilla scale unchanged",
+            "rule": "scales with the terrain (cosmetic decoration or settled exception)" if stretched
+                    else "vanilla scale unchanged (functional)",
             "observed_behaviour": behaviour,
             "vanilla": {str(k): n for k, n in v.items()},
             "expanded": {str(k): n for k, n in e.items()},

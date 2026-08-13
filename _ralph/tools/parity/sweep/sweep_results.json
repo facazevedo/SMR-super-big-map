@@ -1,0 +1,532 @@
+{
+  "sweep-01": {
+    "case": "sweep-01",
+    "label": "31S4W",
+    "lat": 1860,
+    "lon": -240,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 7935646327543774994,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 14942,
+        "expanded_objects": 15559,
+        "classes_differing": 10,
+        "provenance_matched": 14726,
+        "provenance_unmatched_expanded": 31,
+        "provenance_unstamped_expanded": 802,
+        "provenance_unconsumed_vanilla": 216
+      },
+      "underground": {
+        "vanilla_objects": 6523,
+        "expanded_objects": 7389,
+        "classes_differing": 3,
+        "provenance_matched": 6014,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1150,
+        "provenance_unconsumed_vanilla": 509
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-02": {
+    "case": "sweep-02",
+    "label": "24S97W",
+    "lat": 1440,
+    "lon": -5820,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 1599570134647606785,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 13328,
+        "expanded_objects": 13911,
+        "classes_differing": 9,
+        "provenance_matched": 13099,
+        "provenance_unmatched_expanded": 10,
+        "provenance_unstamped_expanded": 802,
+        "provenance_unconsumed_vanilla": 229
+      },
+      "underground": {
+        "vanilla_objects": 4963,
+        "expanded_objects": 5728,
+        "classes_differing": 3,
+        "provenance_matched": 4539,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 964,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "CaveOfWonders",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-03": {
+    "case": "sweep-03",
+    "label": "33S163E",
+    "lat": 1980,
+    "lon": 9780,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 630260075749712949,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 30932,
+        "expanded_objects": 31531,
+        "classes_differing": 3,
+        "provenance_matched": 30731,
+        "provenance_unmatched_expanded": 0,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 201
+      },
+      "underground": {
+        "vanilla_objects": 4957,
+        "expanded_objects": 5722,
+        "classes_differing": 3,
+        "provenance_matched": 4533,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 964,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-04": {
+    "case": "sweep-04",
+    "label": "17N122W",
+    "lat": -1020,
+    "lon": -7320,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 6943626096367146313,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 11184,
+        "expanded_objects": 11781,
+        "classes_differing": 4,
+        "provenance_matched": 10981,
+        "provenance_unmatched_expanded": 0,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 203
+      },
+      "underground": {
+        "vanilla_objects": 6128,
+        "expanded_objects": 6968,
+        "classes_differing": 3,
+        "provenance_matched": 5639,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1104,
+        "provenance_unconsumed_vanilla": 489
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-05": {
+    "case": "sweep-05",
+    "label": "21N70W",
+    "lat": -1260,
+    "lon": -4200,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 7986390377215104579,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 4409,
+        "expanded_objects": 5006,
+        "classes_differing": 9,
+        "provenance_matched": 4196,
+        "provenance_unmatched_expanded": 6,
+        "provenance_unstamped_expanded": 804,
+        "provenance_unconsumed_vanilla": 213
+      },
+      "underground": {
+        "vanilla_objects": 6109,
+        "expanded_objects": 6845,
+        "classes_differing": 3,
+        "provenance_matched": 5747,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 873,
+        "provenance_unconsumed_vanilla": 362
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "CaveOfWonders"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-06": {
+    "case": "sweep-06",
+    "label": "52S159W",
+    "lat": 3120,
+    "lon": -9540,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 8502202077073297587,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 19483,
+        "expanded_objects": 20082,
+        "classes_differing": 5,
+        "provenance_matched": 19280,
+        "provenance_unmatched_expanded": 1,
+        "provenance_unstamped_expanded": 801,
+        "provenance_unconsumed_vanilla": 203
+      },
+      "underground": {
+        "vanilla_objects": 6542,
+        "expanded_objects": 7408,
+        "classes_differing": 3,
+        "provenance_matched": 6033,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1150,
+        "provenance_unconsumed_vanilla": 509
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-07": {
+    "case": "sweep-07",
+    "label": "45S82E",
+    "lat": 2700,
+    "lon": 4920,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 8006206060218582800,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 10300,
+        "expanded_objects": 10918,
+        "classes_differing": 12,
+        "provenance_matched": 10091,
+        "provenance_unmatched_expanded": 25,
+        "provenance_unstamped_expanded": 802,
+        "provenance_unconsumed_vanilla": 209
+      },
+      "underground": {
+        "vanilla_objects": 6465,
+        "expanded_objects": 7331,
+        "classes_differing": 3,
+        "provenance_matched": 5956,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1150,
+        "provenance_unconsumed_vanilla": 509
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-08": {
+    "case": "sweep-08",
+    "label": "18S141E",
+    "lat": 1080,
+    "lon": 8460,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 5987098997272424480,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 23320,
+        "expanded_objects": 23919,
+        "classes_differing": 3,
+        "provenance_matched": 23119,
+        "provenance_unmatched_expanded": 0,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 201
+      },
+      "underground": {
+        "vanilla_objects": 4895,
+        "expanded_objects": 5697,
+        "classes_differing": 3,
+        "provenance_matched": 4471,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1001,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-09": {
+    "case": "sweep-09",
+    "label": "62N13W",
+    "lat": -3720,
+    "lon": -780,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 3058402873055010754,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 11215,
+        "expanded_objects": 11809,
+        "classes_differing": 11,
+        "provenance_matched": 10991,
+        "provenance_unmatched_expanded": 12,
+        "provenance_unstamped_expanded": 806,
+        "provenance_unconsumed_vanilla": 224
+      },
+      "underground": {
+        "vanilla_objects": 4996,
+        "expanded_objects": 5761,
+        "classes_differing": 3,
+        "provenance_matched": 4572,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 964,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "CaveOfWonders",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "sweep-10": {
+    "case": "sweep-10",
+    "label": "35S120W",
+    "lat": 2100,
+    "lon": -7200,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 353339822349731179,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "vanilla_objects": 22650,
+        "expanded_objects": 23245,
+        "classes_differing": 6,
+        "provenance_matched": 22444,
+        "provenance_unmatched_expanded": 1,
+        "provenance_unstamped_expanded": 800,
+        "provenance_unconsumed_vanilla": 206
+      },
+      "underground": {
+        "vanilla_objects": 4998,
+        "expanded_objects": 5800,
+        "classes_differing": 3,
+        "provenance_matched": 4574,
+        "provenance_unmatched_expanded": 225,
+        "provenance_unstamped_expanded": 1001,
+        "provenance_unconsumed_vanilla": 424
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  }
+}

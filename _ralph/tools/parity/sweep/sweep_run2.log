@@ -1,0 +1,12 @@
+[12:50:47] === sweep-01 31S4W lat=1860 lon=-240 ===
+[13:03:35]   vanilla FAILED rc=1
+[13:03:35] === sweep-02 24S97W lat=1440 lon=-5820 ===
+[13:04:37]   vanilla ok, ug seed 5539498441742600761
+[13:05:15]   expanded FAILED rc=1
+[13:05:15] === sweep-03 33S163E lat=1980 lon=9780 ===
+[13:05:55]   vanilla FAILED rc=1
+[13:05:55] === sweep-04 17N122W lat=-1020 lon=-7320 ===
+[13:06:33]   vanilla FAILED rc=1
+[13:06:33] === sweep-05 21N70W lat=-1260 lon=-4200 ===
+[13:07:48]   vanilla FAILED rc=1
+[13:07:48] === sweep-06 52S159W lat=3120 lon=-9540 ===
