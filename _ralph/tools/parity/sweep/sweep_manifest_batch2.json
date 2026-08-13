@@ -1,0 +1,69 @@
+{
+  "master_seed": 30147,
+  "drawn": 10,
+  "batch": 2,
+  "coordinate_rule": "lat=randint(-70,70)*60, lon=randint(-180,180)*60 arc-minutes; +lat=South, +lon=East",
+  "underground_rule": "each case draws its OWN underground seed (nopin); the expanded twin is given that exact seed",
+  "cases": [
+    {
+      "case": "b2-01",
+      "lat": 3060,
+      "lon": -780,
+      "label": "51S13W"
+    },
+    {
+      "case": "b2-02",
+      "lat": 2520,
+      "lon": -1680,
+      "label": "42S28W"
+    },
+    {
+      "case": "b2-03",
+      "lat": 3900,
+      "lon": -660,
+      "label": "65S11W"
+    },
+    {
+      "case": "b2-04",
+      "lat": 240,
+      "lon": 6420,
+      "label": "4S107E"
+    },
+    {
+      "case": "b2-05",
+      "lat": 1320,
+      "lon": 3180,
+      "label": "22S53E"
+    },
+    {
+      "case": "b2-06",
+      "lat": 2520,
+      "lon": 5100,
+      "label": "42S85E"
+    },
+    {
+      "case": "b2-07",
+      "lat": 3300,
+      "lon": 9840,
+      "label": "55S164E"
+    },
+    {
+      "case": "b2-08",
+      "lat": 1680,
+      "lon": -2880,
+      "label": "28S48W"
+    },
+    {
+      "case": "b2-09",
+      "lat": 1800,
+      "lon": -1440,
+      "label": "30S24W"
+    },
+    {
+      "case": "b2-10",
+      "lat": 3060,
+      "lon": -6600,
+      "label": "51S110W"
+    }
+  ]
+}
