@@ -2604,11 +2604,178 @@ PROC_TRACE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "anomprobe" argument.  Iteration 017 left ONE sweep-01 residue
+# cause unproven: vanilla keeps a `SubsurfaceAnomalyMarker` the expanded twin culls and vice versa,
+# with the same final count on both maps.  Suspected mechanism: `City:InitBreakThroughAnomalies`
+# (`Lua/Buildings/Anomaly.lua:652-682`) shuffles the `MapGet("map","SubsurfaceAnomalyMarker", ...)`
+# list with a deterministic research rand and then `DoneObject()`s the tail, so an INPUT list whose
+# enumeration order differs between the twins culls a different marker.  This block records, on both
+# twins, the ordered marker list the initializer sees and the identities it destroys.
+#
+# Two call sites have to be covered because the mod DEFERS this one initializer on the expanded
+# surface (`Code/sbm_map_generation.lua:8819-8905`): the class method fires at
+# GenerateRandomMapsFinishing (pre-stretch, SOURCE coordinates, deferred to a no-op on the expanded
+# twin) and `SuperBigMap.State.original_city_init_breakthrough_anomalies` fires later from
+# `FinalizeDeferredBreakthroughAnomalyInitialization` (post-stretch, DESTINATION coordinates =
+# source * 4/3).  The class wrap also claims the mod's `State.breakthrough_init_wrapper` identity so
+# a later re-install of the mod patch takes its early-out instead of re-saving the probe as the
+# "original" (which would defer forever).  Read-only otherwise: MapGet, IsValid and GetPos only, no
+# object created or destroyed and no RNG consumed, so a probed run's dump must stay byte-identical
+# to the same tag's unprobed dump.
+ANOM_PROBE_BLOCK = """		do
+			local anom_lines = {}
+			local anom_dropped = 0
+			local function anom_log(text)
+				if #anom_lines >= 20000 then
+					anom_dropped = anom_dropped + 1
+					return
+				end
+				anom_lines[#anom_lines + 1] = tostring(text)
+			end
+			local function anom_flush()
+				local werr = AsyncStringToFile("__ANOM_OUT__", table.concat(anom_lines, "\\n"))
+				g_ParityAnomProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end
+			g_ParityAnomProbeStatus = "running"
+			g_ParityAnomProbeCalls = 0
+
+			local function anom_live(obj)
+				if type(obj) ~= "table" then return false end
+				local isv = rawget(_G, "IsValid")
+				if type(isv) ~= "function" then return true end
+				local ok, live = pcall(isv, obj)
+				return ok and live == true
+			end
+			local function anom_xy(obj)
+				if not anom_live(obj) or type(obj.GetPos) ~= "function" then return nil end
+				local ok, x, y = pcall(function()
+					local p = obj:GetPos()
+					return p:x(), p:y()
+				end)
+				if ok and type(x) == "number" then return x, y end
+				return nil
+			end
+
+			-- The census + cull record shared by both call sites.  `phase` names which one fired.
+			local function anom_observe(phase, self, invoke)
+				local n = (rawget(_G, "g_ParityAnomProbeCalls") or 0) + 1
+				g_ParityAnomProbeCalls = n
+				local env, width, slot = "?", "?", "?"
+				pcall(function() env = tostring(GetEnvironment(self)) end)
+				pcall(function()
+					local m = self:GetMap()
+					width = tostring(m and m.mapdata and m.mapdata.Width)
+					slot = tostring(m and m.slot)
+				end)
+				local markers, all = {}, {}
+				pcall(function()
+					markers = self:MapGet("map", "SubsurfaceAnomalyMarker",
+						function(a) return a.tech_action == "breakthrough" end) or {}
+				end)
+				pcall(function()
+					all = self:MapGet("map", "SubsurfaceAnomalyMarker") or {}
+				end)
+				local consts = rawget(_G, "g_Consts")
+				anom_log(string.format(
+					"PRE  call=%d phase=%s env=%s width=%s slot=%s status=%s breakthrough=%d all=%d reserved=%s",
+					n, phase, env, width, slot, tostring(rawget(_G, "g_ParityStatus")),
+					#markers, #all,
+					tostring(consts and consts.PlanetaryBreakthroughCount)))
+				local rec = {}
+				for i = 1, #markers do
+					local m = markers[i]
+					local x, y = anom_xy(m)
+					local handle, class, action = "?", "?", "?"
+					pcall(function()
+						handle = tostring(m.handle)
+						class = tostring(m.class)
+						action = tostring(m.tech_action)
+					end)
+					rec[i] = { m, tostring(x), tostring(y), handle, class }
+					anom_log(string.format("IN   call=%d #%03d pos=%s,%s handle=%s class=%s act=%s",
+						n, i, tostring(x), tostring(y), handle, class, action))
+				end
+				local results = table.pack(invoke())
+				local culled = 0
+				for i = 1, #rec do
+					local r = rec[i]
+					if not anom_live(r[1]) then
+						culled = culled + 1
+						anom_log(string.format("CULL call=%d #%03d pos=%s,%s handle=%s class=%s",
+							n, i, r[2], r[3], r[4], r[5]))
+					end
+				end
+				local order = "?"
+				pcall(function() order = tostring(#(rawget(_G, "BreakthroughOrder") or {})) end)
+				anom_log(string.format(
+					"POST call=%d phase=%s culled=%d remaining=%d breakthrough_order=%s dropped=%d",
+					n, phase, culled, #rec - culled, order, anom_dropped))
+				anom_flush()
+				return results
+			end
+
+			local city_class = rawget(_G, "City")
+			local state = type(SBM) == "table" and SBM.State or nil
+			if type(city_class) ~= "table"
+				or type(city_class.InitBreakThroughAnomalies) ~= "function" then
+				anom_log("MISSING City.InitBreakThroughAnomalies")
+				anom_flush()
+			else
+				local previous = city_class.InitBreakThroughAnomalies
+				local mod_wrapper = type(state) == "table" and state.breakthrough_init_wrapper
+				local deferred_original = type(state) == "table"
+					and state.original_city_init_breakthrough_anomalies
+				anom_log(string.format(
+					"INSTALL state=%s class_is_mod_wrapper=%s deferred_original=%s",
+					tostring(type(state) == "table"),
+					tostring(mod_wrapper == previous),
+					tostring(type(deferred_original) == "function")))
+
+				local class_wrapper = function(self, ...)
+					local argv = table.pack(...)
+					local results = anom_observe("class", self, function()
+						return previous(self, table.unpack(argv, 1, argv.n))
+					end)
+					return table.unpack(results, 1, results.n)
+				end
+				city_class.InitBreakThroughAnomalies = class_wrapper
+				-- Keep the mod patch's identity check satisfied so a re-install early-outs instead
+				-- of saving this probe as the vanilla "original" it defers to.
+				if type(state) == "table" and mod_wrapper == previous then
+					state.breakthrough_init_wrapper = class_wrapper
+				end
+
+				if type(state) == "table" and type(deferred_original) == "function" then
+					state.original_city_init_breakthrough_anomalies = function(self, ...)
+						local argv = table.pack(...)
+						local results = anom_observe("deferred", self, function()
+							return deferred_original(self, table.unpack(argv, 1, argv.n))
+						end)
+						return table.unpack(results, 1, results.n)
+					end
+				end
+			end
+
+			-- A twin where the initializer never fires would otherwise leave no file at all.
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					if status == "complete" or status == "error" then break end
+					Sleep(300)
+				end
+				anom_log(string.format("SUMMARY calls=%s dropped_lines=%d",
+					tostring(rawget(_G, "g_ParityAnomProbeCalls")), anom_dropped))
+				anom_flush()
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
-             passage_pin=False, point_probe=False, field_probe=False, slot_probe=False):
+             passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
+             anom_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2718,6 +2885,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if draw_path.exists():
             draw_path.unlink()
         extras.append(DRAW_PROBE_BLOCK.replace("__DRAW_OUT__", cli.lua_path(draw_path)))
+    anom_path = OUT / f"anomprobe-{tag}.log"
+    if anom_probe:
+        if anom_path.exists():
+            anom_path.unlink()
+        extras.append(ANOM_PROBE_BLOCK.replace("__ANOM_OUT__", cli.lua_path(anom_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -2916,6 +3088,17 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 draw_status = f"unavailable ({exc})"
             log(f"draw probe: {draw_status} -> {draw_path}")
 
+        if anom_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                anom_status = poll_status(
+                    client, "g_ParityAnomProbeStatus", {"complete"}, set(), 180, f"anomprobe-{tag}"
+                )
+            except RuntimeError as exc:
+                anom_status = f"unavailable ({exc})"
+            _, anom_calls = cli.marshal_value(client, "g_ParityAnomProbeCalls", timeout=60.0)
+            log(f"anomaly probe: {anom_status}, {anom_calls} initializer call(s) -> {anom_path}")
+
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
             raise RuntimeError(f"dump script failed to load: {load_err[2]}")
@@ -3003,6 +3186,7 @@ def main():
         pointprobe = "pointprobe" in sys.argv[5:]
         fieldprobe = "fieldprobe" in sys.argv[5:]
         slotprobe = "slotprobe" in sys.argv[5:]
+        anomprobe = "anomprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -3017,13 +3201,14 @@ def main():
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
             f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
-            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"anom_probe={anomprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
-                        point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe)
+                        point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
+                        anom_probe=anomprobe)
         log(f"result: {json.dumps(info)}")
         return
 
