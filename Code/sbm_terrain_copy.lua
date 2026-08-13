@@ -3932,15 +3932,32 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		}
 	end
 
+	-- Inverse of `scaled_final_hex`, for validity queries only: which SOURCE hex does a final hex come
+	-- from. The final surface commitment runs while the underground map still presents its UN-STRETCHED
+	-- source content on the resized canvas (the underground stretch is a later pipeline step), so a
+	-- candidate hex's underground validity has to be asked of its source pre-image. The stretch is a
+	-- similarity transform, so the same hex-count Elevator footprint covers 1/scale LESS real area after
+	-- the stretch than the pre-image query inspects: asking on the source grid is the conservative side.
+	local function source_preimage_hex(final_q, final_r)
+		if not scale_x or not scale_y or scale_x <= 0 or scale_y <= 0 then return nil end
+		local ok_world, final_x, final_y = pcall(hex_to_world, final_q, final_r)
+		if not ok_world or type(final_x) ~= "number" or type(final_y) ~= "number" then return nil end
+		local ok_hex, source_q, source_r = pcall(world_to_hex, point_fn(
+			math.floor(final_x / scale_x + 0.5), math.floor(final_y / scale_y + 0.5)))
+		if not ok_hex or type(source_q) ~= "number" or type(source_r) ~= "number" then return nil end
+		return source_q, source_r
+	end
+
 	local function stamp_plan(anchor, plan, endpoint_q, endpoint_r, endpoint_x, endpoint_y)
 		anchor.SuperBigMapCommittedPassageLocked = true
 		anchor.SuperBigMapCommittedPassageSourceQ = plan.source_q
 		anchor.SuperBigMapCommittedPassageSourceR = plan.source_r
 		anchor.SuperBigMapCommittedPassageSourceX = plan.source_x
 		anchor.SuperBigMapCommittedPassageSourceY = plan.source_y
-		-- The transformed underground coordinate is authoritative and immutable. The surface
-		-- endpoint normally uses it too, but may use a nearby surface-only fallback when that exact
-		-- hex is not a valid surface footprint.
+		-- The pair's single co-located hex, authoritative and immutable once the final surface
+		-- commitment has chosen it. BOTH endpoints receive it: the surface endpoint as its committed
+		-- coordinate and the underground endpoint as the destination its deferred final alignment
+		-- moves to. Before that commitment it is still the image of the vanilla underground hex.
 		anchor.SuperBigMapTrueUndergroundPassageQ = plan.final_q
 		anchor.SuperBigMapTrueUndergroundPassageR = plan.final_r
 		anchor.SuperBigMapTrueUndergroundPassageX = plan.final_x
@@ -4001,6 +4018,23 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local surface_final_commit = source_bootstrap and options.prepare_surface_pad == true
 		local committed = underground_anchor.SuperBigMapCommittedPassageLocked == true
 			and surface_anchor.SuperBigMapCommittedPassageLocked == true
+		-- CO-LOCATION INPUT: this pair's own vanilla SURFACE coordinate. The lightweight bootstrap is
+		-- the only moment the surface endpoint still stands exactly where vanilla put it (it is
+		-- committed into the expanded domain further down), so record its source hex once here and
+		-- never overwrite it; the final surface commitment transforms it into the pair's natural hex.
+		if source_bootstrap and not surface_final_commit
+			and tonumber(surface_anchor.SuperBigMapPassageSurfaceSourceQ) == nil then
+			local ok_surface_hex, vanilla_surface_q, vanilla_surface_r =
+				pcall(world_to_hex, point_fn(sx, sy))
+			if not ok_surface_hex or type(vanilla_surface_q) ~= "number"
+				or type(vanilla_surface_r) ~= "number" then
+				return false, { error = "vanilla surface passage hex unavailable", pairs = stats.pairs }
+			end
+			surface_anchor.SuperBigMapPassageSurfaceSourceQ = vanilla_surface_q
+			surface_anchor.SuperBigMapPassageSurfaceSourceR = vanilla_surface_r
+			surface_anchor.SuperBigMapPassageSurfaceSourceX = sx
+			surface_anchor.SuperBigMapPassageSurfaceSourceY = sy
+		end
 		local plan
 		if source_bootstrap then
 			local source_q = surface_final_commit
@@ -4040,62 +4074,159 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local surface_radius = 0
 		local search_algorithm = "exact transformed underground hex"
 		if surface_final_commit then
-			-- The ring search needs a plain boolean predicate, but WHICH validator refuses the exact
-			-- transform image -- and how far the committed fallback then has to walk -- is the fact
-			-- the passage transform rule is decided on. Collect it alongside the unchanged decision.
-			local exact_reason
-			local rejections = {}
-			local function surface_candidate(q, r)
-				stats.checked = stats.checked + 1
-				local valid, reason = footprint_buildable(
-					surface_map, q, r, surface_angle, surface_anchor)
-				if not valid then
-					local key = tostring(reason)
-					rejections[key] = (rejections[key] or 0) + 1
-					if q == plan.final_q and r == plan.final_r then exact_reason = key end
-				end
-				return valid
+			-- CO-LOCATION (task gate `entrance-colocation`): a linked pair must occupy the SAME hex on
+			-- both maps. Vanilla only aspires to that -- SpawnUndergroundPassage snaps the surface pos,
+			-- then FindPassageSpawnPos may reject candidates and after 12 attempts falls back to a random
+			-- passable position anywhere on the map -- so this pair is co-located by construction. The
+			-- natural hex is the hex-snapped stretched image of the endpoint's own VANILLA SURFACE
+			-- coordinate, and the underground endpoint follows it instead of the image of its own vanilla
+			-- hex: co-location takes precedence over exact-affine placement for these two classes.
+			local surface_source_q = tonumber(surface_anchor.SuperBigMapPassageSurfaceSourceQ)
+			local surface_source_r = tonumber(surface_anchor.SuperBigMapPassageSurfaceSourceR)
+			if type(surface_source_q) ~= "number" or type(surface_source_r) ~= "number" then
+				return false, { error = "vanilla surface passage source hex unavailable",
+					pairs = stats.pairs }
 			end
-			if not surface_candidate(surface_q, surface_r) then
+			local natural = scaled_final_hex(surface_source_q, surface_source_r)
+			if not natural then
+				return false, { error = "vanilla surface passage transform unavailable",
+					pairs = stats.pairs }
+			end
+			-- A candidate is acceptable only when the complete Elevator footprint is valid on BOTH maps:
+			-- the surface in its final stretched form, the underground through the candidate's source
+			-- pre-image. Both use the engine's own predicates; nothing is sculpted to make a hex fit.
+			local surface_rejections, underground_rejections = {}, {}
+			local natural_hex_surface_reason, natural_hex_underground_reason
+			local underground_verdicts = {}
+			local function underground_candidate(q, r)
+				local pre_q, pre_r = source_preimage_hex(q, r)
+				if pre_q == nil then return false, "underground pre-image hex unavailable" end
+				local key = tostring(pre_q) .. ":" .. tostring(pre_r)
+				local verdict = underground_verdicts[key]
+				if verdict == nil then
+					-- Adjacent final hexes share a pre-image at this scale; validate each source hex once.
+					local valid, reason = footprint_buildable(
+						underground_map, pre_q, pre_r, underground_angle, underground_anchor)
+					verdict = { valid = valid == true, reason = reason, q = pre_q, r = pre_r }
+					underground_verdicts[key] = verdict
+				end
+				return verdict.valid, verdict.reason, verdict.q, verdict.r
+			end
+			local function shared_candidate(q, r)
+				stats.checked = stats.checked + 1
+				local natural_hex = q == natural.final_q and r == natural.final_r
+				local surface_valid, surface_reason = footprint_buildable(
+					surface_map, q, r, surface_angle, surface_anchor)
+				if not surface_valid then
+					local key = "surface " .. tostring(surface_reason)
+					surface_rejections[key] = (surface_rejections[key] or 0) + 1
+					if natural_hex then natural_hex_surface_reason = tostring(surface_reason) end
+					return false
+				end
+				local underground_valid, underground_reason = underground_candidate(q, r)
+				if not underground_valid then
+					local key = "underground " .. tostring(underground_reason)
+					underground_rejections[key] = (underground_rejections[key] or 0) + 1
+					if natural_hex then natural_hex_underground_reason = tostring(underground_reason) end
+					return false
+				end
+				return true
+			end
+			local natural_underground_valid, natural_underground_reason,
+				natural_preimage_q, natural_preimage_r =
+					underground_candidate(natural.final_q, natural.final_r)
+			surface_q, surface_r = natural.final_q, natural.final_r
+			surface_x, surface_y = natural.final_x, natural.final_y
+			search_algorithm = "stretched image of the vanilla surface hex, valid on both maps"
+			if not shared_candidate(surface_q, surface_r) then
+				-- Nearest-first ring search: the FIRST hex accepted on both maps is by construction the
+				-- minimum-distance relocation, and both endpoints move to it TOGETHER.
 				surface_q, surface_r, surface_radius = nearest_on_hex_rings(
-					plan.final_q, plan.final_r, surface_candidate, 1,
+					natural.final_q, natural.final_r, shared_candidate, 1,
 					math.max(tonumber(surface_map.hex_width) or 0,
 						tonumber(surface_map.hex_height) or 0))
 				if surface_q == nil then
-					return false, { error = "no valid surface footprint near true underground hex",
+					return false, { error = "no hex valid on both maps near the stretched surface image",
 						pairs = stats.pairs, checked = stats.checked }
 				end
-				local ok_surface_world
-				ok_surface_world, surface_x, surface_y = pcall(hex_to_world, surface_q, surface_r)
-				if not ok_surface_world then
-					return false, { error = "surface fallback world coordinate unavailable",
+				local ok_shared_world
+				ok_shared_world, surface_x, surface_y = pcall(hex_to_world, surface_q, surface_r)
+				if not ok_shared_world then
+					return false, { error = "co-located hex world coordinate unavailable",
 						pairs = stats.pairs }
 				end
-				search_algorithm = "nearest valid surface footprint to true underground hex"
+				search_algorithm = "nearest hex valid on both maps to the stretched surface image"
 				local rejection_summary = {}
-				for reason, count in pairs(rejections) do
+				for reason, count in pairs(surface_rejections) do
+					rejection_summary[#rejection_summary + 1] = reason .. " x" .. tostring(count)
+				end
+				for reason, count in pairs(underground_rejections) do
 					rejection_summary[#rejection_summary + 1] = reason .. " x" .. tostring(count)
 				end
 				table.sort(rejection_summary)
 				EntranceAudit("PASSAGE_PLAN_SURFACE_EXACT_REJECTED", {
 					pair = i,
-					exact_q = plan.final_q, exact_r = plan.final_r,
-					exact_x = plan.final_x, exact_y = plan.final_y,
-					exact_reason = exact_reason,
+					exact_q = natural.final_q, exact_r = natural.final_r,
+					exact_x = natural.final_x, exact_y = natural.final_y,
+					exact_reason = natural_hex_surface_reason or natural_hex_underground_reason,
+					exact_surface_reason = natural_hex_surface_reason,
+					exact_underground_reason = natural_hex_underground_reason,
 					committed_q = surface_q, committed_r = surface_r,
 					committed_x = surface_x, committed_y = surface_y,
 					committed_radius = surface_radius,
-					delta_x = surface_x - plan.final_x, delta_y = surface_y - plan.final_y,
+					delta_x = surface_x - natural.final_x, delta_y = surface_y - natural.final_y,
 					surface_angle = surface_angle,
 					candidates_rejected = table.concat(rejection_summary, "; "),
 					exact_footprint = EntranceAuditEnabled()
-						and describe_footprint(surface_map, plan.final_q, plan.final_r,
+						and describe_footprint(surface_map, natural.final_q, natural.final_r,
 							surface_angle, surface_anchor) or nil,
 					committed_footprint = EntranceAuditEnabled()
 						and describe_footprint(surface_map, surface_q, surface_r,
 							surface_angle, surface_anchor) or nil,
+					exact_underground_footprint = EntranceAuditEnabled() and natural_preimage_q
+						and describe_footprint(underground_map, natural_preimage_q, natural_preimage_r,
+							underground_angle, underground_anchor) or nil,
 				}, underground_map)
 			end
+			local _, committed_underground_reason, committed_preimage_q, committed_preimage_r =
+				underground_candidate(surface_q, surface_r)
+			local drift_x, drift_y = surface_x - natural.final_x, surface_y - natural.final_y
+			local drift_dq, drift_dr = surface_q - natural.final_q, surface_r - natural.final_r
+			-- Informational only, never a placement input: whether the underground map already accepts
+			-- the FINAL hex proves which form its terrain is in while this commitment runs.
+			local underground_final_hex_valid, underground_final_hex_reason = footprint_buildable(
+				underground_map, surface_q, surface_r, underground_angle, underground_anchor)
+			EntranceAudit("PASSAGE_PLAN_COLOCATED", {
+				pair = i,
+				algorithm = search_algorithm,
+				radius = surface_radius,
+				vanilla_surface_q = surface_source_q, vanilla_surface_r = surface_source_r,
+				vanilla_surface_x = natural.source_x, vanilla_surface_y = natural.source_y,
+				vanilla_underground_x = plan.source_x, vanilla_underground_y = plan.source_y,
+				natural_q = natural.final_q, natural_r = natural.final_r,
+				natural_x = natural.final_x, natural_y = natural.final_y,
+				natural_surface_reason = natural_hex_surface_reason,
+				natural_underground_valid = natural_underground_valid,
+				natural_underground_reason = natural_underground_reason,
+				natural_preimage_q = natural_preimage_q, natural_preimage_r = natural_preimage_r,
+				shared_q = surface_q, shared_r = surface_r,
+				shared_x = surface_x, shared_y = surface_y,
+				shared_preimage_q = committed_preimage_q, shared_preimage_r = committed_preimage_r,
+				shared_preimage_reason = committed_underground_reason,
+				drift_x = drift_x, drift_y = drift_y,
+				drift_wu = math.floor(math.sqrt(drift_x * drift_x + drift_y * drift_y) + 0.5),
+				drift_hexes = math.max(math.abs(drift_dq), math.abs(drift_dr),
+					math.abs(drift_dq + drift_dr)),
+				image_of_vanilla_underground_q = plan.final_q,
+				image_of_vanilla_underground_r = plan.final_r,
+				underground_final_hex_valid = underground_final_hex_valid,
+				underground_final_hex_reason = underground_final_hex_reason,
+				candidates_checked = stats.checked,
+			}, underground_map)
+			-- One hex for the pair: the underground endpoint's deferred final destination becomes the
+			-- co-located hex, so both stamps below carry identical coordinates.
+			plan.final_q, plan.final_r = surface_q, surface_r
+			plan.final_x, plan.final_y = surface_x, surface_y
 		elseif not source_bootstrap then
 			surface_q = tonumber(surface_anchor.SuperBigMapCommittedPassageQ)
 			surface_r = tonumber(surface_anchor.SuperBigMapCommittedPassageR)
