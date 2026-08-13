@@ -285,16 +285,23 @@ def infrastructure_enumeration(vc, ec, hexgrid=None, camera=None):
     # sits in it. The expected value is the engine rule, never the observed count, so a
     # second camera reads MISMATCH instead of buying an exemption.
     cam = camera or {}
+    cam_engine_rule = ("ENGINE MAPVAR: exactly one camera per LOADED map (OnMsg.NewMap -> "
+                       "InitMapVarValue, CommonLua/Core/lib.lua; MapVar declared in "
+                       "CommonLua/Classes/ActionFX.lua)")
     if cam.get("proven"):
         cam_v = cam_e = 1
-        cam_rule = ("ENGINE MAPVAR: exactly one camera per LOADED map (OnMsg.NewMap -> "
-                    "InitMapVarValue, CommonLua/Core/lib.lua; MapVar declared in "
-                    f"CommonLua/Classes/ActionFX.lua); proven on this run - {cam['why']}")
+        cam_rule = f"{cam_engine_rule}; proven on this run - {cam['why']}"
+    elif cam.get("evidence_present"):
+        # The engine rule is a fact about the engine, so a count other than 1 is a real
+        # MISMATCH and is reported as one; but a run whose identity evidence fails can
+        # never be awarded `ok` on the count alone (see the downgrade below).
+        cam_v = cam_e = 1
+        cam_rule = (f"{cam_engine_rule}; NOT proven on this run - "
+                    + (cam.get("why") or "camera identity evidence failed"))
     else:
         cam_v = cam_e = None
-        cam_rule = ("UNPROVEN: engine camera helper; this run does not prove the dumped "
-                    "camera is the map's own - "
-                    + (cam.get("why") or "no camera evidence available"))
+        cam_rule = ("UNPROVEN: engine camera helper; this run carries no camera identity "
+                    "evidence - " + (cam.get("why") or "no camera evidence available"))
 
     out = [
         entry("MapSector", VANILLA_SECTOR_GRID ** 2, EXPANDED_SECTOR_GRID ** 2,
@@ -311,6 +318,12 @@ def infrastructure_enumeration(vc, ec, hexgrid=None, camera=None):
         entry("CameraObj", cam_v, cam_e, cam_rule),
         entry("GridObjectList", gol_v, gol_e, gol_rule),
     ]
+    # The exemption is bought by evidence, never by the count: a run that cannot prove
+    # the dumped camera is the map's own keeps the class out of `ok` even when the
+    # cardinality happens to read 1/1.
+    for e in out:
+        if e["class"] == "CameraObj" and not cam.get("proven") and e["verdict"] == "ok":
+            e["verdict"] = "unproven"
     return out, revealed
 
 
