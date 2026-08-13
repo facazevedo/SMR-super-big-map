@@ -129,6 +129,20 @@ CreateRealTimeThread(function()
 			local objs = map:MapGet("map") or {}
 			meta(tag, "raw_object_count", #objs)
 
+			-- Per-map camera evidence for the `CameraObj` cardinality rule. The engine builds
+			-- exactly ONE CameraObj per LOADED map: OnMsg.NewMap -> InitMapVarValue plain-assigns
+			-- the MapVar declared in CommonLua/Classes/ActionFX.lua onto the Map instance. Report
+			-- that map's own camera and let compare.py check the dumped population against it, so
+			-- a camera belonging to another map (the temporary vanilla backing's, transferred into
+			-- the destination before v776) can never be absorbed by the exemption.
+			local own_camera = rawget(map, "g_CameraObj")
+			local own_camera_live = false
+			if own_camera ~= nil then
+				local ok_valid, valid = pcall(IsValid, own_camera)
+				own_camera_live = (ok_valid and valid) and true or false
+			end
+			local camera_total, camera_own, camera_foreign = 0, 0, 0
+
 			if type(PauseInfiniteLoopDetection) == "function" then
 				PauseInfiniteLoopDetection("parity_dump")
 			end
@@ -137,6 +151,14 @@ CreateRealTimeThread(function()
 				local obj = objs[i]
 				if obj and IsValid(obj) then
 					local cls = tostring(obj.class or "?")
+					if cls == "CameraObj" then
+						camera_total = camera_total + 1
+						if own_camera_live and rawequal(obj, own_camera) then
+							camera_own = camera_own + 1
+						else
+							camera_foreign = camera_foreign + 1
+						end
+					end
 					local root = root_donor(obj)
 					local rx, ry = anchor_xy(root)
 					local x, y, z = "", "", ""
@@ -172,6 +194,10 @@ CreateRealTimeThread(function()
 			if type(ResumeInfiniteLoopDetection) == "function" then
 				ResumeInfiniteLoopDetection("parity_dump")
 			end
+			meta(tag, "map_camera_present", tostring(own_camera_live))
+			meta(tag, "camera_objects", camera_total)
+			meta(tag, "camera_own_in_map", camera_own)
+			meta(tag, "camera_foreign_in_map", camera_foreign)
 			meta(tag, "dumped_object_count", rows)
 			g_ParityDumpRows = g_ParityDumpRows + rows
 		end

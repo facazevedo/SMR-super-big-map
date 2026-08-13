@@ -11,8 +11,9 @@ Five independent tests per map (surface, underground):
                    residual distance distribution (proportional placement).
   E. Infrastructure - the enumerated engine/mod infrastructure classes, each with the
                    rule that fixes its expected cardinality and a verdict.  A rule that
-                   needs runtime evidence (GridObjectList) is proven from THIS run's
-                   hex-grid census or the class stays `unproven`.
+                   needs runtime evidence is proven from THIS run's dumps or the class
+                   stays `unproven`: GridObjectList from the hex-grid census, CameraObj
+                   from the per-map camera identity evidence in the object dump.
   F. Content     - A+B recomputed over CONTENT ONLY (everything not enumerated in E),
                    which is the population the bijection gates actually govern.
   G. Unexplained - A+B recomputed over every record the tool cannot yet explain:
@@ -69,8 +70,9 @@ INFRASTRUCTURE = {
         "Generator bookkeeping object holding the map's seed and generation hash; "
         "exactly one is created per generated map."),
     "CameraObj": (
-        "Engine ActionFX camera helper (CommonLua/Classes/ActionFX.lua); created by "
-        "camera activation, not by map generation."),
+        "Engine camera helper declared as a MapVar in CommonLua/Classes/ActionFX.lua; "
+        "OnMsg.NewMap -> InitMapVarValue (CommonLua/Core/lib.lua) builds exactly one per "
+        "LOADED map. It is map machinery, never generated content."),
     "GridObjectList": (
         "Engine hex-grid collision bucket created implicitly by HexGridShapeAddObject "
         "when two or more object shapes occupy one hex node (Lua/GridObject.lua); "
@@ -162,7 +164,81 @@ def hexgrid_evidence(out_dir):
     return out
 
 
-def infrastructure_enumeration(vc, ec, hexgrid=None):
+# ---------------------------------------------------------------------------
+# PER-RUN EVIDENCE FOR THE `CameraObj` CARDINALITY RULE
+#
+# The engine builds exactly ONE camera helper per LOADED map: the MapVar declared in
+# CommonLua/Classes/ActionFX.lua is instantiated by `OnMsg.NewMap -> InitMapVarValue`
+# (CommonLua/Core/lib.lua), which plain-assigns it onto that Map instance.  Both twins
+# load exactly one surface and one underground map, so the expected cardinality is
+# 1 vanilla / 1 expanded on every map.
+#
+# COUNTING ALONE WOULD BE CIRCULAR, so the exemption is bought per run by the dump's own
+# camera evidence (dump_template.lua, `#meta,<map>,camera_*`), on BOTH twins:
+#
+#   * the map must actually own a live `g_CameraObj` (`map_camera_present`);
+#   * exactly one of the map's dumped objects must BE that object
+#     (`camera_own_in_map == 1`, identity by `rawequal`);
+#   * no camera belonging to another map may sit in it (`camera_foreign_in_map == 0`);
+#   * the independently counted `camera_objects` must equal the CameraObj rows the
+#     comparison itself counted, so the two measurements cross-check each other.
+#
+# This is exactly the defect of iterations 008-011: the temporary vanilla backing map's
+# own camera was transferred into the expanded surface, which carried 2 cameras where the
+# vanilla twin carried 1.  Under this rule that state can never be exempted - the foreign
+# camera makes the evidence unproven AND the count a MISMATCH.  A dump without the camera
+# metadata (any dump written before v776-era tooling) leaves the class `unproven`, so its
+# records stay in the unexplained residue.  Decision evidence:
+# artifacts/run_iter011_camera/cameraobj_verdict.md.
+# ---------------------------------------------------------------------------
+CAMERA_KEYS = ("map_camera_present", "camera_objects", "camera_own_in_map",
+               "camera_foreign_in_map")
+
+
+def camera_evidence(vmeta, emeta, vrows, erows):
+    """Per-map proof (or refusal) that each twin carries exactly its own map camera."""
+    out = {}
+    for mp in MAPS:
+        sides = {"vanilla": vmeta.get(mp, {}), "expanded": emeta.get(mp, {})}
+        counted = {side: sum(1 for r in rows.get(mp, []) if r["class"] == "CameraObj")
+                   for side, rows in (("vanilla", vrows), ("expanded", erows))}
+        entry = {"evidence_present": True, "proven": False}
+        problems = []
+        for side, meta in sides.items():
+            missing = [k for k in CAMERA_KEYS if k not in meta]
+            if missing:
+                entry["evidence_present"] = False
+                problems.append(f"{side} dump carries no camera evidence ({missing[0]} "
+                                "absent); re-run the pair with the current dump template")
+                continue
+            present = str(meta.get("map_camera_present", "")).lower() == "true"
+            total = int(meta.get("camera_objects") or 0)
+            own = int(meta.get("camera_own_in_map") or 0)
+            foreign = int(meta.get("camera_foreign_in_map") or 0)
+            entry[f"{side}_map_camera_present"] = present
+            entry[f"{side}_camera_objects"] = total
+            entry[f"{side}_camera_own_in_map"] = own
+            entry[f"{side}_camera_foreign_in_map"] = foreign
+            if not present:
+                problems.append(f"{side} map owns no live g_CameraObj")
+            if own != 1:
+                problems.append(f"{side} map contains {own} instance(s) of its own camera "
+                                "(engine rule: exactly one)")
+            if foreign != 0:
+                problems.append(f"{side} map contains {foreign} camera(s) owned by another "
+                                "map")
+            if total != counted[side]:
+                problems.append(f"{side} camera census {total} disagrees with the "
+                                f"{counted[side]} CameraObj row(s) in the dump")
+        entry["proven"] = not problems
+        entry["why"] = "; ".join(problems) or (
+            "both twins carry exactly one camera and it is that map's own MapVar camera "
+            "(no foreign camera, census agrees with the dumped rows)")
+        out[mp] = entry
+    return out
+
+
+def infrastructure_enumeration(vc, ec, hexgrid=None, camera=None):
     """Enumerate every infrastructure class with its expected cardinality + verdict.
 
     vc/ec are class->count Counters for the vanilla and expanded twin of one map.
@@ -204,6 +280,22 @@ def infrastructure_enumeration(vc, ec, hexgrid=None):
                     "is not established on this run - "
                     + (hg.get("why") or "no hex-grid census evidence available"))
 
+    # CameraObj: expected 1/1 from the engine rule (one MapVar camera per loaded map), and
+    # only while THIS run proves the dumped camera is that map's own and no foreign camera
+    # sits in it. The expected value is the engine rule, never the observed count, so a
+    # second camera reads MISMATCH instead of buying an exemption.
+    cam = camera or {}
+    if cam.get("proven"):
+        cam_v = cam_e = 1
+        cam_rule = ("ENGINE MAPVAR: exactly one camera per LOADED map (OnMsg.NewMap -> "
+                    "InitMapVarValue, CommonLua/Core/lib.lua; MapVar declared in "
+                    f"CommonLua/Classes/ActionFX.lua); proven on this run - {cam['why']}")
+    else:
+        cam_v = cam_e = None
+        cam_rule = ("UNPROVEN: engine camera helper; this run does not prove the dumped "
+                    "camera is the map's own - "
+                    + (cam.get("why") or "no camera evidence available"))
+
     out = [
         entry("MapSector", VANILLA_SECTOR_GRID ** 2, EXPANDED_SECTOR_GRID ** 2,
               f"one per sector cell: {VANILLA_SECTOR_GRID}x{VANILLA_SECTOR_GRID} vanilla, "
@@ -216,8 +308,7 @@ def infrastructure_enumeration(vc, ec, hexgrid=None):
         entry("SectorScanned", 0, 0,
               "none in a fresh game (DeepScanAvailable == 0 at colony start)"),
         entry("RandomMapGeneratorHolder", 1, 1, "exactly one per generated map"),
-        entry("CameraObj", None, None,
-              "UNCONSTRAINED: engine camera helper, cardinality not fixed by the map"),
+        entry("CameraObj", cam_v, cam_e, cam_rule),
         entry("GridObjectList", gol_v, gol_e, gol_rule),
     ]
     return out, revealed
@@ -443,7 +534,7 @@ def dist_summary(d):
             f"median={statistics.median(d):.0f} mean={statistics.fmean(d):.1f}")
 
 
-def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None):
+def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     def w(s=""):
         out.append(s)
 
@@ -515,12 +606,16 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None):
             n = sum(1 for d in alld if d <= thr)
             w(f"     within {thr:>6} wu : {n}/{len(alld)} ({100.0 * n / len(alld):.3f}%)")
 
-    infra, revealed = infrastructure_enumeration(vc, ec, hexgrid)
+    infra, revealed = infrastructure_enumeration(vc, ec, hexgrid, camera)
     w(f"\n-- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --")
     hg = hexgrid or {}
+    cam = camera or {}
     w(f"   hex-grid census evidence : "
       f"{'PROVEN' if hg.get('proven') else 'NOT PROVEN'} - "
       f"{hg.get('why', 'no census evidence loaded')}")
+    w(f"   map-camera evidence      : "
+      f"{'PROVEN' if cam.get('proven') else 'NOT PROVEN'} - "
+      f"{cam.get('why', 'no camera evidence loaded')}")
     w("     class                                   vanilla  expanded  expect_v  expect_e  verdict")
     for e in infra:
         ev = "-" if e["expected_vanilla"] is None else e["expected_vanilla"]
@@ -631,6 +726,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None):
         "infrastructure_unproven": sum(1 for e in infra if e["verdict"] == "unproven"),
         "infrastructure_mismatch": sum(1 for e in infra if e["verdict"] == "MISMATCH"),
         "hexgrid_evidence": hg,
+        "camera_evidence": cam,
         "initial_revealed_sectors": revealed,
         "content_vanilla_objects": len(cv),
         "content_expanded_objects": len(ce),
@@ -686,6 +782,7 @@ def main():
     vmeta, vrows = parse_dump(out_dir / "objects-vanilla.csv")
     emeta, erows = parse_dump(out_dir / "objects-expanded.csv")
     hexgrid = hexgrid_evidence(out_dir)
+    camera = camera_evidence(vmeta, emeta, vrows, erows)
 
     lines = []
     lines.append("30S146E  VANILLA vs EXPANDED  object parity report")
@@ -716,7 +813,7 @@ def main():
         lines.append(f"\n[{tag}] derived stretch ratio: x={rx:.6f}  y={ry:.6f} "
                      f"({vw}->{ew} tiles)")
         summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines,
-                                  hexgrid.get(tag))
+                                  hexgrid.get(tag), camera.get(tag))
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
         # Machine-readable gate inputs (seed/hash equality is a contract gate and must

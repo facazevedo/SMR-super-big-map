@@ -52,9 +52,34 @@ exempts only proven ones), and no gate's definition was widened.
   infrastructure_ok              : bool  -> 1/0 (every enumerated class proven)
   content_matched                : higher better
   neg_content_*                  : negated content counts
-  unexplained_matched            : higher better
   neg_unexplained_*              : negated unexplained-residue counts
   neg_partition_anomalies        : negated count of raw/unexplained identity failures
+
+===========================================================================
+WHY `unexplained_matched` IS INFORMATIONAL TOO (iteration 028)
+===========================================================================
+`unexplained_matched` counts matched pairs inside section G's pool, and that pool
+SHRINKS whenever an infrastructure class buys its evidence-gated exemption on a
+run - by design, that is what an exemption is.  Iteration 028 removed the mod's
+transferred extra camera (the temporary vanilla backing's `g_CameraObj`, left in
+the expanded surface) and then proved the engine's one-camera-per-loaded-map rule
+from the dump, so `CameraObj` left the pool as `ok` infrastructure.  The pair it
+used to contribute left with it and the absolute count fell 21689 -> 21688 while
+every residue gate improved or held.
+
+Demoting it removes no detection power, because matched is not independent of the
+residue gates that stay scored:
+
+    matched = pool_vanilla  - unconsumed_vanilla
+    matched = pool_expanded - unstamped_expanded - unmatched_expanded
+
+A pairing that is really LOST always increases `unconsumed_vanilla` and
+`unstamped_expanded`/`unmatched_expanded`, all of which are scored, must reach
+zero, and are checked against the raw numbers by `neg_partition_anomalies`.  The
+only way to move matched WITHOUT moving a residue gate is to shrink the pool, i.e.
+to exempt a class - and an exemption is granted only by that run's evidence
+(compare.py sections E/G) and must be justified in DONE.md.  So `unexplained_matched`
+keeps its best-yet history under `informational` and no longer decides regression.
 
 Usage:
   python _ralph/tools/parity/ratchet.py <parity_summary.json> <best.json> [--update]
@@ -75,9 +100,18 @@ INFORMATIONAL = (
     "neg_unconsumed_vanilla",
     "neg_object_count_delta",
     "neg_classes_differing",
+    # Pool-relative, not a correctness measure on its own - see the docstring.
+    "unexplained_matched",
 )
 
 JUSTIFICATION = (
+    "`unexplained_matched` is pool-relative: section G's pool shrinks whenever an "
+    "infrastructure class earns its evidence-gated exemption on a run (iteration 028: "
+    "CameraObj, after the transferred extra camera was removed from the mod), so the "
+    "absolute matched count can fall while every residue gate improves. It is tracked "
+    "here as informational only; matched = pool - residue, and all three residue terms "
+    "(unconsumed_vanilla, unstamped_expanded, unmatched_expanded) stay scored, so a real "
+    "lost pairing is still caught. "
     "Raw A/B gates count enumerated infrastructure (400 MapSector and ~400 "
     "SectorUnexplored decals on a 20x20 expanded grid vs 100/100 vanilla), so their "
     "target is unreachable on a correct map and a correct infrastructure fix reads as "
@@ -101,6 +135,7 @@ def raw_score(map_summary):
             s.get("expanded_objects", 0) - s.get("vanilla_objects", 0)
         ),
         "neg_classes_differing": -s.get("classes_differing", 0),
+        "unexplained_matched": s.get("unexplained_matched", 0),
     }
 
 
@@ -120,7 +155,6 @@ def score(map_summary):
             s.get("content_expanded_objects", 0) - s.get("content_vanilla_objects", 0)
         ),
         "neg_content_classes_differing": -s.get("content_classes_differing", 0),
-        "unexplained_matched": s.get("unexplained_matched", 0),
         "neg_unexplained_unmatched_expanded":
             -s.get("unexplained_unmatched_expanded", 0),
         "neg_unexplained_unstamped_expanded":
