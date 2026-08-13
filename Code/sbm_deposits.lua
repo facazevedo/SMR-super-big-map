@@ -8289,6 +8289,21 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	local DoneObject = Global("DoneObject")
 	local despawned = 0
 	local concrete_moves = {}
+	-- A destination sector keeps its physical size while the map grows, so the stretched image of
+	-- vanilla's start sector is 4/3 of one and part of vanilla's OWN initial reveal necessarily
+	-- lands in sectors this grid still calls unscanned. RevealVanillaStartSectors placed exactly
+	-- that footprint (map.SuperBigMapStartFootprint*, mod v790); despawning inside it would delete
+	-- deposits the vanilla control has -- measured at 45S82E as 2 SurfaceDepositMetals and 1
+	-- TerrainDepositConcrete. Everything outside the footprint is still gated as before.
+	local fx0 = tonumber(map.SuperBigMapStartFootprintX0)
+	local fy0 = tonumber(map.SuperBigMapStartFootprintY0)
+	local fx1 = tonumber(map.SuperBigMapStartFootprintX1)
+	local fy1 = tonumber(map.SuperBigMapStartFootprintY1)
+	local footprint_ok = fx0 ~= nil and fy0 ~= nil and fx1 ~= nil and fy1 ~= nil
+	local function InStartFootprint(px, py)
+		return footprint_ok and px >= fx0 and px < fx1 and py >= fy0 and py < fy1
+	end
+	local footprint_kept = 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker)) then return end
 		if marker.is_placed ~= true then return end
@@ -8296,6 +8311,10 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 		if not pos or type(pos.xy) ~= "function" then return end
 		local px, py = pos:xy()
 		if px == nil then return end
+		if InStartFootprint(px, py) then
+			footprint_kept = footprint_kept + 1
+			return
+		end
 		local ok_s, sector = pcall(get_sector, city, px, py)
 		if not (ok_s and sector) or SectorIsScanned(sector) then return end
 		if type(IsValid) == "function" and IsValid(marker.placed_obj) and type(DoneObject) == "function" then
@@ -8348,6 +8367,8 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 			end
 		end
 	end
+	map.SuperBigMapScanGateFootprintKept = footprint_kept
+	map.SuperBigMapScanGateDespawned = despawned
 end
 
 function DepositRules.OnSectorScanned(status, sector)

@@ -125,6 +125,7 @@ CreateRealTimeThread(function()
 				"SuperBigMapStartFootprintBox", "SuperBigMapStartFootprintSectors",
 				"SuperBigMapStartFootprintMarkers", "SuperBigMapStartFootprintPending",
 				"SuperBigMapStartFootprintDeposits",
+				"SuperBigMapScanGateFootprintKept", "SuperBigMapScanGateDespawned",
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end

@@ -1570,6 +1570,13 @@ local function RevealVanillaStartSectors(map)
 				end
 			end)
 		end
+		-- The scan gate (DepositRules.EnforceScanGateAfterStretch, step 5) despawns deposits that
+		-- sit in unscanned sectors. Part of vanilla's own start footprint necessarily does, so the
+		-- box travels with the map and that pass exempts it.
+		map.SuperBigMapStartFootprintX0 = x0
+		map.SuperBigMapStartFootprintY0 = y0
+		map.SuperBigMapStartFootprintX1 = x1
+		map.SuperBigMapStartFootprintY1 = y1
 		map.SuperBigMapStartFootprintBox = string.format("%s,%s,%s,%s", tostring(x0), tostring(y0),
 			tostring(x1), tostring(y1))
 		map.SuperBigMapStartFootprintSectors = #overlaps
