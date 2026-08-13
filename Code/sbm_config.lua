@@ -534,6 +534,18 @@ config.PairingSurfaceBuildableRebuild = true
 -- to a site vanilla would never choose. When true, the caller-less fallback gets the source map's
 -- radius for the duration of the bootstrap only.
 config.PairingSourceFallbackRadius = true
+-- SOURCE PASSABILITY FOR THE SAME FALLBACK (sbm_map_generation, passage bootstrap). With the
+-- buildable answer bridged and the radius pinned above, the last expanded-map input left in
+-- vanilla's fallback is the PASSABLE SET: GetRandomPassableAroundOnMap resolves
+-- map:GetRandomPassablePoint (Lua/Pathfinding.lua:168) and that native chooser reads the map's own
+-- pathfinding field, which Lua cannot substitute the way it substitutes a buildable grid. Measured
+-- at 45S82E: identical center, radius and seed still diverge because the control's own point is
+-- impassable on the expanded map and only 4713 of 16384 samples over the same source square are
+-- passable there against the control's 7576. When true, the temporary native backing stays loaded
+-- in its own map slot through the passage bootstrap and answers the fallback's passable-point
+-- queries, so the selection sees the source's field; the slot is released as soon as the bootstrap's
+-- selection window closes.
+config.PairingSourcePassabilityBridge = true
 -- Post-generation smoothing of the ground around each entrance footprint (GridSmooth, the
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
 -- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
@@ -832,6 +844,8 @@ C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
 	and as_bool(config.PairingSurfaceBuildableRebuild)
 C.PAIRING_SOURCE_FALLBACK_RADIUS = expansion_step_11
 	and as_bool(config.PairingSourceFallbackRadius)
+C.PAIRING_SOURCE_PASSABILITY_BRIDGE = expansion_step_11
+	and as_bool(config.PairingSourcePassabilityBridge)
 C.PASSAGE_PAD_SMOOTHING = expansion_step_11
 	and as_bool(config.PassagePadSmoothing)
 C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01

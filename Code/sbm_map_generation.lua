@@ -2928,6 +2928,54 @@ function SuperBigMap.CaptureNativeSurfacePassageBuildable(source, destination)
 	return true
 end
 
+-- The buildable ANSWER can be captured as a value grid (above); the map's PASSABILITY field cannot
+-- -- Lua sees no grid handle for it, only terrain.RebuildPassability. The passage fallback
+-- (Lua/Pathfinding.lua:168 -> map:GetRandomPassablePoint) reads that native field, so on an
+-- expanded map it draws from a passable set that is 61% different over the same source square
+-- (measured, iter-011) and lands the second passage where vanilla could not. The only way to ask
+-- the question against the source's own field is to keep the temporary native surface map LOADED
+-- through the passage bootstrap and delegate the query to it. Retention is released as soon as the
+-- bootstrap's selection window closes; the slot cost is one of the thirteen idle slots measured
+-- free at that call (iter-012), never the one the underground phase uses.
+local function ReleaseRetainedNativeSourceMap(surface_map, reason)
+	local retention = type(surface_map) == "table"
+		and surface_map.SuperBigMapRetainedNativeSourceMap or nil
+	if type(retention) ~= "table" then return false end
+	surface_map.SuperBigMapRetainedNativeSourceMap = nil
+	local maps = Global("Maps")
+	local change_map_in_slot = Global("ChangeMapInSlot")
+	local slot = retention.slot
+	if type(maps) ~= "table" or type(change_map_in_slot) ~= "function" or not slot then
+		return false
+	end
+	if maps[slot] ~= retention.map then
+		-- Something else already replaced the slot; never unload a map this transaction does not own.
+		LoadingStep("retained vanilla source backing was already released", {
+			source_slot = tostring(slot), reason = tostring(reason),
+		}, surface_map)
+		return false
+	end
+	local unload_token = LoadingBegin("unload retained vanilla source backing", surface_map, {
+		source_slot = tostring(slot), reason = tostring(reason),
+	})
+	local unload_call_ok, unload_error = pcall(change_map_in_slot, slot, "")
+	local unload_ok = unload_call_ok and unload_error == nil
+	if not unload_ok and retention.pass_edits_deferred and retention.map
+		and type(retention.map.ResumePassEdits) == "function" and maps[slot] == retention.map then
+		-- Same compatibility retry the immediate unload path uses for a suspended pass-edit batch.
+		if pcall(retention.map.ResumePassEdits, retention.map, "SuperBigMapVanillaSourceMigration") then
+			unload_call_ok, unload_error = pcall(change_map_in_slot, slot, "")
+			unload_ok = unload_call_ok and unload_error == nil
+		end
+	end
+	LoadingEnd(unload_token, { error = tostring(unload_error) }, unload_ok)
+	if not unload_ok then
+		surface_map.SuperBigMapRetainedNativeSourceUnloadFailed = tostring(unload_error)
+	end
+	return unload_ok
+end
+SuperBigMap.ReleaseRetainedNativeSourceMap = ReleaseRetainedNativeSourceMap
+
 local function TransferGeneratedObjects(source, destination, source_baseline, excluded_objects)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
@@ -4904,7 +4952,25 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 	if get_current_slot() ~= destination_slot then
 		pcall(SwitchGeneratorCurrentSlot, destination_slot)
 	end
-	if maps[source_slot] then
+	-- PASSAGE PASSABILITY BRIDGE (config PAIRING_SOURCE_PASSABILITY_BRIDGE): when a passage
+	-- bootstrap is pending, the native backing must answer one more question before it goes away
+	-- (see ReleaseRetainedNativeSourceMap). Hold its slot until the bootstrap's selection window
+	-- closes instead of unloading here; the underground phase that follows has thirteen other free
+	-- slots, so this retention never contends with it.
+	local retain_source_for_passages = ok and maps[source_slot] and maps[source_slot] == source
+		and cfg_bool("PAIRING_SOURCE_PASSABILITY_BRIDGE", true)
+		and type(destination.SuperBigMapPendingNativeSurfacePassageBuildable) == "table"
+	if retain_source_for_passages then
+		destination.SuperBigMapRetainedNativeSourceMap = {
+			map = source,
+			slot = source_slot,
+			pass_edits_deferred = source_pass_edits_deferred,
+		}
+		LoadingStep("temporary vanilla backing retained for the passage passability bridge", {
+			source_slot = source_slot,
+			pass_edits_deferred = tostring(source_pass_edits_deferred),
+		}, destination)
+	elseif maps[source_slot] then
 		local unload_token = LoadingBegin("unload temporary vanilla backing", destination,
 			{ source_slot = source_slot, pass_edits_deferred = tostring(source_pass_edits_deferred) })
 		local unload_call_ok, unload_error = pcall(change_map_in_slot, source_slot, "")
@@ -4977,6 +5043,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			SuperBigMap.FreeOwnedGrid(pending_buildable.grid)
 		end
 		destination.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+		ReleaseRetainedNativeSourceMap(destination, "temporary source migration failed")
 	end
 	SuperBigMap.State.vanilla_source_migration_active = false
 	if not ok then
@@ -5660,11 +5727,17 @@ local function BootstrapPassagesAndDeferWonders(env)
 	end
 	surface_map.buildable.z_grid = padded_surface_grid
 	local restore_fallback_radius
+	local restore_passability_bridge
 	local function RestoreSurfaceBuildableBridge()
 		if restore_fallback_radius then
 			restore_fallback_radius()
 			restore_fallback_radius = nil
 		end
+		if restore_passability_bridge then
+			restore_passability_bridge()
+			restore_passability_bridge = nil
+		end
+		ReleaseRetainedNativeSourceMap(surface_map, "passage bootstrap selection window closed")
 		surface_map.buildable.z_grid = stock_surface_grid
 		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
 		SuperBigMap.FreeOwnedGrid(pending_surface_buildable.grid)
@@ -5751,6 +5824,60 @@ local function BootstrapPassagesAndDeferWonders(env)
 			source_width = source_world_w, source_height = source_world_h,
 			expanded_width = expanded_world_w, expanded_height = expanded_world_h,
 			max_radius = source_max_radius,
+		}, surface_map)
+	end
+	-- SOURCE PASSABILITY FOR THE FALLBACK DRAW (config PAIRING_SOURCE_PASSABILITY_BRIDGE). With the
+	-- buildable answer and the radius already presented in source terms, the last expanded-map input
+	-- left in vanilla's fallback is the passable set itself: GetRandomPassableAroundOnMap resolves
+	-- map:GetRandomPassablePoint (Lua/Pathfinding.lua:168), and that native chooser reads the map's
+	-- own pathfinding field. Measured at 45S82E: identical center, radius and seed, yet the control's
+	-- own point is IMPASSABLE on the expanded map and only 4713 of 16384 samples over the same source
+	-- square are passable there against the control's 7576 (iter-011). Delegate the query to the
+	-- retained native backing, whose field IS the source's, via the same instance-shadow mechanism
+	-- the radius uses: it is a method lookup on the map table, so it reaches the engine-internal
+	-- caller that a mod-side global replacement cannot. A counter records consultations; zero is
+	-- legitimate (the fallback only runs when the buildable search around a marker fails).
+	if cfg_bool("PAIRING_SOURCE_PASSABILITY_BRIDGE", true) then
+		local retention = surface_map.SuperBigMapRetainedNativeSourceMap
+		local source_map = type(retention) == "table" and retention.map or nil
+		if type(source_map) ~= "table" or type(source_map.GetRandomPassablePoint) ~= "function"
+			or type(source_map.GetPassablePointNearby) ~= "function" then
+			RestoreSurfaceBuildableBridge()
+			error("retained native source map for the passage passability bridge is unavailable")
+		end
+		if rawget(surface_map, "GetRandomPassablePoint") ~= nil
+			or rawget(surface_map, "GetPassablePointNearby") ~= nil then
+			RestoreSurfaceBuildableBridge()
+			error("surface map already shadows the passable-point API; refusing to nest the source view")
+		end
+		surface_map.SuperBigMapPassagePassableBridgeCalls = 0
+		surface_map.SuperBigMapPassagePassableBridgeNearbyCalls = 0
+		local random_point_shadow, nearby_shadow
+		random_point_shadow = function(self, ...)
+			surface_map.SuperBigMapPassagePassableBridgeCalls =
+				(surface_map.SuperBigMapPassagePassableBridgeCalls or 0) + 1
+			return source_map:GetRandomPassablePoint(...)
+		end
+		-- GetRandomPassable (Lua/Pathfinding.lua:161) is the fallback's second half; it has never been
+		-- reached in a measured run, but leaving it on the expanded field would reintroduce exactly the
+		-- defect this bridge removes.
+		nearby_shadow = function(self, ...)
+			surface_map.SuperBigMapPassagePassableBridgeNearbyCalls =
+				(surface_map.SuperBigMapPassagePassableBridgeNearbyCalls or 0) + 1
+			return source_map:GetPassablePointNearby(...)
+		end
+		surface_map.GetRandomPassablePoint = random_point_shadow
+		surface_map.GetPassablePointNearby = nearby_shadow
+		restore_passability_bridge = function()
+			if rawget(surface_map, "GetRandomPassablePoint") == random_point_shadow then
+				surface_map.GetRandomPassablePoint = nil
+			end
+			if rawget(surface_map, "GetPassablePointNearby") == nearby_shadow then
+				surface_map.GetPassablePointNearby = nil
+			end
+		end
+		LoadingStep("native surface passage passability bridged to the retained source map", {
+			source_slot = tostring(retention.slot),
 		}, surface_map)
 	end
 	local successful = {}
@@ -9291,6 +9418,12 @@ local function PatchRandomMapGenerator()
 								"deferred underground passage bootstrap", map)
 							local bootstrap_results = PackValues(pcall(
 								BootstrapPassagesAndDeferWonders, env))
+							-- Safety net for the retained native backing: the bootstrap's own
+							-- restore path releases it, but an early "not ready" return or an
+							-- error before the bridge is installed never reaches that path, and a
+							-- temporary map must not outlive this procedure.
+							ReleaseRetainedNativeSourceMap(Global("MainMap"),
+								"passage bootstrap returned")
 							local bootstrap_ok = bootstrap_results[1] == true
 								and bootstrap_results[2] == true
 							local details = bootstrap_results[3]
