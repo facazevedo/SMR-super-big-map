@@ -110,6 +110,46 @@ PASSAGE_PIN_BLOCK = """		do
 			g_ParityPassagePin = __PIN_SEED__
 			g_ParityPassagePinAround = 0
 			g_ParityPassagePinPassable = 0
+			-- iter-007: record every redirected call so both twins' fallback arguments can be
+			-- compared.  Pure observation on the pinned path (no traceback, no extra draw), so
+			-- the pinned sequence and the dump stay exactly what an unrecorded pinned run gives.
+			g_ParityPassagePinCalls = {}
+
+			local function pin_point_text(p)
+				if p == nil or p == false then return tostring(p) end
+				local ok, x, y, z = pcall(function() return p:xyz() end)
+				if ok and x then
+					return string.format("(%s,%s,%s)", tostring(x), tostring(y), tostring(z))
+				end
+				return tostring(p)
+			end
+
+			local function pin_map_text(map)
+				if type(map) ~= "table" then return "map=" .. tostring(map) end
+				local size = "?"
+				local ok, w, h = pcall(function() return map:GetMapSize() end)
+				if ok then size = tostring(w) .. "x" .. tostring(h) end
+				local env = map.mapdata and map.mapdata.Environment or "?"
+				return string.format("slot=%s env=%s size=%s", tostring(map.slot), tostring(env), size)
+			end
+
+			local function pin_cursor()
+				local ok, last = pcall(function() return pin_random.rand_state:Last() end)
+				if ok then return tostring(last) end
+				return "?"
+			end
+
+			local function pin_record(kind, map, center, max_radius, min_radius, filter,
+					cursor_before, result)
+				local calls = rawget(_G, "g_ParityPassagePinCalls")
+				if type(calls) ~= "table" or #calls >= 64 then return end
+				calls[#calls + 1] = string.format(
+					"#%02d %s status=%s %s center=%s max_radius=%s min_radius=%s filter=%s "
+					.. "cursor=%s->%s -> %s",
+					#calls + 1, kind, tostring(rawget(_G, "g_ParityStatus")), pin_map_text(map),
+					pin_point_text(center), tostring(max_radius), tostring(min_radius),
+					type(filter), cursor_before, pin_cursor(), pin_point_text(result))
+			end
 
 			local original_around = rawget(_G, "GetRandomPassableAroundOnMap")
 			if type(original_around) ~= "function" then
@@ -118,11 +158,16 @@ PASSAGE_PIN_BLOCK = """		do
 			-- Signature per Lua/Pathfinding.lua:163.  Only the caller-supplied-nothing case is
 			-- redirected; a caller with its own stream (map generator rand, city rand) is untouched.
 			_G.GetRandomPassableAroundOnMap = function(map, center, max_radius, min_radius, random, filter, ...)
-				if random == nil then
-					random = pin_random
-					g_ParityPassagePinAround = g_ParityPassagePinAround + 1
+				if random ~= nil then
+					return original_around(map, center, max_radius, min_radius, random, filter, ...)
 				end
-				return original_around(map, center, max_radius, min_radius, random, filter, ...)
+				g_ParityPassagePinAround = g_ParityPassagePinAround + 1
+				local cursor_before = pin_cursor()
+				local result = original_around(map, center, max_radius, min_radius, pin_random,
+					filter, ...)
+				pin_record("around", map, center, max_radius, min_radius, filter, cursor_before,
+					result)
+				return result
 			end
 
 			local original_passable = rawget(_G, "GetRandomPassable")
@@ -2321,7 +2366,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 f"{underground_seed} != pin {int(pin_seed)}"
             )
 
-        pin_around, pin_passable = None, None
+        pin_around, pin_passable, pin_calls = None, None, None
         if passage_pin:
             # A silently uninstalled pin would produce a racing control that still looks like a
             # pinned run, so read the counters back and fail the twin when the block did not run.
@@ -2336,6 +2381,17 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             # Zero is legitimate at a coordinate where the buildable search never fails.
             log(f"  passage-fallback pin seed={pin_applied} redirected_around={pin_around} "
                 f"redirected_passable={pin_passable}")
+            # iter-007: the per-redirect record (arguments + returned point), so the control's
+            # and the expanded twin's fallback calls can be compared line by line.
+            _, pin_calls = cli.marshal_value(client, "g_ParityPassagePinCalls", timeout=60.0)
+            if isinstance(pin_calls, list) and pin_calls:
+                pin_calls_path = OUT / f"passagepincalls-{tag}.log"
+                pin_calls_path.write_text(
+                    "\n".join(str(line) for line in pin_calls) + "\n", encoding="utf-8"
+                )
+                for line in pin_calls:
+                    log(f"  pin call {line}")
+                log(f"  passage-fallback pin calls -> {pin_calls_path}")
 
         if decal_probe:
             # Diagnostic only: never fail the twin because the probe file lagged.
@@ -2464,6 +2520,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "passage_pin": int(PASSAGE_FALLBACK_PIN_SEED) if passage_pin else None,
             "passage_pin_around": pin_around,
             "passage_pin_passable": pin_passable,
+            "passage_pin_calls": pin_calls,
             "rows": rows,
             "csv": str(csv_path),
             "hexgrid": str(hex_path) if hexgrid else None,
