@@ -7433,6 +7433,71 @@ function WonderVerticalDiagnostics.WonderGameInitPending(wonder)
 	return type(threads) == "table" and wonder ~= nil and threads[wonder] ~= nil
 end
 
+-- Vanilla constructs its buried wonders while the underground map is still loading, so
+-- RunGameInitAfterLoadingMap (CommonLua/Core/map.lua) runs each wonder's GameInit -- including the
+-- PlayFX("Spawn", "start") that attaches its fog emitters -- before the finished map is handed to
+-- the game. Expanded generation materializes the same wonders after that boundary, so Object.new
+-- queues GameInit on a game-time thread instead, and that thread cannot run while the preparation
+-- transaction holds game time: the completed expanded underground then lacks attached objects the
+-- vanilla twin already carries. Run the queued GameInit here, once every wonder sits at its final
+-- pose on the final grids, making exactly the call the engine thread would have made later.
+function WonderVerticalDiagnostics.RunDeferredUndergroundWonderGameInit(map, reason)
+	local wonders = WonderVerticalDiagnostics.LiveDeferredUndergroundWonders(map)
+	local stats = {
+		reason = tostring(reason or "unspecified"),
+		wonders = #wonders,
+		ran = 0,
+		already_initialized = 0,
+		attaches_added = 0,
+		failures = 0,
+	}
+	local threads = Global("GameInitThreads")
+	local cancel_game_init = Global("CancelGameInit")
+	local is_valid = Global("IsValid")
+	if type(threads) ~= "table" or type(cancel_game_init) ~= "function"
+		or type(is_valid) ~= "function" then
+		stats.error = "engine GameInit queue is unavailable"
+		return false, stats
+	end
+	local function attach_count(wonder)
+		if type(wonder.GetAttaches) ~= "function" then return 0 end
+		local attaches = SafeCall(wonder.GetAttaches, wonder)
+		return type(attaches) == "table" and #attaches or 0
+	end
+	local failure_details = {}
+	for _, wonder in ipairs(wonders) do
+		local class_name = tostring(wonder.class or "?")
+		if not SafeCall(is_valid, wonder) then
+			failure_details[#failure_details + 1] = class_name .. " is not a valid object"
+		elseif threads[wonder] == nil then
+			-- Either GameInit already ran (hot reload, legacy save) or the class defines none.
+			stats.already_initialized = stats.already_initialized + 1
+		elseif type(wonder.GameInit) ~= "function" then
+			failure_details[#failure_details + 1] = class_name .. " has no GameInit"
+		else
+			local before = attach_count(wonder)
+			cancel_game_init(wonder)
+			if threads[wonder] ~= nil then
+				failure_details[#failure_details + 1] =
+					class_name .. " kept its queued GameInit thread"
+			else
+				local ok, err = pcall(wonder.GameInit, wonder)
+				if ok then
+					stats.ran = stats.ran + 1
+					stats.attaches_added = stats.attaches_added + (attach_count(wonder) - before)
+				else
+					failure_details[#failure_details + 1] =
+						class_name .. " GameInit failed: " .. tostring(err)
+				end
+			end
+		end
+	end
+	stats.failures = #failure_details
+	stats.error = table.concat(failure_details, " | ")
+	LoadingStep("underground buried wonder spawn lifecycle completed", stats, map)
+	return stats.failures == 0, stats
+end
+
 function WonderVerticalDiagnostics.WonderScenarioExists(wonder)
 	local list_name = wonder and wonder.sequence_list
 	local sequence = wonder and wonder.sequence
@@ -11330,6 +11395,25 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			end
 			-- (Buildable + passability rebuilds moved ABOVE the density suite -- its
 			-- buildable-floor-only pools need the live grid.)
+			-- Every buried wonder now sits at its final pose on the final grids and carries its
+			-- rare anomaly, which is the lifecycle point at which vanilla has already run the
+			-- wonder's GameInit. Complete that same spawn lifecycle before the map is reported
+			-- prepared, so the finished underground is not missing objects GameInit attaches.
+			do
+				SetLoadingPhase("Completing buried-wonder spawn effects")
+				local wonder_gameinit_token = LoadingBegin(
+					"underground run buried wonder GameInit", map)
+				local wonder_gameinit_ok, wonder_gameinit_stats =
+					WonderVerticalDiagnostics.RunDeferredUndergroundWonderGameInit(
+						map, "after final grids, anomalies and enrichment placement")
+				LoadingEnd(wonder_gameinit_token, wonder_gameinit_stats,
+					wonder_gameinit_ok == true)
+				if wonder_gameinit_ok ~= true then
+					error("deferred underground wonder GameInit failed: "
+						.. tostring(wonder_gameinit_stats and wonder_gameinit_stats.error
+							or "unknown error"))
+				end
+			end
 		end)
 		-- A failure anywhere between decoration movement and marker verification must still balance
 		-- the caller-owned pass transaction before diagnostics or lifecycle cleanup touch the map.
