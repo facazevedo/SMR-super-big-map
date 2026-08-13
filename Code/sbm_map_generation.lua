@@ -9801,8 +9801,125 @@ local function PatchRandomMapGenerator()
 				error("prefab raster single-task transaction unavailable: "
 					.. tostring(serial_install_error))
 			end
+
+			-- NATIVE MARK-GRID PROJECTION (config UNDERGROUND_MARK_GRID_BACKING_SCALE). The
+			-- generator sizes every working grid from its Lua-visible map size -- 614400/800 = 768
+			-- cells here -- but the NATIVE prefab rasterizer and the native GridGetMark reader
+			-- project a grid over the map's PHYSICAL extent, 819200 on this expanded backing. The
+			-- placement-mark grid therefore quantizes at 1066.67 wu per cell instead of vanilla's
+			-- 800, and Proc_RemoveOverlappedObjects reads a different cell than the vanilla twin
+			-- for objects near a prefab-mark boundary (measured: the nonzero-mark bounding box is
+			-- exactly 3/4 of vanilla's, and the native reader agrees with a backing-view sample
+			-- 2712/3000 against the source view's 8/3000). Allocate the mark grid at backing scale
+			-- (819200/800 = 1024) for the two ApplyTerrain procedures only: the native cell step is
+			-- then exactly vanilla's 800 wu, the generated source view occupies the lower 768x768
+			-- corner, and the marks quantize exactly as they do on a vanilla map. The mark grid is
+			-- never combined with another grid -- it is only rasterized into, sampled through
+			-- GridGetMark and freed -- so its dimensions are free to differ from work_size.
+			local mark_grid_class = Global("RandomMapGenerator")
+			local mark_grid_env = type(do_generate_closure_env) == "table" and do_generate_closure_env or nil
+			local mark_grid_saved_new_compute, mark_grid_new_compute_wrapper
+			local mark_grid_saved_proc_start, mark_grid_saved_proc_end
+			local mark_grid_proc_start_wrapper, mark_grid_proc_end_wrapper
+			local mark_grid_stats = { phases = 0, scaled = 0, unscaled = 0, cells = "none" }
+			if cfg_bool("UNDERGROUND_MARK_GRID_BACKING_SCALE", true)
+				and mark_grid_env and type(mark_grid_class) == "table"
+				and type(saved_map_width) == "number" and saved_map_width > gen_world_w
+				and type(saved_map_height) == "number" and saved_map_height > gen_world_h
+				and gen_world_w > 0 and gen_world_h > 0 then
+				mark_grid_saved_new_compute =
+					do_generate_closure_global("NewComputeGrid", Global("NewComputeGrid"))
+				mark_grid_saved_proc_start = mark_grid_class.ProcStart
+				mark_grid_saved_proc_end = mark_grid_class.ProcEnd
+				if type(mark_grid_saved_new_compute) ~= "function"
+					or type(mark_grid_saved_proc_start) ~= "function"
+					or type(mark_grid_saved_proc_end) ~= "function" then
+					error("underground mark-grid projection API is unavailable")
+				end
+				-- Stock ProcInvoke brackets every generator procedure with ProcStart/ProcEnd, and
+				-- apply_terrain -- the only creator of the mark grid -- runs inside exactly these
+				-- two tags. Scale grid allocations for this generator instance only while one of
+				-- them is on the stack; every other allocation passes through untouched.
+				local mark_phase_active = false
+				local function mark_phase_tag(tag)
+					return tag == "ApplyTerrain" or tag == "ApplyTerrainMarkOnly"
+				end
+				mark_grid_new_compute_wrapper = function(width, height, ...)
+					if mark_phase_active
+						and type(width) == "number" and type(height) == "number"
+						and width > 0 and height > 0
+						and (width * saved_map_width) % gen_world_w == 0
+						and (height * saved_map_height) % gen_world_h == 0 then
+						local scaled_width = math.floor((width * saved_map_width) / gen_world_w)
+						local scaled_height = math.floor((height * saved_map_height) / gen_world_h)
+						if scaled_width > width and scaled_height > height then
+							mark_grid_stats.scaled = mark_grid_stats.scaled + 1
+							mark_grid_stats.cells = tostring(width) .. "x" .. tostring(height)
+								.. "->" .. tostring(scaled_width) .. "x" .. tostring(scaled_height)
+							return mark_grid_saved_new_compute(scaled_width, scaled_height, ...)
+						end
+					end
+					mark_grid_stats.unscaled = mark_grid_stats.unscaled + 1
+					return mark_grid_saved_new_compute(width, height, ...)
+				end
+				mark_grid_proc_start_wrapper = function(generator, tag, ...)
+					if generator == self and mark_phase_tag(tag) then
+						mark_phase_active = true
+						mark_grid_stats.phases = mark_grid_stats.phases + 1
+					end
+					return mark_grid_saved_proc_start(generator, tag, ...)
+				end
+				mark_grid_proc_end_wrapper = function(generator, tag, ...)
+					if generator == self and mark_phase_tag(tag) then
+						mark_phase_active = false
+					end
+					return mark_grid_saved_proc_end(generator, tag, ...)
+				end
+				mark_grid_class.ProcStart = mark_grid_proc_start_wrapper
+				mark_grid_class.ProcEnd = mark_grid_proc_end_wrapper
+				local mark_install_ok, mark_install_error = pcall(function()
+					mark_grid_env.NewComputeGrid = mark_grid_new_compute_wrapper
+				end)
+				if not mark_install_ok
+					or do_generate_closure_global("NewComputeGrid", nil) ~= mark_grid_new_compute_wrapper then
+					mark_grid_class.ProcStart = mark_grid_saved_proc_start
+					mark_grid_class.ProcEnd = mark_grid_saved_proc_end
+					pcall(function() mark_grid_env.NewComputeGrid = mark_grid_saved_new_compute end)
+					mark_grid_new_compute_wrapper = nil
+					error("underground mark-grid projection override could not be installed: "
+						.. tostring(mark_install_error))
+				end
+			end
+
 			local results = { pcall(CallWithClutterCapture, map,
 				call_original_do_generate, self, map, ...) }
+
+			-- Restore the grid allocator and both procedure boundaries on every path, exactly as
+			-- they were, before any other expanded-map work can allocate a generator grid.
+			if mark_grid_new_compute_wrapper then
+				local mark_restore_ok, mark_restore_error = pcall(function()
+					mark_grid_env.NewComputeGrid = mark_grid_saved_new_compute
+				end)
+				if mark_grid_class.ProcStart == mark_grid_proc_start_wrapper then
+					mark_grid_class.ProcStart = mark_grid_saved_proc_start
+				end
+				if mark_grid_class.ProcEnd == mark_grid_proc_end_wrapper then
+					mark_grid_class.ProcEnd = mark_grid_saved_proc_end
+				end
+				if not mark_restore_ok
+					or do_generate_closure_global("NewComputeGrid", nil) ~= mark_grid_saved_new_compute then
+					error("underground mark-grid projection restoration failed: "
+						.. tostring(mark_restore_error))
+				end
+				LoadingStep("underground mark grid allocated at backing scale", {
+					mark_phases = mark_grid_stats.phases,
+					scaled_grids = mark_grid_stats.scaled,
+					unscaled_grids = mark_grid_stats.unscaled,
+					grid_cells = mark_grid_stats.cells,
+					source_world = gen_world_w,
+					backing_world = saved_map_width,
+				}, map)
+			end
 			local serial_restore_ok, serial_restore_error = pcall(function()
 				raster_const.PrefabRasterParallelDiv = saved_raster_parallel_div
 				if raster_const.PrefabRasterParallelDiv ~= saved_raster_parallel_div then

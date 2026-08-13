@@ -527,6 +527,16 @@ config.PairingSurfaceBuildableRebuild = true
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
 -- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
 config.PassagePadSmoothing = true
+-- NATIVE MARK-GRID PROJECTION (sbm_map_generation DoGenerate, underground in-place path). The
+-- generator sizes its working grids from the Lua-visible source size (614400/800 = 768 cells),
+-- but the NATIVE prefab rasterizer and the native GridGetMark reader project a grid over the
+-- map's PHYSICAL extent -- 819200 on the expanded backing -- so the placement-mark grid quantizes
+-- at 1066.67 wu per cell instead of vanilla's 800 and Proc_RemoveOverlappedObjects decides
+-- boundary objects differently from a vanilla map. When true, the two ApplyTerrain procedures
+-- allocate their mark grid at backing scale (819200/800 = 1024 cells) so the native cell step is
+-- exactly vanilla's 800 wu, with the generated source view in the lower 768x768 corner. The mark
+-- grid is never combined with another grid, so no other generator grid is affected.
+config.UndergroundMarkGridBackingScale = true
 -- HEIGHT BUDGET (sbm_terrain_copy stretch_one). The height grid is 16-bit (0..65535); on
 -- high-relief maps the x4/3 height scale overflows the ceiling (60657*4/3 = 80876) and the
 -- tallest peaks clip into flat plateaus. Two remedies (user decision "shift + adaptive
@@ -811,6 +821,8 @@ C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
 	and as_bool(config.PairingSurfaceBuildableRebuild)
 C.PASSAGE_PAD_SMOOTHING = expansion_step_11
 	and as_bool(config.PassagePadSmoothing)
+C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
+	and as_bool(config.UndergroundMarkGridBackingScale)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
