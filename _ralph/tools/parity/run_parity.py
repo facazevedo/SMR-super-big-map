@@ -69,6 +69,75 @@ UNDERGROUND_PIN_BLOCK = """		do
 			end
 		end"""
 
+# Seed of the dedicated passage-fallback stream installed by PASSAGE_PIN_BLOCK.  Any value is
+# equally valid (see that block's rationale); this one is fixed forever so every run and both
+# twins draw the same sequence.
+PASSAGE_FALLBACK_PIN_SEED = 301460102
+
+# Opt-in with the "passagepin" argument.  THE control pin, not a probe.  iter-004 proved the
+# 45S82E variant flip is thread interleaving on the shared session stream: 753 SessionRandom
+# draws happen during a control run, 752 of them from city threads started by CityStart
+# (InitApplicantPool, SurfaceDeposit:Init, rivals, geysers, meteors, vegetation, dust storms),
+# and exactly ONE from the map generator's own thread - the second underground passage's
+# fallback, Pathfinding.lua:168 <- SurfacePassage.lua:119 <- RandomMapGen_PlaceArtefacts_Passages.
+# Whether the generator thread reaches that draw before or after the applicant pool decides which
+# value it gets (variant A = draw #11 -> 2067812733 -> site (211000,171468); variant B = draw #738
+# -> 228955110 -> site (208500,463310)), and every later session consumer shifts with it, which is
+# why SurfaceDeposit rows differ too.  artifacts/draw_probe_verdict.md.
+#
+# The pin takes that one draw OFF the shared stream: GetRandomPassableAroundOnMap takes a `random`
+# parameter and only falls back to SessionRandom when the caller passes none (Pathfinding.lua:163-170),
+# and SurfacePassage.lua:119 passes none, so supplying a dedicated fixed-seed GameRandom removes the
+# race without touching any other consumer - the remaining 752 draws keep their order among
+# themselves because they are issued by the same city threads in the same order.  The resulting
+# passage site is a site vanilla itself can produce (the draw is an ordinary GameRandom value fed to
+# the stock map:GetRandomPassablePoint), so the control stays a valid vanilla map; what stops being
+# valid is only its dependence on thread timing.  Applied symmetrically to BOTH twins, the two sides
+# feed the same value to the same stock chooser.
+#
+# GetRandomPassable (Pathfinding.lua:1-6, reached only when the around-variant returns nothing, and
+# never once in the probed runs) draws from city:Random(); it is pinned the same way by reproducing
+# its two-line body against the dedicated stream, guarded so any surprise there fails loudly instead
+# of silently reintroducing a shared-stream draw.
+PASSAGE_PIN_BLOCK = """		do
+			if type(GameRandom) ~= "table" or type(GameRandom.new) ~= "function" then
+				error("GameRandom unavailable; cannot pin the passage fallback")
+			end
+			local pin_random = GameRandom:new(nil, __PIN_SEED__)
+			if type(pin_random) ~= "table" or type(pin_random.Random) ~= "function" then
+				error("could not build the dedicated passage-fallback stream")
+			end
+			g_ParityPassagePin = __PIN_SEED__
+			g_ParityPassagePinAround = 0
+			g_ParityPassagePinPassable = 0
+
+			local original_around = rawget(_G, "GetRandomPassableAroundOnMap")
+			if type(original_around) ~= "function" then
+				error("GetRandomPassableAroundOnMap unavailable; cannot pin the passage fallback")
+			end
+			-- Signature per Lua/Pathfinding.lua:163.  Only the caller-supplied-nothing case is
+			-- redirected; a caller with its own stream (map generator rand, city rand) is untouched.
+			_G.GetRandomPassableAroundOnMap = function(map, center, max_radius, min_radius, random, filter, ...)
+				if random == nil then
+					random = pin_random
+					g_ParityPassagePinAround = g_ParityPassagePinAround + 1
+				end
+				return original_around(map, center, max_radius, min_radius, random, filter, ...)
+			end
+
+			local original_passable = rawget(_G, "GetRandomPassable")
+			if type(original_passable) ~= "function" then
+				error("GetRandomPassable unavailable; cannot pin the passage fallback")
+			end
+			_G.GetRandomPassable = function(map)
+				if type(map) == "table" and type(map.GetRandomPassablePoint) == "function" then
+					g_ParityPassagePinPassable = g_ParityPassagePinPassable + 1
+					return map:GetRandomPassablePoint(pin_random:Random())
+				end
+				error("passage pin: GetRandomPassable called with an unusable map")
+			end
+		end"""
+
 TWIN_SEED_BLOCK = """		if type(SBM.MapGeneration) == "table"
 			and type(SBM.MapGeneration.SetTwinUndergroundSeedForTest) == "function" then
 			local applied, why = SBM.MapGeneration.SetTwinUndergroundSeedForTest(
@@ -2127,7 +2196,8 @@ PROC_TRACE_BLOCK = """		do
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
-             entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False):
+             entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
+             passage_pin=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2159,6 +2229,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     extras = []
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
+    # Before the probes, so a probe that wraps the same globals observes the pinned call.
+    if passage_pin:
+        extras.append(
+            PASSAGE_PIN_BLOCK.replace("__PIN_SEED__", str(int(PASSAGE_FALLBACK_PIN_SEED)))
+        )
     if entrance_audit:
         extras.append(ENTRANCE_AUDIT_BLOCK)
     probe_path = OUT / f"probe-{tag}.log"
@@ -2245,6 +2320,22 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 f"vanilla underground pin not honoured ({tag}): holder seed "
                 f"{underground_seed} != pin {int(pin_seed)}"
             )
+
+        pin_around, pin_passable = None, None
+        if passage_pin:
+            # A silently uninstalled pin would produce a racing control that still looks like a
+            # pinned run, so read the counters back and fail the twin when the block did not run.
+            _, pin_applied = cli.marshal_value(client, "g_ParityPassagePin", timeout=60.0)
+            _, pin_around = cli.marshal_value(client, "g_ParityPassagePinAround", timeout=60.0)
+            _, pin_passable = cli.marshal_value(client, "g_ParityPassagePinPassable", timeout=60.0)
+            if pin_applied != int(PASSAGE_FALLBACK_PIN_SEED):
+                raise RuntimeError(
+                    f"passage-fallback pin never installed ({tag}): g_ParityPassagePin="
+                    f"{pin_applied!r}"
+                )
+            # Zero is legitimate at a coordinate where the buildable search never fails.
+            log(f"  passage-fallback pin seed={pin_applied} redirected_around={pin_around} "
+                f"redirected_passable={pin_passable}")
 
         if decal_probe:
             # Diagnostic only: never fail the twin because the probe file lagged.
@@ -2370,6 +2461,9 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "surface_seed": surface_seed,
             "underground_seed": underground_seed,
             "underground_pin": None if (expand or pin_seed is None) else int(pin_seed),
+            "passage_pin": int(PASSAGE_FALLBACK_PIN_SEED) if passage_pin else None,
+            "passage_pin_around": pin_around,
+            "passage_pin_passable": pin_passable,
             "rows": rows,
             "csv": str(csv_path),
             "hexgrid": str(hex_path) if hexgrid else None,
@@ -2405,6 +2499,7 @@ def main():
         proctrace = "proctrace" in sys.argv[5:]
         passprobe = "passprobe" in sys.argv[5:]
         drawprobe = "drawprobe" in sys.argv[5:]
+        passagepin = "passagepin" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -2417,13 +2512,13 @@ def main():
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
-            f"pass_probe={passprobe} draw_probe={drawprobe} hexgrid={hexgrid} "
-            f"lat={lat} lon={lon} ===")
+            f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
+            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
-                        pass_probe=passprobe, draw_probe=drawprobe)
+                        pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin)
         log(f"result: {json.dumps(info)}")
         return
 
