@@ -35,6 +35,7 @@ HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 GEN_TEMPLATE = HERE / "gen_template.lua"
 DUMP_TEMPLATE = HERE / "dump_template.lua"
+HEXGRID_TEMPLATE = HERE / "hexgrid_template.lua"
 
 # The stock underground seed is drawn from AsyncRand inside FillRandomMapGen
 # (ModTools PreGameMenus.lua:166, because MapData["BlankUnderground_0X"].map_randomizeseed
@@ -405,7 +406,7 @@ DECAL_PROBE_BLOCK = """		do
 
 
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
-             pin_seed=None, decal_probe=False):
+             pin_seed=None, decal_probe=False, hexgrid=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -504,6 +505,28 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         _, rows = cli.marshal_value(client, "g_ParityDumpRows", timeout=60.0)
         log(f"dump complete ({tag}): {rows} objects -> {csv_path}")
 
+        hex_path = OUT / f"hexgrid-{tag}.txt"
+        if hexgrid:
+            # Read-only, and deliberately AFTER the object dump so the dump stays
+            # byte-comparable with runs that did not ask for the census.
+            if hex_path.exists():
+                hex_path.unlink()
+            hex_src = HEXGRID_TEMPLATE.read_text(encoding="utf-8")
+            hex_src = hex_src.replace("__OUT_PATH__", cli.lua_path(hex_path))
+            hex_script = OUT / f"hexgrid-{tag}.lua"
+            hex_script.write_text(hex_src, encoding="utf-8")
+            load_err, prose = cli.load_lua_file(client, hex_script, timeout=60.0)
+            if load_err:
+                raise RuntimeError(f"hexgrid census failed to load: {load_err[2]}")
+            status = poll_status(
+                client, "g_ParityHexStatus", {"complete"}, {"error"}, 900, f"hexgrid-{tag}"
+            )
+            if status != "complete":
+                _, detail = cli.marshal_value(client, "g_ParityHexError", timeout=60.0)
+                raise RuntimeError(f"hexgrid census failed ({tag}): {detail}")
+            _, buckets = cli.marshal_value(client, "g_ParityHexBuckets", timeout=60.0)
+            log(f"hexgrid census complete ({tag}): {buckets} buckets -> {hex_path}")
+
         try:
             client.evaluate("quit()", timeout=5.0)
         except Exception:
@@ -516,6 +539,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "underground_pin": None if (expand or pin_seed is None) else int(pin_seed),
             "rows": rows,
             "csv": str(csv_path),
+            "hexgrid": str(hex_path) if hexgrid else None,
         }
     finally:
         time.sleep(2)
@@ -539,6 +563,7 @@ def main():
         seed = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4] not in ("-", "") else None
         serial = "serial" in sys.argv[5:]
         probe = "probe" in sys.argv[5:]
+        hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
         pin = None if expand or "nopin" in sys.argv[5:] else (seed or REFERENCE_UNDERGROUND_SEED)
@@ -547,9 +572,10 @@ def main():
             if extra.startswith("lat="): lat = int(extra[4:])
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
-            f"serial_raster={serial} decal_probe={probe} lat={lat} lon={lon} ===")
+            f"serial_raster={serial} decal_probe={probe} hexgrid={hexgrid} "
+            f"lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
-                        pin_seed=pin, decal_probe=probe)
+                        pin_seed=pin, decal_probe=probe, hexgrid=hexgrid)
         log(f"result: {json.dumps(info)}")
         return
 
@@ -565,10 +591,11 @@ def main():
         log(f"metadata -> {meta_path}")
         return
 
+    hexgrid = "hexgrid" in sys.argv[1:]
     log(f"=== 30S146E parity run: VANILLA twin (underground pinned to "
-        f"{REFERENCE_UNDERGROUND_SEED}) ===")
+        f"{REFERENCE_UNDERGROUND_SEED}, hexgrid={hexgrid}) ===")
     vanilla = run_twin("vanilla", expand=False, twin_seed=None,
-                       pin_seed=REFERENCE_UNDERGROUND_SEED)
+                       pin_seed=REFERENCE_UNDERGROUND_SEED, hexgrid=hexgrid)
 
     if not isinstance(vanilla["underground_seed"], (int, float)):
         raise RuntimeError(
@@ -576,7 +603,8 @@ def main():
         )
 
     log("=== 30S146E parity run: EXPANDED twin ===")
-    expanded = run_twin("expanded", expand=True, twin_seed=int(vanilla["underground_seed"]))
+    expanded = run_twin("expanded", expand=True, twin_seed=int(vanilla["underground_seed"]),
+                        hexgrid=hexgrid)
 
     report = {"vanilla": vanilla, "expanded": expanded}
     (OUT / "run_metadata.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
