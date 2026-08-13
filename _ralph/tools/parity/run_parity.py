@@ -416,6 +416,139 @@ FIELD_PROBE_BLOCK = """		do
 			end
 		end"""
 
+# Opt-in with the "slotprobe" argument.  iter-011 proved the defect is the passable SET: the
+# expanded surface map's own native pathfinding field answers the fallback in source coordinates.
+# The named fix (route 2) is to ask the question on a map whose passable set IS the native source's
+# - i.e. keep the temporary source surface map loaded through the passage bootstrap and shadow
+# GetRandomPassablePoint on the surface-map INSTANCE to delegate to it.  Two facts must hold for
+# that to be writable, and neither has been measured:
+#   (A) SLOT LIFETIME - a map slot must be available to hold the retained source map at the moment
+#       of the fallback call.  The source unload (sbm_map_generation.lua ~4907) is documented as
+#       "keeps the slot available for the vanilla additional-map/underground phase", so the count
+#       of slots and their occupancy at the fallback decide whether retention needs to fight the
+#       underground phase for a slot or can simply use another one.
+#   (B) INSTANCE HONOURING - the native chooser must answer for the map instance it is called on,
+#       not for the current map.  map.lua binds these as raw native functions taking the map as
+#       first argument (`IsPassable = terrain.IsPassable`, and LuaExportedDocs/Game/realm.lua:57
+#       documents `GetPassablePointNearby(map, ...)`), and Map:Init stores `self[true] = self.slot`
+#       for the native side, which is static evidence but not proof.
+# This block measures both, read-only, in ONE run: it records config.MapSlots, the current slot,
+# and every occupied/free slot with its environment and extent, then asks EVERY other loaded map
+# the identical passability questions the fallback asks (IsPassable at the center, the seedless
+# GetPassablePointNearby, and the chooser at fixed seeds) side by side with the call's own map.
+# Different answers from a co-loaded map prove (B) - the query follows the instance - and identical
+# answers would kill route 2 outright.  It draws from no stream and calls through unchanged, so a
+# probed dump must stay byte-identical to its unprobed pinned sibling (the inertness check).
+SLOT_PROBE_SEEDS = [777998755, 1, 42]
+
+SLOT_PROBE_BLOCK = """		do
+			local slot_seeds = {__SLOT_SEEDS__}
+			g_ParitySlotProbe = {}
+			g_ParitySlotProbeCalls = 0
+
+			local function slot_point_text(p)
+				if p == nil or p == false then return tostring(p) end
+				local ok, x, y = pcall(function() return p:xyz() end)
+				if ok and x then return string.format("(%s,%s)", tostring(x), tostring(y)) end
+				return tostring(p)
+			end
+
+			local function slot_call(fn)
+				local ok, value = pcall(fn)
+				if not ok then return "ERROR " .. tostring(value) end
+				return slot_point_text(value)
+			end
+
+			local slot_original = rawget(_G, "GetRandomPassableAroundOnMap")
+			if type(slot_original) ~= "function" then
+				error("GetRandomPassableAroundOnMap unavailable; cannot probe the map slots")
+			end
+			_G.GetRandomPassableAroundOnMap = function(map, center, max_radius, min_radius, random,
+					filter, ...)
+				local records = rawget(_G, "g_ParitySlotProbe")
+				if random == nil and type(map) == "table" and type(records) == "table"
+					and (rawget(_G, "g_ParitySlotProbeCalls") or 0) < 2
+					and type(map.GetRandomPassablePoint) == "function" then
+					g_ParitySlotProbeCalls = (rawget(_G, "g_ParitySlotProbeCalls") or 0) + 1
+					local call_no = rawget(_G, "g_ParitySlotProbeCalls")
+					local function record(...)
+						records[#records + 1] = string.format(...)
+					end
+					-- Exactly the expression Pathfinding.lua:165 uses, so the radius is the one the
+					-- real call will resolve (on an expanded twin: the mod's source-extent shadow).
+					local resolved_max = max_radius or Max(map:GetMapSize()) / 2
+					local resolved_min = min_radius or 0
+					local maps = rawget(_G, "Maps")
+					local cfg = rawget(_G, "config")
+					local max_slots = type(cfg) == "table" and cfg.MapSlots or nil
+					local get_current = rawget(_G, "GetCurrentMapSlot")
+					local current_slot = "?"
+					if type(get_current) == "function" then
+						local ok_slot, slot_value = pcall(get_current)
+						if ok_slot then current_slot = tostring(slot_value) end
+					end
+					record("call#%02d status=%s call_map_slot=%s map_slots=%s current_slot=%s "
+						.. "current_is_call_map=%s main_is_call_map=%s center=%s max_radius=%s "
+						.. "min_radius=%s", call_no, tostring(rawget(_G, "g_ParityStatus")),
+						tostring(map.slot), tostring(max_slots), current_slot,
+						tostring(rawget(_G, "CurrentMap") == map),
+						tostring(rawget(_G, "MainMap") == map), slot_point_text(center),
+						tostring(resolved_max), tostring(resolved_min))
+					record("  call#%02d modstate radius=%s radius_calls=%s pending_buildable=%s "
+						.. "gen_world=%s gen_tiles=%s", call_no,
+						tostring(rawget(map, "SuperBigMapPassageFallbackRadius")),
+						tostring(rawget(map, "SuperBigMapPassageFallbackRadiusCalls")),
+						type(rawget(map, "SuperBigMapPendingNativeSurfacePassageBuildable")),
+						tostring(rawget(map, "SuperBigMapGeneratorWidth")),
+						tostring(rawget(map, "SuperBigMapGeneratorWidthTiles")))
+					local others, free = {}, {}
+					local slot_limit = tonumber(max_slots) or 16
+					for slot = 1, slot_limit do
+						local m = type(maps) == "table" and maps[slot] or nil
+						if m == nil then
+							free[#free + 1] = tostring(slot)
+						else
+							local size = "?"
+							local ok_size, w, h = pcall(function() return m:GetMapSize() end)
+							if ok_size then size = tostring(w) .. "x" .. tostring(h) end
+							local md = type(m) == "table" and m.mapdata or nil
+							record("  call#%02d slot%02d map=%s env=%s size=%s mapdata=%sx%s "
+								.. "changing=%s is_call_map=%s", call_no, slot,
+								tostring(type(m) == "table" and m.name or m),
+								tostring(md and md.Environment), size,
+								tostring(md and md.Width), tostring(md and md.Height),
+								tostring(type(m) == "table" and m.changing), tostring(m == map))
+							if m ~= map then others[#others + 1] = { slot, m } end
+						end
+					end
+					record("  call#%02d free_slots=%s others=%s", call_no,
+						#free > 0 and table.concat(free, ",") or "none", tostring(#others))
+					-- (B): the identical questions on the call's map and on every co-loaded map.
+					local function ask(label, m)
+						record("  call#%02d %s ispassable_center=%s nearby=%s", call_no, label,
+							slot_call(function() return m:IsPassable(center) and true or false end),
+							slot_call(function()
+								return m:GetPassablePointNearby(center, 0, resolved_max, resolved_min)
+							end))
+						for i = 1, #slot_seeds do
+							local seed = slot_seeds[i]
+							record("  call#%02d %s seed=%s -> %s", call_no, label, tostring(seed),
+								slot_call(function()
+									return m:GetRandomPassablePoint(center, resolved_max,
+										resolved_min, seed, 0)
+								end))
+						end
+					end
+					ask(string.format("callmap(slot=%s)", tostring(map.slot)), map)
+					for i = 1, #others do
+						local slot, m = others[i][1], others[i][2]
+						ask(string.format("other(slot=%s)", tostring(slot)), m)
+					end
+				end
+				return slot_original(map, center, max_radius, min_radius, random, filter, ...)
+			end
+		end"""
+
 TWIN_SEED_BLOCK = """		if type(SBM.MapGeneration) == "table"
 			and type(SBM.MapGeneration.SetTwinUndergroundSeedForTest) == "function" then
 			local applied, why = SBM.MapGeneration.SetTwinUndergroundSeedForTest(
@@ -2475,7 +2608,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
-             passage_pin=False, point_probe=False, field_probe=False):
+             passage_pin=False, point_probe=False, field_probe=False, slot_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2531,6 +2664,12 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                      ", ".join(str(int(s)) for s in PROBE_FIELD_RADIUS_SEEDS))
             .replace("__FIELD_STEP__", str(int(PROBE_FIELD_LATTICE_STEP)))
             .replace("__FIELD_SPAN__", str(int(PROBE_FIELD_LATTICE_SPAN)))
+        )
+    if slot_probe:
+        extras.append(
+            SLOT_PROBE_BLOCK.replace(
+                "__SLOT_SEEDS__", ", ".join(str(int(s)) for s in SLOT_PROBE_SEEDS)
+            )
         )
     if entrance_audit:
         extras.append(ENTRANCE_AUDIT_BLOCK)
@@ -2679,6 +2818,23 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             )
             log(f"field probe: {field_calls} call(s), {len(field_rows or [])} records "
                 f"-> {field_path}")
+
+        if slot_probe:
+            # Same contract as the point/field probes: a probe that never saw the redirected call
+            # would produce an empty slot picture that reads like a measurement, so fail the twin.
+            _, slot_calls = cli.marshal_value(client, "g_ParitySlotProbeCalls", timeout=60.0)
+            _, slot_rows = cli.marshal_value(client, "g_ParitySlotProbe", timeout=120.0)
+            if not slot_calls:
+                raise RuntimeError(
+                    f"slot probe never saw a caller-less fallback call ({tag}): "
+                    f"g_ParitySlotProbeCalls={slot_calls!r}"
+                )
+            slot_path = OUT / f"slotprobe-{tag}.log"
+            slot_path.write_text(
+                "\n".join(str(line) for line in (slot_rows or [])) + "\n", encoding="utf-8"
+            )
+            log(f"slot probe: {slot_calls} call(s), {len(slot_rows or [])} records "
+                f"-> {slot_path}")
 
         if decal_probe:
             # Diagnostic only: never fail the twin because the probe file lagged.
@@ -2846,6 +3002,7 @@ def main():
         passagepin = "passagepin" in sys.argv[5:]
         pointprobe = "pointprobe" in sys.argv[5:]
         fieldprobe = "fieldprobe" in sys.argv[5:]
+        slotprobe = "slotprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -2859,14 +3016,14 @@ def main():
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
             f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
-            f"point_probe={pointprobe} field_probe={fieldprobe} hexgrid={hexgrid} "
-            f"lat={lat} lon={lon} ===")
+            f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
+            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
-                        point_probe=pointprobe, field_probe=fieldprobe)
+                        point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe)
         log(f"result: {json.dumps(info)}")
         return
 
