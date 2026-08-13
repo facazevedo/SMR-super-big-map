@@ -5659,7 +5659,12 @@ local function BootstrapPassagesAndDeferWonders(env)
 		error("surface passage buildable bridge copy failed: " .. tostring(copy_error))
 	end
 	surface_map.buildable.z_grid = padded_surface_grid
+	local restore_fallback_radius
 	local function RestoreSurfaceBuildableBridge()
+		if restore_fallback_radius then
+			restore_fallback_radius()
+			restore_fallback_radius = nil
+		end
 		surface_map.buildable.z_grid = stock_surface_grid
 		SuperBigMap.FreeOwnedGrid(padded_surface_grid)
 		SuperBigMap.FreeOwnedGrid(pending_surface_buildable.grid)
@@ -5670,6 +5675,71 @@ local function BootstrapPassagesAndDeferWonders(env)
 		source_width = source_hex_w, source_height = source_hex_h,
 		expanded_width = expanded_hex_w, expanded_height = expanded_hex_h,
 	}, surface_map)
+	-- SOURCE-SIZED FALLBACK SEARCH RADIUS (config PAIRING_SOURCE_FALLBACK_RADIUS). When the
+	-- buildable search around a marker fails, vanilla FindPassageSpawnPos
+	-- (Lua/Buildings/SurfacePassage.lua:119) retries from GetRandomPassableAroundOnMap(map, pos)
+	-- with no radius and Lua/Pathfinding.lua:165 defaults max_radius to Max(map:GetMapSize())/2.
+	-- On this map that is the EXPANDED extent, so the same marker and the same random value pick a
+	-- point up to a third further out than vanilla would - and the bridge just installed makes
+	-- everything outside the retained source square unbuildable, so such a point can only fail,
+	-- burn another draw and land the passage at a site vanilla could not choose. This whole
+	-- selection runs in source space; the radius must be the source map's too. Scoped to the
+	-- bootstrap window and to this map, and restored by RestoreSurfaceBuildableBridge.
+	if cfg_bool("PAIRING_SOURCE_FALLBACK_RADIUS", true) then
+		local height_tile_size = tonumber(const_tbl.HeightTileSize)
+		local function SourceWorldExtent(world_field, tile_field)
+			local world = tonumber(surface_map[world_field])
+			if world and world > 0 then return world end
+			local tiles = tonumber(surface_map[tile_field])
+			if tiles and tiles > 0 and height_tile_size and height_tile_size > 0 then
+				return tiles * height_tile_size
+			end
+			return nil
+		end
+		local source_world_w = SourceWorldExtent("SuperBigMapGeneratorWidth",
+			"SuperBigMapGeneratorWidthTiles")
+			or SourceWorldExtent("SuperBigMapSourceWidth", "SuperBigMapSourceWidthTiles")
+		local source_world_h = SourceWorldExtent("SuperBigMapGeneratorHeight",
+			"SuperBigMapGeneratorHeightTiles")
+			or SourceWorldExtent("SuperBigMapSourceHeight", "SuperBigMapSourceHeightTiles")
+		local ok_world_size, expanded_world_w, expanded_world_h = pcall(
+			surface_map.GetMapSize, surface_map)
+		expanded_world_h = expanded_world_h or expanded_world_w
+		if not ok_world_size or type(expanded_world_w) ~= "number"
+			or type(expanded_world_h) ~= "number" or type(source_world_w) ~= "number"
+			or type(source_world_h) ~= "number" or source_world_w <= 0 or source_world_h <= 0
+			or source_world_w > expanded_world_w or source_world_h > expanded_world_h then
+			RestoreSurfaceBuildableBridge()
+			error("native surface extent for the passage fallback radius is unavailable")
+		end
+		-- Vanilla's own expression (Lua/Pathfinding.lua:165), evaluated on the source extent
+		-- (engine Max is not visible from the mod environment; math.max is identical for two
+		-- numbers).
+		local source_max_radius = math.max(source_world_w, source_world_h) / 2
+		local original_around = Global("GetRandomPassableAroundOnMap")
+		if type(original_around) ~= "function" then
+			RestoreSurfaceBuildableBridge()
+			error("GetRandomPassableAroundOnMap is unavailable for the passage fallback radius")
+		end
+		local radius_wrapper
+		radius_wrapper = function(target_map, center, max_radius, min_radius, random, filter, ...)
+			if target_map == surface_map and max_radius == nil then
+				max_radius = source_max_radius
+			end
+			return original_around(target_map, center, max_radius, min_radius, random, filter, ...)
+		end
+		rawset(_G, "GetRandomPassableAroundOnMap", radius_wrapper)
+		restore_fallback_radius = function()
+			if rawget(_G, "GetRandomPassableAroundOnMap") == radius_wrapper then
+				rawset(_G, "GetRandomPassableAroundOnMap", original_around)
+			end
+		end
+		LoadingStep("native surface passage fallback radius pinned to the source extent", {
+			source_width = source_world_w, source_height = source_world_h,
+			expanded_width = expanded_world_w, expanded_height = expanded_world_h,
+			max_radius = source_max_radius,
+		}, surface_map)
+	end
 	local successful = {}
 	map:SuspendPassEdits("SuperBigMap_PassageBootstrap")
 	local ok, err = pcall(function()

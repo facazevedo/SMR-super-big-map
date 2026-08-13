@@ -523,6 +523,17 @@ config.FlattenSkipWhenUnbuildable = true
 -- generic migration/RebuildGrids completion flags are deliberately not reused as proof. This
 -- restores vanilla's complete-footprint selection without editing terrain.
 config.PairingSurfaceBuildableRebuild = true
+-- SOURCE-SIZED FALLBACK SEARCH RADIUS (sbm_map_generation, passage bootstrap). When the first
+-- buildable search around an underground passage marker fails, vanilla FindPassageSpawnPos
+-- (Lua/Buildings/SurfacePassage.lua:119) retries from GetRandomPassableAroundOnMap(map, pos) with
+-- no radius, and Lua/Pathfinding.lua:165 defaults it to Max(map:GetMapSize())/2 -- the EXPANDED
+-- extent here (409600 instead of the native 307200), so the same marker and the same random value
+-- reach a point up to a third further out. Passage selection runs entirely in SOURCE space against
+-- the bridged native buildable grid, where everything outside the retained source square is
+-- unbuildable, so an outside point can only fail, burn another random draw, and move the passage
+-- to a site vanilla would never choose. When true, the caller-less fallback gets the source map's
+-- radius for the duration of the bootstrap only.
+config.PairingSourceFallbackRadius = true
 -- Post-generation smoothing of the ground around each entrance footprint (GridSmooth, the
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
 -- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
@@ -819,6 +830,8 @@ C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_01
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
 	and as_bool(config.PairingSurfaceBuildableRebuild)
+C.PAIRING_SOURCE_FALLBACK_RADIUS = expansion_step_11
+	and as_bool(config.PairingSourceFallbackRadius)
 C.PASSAGE_PAD_SMOOTHING = expansion_step_11
 	and as_bool(config.PassagePadSmoothing)
 C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
