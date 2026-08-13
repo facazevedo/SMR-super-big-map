@@ -2930,6 +2930,28 @@ local function MoveEntranceVisualsToScale(map)
 			and IsKindOfSafe(obj.tunnel_marker, "SurfaceTunnelMarker") then
 			return
 		end
+		-- ATTACHED INDICATOR CHILDREN: the passage entity auto-attaches its build-indicator visuals
+		-- (ElevatorBuildIndicator_SurfaceDecal on the surface passage,
+		-- ElevatorBuildIndicator_UndergroundPassageImprint underground). An attached child's world
+		-- position is its committed parent's, so it is ALREADY in the final domain -- and it still
+		-- lies inside the source region, so the source-region guard below cannot catch it. Sweep 1
+		-- reaches it anyway because IsUndergroundAccessObject matches it through its parent's class,
+		-- and transforming it independently applied a SECOND full/source move: measured at
+		-- 4/3 x its parent's committed pose (surface decal at (737333,438773) for the parent at
+		-- (553000,329080)). Same rule the decoration pass applies (ScaleDecorationsToFull).
+		if type(obj.GetParent) == "function" then
+			local ok_parent, parent = pcall(obj.GetParent, obj)
+			if ok_parent and type(parent) == "table" and parent ~= obj
+				and parent.SuperBigMapCommittedPassageLocked == true then
+				EntranceAudit("ENTRANCE_VISUAL_ATTACHED_CHILD_SKIPPED", {
+					via = via,
+					class = tostring(obj.class),
+					entity = tostring(obj.entity),
+					parent_class = tostring(parent.class),
+				}, map)
+				return
+			end
+		end
 		local pos = ObjectPosition(obj)
 		if not pos then return end
 		local ox, oy = PointXY(pos)
