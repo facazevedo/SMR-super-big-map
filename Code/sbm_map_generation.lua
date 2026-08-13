@@ -5721,10 +5721,20 @@ local function BootstrapPassagesAndDeferWonders(env)
 			RestoreSurfaceBuildableBridge()
 			error("GetRandomPassableAroundOnMap is unavailable for the passage fallback radius")
 		end
+		-- Counters, not just a flag: an installed-but-never-invoked wrapper (calls == 0) and an
+		-- invoked-but-not-substituting one (calls > 0, hits == 0, i.e. another map object) are
+		-- different defects, and the parity harness reads these fields in its fallback record.
+		surface_map.SuperBigMapPassageFallbackRadius = source_max_radius
+		surface_map.SuperBigMapPassageFallbackRadiusCalls = 0
+		surface_map.SuperBigMapPassageFallbackRadiusHits = 0
 		local radius_wrapper
 		radius_wrapper = function(target_map, center, max_radius, min_radius, random, filter, ...)
+			surface_map.SuperBigMapPassageFallbackRadiusCalls =
+				(surface_map.SuperBigMapPassageFallbackRadiusCalls or 0) + 1
 			if target_map == surface_map and max_radius == nil then
 				max_radius = source_max_radius
+				surface_map.SuperBigMapPassageFallbackRadiusHits =
+					(surface_map.SuperBigMapPassageFallbackRadiusHits or 0) + 1
 			end
 			return original_around(target_map, center, max_radius, min_radius, random, filter, ...)
 		end

@@ -133,22 +133,40 @@ PASSAGE_PIN_BLOCK = """		do
 				return string.format("slot=%s env=%s size=%s", tostring(map.slot), tostring(env), size)
 			end
 
+			-- iter-008: the mod's own source-sized fallback radius (config
+			-- PairingSourceFallbackRadius) is supposed to fill in max_radius for exactly this call
+			-- on an expanded twin.  Record its state and the live global's identity so an
+			-- unsubstituted radius says WHICH link failed: state absent = the mod block never ran,
+			-- calls=0 = its wrapper is installed but this call did not reach it, hits=0 = it ran on
+			-- a different map object, and around_global ~= pin = something replaced the global after
+			-- the pin was installed.
+			local function pin_mod_text(map)
+				if type(map) ~= "table" then return "mod_radius=?" end
+				return string.format("mod_radius=%s mod_calls=%s mod_hits=%s",
+					tostring(rawget(map, "SuperBigMapPassageFallbackRadius")),
+					tostring(rawget(map, "SuperBigMapPassageFallbackRadiusCalls")),
+					tostring(rawget(map, "SuperBigMapPassageFallbackRadiusHits")))
+			end
+
 			local function pin_cursor()
 				local ok, last = pcall(function() return pin_random.rand_state:Last() end)
 				if ok then return tostring(last) end
 				return "?"
 			end
 
+			local pin_around_wrapper
 			local function pin_record(kind, map, center, max_radius, min_radius, filter,
 					cursor_before, result)
 				local calls = rawget(_G, "g_ParityPassagePinCalls")
 				if type(calls) ~= "table" or #calls >= 64 then return end
 				calls[#calls + 1] = string.format(
 					"#%02d %s status=%s %s center=%s max_radius=%s min_radius=%s filter=%s "
-					.. "cursor=%s->%s -> %s",
+					.. "cursor=%s->%s -> %s %s around_global=%s pin=%s",
 					#calls + 1, kind, tostring(rawget(_G, "g_ParityStatus")), pin_map_text(map),
 					pin_point_text(center), tostring(max_radius), tostring(min_radius),
-					type(filter), cursor_before, pin_cursor(), pin_point_text(result))
+					type(filter), cursor_before, pin_cursor(), pin_point_text(result),
+					pin_mod_text(map), tostring(rawget(_G, "GetRandomPassableAroundOnMap")),
+					tostring(pin_around_wrapper))
 			end
 
 			local original_around = rawget(_G, "GetRandomPassableAroundOnMap")
@@ -157,7 +175,7 @@ PASSAGE_PIN_BLOCK = """		do
 			end
 			-- Signature per Lua/Pathfinding.lua:163.  Only the caller-supplied-nothing case is
 			-- redirected; a caller with its own stream (map generator rand, city rand) is untouched.
-			_G.GetRandomPassableAroundOnMap = function(map, center, max_radius, min_radius, random, filter, ...)
+			pin_around_wrapper = function(map, center, max_radius, min_radius, random, filter, ...)
 				if random ~= nil then
 					return original_around(map, center, max_radius, min_radius, random, filter, ...)
 				end
@@ -169,6 +187,7 @@ PASSAGE_PIN_BLOCK = """		do
 					result)
 				return result
 			end
+			_G.GetRandomPassableAroundOnMap = pin_around_wrapper
 
 			local original_passable = rawget(_G, "GetRandomPassable")
 			if type(original_passable) ~= "function" then
