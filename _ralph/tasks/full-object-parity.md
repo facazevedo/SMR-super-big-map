@@ -30,7 +30,7 @@ Do not modify game binaries, ModTools sources, engine/account settings, other mo
 
 ## Reproduction contract
 
-1. Confirm no game-process conflict through the harness.
+1. Confirm no game-process conflict through the harness, and commit + deploy (verified audit) every intentional source change BEFORE any game launch — a game booted over uncommitted or undeployed source proves nothing.
 2. Run the twin pair headlessly: `python _ralph/tools/parity/run_parity.py` (full vanilla+expanded pair at 30S146E) or `... run_parity.py twin <tag> <0|1> [seed|-] [serial] [lat=N] [lon=N]` for a single side. A fresh process per twin is mandatory: the vanilla control must never run in a process that has already executed expanded generation.
 3. Wait for real completion: the tool polls `g_ParityStatus` through surface stretch and underground first-access preparation; a merely allocated/deferred underground is not complete. Zero tolerance for `[SuperBigMap]` session errors in the daemon log (`grep` for `SESSION_END ... ok=false`, `could not be prepared`, `materialization failed`, Lua errors, asserts).
 4. Game hygiene is mandatory: any Lua error, assertion, or native error during game startup, map generation, or map switch fails the iteration on the spot — capture the log/diagnostics, terminate the loop-owned game process immediately, diagnose, and fix before any relaunch. Never wait on a hung or error-state game beyond the tool's bounded polls, never leave MarsDebug running between iterations, and never park a broken game while working on something else: kill it, then solve the problem.
@@ -67,6 +67,8 @@ Fail if a vanilla object (decoration, marker, feature product, wonder, passage/a
 ## Required runtime evidence
 
 Preserve per iteration under `artifacts/`: the twin CSV dumps and `parity_report.txt`/`parity_summary.json`, both holder seeds/hashes, map sizes, unmatched/extra/duplicate record files with counts, the exact `[SuperBigMap]` log excerpts for any session error, and (phase 3) the sweep manifest with per-case verdicts. On any CLI exit 3/4 or native dialog, capture structured diagnostics before teardown and read `artifacts/LATEST_INCIDENT.json` next iteration. A timeout is not a pass.
+
+Hygiene: workspace memory follows the session contract's summarization rules — terse ATTEMPTS entries pointing at artifact paths (never pasted logs or object listings), HANDOFF.md rewritten as a rolling summary of roughly 120 lines, and archive consolidation once ATTEMPTS.md passes ~1000 lines/100 KB. Bulk artifacts rotate: keep the newest five twin outputs plus any run still referenced by ATTEMPTS/HANDOFF or a phase verdict, delete older CSV dumps and multi-MB game logs, and keep `_ralph` under ~2 GB total.
 
 ## Offline verification
 
