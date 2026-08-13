@@ -1,0 +1,34 @@
+[14:06:45] === twin 'd7e2' expand=True seed=8006206060218582800 pin=None serial_raster=False decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False hexgrid=False lat=2700 lon=4920 ===
+[14:06:45] spawned MarsDebug.exe pid=36628 (d7e2), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-d7e2.log
+[14:06:45] connecting DAP (d7e2)...
+[14:06:55] harness ready (d7e2)
+[14:06:55] generation started (d7e2): parity_thread_started {
+	metatable = table: 000001CA6B514780 [1]
+}
+[14:06:55]   gen-d7e2: initializing  (+0s)
+[14:07:05]   gen-d7e2: generating  (+10s)
+[14:08:15]   gen-d7e2: waiting_surface_stretch  (+80s)
+[14:08:33]   gen-d7e2: waiting_underground_prepare  (+97s)
+[14:08:37]   gen-d7e2: complete  (+101s)
+[14:08:37] generation complete (d7e2)
+[14:08:37]   surface seed=179841926240133169  underground seed=8006206060218582800
+[14:08:37]   dump-d7e2: running  (+0s)
+[14:08:41]   dump-d7e2: complete  (+4s)
+[14:08:41] dump complete (d7e2): 18249 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-d7e2.csv
+[14:08:43] result: {"tag": "d7e2", "expand": true, "surface_seed": 179841926240133169, "underground_seed": 8006206060218582800, "underground_pin": null, "rows": 18249, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-d7e2.csv", "hexgrid": null}
+[14:09:03] === twin 'd3v2' expand=False seed=None pin=None serial_raster=False decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False hexgrid=False lat=1980 lon=9780 ===
+[14:09:03] spawned MarsDebug.exe pid=11668 (d3v2), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-d3v2.log
+[14:09:03] connecting DAP (d3v2)...
+[14:09:13] harness ready (d3v2)
+[14:09:13] generation started (d3v2): parity_thread_started {
+	metatable = table: 0000027251F74780 [1]
+}
+[14:09:13]   gen-d3v2: initializing  (+0s)
+[14:09:24]   gen-d3v2: generating  (+10s)
+[14:09:47]   gen-d3v2: complete  (+33s)
+[14:09:47] generation complete (d3v2)
+[14:09:47]   surface seed=5907906148490074980  underground seed=537870166968502063
+[14:09:48]   dump-d3v2: running  (+0s)
+[14:09:52]   dump-d3v2: complete  (+4s)
+[14:09:52] dump complete (d3v2): 35884 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-d3v2.csv
+[14:09:54] result: {"tag": "d3v2", "expand": false, "surface_seed": 5907906148490074980, "underground_seed": 537870166968502063, "underground_pin": null, "rows": 35884, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-d3v2.csv", "hexgrid": null}

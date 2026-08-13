@@ -2,90 +2,32 @@
   "surface": {
     "scale_ratio": 1.3333333333333333,
     "scale_classes_total": 54,
-    "scale_classes_ok": 13,
+    "scale_classes_ok": 42,
     "scale_classes_ok_cardinality": 2,
-    "scale_classes_mismatched": 36,
+    "scale_classes_mismatched": 7,
     "scale_classes_unscoreable": 3,
     "scale_mismatched_classes": [
-      "ColdArea",
-      "DecCrater_01",
-      "DecCrater_02",
-      "DecCrater_03",
-      "DecCrater_04",
-      "DecDustDevils_01",
-      "DecDustDevils_02",
-      "DecDustDevils_03",
-      "DecDustDevils_05",
-      "DecLavaCoils_01",
-      "DecLavaCoils_03",
       "ParSystem",
       "PrefabDecorMarker",
       "PrefabMarker",
       "RocksLightSmall_01",
       "RocksLightSmall_02",
       "RocksLightSmall_03",
-      "RocksLightSmall_04",
-      "RocksLightSmall_05",
-      "RocksLightSmall_06",
-      "RocksLightSmall_07",
-      "RocksLightSmall_08",
-      "RocksLight_01",
-      "RocksLight_02",
-      "RocksLight_03",
-      "RocksLight_04",
-      "RocksLight_05",
-      "RocksLight_06",
-      "SafariSight",
-      "SoundSource",
-      "StonesDarkSmall_01",
-      "StonesDarkSmall_02",
-      "StonesDarkSmall_03",
-      "StonesDarkSmall_04",
-      "StonesDarkSmall_05",
-      "StonesDarkSmall_06"
+      "SoundSource"
     ],
     "scale_mismatched_by_behaviour": {
-      "stretched_clamped": [
-        "ColdArea",
-        "DecCrater_01",
-        "DecCrater_03",
-        "PrefabDecorMarker",
-        "RocksLight_01",
-        "RocksLight_03",
-        "RocksLight_04",
-        "RocksLight_06"
-      ],
-      "stretched": [
-        "DecCrater_02",
-        "DecCrater_04",
-        "DecDustDevils_01",
-        "DecDustDevils_02",
-        "DecDustDevils_03",
-        "DecDustDevils_05",
-        "DecLavaCoils_01",
-        "DecLavaCoils_03",
-        "RocksLightSmall_04",
-        "RocksLightSmall_05",
-        "RocksLightSmall_06",
-        "RocksLightSmall_07",
-        "RocksLightSmall_08",
-        "RocksLight_02",
-        "RocksLight_05",
-        "SafariSight",
-        "SoundSource",
-        "StonesDarkSmall_01",
-        "StonesDarkSmall_02",
-        "StonesDarkSmall_03",
-        "StonesDarkSmall_04",
-        "StonesDarkSmall_05",
-        "StonesDarkSmall_06"
-      ],
       "partly_stretched": [
         "ParSystem",
         "PrefabMarker",
         "RocksLightSmall_01",
         "RocksLightSmall_02",
         "RocksLightSmall_03"
+      ],
+      "stretched_clamped": [
+        "PrefabDecorMarker"
+      ],
+      "stretched": [
+        "SoundSource"
       ]
     },
     "scale_protected_ok": true,
@@ -139,7 +81,7 @@
     "scale_table": [
       {
         "class": "CameraObj",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 1
@@ -154,7 +96,7 @@
       },
       {
         "class": "ColdArea",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "1000": 2
@@ -163,19 +105,13 @@
           "500": 2
         },
         "expected_expanded": {
-          "1000": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "500": 2
         },
-        "missing_values": {
-          "1000": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecCrater_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "542": 14,
@@ -196,16 +132,6 @@
           "73": 1
         },
         "expected_expanded": {
-          "542": 14,
-          "171": 1,
-          "237": 3,
-          "115": 2,
-          "174": 2,
-          "281": 1,
-          "55": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "500": 14,
           "228": 1,
           "316": 3,
@@ -214,19 +140,11 @@
           "375": 1,
           "73": 1
         },
-        "missing_values": {
-          "542": 14,
-          "171": 1,
-          "237": 3,
-          "115": 2,
-          "174": 2,
-          "281": 1,
-          "55": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecCrater_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "296": 9
@@ -235,19 +153,13 @@
           "395": 9
         },
         "expected_expanded": {
-          "296": 9
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "395": 9
         },
-        "missing_values": {
-          "296": 9
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecCrater_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "519": 12,
@@ -266,15 +178,6 @@
           "385": 1
         },
         "expected_expanded": {
-          "519": 12,
-          "121": 1,
-          "81": 1,
-          "45": 3,
-          "145": 1,
-          "289": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "500": 12,
           "161": 1,
           "108": 1,
@@ -282,18 +185,11 @@
           "193": 1,
           "385": 1
         },
-        "missing_values": {
-          "519": 12,
-          "121": 1,
-          "81": 1,
-          "45": 3,
-          "145": 1,
-          "289": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecCrater_04",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "38": 29,
@@ -314,16 +210,6 @@
           "175": 1
         },
         "expected_expanded": {
-          "38": 29,
-          "65": 1,
-          "90": 3,
-          "77": 2,
-          "52": 2,
-          "82": 1,
-          "131": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "51": 29,
           "87": 1,
           "120": 3,
@@ -332,19 +218,11 @@
           "109": 1,
           "175": 1
         },
-        "missing_values": {
-          "38": 29,
-          "65": 1,
-          "90": 3,
-          "77": 2,
-          "52": 2,
-          "82": 1,
-          "131": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecDustDevils_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "196": 4,
@@ -357,23 +235,15 @@
           "188": 1
         },
         "expected_expanded": {
-          "196": 4,
-          "188": 1,
-          "141": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "261": 4,
-          "251": 1
+          "251": 1,
+          "188": 1
         },
-        "missing_values": {
-          "196": 4,
-          "141": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecDustDevils_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "157": 1,
@@ -386,23 +256,15 @@
           "188": 1
         },
         "expected_expanded": {
-          "157": 1,
-          "188": 1,
-          "141": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "209": 1,
-          "251": 1
+          "251": 1,
+          "188": 1
         },
-        "missing_values": {
-          "157": 1,
-          "141": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecDustDevils_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "239": 2,
@@ -419,31 +281,17 @@
           "259": 3
         },
         "expected_expanded": {
-          "239": 2,
-          "181": 1,
-          "228": 1,
-          "188": 1,
-          "194": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "319": 2,
           "241": 1,
           "304": 1,
           "251": 1,
           "259": 3
         },
-        "missing_values": {
-          "239": 2,
-          "181": 1,
-          "228": 1,
-          "188": 1,
-          "194": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecDustDevils_05",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "140": 1,
@@ -456,25 +304,15 @@
           "220": 1
         },
         "expected_expanded": {
-          "140": 1,
-          "221": 1,
-          "165": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "187": 1,
           "295": 1,
           "220": 1
         },
-        "missing_values": {
-          "140": 1,
-          "221": 1,
-          "165": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecLavaCoils_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -483,19 +321,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "DecLavaCoils_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -504,19 +336,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "EffectDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 13
@@ -531,7 +357,7 @@
       },
       {
         "class": "ElevatorBuildIndicator_SurfaceDecal",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 2
@@ -546,7 +372,7 @@
       },
       {
         "class": "MapSector",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
           "100": 100
@@ -562,7 +388,7 @@
       },
       {
         "class": "ParSystem",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "300": 3,
@@ -587,7 +413,7 @@
       },
       {
         "class": "PrefabDecorMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "250": 116,
@@ -613,7 +439,7 @@
       },
       {
         "class": "PrefabFeatureMarker",
-        "rule": "stretched with the terrain (SETTLED allowlist)",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 117
@@ -628,7 +454,7 @@
       },
       {
         "class": "PrefabMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "250": 1342,
@@ -655,7 +481,7 @@
       },
       {
         "class": "RandomMapGeneratorHolder",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 1
@@ -670,7 +496,7 @@
       },
       {
         "class": "RocksLightSmall_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "112": 21,
@@ -811,180 +637,85 @@
           "136": 2
         },
         "expected_expanded": {
-          "112": 21,
-          "120": 9,
-          "99": 8,
-          "98": 7,
-          "69": 1,
-          "111": 4,
-          "82": 5,
-          "121": 5,
-          "136": 24,
-          "64": 5,
-          "110": 24,
-          "114": 23,
-          "118": 31,
-          "48": 14,
-          "76": 1,
-          "57": 1,
-          "91": 6,
-          "77": 13,
-          "86": 12,
-          "103": 8,
-          "139": 4,
-          "88": 14,
-          "89": 12,
-          "122": 5,
-          "22": 2,
-          "141": 3,
-          "129": 1,
-          "109": 3,
-          "84": 1,
-          "74": 2,
-          "108": 3,
-          "94": 6,
-          "100": 48,
-          "85": 8,
-          "70": 5,
-          "107": 6,
-          "75": 12,
-          "138": 4,
-          "117": 1,
-          "123": 2,
-          "90": 3,
-          "87": 3,
-          "95": 2,
-          "105": 4,
-          "79": 4,
-          "78": 2,
-          "198": 10,
-          "92": 4,
-          "104": 5,
-          "116": 2,
-          "80": 1,
-          "101": 1,
-          "93": 7,
-          "115": 1,
-          "81": 1,
-          "106": 2,
-          "68": 1,
-          "126": 1,
-          "135": 1,
-          "43": 3,
-          "165": 1,
-          "142": 1,
-          "53": 1,
-          "124": 1,
-          "60": 1,
-          "59": 1,
-          "102": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "149": 20,
+          "149": 21,
           "160": 9,
           "132": 8,
           "131": 7,
+          "92": 1,
           "148": 4,
-          "109": 2,
+          "109": 5,
           "161": 5,
           "181": 24,
-          "157": 30,
+          "85": 5,
           "147": 24,
-          "152": 22,
-          "64": 9,
-          "121": 1,
-          "103": 5,
-          "115": 11,
+          "152": 23,
+          "157": 31,
+          "64": 14,
+          "101": 1,
+          "76": 1,
+          "121": 6,
+          "103": 13,
+          "115": 12,
           "137": 8,
           "185": 4,
-          "117": 13,
+          "117": 14,
           "119": 12,
           "163": 5,
           "29": 2,
           "188": 3,
           "172": 1,
           "145": 3,
+          "112": 1,
+          "99": 2,
           "144": 3,
           "125": 6,
           "133": 48,
           "113": 8,
+          "93": 5,
           "143": 6,
+          "100": 12,
           "184": 4,
           "156": 1,
           "164": 2,
-          "116": 1,
+          "120": 3,
+          "116": 3,
           "127": 2,
           "140": 4,
+          "105": 4,
+          "104": 2,
           "264": 10,
-          "123": 2,
-          "139": 1,
+          "123": 4,
+          "139": 5,
           "155": 2,
-          "124": 6,
+          "107": 1,
+          "135": 1,
+          "124": 7,
           "153": 1,
+          "108": 1,
+          "141": 2,
+          "91": 1,
           "168": 1,
           "180": 1,
-          "57": 2,
+          "57": 3,
           "220": 1,
           "189": 1,
-          "71": 1
+          "71": 1,
+          "165": 1,
+          "80": 1,
+          "79": 1,
+          "136": 2
         },
+        "verdict": "MISMATCH",
+        "unexpected_values": {},
         "missing_values": {
-          "112": 20,
-          "120": 6,
-          "99": 6,
-          "98": 7,
-          "69": 1,
-          "111": 4,
-          "82": 5,
-          "136": 22,
-          "110": 24,
-          "114": 23,
-          "118": 31,
-          "48": 14,
-          "91": 5,
-          "77": 13,
-          "86": 12,
-          "88": 14,
-          "89": 12,
-          "122": 5,
-          "22": 2,
-          "141": 1,
-          "129": 1,
-          "84": 1,
-          "74": 2,
-          "108": 2,
-          "94": 6,
-          "100": 36,
-          "85": 3,
-          "70": 5,
-          "107": 5,
-          "75": 12,
-          "138": 4,
-          "90": 3,
-          "87": 3,
-          "95": 2,
-          "79": 3,
-          "78": 2,
-          "198": 10,
-          "92": 3,
-          "104": 3,
-          "93": 2,
-          "81": 1,
-          "106": 2,
-          "68": 1,
-          "126": 1,
-          "43": 3,
-          "142": 1,
-          "53": 1,
-          "60": 1,
-          "59": 1,
-          "102": 2
+          "149": 1,
+          "152": 1,
+          "157": 1
         }
       },
       {
         "class": "RocksLightSmall_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "116": 14,
@@ -1117,109 +848,54 @@
           "87": 3
         },
         "expected_expanded": {
-          "116": 14,
-          "92": 8,
-          "82": 7,
-          "117": 4,
-          "112": 9,
-          "81": 22,
-          "102": 4,
-          "104": 13,
-          "97": 5,
-          "89": 8,
-          "51": 3,
-          "109": 11,
-          "75": 44,
-          "61": 4,
-          "72": 4,
-          "88": 13,
-          "98": 13,
-          "76": 6,
-          "79": 30,
-          "111": 9,
-          "100": 46,
-          "11": 1,
-          "60": 12,
-          "115": 2,
-          "107": 7,
-          "77": 8,
-          "85": 8,
-          "103": 6,
-          "101": 12,
-          "70": 6,
-          "91": 6,
-          "64": 13,
-          "59": 2,
-          "86": 9,
-          "56": 4,
-          "68": 8,
-          "93": 2,
-          "94": 1,
-          "69": 8,
-          "134": 4,
-          "99": 5,
-          "118": 4,
-          "62": 1,
-          "114": 7,
-          "74": 4,
-          "120": 3,
-          "123": 2,
-          "78": 7,
-          "95": 2,
-          "96": 9,
-          "121": 2,
-          "122": 5,
-          "108": 3,
-          "198": 8,
-          "124": 1,
-          "84": 10,
-          "110": 1,
-          "16": 1,
-          "132": 1,
-          "52": 2,
-          "126": 1,
-          "65": 3,
-          "67": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "155": 14,
-          "123": 6,
+          "123": 8,
+          "109": 7,
           "156": 4,
           "149": 9,
-          "108": 19,
+          "108": 22,
           "136": 4,
           "139": 13,
           "129": 5,
           "119": 8,
+          "68": 3,
           "145": 11,
-          "117": 9,
+          "100": 44,
+          "81": 4,
+          "96": 4,
+          "117": 13,
           "131": 13,
-          "105": 29,
-          "133": 45,
+          "101": 6,
+          "105": 30,
           "148": 9,
+          "133": 46,
           "15": 1,
-          "143": 7,
           "80": 12,
           "153": 2,
-          "103": 2,
+          "143": 7,
+          "103": 8,
           "113": 8,
           "137": 6,
           "135": 12,
-          "93": 4,
-          "121": 4,
-          "85": 5,
-          "115": 7,
-          "91": 2,
-          "124": 1,
+          "93": 6,
+          "121": 6,
+          "85": 13,
+          "79": 2,
+          "115": 9,
+          "75": 4,
+          "91": 8,
+          "124": 2,
           "125": 1,
+          "92": 8,
           "179": 4,
-          "132": 4,
+          "132": 5,
           "157": 4,
           "83": 1,
           "152": 7,
+          "99": 4,
           "160": 3,
           "164": 2,
+          "104": 7,
           "127": 2,
           "128": 9,
           "161": 2,
@@ -1227,69 +903,25 @@
           "144": 3,
           "264": 8,
           "165": 1,
-          "112": 1,
+          "112": 10,
           "147": 1,
           "21": 1,
           "176": 1,
+          "69": 2,
           "168": 1,
-          "87": 3
+          "87": 3,
+          "89": 1
         },
+        "verdict": "MISMATCH",
+        "unexpected_values": {},
         "missing_values": {
-          "116": 14,
-          "82": 7,
-          "81": 18,
-          "102": 4,
-          "104": 6,
-          "97": 5,
-          "89": 7,
-          "51": 3,
-          "109": 4,
-          "75": 40,
-          "61": 4,
-          "72": 4,
-          "88": 13,
-          "98": 13,
-          "76": 6,
-          "79": 28,
-          "111": 9,
-          "100": 2,
-          "11": 1,
-          "60": 12,
-          "107": 7,
-          "77": 8,
-          "101": 6,
-          "70": 6,
-          "64": 13,
-          "59": 2,
-          "86": 9,
-          "56": 4,
-          "68": 5,
-          "94": 1,
-          "69": 6,
-          "134": 4,
-          "99": 1,
-          "118": 4,
-          "62": 1,
-          "114": 7,
-          "74": 4,
-          "120": 3,
-          "78": 7,
-          "95": 2,
-          "96": 5,
-          "122": 5,
-          "198": 8,
-          "84": 10,
-          "110": 1,
-          "16": 1,
-          "52": 2,
-          "126": 1,
-          "65": 3,
-          "67": 1
+          "105": 1,
+          "133": 1
         }
       },
       {
         "class": "RocksLightSmall_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "112": 4,
@@ -1406,156 +1038,71 @@
           "143": 2
         },
         "expected_expanded": {
-          "112": 4,
-          "95": 2,
-          "98": 3,
-          "108": 1,
-          "120": 5,
-          "76": 3,
-          "81": 4,
-          "78": 15,
-          "57": 3,
-          "82": 10,
-          "96": 15,
-          "92": 11,
-          "102": 4,
-          "88": 8,
-          "52": 4,
-          "100": 80,
-          "83": 5,
-          "97": 3,
-          "61": 1,
-          "85": 5,
-          "99": 10,
-          "122": 7,
-          "145": 4,
-          "113": 2,
-          "64": 4,
-          "84": 9,
-          "72": 8,
-          "62": 6,
-          "105": 3,
-          "119": 4,
-          "104": 7,
-          "66": 5,
-          "86": 1,
-          "75": 17,
-          "121": 7,
-          "101": 3,
-          "91": 5,
-          "116": 3,
-          "106": 4,
-          "90": 2,
-          "111": 5,
-          "129": 16,
-          "80": 3,
-          "87": 4,
-          "118": 3,
-          "115": 2,
-          "114": 3,
-          "110": 6,
-          "77": 5,
-          "53": 4,
-          "93": 2,
-          "71": 1,
-          "126": 1,
-          "60": 1,
-          "107": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "149": 4,
           "127": 2,
           "131": 3,
           "144": 1,
           "160": 5,
-          "108": 3,
-          "104": 8,
+          "101": 3,
+          "108": 4,
+          "104": 15,
+          "76": 3,
+          "109": 10,
           "128": 15,
           "123": 11,
-          "109": 10,
           "136": 4,
           "117": 8,
-          "133": 79,
           "69": 4,
-          "113": 3,
+          "133": 80,
+          "111": 5,
+          "129": 3,
+          "81": 1,
+          "113": 5,
+          "132": 10,
           "163": 7,
           "193": 4,
-          "132": 10,
           "151": 2,
-          "112": 5,
-          "83": 1,
+          "85": 4,
+          "112": 9,
+          "96": 8,
+          "83": 6,
           "140": 3,
           "159": 4,
           "139": 7,
+          "88": 5,
+          "115": 1,
+          "100": 17,
           "161": 7,
           "135": 3,
+          "121": 5,
           "155": 3,
           "141": 4,
+          "120": 2,
           "148": 5,
           "172": 16,
-          "107": 1,
-          "116": 1,
+          "107": 3,
+          "116": 4,
           "157": 3,
           "153": 2,
           "152": 3,
           "147": 6,
           "103": 5,
-          "71": 3,
+          "71": 4,
           "124": 2,
+          "95": 1,
           "168": 1,
+          "80": 1,
           "143": 2
         },
+        "verdict": "MISMATCH",
+        "unexpected_values": {},
         "missing_values": {
-          "95": 1,
-          "98": 3,
-          "120": 3,
-          "81": 3,
-          "78": 15,
-          "57": 3,
-          "82": 10,
-          "96": 7,
-          "92": 11,
-          "102": 4,
-          "88": 3,
-          "52": 4,
-          "100": 63,
-          "97": 3,
-          "61": 1,
-          "85": 1,
-          "99": 10,
-          "122": 7,
-          "145": 4,
-          "64": 4,
-          "84": 9,
-          "72": 8,
-          "62": 6,
-          "105": 3,
-          "119": 4,
-          "66": 5,
-          "86": 1,
-          "75": 17,
-          "121": 2,
-          "91": 5,
-          "106": 4,
-          "90": 2,
-          "129": 13,
-          "80": 2,
-          "87": 4,
-          "118": 3,
-          "115": 1,
-          "114": 3,
-          "110": 6,
-          "77": 5,
-          "53": 4,
-          "93": 2,
-          "126": 1,
-          "60": 1
+          "133": 1
         }
       },
       {
         "class": "RocksLightSmall_04",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "121": 1,
@@ -1610,81 +1157,36 @@
           "67": 1
         },
         "expected_expanded": {
-          "121": 1,
-          "97": 7,
-          "68": 6,
-          "65": 4,
-          "81": 1,
-          "91": 1,
-          "112": 4,
-          "95": 4,
-          "103": 1,
-          "111": 2,
-          "109": 7,
-          "77": 7,
-          "100": 20,
-          "80": 2,
-          "71": 2,
-          "110": 2,
-          "69": 9,
-          "127": 3,
-          "54": 3,
-          "118": 1,
-          "52": 2,
-          "66": 1,
-          "55": 1,
-          "50": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "161": 1,
           "129": 7,
-          "91": 5,
+          "91": 6,
           "87": 4,
           "108": 1,
+          "121": 1,
           "149": 4,
-          "127": 1,
+          "127": 4,
           "137": 1,
           "148": 2,
           "145": 7,
-          "103": 6,
+          "103": 7,
           "133": 20,
           "107": 2,
+          "95": 2,
           "147": 2,
           "92": 9,
           "169": 3,
           "72": 3,
           "157": 1,
+          "69": 2,
           "88": 1,
           "73": 1,
           "67": 1
         },
-        "missing_values": {
-          "97": 7,
-          "68": 6,
-          "65": 4,
-          "81": 1,
-          "112": 4,
-          "95": 2,
-          "111": 2,
-          "109": 7,
-          "77": 7,
-          "100": 20,
-          "80": 2,
-          "71": 2,
-          "110": 2,
-          "69": 7,
-          "54": 3,
-          "118": 1,
-          "52": 2,
-          "66": 1,
-          "55": 1,
-          "50": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLightSmall_05",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "113": 2,
@@ -1749,42 +1251,10 @@
           "95": 1
         },
         "expected_expanded": {
-          "113": 2,
-          "73": 7,
-          "80": 1,
-          "85": 4,
-          "57": 1,
-          "109": 1,
-          "81": 22,
-          "21": 1,
-          "100": 31,
-          "101": 1,
-          "45": 2,
-          "69": 3,
-          "63": 1,
-          "99": 3,
-          "89": 1,
-          "119": 3,
-          "104": 2,
-          "114": 1,
-          "94": 3,
-          "84": 1,
-          "97": 1,
-          "24": 1,
-          "116": 1,
-          "125": 1,
-          "65": 2,
-          "102": 1,
-          "72": 1,
-          "58": 1,
-          "71": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "151": 2,
-          "97": 6,
+          "97": 7,
           "107": 1,
-          "113": 2,
+          "113": 4,
           "76": 1,
           "145": 1,
           "108": 22,
@@ -1793,11 +1263,13 @@
           "135": 1,
           "60": 2,
           "92": 3,
+          "84": 1,
           "132": 3,
+          "119": 1,
           "159": 3,
           "139": 2,
           "152": 1,
-          "125": 2,
+          "125": 3,
           "112": 1,
           "129": 1,
           "32": 1,
@@ -1809,37 +1281,11 @@
           "77": 1,
           "95": 1
         },
-        "missing_values": {
-          "73": 7,
-          "80": 1,
-          "85": 4,
-          "57": 1,
-          "109": 1,
-          "81": 22,
-          "21": 1,
-          "100": 31,
-          "101": 1,
-          "45": 2,
-          "69": 3,
-          "63": 1,
-          "99": 3,
-          "89": 1,
-          "119": 2,
-          "104": 2,
-          "114": 1,
-          "94": 3,
-          "24": 1,
-          "116": 1,
-          "65": 2,
-          "102": 1,
-          "72": 1,
-          "58": 1,
-          "71": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLightSmall_06",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "144": 3,
@@ -1880,34 +1326,16 @@
           "91": 1
         },
         "expected_expanded": {
-          "144": 3,
-          "116": 2,
-          "4": 1,
-          "100": 44,
-          "92": 20,
-          "52": 1,
-          "129": 7,
-          "126": 3,
-          "78": 1,
-          "69": 10,
-          "94": 1,
-          "132": 2,
-          "114": 2,
-          "133": 6,
-          "16": 1,
-          "63": 1,
-          "68": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "192": 3,
           "155": 2,
           "5": 1,
-          "133": 38,
+          "133": 44,
           "123": 20,
+          "69": 1,
           "172": 7,
           "168": 3,
           "104": 1,
+          "92": 10,
           "125": 1,
           "176": 2,
           "152": 2,
@@ -1916,28 +1344,11 @@
           "84": 1,
           "91": 1
         },
-        "missing_values": {
-          "144": 3,
-          "116": 2,
-          "4": 1,
-          "100": 44,
-          "92": 10,
-          "52": 1,
-          "129": 7,
-          "126": 3,
-          "78": 1,
-          "69": 9,
-          "94": 1,
-          "132": 2,
-          "114": 2,
-          "16": 1,
-          "63": 1,
-          "68": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLightSmall_07",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "103": 1,
@@ -1972,23 +1383,6 @@
           "96": 1
         },
         "expected_expanded": {
-          "103": 1,
-          "114": 34,
-          "66": 1,
-          "102": 4,
-          "98": 4,
-          "129": 4,
-          "113": 7,
-          "104": 2,
-          "100": 5,
-          "70": 2,
-          "58": 2,
-          "82": 1,
-          "71": 1,
-          "72": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "137": 1,
           "152": 34,
           "88": 1,
@@ -2004,26 +1398,11 @@
           "95": 1,
           "96": 1
         },
-        "missing_values": {
-          "103": 1,
-          "114": 34,
-          "66": 1,
-          "102": 4,
-          "98": 4,
-          "129": 4,
-          "113": 7,
-          "104": 2,
-          "100": 5,
-          "70": 2,
-          "58": 2,
-          "82": 1,
-          "71": 1,
-          "72": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLightSmall_08",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "103": 2,
@@ -2062,27 +1441,8 @@
           "91": 1
         },
         "expected_expanded": {
-          "103": 2,
-          "117": 1,
-          "145": 2,
-          "90": 2,
-          "92": 1,
-          "129": 14,
-          "118": 1,
-          "100": 22,
-          "79": 7,
-          "106": 3,
-          "67": 2,
-          "116": 2,
-          "73": 2,
-          "85": 1,
-          "71": 1,
-          "68": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "156": 1,
           "137": 2,
+          "156": 1,
           "193": 2,
           "120": 2,
           "123": 1,
@@ -2098,28 +1458,11 @@
           "95": 1,
           "91": 1
         },
-        "missing_values": {
-          "103": 2,
-          "117": 1,
-          "145": 2,
-          "90": 2,
-          "92": 1,
-          "129": 14,
-          "118": 1,
-          "100": 22,
-          "79": 7,
-          "106": 3,
-          "67": 2,
-          "116": 2,
-          "73": 2,
-          "85": 1,
-          "71": 1,
-          "68": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "311": 1,
@@ -2149,50 +1492,23 @@
           "413": 1
         },
         "expected_expanded": {
-          "311": 1,
-          "280": 1,
-          "401": 2,
-          "235": 2,
-          "208": 2,
-          "233": 2,
-          "269": 2,
-          "166": 3,
-          "357": 1,
-          "178": 1,
-          "310": 1,
-          "600": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "415": 1,
           "373": 1,
           "500": 3,
           "313": 2,
           "277": 2,
-          "311": 1,
+          "311": 2,
           "359": 2,
           "221": 3,
           "476": 1,
           "237": 1,
           "413": 1
         },
-        "missing_values": {
-          "280": 1,
-          "401": 2,
-          "235": 2,
-          "208": 2,
-          "233": 2,
-          "269": 2,
-          "166": 3,
-          "357": 1,
-          "178": 1,
-          "310": 1,
-          "600": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "277": 1,
@@ -2217,18 +1533,6 @@
           "300": 3
         },
         "expected_expanded": {
-          "277": 1,
-          "257": 1,
-          "269": 11,
-          "196": 1,
-          "235": 1,
-          "187": 1,
-          "166": 1,
-          "318": 1,
-          "225": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "369": 1,
           "343": 1,
           "359": 11,
@@ -2239,21 +1543,11 @@
           "424": 1,
           "300": 3
         },
-        "missing_values": {
-          "277": 1,
-          "257": 1,
-          "269": 11,
-          "196": 1,
-          "235": 1,
-          "187": 1,
-          "166": 1,
-          "318": 1,
-          "225": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "168": 4,
@@ -2295,27 +1589,6 @@
           "407": 1
         },
         "expected_expanded": {
-          "168": 4,
-          "273": 1,
-          "246": 2,
-          "257": 1,
-          "196": 1,
-          "378": 1,
-          "321": 1,
-          "235": 1,
-          "269": 2,
-          "189": 1,
-          "317": 2,
-          "313": 1,
-          "205": 1,
-          "260": 1,
-          "198": 2,
-          "289": 1,
-          "305": 1,
-          "520": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "224": 4,
           "364": 1,
           "328": 2,
@@ -2323,37 +1596,22 @@
           "261": 1,
           "500": 2,
           "428": 1,
+          "313": 1,
           "359": 2,
           "252": 1,
           "423": 2,
           "417": 1,
+          "273": 1,
           "347": 1,
           "264": 2,
           "385": 1,
           "407": 1
         },
-        "missing_values": {
-          "168": 4,
-          "246": 2,
-          "257": 1,
-          "196": 1,
-          "378": 1,
-          "321": 1,
-          "235": 1,
-          "269": 2,
-          "189": 1,
-          "317": 2,
-          "205": 1,
-          "260": 1,
-          "198": 2,
-          "289": 1,
-          "305": 1,
-          "520": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_04",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "101": 12,
@@ -2416,37 +1674,6 @@
           "500": 1
         },
         "expected_expanded": {
-          "101": 12,
-          "163": 6,
-          "222": 5,
-          "146": 4,
-          "137": 6,
-          "179": 2,
-          "127": 4,
-          "100": 3,
-          "128": 1,
-          "110": 1,
-          "145": 1,
-          "134": 4,
-          "295": 1,
-          "294": 2,
-          "122": 2,
-          "241": 2,
-          "111": 4,
-          "120": 1,
-          "104": 1,
-          "133": 1,
-          "213": 1,
-          "254": 1,
-          "68": 1,
-          "58": 1,
-          "173": 1,
-          "64": 1,
-          "74": 1,
-          "529": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "135": 12,
           "217": 6,
           "296": 5,
@@ -2454,13 +1681,14 @@
           "183": 6,
           "239": 2,
           "169": 4,
-          "133": 2,
+          "133": 3,
           "171": 1,
           "147": 1,
           "193": 1,
-          "179": 2,
+          "179": 4,
           "393": 1,
           "392": 2,
+          "163": 2,
           "321": 2,
           "148": 4,
           "160": 1,
@@ -2475,38 +1703,11 @@
           "99": 1,
           "500": 1
         },
-        "missing_values": {
-          "101": 12,
-          "163": 4,
-          "222": 5,
-          "146": 4,
-          "137": 6,
-          "127": 4,
-          "100": 3,
-          "128": 1,
-          "110": 1,
-          "145": 1,
-          "134": 4,
-          "295": 1,
-          "294": 2,
-          "122": 2,
-          "241": 2,
-          "111": 4,
-          "120": 1,
-          "104": 1,
-          "213": 1,
-          "254": 1,
-          "68": 1,
-          "58": 1,
-          "173": 1,
-          "64": 1,
-          "74": 1,
-          "529": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_05",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "95": 26,
@@ -2561,41 +1762,14 @@
           "167": 1
         },
         "expected_expanded": {
-          "95": 26,
-          "145": 4,
-          "139": 2,
-          "104": 20,
-          "123": 2,
-          "87": 2,
-          "121": 1,
-          "124": 2,
-          "81": 1,
-          "117": 5,
-          "107": 7,
-          "127": 2,
-          "295": 1,
-          "163": 20,
-          "294": 1,
-          "132": 2,
-          "77": 2,
-          "293": 1,
-          "159": 1,
-          "190": 1,
-          "69": 1,
-          "106": 1,
-          "50": 1,
-          "125": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "127": 24,
+          "127": 26,
           "193": 4,
           "185": 2,
-          "139": 18,
+          "139": 20,
           "164": 2,
           "116": 2,
-          "165": 2,
           "161": 1,
+          "165": 2,
           "108": 1,
           "156": 5,
           "143": 7,
@@ -2613,34 +1787,11 @@
           "67": 1,
           "167": 1
         },
-        "missing_values": {
-          "95": 26,
-          "145": 4,
-          "104": 20,
-          "123": 2,
-          "87": 2,
-          "121": 1,
-          "124": 2,
-          "81": 1,
-          "117": 5,
-          "107": 7,
-          "295": 1,
-          "163": 20,
-          "294": 1,
-          "132": 2,
-          "77": 2,
-          "293": 1,
-          "159": 1,
-          "190": 1,
-          "69": 1,
-          "106": 1,
-          "50": 1,
-          "125": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "RocksLight_06",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched_clamped",
         "vanilla": {
           "159": 3,
@@ -2667,21 +1818,8 @@
           "96": 1
         },
         "expected_expanded": {
-          "159": 3,
-          "203": 4,
-          "271": 2,
-          "219": 9,
-          "274": 1,
-          "222": 1,
-          "138": 6,
-          "313": 1,
-          "425": 2,
-          "72": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "212": 3,
-          "271": 2,
+          "271": 4,
           "361": 2,
           "292": 9,
           "365": 1,
@@ -2691,21 +1829,11 @@
           "500": 2,
           "96": 1
         },
-        "missing_values": {
-          "159": 3,
-          "203": 4,
-          "219": 9,
-          "274": 1,
-          "222": 1,
-          "138": 6,
-          "313": 1,
-          "425": 2,
-          "72": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "SafariSight",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 13
@@ -2714,19 +1842,13 @@
           "133": 13
         },
         "expected_expanded": {
-          "100": 13
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 13
         },
-        "missing_values": {
-          "100": 13
-        }
+        "verdict": "ok"
       },
       {
         "class": "SectorUnexplored",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
           "411": 99
@@ -2742,7 +1864,7 @@
       },
       {
         "class": "SoundSource",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "250": 9
@@ -2763,7 +1885,7 @@
       },
       {
         "class": "StonesDarkSmall_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "71": 19,
@@ -2774,22 +1896,14 @@
           "113": 2
         },
         "expected_expanded": {
-          "71": 19,
-          "85": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "95": 19,
           "113": 2
         },
-        "missing_values": {
-          "71": 19,
-          "85": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "StonesDarkSmall_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "78": 3
@@ -2798,19 +1912,13 @@
           "104": 3
         },
         "expected_expanded": {
-          "78": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "104": 3
         },
-        "missing_values": {
-          "78": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "StonesDarkSmall_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "90": 3,
@@ -2821,22 +1929,14 @@
           "99": 3
         },
         "expected_expanded": {
-          "90": 3,
-          "74": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "120": 3,
           "99": 3
         },
-        "missing_values": {
-          "90": 3,
-          "74": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "StonesDarkSmall_04",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "71": 2
@@ -2845,19 +1945,13 @@
           "95": 2
         },
         "expected_expanded": {
-          "71": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "95": 2
         },
-        "missing_values": {
-          "71": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "StonesDarkSmall_05",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "76": 6,
@@ -2870,25 +1964,15 @@
           "104": 2
         },
         "expected_expanded": {
-          "76": 6,
-          "82": 5,
-          "78": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "101": 6,
           "109": 5,
           "104": 2
         },
-        "missing_values": {
-          "76": 6,
-          "82": 5,
-          "78": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "StonesDarkSmall_06",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "75": 8
@@ -2897,19 +1981,13 @@
           "100": 8
         },
         "expected_expanded": {
-          "75": 8
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "100": 8
         },
-        "missing_values": {
-          "75": 8
-        }
+        "verdict": "ok"
       },
       {
         "class": "SubsurfaceAnomalyMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 40
@@ -2924,7 +2002,7 @@
       },
       {
         "class": "SubsurfaceAnomaly_complete",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "mixed",
         "vanilla": {},
         "expanded": {
@@ -2936,7 +2014,7 @@
       },
       {
         "class": "SubsurfaceDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 43
@@ -2951,7 +2029,7 @@
       },
       {
         "class": "SubsurfaceDepositWater",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "mixed",
         "vanilla": {},
         "expanded": {
@@ -2963,7 +2041,7 @@
       },
       {
         "class": "SurfaceDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 192
@@ -2978,7 +2056,7 @@
       },
       {
         "class": "SurfaceDepositMetals",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 6
@@ -2993,7 +2071,7 @@
       },
       {
         "class": "SurfaceUndergroundTunnelSign",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 2
@@ -3008,7 +2086,7 @@
       },
       {
         "class": "TerrainDepositConcrete",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "partly_stretched",
         "vanilla": {
           "100": 1
@@ -3022,7 +2100,7 @@
       },
       {
         "class": "TerrainDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 21
@@ -3037,7 +2115,7 @@
       },
       {
         "class": "UndergroundPassage",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 2
@@ -3052,7 +2130,7 @@
       },
       {
         "class": "UndergroundTunnelMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 2
@@ -3353,58 +2431,24 @@
   "underground": {
     "scale_ratio": 1.3333333333333333,
     "scale_classes_total": 37,
-    "scale_classes_ok": 14,
+    "scale_classes_ok": 31,
     "scale_classes_ok_cardinality": 2,
-    "scale_classes_mismatched": 21,
+    "scale_classes_mismatched": 4,
     "scale_classes_unscoreable": 0,
     "scale_mismatched_classes": [
-      "AncientArtifact",
-      "CaveOfWonders",
-      "Cliff_01",
-      "Cliff_02",
-      "Cliff_02_100",
       "GridObjectList",
       "ParSystem",
       "PrefabMarker",
-      "RemovableRocks_01",
-      "RemovableRocks_02",
-      "Rocks_01",
-      "Rocks_01_100",
-      "Rocks_02",
-      "Rocks_03",
-      "Rocks_03_100",
-      "Rocks_03_33",
-      "Rocks_04",
-      "SoundSource",
-      "Underground_Arch_01",
-      "Underground_Arch_02",
-      "Underground_Arch_08"
+      "SoundSource"
     ],
     "scale_mismatched_by_behaviour": {
-      "stretched": [
-        "AncientArtifact",
-        "CaveOfWonders",
-        "Cliff_01",
-        "Cliff_02",
-        "Cliff_02_100",
-        "ParSystem",
-        "PrefabMarker",
-        "RemovableRocks_01",
-        "RemovableRocks_02",
-        "Rocks_01",
-        "Rocks_01_100",
-        "Rocks_02",
-        "Rocks_03",
-        "Rocks_03_100",
-        "Rocks_03_33",
-        "Rocks_04",
-        "SoundSource",
-        "Underground_Arch_01",
-        "Underground_Arch_02",
-        "Underground_Arch_08"
-      ],
       "identical_values_counts_differ": [
         "GridObjectList"
+      ],
+      "stretched": [
+        "ParSystem",
+        "PrefabMarker",
+        "SoundSource"
       ]
     },
     "scale_protected_ok": true,
@@ -3447,7 +2491,7 @@
     "scale_table": [
       {
         "class": "AncientArtifact",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -3456,19 +2500,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "CameraObj",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 1
@@ -3483,7 +2521,7 @@
       },
       {
         "class": "CaveInRubble",
-        "rule": "stretched with the terrain (SETTLED allowlist)",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 26
@@ -3498,7 +2536,7 @@
       },
       {
         "class": "CaveOfWonders",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -3507,19 +2545,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Cliff_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "68": 3,
@@ -3536,31 +2568,17 @@
           "97": 3
         },
         "expected_expanded": {
-          "68": 3,
-          "86": 3,
-          "38": 6,
-          "73": 3,
-          "81": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "115": 3,
           "91": 3,
+          "115": 3,
           "51": 6,
-          "108": 3,
-          "97": 3
+          "97": 3,
+          "108": 3
         },
-        "missing_values": {
-          "68": 3,
-          "86": 3,
-          "38": 6,
-          "73": 3,
-          "81": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "Cliff_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "55": 28,
@@ -3573,25 +2591,15 @@
           "101": 3
         },
         "expected_expanded": {
-          "55": 28,
-          "49": 2,
-          "76": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "73": 28,
           "65": 2,
           "101": 3
         },
-        "missing_values": {
-          "55": 28,
-          "49": 2,
-          "76": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "Cliff_02_100",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "67": 4,
@@ -3602,22 +2610,14 @@
           "89": 4
         },
         "expected_expanded": {
-          "67": 4,
-          "62": 3
+          "89": 4,
+          "83": 3
         },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "83": 3,
-          "89": 4
-        },
-        "missing_values": {
-          "67": 4,
-          "62": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "EffectDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 4
@@ -3632,7 +2632,7 @@
       },
       {
         "class": "ElevatorBuildIndicator_UndergroundPassageImprint",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 2
@@ -3647,7 +2647,7 @@
       },
       {
         "class": "GridObjectList",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
           "100": 161
@@ -3666,7 +2666,7 @@
       },
       {
         "class": "MapSector",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
           "100": 100
@@ -3682,7 +2682,7 @@
       },
       {
         "class": "ParSystem",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 2
@@ -3703,7 +2703,7 @@
       },
       {
         "class": "PrefabMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "150": 4877
@@ -3724,7 +2724,7 @@
       },
       {
         "class": "RandomMapGeneratorHolder",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 1
@@ -3739,7 +2739,7 @@
       },
       {
         "class": "RemovableRocks_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "106": 14,
@@ -3752,25 +2752,15 @@
           "136": 35
         },
         "expected_expanded": {
-          "106": 14,
-          "84": 63,
-          "102": 35
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "141": 14,
           "112": 63,
           "136": 35
         },
-        "missing_values": {
-          "106": 14,
-          "84": 63,
-          "102": 35
-        }
+        "verdict": "ok"
       },
       {
         "class": "RemovableRocks_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "84": 26,
@@ -3789,34 +2779,18 @@
           "107": 1
         },
         "expected_expanded": {
-          "84": 26,
-          "102": 70,
-          "94": 55,
-          "118": 56,
-          "113": 2,
-          "80": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "112": 26,
           "136": 70,
-          "157": 56,
           "125": 55,
+          "157": 56,
           "151": 2,
           "107": 1
         },
-        "missing_values": {
-          "84": 26,
-          "102": 70,
-          "94": 55,
-          "118": 56,
-          "113": 2,
-          "80": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "84": 14,
@@ -3833,31 +2807,17 @@
           "211": 1
         },
         "expected_expanded": {
-          "84": 14,
-          "83": 14,
-          "123": 1,
-          "195": 1,
-          "158": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "111": 14,
           "112": 14,
+          "111": 14,
           "164": 1,
           "260": 1,
           "211": 1
         },
-        "missing_values": {
-          "84": 14,
-          "83": 14,
-          "123": 1,
-          "195": 1,
-          "158": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_01_100",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "243": 6
@@ -3866,19 +2826,13 @@
           "324": 6
         },
         "expected_expanded": {
-          "243": 6
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "324": 6
         },
-        "missing_values": {
-          "243": 6
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "76": 3
@@ -3887,19 +2841,13 @@
           "101": 3
         },
         "expected_expanded": {
-          "76": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "101": 3
         },
-        "missing_values": {
-          "76": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_03",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "118": 32,
@@ -3926,45 +2874,22 @@
           "276": 2
         },
         "expected_expanded": {
-          "118": 32,
-          "85": 18,
-          "100": 10,
-          "98": 1,
-          "78": 1,
-          "157": 1,
-          "120": 1,
-          "87": 3,
-          "128": 3,
-          "207": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "157": 31,
+          "157": 32,
           "113": 18,
           "133": 10,
-          "104": 1,
           "131": 1,
-          "160": 1,
+          "104": 1,
           "209": 1,
-          "171": 3,
+          "160": 1,
           "116": 3,
+          "171": 3,
           "276": 2
         },
-        "missing_values": {
-          "118": 32,
-          "85": 18,
-          "100": 10,
-          "98": 1,
-          "78": 1,
-          "120": 1,
-          "87": 3,
-          "128": 3,
-          "207": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_03_100",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "83": 14,
@@ -3977,24 +2902,15 @@
           "148": 1
         },
         "expected_expanded": {
-          "83": 14,
-          "147": 1,
-          "111": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "111": 13,
+          "111": 14,
           "196": 1,
           "148": 1
         },
-        "missing_values": {
-          "83": 14,
-          "147": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_03_33",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "168": 14,
@@ -4011,31 +2927,17 @@
           "191": 2
         },
         "expected_expanded": {
-          "168": 14,
-          "161": 29,
-          "220": 1,
-          "219": 1,
-          "143": 2
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
-          "215": 29,
           "224": 14,
-          "292": 1,
+          "215": 29,
           "293": 1,
+          "292": 1,
           "191": 2
         },
-        "missing_values": {
-          "168": 14,
-          "161": 29,
-          "220": 1,
-          "219": 1,
-          "143": 2
-        }
+        "verdict": "ok"
       },
       {
         "class": "Rocks_04",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "118": 28,
@@ -4056,37 +2958,19 @@
           "107": 3
         },
         "expected_expanded": {
-          "118": 28,
-          "100": 55,
-          "113": 2,
-          "283": 1,
-          "232": 1,
-          "288": 1,
-          "80": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "157": 28,
           "133": 55,
           "151": 2,
           "377": 1,
-          "384": 1,
           "309": 1,
+          "384": 1,
           "107": 3
         },
-        "missing_values": {
-          "118": 28,
-          "100": 55,
-          "113": 2,
-          "283": 1,
-          "232": 1,
-          "288": 1,
-          "80": 3
-        }
+        "verdict": "ok"
       },
       {
         "class": "SectorUnexplored",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
           "411": 100
@@ -4102,7 +2986,7 @@
       },
       {
         "class": "SoundSource",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "250": 41
@@ -4123,7 +3007,7 @@
       },
       {
         "class": "SubsurfaceAnomalyMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 29
@@ -4138,7 +3022,7 @@
       },
       {
         "class": "SubsurfaceDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 31
@@ -4153,7 +3037,7 @@
       },
       {
         "class": "SubsurfaceRareAnomalyMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 3
@@ -4168,7 +3052,7 @@
       },
       {
         "class": "SubsurfaceSpecialAnomalyMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 2
@@ -4183,7 +3067,7 @@
       },
       {
         "class": "SurfaceDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 39,
@@ -4213,7 +3097,7 @@
       },
       {
         "class": "SurfacePassage",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "100": 2
@@ -4228,7 +3112,7 @@
       },
       {
         "class": "SurfaceTunnelMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 2
@@ -4243,7 +3127,7 @@
       },
       {
         "class": "TerrainDepositMarker",
-        "rule": "vanilla scale unchanged",
+        "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
           "110": 5
@@ -4258,7 +3142,7 @@
       },
       {
         "class": "TunnelBlockerRubble",
-        "rule": "stretched with the terrain (SETTLED allowlist)",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 18
@@ -4273,7 +3157,7 @@
       },
       {
         "class": "Underground_Arch_01",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -4282,19 +3166,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Underground_Arch_02",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 1
@@ -4303,19 +3181,13 @@
           "133": 1
         },
         "expected_expanded": {
-          "100": 1
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 1
         },
-        "missing_values": {
-          "100": 1
-        }
+        "verdict": "ok"
       },
       {
         "class": "Underground_Arch_08",
-        "rule": "vanilla scale unchanged",
+        "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
           "100": 3
@@ -4324,15 +3196,9 @@
           "133": 3
         },
         "expected_expanded": {
-          "100": 3
-        },
-        "verdict": "MISMATCH",
-        "unexpected_values": {
           "133": 3
         },
-        "missing_values": {
-          "100": 3
-        }
+        "verdict": "ok"
       }
     ],
     "vanilla_objects": 6109,
