@@ -12,18 +12,26 @@ Then complete: the remaining per-class transform gates, `sector-integrity`, `sav
 
 ## Inherited state (authoritative, read before acting)
 
-The predecessor run is at `D:\PROJS\SMR\super-big-map\_ralph\runs\full-object-parity` and is READ-ONLY history. Session 1 must read, in this order:
+THREE predecessor workspaces are READ-ONLY history; never edit or delete them:
 
-- `HANDOFF.md` — the rolling summary: proven facts, dead ends/cautions, artifact map. Every "Dead ends / cautions" entry still applies.
-- `artifacts/attempts_archive_1.md` (iterations 001-032) and the tail of `ATTEMPTS.md` (033-039).
-- `artifacts/best.json` — the ratchet. **Copy it into this workspace's `artifacts/best.json` unchanged as the starting baseline** before the first scored run, then continue ratcheting here. Its gate semantics (content_* / infrastructure_* / unexplained_* / neg_partition_anomalies, plus the informational family and its justification) carry over verbatim and may not be relaxed.
+- `_ralph/runs/full-object-parity` (39 iterations) — the object-bijection work.
+- `_ralph/runs/entrance-colocation-and-scale` (2 iterations) — **entrance co-location was DELIVERED GREEN here at mod v783 (`a4d1a0e`)**. Do not redo it.
+- `_ralph/runs/entrance-colocation-v2` (initialized only, no completed iteration) — ignore.
 
-Already GREEN at v782 and must never regress (this is the ratchet's floor):
+Session 1 must read, in this order:
+
+- `_ralph/runs/full-object-parity/HANDOFF.md` — proven facts, dead ends/cautions, artifact map. Every "Dead ends / cautions" entry still applies.
+- `_ralph/runs/entrance-colocation-and-scale/HANDOFF.md` and its `artifacts/run_iter002_colocation/entrance_records.md` — the co-location evidence and the remaining next step.
+- `_ralph/runs/full-object-parity/artifacts/attempts_archive_1.md` (iterations 001-032) and the tail of that workspace's `ATTEMPTS.md` (033-039), then `_ralph/runs/entrance-colocation-and-scale/ATTEMPTS.md` (001-002).
+- **`_ralph/runs/entrance-colocation-and-scale/artifacts/best.json` — THE CURRENT RATCHET.** It is strictly newer than the `full-object-parity` copy: it adds the `entrance` gate family. Copy THIS file into this workspace's `artifacts/best.json` unchanged as the starting baseline, then continue ratcheting here. Its gate semantics (content_* / infrastructure_* / unexplained_* / neg_partition_anomalies / entrance_*, plus the informational family and its justification) carry over verbatim and may not be relaxed.
+
+Already GREEN at mod v783 and must never regress (this is the ratchet's floor):
 
 - `surface-seed-hash`, `underground-seed-hash` — equal seed AND generation hash on both maps.
-- **Full object bijection on BOTH maps**: surface 21693/21693, underground 5867/5867, with zero unmatched, zero unstamped, zero unclaimed, zero object-count delta, zero classes differing, infrastructure proven (ok on every class), zero partition anomalies.
+- **Full object bijection on BOTH maps**: surface 21693/21693, underground 5867/5867, with zero unmatched, zero unstamped, zero unclaimed, zero object-count delta, zero classes differing, infrastructure proven, zero partition anomalies.
+- **`entrance-colocation` / `entrance-validity` / `entrance-minimal-drift`**: both pairs on the identical hex on both maps (0 hex delta, 0 wu separation); pair 2 relocated 2 hexes because its natural hex is impassable underground, proven nearest-valid by the ring-search order; no terrain sculpted. Ratchet family `entrance` has `colocation_ok=1` and every `neg_*` term at 0.
 
-Do not re-derive these; protect them. Any change that moves a green gate off zero is a regression to fix or revert in the same session.
+Do not re-derive any of these; protect them. Any change that moves a green gate off its floor is a regression to fix or revert in the same session.
 
 ## Project facts
 
