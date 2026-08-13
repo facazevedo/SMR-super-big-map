@@ -1,1 +1,5 @@
-_ralph/
+# Ralph loop generated state stays out of history; tasks/ and tools/ are tracked.
+_ralph/runs/
+_ralph/tmp/
+_ralph/tools/parity/out/
+__pycache__/
