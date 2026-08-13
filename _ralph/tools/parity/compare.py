@@ -10,7 +10,9 @@ Five independent tests per map (surface, underground):
                    purely by predicted position (vanilla_xy * ratio) and report the
                    residual distance distribution (proportional placement).
   E. Infrastructure - the enumerated engine/mod infrastructure classes, each with the
-                   rule that fixes its expected cardinality and a verdict.
+                   rule that fixes its expected cardinality and a verdict.  A rule that
+                   needs runtime evidence (GridObjectList) is proven from THIS run's
+                   hex-grid census or the class stays `unproven`.
   F. Content     - A+B recomputed over CONTENT ONLY (everything not enumerated in E),
                    which is the population the bijection gates actually govern.
   G. Unexplained - A+B recomputed over every record the tool cannot yet explain:
@@ -32,7 +34,10 @@ import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import hexgrid_analyze
+
 INVALID_Z = 2147483647
+MAPS = ("surface", "underground")
 
 # ---------------------------------------------------------------------------
 # INFRASTRUCTURE ENUMERATION  (task matrix case `infrastructure-enumerated`)
@@ -73,10 +78,96 @@ INFRASTRUCTURE = {
 }
 
 
-def infrastructure_enumeration(vc, ec):
+# ---------------------------------------------------------------------------
+# PER-RUN EVIDENCE FOR THE `GridObjectList` CARDINALITY RULE
+#
+# GridObjectList has no free cardinality: the engine creates exactly one bucket per hex
+# node covered by two or more registered gridded footprints (Lua/GridObject.lua).  That
+# rule only EXEMPTS the class when this run proves it, so the exemption is bought by
+# evidence and never by registry membership:
+#
+#   * both twins of the map must carry a hex-grid census (hexgrid-<side>.txt, written by
+#     hexgrid_template.lua right after the object dump);
+#   * recomputing "nodes covered by >= 2 footprints" offline from the node lists the
+#     engine itself registered must reproduce the observed bucket set EXACTLY on both
+#     twins (no predicted-not-observed, no observed-not-predicted, no membership
+#     mismatch, no dead member handle) - hexgrid_analyze.analyze's `derivation_exact`;
+#   * the gridded population must be identical class-for-class across the twins, so a
+#     real placement divergence in a gridded class can never be absorbed by this rule;
+#   * and the EXPECTED count handed to the enumeration is the offline PREDICTION, which
+#     is then compared against the independently measured dump count.  A dump count that
+#     disagrees with the prediction is a MISMATCH, not an exemption.
+#
+# A census-less (or inexact) run leaves the class `unproven`, so its records stay in the
+# unexplained residue that must reach zero.  See
+# artifacts/run_iter009_hexgrid/gridobjectlist_verdict.md for the decision evidence.
+# ---------------------------------------------------------------------------
+def hexgrid_evidence(out_dir):
+    """Per-map proof (or refusal) that GridObjectList counts are derived, not divergent."""
+    sides = {}
+    for side in ("vanilla", "expanded"):
+        path = Path(out_dir) / f"hexgrid-{side}.txt"
+        if not path.exists():
+            continue
+        meta, buckets, objects = hexgrid_analyze.parse(path)
+        sides[side] = {}
+        for mp in MAPS:
+            if meta.get(mp, {}).get("present") != "true":
+                continue
+            sides[side][mp] = hexgrid_analyze.analyze(
+                mp, meta[mp], buckets.get(mp, []), objects.get(mp, []))
+
+    out = {}
+    for mp in MAPS:
+        v = sides.get("vanilla", {}).get(mp)
+        e = sides.get("expanded", {}).get(mp)
+        entry = {"census_present": bool(v and e), "proven": False,
+                 "predicted_vanilla": None, "predicted_expanded": None}
+        if not (v and e):
+            have = ", ".join(s for s in ("vanilla", "expanded")
+                             if sides.get(s, {}).get(mp)) or "neither twin"
+            entry["why"] = (f"no hex-grid census for this map ({have} present); "
+                            "re-run the pair with the census enabled")
+            out[mp] = entry
+            continue
+        entry.update({
+            "predicted_vanilla": v["buckets_predicted"],
+            "predicted_expanded": e["buckets_predicted"],
+            "observed_vanilla": v["buckets_observed"],
+            "observed_expanded": e["buckets_observed"],
+            "derivation_exact_vanilla": v["derivation_exact"],
+            "derivation_exact_expanded": e["derivation_exact"],
+            "gridded_objects_vanilla": v["gridded_objects"],
+            "gridded_objects_expanded": e["gridded_objects"],
+        })
+        problems = []
+        for side, res in (("vanilla", v), ("expanded", e)):
+            if not res["derivation_exact"]:
+                problems.append(
+                    f"{side} derivation not exact (predicted-not-observed "
+                    f"{res['predicted_not_observed']}, observed-not-predicted "
+                    f"{res['observed_not_predicted']}, membership mismatches "
+                    f"{res['membership_mismatches']}, dead members "
+                    f"{res['dead_member_handles']})")
+        if v["gridded_classes"] != e["gridded_classes"]:
+            diff = {k: (v["gridded_classes"].get(k, 0), e["gridded_classes"].get(k, 0))
+                    for k in sorted(set(v["gridded_classes"]) | set(e["gridded_classes"]))
+                    if v["gridded_classes"].get(k, 0) != e["gridded_classes"].get(k, 0)}
+            problems.append(f"gridded population differs across the twins: {diff}")
+        entry["proven"] = not problems
+        entry["why"] = "; ".join(problems) or (
+            "derivation exact on both twins, identical gridded population "
+            f"({v['gridded_objects']} objects)")
+        out[mp] = entry
+    return out
+
+
+def infrastructure_enumeration(vc, ec, hexgrid=None):
     """Enumerate every infrastructure class with its expected cardinality + verdict.
 
     vc/ec are class->count Counters for the vanilla and expanded twin of one map.
+    `hexgrid` is this map's entry from hexgrid_evidence(); without a proven entry the
+    GridObjectList rule stays `unproven`.
     """
     v_unexplored = vc.get("SectorUnexplored", 0)
     # Sectors the vanilla control does NOT show as unexplored (vanilla's initial reveal).
@@ -98,6 +189,21 @@ def infrastructure_enumeration(vc, ec):
             "verdict": verdict,
         }
 
+    # GridObjectList: expected = the offline prediction from THIS run's census, never the
+    # observed dump count, and only while the derivation is proven exact on both twins.
+    hg = hexgrid or {}
+    if hg.get("proven"):
+        gol_v, gol_e = hg["predicted_vanilla"], hg["predicted_expanded"]
+        gol_rule = (
+            "DERIVED: one bucket per hex node covered by >= 2 registered gridded "
+            f"footprints, recomputed offline from this run's census -> {gol_v} vanilla / "
+            f"{gol_e} expanded predicted; {hg['why']}")
+    else:
+        gol_v = gol_e = None
+        gol_rule = ("UNPROVEN: implicit hex-node collision buckets; the derivation rule "
+                    "is not established on this run - "
+                    + (hg.get("why") or "no hex-grid census evidence available"))
+
     out = [
         entry("MapSector", VANILLA_SECTOR_GRID ** 2, EXPANDED_SECTOR_GRID ** 2,
               f"one per sector cell: {VANILLA_SECTOR_GRID}x{VANILLA_SECTOR_GRID} vanilla, "
@@ -112,9 +218,7 @@ def infrastructure_enumeration(vc, ec):
         entry("RandomMapGeneratorHolder", 1, 1, "exactly one per generated map"),
         entry("CameraObj", None, None,
               "UNCONSTRAINED: engine camera helper, cardinality not fixed by the map"),
-        entry("GridObjectList", None, None,
-              "UNCONSTRAINED: implicit hex-node collision buckets; count follows hex "
-              "occupancy, not the object population"),
+        entry("GridObjectList", gol_v, gol_e, gol_rule),
     ]
     return out, revealed
 
@@ -339,7 +443,7 @@ def dist_summary(d):
             f"median={statistics.median(d):.0f} mean={statistics.fmean(d):.1f}")
 
 
-def report_map(tag, vrows, erows, rx, ry, out):
+def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None):
     def w(s=""):
         out.append(s)
 
@@ -411,8 +515,12 @@ def report_map(tag, vrows, erows, rx, ry, out):
             n = sum(1 for d in alld if d <= thr)
             w(f"     within {thr:>6} wu : {n}/{len(alld)} ({100.0 * n / len(alld):.3f}%)")
 
-    infra, revealed = infrastructure_enumeration(vc, ec)
+    infra, revealed = infrastructure_enumeration(vc, ec, hexgrid)
     w(f"\n-- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --")
+    hg = hexgrid or {}
+    w(f"   hex-grid census evidence : "
+      f"{'PROVEN' if hg.get('proven') else 'NOT PROVEN'} - "
+      f"{hg.get('why', 'no census evidence loaded')}")
     w("     class                                   vanilla  expanded  expect_v  expect_e  verdict")
     for e in infra:
         ev = "-" if e["expected_vanilla"] is None else e["expected_vanilla"]
@@ -522,6 +630,7 @@ def report_map(tag, vrows, erows, rx, ry, out):
         "infrastructure_ok": infra_ok,
         "infrastructure_unproven": sum(1 for e in infra if e["verdict"] == "unproven"),
         "infrastructure_mismatch": sum(1 for e in infra if e["verdict"] == "MISMATCH"),
+        "hexgrid_evidence": hg,
         "initial_revealed_sectors": revealed,
         "content_vanilla_objects": len(cv),
         "content_expanded_objects": len(ce),
@@ -576,6 +685,7 @@ def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "out"
     vmeta, vrows = parse_dump(out_dir / "objects-vanilla.csv")
     emeta, erows = parse_dump(out_dir / "objects-expanded.csv")
+    hexgrid = hexgrid_evidence(out_dir)
 
     lines = []
     lines.append("30S146E  VANILLA vs EXPANDED  object parity report")
@@ -605,7 +715,8 @@ def main():
         ry = (eh / vh) if vh else 1.0
         lines.append(f"\n[{tag}] derived stretch ratio: x={rx:.6f}  y={ry:.6f} "
                      f"({vw}->{ew} tiles)")
-        summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines)
+        summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines,
+                                  hexgrid.get(tag))
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
         # Machine-readable gate inputs (seed/hash equality is a contract gate and must

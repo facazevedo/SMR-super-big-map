@@ -591,7 +591,12 @@ def main():
         log(f"metadata -> {meta_path}")
         return
 
-    hexgrid = "hexgrid" in sys.argv[1:]
+    # The hex-grid census is REQUIRED in the default pair mode: compare.py only grants
+    # `GridObjectList` its derived-cardinality exemption when this run proves the rule
+    # (section E), so a censusless pair would leave ~880 records unexplained for no
+    # reason.  It is read-only and proven inert (byte-identical dumps, iterations 005-009),
+    # and it runs after the object dump.  "nohexgrid" opts out deliberately.
+    hexgrid = "nohexgrid" not in sys.argv[1:]
     log(f"=== 30S146E parity run: VANILLA twin (underground pinned to "
         f"{REFERENCE_UNDERGROUND_SEED}, hexgrid={hexgrid}) ===")
     vanilla = run_twin("vanilla", expand=False, twin_seed=None,
