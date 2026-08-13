@@ -747,9 +747,286 @@ FX_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "pitprobe" argument.  The remaining underground content
+# residue includes 3 vanilla `ParSystem` with NO expanded counterpart.  Offline row algebra on
+# iteration 030's dumps identifies them exactly: they are the stock `Particles_XTkn7htB`
+# (Data/FXPreset/ActionFXParticles.lua: Action "Spawn", Actor "BottomlessPit", Attach = true,
+# Spot "Fog", SpotsPercent 100), i.e. three ATTACHED fog emitters created when
+# SpawnFXObject/Building GameInit plays PlayFX("Spawn", "start", pit).  The expanded twin does
+# carry the pit itself at the exact transform image (397333,401824 = 4/3 x 298000,301368,
+# native stamp), so the actor exists and only its attached FX is gone.  Three mechanisms are
+# still possible: the FX never played on the expanded twin, it played and the attaches were lost
+# when TransferToMap moved the pit off the temporary vanilla backing, or something destroyed
+# them afterwards (the mod reseats underground wonders after materialization).  This block
+# separates them: it wraps PlayFX (filtered to "Spawn") to record actor class/map/pose and a
+# traceback AT CALL TIME, wraps PlaceParticles to bind every created emitter to that actor,
+# wraps DoneObject/DoneObjects to catch the destruction of any ParSystem with a traceback, and
+# samples a change-only timeline of every watched wonder actor (map, pose, attach list) plus the
+# per-map ParSystem count and the live map set.  It creates no object, consumes no map RNG and
+# changes no generation input.
+PIT_PROBE_BLOCK = """		do
+			local pit_lines = {}
+			local function pit_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local pit_t0 = pit_ticks()
+			local function pit_log(text)
+				if #pit_lines >= 8000 then return end
+				pit_lines[#pit_lines + 1] = string.format(
+					"[%7dms][%s] %s", pit_ticks() - pit_t0,
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityPitLines = pit_lines
+			g_ParityPitProbeStatus = "running"
+
+			local WATCHED = { BottomlessPit = true, JumboCave = true }
+
+			local function pit_map_key(m)
+				if not m then return "nomap" end
+				local env = m.mapdata and m.mapdata.Environment or "?"
+				return tostring(env) .. "#" .. tostring(m.slot)
+			end
+			local function pit_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function pit_class(obj)
+				if type(obj) ~= "table" then return tostring(obj) end
+				return tostring(rawget(obj, "class") or obj.class or "?")
+			end
+			local function pit_desc(obj)
+				if type(obj) ~= "table" then return tostring(obj) end
+				local pos, angle, scale = "nopos", "?", "?"
+				if type(obj.GetPos) == "function" then
+					local ok, p = pcall(obj.GetPos, obj)
+					if ok then pos = tostring(p) end
+				end
+				if type(obj.GetAngle) == "function" then
+					local ok, a = pcall(obj.GetAngle, obj)
+					if ok then angle = tostring(a) end
+				end
+				if type(obj.GetScale) == "function" then
+					local ok, s = pcall(obj.GetScale, obj)
+					if ok then scale = tostring(s) end
+				end
+				return string.format("%s[%s] map=%s pos=%s angle=%s scale=%s", pit_class(obj),
+					tostring(obj), pit_map_key(pit_map_of(obj)), pos, angle, scale)
+			end
+			local function pit_attaches(obj)
+				if type(obj) ~= "table" or type(obj.GetAttaches) ~= "function" then
+					return "no GetAttaches"
+				end
+				local ok, list = pcall(obj.GetAttaches, obj)
+				if not ok then return "GetAttaches error" end
+				list = list or {}
+				local parts = {}
+				for i = 1, #list do
+					local a = list[i]
+					local apos = "nopos"
+					if type(a) == "table" and type(a.GetPos) == "function" then
+						local ok_p, p = pcall(a.GetPos, a)
+						if ok_p then apos = tostring(p) end
+					end
+					parts[#parts + 1] = pit_class(a) .. "@" .. apos
+				end
+				table.sort(parts)
+				return string.format("n=%d [%s]", #list, table.concat(parts, " "))
+			end
+
+			-- Binds a ParSystem created inside a Spawn FX to the actor that played it.
+			local pit_current_actor, pit_current_moment = nil, nil
+			local spawn_calls, watched_calls, par_creations = 0, 0, 0
+			local par_records, par_by_obj = {}, {}
+
+			local original_playfx = rawget(_G, "PlayFX")
+			if type(original_playfx) == "function" then
+				_G.PlayFX = function(cls, moment, actor, target, action_pos, action_dir, ...)
+					if cls == "Spawn" then
+						spawn_calls = spawn_calls + 1
+						local watched = WATCHED[pit_class(actor)] == true
+						if watched then
+							watched_calls = watched_calls + 1
+							pit_log(string.format(
+								"PlayFX Spawn (WATCHED #%d of %d) moment=%s\\n    actor=%s\\n    attaches=%s\\n%s",
+								watched_calls, spawn_calls, tostring(moment), pit_desc(actor),
+								pit_attaches(actor), debug.traceback("", 2)))
+						end
+						local prev_actor, prev_moment = pit_current_actor, pit_current_moment
+						pit_current_actor = watched and pit_desc(actor) or ("unwatched:" .. pit_class(actor))
+						pit_current_moment = tostring(moment)
+						local a, b, c = original_playfx(cls, moment, actor, target, action_pos, action_dir, ...)
+						if watched then
+							pit_log(string.format("  after PlayFX Spawn moment=%s attaches=%s",
+								tostring(moment), pit_attaches(actor)))
+						end
+						pit_current_actor, pit_current_moment = prev_actor, prev_moment
+						return a, b, c
+					end
+					return original_playfx(cls, moment, actor, target, action_pos, action_dir, ...)
+				end
+				pit_log("wrapped PlayFX")
+			else
+				pit_log("PlayFX unavailable - Spawn actors not instrumented")
+			end
+
+			local original_place_particles = rawget(_G, "PlaceParticles")
+			if type(original_place_particles) == "function" then
+				_G.PlaceParticles = function(map, name, class, components)
+					local o = original_place_particles(map, name, class, components)
+					par_creations = par_creations + 1
+					if #par_records < 400 then
+						local rec = {
+							index = par_creations, obj = o, name = tostring(name),
+							map_key = pit_map_key(map), actor = pit_current_actor,
+							moment = pit_current_moment,
+							traceback = (pit_current_actor and par_creations <= 60)
+								and debug.traceback("", 2) or nil,
+						}
+						par_records[#par_records + 1] = rec
+						if type(o) == "table" then par_by_obj[o] = rec end
+					end
+					return o
+				end
+				pit_log("wrapped PlaceParticles")
+			else
+				pit_log("PlaceParticles unavailable - particle creation not instrumented")
+			end
+
+			-- Destruction side: any ParSystem death is logged, whether or not this probe saw it born.
+			local destroyed = 0
+			local function pit_note_destroy(obj, via)
+				if type(obj) ~= "table" or pit_class(obj) ~= "ParSystem" then return end
+				destroyed = destroyed + 1
+				local rec = par_by_obj[obj]
+				if destroyed <= 60 then
+					pit_log(string.format("DESTROY ParSystem via %s creation=#%s particles=%s\\n    %s\\n%s",
+						tostring(via), rec and tostring(rec.index) or "unseen",
+						rec and rec.name or "?", pit_desc(obj), debug.traceback("", 2)))
+				end
+			end
+			local original_done_object = rawget(_G, "DoneObject")
+			if type(original_done_object) == "function" then
+				_G.DoneObject = function(obj, ...)
+					pit_note_destroy(obj, "DoneObject")
+					return original_done_object(obj, ...)
+				end
+				pit_log("wrapped DoneObject")
+			end
+			local original_done_objects = rawget(_G, "DoneObjects")
+			if type(original_done_objects) == "function" then
+				_G.DoneObjects = function(objs, ...)
+					if type(objs) == "table" then
+						for i = 1, #objs do pit_note_destroy(objs[i], "DoneObjects") end
+					end
+					return original_done_objects(objs, ...)
+				end
+				pit_log("wrapped DoneObjects")
+			end
+
+			-- MapGet before the native map is mounted trips luaQuery.cpp ASSERT(m_pMap) (iter 011).
+			local function pit_queryable(m)
+				return m and type(m.MapGet) == "function" and not m.changing
+			end
+
+			CreateRealTimeThread(function()
+				local last, last_maps = {}, ""
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					local map_keys = {}
+					for i = 1, #(rawget(_G, "Maps") or {}) do
+						local m = Maps[i]
+						map_keys[#map_keys + 1] = pit_map_key(m) .. (m and m.changing and "*" or "")
+						if pit_queryable(m) then
+							local key = pit_map_key(m)
+							for cls in pairs(WATCHED) do
+								local ok, objs = pcall(m.MapGet, m, "map", cls)
+								objs = ok and objs or {}
+								for j = 1, #objs do
+									local sig = pit_desc(objs[j]) .. " attaches=" .. pit_attaches(objs[j])
+									local slot = key .. "/" .. cls .. "/" .. tostring(objs[j])
+									if last[slot] ~= sig then
+										pit_log("timeline " .. sig)
+										last[slot] = sig
+									end
+								end
+							end
+							local ok_p, pars = pcall(m.MapGet, m, "map", "ParSystem")
+							pars = ok_p and pars or {}
+							local slot = key .. "/ParSystem#"
+							local sig = tostring(#pars)
+							if last[slot] ~= sig then
+								pit_log(string.format("timeline %s ParSystem count=%s", key, sig))
+								last[slot] = sig
+							end
+						end
+					end
+					local maps_sig = table.concat(map_keys, " ")
+					if maps_sig ~= last_maps then
+						pit_log("maps: " .. maps_sig)
+						last_maps = maps_sig
+					end
+					if status == "complete" or status == "error" then break end
+					Sleep(400)
+				end
+				pit_log(string.format(
+					"SUMMARY Spawn PlayFX calls=%d (watched %d) PlaceParticles=%d recorded=%d ParSystem destroyed=%d",
+					spawn_calls, watched_calls, par_creations, #par_records, destroyed))
+				for i = 1, #(rawget(_G, "Maps") or {}) do
+					local m = Maps[i]
+					if pit_queryable(m) then
+						local ok, pars = pcall(m.MapGet, m, "map", "ParSystem")
+						pars = ok and pars or {}
+						pit_log(string.format("postmortem %s ParSystem=%d", pit_map_key(m), #pars))
+						for j = 1, #pars do
+							local obj = pars[j]
+							local name, parent = "?", "?"
+							if type(obj.GetProperty) == "function" then
+								local ok_n, v = pcall(obj.GetProperty, obj, "ParticlesName")
+								name = ok_n and tostring(v) or "err"
+							end
+							if type(obj.GetParent) == "function" then
+								local ok_p, v = pcall(obj.GetParent, obj)
+								parent = ok_p and pit_desc(v) or "err"
+							end
+							pit_log(string.format("  [%d] %s particles=%s parent=%s", j,
+								pit_desc(obj), name, parent))
+						end
+						for cls in pairs(WATCHED) do
+							local ok_w, objs = pcall(m.MapGet, m, "map", cls)
+							objs = ok_w and objs or {}
+							for j = 1, #objs do
+								pit_log(string.format("postmortem %s %s attaches=%s native=%s,%s",
+									pit_map_key(m), pit_desc(objs[j]), pit_attaches(objs[j]),
+									tostring(objs[j].SuperBigMapNativeSourceX),
+									tostring(objs[j].SuperBigMapNativeSourceY)))
+							end
+						end
+					end
+				end
+				for i = 1, #par_records do
+					local rec = par_records[i]
+					if rec.actor then
+						local obj = rec.obj
+						local live = "gone"
+						if type(obj) == "table" and IsValid(obj) then live = pit_desc(obj) end
+						pit_log(string.format(
+							"creation #%d map=%s particles=%s moment=%s\\n    now=%s\\n    actor=%s%s",
+							rec.index, rec.map_key, rec.name, tostring(rec.moment), live,
+							tostring(rec.actor), rec.traceback and ("\\n" .. rec.traceback) or ""))
+					end
+				end
+				local werr = AsyncStringToFile("__PIT_OUT__", table.concat(pit_lines, "\\n"))
+				g_ParityPitProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
-             fx_probe=False):
+             fx_probe=False, pit_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -796,6 +1073,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if fx_path.exists():
             fx_path.unlink()
         extras.append(FX_PROBE_BLOCK.replace("__FX_OUT__", cli.lua_path(fx_path)))
+    pit_path = OUT / f"pitprobe-{tag}.log"
+    if pit_probe:
+        if pit_path.exists():
+            pit_path.unlink()
+        extras.append(PIT_PROBE_BLOCK.replace("__PIT_OUT__", cli.lua_path(pit_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -855,6 +1137,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             except RuntimeError as exc:
                 cam_status = f"unavailable ({exc})"
             log(f"camera probe: {cam_status} -> {cam_path}")
+
+        if pit_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                pit_status = poll_status(
+                    client, "g_ParityPitProbeStatus", {"complete"}, set(), 120, f"pit-{tag}"
+                )
+            except RuntimeError as exc:
+                pit_status = f"unavailable ({exc})"
+            log(f"pit probe: {pit_status} -> {pit_path}")
 
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
@@ -928,6 +1220,7 @@ def main():
         probe = "probe" in sys.argv[5:]
         camera = "cameraprobe" in sys.argv[5:]
         fxprobe = "fxprobe" in sys.argv[5:]
+        pitprobe = "pitprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -938,10 +1231,10 @@ def main():
             if extra.startswith("lon="): lon = int(extra[4:])
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
-            f"fx_probe={fxprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"fx_probe={fxprobe} pit_probe={pitprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
-                        fx_probe=fxprobe)
+                        fx_probe=fxprobe, pit_probe=pitprobe)
         log(f"result: {json.dumps(info)}")
         return
 
