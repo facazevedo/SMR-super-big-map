@@ -51,6 +51,18 @@ local function EntranceAudit(event, data, map)
 	end
 end
 
+-- Diagnostics.Elevator swallows a record when its channel is off, which is the right default for
+-- one-line audits. A record whose DATA is expensive to collect must ask first.
+local function EntranceAuditEnabled()
+	local diagnostics = SuperBigMap.Diagnostics
+	if type(diagnostics) ~= "table" then return false end
+	local supply = type(diagnostics.ElevatorSupplyEnabled) == "function"
+		and diagnostics.ElevatorSupplyEnabled() == true
+	local enrichment = type(diagnostics.EnrichmentEnabled) == "function"
+		and diagnostics.EnrichmentEnabled() == true
+	return supply or enrichment
+end
+
 local function UndergroundDecorationAudit(event, data, map)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.UndergroundDecoration) == "function" then
@@ -3461,6 +3473,76 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		return valid, valid and nil or failure_reason
 	end
 
+	-- Diagnostics only, never a placement input: footprint_buildable stops at the FIRST hex that
+	-- refuses a candidate, which names the rule but not the shape of the defect. This walks the
+	-- same Elevator footprint without early exit and reports every hex's decision inputs, so a
+	-- refused exact transform image can be attributed to terrain (unbuildable/uneven/slope) or to
+	-- a clearable object. Only called when the gated Elevator channel is on.
+	local function describe_footprint(map, q, r, angle, anchor)
+		local buildable = map and map.buildable
+		local ok_world, x, y = pcall(hex_to_world, q, r)
+		if not buildable or type(buildable.GetZ) ~= "function" or not ok_world then
+			return "footprint description unavailable"
+		end
+		local parts = {}
+		local function describe_hex(hq, hr)
+			local entry = tostring(hq) .. ":" .. tostring(hr)
+			local ok_xy, hx, hy = pcall(hex_to_world, hq, hr)
+			if not ok_xy or not map_point_in_bounds(map, hx, hy) then
+				parts[#parts + 1] = entry .. "=outside"
+				return true
+			end
+			local ok_z, z = pcall(buildable.GetZ, buildable, hq, hr)
+			local z_text = "?"
+			if ok_z and z ~= nil then
+				z_text = z == unbuildable_z and "UNBUILDABLE" or tostring(z)
+			end
+			local hex_point = point_fn(hx, hy)
+			local passable_text = "?"
+			if type(terrain_api) == "table" and type(terrain_api.IsPassable) == "function" then
+				local ok_passable, passable = pcall(terrain_api.IsPassable, map, hex_point)
+				if ok_passable then passable_text = tostring(passable) end
+			end
+			local normal_text = "?"
+			if type(terrain_api) == "table" and type(terrain_api.GetTerrainNormal) == "function" then
+				local ok_normal, normal = pcall(terrain_api.GetTerrainNormal, map, hex_point)
+				local normal_z = ok_normal and normal and type(normal.z) == "function"
+					and SafeCall(normal.z, normal) or nil
+				if type(normal_z) == "number" then normal_text = tostring(normal_z) end
+			end
+			local blockers, first_blocker = 0, nil
+			local object_grid = map.object_hex_grid
+			if object_grid and type(object_grid.GetBuildObstructions) == "function" then
+				local ok_obstructions, obstructions = pcall(
+					object_grid.GetBuildObstructions, object_grid, hq, hr)
+				if ok_obstructions and type(obstructions) == "table" then
+					for oi = 1, #obstructions do
+						local obstruction = obstructions[oi]
+						local follows_anchor = obstruction == anchor
+							or (obstruction and (obstruction.passage == anchor
+								or obstruction.other == anchor or obstruction.linked_obj == anchor
+								or obstruction.SuperBigMapDeferredElevatorPassage == anchor
+								or obstruction.spawner == anchor))
+						if not follows_anchor then
+							blockers = blockers + 1
+							first_blocker = first_blocker or tostring(obstruction and obstruction.class)
+						end
+					end
+				end
+			end
+			parts[#parts + 1] = entry .. "=z" .. z_text .. ",pass" .. passable_text
+				.. ",nz" .. normal_text .. ",blk" .. tostring(blockers)
+				.. (first_blocker and ("(" .. first_blocker .. ")") or "")
+			return true
+		end
+		if elevator_shape and type(validate_shape) == "function" then
+			pcall(validate_shape, elevator_shape, point_fn(x, y), angle or 0, describe_hex)
+		else
+			describe_hex(q, r)
+		end
+		return table.concat(parts, " ")
+	end
+
 	local function registered_shape(obj, map)
 		local is_valid = Global("IsValid")
 		if not obj or not map or not map.object_hex_grid
@@ -3958,9 +4040,21 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 		local surface_radius = 0
 		local search_algorithm = "exact transformed underground hex"
 		if surface_final_commit then
+			-- The ring search needs a plain boolean predicate, but WHICH validator refuses the exact
+			-- transform image -- and how far the committed fallback then has to walk -- is the fact
+			-- the passage transform rule is decided on. Collect it alongside the unchanged decision.
+			local exact_reason
+			local rejections = {}
 			local function surface_candidate(q, r)
 				stats.checked = stats.checked + 1
-				return footprint_buildable(surface_map, q, r, surface_angle, surface_anchor)
+				local valid, reason = footprint_buildable(
+					surface_map, q, r, surface_angle, surface_anchor)
+				if not valid then
+					local key = tostring(reason)
+					rejections[key] = (rejections[key] or 0) + 1
+					if q == plan.final_q and r == plan.final_r then exact_reason = key end
+				end
+				return valid
 			end
 			if not surface_candidate(surface_q, surface_r) then
 				surface_q, surface_r, surface_radius = nearest_on_hex_rings(
@@ -3978,6 +4072,29 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 						pairs = stats.pairs }
 				end
 				search_algorithm = "nearest valid surface footprint to true underground hex"
+				local rejection_summary = {}
+				for reason, count in pairs(rejections) do
+					rejection_summary[#rejection_summary + 1] = reason .. " x" .. tostring(count)
+				end
+				table.sort(rejection_summary)
+				EntranceAudit("PASSAGE_PLAN_SURFACE_EXACT_REJECTED", {
+					pair = i,
+					exact_q = plan.final_q, exact_r = plan.final_r,
+					exact_x = plan.final_x, exact_y = plan.final_y,
+					exact_reason = exact_reason,
+					committed_q = surface_q, committed_r = surface_r,
+					committed_x = surface_x, committed_y = surface_y,
+					committed_radius = surface_radius,
+					delta_x = surface_x - plan.final_x, delta_y = surface_y - plan.final_y,
+					surface_angle = surface_angle,
+					candidates_rejected = table.concat(rejection_summary, "; "),
+					exact_footprint = EntranceAuditEnabled()
+						and describe_footprint(surface_map, plan.final_q, plan.final_r,
+							surface_angle, surface_anchor) or nil,
+					committed_footprint = EntranceAuditEnabled()
+						and describe_footprint(surface_map, surface_q, surface_r,
+							surface_angle, surface_anchor) or nil,
+				}, underground_map)
 			end
 		elseif not source_bootstrap then
 			surface_q = tonumber(surface_anchor.SuperBigMapCommittedPassageQ)
