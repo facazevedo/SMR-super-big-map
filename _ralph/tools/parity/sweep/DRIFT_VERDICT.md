@@ -1,5 +1,27 @@
 # Surface "decoration drift" — verdict: NOT a mod defect
 
+> **SUPERSEDED 2026-08-13 by `_ralph/runs/surface-exact-parity` iteration 001.** The
+> "parallel rasterization race" cause below is WRONG, and so is the measurement rule it
+> justifies. The vanilla-vs-vanilla wobble came from an unpinned INPUT: each `nopin`
+> control drew its own underground seed, and passages are placed *during the underground
+> map's generation* — `OnMsg.RandomMapGen_PlaceArtefacts` in
+> `Lua/RandomMap/RandomMapGenerator_Picard.lua:132-200` shuffles the underground's
+> `SurfacePassageMarker` list with the UNDERGROUND generator's `rand`, spawns the pair
+> into `MainMap`, and then calls `ClearObjObstructions(..., MainMap.obj_prefab_marker,
+> ...)`, which destroys the SURFACE decor around whichever site it picked. A
+> per-procedure trace of two runs that end on opposite variants is byte-identical at all
+> 49 surface generator boundaries: the 21 "drifting" stones exist in BOTH runs when
+> generation ends and are destroyed afterwards, by the passage. What flips between the
+> two variants is only which `SurfacePassageMarker` the second passage uses.
+>
+> A residual flip does survive the underground pin when rasterization stays parallel
+> (`pp3` vs `pp4`, identical inputs, opposite variants), so the rasterization race is
+> real — but it acts through passage-site validity, not by racing the stones. Serial
+> rasterization plus a pinned underground agreed on two runs and is the candidate control
+> pin. Either way the sweep's "allow the control's own wobble" rule is not justified: the
+> control is pinnable. Full table: `_ralph/runs/surface-exact-parity/artifacts/
+> control_determinism_matrix.md`.
+
 The ten-map sweep showed 6–31 unmatched surface decorations on cases 01/02/05/07/09
 (e.g. `StonesRedSmall_01 1306->1316`, `RocksSlate_04 156->157`) while 03/08 were clean.
 Investigated 2026-08-13 at the worst case, sweep-07 (45S82E, lat=2700 lon=4920).
