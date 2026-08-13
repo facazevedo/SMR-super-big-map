@@ -2006,8 +2006,18 @@ local function RefreshSectorDecals(city)
 		return 0
 	end
 	if UndergroundExplorationUiOn(city) then
+		-- Underground draws no grid, but the decal population must stay one-per-sector so the
+		-- expanded map's object set matches its vanilla twin. Recreate anything missing through
+		-- the patched UpdateDecal (which creates hidden underground), then hide everything again.
+		local ug_recreated = 0
+		Grid.ForEachSector(city, function(sector)
+			if not IsValid(sector.decal) and type(sector.UpdateDecal) == "function" then
+				SafeCall(sector.UpdateDecal, sector)
+				ug_recreated = ug_recreated + 1
+			end
+		end)
 		HideSectorVisuals(city, "RefreshSectorDecals underground data-only")
-		return 0
+		return ug_recreated
 	end
 	local recreated = 0
 	Grid.ForEachSector(city, function(sector)

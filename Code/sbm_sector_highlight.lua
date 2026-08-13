@@ -306,6 +306,16 @@ local function Install()
 		end
 	end
 
+	-- Clear efVisible on a single sector decal: the underground grid exists as data/objects only.
+	local function HideSectorDecalObject(decal)
+		if not decal or type(decal.ClearEnumFlags) ~= "function" then return false end
+		if type(is_valid) == "function" and not is_valid(decal) then return false end
+		local const_tbl = Engine.Global("const")
+		local ef_visible = type(const_tbl) == "table" and const_tbl.efVisible
+		if not ef_visible then return false end
+		return pcall(decal.ClearEnumFlags, decal, ef_visible)
+	end
+
 	-- UNDERGROUND queue block: the rollover requires IsExplorationAvailable_Queue==true to be
 	-- created at all, which also makes sectors click-queueable -- but underground sectors are NOT
 	-- scannable. No-op the queue entry point for underground sectors so clicks do nothing.
@@ -326,17 +336,19 @@ local function Install()
 				underground = ok_map and IsModMap(map)
 					and map.mapdata and map.mapdata.Environment == "Underground"
 			end
-			if underground then
-				if self.decal and type(is_valid) == "function" and is_valid(self.decal) then
-					local done = Engine.Global("DoneObject")
-					if type(done) == "function" then pcall(done, self.decal) end
-				end
-				self.decal = nil
-				return
-			end
+			-- UNDERGROUND: the shipped underground UI draws no sector grid, but the decal
+			-- population must still exist one-per-sector exactly as vanilla creates it, so the
+			-- expanded object set matches its vanilla twin. Let the original create the decal and
+			-- then keep it hidden -- stock UpdateDecal already clears efVisible outside overview
+			-- mode, and every later refresh path funnels through HideSectorVisuals, which clears it
+			-- again. Destroying the decal here (the previous behavior) removed 400 objects the
+			-- vanilla underground has.
 			local r1, r2 = original_update_decal(self, ...)
 			if IsModMap(map) and type(normalize) == "function" then
 				normalize(self)
+			end
+			if underground then
+				HideSectorDecalObject(self.decal)
 			end
 			return r1, r2
 		end
