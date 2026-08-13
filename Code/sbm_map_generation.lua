@@ -5683,8 +5683,18 @@ local function BootstrapPassagesAndDeferWonders(env)
 	-- point up to a third further out than vanilla would - and the bridge just installed makes
 	-- everything outside the retained source square unbuildable, so such a point can only fail,
 	-- burn another draw and land the passage at a site vanilla could not choose. This whole
-	-- selection runs in source space; the radius must be the source map's too. Scoped to the
-	-- bootstrap window and to this map, and restored by RestoreSurfaceBuildableBridge.
+	-- selection runs in source space; the extent it measures itself against must be the source
+	-- map's too.
+	--
+	-- The substitution is an INSTANCE-LEVEL GetMapSize shadow on this one map, not a global or
+	-- class patch: mod code cannot replace an engine global (mod _G is the sandbox env, so
+	-- engine-internal callers keep resolving the stock function - measured, iter-008), while a
+	-- plain field on the shared map object shadows Map.GetMapSize (CommonLua/Core/map.lua:51 =
+	-- terrain.GetMapSize) for exactly this map and only for Lua callers. Vanilla's own default
+	-- expression then produces the native radius unchanged. The window is the synchronous
+	-- selection loop below; a concurrent thread reading this map's size inside it would see the
+	-- source extent, which is the same view the buildable bridge already presents. Restored by
+	-- RestoreSurfaceBuildableBridge.
 	if cfg_bool("PAIRING_SOURCE_FALLBACK_RADIUS", true) then
 		local height_tile_size = tonumber(const_tbl.HeightTileSize)
 		local function SourceWorldExtent(world_field, tile_field)
@@ -5716,32 +5726,25 @@ local function BootstrapPassagesAndDeferWonders(env)
 		-- (engine Max is not visible from the mod environment; math.max is identical for two
 		-- numbers).
 		local source_max_radius = math.max(source_world_w, source_world_h) / 2
-		local original_around = Global("GetRandomPassableAroundOnMap")
-		if type(original_around) ~= "function" then
+		if rawget(surface_map, "GetMapSize") ~= nil then
 			RestoreSurfaceBuildableBridge()
-			error("GetRandomPassableAroundOnMap is unavailable for the passage fallback radius")
+			error("surface map already shadows GetMapSize; refusing to nest the source extent view")
 		end
-		-- Counters, not just a flag: an installed-but-never-invoked wrapper (calls == 0) and an
-		-- invoked-but-not-substituting one (calls > 0, hits == 0, i.e. another map object) are
-		-- different defects, and the parity harness reads these fields in its fallback record.
+		-- A counter, not just a flag: an installed-but-never-consulted shadow (calls == 0) means
+		-- the fallback radius came from somewhere else, which is a different defect from a wrong
+		-- value. The parity harness reads these fields back in its fallback record.
 		surface_map.SuperBigMapPassageFallbackRadius = source_max_radius
 		surface_map.SuperBigMapPassageFallbackRadiusCalls = 0
-		surface_map.SuperBigMapPassageFallbackRadiusHits = 0
-		local radius_wrapper
-		radius_wrapper = function(target_map, center, max_radius, min_radius, random, filter, ...)
+		local size_shadow
+		size_shadow = function(self)
 			surface_map.SuperBigMapPassageFallbackRadiusCalls =
 				(surface_map.SuperBigMapPassageFallbackRadiusCalls or 0) + 1
-			if target_map == surface_map and max_radius == nil then
-				max_radius = source_max_radius
-				surface_map.SuperBigMapPassageFallbackRadiusHits =
-					(surface_map.SuperBigMapPassageFallbackRadiusHits or 0) + 1
-			end
-			return original_around(target_map, center, max_radius, min_radius, random, filter, ...)
+			return source_world_w, source_world_h
 		end
-		rawset(_G, "GetRandomPassableAroundOnMap", radius_wrapper)
+		surface_map.GetMapSize = size_shadow
 		restore_fallback_radius = function()
-			if rawget(_G, "GetRandomPassableAroundOnMap") == radius_wrapper then
-				rawset(_G, "GetRandomPassableAroundOnMap", original_around)
+			if rawget(surface_map, "GetMapSize") == size_shadow then
+				surface_map.GetMapSize = nil
 			end
 		end
 		LoadingStep("native surface passage fallback radius pinned to the source extent", {

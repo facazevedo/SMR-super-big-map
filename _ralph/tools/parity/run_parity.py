@@ -133,19 +133,17 @@ PASSAGE_PIN_BLOCK = """		do
 				return string.format("slot=%s env=%s size=%s", tostring(map.slot), tostring(env), size)
 			end
 
-			-- iter-008: the mod's own source-sized fallback radius (config
-			-- PairingSourceFallbackRadius) is supposed to fill in max_radius for exactly this call
-			-- on an expanded twin.  Record its state and the live global's identity so an
-			-- unsubstituted radius says WHICH link failed: state absent = the mod block never ran,
-			-- calls=0 = its wrapper is installed but this call did not reach it, hits=0 = it ran on
-			-- a different map object, and around_global ~= pin = something replaced the global after
-			-- the pin was installed.
+			-- iter-008: on an expanded twin the mod presents the SOURCE extent to vanilla's default
+			-- radius expression (config PairingSourceFallbackRadius) for exactly this call.  Record
+			-- its state and the live global's identity so a wrong radius says WHICH link failed:
+			-- mod_radius=nil = the mod block never ran, mod_calls=0 = its GetMapSize shadow was
+			-- never consulted, and around_global ~= pin = something replaced the global after the
+			-- pin was installed.
 			local function pin_mod_text(map)
 				if type(map) ~= "table" then return "mod_radius=?" end
-				return string.format("mod_radius=%s mod_calls=%s mod_hits=%s",
+				return string.format("mod_radius=%s mod_calls=%s",
 					tostring(rawget(map, "SuperBigMapPassageFallbackRadius")),
-					tostring(rawget(map, "SuperBigMapPassageFallbackRadiusCalls")),
-					tostring(rawget(map, "SuperBigMapPassageFallbackRadiusHits")))
+					tostring(rawget(map, "SuperBigMapPassageFallbackRadiusCalls")))
 			end
 
 			local function pin_cursor()
