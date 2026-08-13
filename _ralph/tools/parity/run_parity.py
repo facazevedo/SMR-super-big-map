@@ -1332,9 +1332,397 @@ DECOR_PROBE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "markprobe" argument.  Iteration 035 named the pass that
+# decides the ten underground residue sites: `remove_overlapping_object`
+# (RandomMapGenerator.lua:2708-2721) inside `Proc_RemoveOverlappedObjects`, on BOTH twins.  Its
+# whole decision is `GridGetMark(mark_grid, obj) ~= obj_can_rem[obj] and obj_to_mark[obj]`, gated
+# by `placed_objects[obj]` - all locals/upvalues of that closure.  This block reaches them from
+# the DoneObject wrapper with debug.getinfo + debug.getupvalue at the first watched destruction on
+# each map (the mark grid is freed only at :2894) and then, in that one moment, reports:
+#   * every size the generator's grid sizing can key off (map:GetMapSize, mapdata.Width/Height,
+#     map.Width/hex_width and the mod's SuperBigMapExpanded* backing extents), work_step, and the
+#     mark grid's own dimensions;
+#   * whether the NATIVE reader GridGetMark agrees with a Lua-side sample of the same grid taken
+#     in the generator's source view (pos / work_step) or in the physical backing's view
+#     (pos * grid_w / backing_world_w), counted over up to 3000 placed objects - the expanded
+#     underground generates on the physically 8192-wide backing while every Lua-facing size reads
+#     6144 (Code/sbm_map_generation.lua:9604-9628), so a native reader keyed off the backing size
+#     quantizes marks 4/3 coarser and flips exactly the marginal objects;
+#   * the nonzero-mark bounding box (stride scan), which shows directly whether the rasterizer
+#     wrote marks across the whole grid or only its lower 3/4;
+#   * per residue site, every decision input for each object within SITE_R plus the 3x3
+#     mark neighbourhood around its cell.
+# Identical Lua runs on BOTH twins.  It is read-only: no object is created or destroyed, no map
+# RNG is consumed, no generation input changes; inertness is proven by a byte-identical dump.
+MARK_PROBE_BLOCK = """		do
+			local mark_lines = {}
+			local mark_dropped = 0
+			local function mark_ticks()
+				if type(GetPreciseTicks) == "function" then return GetPreciseTicks() end
+				return 0
+			end
+			local mark_t0 = mark_ticks()
+			local function mark_log(text)
+				if #mark_lines >= 40000 then
+					mark_dropped = mark_dropped + 1
+					return
+				end
+				mark_lines[#mark_lines + 1] = string.format(
+					"[%7sms][%s] %s", tostring(mark_ticks() - mark_t0),
+					tostring(rawget(_G, "g_ParityStatus")), tostring(text))
+			end
+			g_ParityMarkLines = mark_lines
+			g_ParityMarkProbeStatus = "running"
+
+			local WATCHED = {
+				RemovableRocks_01 = true, RemovableRocks_02 = true,
+				Rocks_04 = true, SoundSource = true,
+			}
+			-- The ten residue sites in SOURCE (vanilla) coordinates; generation-time positions are
+			-- pre-stretch on both twins (iteration 035).  "E" = kept by the expanded twin only,
+			-- "V" = kept by the vanilla twin only.
+			local SITES = {
+				{"E", "Rocks_04", 169118, 305372},
+				{"E", "SoundSource", 401972, 340705},
+				{"E", "RemovableRocks_02", 271913, 343717},
+				{"E", "RemovableRocks_02", 272833, 373485},
+				{"E", "RemovableRocks_02", 288823, 385739},
+				{"V", "SoundSource", 154540, 196242},
+				{"V", "SoundSource", 336786, 397864},
+				{"V", "RemovableRocks_02", 346164, 337898},
+				{"V", "RemovableRocks_02", 164909, 387965},
+				{"V", "RemovableRocks_01", 144912, 386496},
+			}
+			local SITE_R = 600
+
+			local function mark_map_of(obj)
+				if type(obj) ~= "table" or type(obj.GetMap) ~= "function" then return nil end
+				local ok, m = pcall(obj.GetMap, obj)
+				if ok then return m end
+				return nil
+			end
+			local function mark_env(map)
+				if not map then return "nomap" end
+				local md = map.mapdata
+				return string.format("%s#%s/%s", tostring(md and md.Environment or "?"),
+					tostring(map.slot), tostring(md and md.Width or "?"))
+			end
+			local function mark_xy(obj)
+				if type(obj) ~= "table" or type(obj.GetPos) ~= "function" then return nil end
+				local ok, x, y = pcall(function()
+					local p = obj:GetPos()
+					return p:x(), p:y()
+				end)
+				if ok and type(x) == "number" and type(y) == "number" then return x, y end
+				return nil
+			end
+			local function mark_grid_size(grid)
+				if grid == nil or grid == false then return nil end
+				local ok, w, h = pcall(function() return grid:size() end)
+				if ok and type(w) == "number" and type(h) == "number" then return w, h end
+				return nil
+			end
+			local function mark_cell(v, step)
+				if type(v) ~= "number" or type(step) ~= "number" or step <= 0 then return nil end
+				return math.floor(v / step)
+			end
+
+			-- Walk the Lua stack for the frame that owns `mark_grid` (remove_overlapping_object is
+			-- a closure inside DoGenerate, so the grid arrives as an upvalue).  Requires a USABLE
+			-- grid: the IsOutsider cull also calls DoneObject, long before apply_terrain creates it.
+			local function mark_find_upvalues()
+				for level = 2, 8 do
+					local ok, info = pcall(debug.getinfo, level, "fn")
+					if not ok or type(info) ~= "table" then break end
+					local f = info.func
+					if type(f) == "function" then
+						local ups, names, i = {}, {}, 1
+						while true do
+							local ok2, name, value = pcall(debug.getupvalue, f, i)
+							if not ok2 or type(name) ~= "string" then break end
+							ups[name] = value
+							names[#names + 1] = name
+							i = i + 1
+						end
+						if mark_grid_size(ups.mark_grid) then
+							return ups, level, tostring(info.name), table.concat(names, ",")
+						end
+					end
+				end
+				return nil
+			end
+
+			local captured = {}
+			local captures = 0
+			local function mark_evaluate(ups, level, fname, upnames, obj_map, trigger)
+				local grid = ups.mark_grid
+				local gw, gh = mark_grid_size(grid)
+				local const_t = rawget(_G, "const")
+				local terrain_t = rawget(_G, "terrain")
+				local type_tile
+				if terrain_t and type(terrain_t.TypeTileSize) == "function" then
+					local ok, v = pcall(terrain_t.TypeTileSize)
+					type_tile = ok and v or nil
+				end
+				local work_ratio = const_t and const_t.PrefabWorkRatio or nil
+				local work_step = (type(type_tile) == "number" and type(work_ratio) == "number")
+					and (work_ratio * type_tile) or nil
+				local md = obj_map and obj_map.mapdata
+				local get_w, get_h
+				if obj_map and type(obj_map.GetMapSize) == "function" then
+					local ok, a, b = pcall(obj_map.GetMapSize, obj_map)
+					if ok then get_w, get_h = a, b end
+				end
+				local backing_w = obj_map and obj_map.SuperBigMapExpandedWorldWidth or nil
+				local backing_h = obj_map and obj_map.SuperBigMapExpandedWorldHeight or nil
+
+				mark_log(string.format("CAPTURE #%d map=%s trigger=%s level=%s caller=%s",
+					captures, mark_env(obj_map), tostring(trigger), tostring(level), tostring(fname)))
+				mark_log("  upvalues: " .. tostring(upnames))
+				mark_log(string.format(
+					"  grid=%sx%s work_ratio=%s type_tile=%s work_step=%s lua_view_world=%s",
+					tostring(gw), tostring(gh), tostring(work_ratio), tostring(type_tile),
+					tostring(work_step),
+					(gw and work_step) and tostring(gw * work_step) or "?"))
+				mark_log(string.format(
+					"  GetMapSize=%s,%s mapdata=%sx%s map.Width=%s,%s hex=%s,%s backing=%s,%s hexbacking=%s,%s",
+					tostring(get_w), tostring(get_h),
+					tostring(md and md.Width), tostring(md and md.Height),
+					tostring(obj_map and obj_map.Width), tostring(obj_map and obj_map.Height),
+					tostring(obj_map and obj_map.hex_width), tostring(obj_map and obj_map.hex_height),
+					tostring(backing_w), tostring(backing_h),
+					tostring(obj_map and obj_map.SuperBigMapExpandedHexWidth),
+					tostring(obj_map and obj_map.SuperBigMapExpandedHexHeight)))
+
+				local grid_get = function(cx, cy)
+					if not gw or type(cx) ~= "number" or type(cy) ~= "number" then return nil end
+					if cx < 0 or cy < 0 or cx >= gw or cy >= gh then return nil end
+					local ok, v = pcall(function() return grid:get(cx, cy) end)
+					if ok and type(v) == "number" then return v end
+					return nil
+				end
+				local native_mark = function(obj)
+					local getter = rawget(_G, "GridGetMark")
+					if type(getter) ~= "function" then return nil end
+					local ok, v = pcall(getter, grid, obj)
+					if ok and type(v) == "number" then return v end
+					return nil
+				end
+
+				-- Whole-grid nonzero extent: shows whether the rasterizer wrote across the entire
+				-- grid or only the part the physical backing's scale would reach.
+				local stride = 8
+				local ok_scan, sx0, sy0, sx1, sy1, hits, scanned, gmax = pcall(function()
+					local x0, y0, x1, y1, n, total, mx = nil, nil, nil, nil, 0, 0, 0
+					for cy = 0, (gh or 1) - 1, stride do
+						for cx = 0, (gw or 1) - 1, stride do
+							total = total + 1
+							local v = grid:get(cx, cy)
+							if type(v) == "number" and v ~= 0 then
+								n = n + 1
+								if v > mx then mx = v end
+								if not x0 or cx < x0 then x0 = cx end
+								if not x1 or cx > x1 then x1 = cx end
+								if not y0 or cy < y0 then y0 = cy end
+								if not y1 or cy > y1 then y1 = cy end
+							end
+						end
+					end
+					return x0, y0, x1, y1, n, total, mx
+				end)
+				if ok_scan then
+					mark_log(string.format(
+						"  nonzero stride=%d cells=%s/%s bbox=(%s,%s)-(%s,%s) max_mark=%s frac_x=%s",
+						stride, tostring(hits), tostring(scanned), tostring(sx0), tostring(sy0),
+						tostring(sx1), tostring(sy1), tostring(gmax),
+						(sx1 and gw) and tostring(math.floor(1000 * (sx1 + 1) / gw)) or "?"))
+				else
+					mark_log("  nonzero scan failed: " .. tostring(sx0))
+				end
+
+				-- Which view does the NATIVE reader use?  Counted over the pass's own object list.
+				-- The cell offset is swept because the Lua grid accessor's index base is not
+				-- documented here: a wrong base would make BOTH views disagree and prove nothing.
+				local placed = ups.placed_objects
+				local back_step = (backing_w and gw) and (backing_w / gw) or nil
+				local function count_view(offset, budget)
+					local agree_src, agree_back, agree_both, agree_none, sampled = 0, 0, 0, 0, 0
+					if type(placed) ~= "table" then return sampled end
+					for i = 1, #placed do
+						if sampled >= budget then break end
+						local o = placed[i]
+						local x, y = mark_xy(o)
+						if x then
+							local nm = native_mark(o)
+							if nm then
+								sampled = sampled + 1
+								local cx, cy = mark_cell(x, work_step), mark_cell(y, work_step)
+								local src = (cx and grid_get(cx + offset, cy + offset)) or nil
+								local bck = nil
+								if back_step then
+									local bx, by = mark_cell(x, back_step), mark_cell(y, back_step)
+									bck = bx and grid_get(bx + offset, by + offset) or nil
+								end
+								local a = (src ~= nil and src == nm)
+								local b = (bck ~= nil and bck == nm)
+								if a and b then agree_both = agree_both + 1
+								elseif a then agree_src = agree_src + 1
+								elseif b then agree_back = agree_back + 1
+								else agree_none = agree_none + 1 end
+							end
+						end
+					end
+					mark_log(string.format(
+						"  reader view offset=%+d: sampled=%d src_only=%d backing_only=%d both=%d "
+						.. "neither=%d", offset, sampled, agree_src, agree_back, agree_both,
+						agree_none))
+					return sampled
+				end
+				mark_log(string.format("  steps: src_step=%s backing_step=%s placed=%s",
+					tostring(work_step), tostring(back_step),
+					tostring(type(placed) == "table" and #placed or "?")))
+				count_view(0, 3000)
+				count_view(1, 600)
+				count_view(-1, 600)
+
+				-- Per-site decision inputs, evaluated for every object still near the site.
+				local obj_to_mark, obj_can_rem = ups.obj_to_mark, ups.obj_can_rem
+				for s_i = 1, #SITES do
+					local s = SITES[s_i]
+					local found = 0
+					if type(placed) == "table" then
+						for i = 1, #placed do
+							local o = placed[i]
+							local x, y = mark_xy(o)
+							if x then
+								local dx, dy = x - s[3], y - s[4]
+								if dx < 0 then dx = -dx end
+								if dy < 0 then dy = -dy end
+								if dx <= SITE_R and dy <= SITE_R then
+									found = found + 1
+									local nm = native_mark(o)
+									local csx, csy = mark_cell(x, work_step), mark_cell(y, work_step)
+									local cbx, cby = nil, nil
+									if back_step then
+										cbx, cby = mark_cell(x, back_step), mark_cell(y, back_step)
+									end
+									local valid = rawget(_G, "IsValid")
+									local is_valid = type(valid) == "function" and valid(o) or "?"
+									mark_log(string.format(
+										"  SITE %s%02d %s (%d,%d) obj=%s pos=(%s,%s) valid=%s "
+										.. "placed=%s can_rem=%s obj_to_mark=%s native_mark=%s "
+										.. "src_cell=(%s,%s)=%s backing_cell=(%s,%s)=%s",
+										s[1], s_i, s[2], s[3], s[4], tostring(o.class),
+										tostring(x), tostring(y), tostring(is_valid),
+										tostring(type(placed) == "table" and placed[o] or "?"),
+										tostring(obj_can_rem and obj_can_rem[o]),
+										tostring(obj_to_mark and obj_to_mark[o]), tostring(nm),
+										tostring(csx), tostring(csy), tostring(grid_get(csx, csy)),
+										tostring(cbx), tostring(cby),
+										cbx and tostring(grid_get(cbx, cby)) or "-"))
+									local rows = {}
+									for oy = -1, 1 do
+										local row = {}
+										for ox = -1, 1 do
+											row[#row + 1] = tostring(grid_get(
+												csx and (csx + ox), csy and (csy + oy)))
+										end
+										rows[#rows + 1] = table.concat(row, ",")
+									end
+									mark_log("      src 3x3 marks: " .. table.concat(rows, " | "))
+								end
+							end
+						end
+					end
+					if found == 0 then
+						mark_log(string.format("  SITE %s%02d %s (%d,%d) no placed object within %d",
+							s[1], s_i, s[2], s[3], s[4], SITE_R))
+					end
+				end
+			end
+
+			local function mark_site(x, y)
+				if type(x) ~= "number" or type(y) ~= "number" then return nil end
+				for i = 1, #SITES do
+					local s = SITES[i]
+					local dx, dy = x - s[3], y - s[4]
+					if dx < 0 then dx = -dx end
+					if dy < 0 then dy = -dy end
+					if dx <= SITE_R and dy <= SITE_R then
+						return string.format("%s%02d:%s(%d,%d)", s[1], i, s[2], s[3], s[4])
+					end
+				end
+				return nil
+			end
+
+			local site_hits = 0
+			local function mark_note_destroy(obj)
+				local cls = type(obj) == "table" and obj.class
+				if not cls or not WATCHED[cls] then return end
+				local obj_map = mark_map_of(obj)
+				local key = mark_env(obj_map)
+				-- Re-read the upvalues on EVERY call: apply_terrain reassigns `mark_grid` for the
+				-- second (non-mark-only) pass and :2894 sets it false, so a cached grid handle
+				-- could be stale by the time delete_on_steep_slope runs.
+				local ups, level, fname, upnames = mark_find_upvalues()
+				if not ups then return end
+				if not captured[key] then
+					captured[key] = true
+					captures = captures + 1
+					local x, y = mark_xy(obj)
+					local okv, err = pcall(mark_evaluate, ups, level, fname, upnames, obj_map,
+						string.format("%s at (%s,%s)", tostring(cls), tostring(x), tostring(y)))
+					if not okv then mark_log("EVALUATION FAILED: " .. tostring(err)) end
+				end
+				-- Per-destruction record for the residue sites: the two numbers the pass compares.
+				local x, y = mark_xy(obj)
+				local site = mark_site(x, y)
+				if not site then return end
+				site_hits = site_hits + 1
+				local getter = rawget(_G, "GridGetMark")
+				local nm
+				if type(getter) == "function" then
+					local okm, v = pcall(getter, ups.mark_grid, obj)
+					nm = okm and v or nil
+				end
+				mark_log(string.format(
+					"DESTROY %s %s pos=(%s,%s) caller=%s native_mark=%s obj_to_mark=%s can_rem=%s SITE=%s",
+					key, tostring(cls), tostring(x), tostring(y), tostring(fname), tostring(nm),
+					tostring(ups.obj_to_mark and ups.obj_to_mark[obj]),
+					tostring(ups.obj_can_rem and ups.obj_can_rem[obj]), site))
+			end
+
+			local our_wrapper
+			local function mark_wrap_done()
+				local original = rawget(_G, "DoneObject")
+				if type(original) ~= "function" or original == our_wrapper then return false end
+				our_wrapper = function(obj, ...)
+					pcall(mark_note_destroy, obj)
+					return original(obj, ...)
+				end
+				_G.DoneObject = our_wrapper
+				return true
+			end
+			mark_log(mark_wrap_done() and "wrapped DoneObject" or "DoneObject unavailable")
+
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					if mark_wrap_done() then mark_log("DoneObject was REPLACED; re-wrapped") end
+					if status == "complete" or status == "error" then break end
+					Sleep(300)
+				end
+				mark_log(string.format("SUMMARY captures=%d site_hits=%d dropped_lines=%d",
+					captures, site_hits, mark_dropped))
+				local werr = AsyncStringToFile("__MARK_OUT__", table.concat(mark_lines, "\\n"))
+				g_ParityMarkProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
-             fx_probe=False, pit_probe=False, decor_probe=False):
+             fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -1391,6 +1779,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if decor_path.exists():
             decor_path.unlink()
         extras.append(DECOR_PROBE_BLOCK.replace("__DECOR_OUT__", cli.lua_path(decor_path)))
+    mark_path = OUT / f"markprobe-{tag}.log"
+    if mark_probe:
+        if mark_path.exists():
+            mark_path.unlink()
+        extras.append(MARK_PROBE_BLOCK.replace("__MARK_OUT__", cli.lua_path(mark_path)))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -1471,6 +1864,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 decor_status = f"unavailable ({exc})"
             log(f"decor probe: {decor_status} -> {decor_path}")
 
+        if mark_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                mark_status = poll_status(
+                    client, "g_ParityMarkProbeStatus", {"complete"}, set(), 180, f"mark-{tag}"
+                )
+            except RuntimeError as exc:
+                mark_status = f"unavailable ({exc})"
+            log(f"mark probe: {mark_status} -> {mark_path}")
+
         load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
         if load_err:
             raise RuntimeError(f"dump script failed to load: {load_err[2]}")
@@ -1545,6 +1948,7 @@ def main():
         fxprobe = "fxprobe" in sys.argv[5:]
         pitprobe = "pitprobe" in sys.argv[5:]
         decorprobe = "decorprobe" in sys.argv[5:]
+        markprobe = "markprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -1556,10 +1960,11 @@ def main():
         log(f"=== twin '{tag}' expand={expand} seed={seed} pin={pin} "
             f"serial_raster={serial} decal_probe={probe} camera_probe={camera} "
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
-            f"hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"mark_probe={markprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
-                        fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe)
+                        fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
+                        mark_probe=markprobe)
         log(f"result: {json.dumps(info)}")
         return
 
