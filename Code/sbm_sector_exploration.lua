@@ -1518,39 +1518,49 @@ local function RevealVanillaStartSectors(map)
 	-- overlapping sectors, which cover far more ground - reproduces vanilla's placed set exactly.
 	-- Vanilla's own RevealDeposits does the work, with the spawn positions InitialReveal already
 	-- computed for every candidate sector's markers.
+	-- The candidate markers are read from the LIVE map over the footprint box, exactly as vanilla's
+	-- InitSector builds a sector's marker lists (GetDepthClass == "surface"), instead of trusting the
+	-- destination sectors' bookkeeping: this reveal runs mid-stretch, right after the markers were
+	-- recreated at their stretched positions, so a sector list built earlier can name objects that no
+	-- longer exist. The stamps are read back by the parity dump.
 	if (SuperBigMap.Config or {}).START_SECTOR_FOOTPRINT_DEPOSITS == true then
 		local reveal_deposits = Global("RevealDeposits")
 		if type(reveal_deposits) ~= "function" then
 			error("vanilla RevealDeposits unavailable for the stretched start footprint")
 		end
-		local placed_extra = 0
-		for i = 1, #overlaps do
-			local sector = overlaps[i].sector
-			local markers = sector and sector.markers and sector.markers.surface
-			local pending = {}
-			for j = 1, type(markers) == "table" and #markers or 0 do
-				local marker = markers[j]
-				if marker and not marker.is_placed and type(marker.GetVisualPosXYZ) == "function" then
-					local ok_pos, mx, my = pcall(marker.GetVisualPosXYZ, marker)
-					if ok_pos and type(mx) == "number" and type(my) == "number"
-						and mx >= x0 and mx < x1 and my >= y0 and my < y1 then
-						pending[#pending + 1] = marker
-					end
-				end
-			end
-			if #pending > 0 then
-				local amounts = sector.deposits and sector.deposits.surface or nil
-				local revealed_list = sector.revealed_surf
-				local ok_reveal, count = pcall(reveal_deposits, pending, amounts, nil, revealed_list,
-					spawn_positions)
-				if not ok_reveal then
-					error(string.format("stretched start footprint deposit placement failed in %s: %s",
-						tostring(sector.id), tostring(count)))
-				end
-				placed_extra = placed_extra + (tonumber(count) or 0)
-			end
+		if not transformed_box then
+			error("stretched start footprint box unavailable")
 		end
-		if placed_extra > 0 then
+		local seen, pending = 0, {}
+		pcall(map.MapForEach, map, transformed_box, "DepositMarker", function(marker)
+			seen = seen + 1
+			if marker.is_placed or type(marker.GetDepthClass) ~= "function" then return end
+			local ok_depth, depth = pcall(marker.GetDepthClass, marker)
+			if not (ok_depth and depth == "surface") then return end
+			local ok_pos, mx, my = pcall(marker.GetVisualPosXYZ, marker)
+			if not (ok_pos and type(mx) == "number" and type(my) == "number") then return end
+			-- MapForEach's box test is inclusive of the far edge; vanilla's sector membership is
+			-- half-open, so the marker of the next sector must not be adopted here.
+			if mx >= x0 and mx < x1 and my >= y0 and my < y1 then
+				pending[#pending + 1] = { marker = marker, x = mx, y = my }
+			end
+		end)
+		-- Engine enumeration order is not specified; a fixed order keeps the placement sequence
+		-- (and therefore any obstruction interaction between two of them) reproducible.
+		table.sort(pending, function(a, b)
+			if a.x ~= b.x then return a.x < b.x end
+			if a.y ~= b.y then return a.y < b.y end
+			return tostring(a.marker) < tostring(b.marker)
+		end)
+		local list = {}
+		for i = 1, #pending do list[i] = pending[i].marker end
+		local placed_extra = 0
+		if #list > 0 then
+			local ok_reveal, count = pcall(reveal_deposits, list, nil, nil, nil, spawn_positions)
+			if not ok_reveal then
+				error("stretched start footprint deposit placement failed: " .. tostring(count))
+			end
+			placed_extra = tonumber(count) or 0
 			-- Vanilla's own tail for a reveal that spawned deposits (MapSector:Scan).
 			pcall(function()
 				local delayed = Global("DelayedCall")
@@ -1560,6 +1570,11 @@ local function RevealVanillaStartSectors(map)
 				end
 			end)
 		end
+		map.SuperBigMapStartFootprintBox = string.format("%s,%s,%s,%s", tostring(x0), tostring(y0),
+			tostring(x1), tostring(y1))
+		map.SuperBigMapStartFootprintSectors = #overlaps
+		map.SuperBigMapStartFootprintMarkers = seen
+		map.SuperBigMapStartFootprintPending = #list
 		map.SuperBigMapStartFootprintDeposits = placed_extra
 	end
 

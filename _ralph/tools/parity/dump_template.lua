@@ -119,6 +119,12 @@ CreateRealTimeThread(function()
 				"SuperBigMapSurfaceStretchDone", "SuperBigMapUndergroundPrepared",
 				"SuperBigMapStrictNativeObjectCorrespondence",
 				"SuperBigMapProvenanceDerived", "SuperBigMapProvenanceUnresolved",
+				-- Start-sector footprint reveal (mod v789): the box, how many deposit markers the
+				-- box holds, how many were still unplaced after the single sector scan, and how
+				-- many of those the mod placed.  Diagnostic meta only; no row is affected.
+				"SuperBigMapStartFootprintBox", "SuperBigMapStartFootprintSectors",
+				"SuperBigMapStartFootprintMarkers", "SuperBigMapStartFootprintPending",
+				"SuperBigMapStartFootprintDeposits",
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end
