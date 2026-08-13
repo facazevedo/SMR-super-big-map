@@ -49,6 +49,51 @@ CreateRealTimeThread(function()
 			return nil
 		end
 
+		-- Creation chain, mirroring Code/sbm_provenance.lua field for field. Walking it to the
+		-- TOP gives an anchor that both twins compute the same way: on the vanilla twin every
+		-- live position IS the native position, on the expanded twin the root carries a recorded
+		-- source. A child that vanilla displaces from its donor (FindUnobstructedDepositPos moves
+		-- a CityInit marker by a different amount on each twin) is therefore still pairable.
+		local DONOR_FIELDS = { "marker", "tunnel_marker", "spawner", "passage", "linked_obj" }
+
+		local function live(obj)
+			return type(obj) == "table" and IsValid(obj)
+		end
+
+		local function first_new_donor(obj, seen)
+			if type(obj.GetParent) == "function" then
+				local parent = safe_call(obj.GetParent, obj)
+				if live(parent) and not seen[parent] then return parent end
+			end
+			for i = 1, #DONOR_FIELDS do
+				local donor = obj[DONOR_FIELDS[i]]
+				if live(donor) and not seen[donor] then return donor end
+			end
+			return nil
+		end
+
+		local function root_donor(obj)
+			local seen, current = { [obj] = true }, obj
+			for _ = 1, 8 do
+				local nxt = first_new_donor(current, seen)
+				if not nxt then break end
+				seen[nxt] = true
+				current = nxt
+			end
+			return current
+		end
+
+		-- The root's own native/recorded coordinate when it has one, else its live position.
+		local function anchor_xy(obj)
+			local x, y = obj.SuperBigMapNativeSourceX, obj.SuperBigMapNativeSourceY
+			if type(x) == "number" and type(y) == "number" then return x, y end
+			x, y = obj.SuperBigMapProvenanceX, obj.SuperBigMapProvenanceY
+			if type(x) == "number" and type(y) == "number" then return x, y end
+			local pos = safe_call(obj.GetPos, obj)
+			if not pos then return nil end
+			return safe_call(pos.x, pos), safe_call(pos.y, pos)
+		end
+
 		local function dump_map(map, tag)
 			if not map then
 				meta(tag, "present", "false")
@@ -92,6 +137,8 @@ CreateRealTimeThread(function()
 				local obj = objs[i]
 				if obj and IsValid(obj) then
 					local cls = tostring(obj.class or "?")
+					local root = root_donor(obj)
+					local rx, ry = anchor_xy(root)
 					local x, y, z = "", "", ""
 					local pos = safe_call(obj.GetPos, obj)
 					if pos then
@@ -116,6 +163,8 @@ CreateRealTimeThread(function()
 						obj.SuperBigMapTransferredFromNativeSource == true and "1" or "0",
 						src_kind(obj),
 						tostring(obj.SuperBigMapProvenanceFrom or ""),
+						root == obj and cls or tostring(root.class or "?"),
+						num(rx), num(ry),
 					}, ","))
 					rows = rows + 1
 				end
@@ -135,7 +184,7 @@ CreateRealTimeThread(function()
 			if env == "Underground" and not underground then underground = m end
 		end
 
-		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from")
+		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from,root_class,root_x,root_y")
 		dump_map(surface, "surface")
 		dump_map(underground, "underground")
 

@@ -45,6 +45,9 @@ def parse_dump(path):
             # Optional provenance-kind columns (older dumps do not have them).
             skind = parts[14] if len(parts) > 14 else ""
             sfrom = parts[15] if len(parts) > 15 else ""
+            rclass = parts[16] if len(parts) > 16 else ""
+            rx = parts[17] if len(parts) > 17 else ""
+            ry = parts[18] if len(parts) > 18 else ""
 
             def fnum(v):
                 if v == "":
@@ -67,6 +70,8 @@ def parse_dump(path):
                 "transferred": transferred == "1",
                 "src_kind": skind or "",
                 "src_from": sfrom or "",
+                "root_class": rclass or None,
+                "root_x": fnum(rx), "root_y": fnum(ry),
             })
     return meta, rows
 
@@ -116,6 +121,30 @@ def provenance(vrows, erows):
             used.add(bucket.pop())
         else:
             unmatched.append(r)
+    # Stage 2, DERIVED records only. Vanilla creates some children away from the object that
+    # created them (SpawnsOnCityInit:Spawn runs FindUnobstructedDepositPos, whose result depends
+    # on the terrain and so differs between the twins), so such a child's own coordinate cannot
+    # identify it. Pair those donor-root to donor-root instead - the same walk, computed the same
+    # way on both twins. A `native` stamp that failed stage 1 is a real mismatch and is never
+    # rescued here.
+    root_pool = defaultdict(list)
+    for i, r in enumerate(vrows):
+        if i in used or r["root_x"] is None:
+            continue
+        root_pool[(r["class"], r["root_x"], r["root_y"])].append(i)
+    matched_by_root = 0
+    still_unmatched = []
+    for r in unmatched:
+        bucket = (root_pool.get((r["class"], r["root_x"], r["root_y"]))
+                  if r["src_kind"] == "derived" and r["root_x"] is not None else None)
+        if bucket:
+            matched += 1
+            matched_by_root += 1
+            matched_by_kind[r["src_kind"]] += 1
+            used.add(bucket.pop())
+        else:
+            still_unmatched.append(r)
+    unmatched = still_unmatched
     unconsumed = [vrows[i] for i in range(len(vrows)) if i not in used]
     return {
         "stamped": stamped,
@@ -125,6 +154,7 @@ def provenance(vrows, erows):
         "unconsumed_vanilla": unconsumed,
         "stamped_by_kind": dict(by_kind),
         "matched_by_kind": dict(matched_by_kind),
+        "matched_by_root": matched_by_root,
     }
 
 
@@ -237,6 +267,7 @@ def report_map(tag, vrows, erows, rx, ry, out):
     w(f"\n-- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --")
     w(f"   expanded objects carrying a source stamp : {prov['stamped']}")
     w(f"   ... matched to a distinct vanilla object : {prov['matched']}")
+    w(f"   ... of those, paired by donor root       : {prov['matched_by_root']}")
     w(f"   ... stamp with no vanilla counterpart    : {len(prov['unmatched_expanded'])}")
     w(f"   expanded objects with NO source stamp    : {len(prov['unstamped'])}")
     if prov["stamped_by_kind"]:
@@ -295,6 +326,7 @@ def report_map(tag, vrows, erows, rx, ry, out):
         "provenance_unmatched_expanded": len(prov["unmatched_expanded"]),
         "provenance_unstamped_expanded": len(prov["unstamped"]),
         "provenance_unconsumed_vanilla": len(prov["unconsumed_vanilla"]),
+        "provenance_matched_by_root": prov["matched_by_root"],
         "provenance_stamped_by_kind": prov["stamped_by_kind"],
         "provenance_matched_by_kind": prov["matched_by_kind"],
         "stretch_max_residual": max(allres) if allres else None,
