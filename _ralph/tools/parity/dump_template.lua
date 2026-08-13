@@ -214,6 +214,111 @@ CreateRealTimeThread(function()
 		dump_map(surface, "surface")
 		dump_map(underground, "underground")
 
+		-- LINKED PASSAGE PAIR RECORDS (task gate `entrance-colocation`).
+		--
+		-- A linked pair is one passage object on each map joined by `other` (the engine's own link,
+		-- also what SpawnUndergroundPassage builds).  Co-location must be proven by comparing the two
+		-- endpoints' HEXES, so each endpoint reports the hex the engine's own WorldToHex assigns to
+		-- its live position; the comparer never re-derives hex algebra.  Each endpoint also reports
+		-- the exact stretched image of its OWN vanilla coordinate (its recorded source stamp scaled by
+		-- this map's tile ratio, hex-snapped exactly as the mod's planner does) so drift is measured,
+		-- not guessed.  On the vanilla control there is no stamp and no ratio, so the image columns
+		-- stay empty and the record simply states where vanilla put its own two endpoints.
+		--
+		-- Read-only: this block moves, creates and destroys nothing, so the object rows above stay
+		-- byte-identical to a run without it.
+		local function pair_ratio(map)
+			local function axis(source, desired)
+				source, desired = tonumber(source), tonumber(desired)
+				-- Integer division is preserved in this runtime (8192/6144 == 1); promote exactly as
+				-- the mod's own expansion_ratio does.
+				if source and desired and source > 0 and desired > source then
+					return (desired + 0.0) / source
+				end
+				return nil
+			end
+			return axis(map.SuperBigMapGeneratorWidthTiles or map.SuperBigMapSourceWidthTiles,
+					map.SuperBigMapDesiredWidthTiles),
+				axis(map.SuperBigMapGeneratorHeightTiles or map.SuperBigMapSourceHeightTiles,
+					map.SuperBigMapDesiredHeightTiles)
+		end
+
+		local function hex_of(x, y)
+			if type(WorldToHex) ~= "function" or type(point) ~= "function"
+				or type(x) ~= "number" or type(y) ~= "number" then return nil end
+			local ok_hex, q, r = pcall(WorldToHex, point(x, y))
+			if ok_hex and type(q) == "number" and type(r) == "number" then return q, r end
+			return nil
+		end
+
+		local function hex_world(q, r)
+			if type(HexToWorld) ~= "function" or type(q) ~= "number" then return nil end
+			local ok_world, x, y = pcall(HexToWorld, q, r)
+			if ok_world and type(x) == "number" and type(y) == "number" then return x, y end
+			return nil
+		end
+
+		local function endpoint_xy(obj)
+			local pos = safe_call(obj.GetPos, obj)
+			if not pos then return nil end
+			return safe_call(pos.x, pos), safe_call(pos.y, pos), safe_call(pos.z, pos)
+		end
+
+		local function emit_pair_endpoint(index, map, tag, obj, linked)
+			local x, y, z = endpoint_xy(obj)
+			local q, r = hex_of(x, y)
+			local sx = obj.SuperBigMapNativeSourceX
+			local sy = obj.SuperBigMapNativeSourceY
+			if type(sx) ~= "number" then sx = obj.SuperBigMapProvenanceX end
+			if type(sy) ~= "number" then sy = obj.SuperBigMapProvenanceY end
+			local ratio_x, ratio_y = pair_ratio(map)
+			local image_x, image_y, image_q, image_r
+			if type(sx) == "number" and type(sy) == "number" and ratio_x and ratio_y then
+				image_q, image_r = hex_of(math.floor(sx * ratio_x + 0.5),
+					math.floor(sy * ratio_y + 0.5))
+				if image_q then image_x, image_y = hex_world(image_q, image_r) end
+			end
+			emit(table.concat({
+				"#pair", tostring(index), tag, tostring(obj.class or "?"),
+				num(x), num(y), num(z), num(safe_call(obj.GetAngle, obj)),
+				num(q), num(r), num(sx), num(sy),
+				num(image_x), num(image_y), num(image_q), num(image_r),
+				linked and "1" or "0",
+			}, ","))
+		end
+
+		emit("#paircolumns,index,map,class,x,y,z,angle,q,r,src_x,src_y,image_x,image_y,image_q,image_r,linked")
+		local pair_count = 0
+		if surface and underground and type(underground.MapForEach) == "function" then
+			local anchors = {}
+			pcall(underground.MapForEach, underground, "map", "ElevatorPassage", function(obj)
+				if live(obj) then anchors[#anchors + 1] = obj end
+			end)
+			-- MapForEach order is not a contract; order the pairs by the underground endpoint's own
+			-- coordinate so the same pair carries the same index on both twins and across runs.
+			table.sort(anchors, function(a, b)
+				local ax, ay = endpoint_xy(a)
+				local bx, by = endpoint_xy(b)
+				ax, ay, bx, by = ax or 0, ay or 0, bx or 0, by or 0
+				if ax ~= bx then return ax < bx end
+				if ay ~= by then return ay < by end
+				return (a.handle or 0) < (b.handle or 0)
+			end)
+			for i = 1, #anchors do
+				local underground_endpoint = anchors[i]
+				local surface_endpoint = underground_endpoint.other
+				local linked = live(surface_endpoint)
+					and safe_call(surface_endpoint.GetMap, surface_endpoint) == surface
+					and surface_endpoint.other == underground_endpoint
+				pair_count = pair_count + 1
+				emit_pair_endpoint(pair_count, underground, "underground", underground_endpoint, linked)
+				if linked then
+					emit_pair_endpoint(pair_count, surface, "surface", surface_endpoint, true)
+				end
+			end
+		end
+		meta("pairs", "linked_pair_count", pair_count)
+
 		local text = table.concat(out, "\n")
 		local werr = AsyncStringToFile("__OUT_PATH__", text)
 		if werr then

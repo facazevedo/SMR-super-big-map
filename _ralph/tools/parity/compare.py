@@ -635,6 +635,196 @@ def geometric_match(vrows, erows, rx, ry, max_r=200000):
     return per_class
 
 
+# ---------------------------------------------------------------------------
+# LINKED PASSAGE PAIRS  (task matrix cases `entrance-colocation`,
+# `entrance-minimal-drift`)
+#
+# The dump emits one `#pair` record per endpoint of every linked passage pair, with the
+# hex the ENGINE's own WorldToHex assigns to that endpoint's live position (see
+# dump_template.lua).  Co-location is therefore decided by comparing the two endpoints'
+# hexes directly, for EVERY pair - never by sampling and never by hex algebra reproduced
+# here.  Drift is measured from the exact stretched image of that endpoint's own vanilla
+# coordinate, which the dump also computes with the engine's hex functions.
+# ---------------------------------------------------------------------------
+PAIR_COLUMNS = ("index", "map", "class", "x", "y", "z", "angle", "q", "r",
+                "src_x", "src_y", "image_x", "image_y", "image_q", "image_r", "linked")
+
+
+def parse_pairs(path):
+    """Return the dump's linked passage pairs as [{'surface': rec, 'underground': rec}]."""
+    by_index = defaultdict(dict)
+    with open(path, "r", encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if not line.startswith("#pair,"):
+                continue
+            parts = line.rstrip("\n").split(",")[1:]
+            if len(parts) < len(PAIR_COLUMNS):
+                continue
+            rec = {}
+            for name, value in zip(PAIR_COLUMNS, parts):
+                if name in ("map", "class"):
+                    rec[name] = value
+                elif name == "linked":
+                    rec[name] = value == "1"
+                else:
+                    try:
+                        rec[name] = int(value)
+                    except ValueError:
+                        try:
+                            rec[name] = float(value)
+                        except ValueError:
+                            rec[name] = None
+            by_index[rec["index"]][rec["map"]] = rec
+    return [by_index[k] for k in sorted(by_index)]
+
+
+def hex_distance(qa, ra, qb, rb):
+    """Rings between two axial hexes (the engine's six neighbour steps, cube distance)."""
+    if None in (qa, ra, qb, rb):
+        return None
+    dq, dr = qa - qb, ra - rb
+    return (abs(dq) + abs(dr) + abs(dq + dr)) // 2
+
+
+def xy_distance(ax, ay, bx, by):
+    if None in (ax, ay, bx, by):
+        return None
+    return math.hypot(ax - bx, ay - by)
+
+
+def entrance_section(vpairs, epairs, out):
+    def w(s=""):
+        out.append(s)
+
+    w(f"\n{'=' * 78}")
+    w("  ENTRANCE PAIRS   linked Surface/Underground passages")
+    w(f"{'=' * 78}")
+    w(f"   vanilla linked pairs={len(vpairs)}   expanded linked pairs={len(epairs)}")
+
+    # Identify a vanilla pair by its surface endpoint's own coordinate; the expanded surface
+    # endpoint carries exactly that coordinate as its recorded source stamp, so the two twins'
+    # pairs are matched by identity and never by ordering.
+    vanilla_by_surface_xy = {}
+    for pair in vpairs:
+        surface = pair.get("surface")
+        if surface and surface["x"] is not None:
+            vanilla_by_surface_xy[(surface["x"], surface["y"])] = pair
+
+    records = []
+    for pair in epairs:
+        surface, underground = pair.get("surface"), pair.get("underground")
+        rec = {
+            "index": (underground or surface or {}).get("index"),
+            "linked": bool(surface and underground
+                           and surface.get("linked") and underground.get("linked")),
+            "surface_class": (surface or {}).get("class"),
+            "underground_class": (underground or {}).get("class"),
+            "surface_hex": [(surface or {}).get("q"), (surface or {}).get("r")],
+            "underground_hex": [(underground or {}).get("q"), (underground or {}).get("r")],
+            "surface_xy": [(surface or {}).get("x"), (surface or {}).get("y")],
+            "underground_xy": [(underground or {}).get("x"), (underground or {}).get("y")],
+            "surface_source_xy": [(surface or {}).get("src_x"), (surface or {}).get("src_y")],
+            "underground_source_xy": [(underground or {}).get("src_x"),
+                                      (underground or {}).get("src_y")],
+            "surface_image_hex": [(surface or {}).get("image_q"), (surface or {}).get("image_r")],
+            "surface_image_xy": [(surface or {}).get("image_x"), (surface or {}).get("image_y")],
+            "underground_image_hex": [(underground or {}).get("image_q"),
+                                      (underground or {}).get("image_r")],
+        }
+        if surface and underground:
+            rec["hex_delta"] = hex_distance(surface["q"], surface["r"],
+                                            underground["q"], underground["r"])
+            rec["endpoint_distance"] = xy_distance(surface["x"], surface["y"],
+                                                   underground["x"], underground["y"])
+            rec["colocated"] = (rec["hex_delta"] == 0)
+        else:
+            rec["hex_delta"] = None
+            rec["endpoint_distance"] = None
+            rec["colocated"] = False
+        # `entrance-minimal-drift`: distance from the exact stretched image of the vanilla
+        # SURFACE coordinate to the final endpoint, reported per endpoint of the pair.
+        if surface:
+            rec["surface_drift"] = xy_distance(surface["x"], surface["y"],
+                                               surface["image_x"], surface["image_y"])
+            rec["surface_drift_hexes"] = hex_distance(surface["q"], surface["r"],
+                                                      surface["image_q"], surface["image_r"])
+            if underground:
+                rec["underground_drift_from_surface_image"] = xy_distance(
+                    underground["x"], underground["y"],
+                    surface["image_x"], surface["image_y"])
+        if underground:
+            rec["underground_own_image_drift"] = xy_distance(
+                underground["x"], underground["y"],
+                underground["image_x"], underground["image_y"])
+        vanilla = vanilla_by_surface_xy.get(tuple(rec["surface_source_xy"]))
+        if vanilla:
+            vs, vu = vanilla.get("surface"), vanilla.get("underground")
+            rec["vanilla_surface_xy"] = [(vs or {}).get("x"), (vs or {}).get("y")]
+            rec["vanilla_underground_xy"] = [(vu or {}).get("x"), (vu or {}).get("y")]
+            if vs and vu:
+                rec["vanilla_endpoint_distance"] = xy_distance(vs["x"], vs["y"], vu["x"], vu["y"])
+                rec["vanilla_hex_delta"] = hex_distance(vs["q"], vs["r"], vu["q"], vu["r"])
+                rec["vanilla_colocated"] = (rec["vanilla_hex_delta"] == 0)
+        records.append(rec)
+
+    for rec in records:
+        def hx(pair_hex):
+            return f"({pair_hex[0]},{pair_hex[1]})"
+
+        def xy(pair_xy):
+            return f"({pair_xy[0]},{pair_xy[1]})"
+
+        verdict = "CO-LOCATED" if rec["colocated"] else "DIFFERENT HEX  <== entrance-colocation FAIL"
+        w(f"\n   pair {rec['index']}  {verdict}")
+        w(f"      surface     {rec['surface_class']:<24} hex {hx(rec['surface_hex'])} "
+          f"= {xy(rec['surface_xy'])}")
+        w(f"      underground {rec['underground_class']:<24} hex {hx(rec['underground_hex'])} "
+          f"= {xy(rec['underground_xy'])}")
+        w(f"      endpoint separation: hexes={rec['hex_delta']} "
+          f"world={rec['endpoint_distance'] if rec['endpoint_distance'] is None else round(rec['endpoint_distance'])}")
+        w(f"      vanilla source: surface {xy(rec['surface_source_xy'])} "
+          f"underground {xy(rec['underground_source_xy'])}"
+          + (f" (vanilla's own endpoints {round(rec['vanilla_endpoint_distance'])} apart)"
+             if rec.get("vanilla_endpoint_distance") is not None else ""))
+        w(f"      stretched image of the vanilla SURFACE coordinate: "
+          f"hex {hx(rec['surface_image_hex'])} = {xy(rec['surface_image_xy'])}")
+        if rec.get("surface_drift") is not None:
+            w(f"      drift surface endpoint -> that image: {round(rec['surface_drift'])} wu "
+              f"({rec['surface_drift_hexes']} hexes)")
+        if rec.get("underground_drift_from_surface_image") is not None:
+            w(f"      drift underground endpoint -> that image: "
+              f"{round(rec['underground_drift_from_surface_image'])} wu")
+        if rec.get("underground_own_image_drift") is not None:
+            w(f"      drift underground endpoint -> image of its OWN vanilla coordinate: "
+              f"{round(rec['underground_own_image_drift'])} wu")
+
+    differing = [r for r in records if not r["colocated"]]
+    unlinked = [r for r in records if not r["linked"]]
+    drifts = [r["surface_drift"] for r in records if r.get("surface_drift") is not None]
+    summary = {
+        "vanilla_pairs": len(vpairs),
+        "expanded_pairs": len(epairs),
+        "pairs_colocated": len(records) - len(differing),
+        "pairs_differing": len(differing),
+        "pairs_unlinked": len(unlinked),
+        "max_hex_delta": max((r["hex_delta"] for r in records
+                              if r["hex_delta"] is not None), default=None),
+        "max_surface_drift": max(drifts, default=None),
+        "colocation_ok": (len(records) > 0
+                          and len(differing) == 0
+                          and len(unlinked) == 0
+                          and len(vpairs) == len(epairs)),
+        "records": records,
+    }
+    w("")
+    w(f"   GATE entrance-colocation: pairs={summary['expanded_pairs']} "
+      f"colocated={summary['pairs_colocated']} differing={summary['pairs_differing']} "
+      f"-> {'PASS' if summary['colocation_ok'] else 'FAIL'}")
+    w(f"   REPORTED entrance-minimal-drift: max surface drift from the exact stretched image = "
+      f"{'n/a' if summary['max_surface_drift'] is None else round(summary['max_surface_drift'])} wu")
+    return summary
+
+
 def dist_summary(d):
     if not d:
         return "n/a"
@@ -961,6 +1151,11 @@ def main():
                              and s["provenance_unstamped_expanded"] == 0
                              and s["provenance_unconsumed_vanilla"] == 0
                              and s["vanilla_objects"] == s["expanded_objects"])
+
+    summary["entrance"] = entrance_section(
+        parse_pairs(out_dir / "objects-vanilla.csv"),
+        parse_pairs(out_dir / "objects-expanded.csv"),
+        lines)
 
     text = "\n".join(lines)
     print(text)
