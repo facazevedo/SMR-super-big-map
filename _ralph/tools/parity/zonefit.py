@@ -116,11 +116,16 @@ def zone_lut(base, peak, shift):
     T = peak - base
     k = solve_k(H, T)
     t = np.arange(0, max(T, 0) + 1, dtype=np.float64)
+    # floor(x + 0.5), NOT np.rint: the mod's Lua builds this table with math.floor(x + 0.5),
+    # and rint rounds halves to even, so the two would disagree on exact halves.  The gates
+    # compare the game's grid against this table bit for bit (measured in-game equality:
+    # `gridops_check.py`), so the reference must round exactly the way the port does.
     if k <= 0.0:
-        img = base_img + np.rint(H * t / max(T, 1)).astype(np.int64)
+        img = base_img + np.floor(H * t / max(T, 1) + 0.5).astype(np.int64)
     else:
-        img = base_img + np.rint(H * (-np.expm1(-k * t)) / -np.expm1(-k * T)).astype(np.int64)
-    # rint can land 1 unit above the affine near the base, where the two curves touch; the
+        img = base_img + np.floor(
+            H * (-np.expm1(-k * t)) / -np.expm1(-k * T) + 0.5).astype(np.int64)
+    # rounding can land 1 unit above the affine near the base, where the two curves touch; the
     # remap must only ever lower a cell.  min() with the affine is safe at the peak (the
     # affine there is above the ceiling by construction) and keeps the LUT monotone.
     img = np.minimum(img, affine(base + t, shift))
@@ -371,7 +376,9 @@ def main(argv=None):
     ap.add_argument("--width", type=int, default=6144)
     ap.add_argument("--height", type=int, default=0)
     ap.add_argument("--dest-width", type=int, default=8192)
-    ap.add_argument("--connectivity", type=int, choices=(4, 8), default=8)
+    # 4, matching the engine: GridEnumZones is 4-connected (measured in-game -- two cells
+    # touching only diagonally come back as two zones), so the reference must be too.
+    ap.add_argument("--connectivity", type=int, choices=(4, 8), default=4)
     ap.add_argument("--rule", choices=("knee", "area", "headroom"), default="area")
     ap.add_argument("--growth", type=float, default=3.0)
     ap.add_argument("--area-mult", type=float, default=8.0)
