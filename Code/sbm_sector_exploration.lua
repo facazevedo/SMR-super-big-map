@@ -1239,6 +1239,48 @@ local function StageNativeStartSpawns(map, revealed, spawn_positions)
 	return staged, stats
 end
 
+-- ---------------------------------------------------------------------------------------
+-- STAGED NATIVE BREAKTHROUGH MARKER ORDER.
+-- City:InitBreakThroughAnomalies (Lua/Buildings/Anomaly.lua:652) decides WHICH breakthrough
+-- anomaly markers survive by shuffling the array its own MapGet returned with a seeded rand and
+-- then pruning from the tail. The shuffle and the caps are deterministic, so the survivor SET is a
+-- pure function of that ENUMERATION ORDER. The mod defers that one initializer until after the
+-- stretch and replays it on the EXPANDED map over recreated markers, whose enumeration order is the
+-- destination's own - measured at b2-04 as one marker in and one out at 46/46
+-- (runs/perfect-21/artifacts/b204_breakthrough_prune_verdict.md).
+-- So capture vanilla's order HERE, on the live native source, as plain source stamps that survive
+-- the source unload; the deferred finalizer feeds exactly this order back into the shipped method.
+-- ---------------------------------------------------------------------------------------
+local function StageNativeBreakthroughOrder(map)
+	if type(map.MapGet) ~= "function" then return nil, "map enumeration unavailable" end
+	local ok, markers = pcall(map.MapGet, map, "map", "SubsurfaceAnomalyMarker",
+		function(marker) return marker.tech_action == "breakthrough" end)
+	if not ok then return nil, tostring(markers) end
+	local order = {}
+	local count = type(markers) == "table" and #markers or 0
+	for i = 1, count do
+		local marker = markers[i]
+		-- Identity for the destination: the immutable native stamp the recreated marker carries.
+		-- On the native source the marker's own position IS that stamp.
+		local sx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
+		local sy = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
+		if not (sx and sy) then
+			local ok_pos, px, py = pcall(marker.GetVisualPosXYZ, marker)
+			if ok_pos then
+				sx = sx or tonumber(px)
+				sy = sy or tonumber(py)
+			end
+		end
+		if not (sx and sy) then
+			return nil, "native breakthrough marker without a source position"
+		end
+		order[#order + 1] = {
+			class = tostring(marker.class or "?"), source_x = sx, source_y = sy,
+		}
+	end
+	return order
+end
+
 -- Build the virtual vanilla sector list and run vanilla's InitialReveal over it.
 -- Returns { winners = { {x0,y0,x1,y1,id}, ... }, staged = { <native spawn records> } }
 -- or nil + reason.
@@ -1400,6 +1442,15 @@ local function CaptureVanillaStartSelection(map)
 		and #selection.winners >= 1) then
 		return nil, tostring(ok and reason or selection)
 	end
+	-- Same native-source boundary, same reason: the breakthrough prune's only varying input is the
+	-- enumeration order of the markers, and only the source can state vanilla's.
+	if (SuperBigMap.Config or {}).BREAKTHROUGH_STAGED_ORDER == true then
+		local order, order_error = StageNativeBreakthroughOrder(map)
+		if type(order) ~= "table" then
+			return nil, "native breakthrough marker order capture failed: " .. tostring(order_error)
+		end
+		selection.breakthrough_order = order
+	end
 	return selection
 end
 
@@ -1435,6 +1486,12 @@ local function StageVanillaStartSelection(map, selection, reason)
 	map.SuperBigMapStartStagedSubsurface = stats.subsurface
 	map.SuperBigMapStartStagedDeep = stats.deep
 	map.SuperBigMapStartStagedPlaceable = stats.placeable
+	-- Vanilla's breakthrough marker enumeration order travels with the destination map; the deferred
+	-- breakthrough initializer replays the shipped prune over exactly this order.
+	if type(selection.breakthrough_order) == "table" then
+		map.SuperBigMapStartStagedBreakthroughOrder = selection.breakthrough_order
+		map.SuperBigMapStartStagedBreakthroughCount = #selection.breakthrough_order
+	end
 	return true
 end
 

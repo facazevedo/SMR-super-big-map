@@ -603,6 +603,15 @@ config.StartSectorFootprintDeposits = true
 -- arrived placed is swept. The staged set is the single source of truth; when it is absent the
 -- StartSectorFootprintDeposits path above still applies.
 config.StartSpawnStagedReplay = true
+-- STAGED BREAKTHROUGH MARKER ORDER (sbm_sector_exploration StageNativeBreakthroughOrder ->
+-- sbm_map_generation InstallStagedBreakthroughOrder). City:InitBreakThroughAnomalies shuffles the
+-- array MapGet returns with a seeded rand and prunes from the tail, so which breakthrough anomaly
+-- markers survive depends entirely on that enumeration order. The mod defers that initializer until
+-- the recreated markers exist and then replays it on the expanded map, whose enumeration order is
+-- its own: measured at b2-04 as one marker in and one out at 46/46. When true, vanilla's own order
+-- is captured on the live native source and handed to the shipped method, so the prune replays
+-- vanilla's decision instead of re-deriving it. The marker SET is untouched; only the ORDER.
+config.BreakthroughStagedOrder = true
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
 -- complete expanded terrain.
 config.SectorFastInitialReveal = true
@@ -883,6 +892,8 @@ C.START_SECTOR_FOOTPRINT_DEPOSITS = expansion_step_20
 	and as_bool(config.StartSectorFootprintDeposits)
 C.START_SPAWN_STAGED_REPLAY = expansion_step_20
 	and as_bool(config.StartSpawnStagedReplay)
+C.BREAKTHROUGH_STAGED_ORDER = expansion_step_20
+	and as_bool(config.BreakthroughStagedOrder)
 C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
 -- Fixed expanded sector layout and initial exploration behavior.

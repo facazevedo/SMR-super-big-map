@@ -8910,6 +8910,86 @@ function SuperBigMap.PatchDeferredBreakthroughAnomalyInitialization()
 end
 
 function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reason)
+	-- The shipped initializer prunes from `table.shuffle(self:MapGet(...))`, so the survivor SET is a
+	-- pure function of the ENUMERATION ORDER it receives. Replaying it after the stretch hands it the
+	-- EXPANDED map's order over recreated markers, which differs from vanilla's by at least one
+	-- transposition (measured at b2-04: one marker in, one out at 46/46). The native order was staged
+	-- while the source was still alive (SuperBigMapStartStagedBreakthroughOrder, sbm_sector_exploration
+	-- StageNativeBreakthroughOrder). Install it as an instance-field shadow on the city for the duration
+	-- of the one shipped call - instance-field shadows reach the engine's Lua callers, rawset(_G, ...)
+	-- does not - so the prune replays vanilla's decision instead of re-deriving it. The SET handed over
+	-- stays exactly what the real query would return; only the ORDER is vanilla's.
+	local function InstallStagedBreakthroughOrder(map, city)
+		local stats = { staged = 0, live = 0, resolved = 0, missing = 0, extra = 0, applied = false }
+		local function noop() end
+		if (SuperBigMap.Config or {}).BREAKTHROUGH_STAGED_ORDER ~= true then return noop, stats end
+		local order = rawget(map, "SuperBigMapStartStagedBreakthroughOrder")
+		if type(order) ~= "table" or type(map.MapGet) ~= "function"
+			or type(city.MapGet) ~= "function" then
+			return noop, stats
+		end
+		stats.staged = #order
+		local ok_live, live = pcall(map.MapGet, map, "map", "SubsurfaceAnomalyMarker",
+			function(marker) return marker.tech_action == "breakthrough" end)
+		if not (ok_live and type(live) == "table") then return noop, stats end
+		stats.live = #live
+		local index = {}
+		for i = 1, #live do
+			local marker = live[i]
+			local sx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
+			local sy = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
+			if sx and sy then
+				local key = tostring(marker.class) .. ":" .. tostring(sx) .. ":" .. tostring(sy)
+				if index[key] == nil then index[key] = marker end
+			end
+		end
+		local ordered, taken = {}, {}
+		for i = 1, #order do
+			local record = order[i] or {}
+			local key = tostring(record.class) .. ":" .. tostring(record.source_x)
+				.. ":" .. tostring(record.source_y)
+			local marker = index[key]
+			if marker and not taken[marker] then
+				taken[marker] = true
+				ordered[#ordered + 1] = marker
+				stats.resolved = stats.resolved + 1
+			else
+				stats.missing = stats.missing + 1
+			end
+		end
+		for i = 1, #live do
+			if not taken[live[i]] then
+				ordered[#ordered + 1] = live[i]
+				stats.extra = stats.extra + 1
+			end
+		end
+		local real_map_get = city.MapGet
+		local saved = rawget(city, "MapGet")
+		local restored = false
+		local function restore()
+			if restored then return end
+			restored = true
+			rawset(city, "MapGet", saved)
+		end
+		rawset(city, "MapGet", function(self, ...)
+			local area, class, filter = ...
+			if area == "map" and class == "SubsurfaceAnomalyMarker" and type(filter) == "function" then
+				-- One shot: the shipped method asks exactly once, at its first line.
+				restore()
+				local result = {}
+				for i = 1, #ordered do
+					local marker = ordered[i]
+					local ok_filter, keep = pcall(filter, marker)
+					if ok_filter and keep then result[#result + 1] = marker end
+				end
+				return result
+			end
+			return real_map_get(self, ...)
+		end)
+		stats.applied = true
+		return restore, stats
+	end
+
 	if not map or map.SuperBigMapBreakthroughInitializationDeferred ~= true then
 		return true, { deferred = false, before = 0, after = 0, removed = 0 }
 	end
@@ -8928,7 +9008,15 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 		return count
 	end
 	local before = count_breakthrough_markers()
+	local restore_order, order_stats = InstallStagedBreakthroughOrder(map, city)
 	local ok, init_error = pcall(original, city)
+	restore_order()
+	map.SuperBigMapBreakthroughStagedOrderCount = order_stats.staged
+	map.SuperBigMapBreakthroughStagedOrderLive = order_stats.live
+	map.SuperBigMapBreakthroughStagedOrderResolved = order_stats.resolved
+	map.SuperBigMapBreakthroughStagedOrderMissing = order_stats.missing
+	map.SuperBigMapBreakthroughStagedOrderExtra = order_stats.extra
+	map.SuperBigMapBreakthroughStagedOrderApplied = order_stats.applied
 	if not ok then
 		return false, { error = tostring(init_error), before = before }
 	end
@@ -8940,6 +9028,9 @@ function SuperBigMap.FinalizeDeferredBreakthroughAnomalyInitialization(map, reas
 	LoadingStep("deferred vanilla breakthrough initialization complete", {
 		reason = tostring(reason), before = before, after = after,
 		removed = math.max(0, before - after),
+		staged_order = order_stats.applied and order_stats.staged or "off",
+		staged_resolved = order_stats.resolved, staged_missing = order_stats.missing,
+		staged_extra = order_stats.extra,
 	}, map)
 	return true, {
 		deferred = true, before = before, after = after,

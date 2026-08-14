@@ -149,6 +149,17 @@ CreateRealTimeThread(function()
 				"SuperBigMapStartReplayAlreadyPlaced", "SuperBigMapStartReplayPlaced",
 				"SuperBigMapStartReplayFailed", "SuperBigMapStartReplayDuplicates",
 				"SuperBigMapStartReplayBlockers", "SuperBigMapStartReplayDespawned",
+				-- Staged breakthrough marker order (mod v801): vanilla's own MapGet enumeration
+				-- order, captured on the native source and handed to the deferred prune. Missing or
+				-- extra is a defect: the prune would then see a different SET, not just a reorder.
+				"SuperBigMapStartStagedBreakthroughCount",
+				"SuperBigMapBreakthroughStagedOrderCount", "SuperBigMapBreakthroughStagedOrderLive",
+				"SuperBigMapBreakthroughStagedOrderResolved",
+				"SuperBigMapBreakthroughStagedOrderMissing",
+				"SuperBigMapBreakthroughStagedOrderExtra",
+				"SuperBigMapBreakthroughStagedOrderApplied",
+				"SuperBigMapBreakthroughMarkersBeforePruning",
+				"SuperBigMapBreakthroughMarkersAfterPruning",
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end
