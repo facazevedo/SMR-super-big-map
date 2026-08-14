@@ -20,6 +20,14 @@ keeping only samples farther than a footprint-sized threshold from EVERY object 
 This tool joins the two twins on the source lattice index, drops anything inside a compression
 massif, and reports the direction of the residue that survives.
 
+A THIRD cause, measured here and not anticipated by either of the two above: the vanilla map's
+`mapdata.PassBorder` band is impassable BY RULE (MapData.lua calls it "the border zone with no
+passability"), and the mod deliberately zeroes PassBorder so the whole expanded map is playable
+(`sbm_map_bounds.lua`).  Every sample in that band therefore compares a rule with real terrain,
+one-way false->true by construction.  Samples are split on the engine's own
+`Map:IsInsidePlayArea`: only in-play-area samples are scored, and the border band is counted
+and reported beside them rather than mixed in.
+
 THE INTERPRETATION IS FIXED IN ADVANCE (ruling), so it cannot be rationalized after the fact:
 
   (a) object-free terrain matches with only SYMMETRIC residue at the untouched underground's
@@ -84,6 +92,7 @@ def read_lattice(path):
         r = dict(zip(head, f))
         for k in ("sgx", "sgy", "x", "y", "h", "p", "dmin_src", "nobj"):
             r[k] = int(r[k])
+        r["inplay"] = 1 if r.get("inplay") in ("1", None) else 0
         rows[r["map"]].append(r)
     return rows, maps
 
@@ -107,6 +116,9 @@ def score_map(vrows, erows, massifs, threshold, stamp):
     diff = f2t = t2f = 0
     h_exact = h_n = 0
     h_worst = 0
+    # The vanilla PassBorder band: impassable BY RULE in the control and real ground in the
+    # expanded map (the mod zeroes PassBorder).  Counted and reported, never scored.
+    border_n = border_diff = border_f2t = 0
     by_density = defaultdict(lambda: [0, 0, 0])   # bucket -> [n, f2t, t2f]
     examples = []
     for e in erows:
@@ -115,6 +127,12 @@ def score_map(vrows, erows, massifs, threshold, stamp):
             continue
         paired += 1
         if v["dmin_src"] < threshold or e["dmin_src"] < threshold:
+            continue
+        if not v["inplay"]:
+            border_n += 1
+            if v["p"] != e["p"]:
+                border_diff += 1
+                border_f2t += 1 if v["p"] == 0 else 0
             continue
         cx, cy = e["x"] // HEIGHT_TILE, e["y"] // HEIGHT_TILE
         if any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in massifs):
@@ -145,6 +163,10 @@ def score_map(vrows, erows, massifs, threshold, stamp):
                                  "dmin_src": min(v["dmin_src"], e["dmin_src"])})
     return {
         "paired_lattice": paired, "scored": kept, "inside_massif": inside,
+        "vanilla_border_n": border_n, "vanilla_border_diff": border_diff,
+        "vanilla_border_false_to_true": border_f2t,
+        "vanilla_border_diff_rate_pct": (round(100.0 * border_diff / border_n, 4)
+                                         if border_n else None),
         "diff": diff, "false_to_true": f2t, "true_to_false": t2f,
         "diff_rate_pct": round(100.0 * diff / kept, 4) if kept else None,
         "bias_ratio": round(f2t / t2f, 3) if t2f else (None if not f2t else float("inf")),
@@ -160,7 +182,7 @@ def score_map(vrows, erows, massifs, threshold, stamp):
     }
 
 
-def object_density(vtag, etag, stamp, threshold):
+def object_density(vtag, etag, stamp, threshold, play_box=None):
     """Ruling's confirming evidence: at-object diff rate vs local object density."""
     import passverdict
     vrows = passverdict.read_pass(OUT / f"pass-{vtag}.csv")
@@ -193,6 +215,7 @@ def object_density(vtag, etag, stamp, threshold):
             pool[(r["class"], r["src_x"], r["src_y"])].append(r)
         bins = defaultdict(lambda: [0, 0, 0])
         pairs = []
+        border = [0, 0, 0]
         for r in e:
             bucket = pool.get((r["class"], r["src_x"], r["src_y"]))
             if not bucket:
@@ -202,6 +225,14 @@ def object_density(vtag, etag, stamp, threshold):
                 continue
             cx, cy = r["x"] // HEIGHT_TILE, r["y"] // HEIGHT_TILE
             if any(x0 <= cx <= x1 and y0 <= cy <= y1 for x0, y0, x1, y1 in massifs):
+                continue
+            if play_box and not (play_box[0] <= r["src_x"] <= play_box[2]
+                                 and play_box[1] <= r["src_y"] <= play_box[3]):
+                # Vanilla PassBorder band: impassable by rule in the control.  Reported apart.
+                border[0] += 1
+                if vr["self_pass"] != r["self_pass"]:
+                    border[1] += 1
+                    border[2] += 1 if vr["self_pass"] == "false" else 0
                 continue
             nb = near_count(r["src_x"], r["src_y"])
             differs = vr["self_pass"] != r["self_pass"]
@@ -222,7 +253,11 @@ def object_density(vtag, etag, stamp, threshold):
             grouped[f"{lo}-{hi}"] = {"n": n, "diff": d, "false_to_true": f,
                                      "diff_rate_pct": round(100.0 * d / n, 4) if n else None}
         out[m] = {"threshold_src_wu": threshold, "objects_scored": len(pairs),
-                  "spearman_rho_density_vs_diff": rho, "by_neighbour_count": grouped}
+                  "spearman_rho_density_vs_diff": rho, "by_neighbour_count": grouped,
+                  "vanilla_border_objects": border[0], "vanilla_border_diff": border[1],
+                  "vanilla_border_false_to_true": border[2],
+                  "vanilla_border_diff_rate_pct": (round(100.0 * border[1] / border[0], 4)
+                                                   if border[0] else None)}
     return out
 
 
@@ -279,7 +314,13 @@ def main():
     if "--objdensity" in flags:
         # Same run, same tags: the twins carry `passall` beside `passlattice`, so the at-object
         # residue and the object-free lattice come from one generation each.
-        result["at_object_density"] = object_density(vtag, etag, stamp, threshold)
+        vm = vmeta.get("surface", {})
+        try:
+            play_box = tuple(int(vm[k]) for k in ("play_x0", "play_y0", "play_x1", "play_y1"))
+        except (KeyError, ValueError):
+            play_box = None
+        result["vanilla_play_box"] = play_box
+        result["at_object_density"] = object_density(vtag, etag, stamp, threshold, play_box)
 
     # The verdict, on the rules stated in the module docstring and fixed before the run.
     s = result["maps"].get("surface")
@@ -295,6 +336,14 @@ def main():
         result["interpretation"] = "b_transform_defect" if one_way else (
             "a_terrain_exact" if at_noise else "a_symmetric_but_above_underground_noise")
         result["pass"] = (not one_way) and at_noise
+        # The untouched underground rides the same 4/3 XY resample and never saw this task's Z
+        # work, so its own object-free bias is the control for "is this bias the new transform".
+        # A surface no more one-way than the underground cannot be evidence of a surface defect;
+        # that comparison is reported, and never used to soften the verdict above.
+        if u and u["bias_ratio"] is not None and s["bias_ratio"] is not None:
+            result["surface_bias_ratio"] = s["bias_ratio"]
+            result["underground_bias_ratio"] = u["bias_ratio"]
+            result["untouched_underground_more_one_way"] = u["bias_ratio"] > s["bias_ratio"]
     else:
         result["pass"] = False
         result["interpretation"] = "no_surface_samples"

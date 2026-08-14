@@ -24,6 +24,15 @@
 -- Terrain height is sampled beside the passability so the same rows also witness the height
 -- transform at object-free ground.
 --
+-- Every sample also records `map:IsInsidePlayArea`, and every map its `mapdata.PassBorder` and
+-- play-area box.  Outside the play area the engine marks ground impassable BY RULE
+-- (MapData.lua: "width of the border zone with no passability"), and the mod deliberately sets
+-- PassBorder = 0 on the expanded map so the whole stretched destination is playable
+-- (`sbm_map_bounds.lua`).  A vanilla-border sample therefore compares "impassable by rule" with
+-- "real terrain", which is a one-way false->true difference by construction and says nothing
+-- about the Z transform - so the comparison has to know where those samples are instead of
+-- silently mixing them in.
+--
 -- Placeholders: __POS_SCALE__, __STRIDE__, __MIN_DIST__, __BUCKET__, __OUT_PATH__.
 
 g_ParityPassLatStatus = "running"
@@ -45,7 +54,7 @@ CreateRealTimeThread(function()
 		emit("#meta,scale=" .. tostring(scale) .. ",stride=" .. tostring(stride)
 			.. ",min_dist_src=" .. tostring(min_dist) .. ",bucket_src=" .. tostring(bucket_src)
 			.. ",tile=" .. tostring(tile))
-		emit("map,sgx,sgy,x,y,h,p,dmin_src,nobj")
+		emit("map,sgx,sgy,x,y,h,p,dmin_src,nobj,inplay")
 
 		local function probe_map(map, tag)
 			if not map then return nil end
@@ -110,11 +119,16 @@ CreateRealTimeThread(function()
 							local d = math.sqrt(best)
 							if d > bucket then d = bucket end
 							kept = kept + 1
+							local inplay = "?"
+							if type(map.IsInsidePlayArea) == "function" then
+								local ok_ip, v = pcall(map.IsInsidePlayArea, map, x, y)
+								if ok_ip then inplay = v and "1" or "0" end
+							end
 							rows[#rows + 1] = table.concat({ tag, tostring(sgx), tostring(sgy),
 								tostring(x), tostring(y),
 								tostring(map:GetHeight(pt)),
 								map:IsPassable(pt) and "1" or "0",
-								tostring(math.floor(d / scale + 0.5)), tostring(near) }, ",")
+								tostring(math.floor(d / scale + 0.5)), tostring(near), inplay }, ",")
 						end
 					end
 					sgx = sgx + stride
@@ -126,7 +140,21 @@ CreateRealTimeThread(function()
 				ResumeInfiniteLoopDetection("parity_passlat")
 			end
 
+			local pb = map.mapdata and map.mapdata.PassBorder
+			local area = type(map.GetPlayArea) == "function" and map:GetPlayArea() or nil
+			local ax0, ay0, ax1, ay1 = "nil", "nil", "nil", "nil"
+			if area then
+				local ok_box, x0, y0, x1, y1 = pcall(function()
+					return area:minx(), area:miny(), area:maxx(), area:maxy()
+				end)
+				if ok_box then
+					ax0, ay0, ax1, ay1 = tostring(x0), tostring(y0), tostring(x1), tostring(y1)
+				end
+			end
 			emit("#map," .. tag .. ",grid=" .. tostring(gw) .. "x" .. tostring(gh)
+				.. ",passborder=" .. tostring(pb)
+				.. ",play_x0=" .. ax0 .. ",play_y0=" .. ay0
+				.. ",play_x1=" .. ax1 .. ",play_y1=" .. ay1
 				.. ",src=" .. tostring(src_w) .. "x" .. tostring(src_h)
 				.. ",objects=" .. tostring(nobjs)
 				.. ",candidates=" .. tostring(cand) .. ",in_bounds=" .. tostring(inb)
