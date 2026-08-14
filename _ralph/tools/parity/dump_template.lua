@@ -118,6 +118,10 @@ CreateRealTimeThread(function()
 				"SuperBigMapZScaleMul", "SuperBigMapZScaleDiv", "SuperBigMapZScaleAdd",
 				"SuperBigMapSurfaceStretchDone", "SuperBigMapUndergroundPrepared",
 				"SuperBigMapStrictNativeObjectCorrespondence",
+				"SuperBigMapVanillaStartSourceX0", "SuperBigMapVanillaStartSourceY0",
+				"SuperBigMapVanillaStartSourceX1", "SuperBigMapVanillaStartSourceY1",
+				"SuperBigMapStartFootprintDespawned", "SuperBigMapStartFootprintPending",
+				"SuperBigMapStartFootprintDeposits", "SuperBigMapStartFootprintMarkers",
 				"SuperBigMapProvenanceDerived", "SuperBigMapProvenanceUnresolved",
 				-- Start-sector footprint reveal (mod v789): the box, how many deposit markers the
 				-- box holds, how many were still unplaced after the single sector scan, and how
@@ -203,6 +207,7 @@ CreateRealTimeThread(function()
 						tostring(obj.SuperBigMapProvenanceFrom or ""),
 						root == obj and cls or tostring(root.class or "?"),
 						num(rx), num(ry),
+						rawget(obj, "is_placed") and "1" or "",
 					}, ","))
 					rows = rows + 1
 				end
