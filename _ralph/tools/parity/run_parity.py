@@ -49,6 +49,17 @@ LOAD_TEMPLATE = HERE / "load_template.lua"
 # against it.
 REFERENCE_UNDERGROUND_SEED = 6074387974731471656
 
+# Fixed SOURCE cells around the underground Bottomless Pit at 45S82E, chosen offline from the
+# iter-022 twin lattices (`out/passrb-t6{b,y}.csv`, picker `_ralph/tmp/.tmp_fzp_pickcells.py`):
+# 12 that vanilla blocks and the expanded map does not, 4 passable on both, 4 blocked on both.
+# Shared by every pass-input probe so each one interrogates exactly the same ground.
+PASS_FORENSIC_CELLS = (
+    '{{2983,3017,"diff"}, {2998,3068,"diff"}, {3061,3011,"diff"}, {2881,3029,"diff"}, '
+    '{3046,3107,"diff"}, {2851,3008,"diff"}, {2857,3083,"diff"}, {3064,3140,"diff"}, '
+    '{2818,3035,"diff"}, {3064,3164,"diff"}, {2815,3092,"diff"}, {3064,3185,"diff"}, '
+    '{2980,3014,"free"}, {2881,2993,"free"}, {3004,2873,"free"}, {2986,2840,"free"}, '
+    '{2968,2969,"both"}, {2902,2990,"both"}, {3010,2891,"both"}, {3025,2840,"both"}}')
+
 # Vanilla control only: let the stock draw happen (the RNG stream keeps its cardinality,
 # exactly as the mod's expanded seam does), then substitute the reference seed for the
 # underground map alone.  The surface FillRandomMapGen call is untouched.
@@ -3359,7 +3370,7 @@ ANOM_PROBE_BLOCK = """		do
 def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_probe_all=False, zones_probe=False, pass_real_probe=False,
                     pass_lattice_probe=False, pass_rebuild_probe=False,
-                    pass_mask_probe=False):
+                    pass_mask_probe=False, pass_forced_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
 
     Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
@@ -3482,6 +3493,41 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass
                 time.sleep(5)
 
+    if pass_forced_probe:
+        # READ-ONLY (no rebuild, no pass edit), so it runs BEFORE the two mutating pass probes.
+        # Same lattice and same 20 forensic source cells as the mask probe (iter 023), so its
+        # forced-impassability / pass-type columns join that measurement cell for cell.
+        probe_src = (HERE / "passforced_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__POS_SCALE__", repr(float(ring_scale)))
+        probe_src = probe_src.replace("__CENTRE_CLASS__", "BottomlessPit")
+        probe_src = probe_src.replace("__RADIUS__", "20000")
+        probe_src = probe_src.replace("__STRIDE__", "200")
+        probe_src = probe_src.replace("__CELLS__", PASS_FORENSIC_CELLS)
+        probe_src = probe_src.replace("__DUMP_GRID__", "true")
+        probe_src = probe_src.replace("__GRID_PREFIX__", cli.lua_path(OUT / "passgrid"))
+        probe_src = probe_src.replace("__OUT_PATH__", cli.lua_path(OUT / f"passforced-{tag}.csv"))
+        probe_path = OUT / f"passforcedprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  passforced probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPassForcedStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityPassForcedInfo", timeout=60.0)
+                        log(f"  passforced probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityPassForcedError", timeout=60.0)
+                        log(f"  passforced probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
     if pass_rebuild_probe:
         # LAST of all: it forces full-map passability rebuilds, so every probe that reads the
         # as-generated pass data must already have run.
@@ -3520,11 +3566,7 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
         # (`out/passrb-t6{b,y}.csv`, picker `_ralph/tmp/.tmp_fzp_pickcells.py`) so both twins
         # interrogate the same ground: 12 that vanilla blocks and the expanded map does not, 4
         # passable on both, 4 blocked on both.
-        cells = ('{{2983,3017,"diff"}, {2998,3068,"diff"}, {3061,3011,"diff"}, {2881,3029,"diff"}, '
-                 '{3046,3107,"diff"}, {2851,3008,"diff"}, {2857,3083,"diff"}, {3064,3140,"diff"}, '
-                 '{2818,3035,"diff"}, {3064,3164,"diff"}, {2815,3092,"diff"}, {3064,3185,"diff"}, '
-                 '{2980,3014,"free"}, {2881,2993,"free"}, {3004,2873,"free"}, {2986,2840,"free"}, '
-                 '{2968,2969,"both"}, {2902,2990,"both"}, {3010,2891,"both"}, {3025,2840,"both"}}')
+        cells = PASS_FORENSIC_CELLS
         probe_src = (HERE / "passmask_probe.lua").read_text(encoding="utf-8")
         probe_src = probe_src.replace("__POS_SCALE__", repr(float(ring_scale)))
         probe_src = probe_src.replace("__CENTRE_CLASS__", "BottomlessPit")
@@ -3726,7 +3768,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
              stretch_dump=False, flatten_probe=False, pass_real_probe=False,
-             pass_lattice_probe=False, pass_rebuild_probe=False, pass_mask_probe=False):
+             pass_lattice_probe=False, pass_rebuild_probe=False, pass_mask_probe=False,
+             pass_forced_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4127,7 +4170,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             ring_scale=(8192.0 / 6144.0) if expand else 1.0,
             pass_probe_all=pass_probe_all, zones_probe=zones_probe,
             pass_real_probe=pass_real_probe, pass_lattice_probe=pass_lattice_probe,
-            pass_rebuild_probe=pass_rebuild_probe, pass_mask_probe=pass_mask_probe)
+            pass_rebuild_probe=pass_rebuild_probe, pass_mask_probe=pass_mask_probe,
+            pass_forced_probe=pass_forced_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -4219,6 +4263,7 @@ def main():
         passlattice = "passlattice" in sys.argv[5:]
         passrebuild = "passrebuild" in sys.argv[5:]
         passmask = "passmask" in sys.argv[5:]
+        passforced = "passforced" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -4244,6 +4289,7 @@ def main():
             f"stretch_dump={stretchdump} flatten_probe={flattenprobe} "
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
+            f"pass_forced_probe={passforced} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -4257,7 +4303,8 @@ def main():
                         pass_probe_all=passall, zones_probe=zonesprobe,
                         stretch_dump=stretchdump, flatten_probe=flattenprobe,
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
-                        pass_rebuild_probe=passrebuild, pass_mask_probe=passmask)
+                        pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
+                        pass_forced_probe=passforced)
         log(f"result: {json.dumps(info)}")
         return
 
