@@ -301,7 +301,13 @@ CreateRealTimeThread(function()
 						emit(string.format("#try,%s,%s,%s,call=%s,cells=%d,at_want=%d,forced=%d%s",
 							tag, label, sh[1], tostring(ok_w), #cells, moved, forced_n,
 							ok_w and "" or (",err=" .. string.gsub(tostring(e), "[,\r\n]", " "))))
-						if ok_w and moved == #cells and #cells > 0 then return sh[1] end
+						-- Stop at the first write that MOVES bits at all.  Requiring every sampled
+						-- cell would keep the ladder running past a working write and let a later
+						-- candidate undo it (measured: `editor.SetImpassableBox` reverted
+						-- `ClearPassabilityBox`'s 36/49 back to 0 in the t12 pair).  Edge cells of
+						-- the box legitimately miss, since the pass lattice is coarser than the
+						-- sample lattice.
+						if ok_w and moved > 0 then return sh[1] .. ":" .. moved .. "/" .. #cells end
 					end
 				end
 				return "no_visible_write"
