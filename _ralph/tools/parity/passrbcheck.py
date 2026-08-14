@@ -17,12 +17,21 @@ Answers two questions with the same dense sample set, joined by SOURCE cell inde
    on the vanilla-blocked excess only (the terrain-slope background is common to both twins and
    already proven exact by the height gates).
 
+3. With `--grids <vanilla.raw> <expanded.raw>`, whether each twin's passability inside the disc is
+   consistent with its OWN terrain, under the engine rule measured in iteration 021 (impassable iff
+   the max |dh| over the 4 edges of the containing height-grid quad >= 27 wu).  A blocked cell whose
+   own slope is under the threshold is impassability applied by something that is not the ground.
+
 Usage:
   python passrbcheck.py <passrb-vanilla.csv> <passrb-expanded.csv> <out.json> [--map underground]
+                        [--grids <vanilla.raw> <expanded.raw>] [--disc-radius 20000]
 """
 import json
 import sys
 from pathlib import Path
+
+TILE = 100
+SLOPE_T = 27        # wu per 100 wu tile; measured from the engine's own verdicts (iter 021)
 
 
 def load(path, want_map):
@@ -58,6 +67,7 @@ def load(path, want_map):
             if p[0] != want_map:
                 continue
             rows[(int(p[1]), int(p[2]))] = {
+                "x": int(p[3]), "y": int(p[4]),
                 "h": int(p[5]), "p_a": int(p[6]), "p_b": int(p[7]), "p_c": int(p[8]),
                 "d": int(p[9]), "mark": int(p[10])}
     return meta, summary, gridobjs, rows
@@ -90,11 +100,61 @@ def sample_profile(prof, bin_w, r):
     return f0 + (f1 - f0) * max(0.0, min(1.0, t))
 
 
+def slope_consistency(rows_v, rows_e, common, vraw, eraw, radius):
+    """Cross-tab each twin's blocked/passable verdict against its own quad-edge slope statistic."""
+    import importlib.util
+    here = Path(__file__).resolve().parent
+    sys.path.insert(0, str(here))
+    spec = importlib.util.spec_from_file_location("pcd", here / "passcelldiag.py")
+    pcd = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pcd)
+    gv = pcd.quad_edge_max(pcd.load_grid(vraw))
+    ge = pcd.quad_edge_max(pcd.load_grid(eraw))
+
+    st = {"radius_src": radius, "threshold": SLOPE_T, "n": 0,
+          "vanilla_blocked": 0, "vanilla_blocked_slope": 0, "vanilla_blocked_flat": 0,
+          "vanilla_passable_steep": 0, "expanded_blocked": 0, "expanded_blocked_slope": 0,
+          "expanded_blocked_flat": 0, "expanded_passable_steep": 0,
+          "max_slope_vanilla": 0, "max_slope_expanded": 0}
+    for k in common:
+        rv, re_ = rows_v[k], rows_e[k]
+        if rv["d"] > radius:
+            continue
+        ivx, ivy = rv["x"] // TILE, rv["y"] // TILE
+        iex, iey = re_["x"] // TILE, re_["y"] // TILE
+        if not (0 <= ivy < gv.shape[0] and 0 <= ivx < gv.shape[1]):
+            continue
+        if not (0 <= iey < ge.shape[0] and 0 <= iex < ge.shape[1]):
+            continue
+        sv, se = int(gv[ivy, ivx]), int(ge[iey, iex])
+        st["n"] += 1
+        st["max_slope_vanilla"] = max(st["max_slope_vanilla"], sv)
+        st["max_slope_expanded"] = max(st["max_slope_expanded"], se)
+        if rv["p_a"] == 0:
+            st["vanilla_blocked"] += 1
+            st["vanilla_blocked_slope" if sv >= SLOPE_T else "vanilla_blocked_flat"] += 1
+        elif sv >= SLOPE_T:
+            st["vanilla_passable_steep"] += 1
+        if re_["p_a"] == 0:
+            st["expanded_blocked"] += 1
+            st["expanded_blocked_slope" if se >= SLOPE_T else "expanded_blocked_flat"] += 1
+        elif se >= SLOPE_T:
+            st["expanded_passable_steep"] += 1
+    return st
+
+
 def main():
     va, ex, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
     want_map = "underground"
     if "--map" in sys.argv:
         want_map = sys.argv[sys.argv.index("--map") + 1]
+    grids = None
+    if "--grids" in sys.argv:
+        i = sys.argv.index("--grids")
+        grids = (sys.argv[i + 1], sys.argv[i + 2])
+    disc_radius = 20000
+    if "--disc-radius" in sys.argv:
+        disc_radius = int(sys.argv[sys.argv.index("--disc-radius") + 1])
 
     meta_v, sum_v, obj_v, rows_v = load(va, want_map)
     meta_e, sum_e, obj_e, rows_e = load(ex, want_map)
@@ -175,6 +235,9 @@ def main():
             "mean": sum(hres) / len(hres) if hres else None,
         },
     }
+    if grids:
+        report["slope_consistency"] = slope_consistency(rows_v, rows_e, common, grids[0], grids[1],
+                                                        disc_radius)
     Path(out_path).write_text(json.dumps(report, indent=2), encoding="utf-8")
 
     st = report["rebuild_stability"]
@@ -187,6 +250,14 @@ def main():
     fm = report["footprint_model"]
     print(f"footprint model mean|err|={fm['mean_abs_err_model']} vs null {fm['mean_abs_err_null']} "
           f"over {fm['scored_bins']} bins")
+    sc = report.get("slope_consistency")
+    if sc:
+        print(f"inside r<{sc['radius_src']}: n={sc['n']} max slope vanilla={sc['max_slope_vanilla']} "
+              f"expanded={sc['max_slope_expanded']} (threshold {sc['threshold']})")
+        print(f"  vanilla blocked {sc['vanilla_blocked']} (slope-explained "
+              f"{sc['vanilla_blocked_slope']}, FLAT {sc['vanilla_blocked_flat']}); "
+              f"expanded blocked {sc['expanded_blocked']} (slope-explained "
+              f"{sc['expanded_blocked_slope']}, FLAT {sc['expanded_blocked_flat']})")
     print(f"report -> {out_path}")
     # Exit non-zero when the rebuild is NOT stable: that is the defect the probe hunts.
     bad = (st["vanilla"]["wiped"] or st["vanilla"]["gained"] or st["expanded"]["wiped"]
