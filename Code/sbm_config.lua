@@ -29,6 +29,9 @@ config.DebugUndergroundDecorationPositions = false
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
+-- Diagnostic: record what the native source actually produced, at migration time, so a run can
+-- prove nothing was destroyed after transfer without needing a second reproducible vanilla process.
+config.NativeSourceManifest = true
 -- Focused one-run parity trace. This is deliberately default-off; the Ralph harness may enable the
 -- runtime constant before fresh twins to compare every stock generator procedure and rock delta.
 config.TraceUndergroundRockParity = false
@@ -675,6 +678,7 @@ C.DEBUG_OVERVIEW_GRID_VISUALS = debug_logging_enabled and as_bool(config.DebugOv
 C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 	and as_bool(config.DebugUndergroundDecorationPositions)
 C.TRACE_UNDERGROUND_SEED_RESERVATION = as_bool(config.TraceUndergroundSeedReservation)
+C.NATIVE_SOURCE_MANIFEST = as_bool(config.NativeSourceManifest)
 C.TRACE_UNDERGROUND_ROCK_PARITY = as_bool(config.TraceUndergroundRockParity)
 
 -- The only supported mod layout is stretch-expanded terrain with a corner-anchored

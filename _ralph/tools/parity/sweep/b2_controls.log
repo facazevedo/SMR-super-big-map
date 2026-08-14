@@ -1,0 +1,3 @@
+[21:52:40] === twin 'd04a' expand=False seed=8736761973933965003 pin=8736761973933965003 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=240 lon=6420 ===
+[21:52:40] spawned MarsDebug.exe pid=34760 (d04a), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-d04a.log
+[21:52:40] connecting DAP (d04a)...

@@ -1,0 +1,34 @@
+[21:41:06] === twin 'c201a' expand=False seed=6897190323242569227 pin=6897190323242569227 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-780 ===
+[21:41:06] spawned MarsDebug.exe pid=49528 (c201a), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-c201a.log
+[21:41:06] connecting DAP (c201a)...
+[21:41:16] harness ready (c201a)
+[21:41:16] generation started (c201a): parity_thread_started {
+	metatable = table: 000001586B714780 [1]
+}
+[21:41:16]   gen-c201a: initializing  (+0s)
+[21:41:26]   gen-c201a: generating  (+10s)
+[21:41:57]   gen-c201a: complete  (+41s)
+[21:41:57] generation complete (c201a)
+[21:41:57]   surface seed=5434768309385999931  underground seed=6897190323242569227
+[21:41:57]   passage-fallback pin seed=301460102 redirected_around=0 redirected_passable=0
+[21:41:57]   dump-c201a: running  (+0s)
+[21:42:01]   dump-c201a: complete  (+4s)
+[21:42:01] dump complete (c201a): 14432 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-c201a.csv
+[21:42:03] result: {"tag": "c201a", "expand": false, "surface_seed": 5434768309385999931, "underground_seed": 6897190323242569227, "underground_pin": 6897190323242569227, "passage_pin": 301460102, "passage_pin_around": 0, "passage_pin_passable": 0, "passage_pin_calls": [], "rows": 14432, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-c201a.csv", "hexgrid": null}
+[21:42:18] === twin 'c201b' expand=False seed=6897190323242569227 pin=6897190323242569227 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-780 ===
+[21:42:18] spawned MarsDebug.exe pid=13952 (c201b), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-c201b.log
+[21:42:18] connecting DAP (c201b)...
+[21:42:28] harness ready (c201b)
+[21:42:28] generation started (c201b): parity_thread_started {
+	metatable = table: 00000240C36C4780 [1]
+}
+[21:42:28]   gen-c201b: initializing  (+0s)
+[21:42:39]   gen-c201b: generating  (+10s)
+[21:43:10]   gen-c201b: complete  (+41s)
+[21:43:10] generation complete (c201b)
+[21:43:10]   surface seed=5434768309385999931  underground seed=6897190323242569227
+[21:43:10]   passage-fallback pin seed=301460102 redirected_around=0 redirected_passable=0
+[21:43:10]   dump-c201b: running  (+0s)
+[21:43:14]   dump-c201b: complete  (+4s)
+[21:43:14] dump complete (c201b): 14148 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-c201b.csv
+[21:43:16] result: {"tag": "c201b", "expand": false, "surface_seed": 5434768309385999931, "underground_seed": 6897190323242569227, "underground_pin": 6897190323242569227, "passage_pin": 301460102, "passage_pin_around": 0, "passage_pin_passable": 0, "passage_pin_calls": [], "rows": 14148, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-c201b.csv", "hexgrid": null}

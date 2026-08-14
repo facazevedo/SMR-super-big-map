@@ -313,6 +313,44 @@ PROTECTED_CLASS_SCALES = {
 }
 
 
+
+def source_manifest_gate(erows, manifest_lines):
+    """`native-source-delivered`: every object the native source produced at migration
+    time must still be present in the finished expanded map.
+
+    This is the ONLY parity question that is well posed on a coordinate where stock
+    generation is not reproducible: both sides come from the same draw, so vanilla's
+    own run-to-run variation cannot influence it.  The mod already errors if an object
+    fails to migrate, so anything missing here was migrated and then DESTROYED, which is
+    exactly the residue class a cross-process control reports as `unconsumed_vanilla`.
+    """
+    if not manifest_lines:
+        return None
+    want = Counter()
+    for line in manifest_lines:
+        f = line.split(",")
+        if len(f) < 4:
+            continue
+        want[(f[0], f[1], f[2])] += 1          # class, source x, source y
+    have = Counter()
+    for r in erows:
+        if r.get("src_x") is None or r.get("src_y") is None:
+            continue
+        cls = r.get("src_class") or r["class"]
+        have[(cls, str(r["src_x"]), str(r["src_y"]))] += 1
+    missing = want - have
+    extra = have - want
+    return {
+        "manifest_objects": sum(want.values()),
+        "delivered_present": sum((want & have).values()),
+        "destroyed_after_transfer": sum(missing.values()),
+        "stamped_not_in_manifest": sum(extra.values()),
+        "missing_by_class": Counter(c for c, _, _ in missing.elements()).most_common(20),
+        "extra_by_class": Counter(c for c, _, _ in extra.elements()).most_common(20),
+        "ok": not missing and not extra,
+    }
+
+
 def scale_counts(rows):
     """class -> Counter of dumped scale values."""
     out = defaultdict(Counter)
@@ -633,11 +671,16 @@ def infrastructure_enumeration(vc, ec, hexgrid=None, camera=None):
 
 def parse_dump(path):
     meta = defaultdict(dict)
+    manifest = {}
     rows = defaultdict(list)
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
             line = line.rstrip("\n")
             if not line:
+                continue
+            if line.startswith("#manifest,"):
+                _, map_tag, rest = line.split(",", 2)
+                manifest.setdefault(map_tag, []).append(rest)
                 continue
             if line.startswith("#meta,"):
                 _, map_tag, key, value = line.split(",", 3)
@@ -681,7 +724,7 @@ def parse_dump(path):
                 "root_class": rclass or None,
                 "root_x": fnum(rx), "root_y": fnum(ry),
             })
-    return meta, rows
+    return meta, rows, manifest
 
 
 def rnd(v):
@@ -1336,8 +1379,8 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
 
 def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "out"
-    vmeta, vrows = parse_dump(out_dir / "objects-vanilla.csv")
-    emeta, erows = parse_dump(out_dir / "objects-expanded.csv")
+    vmeta, vrows, _vman = parse_dump(out_dir / "objects-vanilla.csv")
+    emeta, erows, eman = parse_dump(out_dir / "objects-expanded.csv")
     hexgrid = hexgrid_evidence(out_dir)
     camera = camera_evidence(vmeta, emeta, vrows, erows)
 
@@ -1373,6 +1416,24 @@ def main():
                                   hexgrid.get(tag), camera.get(tag))
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
+        mg = source_manifest_gate(erows[tag], eman.get(tag, []))
+        if mg is not None:
+            summary[tag]["source_manifest"] = mg
+            lines.append("")
+            lines.append("-- I. NATIVE-SOURCE DELIVERY  (`native-source-delivered`) --")
+            lines.append(f"   manifest objects recorded at migration : {mg['manifest_objects']}")
+            lines.append(f"   still present in the expanded map      : {mg['delivered_present']}")
+            lines.append(f"   DESTROYED after transfer               : {mg['destroyed_after_transfer']}")
+            lines.append(f"   stamped but not in the manifest        : {mg['stamped_not_in_manifest']}")
+            if mg["missing_by_class"]:
+                lines.append("   destroyed by class:")
+                for cls, n in mg["missing_by_class"]:
+                    lines.append(f"     {cls:<40} {n}")
+            if mg["extra_by_class"]:
+                lines.append("   unexpected by class:")
+                for cls, n in mg["extra_by_class"]:
+                    lines.append(f"     {cls:<40} {n}")
+            lines.append(f"   GATE native-source-delivered: {'PASS' if mg['ok'] else 'FAIL'}")
         # Machine-readable gate inputs (seed/hash equality is a contract gate and must
         # not have to be re-read out of the prose report).
         s = summary[tag]

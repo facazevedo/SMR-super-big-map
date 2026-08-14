@@ -1,0 +1,601 @@
+{
+  "P1": {
+    "case": "P1",
+    "label": "30S146E",
+    "lat": 1800,
+    "lon": 8760,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 2535348408952642603,
+    "expanded_attempts": 2,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 21693,
+        "content_expanded_objects": 21693,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 21693,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5940,
+        "content_expanded_objects": 5940,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5940,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "b2-01": {
+    "case": "b2-01",
+    "label": "51S13W",
+    "lat": 3060,
+    "lon": -780,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 6897190323242569227,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 7837,
+        "content_expanded_objects": 8166,
+        "content_classes_differing": 53,
+        "content_class_diffs": [
+          {
+            "class": "BeautyEffectDeposit",
+            "vanilla": 0,
+            "expanded": 1
+          },
+          {
+            "class": "DecCrater_01",
+            "vanilla": 33,
+            "expanded": 20
+          },
+          {
+            "class": "DecCrater_02",
+            "vanilla": 11,
+            "expanded": 16
+          },
+          {
+            "class": "DecCrater_03",
+            "vanilla": 13,
+            "expanded": 17
+          },
+          {
+            "class": "DecCrater_04",
+            "vanilla": 38,
+            "expanded": 32
+          },
+          {
+            "class": "DecCrater_05",
+            "vanilla": 2,
+            "expanded": 0
+          },
+          {
+            "class": "DecLavaCoils_02",
+            "vanilla": 1,
+            "expanded": 0
+          },
+          {
+            "class": "DecLavaCoils_04",
+            "vanilla": 1,
+            "expanded": 0
+          },
+          {
+            "class": "DecSpider_01",
+            "vanilla": 2,
+            "expanded": 5
+          },
+          {
+            "class": "DecSpider_02",
+            "vanilla": 3,
+            "expanded": 8
+          },
+          {
+            "class": "GeyserWarmup",
+            "vanilla": 1,
+            "expanded": 2
+          },
+          {
+            "class": "Geyser_01",
+            "vanilla": 4,
+            "expanded": 9
+          },
+          {
+            "class": "Geyser_02",
+            "vanilla": 6,
+            "expanded": 11
+          },
+          {
+            "class": "Geyser_03",
+            "vanilla": 3,
+            "expanded": 6
+          },
+          {
+            "class": "PrefabDecorMarker",
+            "vanilla": 198,
+            "expanded": 196
+          },
+          {
+            "class": "PrefabFeatureMarker",
+            "vanilla": 111,
+            "expanded": 115
+          },
+          {
+            "class": "PrefabMarker",
+            "vanilla": 1556,
+            "expanded": 1549
+          },
+          {
+            "class": "RocksLightSmall_01",
+            "vanilla": 157,
+            "expanded": 260
+          },
+          {
+            "class": "RocksLightSmall_02",
+            "vanilla": 151,
+            "expanded": 278
+          },
+          {
+            "class": "RocksLightSmall_03",
+            "vanilla": 159,
+            "expanded": 178
+          },
+          {
+            "class": "RocksLightSmall_04",
+            "vanilla": 39,
+            "expanded": 43
+          },
+          {
+            "class": "RocksLightSmall_05",
+            "vanilla": 53,
+            "expanded": 51
+          },
+          {
+            "class": "RocksLightSmall_06",
+            "vanilla": 66,
+            "expanded": 65
+          },
+          {
+            "class": "RocksLightSmall_07",
+            "vanilla": 49,
+            "expanded": 61
+          },
+          {
+            "class": "RocksLightSmall_08",
+            "vanilla": 33,
+            "expanded": 34
+          },
+          {
+            "class": "RocksLight_02",
+            "vanilla": 3,
+            "expanded": 4
+          },
+          {
+            "class": "RocksLight_04",
+            "vanilla": 24,
+            "expanded": 37
+          },
+          {
+            "class": "RocksLight_05",
+            "vanilla": 47,
+            "expanded": 63
+          },
+          {
+            "class": "RocksLight_06",
+            "vanilla": 15,
+            "expanded": 17
+          },
+          {
+            "class": "RocksSlate_01",
+            "vanilla": 190,
+            "expanded": 198
+          },
+          {
+            "class": "RocksSlate_02",
+            "vanilla": 123,
+            "expanded": 121
+          },
+          {
+            "class": "RocksSlate_03",
+            "vanilla": 23,
+            "expanded": 41
+          },
+          {
+            "class": "RocksSlate_04",
+            "vanilla": 124,
+            "expanded": 125
+          },
+          {
+            "class": "RocksSlate_05",
+            "vanilla": 151,
+            "expanded": 169
+          },
+          {
+            "class": "RocksSlate_06",
+            "vanilla": 27,
+            "expanded": 38
+          },
+          {
+            "class": "RocksSlate_07",
+            "vanilla": 7,
+            "expanded": 14
+          },
+          {
+            "class": "SafariSight",
+            "vanilla": 11,
+            "expanded": 12
+          },
+          {
+            "class": "StonesDarkSmall_01",
+            "vanilla": 13,
+            "expanded": 12
+          },
+          {
+            "class": "StonesDarkSmall_03",
+            "vanilla": 3,
+            "expanded": 4
+          },
+          {
+            "class": "StonesDarkSmall_05",
+            "vanilla": 8,
+            "expanded": 7
+          },
+          {
+            "class": "StonesSlateSmall_01",
+            "vanilla": 600,
+            "expanded": 557
+          },
+          {
+            "class": "StonesSlateSmall_02",
+            "vanilla": 591,
+            "expanded": 557
+          },
+          {
+            "class": "StonesSlateSmall_03",
+            "vanilla": 395,
+            "expanded": 393
+          },
+          {
+            "class": "StonesSlateSmall_04",
+            "vanilla": 471,
+            "expanded": 476
+          },
+          {
+            "class": "StonesSlateSmall_05",
+            "vanilla": 619,
+            "expanded": 609
+          },
+          {
+            "class": "StonesSlateSmall_06",
+            "vanilla": 218,
+            "expanded": 205
+          },
+          {
+            "class": "StonesSlate_01",
+            "vanilla": 207,
+            "expanded": 236
+          },
+          {
+            "class": "StonesSlate_02",
+            "vanilla": 399,
+            "expanded": 418
+          },
+          {
+            "class": "StonesSlate_03",
+            "vanilla": 92,
+            "expanded": 108
+          },
+          {
+            "class": "StonesSlate_04",
+            "vanilla": 287,
+            "expanded": 278
+          },
+          {
+            "class": "StonesSlate_06",
+            "vanilla": 72,
+            "expanded": 84
+          },
+          {
+            "class": "SurfaceDepositMarker",
+            "vanilla": 171,
+            "expanded": 169
+          },
+          {
+            "class": "SurfaceDepositMetals",
+            "vanilla": 5,
+            "expanded": 6
+          }
+        ],
+        "content_matched": 15,
+        "content_unmatched_expanded": 8147,
+        "content_unstamped_expanded": 4,
+        "content_unconsumed_vanilla": 7822,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5620,
+        "content_expanded_objects": 5620,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5620,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "b2-04": {
+    "case": "b2-04",
+    "label": "4S107E",
+    "lat": 240,
+    "lon": 6420,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 8736761973933965003,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 5399,
+        "content_expanded_objects": 5398,
+        "content_classes_differing": 1,
+        "content_class_diffs": [
+          {
+            "class": "TerrainDepositConcrete",
+            "vanilla": 1,
+            "expanded": 0
+          }
+        ],
+        "content_matched": 5393,
+        "content_unmatched_expanded": 5,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 6,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5745,
+        "content_expanded_objects": 5745,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5745,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "BottomlessPit"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "b2-07": {
+    "case": "b2-07",
+    "label": "55S164E",
+    "lat": 3300,
+    "lon": 9840,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 3500499737872786970,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 10563,
+        "content_expanded_objects": 10561,
+        "content_classes_differing": 2,
+        "content_class_diffs": [
+          {
+            "class": "ParSystem",
+            "vanilla": 5,
+            "expanded": 4
+          },
+          {
+            "class": "SubsurfaceAnomaly",
+            "vanilla": 1,
+            "expanded": 0
+          }
+        ],
+        "content_matched": 10555,
+        "content_unmatched_expanded": 4,
+        "content_unstamped_expanded": 2,
+        "content_unconsumed_vanilla": 8,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5669,
+        "content_expanded_objects": 5669,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5668,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 1,
+        "content_unconsumed_vanilla": 1,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "CaveOfWonders",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  },
+  "b2-10": {
+    "case": "b2-10",
+    "label": "51S110W",
+    "lat": 3060,
+    "lon": -6600,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 8384283635741179153,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 13672,
+        "content_expanded_objects": 13672,
+        "content_classes_differing": 2,
+        "content_class_diffs": [
+          {
+            "class": "SubsurfaceAnomaly_unlock",
+            "vanilla": 1,
+            "expanded": 0
+          },
+          {
+            "class": "SubsurfaceDepositWater",
+            "vanilla": 0,
+            "expanded": 1
+          }
+        ],
+        "content_matched": 13670,
+        "content_unmatched_expanded": 1,
+        "content_unstamped_expanded": 1,
+        "content_unconsumed_vanilla": 2,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5765,
+        "content_expanded_objects": 5765,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5764,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 1,
+        "content_unconsumed_vanilla": 1,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "CaveOfWonders"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
+  }
+}

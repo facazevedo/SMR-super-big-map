@@ -129,6 +129,15 @@ CreateRealTimeThread(function()
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end
+			-- Native-source manifest (what migration actually delivered), emitted so the
+			-- comparison can prove nothing was destroyed after transfer.
+			local manifest = rawget(map, "SuperBigMapNativeSourceManifest")
+			if type(manifest) == "table" then
+				meta(tag, "native_source_manifest_count", #manifest)
+				for mi = 1, #manifest do
+					emit("#manifest," .. tag .. "," .. tostring(manifest[mi]))
+				end
+			end
 			local holder = GetRandomMapGenerator(map)
 			meta(tag, "gen_seed", holder and tostring(holder.Seed) or "")
 			meta(tag, "gen_hash", holder and tostring(holder.GenerationHash) or "")

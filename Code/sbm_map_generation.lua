@@ -2979,6 +2979,7 @@ SuperBigMap.ReleaseRetainedNativeSourceMap = ReleaseRetainedNativeSourceMap
 local function TransferGeneratedObjects(source, destination, source_baseline, excluded_objects)
 	local objects, err = MapObjects(source)
 	if not objects then error("could not enumerate source objects: " .. tostring(err)) end
+	local source_manifest = cfg_bool("NATIVE_SOURCE_MANIFEST", false) and {} or nil
 	local is_valid = Global("IsValid")
 	-- Engine MapVar helpers belong to whichever map loaded them, not to generated content:
 	-- OnMsg.NewMap -> InitMapVarValue builds exactly one CameraObj per LOADED map
@@ -3100,6 +3101,26 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 					end
 					if landed then
 						transferred = transferred + 1
+						-- Manifest of what the native source actually produced, recorded at the
+						-- moment of migration. The post-transfer audit below already proves nothing
+						-- FAILS to migrate; this proves nothing is destroyed AFTERWARDS, which a
+						-- cross-process vanilla control cannot show on a map where stock generation
+						-- is not reproducible. Diagnostic only: a plain array on the destination,
+						-- never a MapVar, never saved.
+						if source_manifest then
+							local mx, my, mz = 0, 0, 0
+							if pos then
+								local ok_x, vx = pcall(pos.x, pos)
+								local ok_y, vy = pcall(pos.y, pos)
+								local ok_z, vz = pcall(pos.z, pos)
+								mx = ok_x and vx or 0
+								my = ok_y and vy or 0
+								mz = ok_z and vz or 0
+							end
+							source_manifest[#source_manifest + 1] = table.concat({
+								tostring(obj.class), tostring(mx), tostring(my), tostring(mz),
+							}, ",")
+						end
 					else
 						failed = failed + 1
 						if #failures < 8 then
@@ -3142,6 +3163,10 @@ local function TransferGeneratedObjects(source, destination, source_baseline, ex
 			failed + remaining_generated, table.concat(failures, " | ")))
 	end
 	destination.SuperBigMapNativeSourceObjectsTransferred = true
+	if source_manifest then
+		destination.SuperBigMapNativeSourceManifest = source_manifest
+		destination.SuperBigMapNativeSourceManifestCount = #source_manifest
+	end
 	return transferred
 end
 

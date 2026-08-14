@@ -1,0 +1,618 @@
+30S146E  VANILLA vs EXPANDED  object parity report
+==============================================================================
+
+[surface] metadata
+   mapdata_width                          vanilla=6144           expanded=8192
+   mapdata_height                         vanilla=6144           expanded=8192
+   blank_map_id                           vanilla=BlankBigTerraceCMix_11 expanded=BlankBigTerraceCMix_11
+   gen_seed                               vanilla=5434768309385999931 expanded=5434768309385999931   <== MATCH
+   gen_hash                               vanilla=6358497127468097730 expanded=6358497127468097730   <== MATCH
+   SuperBigMapSourceWidthTiles            vanilla=nil            expanded=6144
+   SuperBigMapDesiredWidthTiles           vanilla=nil            expanded=8192
+   SuperBigMapZScaleMul                   vanilla=nil            expanded=64535
+   SuperBigMapZScaleDiv                   vanilla=nil            expanded=64238
+   SuperBigMapZScaleAdd                   vanilla=nil            expanded=-302
+   SuperBigMapExpanded                    vanilla=false          expanded=true
+   SuperBigMapUndergroundPrepared         vanilla=false          expanded=false
+   raw_object_count                       vanilla=8038           expanded=8967
+   dumped_object_count                    vanilla=8038           expanded=8967
+
+[underground] metadata
+   mapdata_width                          vanilla=6144           expanded=8192
+   mapdata_height                         vanilla=6144           expanded=8192
+   blank_map_id                           vanilla=BlankUnderground_04 expanded=BlankUnderground_04
+   gen_seed                               vanilla=6897190323242569227 expanded=6897190323242569227   <== MATCH
+   gen_hash                               vanilla=1108768015374286220 expanded=1108768015374286220   <== MATCH
+   SuperBigMapSourceWidthTiles            vanilla=nil            expanded=6144
+   SuperBigMapDesiredWidthTiles           vanilla=nil            expanded=8192
+   SuperBigMapZScaleMul                   vanilla=nil            expanded=8192
+   SuperBigMapZScaleDiv                   vanilla=nil            expanded=6144
+   SuperBigMapZScaleAdd                   vanilla=nil            expanded=-12333
+   SuperBigMapExpanded                    vanilla=false          expanded=true
+   SuperBigMapUndergroundPrepared         vanilla=false          expanded=true
+   raw_object_count                       vanilla=6110           expanded=6950
+   dumped_object_count                    vanilla=6110           expanded=6950
+
+[surface] derived stretch ratio: x=1.333333  y=1.333333 (6144->8192 tiles)
+
+==============================================================================
+  SURFACE   vanilla=8038 objects   expanded=8967 objects
+==============================================================================
+
+-- A. CLASS CENSUS --
+   total objects       : vanilla 8038 vs expanded 8967  MISMATCH (929)
+   distinct classes    : vanilla 77 vs expanded 75
+   classes matching 1:1: 23
+   classes differing   : 55
+     class                                   vanilla  expanded    delta
+     MapSector                                   100       400     +300
+     SectorUnexplored                             99       399     +300
+     RocksLightSmall_02                          151       278     +127
+     RocksLightSmall_01                          157       260     +103
+     StonesSlateSmall_01                         600       557      -43
+     StonesSlateSmall_02                         591       557      -34
+     StonesSlate_01                              207       236      +29
+     RocksLightSmall_03                          159       178      +19
+     StonesSlate_02                              399       418      +19
+     RocksSlate_03                                23        41      +18
+     RocksSlate_05                               151       169      +18
+     RocksLight_05                                47        63      +16
+     StonesSlate_03                               92       108      +16
+     DecCrater_01                                 33        20      -13
+     RocksLight_04                                24        37      +13
+     StonesSlateSmall_06                         218       205      -13
+     RocksLightSmall_07                           49        61      +12
+     StonesSlate_06                               72        84      +12
+     RocksSlate_06                                27        38      +11
+     StonesSlateSmall_05                         619       609      -10
+     StonesSlate_04                              287       278       -9
+     RocksSlate_01                               190       198       +8
+     PrefabMarker                               1556      1549       -7
+     RocksSlate_07                                 7        14       +7
+     DecCrater_04                                 38        32       -6
+     DecCrater_02                                 11        16       +5
+     DecSpider_02                                  3         8       +5
+     Geyser_01                                     4         9       +5
+     Geyser_02                                     6        11       +5
+     StonesSlateSmall_04                         471       476       +5
+     DecCrater_03                                 13        17       +4
+     PrefabFeatureMarker                         111       115       +4
+     RocksLightSmall_04                           39        43       +4
+     DecSpider_01                                  2         5       +3
+     Geyser_03                                     3         6       +3
+     DecCrater_05                                  2         0       -2
+     PrefabDecorMarker                           198       196       -2
+     RocksLightSmall_05                           53        51       -2
+     RocksLight_06                                15        17       +2
+     RocksSlate_02                               123       121       -2
+
+-- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --
+   expanded objects carrying a source stamp : 8163
+   ... matched to a distinct vanilla object : 16
+   ... of those, paired by donor root       : 0
+   standalone FX carriers (anchor resolved) : vanilla 4 / expanded 4 of 4 / 4
+   ... additionally paired by FX anchor     : 0
+   ... stamp with no vanilla counterpart    : 8147
+   expanded objects with NO source stamp    : 804
+   stamp provenance kind (stamped / matched):
+     derived                     14 /       0
+     native                    8147 /      16
+     native_spawn                 2 /       0
+   vanilla objects never claimed by a stamp : 8022
+   unstamped expanded classes (top 15):
+     MapSector                                        400
+     SectorUnexplored                                 399
+     ParSystem                                          4
+     CameraObj                                          1
+   unclaimed vanilla classes (top 15):
+     PrefabMarker                                    1543
+     StonesSlateSmall_05                              619
+     StonesSlateSmall_01                              600
+     StonesSlateSmall_02                              591
+     StonesSlateSmall_04                              471
+     StonesSlate_02                                   399
+     StonesSlateSmall_03                              395
+     StonesSlate_04                                   287
+     StonesSlateSmall_06                              218
+     StonesSlate_01                                   207
+     PrefabDecorMarker                                198
+     RocksSlate_01                                    190
+     SurfaceDepositMarker                             171
+     RocksLightSmall_03                               159
+     RocksLightSmall_01                               157
+
+-- C. STRETCH PROPORTIONALITY  (|actual_xy - src_xy * 1.333333|, world units) --
+   all stamped objects : n=8163 max=288890 p99=578 median=0 mean=1363.3
+   within 1 wu (pure rounding) : 7814/8163 (95.725%)
+   classes with residual > 1 wu (top 15 by max):
+     PrefabMarker                           n=1549 max=288890 p99=239648 median=0 mean=7089.1
+     UndergroundTunnelMarker                n=2 max=10692 p99=10692 median=8858 mean=8858.1
+     SurfaceUndergroundTunnelSign           n=2 max=7024 p99=7024 median=6526 mean=6525.7
+     ElevatorBuildIndicator_SurfaceDecal    n=2 max=6429 p99=6429 median=4255 mean=4255.2
+     UndergroundPassage                     n=2 max=6429 p99=6429 median=4255 mean=4255.2
+     SurfaceDepositMarker                   n=169 max=621 p99=557 median=360 mean=347.1
+     SubsurfaceAnomalyMarker                n=40 max=578 p99=578 median=333 mean=324.5
+     TerrainDepositMarker                   n=23 max=578 p99=578 median=334 mean=357.6
+     SubsurfaceDepositMarker                n=39 max=578 p99=578 median=334 mean=332.3
+     EffectDepositMarker                    n=11 max=578 p99=578 median=334 mean=355.7
+     TerrainDepositConcrete                 n=1 max=578 p99=578 median=578 mean=577.5
+     SurfaceDepositMetals                   n=6 max=483 p99=483 median=444 mean=402.9
+     BeautyEffectDeposit                    n=1 max=334 p99=334 median=334 mean=333.8
+
+-- D. STAMP-INDEPENDENT GEOMETRIC MATCH (vanilla_xy * ratio -> nearest expanded) --
+   matched pairs        : 7715
+   vanilla unmatched    : 319
+   expanded left over   : 1251
+   residual distance    : n=7715 max=199868 p99=176181 median=26230 mean=36482.7
+     within      1 wu : 2/7715 (0.026%)
+     within    100 wu : 2/7715 (0.026%)
+     within   1000 wu : 45/7715 (0.583%)
+     within  10000 wu : 1529/7715 (19.819%)
+
+-- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --
+   hex-grid census evidence : PROVEN - derivation exact on both twins, identical gridded population (2 objects)
+   map-camera evidence      : PROVEN - both twins carry exactly one camera and it is that map's own MapVar camera (no foreign camera, census agrees with the dumped rows)
+     class                                   vanilla  expanded  expect_v  expect_e  verdict
+     MapSector                                   100       400       100       400  ok
+     SectorUnexplored                             99       399        99       399  ok
+     SectorScanned                                 0         0         0         0  ok
+     RandomMapGeneratorHolder                      1         1         1         1  ok
+     CameraObj                                     1         1         1         1  ok
+     GridObjectList                                0         0         0         0  ok
+   infrastructure gate  : GREEN (ok=6/6, initial reveal measured on the vanilla control = 1 sector(s))
+
+-- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --
+   content objects      : vanilla 7837 vs expanded 8166  MISMATCH (329)
+   classes differing    : 53
+     RocksLightSmall_02                          151       278     +127
+     RocksLightSmall_01                          157       260     +103
+     StonesSlateSmall_01                         600       557      -43
+     StonesSlateSmall_02                         591       557      -34
+     StonesSlate_01                              207       236      +29
+     RocksLightSmall_03                          159       178      +19
+     StonesSlate_02                              399       418      +19
+     RocksSlate_03                                23        41      +18
+     RocksSlate_05                               151       169      +18
+     RocksLight_05                                47        63      +16
+     StonesSlate_03                               92       108      +16
+     DecCrater_01                                 33        20      -13
+     RocksLight_04                                24        37      +13
+     StonesSlateSmall_06                         218       205      -13
+     RocksLightSmall_07                           49        61      +12
+     StonesSlate_06                               72        84      +12
+     RocksSlate_06                                27        38      +11
+     StonesSlateSmall_05                         619       609      -10
+     StonesSlate_04                              287       278       -9
+     RocksSlate_01                               190       198       +8
+   matched              : 15
+   unmatched expanded   : 8147
+   unstamped expanded   : 4
+   unclaimed vanilla    : 7822
+   unstamped expanded classes:
+     ParSystem                                          4
+   unmatched expanded classes:
+     PrefabMarker                                    1536
+     StonesSlateSmall_05                              609
+     StonesSlateSmall_01                              557
+     StonesSlateSmall_02                              557
+     StonesSlateSmall_04                              476
+     StonesSlate_02                                   418
+     StonesSlateSmall_03                              393
+     StonesSlate_04                                   278
+     RocksLightSmall_02                               278
+     RocksLightSmall_01                               260
+     StonesSlate_01                                   236
+     StonesSlateSmall_06                              205
+     RocksSlate_01                                    198
+     PrefabDecorMarker                                196
+     RocksLightSmall_03                               178
+   unclaimed vanilla classes:
+     PrefabMarker                                    1543
+     StonesSlateSmall_05                              619
+     StonesSlateSmall_01                              600
+     StonesSlateSmall_02                              591
+     StonesSlateSmall_04                              471
+     StonesSlate_02                                   399
+     StonesSlateSmall_03                              395
+     StonesSlate_04                                   287
+     StonesSlateSmall_06                              218
+     StonesSlate_01                                   207
+     PrefabDecorMarker                                198
+     RocksSlate_01                                    190
+     SurfaceDepositMarker                             171
+     RocksLightSmall_03                               159
+     RocksLightSmall_01                               157
+
+-- G. UNEXPLAINED RESIDUE (content + infrastructure whose rule is not proven) --
+   ok-infrastructure classes exempted here : CameraObj, GridObjectList, MapSector, RandomMapGeneratorHolder, SectorScanned, SectorUnexplored
+   records exempted     : vanilla 201 / expanded 801
+   unexplained objects  : vanilla 7837 vs expanded 8166  MISMATCH (329)
+   classes differing    : 53
+     RocksLightSmall_02                          151       278     +127
+     RocksLightSmall_01                          157       260     +103
+     StonesSlateSmall_01                         600       557      -43
+     StonesSlateSmall_02                         591       557      -34
+     StonesSlate_01                              207       236      +29
+     RocksLightSmall_03                          159       178      +19
+     StonesSlate_02                              399       418      +19
+     RocksSlate_03                                23        41      +18
+     RocksSlate_05                               151       169      +18
+     RocksLight_05                                47        63      +16
+     StonesSlate_03                               92       108      +16
+     DecCrater_01                                 33        20      -13
+     RocksLight_04                                24        37      +13
+     StonesSlateSmall_06                         218       205      -13
+     RocksLightSmall_07                           49        61      +12
+     StonesSlate_06                               72        84      +12
+     RocksSlate_06                                27        38      +11
+     StonesSlateSmall_05                         619       609      -10
+     StonesSlate_04                              287       278       -9
+     RocksSlate_01                               190       198       +8
+   matched              : 15
+   unmatched expanded   : 8147
+   unstamped expanded   : 4
+   unclaimed vanilla    : 7822
+   unstamped expanded classes:
+     ParSystem                                          4
+   unmatched expanded classes:
+     PrefabMarker                                    1536
+     StonesSlateSmall_05                              609
+     StonesSlateSmall_01                              557
+     StonesSlateSmall_02                              557
+     StonesSlateSmall_04                              476
+     StonesSlate_02                                   418
+     StonesSlateSmall_03                              393
+     StonesSlate_04                                   278
+     RocksLightSmall_02                               278
+     RocksLightSmall_01                               260
+     StonesSlate_01                                   236
+     StonesSlateSmall_06                              205
+     RocksSlate_01                                    198
+     PrefabDecorMarker                                196
+     RocksLightSmall_03                               178
+   unclaimed vanilla classes:
+     PrefabMarker                                    1543
+     StonesSlateSmall_05                              619
+     StonesSlateSmall_01                              600
+     StonesSlateSmall_02                              591
+     StonesSlateSmall_04                              471
+     StonesSlate_02                                   399
+     StonesSlateSmall_03                              395
+     StonesSlate_04                                   287
+     StonesSlateSmall_06                              218
+     StonesSlate_01                                   207
+     PrefabDecorMarker                                198
+     RocksSlate_01                                    190
+     SurfaceDepositMarker                             171
+     RocksLightSmall_03                               159
+     RocksLightSmall_01                               157
+   raw/unexplained partition : CONSISTENT
+
+-- H. PER-CLASS SCALE  (`class-scale-expected`, ratio 1.333333) --
+   allowlist (stretched with the terrain): BottomlessPit, CaveInRubble, JumboCave, PrefabFeatureMarker, TunnelBlockerRubble
+     class                                  vanilla scales                expanded scales               verdict
+     BeautyEffectDeposit                    -                             100                           unscoreable    mixed
+     CameraObj                              100                           100                           ok             identical
+     DecCrater_01                           42x2,57x2,74,78x2,87x2,120,13 83,216,232,241,284,316,339,50 MISMATCH       mixed
+     DecCrater_02                           221,296x10                    295,395x15                    MISMATCH       partly_stretched
+     DecCrater_03                           55,68,519x11                  60,91,173,281,500x13          MISMATCH       mixed
+     DecCrater_04                           38x28,66x2,77,90,96,151x2,161 51x26,111,120,177,215,225,251 MISMATCH       mixed
+     DecCrater_05                           166x2                         -                             unscoreable    partly_stretched
+     DecDustDevils_01                       153,154,194,239,346           204,205,259,319,461           ok             stretched
+     DecDustDevils_02                       109,137,153x4,157,158         145,183,204x4,209,211         ok             stretched
+     DecDustDevils_03                       201x2,209x3,215,224           268x2,279x3,287,299           ok             stretched
+     DecDustDevils_04                       134,146,149x2,194             179,195,199x2,259             ok             stretched
+     DecDustDevils_05                       161                           215                           ok             stretched
+     DecLavaCoils_02                        100                           -                             unscoreable    partly_stretched
+     DecLavaCoils_04                        100                           -                             unscoreable    partly_stretched
+     DecSpider_01                           130,200                       120,148,173,240,267           MISMATCH       mixed
+     DecSpider_02                           94,112,160                    92,107x2,125,133,149,193,213  MISMATCH       mixed
+     EffectDepositMarker                    110x11                        110x11                        ok             identical
+     ElevatorBuildIndicator_SurfaceDecal    100x2                         100x2                         ok             identical
+     GeyserWarmup                           137                           160,183                       MISMATCH       mixed
+     Geyser_01                              105,125,141,170               80,107,140,167,173,188,197,22 MISMATCH       mixed
+     Geyser_02                              89,115x2,126,137,143          99x2,119,121,124,143,153x2,16 MISMATCH       mixed
+     Geyser_03                              74,100,128                    99,117,120,133x2,171          MISMATCH       mixed
+     MapSector                              100x100                       100x400                       ok_cardinality identical_values_counts_differ
+     ParSystem                              100x4                         100x4                         ok             identical
+     PrefabDecorMarker                      250x198                       333x196                       MISMATCH       partly_stretched
+     PrefabFeatureMarker                    100x111                       133x115                       MISMATCH       partly_stretched
+     PrefabMarker                           250x1269,400x287              250x62,333x1195,400,500x291   MISMATCH       partly_stretched
+     RandomMapGeneratorHolder               100                           100                           ok             identical
+     RocksLightSmall_01                     43x15,48x6,56,59x2,65,68,69,7 57x15,64x7,75,79x2,87,91,92x2 MISMATCH       mixed
+     RocksLightSmall_02                     36,50,51x2,52,54x2,56x2,58,60 67,68x3,69,72x2,75x2,77,79x3, MISMATCH       mixed
+     RocksLightSmall_03                     50,53x2,54,55x3,56x2,57x2,59, 67,71x2,73x3,75x2,76,79,83x6, MISMATCH       mixed
+     RocksLightSmall_04                     54x5,68,69x5,71x3,76,77x3,80, 72x3,91x2,92x7,95x3,103x2,107 MISMATCH       partly_stretched
+     RocksLightSmall_05                     52,53,57,60x2,62x2,63x2,64,65 69,71,76,80x2,83x2,84x2,85,87 MISMATCH       partly_stretched
+     RocksLightSmall_06                     50,54x2,58,63,69x12,72,92x5,9 67,72x2,77,84,92x8,96,123x7,1 MISMATCH       mixed
+     RocksLightSmall_07                     53,55,57x2,59,61x2,69,71x2,81 71,73,76x2,79,81x2,92,95x2,10 MISMATCH       mixed
+     RocksLightSmall_08                     51,59,69,75x2,79x3,81,87,89x2 68,79,92,100x2,105x3,108,116, MISMATCH       mixed
+     RocksLight_01                          178,459                       237,500                       ok             stretched_clamped
+     RocksLight_02                          225x3                         281,300x3                     MISMATCH       mixed
+     RocksLight_03                          168x2,205,216,235x2,254,256,2 224x2,244,273,313x4,341,347,4 MISMATCH       mixed
+     RocksLight_04                          101x4,110,111x6,127x3,133,137 135x8,147,148x6,169x3,177,179 MISMATCH       mixed
+     RocksLight_05                          77x2,81x2,95x14,104x12,106x2, 103x2,108x2,116x3,127x17,139x MISMATCH       mixed
+     RocksLight_06                          165x2,189,219x2,222,260x4,274 184x2,220x2,292x2,296,347x4,3 MISMATCH       mixed
+     RocksSlate_01                          42x2,47x2,48x2,60x2,65x2,77x4 56x2,63x2,64x2,80x2,85,87x2,9 MISMATCH       mixed
+     RocksSlate_02                          85x2,99,100x2,102,105,108,110 105,113x2,117,132,133x4,136,1 MISMATCH       partly_stretched
+     RocksSlate_03                          100,104,118,119,121,131x3,133 91,133x2,139,148,152x2,161,16 MISMATCH       mixed
+     RocksSlate_04                          86,88,94,100x2,104x3,111,114x 115,117,123,125,133x4,139x3,1 MISMATCH       mixed
+     RocksSlate_05                          56,73,75,86,88,89,90,97x2,98, 75x2,87,96x2,97,100,115,117,1 MISMATCH       mixed
+     RocksSlate_06                          51,78,80,82,100x4,102,108,117 68,104x2,109,133x7,144,155,15 MISMATCH       mixed
+     RocksSlate_07                          100x2,133,139,150,177,183     133x4,169,177,209,216x2,217,2 MISMATCH       mixed
+     SafariSight                            100x11                        133x12                        MISMATCH       partly_stretched
+     SectorUnexplored                       411x99                        411x399                       ok_cardinality identical_values_counts_differ
+     StonesDarkSmall_01                     71x12,85                      95x10,113x2                   MISMATCH       partly_stretched
+     StonesDarkSmall_02                     78x2                          104x2                         ok             stretched
+     StonesDarkSmall_03                     74x2,90                       99x2,120x2                    MISMATCH       partly_stretched
+     StonesDarkSmall_04                     71                            95                            ok             stretched
+     StonesDarkSmall_05                     76x4,78,82x3                  101x3,104,109x3               MISMATCH       partly_stretched
+     StonesDarkSmall_06                     75x5                          100x5                         ok             stretched
+     StonesSlateSmall_01                    80,84x2,86,88,92x2,94x2,96x2, 107,112x3,115,117,123x2,125x2 MISMATCH       mixed
+     StonesSlateSmall_02                    81,85,87,93,97,99,100x352,101 108,113,116,124,129,132,133x3 MISMATCH       mixed
+     StonesSlateSmall_03                    80x2,84x2,86,90,92,100x170,10 107x2,112x2,115x2,120,123,133 MISMATCH       mixed
+     StonesSlateSmall_04                    85,89,91x2,93,95,97,100x234,1 113,119,121x2,124,127,129,133 MISMATCH       mixed
+     StonesSlateSmall_05                    83,91,95x2,97,99x3,100x389,10 111,121,127x2,129,132x3,133x3 MISMATCH       mixed
+     StonesSlateSmall_06                    82,88x2,90x2,92x2,98,100x7,10 109,117x2,120x2,123x2,125,131 MISMATCH       mixed
+     StonesSlate_01                         63x2,66,67,68,81x2,82x3,84,85 43,51x2,63,67,84x2,85,88,89,9 MISMATCH       mixed
+     StonesSlate_02                         61x2,65x7,69,73,80x3,83,92x20 81x2,87x9,92x3,107x4,109,111, MISMATCH       mixed
+     StonesSlate_03                         49,80,87,89,90,92,97x2,99x4,1 65,107,115x2,116,119,120,123, MISMATCH       mixed
+     StonesSlate_04                         42x4,45x2,46,56,57,65,66,67,7 56x4,60x2,76,88,93x5,107x2,10 MISMATCH       partly_stretched
+     StonesSlate_05                         81x3,83,87,90,91,97,99,100x2, 108x4,111,116,120,121x2,129,1 MISMATCH       mixed
+     StonesSlate_06                         79,80x2,82,84,90,94x2,100,102 105,107x2,109,112,120,125x2,1 MISMATCH       mixed
+     SubsurfaceAnomalyMarker                110x40                        110x40                        ok             identical
+     SubsurfaceDepositMarker                110x39                        110x39                        ok             identical
+     SurfaceDepositMarker                   110x171                       110x169                       MISMATCH       identical_values_counts_differ
+     SurfaceDepositMetals                   100x5                         100x6                         MISMATCH       identical_values_counts_differ
+     SurfaceUndergroundTunnelSign           100x2                         100x2                         ok             identical
+     TerrainDepositConcrete                 100                           100                           ok             identical
+     TerrainDepositMarker                   110x23                        110x23                        ok             identical
+     UndergroundPassage                     100x2                         100x2                         ok             identical
+     UndergroundTunnelMarker                110x2                         110x2                         ok             identical
+   mismatched classes, by measured behaviour:
+     identical_values_counts_differ    2  SurfaceDepositMarker, SurfaceDepositMetals
+     mixed                            37  DecCrater_01, DecCrater_03, DecCrater_04, DecSpider_01, DecSpider_02, GeyserWarmup, Geyser_01, Geyser_02, +29 more
+     partly_stretched                 12  DecCrater_02, PrefabDecorMarker, PrefabFeatureMarker, PrefabMarker, RocksLightSmall_04, RocksLightSmall_05, RocksSlate_02, SafariSight, +4 more
+   per-class detail (expected vs observed):
+     DecCrater_01: unexpected {'284': 1, '83': 1, '241': 1, '339': 1, '316': 1}  missing {'500': 6, '76': 2, '56': 2, '116': 2, '104': 2, '99': 1, '160': 1, '197': 1, '173': 1}
+     DecCrater_02: unexpected {'395': 5}  missing {}
+     DecCrater_03: unexpected {'500': 2, '173': 1, '281': 1, '60': 1}  missing {'73': 1}
+     DecCrater_04: unexpected {'111': 1, '177': 1}  missing {'51': 2, '88': 2, '201': 2, '103': 1, '128': 1}
+     DecSpider_01: unexpected {'240': 1, '120': 1, '148': 1}  missing {}
+     DecSpider_02: unexpected {'107': 2, '193': 1, '92': 1, '133': 1}  missing {}
+     GeyserWarmup: unexpected {'160': 1}  missing {}
+     Geyser_01: unexpected {'107': 1, '221': 1, '173': 1, '197': 1, '80': 1}  missing {}
+     Geyser_02: unexpected {'99': 2, '121': 1, '124': 1, '143': 1}  missing {}
+     Geyser_03: unexpected {'133': 1, '117': 1, '120': 1}  missing {}
+     PrefabDecorMarker: unexpected {'333': 196}  missing {'250': 198}
+     PrefabFeatureMarker: unexpected {'133': 4}  missing {}
+     PrefabMarker: unexpected {'333': 1195, '500': 291}  missing {'250': 1207, '400': 286}
+     RocksLightSmall_01: unexpected {'121': 3, '152': 5, '157': 4, '149': 7, '147': 4, '181': 4, '264': 2, '64': 1, '132': 2, '100': 15, '117': 7, '115': 9, '119': 14, '113': 9, '143': 6, '184': 3, '93': 4, '120': 1, '148': 1, '92': 1, '103': 4, '160': 2, '163': 3}  missing {'133': 8}
+     RocksLightSmall_02: unexpected {'108': 7, '68': 1, '157': 2, '105': 8, '100': 21, '85': 9, '92': 12, '80': 12, '179': 3, '117': 5, '96': 3, '132': 6, '115': 6, '152': 3, '160': 3, '168': 1, '129': 1, '109': 1, '123': 1, '155': 7, '79': 3, '135': 6, '93': 2, '103': 4, '113': 2, '137': 3}  missing {'133': 3, '95': 1, '48': 1}
+     RocksLightSmall_03: unexpected {'83': 3, '172': 2, '149': 7, '131': 1, '144': 1, '127': 1, '151': 3, '140': 3, '132': 4, '112': 3, '113': 2, '193': 2}  missing {'133': 5, '109': 1, '72': 1, '91': 2, '101': 1, '97': 1, '135': 1, '76': 1}
+     RocksLightSmall_04: unexpected {'129': 1, '92': 2, '149': 6, '91': 1, '163': 1}  missing {'72': 2, '133': 2, '103': 1, '101': 1, '109': 1}
+     RocksLightSmall_05: unexpected {'97': 1, '107': 1}  missing {'133': 4}
+     RocksLightSmall_06: unexpected {'123': 2, '192': 2, '176': 3}  missing {'133': 1, '200': 1, '129': 1, '92': 4, '132': 1}
+     RocksLightSmall_07: unexpected {'152': 8, '136': 8}  missing {'151': 2, '133': 2}
+     RocksLightSmall_08: unexpected {'155': 3, '193': 3}  missing {'133': 3, '172': 2}
+     RocksLight_02: unexpected {'281': 1}  missing {}
+     RocksLight_03: unexpected {'313': 2, '244': 1}  missing {'339': 1, '372': 1, '288': 1}
+     RocksLight_04: unexpected {'135': 4, '179': 3, '195': 2, '183': 2, '239': 3}  missing {'209': 1}
+     RocksLight_05: unexpected {'127': 3, '156': 4, '169': 3, '143': 3, '193': 2, '116': 3}  missing {'139': 1, '237': 1}
+     RocksLight_06: unexpected {'365': 2, '184': 2}  missing {'252': 1, '444': 1}
+     RocksSlate_01: unexpected {'107': 3, '124': 1, '133': 8, '109': 1, '93': 1, '123': 1, '143': 1, '193': 1, '144': 1, '151': 2, '105': 1, '85': 1, '121': 1}  missing {'256': 1, '288': 1, '353': 1, '319': 1, '400': 1, '139': 2, '157': 2, '176': 1, '481': 1, '437': 1, '215': 1, '296': 1, '297': 1}
+     RocksSlate_02: unexpected {'117': 1, '159': 1, '133': 2, '183': 1, '181': 1, '105': 1, '157': 1, '173': 1}  missing {'288': 1, '260': 1, '321': 1, '200': 1, '231': 1, '188': 2, '227': 1, '340': 1, '357': 1, '276': 1}
+     RocksSlate_03: unexpected {'240': 1, '176': 1, '169': 2, '152': 2, '165': 2, '195': 6, '177': 3, '133': 1, '241': 1, '91': 1, '172': 1, '148': 1, '203': 1, '173': 1, '180': 1, '191': 1, '253': 1}  missing {'159': 1, '197': 1, '157': 1, '220': 1, '175': 3, '256': 1, '384': 1}
+     RocksSlate_04: unexpected {'133': 2, '156': 1, '164': 1, '184': 1, '181': 1, '215': 1, '151': 2, '163': 1, '389': 1, '123': 1, '169': 1, '193': 1}  missing {'176': 1, '288': 2, '500': 2, '167': 2, '188': 2, '157': 2, '357': 1, '371': 1}
+     RocksSlate_05: unexpected {'75': 1, '96': 2, '87': 1, '180': 1, '123': 1, '199': 2, '173': 2, '196': 1, '133': 4, '204': 1, '172': 1, '119': 1, '129': 1, '147': 2, '248': 1, '120': 1, '151': 2, '184': 1, '185': 1}  missing {'256': 1, '296': 1, '167': 1, '157': 1, '152': 1, '188': 2, '323': 1, '297': 1}
+     RocksSlate_06: unexpected {'195': 2, '171': 2, '207': 2, '133': 3, '260': 1, '104': 1, '185': 1, '169': 1, '172': 1, '155': 1, '183': 1}  missing {'157': 1, '180': 1, '136': 1, '107': 1, '256': 1}
+     RocksSlate_07: unexpected {'241': 2, '216': 2, '133': 2, '169': 1, '209': 1, '217': 1, '224': 1}  missing {'200': 1, '244': 1, '185': 1}
+     SafariSight: unexpected {'133': 1}  missing {}
+     StonesDarkSmall_01: unexpected {'113': 1}  missing {'95': 2}
+     StonesDarkSmall_03: unexpected {'120': 1}  missing {}
+     StonesDarkSmall_05: unexpected {}  missing {'101': 1}
+     StonesSlateSmall_01: unexpected {'144': 2, '264': 2, '152': 1, '165': 1, '181': 3, '184': 1, '112': 1, '209': 1, '167': 1, '249': 1, '220': 2, '237': 1, '219': 1, '137': 2, '239': 2, '135': 1, '157': 1, '171': 1, '189': 1}  missing {'133': 41, '175': 1, '247': 2, '141': 1, '227': 2, '151': 1, '212': 2, '207': 1, '143': 4, '233': 2, '223': 2, '173': 1, '200': 1, '265': 2, '188': 2, '169': 1, '243': 1, '215': 1, '245': 1}
+     StonesSlateSmall_02: unexpected {'252': 2, '239': 1, '140': 2, '143': 1, '201': 1, '161': 1, '199': 1, '172': 1, '213': 2, '259': 2, '231': 1, '151': 1, '407': 1, '409': 1, '171': 1, '197': 1, '227': 1, '193': 2, '204': 1, '305': 2}  missing {'133': 25, '148': 2, '153': 1, '180': 2, '183': 1, '164': 1, '136': 2, '188': 1, '233': 2, '260': 1, '225': 1, '212': 1, '232': 2, '156': 1, '255': 1, '177': 2, '175': 1, '207': 2, '145': 1, '203': 2, '261': 2, '192': 2, '237': 2, '215': 1, '257': 1}
+     StonesSlateSmall_03: unexpected {'133': 14, '196': 1, '193': 1, '221': 1, '115': 1, '240': 1, '189': 1, '164': 1, '204': 2, '139': 2, '141': 1, '213': 1, '143': 1, '145': 1, '259': 1, '200': 1}  missing {'184': 1, '195': 2, '253': 4, '248': 2, '152': 1, '188': 1, '251': 1, '232': 1, '147': 2, '203': 1, '168': 1, '144': 1, '181': 2, '163': 1, '161': 2, '136': 1, '217': 2, '171': 1, '187': 1, '256': 1, '192': 1, '233': 1, '137': 1, '159': 1}
+     StonesSlateSmall_04: unexpected {'248': 1, '221': 1, '232': 2, '224': 2, '229': 1, '241': 2, '209': 1, '167': 2, '239': 1, '257': 1, '137': 1, '220': 2, '188': 1, '180': 1, '240': 1, '179': 1, '500': 3, '408': 1, '328': 1, '244': 1, '256': 1, '153': 1, '157': 1}  missing {'231': 2, '175': 2, '169': 1, '208': 1, '199': 2, '197': 1, '223': 1, '145': 1, '217': 1, '147': 1, '177': 1, '252': 2, '235': 1, '285': 2, '139': 1, '236': 1, '255': 2, '249': 1, '161': 1}
+     StonesSlateSmall_05: unexpected {'449': 1, '177': 2, '265': 2, '140': 2, '156': 3, '217': 1, '221': 1, '187': 2, '225': 1, '163': 1, '188': 1, '204': 1, '181': 1, '245': 2, '139': 1, '237': 1, '159': 1, '272': 1, '259': 1, '455': 1, '176': 1}  missing {'133': 4, '155': 3, '184': 2, '199': 1, '197': 1, '257': 1, '251': 1, '185': 2, '147': 1, '219': 3, '165': 1, '235': 1, '148': 2, '200': 1, '157': 1, '164': 2, '167': 2, '227': 1, '244': 2, '189': 3, '229': 1, '195': 1, '203': 1}
+     StonesSlateSmall_06: unexpected {'161': 2, '172': 2, '204': 2, '184': 1, '139': 1, '200': 1, '155': 1, '189': 1, '264': 1, '125': 1, '239': 1, '217': 2, '243': 1, '156': 1, '232': 2, '203': 3, '221': 1, '233': 1, '251': 1}  missing {'147': 1, '136': 1, '227': 1, '171': 1, '160': 3, '253': 3, '148': 2, '183': 1, '181': 2, '197': 2, '185': 1, '187': 1, '256': 3, '237': 2, '228': 1, '205': 5, '224': 1, '173': 1, '141': 1, '259': 3, '196': 2, '261': 1}
+     StonesSlate_01: unexpected {'133': 31, '109': 1, '193': 1, '63': 1, '43': 1, '67': 1, '180': 1, '51': 2, '253': 1, '85': 1}  missing {'213': 1, '236': 1, '231': 2, '284': 1, '251': 1, '188': 2, '127': 1, '159': 1, '171': 1, '140': 1}
+     StonesSlate_02: unexpected {'133': 20, '177': 1, '107': 1, '195': 1, '163': 2, '159': 1, '239': 1, '87': 2, '92': 2, '143': 1, '191': 1, '120': 1, '145': 1, '117': 1, '261': 1, '109': 1}  missing {'136': 1, '241': 2, '123': 2, '189': 1, '175': 1, '263': 1, '207': 1, '155': 1, '147': 1, '187': 1, '217': 1, '264': 2, '97': 1, '276': 1, '301': 1, '139': 1}
+     StonesSlate_03: unexpected {'200': 1, '189': 2, '115': 2, '133': 14, '173': 1, '147': 1, '144': 1, '251': 1, '264': 1}  missing {'276': 1, '291': 1, '285': 2, '211': 1, '148': 2, '193': 1}
+     StonesSlate_04: unexpected {'228': 1, '181': 1, '157': 1}  missing {'189': 3, '320': 1, '87': 1, '93': 1, '61': 1, '89': 1, '75': 1, '252': 1, '144': 1, '172': 1}
+     StonesSlate_05: unexpected {'180': 2, '157': 1, '108': 1, '196': 1, '143': 1, '153': 1, '161': 1, '121': 1, '185': 1}  missing {'235': 1, '276': 1, '189': 1, '236': 1, '267': 1, '160': 1, '133': 1, '173': 2, '241': 1}
+     StonesSlate_06: unexpected {'235': 1, '127': 1, '137': 2, '156': 1, '224': 1, '209': 1, '377': 1, '185': 1, '200': 1, '144': 2, '211': 1, '164': 1, '305': 3}  missing {'147': 1, '219': 1, '133': 1, '253': 1, '244': 1}
+     SurfaceDepositMarker: unexpected {}  missing {'110': 2}
+     SurfaceDepositMetals: unexpected {'100': 1}  missing {}
+   contract-stated entrance-family constants (both twins):
+     ElevatorBuildIndicator_SurfaceDecal          expect  100  vanilla 100x2          expanded 100x2          ok
+     SurfaceUndergroundTunnelSign                 expect  100  vanilla 100x2          expanded 100x2          ok
+     UndergroundPassage                           expect  100  vanilla 100x2          expanded 100x2          ok
+     UndergroundTunnelMarker                      expect  110  vanilla 110x2          expanded 110x2          ok
+   GATE class-scale-expected: classes=78 ok=23 mismatched=51 unscoreable=4 -> FAIL
+
+[underground] derived stretch ratio: x=1.333333  y=1.333333 (6144->8192 tiles)
+
+==============================================================================
+  UNDERGROUND   vanilla=6110 objects   expanded=6950 objects
+==============================================================================
+
+-- A. CLASS CENSUS --
+   total objects       : vanilla 6110 vs expanded 6950  MISMATCH (840)
+   distinct classes    : vanilla 38 vs expanded 38
+   classes matching 1:1: 35
+   classes differing   : 3
+     class                                   vanilla  expanded    delta
+     MapSector                                   100       400     +300
+     SectorUnexplored                            100       400     +300
+     GridObjectList                              288       528     +240
+
+-- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --
+   expanded objects carrying a source stamp : 5846
+   ... matched to a distinct vanilla object : 5621
+   ... of those, paired by donor root       : 7
+   standalone FX carriers (anchor resolved) : vanilla 2 / expanded 0 of 5 / 5
+   ... additionally paired by FX anchor     : 0
+   ... stamp with no vanilla counterpart    : 225
+   expanded objects with NO source stamp    : 1104
+   stamp provenance kind (stamped / matched):
+     derived                      9 /       9
+     native                    5837 /    5612
+   vanilla objects never claimed by a stamp : 489
+   unstamped expanded classes (top 15):
+     GridObjectList                                   528
+     SectorUnexplored                                 400
+     MapSector                                        175
+     CameraObj                                          1
+   unclaimed vanilla classes (top 15):
+     GridObjectList                                   288
+     SectorUnexplored                                 100
+     MapSector                                        100
+     CameraObj                                          1
+
+-- C. STRETCH PROPORTIONALITY  (|actual_xy - src_xy * 1.333333|, world units) --
+   all stamped objects : n=5846 max=279976 p99=199030 median=0 mean=6048.9
+   within 1 wu (pure rounding) : 5494/5846 (93.979%)
+   classes with residual > 1 wu (top 15 by max):
+     MapSector                              n=225 max=279976 p99=270494 median=164124 mean=156646.2
+     ParSystem                              n=5 max=14596 p99=14596 median=11368 mean=7861.1
+     SurfaceTunnelMarker                    n=2 max=10535 p99=10535 median=7784 mean=7784.3
+     ElevatorBuildIndicator_UndergroundPass n=2 max=8718 p99=8718 median=4647 mean=4647.3
+     SurfacePassage                         n=2 max=8718 p99=8718 median=4647 mean=4647.3
+     SurfaceDepositMarker                   n=52 max=1264 p99=1264 median=357 mean=355.5
+     TerrainDepositMarker                   n=4 max=578 p99=578 median=334 mean=311.3
+     SubsurfaceAnomalyMarker                n=30 max=578 p99=578 median=334 mean=334.3
+     SubsurfaceDepositMarker                n=30 max=578 p99=578 median=334 mean=334.8
+     EffectDepositMarker                    n=4 max=577 p99=577 median=334 mean=394.4
+     SubsurfaceRareAnomalyMarker            n=3 max=447 p99=447 median=366 mean=368.2
+     SubsurfaceSpecialAnomalyMarker         n=2 max=334 p99=334 median=167 mean=166.9
+
+-- D. STAMP-INDEPENDENT GEOMETRIC MATCH (vanilla_xy * ratio -> nearest expanded) --
+   matched pairs        : 6109
+   vanilla unmatched    : 1
+   expanded left over   : 841
+   residual distance    : n=6109 max=28963 p99=21588 median=0 mean=637.8
+     within      1 wu : 5526/6109 (90.457%)
+     within    100 wu : 5531/6109 (90.539%)
+     within   1000 wu : 5902/6109 (96.612%)
+     within  10000 wu : 5980/6109 (97.888%)
+
+-- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --
+   hex-grid census evidence : PROVEN - derivation exact on both twins, identical gridded population (59 objects)
+   map-camera evidence      : PROVEN - both twins carry exactly one camera and it is that map's own MapVar camera (no foreign camera, census agrees with the dumped rows)
+     class                                   vanilla  expanded  expect_v  expect_e  verdict
+     MapSector                                   100       400       100       400  ok
+     SectorUnexplored                            100       400       100       400  ok
+     SectorScanned                                 0         0         0         0  ok
+     RandomMapGeneratorHolder                      1         1         1         1  ok
+     CameraObj                                     1         1         1         1  ok
+     GridObjectList                              288       528       308       574  MISMATCH
+     GridObjectList: MISMATCH - rule: DERIVED: one bucket per hex node covered by >= 2 registered gridded footprints, recomputed offline from this run's census -> 308 vanilla / 574 expanded predicted; derivation exact on both twins, identical gridded population (59 objects)
+   infrastructure gate  : RED (ok=5/6, initial reveal measured on the vanilla control = 0 sector(s))
+
+-- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --
+   content objects      : vanilla 5620 vs expanded 5620  MATCH
+   classes differing    : 0
+   matched              : 5620
+   unmatched expanded   : 0
+   unstamped expanded   : 0
+   unclaimed vanilla    : 0
+
+-- G. UNEXPLAINED RESIDUE (content + infrastructure whose rule is not proven) --
+   ok-infrastructure classes exempted here : CameraObj, MapSector, RandomMapGeneratorHolder, SectorScanned, SectorUnexplored
+   records exempted     : vanilla 202 / expanded 802
+   unexplained objects  : vanilla 5908 vs expanded 6148  MISMATCH (240)
+   classes differing    : 1
+     GridObjectList                              288       528     +240
+   matched              : 5620
+   unmatched expanded   : 0
+   unstamped expanded   : 528
+   unclaimed vanilla    : 288
+   unstamped expanded classes:
+     GridObjectList                                   528
+   unclaimed vanilla classes:
+     GridObjectList                                   288
+   raw/unexplained partition : CONSISTENT
+
+-- H. PER-CLASS SCALE  (`class-scale-expected`, ratio 1.333333) --
+   allowlist (stretched with the terrain): BottomlessPit, CaveInRubble, JumboCave, PrefabFeatureMarker, TunnelBlockerRubble
+     class                                  vanilla scales                expanded scales               verdict
+     AncientArtifact                        100                           133                           ok             stretched
+     BottomlessPit                          100                           133                           ok             stretched
+     CameraObj                              100                           100                           ok             identical
+     CaveInRubble                           100x38                        133x38                        ok             stretched
+     Cliff_01                               38x2,68x2,73,81,86x2          51x2,91x2,97,108,115x2        ok             stretched
+     Cliff_02                               49x2,55x10,76                 65x2,73x10,101                ok             stretched
+     Cliff_02_100                           62x2,67x2                     83x2,89x2                     ok             stretched
+     EffectDepositMarker                    110x4                         110x4                         ok             identical
+     ElevatorBuildIndicator_UndergroundPass 100x2                         100x2                         ok             identical
+     GridObjectList                         100x288                       100x528                       MISMATCH       identical_values_counts_differ
+     MapSector                              100x100                       100x400                       ok_cardinality identical_values_counts_differ
+     ParSystem                              100x5                         100x3,133x2                   MISMATCH       partly_stretched
+     PrefabMarker                           150x4771                      200x4771                      MISMATCH       stretched
+     RandomMapGeneratorHolder               100                           100                           ok             identical
+     RemovableRocks_01                      84x82,102x35,106x18           112x82,136x35,141x18          ok             stretched
+     RemovableRocks_02                      80x2,84x39,94x62,102x72,113x2 107x2,112x39,125x62,136x72,15 ok             stretched
+     Rocks_01                               83x5,84x5,123                 111x5,112x5,164               ok             stretched
+     Rocks_01_100                           243x3                         324x3                         ok             stretched
+     Rocks_02                               76x2                          101x2                         ok             stretched
+     Rocks_03                               78,84,85x21,87,98,100x6,118x4 104,112,113x21,116,131,133x6, ok             stretched
+     Rocks_03_100                           83x5,111,147                  111x5,148,196                 ok             stretched
+     Rocks_03_33                            161x11,168x5,219,220          215x11,224x5,292,293          ok             stretched
+     Rocks_04                               80x3,84,100x64,113x3,118x19,1 107x3,112,133x64,151x3,157x19 ok             stretched
+     SectorUnexplored                       411x100                       411x400                       ok_cardinality identical_values_counts_differ
+     SoundSource                            250x36                        333x36                        MISMATCH       stretched
+     SubsurfaceAnomalyMarker                110x30                        110x30                        ok             identical
+     SubsurfaceDepositMarker                110x30                        110x30                        ok             identical
+     SubsurfaceRareAnomalyMarker            110x3                         110x3                         ok             identical
+     SubsurfaceSpecialAnomalyMarker         110x2                         110x2                         ok             identical
+     SurfaceDepositMarker                   53x3,64x2,70x3,110x38,128x6   53x3,64x2,70x3,110x38,128x6   ok             identical
+     SurfacePassage                         100x2                         100x2                         ok             identical
+     SurfaceTunnelMarker                    110x2                         110x2                         ok             identical
+     TerrainDepositMarker                   110x4                         110x4                         ok             identical
+     TunnelBlockerRubble                    100x17                        133x17                        ok             stretched
+     Underground_Arch_02                    100x2                         133x2                         ok             stretched
+     Underground_Arch_03                    100x6                         133x6                         ok             stretched
+     Underground_Arch_05                    96x4                          128x4                         ok             stretched
+     Underground_Arch_08                    100x3                         133x3                         ok             stretched
+   mismatched classes, by measured behaviour:
+     identical_values_counts_differ    1  GridObjectList
+     partly_stretched                  1  ParSystem
+     stretched                         2  PrefabMarker, SoundSource
+   per-class detail (expected vs observed):
+     GridObjectList: unexpected {'100': 240}  missing {}
+     ParSystem: unexpected {'133': 2}  missing {'100': 2}
+   contract-stated entrance-family constants (both twins):
+     ElevatorBuildIndicator_UndergroundPassageImp expect  100  vanilla 100x2          expanded 100x2          ok
+     SurfacePassage                               expect  100  vanilla 100x2          expanded 100x2          ok
+     SurfaceTunnelMarker                          expect  110  vanilla 110x2          expanded 110x2          ok
+   GATE class-scale-expected: classes=38 ok=34 mismatched=4 unscoreable=0 -> FAIL
+
+==============================================================================
+  ENTRANCE PAIRS   linked Surface/Underground passages
+==============================================================================
+   vanilla linked pairs=2   expanded linked pairs=2
+
+   pair 1  CO-LOCATED
+      surface     UndergroundPassage       hex (58,526) = (321000,455516)
+      underground SurfacePassage           hex (58,526) = (321000,455516)
+      endpoint separation: hexes=0 world=0
+      vanilla source: surface (237000,344668) underground (240000,348132)
+      stretched image of the vanilla SURFACE coordinate: hex (51,530) = (316000,458980)
+      drift surface endpoint -> that image: 6083 wu (7 hexes)
+      drift underground endpoint -> that image: 6083 wu
+      drift underground endpoint -> image of its OWN vanilla coordinate: 8718 wu
+
+   pair 2  CO-LOCATED
+      surface     UndergroundPassage       hex (387,374) = (574000,323884)
+      underground SurfacePassage           hex (387,374) = (574000,323884)
+      endpoint separation: hexes=0 world=0
+      vanilla source: surface (429000,242480) underground (430500,243346)
+      stretched image of the vanilla SURFACE coordinate: hex (386,373) = (572500,323018)
+      drift surface endpoint -> that image: 1732 wu (2 hexes)
+      drift underground endpoint -> that image: 1732 wu
+      drift underground endpoint -> image of its OWN vanilla coordinate: 0 wu
+
+   GATE entrance-colocation: pairs=2 colocated=2 differing=0 -> PASS
+   REPORTED entrance-minimal-drift: max surface drift from the exact stretched image = 6083 wu

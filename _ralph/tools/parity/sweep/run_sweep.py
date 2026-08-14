@@ -18,8 +18,10 @@ PARITY = HERE.parent
 RUN = PARITY / "run_parity.py"
 COMPARE = PARITY / "compare.py"
 OUT = PARITY / "out"
-MANIFEST = json.loads((HERE / "sweep_manifest.json").read_text(encoding="utf-8"))
-RESULTS = HERE / "sweep_results.json"
+MANIFEST_NAME = next((a.split("=",1)[1] for a in sys.argv[1:] if a.startswith("manifest=")),
+                     "sweep_manifest.json")
+MANIFEST = json.loads((HERE / MANIFEST_NAME).read_text(encoding="utf-8"))
+RESULTS = HERE / MANIFEST_NAME.replace("manifest", "results")
 WONDERS = ("AncientArtifact", "CaveOfWonders", "BottomlessPit", "JumboCave")
 
 
@@ -106,19 +108,20 @@ def main():
     hi = int(sys.argv[2]) if len(sys.argv) > 2 else len(cases)
     results = json.loads(RESULTS.read_text(encoding="utf-8")) if RESULTS.exists() else {}
 
-    for c in cases:
-        n = int(c["case"].split("-")[1])
+    for idx, c in enumerate(cases, start=1):
+        n = idx
         if n < lo or n > hi:
             continue
         if "--redo" not in sys.argv and results.get(c["case"], {}).get("verdict") == "COMPARED":
             log(f"{c['case']} {c['label']}: already COMPARED, skipping")
             continue
-        tag_v, tag_e = f"sw{n:02d}v", f"sw{n:02d}e"
+        slug = c["case"].replace("-", "")
+        tag_v, tag_e = f"f{slug}v", f"f{slug}e"
         log(f"=== {c['case']} {c['label']} lat={c['lat']} lon={c['lon']} ===")
         rec = {"case": c["case"], "label": c["label"], "lat": c["lat"], "lon": c["lon"]}
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_v, "0", "-",
-                                             f"lat={c['lat']}", f"lon={c['lon']}", "nopin"])
+                                             f"lat={c['lat']}", f"lon={c['lon']}", "nopin", "serial", "passagepin"])
         rec["vanilla_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "VANILLA_FAILED"
@@ -144,7 +147,7 @@ def main():
         log(f"  vanilla ok, ug seed {seed}")
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_e, "1", str(seed),
-                                             f"lat={c['lat']}", f"lon={c['lon']}"])
+                                             f"lat={c['lat']}", f"lon={c['lon']}", "serial", "passagepin"])
         rec["expanded_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "EXPANDED_FAILED"
@@ -168,11 +171,13 @@ def main():
         if summ.exists():
             data = json.loads(summ.read_text(encoding="utf-8"))
             rec["summary"] = {m: {k: v for k, v in data.get(m, {}).items()
-                                  if k in ("vanilla_objects", "expanded_objects",
-                                           "classes_differing", "provenance_matched",
-                                           "provenance_unmatched_expanded",
-                                           "provenance_unstamped_expanded",
-                                           "provenance_unconsumed_vanilla")}
+                                  if k in ("seed_equal", "hash_equal",
+                                           "content_bijection_ok", "content_matched",
+                                           "content_vanilla_objects", "content_expanded_objects",
+                                           "content_unmatched_expanded",
+                                           "content_unstamped_expanded",
+                                           "content_unconsumed_vanilla",
+                                           "content_classes_differing", "content_class_diffs")}
                               for m in ("surface", "underground") if m in data}
             (HERE / f"parity_summary_{c['case']}.json").write_bytes(summ.read_bytes())
         rep = OUT / "parity_report.txt"

@@ -1,0 +1,38 @@
+{
+  "master_seed": "P1 + batch2 subset",
+  "drawn": 5,
+  "underground_rule": "vanilla control draws its own seed (nopin); expanded twin gets that exact seed",
+  "pins": "serial raster + passagepin on BOTH twins",
+  "cases": [
+    {
+      "case": "P1",
+      "lat": 1800,
+      "lon": 8760,
+      "label": "30S146E"
+    },
+    {
+      "case": "b2-01",
+      "lat": 3060,
+      "lon": -780,
+      "label": "51S13W"
+    },
+    {
+      "case": "b2-04",
+      "lat": 240,
+      "lon": 6420,
+      "label": "4S107E"
+    },
+    {
+      "case": "b2-07",
+      "lat": 3300,
+      "lon": 9840,
+      "label": "55S164E"
+    },
+    {
+      "case": "b2-10",
+      "lat": 3060,
+      "lon": -6600,
+      "label": "51S110W"
+    }
+  ]
+}
