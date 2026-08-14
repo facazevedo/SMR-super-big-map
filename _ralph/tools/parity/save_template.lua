@@ -15,6 +15,7 @@ g_ParitySaveStatus = "running"
 g_ParitySaveError = false
 g_ParitySaveName = false
 g_ParitySaveFolder = false
+g_ParitySaveOSPath = false
 g_ParitySaveMap = false
 
 CreateRealTimeThread(function()
@@ -42,11 +43,20 @@ CreateRealTimeThread(function()
 			if ok_folder and type(value) == "string" then folder = value end
 		end
 		g_ParitySaveFolder = folder
+		-- `folder` is an engine MOUNT ("saves:/<user>/"), not an OS path, so also resolve the
+		-- real file location: the driver checks the written file on disk as its own evidence.
+		local os_path = ""
+		if type(ConvertToOSPath) == "function" then
+			local ok_os, value = pcall(ConvertToOSPath, folder .. name)
+			if ok_os and type(value) == "string" then os_path = value end
+		end
+		g_ParitySaveOSPath = os_path
 		-- Hand the exact savename to the loader process through a file, so the Python side
 		-- never has to guess the engine's naming.
 		local lines = {
 			"name=" .. name,
 			"folder=" .. folder,
+			"os_path=" .. os_path,
 			"map=" .. tostring(g_ParitySaveMap),
 			"display=__SAVE_DISPLAY__",
 		}

@@ -3293,11 +3293,13 @@ def save_session(client, tag, display_name):
         raise RuntimeError(f"save failed ({tag}): {detail}")
     _, savename = cli.marshal_value(client, "g_ParitySaveName", timeout=60.0)
     _, folder = cli.marshal_value(client, "g_ParitySaveFolder", timeout=60.0)
+    _, os_path = cli.marshal_value(client, "g_ParitySaveOSPath", timeout=60.0)
     _, save_map = cli.marshal_value(client, "g_ParitySaveMap", timeout=60.0)
     if not isinstance(savename, str) or not savename:
         raise RuntimeError(f"save reported no savename ({tag}): {savename!r}")
-    log(f"savegame written ({tag}): {savename}  folder={folder}  map={save_map}")
-    return {"savename": savename, "folder": folder, "map": save_map,
+    log(f"savegame written ({tag}): {savename}  folder={folder}  os_path={os_path}  "
+        f"map={save_map}")
+    return {"savename": savename, "folder": folder, "os_path": os_path, "map": save_map,
             "display": display_name, "info": str(info_path)}
 
 
