@@ -62,9 +62,18 @@ CreateRealTimeThread(function()
 		local function has(fname)
 			return type(terrain_api) == "table" and type(terrain_api[fname]) == "function"
 		end
-		for _, fname in ipairs({ "SetPassability", "ClearPassabilityBox", "InvalidateHeight",
-			"InvalidateType", "RebuildPassability", "IsForcedImpassable", "HashPassability" }) do
+		for _, fname in ipairs({ "SetPassability", "ClearPassabilityBox", "SetForcedImpassableBox",
+			"InvalidateHeight", "InvalidateType", "RebuildPassability", "IsForcedImpassable",
+			"HashPassability" }) do
 			emit("#api," .. fname .. "," .. tostring(has(fname)))
+		end
+		local editor_api = rawget(_G, "editor")
+		local function has_ed(fname)
+			return type(editor_api) == "table" and type(editor_api[fname]) == "function"
+		end
+		for _, fname in ipairs({ "SetPassableBox", "SetImpassableBox", "SetPassableCircle",
+			"SetImpassableCircle" }) do
+			emit("#api,editor." .. fname .. "," .. tostring(has_ed(fname)))
 		end
 
 		local function probe_map(map, tag)
@@ -225,32 +234,75 @@ CreateRealTimeThread(function()
 				nB, boxB and string.format("box=%d;%d;%d;%d", boxB:minx(), boxB:miny(),
 					boxB:maxx(), boxB:maxy()) or "-"))
 
-			-- s1: the writes.  Argument convention resolved at run time, map-first shapes only.
-			local function write(bx, value, label)
-				if not bx then return "no_box" end
-				if not has("SetPassability") then return "missing" end
-				local shapes = {
-					{ "map_box_value", function() return terrain_api.SetPassability(map, bx, value) end },
-					{ "box_value", function() return terrain_api.SetPassability(bx, value) end },
-					{ "map_box_value_true", function() return terrain_api.SetPassability(map, bx, value, true) end },
-				}
-				local notes = {}
-				for _, sh in ipairs(shapes) do
-					local ok_w, e = pcall(sh[2])
-					notes[#notes + 1] = sh[1] .. "=" .. tostring(ok_w)
-						.. (ok_w and "" or (":" .. string.gsub(tostring(e), "[,\r\n]", " ")))
-					if ok_w then
-						emit("#write," .. tag .. "," .. label .. ",value=" .. tostring(value)
-							.. "," .. table.concat(notes, ";"))
-						return sh[1]
+			-- s1: the writes.  A write "took" only when the sampled verdicts MOVE - iters 026 and
+			-- 027a both met an engine call that returns cleanly and changes nothing - so every
+			-- candidate is verified immediately and the ladder stops at the first VISIBLE one.
+			emit(string.format("#current,%s,map_slot=%s,current_slot=%s,is_current=%s", tag,
+				tostring(map.slot), tostring(rawget(_G, "CurrentMap") and CurrentMap.slot),
+				tostring(rawget(_G, "CurrentMap") == map)))
+			local function box_cells(bx)
+				local list = {}
+				if not bx then return list end
+				for i = 1, #samples do
+					local s = samples[i]
+					if s.x >= bx:minx() and s.x <= bx:maxx()
+						and s.y >= bx:miny() and s.y <= bx:maxy() then
+						list[#list + 1] = s
 					end
 				end
-				emit("#write," .. tag .. "," .. label .. ",value=" .. tostring(value)
-					.. "," .. table.concat(notes, ";"))
-				return "failed"
+				return list
 			end
-			local shapeA = write(boxA, true, "A")
-			local shapeB = write(boxB, false, "B")
+			-- want = 1 make passable, 0 make impassable
+			local function write(bx, want, label)
+				if not bx then return "no_box" end
+				local cells = box_cells(bx)
+				local shapes
+				if want == 1 then
+					shapes = {
+						{ "terrain.SetPassability(map,box,true)",
+							function() return terrain_api.SetPassability(map, bx, true) end,
+							has("SetPassability") },
+						{ "terrain.SetForcedImpassableBox(map,box,false)",
+							function() return terrain_api.SetForcedImpassableBox(map, bx, false) end,
+							has("SetForcedImpassableBox") },
+						{ "editor.SetPassableBox(box,true)",
+							function() return editor_api.SetPassableBox(bx, true) end,
+							has_ed("SetPassableBox") },
+					}
+				else
+					shapes = {
+						{ "terrain.SetForcedImpassableBox(map,box,true)",
+							function() return terrain_api.SetForcedImpassableBox(map, bx, true) end,
+							has("SetForcedImpassableBox") },
+						{ "terrain.SetPassability(map,box,false)",
+							function() return terrain_api.SetPassability(map, bx, false) end,
+							has("SetPassability") },
+						{ "editor.SetImpassableBox(box,true)",
+							function() return editor_api.SetImpassableBox(bx, true) end,
+							has_ed("SetImpassableBox") },
+					}
+				end
+				for _, sh in ipairs(shapes) do
+					if not sh[3] then
+						emit("#try," .. tag .. "," .. label .. "," .. sh[1] .. ",missing")
+					else
+						local ok_w, e = pcall(sh[2])
+						local moved, forced_n = 0, 0
+						for i = 1, #cells do
+							local now = map:IsPassable(cells[i].pt) and 1 or 0
+							if now == want then moved = moved + 1 end
+							if forced(cells[i].pt) == 1 then forced_n = forced_n + 1 end
+						end
+						emit(string.format("#try,%s,%s,%s,call=%s,cells=%d,at_want=%d,forced=%d%s",
+							tag, label, sh[1], tostring(ok_w), #cells, moved, forced_n,
+							ok_w and "" or (",err=" .. string.gsub(tostring(e), "[,\r\n]", " "))))
+						if ok_w and moved == #cells and #cells > 0 then return sh[1] end
+					end
+				end
+				return "no_visible_write"
+			end
+			local shapeA = write(boxA, 1, "A")
+			local shapeB = write(boxB, 0, "B")
 			stage("1")
 			local h1 = hash()
 			for i = 1, #samples do
