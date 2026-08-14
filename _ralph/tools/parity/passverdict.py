@@ -95,6 +95,13 @@ def score_map(vrows, erows, massifs, diffs):
         if inside:
             in_n += 1
             in_diff += differs
+            # In-zone differences are NOT scored (the ground there is deliberately not the
+            # similarity image), but they are the raw material of `pass-real-inside-zones`,
+            # so they are written out too, flagged, and must never be confused with a
+            # scored one when a figure or a diagnosis reads the CSV.
+            if differs:
+                diffs.append(("inside", r["class"], r["src_x"], r["src_y"], r["x"], r["y"],
+                              v["self_pass"], r["self_pass"]))
             continue
         out_n += 1
         per_class[r["class"]][0] += 1
@@ -113,7 +120,7 @@ def score_map(vrows, erows, massifs, diffs):
             top.append({"class": r["class"], "src_x": r["src_x"], "src_y": r["src_y"],
                         "x": r["x"], "y": r["y"],
                         "vanilla": v["self_pass"], "expanded": r["self_pass"]})
-        diffs.append((r["class"], r["src_x"], r["src_y"], r["x"], r["y"],
+        diffs.append(("outside", r["class"], r["src_x"], r["src_y"], r["x"], r["y"],
                       v["self_pass"], r["self_pass"]))
     return {
         "massifs": len(massifs),
@@ -141,7 +148,7 @@ def main():
     # Every scored difference is written out beside the verdict: 300 rows of "which object,
     # where, which way" is what a diagnosis needs, and it does not belong in the JSON.
     csv_path = Path(out_json).with_name(Path(out_json).stem + "_diffs.csv")
-    csv_rows = ["map,class,src_x,src_y,x,y,vanilla,expanded"]
+    csv_rows = ["map,zone,class,src_x,src_y,x,y,vanilla,expanded"]
     for m in ("surface", "underground"):
         v = [r for r in vrows if r["map"] == m]
         e = [r for r in erows if r["map"] == m]
