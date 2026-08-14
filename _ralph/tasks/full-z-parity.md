@@ -12,7 +12,7 @@ Make the expanded SURFACE height transform a true 4/3 similarity everywhere exce
 
 Surface only — the underground never overflows (measured interior span 12,767; full 4/3 needs 17,022 of 65,535; keep the existing hard error as a backstop).
 
-1. **Full 4/3 on Z** with a floor shift computed on the INTERIOR of the source grid: exclude one cell of border on every side, then `shift = 1000 - floor(interior_min * 4/3)`. The border exclusion is mandatory: the resampled rim holds artifact values (measured: border min 0 vs true interior min 4,078). Do NOT use GridFrame-then-MinMax to measure the interior — GridFrame writes zeros INTO the grid and poisons the min (measured mistake). Crop-copy the interior (raw new_instance + copyrect, the pattern `stretch_one` already uses) or read min/max over a sub-box.
+1. **Full 4/3 on Z** with a floor shift computed on the INTERIOR of the source grid: exclude one cell of border on every side, then `shift = min(0, 1000 - floor(interior_min * 4/3))`. **The shift may only push terrain DOWN, never lift it** (user rule): if the scaled interior minimum already sits at or below 1,000, the shift is ZERO and the terrain stays where vanilla's transform puts it — heights are unsigned, so nothing can fall out of range, and a vanilla map whose lowlands are that low keeps them that low. The border exclusion is mandatory: the resampled rim holds artifact values (measured: border min 0 vs true interior min 4,078). Do NOT use GridFrame-then-MinMax to measure the interior — GridFrame writes zeros INTO the grid and poisons the min (measured mistake). Crop-copy the interior (raw new_instance + copyrect, the pattern `stretch_one` already uses) or read min/max over a sub-box.
 2. **Overflow zones**: cells whose source height exceeds `src_cap = floor((65535 - shift) * 3/4)`. At 42S28W: 127,305 cells = 0.34% of the map, 26 connected zones, largest 215x169 cells, tallest peak 13,708 over the ceiling. Zone discovery may be done in Lua on cropped sub-grids (zones are small); do not fight GridEnumZones/GridMask semantics blind — their argument conventions differ from the doc guesses (measured failure), and an offline-python-verified reference for this exact map exists (see Evidence).
 3. **Per-zone base by topological persistence** (user's choice): descend the threshold from the peak in steps of ~(src_cap - src_min)/40; the zone's area grows slowly on its own flanks (x1.1-1.2 per step measured) and JUMPS when it floods past its saddle; base = last level before growth exceeds x3. Measured for the largest zone: gentle growth 52,479 -> 45,219, local summit-merge blip x2.64 at 44,009, true flood x4.21 at 33,119; base ~44,000-45,000.
 4. **In-zone smooth remap**, applied only to the mountain's cells above its base, on a cropped sub-grid: monotone curve with value base_img and slope exactly 4/3 AT the base (seamless join, no crease) tightening with height so the zone's own peak maps EXACTLY to 65,535. A normalized exponential f(t) = H*(1-e^(-kt))/(1-e^(-kT)) with k solved per zone so f'(0) = 4/3 satisfies all three constraints and is monotone; any curve meeting value/slope/peak/monotone is acceptable. Per-cell Lua cost is bounded: zones total ~1% of cells even after the 4/3 area growth.
@@ -30,6 +30,16 @@ Surface only — the underground never overflows (measured interior span 12,767;
 - `underground-unchanged`: underground grids byte-identical to the pre-change pipeline on the same seeds.
 - `no-crease`: the in-zone remap's join is slope-continuous at the base by construction; verify numerically on the dumped grids (finite-difference slope across the base contour has no step discontinuity).
 - Hygiene as always: luac -p, version bump, commit, deploy + audit green BEFORE measuring; game killed on any assert; one game; headless; terse ATTEMPTS with exactly one Progress: line; HANDOFF near 120 lines.
+
+## Started work (continue it, do not redo it)
+
+The first session of the previous workspace built `_ralph/tools/parity/zonefit.py` — the
+offline reference implementation of this exact algorithm (interior shift, zone discovery,
+persistence bases with a `--rules-report` comparing base rules, the normalized-exponential
+in-zone remap with the per-zone k solve, and the gate checks), running on the dumped raw
+grids in seconds instead of 3-minute game runs. UPDATE ITS SHIFT FORMULA to the clamped
+never-lift rule above, validate the transform offline against `out/height-zq04-surface.raw`,
+and only then port the validated algorithm into the mod's Lua.
 
 ## Evidence (all measured 2026-08-14, do not re-derive)
 
