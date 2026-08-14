@@ -1220,14 +1220,14 @@ local function StageNativeStartSpawns(map, revealed, spawn_positions)
 				local record = {
 					sector = tostring(sec.id), winner = wi, depth = depth, order = i,
 					class = tostring(marker.class or "?"),
-					resource = tostring(rawget(marker, "resource") or ""),
+					resource = tostring(marker.resource or ""),
 					depth_layer = tonumber(rawget(marker, "depth_layer")),
 					source_x = sx, source_y = sy, source_z = sz,
 					source_hash = rawget(marker, "SuperBigMapNativeSourceHash"),
 					can_place = (spawn_x ~= nil and spawn_y ~= nil) or false,
 					spawn_x = spawn_x, spawn_y = spawn_y,
 					spawn_from_reveal = from_reveal,
-					already_placed = rawget(marker, "is_placed") and true or false,
+					already_placed = marker.is_placed and true or false,
 				}
 				staged[#staged + 1] = record
 				stats.markers = stats.markers + 1
@@ -1495,6 +1495,178 @@ local function PatchInitialExplore()
 	return true
 end
 
+-- ---------------------------------------------------------------------------------------
+-- Staged start-spawn replay (destination side)
+-- ---------------------------------------------------------------------------------------
+-- StageNativeStartSpawns recorded vanilla's own decisions on native terrain. Here they are
+-- replayed verbatim: a staged record names its marker by the immutable native stamp the migrated
+-- marker carries, and vanilla's native spawn position names where its deposit went. Nothing is
+-- re-derived from stretched geometry - not membership, not placeability, not the position.
+-- ---------------------------------------------------------------------------------------
+
+-- Index the destination's markers by the identity a staged record carries. Class is part of the
+-- key because two different marker classes may share a source hex; two markers of the SAME class
+-- at the same source point would be indistinguishable in vanilla too, so they are counted.
+local function BuildNativeSourceMarkerIndex(map)
+	local index, duplicates = {}, 0
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		local sx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
+		local sy = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
+		if not (sx and sy) then return end
+		local key = tostring(marker.class) .. ":" .. tostring(sx) .. ":" .. tostring(sy)
+		if index[key] then
+			duplicates = duplicates + 1
+		else
+			index[key] = marker
+		end
+	end)
+	return index, duplicates
+end
+
+-- Where vanilla's deposit goes on the destination. Vanilla almost always spawns on the marker's
+-- own hex (spawn == source), and the migrated marker already sits on the transformed image of that
+-- hex, so its own position IS the answer and no second rounding is introduced. When vanilla moved
+-- the deposit off its marker (FindUnobstructedDepositPos), the moved point is transformed with the
+-- same affine + hex snap every migrated object uses.
+local function StagedDestinationSpawnPoint(record, marker, geom)
+	local point_fn = Global("point")
+	if type(point_fn) ~= "function" then return nil, "point unavailable" end
+	local sx, sy = tonumber(record.spawn_x), tonumber(record.spawn_y)
+	if not (sx and sy) then return nil, "staged record has no native spawn position" end
+	if sx == tonumber(record.source_x) and sy == tonumber(record.source_y) then
+		local ok_pos, px, py = pcall(marker.GetVisualPosXYZ, marker)
+		if ok_pos and type(px) == "number" and type(py) == "number" then
+			return point_fn(px, py)
+		end
+		return nil, "destination marker position unavailable"
+	end
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	if type(world_to_hex) ~= "function" or type(hex_to_world) ~= "function" then
+		return nil, "hex API unavailable"
+	end
+	local raw_x = math.floor(geom.origin_x + (sx - geom.origin_x) * geom.scale_x + 0.5)
+	local raw_y = math.floor(geom.origin_y + (sy - geom.origin_y) * geom.scale_y + 0.5)
+	local ok_hex, q, r = pcall(world_to_hex, point_fn(raw_x, raw_y))
+	if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then
+		return nil, "WorldToHex failed"
+	end
+	local ok_world, wx, wy = pcall(hex_to_world, q, r)
+	if not ok_world or type(wx) ~= "number" or type(wy) ~= "number" then
+		return nil, "HexToWorld failed"
+	end
+	return point_fn(wx, wy)
+end
+
+-- Vanilla's RevealDeposits tail for one placed deposit: sector resource bookkeeping, the sector's
+-- revealed list, and the revealed flag its class uses. PlaceDeposit itself already registered the
+-- marker with the sector that owns the spawn position.
+local function RegisterStagedDeposit(city, record, marker, deposit, x, y)
+	local get_sector = Global("GetMapSectorXY")
+	local is_kind = Global("IsKindOf")
+	if type(is_kind) == "function" then
+		if is_kind(deposit, "CrystalsBuilding") and type(deposit.SetRevealed) == "function" then
+			pcall(deposit.SetRevealed, deposit, true)
+		elseif is_kind(deposit, "ExplorableObject") then
+			deposit.revealed = true
+		end
+	end
+	if type(get_sector) ~= "function" then return end
+	local ok_sector, sector = pcall(get_sector, city, x, y)
+	if not (ok_sector and type(sector) == "table") then return end
+	local amounts = type(sector.deposits) == "table" and sector.deposits[record.depth] or nil
+	if type(amounts) == "table" and deposit.resource and type(deposit.max_amount) == "number" then
+		amounts[deposit.resource] = (amounts[deposit.resource] or 0) + deposit.max_amount
+	end
+	local list = (record.depth == "surface") and sector.revealed_surf
+		or (record.depth == "subsurface") and sector.revealed_deep or nil
+	if type(list) == "table" then list[#list + 1] = marker end
+end
+
+-- Replay the whole staged set in vanilla's own order (per revealed sector: block, then surface,
+-- then subsurface). Returns the statistics, the set of markers vanilla actually placed (the only
+-- deposits allowed to survive the sweep) and the placed records for the FX tail.
+local function ReplayStagedStartSpawns(map, city, staged, geom)
+	local stats = {
+		records = #staged, unplaceable = 0, resolved = 0, unresolved = 0,
+		already_placed = 0, placed = 0, failed = 0, duplicates = 0, blockers = 0,
+	}
+	local index, duplicates = BuildNativeSourceMarkerIndex(map)
+	stats.duplicates = duplicates
+	local staged_markers, placed_records = {}, {}
+	for i = 1, #staged do
+		local record = staged[i]
+		if record.can_place ~= true then
+			stats.unplaceable = stats.unplaceable + 1
+		else
+			local key = tostring(record.class) .. ":" .. tostring(record.source_x)
+				.. ":" .. tostring(record.source_y)
+			local marker = index[key]
+			if not marker then
+				stats.unresolved = stats.unresolved + 1
+			else
+				stats.resolved = stats.resolved + 1
+				staged_markers[marker] = true
+				if marker.is_placed then
+					stats.already_placed = stats.already_placed + 1
+				else
+					local spawn = StagedDestinationSpawnPoint(record, marker, geom)
+					local deposit
+					if spawn then
+						local ok_place, result = pcall(marker.PlaceDeposit, marker, nil, spawn)
+						if ok_place then deposit = result end
+					end
+					if deposit then
+						stats.placed = stats.placed + 1
+						if record.depth == "block" then stats.blockers = stats.blockers + 1 end
+						local sx, sy = spawn:xy()
+						RegisterStagedDeposit(city, record, marker, deposit, sx, sy)
+						placed_records[#placed_records + 1] = { record = record, marker = marker, deposit = deposit }
+					else
+						stats.failed = stats.failed + 1
+					end
+				end
+			end
+		end
+	end
+	return stats, staged_markers, placed_records
+end
+
+-- Everything else that arrived placed is not vanilla's: the destination's own mechanisms can place
+-- a deposit the native run never spawned (measured at b2-10 and in the v797 overshoot). The staged
+-- set is the single source of truth, so sweep the rest and purge the reveal bookkeeping that names
+-- them, which would otherwise re-materialize them on save/load.
+local function SweepUnstagedStartSpawns(map, city, staged_markers)
+	local done_object = Global("DoneObject")
+	local is_valid = Global("IsValid")
+	local despawned, despawned_markers = 0, {}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not marker.is_placed then return end
+		if staged_markers[marker] then return end
+		local obj = marker.placed_obj
+		if obj and type(done_object) == "function"
+			and (type(is_valid) ~= "function" or is_valid(obj)) then
+			pcall(done_object, obj)
+		end
+		marker.placed_obj = false
+		marker.is_placed = false
+		despawned_markers[marker] = true
+		despawned = despawned + 1
+	end)
+	Grid.ForEachSector(city, function(sector)
+		local lists = { sector.revealed_surf, sector.revealed_deep }
+		for li = 1, 2 do
+			local lst = lists[li]
+			if type(lst) == "table" then
+				for i = #lst, 1, -1 do
+					if despawned_markers[lst[i]] then table.remove(lst, i) end
+				end
+			end
+		end
+	end)
+	return despawned
+end
+
 -- Post-stretch reveal: transform the annotated vanilla winner box and collect every live expanded
 -- sector with positive-area overlap. Those sectors are the positional equivalents of the stretched
 -- vanilla footprint. Run vanilla's own InitialReveal over that complete candidate set so its normal
@@ -1655,17 +1827,46 @@ local function RevealVanillaStartSectors(map)
 		if type(sector.UpdateDecal) == "function" then pcall(sector.UpdateDecal, sector) end
 	end)
 	city.InitialSector = selected
+	-- The staged native set decides which deposits this reveal spawns. A destination scan would
+	-- decide that again from stretched geometry - a sector-sized area instead of the stretched
+	-- winner rect, and CanPlaceDeposit on stretched terrain - so its marker lists are emptied for
+	-- the duration of the scan. The scan still does everything else vanilla's scan does (status,
+	-- RevealedMapSector, decal, notifications); only the placement is left to the replay.
+	local staged = data.staged
+	local staged_replay = (SuperBigMap.Config or {}).START_SPAWN_STAGED_REPLAY == true
+		and type(staged) == "table" and #staged > 0
+	local suppressed = {}
+	if staged_replay then
+		for i = 1, #reveal_targets do
+			local markers = reveal_targets[i].markers
+			if type(markers) == "table" then
+				suppressed[#suppressed + 1] = {
+					markers = markers, block = markers.block,
+					surface = markers.surface, subsurface = markers.subsurface,
+				}
+				markers.block, markers.surface, markers.subsurface = {}, {}, {}
+			end
+		end
+	end
 	local blocked_targets = {}
 	for i = 1, #reveal_targets do
 		local target = reveal_targets[i]
 		local scan_ok, scan_error = pcall(target.Scan, target, "scanned", nil, spawn_positions)
 		if not scan_ok then
+			for si = 1, #suppressed do
+				local s = suppressed[si]
+				s.markers.block, s.markers.surface, s.markers.subsurface = s.block, s.surface, s.subsurface
+			end
 			error(string.format("stretched-equivalent start sector %s scan failed: %s",
 				tostring(target.id), tostring(scan_error)))
 		end
 		if target.status == "unexplored" then
 			blocked_targets[#blocked_targets + 1] = tostring(target.id)
 		end
+	end
+	for si = 1, #suppressed do
+		local s = suppressed[si]
+		s.markers.block, s.markers.surface, s.markers.subsurface = s.block, s.surface, s.subsurface
 	end
 
 	local scanned_total = 0
@@ -1693,7 +1894,71 @@ local function RevealVanillaStartSectors(map)
 	-- destination sectors' bookkeeping: this reveal runs mid-stretch, right after the markers were
 	-- recreated at their stretched positions, so a sector list built earlier can name objects that no
 	-- longer exist. The stamps are read back by the parity dump.
-	if (SuperBigMap.Config or {}).START_SECTOR_FOOTPRINT_DEPOSITS == true then
+	if staged_replay then
+		-- Replay vanilla's own decisions. The staged set is complete (block + surface + subsurface
+		-- of every sector vanilla's InitialReveal returned, including the auxiliary concrete
+		-- sector), so nothing here consults the destination's geometry.
+		local geom = { origin_x = origin_x, origin_y = origin_y, scale_x = scale_x, scale_y = scale_y }
+		local stats, staged_markers, placed_records = ReplayStagedStartSpawns(map, city, staged, geom)
+		local despawned = SweepUnstagedStartSpawns(map, city, staged_markers)
+		if stats.blockers > 0 then
+			local msg = Global("Msg")
+			if type(msg) == "function" then pcall(msg, "ExplorationBlockerSpawned") end
+		end
+		-- Vanilla's rare-anomaly "Revealed" FX (a persistent ParSystem carrier) fires from
+		-- PlaceDeposit's reveal path. This replay runs mid-stretch, where that pipeline was measured
+		-- not to produce the carrier (b2-07), so replay it end-of-tick, the deferral vanilla uses
+		-- for OnDepositsSpawned.
+		for i = 1, #placed_records do
+			local entry = placed_records[i]
+			if entry.record.depth == "subsurface" and entry.deposit.rare then
+				local play_fx = Global("PlayFX")
+				local delayed = Global("DelayedCall")
+				if type(play_fx) == "function" and type(delayed) == "function" then
+					pcall(delayed, 0, play_fx, "Revealed", "start", entry.deposit)
+				elseif type(play_fx) == "function" then
+					pcall(play_fx, "Revealed", "start", entry.deposit)
+				end
+			end
+		end
+		if stats.placed > 0 then
+			pcall(function()
+				local delayed = Global("DelayedCall")
+				local on_spawned = Global("OnDepositsSpawned")
+				if type(delayed) == "function" and type(on_spawned) == "function" then
+					delayed(0, on_spawned, city)
+				end
+			end)
+		end
+		-- The scan gate (DepositRules.EnforceScanGateAfterStretch) despawns deposits in unscanned
+		-- sectors. Part of vanilla's own start footprint necessarily lands in one, so the stretched
+		-- winner rects travel with the map exactly as the footprint path published them.
+		map.SuperBigMapStartFootprintX0 = x0
+		map.SuperBigMapStartFootprintY0 = y0
+		map.SuperBigMapStartFootprintX1 = x1
+		map.SuperBigMapStartFootprintY1 = y1
+		map.SuperBigMapStartFootprintBox = string.format("%s,%s,%s,%s", tostring(x0), tostring(y0),
+			tostring(x1), tostring(y1))
+		map.SuperBigMapStartFootprintSectors = #overlaps
+		if winner2 then
+			map.SuperBigMapStartFootprint2X0 = math.floor(origin_x + (winner2.x0 - origin_x) * scale_x + 0.5)
+			map.SuperBigMapStartFootprint2Y0 = math.floor(origin_y + (winner2.y0 - origin_y) * scale_y + 0.5)
+			map.SuperBigMapStartFootprint2X1 = math.floor(origin_x + (winner2.x1 - origin_x) * scale_x + 0.5)
+			map.SuperBigMapStartFootprint2Y1 = math.floor(origin_y + (winner2.y1 - origin_y) * scale_y + 0.5)
+		end
+		-- Evidence for the parity dump: every staged record must resolve and place, and the sweep
+		-- reports how much destination-side placement it had to undo.
+		map.SuperBigMapStartReplayRecords = stats.records
+		map.SuperBigMapStartReplayResolved = stats.resolved
+		map.SuperBigMapStartReplayUnresolved = stats.unresolved
+		map.SuperBigMapStartReplayUnplaceable = stats.unplaceable
+		map.SuperBigMapStartReplayAlreadyPlaced = stats.already_placed
+		map.SuperBigMapStartReplayPlaced = stats.placed
+		map.SuperBigMapStartReplayFailed = stats.failed
+		map.SuperBigMapStartReplayDuplicates = stats.duplicates
+		map.SuperBigMapStartReplayBlockers = stats.blockers
+		map.SuperBigMapStartReplayDespawned = despawned
+	elseif (SuperBigMap.Config or {}).START_SECTOR_FOOTPRINT_DEPOSITS == true then
 		local reveal_deposits = Global("RevealDeposits")
 		if type(reveal_deposits) ~= "function" then
 			error("vanilla RevealDeposits unavailable for the stretched start footprint")

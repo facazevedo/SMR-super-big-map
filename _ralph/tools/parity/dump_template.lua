@@ -138,6 +138,14 @@ CreateRealTimeThread(function()
 				"SuperBigMapStartStagedBlock", "SuperBigMapStartStagedSurface",
 				"SuperBigMapStartStagedSubsurface", "SuperBigMapStartStagedDeep",
 				"SuperBigMapStartStagedPlaceable",
+				-- Staged replay on the destination (mod v799): how many staged records resolved
+				-- to a migrated marker, how many were placed, and how much destination-side
+				-- placement the sweep had to undo. Any non-zero unresolved/failed is a defect.
+				"SuperBigMapStartReplayRecords", "SuperBigMapStartReplayResolved",
+				"SuperBigMapStartReplayUnresolved", "SuperBigMapStartReplayUnplaceable",
+				"SuperBigMapStartReplayAlreadyPlaced", "SuperBigMapStartReplayPlaced",
+				"SuperBigMapStartReplayFailed", "SuperBigMapStartReplayDuplicates",
+				"SuperBigMapStartReplayBlockers", "SuperBigMapStartReplayDespawned",
 			}) do
 				meta(tag, field, tostring(map[field]))
 			end

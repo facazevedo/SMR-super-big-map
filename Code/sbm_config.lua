@@ -593,6 +593,16 @@ config.StretchVanillaStartSector = true
 -- stretched image of vanilla's sector, so the placed set is vanilla's placed set - unlike scanning
 -- every overlapping sector, which would cover far more ground than vanilla revealed.
 config.StartSectorFootprintDeposits = true
+-- STAGED START-SPAWN REPLAY (sbm_sector_exploration StageNativeStartSpawns ->
+-- ReplayStagedStartSpawns). Vanilla decided WHICH markers the initial reveal spawns, and WHERE,
+-- on NATIVE terrain; re-deriving those decisions on the stretched destination measurably changes
+-- the answer in both directions (v796/v797: extra metals, missing concrete). The native decisions
+-- are staged while the source still exists, so the destination must replay exactly that set:
+-- the reveal targets scan with their marker lists suppressed, every staged record is placed by
+-- source stamp at the destination image of vanilla's own spawn position, and anything else that
+-- arrived placed is swept. The staged set is the single source of truth; when it is absent the
+-- StartSectorFootprintDeposits path above still applies.
+config.StartSpawnStagedReplay = true
 -- The sector layout is fixed: vanilla-sized sectors, corner anchored, covering the
 -- complete expanded terrain.
 config.SectorFastInitialReveal = true
@@ -871,6 +881,8 @@ C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
 C.START_SECTOR_FOOTPRINT_DEPOSITS = expansion_step_20
 	and as_bool(config.StartSectorFootprintDeposits)
+C.START_SPAWN_STAGED_REPLAY = expansion_step_20
+	and as_bool(config.StartSpawnStagedReplay)
 C.PATCH_RANDOM_MAP_GENERATOR = expansion_step_01
 
 -- Fixed expanded sector layout and initial exploration behavior.
