@@ -2824,6 +2824,24 @@ local function RestoreTransferredPrefabFeatureGameLogic(map)
 							created.SuperBigMapNativeSourceZ = marker.SuperBigMapNativeSourceZ or mz
 							created.SuperBigMapNativeSourceScale = 100
 							created.SuperBigMapNativeSourceClass = "SafariSight"
+							-- Third delivery path: feature GameLogic products are re-created from
+							-- their marker after the transform, so they carry native provenance
+							-- without ever passing through TransferGeneratedObjects. Record them in
+							-- the same manifest, keyed on the SOURCE coordinate they inherit.
+							if cfg_bool("NATIVE_SOURCE_MANIFEST", false) then
+								local manifest = rawget(map, "SuperBigMapNativeSourceManifest")
+								if type(manifest) ~= "table" then
+									manifest = {}
+									map.SuperBigMapNativeSourceManifest = manifest
+								end
+								manifest[#manifest + 1] = table.concat({
+									"SafariSight",
+									tostring(created.SuperBigMapNativeSourceX or 0),
+									tostring(created.SuperBigMapNativeSourceY or 0),
+									tostring(created.SuperBigMapNativeSourceZ or 0),
+								}, ",")
+								map.SuperBigMapNativeSourceManifestCount = #manifest
+							end
 							if type(created.SetScale) == "function" then
 								SafeCall(created.SetScale, created,
 									math.max(1, math.min(500, math.floor(100 * object_scale + 0.5))))

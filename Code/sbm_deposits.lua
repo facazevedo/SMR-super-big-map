@@ -3121,6 +3121,23 @@ function DepositRules.RecreateStagedNativeEnrichments(map, reason)
 			marker.SuperBigMapTransformCollisionOwnerIndex = geometry.collision_owner_index
 			marker.SuperBigMapNativeRecordIndex = i
 			marker.SuperBigMapNativeRecreatedAtFinal = true
+			-- Second delivery path for native content: enrichments are captured as value
+			-- records and recreated here rather than migrated by TransferGeneratedObjects, so
+			-- they must join the same manifest or `native-source-delivered` cannot tell a
+			-- recreated marker from an invented one. Same "class,x,y,z" shape as the transfer
+			-- manifest, keyed on the SOURCE coordinate.
+			if cfg().NATIVE_SOURCE_MANIFEST == true then
+				local manifest = rawget(map, "SuperBigMapNativeSourceManifest")
+				if type(manifest) ~= "table" then
+					manifest = {}
+					map.SuperBigMapNativeSourceManifest = manifest
+				end
+				manifest[#manifest + 1] = table.concat({
+					tostring(record.class), tostring(record.source_x or 0),
+					tostring(record.source_y or 0), tostring(record.source_z or 0),
+				}, ",")
+				map.SuperBigMapNativeSourceManifestCount = #manifest
+			end
 			local registered_ok, registered, revealed =
 				RegisterNativeMarkerWithFinalSector(map, marker, final_point)
 			if not registered_ok then error("record " .. tostring(i) .. ": " .. tostring(registered)) end
