@@ -24,6 +24,14 @@ local function cfg_bool(key, default)
 	return default
 end
 
+local function cfg_str(key, default)
+	local value = (SuperBigMap.Config or {})[key]
+	if type(value) == "string" and value ~= "" then
+		return value
+	end
+	return default
+end
+
 local function LoadingBegin(name, map, data)
 	local diagnostics = SuperBigMap.Diagnostics
 	return diagnostics and type(diagnostics.LoadingBegin) == "function"
@@ -969,6 +977,29 @@ local function ZInteriorMinMax(grid)
 	return mn, mx
 end
 
+-- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
+-- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
+-- between its own input ("pre", straight out of GridResample) and its output ("post", right after
+-- the Z transform) -- the engine's resample arithmetic is not reproducible offline, and by the end
+-- of generation later terrain edits (flatten pads, the landing pit) have overwritten transformed
+-- ground. Diagnostic only: a failure is logged and generation continues unaffected.
+local function ZDumpHeightGrid(map, stage, grid)
+	local prefix = cfg_str("STRETCH_HEIGHT_GRID_DUMP_PATH", nil)
+	if not prefix or not grid then return end
+	local save = Global("GridSaveRaw")
+	if type(save) ~= "function" then return end
+	local environment = (type(map.mapdata) == "table"
+		and map.mapdata.Environment == "Underground") and "underground" or "surface"
+	local path = prefix .. "-" .. environment .. "-" .. stage .. ".raw"
+	local ok, err = pcall(save, path, grid)
+	LoadingStep("terrain height grid test dump", {
+		stage = stage,
+		environment = environment,
+		path = path,
+		error = ok and tostring(err or "") or tostring(err),
+	}, map)
+end
+
 -- source_map is optional. When supplied, height/type are read directly from that native-sized
 -- map and written at full size to map, avoiding the old source -> destination-corner -> full-size
 -- round trip. terrain_only is used by temporary-source migration; the normal surface tail still
@@ -1258,6 +1289,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
 			-- slope steepness and object seating geometry are preserved (XY-only stretching made
@@ -1398,6 +1430,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					end
 				end
 			end
+			if scale_values then ZDumpHeightGrid(map, "post", stretched) end
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
 			free_grid(src_sub)

@@ -3072,6 +3072,22 @@ PLAY_PROBE_BLOCK = """		do
 # "original" (which would defer forever).  Read-only otherwise: MapGet, IsValid and GetPos only, no
 # object created or destroyed and no RNG consumed, so a probed run's dump must stay byte-identical
 # to the same tag's unprobed dump.
+# Opt-in with the "stretchdump" argument.  Turns on the mod's test-only height-grid dump seam
+# (config `StretchHeightGridDumpPath`, empty and inert by default) for this run only, by writing
+# the mod's own live config table before generation starts.  The seam writes the DESTINATION height
+# grid twice - "<prefix>-<environment>-pre.raw" straight out of GridResample and "-post.raw" right
+# after the Z transform - which is the only way to score `post == floor(pre*4/3) + shift` cell by
+# cell offline: the engine's resample arithmetic is not reproducible outside the game, and by the
+# end of generation the mod's later terrain edits (flatten pads, landing pit) have legitimately
+# overwritten transformed ground.  It changes no transform, consumes no RNG and creates no object;
+# it only writes files.
+STRETCH_DUMP_BLOCK = """		do
+			if type(SBM.Config) ~= "table" then
+				error("SuperBigMap.Config unavailable; cannot arm the height grid dump seam")
+			end
+			SBM.Config.STRETCH_HEIGHT_GRID_DUMP_PATH = "__STRETCH_DUMP__"
+		end"""
+
 ANOM_PROBE_BLOCK = """		do
 			local anom_lines = {}
 			local anom_dropped = 0
@@ -3455,7 +3471,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
-             save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False):
+             save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
+             stretch_dump=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -3581,6 +3598,15 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if anom_path.exists():
             anom_path.unlink()
         extras.append(ANOM_PROBE_BLOCK.replace("__ANOM_OUT__", cli.lua_path(anom_path)))
+    if stretch_dump:
+        # Stale grids from an earlier run would be indistinguishable from a seam that never fired.
+        for env in ("surface", "underground"):
+            for stage in ("pre", "post"):
+                stale = OUT / f"stretch-{tag}-{env}-{stage}.raw"
+                if stale.exists():
+                    stale.unlink()
+        extras.append(STRETCH_DUMP_BLOCK.replace(
+            "__STRETCH_DUMP__", cli.lua_path(OUT / f"stretch-{tag}")))
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
@@ -3914,6 +3940,7 @@ def main():
         wonderprobe = "wonderprobe" in sys.argv[5:]
         passall = "passall" in sys.argv[5:]
         zonesprobe = "zonesprobe" in sys.argv[5:]
+        stretchdump = "stretchdump" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -3936,6 +3963,7 @@ def main():
             f"tag_order_pin={tagorder} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
             f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
+            f"stretch_dump={stretchdump} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -3946,7 +3974,8 @@ def main():
                         anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe,
                         tag_order_pin=tagorder, save_as=save_as,
                         keep_alive=keepalive, wonder_probe=wonderprobe,
-                        pass_probe_all=passall, zones_probe=zonesprobe)
+                        pass_probe_all=passall, zones_probe=zonesprobe,
+                        stretch_dump=stretchdump)
         log(f"result: {json.dumps(info)}")
         return
 

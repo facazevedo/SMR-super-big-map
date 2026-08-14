@@ -602,6 +602,15 @@ config.StretchAdaptiveZScale = true
 -- 42S28W: 28 such massifs covering 1.5% of the map. The adaptive reduction above stays as the
 -- fallback for a build that lacks one of the grid ops this needs.
 config.StretchZoneCompression = true
+-- TEST-ONLY SEAM, empty string = off (never set in a played game). When set to a path prefix,
+-- the height stretch writes the destination height grid twice with GridSaveRaw:
+-- "<prefix>-<environment>-pre.raw" straight out of GridResample and "<prefix>-<environment>-
+-- post.raw" right after the Z transform, BEFORE the terrain edits that run later in generation
+-- (entrance/passage flatten pads, the landing pit) can overwrite transformed ground. Only that
+-- pair makes the contract's `expanded == floor(vanilla*4/3) + shift` gate scorable cell by cell
+-- offline: the engine's resample arithmetic is not reproducible outside the game, so the pure
+-- transform can only be judged between its own input and output.
+config.StretchHeightGridDumpPath = ""
 -- VANILLA-EQUIVALENT START SECTOR (sbm_sector_exploration source annotation +
 -- RevealVanillaStartSectors). Vanilla's OWN InitialReveal runs while the native source markers
 -- still exist, and its first 10x10 winner is recorded. After stretching, only 20x20 sectors that
@@ -916,6 +925,8 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_ZONE_COMPRESSION = as_bool(config.StretchZoneCompression)
+C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
+	and config.StretchHeightGridDumpPath or ""
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
 C.START_SECTOR_FOOTPRINT_DEPOSITS = expansion_step_20
