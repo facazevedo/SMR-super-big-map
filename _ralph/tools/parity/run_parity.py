@@ -624,16 +624,50 @@ PLACE_PROBE_BLOCK = """		-- Trace every deposit placement with a traceback (pari
 		end"""
 
 
-SERIAL_RASTER_BLOCK = """		-- Match the mod's source-capture transaction: stock prefab rasterization launches
-		-- PrefabRasterParallelDiv^2 real-time tasks that share the placement-mark grid used by
-		-- Proc_RemoveOverlappedObjects, so task completion order can pick a different overlap
-		-- winner run-to-run.  The mod forces 1 while generating its vanilla source
-		-- (sbm_map_generation.lua:10144).  A control that does not do the same is not reproducible.
-		if type(const) == "table" then
-			g_ParityRasterDivBefore = const.PrefabRasterParallelDiv
-			const.PrefabRasterParallelDiv = 1
-			if const.PrefabRasterParallelDiv ~= 1 then
-				error("could not serialize prefab rasterization for the control")
+SERIAL_RASTER_BLOCK = """		-- Serialize stock prefab rasterization for this control.
+		--
+		-- The value MUST be written into the table the generator's own compiled body reads.
+		-- RandomMapGenerator.DoGenerate owns a private _ENV, so the ambient `const` visible to
+		-- this script can be a DIFFERENT table: writing there succeeds, verifies, and has no
+		-- effect on generation. The mod hit exactly this and fixed it by resolving `const`
+		-- through the DoGenerate closure environment (sbm_map_generation.lua:9719-9722,
+		-- commit 3520c72). Do the same here, and FAIL LOUDLY if the generator's own view does
+		-- not read 1 afterwards - a control that silently stayed parallel is worse than none.
+		do
+			local gen_class = rawget(_G, "RandomMapGenerator")
+			local body = gen_class and gen_class.DoGenerate
+			local envs, seen = {}, {}
+			local function add(t)
+				if type(t) == "table" and not seen[t] then seen[t] = true; envs[#envs + 1] = t end
+			end
+			if type(body) == "function" and type(getfenv) == "function" then
+				local ok_env, env = pcall(getfenv, body)
+				if ok_env and type(env) == "table" then
+					add(rawget(env, "const"))
+					local mt = getmetatable(env)
+					local idx = mt and rawget(mt, "__index")
+					if type(idx) == "table" then add(rawget(idx, "const")) end
+				end
+			end
+			add(rawget(_G, "const"))
+			if #envs == 0 then error("no const table reachable to serialize prefab rasterization") end
+			g_ParityRasterTables = #envs
+			g_ParityRasterDivBefore = envs[1].PrefabRasterParallelDiv
+			for i = 1, #envs do envs[i].PrefabRasterParallelDiv = 1 end
+			-- Verify through the generator's own lookup path, not ours.
+			local check
+			if type(body) == "function" and type(getfenv) == "function" then
+				local ok_env, env = pcall(getfenv, body)
+				if ok_env and type(env) == "table" then
+					local ok_c, c = pcall(function() return env.const end)
+					if ok_c and type(c) == "table" then check = c.PrefabRasterParallelDiv end
+				end
+			end
+			check = check or (rawget(_G, "const") or {}).PrefabRasterParallelDiv
+			g_ParityRasterDivAfter = check
+			if check ~= 1 then
+				error("prefab rasterization not serialized in the generator's own environment: "
+					.. tostring(check))
 			end
 		end"""
 
@@ -3133,6 +3167,17 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             raise RuntimeError(f"dump failed ({tag}): {detail}")
         _, rows = cli.marshal_value(client, "g_ParityDumpRows", timeout=60.0)
         log(f"dump complete ({tag}): {rows} objects -> {csv_path}")
+        # Temporary determinism diagnostics: prove the serial pin reached the table the
+        # generator's own compiled body reads, instead of a shadowed ambient `const`.
+        for var, label in (("g_ParityRasterTables", "raster const tables patched"),
+                           ("g_ParityRasterDivBefore", "raster div before"),
+                           ("g_ParityRasterDivAfter", "raster div seen by generator")):
+            try:
+                _, v = cli.marshal_value(client, var, timeout=30.0)
+                if v is not None:
+                    log(f"  {label}: {v}")
+            except Exception:
+                pass
 
         hex_path = OUT / f"hexgrid-{tag}.txt"
         if hexgrid:

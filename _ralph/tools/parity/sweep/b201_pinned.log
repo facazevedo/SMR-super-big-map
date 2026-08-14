@@ -1,0 +1,40 @@
+[23:38:58] === twin 'z201a' expand=False seed=6897190323242569227 pin=6897190323242569227 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-780 ===
+[23:38:58] spawned MarsDebug.exe pid=7408 (z201a), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-z201a.log
+[23:38:58] connecting DAP (z201a)...
+[23:39:07] harness ready (z201a)
+[23:39:07] generation started (z201a): parity_thread_started {
+	metatable = table: 0000018C69C64780 [1]
+}
+[23:39:07]   gen-z201a: initializing  (+0s)
+[23:39:18]   gen-z201a: generating  (+10s)
+[23:39:48]   gen-z201a: complete  (+40s)
+[23:39:48] generation complete (z201a)
+[23:39:48]   surface seed=5434768309385999931  underground seed=6897190323242569227
+[23:39:48]   passage-fallback pin seed=301460102 redirected_around=0 redirected_passable=0
+[23:39:48]   dump-z201a: running  (+0s)
+[23:39:52]   dump-z201a: complete  (+4s)
+[23:39:52] dump complete (z201a): 14476 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-z201a.csv
+[23:39:52]   raster const tables patched: 1
+[23:39:52]   raster div before: 8
+[23:39:52]   raster div seen by generator: 1
+[23:39:54] result: {"tag": "z201a", "expand": false, "surface_seed": 5434768309385999931, "underground_seed": 6897190323242569227, "underground_pin": 6897190323242569227, "passage_pin": 301460102, "passage_pin_around": 0, "passage_pin_passable": 0, "passage_pin_calls": [], "rows": 14476, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-z201a.csv", "hexgrid": null}
+[23:40:10] === twin 'z201b' expand=False seed=6897190323242569227 pin=6897190323242569227 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-780 ===
+[23:40:10] spawned MarsDebug.exe pid=27356 (z201b), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-z201b.log
+[23:40:10] connecting DAP (z201b)...
+[23:40:19] harness ready (z201b)
+[23:40:19] generation started (z201b): parity_thread_started {
+	metatable = table: 000002195A9E4780 [1]
+}
+[23:40:19]   gen-z201b: initializing  (+0s)
+[23:40:30]   gen-z201b: generating  (+10s)
+[23:41:00]   gen-z201b: complete  (+41s)
+[23:41:00] generation complete (z201b)
+[23:41:00]   surface seed=5434768309385999931  underground seed=6897190323242569227
+[23:41:00]   passage-fallback pin seed=301460102 redirected_around=0 redirected_passable=0
+[23:41:00]   dump-z201b: running  (+0s)
+[23:41:04]   dump-z201b: complete  (+4s)
+[23:41:04] dump complete (z201b): 14148 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-z201b.csv
+[23:41:04]   raster const tables patched: 1
+[23:41:04]   raster div before: 8
+[23:41:04]   raster div seen by generator: 1
+[23:41:06] result: {"tag": "z201b", "expand": false, "surface_seed": 5434768309385999931, "underground_seed": 6897190323242569227, "underground_pin": 6897190323242569227, "passage_pin": 301460102, "passage_pin_around": 0, "passage_pin_passable": 0, "passage_pin_calls": [], "rows": 14148, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-z201b.csv", "hexgrid": null}
