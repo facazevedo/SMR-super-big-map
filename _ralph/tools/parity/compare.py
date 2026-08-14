@@ -5,14 +5,16 @@ Five independent tests per map (surface, underground):
   A. Census      - per-class object counts must match exactly (the 1:1 claim).
   B. Provenance  - every expanded object's stamped SuperBigMapNativeSource(X,Y)
                    must correspond to exactly one vanilla object of the same class
-                   at exactly that position (bijection by identity).  Three stages:
-                   the source stamp, then the donor root for objects vanilla derives
-                   away from their donor, then the FX anchor for standalone action-FX
-                   carriers, which have no creation chain on either twin
-                   (FX_CARRIER_CLASSES), and finally the contract's ONE positional
-                   exemption for the entrance/passage family, which only runs while the
-                   entrance gate proves equal pair counts and 0-hex co-location
-                   (`entrance_exempt_ids`).
+                   at exactly that position (bijection by identity).  Stages: the
+                   source stamp, then the donor root for objects vanilla derives away
+                   from their donor, then the moved spawn of a staged start spawn
+                   VANILLA ITSELF relocated off the generated hex (`staged_move_index`,
+                   read from the expanded dump's own `#stagedspawn` records), then the
+                   FX anchor for standalone action-FX carriers, which have no creation
+                   chain on either twin (FX_CARRIER_CLASSES), and finally the contract's
+                   ONE positional exemption for the entrance/passage family, which only
+                   runs while the entrance gate proves equal pair counts and 0-hex
+                   co-location (`entrance_exempt_ids`).
   C. Geometry    - independent of the stamps: match vanilla -> expanded per class
                    purely by predicted position (vanilla_xy * ratio) and report the
                    residual distance distribution (proportional placement).
@@ -730,9 +732,22 @@ def infrastructure_enumeration(vc, ec, hexgrid=None, camera=None):
     return out, revealed
 
 
+def _num(v):
+    if v == "":
+        return None
+    try:
+        return int(v)
+    except ValueError:
+        try:
+            return float(v)
+        except ValueError:
+            return None
+
+
 def parse_dump(path):
     meta = defaultdict(dict)
     manifest = {}
+    staged = {}
     rows = defaultdict(list)
     with open(path, "r", encoding="utf-8", errors="replace") as fh:
         for line in fh:
@@ -742,6 +757,23 @@ def parse_dump(path):
             if line.startswith("#manifest,"):
                 _, map_tag, rest = line.split(",", 2)
                 manifest.setdefault(map_tag, []).append(rest)
+                continue
+            if line.startswith("#stagedspawn,"):
+                # One row per staged native start-spawn decision the mod captured on the
+                # LIVE native source and replayed on the destination (dump_template.lua):
+                # map, sector, winner, depth, list order, class, resource, source xyz,
+                # can_place, native spawn xy, from_reveal, already_placed.
+                p = line.split(",")
+                if len(p) >= 14:
+                    staged.setdefault(p[1], []).append({
+                        "sector": p[2], "winner": p[3], "depth": p[4], "order": p[5],
+                        "class": p[6] or None, "resource": p[7],
+                        "source_x": _num(p[8]), "source_y": _num(p[9]),
+                        "source_z": _num(p[10]), "can_place": p[11] == "1",
+                        "spawn_x": _num(p[12]), "spawn_y": _num(p[13]),
+                        "from_reveal": len(p) > 14 and p[14] == "1",
+                        "already_placed": len(p) > 15 and p[15] == "1",
+                    })
                 continue
             if line.startswith("#meta,"):
                 _, map_tag, key, value = line.split(",", 3)
@@ -761,31 +793,20 @@ def parse_dump(path):
             rx = parts[17] if len(parts) > 17 else ""
             ry = parts[18] if len(parts) > 18 else ""
 
-            def fnum(v):
-                if v == "":
-                    return None
-                try:
-                    return int(v)
-                except ValueError:
-                    try:
-                        return float(v)
-                    except ValueError:
-                        return None
-
             rows[map_tag].append({
                 "class": cls,
-                "x": fnum(x), "y": fnum(y), "z": fnum(z),
-                "scale": fnum(scale), "angle": fnum(angle),
-                "src_x": fnum(sx), "src_y": fnum(sy), "src_z": fnum(sz),
-                "src_scale": fnum(sscale), "src_angle": fnum(sangle),
+                "x": _num(x), "y": _num(y), "z": _num(z),
+                "scale": _num(scale), "angle": _num(angle),
+                "src_x": _num(sx), "src_y": _num(sy), "src_z": _num(sz),
+                "src_scale": _num(sscale), "src_angle": _num(sangle),
                 "src_class": sclass or None,
                 "transferred": transferred == "1",
                 "src_kind": skind or "",
                 "src_from": sfrom or "",
                 "root_class": rclass or None,
-                "root_x": fnum(rx), "root_y": fnum(ry),
+                "root_x": _num(rx), "root_y": _num(ry),
             })
-    return meta, rows, manifest
+    return meta, rows, manifest, staged
 
 
 def rnd(v):
@@ -804,12 +825,35 @@ def census(vrows, erows):
     return vc, ec, same, diff
 
 
-def provenance(vrows, erows, entrance_exempt=False):
+def staged_move_index(staged):
+    """(source_x, source_y) -> {(staged class, spawn_x, spawn_y)} for the staged start
+    spawns VANILLA ITSELF MOVED off the generated point (matching stage 2b).
+
+    Only records whose native `CanPlaceDeposit` said yes AND whose recorded native spawn
+    differs from the source are indexed, so the stage can never reach an object vanilla
+    placed where it was generated.
+    """
+    moved = defaultdict(set)
+    for s in staged or ():
+        sx, sy = s.get("source_x"), s.get("source_y")
+        px, py = s.get("spawn_x"), s.get("spawn_y")
+        if None in (sx, sy, px, py) or not s.get("can_place") or not s.get("class"):
+            continue
+        if (sx, sy) == (px, py):
+            continue
+        moved[(sx, sy)].add((s["class"], px, py))
+    return dict(moved)
+
+
+def provenance(vrows, erows, entrance_exempt=False, staged=None):
     """Match expanded objects to vanilla objects by their stamped source position.
 
     `entrance_exempt` enables the LAST matching stage, contract exemption 1 (see
     `entrance_exempt_ids`); the caller passes the entrance gate's own verdict, so the
     exemption exists only while that gate proves equal pair counts and 0-hex co-location.
+
+    `staged` is the expanded dump's own `#stagedspawn` record list for this map, which
+    enables matching stage 2b (see `staged_move_index`).
     """
     pool = defaultdict(list)
     for i, r in enumerate(vrows):
@@ -862,6 +906,59 @@ def provenance(vrows, erows, entrance_exempt=False):
         else:
             still_unmatched.append(r)
     unmatched = still_unmatched
+    # Stage 2b, STAGED START-SPAWN RELOCATION only. Vanilla's own `PlaceDeposit` can move a
+    # staged start spawn - and the marker it spawned from - off the generated hex
+    # (FindUnobstructedDepositPos). The expanded twin REPLAYS that move (it stretches
+    # vanilla's recorded native spawn point and snaps it), but the row's stamp still names
+    # the PRE-move source, so stage 1 looks for a vanilla object that is no longer there and
+    # stage 2's donor root moved away with it. Retry exactly those rows at the position
+    # VANILLA'S OWN staged record says it moved that spawn to - never at a position this
+    # tool invents:
+    #
+    #   * the row's stamped source (`native`) or its donor root (`derived`) must be the
+    #     source of a staged record with can_place true and spawn != source;
+    #   * that record's class must equal the row's stamped/root class, so the retry is
+    #     paired class for class and can never rescue an unrelated object;
+    #   * the retry uses the SAME pools and keys as stages 1-2, only at the moved position,
+    #     so a claim stays strictly one-to-one (a vanilla row already claimed is skipped).
+    #
+    # 426 of the 427 staged records measured so far have spawn == source, so the stage is
+    # inert on every case except b2-09 (artifacts/b209_staged_move_verdict.md).
+    moved = staged_move_index(staged)
+    matched_by_staged_move = 0
+
+    def pop_unused(bucket):
+        while bucket:
+            i = bucket.pop()
+            if i not in used:
+                return i
+        return None
+
+    def claim_by_staged_move(r):
+        nonlocal matched, matched_by_staged_move
+        if not moved:
+            return False
+        derived = r["src_kind"] == "derived" and r["root_x"] is not None
+        if derived:
+            src_cls, src_xy = r["root_class"], (r["root_x"], r["root_y"])
+        else:
+            src_cls, src_xy = (r["src_class"] or r["class"]), (r["src_x"], r["src_y"])
+        for cls, px, py in sorted(moved.get(src_xy, ())):
+            if cls != src_cls:
+                continue
+            if derived:
+                i = pop_unused(root_pool.get((r["class"], px, py)))
+            else:
+                i = pop_unused(pool.get((r["src_class"] or r["class"], px, py)))
+            if i is None:
+                continue
+            used.add(i)
+            matched += 1
+            matched_by_staged_move += 1
+            return True
+        return False
+
+    unmatched = [r for r in unmatched if not claim_by_staged_move(r)]
     # Stage 3, STANDALONE ACTION-FX CARRIERS only (see FX_CARRIER_CLASSES). These objects
     # have no creation chain on either twin, so stages 1-2 can never see them; their
     # identity is the object they were played on, resolved geometrically and identically
@@ -942,6 +1039,8 @@ def provenance(vrows, erows, entrance_exempt=False):
         "stamped_by_kind": dict(by_kind),
         "matched_by_kind": dict(matched_by_kind),
         "matched_by_root": matched_by_root,
+        "matched_by_staged_move": matched_by_staged_move,
+        "staged_moved_records": sum(len(v) for v in moved.values()),
         "matched_by_fx_anchor": matched_by_fx_anchor,
         "matched_by_entrance_exemption": exemption["expanded"],
         "entrance_exemption": exemption,
@@ -1224,7 +1323,7 @@ def dist_summary(d):
 
 
 def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
-               entrance_ok=False):
+               entrance_ok=False, staged=None):
     def w(s=""):
         out.append(s)
 
@@ -1250,11 +1349,13 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
         for c, v, e in sorted(diff, key=lambda t: -abs(t[1] - t[2]))[:40]:
             w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
 
-    prov = provenance(vrows, erows, entrance_exempt=entrance_ok)
+    prov = provenance(vrows, erows, entrance_exempt=entrance_ok, staged=staged)
     w(f"\n-- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --")
     w(f"   expanded objects carrying a source stamp : {prov['stamped']}")
     w(f"   ... matched to a distinct vanilla object : {prov['matched']}")
     w(f"   ... of those, paired by donor root       : {prov['matched_by_root']}")
+    w(f"   staged start spawns vanilla MOVED        : {prov['staged_moved_records']}")
+    w(f"   ... additionally paired at the moved spawn: {prov['matched_by_staged_move']}")
     w(f"   standalone FX carriers (anchor resolved) : vanilla {fx_v} / expanded {fx_e} "
       f"of {sum(1 for r in vrows if r['class'] in FX_CARRIER_CLASSES)} / "
       f"{sum(1 for r in erows if r['class'] in FX_CARRIER_CLASSES)}")
@@ -1334,7 +1435,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
     cv = [r for r in vrows if r["class"] not in INFRASTRUCTURE]
     ce = [r for r in erows if r["class"] not in INFRASTRUCTURE]
     cvc, cec, csame, cdiff = census(cv, ce)
-    cprov = provenance(cv, ce, entrance_exempt=entrance_ok)
+    cprov = provenance(cv, ce, entrance_exempt=entrance_ok, staged=staged)
     cex = cprov["entrance_exemption"]
     w(f"\n-- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --")
     w(f"   content objects      : vanilla {len(cv)} vs expanded {len(ce)}  "
@@ -1343,6 +1444,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
     for c, v, e in sorted(cdiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
         w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
     w(f"   matched              : {cprov['matched']}")
+    w(f"   ... of those, staged moved spawn     : {cprov['matched_by_staged_move']}")
     w(f"   ... of those, exemption 1 (entrance) : {cprov['matched_by_entrance_exemption']}")
     w(f"   unmatched expanded   : {len(cprov['unmatched_expanded'])}")
     w(f"   unstamped expanded   : {len(cprov['unstamped'])}")
@@ -1377,7 +1479,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
     uv = [r for r in vrows if r["class"] not in ok_infra]
     ue = [r for r in erows if r["class"] not in ok_infra]
     _, _, _, udiff = census(uv, ue)
-    uprov = provenance(uv, ue, entrance_exempt=entrance_ok)
+    uprov = provenance(uv, ue, entrance_exempt=entrance_ok, staged=staged)
     ok_v, ok_e = len(vrows) - len(uv), len(erows) - len(ue)
     ok_e_unstamped = sum(1 for r in erows
                          if r["class"] in ok_infra and r["src_x"] is None)
@@ -1417,6 +1519,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
     for c, v, e in sorted(udiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
         w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
     w(f"   matched              : {uprov['matched']}")
+    w(f"   ... of those, staged moved spawn     : {uprov['matched_by_staged_move']}")
     w(f"   ... of those, exemption 1 (entrance) : {uprov['matched_by_entrance_exemption']}")
     w(f"   unmatched expanded   : {len(uprov['unmatched_expanded'])}")
     w(f"   unstamped expanded   : {len(uprov['unstamped'])}")
@@ -1487,6 +1590,10 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
         "provenance_unstamped_expanded": len(prov["unstamped"]),
         "provenance_unconsumed_vanilla": len(prov["unconsumed_vanilla"]),
         "provenance_matched_by_root": prov["matched_by_root"],
+        "staged_moved_records": prov["staged_moved_records"],
+        "provenance_matched_by_staged_move": prov["matched_by_staged_move"],
+        "content_matched_by_staged_move": cprov["matched_by_staged_move"],
+        "unexplained_matched_by_staged_move": uprov["matched_by_staged_move"],
         "provenance_matched_by_fx_anchor": prov["matched_by_fx_anchor"],
         "content_matched_by_fx_anchor": cprov["matched_by_fx_anchor"],
         "unexplained_matched_by_fx_anchor": uprov["matched_by_fx_anchor"],
@@ -1513,8 +1620,8 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
 
 def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "out"
-    vmeta, vrows, _vman = parse_dump(out_dir / "objects-vanilla.csv")
-    emeta, erows, eman = parse_dump(out_dir / "objects-expanded.csv")
+    vmeta, vrows, _vman, _vstaged = parse_dump(out_dir / "objects-vanilla.csv")
+    emeta, erows, eman, estaged = parse_dump(out_dir / "objects-expanded.csv")
     hexgrid = hexgrid_evidence(out_dir)
     camera = camera_evidence(vmeta, emeta, vrows, erows)
 
@@ -1558,7 +1665,8 @@ def main():
                      f"({vw}->{ew} tiles)")
         summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines,
                                   hexgrid.get(tag), camera.get(tag),
-                                  entrance_ok=entrance["colocation_ok"])
+                                  entrance_ok=entrance["colocation_ok"],
+                                  staged=estaged.get(tag))
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
         mg = source_manifest_gate(erows[tag], eman.get(tag, []))
