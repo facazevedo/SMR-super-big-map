@@ -21,7 +21,37 @@ A case can only be scored against a control that reproduces itself. Two pinned v
 
 Proven pins: `serial` rasterization, `passagepin` (a dedicated fixed-seed stream for the passage fallback, which removed it from the race with city-startup threads on the shared `SessionRandom`), and re-injecting that case's own drawn underground seed.
 
-KNOWN GAP — b2-01 (51S13W, lat 3060 lon -780): with ALL of those pins, two vanilla controls produced 8322 vs 8038 surface objects with ~200 rows in common, and `passage_pin_calls` was EMPTY, so this is a DIFFERENT race from the passage one. Its signature is the whole decoration population (PrefabMarker +-30, every StonesSlate* family differing by tens). Find it and pin it. Leads: the mod's own procedure trace (`sbm_map_generation.lua` ~L923-1976) brackets each generator procedure and can proxy `Proc_RemoveOverlappedObjects`; run it on two vanilla controls at 51S13W that end on different variants and diff per-ordinal manifests to name the first diverging procedure. `const.PrefabRasterParallelDiv = 1` is already applied by `serial` and does NOT pin it, so the race is elsewhere (candidate: async prefab/asset load order affecting object handle allocation, hence hash/handle-keyed iteration order).
+KNOWN GAP — b2-01 (51S13W, lat 3060 lon -780). MEASURED 2026-08-14, mod v797, harness 0ebd543:
+
+- Two controls with `serial` + `passagepin` + the same injected underground seed produced 8366 vs
+  8038 surface objects with only ~200 rows in common.
+- Their generation INPUTS are identical: preset `BlankBigTerraceCMix_11`, `gen_seed`
+  5434768309385999931, `gen_hash` 6358497127468097730, underground seed 6897190323242569227.
+- Prefab rasterization IS serialized and verified through the generator's own environment
+  (`raster div before: 8`, `raster div seen by generator: 1`, one const table). So the
+  rasterization race is RULED OUT as the cause.
+- `passage_pin_calls` is empty on these runs, so the passage fallback race is RULED OUT too.
+
+Therefore something inside generation reads a value that varies between processes while seed,
+hash and preset stay equal. FIND IT AND NAME IT — this is the task, not an accepted limit. The
+divergence is near-total (~2.5% of rows survive), which is the signature of a SHARED RANDOM
+STREAM SHIFTING EARLY rather than a local placement race: one extra or missing draw near the
+start re-rolls everything downstream. Precedent: at 45S82E the flip was exactly this, the passage
+fallback drawing at stream position 11 versus 738 (`surface-exact-parity/artifacts/draw_probe_verdict.md`).
+
+Leads, cheapest first:
+1. The mod's procedure trace (`sbm_map_generation.lua` ~L923-1976, config `TraceUndergroundRockParity`)
+   brackets every generator procedure by ordinal and captures sorted object manifests. Run it on two
+   vanilla controls at 51S13W that land on different variants and diff per-ordinal: the FIRST
+   procedure whose manifest differs names the consumer.
+2. `run_parity.py`'s `drawprobe` wraps the shared `SessionRandom` and logs every draw with its
+   consumer. It is a biased observer (its tracebacks changed which variant won at 45S82E), so use it
+   to identify the CONSUMER and the draw ordinal, not to decide the outcome.
+3. Suspect any generator input not derived from `gen.Seed`: `AsyncRand()` calls during generation,
+   anything seeded from time or process state, and iteration over a hash/handle-keyed container
+   whose order depends on object-handle allocation (which async asset load timing can perturb).
+4. Once named, pin it in the CONTROL harness the same way `passagepin` pinned the passage fallback
+   (a dedicated fixed-seed stream), and re-prove ten consecutive byte-identical controls.
 
 A coordinate whose control cannot be pinned is NOT a pass and NOT a silent exclusion: it is a `BLOCKED.md` with the trace naming the exact procedure, at least three distinct pin attempts with evidence, and a statement of what would be required. Every other coordinate must still be proven green.
 
