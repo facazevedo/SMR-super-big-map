@@ -5711,7 +5711,53 @@ local function BootstrapPassagesAndDeferWonders(env)
 	end
 	table_lib.shuffle(passage_markers, rand)
 
+	-- NATIVE PASSAGE SPAWN WITHOUT THE SOURCE-POSE FLATTEN (config
+	-- PASSAGE_NATIVE_SPAWN_NO_FLATTEN). Vanilla SpawnUndergroundPassage
+	-- (Lua\Buildings\SurfacePassage.lua:126) ends with
+	-- FlattenTerrainInBuildShape(shape, passage, "flatten unbuildable") (:139), which carves the
+	-- Elevator footprint into the LIVE terrain at the level map.buildable.z_grid reports on those
+	-- hexes (Lua\Construction\Construction.lua:1842-1870). This bootstrap runs that spawner on the
+	-- EXPANDED surface map while the SOURCE-space buildable bridge installed above is in place, so
+	-- the flatten writes a source-pose, SOURCE-level hexagon into already transformed ground:
+	-- measured at 30S146E as two stale craters, 9.7 m and 33.0 m below the plain around them, one
+	-- per passage pair, still present at the end of generation. The pad the finished map needs is
+	-- the one prepare_passage_pad (sbm_terrain_copy) carves later at the COMMITTED destination
+	-- pose; this one is pure damage. The site choice is made before the flatten and does not read
+	-- it back, so dropping that single terrain edit leaves the selection untouched.
+	-- The engine global itself cannot be wrapped from mod code (the mod's _G is the sandbox env -
+	-- see the GetMapSize note below), so the spawner's remaining steps are reproduced here against
+	-- the same globals, in the same order, which keeps the random draws, the placed object and its
+	-- returned shape identical to vanilla's.
 	local spawn_surface_anchor = Global("SpawnUndergroundPassage")
+	if cfg_bool("PASSAGE_NATIVE_SPAWN_NO_FLATTEN", true) then
+		local snap_world_to_hex = Global("SnapWorldToHex")
+		local snap_world_to_hex_angle = Global("SnapWorldToHexAngle")
+		local extended_spawn_shape = Global("GetExtendedSpawnShape")
+		local find_passage_spawn_pos = Global("FindPassageSpawnPos")
+		local place_building_in = Global("PlaceBuildingIn")
+		local permanent_flag = const_tbl and const_tbl.gofPermanent
+		if type(snap_world_to_hex) ~= "function" or type(snap_world_to_hex_angle) ~= "function"
+			or type(extended_spawn_shape) ~= "function"
+			or type(find_passage_spawn_pos) ~= "function"
+			or type(place_building_in) ~= "function" or permanent_flag == nil then
+			error("native passage spawn without the source-pose flatten is unavailable")
+		end
+		spawn_surface_anchor = function(spawn_map, pos, angle, min_dist, passages)
+			pos = snap_world_to_hex(pos)
+			angle = snap_world_to_hex_angle(angle)
+			local shape = extended_spawn_shape("Elevator")
+			local position = find_passage_spawn_pos(spawn_map, spawn_map.object_hex_grid,
+				spawn_map.buildable, pos, angle, shape, min_dist, passages)
+			if not position then return end
+			position = spawn_map:SnapToTerrain(position)
+			local passage = place_building_in("UndergroundPassage", spawn_map)
+			passage:SetPos(position)
+			passage:SetAngle(angle)
+			passage:SetGameFlags(permanent_flag)
+			-- Vanilla's FlattenTerrainInBuildShape call is deliberately omitted here.
+			return passage, shape
+		end
+	end
 	local get_shape = Global("GetExtendedSpawnShape")
 	local for_each_hex = Global("HexShapeForEach")
 	local hex_to_world = Global("HexToWorld")

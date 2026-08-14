@@ -573,6 +573,16 @@ config.PairingSourcePassabilityBridge = true
 -- engine's own terrain filter): the game's entrance flatten is per-hex, which leaves faint
 -- hex terracing (zigzag creases) even with clean height values. Runs once pre-stretch.
 config.PassagePadSmoothing = true
+-- NATIVE PASSAGE SPAWN WITHOUT THE SOURCE-POSE FLATTEN (sbm_map_generation, passage bootstrap).
+-- Vanilla SpawnUndergroundPassage flattens the Elevator footprint into the live terrain as its
+-- last step, at the level the buildable z_grid reports. The bootstrap runs that spawner on the
+-- expanded surface map with the SOURCE-space buildable bridge installed, so the flatten carves a
+-- source-pose, source-level hexagon into transformed ground - measured at 30S146E as two stale
+-- craters 9.7 m and 33.0 m deep, one per passage pair, on top of the correct pad that
+-- prepare_passage_pad later carves at the committed destination pose. When true, the bootstrap
+-- reproduces the spawner's selection and placement steps and omits only that terrain edit; the
+-- site choice, the random draws and the placed object are unchanged.
+config.PassageNativeSpawnNoFlatten = true
 -- NATIVE MARK-GRID PROJECTION (sbm_map_generation DoGenerate, underground in-place path). The
 -- generator sizes its working grids from the Lua-visible source size (614400/800 = 768 cells),
 -- but the NATIVE prefab rasterizer and the native GridGetMark reader project a grid over the
@@ -920,6 +930,8 @@ C.PAIRING_SOURCE_PASSABILITY_BRIDGE = expansion_step_11
 	and as_bool(config.PairingSourcePassabilityBridge)
 C.PASSAGE_PAD_SMOOTHING = expansion_step_11
 	and as_bool(config.PassagePadSmoothing)
+C.PASSAGE_NATIVE_SPAWN_NO_FLATTEN = expansion_step_11
+	and as_bool(config.PassageNativeSpawnNoFlatten)
 C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 	and as_bool(config.UndergroundMarkGridBackingScale)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
