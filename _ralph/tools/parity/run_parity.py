@@ -3371,7 +3371,7 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_probe_all=False, zones_probe=False, pass_real_probe=False,
                     pass_lattice_probe=False, pass_rebuild_probe=False,
                     pass_mask_probe=False, pass_forced_probe=False,
-                    pass_writer_probe=False):
+                    pass_writer_probe=False, pass_own_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
 
     Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
@@ -3630,6 +3630,39 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass
                 time.sleep(5)
 
+    if pass_own_probe:
+        # LAST of all, and meant to run ALONE: it WRITES passability with terrain.SetPassability
+        # and then invalidates and rebuilds.  Same window and stride as the mask/forced/writer
+        # probes (023/024/026), so its per-cell columns join those measurements cell for cell.
+        probe_src = (HERE / "passown_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__POS_SCALE__", repr(float(ring_scale)))
+        probe_src = probe_src.replace("__CENTRE_CLASS__", "BottomlessPit")
+        probe_src = probe_src.replace("__RADIUS__", "20000")
+        probe_src = probe_src.replace("__STRIDE__", "200")
+        probe_src = probe_src.replace("__BOXHALF__", "600")
+        probe_src = probe_src.replace("__OUT_PATH__", cli.lua_path(OUT / f"passown-{tag}.csv"))
+        probe_path = OUT / f"passownprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  passown probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPassOwnStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityPassOwnInfo", timeout=60.0)
+                        log(f"  passown probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityPassOwnError", timeout=60.0)
+                        log(f"  passown probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
     if wonder_probe:
         # Runs in the same post-generation window as the dump, with the game alive.
         probe_src = (HERE / "wonder_probe.lua").read_text(encoding="utf-8")
@@ -3803,7 +3836,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
              stretch_dump=False, flatten_probe=False, pass_real_probe=False,
              pass_lattice_probe=False, pass_rebuild_probe=False, pass_mask_probe=False,
-             pass_forced_probe=False, pass_writer_probe=False):
+             pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4205,7 +4238,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             pass_probe_all=pass_probe_all, zones_probe=zones_probe,
             pass_real_probe=pass_real_probe, pass_lattice_probe=pass_lattice_probe,
             pass_rebuild_probe=pass_rebuild_probe, pass_mask_probe=pass_mask_probe,
-            pass_forced_probe=pass_forced_probe, pass_writer_probe=pass_writer_probe)
+            pass_forced_probe=pass_forced_probe, pass_writer_probe=pass_writer_probe,
+            pass_own_probe=pass_own_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -4299,6 +4333,7 @@ def main():
         passmask = "passmask" in sys.argv[5:]
         passforced = "passforced" in sys.argv[5:]
         passwriter = "passwriter" in sys.argv[5:]
+        passown = "passown" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -4325,6 +4360,7 @@ def main():
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
             f"pass_forced_probe={passforced} pass_writer_probe={passwriter} "
+            f"pass_own_probe={passown} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -4340,7 +4376,7 @@ def main():
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
                         pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
                         pass_forced_probe=passforced,
-                        pass_writer_probe=passwriter)
+                        pass_writer_probe=passwriter, pass_own_probe=passown)
         log(f"result: {json.dumps(info)}")
         return
 
