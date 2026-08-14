@@ -9,7 +9,10 @@ Five independent tests per map (surface, underground):
                    the source stamp, then the donor root for objects vanilla derives
                    away from their donor, then the FX anchor for standalone action-FX
                    carriers, which have no creation chain on either twin
-                   (FX_CARRIER_CLASSES).
+                   (FX_CARRIER_CLASSES), and finally the contract's ONE positional
+                   exemption for the entrance/passage family, which only runs while the
+                   entrance gate proves equal pair counts and 0-hex co-location
+                   (`entrance_exempt_ids`).
   C. Geometry    - independent of the stamps: match vanilla -> expanded per class
                    purely by predicted position (vanilla_xy * ratio) and report the
                    residual distance distribution (proportional placement).
@@ -107,6 +110,64 @@ def annotate_fx_anchors(rows):
                 r["fx_anchor"] = key
                 resolved += 1
     return resolved
+
+# ---------------------------------------------------------------------------
+# CONTRACT EXEMPTION 1 - THE ENTRANCE/PASSAGE FAMILY'S POSITION  (matching stage 4)
+#
+# The task contract grants exactly one positional exemption: the entrance/passage family
+# may sit somewhere else on the expanded map than on the vanilla twin, because the
+# expanded run deliberately CO-LOCATES a passage pair on one hex while vanilla drifts its
+# passage off the marker hex (and can fall back to a random passable point).  What the
+# contract still demands of that family is counts that match EXACTLY and 0-hex
+# co-location on every case - never a relaxed count and never a class exemption.
+#
+# So this is a matching stage, not an exclusion list, and it is deliberately the LAST one:
+#
+#   * stages 1-3 run first and unchanged, so a family object that DOES land on the exact
+#     stretched image of its vanilla source is still matched by its stamp and still proves
+#     that exactness inside the content bijection (b2-06's passage #1 does exactly this);
+#   * only the leftovers are considered, so the stage is completely INERT on a case whose
+#     family already matched whole - every already-green case scores byte-identically;
+#   * the exemptible population on each side is the family itself plus the standalone FX
+#     carriers riding on a family member's exact XY.  Those carriers' provenance is
+#     measured, not assumed: `ExplorableObject:SetRevealed` -> `PlayFX("Revealed",
+#     moment=true)` with an entrance-family actor, carrier XY == actor XY on its own side,
+#     in every case on both twins (artifacts/b206_entrance_fx_provenance_verdict.md).
+#     `ParSystem` is NEVER exempted as a class - a carrier qualifies only through that
+#     XY coincidence with a family member on its own side;
+#   * the stage runs ONLY while the entrance gate proves the contract's own conditions -
+#     equal linked-pair counts and 0-hex co-location on every pair (`colocation_ok`) - and
+#     it refuses to exempt anything unless the leftover multisets are EQUAL CLASS FOR
+#     CLASS on the two sides.  An unequal count therefore still fails, loudly, and one
+#     mismatching class voids the whole exemption rather than being partially absorbed.
+# ---------------------------------------------------------------------------
+ENTRANCE_FAMILY_EXACT = {
+    "SurfacePassage", "UndergroundPassage",
+    "SurfaceTunnelMarker", "UndergroundTunnelMarker",
+    "SurfaceUndergroundTunnelSign",
+}
+ENTRANCE_FAMILY_PREFIXES = ("ElevatorBuildIndicator_",)
+
+
+def is_entrance_family(cls):
+    """The contract's exemption-1 family, `ElevatorBuildIndicator_*` by prefix."""
+    return (cls in ENTRANCE_FAMILY_EXACT
+            or any(cls.startswith(p) for p in ENTRANCE_FAMILY_PREFIXES))
+
+
+def entrance_exempt_ids(rows):
+    """Row identities on ONE side that exemption 1 may cover: the family, plus the
+    standalone FX carriers sitting on a family member's exact XY."""
+    fam_xy = {(r["x"], r["y"]) for r in rows
+              if is_entrance_family(r["class"]) and r["x"] is not None}
+    out = set()
+    for r in rows:
+        if is_entrance_family(r["class"]):
+            out.add(id(r))
+        elif r["class"] in FX_CARRIER_CLASSES and (r["x"], r["y"]) in fam_xy:
+            out.add(id(r))
+    return out
+
 
 # ---------------------------------------------------------------------------
 # INFRASTRUCTURE ENUMERATION  (task matrix case `infrastructure-enumerated`)
@@ -743,8 +804,13 @@ def census(vrows, erows):
     return vc, ec, same, diff
 
 
-def provenance(vrows, erows):
-    """Match expanded objects to vanilla objects by their stamped source position."""
+def provenance(vrows, erows, entrance_exempt=False):
+    """Match expanded objects to vanilla objects by their stamped source position.
+
+    `entrance_exempt` enables the LAST matching stage, contract exemption 1 (see
+    `entrance_exempt_ids`); the caller passes the entrance gate's own verdict, so the
+    exemption exists only while that gate proves equal pair counts and 0-hex co-location.
+    """
     pool = defaultdict(list)
     for i, r in enumerate(vrows):
         if r["x"] is None:
@@ -824,6 +890,49 @@ def provenance(vrows, erows):
     unstamped = [r for r in unstamped if not claim_by_fx_anchor(r)]
     unmatched = [r for r in unmatched if not claim_by_fx_anchor(r)]
     unconsumed = [vrows[i] for i in range(len(vrows)) if i not in used]
+
+    # Stage 4, CONTRACT EXEMPTION 1 (entrance/passage family position). Leftovers only, so
+    # the stage cannot touch a family object stages 1-3 already matched, and it refuses
+    # everything unless the two sides' leftovers agree class for class.
+    exemption = {"enabled": bool(entrance_exempt), "applied": False, "expanded": 0,
+                 "vanilla": 0, "by_class": {}, "pairs": [], "reason": ""}
+    if not entrance_exempt:
+        exemption["reason"] = ("disabled - the entrance gate does not prove equal pair "
+                               "counts and 0-hex co-location on this run")
+    else:
+        ids_e, ids_v = entrance_exempt_ids(erows), entrance_exempt_ids(vrows)
+        left_e = [r for r in unstamped + unmatched if id(r) in ids_e]
+        left_v = [r for r in unconsumed if id(r) in ids_v]
+        cnt_e = Counter(r["class"] for r in left_e)
+        cnt_v = Counter(r["class"] for r in left_v)
+        if not left_e and not left_v:
+            exemption["reason"] = "inert - no entrance-family residue on either side"
+        elif cnt_e != cnt_v:
+            exemption["reason"] = (
+                "REFUSED - entrance-family residue is not equal class for class: "
+                f"expanded {dict(sorted(cnt_e.items()))} vs "
+                f"vanilla {dict(sorted(cnt_v.items()))}")
+        else:
+            drop_e = {id(r) for r in left_e}
+            drop_v = {id(r) for r in left_v}
+            unstamped = [r for r in unstamped if id(r) not in drop_e]
+            unmatched = [r for r in unmatched if id(r) not in drop_e]
+            unconsumed = [r for r in unconsumed if id(r) not in drop_v]
+            matched += len(left_e)
+            by_v = defaultdict(list)
+            for r in left_v:
+                by_v[r["class"]].append(r)
+            for r in left_e:
+                v = by_v[r["class"]].pop()
+                exemption["pairs"].append({
+                    "class": r["class"],
+                    "expanded_xy": [r["x"], r["y"]],
+                    "expanded_source_xy": [r["src_x"], r["src_y"]],
+                    "vanilla_xy": [v["x"], v["y"]],
+                })
+            exemption.update(applied=True, expanded=len(left_e), vanilla=len(left_v),
+                             by_class=dict(sorted(cnt_e.items())),
+                             reason="applied - entrance-family position exemption")
     return {
         "stamped": stamped,
         "unstamped": unstamped,
@@ -834,6 +943,8 @@ def provenance(vrows, erows):
         "matched_by_kind": dict(matched_by_kind),
         "matched_by_root": matched_by_root,
         "matched_by_fx_anchor": matched_by_fx_anchor,
+        "matched_by_entrance_exemption": exemption["expanded"],
+        "entrance_exemption": exemption,
     }
 
 
@@ -1112,7 +1223,8 @@ def dist_summary(d):
             f"median={statistics.median(d):.0f} mean={statistics.fmean(d):.1f}")
 
 
-def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
+def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
+               entrance_ok=False):
     def w(s=""):
         out.append(s)
 
@@ -1138,7 +1250,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
         for c, v, e in sorted(diff, key=lambda t: -abs(t[1] - t[2]))[:40]:
             w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
 
-    prov = provenance(vrows, erows)
+    prov = provenance(vrows, erows, entrance_exempt=entrance_ok)
     w(f"\n-- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --")
     w(f"   expanded objects carrying a source stamp : {prov['stamped']}")
     w(f"   ... matched to a distinct vanilla object : {prov['matched']}")
@@ -1147,6 +1259,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
       f"of {sum(1 for r in vrows if r['class'] in FX_CARRIER_CLASSES)} / "
       f"{sum(1 for r in erows if r['class'] in FX_CARRIER_CLASSES)}")
     w(f"   ... additionally paired by FX anchor     : {prov['matched_by_fx_anchor']}")
+    w(f"   ... paired under contract exemption 1    : {prov['matched_by_entrance_exemption']}")
     w(f"   ... stamp with no vanilla counterpart    : {len(prov['unmatched_expanded'])}")
     w(f"   expanded objects with NO source stamp    : {len(prov['unstamped'])}")
     if prov["stamped_by_kind"]:
@@ -1221,7 +1334,8 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     cv = [r for r in vrows if r["class"] not in INFRASTRUCTURE]
     ce = [r for r in erows if r["class"] not in INFRASTRUCTURE]
     cvc, cec, csame, cdiff = census(cv, ce)
-    cprov = provenance(cv, ce)
+    cprov = provenance(cv, ce, entrance_exempt=entrance_ok)
+    cex = cprov["entrance_exemption"]
     w(f"\n-- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --")
     w(f"   content objects      : vanilla {len(cv)} vs expanded {len(ce)}  "
       f"{'MATCH' if len(cv) == len(ce) else 'MISMATCH (' + str(len(ce) - len(cv)) + ')'}")
@@ -1229,9 +1343,21 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     for c, v, e in sorted(cdiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
         w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
     w(f"   matched              : {cprov['matched']}")
+    w(f"   ... of those, exemption 1 (entrance) : {cprov['matched_by_entrance_exemption']}")
     w(f"   unmatched expanded   : {len(cprov['unmatched_expanded'])}")
     w(f"   unstamped expanded   : {len(cprov['unstamped'])}")
     w(f"   unclaimed vanilla    : {len(cprov['unconsumed_vanilla'])}")
+    w(f"   exemption 1 (entrance/passage family position): {cex['reason']}")
+    if cex["applied"]:
+        w(f"     exempted records   : expanded {cex['expanded']} / vanilla {cex['vanilla']} "
+          f"({', '.join(f'{c} x{n}' for c, n in cex['by_class'].items())})")
+        w("     the entrance gate proves equal pair counts and 0-hex co-location; each "
+          "exempted expanded record is paired with a same-class vanilla record:")
+        for p in cex["pairs"]:
+            w(f"       {p['class'][:40]:<40} expanded ({p['expanded_xy'][0]},"
+              f"{p['expanded_xy'][1]}) source ({p['expanded_source_xy'][0]},"
+              f"{p['expanded_source_xy'][1]}) <- vanilla ({p['vanilla_xy'][0]},"
+              f"{p['vanilla_xy'][1]})")
     for label, recs in (("unstamped expanded", cprov["unstamped"]),
                         ("unmatched expanded", cprov["unmatched_expanded"]),
                         ("unclaimed vanilla", cprov["unconsumed_vanilla"])):
@@ -1251,7 +1377,7 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     uv = [r for r in vrows if r["class"] not in ok_infra]
     ue = [r for r in erows if r["class"] not in ok_infra]
     _, _, _, udiff = census(uv, ue)
-    uprov = provenance(uv, ue)
+    uprov = provenance(uv, ue, entrance_exempt=entrance_ok)
     ok_v, ok_e = len(vrows) - len(uv), len(erows) - len(ue)
     ok_e_unstamped = sum(1 for r in erows
                          if r["class"] in ok_infra and r["src_x"] is None)
@@ -1291,9 +1417,12 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
     for c, v, e in sorted(udiff, key=lambda t: -abs(t[1] - t[2]))[:20]:
         w(f"     {c[:38]:<38} {v:>8} {e:>9} {e - v:>+8}")
     w(f"   matched              : {uprov['matched']}")
+    w(f"   ... of those, exemption 1 (entrance) : {uprov['matched_by_entrance_exemption']}")
     w(f"   unmatched expanded   : {len(uprov['unmatched_expanded'])}")
     w(f"   unstamped expanded   : {len(uprov['unstamped'])}")
     w(f"   unclaimed vanilla    : {len(uprov['unconsumed_vanilla'])}")
+    w(f"   exemption 1 (entrance/passage family position): "
+      f"{uprov['entrance_exemption']['reason']}")
     for label, recs in (("unstamped expanded", uprov["unstamped"]),
                         ("unmatched expanded", uprov["unmatched_expanded"]),
                         ("unclaimed vanilla", uprov["unconsumed_vanilla"])):
@@ -1361,6 +1490,11 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None):
         "provenance_matched_by_fx_anchor": prov["matched_by_fx_anchor"],
         "content_matched_by_fx_anchor": cprov["matched_by_fx_anchor"],
         "unexplained_matched_by_fx_anchor": uprov["matched_by_fx_anchor"],
+        "entrance_exemption_enabled": bool(entrance_ok),
+        "content_matched_by_entrance_exemption": cprov["matched_by_entrance_exemption"],
+        "unexplained_matched_by_entrance_exemption":
+            uprov["matched_by_entrance_exemption"],
+        "content_entrance_exemption": cex,
         "fx_carriers_vanilla": sum(1 for r in vrows
                                    if r["class"] in FX_CARRIER_CLASSES),
         "fx_carriers_expanded": sum(1 for r in erows
@@ -1388,6 +1522,16 @@ def main():
     lines.append("30S146E  VANILLA vs EXPANDED  object parity report")
     lines.append("=" * 78)
 
+    # The entrance gate is computed FIRST because contract exemption 1 is conditional on
+    # it: its verdict decides whether the per-map bijection may run matching stage 4 at
+    # all. Its own report lines are held back and appended in their usual place, so the
+    # report layout is unchanged.
+    entrance_lines = []
+    entrance = entrance_section(
+        parse_pairs(out_dir / "objects-vanilla.csv"),
+        parse_pairs(out_dir / "objects-expanded.csv"),
+        entrance_lines)
+
     for tag in ("surface", "underground"):
         lines.append(f"\n[{tag}] metadata")
         keys = ["mapdata_width", "mapdata_height", "blank_map_id", "gen_seed", "gen_hash",
@@ -1413,7 +1557,8 @@ def main():
         lines.append(f"\n[{tag}] derived stretch ratio: x={rx:.6f}  y={ry:.6f} "
                      f"({vw}->{ew} tiles)")
         summary[tag] = report_map(tag, vrows[tag], erows[tag], rx, ry, lines,
-                                  hexgrid.get(tag), camera.get(tag))
+                                  hexgrid.get(tag), camera.get(tag),
+                                  entrance_ok=entrance["colocation_ok"])
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
         mg = source_manifest_gate(erows[tag], eman.get(tag, []))
@@ -1452,10 +1597,8 @@ def main():
                              and s["provenance_unconsumed_vanilla"] == 0
                              and s["vanilla_objects"] == s["expanded_objects"])
 
-    summary["entrance"] = entrance_section(
-        parse_pairs(out_dir / "objects-vanilla.csv"),
-        parse_pairs(out_dir / "objects-expanded.csv"),
-        lines)
+    lines.extend(entrance_lines)
+    summary["entrance"] = entrance
 
     text = "\n".join(lines)
     print(text)
