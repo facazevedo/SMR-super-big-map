@@ -424,6 +424,17 @@ config.StretchReliefAwareDecor = true
 -- DESTINATION rect fills the missing SuperBigMapNativeSource* fields. Stamps only: nothing is
 -- moved, rescaled or made eligible, so the scaling passes and the proven floors are unchanged.
 config.StretchStampOutOfBoxSources = true
+-- DESPAWN OUT-OF-BOX CONTENT (same sweep). Stamping keeps an out-of-box object; that is right for
+-- the objects vanilla itself has out there and wrong for the ones it does not. Vanilla generates on
+-- its own (smaller) map, whose box drops a prefab's spill past the edge; the expanded run generates
+-- its native source inside the already enlarged map, so the same spill survives and appears as extra
+-- content with no vanilla counterpart -- and, because the move passes enumerate the source rect only,
+-- it also stays unmoved while its prefab siblings move away (sweep-04: Rocks_03 (588223,614853) and
+-- RemovableRocks_02 (589778,615657), both absent from the vanilla control while the in-box sibling
+-- RemovableRocks_01 (589278,612914) matched). Measured across nine twin pairs on both maps, EVERY
+-- out-of-box vanilla row is a PrefabMarker, so when true the sweep stamps markers and the
+-- destination's own enumerated infrastructure and despawns any other out-of-box object.
+config.StretchDespawnOutOfBoxContent = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -856,6 +867,7 @@ C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
+C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxContent)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)

@@ -1741,6 +1741,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	-- move, so the two scaling passes below keep their src_box scope and the proven floors are
 	-- untouched. Anchoring the box at (0,0) keeps the negative-coordinate CameraObj out.
 	local out_of_box_stamped = 0
+	local out_of_box_despawned = 0
 	if cfg_bool("STRETCH_STAMP_OUT_OF_BOX_SOURCES", true) then
 		local full_tw = map.SuperBigMapDesiredWidthTiles
 		local full_th = map.SuperBigMapDesiredHeightTiles
@@ -1751,6 +1752,26 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		end
 		if type(full_tw) == "number" and type(full_th) == "number"
 			and (full_tw > sw_tiles or full_th > sh_tiles) then
+			-- Stamping is right only for the out-of-box objects vanilla itself has. Vanilla's own map
+			-- box drops a prefab's spill past the source edge; the expanded run generates its native
+			-- source inside the already enlarged map, so that spill survives as content with no
+			-- vanilla counterpart, left unmoved by the src_box move passes (sweep-04, see
+			-- config.StretchDespawnOutOfBoxContent). Every out-of-box VANILLA row measured across nine
+			-- twin pairs on both maps is a PrefabMarker, so keep markers plus the destination's own
+			-- enumerated infrastructure and despawn the rest. Collect first: destroying inside
+			-- MapForEach would mutate the container being traversed.
+			local despawn_out_of_box_content = cfg_bool("STRETCH_DESPAWN_OUT_OF_BOX_CONTENT", true)
+			local keep_out_of_box_class = {
+				PrefabMarker = true,
+				MapSector = true,
+				SectorUnexplored = true,
+				SectorScanned = true,
+				GridObjectList = true,
+				CameraObj = true,
+				RandomMapGeneratorHolder = true,
+			}
+			local src_w_wu, src_h_wu = sw_tiles * hts, sh_tiles * hts
+			local out_of_box_content = {}
 			pcall(map.MapForEach, map, box_fn(0, 0, full_tw * hts, full_th * hts), "CObject",
 				function(obj)
 				if not obj then return end
@@ -1759,6 +1780,15 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 				if not source_pos then return end
 				local source_x, source_y = PointXY(source_pos)
 				if type(source_x) ~= "number" or type(source_y) ~= "number" then return end
+				if despawn_out_of_box_content
+					and (source_x >= src_w_wu or source_y >= src_h_wu)
+					and not keep_out_of_box_class[tostring(obj.class or "?")]
+					and not IsKindOfSafe(obj, "PrefabMarker")
+					and not IsKindOfSafe(obj, "MapSector")
+					and not IsKindOfSafe(obj, "GridObjectList") then
+					out_of_box_content[#out_of_box_content + 1] = obj
+					return
+				end
 				obj.SuperBigMapNativeSourceX = source_x
 				obj.SuperBigMapNativeSourceY = source_y
 				if type(obj.SuperBigMapNativeSourceZ) ~= "number" and type(source_pos.z) == "function" then
@@ -1785,6 +1815,17 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 					or tostring(obj.class or "?")
 				out_of_box_stamped = out_of_box_stamped + 1
 			end)
+			local done_object = Global("DoneObject")
+			if #out_of_box_content > 0 and type(done_object) == "function" then
+				local is_valid = Global("IsValid")
+				for index = 1, #out_of_box_content do
+					local obj = out_of_box_content[index]
+					local alive = type(is_valid) ~= "function" or SafeCall(is_valid, obj) == true
+					if alive and pcall(done_object, obj) then
+						out_of_box_despawned = out_of_box_despawned + 1
+					end
+				end
+			end
 		end
 	end
 	decor_relief_by_map[map] = relief
@@ -1798,6 +1839,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		height_failures = height_failures,
 		max_abs_relief = max_abs_relief,
 		out_of_box_stamped = out_of_box_stamped,
+		out_of_box_despawned = out_of_box_despawned,
 		terrain_source_is_destination = relief_terrain_map == map,
 	}
 	cave_in_transform_capture_by_map[map] = cave_capture
