@@ -132,8 +132,31 @@ CreateRealTimeThread(function()
 				"SuperBigMapStartFootprintMarkers", "SuperBigMapStartFootprintPending",
 				"SuperBigMapStartFootprintDeposits",
 				"SuperBigMapScanGateFootprintKept", "SuperBigMapScanGateDespawned",
+				-- Staged native start spawns (mod v798): vanilla's own per-sector, per-depth
+				-- spawn decisions, recorded on the native source before the stretch.
+				"SuperBigMapStartStagedCount", "SuperBigMapStartStagedSectors",
+				"SuperBigMapStartStagedBlock", "SuperBigMapStartStagedSurface",
+				"SuperBigMapStartStagedSubsurface", "SuperBigMapStartStagedDeep",
+				"SuperBigMapStartStagedPlaceable",
 			}) do
 				meta(tag, field, tostring(map[field]))
+			end
+			-- One row per staged native spawn decision, so the staged set is dump-visible:
+			-- which marker (native source stamp), in which vanilla sector, at which depth and
+			-- list position, and where vanilla's native CanPlaceDeposit said it may spawn.
+			local staged = rawget(map, "SuperBigMapStartStagedSpawns")
+			if type(staged) == "table" then
+				for si = 1, #staged do
+					local r = staged[si] or {}
+					emit("#stagedspawn," .. table.concat({
+						tag, tostring(r.sector), tostring(r.winner), tostring(r.depth),
+						tostring(r.order), tostring(r.class), tostring(r.resource),
+						num(r.source_x), num(r.source_y), num(r.source_z),
+						r.can_place and "1" or "0", num(r.spawn_x), num(r.spawn_y),
+						r.spawn_from_reveal and "1" or "0",
+						r.already_placed and "1" or "0",
+					}, ","))
+				end
 			end
 			-- Native-source manifest (what migration actually delivered), emitted so the
 			-- comparison can prove nothing was destroyed after transfer.

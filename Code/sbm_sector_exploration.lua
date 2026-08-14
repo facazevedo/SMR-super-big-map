@@ -1139,8 +1139,109 @@ end
 -- prevents a deferred underground map or a second map slot from consuming the surface selection.
 local pending_vanilla_start_by_map = setmetatable({}, { __mode = "k" })
 
+-- ---------------------------------------------------------------------------------------
+-- STAGED NATIVE START SPAWNS.
+-- Vanilla's InitialExplore scans EVERY sector InitialReveal returns, and a scan of an
+-- unexplored sector places exactly three lists, in this order: markers.block, then
+-- markers.surface with InitialReveal's precomputed spawn positions, then markers.subsurface
+-- (MapSector:Scan, Exploration.lua:234-258; markers.deep needs a deep scan or a BlueSun probe
+-- and stays in the ground). Those lists are InitSector's own enumeration of the sector area,
+-- split by GetDepthClass.
+-- Every one of those decisions is taken on NATIVE terrain: CanPlaceDeposit tests passability,
+-- obstruction and neighbouring deposits at the vanilla position, and PlaceDeposit spawns at the
+-- position it returns. Re-deriving them on the stretched destination measurably changes the
+-- answer (v796/v797: metals markers that fail natively succeed stretched, concrete loses its
+-- terrain imprint, water arrives from outside the winner). So record them HERE, while the
+-- native source and its markers are still alive, as PLAIN VALUES that survive the source unload:
+-- the marker's native source stamp (its identity on the destination), its depth class, its
+-- order inside vanilla's list, and the native spawn position vanilla would have used.
+-- The destination replays exactly this staged set; it must never re-decide membership or
+-- placeability from stretched geometry.
+-- ---------------------------------------------------------------------------------------
+local function StageNativeStartSpawns(map, revealed, spawn_positions)
+	if type(map.MapForEach) ~= "function" then return nil, "map enumeration unavailable" end
+	local staged = {}
+	local stats = {
+		sectors = #revealed, markers = 0, placeable = 0,
+		block = 0, surface = 0, subsurface = 0, deep = 0,
+	}
+	for wi = 1, #revealed do
+		local sec = revealed[wi]
+		if not (sec and sec.area) then return nil, "revealed start sector without an area" end
+		local lists = { block = {}, surface = {}, subsurface = {} }
+		local deep_seen = 0
+		pcall(map.MapForEach, map, sec.area, "DepositMarker", function(marker)
+			if type(marker.GetDepthClass) ~= "function" then return end
+			local ok_depth, depth = pcall(marker.GetDepthClass, marker)
+			if not ok_depth then return end
+			local list = lists[depth]
+			if not list then
+				if depth == "deep" then deep_seen = deep_seen + 1 end
+				return
+			end
+			list[#list + 1] = marker
+		end)
+		stats.deep = stats.deep + deep_seen
+		for _, depth in ipairs({ "block", "surface", "subsurface" }) do
+			local list = lists[depth]
+			for i = 1, #list do
+				local marker = list[i]
+				-- Identity for the destination: the immutable native stamp the migrated marker
+				-- carries. Unstamped classes are still on their native map here, so their own
+				-- position IS the native one.
+				local sx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
+				local sy = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
+				local sz = tonumber(rawget(marker, "SuperBigMapNativeSourceZ"))
+				if not (sx and sy) then
+					local ok_pos, px, py, pz = pcall(marker.GetVisualPosXYZ, marker)
+					if ok_pos then
+						sx = sx or tonumber(px)
+						sy = sy or tonumber(py)
+						sz = sz or tonumber(pz)
+					end
+				end
+				if not (sx and sy) then
+					return nil, "native start spawn marker without a source position"
+				end
+				-- Vanilla's own answer for this marker on native terrain. InitialReveal already
+				-- cached it for the surface markers of every eligible sector; ask CanPlaceDeposit
+				-- for the rest, which is exactly what RevealDeposits -> PlaceDeposit evaluates.
+				local spawn = spawn_positions and spawn_positions[marker] or nil
+				local from_reveal = spawn ~= nil
+				if not spawn and type(marker.CanPlaceDeposit) == "function" then
+					local ok_can, value = pcall(marker.CanPlaceDeposit, marker)
+					if ok_can and value then spawn = value end
+				end
+				local spawn_x, spawn_y
+				if spawn and type(spawn.xy) == "function" then
+					local ok_xy, vx, vy = pcall(spawn.xy, spawn)
+					if ok_xy then spawn_x, spawn_y = tonumber(vx), tonumber(vy) end
+				end
+				local record = {
+					sector = tostring(sec.id), winner = wi, depth = depth, order = i,
+					class = tostring(marker.class or "?"),
+					resource = tostring(rawget(marker, "resource") or ""),
+					depth_layer = tonumber(rawget(marker, "depth_layer")),
+					source_x = sx, source_y = sy, source_z = sz,
+					source_hash = rawget(marker, "SuperBigMapNativeSourceHash"),
+					can_place = (spawn_x ~= nil and spawn_y ~= nil) or false,
+					spawn_x = spawn_x, spawn_y = spawn_y,
+					spawn_from_reveal = from_reveal,
+					already_placed = rawget(marker, "is_placed") and true or false,
+				}
+				staged[#staged + 1] = record
+				stats.markers = stats.markers + 1
+				stats[depth] = stats[depth] + 1
+				if record.can_place then stats.placeable = stats.placeable + 1 end
+			end
+		end
+	end
+	return staged, stats
+end
+
 -- Build the virtual vanilla sector list and run vanilla's InitialReveal over it.
--- Returns { winners = { {x0,y0,x1,y1,id}, ... } } or nil + reason.
+-- Returns { winners = { {x0,y0,x1,y1,id}, ... }, staged = { <native spawn records> } }
+-- or nil + reason.
 local function VanillaStartPick(city, map)
 	local State = SuperBigMap.State or {}
 	local box_fn = Global("box")
@@ -1249,9 +1350,21 @@ local function VanillaStartPick(city, map)
 
 	-- Same seeded stream vanilla's InitialExplore would create.
 	local ok_rand, _, trand = pcall(city.CreateMapRand, city, "Exploration")
-	local ok_pick, revealed
+	local ok_pick, revealed, spawn_positions
 	if ok_rand and type(trand) == "function" then
-		ok_pick, revealed = pcall(initial_reveal, eligible, trand)
+		ok_pick, revealed, spawn_positions = pcall(initial_reveal, eligible, trand)
+	end
+	-- Stage vanilla's spawn decisions while the transient 10x10 view is STILL installed:
+	-- CanPlaceDeposit resolves the owning city's sector geometry, so the staged answers must be
+	-- taken under exactly the geometry vanilla's own scan would have used.
+	local staged, staged_stats, staged_error
+	if ok_pick and type(revealed) == "table" and #revealed > 0 then
+		local ok_stage, result, extra = pcall(StageNativeStartSpawns, map, revealed, spawn_positions)
+		if ok_stage and type(result) == "table" then
+			staged, staged_stats = result, extra
+		else
+			staged_error = tostring(ok_stage and extra or result)
+		end
 	end
 	city.MapArea = saved_map_area
 	city.MapSectors = saved_map_sectors
@@ -1271,7 +1384,10 @@ local function VanillaStartPick(city, map)
 		local x1, y1 = mx:xy()
 		winners[#winners + 1] = { x0 = x0, y0 = y0, x1 = x1, y1 = y1, id = sec.id }
 	end
-	return { winners = winners }
+	if type(staged) ~= "table" then
+		error("native start spawn staging failed: " .. tostring(staged_error))
+	end
+	return { winners = winners, staged = staged, staged_stats = staged_stats }
 end
 
 local function CaptureVanillaStartSelection(map)
@@ -1305,6 +1421,20 @@ local function StageVanillaStartSelection(map, selection, reason)
 	map.SuperBigMapVanillaStartSource2Y0 = second and second.y0 or nil
 	map.SuperBigMapVanillaStartSource2X1 = second and second.x1 or nil
 	map.SuperBigMapVanillaStartSource2Y1 = second and second.y1 or nil
+	-- The staged native spawn set travels with the destination map: it is the single source of
+	-- truth for what the initial reveal may spawn, and the parity dump reads it back as evidence.
+	if type(selection.staged) ~= "table" then
+		return false, "native start annotation carries no staged spawn set"
+	end
+	local stats = selection.staged_stats or {}
+	map.SuperBigMapStartStagedSpawns = selection.staged
+	map.SuperBigMapStartStagedCount = #selection.staged
+	map.SuperBigMapStartStagedSectors = stats.sectors
+	map.SuperBigMapStartStagedBlock = stats.block
+	map.SuperBigMapStartStagedSurface = stats.surface
+	map.SuperBigMapStartStagedSubsurface = stats.subsurface
+	map.SuperBigMapStartStagedDeep = stats.deep
+	map.SuperBigMapStartStagedPlaceable = stats.placeable
 	return true
 end
 
