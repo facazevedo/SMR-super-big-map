@@ -624,6 +624,155 @@ PLACE_PROBE_BLOCK = """		-- Trace every deposit placement with a traceback (pari
 		end"""
 
 
+# Opt-in with the "tagorder" argument.  THE second control pin, not a probe (see `passagepin`).
+# Iteration 009's playprobe NAMED b2-01's control race: the only difference between two otherwise
+# identical vanilla processes inside `Proc_FindPrefabPos_Playable` is the ORDER of adjacent calls
+# whose grid arguments are the same set - `pairs(prefab.group_tags)` walking a string-keyed set,
+# and Lua seeding its string hash per process.  `similar_apply`
+# (Lua/RandomMap/RandomMapGenerator.lua:1390-1401) folds one `similar_grids[tag]` per tag into ONE
+# destination with integer `GridMulDivAdd`, and integer rounding does not commute, so two processes
+# compose DIFFERENT candidate grids from identical inputs and `grand` picks a different prefab
+# position.  `Proc_FindPrefabPos_Border` never calls `similar_apply`, which is exactly why
+# iteration 008's boundary #0004 agreed and #0005 diverged.
+# artifacts/b201_tagorder_verdict.md.
+#
+# The pin replaces the process-dependent order with the CANONICAL (sorted) one, which every process
+# can derive identically - so unlike a captured value this needs no capture/inject channel; the same
+# canonicalization installed on both twins makes them agree by construction.  `similar_apply` is a
+# local closure and cannot be patched, so the seam is the global `pairs`: the block snapshots every
+# `group_tags` table reachable from `PrefabMarkers`, and `pairs` returns a sorted stateless iterator
+# for EXACTLY those tables while forwarding every other call to the original.  A sorted walk is an
+# order vanilla itself can produce, so the control stays a valid vanilla map; what stops being valid
+# is only its dependence on this process's string-hash seed.
+#
+# Written into the generator's own lookup path as well as `_G` (same caution as the raster pin: a
+# private function environment would make a `_G`-only write verify and do nothing), and the runtime
+# hit counter is read back after the run so a silently inert pin fails loudly instead of producing a
+# control that merely looks pinned.  The wrapper is deliberately NEVER uninstalled: restoring it at
+# some point during the run would itself be a timing-dependent input.
+TAG_ORDER_PIN_BLOCK = """		do
+			local orig_pairs = rawget(_G, "pairs")
+			local orig_next = rawget(_G, "next")
+			if type(orig_pairs) ~= "function" or type(orig_next) ~= "function" then
+				error("pairs/next unavailable; cannot canonicalize prefab group-tag order")
+			end
+			local canon = {}
+			local hits = 0
+			g_ParityTagOrderPin = "installing"
+			g_ParityTagOrderTables = 0
+			g_ParityTagOrderMulti = 0
+			g_ParityTagOrderRefresh = 0
+			g_ParityTagOrderHits = 0
+			g_ParityTagOrderEnvs = 0
+
+			-- Total order over keys of any type, so table.sort can never see an inconsistent
+			-- comparator (tags are strings; the rest is belt and braces).
+			local function key_less(a, b)
+				local ta, tb = type(a), type(b)
+				if ta ~= tb then return ta < tb end
+				if ta == "number" or ta == "string" then return a < b end
+				return tostring(a) < tostring(b)
+			end
+
+			-- Stateless iterator with the same contract as `next`: (table, control) -> k, v.
+			local function canon_next(t, k)
+				local e = canon[t]
+				if e == nil then return orig_next(t, k) end
+				local nk
+				if k == nil then nk = e.first else nk = e.nxt[k] end
+				if nk == nil then return nil end
+				return nk, t[nk]
+			end
+
+			local pairs_wrapper = function(t, ...)
+				if canon[t] ~= nil then
+					hits = hits + 1
+					return canon_next, t, nil
+				end
+				return orig_pairs(t, ...)
+			end
+
+			-- Snapshot the tag sets.  Rebuilt from scratch on every refresh so a prefab list
+			-- reloaded between maps cannot leave a stale order behind.
+			local function refresh(reason)
+				local list = rawget(_G, "PrefabMarkers")
+				if type(list) ~= "table" then
+					g_ParityTagOrderPin = "no PrefabMarkers at " .. tostring(reason)
+					return
+				end
+				local fresh, tables, multi = {}, 0, 0
+				for i = 1, #list do
+					local m = list[i]
+					local gt = type(m) == "table" and rawget(m, "group_tags") or nil
+					if type(gt) == "table" and fresh[gt] == nil then
+						local keys = {}
+						for key in orig_next, gt do keys[#keys + 1] = key end
+						table.sort(keys, key_less)
+						local nxt = {}
+						for j = 1, #keys - 1 do nxt[keys[j]] = keys[j + 1] end
+						fresh[gt] = {first = keys[1], nxt = nxt}
+						tables = tables + 1
+						if #keys >= 2 then multi = multi + 1 end
+					end
+				end
+				canon = fresh
+				g_ParityTagOrderTables = tables
+				g_ParityTagOrderMulti = multi
+				g_ParityTagOrderRefresh = (rawget(_G, "g_ParityTagOrderRefresh") or 0) + 1
+				g_ParityTagOrderPin = "installed"
+			end
+
+			-- Install on every table the generator's own name lookup can reach.
+			local gen_class = rawget(_G, "RandomMapGenerator")
+			local body = gen_class and gen_class.DoGenerate
+			local envs, seen = {}, {}
+			local function add(t)
+				if type(t) == "table" and not seen[t] then seen[t] = true; envs[#envs + 1] = t end
+			end
+			add(rawget(_G, "_G"))
+			add(_G)
+			if type(body) == "function" and type(getfenv) == "function" then
+				local ok_env, env = pcall(getfenv, body)
+				if ok_env and type(env) == "table" then
+					add(env)
+					local mt = getmetatable(env)
+					local idx = mt and rawget(mt, "__index")
+					if type(idx) == "table" then add(idx) end
+				end
+			end
+			for i = 1, #envs do envs[i].pairs = pairs_wrapper end
+			g_ParityTagOrderEnvs = #envs
+
+			-- Verify through the generator's own lookup path, not ours.
+			if type(body) == "function" and type(getfenv) == "function" then
+				local ok_env, env = pcall(getfenv, body)
+				if ok_env and type(env) == "table" then
+					local ok_p, p = pcall(function() return env.pairs end)
+					if not ok_p or p ~= pairs_wrapper then
+						error("group-tag order pin did not reach the generator's own environment")
+					end
+				end
+			end
+			if rawget(_G, "pairs") ~= pairs_wrapper then
+				error("group-tag order pin not installed on _G")
+			end
+
+			refresh("install")
+
+			-- The prefab list is loaded from assets, so re-snapshot at each map's generation
+			-- entry point (class-method shadow: engine callers see it, per the fxprobe result).
+			if type(body) == "function" then
+				gen_class.DoGenerate = function(self, map, ...)
+					refresh("dogenerate")
+					local a, b, c = body(self, map, ...)
+					-- Published per map so the counter is final before the dump is scored.
+					g_ParityTagOrderHits = hits
+					return a, b, c
+				end
+			end
+		end"""
+
+
 SERIAL_RASTER_BLOCK = """		-- Serialize stock prefab rasterization for this control.
 		--
 		-- The value MUST be written into the table the generator's own compiled body reads.
@@ -3074,7 +3223,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
-             anom_probe=False, place_probe=False, play_probe=False):
+             anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -3106,6 +3255,10 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     extras = []
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
+    # Before every probe and before the passage pin: it shadows `pairs` and DoGenerate, and a
+    # probe that shadows DoGenerate too must wrap the pinned one, not the other way round.
+    if tag_order_pin:
+        extras.append(TAG_ORDER_PIN_BLOCK)
     if place_probe:
         extras.append(PLACE_PROBE_BLOCK)
     # Before the probes, so a probe that wraps the same globals observes the pinned call.
@@ -3235,6 +3388,34 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 f"vanilla underground pin not honoured ({tag}): holder seed "
                 f"{underground_seed} != pin {int(pin_seed)}"
             )
+
+        tag_order = None
+        if tag_order_pin:
+            # A silently inert canonicalization would produce a racing control that still looks
+            # pinned, so read the counters back and fail the twin unless the pin installed and
+            # actually snapshotted tag sets.
+            _, to_status = cli.marshal_value(client, "g_ParityTagOrderPin", timeout=60.0)
+            _, to_tables = cli.marshal_value(client, "g_ParityTagOrderTables", timeout=60.0)
+            _, to_multi = cli.marshal_value(client, "g_ParityTagOrderMulti", timeout=60.0)
+            _, to_hits = cli.marshal_value(client, "g_ParityTagOrderHits", timeout=60.0)
+            _, to_refresh = cli.marshal_value(client, "g_ParityTagOrderRefresh", timeout=60.0)
+            _, to_envs = cli.marshal_value(client, "g_ParityTagOrderEnvs", timeout=60.0)
+            tag_order = {
+                "status": to_status, "tables": to_tables, "multi_tag": to_multi,
+                "hits": to_hits, "refreshes": to_refresh, "envs": to_envs,
+            }
+            if to_status != "installed" or not to_tables:
+                raise RuntimeError(
+                    f"group-tag order pin not established ({tag}): {tag_order}"
+                )
+            log(f"  group-tag order pin: tables={to_tables} multi_tag={to_multi} "
+                f"iterations={to_hits} refreshes={to_refresh} envs={to_envs}")
+            # Zero hits means no prefab tag set was walked through the pinned `pairs` at all, i.e.
+            # nothing was canonicalized - the run is NOT pinned against this input.  Loud, but not
+            # fatal: a preset with prefab grouping disabled legitimately never reaches the fold.
+            if not to_hits:
+                log(f"  TAGORDER WARNING ({tag}): the pinned pairs was never used by a prefab "
+                    f"group-tag walk; this run is not canonicalized")
 
         pin_around, pin_passable, pin_calls = None, None, None
         if passage_pin:
@@ -3474,6 +3655,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "passage_pin_around": pin_around,
             "passage_pin_passable": pin_passable,
             "passage_pin_calls": pin_calls,
+            "tag_order_pin": tag_order,
             "rows": rows,
             "csv": str(csv_path),
             "hexgrid": str(hex_path) if hexgrid else None,
@@ -3511,6 +3693,7 @@ def main():
         passprobe = "passprobe" in sys.argv[5:]
         drawprobe = "drawprobe" in sys.argv[5:]
         passagepin = "passagepin" in sys.argv[5:]
+        tagorder = "tagorder" in sys.argv[5:]
         pointprobe = "pointprobe" in sys.argv[5:]
         fieldprobe = "fieldprobe" in sys.argv[5:]
         slotprobe = "slotprobe" in sys.argv[5:]
@@ -3529,6 +3712,7 @@ def main():
             f"fx_probe={fxprobe} pit_probe={pitprobe} decor_probe={decorprobe} "
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
             f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
+            f"tag_order_pin={tagorder} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
             f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
             f"lat={lat} lon={lon} ===")
@@ -3538,7 +3722,8 @@ def main():
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
                         point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
-                        anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe)
+                        anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe,
+                        tag_order_pin=tagorder)
         log(f"result: {json.dumps(info)}")
         return
 
