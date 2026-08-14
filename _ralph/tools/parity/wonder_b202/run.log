@@ -1,0 +1,24 @@
+[08:26:35] === vanilla twin at lat=2520 lon=-1680 ===
+[08:26:59]   twin failed rc=1
+    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+    ...<5 lines>...
+                    tag_order_pin=tagorder, save_as=save_as,
+                    keep_alive=keepalive)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3527, in run_twin
+    raise RuntimeError(f"generation failed ({tag}): {detail}")
+RuntimeError: generation failed (wonV): CommonLua/Core/map.lua:759: attempt to index a nil value (local 'SuspendPassEditsReasons')
+stack traceback:
+	CommonLua/Core/map.lua:759: in method 'ResumePassEdits'
+	Lua/RandomMap/RandomMapGenerator.lua:2398: in local 'func'
+	Lua/RandomMap/RandomMapGenerator.lua:1122: in local 'ProcInvoke'
+	Lua/RandomMap/RandomMapGenerator.lua:2851: in method 'DoGenerate'
+	Lua/RandomMap/RandomMapGenerator.lua:922: in function 'RandomMapGenerate'
+	Lua/RandomMap/RandomMapGenerator.lua:813: in method 'Generate'
+	Lua/UI/PreGameMenus.lua:266: in upvalue 'GenRndMap'
+	Lua/UI/PreGameMenus.lua:270: in function 'GenerateRandomMap'
+	Lua/UI/PreGameMenus.lua:287: in function 'GenerateCurrentRandomMap'
+	...S/SMR/super-big-map/_ralph/tools/parity/out/gen-wonV.lua:240: in function <...S/SMR/super-big-map/_ralph/tools/parity/out/gen-wonV.lua:21>
+	[C]: in function 'xpcall'
+	...S/SMR/super-big-map/_ralph/tools/parity/out/gen-wonV.lua:21: in function <...S/SMR/super-big-map/_ralph/tools/parity/out/gen-wonV.lua:20>
+

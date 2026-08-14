@@ -1,0 +1,48 @@
+[08:57:02] === twin 'pv02' expand=False seed=4740483604589633956 pin=4740483604589633956 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True tag_order_pin=False point_probe=False field_probe=False slot_probe=False anom_probe=False play_probe=False hexgrid=False save_as=None lat=2520 lon=-1680 ===
+[08:57:02] spawned MarsDebug.exe pid=54496 (pv02), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-pv02.log
+[08:57:02] connecting DAP (pv02)...
+[08:57:12] harness ready (pv02)
+[08:57:12] generation started (pv02): parity_thread_started {
+	metatable = table: 000001CDF3324780 [1]
+}
+[08:57:12]   gen-pv02: initializing  (+0s)
+[08:57:24]   gen-pv02: generating  (+11s)
+[08:57:54]   gen-pv02: complete  (+41s)
+[08:57:54] generation complete (pv02)
+[08:57:54]   surface seed=-8686087843927525788  underground seed=4740483604589633956
+[08:57:54]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[08:57:54]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000001CDF4BF53F8 pin=function: 000001CDF4BF53F8
+[08:57:54]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-pv02.log
+[08:57:59]   pass probe: surface=4920 underground=6224 ring_scale=1.0 rows=11145
+[08:57:59]   dump-pv02: running  (+0s)
+[08:58:03]   dump-pv02: complete  (+4s)
+[08:58:03] dump complete (pv02): 11144 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-pv02.csv
+[08:58:03]   raster const tables patched: 1
+[08:58:03]   raster div before: 8
+[08:58:03]   raster div seen by generator: 1
+[08:58:05] result: {"tag": "pv02", "expand": false, "surface_seed": -8686087843927525788, "underground_seed": 4740483604589633956, "underground_pin": 4740483604589633956, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000001CDF4BF53F8 pin=function: 000001CDF4BF53F8"], "tag_order_pin": null, "rows": 11144, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-pv02.csv", "hexgrid": null, "savegame": null}
+[08:58:21] === twin 'px02' expand=True seed=4740483604589633956 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True tag_order_pin=False point_probe=False field_probe=False slot_probe=False anom_probe=False play_probe=False hexgrid=False save_as=None lat=2520 lon=-1680 ===
+[08:58:21] spawned MarsDebug.exe pid=5688 (px02), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-px02.log
+[08:58:21] connecting DAP (px02)...
+[08:58:30] harness ready (px02)
+[08:58:31] generation started (px02): parity_thread_started {
+	metatable = table: 0000025972E24780 [1]
+}
+[08:58:31]   gen-px02: initializing  (+0s)
+[08:58:42]   gen-px02: generating  (+11s)
+[09:00:00]   gen-px02: waiting_surface_stretch  (+89s)
+[09:00:18]   gen-px02: waiting_underground_prepare  (+107s)
+[09:00:22]   gen-px02: complete  (+111s)
+[09:00:22] generation complete (px02)
+[09:00:22]   surface seed=-8686087843927525788  underground seed=4740483604589633956
+[09:00:22]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[09:00:22]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=307200 mod_calls=2 around_global=function: 00000259748273A0 pin=function: 00000259748273A0
+[09:00:22]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-px02.log
+[09:00:28]   pass probe: surface=5520 underground=7064 ring_scale=1.3333333333333 rows=12585
+[09:00:28]   dump-px02: running  (+0s)
+[09:00:32]   dump-px02: complete  (+4s)
+[09:00:32] dump complete (px02): 12584 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-px02.csv
+[09:00:32]   raster const tables patched: 1
+[09:00:32]   raster div before: 8
+[09:00:32]   raster div seen by generator: 1
+[09:00:34] result: {"tag": "px02", "expand": true, "surface_seed": -8686087843927525788, "underground_seed": 4740483604589633956, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=307200 mod_calls=2 around_global=function: 00000259748273A0 pin=function: 00000259748273A0"], "tag_order_pin": null, "rows": 12584, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-px02.csv", "hexgrid": null, "savegame": null}

@@ -1,0 +1,25 @@
+[10:15:43] === twin 'zq02' expand=False seed=4740483604589633956 pin=4740483604589633956 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True tag_order_pin=False point_probe=False field_probe=False slot_probe=False anom_probe=False play_probe=False hexgrid=False save_as=None lat=2520 lon=-1680 ===
+[10:15:43] spawned MarsDebug.exe pid=49788 (zq02), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-zq02.log
+[10:15:43] connecting DAP (zq02)...
+[10:15:53] harness ready (zq02)
+[10:15:53] generation started (zq02): parity_thread_started {
+	metatable = table: 000001B6ED2C4780 [1]
+}
+[10:15:53]   gen-zq02: initializing  (+0s)
+[10:16:04]   gen-zq02: generating  (+10s)
+[10:16:35]   gen-zq02: complete  (+41s)
+[10:16:35] generation complete (zq02)
+[10:16:35]   surface seed=-8686087843927525788  underground seed=4740483604589633956
+[10:16:35]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[10:16:35]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000001B6EEC12128 pin=function: 000001B6EEC12128
+[10:16:35]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-zq02.log
+[10:16:35]   zones probe failed to load: lua error loading D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\zonesprobe-zq02.lua: SMR_LOAD_ERR: ...uper-big-map/_ralph/tools/parity/out/zonesprobe-zq02.lua:40: syntax error near 'and' {
+	metatable = table: 000001B6ED2C4780 [1]
+}
+[10:16:35]   dump-zq02: running  (+0s)
+[10:16:39]   dump-zq02: complete  (+4s)
+[10:16:39] dump complete (zq02): 11144 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-zq02.csv
+[10:16:39]   raster const tables patched: 1
+[10:16:39]   raster div before: 8
+[10:16:39]   raster div seen by generator: 1
+[10:16:41] result: {"tag": "zq02", "expand": false, "surface_seed": -8686087843927525788, "underground_seed": 4740483604589633956, "underground_pin": 4740483604589633956, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000001B6EEC12128 pin=function: 000001B6EEC12128"], "tag_order_pin": null, "rows": 11144, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-zq02.csv", "hexgrid": null, "savegame": null}

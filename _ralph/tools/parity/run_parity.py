@@ -3220,7 +3220,8 @@ ANOM_PROBE_BLOCK = """		do
 		end"""
 
 
-def dump_and_census(client, tag, hexgrid):
+def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
+                    pass_probe_all=False, zones_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
 
     Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
@@ -3232,6 +3233,85 @@ def dump_and_census(client, tag, hexgrid):
     dump_src = dump_src.replace("__OUT_PATH__", cli.lua_path(csv_path))
     dump_path = OUT / f"dump-{tag}.lua"
     dump_path.write_text(dump_src, encoding="utf-8")
+
+    if zones_probe:
+        probe_src = (HERE / "height_dump_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__OUT_BASE__", cli.lua_path(OUT / f"height-{tag}"))
+        probe_path = OUT / f"zonesprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  zones probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityZonesStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityZonesInfo", timeout=60.0)
+                        log(f"  zones probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityZonesError", timeout=60.0)
+                        log(f"  zones probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if pass_probe_all:
+        probe_src = (HERE / "pass_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__RING_SCALE__", repr(float(ring_scale)))
+        probe_src = probe_src.replace("__OUT_PATH__", cli.lua_path(OUT / f"pass-{tag}.csv"))
+        probe_path = OUT / f"passprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  pass probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPassStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityPassInfo", timeout=60.0)
+                        log(f"  pass probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityPassError", timeout=60.0)
+                        log(f"  pass probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if wonder_probe:
+        # Runs in the same post-generation window as the dump, with the game alive.
+        probe_src = (HERE / "wonder_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__RING_SCALE__", repr(float(ring_scale)))
+        probe_src = probe_src.replace("__OUT_PATH__", cli.lua_path(OUT / f"rings-{tag}.csv"))
+        probe_src = probe_src.replace("__SHOT_PATH__", cli.lua_path(OUT / f"wonder-{tag}.png"))
+        probe_path = OUT / f"wonderprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, pprose = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  wonder probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 900
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityWonderStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityWonderInfo", timeout=60.0)
+                        log(f"  wonder probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityWonderError", timeout=60.0)
+                        log(f"  wonder probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
 
     load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
     if load_err:
@@ -3375,7 +3455,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
-             save_as=None):
+             save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -3745,7 +3825,10 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
 
         # Temporary determinism diagnostics: prove the serial pin reached the table the
         # generator's own compiled body reads, instead of a shadowed ambient `const`.
-        rows, csv_path, hex_path = dump_and_census(client, tag, hexgrid)
+        rows, csv_path, hex_path = dump_and_census(
+            client, tag, hexgrid, wonder_probe=wonder_probe,
+            ring_scale=(8192.0 / 6144.0) if expand else 1.0,
+            pass_probe_all=pass_probe_all, zones_probe=zones_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -3784,15 +3867,21 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         }
     finally:
         time.sleep(2)
-        try:
-            proc.terminate()
-            proc.wait(timeout=20)
-        except Exception:
+        if keep_alive:
+            # Leave the finished game running so a follow-up probe can attach to the
+            # generated map. The CALLER owns teardown from here.
+            log(f"keepalive: leaving MarsDebug pid={proc.pid} running for the probe")
+            lf.close()
+        else:
             try:
-                proc.kill()
+                proc.terminate()
+                proc.wait(timeout=20)
             except Exception:
-                pass
-        lf.close()
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            lf.close()
 
 
 def main():
@@ -3821,6 +3910,10 @@ def main():
         slotprobe = "slotprobe" in sys.argv[5:]
         anomprobe = "anomprobe" in sys.argv[5:]
         placeprobe = "placeprobe" in sys.argv[5:]
+        keepalive = "keepalive" in sys.argv[5:]
+        wonderprobe = "wonderprobe" in sys.argv[5:]
+        passall = "passall" in sys.argv[5:]
+        zonesprobe = "zonesprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -3851,7 +3944,9 @@ def main():
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
                         point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
                         anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe,
-                        tag_order_pin=tagorder, save_as=save_as)
+                        tag_order_pin=tagorder, save_as=save_as,
+                        keep_alive=keepalive, wonder_probe=wonderprobe,
+                        pass_probe_all=passall, zones_probe=zonesprobe)
         log(f"result: {json.dumps(info)}")
         return
 

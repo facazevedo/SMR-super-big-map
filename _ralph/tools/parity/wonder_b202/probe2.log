@@ -1,0 +1,48 @@
+[08:41:27] === twin 'wv03' expand=False seed=4740483604589633956 pin=4740483604589633956 serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True tag_order_pin=False point_probe=False field_probe=False slot_probe=False anom_probe=False play_probe=False hexgrid=False save_as=None lat=2520 lon=-1680 ===
+[08:41:27] spawned MarsDebug.exe pid=8728 (wv03), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-wv03.log
+[08:41:27] connecting DAP (wv03)...
+[08:41:37] harness ready (wv03)
+[08:41:37] generation started (wv03): parity_thread_started {
+	metatable = table: 000002A343514780 [1]
+}
+[08:41:37]   gen-wv03: initializing  (+0s)
+[08:41:48]   gen-wv03: generating  (+10s)
+[08:42:18]   gen-wv03: complete  (+41s)
+[08:42:18] generation complete (wv03)
+[08:42:18]   surface seed=-8686087843927525788  underground seed=4740483604589633956
+[08:42:18]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[08:42:18]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000002A344B38880 pin=function: 000002A344B38880
+[08:42:18]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-wv03.log
+[08:42:28]   wonder probe: wonder=AncientArtifact pos=(281000,211304,10000) ring_scale=1.0 camera=(292000, 222304, 19500)->(281000, 211304, 10500) wonders=2 rows=721 shot=ok
+[08:42:28]   dump-wv03: running  (+0s)
+[08:42:32]   dump-wv03: complete  (+4s)
+[08:42:32] dump complete (wv03): 11146 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-wv03.csv
+[08:42:32]   raster const tables patched: 1
+[08:42:32]   raster div before: 8
+[08:42:32]   raster div seen by generator: 1
+[08:42:34] result: {"tag": "wv03", "expand": false, "surface_seed": -8686087843927525788, "underground_seed": 4740483604589633956, "underground_pin": 4740483604589633956, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=nil mod_calls=nil around_global=function: 000002A344B38880 pin=function: 000002A344B38880"], "tag_order_pin": null, "rows": 11146, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-wv03.csv", "hexgrid": null, "savegame": null}
+[08:42:50] === twin 'wx03' expand=True seed=4740483604589633956 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True tag_order_pin=False point_probe=False field_probe=False slot_probe=False anom_probe=False play_probe=False hexgrid=False save_as=None lat=2520 lon=-1680 ===
+[08:42:50] spawned MarsDebug.exe pid=33976 (wx03), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-wx03.log
+[08:42:50] connecting DAP (wx03)...
+[08:42:59] harness ready (wx03)
+[08:42:59] generation started (wx03): parity_thread_started {
+	metatable = table: 000001F9F1644780 [1]
+}
+[08:42:59]   gen-wx03: initializing  (+0s)
+[08:43:09]   gen-wx03: generating  (+10s)
+[08:44:28]   gen-wx03: waiting_surface_stretch  (+89s)
+[08:44:46]   gen-wx03: waiting_underground_prepare  (+107s)
+[08:44:50]   gen-wx03: complete  (+111s)
+[08:44:50] generation complete (wx03)
+[08:44:50]   surface seed=-8686087843927525788  underground seed=4740483604589633956
+[08:44:50]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[08:44:50]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=307200 mod_calls=2 around_global=function: 000001F9F2EC4600 pin=function: 000001F9F2EC4600
+[08:44:50]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-wx03.log
+[08:45:00]   wonder probe: wonder=AncientArtifact pos=(374667,281739,1000) ring_scale=1.3333333333333 camera=(389334, 296406, 13500)->(374667, 281739, 1500) wonders=2 rows=721 shot=ok
+[08:45:01]   dump-wx03: running  (+0s)
+[08:45:05]   dump-wx03: complete  (+4s)
+[08:45:05] dump complete (wx03): 12586 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-wx03.csv
+[08:45:05]   raster const tables patched: 1
+[08:45:05]   raster div before: 8
+[08:45:05]   raster div seen by generator: 1
+[08:45:07] result: {"tag": "wx03", "expand": true, "surface_seed": -8686087843927525788, "underground_seed": 4740483604589633956, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(240000,348132,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (391375,149875,nil) mod_radius=307200 mod_calls=2 around_global=function: 000001F9F2EC4600 pin=function: 000001F9F2EC4600"], "tag_order_pin": null, "rows": 12586, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-wx03.csv", "hexgrid": null, "savegame": null}

@@ -1,0 +1,34 @@
+[08:27:46] === vanilla twin at lat=2520 lon=-1680 ===
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 47, in __init__
+    self.sock = socket.create_connection((host, port), timeout=connect_timeout)
+                ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\fazevedo\AppData\Local\Programs\Python\Python314\Lib\socket.py", line 870, in create_connection
+    raise exceptions[0]
+  File "C:\Users\fazevedo\AppData\Local\Programs\Python\Python314\Lib\socket.py", line 855, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [WinError 10061] No connection could be made because the target machine actively refused it
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 167, in connect
+    c = DapClient()
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 49, in __init__
+    raise DapClosed(f"connect to {host}:{port} failed: {e}")
+dap.DapClosed: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_wonder_probe.py", line 104, in <module>
+    sys.exit(main())
+             ~~~~^^
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_wonder_probe.py", line 91, in main
+    info = probe_live_game(ring_scale, csv_path, shot_path)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_wonder_probe.py", line 48, in probe_live_game
+    c = dap.connect(retry_timeout=120.0)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 173, in connect
+    raise DapClosed(f"could not connect+handshake: {last}")
+dap.DapClosed: could not connect+handshake: connect to 127.0.0.1:8165 failed: [WinError 10061] No connection could be made because the target machine actively refused it
