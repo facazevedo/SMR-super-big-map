@@ -2659,6 +2659,250 @@ PROC_TRACE_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "playprobe" argument.  Iteration 008 localized b2-01's control
+# race to ONE generator procedure: two identical vanilla processes agree on every boundary up to
+# and including #0004 `FindPrefabPos_Border` (same `rand_state:Last()`) and first disagree at
+# #0005 `FindPrefabPos_Playable`, i.e. they consume a DIFFERENT NUMBER OF DRAWS inside
+# `Proc_FindPrefabPos_Playable` (Lua/RandomMap/RandomMapGenerator.lua:1639-1760) while no object
+# exists yet.  This block names the varying input by tracing that procedure's whole call sequence.
+#
+# It arms only between `ProcStart("FindPrefabPos_Playable")` and its `ProcEnd` on the SURFACE map
+# (both are public class methods; `DoGenerate` tells which map is generating), and records:
+#   * at arm time: `#PrefabMarkers`, `AssetsRevision`, and an ordered digest of every marker's
+#     name/type/radii/weight/revision/version/group tags - which decides outright whether the
+#     prefab set itself differs between the two processes (contract lead 3, async asset load);
+#   * one ordinal-numbered line per call to the globals the procedure uses, with an xxhash
+#     fingerprint of every grid argument taken AFTER the call plus the scalar returns.  The
+#     wrapped set covers the three ways this procedure can diverge:
+#       - grid CONTENT arriving from earlier procedures (equal draw counts do NOT prove equal
+#         grids): `GridDistanceMars`, `GridMinMax`, `GridEquals`, `GridMask`, `GridAnd/Or/Not`;
+#       - prefab list content: `PrefabFilter`;
+#       - the draws themselves: `table.weighted_rand` (trand), `GridStableRandomPosSimple` /
+#         `GridStableRandomPos` (grand), logged with the seed they were handed and the index or
+#         position they returned;
+#       - composition ORDER inside `similar_apply`, which folds one `similar_grids[tag]` per
+#         `pairs(prefab.group_tags)` into the candidate zone with `GridMulDivAdd`: integer
+#         rounding makes that fold order-sensitive, so the same set of sgrid hashes appearing in
+#         a different ORDER between the two runs is a direct signature of hash-order variation.
+#         `Proc_FindPrefabPos_Border` (#0004, which agrees) never calls `similar_apply`.
+# Read-only: it creates nothing, destroys nothing and consumes no map RNG - it only hashes grids
+# and returns every wrapped call's own results unchanged.  Like every wrapper it costs time, so
+# two probed runs landing on the same variant is itself informative rather than a result.
+PLAY_PROBE_BLOCK = """		do
+			local play_lines = {}
+			local play_dropped = 0
+			local function play_log(text)
+				if #play_lines >= 60000 then
+					play_dropped = play_dropped + 1
+					return
+				end
+				play_lines[#play_lines + 1] = tostring(text)
+			end
+			g_ParityPlayProbeStatus = "running"
+
+			local PLAY_PROC = "FindPrefabPos_Playable"
+			local armed = false
+			local ordinal = 0
+			local play_surface = false
+
+			local function ghash(v)
+				if not IsComputeGrid(v) then return nil end
+				local ok, h = pcall(xxhash, v)
+				if ok then return tostring(h) end
+				return "hasherr"
+			end
+
+			local function vdesc(v)
+				local h = ghash(v)
+				if h then return "grid:" .. h end
+				local t = type(v)
+				if t == "table" then
+					local ok, n = pcall(function() return #v end)
+					return "table#" .. (ok and tostring(n) or "?")
+				end
+				if t == "userdata" then
+					-- Points print as point(x,y[,z]); anything whose text carries an address is
+					-- process-varying noise and must never reach the diff.
+					local ok, s = pcall(tostring, v)
+					if ok and not string.find(s, "0x", 1, true) then return s end
+					return "userdata"
+				end
+				if t == "function" or t == "thread" then return t end
+				return tostring(v)
+			end
+
+			-- Grid arguments are hashed AFTER the call, so an in-place op's result is what lands
+			-- in the log; that is the point - the fingerprint of what the procedure actually saw.
+			local function argdesc(n, ...)
+				local parts = {}
+				for i = 1, n do
+					parts[#parts + 1] = string.format("a%d=%s", i, vdesc((select(i, ...))))
+				end
+				return table.concat(parts, " ")
+			end
+
+			local function marker_digest()
+				local list = rawget(_G, "PrefabMarkers")
+				if type(list) ~= "table" then return "nomarkers", -1 end
+				local parts = {}
+				for i = 1, #list do
+					local m = list[i]
+					local tags = {}
+					local gt = type(m) == "table" and rawget(m, "group_tags")
+					if type(gt) == "table" then
+						for tag in pairs(gt) do tags[#tags + 1] = tostring(tag) end
+						table.sort(tags)
+					end
+					parts[#parts + 1] = string.format("%s|%s|%s|%s|%s|%s|%s|%s",
+						tostring(list[m]), tostring(m.type), tostring(m.max_radius),
+						tostring(m.min_radius), tostring(m.weight), tostring(m.revision),
+						tostring(m.version), table.concat(tags, ","))
+				end
+				local ok, h = pcall(xxhash, table.concat(parts, ";"))
+				return ok and tostring(h) or "hasherr", #list
+			end
+
+			local function list_digest(res)
+				if type(res) ~= "table" then return tostring(res), -1 end
+				local list = rawget(_G, "PrefabMarkers")
+				local parts = {}
+				for i = 1, #res do
+					local m = res[i]
+					local name = type(list) == "table" and list[m] or nil
+					parts[#parts + 1] = tostring(name or (type(m) == "table" and m.type) or m)
+				end
+				local ok, h = pcall(xxhash, table.concat(parts, ";"))
+				return ok and tostring(h) or "hasherr", #res
+			end
+
+			local wrapped = {}
+			local function wrap_global(name)
+				local saved = rawget(_G, name)
+				if type(saved) ~= "function" then
+					play_log("MISSING global " .. name)
+					return
+				end
+				wrapped[#wrapped + 1] = {name = name, fn = saved}
+				_G[name] = function(...)
+					if not armed then return saved(...) end
+					local n = select("#", ...)
+					local r1, r2, r3, r4 = saved(...)
+					ordinal = ordinal + 1
+					play_log(string.format("#%05d %-26s %s -> %s %s %s %s", ordinal, name,
+						argdesc(n, ...), vdesc(r1), vdesc(r2), vdesc(r3), vdesc(r4)))
+					return r1, r2, r3, r4
+				end
+			end
+
+			for _, name in ipairs{
+				"GridDistanceMars", "GridMinMax", "GridEquals", "GridMask", "GridAnd", "GridOr",
+				"GridNot", "GridMulDivAdd", "GridMulAddScaled", "GridCircleSet", "GridCircleMax",
+				"GridStableRandomPosSimple", "GridStableRandomPos",
+			} do
+				wrap_global(name)
+			end
+
+			-- PrefabFilter returns the candidate list itself; log its digest, not its address.
+			local saved_filter = rawget(_G, "PrefabFilter")
+			if type(saved_filter) ~= "function" then
+				play_log("MISSING global PrefabFilter")
+			else
+				wrapped[#wrapped + 1] = {name = "PrefabFilter", fn = saved_filter}
+				_G.PrefabFilter = function(...)
+					if not armed then return saved_filter(...) end
+					local res = saved_filter(...)
+					local h, n = list_digest(res)
+					ordinal = ordinal + 1
+					play_log(string.format("#%05d %-26s n=%s digest=%s", ordinal,
+						"PrefabFilter:result", tostring(n), h))
+					return res
+				end
+			end
+
+			-- trand's weighted pick: the seed it was handed and the index it returned decide the
+			-- whole loop, so a divergence here with an equal candidate digest is a rand-stream
+			-- shift, and one with a differing digest is a list-content difference.
+			local saved_wrand = table.weighted_rand
+			if type(saved_wrand) == "function" then
+				table.weighted_rand = function(tbl, calc_weight, seed, ...)
+					if not armed then return saved_wrand(tbl, calc_weight, seed, ...) end
+					local res, idx = saved_wrand(tbl, calc_weight, seed, ...)
+					local h, n = list_digest(tbl)
+					local list = rawget(_G, "PrefabMarkers")
+					local picked = type(list) == "table" and list[res] or nil
+					ordinal = ordinal + 1
+					play_log(string.format("#%05d %-26s n=%s digest=%s seed=%s -> idx=%s name=%s",
+						ordinal, "table.weighted_rand", tostring(n), h, tostring(seed),
+						tostring(idx), tostring(picked)))
+					return res, idx
+				end
+			else
+				play_log("MISSING table.weighted_rand")
+			end
+
+			local gen_class = rawget(_G, "RandomMapGenerator")
+			if type(gen_class) ~= "table" then
+				error("RandomMapGenerator class unavailable for the playable-procedure probe")
+			end
+			local saved_start, saved_end = gen_class.ProcStart, gen_class.ProcEnd
+			local saved_do = gen_class.DoGenerate
+			if type(saved_start) ~= "function" or type(saved_end) ~= "function"
+				or type(saved_do) ~= "function" then
+				error("generator procedure boundary API unavailable for the playable-procedure probe")
+			end
+
+			gen_class.ProcStart = function(self, tag, ...)
+				if play_surface and tag == PLAY_PROC then
+					local digest, count = marker_digest()
+					local rs = "unavailable"
+					pcall(function() rs = tostring(self.rand_state:Last()) end)
+					play_log(string.format(
+						"ARM proc=%s prefab_markers=%s assets_revision=%s marker_digest=%s rand_last=%s",
+						tag, tostring(count), tostring(rawget(_G, "AssetsRevision")), digest, rs))
+					armed = true
+				end
+				return saved_start(self, tag, ...)
+			end
+			gen_class.ProcEnd = function(self, tag, ...)
+				if armed and tag == PLAY_PROC then
+					armed = false
+					local rs = "unavailable"
+					pcall(function() rs = tostring(self.rand_state:Last()) end)
+					play_log(string.format("DISARM proc=%s calls=%d rand_last=%s",
+						tag, ordinal, rs))
+				end
+				return saved_end(self, tag, ...)
+			end
+			gen_class.DoGenerate = function(self, map, ...)
+				local mapdata = type(map) == "table" and map.mapdata or nil
+				local env = type(mapdata) == "table" and mapdata.Environment or "?"
+				play_surface = env ~= "Underground"
+				play_log(string.format("DOGENERATE env=%s surface=%s seed=%s", tostring(env),
+					tostring(play_surface), tostring(type(self) == "table" and self.Seed or "?")))
+				local a, b, c = saved_do(self, map, ...)
+				play_surface = false
+				armed = false
+				return a, b, c
+			end
+
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					if status == "complete" or status == "error" then break end
+					Sleep(300)
+				end
+				armed = false
+				gen_class.ProcStart, gen_class.ProcEnd = saved_start, saved_end
+				gen_class.DoGenerate = saved_do
+				for i = 1, #wrapped do _G[wrapped[i].name] = wrapped[i].fn end
+				if type(saved_wrand) == "function" then table.weighted_rand = saved_wrand end
+				play_log(string.format("SUMMARY calls=%d dropped_lines=%d", ordinal, play_dropped))
+				local werr = AsyncStringToFile("__PLAY_OUT__", table.concat(play_lines, "\\n"))
+				g_ParityPlayProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end)
+		end"""
+
+
 # Diagnostic only, opt-in with the "anomprobe" argument.  Iteration 017 left ONE sweep-01 residue
 # cause unproven: vanilla keeps a `SubsurfaceAnomalyMarker` the expanded twin culls and vice versa,
 # with the same final count on both maps.  Suspected mechanism: `City:InitBreakThroughAnomalies`
@@ -2830,7 +3074,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
-             anom_probe=False, place_probe=False):
+             anom_probe=False, place_probe=False, play_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2927,6 +3171,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if mark_path.exists():
             mark_path.unlink()
         extras.append(MARK_PROBE_BLOCK.replace("__MARK_OUT__", cli.lua_path(mark_path)))
+    play_path = OUT / f"playprobe-{tag}.log"
+    if play_probe:
+        if play_path.exists():
+            play_path.unlink()
+        extras.append(PLAY_PROBE_BLOCK.replace("__PLAY_OUT__", cli.lua_path(play_path)))
     proc_path = OUT / f"proctrace-{tag}.log"
     if proc_trace:
         if proc_path.exists():
@@ -3115,6 +3364,16 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 mark_status = f"unavailable ({exc})"
             log(f"mark probe: {mark_status} -> {mark_path}")
 
+        if play_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                play_status = poll_status(
+                    client, "g_ParityPlayProbeStatus", {"complete"}, set(), 180, f"playprobe-{tag}"
+                )
+            except RuntimeError as exc:
+                play_status = f"unavailable ({exc})"
+            log(f"playable-procedure probe: {play_status} -> {play_path}")
+
         if proc_trace:
             # Diagnostic only: never fail the twin because the probe file lagged.
             try:
@@ -3248,6 +3507,7 @@ def main():
         markprobe = "markprobe" in sys.argv[5:]
         entranceaudit = "entranceaudit" in sys.argv[5:]
         proctrace = "proctrace" in sys.argv[5:]
+        playprobe = "playprobe" in sys.argv[5:]
         passprobe = "passprobe" in sys.argv[5:]
         drawprobe = "drawprobe" in sys.argv[5:]
         passagepin = "passagepin" in sys.argv[5:]
@@ -3270,14 +3530,15 @@ def main():
             f"mark_probe={markprobe} entrance_audit={entranceaudit} proc_trace={proctrace} "
             f"pass_probe={passprobe} draw_probe={drawprobe} passage_pin={passagepin} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
-            f"anom_probe={anomprobe} hexgrid={hexgrid} lat={lat} lon={lon} ===")
+            f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
+            f"lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
                         point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
-                        anom_probe=anomprobe, place_probe=placeprobe)
+                        anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe)
         log(f"result: {json.dumps(info)}")
         return
 
