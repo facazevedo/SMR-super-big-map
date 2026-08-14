@@ -53,6 +53,30 @@ Leads, cheapest first:
 4. Once named, pin it in the CONTROL harness the same way `passagepin` pinned the passage fallback
    (a dedicated fixed-seed stream), and re-prove ten consecutive byte-identical controls.
 
+### The required approach: REPLICATE the varying input, do not merely pin it
+
+The expanded run generates its vanilla source IN THE SAME PROCESS as the expanded map, so
+whatever varying input a vanilla generation reads, the expanded run's source generation reads
+its own instance of it. That is why the expanded source is always A valid vanilla map, and why
+only a SEPARATE vanilla process disagrees.
+
+So the fix is the same shape as the underground seed, which is already solved this way: the
+control DRAWS its underground seed, the harness CAPTURES it, and
+`SuperBigMap.MapGeneration.SetTwinUndergroundSeedForTest` INJECTS it into the expanded run so
+both generate the same underground. Do exactly that for whatever varying input is found:
+
+1. NAME the input (which call, which consumer, which draw ordinal).
+2. CAPTURE its value in the vanilla control run and report it in that run's result.
+3. INJECT the captured value into the expanded twin's SOURCE generation, through a
+   scenario-agnostic test seam beside `SetTwinUndergroundSeedForTest` (production gameplay must
+   keep drawing normally; the seam exists only for the twin harness).
+4. Re-measure: both twins then generate the identical map and the case must be exact zero.
+
+Pinning the control to a fixed value is acceptable ONLY where the same value can also be
+injected into the expanded twin, so the two remain genuinely comparable. A pin that makes the
+control reproducible but leaves the expanded twin drawing its own value is NOT a solution - it
+just moves the mismatch.
+
 A coordinate whose control cannot be pinned is NOT a pass and NOT a silent exclusion: it is a `BLOCKED.md` with the trace naming the exact procedure, at least three distinct pin attempts with evidence, and a statement of what would be required. Every other coordinate must still be proven green.
 
 ## Method (do not redesign the harness)
