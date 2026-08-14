@@ -41,9 +41,26 @@ WHAT IT DOES
    resamples the VANILLA grid bilinearly at the expanded node positions, applies the map's own
    stamped affine, and recomputes the statistic; agreement with the measured Se is reported.
 
+4. C2a - THE PASS-GRID SPACING MODEL (iter 025).  Iter 024 measured that the twins do not
+   evaluate passability on similar lattices: the effective pass cell is `mapsize/PassMapSize`,
+   75 wu on vanilla and 50 wu on the expanded map (= 37.5 SOURCE wu, where an exact similarity
+   needs 100).  This section recomputes each twin's expected verdict by differencing that twin's
+   own BILINEAR height field over its OWN pass cell instead of over height-grid nodes, in two
+   alignments (cell corners on multiples of the cell, and cell centres), and reports:
+     - the threshold that best reproduces that twin's own engine verdicts, in wu per pass cell
+       (absolute) and in wu per 100 wu (normalized by cell size);
+     - whether the model beats the height-node model at reproducing the engine;
+     - how many of the engine's paired diffs it predicts, in the right direction, against how
+       many it invents (false alarms), versus the same numbers for the height-node model.
+   An engine rule that is ABSOLUTE per pass cell would show the same absolute threshold on both
+   twins and would make the expanded map systematically more permissive; a NORMALIZED rule shows
+   the same normalized threshold and can only act near the threshold.  The measurement decides
+   which, per twin, from the engine's own verdicts.
+
 Usage:
   python passcelldiag.py <vanilla_tag> <expanded_tag> <zones_txt|-> <out_json>
                          [--threshold 2400] [--dump-dir DIR] [--quant 2]
+                         [--pass-cell-vanilla 75] [--pass-cell-expanded 50]
 """
 import json
 import math
@@ -62,6 +79,9 @@ TILE = 100
 DEFAULT_OBJ_THRESHOLD = 2400
 QUANT_BAND = 2      # a per-node +-1 rounding can move a two-node difference by at most 2
 PROFILE_LO, PROFILE_HI = 14, 44
+# Measured in iter 024 (`artifacts/pass/passforced_t8_45s82e.json`): mapsize / PassMapSize.
+PASS_CELL_VANILLA = 75.0
+PASS_CELL_EXPANDED = 50.0
 
 
 def load_grid(path):
@@ -104,6 +124,182 @@ def model_expanded_stat(vg, ex_ix, ex_iy, mul, div, add):
             hv = bilinear(vg, (ex_ix + i) * r, (ex_iy + j) * r)
             w[j, i] = math.floor(hv * mul / div) + add
     return int(quad_edge_max(w).max()), int(quad_edge_max(w)[0, 0])
+
+
+def bilinear_vec(g, fx, fy):
+    """Vectorized bilinear sample of the height grid at float NODE coordinates (fx, fy)."""
+    ix = np.clip(np.floor(fx).astype(np.int64), 0, g.shape[1] - 2)
+    iy = np.clip(np.floor(fy).astype(np.int64), 0, g.shape[0] - 2)
+    tx = fx - ix
+    ty = fy - iy
+    return ((1 - tx) * (1 - ty) * g[iy, ix] + tx * (1 - ty) * g[iy, ix + 1]
+            + (1 - tx) * ty * g[iy + 1, ix] + tx * ty * g[iy + 1, ix + 1])
+
+
+def pass_cell_stat(g, x, y, cell, align):
+    """max |dh| over the 4 edges of the PASS cell containing world (x, y), in wu per cell.
+
+    `align` = "corner": cell corners sit on multiples of `cell` (the natural grid a pass map of
+    mapsize/cell cells has).  "center": the same lattice shifted half a cell, i.e. the sample's
+    cell is centred on a multiple of `cell`.  Heights come from the map's own bilinear height
+    field (nodes every 100 wu), which is what `terrain.GetHeight` was validated to be (021).
+    """
+    off = 0.0 if align == "corner" else cell / 2.0
+    px = np.floor((x - off) / cell)
+    py = np.floor((y - off) / cell)
+    x0 = px * cell + off
+    y0 = py * cell + off
+    fx0, fx1 = x0 / TILE, (x0 + cell) / TILE
+    fy0, fy1 = y0 / TILE, (y0 + cell) / TILE
+    h00 = bilinear_vec(g, fx0, fy0)
+    h10 = bilinear_vec(g, fx1, fy0)
+    h01 = bilinear_vec(g, fx0, fy1)
+    h11 = bilinear_vec(g, fx1, fy1)
+    return np.maximum(np.maximum(np.abs(h10 - h00), np.abs(h11 - h01)),
+                      np.maximum(np.abs(h01 - h00), np.abs(h11 - h10)))
+
+
+def sweep_threshold(stat, ps, lo=0.5, hi=90.0, step=0.25):
+    """Threshold on a float statistic minimizing disagreement with the engine's own verdict."""
+    best = None
+    for T in np.arange(lo, hi + step / 2, step):
+        err = int(((stat >= T) & (ps == 1)).sum() + ((stat < T) & (ps == 0)).sum())
+        if best is None or err < best[1]:
+            best = (float(T), err)
+    T, err = best
+    return {"threshold": round(T, 3), "misclassified": err,
+            "misclassified_pct": round(100.0 * err / stat.size, 4) if stat.size else None}
+
+
+def pooled_threshold(sv, pv, se, pe, lo=0.5, hi=90.0, step=0.25):
+    """One rule for BOTH twins: the threshold minimizing total disagreement across them."""
+    best = None
+    n = sv.size + se.size
+    for T in np.arange(lo, hi + step / 2, step):
+        err = int(((sv >= T) & (pv == 1)).sum() + ((sv < T) & (pv == 0)).sum()
+                  + ((se >= T) & (pe == 1)).sum() + ((se < T) & (pe == 0)).sum())
+        if best is None or err < best[1]:
+            best = (float(T), err)
+    T, err = best
+    return {"threshold": round(T, 3), "misclassified": err,
+            "misclassified_pct": round(100.0 * err / n, 4) if n else None}
+
+
+def paired_prediction(sv, se, pv, pe, T):
+    """How a rule `impassable iff stat >= T` reproduces the engine's paired disagreements."""
+    mv = (sv < T).astype(np.int64)          # model verdict, 1 = passable, like the probe's `p`
+    me = (se < T).astype(np.int64)
+    eng_diff = pv != pe
+    mod_diff = mv != me
+    same_dir = eng_diff & mod_diff & ((pv < pe) == (mv < me))
+    return {
+        "pairs": int(sv.size),
+        "engine_diff": int(eng_diff.sum()),
+        "engine_f2t": int((eng_diff & (pv == 0)).sum()),
+        "model_diff": int(mod_diff.sum()),
+        "model_f2t": int((mod_diff & (mv == 0)).sum()),
+        "explained_same_direction": int(same_dir.sum()),
+        "explained_pct": (round(100.0 * int(same_dir.sum()) / int(eng_diff.sum()), 3)
+                          if eng_diff.any() else None),
+        "false_alarms": int((mod_diff & ~eng_diff).sum()),
+        "false_alarm_rate_pct": round(100.0 * int((mod_diff & ~eng_diff).sum())
+                                      / max(1, int((~eng_diff).sum())), 4),
+        "model_reproduces_vanilla_pct": round(100.0 * float((mv == pv).mean()), 3),
+        "model_reproduces_expanded_pct": round(100.0 * float((me == pe).mean()), 3),
+    }
+
+
+def signed_delta_stats(d, quant):
+    if d.size == 0:
+        return None
+    return {"n": int(d.size), "mean": round(float(d.mean()), 3),
+            "median": round(float(np.median(d)), 3),
+            "gt_quant_pct": round(100.0 * float((d > quant).mean()), 3),
+            "lt_neg_quant_pct": round(100.0 * float((d < -quant).mean()), 3),
+            "within_quant_pct": round(100.0 * float((np.abs(d) <= quant).mean()), 3)}
+
+
+def pass_spacing_model(vg, eg, vrows, erows, pairs, cell_v, cell_e, quant, node_T, dump_path):
+    """C2a: each twin judged on ITS OWN pass-cell spacing instead of on height-grid nodes."""
+    def inplay_arrays(rows, g):
+        rr = [r for r in rows if r["inplay"]]
+        x = np.array([r["x"] for r in rr], dtype=np.float64)
+        y = np.array([r["y"] for r in rr], dtype=np.float64)
+        p = np.array([r["p"] for r in rr], dtype=np.int64)
+        ok = (x / TILE < g.shape[1] - 1) & (y / TILE < g.shape[0] - 1)
+        return x[ok], y[ok], p[ok]
+
+    vx, vy, vp = inplay_arrays(vrows, vg)
+    ex, ey, ep = inplay_arrays(erows, eg)
+
+    # The same pairs the gate scores, as arrays.
+    pvx = np.array([v["x"] for v, _ in pairs], dtype=np.float64)
+    pvy = np.array([v["y"] for v, _ in pairs], dtype=np.float64)
+    pex = np.array([e["x"] for _, e in pairs], dtype=np.float64)
+    pey = np.array([e["y"] for _, e in pairs], dtype=np.float64)
+    ppv = np.array([v["p"] for v, _ in pairs], dtype=np.int64)
+    ppe = np.array([e["p"] for _, e in pairs], dtype=np.int64)
+    keep = ((pvx / TILE < vg.shape[1] - 1) & (pvy / TILE < vg.shape[0] - 1)
+            & (pex / TILE < eg.shape[1] - 1) & (pey / TILE < eg.shape[0] - 1))
+    pvx, pvy, pex, pey, ppv, ppe = (a[keep] for a in (pvx, pvy, pex, pey, ppv, ppe))
+
+    out = {
+        "pass_cell_wu": {"vanilla": cell_v, "expanded": cell_e},
+        "pass_cell_in_source_wu": {"vanilla": cell_v, "expanded": round(cell_e * 0.75, 3)},
+        "alignments": {},
+    }
+    best_align = None
+    for align in ("corner", "center"):
+        sv_abs = pass_cell_stat(vg, vx, vy, cell_v, align)
+        se_abs = pass_cell_stat(eg, ex, ey, cell_e, align)
+        sv_n = sv_abs * TILE / cell_v
+        se_n = se_abs * TILE / cell_e
+        rec = {
+            "per_twin_absolute_wu_per_cell": {
+                "vanilla": sweep_threshold(sv_abs, vp),
+                "expanded": sweep_threshold(se_abs, ep),
+            },
+            "per_twin_normalized_wu_per_100wu": {
+                "vanilla": sweep_threshold(sv_n, vp),
+                "expanded": sweep_threshold(se_n, ep),
+            },
+            "pooled_absolute": pooled_threshold(sv_abs, vp, se_abs, ep),
+            "pooled_normalized": pooled_threshold(sv_n, vp, se_n, ep),
+        }
+        # Paired prediction under the pooled NORMALIZED rule (one rule, not per-twin fitted).
+        psv = pass_cell_stat(vg, pvx, pvy, cell_v, align) * TILE / cell_v
+        pse = pass_cell_stat(eg, pex, pey, cell_e, align) * TILE / cell_e
+        T = rec["pooled_normalized"]["threshold"]
+        rec["paired_prediction_pooled_normalized"] = paired_prediction(psv, pse, ppv, ppe, T)
+        rec["paired_prediction_at_node_threshold"] = paired_prediction(psv, pse, ppv, ppe, node_T)
+        eng_diff = ppv != ppe
+        rec["stat_delta_on_diffs"] = signed_delta_stats(psv[eng_diff] - pse[eng_diff], quant)
+        rec["stat_delta_on_matches"] = signed_delta_stats(psv[~eng_diff] - pse[~eng_diff], quant)
+        rec["near_threshold_share_pct"] = round(
+            100.0 * float((np.abs(psv - T) <= 8).mean()), 3)
+        out["alignments"][align] = rec
+        score = (rec["per_twin_normalized_wu_per_100wu"]["vanilla"]["misclassified"]
+                 + rec["per_twin_normalized_wu_per_100wu"]["expanded"]["misclassified"])
+        if best_align is None or score < best_align[1]:
+            best_align = (align, score, psv, pse, eng_diff, T)
+
+    align, _, psv, pse, eng_diff, T = best_align
+    out["best_alignment"] = align
+    if dump_path is not None and int(eng_diff.sum()):
+        sel = np.nonzero(eng_diff)[0]
+        head = ["vx", "vy", "ex", "ey", "vanilla_pass", "expanded_pass",
+                "pass_stat_vanilla_norm", "pass_stat_expanded_norm", "pooled_threshold",
+                "model_vanilla_pass", "model_expanded_pass", "predicts_diff"]
+        lines = [",".join(head)]
+        for i in sel:
+            mv, me = int(psv[i] < T), int(pse[i] < T)
+            lines.append(",".join(str(s) for s in [
+                int(pvx[i]), int(pvy[i]), int(pex[i]), int(pey[i]), int(ppv[i]), int(ppe[i]),
+                round(float(psv[i]), 3), round(float(pse[i]), 3), T, mv, me,
+                1 if mv != me else 0]))
+        Path(dump_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        out["per_diff_cell_csv"] = str(dump_path)
+    return out
 
 
 def measure_threshold(stat, ps):
@@ -152,7 +348,8 @@ def pair_samples(vrows, erows, massifs, obj_threshold):
     return pairs
 
 
-def diagnose(env, vtag, etag, massifs, stamp, obj_threshold, quant, dump_dir):
+def diagnose(env, vtag, etag, massifs, stamp, obj_threshold, quant, dump_dir,
+             cell_v=PASS_CELL_VANILLA, cell_e=PASS_CELL_EXPANDED):
     vg = load_grid(OUT / f"height-{vtag}-{env}.raw")
     eg = load_grid(OUT / f"height-{etag}-{env}.raw")
     vstat, estat = quad_edge_max(vg), quad_edge_max(eg)
@@ -257,6 +454,32 @@ def diagnose(env, vtag, etag, massifs, stamp, obj_threshold, quant, dump_dir):
                 "within_quant_pct": round(100.0 * float((np.abs(arr) <= quant).mean()), 3)}
 
     accounted = sum(n for k, n in classes.items() if k.startswith("crossing_"))
+
+    # C2a: the same scored pairs judged on each twin's OWN pass-cell spacing, plus the
+    # height-node model's paired prediction as the baseline to beat.
+    def node_pair_arrays():
+        sv, se, pv, pe = [], [], [], []
+        for v, e in pairs:
+            vix, viy = v["x"] // TILE, v["y"] // TILE
+            eix, eiy = e["x"] // TILE, e["y"] // TILE
+            if vix >= vstat.shape[1] or viy >= vstat.shape[0]:
+                continue
+            if eix >= estat.shape[1] or eiy >= estat.shape[0]:
+                continue
+            sv.append(vstat[viy, vix])
+            se.append(estat[eiy, eix])
+            pv.append(v["p"])
+            pe.append(e["p"])
+        return (np.array(sv, dtype=np.float64), np.array(se, dtype=np.float64),
+                np.array(pv, dtype=np.int64), np.array(pe, dtype=np.int64))
+
+    nsv, nse, npv, npe = node_pair_arrays()
+    node_baseline = paired_prediction(nsv, nse, npv, npe, T) if nsv.size else None
+    dump_csv = (Path(dump_dir) / f"passcellmodel-{env}-{vtag}-{etag}.csv") if dump_dir else None
+    pass_model = pass_spacing_model(vg, eg, vrows[env], erows[env], pairs,
+                                    cell_v, cell_e, quant, T, dump_csv)
+    pass_model["height_node_model_baseline"] = node_baseline
+
     return {
         "env": env, "scored_pairs": len(pairs), "diff": diff,
         "false_to_true": f2t, "true_to_false": t2f,
@@ -282,6 +505,7 @@ def diagnose(env, vtag, etag, massifs, stamp, obj_threshold, quant, dump_dir):
             "side_of_threshold_agrees_pct": (round(100.0 * model_pred_ok / model_n, 3)
                                              if model_n else None),
         },
+        "pass_spacing_model": pass_model,
         "affine": {"mul": mul, "div": div, "add": add},
         "grids": {"vanilla": list(vg.shape), "expanded": list(eg.shape)},
     }
@@ -296,6 +520,8 @@ def main():
     vtag, etag, zones_txt, out_json = args[:4]
     obj_threshold = int(flags.get("--threshold", DEFAULT_OBJ_THRESHOLD))
     quant = int(flags.get("--quant", QUANT_BAND))
+    cell_v = float(flags.get("--pass-cell-vanilla", PASS_CELL_VANILLA))
+    cell_e = float(flags.get("--pass-cell-expanded", PASS_CELL_EXPANDED))
     dump_dir = flags.get("--dump-dir")
     stamp = {} if zones_txt == "-" else zverdict.read_stamp(zones_txt)
 
@@ -307,7 +533,8 @@ def main():
         massifs = (stamp.get(env) or {}).get("massifs", [])
         result["maps"][env] = diagnose(env, vtag, etag, massifs, stamp.get(env),
                                        obj_threshold, quant,
-                                       dump_dir if dump_dir is not True else None)
+                                       dump_dir if dump_dir is not True else None,
+                                       cell_v, cell_e)
         result["maps"][env]["massifs"] = len(massifs)
     Path(out_json).write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, indent=2))
