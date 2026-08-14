@@ -1,0 +1,97 @@
+[23:08:12] === twin 't10e' expand=True seed=8384283635741179153 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-6600 ===
+[23:08:12] spawned MarsDebug.exe pid=26784 (t10e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-t10e.log
+[23:08:12] connecting DAP (t10e)...
+[23:08:22] harness ready (t10e)
+[23:08:22] generation started (t10e): parity_thread_started {
+	metatable = table: 000002CDD9094780 [1]
+}
+[23:08:22]   gen-t10e: initializing  (+0s)
+[23:08:33]   gen-t10e: generating  (+10s)
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 72, in _recv
+    chunk = self.sock.recv(65536)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 587, in poll_status
+    err, val = cli.marshal_value(client, var, timeout=60.0)
+               ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\cli.py", line 1585, in marshal_value
+    r = c.evaluate(expr, timeout=timeout)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 126, in evaluate
+    return self.request(
+           ~~~~~~~~~~~~^
+        "evaluate", {"expression": expr, "context": "repl"}, timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 120, in request
+    msg = self.read_message(remaining)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 87, in read_message
+    self._recv(deadline)
+    ~~~~~~~~~~^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 76, in _recv
+    raise DapClosed(f"recv failed: {e}")
+dap.DapClosed: recv failed: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3283, in <module>
+    main()
+    ~~~~^^
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3229, in main
+    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+    ...<3 lines>...
+                    point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
+                    anom_probe=anomprobe, place_probe=placeprobe)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 2939, in run_twin
+    status = poll_status(
+        client, "g_ParityStatus", {"complete"}, {"error"}, max_wait, f"gen-{tag}"
+    )
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 601, in poll_status
+    raise RuntimeError(f"{label}: game process died: {e}")
+RuntimeError: gen-t10e: game process died: recv failed: [WinError 10053] An established connection was aborted by the software in your host machine
+[23:08:56] === twin 't04e' expand=True seed=8736761973933965003 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=240 lon=6420 ===
+[23:08:56] spawned MarsDebug.exe pid=42668 (t04e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-t04e.log
+[23:08:56] connecting DAP (t04e)...
+[23:09:06] harness ready (t04e)
+[23:09:06] generation started (t04e): parity_thread_started {
+	metatable = table: 0000029BFBED4780 [1]
+}
+[23:09:06]   gen-t04e: initializing  (+0s)
+[23:09:17]   gen-t04e: generating  (+10s)
+[23:10:31]   gen-t04e: waiting_surface_stretch  (+85s)
+[23:10:49]   gen-t04e: waiting_underground_prepare  (+102s)
+[23:10:53]   gen-t04e: complete  (+106s)
+[23:10:53] generation complete (t04e)
+[23:10:53]   surface seed=648541816952678263  underground seed=8736761973933965003
+[23:10:53]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[23:10:53]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(163500,217366,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (124175,155225,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000029BFD57DCB8 pin=function: 0000029BFD57DCB8
+[23:10:53]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-t04e.log
+[23:10:53]   dump-t04e: running  (+0s)
+[23:10:57]   dump-t04e: complete  (+4s)
+[23:10:57] dump complete (t04e): 13048 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-t04e.csv
+[23:10:59] result: {"tag": "t04e", "expand": true, "surface_seed": 648541816952678263, "underground_seed": 8736761973933965003, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(163500,217366,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (124175,155225,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000029BFD57DCB8 pin=function: 0000029BFD57DCB8"], "rows": 13048, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-t04e.csv", "hexgrid": null}
+[23:11:11] === twin 't07e' expand=True seed=3500499737872786970 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3300 lon=9840 ===
+[23:11:11] spawned MarsDebug.exe pid=48832 (t07e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-t07e.log
+[23:11:11] connecting DAP (t07e)...
+[23:11:21] harness ready (t07e)
+[23:11:21] generation started (t07e): parity_thread_started {
+	metatable = table: 000001B572D74780 [1]
+}
+[23:11:21]   gen-t07e: initializing  (+0s)
+[23:11:31]   gen-t07e: generating  (+10s)
+[23:12:33]   gen-t07e: waiting_surface_stretch  (+71s)
+[23:12:50]   gen-t07e: waiting_underground_prepare  (+89s)
+[23:12:54]   gen-t07e: complete  (+93s)
+[23:12:54] generation complete (t07e)
+[23:12:54]   surface seed=-6266472549667623133  underground seed=3500499737872786970
+[23:12:54]   passage-fallback pin seed=301460102 redirected_around=0 redirected_passable=0
+[23:12:55]   dump-t07e: running  (+0s)
+[23:12:59]   dump-t07e: complete  (+4s)
+[23:12:59] dump complete (t07e): 18372 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-t07e.csv
+[23:13:01] result: {"tag": "t07e", "expand": true, "surface_seed": -6266472549667623133, "underground_seed": 3500499737872786970, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 0, "passage_pin_passable": 0, "passage_pin_calls": [], "rows": 18372, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-t07e.csv", "hexgrid": null}

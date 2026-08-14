@@ -603,6 +603,27 @@ def poll_status(client, var, done_values, error_values, max_wait, label):
     raise RuntimeError(f"{label}: timed out after {max_wait}s (last status {last!r})")
 
 
+PLACE_PROBE_BLOCK = """		-- Trace every deposit placement with a traceback (parity forensics; harness-only).
+		g_ParityPlaceLog = {}
+		do
+			local dm = rawget(_G, "DepositMarker")
+			local base = dm and dm.PlaceDeposit
+			if type(base) == "function" then
+				dm.PlaceDeposit = function(self, depth, spawn_pos, ...)
+					local ok_pos, px, py = pcall(self.GetVisualPosXYZ, self)
+					g_ParityPlaceLog[#g_ParityPlaceLog + 1] = {
+						class = tostring(self.class),
+						x = ok_pos and px or -1, y = ok_pos and py or -1,
+						src_x = tostring(rawget(self, "SuperBigMapNativeSourceX")),
+						src_y = tostring(rawget(self, "SuperBigMapNativeSourceY")),
+						trace = tostring(debug and debug.traceback and debug.traceback("", 2) or "?"),
+					}
+					return base(self, depth, spawn_pos, ...)
+				end
+			end
+		end"""
+
+
 SERIAL_RASTER_BLOCK = """		-- Match the mod's source-capture transaction: stock prefab rasterization launches
 		-- PrefabRasterParallelDiv^2 real-time tasks that share the placement-mark grid used by
 		-- Proc_RemoveOverlappedObjects, so task completion order can pick a different overlap
@@ -2775,7 +2796,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
-             anom_probe=False):
+             anom_probe=False, place_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -2807,6 +2828,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     extras = []
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
+    if place_probe:
+        extras.append(PLACE_PROBE_BLOCK)
     # Before the probes, so a probe that wraps the same globals observes the pinned call.
     if passage_pin:
         extras.append(
@@ -3187,6 +3210,7 @@ def main():
         fieldprobe = "fieldprobe" in sys.argv[5:]
         slotprobe = "slotprobe" in sys.argv[5:]
         anomprobe = "anomprobe" in sys.argv[5:]
+        placeprobe = "placeprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
@@ -3208,7 +3232,7 @@ def main():
                         mark_probe=markprobe, entrance_audit=entranceaudit, proc_trace=proctrace,
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
                         point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
-                        anom_probe=anomprobe)
+                        anom_probe=anomprobe, place_probe=placeprobe)
         log(f"result: {json.dumps(info)}")
         return
 

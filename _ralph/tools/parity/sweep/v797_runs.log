@@ -1,0 +1,146 @@
+[23:04:58] === twin 's10e' expand=True seed=8384283635741179153 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-6600 ===
+[23:04:58] spawned MarsDebug.exe pid=43340 (s10e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-s10e.log
+[23:04:58] connecting DAP (s10e)...
+[23:05:08] harness ready (s10e)
+[23:05:08] generation started (s10e): parity_thread_started {
+	metatable = table: 0000018F50794780 [1]
+}
+[23:05:08]   gen-s10e: initializing  (+0s)
+[23:05:19]   gen-s10e: generating  (+10s)
+[23:06:33]   gen-s10e: waiting_surface_stretch  (+84s)
+[23:06:51]   gen-s10e: waiting_underground_prepare  (+102s)
+[23:06:55]   gen-s10e: complete  (+106s)
+[23:06:55] generation complete (s10e)
+[23:06:55]   surface seed=8251727920312377158  underground seed=8384283635741179153
+[23:06:55]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[23:06:55]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(430500,243346,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (422675,152425,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000018F51F54FA8 pin=function: 0000018F51F54FA8
+[23:06:55]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-s10e.log
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3283, in <module>
+    main()
+    ~~~~^^
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3229, in main
+    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+    ...<3 lines>...
+                    point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
+                    anom_probe=anomprobe, place_probe=placeprobe)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3127, in run_twin
+    raise RuntimeError(f"dump script failed to load: {load_err[2]}")
+RuntimeError: dump script failed to load: lua error loading D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\dump-s10e.lua: SMR_LOAD_ERR: .../SMR/super-big-map/_ralph/tools/parity/out/dump-s10e.lua:243: unfinished string near '"[' {
+	metatable = table: 0000018F50794780 [1]
+}
+[23:07:09] === twin 's04e' expand=True seed=8736761973933965003 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=240 lon=6420 ===
+[23:07:09] spawned MarsDebug.exe pid=49884 (s04e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-s04e.log
+[23:07:09] connecting DAP (s04e)...
+[23:07:20] harness ready (s04e)
+[23:07:20] generation started (s04e): parity_thread_started {
+	metatable = table: 000001A8694A4780 [1]
+}
+[23:07:20]   gen-s04e: initializing  (+0s)
+[23:07:30]   gen-s04e: generating  (+10s)
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 72, in _recv
+    chunk = self.sock.recv(65536)
+ConnectionResetError: [WinError 10054] An existing connection was forcibly closed by the remote host
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 587, in poll_status
+    err, val = cli.marshal_value(client, var, timeout=60.0)
+               ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\cli.py", line 1585, in marshal_value
+    r = c.evaluate(expr, timeout=timeout)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 126, in evaluate
+    return self.request(
+           ~~~~~~~~~~~~^
+        "evaluate", {"expression": expr, "context": "repl"}, timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 120, in request
+    msg = self.read_message(remaining)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 87, in read_message
+    self._recv(deadline)
+    ~~~~~~~~~~^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 76, in _recv
+    raise DapClosed(f"recv failed: {e}")
+dap.DapClosed: recv failed: [WinError 10054] An existing connection was forcibly closed by the remote host
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3283, in <module>
+    main()
+    ~~~~^^
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3229, in main
+    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+    ...<3 lines>...
+                    point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
+                    anom_probe=anomprobe, place_probe=placeprobe)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 2939, in run_twin
+    status = poll_status(
+        client, "g_ParityStatus", {"complete"}, {"error"}, max_wait, f"gen-{tag}"
+    )
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 601, in poll_status
+    raise RuntimeError(f"{label}: game process died: {e}")
+RuntimeError: gen-s04e: game process died: recv failed: [WinError 10054] An existing connection was forcibly closed by the remote host
+[23:08:27] === twin 's07e' expand=True seed=3500499737872786970 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3300 lon=9840 ===
+[23:08:27] spawned MarsDebug.exe pid=48296 (s07e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-s07e.log
+[23:08:27] connecting DAP (s07e)...
+[23:08:31] harness ready (s07e)
+[23:08:31] generation started (s07e): parity_thread_started {
+	metatable = table: 000002CDD9094780 [1]
+}
+[23:08:31]   gen-s07e: initializing  (+0s)
+[23:08:38]   gen-s07e: generating  (+6s)
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 72, in _recv
+    chunk = self.sock.recv(65536)
+ConnectionAbortedError: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 587, in poll_status
+    err, val = cli.marshal_value(client, var, timeout=60.0)
+               ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\cli.py", line 1585, in marshal_value
+    r = c.evaluate(expr, timeout=timeout)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 126, in evaluate
+    return self.request(
+           ~~~~~~~~~~~~^
+        "evaluate", {"expression": expr, "context": "repl"}, timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 120, in request
+    msg = self.read_message(remaining)
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 87, in read_message
+    self._recv(deadline)
+    ~~~~~~~~~~^^^^^^^^^^
+  File "D:\PROJS\SMR\smr-harness\dap.py", line 76, in _recv
+    raise DapClosed(f"recv failed: {e}")
+dap.DapClosed: recv failed: [WinError 10053] An established connection was aborted by the software in your host machine
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3283, in <module>
+    main()
+    ~~~~^^
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 3229, in main
+    info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
+                    pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
+    ...<3 lines>...
+                    point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
+                    anom_probe=anomprobe, place_probe=placeprobe)
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 2939, in run_twin
+    status = poll_status(
+        client, "g_ParityStatus", {"complete"}, {"error"}, max_wait, f"gen-{tag}"
+    )
+  File "D:\PROJS\SMR\super-big-map\_ralph\tools\parity\run_parity.py", line 601, in poll_status
+    raise RuntimeError(f"{label}: game process died: {e}")
+RuntimeError: gen-s07e: game process died: recv failed: [WinError 10053] An established connection was aborted by the software in your host machine

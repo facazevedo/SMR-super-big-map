@@ -233,6 +233,16 @@ CreateRealTimeThread(function()
 			if env == "Underground" and not underground then underground = m end
 		end
 
+		-- Placement trace from the harness placeprobe, when armed.
+		local place_log = rawget(_G, "g_ParityPlaceLog")
+		if type(place_log) == "table" then
+			for pi = 1, #place_log do
+				local e = place_log[pi]
+				emit("#placelog," .. tostring(e.class) .. "," .. tostring(e.x) .. "," .. tostring(e.y)
+					.. "," .. tostring(e.src_x) .. "," .. tostring(e.src_y) .. ","
+					.. (tostring(e.trace):gsub("%s+", " ")))
+			end
+		end
 		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from,root_class,root_x,root_y")
 		dump_map(surface, "surface")
 		dump_map(underground, "underground")
