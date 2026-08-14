@@ -271,6 +271,11 @@ CreateRealTimeThread(function()
 					}
 				else
 					shapes = {
+						-- The engine's OWN accepted write: `marker.lua:776` calls exactly this from
+						-- the `OnPassabilityRebuilding` message to realise a ForcedImpassableMarker.
+						{ "terrain.ClearPassabilityBox(map,box)",
+							function() return terrain_api.ClearPassabilityBox(map, bx) end,
+							has("ClearPassabilityBox") },
 						{ "terrain.SetForcedImpassableBox(map,box,true)",
 							function() return terrain_api.SetForcedImpassableBox(map, bx, true) end,
 							has("SetForcedImpassableBox") },
