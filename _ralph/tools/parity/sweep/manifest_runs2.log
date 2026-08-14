@@ -1,0 +1,42 @@
+[22:10:51] === twin 'n04e' expand=True seed=8736761973933965003 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=240 lon=6420 ===
+[22:10:51] spawned MarsDebug.exe pid=46244 (n04e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-n04e.log
+[22:10:51] connecting DAP (n04e)...
+[22:11:00] harness ready (n04e)
+[22:11:00] generation started (n04e): parity_thread_started {
+	metatable = table: 0000025B57894780 [1]
+}
+[22:11:00]   gen-n04e: initializing  (+0s)
+[22:11:11]   gen-n04e: generating  (+10s)
+[22:12:24]   gen-n04e: waiting_surface_stretch  (+83s)
+[22:12:42]   gen-n04e: waiting_underground_prepare  (+101s)
+[22:12:46]   gen-n04e: complete  (+105s)
+[22:12:46] generation complete (n04e)
+[22:12:46]   surface seed=648541816952678263  underground seed=8736761973933965003
+[22:12:46]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[22:12:46]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(163500,217366,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (124175,155225,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000025B591E3308 pin=function: 0000025B591E3308
+[22:12:46]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-n04e.log
+[22:12:46]   dump-n04e: running  (+0s)
+[22:12:50]   dump-n04e: complete  (+4s)
+[22:12:50] dump complete (n04e): 13043 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-n04e.csv
+[22:12:52] result: {"tag": "n04e", "expand": true, "surface_seed": 648541816952678263, "underground_seed": 8736761973933965003, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(163500,217366,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (124175,155225,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000025B591E3308 pin=function: 0000025B591E3308"], "rows": 13043, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-n04e.csv", "hexgrid": null}
+[22:13:04] === twin 'n10e' expand=True seed=8384283635741179153 pin=None serial_raster=True decal_probe=False camera_probe=False fx_probe=False pit_probe=False decor_probe=False mark_probe=False entrance_audit=False proc_trace=False pass_probe=False draw_probe=False passage_pin=True point_probe=False field_probe=False slot_probe=False anom_probe=False hexgrid=False lat=3060 lon=-6600 ===
+[22:13:04] spawned MarsDebug.exe pid=18948 (n10e), log -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\game-n10e.log
+[22:13:04] connecting DAP (n10e)...
+[22:13:13] harness ready (n10e)
+[22:13:13] generation started (n10e): parity_thread_started {
+	metatable = table: 0000017975674780 [1]
+}
+[22:13:14]   gen-n10e: initializing  (+0s)
+[22:13:24]   gen-n10e: generating  (+10s)
+[22:14:37]   gen-n10e: waiting_surface_stretch  (+83s)
+[22:14:54]   gen-n10e: waiting_underground_prepare  (+100s)
+[22:14:58]   gen-n10e: complete  (+104s)
+[22:14:58] generation complete (n10e)
+[22:14:58]   surface seed=8251727920312377158  underground seed=8384283635741179153
+[22:14:58]   passage-fallback pin seed=301460102 redirected_around=1 redirected_passable=0
+[22:14:58]   pin call #01 around status=generating slot=1 env=Surface size=614400x614400 center=(430500,243346,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (422675,152425,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000017976F2FB98 pin=function: 0000017976F2FB98
+[22:14:58]   passage-fallback pin calls -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\passagepincalls-n10e.log
+[22:14:59]   dump-n10e: running  (+0s)
+[22:15:03]   dump-n10e: complete  (+4s)
+[22:15:03] dump complete (n10e): 21575 objects -> D:\PROJS\SMR\super-big-map\_ralph\tools\parity\out\objects-n10e.csv
+[22:15:05] result: {"tag": "n10e", "expand": true, "surface_seed": 8251727920312377158, "underground_seed": 8384283635741179153, "underground_pin": null, "passage_pin": 301460102, "passage_pin_around": 1, "passage_pin_passable": 0, "passage_pin_calls": ["#01 around status=generating slot=1 env=Surface size=614400x614400 center=(430500,243346,nil) max_radius=nil min_radius=nil filter=nil cursor=415661308->777998755 -> (422675,152425,nil) mod_radius=307200 mod_calls=2 around_global=function: 0000017976F2FB98 pin=function: 0000017976F2FB98"], "rows": 21575, "csv": "D:\\PROJS\\SMR\\super-big-map\\_ralph\\tools\\parity\\out\\objects-n10e.csv", "hexgrid": null}

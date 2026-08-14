@@ -1531,36 +1531,107 @@ local function RevealVanillaStartSectors(map)
 		if not transformed_box then
 			error("stretched start footprint box unavailable")
 		end
-		local seen, pending = 0, {}
-		pcall(map.MapForEach, map, transformed_box, "DepositMarker", function(marker)
+		-- MEMBERSHIP IS DECIDED IN SOURCE SPACE. Vanilla spawned exactly the markers of its
+		-- winner sector; every native marker carries its vanilla position as an immutable stamp,
+		-- and the winner rect is staged in native coordinates. Testing the STRETCHED position
+		-- against the STRETCHED box re-derives that decision through two roundings (the affine
+		-- image and the hex snap) and measurably flips markers near the boundary in both
+		-- directions (b2-04 lost its TerrainDepositConcrete, b2-10 gained a SubsurfaceDepositWater).
+		-- The half-open test matches vanilla's sector membership.
+		local sx0 = tonumber(map.SuperBigMapVanillaStartSourceX0)
+		local sy0 = tonumber(map.SuperBigMapVanillaStartSourceY0)
+		local sx1 = tonumber(map.SuperBigMapVanillaStartSourceX1)
+		local sy1 = tonumber(map.SuperBigMapVanillaStartSourceY1)
+		if not (sx0 and sy0 and sx1 and sy1) then
+			error("vanilla start winner rect unavailable in source coordinates")
+		end
+		local function source_membership(marker)
+			local mx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
+			local my = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
+			if not mx or not my then return nil end
+			return mx >= sx0 and mx < sx1 and my >= sy0 and my < sy1
+		end
+
+		-- (1) The destination start sector's own vanilla Scan ran over a physically
+		-- sector-sized area: a hex-snapped marker can sit inside it while its source was
+		-- OUTSIDE vanilla's winner. Vanilla never spawned those; despawn them before the
+		-- remainder pass so the final spawned set is exactly vanilla's.
+		local despawned = 0
+		local done_object = Global("DoneObject")
+		local is_valid = Global("IsValid")
+		for _, target in ipairs(reveal_targets) do
+			local revealed_lists = { target.revealed_surf, target.revealed_deep }
+			for li = 1, #revealed_lists do
+				local lst = revealed_lists[li]
+				if type(lst) == "table" then
+					for i = #lst, 1, -1 do
+						local marker = lst[i]
+						if marker and source_membership(marker) == false then
+							local obj = rawget(marker, "placed_obj")
+							if obj and type(done_object) == "function"
+								and (type(is_valid) ~= "function" or is_valid(obj)) then
+								pcall(done_object, obj)
+							end
+							marker.placed_obj = false
+							marker.is_placed = false
+							table.remove(lst, i)
+							despawned = despawned + 1
+						end
+					end
+				end
+			end
+		end
+
+		-- (2) Spawn the footprint remainder: every not-yet-placed native marker whose SOURCE
+		-- lies in the winner rect, split by vanilla's own depth classes exactly as
+		-- MapSector:Scan does on a fresh sector - block first, then surface (with the spawn
+		-- positions InitialReveal computed), then subsurface. The old pass spawned only
+		-- depth "surface", so vanilla's subsurface anomalies (SubsurfaceAnomalyMarker is a
+		-- DepositMarker of depth "subsurface") never appeared (b2-07, b2-10).
+		-- The enumeration box is padded: the hex snap can move a source-inside marker's
+		-- final position slightly outside the exact image of the winner rect.
+		local pad = 4000
+		local box_fn2 = Global("box")
+		local search_box = type(box_fn2) == "function"
+			and box_fn2(x0 - pad, y0 - pad, x1 + pad, y1 + pad) or transformed_box
+		local seen, pending = 0, { block = {}, surface = {}, subsurface = {} }
+		pcall(map.MapForEach, map, search_box, "DepositMarker", function(marker)
 			seen = seen + 1
 			if marker.is_placed or type(marker.GetDepthClass) ~= "function" then return end
+			if source_membership(marker) ~= true then return end
 			local ok_depth, depth = pcall(marker.GetDepthClass, marker)
-			if not (ok_depth and depth == "surface") then return end
+			if not ok_depth or not pending[depth] then return end
 			local ok_pos, mx, my = pcall(marker.GetVisualPosXYZ, marker)
 			if not (ok_pos and type(mx) == "number" and type(my) == "number") then return end
-			-- MapForEach's box test is inclusive of the far edge; vanilla's sector membership is
-			-- half-open, so the marker of the next sector must not be adopted here.
-			if mx >= x0 and mx < x1 and my >= y0 and my < y1 then
-				pending[#pending + 1] = { marker = marker, x = mx, y = my }
-			end
+			pending[depth][#pending[depth] + 1] = { marker = marker, x = mx, y = my }
 		end)
 		-- Engine enumeration order is not specified; a fixed order keeps the placement sequence
 		-- (and therefore any obstruction interaction between two of them) reproducible.
-		table.sort(pending, function(a, b)
-			if a.x ~= b.x then return a.x < b.x end
-			if a.y ~= b.y then return a.y < b.y end
-			return tostring(a.marker) < tostring(b.marker)
-		end)
-		local list = {}
-		for i = 1, #pending do list[i] = pending[i].marker end
-		local placed_extra = 0
-		if #list > 0 then
-			local ok_reveal, count = pcall(reveal_deposits, list, nil, nil, nil, spawn_positions)
-			if not ok_reveal then
-				error("stretched start footprint deposit placement failed: " .. tostring(count))
+		local placed_extra, pending_total = 0, 0
+		for _, depth in ipairs({ "block", "surface", "subsurface" }) do
+			local group = pending[depth]
+			table.sort(group, function(a, b)
+				if a.x ~= b.x then return a.x < b.x end
+				if a.y ~= b.y then return a.y < b.y end
+				return tostring(a.marker) < tostring(b.marker)
+			end)
+			local list = {}
+			for i = 1, #group do list[i] = group[i].marker end
+			pending_total = pending_total + #list
+			if #list > 0 then
+				local ok_reveal, count
+				if depth == "surface" then
+					ok_reveal, count = pcall(reveal_deposits, list, nil, nil, nil, spawn_positions)
+				else
+					ok_reveal, count = pcall(reveal_deposits, list, nil, nil, nil)
+				end
+				if not ok_reveal then
+					error("stretched start footprint " .. depth .. " placement failed: " .. tostring(count))
+				end
+				placed_extra = placed_extra + (tonumber(count) or 0)
 			end
-			placed_extra = tonumber(count) or 0
+		end
+		if placed_extra > 0 then
 			-- Vanilla's own tail for a reveal that spawned deposits (MapSector:Scan).
 			pcall(function()
 				local delayed = Global("DelayedCall")
@@ -1581,8 +1652,9 @@ local function RevealVanillaStartSectors(map)
 			tostring(x1), tostring(y1))
 		map.SuperBigMapStartFootprintSectors = #overlaps
 		map.SuperBigMapStartFootprintMarkers = seen
-		map.SuperBigMapStartFootprintPending = #list
+		map.SuperBigMapStartFootprintPending = pending_total
 		map.SuperBigMapStartFootprintDeposits = placed_extra
+		map.SuperBigMapStartFootprintDespawned = despawned
 	end
 
 	if selected then
