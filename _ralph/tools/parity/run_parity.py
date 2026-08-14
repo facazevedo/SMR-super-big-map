@@ -3088,6 +3088,126 @@ STRETCH_DUMP_BLOCK = """		do
 			SBM.Config.STRETCH_HEIGHT_GRID_DUMP_PATH = "__STRETCH_DUMP__"
 		end"""
 
+# Diagnostic only, opt-in with the "flattenprobe" argument.  iter-006 located, to the cell, a
+# SECOND hexagonal Elevator-shape pad per underground passage, carved at the passage's
+# UNTRANSFORMED vanilla pose and flattened to a SOURCE-space level (9.7 m and 33.0 m craters at
+# 30S146E), absent from the post-Z-transform dump and therefore written by a later caller.
+# Reading the mod's Lua could not name that caller (`prepare_passage_pad` verifies the anchor is
+# already at the destination pose), so this block names it from the call itself.
+#
+# `FlattenTerrainInBuildShape` (Lua/Construction/Construction.lua:1842) is a plain global that
+# forwards to the global `FlattenTerrainInShape` (:1870); wrapping BOTH records the outer call and
+# the inner one it delegates to.  The flatten LEVEL is not an argument: the C op reads it from the
+# buildable z_grid at the object's own hexes (the reference implementation kept in the comment at
+# :1850 does exactly `buildable:GetZ(q+x, r+y)`), so the per-call facts that identify a stale pad
+# are the object's pose, the identity of `map.buildable.z_grid`, the z that grid reports at the
+# anchor hex, and whether the mod's source-space passage bridge
+# (`map.SuperBigMapPendingNativeSurfacePassageBuildable`, sbm_map_generation.lua:5721-5789, which
+# swaps a SOURCE-space buildable grid in for the native passage selection window) is installed at
+# that moment.  A one-line traceback names the call site.
+# The wrappers are pass-through: they forward every argument and result with an explicit arity,
+# consume no rand, and create, destroy and move nothing; only reads (GetPos/GetAngle/GetMap/GetZ)
+# are added.
+FLATTEN_PROBE_BLOCK = """		do
+			local fl_lines = {}
+			local fl_dropped = 0
+			local fl_calls = 0
+			local function fl_log(text)
+				if #fl_lines >= 20000 then
+					fl_dropped = fl_dropped + 1
+					return
+				end
+				fl_lines[#fl_lines + 1] = tostring(text)
+			end
+			local function fl_flush()
+				local werr = AsyncStringToFile("__FLATTEN_OUT__", table.concat(fl_lines, "\\n"))
+				g_ParityFlattenProbeStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end
+			g_ParityFlattenProbeStatus = "running"
+			g_ParityFlattenProbeCalls = 0
+
+			-- Level 3 starts the trace at the CALLER of the wrapper (1 = this function,
+			-- 2 = the wrapper itself).  One line per call keeps the log diffable.
+			local function fl_where()
+				if type(debug) ~= "table" or type(debug.traceback) ~= "function" then
+					return "no debug.traceback"
+				end
+				local tb = tostring(debug.traceback("", 3))
+				tb = tb:gsub("stack traceback:", "")
+				tb = tb:gsub("%s+", " ")
+				if #tb > 700 then tb = tb:sub(1, 700) .. " ..." end
+				return tb
+			end
+
+			local function fl_desc(obj)
+				local out = { "obj=?" }
+				pcall(function() out[1] = "obj=" .. tostring(obj.class) end)
+				pcall(function()
+					local p = obj:GetPos()
+					local px, py, pz = p:xyz()
+					out[#out + 1] = string.format("pos=%s,%s,%s",
+						tostring(px), tostring(py), tostring(pz))
+					local q, r = WorldToHex(p)
+					out[#out + 1] = string.format("hex=%s,%s", tostring(q), tostring(r))
+					local map = obj:GetMap()
+					out[#out + 1] = "env=" .. tostring(map and map.mapdata and map.mapdata.Environment)
+					out[#out + 1] = "mapw=" .. tostring(map and map.mapdata and map.mapdata.Width)
+					out[#out + 1] = "zgrid=" .. tostring(map and map.buildable and map.buildable.z_grid)
+					local bz = "?"
+					pcall(function() bz = tostring(map.buildable:GetZ(q, r)) end)
+					out[#out + 1] = "buildable_z=" .. bz
+					out[#out + 1] = "bridge="
+						.. tostring(map and map.SuperBigMapPendingNativeSurfacePassageBuildable ~= nil)
+					out[#out + 1] = "angle=" .. tostring(obj:GetAngle())
+				end)
+				return table.concat(out, " ")
+			end
+
+			local function fl_wrap(name)
+				local original = rawget(_G, name)
+				if type(original) ~= "function" then
+					fl_log("MISSING " .. name)
+					return
+				end
+				_G[name] = function(...)
+					fl_calls = fl_calls + 1
+					g_ParityFlattenProbeCalls = fl_calls
+					local n = fl_calls
+					-- `...` cannot cross into a pcall closure, so pack once and reuse the same
+					-- argument list for the description and for the real call.
+					local argv = table.pack(...)
+					local hexes = "?"
+					pcall(function() hexes = tostring(#(argv[1] or "")) end)
+					local desc = "?"
+					pcall(function() desc = fl_desc(argv[2]) end)
+					fl_log(string.format("CALL #%04d %-26s status=%s hexes=%s %s",
+						n, name, tostring(rawget(_G, "g_ParityStatus")), hexes, desc))
+					fl_log("   at " .. fl_where())
+					local results = table.pack(original(table.unpack(argv, 1, argv.n)))
+					local ret = "?"
+					pcall(function() ret = tostring(results[1]) end)
+					fl_log(string.format("RET  #%04d %-26s -> %s", n, name, ret))
+					-- Flushing per call keeps the evidence on disk if the run dies mid-generation;
+					-- a long tail of routine construction flattens throttles to every 50th.
+					if n <= 200 or n % 50 == 0 then fl_flush() end
+					return table.unpack(results, 1, results.n)
+				end
+			end
+
+			fl_wrap("FlattenTerrainInBuildShape")
+			fl_wrap("FlattenTerrainInShape")
+
+			CreateRealTimeThread(function()
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					if status == "complete" or status == "error" then break end
+					Sleep(100)
+				end
+				fl_log(string.format("SUMMARY calls=%d dropped_lines=%d", fl_calls, fl_dropped))
+				fl_flush()
+			end)
+		end"""
+
 ANOM_PROBE_BLOCK = """		do
 			local anom_lines = {}
 			local anom_dropped = 0
@@ -3472,7 +3592,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
-             stretch_dump=False):
+             stretch_dump=False, flatten_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -3598,6 +3718,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if anom_path.exists():
             anom_path.unlink()
         extras.append(ANOM_PROBE_BLOCK.replace("__ANOM_OUT__", cli.lua_path(anom_path)))
+    flatten_path = OUT / f"flattenprobe-{tag}.log"
+    if flatten_probe:
+        if flatten_path.exists():
+            flatten_path.unlink()
+        extras.append(FLATTEN_PROBE_BLOCK.replace("__FLATTEN_OUT__", cli.lua_path(flatten_path)))
     if stretch_dump:
         # Stale grids from an earlier run would be indistinguishable from a seam that never fired.
         for env in ("surface", "underground"):
@@ -3849,6 +3974,18 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             _, anom_calls = cli.marshal_value(client, "g_ParityAnomProbeCalls", timeout=60.0)
             log(f"anomaly probe: {anom_status}, {anom_calls} initializer call(s) -> {anom_path}")
 
+        if flatten_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.
+            try:
+                flatten_status = poll_status(
+                    client, "g_ParityFlattenProbeStatus", {"complete"}, set(), 180,
+                    f"flattenprobe-{tag}"
+                )
+            except RuntimeError as exc:
+                flatten_status = f"unavailable ({exc})"
+            _, flatten_calls = cli.marshal_value(client, "g_ParityFlattenProbeCalls", timeout=60.0)
+            log(f"flatten probe: {flatten_status}, {flatten_calls} flatten call(s) -> {flatten_path}")
+
         # Temporary determinism diagnostics: prove the serial pin reached the table the
         # generator's own compiled body reads, instead of a shadowed ambient `const`.
         rows, csv_path, hex_path = dump_and_census(
@@ -3941,6 +4078,7 @@ def main():
         passall = "passall" in sys.argv[5:]
         zonesprobe = "zonesprobe" in sys.argv[5:]
         stretchdump = "stretchdump" in sys.argv[5:]
+        flattenprobe = "flattenprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -3963,7 +4101,7 @@ def main():
             f"tag_order_pin={tagorder} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
             f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
-            f"stretch_dump={stretchdump} "
+            f"stretch_dump={stretchdump} flatten_probe={flattenprobe} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -3975,7 +4113,7 @@ def main():
                         tag_order_pin=tagorder, save_as=save_as,
                         keep_alive=keepalive, wonder_probe=wonderprobe,
                         pass_probe_all=passall, zones_probe=zonesprobe,
-                        stretch_dump=stretchdump)
+                        stretch_dump=stretchdump, flatten_probe=flattenprobe)
         log(f"result: {json.dumps(info)}")
         return
 
