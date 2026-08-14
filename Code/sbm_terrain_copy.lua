@@ -1730,6 +1730,63 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 	cave_capture.capture_ok = capture_traversal_ok == true
 	cave_capture.capture_error = capture_traversal_ok ~= true
 		and tostring(capture_traversal_err) or nil
+	-- Native generation places a few objects (prefab markers) just BEYOND the source rect, so the
+	-- src_box traversal above never sees them and they keep no source stamp. The surface survives
+	-- that because TransferGeneratedObjects stamps through an unbounded MapGet before transfer -- it
+	-- stamps those objects without moving them. The underground is stretched in place and has no
+	-- transfer pass, so its out-of-box objects stayed unstamped and the parity bijection lost them
+	-- (b2-10 (584773,619417) and b2-07 (591080,615669), one unstamped/one unclaimed each). Give the
+	-- underground the surface's guarantee with a stamp-only sweep over the DESTINATION rect: it fills
+	-- missing SuperBigMapNativeSource* only -- no relief, no cave capture, no eligibility, and no
+	-- move, so the two scaling passes below keep their src_box scope and the proven floors are
+	-- untouched. Anchoring the box at (0,0) keeps the negative-coordinate CameraObj out.
+	local out_of_box_stamped = 0
+	if cfg_bool("STRETCH_STAMP_OUT_OF_BOX_SOURCES", true) then
+		local full_tw = map.SuperBigMapDesiredWidthTiles
+		local full_th = map.SuperBigMapDesiredHeightTiles
+		if type(full_tw) ~= "number" or full_tw <= 0 then
+			local mapdata = map.mapdata
+			full_tw = (type(mapdata) == "table" and type(mapdata.Width) == "number") and mapdata.Width or nil
+			full_th = (type(mapdata) == "table" and type(mapdata.Height) == "number") and mapdata.Height or full_tw
+		end
+		if type(full_tw) == "number" and type(full_th) == "number"
+			and (full_tw > sw_tiles or full_th > sh_tiles) then
+			pcall(map.MapForEach, map, box_fn(0, 0, full_tw * hts, full_th * hts), "CObject",
+				function(obj)
+				if not obj then return end
+				if type(obj.SuperBigMapNativeSourceX) == "number" then return end
+				local source_pos = ObjectPosition(obj)
+				if not source_pos then return end
+				local source_x, source_y = PointXY(source_pos)
+				if type(source_x) ~= "number" or type(source_y) ~= "number" then return end
+				obj.SuperBigMapNativeSourceX = source_x
+				obj.SuperBigMapNativeSourceY = source_y
+				if type(obj.SuperBigMapNativeSourceZ) ~= "number" and type(source_pos.z) == "function" then
+					local ok_z, source_z = pcall(source_pos.z, source_pos)
+					if ok_z and type(source_z) == "number" then
+						obj.SuperBigMapNativeSourceZ = source_z
+					end
+				end
+				if type(obj.SuperBigMapNativeSourceScale) ~= "number"
+					and type(obj.GetScale) == "function" then
+					local source_scale = SafeCall(obj.GetScale, obj)
+					if type(source_scale) == "number" then
+						obj.SuperBigMapNativeSourceScale = source_scale
+					end
+				end
+				if type(obj.SuperBigMapNativeSourceAngle) ~= "number"
+					and type(obj.GetAngle) == "function" then
+					local source_angle = SafeCall(obj.GetAngle, obj)
+					if type(source_angle) == "number" then
+						obj.SuperBigMapNativeSourceAngle = source_angle
+					end
+				end
+				obj.SuperBigMapNativeSourceClass = obj.SuperBigMapNativeSourceClass
+					or tostring(obj.class or "?")
+				out_of_box_stamped = out_of_box_stamped + 1
+			end)
+		end
+	end
 	decor_relief_by_map[map] = relief
 	decor_position_audit_by_map[map] = audit_records
 	decor_relief_stats_by_map[map] = {
@@ -1740,6 +1797,7 @@ local function AnnotateDecorRelief(map, terrain_source_map)
 		terrain_glued = terrain_glued,
 		height_failures = height_failures,
 		max_abs_relief = max_abs_relief,
+		out_of_box_stamped = out_of_box_stamped,
 		terrain_source_is_destination = relief_terrain_map == map,
 	}
 	cave_in_transform_capture_by_map[map] = cave_capture

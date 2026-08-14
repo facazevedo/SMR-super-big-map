@@ -415,6 +415,15 @@ config.StretchScaleHeights = true
 -- embedding (half-buried stays proportionally half-buried) and absorbs resample smoothing --
 -- the plain SetTerrainZ snap (used as fallback / when off) forces every base onto the surface.
 config.StretchReliefAwareDecor = true
+-- STAMP OUT-OF-BOX SOURCE OBJECTS (sbm_terrain_copy AnnotateDecorRelief). Native generation puts a
+-- few objects just BEYOND the source rect, and the stretch passes enumerate that rect only, so
+-- those objects are never stamped with their immutable native transform. The surface path is immune
+-- because TransferGeneratedObjects stamps through an unbounded MapGet and simply leaves them where
+-- they are; the underground is stretched in place and had no such pass, so the parity bijection
+-- lost one object per affected case (b2-10, b2-07). When true, a stamp-only sweep over the
+-- DESTINATION rect fills the missing SuperBigMapNativeSource* fields. Stamps only: nothing is
+-- moved, rescaled or made eligible, so the scaling passes and the proven floors are unchanged.
+config.StretchStampOutOfBoxSources = true
 -- Move the entrance VISUALS (tunnel signs, entrance structures, CityInit tunnel spawners) with
 -- the same position*(full/source) transform as their markers, on BOTH maps (user-confirmed
 -- design). Function and visuals stay co-located, every entrance sits on the terrain feature it
@@ -846,6 +855,7 @@ C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 	and as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
+C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
