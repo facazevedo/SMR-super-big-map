@@ -9,9 +9,12 @@ seconds instead of a 3-minute game run.
 Algorithm (task contract `_ralph/tasks/full-z-parity.md`):
 
   1. shift measured on the INTERIOR of the source grid (one cell of border excluded --
-     the rim holds resample/generation artifacts):
-        shift   = 1000 - floor(interior_min * 4/3)
+     the rim holds resample/generation artifacts).  The shift may only push terrain DOWN,
+     never lift it, so it is clamped at zero:
+        shift   = min(0, FLOOR - floor(interior_min * 4/3))    FLOOR = 5000 (5 in-game m)
         src_cap = floor((65535 - shift) * 3/4)
+     A map whose scaled interior minimum already sits at or below FLOOR gets shift = 0 and
+     keeps its lowlands exactly where the vanilla affine puts them.
   2. overflow zones = connected components of (h > src_cap).
   3. per-zone base: a level below src_cap, chosen per `--rule` (see BASE RULES).
   4. in-zone remap, applied to the connected component at the base level, for cells at or
@@ -59,7 +62,9 @@ from scipy import ndimage
 from scipy.optimize import brentq
 
 CAP = 65535
-FLOOR_MARGIN = 1000
+# Target height for the map's lowest interior cell, in world units (guim = 1000 per in-game
+# metre), i.e. 5 metres.  The shift that realizes it is clamped to <= 0: down-only.
+FLOOR = 5000
 XY_MUL, XY_DIV = 8192, 6144  # destination / source tiles; ratio exactly 4/3
 TARGET_SLOPE = XY_MUL / XY_DIV
 
@@ -138,14 +143,36 @@ def crop_for(bbox, shape, pad):
     return (max(0, y0 - pad), min(gh, y1 + pad), max(0, x0 - pad), min(gw, x1 + pad))
 
 
-def component_at(sub, level, py, px, structure):
-    """(mask, area, escaped) for the >=level component of `sub` containing (py, px)."""
+def open_sides(crop, shape):
+    """Which sides of `crop` = (y0, y1, x0, x1) are INTERIOR to the grid.
+
+    A component touching the map's own border has not escaped anything -- there is no
+    terrain past it.  Only contact with a crop side that cuts through the grid means the
+    measurement is a lower bound.  (Measured: the 11 tallest massifs at 42S28W all sit on
+    the map rim, and treating rim contact as an escape aborted every descent at src_cap.)
+    """
+    y0, y1, x0, x1 = crop
+    gh, gw = shape
+    return dict(top=y0 > 0, bottom=y1 < gh, left=x0 > 0, right=x1 < gw)
+
+
+def component_at(sub, level, py, px, structure, sides=None):
+    """(mask, area, escaped) for the >=level component of `sub` containing (py, px).
+
+    `escaped` is True only where the component reaches an interior crop side (`sides` from
+    open_sides); with sides=None every side counts, the old whole-crop behaviour.
+    """
     lab, _ = ndimage.label(sub >= level, structure=structure)
     want = lab[py, px]
     if want == 0:
         return None, 0, False
     mask = lab == want
-    escaped = bool(mask[0, :].any() or mask[-1, :].any() or mask[:, 0].any() or mask[:, -1].any())
+    if sides is None:
+        sides = dict(top=True, bottom=True, left=True, right=True)
+    escaped = bool((sides["top"] and mask[0, :].any())
+                   or (sides["bottom"] and mask[-1, :].any())
+                   or (sides["left"] and mask[:, 0].any())
+                   or (sides["right"] and mask[:, -1].any()))
     return mask, int(mask.sum()), escaped
 
 
@@ -154,47 +181,83 @@ def fine_curve(grid, zone, src_cap, structure, pad, steps, span_mult, log):
 
     Descends from src_cap to src_cap - span_mult*(peak - src_cap) in `steps` steps.
     Each sample records the area of the component containing the peak and whether that
-    component has reached the crop border (below which the sample is a lower bound).
+    component has reached an interior crop border (below which the sample is a lower
+    bound).  When it does, the crop is enlarged (pad x4, up to the whole grid) and the
+    level is re-measured, so a deep descent pays for a big crop only where it needs one.
     """
-    y0, y1, x0, x1 = crop_for(zone["bbox"], grid.shape, pad)
-    sub = grid[y0:y1, x0:x1]
-    py, px = zone["peak_y"] - y0, zone["peak_x"] - x0
+    gh, gw = grid.shape
     over = max(1, zone["peak_src"] - src_cap)
     lo = max(1, src_cap - int(span_mult * over))
     step = max(1, (src_cap - lo) // steps)
+
+    cur_pad = pad
+    crop = crop_for(zone["bbox"], grid.shape, cur_pad)
+    sides = open_sides(crop, grid.shape)
+    sub = grid[crop[0]:crop[1], crop[2]:crop[3]]
+    grows = 0
     curve = []
     level = src_cap
     while level >= lo:
-        _, area, escaped = component_at(sub, level, py, px, structure)
+        py, px = zone["peak_y"] - crop[0], zone["peak_x"] - crop[2]
+        _, area, escaped = component_at(sub, level, py, px, structure, sides)
+        while escaped and cur_pad < max(gh, gw):
+            cur_pad *= 4
+            grows += 1
+            crop = crop_for(zone["bbox"], grid.shape, cur_pad)
+            sides = open_sides(crop, grid.shape)
+            sub = grid[crop[0]:crop[1], crop[2]:crop[3]]
+            py, px = zone["peak_y"] - crop[0], zone["peak_x"] - crop[2]
+            _, area, escaped = component_at(sub, level, py, px, structure, sides)
         curve.append((int(level), int(area), bool(escaped)))
         level -= step
-    return dict(crop=[x0, y0, x1, y1], pad=pad, step=step, lo=lo,
-                samples=[[l, a, int(e)] for l, a, e in curve])
+    return dict(crop=[crop[2], crop[0], crop[3], crop[1]], pad=cur_pad, grows=grows,
+                step=step, lo=lo, samples=[[l, a, int(e)] for l, a, e in curve])
 
 
-def pick_base(curve, zone, src_cap, rule, growth, area_mult, headroom):
-    """Base level for one zone under `rule`; returns (base, why)."""
+def pick_base(curve, zone, src_cap, rule, growth, area_mult, headroom, min_factor=0.0):
+    """Base level for one zone under `rule`; returns (base, why).
+
+    `min_factor` is a hard validity clamp on the result, independent of the rule: the
+    massif's average in-zone slope factor (src_cap - base)/(peak - base) must be at least
+    this much, i.e. base <= src_cap - min_factor/(1-min_factor) * (peak - src_cap).  Without
+    it a base sitting at (or just under) src_cap gives H = 0: the summit collapses onto a
+    flat plateau at the ceiling and the slope at the base is 0, not 4/3, which fails the
+    no-crease gate.  A tiny zone's area curve is noisy enough (3 cells -> 9 is already the
+    x3 flood test) that the persistence rule alone cannot be trusted to stay off src_cap.
+    """
     samples = curve["samples"]
+    over = max(1, zone["peak_src"] - src_cap)
+    if min_factor > 0.0:
+        ceiling = src_cap - int(math.ceil(min_factor / (1.0 - min_factor) * over))
+    else:
+        ceiling = src_cap
+
+    def out(base, why):
+        base = int(base)
+        if base > ceiling:
+            return max(1, ceiling), f"{why}; clamped to slope factor >= {min_factor}"
+        return max(1, base), why
+
     if rule == "headroom":
-        over = max(1, zone["peak_src"] - src_cap)
-        return max(1, src_cap - int(round(headroom * over))), f"src_cap - {headroom}*over"
+        return out(src_cap - int(round(headroom * over)), f"src_cap - {headroom}*over")
     prev_level, prev_area = samples[0][0], max(1, samples[0][1])
     for level, area, escaped in samples[1:]:
         if rule == "knee" and area > prev_area * growth:
-            return prev_level, f"flood x{area / prev_area:.2f} below {prev_level}"
+            return out(prev_level, f"flood x{area / prev_area:.2f} below {prev_level}")
         if rule == "area" and area > area_mult * max(1, zone["area_over_cap"]):
-            return prev_level, f"area {area} > {area_mult}x{zone['area_over_cap']} below {prev_level}"
+            return out(prev_level, f"area {area} > {area_mult}x{zone['area_over_cap']} below {prev_level}")
         if escaped:
-            return prev_level, f"component escaped the crop below {prev_level}"
+            return out(prev_level, f"component escaped the crop below {prev_level}")
         prev_level, prev_area = level, max(1, area)
-    return prev_level, "descent bottom reached"
+    return out(prev_level, "descent bottom reached")
 
 
-def build_massifs(grid, zones, bases, structure, pad, log):
+def build_massifs(grid, zones, bases, structure, pads, log):
     """Merge zones that share a component at their base level.
 
     Highest peak first: a zone's base-level component absorbs every other zone whose peak
-    lies inside it, and the massif keeps the base of its highest peak.
+    lies inside it, and the massif keeps the base of its highest peak.  Each zone uses the
+    crop its own descent settled on (`pads`), and grid-rim contact is not an escape.
     """
     order = sorted(range(len(zones)), key=lambda i: -zones[i]["peak_src"])
     assigned = {}
@@ -204,9 +267,11 @@ def build_massifs(grid, zones, bases, structure, pad, log):
             continue
         z = zones[i]
         base = int(bases[i])
-        y0, y1, x0, x1 = crop_for(z["bbox"], grid.shape, pad)
+        y0, y1, x0, x1 = crop_for(z["bbox"], grid.shape, pads[i])
         sub = grid[y0:y1, x0:x1]
-        mask, area, escaped = component_at(sub, base, z["peak_y"] - y0, z["peak_x"] - x0, structure)
+        sides = open_sides((y0, y1, x0, x1), grid.shape)
+        mask, area, escaped = component_at(sub, base, z["peak_y"] - y0, z["peak_x"] - x0,
+                                           structure, sides)
         members = [i]
         for j in range(len(zones)):
             if j == i or j in assigned:
@@ -226,6 +291,60 @@ def build_massifs(grid, zones, bases, structure, pad, log):
     return massifs
 
 
+def factor_sweep(grid, zones, src_cap, shift, structure, factors, log):
+    """How much of the map ends up inside zones, as a function of the slope-factor floor.
+
+    Absorbing a massif's overflow is a fixed budget: the peak stands (4/3)*(peak - src_cap)
+    image units above the ceiling no matter where the base goes.  The base only chooses how
+    gently that is absorbed -- with average in-zone slope factor f (relative to 4/3), the
+    compressed band is d = f/(1-f) * (peak - src_cap) source units deep.  Gentle summits
+    (f -> 1) need deep bases and therefore wide zones; narrow zones need flat summits.
+    This measures both ends exactly, on the full grid (no crops, no descent), using the
+    same highest-peak-first merge as build_massifs.
+    """
+    gh, gw = grid.shape
+    rows = []
+    for f in factors:
+        mult = f / (1.0 - f)
+        order = sorted(range(len(zones)), key=lambda i: -zones[i]["peak_src"])
+        assigned = set()
+        union = np.zeros(grid.shape, dtype=bool)
+        massifs = []
+        for i in order:
+            if i in assigned:
+                continue
+            z = zones[i]
+            over = max(1, z["peak_src"] - src_cap)
+            base = max(1, src_cap - int(math.ceil(mult * over)))
+            lab, _ = ndimage.label(grid >= base, structure=structure)
+            want = lab[z["peak_y"], z["peak_x"]]
+            mask = lab == want
+            members = [i]
+            for j in range(len(zones)):
+                if j != i and j not in assigned and mask[zones[j]["peak_y"], zones[j]["peak_x"]]:
+                    members.append(j)
+            assigned.update(members)
+            union |= mask
+            comp_peak = int(grid[mask].max())
+            # the merged component's own peak may be higher than the seed zone's peak, so
+            # the realized factor is measured against it
+            realized = (src_cap - base) / max(1, comp_peak - base)
+            massifs.append(dict(members=[j + 1 for j in members], base_src=int(base),
+                                comp_peak=comp_peak, area=int(mask.sum()),
+                                realized_factor=round(realized, 4)))
+        area = int(union.sum())
+        row = dict(factor=f, band_mult=round(mult, 4), massifs=len(massifs),
+                   deepest_base=min(m["base_src"] for m in massifs),
+                   zone_cells=area, pct_of_map=round(100.0 * area / (gw * gh), 4),
+                   worst_realized_factor=round(min(m["realized_factor"] for m in massifs), 4),
+                   detail=massifs)
+        rows.append(row)
+        log(f"  factor {f:4.2f}: band {mult:5.2f}x overflow, {len(massifs):3d} massifs, "
+            f"deepest base {row['deepest_base']:6d}, zones cover {row['pct_of_map']:7.3f}% "
+            f"of the map, worst realized factor {row['worst_realized_factor']:.3f}")
+    return rows
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -241,12 +360,18 @@ def main(argv=None):
     ap.add_argument("--growth", type=float, default=3.0)
     ap.add_argument("--area-mult", type=float, default=8.0)
     ap.add_argument("--headroom", type=float, default=1.0)
+    ap.add_argument("--min-factor", type=float, default=0.5,
+                    help="hard floor on each massif's average in-zone slope factor "
+                         "(0.5 = at most 2:1 average compression); keeps a base off src_cap")
     ap.add_argument("--pad", type=int, default=512, help="crop padding in source cells")
     ap.add_argument("--steps", type=int, default=96, help="descent samples per zone")
     ap.add_argument("--span-mult", type=float, default=4.0,
                     help="descend to src_cap - span_mult*(peak-src_cap)")
     ap.add_argument("--coarse", action="store_true",
                     help="also run the contract's literal coarse descent for comparison")
+    ap.add_argument("--factor-sweep", default="",
+                    help="comma-separated slope-factor floors; measure zone coverage for "
+                         "each and skip the per-zone descent (decision evidence only)")
     ap.add_argument("--json", default="")
     ap.add_argument("--fig", default="")
     ap.add_argument("--simulate", action="store_true")
@@ -261,11 +386,14 @@ def main(argv=None):
     full_min, full_max = int(grid.min()), int(grid.max())
     interior = grid[1:-1, 1:-1]
     src_min, src_max = int(interior.min()), int(interior.max())
-    shift = FLOOR_MARGIN - int(affine(src_min, 0))
+    floor_img = int(affine(src_min, 0))
+    shift = min(0, FLOOR - floor_img)  # down-only: never lift the terrain
     src_cap = int(((CAP - shift) * XY_DIV) // XY_MUL)
     affine_max = int(affine(src_max, shift))
     log(f"grid {gw}x{gh}  full {full_min}..{full_max}  interior {src_min}..{src_max}")
-    log(f"shift {shift}  src_cap {src_cap}  affine_max {affine_max}  overflow {affine_max - CAP}")
+    log(f"floor target {FLOOR}  scaled interior min {floor_img}  shift {shift}"
+        f"{' (clamped: already at or below the floor)' if shift == 0 else ''}")
+    log(f"src_cap {src_cap}  affine_max {affine_max}  overflow {affine_max - CAP}")
 
     structure = ndimage.generate_binary_structure(2, 1 if args.connectivity == 4 else 2)
     over = grid > src_cap
@@ -288,6 +416,28 @@ def main(argv=None):
             bbox=[int(sl[1].start), int(sl[0].start), int(sl[1].stop), int(sl[0].stop)],
         ))
 
+    if args.factor_sweep:
+        factors = [float(v) for v in args.factor_sweep.split(",") if v.strip()]
+        log(f"factor sweep on the full grid: {factors}")
+        rows = factor_sweep(grid, zones, src_cap, shift, structure, factors, log)
+        report = dict(
+            schema="smr.zonefit.factorsweep", schema_version=1, label=args.label,
+            source=dict(raw=os.path.abspath(args.raw), width=gw, height=gh,
+                        full_min=full_min, full_max=full_max,
+                        interior_min=src_min, interior_max=src_max),
+            transform=dict(xy_mul=XY_MUL, xy_div=XY_DIV, floor_target=FLOOR,
+                           scaled_interior_min=floor_img, shift=shift, src_cap=src_cap,
+                           affine_max=affine_max, overflow_above_cap=affine_max - CAP),
+            overflow=dict(cells=int(over.sum()),
+                          pct=round(100.0 * float(over.sum()) / over.size, 6), zones=nzones),
+            zones=zones, sweep=rows,
+        )
+        if args.json:
+            with open(args.json, "w", encoding="utf-8") as fh:
+                json.dump(report, fh, indent=1, sort_keys=True)
+            log(f"wrote {args.json}")
+        return 0
+
     # --- per-zone fine descent curves
     log("fine descent per zone")
     curves = []
@@ -298,7 +448,7 @@ def main(argv=None):
         log(f"  zone {z['id']:2d} peak {z['peak_src']} over {z['peak_src']-src_cap:5d} "
             f"area@cap {z['area_over_cap']:6d} step {c['step']:4d} "
             f"area@{s[len(s)//2][0]} {s[len(s)//2][1]} area@{s[-1][0]} {s[-1][1]} "
-            f"escaped {any(x[2] for x in s)}")
+            f"pad {c['pad']} grows {c['grows']} escaped {any(x[2] for x in s)}")
 
     # --- candidate base rules, side by side
     rules_report = {}
@@ -306,7 +456,8 @@ def main(argv=None):
         rows = []
         total = 0
         for z, c in zip(zones, curves):
-            b, why = pick_base(c, z, src_cap, rule, args.growth, args.area_mult, args.headroom)
+            b, why = pick_base(c, z, src_cap, rule, args.growth, args.area_mult,
+                               args.headroom, args.min_factor)
             area = next((a for l, a, _ in c["samples"] if l <= b), None)
             factor = (src_cap - b) / max(1, z["peak_src"] - b)
             total += area or 0
@@ -321,9 +472,10 @@ def main(argv=None):
             f"worst slope factor {rules_report[rule]['min_slope_factor']:.3f}")
 
     # --- chosen rule -> massifs -> LUTs
-    bases = [pick_base(c, z, src_cap, args.rule, args.growth, args.area_mult, args.headroom)[0]
+    bases = [pick_base(c, z, src_cap, args.rule, args.growth, args.area_mult,
+                       args.headroom, args.min_factor)[0]
              for z, c in zip(zones, curves)]
-    massifs = build_massifs(grid, zones, bases, structure, args.pad, log)
+    massifs = build_massifs(grid, zones, bases, structure, [c["pad"] for c in curves], log)
     log(f"rule {args.rule}: {len(massifs)} massifs from {len(zones)} overflow zones")
     for m in massifs:
         meta, lut = zone_lut(m["base_src"], m["peak_src"], shift)
@@ -338,12 +490,14 @@ def main(argv=None):
     report = dict(
         schema="smr.zonefit", schema_version=2, label=args.label,
         argv=dict(rule=args.rule, growth=args.growth, area_mult=args.area_mult,
-                  headroom=args.headroom, pad=args.pad, steps=args.steps,
+                  headroom=args.headroom, min_factor=args.min_factor,
+                  pad=args.pad, steps=args.steps,
                   span_mult=args.span_mult, connectivity=args.connectivity),
         source=dict(raw=os.path.abspath(args.raw), width=gw, height=gh,
                     full_min=full_min, full_max=full_max,
                     interior_min=src_min, interior_max=src_max),
-        transform=dict(xy_mul=XY_MUL, xy_div=XY_DIV, floor_margin=FLOOR_MARGIN,
+        transform=dict(xy_mul=XY_MUL, xy_div=XY_DIV, floor_target=FLOOR,
+                       scaled_interior_min=floor_img, shift_clamped=bool(shift == 0),
                        shift=shift, src_cap=src_cap, affine_max=affine_max,
                        overflow_above_cap=affine_max - CAP),
         overflow=dict(cells=int(over.sum()),
@@ -460,7 +614,8 @@ def simulate(grid, massifs, shift, src_cap, dest_w, structure, pad, log):
         wmax = int(sub[wy0:wy1, wx0:wx1].max())
         wpos = np.argwhere(sub[wy0:wy1, wx0:wx1] == wmax)[0]
         ppy, ppx = wy0 + int(wpos[0]), wx0 + int(wpos[1])
-        mask, area, escaped = component_at(sub, base, ppy, ppx, structure)
+        sides = open_sides((y0, y1, x0, x1), (dest_h, dest_w))
+        mask, area, escaped = component_at(sub, base, ppy, ppx, structure, sides)
         if mask is None:
             out.append(dict(members=m["members"], error="component not found"))
             continue
@@ -497,7 +652,11 @@ def simulate(grid, massifs, shift, src_cap, dest_w, structure, pad, log):
     res["outside_zone_affine_exact"] = bool(np.array_equal(img[~remapped], aff[~remapped]))
     res["outside_zone_over_cap"] = int((aff[~remapped] > CAP).sum())
     inside = img[remapped]
-    res["inside_zone_compressed_only"] = bool(np.all(inside <= aff[remapped]))
+    excess = (inside - aff[remapped]) if inside.size else np.zeros(1, dtype=np.int64)
+    # the remap can only lower a cell, up to the LUT's rint-vs-floor rounding (<= 1 unit)
+    res["inside_zone_compressed_only"] = bool(np.all(excess <= 0))
+    res["inside_zone_max_excess_over_affine"] = int(excess.max())
+    res["inside_zone_cells_above_affine"] = int((excess > 0).sum())
     res["inside_zone_min_vs_base"] = int(inside.min()) if inside.size else 0
     log(f"  remapped {res['remapped_cells']} cells ({res['remapped_pct']:.4f}%), "
         f"img max {res['img_max']}, over-cap {res['over_cap_after']}, "
