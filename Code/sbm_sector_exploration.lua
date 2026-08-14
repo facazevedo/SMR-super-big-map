@@ -1260,10 +1260,10 @@ local function VanillaStartPick(city, map)
 	if not (ok_pick and type(revealed) == "table" and #revealed > 0) then
 		return nil, "InitialReveal failed: " .. tostring(revealed)
 	end
-	-- Vanilla can return a second, nearest-concrete sector in its fallback branch. The stretched
-	-- footprint is based on VANILLA'S FIRST winner; the auxiliary concrete sector is not part of
-	-- that source footprint and therefore is not used as another transform anchor.
-	revealed = { revealed[1] }
+	-- Vanilla can return a second, nearest-concrete sector in its fallback branch, and it SCANS
+	-- that sector, so its content spawns. Capture every winner: the first stays the transform
+	-- anchor, the second drives the auxiliary reveal (its absence measured as b2-04's missing
+	-- TerrainDepositConcrete).
 	local winners = {}
 	for _, sec in ipairs(revealed) do
 		local mn, mx = sec.area:min(), sec.area:max()
