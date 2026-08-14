@@ -157,8 +157,11 @@ CreateRealTimeThread(function()
 			-- Sample lattice in SOURCE cells around the centre, so both twins walk the same ground.
 			local stride_cells = math.max(1, math.floor(stride_src / tile + 0.5))
 			local radius_cells = math.floor(radius_src / tile + 0.5)
-			local c_sgx = math.floor(cx / scale / tile)
-			local c_sgy = math.floor(cy / scale / tile)
+			-- Round to the NEAREST source cell, never floor: the expanded twin's position is the
+			-- source position times 4/3, so dividing it back lands a hair under the integer and a
+			-- floor would offset the whole expanded lattice by one source cell (measured, t6x).
+			local c_sgx = math.floor(cx / (scale * tile) + 0.5)
+			local c_sgy = math.floor(cy / (scale * tile) + 0.5)
 
 			if type(PauseInfiniteLoopDetection) == "function" then
 				PauseInfiniteLoopDetection("parity_passrb")
