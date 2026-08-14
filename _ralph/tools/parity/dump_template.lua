@@ -135,6 +135,9 @@ CreateRealTimeThread(function()
 				-- How many unplaced markers the scan gate's scanned-sector pass refused because
 				-- the staged native set (mod v800) says vanilla never placed them.
 				"SuperBigMapScanGateStagedSkipped",
+				-- How many staged start spawns the scan gate's leak-hiding pass (section A) left
+				-- revealed because they are vanilla's own initial reveal (mod v802).
+				"SuperBigMapScanGateStagedRevealKept",
 				-- Staged native start spawns (mod v798): vanilla's own per-sector, per-depth
 				-- spawn decisions, recorded on the native source before the stretch.
 				"SuperBigMapStartStagedCount", "SuperBigMapStartStagedSectors",

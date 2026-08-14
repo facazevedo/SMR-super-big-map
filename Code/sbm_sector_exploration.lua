@@ -1678,6 +1678,13 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 					end
 					if deposit then
 						stats.placed = stats.placed + 1
+						-- Vanilla revealed this object during ITS start reveal, and the free
+						-- "Revealed"/moment-"true" FX carrier is played by the engine's own
+						-- ExplorableObject:GameInit from that reveal state. Any destination-side
+						-- pass that un-reveals the object before its GameInit runs deletes the
+						-- carrier from the map (b2-07: artifacts/b207_parsystem_verdict.md), so mark
+						-- it as vanilla's own and let those passes leave its reveal state alone.
+						deposit.SuperBigMapStagedStartSpawn = true
 						if record.depth == "block" then stats.blockers = stats.blockers + 1 end
 						local sx, sy = spawn:xy()
 						RegisterStagedDeposit(city, record, marker, deposit, sx, sy)

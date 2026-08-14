@@ -8275,11 +8275,22 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 		return
 	end
 	-- A) hide revealed scan-gated objects that now sit in unscanned sectors.
-	local hidden = 0
+	-- EXCEPT the staged start spawns: those ARE vanilla's own initial reveal, replayed by source
+	-- identity, so their reveal state is not a stretch leak to be corrected. Un-revealing one here
+	-- also runs BEFORE the engine's deferred ExplorableObject:GameInit, which is what plays the
+	-- free "Revealed"/moment-"true" FX carrier (Particles_1LtXWp8i) from the object's reveal state;
+	-- the carrier is then never created and the map is short exactly that ParSystem (b2-07,
+	-- artifacts/b207_parsystem_verdict.md). A later un-reveal would not have destroyed it - the
+	-- "Revealed" ActionFXRemove rules key on FxId "Revealed", which that preset does not set.
+	local hidden, staged_reveal_kept = 0, 0
 	local function hide_leaks(class_name)
 		pcall(map.MapForEach, map, "map", class_name, function(obj)
 			if not (obj and IsScanGatedDeposit(obj)) then return end
 			if obj.revealed ~= true then return end
+			if rawget(obj, "SuperBigMapStagedStartSpawn") == true then
+				staged_reveal_kept = staged_reveal_kept + 1
+				return
+			end
 			local pos = ObjectPos(obj)
 			if not pos or type(pos.xy) ~= "function" then return end
 			local px, py = pos:xy()
@@ -8415,6 +8426,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	map.SuperBigMapScanGateFootprintKept = footprint_kept
 	map.SuperBigMapScanGateDespawned = despawned
 	map.SuperBigMapScanGateStagedSkipped = staged_skipped
+	map.SuperBigMapScanGateStagedRevealKept = staged_reveal_kept
 end
 
 function DepositRules.OnSectorScanned(status, sector)
