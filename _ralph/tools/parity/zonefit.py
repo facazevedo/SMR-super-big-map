@@ -255,7 +255,10 @@ def pick_base(curve, zone, src_cap, rule, growth, area_mult, headroom, min_facto
         return max(1, base), why
 
     if rule == "headroom":
-        return out(src_cap - int(round(headroom * over)), f"src_cap - {headroom}*over")
+        # ceil, not round: the mod's Lua port and factor_sweep both use ceil, and a one-unit
+        # difference in the base changes k and therefore the whole LUT, which the gates compare
+        # against the game's grid bit for bit.
+        return out(src_cap - int(math.ceil(headroom * over)), f"src_cap - {headroom}*over")
     prev_level, prev_area = samples[0][0], max(1, samples[0][1])
     for level, area, escaped in samples[1:]:
         if rule == "knee" and area > prev_area * growth:

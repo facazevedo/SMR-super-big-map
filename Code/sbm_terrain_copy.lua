@@ -553,7 +553,12 @@ end
 -- it from the map-editor property handler, so calling it in-game would ADD a restriction
 -- vanilla games don't have. Idempotent per map (flag stamp). MUST run before the stretch
 -- branches' RebuildBuildableGrid.
-local function ScaleHeightRanges(map, mul, div, add_wu)
+-- measured_max is the MEASURED maximum of the final height grid (grid units), supplied whenever
+-- the per-mountain zone compression ran: above a compressed massif the affine over-predicts the
+-- height by up to the whole overflow (83,243 predicted vs the real 65,535 at 42S28W), and a
+-- declared range beyond the engine's own MaxTerrainHeight is not a range the buildable grid can
+-- honour. The from/floor side always keeps the affine -- the transform is exact down there.
+local function ScaleHeightRanges(map, mul, div, add_wu, measured_max)
 	if cfg_bool("STRETCH_SCALE_HEIGHTS", true) ~= true then return false end
 	local mapdata = map and map.mapdata
 	if type(mapdata) ~= "table" or type(mul) ~= "number" or type(div) ~= "number" or div <= 0 then
@@ -570,13 +575,23 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 		local scaled = (v * mul + 0.0) / div + (add_wu + 0.0) / guim_v
 		return up and math.ceil(scaled) or math.floor(scaled)
 	end
+	-- Grid height units -> metres. The engine states the terrain ceiling as
+	-- const.MaxTerrainHeight world units over const.TerrainHeightScale units per grid step.
+	local measured_to
+	if type(measured_max) == "number" and measured_max > 0 then
+		local const_tbl = Global("const")
+		local hscale = (type(const_tbl) == "table" and type(const_tbl.TerrainHeightScale) == "number"
+			and const_tbl.TerrainHeightScale > 0) and const_tbl.TerrainHeightScale or 1
+		measured_to = math.ceil((measured_max * hscale + 0.0) / guim_v)
+	end
 	local function scale_range(tag, range)
 		if type(range) ~= "table" or type(range.from) ~= "number" or type(range.to) ~= "number" then
 			return
 		end
 		local from0, to0 = range.from, range.to
 		range.from = scale_out(from0, false)
-		range.to = scale_out(to0, true)
+		range.to = measured_to or scale_out(to0, true)
+		if range.to <= range.from then range.to = range.from + 1 end
 	end
 	-- mapdata is a shared preset and survives Map destruction. Preserve the exact
 	-- vanilla ranges so the next non-expanded game does not inherit stretched-height
@@ -605,6 +620,353 @@ local function ScaleHeightRanges(map, mul, div, add_wu)
 	end
 	mapdata.SuperBigMapHeightRangesScaled = true
 	return true
+end
+
+-- ---------------------------------------------------------------------------------------------
+-- FULL 4/3 Z WITH PER-MOUNTAIN CEILING NORMALIZATION (task contract `full-z-parity`)
+--
+-- The surface stretch used to fit the 16-bit height ceiling by REDUCING the Z scale for the whole
+-- map (~1.097 instead of 4/3), which flattened every slope to ~82% of vanilla and changed
+-- passability: measured at 42S28W, 289 of 4,692 surface objects stood on ground whose own-cell
+-- passability differed from vanilla, 223 of them vanilla-impassable turned walkable. The
+-- underground, which always scaled Z by exactly 4/3, showed only bidirectional noise. So the fix
+-- is to make the surface a true similarity transform too, and to absorb the overflow ONLY inside
+-- the few mountains that would pierce the ceiling:
+--
+--   shift    = min(0, Z_FLOOR_WU - floor(interior_min * 4/3))   -- down-only: never lift terrain
+--   src_cap  = floor((cap - shift) * 3/4)                       -- highest source value that fits
+--   massifs  = connected components of (h >= base) around each overflow peak, tallest peak first
+--   base     = src_cap - ceil(Z_BAND_MULT * (peak - src_cap))   -- bounded compression band
+--   in a massif:  base_img = floor(base*4/3) + shift,  H = cap - base_img,  T = peak - base
+--                 lut[h] = min(base_img + floor(H*(1-e^-k(h-base))/(1-e^-kT) + 0.5), affine(h))
+--                 with k solved so f'(0) = 4/3 exactly -> the remap leaves the base TANGENT to the
+--                 affine (no crease along the base isoline) and lands the massif's own peak
+--                 EXACTLY on the ceiling.
+--   elsewhere: img(h) = floor(h*4/3) + shift, i.e. bit-exact vanilla slopes and passability.
+--
+-- The interior minimum excludes one cell of border: the source rim holds generation/resample
+-- artifacts (measured 0 against a true interior minimum of 4,078), which would nullify the shift.
+--
+-- Base rule: the contract's topological-persistence descent is unusable on this map -- 42S28W's
+-- overflow peaks belong to giant connected highlands, so the flood test pushes bases so deep that
+-- 13.5% of the map ends up remapped. A full-grid sweep of the one real knob (the average in-zone
+-- slope factor f; band depth = f/(1-f) x overflow) measured 0.94% of the map inside zones at
+-- f=0.05 up to 39% at f=0.67. Z_BAND_MULT = 1/3 is f = 0.25, i.e. summits compressed to a quarter
+-- of vanilla steepness on average, and 1.50% of the map inside zones.
+--
+-- Per-cell Lua over an 8192^2 grid is impossible, so this is built only out of engine grid ops
+-- whose exact semantics were measured in-game (`_ralph/tools/parity/gridops_probe.lua`):
+--   GridMask(src, dst, from, to)     dst = 1 where from <= src <= to else 0
+--   GridEnumZones(mask, min_area)    labels mask IN PLACE from level 2, 4-CONNECTED (min_area 1)
+--   GridCount(g, from, to)           counts from < v <= to  -> mask ones are GridCount(m, 0, 1)
+--   GridMinMax(g, mask, 1, false)    masked min/max
+--   GridFind(g, value)               x, y of a cell holding value
+--   GridReplace(g, table)            sparse integer LUT at C speed, in place
+--   GridLerp(a, res, b, mask, 0, 1)  res = a outside the mask, b inside it
+--   GridMulDivAdd(g, mul, div, add)  floor(v*mul/div) + add; WRAPS mod 65536 on U16 overflow
+--   GridMin(a, res, b)               element-wise minimum
+-- The wrap is why the affine is applied to a source grid pre-clamped to src_cap (a missed massif
+-- then degrades to a flat summit, never to an inverted pit), and why cells whose affine would go
+-- negative (rim artifacts below the interior minimum) are pinned to 0.
+local Z_FLOOR_WU = 5000        -- lowest interior cell lands here: 5 in-game metres (guim = 1000)
+local Z_BAND_MULT = 1.0 / 3.0  -- base = src_cap - Z_BAND_MULT * overflow (average slope factor 1/4)
+local Z_ZONE_PAD = 512         -- initial per-massif crop half-width, destination cells
+local Z_ZONE_PAD_GROWTH = 2    -- crop growth when the massif reaches an interior crop side
+local Z_MAX_MASSIFS = 256      -- runaway guard; 42S28W needs 28
+
+-- k > 0 with H*k/(1-exp(-k*T)) = target (the curve's slope at the base). The left side rises with
+-- k from H/T, so a root exists exactly when the massif overflows above its base; return 0 for the
+-- degenerate case and let the caller use the linear ramp.
+local function ZSolveK(H, T, target)
+	if T <= 0 or H <= 0 then return 0 end
+	if (H + 0.0) / T >= target then return 0 end
+	local exp = math.exp
+	local function fk(k) return H * k / (1.0 - exp(-k * T)) - target end
+	local hi = 1e-9
+	while fk(hi) < 0 do
+		hi = hi * 2
+		if hi > 1e6 then return 0 end
+	end
+	local lo = 0.0
+	for _ = 1, 160 do
+		local mid = 0.5 * (lo + hi)
+		if fk(mid) < 0 then lo = mid else hi = mid end
+	end
+	return 0.5 * (lo + hi)
+end
+
+-- Integer remap table for one massif's source values base..peak. Clamped elementwise to the affine
+-- because floor(x+0.5) can land one unit ABOVE it where the two curves touch at the base, and the
+-- remap must only ever LOWER a cell; the clamp is inert at the peak (the affine is above the
+-- ceiling there by construction) and preserves monotonicity.
+local function ZBuildLut(base, peak, cap, zmul, zdiv, shift)
+	local base_img = math.floor((base * zmul + 0.0) / zdiv) + shift
+	local H = cap - base_img
+	local T = peak - base
+	local k = ZSolveK(H, T, (zmul + 0.0) / zdiv)
+	local denom = (k > 0) and (1.0 - math.exp(-k * T)) or 1.0
+	local lut = {}
+	local monotone, prev = true, -1
+	local exp = math.exp
+	for hv = base, peak do
+		local t = hv - base
+		local img
+		if k > 0 then
+			img = base_img + math.floor(H * (1.0 - exp(-k * t)) / denom + 0.5)
+		elseif T > 0 then
+			img = base_img + math.floor((H * t + 0.0) / T + 0.5)
+		else
+			img = cap
+		end
+		local a = math.floor((hv * zmul + 0.0) / zdiv) + shift
+		if img > a then img = a end
+		if img > cap then img = cap end
+		if img < prev then monotone = false end
+		prev = img
+		lut[hv] = img
+	end
+	return lut, base_img, H, T, k, monotone
+end
+
+-- Does the component reach a crop side that CUTS THROUGH the grid? Contact with the map's own
+-- border is not an escape -- there is no terrain past it (measured: 42S28W's tallest massifs all
+-- sit on the map rim, and counting that as an escape aborted every descent).
+local function ZCompEscapes(comp, cw, ch, open_left, open_top, open_right, open_bottom)
+	if open_left then
+		for y = 0, ch - 1 do if comp:get(0, y) ~= 0 then return true end end
+	end
+	if open_right then
+		for y = 0, ch - 1 do if comp:get(cw - 1, y) ~= 0 then return true end end
+	end
+	if open_top then
+		for x = 0, cw - 1 do if comp:get(x, 0) ~= 0 then return true end end
+	end
+	if open_bottom then
+		for x = 0, cw - 1 do if comp:get(x, ch - 1) ~= 0 then return true end end
+	end
+	return false
+end
+
+-- Apply the transform above to a DESTINATION-sized compute grid that still holds SOURCE height
+-- values (i.e. straight out of GridResample, before any Z scaling). Zone discovery must run here,
+-- not on the source grid: only one destination sample in nine lands on a source cell, so a
+-- massif's destination peak is generally lower than its source peak and k has to be solved
+-- against the value that actually exists in the final grid for the peak to land on the ceiling.
+-- Returns a NEW grid holding the final heights plus a report; the caller owns both grids.
+local function ZCompressOverflow(values, o)
+	local NewComputeGrid = Global("NewComputeGrid")
+	local IsComputeGrid = Global("IsComputeGrid")
+	local GridDest = Global("GridDest")
+	local GridMask = Global("GridMask")
+	local GridEnumZones = Global("GridEnumZones")
+	local GridMinMax = Global("GridMinMax")
+	local GridCount = Global("GridCount")
+	local GridFind = Global("GridFind")
+	local GridReplace = Global("GridReplace")
+	local GridLerp = Global("GridLerp")
+	local GridMin = Global("GridMin")
+	local GridMulDivAdd = Global("GridMulDivAdd")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	for _, fn in ipairs({ NewComputeGrid, IsComputeGrid, GridDest, GridMask, GridEnumZones,
+		GridMinMax, GridCount, GridFind, GridReplace, GridLerp, GridMin, GridMulDivAdd,
+		box_fn, point_fn }) do
+		if type(fn) ~= "function" then return nil, "grid op unavailable" end
+	end
+	local function free_one(g)
+		if g then pcall(function() if type(g.free) == "function" then g:free() end end) end
+	end
+	local cap, zmul, zdiv, shift = o.cap, o.zmul, o.zdiv, o.shift
+	local ok_size, w, h = pcall(function() return values:size() end)
+	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 4 or h < 4 then
+		return nil, "destination grid size unavailable"
+	end
+	local fmt, bits = IsComputeGrid(values)
+	local src_cap = math.floor(((cap - shift) * zdiv + 0.0) / zmul)
+	if src_cap >= cap then src_cap = cap - 1 end
+
+	-- Affine base image, built so it can never wrap: source values are pre-clamped to src_cap
+	-- (every clamped cell is inside a massif and gets overwritten below), and the handful of rim
+	-- cells whose affine would be negative are pinned to 0 afterwards.
+	local const_cap = GridDest(values)
+	const_cap:copy(values)
+	GridMulDivAdd(const_cap, 0, 1, src_cap)
+	local acc = GridDest(values)
+	GridMin(values, acc, const_cap)
+	free_one(const_cap)
+	GridMulDivAdd(acc, zmul, zdiv, shift)
+	local pinned_low = 0
+	local lo_src = (shift < 0) and math.ceil(((-shift) * zdiv + 0.0) / zmul) or 0
+	if lo_src > 0 then
+		local low_mask = GridDest(values)
+		GridMask(values, low_mask, 0, lo_src - 1)
+		pinned_low = GridCount(low_mask, 0, 1) or 0
+		if pinned_low > 0 then
+			local zero = GridDest(acc)
+			zero:copy(acc)
+			GridMulDivAdd(zero, 0, 1, 0)
+			local fixed = GridDest(acc)
+			GridLerp(acc, fixed, zero, low_mask, 0, 1)
+			free_one(zero)
+			free_one(acc)
+			acc = fixed
+		end
+		free_one(low_mask)
+	end
+
+	local remaining = GridDest(values)
+	GridMask(values, remaining, src_cap + 1, cap)
+	local overflow_cells = GridCount(remaining, 0, 1) or 0
+	local left = overflow_cells
+	local massifs, remapped, worst_pad = {}, 0, 0
+	local stop_reason = "no overflow"
+	while left > 0 do
+		if #massifs >= Z_MAX_MASSIFS then stop_reason = "massif guard hit" break end
+		local _, peak = GridMinMax(values, remaining, 1, false)
+		if type(peak) ~= "number" or peak <= src_cap then stop_reason = "peak lookup failed" break end
+		-- one cell that is BOTH at that peak and still unprocessed (element-wise min of two masks
+		-- is their intersection); GridMinMax's offset return does not say whether it belongs to
+		-- the min or the max, so the position is taken from an unambiguous mask instead.
+		local peak_mask = GridDest(values)
+		GridMask(values, peak_mask, peak, cap)
+		local seed_mask = GridDest(peak_mask)
+		GridMin(peak_mask, seed_mask, remaining)
+		local px, py = GridFind(seed_mask, 1)
+		free_one(peak_mask)
+		free_one(seed_mask)
+		if type(px) ~= "number" or type(py) ~= "number" then
+			stop_reason = "peak position lookup failed"
+			break
+		end
+		local over = math.max(1, peak - src_cap)
+		local base = math.max(1, src_cap - math.ceil(Z_BAND_MULT * over))
+		-- the massif is the component of (h >= base) holding that peak, measured on a crop that
+		-- grows until the component no longer reaches an interior crop side
+		local pad, crop, comp, escaped, x0, y0, x1, y1, cw, ch = Z_ZONE_PAD
+		while true do
+			x0, y0 = math.max(0, px - pad), math.max(0, py - pad)
+			x1, y1 = math.min(w, px + pad + 1), math.min(h, py + pad + 1)
+			cw, ch = x1 - x0, y1 - y0
+			crop = NewComputeGrid(cw, ch, fmt, bits)
+			crop:copyrect(values, box_fn(x0, y0, x1, y1), point_fn(0, 0))
+			local base_mask = GridDest(crop)
+			GridMask(crop, base_mask, base, cap)
+			GridEnumZones(base_mask, 1)
+			local level = base_mask:get(px - x0, py - y0)
+			comp = GridDest(base_mask)
+			GridMask(base_mask, comp, level, level)
+			free_one(base_mask)
+			if type(level) ~= "number" or level <= 0 then
+				escaped = false
+				break
+			end
+			escaped = ZCompEscapes(comp, cw, ch, x0 > 0, y0 > 0, x1 < w, y1 < h)
+			if not escaped or (cw >= w and ch >= h) then break end
+			free_one(crop)
+			free_one(comp)
+			crop, comp = nil, nil
+			pad = pad * Z_ZONE_PAD_GROWTH
+		end
+		if pad > worst_pad then worst_pad = pad end
+		local area = GridCount(comp, 0, 1) or 0
+		if area <= 0 then
+			free_one(crop)
+			free_one(comp)
+			stop_reason = "empty massif component"
+			break
+		end
+		local _, comp_peak = GridMinMax(crop, comp, 1, false)
+		if type(comp_peak) ~= "number" or comp_peak < peak then comp_peak = peak end
+		local lut, base_img, band_h, band_t, k, monotone =
+			ZBuildLut(base, comp_peak, cap, zmul, zdiv, shift)
+		local lut_grid = GridDest(crop)
+		lut_grid:copy(crop)
+		GridReplace(lut_grid, lut)
+		-- compose against the RUNNING accumulator: overlapping crops stay correct and every cell
+		-- the affine had to clamp is repaired, because a clamped cell is always inside a massif
+		local acc_crop = NewComputeGrid(cw, ch, fmt, bits)
+		acc_crop:copyrect(acc, box_fn(x0, y0, x1, y1), point_fn(0, 0))
+		local merged = GridDest(acc_crop)
+		GridLerp(acc_crop, merged, lut_grid, comp, 0, 1)
+		acc:copyrect(merged, box_fn(0, 0, cw, ch), point_fn(x0, y0))
+		free_one(acc_crop)
+		free_one(merged)
+		free_one(lut_grid)
+		-- retire this massif's cells from the overflow set (a zero grid selected inside the mask)
+		local rem_crop = NewComputeGrid(cw, ch, fmt, bits)
+		rem_crop:copyrect(remaining, box_fn(x0, y0, x1, y1), point_fn(0, 0))
+		local rem_zero = GridDest(rem_crop)
+		rem_zero:copy(rem_crop)
+		GridMulDivAdd(rem_zero, 0, 1, 0)
+		local rem_next = GridDest(rem_crop)
+		GridLerp(rem_crop, rem_next, rem_zero, comp, 0, 1)
+		remaining:copyrect(rem_next, box_fn(0, 0, cw, ch), point_fn(x0, y0))
+		free_one(rem_crop)
+		free_one(rem_zero)
+		free_one(rem_next)
+		free_one(crop)
+		free_one(comp)
+		remapped = remapped + area
+		massifs[#massifs + 1] = {
+			x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+			base = base, base_img = base_img, peak = comp_peak, peak_img = lut[comp_peak],
+			peak_x = px, peak_y = py, k = k, cells = area,
+			band_h = band_h, band_t = band_t, monotone = monotone, escaped = escaped,
+		}
+		local next_left = GridCount(remaining, 0, 1) or 0
+		if next_left >= left then
+			stop_reason = "overflow set did not shrink"
+			left = next_left
+			break
+		end
+		left = next_left
+		stop_reason = "complete"
+	end
+	free_one(remaining)
+	local final_min, final_max = GridMinMax(acc)
+	local peaks_at_cap = 0
+	for _, m in ipairs(massifs) do
+		if m.peak_img == cap then peaks_at_cap = peaks_at_cap + 1 end
+	end
+	return acc, {
+		shift = shift, src_cap = src_cap, cap = cap,
+		width = w, height = h,
+		overflow_cells = overflow_cells, overflow_left = left,
+		remapped_cells = remapped, massifs = massifs, peaks_at_cap = peaks_at_cap,
+		pinned_low_cells = pinned_low, worst_pad = worst_pad,
+		final_min = final_min, final_max = final_max,
+		complete = (left == 0), stop_reason = stop_reason,
+	}
+end
+
+-- Interior minimum/maximum of a compute grid, excluding one cell of border, measured by crop-copy.
+-- NOT GridFrame-then-MinMax: GridFrame writes zeros INTO the grid and poisons the minimum.
+local function ZInteriorMinMax(grid)
+	local NewComputeGrid = Global("NewComputeGrid")
+	local IsComputeGrid = Global("IsComputeGrid")
+	local GridMinMax = Global("GridMinMax")
+	local box_fn = Global("box")
+	local point_fn = Global("point")
+	if type(NewComputeGrid) ~= "function" or type(IsComputeGrid) ~= "function"
+		or type(GridMinMax) ~= "function" or type(box_fn) ~= "function"
+		or type(point_fn) ~= "function" then
+		return nil
+	end
+	local ok_size, w, h = pcall(function() return grid:size() end)
+	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 3 or h < 3 then
+		return nil
+	end
+	local fmt, bits = IsComputeGrid(grid)
+	local inner = NewComputeGrid(w - 2, h - 2, fmt, bits)
+	if not inner then return nil end
+	local ok_copy = pcall(function()
+		inner:copyrect(grid, box_fn(1, 1, w - 1, h - 1), point_fn(0, 0))
+	end)
+	local mn, mx
+	if ok_copy then mn, mx = GridMinMax(inner) end
+	pcall(function() if type(inner.free) == "function" then inner:free() end end)
+	if type(mn) ~= "number" or type(mx) ~= "number" then return nil end
+	return mn, mx
 end
 
 -- source_map is optional. When supplied, height/type are read directly from that native-sized
@@ -941,27 +1303,65 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						and map.mapdata.Environment or nil
 					local uniform_underground = environment == "Underground"
 					local zmul, zdiv, zadd = full_tw, sw_tiles, 0
-					if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
-						local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
-						if not uniform_underground and shift
-							and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
-							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
-							zmul, zdiv = cap - FLOOR_MARGIN, max0 - min0
-						end
-						if uniform_underground
-							and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
-							error("uniform underground height stretch exceeds the terrain height budget")
-						end
-						if shift then
-							zadd = FLOOR_MARGIN - math.floor(min0 * zmul / zdiv)
+					-- SURFACE: full 4/3 on Z with per-mountain ceiling normalization (the block above
+					-- stretch_one documents the transform and the measured grid-op contract). The
+					-- whole-map adaptive Z reduction below is what it replaces; that path survives only
+					-- as the fallback for a build whose grid ops are missing.
+					local zone_report
+					if not uniform_underground and cap and cfg_bool("STRETCH_ZONE_COMPRESSION", true) then
+						local interior_min = ZInteriorMinMax(src_sub)
+						if type(interior_min) ~= "number" then interior_min = min0 end
+						if type(interior_min) == "number" then
+							local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
+								and math.min(0, Z_FLOOR_WU - math.floor((interior_min * zmul + 0.0) / zdiv))
+								or 0
+							local ok_z, compressed, report = pcall(ZCompressOverflow, stretched, {
+								cap = cap, zmul = zmul, zdiv = zdiv, shift = shift,
+							})
+							if ok_z and compressed and type(report) == "table" and report.complete then
+								free_grid(stretched)
+								stretched = compressed
+								zadd = shift
+								zone_report = report
+								zone_report.interior_min = interior_min
+							else
+								if ok_z then free_grid(compressed) end
+								LoadingStep("terrain height zone compression unavailable", {
+									error = tostring(ok_z and (type(report) == "table"
+										and report.stop_reason or report) or compressed),
+									interior_min = tostring(interior_min),
+								}, map)
+							end
 						end
 					end
-					pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
+					if not zone_report then
+						if type(min0) == "number" and type(max0) == "number" and max0 > min0 and cap then
+							local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
+							if not uniform_underground and shift
+								and cfg_bool("STRETCH_ADAPTIVE_Z_SCALE", true)
+								and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
+								zmul, zdiv = cap - FLOOR_MARGIN, max0 - min0
+							end
+							if uniform_underground
+								and (max0 - min0) * zmul / zdiv + FLOOR_MARGIN > cap then
+								error("uniform underground height stretch exceeds the terrain height budget")
+							end
+							if shift then
+								zadd = FLOOR_MARGIN - math.floor(min0 * zmul / zdiv)
+							end
+						end
+						pcall(grid_muldivadd, stretched, zmul, zdiv, zadd)
+					end
 					-- Stamp the applied Z transform for consumers (height ranges, relief dz).
 					map.SuperBigMapZScaleMul = zmul
 					map.SuperBigMapZScaleDiv = zdiv
 					map.SuperBigMapZScaleAdd = zadd
 					map.SuperBigMapZScaleUniform = uniform_underground == true
+					-- Where the affine does NOT hold: inside these boxes the ground was remapped by its
+					-- massif's curve, so object seating and every Z prediction must read the real terrain
+					-- (SetTerrainZ) instead of scaling the vanilla Z.
+					map.SuperBigMapZCompressionZones = zone_report and zone_report.massifs or nil
+					map.SuperBigMapZMeasuredMaxHeight = zone_report and zone_report.final_max or nil
 					LoadingStep("terrain height similarity transform", {
 						environment = tostring(environment),
 						xy_scale_mul = full_tw,
@@ -971,6 +1371,17 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						z_scale_add = zadd,
 						uniform_required = tostring(uniform_underground),
 						uniform_applied = tostring(zmul * sw_tiles == zdiv * full_tw),
+						zone_compression = tostring(zone_report ~= nil),
+						zone_massifs = zone_report and #zone_report.massifs or 0,
+						zone_cells = zone_report and zone_report.remapped_cells or 0,
+						zone_peaks_at_cap = zone_report and zone_report.peaks_at_cap or 0,
+						overflow_cells = zone_report and zone_report.overflow_cells or 0,
+						interior_min = zone_report and zone_report.interior_min or 0,
+						src_cap = zone_report and zone_report.src_cap or 0,
+						pinned_low_cells = zone_report and zone_report.pinned_low_cells or 0,
+						worst_crop_pad = zone_report and zone_report.worst_pad or 0,
+						final_min = zone_report and zone_report.final_min or 0,
+						final_max = zone_report and zone_report.final_max or 0,
 					}, map)
 					local min1, max1
 					if type(grid_minmax) == "function" then
@@ -1020,7 +1431,8 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		ScaleHeightRanges(map,
 			map.SuperBigMapZScaleMul or full_tw,
 			map.SuperBigMapZScaleDiv or sw_tiles,
-			map.SuperBigMapZScaleAdd or 0)
+			map.SuperBigMapZScaleAdd or 0,
+			map.SuperBigMapZMeasuredMaxHeight)
 	end
 	if not terrain_already_stretched and stretch_one("type", terrain_api.GetTypeGrid,
 		terrain_api.SetTypeGrid, terrain_api.InvalidateType, false) then

@@ -595,6 +595,13 @@ config.StretchShiftHeightsDown = true
 -- ~90% of vanilla steepness ONLY on maps that need it; most maps keep the full 4/3. The
 -- relief-dz and height-range consumers read the stamped factor, so seating stays correct.
 config.StretchAdaptiveZScale = true
+-- SUPERSEDES the adaptive Z reduction on the SURFACE: keep Z at the full 4/3 everywhere (so
+-- slopes, and therefore passability, are bit-exact vanilla) and absorb the 16-bit overflow only
+-- inside the individual mountains that would pierce the ceiling, each normalized so its own peak
+-- lands exactly on it and its base stays tangent to the 4/3 affine (no crease). Measured at
+-- 42S28W: 28 such massifs covering 1.5% of the map. The adaptive reduction above stays as the
+-- fallback for a build that lacks one of the grid ops this needs.
+config.StretchZoneCompression = true
 -- VANILLA-EQUIVALENT START SECTOR (sbm_sector_exploration source annotation +
 -- RevealVanillaStartSectors). Vanilla's OWN InitialReveal runs while the native source markers
 -- still exist, and its first 10x10 winner is recorded. After stretching, only 20x20 sectors that
@@ -908,6 +915,7 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 	and as_bool(config.UndergroundMarkGridBackingScale)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
+C.STRETCH_ZONE_COMPRESSION = as_bool(config.StretchZoneCompression)
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
 	and as_bool(config.StretchVanillaStartSector)
 C.START_SECTOR_FOOTPRINT_DEPOSITS = expansion_step_20
