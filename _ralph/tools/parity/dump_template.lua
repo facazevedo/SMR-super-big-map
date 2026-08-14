@@ -122,6 +122,8 @@ CreateRealTimeThread(function()
 				"SuperBigMapVanillaStartSourceX1", "SuperBigMapVanillaStartSourceY1",
 				"SuperBigMapStartFootprintDespawned", "SuperBigMapStartFootprintPending",
 				"SuperBigMapStartFootprintDeposits", "SuperBigMapStartFootprintMarkers",
+				"SuperBigMapVanillaStartSource2X0", "SuperBigMapVanillaStartSource2Y0",
+				"SuperBigMapVanillaStartSource2X1", "SuperBigMapVanillaStartSource2Y1",
 				"SuperBigMapProvenanceDerived", "SuperBigMapProvenanceUnresolved",
 				-- Start-sector footprint reveal (mod v789): the box, how many deposit markers the
 				-- box holds, how many were still unplaced after the single sector scan, and how

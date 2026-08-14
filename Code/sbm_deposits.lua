@@ -8317,8 +8317,16 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	local fx1 = tonumber(map.SuperBigMapStartFootprintX1)
 	local fy1 = tonumber(map.SuperBigMapStartFootprintY1)
 	local footprint_ok = fx0 ~= nil and fy0 ~= nil and fx1 ~= nil and fy1 ~= nil
+	-- Vanilla's fallback initial reveal scans a second, nearest-concrete sector; its
+	-- stretched image is a second exempt footprint (SuperBigMapStartFootprint2*).
+	local gx0 = tonumber(map.SuperBigMapStartFootprint2X0)
+	local gy0 = tonumber(map.SuperBigMapStartFootprint2Y0)
+	local gx1 = tonumber(map.SuperBigMapStartFootprint2X1)
+	local gy1 = tonumber(map.SuperBigMapStartFootprint2Y1)
+	local footprint2_ok = gx0 and gy0 and gx1 and gy1
 	local function InStartFootprint(px, py)
-		return footprint_ok and px >= fx0 and px < fx1 and py >= fy0 and py < fy1
+		if footprint_ok and px >= fx0 and px < fx1 and py >= fy0 and py < fy1 then return true end
+		return footprint2_ok and px >= gx0 and px < gx1 and py >= gy0 and py < gy1
 	end
 	local footprint_kept = 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)

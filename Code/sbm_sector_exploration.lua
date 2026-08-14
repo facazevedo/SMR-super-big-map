@@ -1281,7 +1281,7 @@ local function CaptureVanillaStartSelection(map)
 	if not city then return nil, "native source city unavailable" end
 	local ok, selection, reason = pcall(VanillaStartPick, city, map)
 	if not (ok and type(selection) == "table" and type(selection.winners) == "table"
-		and #selection.winners == 1) then
+		and #selection.winners >= 1) then
 		return nil, tostring(ok and reason or selection)
 	end
 	return selection
@@ -1289,7 +1289,7 @@ end
 
 local function StageVanillaStartSelection(map, selection, reason)
 	if not map or type(selection) ~= "table" or type(selection.winners) ~= "table"
-		or #selection.winners ~= 1 then return false, "invalid native start annotation" end
+		or #selection.winners < 1 then return false, "invalid native start annotation" end
 	pending_vanilla_start_by_map[map] = selection
 	local winner = selection.winners[1]
 	map.SuperBigMapVanillaStartSourceSector = winner.id
@@ -1297,6 +1297,14 @@ local function StageVanillaStartSelection(map, selection, reason)
 	map.SuperBigMapVanillaStartSourceY0 = winner.y0
 	map.SuperBigMapVanillaStartSourceX1 = winner.x1
 	map.SuperBigMapVanillaStartSourceY1 = winner.y1
+	-- Vanilla's InitialReveal fallback also reveals the nearest concrete sector (revealed[2],
+	-- Exploration.lua:971-976). Its content spawns in vanilla, so it must spawn here too.
+	local second = selection.winners[2]
+	map.SuperBigMapVanillaStartSource2Sector = second and second.id or nil
+	map.SuperBigMapVanillaStartSource2X0 = second and second.x0 or nil
+	map.SuperBigMapVanillaStartSource2Y0 = second and second.y0 or nil
+	map.SuperBigMapVanillaStartSource2X1 = second and second.x1 or nil
+	map.SuperBigMapVanillaStartSource2Y1 = second and second.y1 or nil
 	return true
 end
 
@@ -1459,10 +1467,42 @@ local function RevealVanillaStartSectors(map)
 		error("vanilla InitialReveal failed for transformed start candidates: " .. tostring(revealed))
 	end
 	local selected = revealed[1]
-	-- Vanilla may return an auxiliary nearest-concrete sector in its fallback branch. The user-facing
-	-- initial reveal is deliberately singular here: use vanilla's first winner as the anchor and scan
-	-- only that sector.
+	-- Vanilla's fallback branch returns an auxiliary nearest-concrete sector (revealed[2]) and
+	-- SCANS it, so its content spawns. The anchor (camera, InitialSector) stays vanilla's first
+	-- winner, but the scan set must be the whole revealed set or the auxiliary sector's deposits
+	-- are missing from the expanded map (measured: b2-04's TerrainDepositConcrete).
 	local reveal_targets = { selected }
+	local winner2 = data.winners and data.winners[2]
+	if winner2 then
+		local w2cx = math.floor(origin_x + ((winner2.x0 + winner2.x1) * 0.5 - origin_x) * scale_x + 0.5)
+		local w2cy = math.floor(origin_y + ((winner2.y0 + winner2.y1) * 0.5 - origin_y) * scale_y + 0.5)
+		local w2_sector
+		Grid.ForEachSector(city, function(sector)
+			local a = sector and sector.area
+			if not a or w2_sector then return end
+			local mn, mx = a:min(), a:max()
+			local ax0, ay0 = mn:xy()
+			local ax1, ay1 = mx:xy()
+			if w2cx >= ax0 and w2cx < ax1 and w2cy >= ay0 and w2cy < ay1 then w2_sector = sector end
+		end)
+		if not w2_sector then
+			error("no expanded sector contains the transformed auxiliary concrete sector center")
+		end
+		if w2_sector ~= selected then
+			reveal_targets[#reveal_targets + 1] = w2_sector
+			-- InitialReveal precomputed CanPlaceDeposit spawn positions only for the first
+			-- winner's candidate sectors; replicate its inner loop for the auxiliary sector
+			-- (Exploration.lua:900-906) so its surface markers spawn exactly the same way.
+			for j = 1, #(w2_sector.markers and w2_sector.markers.surface or "") do
+				local marker = w2_sector.markers.surface[j]
+				if marker and not spawn_positions[marker]
+					and type(marker.CanPlaceDeposit) == "function" then
+					local ok_sp, sp = pcall(marker.CanPlaceDeposit, marker)
+					if ok_sp and sp then spawn_positions[marker] = sp end
+				end
+			end
+		end
+	end
 	-- This is still initial generation: remove any accidental destination reveal produced while the
 	-- class wrapper was being reclaimed, then persist only vanilla's selected initial winner.
 	local done_object = Global("DoneObject")
@@ -1538,18 +1578,25 @@ local function RevealVanillaStartSectors(map)
 		-- image and the hex snap) and measurably flips markers near the boundary in both
 		-- directions (b2-04 lost its TerrainDepositConcrete, b2-10 gained a SubsurfaceDepositWater).
 		-- The half-open test matches vanilla's sector membership.
-		local sx0 = tonumber(map.SuperBigMapVanillaStartSourceX0)
-		local sy0 = tonumber(map.SuperBigMapVanillaStartSourceY0)
-		local sx1 = tonumber(map.SuperBigMapVanillaStartSourceX1)
-		local sy1 = tonumber(map.SuperBigMapVanillaStartSourceY1)
-		if not (sx0 and sy0 and sx1 and sy1) then
-			error("vanilla start winner rect unavailable in source coordinates")
+		local source_rects = {}
+		for wi = 1, #(data.winners or "") do
+			local w = data.winners[wi]
+			if type(w) == "table" and w.x0 and w.y0 and w.x1 and w.y1 then
+				source_rects[#source_rects + 1] = w
+			end
+		end
+		if #source_rects == 0 then
+			error("vanilla start winner rects unavailable in source coordinates")
 		end
 		local function source_membership(marker)
 			local mx = tonumber(rawget(marker, "SuperBigMapNativeSourceX"))
 			local my = tonumber(rawget(marker, "SuperBigMapNativeSourceY"))
 			if not mx or not my then return nil end
-			return mx >= sx0 and mx < sx1 and my >= sy0 and my < sy1
+			for ri = 1, #source_rects do
+				local r = source_rects[ri]
+				if mx >= r.x0 and mx < r.x1 and my >= r.y0 and my < r.y1 then return true end
+			end
+			return false
 		end
 
 		-- (1) The destination start sector's own vanilla Scan ran over a physically
@@ -1557,29 +1604,40 @@ local function RevealVanillaStartSectors(map)
 		-- OUTSIDE vanilla's winner. Vanilla never spawned those; despawn them before the
 		-- remainder pass so the final spawned set is exactly vanilla's.
 		local despawned = 0
-		local done_object = Global("DoneObject")
-		local is_valid = Global("IsValid")
-		for _, target in ipairs(reveal_targets) do
-			local revealed_lists = { target.revealed_surf, target.revealed_deep }
-			for li = 1, #revealed_lists do
-				local lst = revealed_lists[li]
-				if type(lst) == "table" then
-					for i = #lst, 1, -1 do
-						local marker = lst[i]
-						if marker and source_membership(marker) == false then
-							local obj = rawget(marker, "placed_obj")
-							if obj and type(done_object) == "function"
-								and (type(is_valid) ~= "function" or is_valid(obj)) then
-								pcall(done_object, obj)
-							end
-							marker.placed_obj = false
-							marker.is_placed = false
-							table.remove(lst, i)
-							despawned = despawned + 1
+		local despawned_markers = {}
+		do
+			-- GLOBAL sweep: mechanisms other than the sector scan can also place a deposit
+			-- (measured at b2-10: a marker just outside the winner's corner arrived placed
+			-- while the scan-list walk saw nothing), so the source-space rule is enforced on
+			-- the whole map, not on the reveal bookkeeping.
+			local sweep_done = Global("DoneObject")
+			local sweep_valid = Global("IsValid")
+			pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+				if not rawget(marker, "is_placed") then return end
+				if source_membership(marker) ~= false then return end
+				local obj = rawget(marker, "placed_obj")
+				if obj and type(sweep_done) == "function"
+					and (type(sweep_valid) ~= "function" or sweep_valid(obj)) then
+					pcall(sweep_done, obj)
+				end
+				marker.placed_obj = false
+				marker.is_placed = false
+				despawned_markers[marker] = true
+				despawned = despawned + 1
+			end)
+			-- Purge every sector's revealed bookkeeping of the despawned markers; a stale
+			-- entry re-materializes the deposit on save/load.
+			Grid.ForEachSector(city, function(sector)
+				local lists = { sector.revealed_surf, sector.revealed_deep }
+				for li = 1, 2 do
+					local lst = lists[li]
+					if type(lst) == "table" then
+						for i = #lst, 1, -1 do
+							if despawned_markers[lst[i]] then table.remove(lst, i) end
 						end
 					end
 				end
-			end
+			end)
 		end
 
 		-- (2) Spawn the footprint remainder: every not-yet-placed native marker whose SOURCE
@@ -1631,6 +1689,24 @@ local function RevealVanillaStartSectors(map)
 				placed_extra = placed_extra + (tonumber(count) or 0)
 			end
 		end
+		-- Vanilla's rare-anomaly "Revealed" FX (a persistent ParSystem carrier) fires from
+		-- SetRevealed(true) -> OnRevealedValueChanged -> OnReveal during PlaceDeposit. A
+		-- footprint-remainder spawn runs mid-stretch, where the FX pipeline was measured not to
+		-- produce the carrier (b2-07), so replay it end-of-tick, the same deferral vanilla uses
+		-- for OnDepositsSpawned.
+		for i = 1, #pending.subsurface do
+			local marker = pending.subsurface[i].marker
+			local obj = rawget(marker, "placed_obj")
+			if obj and rawget(obj, "rare") then
+				local play_fx = Global("PlayFX")
+				local delayed = Global("DelayedCall")
+				if type(play_fx) == "function" and type(delayed) == "function" then
+					pcall(delayed, 0, play_fx, "Revealed", "start", obj)
+				elseif type(play_fx) == "function" then
+					pcall(play_fx, "Revealed", "start", obj)
+				end
+			end
+		end
 		if placed_extra > 0 then
 			-- Vanilla's own tail for a reveal that spawned deposits (MapSector:Scan).
 			pcall(function()
@@ -1655,6 +1731,12 @@ local function RevealVanillaStartSectors(map)
 		map.SuperBigMapStartFootprintPending = pending_total
 		map.SuperBigMapStartFootprintDeposits = placed_extra
 		map.SuperBigMapStartFootprintDespawned = despawned
+		if winner2 then
+			map.SuperBigMapStartFootprint2X0 = math.floor(origin_x + (winner2.x0 - origin_x) * scale_x + 0.5)
+			map.SuperBigMapStartFootprint2Y0 = math.floor(origin_y + (winner2.y0 - origin_y) * scale_y + 0.5)
+			map.SuperBigMapStartFootprint2X1 = math.floor(origin_x + (winner2.x1 - origin_x) * scale_x + 0.5)
+			map.SuperBigMapStartFootprint2Y1 = math.floor(origin_y + (winner2.y1 - origin_y) * scale_y + 0.5)
+		end
 	end
 
 	if selected then
