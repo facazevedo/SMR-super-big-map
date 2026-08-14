@@ -36,6 +36,8 @@ OUT = HERE / "out"
 GEN_TEMPLATE = HERE / "gen_template.lua"
 DUMP_TEMPLATE = HERE / "dump_template.lua"
 HEXGRID_TEMPLATE = HERE / "hexgrid_template.lua"
+SAVE_TEMPLATE = HERE / "save_template.lua"
+LOAD_TEMPLATE = HERE / "load_template.lua"
 
 # The stock underground seed is drawn from AsyncRand inside FillRandomMapGen
 # (ModTools PreGameMenus.lua:166, because MapData["BlankUnderground_0X"].map_randomizeseed
@@ -3218,12 +3220,160 @@ ANOM_PROBE_BLOCK = """		do
 		end"""
 
 
+def dump_and_census(client, tag, hexgrid):
+    """Dump every object on both maps, then (optionally) the read-only hexgrid census.
+
+    Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
+    produced by exactly the same code path as the pre-save dump - a recount scored against a
+    dump made by different logic would prove nothing.
+    """
+    csv_path = OUT / f"objects-{tag}.csv"
+    dump_src = DUMP_TEMPLATE.read_text(encoding="utf-8")
+    dump_src = dump_src.replace("__OUT_PATH__", cli.lua_path(csv_path))
+    dump_path = OUT / f"dump-{tag}.lua"
+    dump_path.write_text(dump_src, encoding="utf-8")
+
+    load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
+    if load_err:
+        raise RuntimeError(f"dump script failed to load: {load_err[2]}")
+    status = poll_status(
+        client, "g_ParityDumpStatus", {"complete"}, {"error"}, 900, f"dump-{tag}"
+    )
+    if status != "complete":
+        _, detail = cli.marshal_value(client, "g_ParityDumpError", timeout=60.0)
+        raise RuntimeError(f"dump failed ({tag}): {detail}")
+    _, rows = cli.marshal_value(client, "g_ParityDumpRows", timeout=60.0)
+    log(f"dump complete ({tag}): {rows} objects -> {csv_path}")
+
+    hex_path = OUT / f"hexgrid-{tag}.txt"
+    if hexgrid:
+        # Read-only, and deliberately AFTER the object dump so the dump stays
+        # byte-comparable with runs that did not ask for the census.
+        if hex_path.exists():
+            hex_path.unlink()
+        hex_src = HEXGRID_TEMPLATE.read_text(encoding="utf-8")
+        hex_src = hex_src.replace("__OUT_PATH__", cli.lua_path(hex_path))
+        hex_script = OUT / f"hexgrid-{tag}.lua"
+        hex_script.write_text(hex_src, encoding="utf-8")
+        load_err, prose = cli.load_lua_file(client, hex_script, timeout=60.0)
+        if load_err:
+            raise RuntimeError(f"hexgrid census failed to load: {load_err[2]}")
+        status = poll_status(
+            client, "g_ParityHexStatus", {"complete"}, {"error"}, 900, f"hexgrid-{tag}"
+        )
+        if status != "complete":
+            _, detail = cli.marshal_value(client, "g_ParityHexError", timeout=60.0)
+            raise RuntimeError(f"hexgrid census failed ({tag}): {detail}")
+        _, buckets = cli.marshal_value(client, "g_ParityHexBuckets", timeout=60.0)
+        log(f"hexgrid census complete ({tag}): {buckets} buckets -> {hex_path}")
+    return rows, csv_path, hex_path
+
+
+def save_session(client, tag, display_name):
+    """Save the live session through the engine's own SaveGame path; return its metadata.
+
+    Runs AFTER the dump and the census, so neither is affected by the save.
+    """
+    info_path = OUT / f"savegame-{tag}.txt"
+    if info_path.exists():
+        info_path.unlink()
+    save_src = SAVE_TEMPLATE.read_text(encoding="utf-8")
+    save_src = save_src.replace("__SAVE_DISPLAY__", display_name)
+    save_src = save_src.replace("__SAVE_INFO__", cli.lua_path(info_path))
+    save_script = OUT / f"save-{tag}.lua"
+    save_script.write_text(save_src, encoding="utf-8")
+    load_err, prose = cli.load_lua_file(client, save_script, timeout=60.0)
+    if load_err:
+        raise RuntimeError(f"save script failed to load: {load_err[2]}")
+    status = poll_status(
+        client, "g_ParitySaveStatus", {"complete"}, {"error"}, 900, f"save-{tag}"
+    )
+    if status != "complete":
+        _, detail = cli.marshal_value(client, "g_ParitySaveError", timeout=60.0)
+        raise RuntimeError(f"save failed ({tag}): {detail}")
+    _, savename = cli.marshal_value(client, "g_ParitySaveName", timeout=60.0)
+    _, folder = cli.marshal_value(client, "g_ParitySaveFolder", timeout=60.0)
+    _, save_map = cli.marshal_value(client, "g_ParitySaveMap", timeout=60.0)
+    if not isinstance(savename, str) or not savename:
+        raise RuntimeError(f"save reported no savename ({tag}): {savename!r}")
+    log(f"savegame written ({tag}): {savename}  folder={folder}  map={save_map}")
+    return {"savename": savename, "folder": folder, "map": save_map,
+            "display": display_name, "info": str(info_path)}
+
+
+def run_load(tag, savename, hexgrid=False, max_wait=1800):
+    """Boot a FRESH game, load `savename`, then recount both maps with the same dump.
+
+    Nothing is generated here: the expanded map must come back out of the engine's own
+    persistence.  Used by the save-roundtrip acceptance condition.
+    """
+    csv_path = OUT / f"objects-{tag}.csv"
+    if csv_path.exists():
+        csv_path.unlink()
+
+    load_src = LOAD_TEMPLATE.read_text(encoding="utf-8")
+    load_src = load_src.replace("__SAVE_NAME__", savename)
+    load_script = OUT / f"load-{tag}.lua"
+    load_script.write_text(load_src, encoding="utf-8")
+
+    proc, lf = spawn_game(tag)
+    try:
+        log(f"connecting DAP ({tag})...")
+        client = dap.connect(retry_timeout=180.0)
+        err = cli.ensure_harness(client)
+        if err:
+            raise RuntimeError(f"harness injection failed: {err[2]}")
+        log(f"harness ready ({tag})")
+
+        load_err, prose = cli.load_lua_file(client, load_script, timeout=60.0)
+        if load_err:
+            raise RuntimeError(f"load script failed to load: {load_err[2]}")
+        log(f"savegame load started ({tag}): {prose}")
+        status = poll_status(
+            client, "g_ParityLoadStatus", {"complete"}, {"error"}, max_wait, f"load-{tag}"
+        )
+        if status != "complete":
+            _, detail = cli.marshal_value(client, "g_ParityLoadError", timeout=60.0)
+            raise RuntimeError(f"savegame load failed ({tag}): {detail}")
+        readback = {}
+        for var, key in (("g_ParityLoadSurfaceSeed", "surface_seed"),
+                         ("g_ParityLoadUndergroundSeed", "underground_seed"),
+                         ("g_ParityLoadMap", "map"),
+                         ("g_ParityLoadMapCount", "map_count"),
+                         ("g_ParityLoadSwitched", "switched_to_underground"),
+                         ("g_ParityLoadExpanded", "surface_expanded")):
+            _, readback[key] = cli.marshal_value(client, var, timeout=60.0)
+        log(f"savegame loaded ({tag}): {json.dumps(readback)}")
+
+        rows, csv_path, hex_path = dump_and_census(client, tag, hexgrid)
+        try:
+            client.evaluate("quit()", timeout=5.0)
+        except Exception:
+            pass
+        info = {"tag": tag, "loaded_savename": savename, "rows": rows,
+                "csv": str(csv_path), "hexgrid": str(hex_path) if hexgrid else None}
+        info.update(readback)
+        return info
+    finally:
+        time.sleep(2)
+        try:
+            proc.terminate()
+            proc.wait(timeout=20)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        lf.close()
+
+
 def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=1800, lon=8760,
              pin_seed=None, decal_probe=False, hexgrid=False, camera_probe=False,
              fx_probe=False, pit_probe=False, decor_probe=False, mark_probe=False,
              entrance_audit=False, proc_trace=False, pass_probe=False, draw_probe=False,
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
-             anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False):
+             anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
+             save_as=None):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -3352,11 +3502,6 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     gen_src = gen_src.replace("__EXTRA_SETUP__", "\n\n".join(extras))
     gen_path = OUT / f"gen-{tag}.lua"
     gen_path.write_text(gen_src, encoding="utf-8")
-
-    dump_src = DUMP_TEMPLATE.read_text(encoding="utf-8")
-    dump_src = dump_src.replace("__OUT_PATH__", cli.lua_path(csv_path))
-    dump_path = OUT / f"dump-{tag}.lua"
-    dump_path.write_text(dump_src, encoding="utf-8")
 
     proc, lf = spawn_game(tag)
     try:
@@ -3596,19 +3741,9 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             _, anom_calls = cli.marshal_value(client, "g_ParityAnomProbeCalls", timeout=60.0)
             log(f"anomaly probe: {anom_status}, {anom_calls} initializer call(s) -> {anom_path}")
 
-        load_err, prose = cli.load_lua_file(client, dump_path, timeout=60.0)
-        if load_err:
-            raise RuntimeError(f"dump script failed to load: {load_err[2]}")
-        status = poll_status(
-            client, "g_ParityDumpStatus", {"complete"}, {"error"}, 900, f"dump-{tag}"
-        )
-        if status != "complete":
-            _, detail = cli.marshal_value(client, "g_ParityDumpError", timeout=60.0)
-            raise RuntimeError(f"dump failed ({tag}): {detail}")
-        _, rows = cli.marshal_value(client, "g_ParityDumpRows", timeout=60.0)
-        log(f"dump complete ({tag}): {rows} objects -> {csv_path}")
         # Temporary determinism diagnostics: prove the serial pin reached the table the
         # generator's own compiled body reads, instead of a shadowed ambient `const`.
+        rows, csv_path, hex_path = dump_and_census(client, tag, hexgrid)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -3619,27 +3754,11 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             except Exception:
                 pass
 
-        hex_path = OUT / f"hexgrid-{tag}.txt"
-        if hexgrid:
-            # Read-only, and deliberately AFTER the object dump so the dump stays
-            # byte-comparable with runs that did not ask for the census.
-            if hex_path.exists():
-                hex_path.unlink()
-            hex_src = HEXGRID_TEMPLATE.read_text(encoding="utf-8")
-            hex_src = hex_src.replace("__OUT_PATH__", cli.lua_path(hex_path))
-            hex_script = OUT / f"hexgrid-{tag}.lua"
-            hex_script.write_text(hex_src, encoding="utf-8")
-            load_err, prose = cli.load_lua_file(client, hex_script, timeout=60.0)
-            if load_err:
-                raise RuntimeError(f"hexgrid census failed to load: {load_err[2]}")
-            status = poll_status(
-                client, "g_ParityHexStatus", {"complete"}, {"error"}, 900, f"hexgrid-{tag}"
-            )
-            if status != "complete":
-                _, detail = cli.marshal_value(client, "g_ParityHexError", timeout=60.0)
-                raise RuntimeError(f"hexgrid census failed ({tag}): {detail}")
-            _, buckets = cli.marshal_value(client, "g_ParityHexBuckets", timeout=60.0)
-            log(f"hexgrid census complete ({tag}): {buckets} buckets -> {hex_path}")
+        savegame = None
+        if save_as:
+            # AFTER the dump and the census, so this twin's dump stays byte-comparable with a
+            # run that never saved.
+            savegame = save_session(client, tag, save_as)
 
         try:
             client.evaluate("quit()", timeout=5.0)
@@ -3659,6 +3778,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "rows": rows,
             "csv": str(csv_path),
             "hexgrid": str(hex_path) if hexgrid else None,
+            "savegame": savegame,
         }
     finally:
         time.sleep(2)
@@ -3700,6 +3820,12 @@ def main():
         anomprobe = "anomprobe" in sys.argv[5:]
         placeprobe = "placeprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
+        # "saveas=<display>" saves the finished session through the engine's own SaveGame path
+        # after the dump and the census, for the save-roundtrip acceptance condition.
+        save_as = None
+        for extra in sys.argv[5:]:
+            if extra.startswith("saveas="):
+                save_as = extra[7:]
         # A vanilla control is pinned to the reference underground unless "nopin" is passed;
         # an explicit seed argument overrides which underground it is pinned to.
         pin = None if expand or "nopin" in sys.argv[5:] else (seed or REFERENCE_UNDERGROUND_SEED)
@@ -3715,7 +3841,7 @@ def main():
             f"tag_order_pin={tagorder} "
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
             f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
-            f"lat={lat} lon={lon} ===")
+            f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
                         fx_probe=fxprobe, pit_probe=pitprobe, decor_probe=decorprobe,
@@ -3723,7 +3849,17 @@ def main():
                         pass_probe=passprobe, draw_probe=drawprobe, passage_pin=passagepin,
                         point_probe=pointprobe, field_probe=fieldprobe, slot_probe=slotprobe,
                         anom_probe=anomprobe, place_probe=placeprobe, play_probe=playprobe,
-                        tag_order_pin=tagorder)
+                        tag_order_pin=tagorder, save_as=save_as)
+        log(f"result: {json.dumps(info)}")
+        return
+
+    # Save-roundtrip mode: "load <tag> <savename> [hexgrid]" boots a FRESH game, loads that
+    # savegame and recounts both maps with the twins' own dump.  No generation happens.
+    if len(sys.argv) >= 4 and sys.argv[1] == "load":
+        tag, savename = sys.argv[2], sys.argv[3]
+        hexgrid = "hexgrid" in sys.argv[4:]
+        log(f"=== load '{tag}' savename={savename} hexgrid={hexgrid} ===")
+        info = run_load(tag, savename, hexgrid=hexgrid)
         log(f"result: {json.dumps(info)}")
         return
 
