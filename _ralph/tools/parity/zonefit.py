@@ -120,15 +120,26 @@ def zone_lut(base, peak, shift):
         img = base_img + np.rint(H * t / max(T, 1)).astype(np.int64)
     else:
         img = base_img + np.rint(H * (-np.expm1(-k * t)) / -np.expm1(-k * T)).astype(np.int64)
+    # rint can land 1 unit above the affine near the base, where the two curves touch; the
+    # remap must only ever lower a cell.  min() with the affine is safe at the peak (the
+    # affine there is above the ceiling by construction) and keeps the LUT monotone.
+    img = np.minimum(img, affine(base + t, shift))
     d = np.diff(img)
+    # no-crease check.  The analytic derivative at the base is the constraint solve_k
+    # enforces; the discrete numbers are what a finite difference on the integer LUT can
+    # see, so they are taken over a SHORT window -- a 64-step window understates f'(0) on a
+    # small massif whose curve bends inside 100 units, which is curvature, not a crease.
+    win = max(1, min(8, T))
+    slope0 = (H * k / -math.expm1(-k * T)) if (k > 0 and T > 0) else (H / T if T > 0 else None)
     meta = dict(
         base=base, peak=peak, base_img=base_img, H=int(H), T=int(T), k=k,
         peak_img=int(img[-1]),
         avg_slope=round(H / T, 6) if T > 0 else None,
         slope_factor=round((H / T) / TARGET_SLOPE, 6) if T > 0 else None,
-        # measured slope over the first/last 64 steps: the numeric no-crease check
-        slope_at_base=round(float(img[min(64, T)] - img[0]) / max(1, min(64, T)), 6) if T > 0 else None,
-        slope_at_peak=round(float(img[-1] - img[max(0, T - 64)]) / max(1, min(64, T)), 6) if T > 0 else None,
+        slope_at_base_analytic=round(float(slope0), 6) if slope0 is not None else None,
+        slope_window=int(win),
+        slope_at_base=round(float(img[win] - img[0]) / win, 6) if T > 0 else None,
+        slope_at_peak=round(float(img[-1] - img[-1 - win]) / win, 6) if T > 0 else None,
         monotone=bool(np.all(d >= 0)) if T > 0 else True,
     )
     return meta, img
@@ -267,11 +278,16 @@ def build_massifs(grid, zones, bases, structure, pads, log):
             continue
         z = zones[i]
         base = int(bases[i])
-        y0, y1, x0, x1 = crop_for(z["bbox"], grid.shape, pads[i])
-        sub = grid[y0:y1, x0:x1]
-        sides = open_sides((y0, y1, x0, x1), grid.shape)
-        mask, area, escaped = component_at(sub, base, z["peak_y"] - y0, z["peak_x"] - x0,
-                                           structure, sides)
+        cur_pad = pads[i]
+        while True:
+            y0, y1, x0, x1 = crop_for(z["bbox"], grid.shape, cur_pad)
+            sub = grid[y0:y1, x0:x1]
+            sides = open_sides((y0, y1, x0, x1), grid.shape)
+            mask, area, escaped = component_at(sub, base, z["peak_y"] - y0, z["peak_x"] - x0,
+                                               structure, sides)
+            if not escaped or cur_pad >= max(grid.shape):
+                break
+            cur_pad *= 4  # the massif continues past the crop: measure it whole
         members = [i]
         for j in range(len(zones)):
             if j == i or j in assigned:
@@ -369,6 +385,9 @@ def main(argv=None):
                     help="descend to src_cap - span_mult*(peak-src_cap)")
     ap.add_argument("--coarse", action="store_true",
                     help="also run the contract's literal coarse descent for comparison")
+    ap.add_argument("--skip-descent", action="store_true",
+                    help="skip the per-zone area-vs-level descent; only valid with "
+                         "--rule headroom, which derives the base from the overflow alone")
     ap.add_argument("--factor-sweep", default="",
                     help="comma-separated slope-factor floors; measure zone coverage for "
                          "each and skip the per-zone descent (decision evidence only)")
@@ -439,20 +458,29 @@ def main(argv=None):
         return 0
 
     # --- per-zone fine descent curves
-    log("fine descent per zone")
-    curves = []
-    for z in zones:
-        c = fine_curve(grid, z, src_cap, structure, args.pad, args.steps, args.span_mult, log)
-        curves.append(c)
-        s = c["samples"]
-        log(f"  zone {z['id']:2d} peak {z['peak_src']} over {z['peak_src']-src_cap:5d} "
-            f"area@cap {z['area_over_cap']:6d} step {c['step']:4d} "
-            f"area@{s[len(s)//2][0]} {s[len(s)//2][1]} area@{s[-1][0]} {s[-1][1]} "
-            f"pad {c['pad']} grows {c['grows']} escaped {any(x[2] for x in s)}")
+    if args.skip_descent:
+        if args.rule != "headroom":
+            raise SystemExit("--skip-descent needs --rule headroom (the other rules read "
+                             "the descent curve)")
+        log("descent skipped (--skip-descent): the headroom base needs only the overflow")
+        curves = [dict(crop=list(z["bbox"]), pad=args.pad, grows=0, step=0, lo=src_cap,
+                       samples=[[src_cap, z["area_over_cap"], 0]]) for z in zones]
+    else:
+        log("fine descent per zone")
+        curves = []
+        for z in zones:
+            c = fine_curve(grid, z, src_cap, structure, args.pad, args.steps,
+                           args.span_mult, log)
+            curves.append(c)
+            s = c["samples"]
+            log(f"  zone {z['id']:2d} peak {z['peak_src']} over {z['peak_src']-src_cap:5d} "
+                f"area@cap {z['area_over_cap']:6d} step {c['step']:4d} "
+                f"area@{s[len(s)//2][0]} {s[len(s)//2][1]} area@{s[-1][0]} {s[-1][1]} "
+                f"pad {c['pad']} grows {c['grows']} escaped {any(x[2] for x in s)}")
 
     # --- candidate base rules, side by side
     rules_report = {}
-    for rule in ("knee", "area", "headroom"):
+    for rule in (("headroom",) if args.skip_descent else ("knee", "area", "headroom")):
         rows = []
         total = 0
         for z, c in zip(zones, curves):
@@ -689,20 +717,37 @@ def make_figure(grid, lab, zones, curves, massifs, rules, shift, src_cap, path, 
     ax.set_xticks([]); ax.set_yticks([])
 
     ax2 = fig.add_subplot(2, 2, 2)
-    for n in range(min(6, len(curves))):
-        s = curves[n]["samples"]
-        ax2.semilogy([x[0] for x in s], [max(1, x[1]) for x in s], lw=1.1,
-                     label=f"zone {zones[n]['id']}")
-    for m in massifs[:6]:
-        ax2.axvline(m["base_src"], ls=":", lw=0.8, color="gray")
-    ax2.invert_xaxis()
-    ax2.set_xlabel("threshold level (source units)")
-    ax2.set_ylabel("area of the peak's component (cells)")
-    ax2.set_title(f"fine descent: area vs level (dotted = chosen bases, rule '{rule}')\n"
-                  f"rule totals: " + ", ".join(
-                      f"{r}={rules[r]['pct_of_map']:.2f}%/f{rules[r]['min_slope_factor']:.2f}"
-                      for r in rules))
-    ax2.legend(fontsize=7, ncol=3)
+    if max(len(c["samples"]) for c in curves) > 1:
+        for n in range(min(6, len(curves))):
+            s = curves[n]["samples"]
+            ax2.semilogy([x[0] for x in s], [max(1, x[1]) for x in s], lw=1.1,
+                         label=f"zone {zones[n]['id']}")
+        for m in massifs[:6]:
+            ax2.axvline(m["base_src"], ls=":", lw=0.8, color="gray")
+        ax2.invert_xaxis()
+        ax2.set_xlabel("threshold level (source units)")
+        ax2.set_ylabel("area of the peak's component (cells)")
+        ax2.set_title(f"fine descent: area vs level (dotted = chosen bases, rule '{rule}')\n"
+                      f"rule totals: " + ", ".join(
+                          f"{r}={rules[r]['pct_of_map']:.2f}%/f{rules[r]['min_slope_factor']:.2f}"
+                          for r in rules))
+        ax2.legend(fontsize=7, ncol=3)
+    else:
+        # no descent was run (bases come from the overflow alone): show the massif family
+        for m in massifs:
+            hs = np.arange(m["base_src"], m["peak_src"] + 1)
+            _, lut = zone_lut(m["base_src"], m["peak_src"], shift)
+            ax2.plot(hs, lut, lw=0.9)
+        ax2.axhline(CAP, lw=0.8, color="k")
+        ax2.plot([], [], lw=0.9, color="gray", label=f"{len(massifs)} massif remaps")
+        ax2.set_xlabel("source height")
+        ax2.set_ylabel("destination height")
+        ax2.set_title(f"every massif remap (rule '{rule}'): each leaves its base tangent to "
+                      f"the 4/3 affine\nand lands its own peak exactly on {CAP}; "
+                      f"bases {min(m['base_src'] for m in massifs)}.."
+                      f"{max(m['base_src'] for m in massifs)}, "
+                      f"total zone cells {sum(m['base_area'] for m in massifs)}")
+        ax2.legend(fontsize=8)
     ax2.grid(alpha=0.3)
 
     ax3 = fig.add_subplot(2, 2, 4)
