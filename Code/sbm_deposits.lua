@@ -8360,6 +8360,22 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	-- and reveal any hidden scan-gated objects inside.
 	local reveal_deposits = Global("RevealDeposits")
 	local placed_sectors, revealed_objs = 0, 0
+	-- The staged start-spawn replay decided the whole initial reveal on NATIVE terrain, and the
+	-- only scanned sectors at this point are vanilla's own reveal targets. A destination sector's
+	-- area is NOT the stretched image of vanilla's winner rect, so enumerating it here manufactures
+	-- deposits vanilla never placed (measured at b2-04, v799: +4 SurfaceDepositMetals,
+	-- +1 SubsurfaceDepositMetals and their ParSystem / SubsurfaceAnomaly_breakthrough followers).
+	-- While the staged key set is published, only a marker vanilla itself placed may be revealed.
+	local staged_keys = map.SuperBigMapStartStagedMarkerKeys
+	if type(staged_keys) ~= "table" then staged_keys = nil end
+	local staged_skipped = 0
+	local function StagedAllows(m)
+		if not staged_keys then return true end
+		local sx = tonumber(rawget(m, "SuperBigMapNativeSourceX"))
+		local sy = tonumber(rawget(m, "SuperBigMapNativeSourceY"))
+		if not (sx and sy) then return false end
+		return staged_keys[tostring(m.class) .. ":" .. tostring(sx) .. ":" .. tostring(sy)] == true
+	end
 	if type(city.MapSectors) == "table" then
 		for _, sector_col in pairs(city.MapSectors) do
 			if type(sector_col) == "table" then
@@ -8369,7 +8385,11 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 							local markers = {}
 							pcall(map.MapForEach, map, sector.area, "DepositMarker", function(m)
 								if m and IsResourceDepositMarker(m) and m.is_placed ~= true then
-									markers[#markers + 1] = m
+									if StagedAllows(m) then
+										markers[#markers + 1] = m
+									else
+										staged_skipped = staged_skipped + 1
+									end
 								end
 							end)
 							if #markers > 0 then
@@ -8394,6 +8414,7 @@ function DepositRules.EnforceScanGateAfterStretch(map)
 	end
 	map.SuperBigMapScanGateFootprintKept = footprint_kept
 	map.SuperBigMapScanGateDespawned = despawned
+	map.SuperBigMapScanGateStagedSkipped = staged_skipped
 end
 
 function DepositRules.OnSectorScanned(status, sector)

@@ -132,6 +132,9 @@ CreateRealTimeThread(function()
 				"SuperBigMapStartFootprintMarkers", "SuperBigMapStartFootprintPending",
 				"SuperBigMapStartFootprintDeposits",
 				"SuperBigMapScanGateFootprintKept", "SuperBigMapScanGateDespawned",
+				-- How many unplaced markers the scan gate's scanned-sector pass refused because
+				-- the staged native set (mod v800) says vanilla never placed them.
+				"SuperBigMapScanGateStagedSkipped",
 				-- Staged native start spawns (mod v798): vanilla's own per-sector, per-depth
 				-- spawn decisions, recorded on the native source before the stretch.
 				"SuperBigMapStartStagedCount", "SuperBigMapStartStagedSectors",

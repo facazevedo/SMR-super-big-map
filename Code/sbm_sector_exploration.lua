@@ -1585,7 +1585,9 @@ end
 
 -- Replay the whole staged set in vanilla's own order (per revealed sector: block, then surface,
 -- then subsurface). Returns the statistics, the set of markers vanilla actually placed (the only
--- deposits allowed to survive the sweep) and the placed records for the FX tail.
+-- deposits allowed to survive the sweep), the placed records for the FX tail, and the source-stamp
+-- keys of the markers vanilla placed (published on the map so later destination-side passes can
+-- tell a vanilla start spawn from one of their own).
 local function ReplayStagedStartSpawns(map, city, staged, geom)
 	local stats = {
 		records = #staged, unplaceable = 0, resolved = 0, unresolved = 0,
@@ -1593,7 +1595,7 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 	}
 	local index, duplicates = BuildNativeSourceMarkerIndex(map)
 	stats.duplicates = duplicates
-	local staged_markers, placed_records = {}, {}
+	local staged_markers, placed_records, staged_keys = {}, {}, {}
 	for i = 1, #staged do
 		local record = staged[i]
 		if record.can_place ~= true then
@@ -1601,6 +1603,7 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 		else
 			local key = tostring(record.class) .. ":" .. tostring(record.source_x)
 				.. ":" .. tostring(record.source_y)
+			staged_keys[key] = true
 			local marker = index[key]
 			if not marker then
 				stats.unresolved = stats.unresolved + 1
@@ -1629,7 +1632,7 @@ local function ReplayStagedStartSpawns(map, city, staged, geom)
 			end
 		end
 	end
-	return stats, staged_markers, placed_records
+	return stats, staged_markers, placed_records, staged_keys
 end
 
 -- Everything else that arrived placed is not vanilla's: the destination's own mechanisms can place
@@ -1899,8 +1902,15 @@ local function RevealVanillaStartSectors(map)
 		-- of every sector vanilla's InitialReveal returned, including the auxiliary concrete
 		-- sector), so nothing here consults the destination's geometry.
 		local geom = { origin_x = origin_x, origin_y = origin_y, scale_x = scale_x, scale_y = scale_y }
-		local stats, staged_markers, placed_records = ReplayStagedStartSpawns(map, city, staged, geom)
+		local stats, staged_markers, placed_records, staged_keys =
+			ReplayStagedStartSpawns(map, city, staged, geom)
 		local despawned = SweepUnstagedStartSpawns(map, city, staged_markers)
+		-- The staged set is the ONLY start-reveal spawn set. Later destination-side passes that
+		-- enumerate a scanned sector's AREA (DepositRules.EnforceScanGateAfterStretch section B)
+		-- would otherwise place markers whose native source lay outside vanilla's winner rect,
+		-- because a destination sector is not the stretched image of that rect. Publish the source
+		-- stamps vanilla placed so those passes can restrict themselves to them.
+		map.SuperBigMapStartStagedMarkerKeys = staged_keys
 		if stats.blockers > 0 then
 			local msg = Global("Msg")
 			if type(msg) == "function" then pcall(msg, "ExplorationBlockerSpawned") end
