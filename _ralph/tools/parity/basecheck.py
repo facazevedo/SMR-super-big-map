@@ -16,8 +16,14 @@ saddle -- is a property the shipped base either has or does not have.  This tool
 Clauses, all on the PRE grid (the destination-sized grid straight out of GridResample: exactly
 the values the mod's own zone discovery ran on, in source height units):
 
-  rule       every stamped base equals max(1, src_cap - ceil(BAND*(peak - src_cap))) for
-             BAND = 1/3.  Controls: BAND = 1/4 and BAND = 1/2 must move rows.
+  rule       every stamped base equals the port's rule, recomputed here from the PRE grid
+             rather than from a closed form: the bounded band max(1, src_cap -
+             ceil(BAND*(peak - src_cap))) with BAND = 1/3, CLAMPED UP to the saddle where
+             that band would flood -- descend the contract's ladder from src_cap, and at the
+             first step that grows past x3 bisect the interval to unit resolution, keeping the
+             deepest level still within x3 of the last good one (v813; before it, the band
+             alone).  Controls: BAND = 1/4 and BAND = 1/2 must move rows, and the unclamped
+             band must differ on exactly the massifs whose stamp says it flooded.
   no_flood   descending the contract's own ladder from src_cap to the shipped base, the area of
              the 4-connected component holding the massif's peak never grows by more than x3 in
              one step.  This is the contract's persistence criterion read on the band the port
@@ -71,6 +77,49 @@ def predicted_base(src_cap, peak, band):
     """The port's own rule, reproduced exactly (integer ceil on a positive quantity)."""
     over = max(1, peak - src_cap)
     return max(1, src_cap - int(math.ceil(band * over)))
+
+
+def saddle_clamped_base(pre, m, src_cap, step, band=BAND_MULT):
+    """The port's v813 base rule, recomputed from the grid: band base clamped up to the saddle.
+
+    Mirrors `ZCompressOverflow` step for step -- the same ladder (from min(src_cap, peak) down
+    to the band base), the same x3 flood test against the last good level, and the same integer
+    bisection of the interval that flooded.  Returns (base, band_base, good_level, flood_level).
+    """
+    px, py, peak = m["peak_x"], m["peak_y"], m["peak"]
+    bbox = (m["x0"], m["y0"], m["x1"], m["y1"])
+    pad = max(64, (m["x1"] - m["x0"]) // 2)
+    band_base = predicted_base(src_cap, peak, band)
+    start = min(src_cap, peak)
+    if step <= 0 or band_base >= start:
+        return band_base, band_base, None, None
+
+    def area_at(level):
+        return peak_component(pre, level, px, py, bbox, pad)[0]
+
+    levels, lvl = [start], start
+    while lvl - step > band_base:
+        lvl -= step
+        levels.append(lvl)
+    levels.append(band_base)
+
+    good, good_area, flood = None, None, None
+    for lvl in levels:
+        area = area_at(lvl)
+        if good_area and area / good_area > FLOOD_RATIO:
+            flood = lvl
+            break
+        good, good_area = lvl, area
+    if flood is None:
+        return band_base, band_base, good, None
+    lo, hi, ref = flood, good, FLOOD_RATIO * good_area
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if area_at(mid) > ref:
+            lo = mid
+        else:
+            hi = mid
+    return max(band_base, hi), band_base, good, flood
 
 
 def peak_component(pre, level, px, py, bbox, pad):
@@ -227,14 +276,20 @@ def score_case(label, pre_path, stamp_path, log):
         log(f"[{label}] N/A - zero massifs (degenerate branch)")
         return case
 
-    # --- clause `rule`: the shipped base is the port's own bounded band, exactly
-    rule_rows, rule_bad = [], 0
+    # --- clause `rule`: the shipped base is the port's own saddle-clamped band, exactly
+    rule_rows, rule_bad, clamped, ctl_unclamped = [], 0, 0, 0
     for m in massifs:
-        want = predicted_base(src_cap, m["peak"], BAND_MULT)
+        want, band_base, good, flood = saddle_clamped_base(pre, m, src_cap, step)
         ok = (m["base"] == want)
         rule_bad += 0 if ok else 1
+        clamped += 1 if want > band_base else 0
+        ctl_unclamped += 0 if m["base"] == band_base else 1
         rule_rows.append(dict(index=m["index"], peak=m["peak"], base=m["base"],
-                              predicted=want, ok=bool(ok)))
+                              predicted=want, band_base=band_base, clamped=bool(want > band_base),
+                              ladder_good_level=good, flood_level=flood, ok=bool(ok)))
+        if want > band_base:
+            log(f"[{label}]  massif {m['index']:>3}: band base {band_base} CLAMPED to {want} "
+                f"(flood at {flood} below the last good level {good})")
     ctl_quarter = sum(1 for m in massifs
                       if m["base"] != predicted_base(src_cap, m["peak"], 0.25))
     ctl_half = sum(1 for m in massifs
@@ -289,7 +344,8 @@ def score_case(label, pre_path, stamp_path, log):
     case["clauses"] = dict(
         rule=dict(massifs=len(massifs), mismatches=rule_bad, band_mult=BAND_MULT,
                   ok=bool(rule_bad == 0), control_band_quarter_moves=ctl_quarter,
-                  control_band_half_moves=ctl_half, detail=rule_rows),
+                  control_band_half_moves=ctl_half, saddle_clamped_massifs=clamped,
+                  control_unclamped_band_moves=ctl_unclamped, detail=rule_rows),
         monotone=dict(non_monotone_tables=mono_bad, stamp_flag_disagreements=mono_flag_disagree,
                       control_inversions_detected=ctl_mono, ok=bool(mono_bad == 0)),
         no_flood=dict(criterion=f"component area growth <= x{FLOOD_RATIO} per ladder step "
