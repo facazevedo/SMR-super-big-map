@@ -3244,11 +3244,23 @@ FLATTEN_PROBE_BLOCK = """		do
 #       that is itself the answer to "who runs last".
 # Pass-through only: every argument and result is forwarded with an explicit arity, no RNG is
 # consumed, nothing is created, moved or destroyed, and the added work is reads (HashPassability)
-# plus logging.  Suspend/ResumePassEdits are bracketing helpers called thousands of times per
-# generation, so they are logged compactly, capped, and never hashed - the sampler covers them.
+# plus logging.
+#
+# Iteration 037 (C1n) closes the one hole iteration 036 left.  Suspend/ResumePassEdits were logged
+# compactly, CAPPED at 60 and never hashed, so the six calls that follow the mod's final rebuild -
+# the window in which the underground digest was seen to move - were invisible.  They are now
+# UNCAPPED (about 13,000 single-line entries against a 60,000-line buffer) and hashed AROUND:
+#   * the BEFORE hash catches a move that happened since the previous hash, i.e. with NO traced
+#     call running - the signature of a native or early-bound writer;
+#   * the AFTER hash catches a move the call itself made, and only then is a traceback taken.
+# Hashing is per-call-map (a method's first argument is its map), which halves the cost, and it is
+# abandoned if the cumulative hash time passes PT_HASH_BUDGET_MS so a slow build cannot hang a run.
+# The flush - which rewrites the whole buffer - relaxes to every 250 calls after the first 400.
 PASSTRACE_BLOCK = """		do
+			local PT_HASH_BUDGET_MS = 180000
 			local pt_lines, pt_dropped, pt_calls, pt_changes = {}, 0, 0, 0
-			local pt_hash_ms, pt_hash_total = 0, 0
+			local pt_hash_ms, pt_hash_total, pt_hash_calls = 0, 0, 0
+			local pt_last_hash_call, pt_budget_noted = 0, false
 			local pt_label_calls = {}
 			local function pt_log(text)
 				if #pt_lines >= 60000 then
@@ -3275,33 +3287,41 @@ PASSTRACE_BLOCK = """		do
 
 			-- Weak keys: a destroyed map must not be kept alive by the watch table.
 			local pt_last = setmetatable({}, { __mode = "k" })
-			local function pt_check(who)
-				if type(hash_fn) ~= "function" then return end
-				local maps = rawget(_G, "Maps") or {}
-				for i = 1, #maps do
-					local m = maps[i]
-					if m and m.mapdata then
-						local t0 = GetPreciseTicks()
-						local ok, h = pcall(hash_fn, m)
-						pt_hash_ms = GetPreciseTicks() - t0
-						pt_hash_total = pt_hash_total + pt_hash_ms
-						if ok then
-							local prev = pt_last[m]
-							if prev == nil then
-								pt_log(string.format("DIGEST %-11s INIT   %s  (%s, status=%s, %d ms)",
-									pt_env(m), tostring(h), who,
-									tostring(rawget(_G, "g_ParityStatus")), pt_hash_ms))
-							elseif prev ~= h then
-								pt_changes = pt_changes + 1
-								g_ParityPassTraceChanges = pt_changes
-								pt_log(string.format("DIGEST %-11s CHANGE#%03d %s -> %s  (%s, status=%s)",
-									pt_env(m), pt_changes, tostring(prev), tostring(h), who,
-									tostring(rawget(_G, "g_ParityStatus"))))
-							end
-							pt_last[m] = h
-						end
-					end
+			-- Returns true when THIS map's digest moved, so the caller can decide to pay for a
+			-- traceback only where it is evidence.
+			local function pt_hash_map(m, who)
+				if type(hash_fn) ~= "function" then return false end
+				if not (m and m.mapdata) then return false end
+				local t0 = GetPreciseTicks()
+				local ok, h = pcall(hash_fn, m)
+				pt_hash_ms = GetPreciseTicks() - t0
+				pt_hash_total = pt_hash_total + pt_hash_ms
+				pt_hash_calls = pt_hash_calls + 1
+				if not ok then return false end
+				local prev = pt_last[m]
+				pt_last[m] = h
+				if prev == nil then
+					pt_log(string.format("DIGEST %-11s INIT   %s  (%s, status=%s, %d ms)",
+						pt_env(m), tostring(h), who,
+						tostring(rawget(_G, "g_ParityStatus")), pt_hash_ms))
+					return false
 				end
+				if prev == h then return false end
+				pt_changes = pt_changes + 1
+				g_ParityPassTraceChanges = pt_changes
+				pt_log(string.format("DIGEST %-11s CHANGE#%03d %s -> %s  (%s, status=%s)",
+					pt_env(m), pt_changes, tostring(prev), tostring(h), who,
+					tostring(rawget(_G, "g_ParityStatus"))))
+				return true
+			end
+			local function pt_check(who)
+				if type(hash_fn) ~= "function" then return false end
+				local maps = rawget(_G, "Maps") or {}
+				local moved = false
+				for i = 1, #maps do
+					if pt_hash_map(maps[i], who) then moved = true end
+				end
+				return moved
 			end
 
 			-- Level 3 starts the trace at the CALLER of the wrapper (1 = this function,
@@ -3335,7 +3355,17 @@ PASSTRACE_BLOCK = """		do
 				return (ok and tostring(s)) or tv
 			end
 
-			local function pt_wrap(holder, key, label, hash_after, trace, cap)
+			-- A method's first argument is its own map; hashing only that map is what makes
+			-- hashing around 13,000 bracketing calls affordable.
+			local function pt_own_map(v)
+				if type(v) ~= "table" then return nil end
+				local ok, is_map = pcall(function() return type(v.mapdata) == "table" end)
+				return (ok and is_map) and v or nil
+			end
+			-- opts: hash = "none" | "after" | "around", trace, cap, own_map
+			local function pt_wrap(holder, key, label, opts)
+				opts = opts or {}
+				local hash, trace, cap = opts.hash or "none", opts.trace, opts.cap
 				if type(holder) ~= "table" then
 					pt_log("MISSING holder for " .. label)
 					return
@@ -3360,9 +3390,41 @@ PASSTRACE_BLOCK = """		do
 							tostring(rawget(_G, "g_ParityStatus")), table.concat(a, " ")))
 						if trace then pt_log("   at " .. pt_where()) end
 					end
+					local scope = opts.own_map and pt_own_map(argv[1]) or nil
+					local do_hash = hash ~= "none"
+					if do_hash and pt_hash_total > PT_HASH_BUDGET_MS then
+						do_hash = false
+						if not pt_budget_noted then
+							pt_budget_noted = true
+							pt_log(string.format("HASH BUDGET EXHAUSTED at #%05d (%d ms, %d hashes)",
+								n, pt_hash_total, pt_hash_calls))
+						end
+					end
+					-- BEFORE: a move seen here happened with no traced call running, i.e. between
+					-- call #pt_last_hash_call and this one.
+					if do_hash and hash == "around" then
+						local who = string.format("BEFORE #%05d %s (nothing traced since #%05d)",
+							n, label, pt_last_hash_call)
+						local moved = scope and pt_hash_map(scope, who) or pt_check(who)
+						if moved then
+							pt_log(string.format("   UNTRACED WRITER: digest moved between #%05d and #%05d",
+								pt_last_hash_call, n))
+						end
+						pt_last_hash_call = n
+					end
 					local results = table.pack(original(table.unpack(argv, 1, argv.n)))
-					if hash_after then pt_check(string.format("#%05d %s", n, label)) end
-					if n <= 400 or n % 25 == 0 then pt_flush() end
+					if do_hash then
+						local who = string.format("#%05d %s", n, label)
+						local moved = scope and pt_hash_map(scope, who) or pt_check(who)
+						if moved then
+							pt_log(string.format("   WRITER #%05d %s moved the digest; call site:", n, label))
+							pt_log("   at " .. pt_where())
+						end
+						pt_last_hash_call = n
+					end
+					-- Each flush rewrites the whole buffer, so it relaxes once the interesting
+					-- early ordering is on disk.
+					if n <= 400 or n % 250 == 0 then pt_flush() end
 					return table.unpack(results, 1, results.n)
 				end
 				-- A protected table would otherwise kill the whole run at setup; and an
@@ -3377,30 +3439,36 @@ PASSTRACE_BLOCK = """		do
 				end
 			end
 
-			-- Write-class entry points: hashed after every call, full traceback.
-			pt_wrap(terrain_tbl, "RebuildPassability", "terrain.RebuildPassability", true, true)
-			pt_wrap(terrain_tbl, "ClearPassabilityBox", "terrain.ClearPassabilityBox", true, true)
-			pt_wrap(terrain_tbl, "SetPassability", "terrain.SetPassability", true, true)
-			pt_wrap(terrain_tbl, "SetPassableHeight", "terrain.SetPassableHeight", true, true)
-			pt_wrap(terrain_tbl, "SetForcedImpassableBox", "terrain.SetForcedImpassableBox", true, true)
-			pt_wrap(_G, "RebuildGrids", "_G.RebuildGrids", true, true)
-			pt_wrap(_G, "RebuildBuildableGrid", "_G.RebuildBuildableGrid", true, true)
+			-- Write-class entry points: hashed AROUND every call, full traceback.  All maps are
+			-- hashed here (these are few) so a write to a map other than the argument's shows up.
+			local WRITE = { hash = "around", trace = true }
+			pt_wrap(terrain_tbl, "RebuildPassability", "terrain.RebuildPassability", WRITE)
+			pt_wrap(terrain_tbl, "ClearPassabilityBox", "terrain.ClearPassabilityBox", WRITE)
+			pt_wrap(terrain_tbl, "SetPassability", "terrain.SetPassability", WRITE)
+			pt_wrap(terrain_tbl, "SetPassableHeight", "terrain.SetPassableHeight", WRITE)
+			pt_wrap(terrain_tbl, "SetForcedImpassableBox", "terrain.SetForcedImpassableBox", WRITE)
+			pt_wrap(_G, "RebuildGrids", "_G.RebuildGrids", WRITE)
+			pt_wrap(_G, "RebuildBuildableGrid", "_G.RebuildBuildableGrid", WRITE)
 			-- Invalidations decide whether a later rebuild recomputes anything (iteration 034), so
 			-- they are traced for ordering but not hashed - they write no bits themselves.
-			pt_wrap(terrain_tbl, "InvalidateHeight", "terrain.InvalidateHeight", false, true, 400)
-			pt_wrap(terrain_tbl, "InvalidateType", "terrain.InvalidateType", false, true, 400)
+			local INVAL = { hash = "none", trace = true, cap = 400 }
+			pt_wrap(terrain_tbl, "InvalidateHeight", "terrain.InvalidateHeight", INVAL)
+			pt_wrap(terrain_tbl, "InvalidateType", "terrain.InvalidateType", INVAL)
 			-- The Map class holds its OWN copies taken at class-definition time (Core/map.lua:49-63).
 			local map_class = rawget(_G, "Map")
-			pt_wrap(map_class, "RebuildGrids", "Map:RebuildGrids", true, true)
-			pt_wrap(map_class, "RebuildPassability", "Map:RebuildPassability", true, true)
-			pt_wrap(map_class, "InvalidateHeight", "Map:InvalidateHeight", false, true, 400)
-			pt_wrap(map_class, "InvalidateType", "Map:InvalidateType", false, true, 400)
-			-- Bracketing helpers: thousands of calls per generation.  Compact, capped, unhashed;
-			-- the sampler reports whatever bits their deferred rebuild moves.
-			pt_wrap(map_class, "SuspendPassEdits", "Map:SuspendPassEdits", false, false, 60)
-			pt_wrap(map_class, "ResumePassEdits", "Map:ResumePassEdits", false, false, 60)
-			pt_wrap(terrain_tbl, "SuspendPassEdits", "terrain.SuspendPassEdits", false, false, 60)
-			pt_wrap(terrain_tbl, "ResumePassEdits", "terrain.ResumePassEdits", false, false, 60)
+			pt_wrap(map_class, "RebuildGrids", "Map:RebuildGrids", WRITE)
+			pt_wrap(map_class, "RebuildPassability", "Map:RebuildPassability", WRITE)
+			pt_wrap(map_class, "InvalidateHeight", "Map:InvalidateHeight", INVAL)
+			pt_wrap(map_class, "InvalidateType", "Map:InvalidateType", INVAL)
+			-- Bracketing helpers (iteration 037): UNCAPPED and hashed around their OWN map, which
+			-- is the only affordable way to hash thousands of calls.  A ResumePassEdits that
+			-- flushes a deferred rebuild is named by its AFTER hash; a move that appears in a
+			-- BEFORE hash belongs to no traced call at all.  Tracebacks only where a move is seen.
+			local BRACKET = { hash = "around", trace = false, own_map = true }
+			pt_wrap(map_class, "SuspendPassEdits", "Map:SuspendPassEdits", BRACKET)
+			pt_wrap(map_class, "ResumePassEdits", "Map:ResumePassEdits", BRACKET)
+			pt_wrap(terrain_tbl, "SuspendPassEdits", "terrain.SuspendPassEdits", BRACKET)
+			pt_wrap(terrain_tbl, "ResumePassEdits", "terrain.ResumePassEdits", BRACKET)
 
 			pt_log("INSTALLED passtrace")
 			pt_flush()
@@ -3414,8 +3482,9 @@ PASSTRACE_BLOCK = """		do
 					-- Adaptive: never spend more than ~1/6 of wall time hashing.
 					Sleep(math.max(250, pt_hash_ms * 6))
 				end
-				pt_log(string.format("SUMMARY calls=%d digest_changes=%d hash_ms_total=%d dropped_lines=%d",
-					pt_calls, pt_changes, pt_hash_total, pt_dropped))
+				pt_log(string.format(
+					"SUMMARY calls=%d digest_changes=%d hashes=%d hash_ms_total=%d dropped_lines=%d",
+					pt_calls, pt_changes, pt_hash_calls, pt_hash_total, pt_dropped))
 				pt_flush()
 			end)
 		end"""
