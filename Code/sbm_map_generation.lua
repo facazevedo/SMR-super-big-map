@@ -6510,9 +6510,54 @@ end
 -- module-level declarations here pushed a later pre-existing function over that limit in 682/683.
 -- The public table remains reachable after this block without keeping another main-chunk local
 -- alive. Patch version 2 also replaces a version-1 wrapper during an in-session hot reload.
-SuperBigMap.BuriedWonderDarkness = { PATCH_VERSION = 2 }
+--
+-- Patch version 3 changes HOW the mesh is concealed. Versions 1-2 cleared efVisible
+-- (CObject:SetVisible(false) IS Set/ClearEnumFlags(efVisible), _cobject.lua:729), and the engine
+-- rasterises an object's ApplyToGrids surfaces into the passability grid only while that bit is
+-- set: the concealed Bottomless Pit therefore contributed NO impassability, so the expanded map
+-- left ~20,855 cells of flat rock around the pit walkable that vanilla blocks. Measured on both
+-- twins at 45S82E: clearing the bit on vanilla's wonder collapses that window 21,719 -> 864, the
+-- same figure as deleting the object; setting it on the concealed clone fills 866 -> 21,668, and
+-- the twins' pit-region disagreement falls 20,869 -> 67 (full-z-parity iterations 028-032).
+-- Zero opacity hides the mesh without touching the enum flag, and it is already the mod's own
+-- concealment technique for completed-passage indicators (see HideCompletedPassageVisual below).
+SuperBigMap.BuriedWonderDarkness = { PATCH_VERSION = 3 }
 do
 local BuriedWonderDarkness = SuperBigMap.BuriedWonderDarkness
+
+-- Opacity is a per-object visual property, so the attach tree is walked explicitly: an attached
+-- decoration would keep drawing at full opacity otherwise. The depth bound and the seen table
+-- mirror RestorePassageMarkerVisualTree below, which meets the same auto-attached artwork. Every
+-- engine call is pcall-guarded instead of validity-checked: `IsValid` is not part of the mod's
+-- sandbox environment (the other modules fetch it through Global()).
+local function SetWonderTreeOpacity(root, opacity, seen, depth)
+	depth = depth or 0
+	if not root or seen[root] or depth > 6 then return 0 end
+	seen[root] = true
+	local applied = 0
+	if type(root.SetOpacity) == "function" and pcall(root.SetOpacity, root, opacity) then
+		applied = 1
+	end
+	if type(root.GetAttaches) == "function" then
+		local ok, attaches = pcall(root.GetAttaches, root)
+		if ok and type(attaches) == "table" then
+			for _, attach in ipairs(attaches) do
+				applied = applied + SetWonderTreeOpacity(attach, opacity, seen, depth + 1)
+			end
+		end
+	end
+	return applied
+end
+
+-- efVisible must be SET on a concealed wonder (see the patch-version-3 note above), and saves
+-- written by mod versions up to 807 concealed by clearing it, so both paths write it back.
+local function SetWonderConcealed(wonder, concealed)
+	if type(wonder.SetVisible) == "function" then
+		pcall(wonder.SetVisible, wonder, true)
+	end
+	local seen = setmetatable({}, { __mode = "k" })
+	return SetWonderTreeOpacity(wonder, concealed and 0 or 100, seen, 0) > 0
+end
 
 function BuriedWonderDarkness.MapEnabled(map)
 	if cfg_bool("CONCEAL_BURIED_WONDERS_IN_DARKNESS", true) ~= true
@@ -6540,9 +6585,7 @@ function BuriedWonderDarkness.RestoreVisibility(wonder, reason, force)
 	-- never leave a discovered wonder permanently hidden.
 	if not was_concealed and force ~= true
 		and wonder.SuperBigMapDarknessVisibilityRestored == true then return false end
-	if type(wonder.SetVisible) == "function" then
-		pcall(wonder.SetVisible, wonder, true)
-	end
+	SetWonderConcealed(wonder, false)
 	wonder.SuperBigMapConcealedByDarkness = nil
 	wonder.SuperBigMapDarknessVisibilityRestored = true
 	wonder.SuperBigMapDarknessVisibilityReason = tostring(reason or "restored")
@@ -6568,9 +6611,8 @@ function BuriedWonderDarkness.SyncVisibility(wonder, map, reason)
 	if revealed then
 		return BuriedWonderDarkness.RestoreVisibility(wonder, reason or "darkness revealed")
 	end
-	if not wonder or type(wonder.SetVisible) ~= "function" then return false end
-	local ok = pcall(wonder.SetVisible, wonder, false)
-	if not ok then return false end
+	if not wonder or type(wonder.SetOpacity) ~= "function" then return false end
+	if not SetWonderConcealed(wonder, true) then return false end
 	wonder.SuperBigMapConcealedByDarkness = true
 	wonder.SuperBigMapDarknessVisibilityRestored = nil
 	wonder.SuperBigMapDarknessVisibilityReason = tostring(reason or "darkness concealed")
