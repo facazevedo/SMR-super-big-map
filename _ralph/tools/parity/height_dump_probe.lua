@@ -68,8 +68,29 @@ CreateRealTimeThread(function()
 					tostring(m.monotone), tostring(m.escaped))
 			end
 		end
+		-- Generation-time stamps of the mod's final gameplay-grid rebuild, per map. v812 runs the
+		-- same closing sequence on BOTH maps; before it, only the underground had one. These are
+		-- the only way, without a debug build, to tell "that call site ran on this map" from "it
+		-- never ran", and HashBefore vs HashAfter says whether the whole-map recompute actually
+		-- moved the passability grid. Absent on a vanilla twin, which never runs the pipeline.
+		-- The row prefix is new: every consumer of this file keys on "map"/"massif" and ignores
+		-- anything else.
+		local function final_pass_stamp(map, tag)
+			if not map then return end
+			local rep = { "finalpass", tag }
+			for _, key in ipairs({ "SuperBigMapFinalPassStage", "SuperBigMapFinalPassCount",
+				"SuperBigMapFinalPassBranch", "SuperBigMapFinalPassMs",
+				"SuperBigMapFinalPassHashBefore", "SuperBigMapFinalPassHashAfter",
+				"SuperBigMapRevalidationRebuiltGrids" }) do
+				local ok_s, value = pcall(function() return map[key] end)
+				rep[#rep + 1] = key .. "=" .. tostring(ok_s and value or "?")
+			end
+			rows[#rows + 1] = table.concat(rep, ",")
+		end
 		stamp(surface, "surface")
 		stamp(underground, "underground")
+		final_pass_stamp(surface, "surface")
+		final_pass_stamp(underground, "underground")
 		local serr = AsyncStringToFile("__OUT_BASE__-zones.txt", table.concat(rows, "\n"))
 		if serr then error("zone stamp write failed: " .. tostring(serr)) end
 		info[#info + 1] = "stamp_rows=" .. #rows
