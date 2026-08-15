@@ -117,6 +117,26 @@ CreateRealTimeThread(function()
 		survey(surface, "surface")
 		survey(underground, "underground")
 
+		-- Generation-time stamps of the mod's final gameplay-grid rebuild, per map (v812 runs the
+		-- same closing sequence on BOTH maps; before that only the underground had one). They are
+		-- the only way, without a debug build, to tell "that call site ran" from "it never ran",
+		-- and HashBefore vs HashAfter says whether the whole-map recompute actually moved the
+		-- passability grid. Absent on the vanilla twin, which never runs the pipeline.
+		local function stamps(m, tag)
+			if not m then return end
+			local rep = { "#finalpass", tag }
+			for _, key in ipairs({ "SuperBigMapFinalPassStage", "SuperBigMapFinalPassCount",
+				"SuperBigMapFinalPassBranch", "SuperBigMapFinalPassMs",
+				"SuperBigMapFinalPassHashBefore", "SuperBigMapFinalPassHashAfter",
+				"SuperBigMapRevalidationRebuiltGrids" }) do
+				local ok_s, value = pcall(function() return m[key] end)
+				rep[#rep + 1] = key .. "=" .. tostring(ok_s and value or "?")
+			end
+			emit(table.concat(rep, ","))
+		end
+		stamps(surface, "surface")
+		stamps(underground, "underground")
+
 		local werr = AsyncStringToFile("__OUT_PATH__", table.concat(out, "\n"))
 		if werr then error("write failed: " .. tostring(werr)) end
 		g_ParityZonesInfo = "rows=" .. #out
