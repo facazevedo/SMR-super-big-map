@@ -170,6 +170,22 @@ def run_env(env, vtag, etag, stamp, obj_threshold, T, shift, dump_dir):
     out["diff"] = int(diff.sum())
     out["false_to_true"] = int((diff & (pv == 0)).sum())
     out["true_to_false"] = int((diff & (pv == 1)).sum())
+    # The rule-free half of the C2 evidence: on the cells the engine actually disagreed
+    # about, how far is its measured expanded statistic from the ideal similarity's?
+    # This needs no threshold rule, so it is the part that survives the rule's own
+    # ~97% fidelity limit.
+    if int(diff.sum()):
+        gap = np.abs(Se - Si)[diff]
+        near = np.abs(Sv - T)[diff]
+        out["se_vs_si_on_diffs"] = {
+            "n": int(gap.size),
+            "abs_le_1_pct": round(100.0 * float((gap <= 1).mean()), 2),
+            "abs_le_2_pct": round(100.0 * float((gap <= 2).mean()), 2),
+            "abs_le_5_pct": round(100.0 * float((gap <= 5).mean()), 2),
+            "abs_mean": round(float(gap.mean()), 3),
+            "abs_max": round(float(gap.max()), 2),
+            "within_5_wu_of_threshold_pct": round(100.0 * float((near <= 5).mean()), 2),
+        }
     out["classes"] = dict(sorted(cls.items()))
     acc = sum(n for k, n in cls.items() if not k.startswith("unexplained"))
     out["accounted"] = acc
