@@ -136,6 +136,20 @@ CreateRealTimeThread(function()
 			emit(string.format("#centre,%s,x=%d,y=%d,sgx=%d,sgy=%d,objects=%d,grid=%dx%d",
 				tag, cx, cy, c_sgx, c_sgy, #objs, gw, gh))
 			report_tree(map, tag, pit, "wonder", 0, setmetatable({}, { __mode = "k" }))
+			-- Generation-time stamps of the mod's final underground passability rebuild (mod v810
+			-- and later; absent on vanilla, which never runs that pipeline). They answer, without a
+			-- debug build, whether that call site ran at all, which branch it took, how long it
+			-- cost, and whether the passability digest moved across it.
+			do
+				local rep = { "#modstamp", tag }
+				for _, key in ipairs({ "SuperBigMapFinalPassBranch", "SuperBigMapFinalPassMs",
+					"SuperBigMapFinalPassHashBefore", "SuperBigMapFinalPassHashAfter",
+					"SuperBigMapRevalidationRebuiltGrids" }) do
+					local ok_s, value = pcall(function() return map[key] end)
+					rep[#rep + 1] = key .. "=" .. csv(tostring(ok_s and value or "?"))
+				end
+				emit(table.concat(rep, ","))
+			end
 
 			local samples = {}
 			local dy = -radius_cells

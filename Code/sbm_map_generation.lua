@@ -11607,6 +11607,18 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				local final_pass_box = (invalidate_final and type(box_ctor) == "function"
 					and final_pass_w > 0 and final_pass_h > 0)
 					and box_ctor(0, 0, final_pass_w, final_pass_h) or false
+				-- Generation-time stamps (never saved) so a probe can tell "this call site ran and
+				-- changed the grid" from "it never ran" without a debug build: the passability
+				-- digest either side of the rebuild plus the branch and its cost.
+				local function pass_hash()
+					if type(terrain_api2.HashPassability) ~= "function" then return "unavailable" end
+					local ok_h, h = pcall(terrain_api2.HashPassability, map)
+					return ok_h and tostring(h) or "error"
+				end
+				map.SuperBigMapFinalPassBranch = invalidate_final
+					and (final_pass_box and "invalidate_box" or "invalidate_map") or "bare"
+				map.SuperBigMapFinalPassHashBefore = pass_hash()
+				local pass_started = GetPreciseTicks()
 				local passability_token = LoadingBegin("underground final RebuildPassability", map)
 				local pass_ok, pass_err
 				if invalidate_final then
@@ -11628,6 +11640,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				end
 				LoadingEnd(passability_token,
 					{ error = pass_ok and "" or tostring(pass_err) }, pass_ok)
+				map.SuperBigMapFinalPassMs = GetPreciseTicks() - pass_started
+				map.SuperBigMapFinalPassHashAfter = pass_hash()
 				if not pass_ok then
 					error("underground final passability rebuild failed: " .. tostring(pass_err))
 				end
