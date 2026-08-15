@@ -644,7 +644,10 @@ end
 --   shift    = min(0, Z_FLOOR_WU - floor(interior_min * 4/3))   -- down-only: never lift terrain
 --   src_cap  = floor((cap - shift) * 3/4)                       -- highest source value that fits
 --   massifs  = connected components of (h >= base) around each overflow peak, tallest peak first
---   base     = src_cap - ceil(Z_BAND_MULT * (peak - src_cap))   -- bounded compression band
+--   base     = max(band base, saddle level)                     -- bounded band, clamped up
+--              band base   = src_cap - ceil(Z_BAND_MULT * (peak - src_cap))
+--              saddle level = deepest level whose peak-component is still within Z_FLOOD_RATIO
+--                             of the last ladder level that did not flood (unit resolution)
 --   in a massif:  base_img = floor(base*4/3) + shift,  H = cap - base_img,  T = peak - base
 --                 lut[h] = min(base_img + floor(H*(1-e^-k(h-base))/(1-e^-kT) + 0.5), affine(h))
 --                 with k solved so f'(0) = 4/3 exactly -> the remap leaves the base TANGENT to the
@@ -655,12 +658,19 @@ end
 -- The interior minimum excludes one cell of border: the source rim holds generation/resample
 -- artifacts (measured 0 against a true interior minimum of 4,078), which would nullify the shift.
 --
--- Base rule: the contract's topological-persistence descent is unusable on this map -- 42S28W's
--- overflow peaks belong to giant connected highlands, so the flood test pushes bases so deep that
--- 13.5% of the map ends up remapped. A full-grid sweep of the one real knob (the average in-zone
--- slope factor f; band depth = f/(1-f) x overflow) measured 0.94% of the map inside zones at
--- f=0.05 up to 39% at f=0.67. Z_BAND_MULT = 1/3 is f = 0.25, i.e. summits compressed to a quarter
--- of vanilla steepness on average, and 1.50% of the map inside zones.
+-- Base rule: the contract's topological-persistence descent alone is unusable on this map --
+-- 42S28W's overflow peaks belong to giant connected highlands, so the flood test pushes bases so
+-- deep that 11-19% of the map ends up remapped (measured at three coordinates). A full-grid sweep
+-- of the one real knob (the average in-zone slope factor f; band depth = f/(1-f) x overflow)
+-- measured 0.94% of the map inside zones at f=0.05 up to 39% at f=0.67. Z_BAND_MULT = 1/3 is
+-- f = 0.25, i.e. summits compressed to a quarter of vanilla steepness on average.
+-- The band alone is not enough either: a band that reaches below a high saddle merges the massif
+-- with its NEIGHBOUR, which objective 2 forbids (measured at 30S146E: 2 of 22 massifs dragged
+-- 1,049,850 cells = 1.56% of the map of never-overflowing terrain up to 2,640 wu below the
+-- affine). So the band is CLAMPED UP by the persistence criterion the contract states -- the
+-- deepest level that has not yet grown past Z_FLOOD_RATIO -- which is a no-op wherever no massif
+-- floods inside its band (42S28W 28/28 and 4S107E 27/27 unchanged, offline) and holds map
+-- coverage at 1.1-1.9%.
 --
 -- Per-cell Lua over an 8192^2 grid is impossible, so this is built only out of engine grid ops
 -- whose exact semantics were measured in-game (`_ralph/tools/parity/gridops_probe.lua`):
@@ -681,6 +691,8 @@ local Z_BAND_MULT = 1.0 / 3.0  -- base = src_cap - Z_BAND_MULT * overflow (avera
 local Z_ZONE_PAD = 512         -- initial per-massif crop half-width, destination cells
 local Z_ZONE_PAD_GROWTH = 2    -- crop growth when the massif reaches an interior crop side
 local Z_MAX_MASSIFS = 256      -- runaway guard; 42S28W needs 28
+local Z_LADDER_STEPS = 40      -- the contract's descent ladder: (src_cap - interior_min)/40
+local Z_FLOOD_RATIO = 3.0      -- the contract's "growth exceeds x3" = merged past a saddle
 
 -- k > 0 with H*k/(1-exp(-k*T)) = target (the curve's slope at the base). The left side rises with
 -- k from H/T, so a root exists exactly when the massif overflows above its base; return 0 for the
@@ -792,6 +804,45 @@ local function ZCompressOverflow(values, o)
 	local fmt, bits = IsComputeGrid(values)
 	local src_cap = math.floor(((cap - shift) * zdiv + 0.0) / zmul)
 	if src_cap >= cap then src_cap = cap - 1 end
+	-- The contract's descent ladder, derived from this grid's own interior minimum (the caller
+	-- measures it the same way the shift does, one cell of rim excluded); 0 disables the descent
+	-- and leaves the pure bounded band.
+	local ladder_step = 0
+	if type(o.src_min) == "number" and src_cap > o.src_min then
+		ladder_step = math.max(1, math.floor((src_cap - o.src_min) / Z_LADDER_STEPS))
+	end
+
+	-- The 4-connected component of (h >= level) holding (px, py), measured on a crop that grows
+	-- until the component no longer reaches an interior crop side. Contact with the map's own
+	-- border is not an escape. Returns the crop and the component mask; the caller owns both.
+	local function peak_component(px, py, level, pad)
+		local crop, comp, escaped, x0, y0, x1, y1, cw, ch
+		while true do
+			x0, y0 = math.max(0, px - pad), math.max(0, py - pad)
+			x1, y1 = math.min(w, px + pad + 1), math.min(h, py + pad + 1)
+			cw, ch = x1 - x0, y1 - y0
+			crop = NewComputeGrid(cw, ch, fmt, bits)
+			crop:copyrect(values, box_fn(x0, y0, x1, y1), point_fn(0, 0))
+			local zone_mask = GridDest(crop)
+			GridMask(crop, zone_mask, level, cap)
+			GridEnumZones(zone_mask, 1)
+			local label = zone_mask:get(px - x0, py - y0)
+			comp = GridDest(zone_mask)
+			GridMask(zone_mask, comp, label, label)
+			free_one(zone_mask)
+			if type(label) ~= "number" or label <= 0 then
+				escaped = false
+				break
+			end
+			escaped = ZCompEscapes(comp, cw, ch, x0 > 0, y0 > 0, x1 < w, y1 < h)
+			if not escaped or (cw >= w and ch >= h) then break end
+			free_one(crop)
+			free_one(comp)
+			crop, comp = nil, nil
+			pad = pad * Z_ZONE_PAD_GROWTH
+		end
+		return crop, comp, GridCount(comp, 0, 1) or 0, x0, y0, x1, y1, cw, ch, pad, escaped
+	end
 
 	-- Affine base image, built so it can never wrap: source values are pre-clamped to src_cap
 	-- (every clamped cell is inside a massif and gets overwritten below), and the handful of rim
@@ -827,6 +878,7 @@ local function ZCompressOverflow(values, o)
 	local overflow_cells = GridCount(remaining, 0, 1) or 0
 	local left = overflow_cells
 	local massifs, remapped, worst_pad = {}, 0, 0
+	local flood_clamped = 0
 	local stop_reason = "no overflow"
 	while left > 0 do
 		if #massifs >= Z_MAX_MASSIFS then stop_reason = "massif guard hit" break end
@@ -847,36 +899,56 @@ local function ZCompressOverflow(values, o)
 			break
 		end
 		local over = math.max(1, peak - src_cap)
-		local base = math.max(1, src_cap - math.ceil(Z_BAND_MULT * over))
-		-- the massif is the component of (h >= base) holding that peak, measured on a crop that
-		-- grows until the component no longer reaches an interior crop side
-		local pad, crop, comp, escaped, x0, y0, x1, y1, cw, ch = Z_ZONE_PAD
-		while true do
-			x0, y0 = math.max(0, px - pad), math.max(0, py - pad)
-			x1, y1 = math.min(w, px + pad + 1), math.min(h, py + pad + 1)
-			cw, ch = x1 - x0, y1 - y0
-			crop = NewComputeGrid(cw, ch, fmt, bits)
-			crop:copyrect(values, box_fn(x0, y0, x1, y1), point_fn(0, 0))
-			local base_mask = GridDest(crop)
-			GridMask(crop, base_mask, base, cap)
-			GridEnumZones(base_mask, 1)
-			local level = base_mask:get(px - x0, py - y0)
-			comp = GridDest(base_mask)
-			GridMask(base_mask, comp, level, level)
-			free_one(base_mask)
-			if type(level) ~= "number" or level <= 0 then
-				escaped = false
-				break
-			end
-			escaped = ZCompEscapes(comp, cw, ch, x0 > 0, y0 > 0, x1 < w, y1 < h)
-			if not escaped or (cw >= w and ch >= h) then break end
+		local band_base = math.max(1, src_cap - math.ceil(Z_BAND_MULT * over))
+		-- Contract step 3: the base may not flood past the massif's own saddle. Descend the
+		-- contract's ladder from the cap level; a step whose peak-component grows by more than
+		-- Z_FLOOD_RATIO has merged with a NEIGHBOURING landform, and compressing that neighbour is
+		-- what objective 2 forbids (measured at 30S146E: two massifs dragged 1,049,850 cells of
+		-- never-overflowing terrain up to 2,640 wu below the affine). The base is then bisected to
+		-- unit resolution inside the last ladder interval -- the deepest level whose component is
+		-- still within Z_FLOOD_RATIO of the last good one, so the band stays as deep as the
+		-- criterion allows. Clamping to the ladder level itself is not usable: where the merge
+		-- happens at the first step below src_cap the band vanishes and the summit becomes a mesa
+		-- on the ceiling (measured offline, 30S146E massif 6: base = src_cap, H = 1).
+		local base, pad = band_base, Z_ZONE_PAD
+		local crop, comp, area, escaped, x0, y0, x1, y1, cw, ch
+		local held, flood_level, good_level, good_area, bisect_steps = nil, nil, nil, nil, 0
+		local function measure(level)
 			free_one(crop)
 			free_one(comp)
-			crop, comp = nil, nil
-			pad = pad * Z_ZONE_PAD_GROWTH
+			crop, comp, area, x0, y0, x1, y1, cw, ch, pad, escaped =
+				peak_component(px, py, level, pad)
+			held = level
+			return area
 		end
+		if ladder_step > 0 and band_base < math.min(src_cap, peak) then
+			local levels, lv = { math.min(src_cap, peak) }, math.min(src_cap, peak)
+			while lv - ladder_step > band_base do
+				lv = lv - ladder_step
+				levels[#levels + 1] = lv
+			end
+			levels[#levels + 1] = band_base
+			for i = 1, #levels do
+				local a = measure(levels[i])
+				if good_area and (a + 0.0) / good_area > Z_FLOOD_RATIO then
+					flood_level = levels[i]
+					break
+				end
+				good_level, good_area = levels[i], a
+			end
+			if flood_level and good_level then
+				local lo, hi = flood_level, good_level
+				local ref = Z_FLOOD_RATIO * good_area
+				while hi - lo > 1 do
+					local mid = math.floor((lo + hi) / 2)
+					bisect_steps = bisect_steps + 1
+					if measure(mid) > ref then lo = mid else hi = mid end
+				end
+				base = math.max(band_base, hi)
+			end
+		end
+		if held ~= base then measure(base) end
 		if pad > worst_pad then worst_pad = pad end
-		local area = GridCount(comp, 0, 1) or 0
 		if area <= 0 then
 			free_one(crop)
 			free_one(comp)
@@ -920,7 +992,9 @@ local function ZCompressOverflow(values, o)
 			base = base, base_img = base_img, peak = comp_peak, peak_img = lut[comp_peak],
 			peak_x = px, peak_y = py, k = k, cells = area,
 			band_h = band_h, band_t = band_t, monotone = monotone, escaped = escaped,
+			band_base = band_base, flood_level = flood_level, bisect_steps = bisect_steps,
 		}
+		if base > band_base then flood_clamped = flood_clamped + 1 end
 		local next_left = GridCount(remaining, 0, 1) or 0
 		if next_left >= left then
 			stop_reason = "overflow set did not shrink"
@@ -941,6 +1015,7 @@ local function ZCompressOverflow(values, o)
 		width = w, height = h,
 		overflow_cells = overflow_cells, overflow_left = left,
 		remapped_cells = remapped, massifs = massifs, peaks_at_cap = peaks_at_cap,
+		ladder_step = ladder_step, flood_clamped = flood_clamped,
 		pinned_low_cells = pinned_low, worst_pad = worst_pad,
 		final_min = final_min, final_max = final_max,
 		complete = (left == 0), stop_reason = stop_reason,
@@ -1347,8 +1422,14 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 							local shift = cfg_bool("STRETCH_SHIFT_HEIGHTS_DOWN", true)
 								and math.min(0, Z_FLOOR_WU - math.floor((interior_min * zmul + 0.0) / zdiv))
 								or 0
+							-- the descent ladder is measured on the RESAMPLED grid the zone discovery
+							-- runs on, not on the source grid the shift uses: the two interior
+							-- minima differ by a few units after resampling, and the offline gate
+							-- reads this one
+							local pre_min = ZInteriorMinMax(stretched)
 							local ok_z, compressed, report = pcall(ZCompressOverflow, stretched, {
 								cap = cap, zmul = zmul, zdiv = zdiv, shift = shift,
+								src_min = type(pre_min) == "number" and pre_min or nil,
 							})
 							if ok_z and compressed and type(report) == "table" and report.complete then
 								free_grid(stretched)

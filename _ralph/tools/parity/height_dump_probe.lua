@@ -62,10 +62,15 @@ CreateRealTimeThread(function()
 			for i, m in ipairs(map.SuperBigMapZCompressionZones or {}) do
 				rows[#rows + 1] = string.format(
 					"massif,%s,%d,x0=%d,y0=%d,x1=%d,y1=%d,base=%d,base_img=%d,peak=%d,peak_img=%s,"
-					.. "peak_x=%d,peak_y=%d,k=%.12g,cells=%d,band_h=%d,band_t=%d,monotone=%s,escaped=%s",
+					.. "peak_x=%d,peak_y=%d,k=%.12g,cells=%d,band_h=%d,band_t=%d,monotone=%s,escaped=%s"
+					-- the saddle clamp (v813): where the bounded band would have flooded past a
+					-- neighbour, base > band_base and flood_level names the ladder level that did
+					-- it. Appended, so every existing consumer keeps parsing older dumps.
+					.. ",band_base=%s,flood_level=%s,bisect_steps=%s",
 					tag, i, m.x0, m.y0, m.x1, m.y1, m.base, m.base_img, m.peak,
 					tostring(m.peak_img), m.peak_x, m.peak_y, m.k, m.cells, m.band_h, m.band_t,
-					tostring(m.monotone), tostring(m.escaped))
+					tostring(m.monotone), tostring(m.escaped),
+					tostring(m.band_base), tostring(m.flood_level), tostring(m.bisect_steps))
 			end
 		end
 		-- Generation-time stamps of the mod's final gameplay-grid rebuild, per map. v812 runs the
