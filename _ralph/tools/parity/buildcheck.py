@@ -28,18 +28,25 @@ Scored checks
      perturbation of the rebuild copy.  Both must report a nonzero difference.
   3. Anti-vacuity: each grid holds both sentinel and non-sentinel hexes.
   4. RANGE FIT (contract step 5, the clause that gates this grid): `BuildableGrid:Build` caps at
-     `map_max_height = range.to*guim` and floors at `range.from*guim` (`:71-72`), so every cell of
-     the FINAL height grid must lie inside the map's declared `visible_height_range` or the hexes
-     above it go unbuildable - the v423 failure mode. Scored per map from the dumped height grid
-     against the `ranges,` row of the same run's zone stamp; a map that declares no range (every
-     surface measured here) has no cap and is reported N/A, not green.
+     `map_max_height = range.to*guim` and floors at `range.from*guim` (`:71-72`), so terrain
+     outside the map's declared `visible_height_range` goes unbuildable - the v423 failure mode.
+     Scored per map from the dumped height grid against the `ranges,` row of the same run's zone
+     stamp; a map that declares no range (every surface measured here) has no cap and is reported
+     N/A, not green. The CRITERION is equivalence with the vanilla twin, not zero: a stock map
+     already carries most of its underground above its own declared cap, so what step 5 asks is
+     that the transform does not push MORE of the map out of range than vanilla had, and that the
+     expanded cap is the round-outward image of the vanilla one. `rangecheck.py` scores the
+     derivation rule that produces that cap.
   5. Ceiling exposure, reported per twin: the largest NON-sentinel buildable Z, how many hexes
      sit within 1000 wu of the sentinel, and the per-massif summit rows (the hex holding each
      peak cell and its 5x5 hex neighbourhood) with the vanilla twin's matching window.
 
 Height grid units are world units on both twins (measured: the underground's vanilla flatten floor
-is 10,000 in the grid and its buildable Z reads 10,000 wu), and declared ranges are in metres with
-guim = 1000 wu/m.
+is 10,000 in the grid and its buildable Z reads 10,000 wu), and declared ranges are in metres. The
+metre is NOT assumed here: `guim` is derived from each run's own dumps by `rangecheck.py`
+(mapdata.Width against the terrain extent, per the engine's own `MapData.lua:15`), which measures
+100 wu/m on every run in this workspace. This tool used to hardcode 1000, which made check 4
+vacuous - every cap was ten times too high for anything to exceed.
 
 Hex windows are matched across twins by scaling storage coordinates by src/dest (the hex size is
 identical on both maps; only the map extent differs), so the match is exact up to +-1 hex - which
@@ -58,6 +65,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+import rangecheck
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = HERE / "out"
@@ -97,10 +106,7 @@ def parse_stamp(path: Path) -> dict:
     return out
 
 
-GUIM = 1000
-
-
-def range_fit(out_dir: Path, tag: str, env: str) -> dict:
+def range_fit(out_dir: Path, tag: str, env: str, guim: int) -> dict:
     """Does the final height grid fit inside the range the buildable grid is capped by?"""
     stamp = out_dir / f"height-{tag}-zones.txt"
     declared = None
@@ -119,13 +125,18 @@ def range_fit(out_dir: Path, tag: str, env: str) -> dict:
         out["note"] = "no declared visible_height_range: map_max_height falls back to UnbuildableZ"
         return out
     a, b = declared.split("..")
-    frm, to = int(a) * GUIM, int(b) * GUIM
+    frm, to = int(a) * guim, int(b) * guim
+    above = int((raw.astype(np.int64) > to).sum())
+    below = int((raw.astype(np.int64) < frm).sum())
     out.update({
         "applicable": True,
+        "guim_wu_per_m": guim,
         "cap_wu": to,
         "floor_wu": frm,
-        "cells_above_cap": int((raw > to).sum()),
-        "cells_below_floor": int((raw < frm).sum()),
+        "cells_above_cap": above,
+        "cells_below_floor": below,
+        "fraction_above_cap": round(above / raw.size, 6),
+        "cap_margin_over_grid_min_wu": to - lo,
         "headroom_wu": to - hi,
     })
     return out
@@ -184,6 +195,17 @@ def main() -> int:
     }
     fail = report["failed_checks"].append
 
+    # The metre, measured from the run's own dumps rather than assumed (see the header).
+    guims = {role: rangecheck.derive_guim(out_dir, tag)
+             for role, tag in (("vanilla", args.vanilla), ("expanded", args.expanded))}
+    report["guim"] = guims
+    guim_vals = sorted({g["guim"] for g in guims.values() if g.get("guim")})
+    if len(guim_vals) != 1:
+        fail(f"guim could not be derived consistently from the twins' dumps: {guim_vals}")
+        guim = None
+    else:
+        guim = guim_vals[0]
+
     grids = {}
     for role, tag in (("vanilla", args.vanilla), ("expanded", args.expanded)):
         stamp = parse_stamp(out_dir / f"height-{tag}-buildable.txt")
@@ -200,12 +222,9 @@ def main() -> int:
             st = grid_stats(shipped)
             st["stale_cells_vs_fresh_rebuild"] = diff
             st["rebuild_ms"] = stamp["rebuild"].get(env, {}).get("ms")
-            st["range_fit"] = range_fit(out_dir, tag, env)
+            st["range_fit"] = (range_fit(out_dir, tag, env, guim) if guim
+                               else {"scored": False, "reason": "guim not derived"})
             report["maps"][key] = st
-            rf = st["range_fit"]
-            if rf.get("applicable") and (rf["cells_above_cap"] or rf["cells_below_floor"]):
-                fail(f"{key}: {rf['cells_above_cap']} cells above the declared cap and "
-                     f"{rf['cells_below_floor']} below its floor - those hexes go unbuildable")
             # The gate is the MOD's pipeline: step 6 is a statement about what this task ships.
             # The vanilla twin's own number is the baseline it is read against - and where it is
             # nonzero it is also the sensitivity control this comparator needs, found in the wild
@@ -216,6 +235,42 @@ def main() -> int:
                 fail(f"{key}: vacuous grid - {st['sentinel']} sentinel, {st['buildable']} buildable")
         if role == "expanded":
             report["expanded_summits_raw"] = stamp["summits"]
+
+    # Check 4, the corrected criterion: the declared range must travel WITH the terrain, so the
+    # expanded map may not hold a larger share of itself outside the range than vanilla does, and
+    # its cap must be the round-outward image of vanilla's under the same affine.
+    exp_stamp = rangecheck.parse_zones(out_dir / f"height-{args.expanded}-zones.txt")
+    van_ranges = rangecheck.parse_zones(out_dir / f"height-{args.vanilla}-zones.txt")["ranges"]
+    report["range_equivalence"] = {}
+    for env in ("surface", "underground"):
+        vf = report["maps"].get(f"vanilla/{env}", {}).get("range_fit", {})
+        xf = report["maps"].get(f"expanded/{env}", {}).get("range_fit", {})
+        if not (vf.get("applicable") and xf.get("applicable")):
+            report["range_equivalence"][env] = {"applicable": False}
+            continue
+        stamp = exp_stamp["maps"].get(env, {})
+        mul = rangecheck.int_or_none(stamp, "zmul")
+        div = rangecheck.int_or_none(stamp, "zdiv")
+        add = rangecheck.int_or_none(stamp, "zadd") or 0
+        src = rangecheck.parse_range(van_ranges.get(env, {}).get("visible"))
+        img = (src[1] * mul) / div * guim + add if (src and mul and div) else None
+        entry = {"applicable": True,
+                 "vanilla_fraction_above_cap": vf["fraction_above_cap"],
+                 "expanded_fraction_above_cap": xf["fraction_above_cap"],
+                 "fraction_delta": round(xf["fraction_above_cap"] - vf["fraction_above_cap"], 6),
+                 "vanilla_cap_image_wu": round(img, 3) if img is not None else None,
+                 "expanded_cap_wu": xf["cap_wu"],
+                 "expanded_cap_minus_image_wu": round(xf["cap_wu"] - img, 3) if img else None}
+        report["range_equivalence"][env] = entry
+        if entry["fraction_delta"] > 1e-3:
+            fail(f"{env}: the transform pushed {entry['fraction_delta']:.6f} more of the map above "
+                 "the declared cap than vanilla had - the v423 failure mode")
+        if xf["cells_below_floor"] > vf["cells_below_floor"]:
+            fail(f"{env}: {xf['cells_below_floor']} cells below the declared floor against "
+                 f"vanilla's {vf['cells_below_floor']}")
+        if img is not None and not (0 <= xf["cap_wu"] - img < guim):
+            fail(f"{env}: the expanded cap {xf['cap_wu']} wu is not the round-outward image of the "
+                 f"vanilla cap ({img:.1f} wu)")
 
     # Control A: the comparator on two grids that MUST differ (same dims, different map).
     for role in ("vanilla", "expanded"):
