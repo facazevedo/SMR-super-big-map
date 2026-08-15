@@ -677,12 +677,25 @@ def main(argv=None):
                                   curvature_screen_reported=CURV_TOL,
                                   curvature_ratio_reported=CURV_RATIO_TOL),
                   summary=summary, detail=rows, gate_ok=ok)
+    # A map whose terrain never overflows takes the compression loop zero times, so no base
+    # isoline and no join EXIST to be slope-continuous. That is not a pass and not a failure:
+    # gate_ok stays null so no tally can read it as green, and the exit status stops reporting a
+    # scored massif's failure when none was scored.
+    applicable = bool(massifs)
+    report["applicable"] = applicable
+    if not applicable:
+        report["gate_ok"] = None
+        report["not_applicable_reason"] = ("the stamp carries no surface massif: the whole map is "
+                                           "the pure similarity and the transform has no join")
     if mode == "dest_only":
         # keep the curvature screen visible on an end-of-generation grid, as a reported number
         summary["curvature_screen_within_tol"] = sum(
             1 for r in scored
             if (r.get("curvature_bands", {}).get("contour_over_control") or 0) <= CURV_TOL)
-    log(f"GATE {'PASS' if ok else 'FAIL'} ({mode}): {summary['passing']}/{summary['scored']} "
+    verdict = "PASS" if ok else "FAIL"
+    if not applicable:
+        verdict = "N/A"
+    log(f"GATE {verdict} ({mode}): {summary['passing']}/{summary['scored']} "
         f"massifs, " + ", ".join(f"{k} {v}" for k, v in summary.items()
                                  if k.startswith("worst")))
 
@@ -693,6 +706,8 @@ def main(argv=None):
         with open(args.json, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=1, sort_keys=True)
         log(f"wrote {args.json}")
+    if not applicable:
+        return 0
     return 0 if ok else 1
 
 

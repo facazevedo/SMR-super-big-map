@@ -349,9 +349,19 @@ def main(argv=None):
         final=dict(grid_max=int(exp.max()), grid_min=int(exp.min()),
                    cells_at_cap=int((exp == CAP).sum())),
         no_crease=dict(target_slope=round(TARGET_SLOPE, 9),
-                       worst_abs_error=round(max(abs(r["slope_at_base"] - TARGET_SLOPE)
-                                                 for r in rows if r["slope_at_base"]), 12)),
+                       worst_abs_error=round(max(
+                           [abs(r["slope_at_base"] - TARGET_SLOPE)
+                            for r in rows if r["slope_at_base"]] or [0.0]), 12)),
     )
+    # A map with no overflow takes the compression loop ZERO times, so the transform degenerates
+    # to the pure similarity. Its final maximum then must NOT reach the ceiling - had it reached
+    # it, an overflow existed and a massif was owed. Demanding grid_max == CAP there would fail a
+    # correct zero-massif map; demanding grid_max < CAP is the same statement the massif branch
+    # makes (every peak lands exactly on the cap), read on the branch that has no peaks.
+    report["final"]["ceiling_rule"] = ("massif peaks land on the cap" if massifs
+                                       else "no massif: the final max must stay below the cap")
+    report["final"]["ceiling_ok"] = bool(report["final"]["grid_max"] == CAP if massifs
+                                         else report["final"]["grid_max"] < CAP)
     ok = (report["outside"]["exact"]
           and (exact is None or exact["ok"])
           and report["transform"]["is_similarity"]
@@ -359,7 +369,7 @@ def main(argv=None):
           and report["zones"]["cells_match"] == len(massifs)
           and report["zones"]["values_outside_lut_image"] == 0
           and report["zones"]["all_monotone"]
-          and report["final"]["grid_max"] == CAP
+          and report["final"]["ceiling_ok"]
           and report["no_crease"]["worst_abs_error"] < 1e-9)
     report["gate_ok"] = bool(ok)
     log(f"GATE {'PASS' if ok else 'FAIL'} ({report['mode']}): "

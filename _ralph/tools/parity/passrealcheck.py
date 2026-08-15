@@ -163,14 +163,29 @@ def main():
     control_ok = bool(changed_terrain) and bool(held_stale) and bool(repaired)
     report["control"]["discriminating"] = control_ok
 
-    checks = {
-        "zone_samples_present": report["zone"]["samples"] > 0,
-        "zone_no_stale": report["zone"]["stale"] == 0,
-        "zone_idempotent": report["zone"]["not_idempotent"] == 0,
-        "zone_heights_static": report["zone"]["height_moved_by_rebuild"] == 0,
+    # `zone_samples_present` is the anti-vacuity guard for a map that HAS massifs: an in-zone zero
+    # proves nothing if the probe sampled nothing.  A map whose terrain never overflows has no
+    # massif at all, so there is no in-zone population to sample and the in-zone clause does not
+    # apply.  Scoring it would demand samples that cannot exist; dropping the guard where massifs
+    # DO exist would hide vacuity.  So make the whole in-zone clause conditional on the stamp, and
+    # say in the report which clauses were scored.
+    zone_clause_applicable = report["massif_count"] > 0
+    report["zone_clause_applicable"] = zone_clause_applicable
+    checks = {}
+    if zone_clause_applicable:
+        checks.update({
+            "zone_samples_present": report["zone"]["samples"] > 0,
+            "zone_no_stale": report["zone"]["stale"] == 0,
+            "zone_idempotent": report["zone"]["not_idempotent"] == 0,
+            "zone_heights_static": report["zone"]["height_moved_by_rebuild"] == 0,
+        })
+    else:
+        report["scope"] = ("outside-zone clauses only: the stamp carries no massif, so the map is "
+                           "the pure similarity and has no in-zone population")
+    checks.update({
         "outside_no_stale": report["outside"]["stale"] == 0,
         "control_discriminating": control_ok,
-    }
+    })
     report["checks"] = checks
     failed = [k for k, v in checks.items() if not v]
     report["failed_checks"] = failed
