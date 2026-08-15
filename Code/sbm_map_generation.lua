@@ -11587,8 +11587,45 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 					and type(terrain_api2.RebuildPassability) == "function") then
 					error("underground final passability rebuild is unavailable")
 				end
+				-- A BARE RebuildPassability recomputes NOTHING: the engine rebuilds only the regions
+				-- that were invalidated first, which is why its own generator always calls
+				-- InvalidateHeight + InvalidateType immediately before it
+				-- (RandomMapGenerator.lua:2900). Without them this "authoritative" call left the
+				-- grid as whatever earlier box-scoped rebuilds had produced -- measured at 45S82E
+				-- as a buried wonder whose impassability imprint was cropped to a box around it
+				-- (6,276 of 40,401 window cells blocked, against vanilla's 21,719). The same
+				-- rebuild preceded by the two invalidates restores 21,668 of them (twin difference
+				-- 15,459 -> 67 cells) and is idempotent; whole-map cost measured at 5.5 s.
+				local invalidate_final = cfg_bool("UNDERGROUND_FINAL_PASSABILITY_INVALIDATE", true)
+				if invalidate_final
+					and not (type(terrain_api2.InvalidateHeight) == "function"
+						and type(terrain_api2.InvalidateType) == "function") then
+					error("underground final passability invalidation is unavailable")
+				end
+				local final_pass_w, final_pass_h = TerrainSize(map)
+				local box_ctor = Global("box")
+				local final_pass_box = (invalidate_final and type(box_ctor) == "function"
+					and final_pass_w > 0 and final_pass_h > 0)
+					and box_ctor(0, 0, final_pass_w, final_pass_h) or false
 				local passability_token = LoadingBegin("underground final RebuildPassability", map)
-				local pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				local pass_ok, pass_err
+				if invalidate_final then
+					-- The measured sequence (iteration 034), box form when the engine box
+					-- constructor is available and whole-map form otherwise.
+					pass_ok, pass_err = pcall(function()
+						if final_pass_box then
+							terrain_api2.InvalidateHeight(map, final_pass_box)
+							terrain_api2.InvalidateType(map, final_pass_box)
+							terrain_api2.RebuildPassability(map, final_pass_box)
+						else
+							terrain_api2.InvalidateHeight(map)
+							terrain_api2.InvalidateType(map)
+							terrain_api2.RebuildPassability(map)
+						end
+					end)
+				else
+					pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+				end
 				LoadingEnd(passability_token,
 					{ error = pass_ok and "" or tostring(pass_err) }, pass_ok)
 				if not pass_ok then
