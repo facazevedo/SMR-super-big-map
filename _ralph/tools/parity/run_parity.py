@@ -3249,15 +3249,20 @@ FLATTEN_PROBE_BLOCK = """		do
 # Iteration 037 (C1n) closes the one hole iteration 036 left.  Suspend/ResumePassEdits were logged
 # compactly, CAPPED at 60 and never hashed, so the six calls that follow the mod's final rebuild -
 # the window in which the underground digest was seen to move - were invisible.  They are now
-# UNCAPPED (about 13,000 single-line entries against a 60,000-line buffer) and hashed AROUND:
+# UNCAPPED (about 13,000 single-line entries against a 60,000-line buffer), and the RESUME side is
+# hashed AROUND (only a resume can flush deferred edits):
 #   * the BEFORE hash catches a move that happened since the previous hash, i.e. with NO traced
 #     call running - the signature of a native or early-bound writer;
 #   * the AFTER hash catches a move the call itself made, and only then is a traceback taken.
 # Hashing is per-call-map (a method's first argument is its map), which halves the cost, and it is
 # abandoned if the cumulative hash time passes PT_HASH_BUDGET_MS so a slow build cannot hang a run.
+# Every bracket and write-class call also records `IsPassEditSuspended` and the outstanding
+# SuspendPassEditsReasons, because the engine's suspend lifts only when the LAST reason clears
+# (Core/map.lua:734-770): a rebuild issued while a reason is outstanding is a candidate for being
+# discarded by that final resume.
 # The flush - which rewrites the whole buffer - relaxes to every 250 calls after the first 400.
 PASSTRACE_BLOCK = """		do
-			local PT_HASH_BUDGET_MS = 180000
+			local PT_HASH_BUDGET_MS = 300000
 			local pt_lines, pt_dropped, pt_calls, pt_changes = {}, 0, 0, 0
 			local pt_hash_ms, pt_hash_total, pt_hash_calls = 0, 0, 0
 			local pt_last_hash_call, pt_budget_noted = 0, false
@@ -3362,6 +3367,34 @@ PASSTRACE_BLOCK = """		do
 				local ok, is_map = pcall(function() return type(v.mapdata) == "table" end)
 				return (ok and is_map) and v or nil
 			end
+
+			-- `Map:SuspendPassEdits` counts by REASON and the engine's own suspend only lifts when
+			-- the LAST reason clears (Core/map.lua:734-770), so a rebuild that runs with any reason
+			-- outstanding can be discarded by that final resume.  Every hashed call records the
+			-- state as it found it.
+			local function pt_susp(m)
+				if type(m) ~= "table" then return "susp=? reasons=?" end
+				local ok, s = pcall(function()
+					local flag = "?"
+					if type(m.IsPassEditSuspended) == "function" then
+						flag = tostring(m:IsPassEditSuspended())
+					end
+					local t = m.SuspendPassEditsReasons
+					if type(t) ~= "table" then return "susp=" .. flag .. " reasons=?" end
+					local names = {}
+					for k in pairs(t) do
+						if type(k) == "table" then
+							names[#names + 1] = tostring(rawget(k, "class") or "table")
+						else
+							names[#names + 1] = tostring(k)
+						end
+					end
+					table.sort(names)
+					return string.format("susp=%s reasons=%d[%s]", flag, #names,
+						table.concat(names, "+"))
+				end)
+				return (ok and s) or "susp=? reasons=?"
+			end
 			-- opts: hash = "none" | "after" | "around", trace, cap, own_map
 			local function pt_wrap(holder, key, label, opts)
 				opts = opts or {}
@@ -3383,14 +3416,16 @@ PASSTRACE_BLOCK = """		do
 					local n = pt_calls
 					local seen = (pt_label_calls[label] or 0) + 1
 					pt_label_calls[label] = seen
+					local own = pt_own_map(argv[1])
 					if not cap or seen <= cap then
 						local a = {}
 						for i = 1, math.min(argv.n, 4) do a[#a + 1] = pt_arg(argv[i]) end
-						pt_log(string.format("CALL #%05d %-30s status=%-22s args=%s", n, label,
-							tostring(rawget(_G, "g_ParityStatus")), table.concat(a, " ")))
+						pt_log(string.format("CALL #%05d %-30s status=%-22s %s args=%s", n, label,
+							tostring(rawget(_G, "g_ParityStatus")),
+							opts.susp and pt_susp(own) or "", table.concat(a, " ")))
 						if trace then pt_log("   at " .. pt_where()) end
 					end
-					local scope = opts.own_map and pt_own_map(argv[1]) or nil
+					local scope = opts.own_map and own or nil
 					local do_hash = hash ~= "none"
 					if do_hash and pt_hash_total > PT_HASH_BUDGET_MS then
 						do_hash = false
@@ -3405,7 +3440,10 @@ PASSTRACE_BLOCK = """		do
 					if do_hash and hash == "around" then
 						local who = string.format("BEFORE #%05d %s (nothing traced since #%05d)",
 							n, label, pt_last_hash_call)
-						local moved = scope and pt_hash_map(scope, who) or pt_check(who)
+						-- `scope and f() or g()` would call g() whenever f() returns false, which
+						-- is the common case; the branch must be explicit.
+						local moved
+						if scope then moved = pt_hash_map(scope, who) else moved = pt_check(who) end
 						if moved then
 							pt_log(string.format("   UNTRACED WRITER: digest moved between #%05d and #%05d",
 								pt_last_hash_call, n))
@@ -3415,9 +3453,11 @@ PASSTRACE_BLOCK = """		do
 					local results = table.pack(original(table.unpack(argv, 1, argv.n)))
 					if do_hash then
 						local who = string.format("#%05d %s", n, label)
-						local moved = scope and pt_hash_map(scope, who) or pt_check(who)
+						local moved
+						if scope then moved = pt_hash_map(scope, who) else moved = pt_check(who) end
 						if moved then
-							pt_log(string.format("   WRITER #%05d %s moved the digest; call site:", n, label))
+							pt_log(string.format("   WRITER #%05d %s moved the digest; %s; call site:",
+								n, label, pt_susp(own)))
 							pt_log("   at " .. pt_where())
 						end
 						pt_last_hash_call = n
@@ -3441,7 +3481,7 @@ PASSTRACE_BLOCK = """		do
 
 			-- Write-class entry points: hashed AROUND every call, full traceback.  All maps are
 			-- hashed here (these are few) so a write to a map other than the argument's shows up.
-			local WRITE = { hash = "around", trace = true }
+			local WRITE = { hash = "around", trace = true, susp = true }
 			pt_wrap(terrain_tbl, "RebuildPassability", "terrain.RebuildPassability", WRITE)
 			pt_wrap(terrain_tbl, "ClearPassabilityBox", "terrain.ClearPassabilityBox", WRITE)
 			pt_wrap(terrain_tbl, "SetPassability", "terrain.SetPassability", WRITE)
@@ -3460,15 +3500,18 @@ PASSTRACE_BLOCK = """		do
 			pt_wrap(map_class, "RebuildPassability", "Map:RebuildPassability", WRITE)
 			pt_wrap(map_class, "InvalidateHeight", "Map:InvalidateHeight", INVAL)
 			pt_wrap(map_class, "InvalidateType", "Map:InvalidateType", INVAL)
-			-- Bracketing helpers (iteration 037): UNCAPPED and hashed around their OWN map, which
-			-- is the only affordable way to hash thousands of calls.  A ResumePassEdits that
-			-- flushes a deferred rebuild is named by its AFTER hash; a move that appears in a
-			-- BEFORE hash belongs to no traced call at all.  Tracebacks only where a move is seen.
-			local BRACKET = { hash = "around", trace = false, own_map = true }
-			pt_wrap(map_class, "SuspendPassEdits", "Map:SuspendPassEdits", BRACKET)
-			pt_wrap(map_class, "ResumePassEdits", "Map:ResumePassEdits", BRACKET)
-			pt_wrap(terrain_tbl, "SuspendPassEdits", "terrain.SuspendPassEdits", BRACKET)
-			pt_wrap(terrain_tbl, "ResumePassEdits", "terrain.ResumePassEdits", BRACKET)
+			-- Bracketing helpers (iteration 037): UNCAPPED, and the RESUME side is hashed around
+			-- its OWN map - only a resume can flush deferred edits, so hashing the suspend side
+			-- doubled the cost for nothing (run 1 spent its whole budget by call #05138).  A
+			-- ResumePassEdits that flushes a rebuild is named by its AFTER hash; a move that
+			-- appears in a BEFORE hash belongs to no traced call at all.  Both sides record the
+			-- outstanding suspend reasons, because the engine's suspend only lifts on the last one.
+			local SUSPEND = { hash = "none", trace = false, own_map = true, susp = true }
+			local RESUME = { hash = "around", trace = false, own_map = true, susp = true }
+			pt_wrap(map_class, "SuspendPassEdits", "Map:SuspendPassEdits", SUSPEND)
+			pt_wrap(map_class, "ResumePassEdits", "Map:ResumePassEdits", RESUME)
+			pt_wrap(terrain_tbl, "SuspendPassEdits", "terrain.SuspendPassEdits", SUSPEND)
+			pt_wrap(terrain_tbl, "ResumePassEdits", "terrain.ResumePassEdits", RESUME)
 
 			pt_log("INSTALLED passtrace")
 			pt_flush()
