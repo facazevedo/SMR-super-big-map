@@ -144,6 +144,7 @@ CreateRealTimeThread(function()
 				local rep = { "#modstamp", tag }
 				for _, key in ipairs({ "SuperBigMapFinalPassBranch", "SuperBigMapFinalPassMs",
 					"SuperBigMapFinalPassHashBefore", "SuperBigMapFinalPassHashAfter",
+					"SuperBigMapFinalPassStage", "SuperBigMapFinalPassCount",
 					"SuperBigMapRevalidationRebuiltGrids" }) do
 					local ok_s, value = pcall(function() return map[key] end)
 					rep[#rep + 1] = key .. "=" .. csv(tostring(ok_s and value or "?"))

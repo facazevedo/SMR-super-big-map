@@ -11440,6 +11440,101 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 			if resume_ok then transform_pass_batch_active = false end
 			return resume_ok, resume_err
 		end
+		-- The mod's authoritative underground gameplay-grid rebuild. It is a FUNCTION because it
+		-- has to run more than once: a rebuild stays authoritative only until the next object-grid
+		-- transaction. The engine re-derives passability for the regions touched between
+		-- SuspendPassEdits and the matching ResumePassEdits, so any later transaction silently
+		-- discards this whole-map result over the region it touched -- measured (iteration 037,
+		-- call tracer): the pipeline's own pre-anomaly buried-wonder reseat is the last pass-edit
+		-- bracket of generation, and its resume put the underground pass grid back to the state
+		-- this rebuild had just corrected (a wonder's impassability imprint cropped to a box).
+		-- Hence one call before the reachability-filtered density suite, which needs live grids,
+		-- and one more after the pipeline's LAST object-grid transaction. Both are whole-map and
+		-- derived from TerrainSize; there is nothing per-map, per-class or per-coordinate here.
+		local final_pass_rebuild_count = 0
+		local function RebuildFinalUndergroundGameplayGrids(stage)
+			stage = tostring(stage or "final")
+			local terrain_api2 = Global("terrain")
+			if not (type(terrain_api2) == "table"
+				and type(terrain_api2.RebuildPassability) == "function") then
+				error("underground final passability rebuild is unavailable")
+			end
+			-- A BARE RebuildPassability recomputes NOTHING: the engine rebuilds only the regions
+			-- that were invalidated first, which is why its own generator always calls
+			-- InvalidateHeight + InvalidateType immediately before it
+			-- (RandomMapGenerator.lua:2900). Without them this "authoritative" call left the
+			-- grid as whatever earlier box-scoped rebuilds had produced -- measured at 45S82E
+			-- as a buried wonder whose impassability imprint was cropped to a box around it
+			-- (6,276 of 40,401 window cells blocked, against vanilla's 21,719). The same
+			-- rebuild preceded by the two invalidates restores 21,668 of them (twin difference
+			-- 15,459 -> 67 cells) and is idempotent; whole-map cost measured at 5.5 s.
+			local invalidate_final = cfg_bool("UNDERGROUND_FINAL_PASSABILITY_INVALIDATE", true)
+			if invalidate_final
+				and not (type(terrain_api2.InvalidateHeight) == "function"
+					and type(terrain_api2.InvalidateType) == "function") then
+				error("underground final passability invalidation is unavailable")
+			end
+			local final_pass_w, final_pass_h = TerrainSize(map)
+			local box_ctor = Global("box")
+			local final_pass_box = (invalidate_final and type(box_ctor) == "function"
+				and final_pass_w > 0 and final_pass_h > 0)
+				and box_ctor(0, 0, final_pass_w, final_pass_h) or false
+			-- Generation-time stamps (never saved) so a probe can tell "this call site ran and
+			-- changed the grid" from "it never ran" without a debug build: the passability
+			-- digest either side of the rebuild plus the branch, the stage and its cost. The
+			-- LAST rebuild of the pipeline is the one these describe.
+			local function pass_hash()
+				if type(terrain_api2.HashPassability) ~= "function" then return "unavailable" end
+				local ok_h, h = pcall(terrain_api2.HashPassability, map)
+				return ok_h and tostring(h) or "error"
+			end
+			final_pass_rebuild_count = final_pass_rebuild_count + 1
+			map.SuperBigMapFinalPassStage = stage
+			map.SuperBigMapFinalPassCount = final_pass_rebuild_count
+			map.SuperBigMapFinalPassBranch = invalidate_final
+				and (final_pass_box and "invalidate_box" or "invalidate_map") or "bare"
+			map.SuperBigMapFinalPassHashBefore = pass_hash()
+			local pass_started = GetPreciseTicks()
+			local passability_token = LoadingBegin(
+				"underground final RebuildPassability (" .. stage .. ")", map)
+			local pass_ok, pass_err
+			if invalidate_final then
+				-- The measured sequence (iteration 034), box form when the engine box
+				-- constructor is available and whole-map form otherwise.
+				pass_ok, pass_err = pcall(function()
+					if final_pass_box then
+						terrain_api2.InvalidateHeight(map, final_pass_box)
+						terrain_api2.InvalidateType(map, final_pass_box)
+						terrain_api2.RebuildPassability(map, final_pass_box)
+					else
+						terrain_api2.InvalidateHeight(map)
+						terrain_api2.InvalidateType(map)
+						terrain_api2.RebuildPassability(map)
+					end
+				end)
+			else
+				pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
+			end
+			LoadingEnd(passability_token,
+				{ error = pass_ok and "" or tostring(pass_err) }, pass_ok)
+			map.SuperBigMapFinalPassMs = GetPreciseTicks() - pass_started
+			map.SuperBigMapFinalPassHashAfter = pass_hash()
+			if not pass_ok then
+				error("underground final passability rebuild failed: " .. tostring(pass_err))
+			end
+			local rebuild_buildable = Global("RebuildBuildableGrid")
+			if type(rebuild_buildable) ~= "function" then
+				error("underground final buildable-grid rebuild is unavailable")
+			end
+			SetLoadingPhase("Rebuilding the final underground build grid")
+			local buildable_token = LoadingBegin(
+				"underground final RebuildBuildableGrid (" .. stage .. ")", map)
+			local build_ok, build_err = pcall(rebuild_buildable, map)
+			LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
+			if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
+			map.SuperBigMapRevalidationRebuiltGrids = true
+			return true
+		end
 		local ok_branch, branch_err = pcall(function()
 			-- A surface Elevator may already be finished while its paired underground half is a
 			-- pending site with a destroyed linked_obj. Snapshot/remove only that underground half
@@ -11581,80 +11676,11 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 				-- pass-edit transaction. The underground map is not necessarily CurrentMap, and a successful
 				-- RebuildGrids/ResumePassEdits return does not prove that its asynchronous native pass grid is
 				-- already current. This remains the authoritative synchronization point before reachability-
-				-- constrained density placement.
-				local terrain_api2 = Global("terrain")
-				if not (type(terrain_api2) == "table"
-					and type(terrain_api2.RebuildPassability) == "function") then
-					error("underground final passability rebuild is unavailable")
-				end
-				-- A BARE RebuildPassability recomputes NOTHING: the engine rebuilds only the regions
-				-- that were invalidated first, which is why its own generator always calls
-				-- InvalidateHeight + InvalidateType immediately before it
-				-- (RandomMapGenerator.lua:2900). Without them this "authoritative" call left the
-				-- grid as whatever earlier box-scoped rebuilds had produced -- measured at 45S82E
-				-- as a buried wonder whose impassability imprint was cropped to a box around it
-				-- (6,276 of 40,401 window cells blocked, against vanilla's 21,719). The same
-				-- rebuild preceded by the two invalidates restores 21,668 of them (twin difference
-				-- 15,459 -> 67 cells) and is idempotent; whole-map cost measured at 5.5 s.
-				local invalidate_final = cfg_bool("UNDERGROUND_FINAL_PASSABILITY_INVALIDATE", true)
-				if invalidate_final
-					and not (type(terrain_api2.InvalidateHeight) == "function"
-						and type(terrain_api2.InvalidateType) == "function") then
-					error("underground final passability invalidation is unavailable")
-				end
-				local final_pass_w, final_pass_h = TerrainSize(map)
-				local box_ctor = Global("box")
-				local final_pass_box = (invalidate_final and type(box_ctor) == "function"
-					and final_pass_w > 0 and final_pass_h > 0)
-					and box_ctor(0, 0, final_pass_w, final_pass_h) or false
-				-- Generation-time stamps (never saved) so a probe can tell "this call site ran and
-				-- changed the grid" from "it never ran" without a debug build: the passability
-				-- digest either side of the rebuild plus the branch and its cost.
-				local function pass_hash()
-					if type(terrain_api2.HashPassability) ~= "function" then return "unavailable" end
-					local ok_h, h = pcall(terrain_api2.HashPassability, map)
-					return ok_h and tostring(h) or "error"
-				end
-				map.SuperBigMapFinalPassBranch = invalidate_final
-					and (final_pass_box and "invalidate_box" or "invalidate_map") or "bare"
-				map.SuperBigMapFinalPassHashBefore = pass_hash()
-				local pass_started = GetPreciseTicks()
-				local passability_token = LoadingBegin("underground final RebuildPassability", map)
-				local pass_ok, pass_err
-				if invalidate_final then
-					-- The measured sequence (iteration 034), box form when the engine box
-					-- constructor is available and whole-map form otherwise.
-					pass_ok, pass_err = pcall(function()
-						if final_pass_box then
-							terrain_api2.InvalidateHeight(map, final_pass_box)
-							terrain_api2.InvalidateType(map, final_pass_box)
-							terrain_api2.RebuildPassability(map, final_pass_box)
-						else
-							terrain_api2.InvalidateHeight(map)
-							terrain_api2.InvalidateType(map)
-							terrain_api2.RebuildPassability(map)
-						end
-					end)
-				else
-					pass_ok, pass_err = pcall(terrain_api2.RebuildPassability, map)
-				end
-				LoadingEnd(passability_token,
-					{ error = pass_ok and "" or tostring(pass_err) }, pass_ok)
-				map.SuperBigMapFinalPassMs = GetPreciseTicks() - pass_started
-				map.SuperBigMapFinalPassHashAfter = pass_hash()
-				if not pass_ok then
-					error("underground final passability rebuild failed: " .. tostring(pass_err))
-				end
-				local rebuild_buildable = Global("RebuildBuildableGrid")
-				if type(rebuild_buildable) ~= "function" then
-					error("underground final buildable-grid rebuild is unavailable")
-				end
-				SetLoadingPhase("Rebuilding the final underground build grid")
-				local buildable_token = LoadingBegin("underground final RebuildBuildableGrid", map)
-				local build_ok, build_err = pcall(rebuild_buildable, map)
-				LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
-				if not build_ok then error("underground final buildable-grid rebuild failed: " .. tostring(build_err)) end
-				map.SuperBigMapRevalidationRebuiltGrids = true
+				-- constrained density placement -- but NOT the pipeline's last one: every object-grid
+				-- transaction after it re-derives the regions it touches, so the same rebuild runs
+				-- again once the last such transaction has closed (see
+				-- RebuildFinalUndergroundGameplayGrids).
+				RebuildFinalUndergroundGameplayGrids("before reachability and density")
 				WonderVerticalDiagnostics.LogAll(map, "after_final_grid_rebuild")
 				-- StretchSourceToFull may have deferred its intermediate RebuildGrids pass. Both final
 				-- authoritative gameplay grids now exist against the completed terrain/object layout.
@@ -12041,6 +12067,19 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						.. tostring(wonder_gameinit_stats and wonder_gameinit_stats.error
 							or "unknown error"))
 				end
+			end
+			-- LAST WORD ON THE GAMEPLAY GRIDS. Everything above -- the pre-anomaly buried-wonder
+			-- reseat, anomaly activation, enrichment relocation and this GameInit pass -- runs inside
+			-- object-grid transactions, and the engine re-derives passability over the regions each
+			-- one touches when the last SuspendPassEdits reason clears. Measured (iteration 037, call
+			-- tracer): the reseat bracket was the pipeline's final pass-edit transaction and its resume
+			-- discarded the authoritative rebuild issued before the density suite, restoring the exact
+			-- defective grid. So repeat that rebuild here, after the pipeline's last transaction has
+			-- closed. It is idempotent and whole-map, and both call sites run the same engine sequence.
+			if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
+				SetLoadingPhase("Finalizing underground gameplay grids")
+				RebuildFinalUndergroundGameplayGrids("after last object-grid transaction")
+				WonderVerticalDiagnostics.LogAll(map, "after_closing_grid_rebuild")
 			end
 		end)
 		-- A failure anywhere between decoration movement and marker verification must still balance
