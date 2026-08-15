@@ -14,7 +14,7 @@
 -- What is written, per map:
 --   <base>-<tag>-buildable.txt          the live z_grid as shipped by the pipeline
 --   <base>-<tag>-buildable-rebuild.txt  a fresh RebuildBuildableGrid over the FINAL terrain
---   <base>-buildable-stamp.txt          dims, the sentinel, and one summit row per massif
+--   <base>-buildable.txt               dims, the sentinel, and one summit row per massif
 -- A shipped grid equal to the fresh rebuild is the step-6 evidence: the grid the game plays
 -- on was derived from the final terrain and is not stale.
 --
