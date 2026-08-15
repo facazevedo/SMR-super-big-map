@@ -134,9 +134,17 @@ def main():
     if len(args) < 3:
         raise SystemExit(__doc__)
     max_diff = DEFAULT_MAX_DIFF
+    # The vanilla control count is a property of ONE window (the 45S82E reference the reading
+    # probes have re-measured since iteration 023).  A held-out coordinate has its own window and
+    # its own freshly measured vanilla twin, which is then its own control, so allow the expected
+    # count to be overridden or waived with `--vanilla-blocked any`.
+    expect_vanilla = BASELINE["vanilla_blocked"]
     for i, a in enumerate(sys.argv):
         if a == "--max-diff" and i + 1 < len(sys.argv):
             max_diff = int(sys.argv[i + 1])
+        if a == "--vanilla-blocked" and i + 1 < len(sys.argv):
+            nxt = sys.argv[i + 1]
+            expect_vanilla = None if nxt == "any" else int(nxt)
     van_tag, exp_tag, out_path = args[0], args[1], Path(args[2])
     van, exp = parse(van_tag), parse(exp_tag)
 
@@ -162,9 +170,9 @@ def main():
     v, e = report["vanilla"], report["expanded"]
 
     # (3) the vanilla control must be exactly what every reading probe has measured since 023.
-    if v["blocked"] != BASELINE["vanilla_blocked"]:
+    if expect_vanilla is not None and v["blocked"] != expect_vanilla:
         problems.append(f"vanilla control moved: window blocked {v['blocked']} vs the measured "
-                        f"{BASELINE['vanilla_blocked']}")
+                        f"{expect_vanilla}")
     if v["wonder"]["ef_visible"] != "true":
         problems.append(f"vanilla wonder is not visible (ef_visible={v['wonder']['ef_visible']})")
     if v["wonder"]["sbm_concealed"] not in (None, "nil"):
