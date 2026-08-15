@@ -612,15 +612,16 @@ config.StretchAdaptiveZScale = true
 -- 42S28W: 28 such massifs covering 1.5% of the map. The adaptive reduction above stays as the
 -- fallback for a build that lacks one of the grid ops this needs.
 config.StretchZoneCompression = true
--- INVALIDATE BEFORE THE FINAL UNDERGROUND PASSABILITY REBUILD (sbm_map_generation, expansion step
--- 11). The engine rebuilds passability only over regions that were INVALIDATED first -- its own
--- generator always calls terrain.InvalidateHeight + terrain.InvalidateType immediately before
--- terrain.RebuildPassability (RandomMapGenerator.lua:2900) -- so the mod's bare rebuild at the
--- authoritative underground synchronization point recomputed nothing. Measured at 45S82E: a buried
--- wonder's impassability imprint stayed cropped to a small box around it (6,276 of 40,401 window
--- cells blocked against vanilla's 21,719), and the identical rebuild preceded by the two
--- invalidates restored 21,668 of them, taking the twin difference from 15,459 cells to 67.
-config.UndergroundFinalPassabilityInvalidate = true
+-- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
+-- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
+-- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
+-- terrain.InvalidateType immediately before terrain.RebuildPassability
+-- (RandomMapGenerator.lua:2900) -- so the mod's bare rebuild at an authoritative synchronization
+-- point recomputed nothing. Measured at 45S82E: a buried wonder's impassability imprint stayed
+-- cropped to a small box around it (6,276 of 40,401 window cells blocked against vanilla's 21,719),
+-- and the identical rebuild preceded by the two invalidates restored 21,668 of them, taking the
+-- twin difference from 15,459 cells to 67.
+config.FinalPassabilityInvalidate = true
 -- TEST-ONLY SEAM, empty string = off (never set in a played game). When set to a path prefix,
 -- the height stretch writes the destination height grid twice with GridSaveRaw:
 -- "<prefix>-<environment>-pre.raw" straight out of GridResample and "<prefix>-<environment>-
@@ -946,8 +947,8 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_ZONE_COMPRESSION = as_bool(config.StretchZoneCompression)
-C.UNDERGROUND_FINAL_PASSABILITY_INVALIDATE = expansion_step_11
-	and as_bool(config.UndergroundFinalPassabilityInvalidate)
+C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
+	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
 	and config.StretchHeightGridDumpPath or ""
 C.STRETCH_VANILLA_START_SECTOR = expansion_step_20
