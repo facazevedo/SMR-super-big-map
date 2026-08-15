@@ -3219,6 +3219,207 @@ FLATTEN_PROBE_BLOCK = """		do
 			end)
 		end"""
 
+# Diagnostic only, opt-in with the "passtrace" argument.  Iteration 035 proved that the mod's
+# authoritative final underground pass rebuild RUNS (branch/cost stamps, digest moves) and that the
+# map handed over at the end of generation nevertheless carries mod 808's exact passability digest
+# and mask, so a LATER actor re-derives the grid.  Reading Lua cannot name that actor (the workspace
+# lesson "probe the call, never read Lua to find a terrain writer"), so this block names it from the
+# calls themselves.
+#
+# It is installed in the CONSOLE `_G` before generation, which matters twice:
+#   * the mod indexes `terrain` at call time (`Engine.Global("terrain")` -> `rawget(_G, "terrain")`
+#     resolves to the engine's own table), so wrapping the table entries catches mod and engine-Lua
+#     callers alike;
+#   * `Core/map.lua:49-63` COPIES `terrain.RebuildPassability/InvalidateHeight/InvalidateType/
+#     Suspend/ResumePassEdits` and the global `RebuildGrids` into the `Map` class at definition
+#     time, so `map:RebuildGrids(box)` would bypass a terrain-table-only wrap.  Both holders are
+#     wrapped.  Native C callers stay invisible - which the sampler below turns into evidence.
+#
+# Two independent instruments, so an untraced writer cannot hide:
+#   (1) per-call log: ordinal, name, the g_ParityStatus phase, the argument summary (map environment
+#       and box) and a one-line traceback naming the call site;
+#   (2) digest watch: `terrain.HashPassability` per live map after every write-class call AND from a
+#       real-time sampler thread.  A change reported by a wrapper names its caller; a change the
+#       SAMPLER sees first means no traced Lua call did it (native or an early-captured local), and
+#       that is itself the answer to "who runs last".
+# Pass-through only: every argument and result is forwarded with an explicit arity, no RNG is
+# consumed, nothing is created, moved or destroyed, and the added work is reads (HashPassability)
+# plus logging.  Suspend/ResumePassEdits are bracketing helpers called thousands of times per
+# generation, so they are logged compactly, capped, and never hashed - the sampler covers them.
+PASSTRACE_BLOCK = """		do
+			local pt_lines, pt_dropped, pt_calls, pt_changes = {}, 0, 0, 0
+			local pt_hash_ms, pt_hash_total = 0, 0
+			local pt_label_calls = {}
+			local function pt_log(text)
+				if #pt_lines >= 60000 then
+					pt_dropped = pt_dropped + 1
+					return
+				end
+				pt_lines[#pt_lines + 1] = tostring(text)
+			end
+			local function pt_flush()
+				local werr = AsyncStringToFile("__PASSTRACE_OUT__", table.concat(pt_lines, "\\n"))
+				g_ParityPassTraceStatus = werr and ("error: " .. tostring(werr)) or "complete"
+			end
+			g_ParityPassTraceStatus = "running"
+			g_ParityPassTraceCalls = 0
+			g_ParityPassTraceChanges = 0
+
+			local terrain_tbl = rawget(_G, "terrain")
+			local hash_fn = (type(terrain_tbl) == "table" and terrain_tbl.HashPassability) or false
+
+			local function pt_env(m)
+				local ok, env = pcall(function() return m.mapdata.Environment end)
+				return (ok and tostring(env)) or "?"
+			end
+
+			-- Weak keys: a destroyed map must not be kept alive by the watch table.
+			local pt_last = setmetatable({}, { __mode = "k" })
+			local function pt_check(who)
+				if type(hash_fn) ~= "function" then return end
+				local maps = rawget(_G, "Maps") or {}
+				for i = 1, #maps do
+					local m = maps[i]
+					if m and m.mapdata then
+						local t0 = GetPreciseTicks()
+						local ok, h = pcall(hash_fn, m)
+						pt_hash_ms = GetPreciseTicks() - t0
+						pt_hash_total = pt_hash_total + pt_hash_ms
+						if ok then
+							local prev = pt_last[m]
+							if prev == nil then
+								pt_log(string.format("DIGEST %-11s INIT   %s  (%s, status=%s, %d ms)",
+									pt_env(m), tostring(h), who,
+									tostring(rawget(_G, "g_ParityStatus")), pt_hash_ms))
+							elseif prev ~= h then
+								pt_changes = pt_changes + 1
+								g_ParityPassTraceChanges = pt_changes
+								pt_log(string.format("DIGEST %-11s CHANGE#%03d %s -> %s  (%s, status=%s)",
+									pt_env(m), pt_changes, tostring(prev), tostring(h), who,
+									tostring(rawget(_G, "g_ParityStatus"))))
+							end
+							pt_last[m] = h
+						end
+					end
+				end
+			end
+
+			-- Level 3 starts the trace at the CALLER of the wrapper (1 = this function,
+			-- 2 = the wrapper itself).
+			local function pt_where()
+				if type(debug) ~= "table" or type(debug.traceback) ~= "function" then
+					return "no debug.traceback"
+				end
+				local tb = tostring(debug.traceback("", 3))
+				tb = tb:gsub("stack traceback:", "")
+				tb = tb:gsub("%s+", " ")
+				if #tb > 700 then tb = tb:sub(1, 700) .. " ..." end
+				return tb
+			end
+
+			-- Maps and boxes are the only argument shapes that identify a pass write; everything
+			-- else is reported by value or by type, and every read is protected.
+			local function pt_arg(v)
+				if v == nil then return "nil" end
+				local tv = type(v)
+				if tv == "number" or tv == "boolean" or tv == "string" then return tostring(v) end
+				local ok, s = pcall(function()
+					if type(v) == "table" and type(v.mapdata) == "table" then
+						return "map<" .. tostring(v.mapdata.Environment) .. "/" .. tostring(v.slot) .. ">"
+					end
+					if type(v.sizex) == "function" then
+						return string.format("box<%dx%d@%d,%d>", v:sizex(), v:sizey(), v:minx(), v:miny())
+					end
+					return tostring(v)
+				end)
+				return (ok and tostring(s)) or tv
+			end
+
+			local function pt_wrap(holder, key, label, hash_after, trace, cap)
+				if type(holder) ~= "table" then
+					pt_log("MISSING holder for " .. label)
+					return
+				end
+				local original = rawget(holder, key)
+				if type(original) ~= "function" then
+					pt_log("MISSING " .. label)
+					return
+				end
+				local wrapper
+				wrapper = function(...)
+					local argv = table.pack(...)
+					pt_calls = pt_calls + 1
+					g_ParityPassTraceCalls = pt_calls
+					local n = pt_calls
+					local seen = (pt_label_calls[label] or 0) + 1
+					pt_label_calls[label] = seen
+					if not cap or seen <= cap then
+						local a = {}
+						for i = 1, math.min(argv.n, 4) do a[#a + 1] = pt_arg(argv[i]) end
+						pt_log(string.format("CALL #%05d %-30s status=%-22s args=%s", n, label,
+							tostring(rawget(_G, "g_ParityStatus")), table.concat(a, " ")))
+						if trace then pt_log("   at " .. pt_where()) end
+					end
+					local results = table.pack(original(table.unpack(argv, 1, argv.n)))
+					if hash_after then pt_check(string.format("#%05d %s", n, label)) end
+					if n <= 400 or n % 25 == 0 then pt_flush() end
+					return table.unpack(results, 1, results.n)
+				end
+				-- A protected table would otherwise kill the whole run at setup; and an
+				-- assignment that silently does not stick must be reported, not assumed.
+				local set_ok, set_err = pcall(function() holder[key] = wrapper end)
+				if not set_ok then
+					pt_log("UNWRAPPABLE " .. label .. ": " .. tostring(set_err))
+				elseif rawget(holder, key) ~= wrapper then
+					pt_log("UNWRAPPABLE " .. label .. ": assignment did not stick")
+				else
+					pt_log("WRAPPED " .. label)
+				end
+			end
+
+			-- Write-class entry points: hashed after every call, full traceback.
+			pt_wrap(terrain_tbl, "RebuildPassability", "terrain.RebuildPassability", true, true)
+			pt_wrap(terrain_tbl, "ClearPassabilityBox", "terrain.ClearPassabilityBox", true, true)
+			pt_wrap(terrain_tbl, "SetPassability", "terrain.SetPassability", true, true)
+			pt_wrap(terrain_tbl, "SetPassableHeight", "terrain.SetPassableHeight", true, true)
+			pt_wrap(terrain_tbl, "SetForcedImpassableBox", "terrain.SetForcedImpassableBox", true, true)
+			pt_wrap(_G, "RebuildGrids", "_G.RebuildGrids", true, true)
+			pt_wrap(_G, "RebuildBuildableGrid", "_G.RebuildBuildableGrid", true, true)
+			-- Invalidations decide whether a later rebuild recomputes anything (iteration 034), so
+			-- they are traced for ordering but not hashed - they write no bits themselves.
+			pt_wrap(terrain_tbl, "InvalidateHeight", "terrain.InvalidateHeight", false, true, 400)
+			pt_wrap(terrain_tbl, "InvalidateType", "terrain.InvalidateType", false, true, 400)
+			-- The Map class holds its OWN copies taken at class-definition time (Core/map.lua:49-63).
+			local map_class = rawget(_G, "Map")
+			pt_wrap(map_class, "RebuildGrids", "Map:RebuildGrids", true, true)
+			pt_wrap(map_class, "RebuildPassability", "Map:RebuildPassability", true, true)
+			pt_wrap(map_class, "InvalidateHeight", "Map:InvalidateHeight", false, true, 400)
+			pt_wrap(map_class, "InvalidateType", "Map:InvalidateType", false, true, 400)
+			-- Bracketing helpers: thousands of calls per generation.  Compact, capped, unhashed;
+			-- the sampler reports whatever bits their deferred rebuild moves.
+			pt_wrap(map_class, "SuspendPassEdits", "Map:SuspendPassEdits", false, false, 60)
+			pt_wrap(map_class, "ResumePassEdits", "Map:ResumePassEdits", false, false, 60)
+			pt_wrap(terrain_tbl, "SuspendPassEdits", "terrain.SuspendPassEdits", false, false, 60)
+			pt_wrap(terrain_tbl, "ResumePassEdits", "terrain.ResumePassEdits", false, false, 60)
+
+			pt_log("INSTALLED passtrace")
+			pt_flush()
+
+			CreateRealTimeThread(function()
+				pt_check("sampler-start")
+				while true do
+					local status = tostring(rawget(_G, "g_ParityStatus"))
+					pt_check("sampler")
+					if status == "complete" or status == "error" then break end
+					-- Adaptive: never spend more than ~1/6 of wall time hashing.
+					Sleep(math.max(250, pt_hash_ms * 6))
+				end
+				pt_log(string.format("SUMMARY calls=%d digest_changes=%d hash_ms_total=%d dropped_lines=%d",
+					pt_calls, pt_changes, pt_hash_total, pt_dropped))
+				pt_flush()
+			end)
+		end"""
+
 ANOM_PROBE_BLOCK = """		do
 			local anom_lines = {}
 			local anom_dropped = 0
@@ -4043,7 +4244,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              passage_pin=False, point_probe=False, field_probe=False, slot_probe=False,
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
-             stretch_dump=False, flatten_probe=False, pass_real_probe=False,
+             stretch_dump=False, flatten_probe=False, pass_trace=False, pass_real_probe=False,
              pass_lattice_probe=False, pass_rebuild_probe=False, pass_mask_probe=False,
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
@@ -4178,6 +4379,13 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         if flatten_path.exists():
             flatten_path.unlink()
         extras.append(FLATTEN_PROBE_BLOCK.replace("__FLATTEN_OUT__", cli.lua_path(flatten_path)))
+    passtrace_path = OUT / f"passtrace-{tag}.log"
+    if pass_trace:
+        # A stale log from an earlier run would be indistinguishable from a tracer that never
+        # installed, so remove it first.
+        if passtrace_path.exists():
+            passtrace_path.unlink()
+        extras.append(PASSTRACE_BLOCK.replace("__PASSTRACE_OUT__", cli.lua_path(passtrace_path)))
     if stretch_dump:
         # Stale grids from an earlier run would be indistinguishable from a seam that never fired.
         for env in ("surface", "underground"):
@@ -4441,6 +4649,20 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             _, flatten_calls = cli.marshal_value(client, "g_ParityFlattenProbeCalls", timeout=60.0)
             log(f"flatten probe: {flatten_status}, {flatten_calls} flatten call(s) -> {flatten_path}")
 
+        if pass_trace:
+            # Diagnostic only: never fail the twin because the tracer's file lagged.
+            try:
+                trace_status = poll_status(
+                    client, "g_ParityPassTraceStatus", {"complete"}, set(), 180,
+                    f"passtrace-{tag}"
+                )
+            except RuntimeError as exc:
+                trace_status = f"unavailable ({exc})"
+            _, trace_calls = cli.marshal_value(client, "g_ParityPassTraceCalls", timeout=60.0)
+            _, trace_changes = cli.marshal_value(client, "g_ParityPassTraceChanges", timeout=60.0)
+            log(f"pass trace: {trace_status}, {trace_calls} traced call(s), "
+                f"{trace_changes} digest change(s) -> {passtrace_path}")
+
         # Temporary determinism diagnostics: prove the serial pin reached the table the
         # generator's own compiled body reads, instead of a shadowed ambient `const`.
         rows, csv_path, hex_path = dump_and_census(
@@ -4541,6 +4763,7 @@ def main():
         zonesprobe = "zonesprobe" in sys.argv[5:]
         stretchdump = "stretchdump" in sys.argv[5:]
         flattenprobe = "flattenprobe" in sys.argv[5:]
+        passtrace = "passtrace" in sys.argv[5:]
         passreal = "passreal" in sys.argv[5:]
         passlattice = "passlattice" in sys.argv[5:]
         passrebuild = "passrebuild" in sys.argv[5:]
@@ -4577,6 +4800,7 @@ def main():
             f"point_probe={pointprobe} field_probe={fieldprobe} slot_probe={slotprobe} "
             f"anom_probe={anomprobe} play_probe={playprobe} hexgrid={hexgrid} "
             f"stretch_dump={stretchdump} flatten_probe={flattenprobe} "
+            f"pass_trace={passtrace} "
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
             f"pass_forced_probe={passforced} pass_writer_probe={passwriter} "
@@ -4596,6 +4820,7 @@ def main():
                         keep_alive=keepalive, wonder_probe=wonderprobe,
                         pass_probe_all=passall, zones_probe=zonesprobe,
                         stretch_dump=stretchdump, flatten_probe=flattenprobe,
+                        pass_trace=passtrace,
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
                         pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
                         pass_forced_probe=passforced,
