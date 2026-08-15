@@ -12,9 +12,9 @@
 -- has ever measured it.
 --
 -- What is written, per map:
---   <base>-<tag>-buildable.raw          the live z_grid as shipped by the pipeline (U16)
---   <base>-<tag>-buildable-rebuild.raw  a fresh RebuildBuildableGrid over the FINAL terrain
---   rows in <base>-buildable.txt        dims, the sentinel, and one summit row per massif
+--   <base>-<tag>-buildable.txt          the live z_grid as shipped by the pipeline
+--   <base>-<tag>-buildable-rebuild.txt  a fresh RebuildBuildableGrid over the FINAL terrain
+--   <base>-buildable-stamp.txt          dims, the sentinel, and one summit row per massif
 -- A shipped grid equal to the fresh rebuild is the step-6 evidence: the grid the game plays
 -- on was derived from the final terrain and is not stale.
 --
@@ -34,16 +34,22 @@ CreateRealTimeThread(function()
 		local tile = (type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize)) or 100
 		local unb = (type(buildUnbuildableZ) == "function") and buildUnbuildableZ() or (2 ^ 16 - 1)
 
+		-- The buildable grid is a plain NewGrid, not a ComputeGrid: `IsComputeGrid` returns nil
+		-- and `GridSaveRaw` rejects it with "Invalid Parameter" (measured, t76a). So the values
+		-- are read out through the documented `grid:get(x, y)` and written as text - one line
+		-- per row, `gw` comma-separated integers - which is also what makes the file diffable.
 		local function save(grid, path)
-			local fmt, bits = IsComputeGrid(grid)
-			if fmt == "U" and (bits == 16 or bits == 8) then
-				return tostring(GridSaveRaw(path, grid)), fmt, bits
+			local gw, gh = grid:size()
+			local out = { string.format("#gw=%d,gh=%d,unbuildable_z=%d", gw, gh, unb) }
+			local row = {}
+			for y = 0, gh - 1 do
+				for x = 0, gw - 1 do
+					row[x + 1] = grid:get(x, y)
+				end
+				out[#out + 1] = table.concat(row, ",", 1, gw)
 			end
-			local cg = GridToCompute and GridToCompute(grid, "U", 16) or nil
-			if not cg then return "convert_failed", fmt, bits end
-			local werr = GridSaveRaw(path, cg)
-			if cg.free then cg:free() end
-			return tostring(werr), fmt, bits
+			local werr = AsyncStringToFile(path, table.concat(out, "\n"))
+			return tostring(werr), gw, gh
 		end
 
 		local function probe_map(map, tag)
@@ -56,12 +62,12 @@ CreateRealTimeThread(function()
 				return
 			end
 			local gw, gh = grid:size()
-			local werr, fmt, bits = save(grid, "__OUT_BASE__-" .. tag .. "-buildable.raw")
+			local werr = save(grid, "__OUT_BASE__-" .. tag .. "-buildable.txt")
 			local hgw, hgh = terrain.HeightMapSize(map)
 			rows[#rows + 1] = string.format(
-				"buildable,%s,present=true,gw=%d,gh=%d,fmt=%s%s,unbuildable_z=%d,hex_width=%s,"
+				"buildable,%s,present=true,gw=%d,gh=%d,unbuildable_z=%d,hex_width=%s,"
 				.. "hex_height=%s,height_gw=%d,height_gh=%d,tile=%d,write_err=%s",
-				tag, gw, gh, tostring(fmt), tostring(bits), unb, tostring(map.hex_width),
+				tag, gw, gh, unb, tostring(map.hex_width),
 				tostring(map.hex_height), hgw, hgh, tile, tostring(werr))
 
 			-- One row per compressed massif: the hex holding its peak cell, read off the grid
@@ -103,7 +109,7 @@ CreateRealTimeThread(function()
 			local ms = GetPreciseTicks() - st
 			local g2 = (type(map.buildable) == "table") and map.buildable.z_grid or nil
 			local werr2 = "no_grid"
-			if g2 then werr2 = (save(g2, "__OUT_BASE__-" .. tag .. "-buildable-rebuild.raw")) end
+			if g2 then werr2 = (save(g2, "__OUT_BASE__-" .. tag .. "-buildable-rebuild.txt")) end
 			rows[#rows + 1] = string.format("rebuild,%s,ms=%d,gw=%s,gh=%s,write_err=%s",
 				tag, ms, tostring(gw), tostring(gh), tostring(werr2))
 			info[#info + 1] = string.format("%s=%dx%d(%dms)", tag, gw, gh, ms)
