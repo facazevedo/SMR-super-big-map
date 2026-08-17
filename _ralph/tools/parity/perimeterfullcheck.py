@@ -273,11 +273,6 @@ def score_map(
                     "h": int(rows_by_stage["production"]["h"]),
                     "bits": int(rows_by_stage["production"]["bits"]),
                 },
-                "ones": {
-                    stage: int(rows_by_stage[stage]["ones"])
-                    if rows_by_stage[stage]["ones"].lstrip("-").isdigit() else None
-                    for stage in expected_stages
-                },
                 "serialized_bytes": {
                     stage: len(blobs[stage]) for stage in expected_stages
                 },

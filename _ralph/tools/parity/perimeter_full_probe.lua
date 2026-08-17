@@ -168,11 +168,6 @@ CreateRealTimeThread(function()
 					error(string.format("%s: repeated GridWriteStr grid %d failed: %s",
 						env, idx, tostring(repeat_error)))
 				end
-				local ones = "unavailable"
-				if type(GridCount) == "function" then
-					local ok_c, value = pcall(GridCount, grid, 0, 1)
-					if ok_c then ones = tostring(value) end
-				end
 				local path = string.format("%s-%s-passgrid%d-%s.grid",
 					out_base, env, idx, stage)
 				local file_error = AsyncStringToFile(path, blob)
@@ -180,8 +175,8 @@ CreateRealTimeThread(function()
 				local production_blob = saved[idx] and saved[idx].production
 				local direct_blob = saved[idx] and saved[idx].direct_plus1
 				rows[#rows + 1] = string.format(
-					"passgrid,env=%s,stage=%s,idx=%d,count=%d,w=%d,h=%d,bits=%s,ones=%s,bytes=%d,xxhash=%s,repeat_equal=%s,matches_production=%s,matches_direct_plus1=%s",
-					env, stage, idx, count, gw, gh, tostring(bits), ones, #blob,
+					"passgrid,env=%s,stage=%s,idx=%d,count=%d,w=%d,h=%d,bits=%s,bytes=%d,xxhash=%s,repeat_equal=%s,matches_production=%s,matches_direct_plus1=%s",
+					env, stage, idx, count, gw, gh, tostring(bits), #blob,
 					tostring(xxhash(blob)), tostring(blob == repeat_blob),
 					production_blob and tostring(blob == production_blob) or "na",
 					direct_blob and tostring(blob == direct_blob) or "na")
