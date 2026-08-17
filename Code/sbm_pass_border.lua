@@ -9,8 +9,10 @@
 -- Reconstruct the source property lattice from live dimensions, map every source site
 -- through the exact stretch, and derive a compact union of arbitrary stock passability
 -- boxes.  The union is entirely data-derived: four maximal edge slabs plus guarded runs
--- for the remaining boundary sites.  It is exhaustively validated against every mapped
--- source site before use.  ClearPassabilityBox rasterises max-X as open, so the applied
+-- for the remaining boundary sites.  Core slabs round outward; guarded fringe runs round
+-- their lower-Y edge inward so a fractional edge cannot spill into the preceding native
+-- pass-grid row.  The integer union is exhaustively validated against every mapped source
+-- site before use.  ClearPassabilityBox rasterises max-X as open, so the applied
 -- boxes add one world unit to both maxima, matching ForcedImpassableMarker:GetArea.
 -- The caller must invoke Apply only AFTER terrain.RebuildPassability returns.
 
@@ -26,7 +28,7 @@ local Global = Engine.Global
 local Replay = {}
 SuperBigMap.PassBorderReplay = Replay
 
-Replay.VERSION = 1
+Replay.VERSION = 2
 Replay.Cache = setmetatable({}, { __mode = "k" })
 
 local function round_nonnegative(value)
@@ -50,9 +52,16 @@ local function minimum_gap(values, name)
 	return gap
 end
 
-local function quantized_spec(minx, miny, maxx, maxy, kind)
+local function quantized_core_spec(minx, miny, maxx, maxy, kind)
 	return {
 		math.floor(minx), math.floor(miny), math.ceil(maxx), math.ceil(maxy),
+		kind = kind,
+	}
+end
+
+local function quantized_fringe_spec(minx, miny, maxx, maxy, kind)
+	return {
+		math.floor(minx), math.ceil(miny), math.ceil(maxx), math.ceil(maxy),
 		kind = kind,
 	}
 end
@@ -250,7 +259,7 @@ local function derive_candidate(context, core, axis, gap_x, gap_y, fixed_values)
 				minx, maxx = run_start - guard_x, run_end + guard_x
 				miny, maxy = fixed - guard_y, fixed + guard_y
 			end
-			local spec = quantized_spec(minx, miny, maxx, maxy, "fringe_" .. axis)
+			local spec = quantized_fringe_spec(minx, miny, maxx, maxy, "fringe_" .. axis)
 			spec.sites_in_run = 1
 			fringe_specs[#fringe_specs + 1] = spec
 			specs[#specs + 1] = spec
@@ -366,13 +375,13 @@ function Replay.Derive(map)
 		if not bottom_edge and value > interior.maxy then bottom_edge = value end
 	end
 	local core = {}
-	if left_edge then core[#core + 1] = quantized_spec(
+	if left_edge then core[#core + 1] = quantized_core_spec(
 		lattice.minx, lattice.miny, left_edge, lattice.maxy, "core_left") end
-	if right_edge then core[#core + 1] = quantized_spec(
+	if right_edge then core[#core + 1] = quantized_core_spec(
 		right_edge, lattice.miny, lattice.maxx, lattice.maxy, "core_right") end
-	if top_edge then core[#core + 1] = quantized_spec(
+	if top_edge then core[#core + 1] = quantized_core_spec(
 		lattice.minx, lattice.miny, lattice.maxx, top_edge, "core_top") end
-	if bottom_edge then core[#core + 1] = quantized_spec(
+	if bottom_edge then core[#core + 1] = quantized_core_spec(
 		lattice.minx, bottom_edge, lattice.maxx, lattice.maxy, "core_bottom") end
 	if #core == 0 then error("pass-border compact union has no core boxes") end
 

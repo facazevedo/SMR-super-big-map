@@ -60,6 +60,7 @@ def main() -> int:
         actual_boxes.append({
             "minx": int(row["minx"]), "miny": int(row["miny"]),
             "maxx": int(row["maxx"]), "maxy": int(row["maxy"]),
+            "kind": row["kind"],
         })
 
     report = json.loads(args.report.read_text(encoding="utf-8"))
@@ -67,12 +68,35 @@ def main() -> int:
     expected_boxes = [
         {
             "minx": math.floor(float(row["minx"])),
-            "miny": math.floor(float(row["miny"])),
+            "miny": (math.ceil(float(row["miny"]))
+                     if str(row["kind"]).startswith("fringe_")
+                     else math.floor(float(row["miny"]))),
             "maxx": math.ceil(float(row["maxx"])),
             "maxy": math.ceil(float(row["maxy"])),
+            "kind": str(row["kind"]),
         }
         for row in compact["boxes"]
     ]
+    previous_outward_boxes = [
+        {**row, "miny": math.floor(float(source["miny"]))}
+        for row, source in zip(expected_boxes, compact["boxes"])
+    ]
+    inward_changed_indices = [
+        index for index, (old, new) in enumerate(
+            zip(previous_outward_boxes, expected_boxes), start=1)
+        if old != new
+    ]
+    quantization_checks = {
+        "core_boxes_keep_outward_lower_y": all(
+            actual["miny"] == math.floor(float(source["miny"]))
+            for actual, source in zip(actual_boxes, compact["boxes"])
+            if str(source["kind"]).startswith("core_")),
+        "all_fringe_boxes_use_inward_lower_y": all(
+            actual["miny"] == math.ceil(float(source["miny"]))
+            for actual, source in zip(actual_boxes, compact["boxes"])
+            if str(source["kind"]).startswith("fringe_")),
+        "inward_policy_changes_at_least_one_box": bool(inward_changed_indices),
+    }
     expected_stats = {
         "boxes": str(compact["total_boxes"]),
         "core": str(compact["core_boxes"]),
@@ -137,12 +161,13 @@ def main() -> int:
         len(actual_boxes) == len(expected_boxes)
         and first_difference is None
         and all(stat_checks.values())
+        and all(quantization_checks.values())
         and all(idiv_checks.values())
         and missing_promotion_controls_ok
         and not literal_hits
     )
     result = {
-        "schema": "smr.passborderderivecheck.v2",
+        "schema": "smr.passborderderivecheck.v3",
         "gate_ok": gate_ok,
         "production_module": str(module),
         "preserved_report": str(args.report.resolve()),
@@ -154,6 +179,9 @@ def main() -> int:
         "first_box_difference": first_difference,
         "stat_checks": stat_checks,
         "actual_stats": actual_stats,
+        "quantization_checks": quantization_checks,
+        "inward_lower_y_changed_box_count": len(inward_changed_indices),
+        "inward_lower_y_changed_box_indices": inward_changed_indices,
         "integer_division_control_checks": idiv_checks,
         "integer_division_control": idiv_control,
         "missing_promotion_controls_ok": missing_promotion_controls_ok,
