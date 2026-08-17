@@ -46,6 +46,7 @@ CreateRealTimeThread(function()
 	end
 
 	local ok, err = xpcall(function()
+		local out_path = rawget(_G, "g_ParityPerimeterOut") or "__OUT_PATH__"
 		local rows = {
 			"env,ix,iy,x,y,p0,p_direct,p_bare,p_marker1,p_marker2,p_cleanup"
 		}
@@ -225,7 +226,7 @@ CreateRealTimeThread(function()
 		end
 
 		restore_all()
-		local werr = AsyncStringToFile("__OUT_PATH__", table.concat(rows, "\n"))
+		local werr = AsyncStringToFile(out_path, table.concat(rows, "\n"))
 		if werr then error("perimeter probe write failed: " .. tostring(werr)) end
 		g_ParityPerimeterInfo = table.concat(info, " ")
 		g_ParityPerimeterStatus = "ready"
