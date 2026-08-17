@@ -24,9 +24,9 @@
 -- both property grids are rebuilt again. Run before any other mutating parity probe.
 -- Placeholder: __OUT_BASE__.
 
-g_ParityPropertyStatus = "running"
-g_ParityPropertyInfo = false
-g_ParityPropertyError = false
+rawset(_G, "g_ParityPropertyStatus", "running")
+rawset(_G, "g_ParityPropertyInfo", false)
+rawset(_G, "g_ParityPropertyError", false)
 
 CreateRealTimeThread(function()
 	local restore_map, restore_grid, restore_armed
