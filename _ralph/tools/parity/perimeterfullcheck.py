@@ -26,6 +26,7 @@ STAGES = (
     "post_rebuild_plus1", "post_rebuild_plus1_repeat", "cleanup",
 )
 EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
+EXPECTED_REPLAY_VERSION = 3
 RESIDUAL_FIELDS = (
     "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
     "production",
@@ -444,7 +445,7 @@ def score_map(
     if production_stamp:
         production_stamp = dict(production_stamp)
         stamp_checks = {
-            "version": int(production_stamp["version"]) == 1,
+            "version": int(production_stamp["version"]) == EXPECTED_REPLAY_VERSION,
             "stage_present": production_stamp["stage"] not in ("", "nil", "false", "?"),
             "apply_count_positive": int(production_stamp["apply_count"]) >= 1,
             "box_count": int(production_stamp["boxes"]) == len(boxes) == 162,
