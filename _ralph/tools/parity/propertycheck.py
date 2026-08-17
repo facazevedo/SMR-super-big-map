@@ -1,14 +1,15 @@
 """Score the floor sweep's exhaustive passability/buildability ruling.
 
 ``property_probe.lua`` writes dense shipped/fresh/repeat property rasters for both
-twins, plus a self-restoring one-height-node sensitivity control.  This scorer:
+twins, plus a self-restoring bank of one-height-node sensitivity controls.  This scorer:
 
 * rebuilds the expanded twin's exact massif components from its pre-transform
   height grid and stamp;
 * narrows that set to height nodes whose actual post-transform value differs from
   the clipped affine image (the exact spatial-normalisation set);
-* derives separate passability and buildability reverse footprints from the live
-  sensitivity control and applies them to every normalised height node;
+* requires a multi-phase bank of live sensitivity controls to cross-replay exactly,
+  then derives separate passability and buildability reverse footprints and applies
+  them to every normalised height node;
 * maps every vanilla property-storage site to one unique expanded site by the
   probes' own ``HexToWorld`` calibration and the measured height-grid ratio;
 * requires zero shipped-verdict differences outside the footprint-aware set; and
@@ -64,7 +65,7 @@ class ProbeStamp:
     maps: dict[str, dict[str, str]]
     calibration: dict[str, dict[tuple[int, int], tuple[float, float]]]
     freshness: dict[str, dict[str, str]]
-    control: dict[str, str]
+    controls: list[dict[str, str]]
 
 
 @dataclass
@@ -82,7 +83,7 @@ def parse_probe_stamp(path: Path) -> ProbeStamp:
     maps: dict[str, dict[str, str]] = {}
     calibration: dict[str, dict[tuple[int, int], tuple[float, float]]] = {}
     freshness: dict[str, dict[str, str]] = {}
-    control: dict[str, str] = {}
+    controls: list[dict[str, str]] = []
     for raw in path.read_text(encoding="utf-8").splitlines():
         parts = raw.strip().split(",")
         if len(parts) < 2:
@@ -98,7 +99,7 @@ def parse_probe_stamp(path: Path) -> ProbeStamp:
         elif kind == "freshness":
             freshness[env] = fields
         elif kind == "control":
-            control = fields
+            controls.append(fields)
     missing = {"surface", "underground"} - maps.keys()
     if missing:
         fail(f"{path}: missing map rows for {sorted(missing)}")
@@ -106,7 +107,7 @@ def parse_probe_stamp(path: Path) -> ProbeStamp:
         need = {(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)}
         if need - calibration.get(env, {}).keys():
             fail(f"{path}: incomplete parity-aware {env} HexToWorld calibration")
-    return ProbeStamp(maps, calibration, freshness, control)
+    return ProbeStamp(maps, calibration, freshness, controls)
 
 
 def load_property(path: Path, gw: int, gh: int) -> np.ndarray:
@@ -225,48 +226,103 @@ def parse_control_csv(path: Path) -> list[dict[str, int]]:
     return rows
 
 
-def validate_probe_control(out_dir: Path, tag: str, stamp: ProbeStamp,
-                           grids: dict[str, np.ndarray]) -> dict[str, object]:
-    meta = stamp.control
+def replay_cells(geometry: HexGeometry, source: dict[str, object],
+                 target: dict[str, object], property_name: str) -> set[tuple[int, int]]:
+    key = "pass_rows" if property_name == "passability" else "build_rows"
+    source_node = np.asarray(source["node_world"], dtype=np.float64)
+    target_node = np.asarray(target["node_world"], dtype=np.float64)
+    rows = source[key]
+    storage = np.asarray([[row["sx"], row["sy"]] for row in rows], dtype=np.int64)
+    observed_world = storage_to_world(geometry, storage[:, 0], storage[:, 1]).T
+    offsets = observed_world - source_node[None, :]
+    replay, _ = world_to_storage(geometry, target_node[:, None] + offsets.T)
+    return set(zip(replay[0].tolist(), replay[1].tolist()))
+
+
+def validate_probe_controls(out_dir: Path, tag: str, stamp: ProbeStamp,
+                            grids: dict[str, np.ndarray]) -> dict[str, object]:
+    if len(stamp.controls) < 4:
+        fail(f"property-{tag}-property.txt: fewer than four phase controls")
     required = {"site_sx", "site_sy", "site_wx", "site_wy", "node_gx", "node_gy",
-                "node_wx", "node_wy", "diff", "pass_diff", "build_diff", "restore_diff"}
-    if required - meta.keys():
-        fail(f"property-{tag}-property.txt: missing surface control fields")
-    rows = parse_control_csv(out_dir / f"property-{tag}-surface-property-control.csv")
-    fresh, control = grids["surface:fresh"], grids["surface:control"]
-    raw_diff = fresh != control
-    csv_cells = {(row["sx"], row["sy"]) for row in rows}
-    raw_y, raw_x = np.nonzero(raw_diff)
-    raw_cells = set(zip(raw_x.tolist(), raw_y.tolist()))
-    pass_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 1]
-    build_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 2]
+                "node_wx", "node_wy", "diff", "pass_diff", "build_diff", "restore_diff", "id"}
     geometry = geometry_for(stamp, "surface")
-    measured_site = np.asarray([float(meta["site_wx"]), float(meta["site_wy"])])
-    modelled_site = storage_to_world(
-        geometry, np.asarray(int(meta["site_sx"])), np.asarray(int(meta["site_sy"])))
     tile = float(stamp.maps["surface"]["tile"])
-    measured_node = np.asarray([float(meta["node_wx"]), float(meta["node_wy"])])
-    modelled_node = np.asarray([int(meta["node_gx"]) * tile, int(meta["node_gy"]) * tile])
+    fresh = grids["surface:fresh"]
+    controls: list[dict[str, object]] = []
+    ids: set[str] = set()
+    for meta in stamp.controls:
+        if required - meta.keys():
+            fail(f"property-{tag}-property.txt: missing phase-control fields")
+        control_id = meta["id"]
+        if control_id in ids:
+            fail(f"property-{tag}-property.txt: duplicate phase-control id {control_id}")
+        ids.add(control_id)
+        rows = parse_control_csv(
+            out_dir / f"property-{tag}-surface-property-control-{control_id}.csv")
+        control = grids[f"surface:control-{control_id}"]
+        raw_diff = fresh != control
+        csv_cells = {(row["sx"], row["sy"]) for row in rows}
+        raw_y, raw_x = np.nonzero(raw_diff)
+        raw_cells = set(zip(raw_x.tolist(), raw_y.tolist()))
+        pass_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 1]
+        build_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 2]
+        measured_site = np.asarray([float(meta["site_wx"]), float(meta["site_wy"])])
+        modelled_site = storage_to_world(
+            geometry, np.asarray(int(meta["site_sx"])), np.asarray(int(meta["site_sy"])))
+        measured_node = np.asarray([float(meta["node_wx"]), float(meta["node_wy"])])
+        modelled_node = np.asarray([int(meta["node_gx"]) * tile, int(meta["node_gy"]) * tile])
+        checks = {
+            "csv_is_complete": csv_cells == raw_cells,
+            "diff_matches_stamp": len(rows) == int(meta["diff"]),
+            "pass_diff_matches_stamp": len(pass_rows) == int(meta["pass_diff"]),
+            "build_diff_matches_stamp": len(build_rows) == int(meta["build_diff"]),
+            "both_properties_moved": bool(pass_rows) and bool(build_rows),
+            "restore_diff_zero": int(meta["restore_diff"]) == 0,
+            "site_storage_world_exact": bool(np.allclose(
+                modelled_site, measured_site, rtol=0, atol=1e-9)),
+            "node_storage_world_exact": bool(np.allclose(
+                modelled_node, measured_node, rtol=0, atol=1e-9)),
+        }
+        controls.append({
+            "id": control_id,
+            "checks": checks,
+            "ok": all(checks.values()),
+            "rows": rows,
+            "pass_rows": pass_rows,
+            "build_rows": build_rows,
+            "node_world": measured_node.tolist(),
+            "site_row_parity": int(meta["site_sy"]) % 2,
+            "counts": {"all": len(rows), "passability": len(pass_rows),
+                       "buildability": len(build_rows)},
+        })
+
+    cross_checks: list[dict[str, object]] = []
+    for source in controls:
+        for target in controls:
+            row = {"source": source["id"], "target": target["id"]}
+            for property_name in ("passability", "buildability"):
+                predicted = replay_cells(geometry, source, target, property_name)
+                key = "pass_rows" if property_name == "passability" else "build_rows"
+                observed = {(item["sx"], item["sy"]) for item in target[key]}
+                row[property_name] = predicted == observed
+            row["ok"] = bool(row["passability"] and row["buildability"])
+            cross_checks.append(row)
+    parities = {int(control["site_row_parity"]) for control in controls}
+    all_cross_exact = all(bool(row["ok"]) for row in cross_checks)
     checks = {
-        "csv_is_complete": csv_cells == raw_cells,
-        "diff_matches_stamp": len(rows) == int(meta["diff"]),
-        "pass_diff_matches_stamp": len(pass_rows) == int(meta["pass_diff"]),
-        "build_diff_matches_stamp": len(build_rows) == int(meta["build_diff"]),
-        "both_properties_moved": bool(pass_rows) and bool(build_rows),
-        "restore_diff_zero": int(meta["restore_diff"]) == 0,
-        "site_storage_world_exact": bool(np.allclose(
-            modelled_site, measured_site, rtol=0, atol=1e-9)),
-        "node_storage_world_exact": bool(np.allclose(
-            modelled_node, measured_node, rtol=0, atol=1e-9)),
+        "all_controls_valid": all(bool(control["ok"]) for control in controls),
+        "both_row_parities_present": parities == {0, 1},
+        "all_phase_kernels_cross_replay_exact": all_cross_exact,
     }
+    anchor = controls[0]
     return {
         "checks": checks,
         "ok": all(checks.values()),
-        "rows": rows,
-        "pass_rows": pass_rows,
-        "build_rows": build_rows,
-        "node_world": measured_node.tolist(),
-        "counts": {"all": len(rows), "passability": len(pass_rows), "buildability": len(build_rows)},
+        "controls": controls,
+        "cross_checks": cross_checks,
+        "anchor": anchor,
+        "phase_count": len(controls),
+        "cross_replays": len(cross_checks),
     }
 
 
@@ -278,9 +334,13 @@ def load_probe_grids(out_dir: Path, tag: str, stamp: ProbeStamp) -> dict[str, np
             path = out_dir / f"property-{tag}-{env}-property-{stage}.raw"
             grids[f"{env}:{stage}"] = load_property(path, gw, gh)
         if env == "surface":
-            for stage in ("control", "restored"):
+            for meta in stamp.controls:
+                stage = f"control-{meta['id']}"
                 path = out_dir / f"property-{tag}-{env}-property-{stage}.raw"
                 grids[f"{env}:{stage}"] = load_property(path, gw, gh)
+            stage = "restored"
+            path = out_dir / f"property-{tag}-{env}-property-{stage}.raw"
+            grids[f"{env}:{stage}"] = load_property(path, gw, gh)
     return grids
 
 
@@ -463,8 +523,8 @@ def synthetic_controls() -> dict[str, object]:
     emaps = {env: {"gw": "20", "gh": "24", "height_gw": "200", "height_gh": "200",
                     "tile": "100"} for env in ("surface", "underground")}
     calibrations = {env: geometry_calibration for env in ("surface", "underground")}
-    vstamp = ProbeStamp(vmaps, calibrations, {}, {})
-    estamp = ProbeStamp(emaps, calibrations, {}, {})
+    vstamp = ProbeStamp(vmaps, calibrations, {}, [])
+    estamp = ProbeStamp(emaps, calibrations, {}, [])
     geometry = geometry_for(vstamp, "surface")
     test_sx = np.asarray([0, 1, 0, 1, 7, 7], dtype=np.int64)
     test_sy = np.asarray([0, 0, 1, 2, 9, 10], dtype=np.int64)
@@ -477,6 +537,19 @@ def synthetic_controls() -> dict[str, object]:
     src_y, src_x = np.indices((18, 15), dtype=np.float64)
     old_affine_x = round_storage(src_x * (4.0 / 3.0))
     parity_discriminator = int((old_affine_x != mapped_x).sum())
+    phase_source = {
+        "node_world": storage_to_world(
+            geometry, np.asarray(5), np.asarray(4)).tolist(),
+        "pass_rows": [{"sx": 5, "sy": 4}],
+        "build_rows": [{"sx": 5, "sy": 4}],
+    }
+    phase_target = {
+        "node_world": storage_to_world(
+            geometry, np.asarray(6), np.asarray(5)).tolist(),
+        "pass_rows": [{"sx": 6, "sy": 5}],
+        "build_rows": [{"sx": 6, "sy": 5}],
+    }
+    phase_replay = replay_cells(geometry, phase_source, phase_target, "passability")
 
     checks = {
         "inside_differences_are_classified_inside": (
@@ -494,6 +567,8 @@ def synthetic_controls() -> dict[str, object]:
             int(mapped_x[1, 1]) == 2 and int(mapped_y[1, 1]) == 1),
         "even_row_twin_mapping_is_parity_aware": (
             int(mapped_x[2, 2]) == 2 and int(mapped_y[2, 2]) == 3),
+        "phase_kernel_cross_replays_across_row_parity": phase_replay == {(6, 5)},
+        "phase_kernel_mismatch_is_rejected": phase_replay != {(7, 5)},
     }
     return {"ok": all(checks.values()), "checks": checks,
             "geometry_control": {
@@ -522,7 +597,7 @@ def main(argv: list[str] | None = None) -> int:
 
     self_test = synthetic_controls()
     if args.self_test:
-        payload = {"schema": "smr.propertycheck.selftest.v2", **self_test}
+        payload = {"schema": "smr.propertycheck.selftest.v3", **self_test}
         rendered = json.dumps(payload, indent=2) + "\n"
         if args.out is not None:
             args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -541,14 +616,26 @@ def main(argv: list[str] | None = None) -> int:
     estamp = parse_probe_stamp(out_dir / f"property-{etag}-property.txt")
     vgrids = load_probe_grids(out_dir, vtag, vstamp)
     egrids = load_probe_grids(out_dir, etag, estamp)
-    vcontrol = validate_probe_control(out_dir, vtag, vstamp, vgrids)
-    econtrol = validate_probe_control(out_dir, etag, estamp, egrids)
+    vcontrol = validate_probe_controls(out_dir, vtag, vstamp, vgrids)
+    econtrol = validate_probe_controls(out_dir, etag, estamp, egrids)
     normalised, zone_report = exact_normalised_nodes(pre, post, zone_stamp)
-    pass_affected, pass_foot = footprint_mask(normalised, estamp, "surface", econtrol, "passability")
-    build_affected, build_foot = footprint_mask(normalised, estamp, "surface", econtrol, "buildability")
+    pass_affected, pass_foot = footprint_mask(
+        normalised, estamp, "surface", econtrol["anchor"], "passability")
+    build_affected, build_foot = footprint_mask(
+        normalised, estamp, "surface", econtrol["anchor"], "buildability")
+
+    def compact_controls(control: dict[str, object]) -> dict[str, object]:
+        compact = {key: value for key, value in control.items()
+                   if key not in {"controls", "anchor"}}
+        compact["controls"] = [
+            {key: value for key, value in item.items()
+             if key not in {"rows", "pass_rows", "build_rows"}}
+            for item in control["controls"]  # type: ignore[index,union-attr]
+        ]
+        return compact
 
     report: dict[str, object] = {
-        "schema": "smr.propertycheck.v2",
+        "schema": "smr.propertycheck.v3",
         "vanilla": vtag,
         "expanded": etag,
         "gate_ok": False,
@@ -556,8 +643,8 @@ def main(argv: list[str] | None = None) -> int:
         "self_test": self_test,
         "zones": zone_report,
         "probe_controls": {
-            "vanilla": {key: value for key, value in vcontrol.items() if key not in {"rows", "pass_rows", "build_rows"}},
-            "expanded": {key: value for key, value in econtrol.items() if key not in {"rows", "pass_rows", "build_rows"}},
+            "vanilla": compact_controls(vcontrol),
+            "expanded": compact_controls(econtrol),
         },
         "footprints": {"passability": pass_foot, "buildability": build_foot},
         "freshness": {"vanilla": freshness_report(vgrids), "expanded": freshness_report(egrids)},
@@ -569,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
     if not zone_report["ok"]:
         failed.append("exact normalisation mask reconstruction failed")
     if not vcontrol["ok"] or not econtrol["ok"]:
-        failed.append("live one-node probe control failed")
+        failed.append("live multi-phase probe control failed")
     if not pass_foot["ok"] or not build_foot["ok"]:
         failed.append("property footprint derivation failed")
     for role in ("vanilla", "expanded"):
