@@ -19,11 +19,16 @@ import propertycheck
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = HERE / "out"
-STAGES = ("baseline", "direct", "bare", "marker1", "marker2", "cleanup")
+STAGES = (
+    "baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
+    "marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
+    "callback_plus1", "callback_plus1_repeat", "cleanup",
+)
 EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
 RESIDUAL_FIELDS = (
     "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
-    "marker1", "closed_box_member", "nearest_box_id", "nearest_box_kind",
+    "callback1", "marker1", "direct_plus1", "callback_plus1",
+    "closed_box_member", "nearest_box_id", "nearest_box_kind",
     "outside_dx", "outside_dy", "outside_chebyshev",
 )
 
@@ -167,7 +172,10 @@ def enumerate_residuals(
             "wy": int(y),
             "baseline": int(rasters["baseline"][sy, sx]),
             "direct": int(rasters["direct"][sy, sx]),
+            "callback1": int(rasters["callback1"][sy, sx]),
             "marker1": int(rasters["marker1"][sy, sx]),
+            "direct_plus1": int(rasters["direct_plus1"][sy, sx]),
+            "callback_plus1": int(rasters["callback_plus1"][sy, sx]),
             "closed_box_member": int(closed_membership[sy, sx]),
             "nearest_box_id": box_id,
             "nearest_box_kind": (
@@ -247,35 +255,75 @@ def score_map(
     mapped_membership = full_membership[ey, ex]
     baseline_mapped = rasters["baseline"][ey, ex]
     direct_mapped = rasters["direct"][ey, ex]
+    direct_plus1_mapped = rasters["direct_plus1"][ey, ex]
     expected_mapped_direct = baseline_mapped & ~source_border
 
     full_prediction_diff = int(np.count_nonzero(rasters["direct"] != predicted_direct))
     mapped_membership_diff = int(np.count_nonzero(mapped_membership != source_border))
     mapped_direct_diff = int(np.count_nonzero(direct_mapped != expected_mapped_direct))
+    mapped_direct_plus1_diff = int(np.count_nonzero(
+        direct_plus1_mapped != expected_mapped_direct))
     direct_changes = int(np.count_nonzero(rasters["direct"] != rasters["baseline"]))
     direct_residual = rasters["direct"] != predicted_direct
-    marker_direct_residual = rasters["marker1"] != rasters["direct"]
-    marker_inside = int(np.count_nonzero(marker_direct_residual & full_membership))
-    marker_outside = int(np.count_nonzero(marker_direct_residual & ~full_membership))
+    callback_direct_residual = rasters["callback1"] != rasters["direct"]
+    marker_callback_residual = rasters["marker1"] != rasters["callback1"]
+    plus1_prediction_residual = rasters["direct_plus1"] != predicted_direct
+    plus1_callback_residual = rasters["callback_plus1"] != rasters["direct_plus1"]
+    marker_inside = int(np.count_nonzero(marker_callback_residual & full_membership))
+    marker_outside = int(np.count_nonzero(marker_callback_residual & ~full_membership))
     residuals = enumerate_residuals(
         env, "direct_vs_closed_geometry", direct_residual, live_world,
         rasters, full_membership, boxes)
     residuals.extend(enumerate_residuals(
-        env, "marker1_vs_direct", marker_direct_residual, live_world,
+        env, "callback1_vs_direct", callback_direct_residual, live_world,
+        rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "marker1_vs_callback1", marker_callback_residual, live_world,
+        rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "direct_plus1_vs_closed_geometry", plus1_prediction_residual, live_world,
+        rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "callback_plus1_vs_direct_plus1", plus1_callback_residual, live_world,
         rasters, full_membership, boxes))
     checks = {
         "probe_dimensions_match_preserved_expanded_stamp": (gw, gh) == expected_dims,
-        "all_engine_lattice_cells_match_closed_box_prediction": full_prediction_diff == 0,
+        "original_all_closed_prediction_is_a_live_negative_control": full_prediction_diff > 0,
         "all_corresponding_sites_match_source_border_membership": mapped_membership_diff == 0,
-        "all_corresponding_live_verdicts_match_source_border_prediction": mapped_direct_diff == 0,
+        "original_corresponding_prediction_is_a_live_negative_control": mapped_direct_diff > 0,
         "direct_write_observable": direct_changes > 0,
         "bare_rebuild_restores_raster": np.array_equal(rasters["bare"], rasters["baseline"]),
-        "marker_rebuild_matches_direct_raster": np.array_equal(rasters["marker1"], rasters["direct"]),
+        "marker_free_callback_matches_direct_raster": np.array_equal(
+            rasters["callback1"], rasters["direct"]),
+        "marker_free_callback_repeat_is_stable_raster": np.array_equal(
+            rasters["callback2"], rasters["callback1"]),
+        "callback_cleanup_restores_raster": np.array_equal(
+            rasters["callback_cleanup"], rasters["baseline"]),
         "marker_repeat_is_stable_raster": np.array_equal(rasters["marker2"], rasters["marker1"]),
+        "marker_cleanup_restores_raster": np.array_equal(
+            rasters["marker_cleanup"], rasters["baseline"]),
+        "max_plus_one_matches_closed_box_prediction": not np.any(plus1_prediction_residual),
+        "max_plus_one_corresponding_sites_match_source_border_prediction":
+            mapped_direct_plus1_diff == 0,
+        "plus1_bare_rebuild_restores_raster": np.array_equal(
+            rasters["plus1_bare"], rasters["baseline"]),
+        "max_plus_one_callback_matches_direct_raster": np.array_equal(
+            rasters["callback_plus1"], rasters["direct_plus1"]),
+        "max_plus_one_callback_repeat_is_stable_raster": np.array_equal(
+            rasters["callback_plus1_repeat"], rasters["callback_plus1"]),
         "cleanup_restores_raster": np.array_equal(rasters["cleanup"], rasters["baseline"]),
         "bare_rebuild_restores_hash": hashes["bare"] == hashes["baseline"],
-        "marker_rebuild_matches_direct_hash": hashes["marker1"] == hashes["direct"],
+        "marker_free_callback_matches_direct_hash": hashes["callback1"] == hashes["direct"],
+        "marker_free_callback_repeat_is_stable_hash": hashes["callback2"] == hashes["callback1"],
+        "callback_cleanup_restores_hash": hashes["callback_cleanup"] == hashes["baseline"],
         "marker_repeat_is_stable_hash": hashes["marker2"] == hashes["marker1"],
+        "marker_cleanup_restores_hash": hashes["marker_cleanup"] == hashes["baseline"],
+        "max_plus_one_write_is_hash_observable": hashes["direct_plus1"] != hashes["baseline"],
+        "plus1_bare_rebuild_restores_hash": hashes["plus1_bare"] == hashes["baseline"],
+        "max_plus_one_callback_matches_direct_hash": (
+            hashes["callback_plus1"] == hashes["direct_plus1"]),
+        "max_plus_one_callback_repeat_is_stable_hash": (
+            hashes["callback_plus1_repeat"] == hashes["callback_plus1"]),
         "cleanup_restores_hash": hashes["cleanup"] == hashes["baseline"],
     }
     report = {
@@ -288,6 +336,7 @@ def score_map(
         "full_prediction_differences": full_prediction_diff,
         "mapped_membership_differences": mapped_membership_diff,
         "mapped_direct_differences": mapped_direct_diff,
+        "mapped_direct_plus1_differences": mapped_direct_plus1_diff,
         "direct_boundary_model": {
             "tested_edge_modes": len(edge_controls),
             "difference_counts": edge_controls,
@@ -308,13 +357,21 @@ def score_map(
                 and inclusive_candidate_differences == 0
             ),
         },
-        "marker_direct_residual": {
-            "differences": int(np.count_nonzero(marker_direct_residual)),
+        "marker_free_callback_residual": {
+            "differences": int(np.count_nonzero(callback_direct_residual)),
+        },
+        "placed_marker_object_residual": {
+            "differences": int(np.count_nonzero(marker_callback_residual)),
             "inside_closed_box_union": marker_inside,
             "outside_closed_box_union": marker_outside,
             "all_marker_changes_block": bool(np.all(
-                ~rasters["marker1"][marker_direct_residual])),
-            "requires_separate_live_mechanism_probe": bool(np.any(marker_direct_residual)),
+                ~rasters["marker1"][marker_callback_residual])),
+            "isolated_from_callback_timing": not np.any(callback_direct_residual),
+        },
+        "max_plus_one_live_replay": {
+            "direct_prediction_differences": int(np.count_nonzero(plus1_prediction_residual)),
+            "callback_vs_direct_differences": int(np.count_nonzero(plus1_callback_residual)),
+            "mapped_prediction_differences": mapped_direct_plus1_diff,
         },
         "residual_rows": len(residuals),
         "hashes": {stage: hashes[stage] for stage in STAGES},
@@ -361,7 +418,7 @@ def main() -> int:
             args.box_report.read_text(encoding="utf-8"))["gate_ok"]),
     }
     report = {
-        "schema": "smr.perimeterfullcheck.v2",
+        "schema": "smr.perimeterfullcheck.v3",
         "inputs": {
             "probe_base": str(args.probe_base),
             "box_report": str(args.box_report),
@@ -382,6 +439,10 @@ def main() -> int:
                 for env in ("surface", "underground")),
             "residuals_fully_enumerated": len(residuals) == sum(
                 maps[env]["residual_rows"] for env in ("surface", "underground")),
+            "placed_marker_effect_is_surface_only": (
+                maps["surface"]["placed_marker_object_residual"]["differences"] > 0
+                and maps["underground"]["placed_marker_object_residual"]["differences"] == 0
+            ),
             "surface_gate": maps["surface"]["gate_ok"],
             "underground_gate": maps["underground"]["gate_ok"],
         },

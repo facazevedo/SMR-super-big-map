@@ -3,7 +3,11 @@
 -- The host binds one scenario-independent box list derived by perimetercheck.py.
 -- For both maps this probe preserves complete property-lattice passability rasters:
 --
---   baseline -> direct boxes -> bare rebuild -> marker rebuild -> repeat -> cleanup
+--   baseline -> direct boxes -> bare rebuild
+--     -> marker-free stock callback -> repeat -> cleanup
+--     -> real marker rebuild -> repeat -> cleanup
+--     -> max-plus-one direct boxes -> bare rebuild
+--     -> max-plus-one marker-free stock callback -> repeat -> cleanup
 --
 -- It is mutating but self-restoring; the host binds the output path, box rows,
 -- and source/engine digests before loading this file.
@@ -29,6 +33,10 @@ CreateRealTimeThread(function()
 	local function restore_all()
 		for i = #cleanup, 1, -1 do
 			local row = cleanup[i]
+			for j = #row.fakes, 1, -1 do
+				table.remove_value(row.map.ForcedImpassableMarkers or {}, row.fakes[j])
+			end
+			row.fakes = {}
 			for j = #row.markers, 1, -1 do
 				local marker = row.markers[j]
 				if IsValid(marker) then pcall(DoneObject, marker) end
@@ -62,9 +70,11 @@ CreateRealTimeThread(function()
 		if type(PlaceObjectIn) ~= "function" then error("PlaceObjectIn unavailable") end
 
 		local boxes = {}
+		local plus1_boxes = {}
 		for i = 1, #specs do
 			local s = specs[i]
 			boxes[i] = box(point(s[1], s[2]), point(s[3], s[4]))
+			plus1_boxes[i] = box(point(s[1], s[2]), point(s[3] + 1, s[4] + 1))
 			rows[#rows + 1] = string.format("box,id=%d,minx=%d,miny=%d,maxx=%d,maxy=%d",
 				i, s[1], s[2], s[3], s[4])
 		end
@@ -119,6 +129,36 @@ CreateRealTimeThread(function()
 			if not ok_h then error("HashPassability failed: " .. tostring(value)) end
 			return tostring(value)
 		end
+		local function apply_direct(map, box_list)
+			for i = 1, #box_list do
+				local ok_c, err_c = pcall(terrain.ClearPassabilityBox, map, box_list[i])
+				if not ok_c then
+					error("direct ClearPassabilityBox failed: " .. tostring(err_c))
+				end
+			end
+		end
+		local function install_fake_markers(state, box_list)
+			local list = state.map.ForcedImpassableMarkers
+			if type(list) ~= "table" then
+				list = {}
+				state.map.ForcedImpassableMarkers = list
+			end
+			for i = 1, #box_list do
+				local fake = {
+					area = box_list[i],
+					GetArea = function(self) return self.area end,
+				}
+				list[#list + 1] = fake
+				state.fakes[#state.fakes + 1] = fake
+			end
+		end
+		local function remove_fake_markers(state)
+			local list = state.map.ForcedImpassableMarkers or {}
+			for i = #state.fakes, 1, -1 do
+				table.remove_value(list, state.fakes[i])
+			end
+			state.fakes = {}
+		end
 		local function calibration(map, env, gw, gh)
 			local hgw, hgh = terrain.HeightMapSize(map)
 			rows[#rows + 1] = string.format(
@@ -134,23 +174,38 @@ CreateRealTimeThread(function()
 
 		for _, env in ipairs({ "surface", "underground" }) do
 			local map = maps[env]
-			local state = { map = map, markers = {} }
+			local state = { map = map, markers = {}, fakes = {} }
 			cleanup[#cleanup + 1] = state
+			local stage_names = {
+				"baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
+				"marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
+				"callback_plus1", "callback_plus1_repeat", "cleanup",
+			}
+			local stage_hashes = {}
 			rebuild(map)
 			local gw, gh = snapshot(map, env, "baseline")
 			calibration(map, env, gw, gh)
-			local h0 = pass_hash(map)
+			stage_hashes.baseline = pass_hash(map)
 
-			for i = 1, #boxes do
-				local ok_c, err_c = pcall(terrain.ClearPassabilityBox, map, boxes[i])
-				if not ok_c then error("direct ClearPassabilityBox failed: " .. tostring(err_c)) end
-			end
+			apply_direct(map, boxes)
 			snapshot(map, env, "direct")
-			local hd = pass_hash(map)
+			stage_hashes.direct = pass_hash(map)
 
 			rebuild(map)
 			snapshot(map, env, "bare")
-			local hb = pass_hash(map)
+			stage_hashes.bare = pass_hash(map)
+
+			install_fake_markers(state, boxes)
+			rebuild(map)
+			snapshot(map, env, "callback1")
+			stage_hashes.callback1 = pass_hash(map)
+			rebuild(map)
+			snapshot(map, env, "callback2")
+			stage_hashes.callback2 = pass_hash(map)
+			remove_fake_markers(state)
+			rebuild(map)
+			snapshot(map, env, "callback_cleanup")
+			stage_hashes.callback_cleanup = pass_hash(map)
 
 			for i = 1, #boxes do
 				local marker = PlaceObjectIn("ForcedImpassableMarker", map)
@@ -160,10 +215,10 @@ CreateRealTimeThread(function()
 			end
 			rebuild(map)
 			snapshot(map, env, "marker1")
-			local hm1 = pass_hash(map)
+			stage_hashes.marker1 = pass_hash(map)
 			rebuild(map)
 			snapshot(map, env, "marker2")
-			local hm2 = pass_hash(map)
+			stage_hashes.marker2 = pass_hash(map)
 
 			for i = #state.markers, 1, -1 do
 				local marker = state.markers[i]
@@ -171,11 +226,33 @@ CreateRealTimeThread(function()
 			end
 			state.markers = {}
 			rebuild(map)
+			snapshot(map, env, "marker_cleanup")
+			stage_hashes.marker_cleanup = pass_hash(map)
+
+			apply_direct(map, plus1_boxes)
+			snapshot(map, env, "direct_plus1")
+			stage_hashes.direct_plus1 = pass_hash(map)
+			rebuild(map)
+			snapshot(map, env, "plus1_bare")
+			stage_hashes.plus1_bare = pass_hash(map)
+
+			install_fake_markers(state, plus1_boxes)
+			rebuild(map)
+			snapshot(map, env, "callback_plus1")
+			stage_hashes.callback_plus1 = pass_hash(map)
+			rebuild(map)
+			snapshot(map, env, "callback_plus1_repeat")
+			stage_hashes.callback_plus1_repeat = pass_hash(map)
+			remove_fake_markers(state)
+			rebuild(map)
 			snapshot(map, env, "cleanup")
-			local hc = pass_hash(map)
-			rows[#rows + 1] = string.format(
-				"hash,env=%s,baseline=%s,direct=%s,bare=%s,marker1=%s,marker2=%s,cleanup=%s",
-				env, h0, hd, hb, hm1, hm2, hc)
+			stage_hashes.cleanup = pass_hash(map)
+			local hash_parts = { "hash", "env=" .. env }
+			for i = 1, #stage_names do
+				local stage = stage_names[i]
+				hash_parts[#hash_parts + 1] = stage .. "=" .. stage_hashes[stage]
+			end
+			rows[#rows + 1] = table.concat(hash_parts, ",")
 			info[#info + 1] = string.format("%s=%dx%d", env, gw, gh)
 		end
 
