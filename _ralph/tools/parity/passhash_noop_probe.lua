@@ -25,7 +25,10 @@ CreateRealTimeThread(function()
 		-- Keep the validated function references themselves.  The diagnostic thread runs
 		-- after the loading chunk returns, and no later table lookup is needed to identify
 		-- which shipped implementation is under test.
-		local replay_derive, replay_apply = replay.Derive, replay.Apply
+		-- Assign sequentially: this engine's Lua compiler reused the dying `replay`
+		-- register during the two-value local initializer, so the second RHS indexed nil.
+		local replay_derive = replay.Derive
+		local replay_apply = replay.Apply
 		if type(terrain) ~= "table" or type(terrain.HashPassability) ~= "function"
 			or type(terrain.GetPassGridsCount) ~= "function"
 			or type(terrain.GetPassGrid) ~= "function" then
