@@ -16,7 +16,14 @@ CreateRealTimeThread(function()
 		if type(out_path) ~= "string" or out_path == "" then
 			error("g_ParityPassHashNoopOut is not bound")
 		end
-		local sbm = rawget(_G, "SuperBigMap")
+		local mod
+		for _, candidate in ipairs(ModsLoaded or {}) do
+			if candidate.id == "SuperBigMap" then
+				mod = candidate
+				break
+			end
+		end
+		local sbm = (mod and mod.env and mod.env.SuperBigMap) or rawget(_G, "SuperBigMap")
 		local replay = type(sbm) == "table" and sbm.PassBorderReplay or nil
 		if type(replay) ~= "table" or type(replay.Derive) ~= "function"
 			or type(replay.Apply) ~= "function" then
