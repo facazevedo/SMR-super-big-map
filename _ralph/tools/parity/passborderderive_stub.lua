@@ -5,7 +5,7 @@
 local module_path = assert(arg[1], "production module path is required")
 
 -- The game runtime preserves integer division, unlike the standalone Lua used by
--- this stub. Bind the four required promotions explicitly and retain the exact
+-- this stub. Bind the six required promotions explicitly and retain the exact
 -- live-red arithmetic as a destructive control. Removing any promotion makes
 -- this stub fail before the full derivation can be accepted.
 local module_file = assert(io.open(module_path, "rb"))
@@ -16,6 +16,8 @@ local promotion_sites = {
 	"(expanded_gh * source_h + 0.0) / desired_h",
 	"(desired_w + 0.0) / source_w",
 	"(desired_h + 0.0) / source_h",
+	"(gap_x + 0.0) / 4",
+	"(gap_y + 0.0) / 4",
 }
 local missing_promotions = {}
 for i = 1, #promotion_sites do
@@ -41,12 +43,20 @@ local promoted_source_gw = round_nonnegative(engine_div(820 * 6144, 8192, true))
 local promoted_source_gh = round_nonnegative(engine_div(946 * 6144, 8192, true))
 local unpromoted_scale = engine_div(8192, 6144, false)
 local promoted_scale = engine_div(8192, 6144, true)
+local unpromoted_guard_x = engine_div(1000, 4, false)
+local unpromoted_guard_y = engine_div(866, 4, false)
+local promoted_guard_x = engine_div(1000, 4, true)
+local promoted_guard_y = engine_div(866, 4, true)
 assert(unpromoted_source_gw == 615 and unpromoted_source_gh == 709,
 	"integer-division lattice control no longer reproduces the live red baseline")
 assert(promoted_source_gw == 615 and promoted_source_gh == 710,
 	"promoted lattice control does not recover the exact source dimensions")
 assert(unpromoted_scale == 1 and math.abs(promoted_scale - 4 / 3) < 1e-12,
 	"integer-division scale control no longer discriminates promotion")
+assert(unpromoted_guard_x == 250 and unpromoted_guard_y == 216,
+	"integer-division guard control no longer reproduces the live red baseline")
+assert(promoted_guard_x == 250 and promoted_guard_y == 216.5,
+	"promoted guard control does not recover the half-unit lower-Y shoulder")
 
 local globals = {}
 globals.const = { HeightTileSize = 100 }
@@ -90,9 +100,12 @@ io.write(string.format(
 	stats.expanded_gw, stats.expanded_gh, stats.orientation))
 io.write(string.format(
 	"idiv_control,promotions=%d,unpromoted_source_gw=%d,unpromoted_source_gh=%d,"
-		.. "promoted_source_gw=%d,promoted_source_gh=%d,unpromoted_scale=%.6f,promoted_scale=%.6f\n",
+		.. "promoted_source_gw=%d,promoted_source_gh=%d,unpromoted_scale=%.6f,promoted_scale=%.6f,"
+		.. "unpromoted_guard_x=%.1f,unpromoted_guard_y=%.1f,"
+		.. "promoted_guard_x=%.1f,promoted_guard_y=%.1f\n",
 	#promotion_sites, unpromoted_source_gw, unpromoted_source_gh,
-	promoted_source_gw, promoted_source_gh, unpromoted_scale, promoted_scale))
+	promoted_source_gw, promoted_source_gh, unpromoted_scale, promoted_scale,
+	unpromoted_guard_x, unpromoted_guard_y, promoted_guard_x, promoted_guard_y))
 for i = 1, #specs do
 	local spec = specs[i]
 	io.write(string.format("box,id=%d,minx=%d,miny=%d,maxx=%d,maxy=%d,kind=%s\n",

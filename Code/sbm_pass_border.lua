@@ -9,10 +9,10 @@
 -- Reconstruct the source property lattice from live dimensions, map every source site
 -- through the exact stretch, and derive a compact union of arbitrary stock passability
 -- boxes.  The union is entirely data-derived: four maximal edge slabs plus guarded runs
--- for the remaining boundary sites.  Core slabs round outward; guarded fringe runs round
--- their lower-Y edge inward so a fractional edge cannot spill into the preceding native
--- pass-grid row.  The integer union is exhaustively validated against every mapped source
--- site before use.  ClearPassabilityBox rasterises max-X as open, so the applied
+-- for the remaining boundary sites.  All lower edges round outward after the guard widths
+-- are explicitly promoted to floating point; this preserves the half-world-unit shoulder
+-- that the stock pass-grid rasterizer includes.  The integer union is exhaustively validated
+-- against every mapped source site before use.  ClearPassabilityBox rasterises max-X as open, so the applied
 -- boxes add one world unit to both maxima, matching ForcedImpassableMarker:GetArea.
 -- The caller must invoke Apply only AFTER terrain.RebuildPassability returns.
 
@@ -28,7 +28,7 @@ local Global = Engine.Global
 local Replay = {}
 SuperBigMap.PassBorderReplay = Replay
 
-Replay.VERSION = 2
+Replay.VERSION = 3
 Replay.Cache = setmetatable({}, { __mode = "k" })
 
 local function round_nonnegative(value)
@@ -61,7 +61,7 @@ end
 
 local function quantized_fringe_spec(minx, miny, maxx, maxy, kind)
 	return {
-		math.floor(minx), math.ceil(miny), math.ceil(maxx), math.ceil(maxy),
+		math.floor(minx), math.floor(miny), math.ceil(maxx), math.ceil(maxy),
 		kind = kind,
 	}
 end
@@ -239,7 +239,7 @@ local function derive_candidate(context, core, axis, gap_x, gap_y, fixed_values)
 		if group then group.forbidden[#group.forbidden + 1] = along end
 	end)
 
-	local guard_x, guard_y = gap_x / 4, gap_y / 4
+	local guard_x, guard_y = (gap_x + 0.0) / 4, (gap_y + 0.0) / 4
 	local specs = {}
 	for i = 1, #core do specs[#specs + 1] = core[i] end
 	local fringe_specs = {}

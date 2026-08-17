@@ -37,6 +37,8 @@ def main() -> int:
         "(expanded_gh * source_h + 0.0) / desired_h",
         "(desired_w + 0.0) / source_w",
         "(desired_h + 0.0) / source_h",
+        "(gap_x + 0.0) / 4",
+        "(gap_y + 0.0) / 4",
     ]
     run = subprocess.run(
         [lua, str(stub), str(module)], text=True, capture_output=True, check=False)
@@ -68,22 +70,22 @@ def main() -> int:
     expected_boxes = [
         {
             "minx": math.floor(float(row["minx"])),
-            "miny": (math.ceil(float(row["miny"]))
-                     if str(row["kind"]).startswith("fringe_")
-                     else math.floor(float(row["miny"]))),
+            "miny": math.floor(float(row["miny"])),
             "maxx": math.ceil(float(row["maxx"])),
             "maxy": math.ceil(float(row["maxy"])),
             "kind": str(row["kind"]),
         }
         for row in compact["boxes"]
     ]
-    previous_outward_boxes = [
-        {**row, "miny": math.floor(float(source["miny"]))}
+    previous_inward_boxes = [
+        {**row, "miny": (math.ceil(float(source["miny"]))
+                          if str(source["kind"]).startswith("fringe_")
+                          else math.floor(float(source["miny"])))}
         for row, source in zip(expected_boxes, compact["boxes"])
     ]
-    inward_changed_indices = [
+    outward_changed_indices = [
         index for index, (old, new) in enumerate(
-            zip(previous_outward_boxes, expected_boxes), start=1)
+            zip(previous_inward_boxes, expected_boxes), start=1)
         if old != new
     ]
     quantization_checks = {
@@ -91,11 +93,11 @@ def main() -> int:
             actual["miny"] == math.floor(float(source["miny"]))
             for actual, source in zip(actual_boxes, compact["boxes"])
             if str(source["kind"]).startswith("core_")),
-        "all_fringe_boxes_use_inward_lower_y": all(
-            actual["miny"] == math.ceil(float(source["miny"]))
+        "all_fringe_boxes_use_outward_lower_y": all(
+            actual["miny"] == math.floor(float(source["miny"]))
             for actual, source in zip(actual_boxes, compact["boxes"])
             if str(source["kind"]).startswith("fringe_")),
-        "inward_policy_changes_at_least_one_box": bool(inward_changed_indices),
+        "outward_policy_changes_at_least_one_box": bool(outward_changed_indices),
     }
     expected_stats = {
         "boxes": str(compact["total_boxes"]),
@@ -113,13 +115,17 @@ def main() -> int:
         for key, expected in expected_stats.items()
     }
     expected_idiv_control = {
-        "promotions": "4",
+        "promotions": "6",
         "unpromoted_source_gw": "615",
         "unpromoted_source_gh": "709",
         "promoted_source_gw": "615",
         "promoted_source_gh": "710",
         "unpromoted_scale": "1.000000",
         "promoted_scale": "1.333333",
+        "unpromoted_guard_x": "250.0",
+        "unpromoted_guard_y": "216.0",
+        "promoted_guard_x": "250.0",
+        "promoted_guard_y": "216.5",
     }
     idiv_checks = {
         key: idiv_control is not None and idiv_control.get(key) == expected
@@ -167,7 +173,7 @@ def main() -> int:
         and not literal_hits
     )
     result = {
-        "schema": "smr.passborderderivecheck.v3",
+        "schema": "smr.passborderderivecheck.v4",
         "gate_ok": gate_ok,
         "production_module": str(module),
         "preserved_report": str(args.report.resolve()),
@@ -180,8 +186,8 @@ def main() -> int:
         "stat_checks": stat_checks,
         "actual_stats": actual_stats,
         "quantization_checks": quantization_checks,
-        "inward_lower_y_changed_box_count": len(inward_changed_indices),
-        "inward_lower_y_changed_box_indices": inward_changed_indices,
+        "outward_lower_y_changed_box_count": len(outward_changed_indices),
+        "outward_lower_y_changed_box_indices": outward_changed_indices,
         "integer_division_control_checks": idiv_checks,
         "integer_division_control": idiv_control,
         "missing_promotion_controls_ok": missing_promotion_controls_ok,
