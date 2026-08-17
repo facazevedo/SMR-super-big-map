@@ -22,12 +22,14 @@ DEFAULT_OUT_DIR = HERE / "out"
 STAGES = (
     "baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
     "marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
-    "callback_plus1", "callback_plus1_repeat", "cleanup",
+    "callback_plus1", "callback_plus1_repeat", "tail_plus1",
+    "post_rebuild_plus1", "post_rebuild_plus1_repeat", "cleanup",
 )
 EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
 RESIDUAL_FIELDS = (
     "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
     "callback1", "marker1", "direct_plus1", "callback_plus1",
+    "tail_plus1", "post_rebuild_plus1", "post_rebuild_plus1_repeat",
     "closed_box_member", "nearest_box_id", "nearest_box_kind",
     "outside_dx", "outside_dy", "outside_chebyshev",
 )
@@ -75,7 +77,9 @@ def kv(parts: list[str]) -> dict[str, str]:
 
 
 def parse_probe(path: Path) -> dict[str, object]:
-    result: dict[str, object] = {"maps": {}, "calibrations": [], "boxes": []}
+    result: dict[str, object] = {
+        "maps": {}, "calibrations": [], "boxes": [], "traces": [],
+    }
     maps: dict[str, dict[str, object]] = result["maps"]  # type: ignore[assignment]
     for line in path.read_text(encoding="utf-8").splitlines():
         parts = line.split(",")
@@ -94,6 +98,8 @@ def parse_probe(path: Path) -> dict[str, object]:
         elif parts[0] == "hash":
             row = kv(parts[1:])
             maps.setdefault(row["env"], {})["hashes"] = row
+        elif parts[0] == "trace":
+            result["traces"].append(kv(parts[1:]))  # type: ignore[union-attr]
     return result
 
 
@@ -176,6 +182,10 @@ def enumerate_residuals(
             "marker1": int(rasters["marker1"][sy, sx]),
             "direct_plus1": int(rasters["direct_plus1"][sy, sx]),
             "callback_plus1": int(rasters["callback_plus1"][sy, sx]),
+            "tail_plus1": int(rasters["tail_plus1"][sy, sx]),
+            "post_rebuild_plus1": int(rasters["post_rebuild_plus1"][sy, sx]),
+            "post_rebuild_plus1_repeat": int(
+                rasters["post_rebuild_plus1_repeat"][sy, sx]),
             "closed_box_member": int(closed_membership[sy, sx]),
             "nearest_box_id": box_id,
             "nearest_box_kind": (
@@ -269,6 +279,10 @@ def score_map(
     marker_callback_residual = rasters["marker1"] != rasters["callback1"]
     plus1_prediction_residual = rasters["direct_plus1"] != predicted_direct
     plus1_callback_residual = rasters["callback_plus1"] != rasters["direct_plus1"]
+    tail_residual = rasters["tail_plus1"] != rasters["direct_plus1"]
+    post_rebuild_residual = rasters["post_rebuild_plus1"] != rasters["direct_plus1"]
+    post_rebuild_repeat_residual = (
+        rasters["post_rebuild_plus1_repeat"] != rasters["direct_plus1"])
     marker_inside = int(np.count_nonzero(marker_callback_residual & full_membership))
     marker_outside = int(np.count_nonzero(marker_callback_residual & ~full_membership))
     residuals = enumerate_residuals(
@@ -286,6 +300,25 @@ def score_map(
     residuals.extend(enumerate_residuals(
         env, "callback_plus1_vs_direct_plus1", plus1_callback_residual, live_world,
         rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "tail_plus1_vs_direct_plus1", tail_residual, live_world,
+        rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "post_rebuild_plus1_vs_direct_plus1", post_rebuild_residual, live_world,
+        rasters, full_membership, boxes))
+    residuals.extend(enumerate_residuals(
+        env, "post_rebuild_plus1_repeat_vs_direct_plus1",
+        post_rebuild_repeat_residual, live_world, rasters, full_membership, boxes))
+    traces = [
+        row for row in probe["traces"]  # type: ignore[union-attr]
+        if row["env"] == env
+    ]
+    trace_ok = (
+        len(traces) == 1
+        and traces[0]["cycle"] == "1"
+        and all(key in traces[0] for key in (
+            "before_stock", "after_stock", "after_tail"))
+    )
     checks = {
         "probe_dimensions_match_preserved_expanded_stamp": (gw, gh) == expected_dims,
         "original_all_closed_prediction_is_a_live_negative_control": full_prediction_diff > 0,
@@ -293,8 +326,9 @@ def score_map(
         "original_corresponding_prediction_is_a_live_negative_control": mapped_direct_diff > 0,
         "direct_write_observable": direct_changes > 0,
         "bare_rebuild_restores_raster": np.array_equal(rasters["bare"], rasters["baseline"]),
-        "marker_free_callback_matches_direct_raster": np.array_equal(
-            rasters["callback1"], rasters["direct"]),
+        "marker_free_callback_phase_control": (
+            bool(np.any(callback_direct_residual)) if env == "surface"
+            else not np.any(callback_direct_residual)),
         "marker_free_callback_repeat_is_stable_raster": np.array_equal(
             rasters["callback2"], rasters["callback1"]),
         "callback_cleanup_restores_raster": np.array_equal(
@@ -307,23 +341,41 @@ def score_map(
             mapped_direct_plus1_diff == 0,
         "plus1_bare_rebuild_restores_raster": np.array_equal(
             rasters["plus1_bare"], rasters["baseline"]),
-        "max_plus_one_callback_matches_direct_raster": np.array_equal(
-            rasters["callback_plus1"], rasters["direct_plus1"]),
+        "max_plus_one_callback_phase_control": (
+            bool(np.any(plus1_callback_residual)) if env == "surface"
+            else not np.any(plus1_callback_residual)),
         "max_plus_one_callback_repeat_is_stable_raster": np.array_equal(
             rasters["callback_plus1_repeat"], rasters["callback_plus1"]),
         "cleanup_restores_raster": np.array_equal(rasters["cleanup"], rasters["baseline"]),
         "bare_rebuild_restores_hash": hashes["bare"] == hashes["baseline"],
-        "marker_free_callback_matches_direct_hash": hashes["callback1"] == hashes["direct"],
+        "marker_free_callback_hash_phase_control": (
+            (hashes["callback1"] != hashes["direct"])
+            if env == "surface" else
+            (hashes["callback1"] == hashes["direct"])),
         "marker_free_callback_repeat_is_stable_hash": hashes["callback2"] == hashes["callback1"],
         "callback_cleanup_restores_hash": hashes["callback_cleanup"] == hashes["baseline"],
         "marker_repeat_is_stable_hash": hashes["marker2"] == hashes["marker1"],
         "marker_cleanup_restores_hash": hashes["marker_cleanup"] == hashes["baseline"],
         "max_plus_one_write_is_hash_observable": hashes["direct_plus1"] != hashes["baseline"],
         "plus1_bare_rebuild_restores_hash": hashes["plus1_bare"] == hashes["baseline"],
-        "max_plus_one_callback_matches_direct_hash": (
-            hashes["callback_plus1"] == hashes["direct_plus1"]),
+        "max_plus_one_callback_hash_phase_control": (
+            (hashes["callback_plus1"] != hashes["direct_plus1"])
+            if env == "surface" else
+            (hashes["callback_plus1"] == hashes["direct_plus1"])),
         "max_plus_one_callback_repeat_is_stable_hash": (
             hashes["callback_plus1_repeat"] == hashes["callback_plus1"]),
+        "tail_handler_trace_is_complete": trace_ok,
+        "tail_handler_retains_callback_raster": np.array_equal(
+            rasters["tail_plus1"], rasters["callback_plus1"]),
+        "tail_handler_retains_callback_hash": (
+            hashes["tail_plus1"] == hashes["callback_plus1"]),
+        "post_rebuild_replay_matches_direct_raster": not np.any(post_rebuild_residual),
+        "post_rebuild_replay_matches_direct_hash": (
+            hashes["post_rebuild_plus1"] == hashes["direct_plus1"]),
+        "post_rebuild_replay_repeat_is_stable_raster": (
+            not np.any(post_rebuild_repeat_residual)),
+        "post_rebuild_replay_repeat_is_stable_hash": (
+            hashes["post_rebuild_plus1_repeat"] == hashes["direct_plus1"]),
         "cleanup_restores_hash": hashes["cleanup"] == hashes["baseline"],
     }
     report = {
@@ -373,6 +425,24 @@ def score_map(
             "callback_vs_direct_differences": int(np.count_nonzero(plus1_callback_residual)),
             "mapped_prediction_differences": mapped_direct_plus1_diff,
         },
+        "rebuild_order_discriminator": {
+            "stock_message": "OnPassabilityRebuilding",
+            "stock_source": "CommonLua/Classes/marker.lua:771-779",
+            "tail_handler_vs_direct_differences": int(np.count_nonzero(tail_residual)),
+            "post_rebuild_vs_direct_differences": int(
+                np.count_nonzero(post_rebuild_residual)),
+            "post_rebuild_repeat_vs_direct_differences": int(
+                np.count_nonzero(post_rebuild_repeat_residual)),
+            "trace": traces,
+            "tail_write_changed_stock_callback_hash": (
+                traces[0]["after_stock"] != traces[0]["after_tail"]
+                if trace_ok else None),
+            "rebuild_changed_hash_after_message_tail": (
+                traces[0]["after_tail"] != hashes["tail_plus1"]
+                if trace_ok else None),
+            "gate_ok": trace_ok and not np.any(post_rebuild_residual)
+            and not np.any(post_rebuild_repeat_residual),
+        },
         "residual_rows": len(residuals),
         "hashes": {stage: hashes[stage] for stage in STAGES},
         "checks": checks,
@@ -418,7 +488,7 @@ def main() -> int:
             args.box_report.read_text(encoding="utf-8"))["gate_ok"]),
     }
     report = {
-        "schema": "smr.perimeterfullcheck.v3",
+        "schema": "smr.perimeterfullcheck.v4",
         "inputs": {
             "probe_base": str(args.probe_base),
             "box_report": str(args.box_report),
@@ -439,9 +509,17 @@ def main() -> int:
                 for env in ("surface", "underground")),
             "residuals_fully_enumerated": len(residuals) == sum(
                 maps[env]["residual_rows"] for env in ("surface", "underground")),
-            "placed_marker_effect_is_surface_only": (
-                maps["surface"]["placed_marker_object_residual"]["differences"] > 0
+            "placed_markers_add_nothing_beyond_callback": (
+                maps["surface"]["placed_marker_object_residual"]["differences"] == 0
                 and maps["underground"]["placed_marker_object_residual"]["differences"] == 0
+            ),
+            "surface_callback_phase_is_a_negative_control": (
+                maps["surface"]["max_plus_one_live_replay"]
+                    ["callback_vs_direct_differences"] > 0
+            ),
+            "post_rebuild_direct_replay_is_exact": all(
+                maps[env]["rebuild_order_discriminator"]["gate_ok"]
+                for env in ("surface", "underground")
             ),
             "surface_gate": maps["surface"]["gate_ok"],
             "underground_gate": maps["underground"]["gate_ok"],
