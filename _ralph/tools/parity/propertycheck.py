@@ -67,6 +67,17 @@ class ProbeStamp:
     control: dict[str, str]
 
 
+@dataclass
+class HexGeometry:
+    """Measured parity-aware conversion between property storage and world space."""
+
+    origin: np.ndarray
+    axis_x: np.ndarray
+    row_axis: np.ndarray
+    inverse: np.ndarray
+    calibration_max_error: float
+
+
 def parse_probe_stamp(path: Path) -> ProbeStamp:
     maps: dict[str, dict[str, str]] = {}
     calibration: dict[str, dict[tuple[int, int], tuple[float, float]]] = {}
@@ -92,9 +103,9 @@ def parse_probe_stamp(path: Path) -> ProbeStamp:
     if missing:
         fail(f"{path}: missing map rows for {sorted(missing)}")
     for env in ("surface", "underground"):
-        need = {(0, 0), (1, 0), (0, 1), (1, 1)}
+        need = {(0, 0), (1, 0), (0, 1), (1, 1), (0, 2), (1, 2)}
         if need - calibration.get(env, {}).keys():
-            fail(f"{path}: incomplete {env} HexToWorld calibration")
+            fail(f"{path}: incomplete parity-aware {env} HexToWorld calibration")
     return ProbeStamp(maps, calibration, freshness, control)
 
 
@@ -107,18 +118,52 @@ def load_property(path: Path, gw: int, gh: int) -> np.ndarray:
     return raw.reshape((gh, gw))
 
 
-def matrix_for(stamp: ProbeStamp, env: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def storage_to_world(geometry: HexGeometry, sx: np.ndarray, sy: np.ndarray) -> np.ndarray:
+    """Apply the engine's alternating-row storage convention without an affine shortcut."""
+    sx = np.asarray(sx, dtype=np.float64)
+    sy = np.asarray(sy, dtype=np.float64)
+    parity = np.remainder(sy.astype(np.int64), 2).astype(np.float64)
+    return np.stack((
+        geometry.origin[0] + geometry.axis_x[0] * sx + geometry.row_axis[0] * sy
+        + geometry.axis_x[0] * parity / 2.0,
+        geometry.origin[1] + geometry.axis_x[1] * sx + geometry.row_axis[1] * sy
+        + geometry.axis_x[1] * parity / 2.0,
+    ), axis=0)
+
+
+def geometry_for(stamp: ProbeStamp, env: str) -> HexGeometry:
     cal = stamp.calibration[env]
     origin = np.asarray(cal[(0, 0)], dtype=np.float64)
     axis_x = np.asarray(cal[(1, 0)], dtype=np.float64) - origin
-    axis_y = np.asarray(cal[(0, 1)], dtype=np.float64) - origin
-    matrix = np.column_stack((axis_x, axis_y))
+    row_axis = (np.asarray(cal[(0, 2)], dtype=np.float64) - origin) / 2.0
+    matrix = np.column_stack((axis_x, row_axis))
     if abs(float(np.linalg.det(matrix))) < 1e-9:
         fail(f"{env}: singular HexToWorld calibration")
-    predicted = origin + matrix @ np.asarray([1.0, 1.0])
-    if not np.allclose(predicted, cal[(1, 1)], rtol=0, atol=1e-9):
-        fail(f"{env}: HexToWorld calibration is not affine")
-    return origin, matrix, np.linalg.inv(matrix)
+    geometry = HexGeometry(origin, axis_x, row_axis, np.linalg.inv(matrix), 0.0)
+    errors = []
+    for (sx, sy), measured in cal.items():
+        predicted = storage_to_world(geometry, np.asarray(sx), np.asarray(sy))
+        errors.append(float(np.linalg.norm(predicted - np.asarray(measured, dtype=np.float64))))
+    geometry.calibration_max_error = max(errors, default=0.0)
+    if geometry.calibration_max_error > 1e-9:
+        fail(f"{env}: HexToWorld calibration does not fit alternating-row storage "
+             f"(max error {geometry.calibration_max_error})")
+    return geometry
+
+
+def world_to_storage(geometry: HexGeometry, world: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Nearest storage row/column, applying the selected row's measured parity offset."""
+    world = np.asarray(world, dtype=np.float64)
+    if world.ndim == 1:
+        world = world[:, None]
+    continuous = geometry.inverse @ (world - geometry.origin[:, None])
+    sy_float = continuous[1]
+    sy = round_storage(sy_float)
+    parity_offset = geometry.axis_x[:, None] * (np.remainder(sy, 2)[None, :] / 2.0)
+    deparitied = geometry.inverse @ (world - geometry.origin[:, None] - parity_offset)
+    sx_float = deparitied[0]
+    sx = round_storage(sx_float)
+    return np.vstack((sx, sy)), np.vstack((sx_float, sy_float))
 
 
 def dims(stamp: ProbeStamp, env: str) -> tuple[int, int]:
@@ -139,14 +184,12 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarra
     if vh <= 0 or eh <= vh:
         fail(f"{env}: expected expanded height grid larger than vanilla ({vh}, {eh})")
     scale = eh / vh
-    vo, vm, _ = matrix_for(van, env)
-    eo, _, einv = matrix_for(exp, env)
+    vgeometry = geometry_for(van, env)
+    egeometry = geometry_for(exp, env)
 
     sy, sx = np.indices((vgh, vgw), dtype=np.float64)
-    flat = np.vstack((sx.ravel(), sy.ravel()))
-    world = vo[:, None] + vm @ flat
-    target_float = einv @ (world * scale - eo[:, None])
-    target = round_storage(target_float)
+    world = storage_to_world(vgeometry, sx.ravel(), sy.ravel())
+    target, target_float = world_to_storage(egeometry, world * scale)
     ex = target[0].reshape((vgh, vgw))
     ey = target[1].reshape((vgh, vgw))
     in_bounds = (ex >= 0) & (ex < egw) & (ey >= 0) & (ey < egh)
@@ -158,7 +201,7 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarra
     if unique != vgw * vgh:
         fail(f"{env}: mapping is not one-to-one ({unique}/{vgw * vgh} unique)")
 
-    rounded_world = eo[:, None] + np.linalg.inv(einv) @ target.astype(np.float64)
+    rounded_world = storage_to_world(egeometry, target[0], target[1])
     residual = np.linalg.norm(rounded_world - world * scale, axis=0)
     return {
         "ex": ex,
@@ -166,6 +209,9 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarra
         "scale": scale,
         "sites": vgw * vgh,
         "expanded_unmapped": egw * egh - unique,
+        "geometry": "alternating_row_parity",
+        "vanilla_calibration_max_error": vgeometry.calibration_max_error,
+        "expanded_calibration_max_error": egeometry.calibration_max_error,
         "max_world_rounding_residual": float(residual.max(initial=0.0)),
         "p99_world_rounding_residual": float(np.percentile(residual, 99)) if residual.size else 0.0,
     }
@@ -182,7 +228,8 @@ def parse_control_csv(path: Path) -> list[dict[str, int]]:
 def validate_probe_control(out_dir: Path, tag: str, stamp: ProbeStamp,
                            grids: dict[str, np.ndarray]) -> dict[str, object]:
     meta = stamp.control
-    required = {"node_wx", "node_wy", "diff", "pass_diff", "build_diff", "restore_diff"}
+    required = {"site_sx", "site_sy", "site_wx", "site_wy", "node_gx", "node_gy",
+                "node_wx", "node_wy", "diff", "pass_diff", "build_diff", "restore_diff"}
     if required - meta.keys():
         fail(f"property-{tag}-property.txt: missing surface control fields")
     rows = parse_control_csv(out_dir / f"property-{tag}-surface-property-control.csv")
@@ -193,6 +240,13 @@ def validate_probe_control(out_dir: Path, tag: str, stamp: ProbeStamp,
     raw_cells = set(zip(raw_x.tolist(), raw_y.tolist()))
     pass_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 1]
     build_rows = [row for row in rows if (row["fresh_bits"] ^ row["control_bits"]) & 2]
+    geometry = geometry_for(stamp, "surface")
+    measured_site = np.asarray([float(meta["site_wx"]), float(meta["site_wy"])])
+    modelled_site = storage_to_world(
+        geometry, np.asarray(int(meta["site_sx"])), np.asarray(int(meta["site_sy"])))
+    tile = float(stamp.maps["surface"]["tile"])
+    measured_node = np.asarray([float(meta["node_wx"]), float(meta["node_wy"])])
+    modelled_node = np.asarray([int(meta["node_gx"]) * tile, int(meta["node_gy"]) * tile])
     checks = {
         "csv_is_complete": csv_cells == raw_cells,
         "diff_matches_stamp": len(rows) == int(meta["diff"]),
@@ -200,6 +254,10 @@ def validate_probe_control(out_dir: Path, tag: str, stamp: ProbeStamp,
         "build_diff_matches_stamp": len(build_rows) == int(meta["build_diff"]),
         "both_properties_moved": bool(pass_rows) and bool(build_rows),
         "restore_diff_zero": int(meta["restore_diff"]) == 0,
+        "site_storage_world_exact": bool(np.allclose(
+            modelled_site, measured_site, rtol=0, atol=1e-9)),
+        "node_storage_world_exact": bool(np.allclose(
+            modelled_node, measured_node, rtol=0, atol=1e-9)),
     }
     return {
         "checks": checks,
@@ -207,7 +265,7 @@ def validate_probe_control(out_dir: Path, tag: str, stamp: ProbeStamp,
         "rows": rows,
         "pass_rows": pass_rows,
         "build_rows": build_rows,
-        "node_world": [float(meta["node_wx"]), float(meta["node_wy"])],
+        "node_world": measured_node.tolist(),
         "counts": {"all": len(rows), "passability": len(pass_rows), "buildability": len(build_rows)},
     }
 
@@ -292,13 +350,13 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path) ->
 def footprint_mask(nodes: np.ndarray, stamp: ProbeStamp, env: str,
                    control: dict[str, object], property_name: str) -> tuple[np.ndarray, dict]:
     gw, gh = dims(stamp, env)
-    origin, _, inverse = matrix_for(stamp, env)
+    geometry = geometry_for(stamp, env)
     node_world = np.asarray(control["node_world"], dtype=np.float64)
-    node_storage = inverse @ (node_world - origin)
     key = "pass_rows" if property_name == "passability" else "build_rows"
     rows = control[key]
-    offsets = np.asarray([[row["sx"], row["sy"]] for row in rows], dtype=np.float64)
-    offsets -= node_storage[None, :]
+    observed_storage = np.asarray([[row["sx"], row["sy"]] for row in rows], dtype=np.int64)
+    observed_world = storage_to_world(geometry, observed_storage[:, 0], observed_storage[:, 1]).T
+    world_offsets = observed_world - node_world[None, :]
     affected = np.zeros((gh, gw), dtype=bool)
     ny, nx = np.nonzero(nodes)
     chunk = 250_000
@@ -306,21 +364,21 @@ def footprint_mask(nodes: np.ndarray, stamp: ProbeStamp, env: str,
     for start in range(0, nx.size, chunk):
         stop = min(start + chunk, nx.size)
         world = np.vstack((nx[start:stop] * tile, ny[start:stop] * tile)).astype(np.float64)
-        projected = inverse @ (world - origin[:, None])
-        for offset in offsets:
-            cell = round_storage(projected + offset[:, None])
+        for offset in world_offsets:
+            cell, _ = world_to_storage(geometry, world + offset[:, None])
             sx, sy = cell[0], cell[1]
             valid = (sx >= 0) & (sx < gw) & (sy >= 0) & (sy < gh)
             affected[sy[valid], sx[valid]] = True
 
     # Reapplying the derived footprint to the control node must reproduce every observed
     # changed property cell, exactly.  This is the live footprint anti-vacuity check.
-    projected_control = inverse @ (node_world - origin)
-    replay = round_storage(projected_control[:, None] + offsets.T)
+    replay, _ = world_to_storage(geometry, node_world[:, None] + world_offsets.T)
     replay_cells = set(zip(replay[0].tolist(), replay[1].tolist()))
     observed = {(row["sx"], row["sy"]) for row in rows}
     detail = {
         "kernel_cells": len(rows),
+        "geometry": "world_delta_over_alternating_row_parity",
+        "calibration_max_error": geometry.calibration_max_error,
         "control_replay_exact": replay_cells == observed,
         "affected_cells": int(affected.sum()),
         "height_nodes": int(nodes.sum()),
@@ -395,6 +453,31 @@ def synthetic_controls() -> dict[str, object]:
     stale[2, 2] ^= 1
     stale_report = affected_staleness(stale, baseline, baseline, baseline,
                                       ex, ey, pass_mask, 1)
+    geometry_calibration = {
+        (0, 0): (0.0, 0.0), (1, 0): (1000.0, 0.0),
+        (0, 1): (500.0, 866.0), (1, 1): (1500.0, 866.0),
+        (0, 2): (0.0, 1732.0), (1, 2): (1000.0, 1732.0),
+    }
+    vmaps = {env: {"gw": "15", "gh": "18", "height_gw": "150", "height_gh": "150",
+                    "tile": "100"} for env in ("surface", "underground")}
+    emaps = {env: {"gw": "20", "gh": "24", "height_gw": "200", "height_gh": "200",
+                    "tile": "100"} for env in ("surface", "underground")}
+    calibrations = {env: geometry_calibration for env in ("surface", "underground")}
+    vstamp = ProbeStamp(vmaps, calibrations, {}, {})
+    estamp = ProbeStamp(emaps, calibrations, {}, {})
+    geometry = geometry_for(vstamp, "surface")
+    test_sx = np.asarray([0, 1, 0, 1, 7, 7], dtype=np.int64)
+    test_sy = np.asarray([0, 0, 1, 2, 9, 10], dtype=np.int64)
+    test_world = storage_to_world(geometry, test_sx, test_sy)
+    roundtrip, _ = world_to_storage(geometry, test_world)
+    mapping = map_sites(vstamp, estamp, "surface")
+    mapped_x = mapping["ex"]
+    mapped_y = mapping["ey"]
+    assert isinstance(mapped_x, np.ndarray) and isinstance(mapped_y, np.ndarray)
+    src_y, src_x = np.indices((18, 15), dtype=np.float64)
+    old_affine_x = round_storage(src_x * (4.0 / 3.0))
+    parity_discriminator = int((old_affine_x != mapped_x).sum())
+
     checks = {
         "inside_differences_are_classified_inside": (
             p_green["differences_inside"] == 1 and p_green["differences_outside"] == 0
@@ -404,8 +487,21 @@ def synthetic_controls() -> dict[str, object]:
         "stale_in_mask_injection_rejected": (
             stale_report["vanilla_shipped_vs_fresh_inside"] == 1
             and not stale_report["inside_fresh"]),
+        "parity_geometry_roundtrips": bool(np.array_equal(
+            roundtrip, np.vstack((test_sx, test_sy)))),
+        "row_two_rejects_global_affine_model": parity_discriminator > 0,
+        "odd_row_twin_mapping_is_parity_aware": (
+            int(mapped_x[1, 1]) == 2 and int(mapped_y[1, 1]) == 1),
+        "even_row_twin_mapping_is_parity_aware": (
+            int(mapped_x[2, 2]) == 2 and int(mapped_y[2, 2]) == 3),
     }
     return {"ok": all(checks.values()), "checks": checks,
+            "geometry_control": {
+                "calibration_max_error": geometry.calibration_max_error,
+                "roundtrip_sites": int(test_sx.size),
+                "global_affine_disagreements": parity_discriminator,
+                "mapping_sites": int(mapping["sites"]),
+            },
             "injected_counts": {"outside_pass": p_bad["differences_outside"],
                                 "outside_build": b_bad["differences_outside"],
                                 "stale": stale_report["vanilla_shipped_vs_fresh_inside"]}}
@@ -426,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
 
     self_test = synthetic_controls()
     if args.self_test:
-        payload = {"schema": "smr.propertycheck.selftest.v1", **self_test}
+        payload = {"schema": "smr.propertycheck.selftest.v2", **self_test}
         rendered = json.dumps(payload, indent=2) + "\n"
         if args.out is not None:
             args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -452,7 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     build_affected, build_foot = footprint_mask(normalised, estamp, "surface", econtrol, "buildability")
 
     report: dict[str, object] = {
-        "schema": "smr.propertycheck.v1",
+        "schema": "smr.propertycheck.v2",
         "vanilla": vtag,
         "expanded": etag,
         "gate_ok": False,

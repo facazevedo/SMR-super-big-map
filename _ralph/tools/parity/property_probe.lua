@@ -14,6 +14,8 @@
 -- Restoring the saved height grid and reproducing the fresh raster byte-for-byte is
 -- the anti-vacuity/cleanup gate. Geometry calibration rows use HexToWorld itself so
 -- the offline scorer never needs a scenario-specific grid offset or map constant.
+-- Rows 0, 1 and 2 are all emitted because storage rows are staggered by parity; a
+-- four-point rows-0/1 calibration can be misread as one globally affine lattice.
 --
 -- MUTATING, BUT SELF-RESTORING: passability/buildability are rebuilt, one copied
 -- surface height node is perturbed, then the exact saved height grid is restored and
@@ -114,7 +116,7 @@ CreateRealTimeThread(function()
 				tostring(map.SuperBigMapZScaleMul), tostring(map.SuperBigMapZScaleDiv),
 				tostring(map.SuperBigMapZScaleAdd),
 				tostring(map.SuperBigMapZCompressionZones and #map.SuperBigMapZCompressionZones or 0)))
-			for _, p in ipairs({ {0, 0}, {1, 0}, {0, 1}, {1, 1} }) do
+			for _, p in ipairs({ {0, 0}, {1, 0}, {0, 1}, {1, 1}, {0, 2}, {1, 2} }) do
 				local q, r, wx, wy = storage_world(p[1], p[2])
 				emit(string.format("calibration,%s,sx=%d,sy=%d,q=%s,r=%s,wx=%s,wy=%s",
 					env, p[1], p[2], tostring(q), tostring(r), tostring(wx), tostring(wy)))
