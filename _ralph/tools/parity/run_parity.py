@@ -3686,7 +3686,8 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_mask_probe=False, pass_forced_probe=False,
                     pass_writer_probe=False, pass_own_probe=False, pass_ablate_probe=False,
                     pass_imprint_probe=False, pass_move_probe=False, pass_class_probe=False,
-                    pass_vis_probe=False, pass_fix_probe=False, build_probe=False):
+                    pass_vis_probe=False, pass_fix_probe=False, build_probe=False,
+                    property_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
 
     Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
@@ -3719,6 +3720,38 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     if st == "error":
                         _, e = cli.marshal_value(client, "g_ParityZonesError", timeout=60.0)
                         log(f"  zones probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if property_probe:
+        # Exhaustive passability/buildability verdicts on the common property lattice.
+        # This probe snapshots shipped state first, then performs and sensitivity-controls
+        # stock rebuilds before restoring the exact final terrain. Run it before every other
+        # mutating probe. It subsumes buildable staleness verdicts, so combining the two would
+        # make buildableprobe's "shipped" snapshot observe propertyprobe's fresh rebuild.
+        if build_probe:
+            raise RuntimeError("propertyprobe and buildableprobe are mutually exclusive")
+        probe_src = (HERE / "property_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__OUT_BASE__", cli.lua_path(OUT / f"property-{tag}"))
+        probe_path = OUT / f"propertyprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  property probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPropertyStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityPropertyInfo", timeout=60.0)
+                        log(f"  property probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityPropertyError", timeout=60.0)
+                        log(f"  property probe error: {e}")
                         break
                 except dap.DapTimeout:
                     pass
@@ -4392,7 +4425,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
-             build_probe=False):
+             build_probe=False, property_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4819,7 +4852,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             pass_own_probe=pass_own_probe, pass_ablate_probe=pass_ablate_probe,
             pass_imprint_probe=pass_imprint_probe, pass_move_probe=pass_move_probe,
             pass_class_probe=pass_class_probe, pass_vis_probe=pass_vis_probe,
-            pass_fix_probe=pass_fix_probe, build_probe=build_probe)
+            pass_fix_probe=pass_fix_probe, build_probe=build_probe,
+            property_probe=property_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -4922,6 +4956,7 @@ def main():
         passvis = "passvis" in sys.argv[5:]
         passfix = "passfix" in sys.argv[5:]
         buildableprobe = "buildableprobe" in sys.argv[5:]
+        propertyprobe = "propertyprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -4953,6 +4988,7 @@ def main():
             f"pass_imprint_probe={passimprint} pass_move_probe={passmove} "
             f"pass_class_probe={passclass} pass_vis_probe={passvis} "
             f"pass_fix_probe={passfix} build_probe={buildableprobe} "
+            f"property_probe={propertyprobe} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -4973,7 +5009,7 @@ def main():
                         pass_ablate_probe=passablate, pass_imprint_probe=passimprint,
                         pass_move_probe=passmove, pass_class_probe=passclass,
                         pass_vis_probe=passvis, pass_fix_probe=passfix,
-                        build_probe=buildableprobe)
+                        build_probe=buildableprobe, property_probe=propertyprobe)
         log(f"result: {json.dumps(info)}")
         return
 
