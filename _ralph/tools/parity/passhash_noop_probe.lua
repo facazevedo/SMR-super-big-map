@@ -22,6 +22,10 @@ CreateRealTimeThread(function()
 			or type(replay.Apply) ~= "function" then
 			error("production pass-border replay is unavailable")
 		end
+		-- Keep the validated function references themselves.  The diagnostic thread runs
+		-- after the loading chunk returns, and no later table lookup is needed to identify
+		-- which shipped implementation is under test.
+		local replay_derive, replay_apply = replay.Derive, replay.Apply
 		if type(terrain) ~= "table" or type(terrain.HashPassability) ~= "function"
 			or type(terrain.GetPassGridsCount) ~= "function"
 			or type(terrain.GetPassGrid) ~= "function" then
@@ -86,7 +90,7 @@ CreateRealTimeThread(function()
 		local summaries = {}
 		for _, env in ipairs({ "surface", "underground" }) do
 			local map = maps[env]
-			local specs, stats = replay.Derive(map)
+			local specs, stats = replay_derive(map)
 			if specs == false then error(env .. " replay derive skipped: " .. tostring(stats)) end
 			rows[#rows + 1] = string.format(
 				"replay,env=%s,version=%s,boxes=%d,orientation=%s,apply_count_before=%s,stage_before=%s",
@@ -101,12 +105,12 @@ CreateRealTimeThread(function()
 			end
 
 			local before, hash_before = capture(map, env, "before", nil)
-			local apply1_ok, applied1, count1 = pcall(replay.Apply, map, "diagnostic no-op repeat 1")
+			local apply1_ok, applied1, count1 = pcall(replay_apply, map, "diagnostic no-op repeat 1")
 			if not apply1_ok or applied1 ~= true then
 				error(env .. " first repeat failed: " .. tostring(applied1))
 			end
 			local _, hash_after1 = capture(map, env, "after1", before)
-			local apply2_ok, applied2, count2 = pcall(replay.Apply, map, "diagnostic no-op repeat 2")
+			local apply2_ok, applied2, count2 = pcall(replay_apply, map, "diagnostic no-op repeat 2")
 			if not apply2_ok or applied2 ~= true then
 				error(env .. " second repeat failed: " .. tostring(applied2))
 			end
