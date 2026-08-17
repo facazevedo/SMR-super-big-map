@@ -10,9 +10,10 @@ It consumes preserved ``property_probe.lua`` stamps, uses propertycheck.py's
 measured alternating-row geometry, and reports three models:
 
 * the ideal unaligned symmetric scalar;
-* the tightest single axis-aligned interior rectangle; and
-* row/column-striped edge thresholds suitable for stock
-  ``terrain.ClearPassabilityBox`` calls during ``OnPassabilityRebuilding``.
+* the tightest single axis-aligned interior rectangle;
+* row/column-striped edge thresholds; and
+* a compact, concrete union of closed stock boxes: four core edge slabs plus
+  guarded runs for the mapped sites left on the interior rectangle boundary.
 
 The striped result is a representability proof, not an implementation or an
 acceptance pass.  Buildability has a separate stock ``map_border`` input and is
@@ -22,6 +23,7 @@ explicitly not changed or scored here.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -54,6 +56,168 @@ def counts(expected: np.ndarray, actual: np.ndarray) -> dict[str, int]:
         "source_border_but_candidate_interior": int(np.count_nonzero(expected & ~actual)),
         "source_interior_but_candidate_border": int(np.count_nonzero(~expected & actual)),
     }
+
+
+def box_membership(world: np.ndarray, boxes: list[dict[str, object]]) -> np.ndarray:
+    """Replay the live-proven closed-edge ClearPassabilityBox convention."""
+    x, y = world
+    predicted = np.zeros(x.shape, dtype=bool)
+    for box in boxes:
+        predicted |= (
+            (x >= float(box["minx"]))
+            & (x <= float(box["maxx"]))
+            & (y >= float(box["miny"]))
+            & (y <= float(box["maxy"]))
+        )
+    return predicted
+
+
+def minimum_coordinate_gap(values: np.ndarray, name: str) -> float:
+    distinct = np.unique(values)
+    gaps = np.diff(distinct)
+    positive = gaps[gaps > 0]
+    if positive.size == 0:
+        raise RuntimeError(f"mapped lattice has no positive {name} separation")
+    return float(positive.min())
+
+
+def fringe_run_boxes(
+    expected: np.ndarray,
+    missing: np.ndarray,
+    world: np.ndarray,
+    axis: str,
+    guard_x: float,
+    guard_y: float,
+) -> list[dict[str, object]]:
+    """Cover missing sites in maximal safe runs along one lattice axis.
+
+    A run may bridge another expected-border site or empty lattice space, but
+    never an interior site.  The guards are derived from the calibrated
+    lattice's minimum coordinate gaps, so a run cannot touch the neighbouring
+    parallel lattice line.
+    """
+    x, y = world
+    fixed, along = (x, y) if axis == "vertical" else (y, x)
+    guard_fixed, guard_along = (
+        (guard_x, guard_y) if axis == "vertical" else (guard_y, guard_x)
+    )
+    boxes: list[dict[str, object]] = []
+    for fixed_value in np.unique(fixed[missing]):
+        on_line = fixed == fixed_value
+        selected = sorted(float(value) for value in along[missing & on_line])
+        forbidden = np.sort(along[(~expected) & on_line])
+        if not selected:
+            continue
+        runs: list[list[float]] = [[selected[0]]]
+        for value in selected[1:]:
+            previous = runs[-1][-1]
+            if bool(np.any((forbidden > previous) & (forbidden < value))):
+                runs.append([value])
+            else:
+                runs[-1].append(value)
+        for run in runs:
+            fixed_min = float(fixed_value) - guard_fixed
+            fixed_max = float(fixed_value) + guard_fixed
+            along_min = min(run) - guard_along
+            along_max = max(run) + guard_along
+            if axis == "vertical":
+                bounds = (fixed_min, along_min, fixed_max, along_max)
+            else:
+                bounds = (along_min, fixed_min, along_max, fixed_max)
+            boxes.append({
+                "kind": f"fringe_{axis}",
+                "minx": bounds[0], "miny": bounds[1],
+                "maxx": bounds[2], "maxy": bounds[3],
+                "sites_in_run": len(run),
+            })
+    return boxes
+
+
+def compact_box_union(
+    expected: np.ndarray,
+    world: np.ndarray,
+) -> tuple[np.ndarray, dict[str, object], list[dict[str, object]]]:
+    """Derive an exact compact closed-box union without scenario constants."""
+    x, y = world
+    interior = ~expected
+    if not bool(interior.any()) or not bool(expected.any()):
+        raise RuntimeError("border discriminator needs both border and interior sites")
+
+    interior_bounds = {
+        "minx": float(x[interior].min()),
+        "maxx": float(x[interior].max()),
+        "miny": float(y[interior].min()),
+        "maxy": float(y[interior].max()),
+    }
+    lattice_bounds = {
+        "minx": float(x.min()), "maxx": float(x.max()),
+        "miny": float(y.min()), "maxy": float(y.max()),
+    }
+    core: list[dict[str, object]] = []
+    core_specs = (
+        ("core_left", x < interior_bounds["minx"], "x", "max"),
+        ("core_right", x > interior_bounds["maxx"], "x", "min"),
+        ("core_top", y < interior_bounds["miny"], "y", "max"),
+        ("core_bottom", y > interior_bounds["maxy"], "y", "min"),
+    )
+    for kind, selected, coordinate, side in core_specs:
+        if not bool(selected.any()):
+            continue
+        if coordinate == "x":
+            edge = float(x[selected].max() if side == "max" else x[selected].min())
+            minx, maxx = ((lattice_bounds["minx"], edge) if side == "max"
+                          else (edge, lattice_bounds["maxx"]))
+            miny, maxy = lattice_bounds["miny"], lattice_bounds["maxy"]
+        else:
+            edge = float(y[selected].max() if side == "max" else y[selected].min())
+            miny, maxy = ((lattice_bounds["miny"], edge) if side == "max"
+                          else (edge, lattice_bounds["maxy"]))
+            minx, maxx = lattice_bounds["minx"], lattice_bounds["maxx"]
+        core.append({
+            "kind": kind, "minx": minx, "miny": miny,
+            "maxx": maxx, "maxy": maxy,
+        })
+
+    core_prediction = box_membership(world, core)
+    if bool(np.any(core_prediction & ~expected)):
+        raise RuntimeError("core border slabs cover an expected-interior site")
+    missing = expected & ~core_prediction
+
+    gap_x = minimum_coordinate_gap(x, "x")
+    gap_y = minimum_coordinate_gap(y, "y")
+    # Strictly less than half a lattice gap keeps each guarded run on its own
+    # calibrated coordinate line while giving singleton runs positive area.
+    guard_x, guard_y = gap_x / 4.0, gap_y / 4.0
+    candidates: list[tuple[str, list[dict[str, object]], np.ndarray]] = []
+    for axis in ("vertical", "horizontal"):
+        fringe = fringe_run_boxes(
+            expected, missing, world, axis, guard_x, guard_y)
+        boxes = core + fringe
+        predicted = box_membership(world, boxes)
+        if np.array_equal(predicted, expected):
+            candidates.append((axis, boxes, predicted))
+    if not candidates:
+        raise RuntimeError("neither guarded fringe-run orientation is exact")
+    axis, boxes, predicted = min(candidates, key=lambda item: len(item[1]))
+
+    fringe = boxes[len(core):]
+    serialized = json.dumps(boxes, sort_keys=True, separators=(",", ":"))
+    report = {
+        "interior_world_box": interior_bounds,
+        "lattice_world_box": lattice_bounds,
+        "minimum_coordinate_gap_wu": {"x": gap_x, "y": gap_y},
+        "guard_wu": {"x": guard_x, "y": guard_y},
+        "core_boxes": len(core),
+        "fringe_sites": int(missing.sum()),
+        "fringe_orientation": axis,
+        "fringe_boxes": len(fringe),
+        "fringe_run_size_counts": dict(sorted(Counter(
+            int(box["sites_in_run"]) for box in fringe).items())),
+        "total_boxes": len(boxes),
+        "box_union_sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+        "boxes": boxes,
+    }
+    return predicted, report, boxes
 
 
 def stripe_edge(
@@ -169,6 +333,8 @@ def score_environment(
     top_pred, top_report = stripe_edge(top, expanded_world[1], ex, True)
     bottom_pred, bottom_report = stripe_edge(bottom, expanded_world[1], ex, False)
     striped_border = left_pred | right_pred | top_pred | bottom_pred
+    compact_border, compact_report, compact_boxes = compact_box_union(
+        source_border, expanded_world)
 
     # Anti-vacuity control: replacing the exact striped result with the tightest
     # single rectangle must expose the staggered-lattice boundary conflict.
@@ -178,6 +344,31 @@ def score_environment(
     striped_counts = counts(source_border, striped_border)
     if striped_counts["differences"] != 0:
         raise RuntimeError("striped stock-box model failed exact membership")
+    compact_counts = counts(source_border, compact_border)
+    if compact_counts["differences"] != 0:
+        raise RuntimeError("compact closed-box union failed exact membership")
+
+    core_count = int(compact_report["core_boxes"])
+    fringe_count = int(compact_report["fringe_boxes"])
+    if core_count == 0 or fringe_count == 0:
+        raise RuntimeError("compact-union controls require core and fringe boxes")
+    drop_core = counts(
+        source_border,
+        box_membership(expanded_world, compact_boxes[1:]),
+    )
+    drop_fringe = counts(
+        source_border,
+        box_membership(expanded_world, compact_boxes[:-1]),
+    )
+    controls = {
+        "drop_one_core_box": drop_core,
+        "drop_one_fringe_box": drop_fringe,
+        "both_controls_reject": (
+            drop_core["differences"] > 0 and drop_fringe["differences"] > 0
+        ),
+    }
+    if not controls["both_controls_reject"]:
+        raise RuntimeError("compact closed-box negative control unexpectedly passed")
 
     return {
         "scale": scale,
@@ -205,6 +396,22 @@ def score_environment(
             ),
             "representable_exactly": striped_counts["differences"] == 0,
         },
+        "compact_closed_box_union": {
+            "membership": compact_counts,
+            **compact_report,
+            "reduction_from_edge_stripes": {
+                "boxes_saved": sum(
+                    edge["stripes"]
+                    for edge in (left_report, right_report, top_report, bottom_report)
+                ) - int(compact_report["total_boxes"]),
+                "fraction_saved": 1.0 - int(compact_report["total_boxes"]) / sum(
+                    edge["stripes"]
+                    for edge in (left_report, right_report, top_report, bottom_report)
+                ),
+            },
+            "controls": controls,
+            "representable_exactly": compact_counts["differences"] == 0,
+        },
     }
 
 
@@ -223,7 +430,7 @@ def main() -> int:
         for env in ("surface", "underground")
     }
     report = {
-        "schema": "smr.perimetercheck.v1",
+        "schema": "smr.perimetercheck.v2",
         "inputs": {"vanilla": args.vanilla, "expanded": args.expanded},
         "production_gate_changed": False,
         "source_trace": {
@@ -241,10 +448,10 @@ def main() -> int:
         "interpretation": {
             "passability": (
                 "The stock rebuild-time ClearPassabilityBox hook can represent exact mapped "
-                "border membership when thresholds are derived per target lattice stripe."),
+                "border membership with a compact, data-derived closed-box union."),
             "not_yet_proven": (
-                "No live mutation was performed; box boundary semantics and a general compact "
-                "stripe construction still require an engine probe before payload work."),
+                "Closed-edge box semantics and rebuild persistence are live-proven, but this "
+                "complete compact union has not yet been replayed in the game."),
             "buildability": (
                 "This result does not solve or relax buildability parity; its stock path remains "
                 "a separate scalar map_border input."),
@@ -252,6 +459,8 @@ def main() -> int:
         "maps": maps,
         "gate_ok": all(
             data["stock_clear_box_stripes"]["representable_exactly"]
+            and data["compact_closed_box_union"]["representable_exactly"]
+            and data["compact_closed_box_union"]["controls"]["both_controls_reject"]
             for data in maps.values()
         ),
     }
