@@ -532,6 +532,9 @@ config.LimitBuildableGridToSource = true
 -- stream (same lake prefab at another position/rotation). When true, the ORIGINAL PassBorder
 -- is restored for just the DoGenerate window (the engine already baked full passability at
 -- ChangeMap; only the generator's Lua-side reads see the restored value) and re-zeroed after.
+-- The final gameplay-grid rebuild also derives and applies the exact mapped image of that vanilla
+-- border through stock arbitrary passability boxes. A scalar 4/3 border is not exact on the
+-- staggered property lattice, so the derived union is validated at every mapped source site.
 config.StretchVanillaExactPassBorder = true
 -- FLATTEN GUARD (sbm_rocket_rules flatten wrapper). On MOD maps, skip the engine
 -- construction flatten when the site's anchor hex reads UNBUILDABLE from the buildable

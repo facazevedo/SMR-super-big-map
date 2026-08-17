@@ -68,6 +68,10 @@ return {
 		'CodeFileName', "Code/sbm_terrain_copy.lua",
 	}),
 	PlaceObj('ModItemCode', {
+		'name', "sbm_pass_border",
+		'CodeFileName', "Code/sbm_pass_border.lua",
+	}),
+	PlaceObj('ModItemCode', {
 		'name', "sbm_map_generation",
 		'CodeFileName', "Code/sbm_map_generation.lua",
 	}),
