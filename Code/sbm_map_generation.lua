@@ -10765,7 +10765,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	local schedule_ok = pcall(create_thread, function()
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
 		-- readiness/setup errors take the normal full-rebuild fallback.
-		local thread_ok = yield_protected_call(function()
+		local thread_ok, thread_err = yield_protected_call(function()
 		local function end_loading()
 			-- Fail-safe: if the stretch exited before its final lightweight refresh, restore the
 			-- original full rebuild path rather than leave partially refreshed map state.
@@ -11212,6 +11212,46 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		end
 
 		end)
+		-- The surface aggregate is not canonical until the generation thread yields once, even
+		-- though its exposed pass grids already match stock control. Measured by t120x: the first
+		-- real-time-thread entry after this protected pipeline is the earliest stable boundary, and
+		-- one ordinary RebuildFinal there is sufficient. Keep the immediate call above for ordering
+		-- and queue this surface-only revalidation exactly once after a successful pipeline return.
+		if thread_ok
+			and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
+			and map.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
+			map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
+			map.SuperBigMapSurfacePostPipelineRevalidationComplete = nil
+			map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+			local revalidation_schedule_ok, revalidation_schedule_err = pcall(create_thread, function()
+				local pause_ild = Global("PauseInfiniteLoopDetection")
+				local resume_ild = Global("ResumeInfiniteLoopDetection")
+				if type(pause_ild) == "function" then
+					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
+				end
+				local revalidation_ok, revalidation_err = yield_protected_call(function()
+					SuperBigMap.GenerationGrids.RebuildFinal(
+						map, "post-pipeline scheduled revalidation")
+				end)
+				if type(resume_ild) == "function" then
+					SafeCall(resume_ild, "SuperBigMapSurfacePostPipelineRevalidation")
+				end
+				if revalidation_ok then
+					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
+				else
+					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
+					LoadingFinish("surface post-pipeline revalidation failed", map, {
+						error = tostring(revalidation_err),
+					}, false)
+				end
+			end)
+			if not revalidation_schedule_ok then
+				map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
+				thread_ok = false
+				thread_err = "surface post-pipeline revalidation scheduling failed: "
+					.. tostring(revalidation_schedule_err)
+			end
+		end
 		if not thread_ok then
 			if map.SuperBigMapStretchPipelinePending == true then
 				local lifecycle = SuperBigMap.Lifecycle
@@ -11223,7 +11263,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			map.SuperBigMapSurfaceStretchScheduled = false
 			EndSurfaceExpansionLoading(map)
 			LoadingFinish("surface expansion thread failed", map,
-				{ error = tostring(thread_ok) }, false)
+				{ error = tostring(thread_err or thread_ok) }, false)
 		end
 	end)
 	if not schedule_ok then
