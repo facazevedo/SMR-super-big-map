@@ -10,12 +10,16 @@ twins, plus a self-restoring bank of one-height-node sensitivity controls.  This
 * indexes the live sensitivity bank by each height node's data-derived phase relative
   to its property site, requires exact replay within every phase across staggered row
   parities, then applies the matching phase footprint to every property site;
-* maps every vanilla property-storage site to one unique expanded site by the
-  probes' own ``HexToWorld`` calibration and the measured height-grid ratio;
-* requires zero shipped-verdict differences outside the footprint-aware set; and
-* requires shipped == fresh on every affected verdict, plus fresh == repeat (and
-  restored == fresh where present), so the exception was freshly and idempotently
-  judged by the stock rules without rejecting unrelated stock staleness elsewhere.
+* enumerates every expanded property-storage site and inverse-maps its centre into
+  the vanilla/source field by the probes' own ``HexToWorld`` calibration and the
+  measured height-grid ratio;
+* applies the complete, live-measured stock evaluation footprint to the exact
+  non-affine height-node set before classifying every expanded verdict;
+* requires zero fresh-stock field differences outside that footprint-aware set;
+  and
+* requires expanded shipped == fresh over the entire expanded map, plus fresh ==
+  repeat (and restored == fresh where present), so freshness is authoritative and
+  global rather than an exception-local diagnostic.
 
 Every cross-twin difference is written to CSV.  There is no tolerance or allowlist.
 The scorer intentionally requires exact pre/post stretch dumps; a bbox-only massif
@@ -26,9 +30,10 @@ Typical use::
   python propertycheck.py --vanilla vanilla_tag --expanded expanded_tag \
     --out artifacts/property_case.json --differences artifacts/property_case.csv
 
-Run ``--self-test`` before live use.  It injects one outside-mask pass difference,
-one outside-mask build difference, and one stale in-mask verdict and requires the
-same production comparison helpers to reject all three.
+Run ``--self-test`` before live use.  Its mandatory discriminator injects a single
+residual at an expanded site omitted by the superseded forward mapper and requires
+the old subset to miss it while the production inverse scorer and global freshness
+gate both reject it.
 """
 
 from __future__ import annotations
@@ -177,7 +182,9 @@ def round_storage(values: np.ndarray) -> np.ndarray:
     return np.floor(values + 0.5).astype(np.int64)
 
 
-def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarray | float | int]:
+def forward_map_sites(van: ProbeStamp, exp: ProbeStamp,
+                      env: str) -> dict[str, np.ndarray | float | int]:
+    """Superseded vanilla-to-expanded subset, retained only as a self-test control."""
     vgw, vgh = dims(van, env)
     egw, egh = dims(exp, env)
     vrow, erow = van.maps[env], exp.maps[env]
@@ -232,6 +239,82 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarra
         "residual_classes": residual_classes,
         "max_world_rounding_residual": float(residual.max(initial=0.0)),
         "p99_world_rounding_residual": float(np.percentile(residual, 99)) if residual.size else 0.0,
+    }
+
+
+def map_sites(van: ProbeStamp, exp: ProbeStamp,
+              env: str) -> dict[str, np.ndarray | float | int | str]:
+    """Inverse-map every expanded property centre into the source spatial field.
+
+    The finite vanilla storage raster does not contain a sample for a narrow strip
+    of expanded edge centres.  Those centres lie outside the source property
+    domain after inverse transformation and therefore receive the stock outside-
+    map value (false/unbuildable), represented by ``in_source == False``.
+    """
+    vgw, vgh = dims(van, env)
+    egw, egh = dims(exp, env)
+    vrow, erow = van.maps[env], exp.maps[env]
+    vh, eh = int(vrow["height_gw"]), int(erow["height_gw"])
+    if vh <= 0 or eh <= vh:
+        fail(f"{env}: expected expanded height grid larger than vanilla ({vh}, {eh})")
+    scale = eh / vh
+    vgeometry = geometry_for(van, env)
+    egeometry = geometry_for(exp, env)
+
+    ey, ex = np.indices((egh, egw), dtype=np.int64)
+    expanded_world = storage_to_world(egeometry, ex.ravel(), ey.ravel())
+    source_world = expanded_world / scale
+    source, source_float = world_to_storage(vgeometry, source_world)
+    vx = source[0].reshape((egh, egw))
+    vy = source[1].reshape((egh, egw))
+    in_source = (vx >= 0) & (vx < vgw) & (vy >= 0) & (vy < vgh)
+
+    covered_linear = vy[in_source] * vgw + vx[in_source]
+    covered = int(np.unique(covered_linear).size)
+    if covered != vgw * vgh:
+        fail(f"{env}: inverse mapping does not cover the complete source field "
+             f"({covered}/{vgw * vgh})")
+
+    rounded_source_world = storage_to_world(vgeometry, source[0], source[1])
+    displacement = rounded_source_world - source_world
+    residual = np.linalg.norm(displacement, axis=0)
+    exact_world = (residual <= 1e-9).reshape((egh, egw))
+    vectors, vector_counts = np.unique(
+        np.round(displacement.T, decimals=9), axis=0, return_counts=True)
+    residual_classes = [
+        {
+            "dx": float(vector[0]),
+            "dy": float(vector[1]),
+            "distance": float(np.linalg.norm(vector)),
+            "sites": int(count),
+        }
+        for vector, count in zip(vectors, vector_counts)
+    ]
+    return {
+        "vx": vx,
+        "vy": vy,
+        "in_source": in_source,
+        "exact_world": exact_world,
+        "source_world_x": source_world[0].reshape((egh, egw)),
+        "source_world_y": source_world[1].reshape((egh, egw)),
+        "scale": scale,
+        "sites": egw * egh,
+        "expanded_sites": egw * egh,
+        "source_sites": vgw * vgh,
+        "source_sites_covered": covered,
+        "source_sites_uncovered": vgw * vgh - covered,
+        "out_of_source_sites": int((~in_source).sum()),
+        "out_of_source_value": "false_unbuildable",
+        "geometry": "all_expanded_inverse_alternating_row_parity",
+        "vanilla_calibration_max_error": vgeometry.calibration_max_error,
+        "expanded_calibration_max_error": egeometry.calibration_max_error,
+        "exact_world_sites": int(exact_world.sum()),
+        "noncoincident_sites": int((~exact_world).sum()),
+        "residual_classes": residual_classes,
+        "max_world_rounding_residual": float(residual.max(initial=0.0)),
+        "p99_world_rounding_residual": float(np.percentile(residual, 99)) if residual.size else 0.0,
+        "source_continuous_x_range": [float(source_float[0].min()), float(source_float[0].max())],
+        "source_continuous_y_range": [float(source_float[1].min()), float(source_float[1].max())],
     }
 
 
@@ -415,18 +498,28 @@ def load_probe_grids(out_dir: Path, tag: str, stamp: ProbeStamp) -> dict[str, np
     return grids
 
 
-def freshness_report(grids: dict[str, np.ndarray]) -> dict[str, dict[str, int | bool]]:
-    report: dict[str, dict[str, int | bool]] = {}
+def freshness_report(grids: dict[str, np.ndarray]) -> dict[str, dict[str, object]]:
+    report: dict[str, dict[str, object]] = {}
     for env in ("surface", "underground"):
         fresh = grids[f"{env}:fresh"]
-        shipped = int((grids[f"{env}:shipped"] != fresh).sum())
+        shipped_grid = grids[f"{env}:shipped"]
+        shipped = int((shipped_grid != fresh).sum())
         repeat = int((grids[f"{env}:repeat"] != fresh).sum())
         restored = int((grids[f"{env}:restored"] != fresh).sum()) if env == "surface" else 0
+        by_property = {}
+        for name, bit in (("passability", 1), ("buildability", 2)):
+            changed = ((shipped_grid ^ fresh) & bit) != 0
+            by_property[name] = {
+                "shipped_vs_fresh": int(changed.sum()),
+                "shipped_fresh": int(changed.sum()) == 0,
+            }
         report[env] = {
             "shipped_vs_fresh": shipped,
+            "shipped_fresh": shipped == 0,
             "repeat_vs_fresh": repeat,
             "restored_vs_fresh": restored,
             "stable": repeat == 0 and restored == 0,
+            "by_property": by_property,
         }
     return report
 
@@ -547,23 +640,41 @@ def footprint_mask(nodes: np.ndarray, stamp: ProbeStamp, env: str,
     return affected, detail
 
 
-def compare_bits(van_bits: np.ndarray, exp_bits: np.ndarray, ex: np.ndarray, ey: np.ndarray,
-                 affected: np.ndarray, bit: int) -> tuple[dict[str, int | bool], np.ndarray]:
+def inverse_expected(van_bits: np.ndarray, vx: np.ndarray, vy: np.ndarray,
+                     in_source: np.ndarray, bit: int) -> np.ndarray:
+    """Nearest-centre sample of the inverse transformed source field.
+
+    The complete stock evaluation footprint is used separately to construct the
+    expanded ``affected`` mask.  Outside the finite source field the stock spatial
+    value is false/unbuildable.
+    """
     vanilla = (van_bits & bit) != 0
-    expanded = (exp_bits[ey, ex] & bit) != 0
-    scope = affected[ey, ex]
-    different = vanilla != expanded
+    expected = np.zeros(vx.shape, dtype=bool)
+    expected[in_source] = vanilla[vy[in_source], vx[in_source]]
+    return expected
+
+
+def compare_bits(van_bits: np.ndarray, exp_bits: np.ndarray, vx: np.ndarray, vy: np.ndarray,
+                 in_source: np.ndarray, affected: np.ndarray,
+                 bit: int) -> tuple[dict[str, int | bool], np.ndarray]:
+    expected = inverse_expected(van_bits, vx, vy, in_source, bit)
+    expanded = (exp_bits & bit) != 0
+    scope = affected
+    different = expected != expanded
     outside = different & ~scope
     inside = different & scope
     report = {
         "corresponding_sites": int(different.size),
+        "all_expanded_sites_scored": int(different.size) == int(exp_bits.size),
+        "in_source_sites": int(in_source.sum()),
+        "out_of_source_sites": int((~in_source).sum()),
         "affected_sites": int(scope.sum()),
         "outside_sites": int((~scope).sum()),
         "differences_total": int(different.sum()),
         "differences_outside": int(outside.sum()),
         "differences_inside": int(inside.sum()),
-        "outside_false_to_true": int((~vanilla & expanded & ~scope).sum()),
-        "outside_true_to_false": int((vanilla & ~expanded & ~scope).sum()),
+        "outside_false_to_true": int((~expected & expanded & ~scope).sum()),
+        "outside_true_to_false": int((expected & ~expanded & ~scope).sum()),
         "outside_zero": int(outside.sum()) == 0,
     }
     return report, different
@@ -594,13 +705,15 @@ def count_binary_partition(mask: np.ndarray, exact_world: np.ndarray, different:
 
 def exact_world_stock_inputs(vstamp: ProbeStamp, estamp: ProbeStamp, env: str,
                              exact_world: np.ndarray, different: np.ndarray,
-                             vanilla: np.ndarray, expanded: np.ndarray) -> dict[str, object]:
+                             vanilla: np.ndarray, expanded: np.ndarray,
+                             source_distance: np.ndarray | None = None) -> dict[str, object]:
     """Partition exact-world results by the stock map-border passability input.
 
     This is diagnostic only: neither partition relaxes the production zero-difference gate.
     The strict ``<`` convention is intentionally explicit and synthetic-controlled.
     """
-    source_distance = property_border_distance(vstamp, env)
+    if source_distance is None:
+        source_distance = property_border_distance(vstamp, env)
     vanilla_border = float(vstamp.maps[env]["pass_border"])
     expanded_border = float(estamp.maps[env]["pass_border"])
     in_vanilla_border = source_distance < vanilla_border
@@ -629,48 +742,25 @@ def exact_world_stock_inputs(vstamp: ProbeStamp, estamp: ProbeStamp, env: str,
 
 def affected_staleness(van_shipped: np.ndarray, van_fresh: np.ndarray,
                        exp_shipped: np.ndarray, exp_fresh: np.ndarray,
-                       ex: np.ndarray, ey: np.ndarray, affected: np.ndarray,
+                       vx: np.ndarray, vy: np.ndarray, in_source: np.ndarray,
+                       affected: np.ndarray,
                        bit: int) -> dict[str, int | bool]:
-    source_scope = affected[ey, ex]
     van_changed = ((van_shipped ^ van_fresh) & bit) != 0
     exp_changed = ((exp_shipped ^ exp_fresh) & bit) != 0
-    van_stale = int((van_changed & source_scope).sum())
+    mapped_van_changed = np.zeros(affected.shape, dtype=bool)
+    mapped_van_changed[in_source] = van_changed[vy[in_source], vx[in_source]]
+    van_stale = int((mapped_van_changed & affected).sum())
     exp_stale = int((exp_changed & affected).sum())
     return {
-        "vanilla_affected_sites": int(source_scope.sum()),
+        "vanilla_mapped_affected_sites": int((affected & in_source).sum()),
         "expanded_affected_sites": int(affected.sum()),
-        "vanilla_shipped_vs_fresh_inside": van_stale,
+        "mapped_vanilla_shipped_vs_fresh_inside": van_stale,
         "expanded_shipped_vs_fresh_inside": exp_stale,
         "inside_fresh": van_stale == 0 and exp_stale == 0,
     }
 
 
 def synthetic_controls() -> dict[str, object]:
-    shape = (6, 7)
-    ex, ey = np.indices(shape, dtype=np.int64)[1], np.indices(shape, dtype=np.int64)[0]
-    baseline = np.full(shape, 3, dtype=np.uint8)
-    pass_mask = np.zeros(shape, dtype=bool)
-    build_mask = np.zeros(shape, dtype=bool)
-    pass_mask[2, 2] = True
-    build_mask[3, 3] = True
-
-    green_exp = baseline.copy()
-    green_exp[2, 2] ^= 1
-    green_exp[3, 3] ^= 2
-    p_green, _ = compare_bits(baseline, green_exp, ex, ey, pass_mask, 1)
-    b_green, _ = compare_bits(baseline, green_exp, ex, ey, build_mask, 2)
-
-    bad_pass = green_exp.copy()
-    bad_pass[0, 0] ^= 1
-    p_bad, _ = compare_bits(baseline, bad_pass, ex, ey, pass_mask, 1)
-    bad_build = green_exp.copy()
-    bad_build[5, 6] ^= 2
-    b_bad, _ = compare_bits(baseline, bad_build, ex, ey, build_mask, 2)
-
-    stale = baseline.copy()
-    stale[2, 2] ^= 1
-    stale_report = affected_staleness(stale, baseline, baseline, baseline,
-                                      ex, ey, pass_mask, 1)
     geometry_calibration = {
         (0, 0): (0.0, 0.0), (1, 0): (1000.0, 0.0),
         (0, 1): (500.0, 866.0), (1, 1): (1500.0, 866.0),
@@ -686,19 +776,72 @@ def synthetic_controls() -> dict[str, object]:
     vstamp = ProbeStamp(vmaps, calibrations, {}, [])
     estamp = ProbeStamp(emaps, calibrations, {}, [])
     geometry = geometry_for(vstamp, "surface")
+    egeometry = geometry_for(estamp, "surface")
     test_sx = np.asarray([0, 1, 0, 1, 7, 7], dtype=np.int64)
     test_sy = np.asarray([0, 0, 1, 2, 9, 10], dtype=np.int64)
     test_world = storage_to_world(geometry, test_sx, test_sy)
     roundtrip, _ = world_to_storage(geometry, test_world)
+    forward = forward_map_sites(vstamp, estamp, "surface")
+    mapped_x = forward["ex"]
+    mapped_y = forward["ey"]
     mapping = map_sites(vstamp, estamp, "surface")
-    mapped_x = mapping["ex"]
-    mapped_y = mapping["ey"]
+    vx, vy = mapping["vx"], mapping["vy"]
+    in_source = mapping["in_source"]
     exact_world = mapping["exact_world"]
     assert (isinstance(mapped_x, np.ndarray) and isinstance(mapped_y, np.ndarray)
-            and isinstance(exact_world, np.ndarray))
+            and isinstance(vx, np.ndarray) and isinstance(vy, np.ndarray)
+            and isinstance(in_source, np.ndarray) and isinstance(exact_world, np.ndarray))
     src_y, src_x = np.indices((18, 15), dtype=np.float64)
     old_affine_x = round_storage(src_x * (4.0 / 3.0))
     parity_discriminator = int((old_affine_x != mapped_x).sum())
+
+    baseline = np.full((18, 15), 3, dtype=np.uint8)
+    expected_exp = np.zeros((24, 20), dtype=np.uint8)
+    expected_exp[in_source] = 3
+    green_exp = expected_exp.copy()
+    pass_mask = np.zeros(green_exp.shape, dtype=bool)
+    build_mask = np.zeros(green_exp.shape, dtype=bool)
+    pass_mask[4, 5] = True
+    build_mask[6, 7] = True
+    green_exp[pass_mask] ^= 1
+    green_exp[build_mask] ^= 2
+    p_green, _ = compare_bits(
+        baseline, green_exp, vx, vy, in_source, pass_mask, 1)
+    b_green, _ = compare_bits(
+        baseline, green_exp, vx, vy, in_source, build_mask, 2)
+
+    forward_coverage = np.zeros(green_exp.shape, dtype=bool)
+    forward_coverage[mapped_y, mapped_x] = True
+    old_unmapped = ~forward_coverage & in_source & ~pass_mask & ~build_mask
+    injected_linear = int(np.flatnonzero(old_unmapped)[0])
+    injected_y, injected_x = np.unravel_index(injected_linear, green_exp.shape)
+    bad_pass = expected_exp.copy()
+    bad_pass[injected_y, injected_x] ^= 1
+    p_bad, _ = compare_bits(
+        baseline, bad_pass, vx, vy, in_source, pass_mask, 1)
+    old_source_pass = (baseline & 1) != 0
+    old_exp_pass = (bad_pass[mapped_y, mapped_x] & 1) != 0
+    old_subset_differences = int((old_source_pass != old_exp_pass).sum())
+
+    bad_build = expected_exp.copy()
+    build_inject_y, build_inject_x = np.unravel_index(
+        int(np.flatnonzero(old_unmapped)[1]), green_exp.shape)
+    bad_build[build_inject_y, build_inject_x] ^= 2
+    b_bad, _ = compare_bits(
+        baseline, bad_build, vx, vy, in_source, build_mask, 2)
+
+    stale = green_exp.copy()
+    stale[pass_mask] ^= 1
+    stale_report = affected_staleness(
+        baseline, baseline, stale, green_exp, vx, vy, in_source, pass_mask, 1)
+    fresh_grids = {}
+    for env in ("surface", "underground"):
+        fresh_grids[f"{env}:fresh"] = green_exp.copy()
+        fresh_grids[f"{env}:repeat"] = green_exp.copy()
+        fresh_grids[f"{env}:shipped"] = green_exp.copy()
+    fresh_grids["surface:restored"] = green_exp.copy()
+    fresh_grids["surface:shipped"][injected_y, injected_x] ^= 1
+    global_freshness = freshness_report(fresh_grids)
     phase_source = {
         "node_world": storage_to_world(
             geometry, np.asarray(5), np.asarray(4)).tolist(),
@@ -714,7 +857,7 @@ def synthetic_controls() -> dict[str, object]:
     phase_replay = replay_cells(geometry, phase_source, phase_target, "passability")
     synthetic_site = (5, 4)
     synthetic_site_world = storage_to_world(
-        geometry, np.asarray(synthetic_site[0]), np.asarray(synthetic_site[1]))
+        egeometry, np.asarray(synthetic_site[0]), np.asarray(synthetic_site[1]))
     synthetic_base = np.floor(synthetic_site_world / 100.0).astype(np.int64)
     active_nodes = np.zeros((150, 150), dtype=bool)
     active_nodes[synthetic_base[1], synthetic_base[0]] = True
@@ -726,33 +869,40 @@ def synthetic_controls() -> dict[str, object]:
         "phase_controls": {
             (0, 0): {
                 "site_world": storage_to_world(
-                    geometry, np.asarray(2), np.asarray(2)).tolist(),
+                    egeometry, np.asarray(2), np.asarray(2)).tolist(),
                 "pass_rows": [{"sx": 2, "sy": 2}],
                 "build_rows": [{"sx": 2, "sy": 2}],
             },
             (1, 0): {
                 "site_world": storage_to_world(
-                    geometry, np.asarray(2), np.asarray(2)).tolist(),
+                    egeometry, np.asarray(2), np.asarray(2)).tolist(),
                 "pass_rows": [],
                 "build_rows": [{"sx": 2, "sy": 2}],
             },
         },
     }
     active_footprint, active_detail = footprint_mask(
-        active_nodes, vstamp, "surface", phase_bank, "passability")
+        active_nodes, estamp, "surface", phase_bank, "passability")
     inactive_footprint, inactive_detail = footprint_mask(
-        inactive_nodes, vstamp, "surface", phase_bank, "passability")
+        inactive_nodes, estamp, "surface", phase_bank, "passability")
     synthetic_vbits = np.zeros((18, 15), dtype=np.uint8)
     synthetic_ebits = np.zeros((24, 20), dtype=np.uint8)
-    synthetic_border = property_border_distance(vstamp, "surface") < 2000
+    source_world_x = mapping["source_world_x"]
+    source_world_y = mapping["source_world_y"]
+    assert isinstance(source_world_x, np.ndarray) and isinstance(source_world_y, np.ndarray)
+    source_extent = 150 * 100
+    source_distance = np.minimum.reduce((source_world_x, source_world_y,
+                                         source_extent - source_world_x,
+                                         source_extent - source_world_y))
+    synthetic_border = source_distance < 2000
     injected_border = exact_world & synthetic_border
-    synthetic_ebits[mapped_y[injected_border], mapped_x[injected_border]] = 1
-    synthetic_vvalues = (synthetic_vbits & 1) != 0
-    synthetic_evalues = (synthetic_ebits[mapped_y, mapped_x] & 1) != 0
+    synthetic_ebits[injected_border] = 1
+    synthetic_vvalues = inverse_expected(synthetic_vbits, vx, vy, in_source, 1)
+    synthetic_evalues = (synthetic_ebits & 1) != 0
     synthetic_different = synthetic_vvalues != synthetic_evalues
     border_partition = exact_world_stock_inputs(
         vstamp, estamp, "surface", exact_world, synthetic_different,
-        synthetic_vvalues, synthetic_evalues)
+        synthetic_vvalues, synthetic_evalues, source_distance)
 
     checks = {
         "inside_differences_are_classified_inside": (
@@ -760,18 +910,29 @@ def synthetic_controls() -> dict[str, object]:
             and b_green["differences_inside"] == 1 and b_green["differences_outside"] == 0),
         "outside_pass_injection_rejected": p_bad["differences_outside"] == 1,
         "outside_build_injection_rejected": b_bad["differences_outside"] == 1,
+        "old_forward_subset_misses_unmapped_injection": old_subset_differences == 0,
+        "injected_site_was_old_unmapped": not bool(forward_coverage[injected_y, injected_x]),
+        "all_expanded_inverse_scorer_covers_injection": (
+            p_bad["corresponding_sites"] == 20 * 24
+            and p_bad["all_expanded_sites_scored"]),
+        "global_expanded_freshness_rejects_unmapped_injection": (
+            global_freshness["surface"]["shipped_vs_fresh"] == 1
+            and not global_freshness["surface"]["shipped_fresh"]),
         "stale_in_mask_injection_rejected": (
-            stale_report["vanilla_shipped_vs_fresh_inside"] == 1
+            stale_report["expanded_shipped_vs_fresh_inside"] == 1
             and not stale_report["inside_fresh"]),
         "parity_geometry_roundtrips": bool(np.array_equal(
             roundtrip, np.vstack((test_sx, test_sy)))),
         "row_two_rejects_global_affine_model": parity_discriminator > 0,
-        "odd_row_twin_mapping_is_parity_aware": (
-            int(mapped_x[1, 1]) == 2 and int(mapped_y[1, 1]) == 1),
-        "even_row_twin_mapping_is_parity_aware": (
-            int(mapped_x[2, 2]) == 2 and int(mapped_y[2, 2]) == 3),
-        "exact_world_sublattice_is_detected": int(exact_world.sum()) == 30,
-        "noncoincident_residual_classes_are_detected": len(mapping["residual_classes"]) == 9,
+        "odd_row_inverse_mapping_is_parity_aware": (
+            int(vx[1, 1]) == 1 and int(vy[1, 1]) == 1),
+        "even_row_inverse_mapping_is_parity_aware": (
+            int(vx[2, 2]) == 2 and int(vy[2, 2]) == 2),
+        "exact_world_sublattice_is_detected": 0 < int(exact_world.sum()) < 20 * 24,
+        "noncoincident_residual_classes_are_detected": len(mapping["residual_classes"]) >= 9,
+        "inverse_mapping_covers_all_source_sites": (
+            mapping["source_sites_covered"] == 15 * 18
+            and mapping["source_sites_uncovered"] == 0),
         "phase_kernel_cross_replays_across_row_parity": phase_replay == {(6, 5)},
         "phase_kernel_mismatch_is_rejected": phase_replay != {(7, 5)},
         "phase_index_selects_matching_footprint": (
@@ -794,6 +955,10 @@ def synthetic_controls() -> dict[str, object]:
                 "roundtrip_sites": int(test_sx.size),
                 "global_affine_disagreements": parity_discriminator,
                 "mapping_sites": int(mapping["sites"]),
+                "forward_subset_sites": int(forward["sites"]),
+                "forward_unmapped_sites": int(forward["expanded_unmapped"]),
+                "injected_old_unmapped_site": [int(injected_x), int(injected_y)],
+                "old_subset_differences": old_subset_differences,
             },
             "phase_control": {
                 "matching_affected_cells": int(active_footprint.sum()),
@@ -801,8 +966,9 @@ def synthetic_controls() -> dict[str, object]:
             },
             "border_control": border_partition,
             "injected_counts": {"outside_pass": p_bad["differences_outside"],
-                                "outside_build": b_bad["differences_outside"],
-                                "stale": stale_report["vanilla_shipped_vs_fresh_inside"]}}
+                                 "outside_build": b_bad["differences_outside"],
+                                 "stale": stale_report["expanded_shipped_vs_fresh_inside"],
+                                 "global_freshness": global_freshness["surface"]["shipped_vs_fresh"]}}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -821,7 +987,7 @@ def main(argv: list[str] | None = None) -> int:
 
     self_test = synthetic_controls()
     if args.self_test:
-        payload = {"schema": "smr.propertycheck.selftest.v4", **self_test}
+        payload = {"schema": "smr.propertycheck.selftest.v5", **self_test}
         rendered = json.dumps(payload, indent=2) + "\n"
         if args.out is not None:
             args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -839,7 +1005,7 @@ def main(argv: list[str] | None = None) -> int:
         stable = all(bool(row["stable"]) for row in freshness.values())
         gate_ok = bool(self_test["ok"] and control["ok"] and stable)
         payload = {
-            "schema": "smr.propertycheck.probe.v4",
+            "schema": "smr.propertycheck.probe.v5",
             "tag": tag,
             "gate_ok": gate_ok,
             "failed_checks": ([] if gate_ok else [
@@ -878,7 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
         normalised, estamp, "surface", econtrol, "buildability")
 
     report: dict[str, object] = {
-        "schema": "smr.propertycheck.v4",
+        "schema": "smr.propertycheck.v5",
         "vanilla": vtag,
         "expanded": etag,
         "gate_ok": False,
@@ -890,6 +1056,13 @@ def main(argv: list[str] | None = None) -> int:
             "expanded": compact_controls(econtrol),
         },
         "footprints": {"passability": pass_foot, "buildability": build_foot},
+        "correspondence_rule": {
+            "enumeration": "every_expanded_property_site",
+            "source_field": "fresh_stock_vanilla_inverse_nearest_center",
+            "outside_source_value": "false_unbuildable",
+            "normalisation_exception": "complete_live_measured_expanded_stock_footprint",
+            "primary_gate": "expanded_shipped_equals_fresh_everywhere",
+        },
         "freshness": {"vanilla": freshness_report(vgrids), "expanded": freshness_report(egrids)},
         "maps": {},
     }
@@ -906,25 +1079,44 @@ def main(argv: list[str] | None = None) -> int:
         for env, fresh in report["freshness"][role].items():  # type: ignore[index,union-attr]
             if not fresh["stable"]:
                 failed.append(f"{role}/{env}: fresh/repeat/restored mismatch")
+            if role == "expanded" and not fresh["shipped_fresh"]:
+                by_property = fresh["by_property"]
+                failed.append(
+                    f"expanded/{env}: shipped verdict stale globally "
+                    f"(pass={by_property['passability']['shipped_vs_fresh']}, "
+                    f"build={by_property['buildability']['shipped_vs_fresh']})")
 
     diff_rows: list[list[object]] = []
     for env in ("surface", "underground"):
         mapping = map_sites(vstamp, estamp, env)
-        ex, ey = mapping.pop("ex"), mapping.pop("ey")
+        vx, vy = mapping.pop("vx"), mapping.pop("vy")
+        in_source = mapping.pop("in_source")
         exact_world = mapping.pop("exact_world")
-        assert (isinstance(ex, np.ndarray) and isinstance(ey, np.ndarray)
-                and isinstance(exact_world, np.ndarray))
+        source_world_x = mapping.pop("source_world_x")
+        source_world_y = mapping.pop("source_world_y")
+        assert (isinstance(vx, np.ndarray) and isinstance(vy, np.ndarray)
+                and isinstance(in_source, np.ndarray) and isinstance(exact_world, np.ndarray)
+                and isinstance(source_world_x, np.ndarray)
+                and isinstance(source_world_y, np.ndarray))
+        vrow = vstamp.maps[env]
+        source_width = int(vrow["height_gw"]) * float(vrow["tile"])
+        source_height = int(vrow["height_gh"]) * float(vrow["tile"])
+        source_distance = np.minimum.reduce((source_world_x, source_world_y,
+                                             source_width - source_world_x,
+                                             source_height - source_world_y))
         affected_masks = {
             "passability": pass_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
             "buildability": build_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
         }
         env_report: dict[str, object] = {"mapping": mapping}
         for name, bit in (("passability", 1), ("buildability", 2)):
-            scored, different = compare_bits(vgrids[f"{env}:shipped"], egrids[f"{env}:shipped"],
-                                             ex, ey, affected_masks[name], bit)
-            source_scope = affected_masks[name][ey, ex]
-            vanilla_values = (vgrids[f"{env}:shipped"] & bit) != 0
-            expanded_values = (egrids[f"{env}:shipped"][ey, ex] & bit) != 0
+            scored, different = compare_bits(
+                vgrids[f"{env}:fresh"], egrids[f"{env}:fresh"],
+                vx, vy, in_source, affected_masks[name], bit)
+            source_scope = affected_masks[name]
+            vanilla_values = inverse_expected(
+                vgrids[f"{env}:fresh"], vx, vy, in_source, bit)
+            expanded_values = (egrids[f"{env}:fresh"] & bit) != 0
             exact_outside = exact_world & ~source_scope
             exact_inside = exact_world & source_scope
             scored["exact_world_correspondence"] = {
@@ -941,32 +1133,34 @@ def main(argv: list[str] | None = None) -> int:
                 "outside_zero": int((different & exact_outside).sum()) == 0,
             }
             scored["exact_world_correspondence"]["stock_inputs"] = exact_world_stock_inputs(
-                vstamp, estamp, env, exact_world, different, vanilla_values, expanded_values)
+                vstamp, estamp, env, exact_world, different, vanilla_values, expanded_values,
+                source_distance)
             scored["freshness_inside"] = affected_staleness(
                 vgrids[f"{env}:shipped"], vgrids[f"{env}:fresh"],
                 egrids[f"{env}:shipped"], egrids[f"{env}:fresh"],
-                ex, ey, affected_masks[name], bit)
+                vx, vy, in_source, affected_masks[name], bit)
             env_report[name] = scored
             if not scored["outside_zero"]:
                 failed.append(f"{env}/{name}: {scored['differences_outside']} outside-mask differences")
             if not scored["freshness_inside"]["inside_fresh"]:
                 failed.append(f"{env}/{name}: shipped verdict stale inside affected set")
             dy, dx = np.nonzero(different)
-            scope = affected_masks[name][ey, ex]
-            vvalues = (vgrids[f"{env}:shipped"] & bit) != 0
-            evalues = (egrids[f"{env}:shipped"] & bit) != 0
-            for sy, sx in zip(dy.tolist(), dx.tolist()):
-                esx, esy = int(ex[sy, sx]), int(ey[sy, sx])
-                diff_rows.append([env, name, "inside" if scope[sy, sx] else "outside",
-                                  sx, sy, esx, esy, int(vvalues[sy, sx]), int(evalues[esy, esx]),
-                                  int(scope[sy, sx])])
+            scope = affected_masks[name]
+            for esy, esx in zip(dy.tolist(), dx.tolist()):
+                vsx, vsy = int(vx[esy, esx]), int(vy[esy, esx])
+                diff_rows.append([
+                    env, name, "inside" if scope[esy, esx] else "outside",
+                    vsx, vsy, esx, esy,
+                    int(vanilla_values[esy, esx]), int(expanded_values[esy, esx]),
+                    int(scope[esy, esx]), int(in_source[esy, esx]),
+                ])
         report["maps"][env] = env_report  # type: ignore[index]
 
     args.differences.parent.mkdir(parents=True, exist_ok=True)
     with args.differences.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh, lineterminator="\n")
         writer.writerow(["env", "property", "scope", "van_sx", "van_sy", "exp_sx", "exp_sy",
-                         "van_value", "exp_value", "affected"])
+                         "van_value", "exp_value", "affected", "in_source"])
         writer.writerows(diff_rows)
     report["difference_csv"] = str(args.differences)
     report["difference_rows"] = len(diff_rows)
