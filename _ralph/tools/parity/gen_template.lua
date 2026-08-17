@@ -10,12 +10,15 @@
 -- Two placeholder tokens are substituted by run_parity.py (deliberately not spelled
 -- out here: this comment would itself be substituted).
 
-g_ParityStatus = "initializing"
-g_ParityError = false
-g_ParitySurfaceSeed = false
-g_ParityUndergroundSeed = false
-g_ParityUndergroundPin = false
-g_ParityUndergroundPinApplied = false
+-- The debug build reports ordinary assignment to a previously unknown global as a
+-- Lua error even though it completes the assignment.  Declare the DAP-visible
+-- status cells without tripping that diagnostic; later assignments are ordinary.
+rawset(_G, "g_ParityStatus", "initializing")
+rawset(_G, "g_ParityError", false)
+rawset(_G, "g_ParitySurfaceSeed", false)
+rawset(_G, "g_ParityUndergroundSeed", false)
+rawset(_G, "g_ParityUndergroundPin", false)
+rawset(_G, "g_ParityUndergroundPinApplied", false)
 
 CreateRealTimeThread(function()
 	local ok, err = xpcall(function()
@@ -72,6 +75,34 @@ __TWIN_SEED_BLOCK__
 __UNDERGROUND_PIN_BLOCK__
 
 __EXTRA_SETUP__
+
+		-- Random-map rubble can call Flight:Mark/Unmark while GeneratingMap is true,
+		-- before the stock OnMsg.MapGenerated handler has initialized the flight
+		-- queues.  The stock class defaults are false, so those premature callbacks
+		-- otherwise produce Lua errors.  Ignoring only this pre-init window is neutral:
+		-- Flight_Init subsequently enumerates every attached object into a fresh mark
+		-- queue.  Once all three queues are tables, delegate exactly to the stock method.
+		do
+			local flight = rawget(_G, "Flight")
+			if type(flight) ~= "table" then
+				error("Flight class unavailable; cannot guard pre-init callbacks")
+			end
+			local function ready(self)
+				return type(self.objects_to_mark) == "table"
+					and type(self.objects_to_unmark) == "table"
+					and type(self.marked_objects) == "table"
+			end
+			for _, name in ipairs({ "Mark", "Unmark", "Remark" }) do
+				local original = flight[name]
+				if type(original) ~= "function" then
+					error("Flight:" .. name .. " unavailable; cannot guard pre-init callbacks")
+				end
+				flight[name] = function(self, ...)
+					if not ready(self) then return end
+					return original(self, ...)
+				end
+			end
+		end
 
 		g_ParityStatus = "generating"
 		GenerateCurrentRandomMap()

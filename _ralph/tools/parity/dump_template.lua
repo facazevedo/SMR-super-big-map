@@ -4,9 +4,9 @@
 --
 -- Placeholder substituted by run_parity.py: __OUT_PATH__
 
-g_ParityDumpStatus = "running"
-g_ParityDumpError = false
-g_ParityDumpRows = 0
+rawset(_G, "g_ParityDumpStatus", "running")
+rawset(_G, "g_ParityDumpError", false)
+rawset(_G, "g_ParityDumpRows", 0)
 
 CreateRealTimeThread(function()
 	local ok, err = xpcall(function()

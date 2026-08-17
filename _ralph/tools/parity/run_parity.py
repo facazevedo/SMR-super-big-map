@@ -120,13 +120,13 @@ PASSAGE_PIN_BLOCK = """		do
 			if type(pin_random) ~= "table" or type(pin_random.Random) ~= "function" then
 				error("could not build the dedicated passage-fallback stream")
 			end
-			g_ParityPassagePin = __PIN_SEED__
-			g_ParityPassagePinAround = 0
-			g_ParityPassagePinPassable = 0
+			rawset(_G, "g_ParityPassagePin", __PIN_SEED__)
+			rawset(_G, "g_ParityPassagePinAround", 0)
+			rawset(_G, "g_ParityPassagePinPassable", 0)
 			-- iter-007: record every redirected call so both twins' fallback arguments can be
 			-- compared.  Pure observation on the pinned path (no traceback, no extra draw), so
 			-- the pinned sequence and the dump stay exactly what an unrecorded pinned run gives.
-			g_ParityPassagePinCalls = {}
+			rawset(_G, "g_ParityPassagePinCalls", {})
 
 			local function pin_point_text(p)
 				if p == nil or p == false then return tostring(p) end
@@ -798,12 +798,13 @@ SERIAL_RASTER_BLOCK = """		-- Serialize stock prefab rasterization for this cont
 		do
 			local gen_class = rawget(_G, "RandomMapGenerator")
 			local body = gen_class and gen_class.DoGenerate
+			local getfenv_fn = rawget(_G, "getfenv")
 			local envs, seen = {}, {}
 			local function add(t)
 				if type(t) == "table" and not seen[t] then seen[t] = true; envs[#envs + 1] = t end
 			end
-			if type(body) == "function" and type(getfenv) == "function" then
-				local ok_env, env = pcall(getfenv, body)
+			if type(body) == "function" and type(getfenv_fn) == "function" then
+				local ok_env, env = pcall(getfenv_fn, body)
 				if ok_env and type(env) == "table" then
 					add(rawget(env, "const"))
 					local mt = getmetatable(env)
@@ -813,20 +814,20 @@ SERIAL_RASTER_BLOCK = """		-- Serialize stock prefab rasterization for this cont
 			end
 			add(rawget(_G, "const"))
 			if #envs == 0 then error("no const table reachable to serialize prefab rasterization") end
-			g_ParityRasterTables = #envs
-			g_ParityRasterDivBefore = envs[1].PrefabRasterParallelDiv
+			rawset(_G, "g_ParityRasterTables", #envs)
+			rawset(_G, "g_ParityRasterDivBefore", envs[1].PrefabRasterParallelDiv)
 			for i = 1, #envs do envs[i].PrefabRasterParallelDiv = 1 end
 			-- Verify through the generator's own lookup path, not ours.
 			local check
-			if type(body) == "function" and type(getfenv) == "function" then
-				local ok_env, env = pcall(getfenv, body)
+			if type(body) == "function" and type(getfenv_fn) == "function" then
+				local ok_env, env = pcall(getfenv_fn, body)
 				if ok_env and type(env) == "table" then
 					local ok_c, c = pcall(function() return env.const end)
 					if ok_c and type(c) == "table" then check = c.PrefabRasterParallelDiv end
 				end
 			end
 			check = check or (rawget(_G, "const") or {}).PrefabRasterParallelDiv
-			g_ParityRasterDivAfter = check
+			rawset(_G, "g_ParityRasterDivAfter", check)
 			if check ~= 1 then
 				error("prefab rasterization not serialized in the generator's own environment: "
 					.. tostring(check))

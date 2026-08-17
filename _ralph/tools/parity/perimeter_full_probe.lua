@@ -19,9 +19,9 @@
 -- It is mutating but self-restoring; the host binds the output path, box rows,
 -- and source/engine digests before loading this file.
 
-g_ParityPerimeterFullStatus = "running"
-g_ParityPerimeterFullInfo = false
-g_ParityPerimeterFullError = false
+rawset(_G, "g_ParityPerimeterFullStatus", "running")
+rawset(_G, "g_ParityPerimeterFullInfo", false)
+rawset(_G, "g_ParityPerimeterFullError", false)
 
 CreateRealTimeThread(function()
 	local cleanup = {}
