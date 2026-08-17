@@ -110,7 +110,7 @@ local function record_transition(map, before, after)
 	flush()
 end
 
-function g_ParityPassHashHistorySnapshot()
+rawset(_G, "g_ParityPassHashHistorySnapshot", function()
 	for _, map in ipairs(Maps or empty_table) do
 		local env = env_name(map)
 		if env == "surface" or env == "underground" then
@@ -132,17 +132,17 @@ function g_ParityPassHashHistorySnapshot()
 	end
 	flush()
 	return string.format("events=%d rows=%d out=%s", sequence, #rows, out_path)
-end
+end)
 
-function g_ParityPassHashHistoryRestore()
+rawset(_G, "g_ParityPassHashHistoryRestore", function()
 	if rawget(_G, "g_ParityPassHashHistoryOriginal") then
 		RebuildBuildableGrid = g_ParityPassHashHistoryOriginal
-		g_ParityPassHashHistoryOriginal = nil
+		rawset(_G, "g_ParityPassHashHistoryOriginal", nil)
 	end
 	return true
-end
+end)
 
-g_ParityPassHashHistoryOriginal = original
+rawset(_G, "g_ParityPassHashHistoryOriginal", original)
 RebuildBuildableGrid = function(map, ...)
 	local count = map and tonumber(map.SuperBigMapFinalPassCount)
 	local observe = count and count > (seen_count[map] or 0)
