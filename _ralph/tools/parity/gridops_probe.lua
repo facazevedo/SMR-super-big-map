@@ -51,7 +51,7 @@ CreateRealTimeThread(function()
 		end
 
 		local CAP = 65535
-		local FLOOR = 5000            -- contract: 5 in-game metres for the lowest interior cell
+		local FLOOR = 500             -- authoritative: 5 in-game metres at 100 world units/metre
 		local MUL, DIV = 8192, 6144   -- destination / source tiles; exactly 4/3
 		local BAND_MULT = 1.0 / 3.0   -- base = src_cap - BAND_MULT * (peak - src_cap)
 		local W, H = 192, 192

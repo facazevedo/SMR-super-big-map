@@ -5,7 +5,7 @@ WHAT THIS SCORES.  Every other terrain gate in this workspace takes the map's st
 verifies `post == floor(min(pre,src_cap)*zmul/zdiv) + zadd` cell by cell, so a zadd computed
 by the WRONG RULE would still score green everywhere.  The contract's step 1 fixes that rule:
 
-    shift = min(0, FLOOR - floor(interior_min * 4/3)),  FLOOR = 5000 wu = 5 in-game metres
+    shift = min(0, FLOOR - floor(interior_min * 4/3)),  FLOOR = 500 wu = 5 in-game metres
 
 with `interior_min` measured on the INTERIOR of the SOURCE grid (one cell of border excluded)
 and the `min(0, ...)` clamp making the shift DOWN-ONLY: a map whose scaled interior minimum
@@ -55,7 +55,7 @@ CAP = 65535
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "out")
 PAYLOAD = os.path.abspath(os.path.join(HERE, "..", "..", "..", "Code", "sbm_terrain_copy.lua"))
-CONTRACT_FLOOR = 5000
+CONTRACT_FLOOR = 500
 
 
 def load_grid(path):
