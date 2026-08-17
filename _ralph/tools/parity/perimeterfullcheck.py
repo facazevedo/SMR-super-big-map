@@ -102,6 +102,10 @@ def parse_probe(path: Path) -> dict[str, object]:
         elif parts[0] == "hash":
             row = kv(parts[1:])
             maps.setdefault(row["env"], {})["hashes"] = row
+        elif parts[0] == "passgrid":
+            row = kv(parts[1:])
+            maps.setdefault(row["env"], {}).setdefault("passgrids", {}).setdefault(
+                row["stage"], {})[row["idx"]] = row
         elif parts[0] == "trace":
             result["traces"].append(kv(parts[1:]))  # type: ignore[union-attr]
     return result
@@ -221,6 +225,82 @@ def score_map(
     production_stamp = live.get("production")
     stages = (("production",) + STAGES) if production_stamp else STAGES
     rasters = {stage: load_raw(probe_base, env, stage, gw, gh) for stage in stages}
+
+    passgrid_semantics = None
+    passgrid_rows = live.get("passgrids")
+    if passgrid_rows:
+        expected_stages = ("production", "direct_plus1", "post_rebuild_plus1")
+        stage_rows: dict[str, dict[str, dict[str, str]]] = passgrid_rows  # type: ignore[assignment]
+        if set(stage_rows) != set(expected_stages):
+            raise RuntimeError(f"{env}: incomplete pass-grid stages: {sorted(stage_rows)}")
+        expected_indices = set(stage_rows["production"])
+        if not expected_indices or any(set(stage_rows[stage]) != expected_indices
+                                       for stage in expected_stages):
+            raise RuntimeError(f"{env}: inconsistent pass-grid index sets")
+        grid_reports = []
+        serialized_controls_stable = True
+        production_matches_control = True
+        for idx_text in sorted(expected_indices, key=int):
+            rows_by_stage = {stage: stage_rows[stage][idx_text] for stage in expected_stages}
+            files = {
+                stage: Path(f"{probe_base}-{env}-passgrid{idx_text}-{stage}.grid")
+                for stage in expected_stages
+            }
+            for stage, path in files.items():
+                if not path.is_file():
+                    raise RuntimeError(f"{env}: missing serialized pass grid {path}")
+                expected_bytes = int(rows_by_stage[stage]["bytes"])
+                if path.stat().st_size != expected_bytes:
+                    raise RuntimeError(
+                        f"{env}: {path} expected {expected_bytes} bytes, got {path.stat().st_size}")
+            blobs = {stage: path.read_bytes() for stage, path in files.items()}
+            shas = {
+                stage: hashlib.sha256(blob).hexdigest() for stage, blob in blobs.items()
+            }
+            prod_equal = blobs["production"] == blobs["direct_plus1"]
+            control_equal = blobs["direct_plus1"] == blobs["post_rebuild_plus1"]
+            repeat_equal = all(
+                rows_by_stage[stage]["repeat_equal"] == "true" for stage in expected_stages)
+            serialized_controls_stable &= control_equal and repeat_equal
+            production_matches_control &= prod_equal
+            idx = int(idx_text)
+            grid_reports.append({
+                "index": idx,
+                "stock_name": ("DefaultPass", "DifficultTerrain")[idx]
+                if idx < 2 else f"pass_grid_{idx}",
+                "dimensions": {
+                    "w": int(rows_by_stage["production"]["w"]),
+                    "h": int(rows_by_stage["production"]["h"]),
+                    "bits": int(rows_by_stage["production"]["bits"]),
+                },
+                "ones": {
+                    stage: int(rows_by_stage[stage]["ones"])
+                    if rows_by_stage[stage]["ones"].lstrip("-").isdigit() else None
+                    for stage in expected_stages
+                },
+                "serialized_bytes": {
+                    stage: len(blobs[stage]) for stage in expected_stages
+                },
+                "serialized_sha256": shas,
+                "serialize_repeat_equal": repeat_equal,
+                "production_matches_direct_plus1": prod_equal,
+                "direct_plus1_matches_post_rebuild_plus1": control_equal,
+            })
+        aggregate_hash_equal = hashes["production"] == hashes["direct_plus1"]
+        passgrid_semantics = {
+            "stock_source": "Lua/Config/pathfind.lua:61-69",
+            "hash_source": "CommonLua/Libs/Network/Network.lua:302-306",
+            "exposed_grid_count": len(expected_indices),
+            "grids": grid_reports,
+            "serialization_controls_stable": serialized_controls_stable,
+            "all_production_grids_match_independent_control": production_matches_control,
+            "aggregate_hash_matches_independent_control": aggregate_hash_equal,
+            "aggregate_hash_relation_matches_serialized_grids": (
+                aggregate_hash_equal == production_matches_control),
+            "gate_ok": serialized_controls_stable
+            and production_matches_control
+            and aggregate_hash_equal,
+        }
 
     sy, sx = np.indices((gh, gw), dtype=np.float64)
     live_world = propertycheck.storage_to_world(geometry, sx.ravel(), sy.ravel())
@@ -395,9 +475,11 @@ def score_map(
                 np.count_nonzero(production_residual)),
             "hash_matches_independent_plus1_control": (
                 hashes["production"] == hashes["direct_plus1"]),
+            "passgrid_semantics": passgrid_semantics,
             "gate_ok": (
                 all(stamp_checks.values())
                 and not np.any(production_residual)
+                and (passgrid_semantics is None or passgrid_semantics["gate_ok"])
                 and hashes["production"] == hashes["direct_plus1"]
             ),
         }
@@ -505,7 +587,7 @@ def main() -> int:
             args.box_report.read_text(encoding="utf-8"))["gate_ok"]),
     }
     report = {
-        "schema": "smr.perimeterfullcheck.v4",
+        "schema": "smr.perimeterfullcheck.v5",
         "inputs": {
             "probe_base": str(args.probe_base),
             "box_report": str(args.box_report),

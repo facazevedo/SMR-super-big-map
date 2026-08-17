@@ -10,6 +10,12 @@
 --     -> max-plus-one marker-free stock callback -> repeat
 --     -> marker-free rebuild + post-return direct replay -> repeat -> cleanup
 --
+-- For v5 captures the probe also serializes every engine pass grid at production,
+-- direct-plus-one control, and repeated post-rebuild control.  The property-lattice
+-- snapshots above read only the default IsPassable projection; terrain.HashPassability
+-- covers all pass grids, so the serialized captures distinguish a real secondary-grid
+-- residual from non-content hash state without relaxing the hash gate.
+--
 -- It is mutating but self-restoring; the host binds the output path, box rows,
 -- and source/engine digests before loading this file.
 
@@ -65,8 +71,13 @@ CreateRealTimeThread(function()
 		local tile = (type(const_tbl) == "table" and tonumber(const_tbl.HeightTileSize)) or 100
 		if tile <= 0 then error("invalid height tile") end
 		if type(terrain) ~= "table" or type(terrain.ClearPassabilityBox) ~= "function"
-			or type(terrain.HashPassability) ~= "function" then
+			or type(terrain.HashPassability) ~= "function"
+			or type(terrain.GetPassGridsCount) ~= "function"
+			or type(terrain.GetPassGrid) ~= "function" then
 			error("required stock passability APIs unavailable")
+		end
+		if type(GridWriteStr) ~= "function" or type(xxhash) ~= "function" then
+			error("required pass-grid serialization APIs unavailable")
 		end
 		if type(PlaceObjectIn) ~= "function" then error("PlaceObjectIn unavailable") end
 
@@ -129,6 +140,54 @@ CreateRealTimeThread(function()
 			local ok_h, value = pcall(terrain.HashPassability, map)
 			if not ok_h then error("HashPassability failed: " .. tostring(value)) end
 			return tostring(value)
+		end
+		local passgrid_blobs = {}
+		local function capture_passgrids(map, env, stage)
+			local ok_n, count = pcall(terrain.GetPassGridsCount, map)
+			count = ok_n and tonumber(count) or nil
+			if not count or count < 1 or count > 8 then
+				error(env .. ": invalid pass-grid count " .. tostring(count))
+			end
+			passgrid_blobs[env] = passgrid_blobs[env] or {}
+			local saved = passgrid_blobs[env]
+			for idx = 0, count - 1 do
+				local ok_g, grid = pcall(terrain.GetPassGrid, map, idx)
+				if not ok_g or not grid or not IsGrid(grid) then
+					error(string.format("%s: pass grid %d unavailable: %s",
+						env, idx, tostring(grid)))
+				end
+				local gw, gh = grid:size()
+				local bits = grid:bits()
+				local blob, write_error = GridWriteStr(grid)
+				if write_error or type(blob) ~= "string" then
+					error(string.format("%s: GridWriteStr grid %d failed: %s",
+						env, idx, tostring(write_error)))
+				end
+				local repeat_blob, repeat_error = GridWriteStr(grid)
+				if repeat_error or type(repeat_blob) ~= "string" then
+					error(string.format("%s: repeated GridWriteStr grid %d failed: %s",
+						env, idx, tostring(repeat_error)))
+				end
+				local ones = "unavailable"
+				if type(GridCount) == "function" then
+					local ok_c, value = pcall(GridCount, grid, 0, 1)
+					if ok_c then ones = tostring(value) end
+				end
+				local path = string.format("%s-%s-passgrid%d-%s.grid",
+					out_base, env, idx, stage)
+				local file_error = AsyncStringToFile(path, blob)
+				if file_error then error("write failed " .. path .. ": " .. tostring(file_error)) end
+				local production_blob = saved[idx] and saved[idx].production
+				local direct_blob = saved[idx] and saved[idx].direct_plus1
+				rows[#rows + 1] = string.format(
+					"passgrid,env=%s,stage=%s,idx=%d,count=%d,w=%d,h=%d,bits=%s,ones=%s,bytes=%d,xxhash=%s,repeat_equal=%s,matches_production=%s,matches_direct_plus1=%s",
+					env, stage, idx, count, gw, gh, tostring(bits), ones, #blob,
+					tostring(xxhash(blob)), tostring(blob == repeat_blob),
+					production_blob and tostring(blob == production_blob) or "na",
+					direct_blob and tostring(blob == direct_blob) or "na")
+				saved[idx] = saved[idx] or {}
+				saved[idx][stage] = blob
+			end
 		end
 		local function production_stamp(map, env)
 			local fields = {
@@ -208,6 +267,7 @@ CreateRealTimeThread(function()
 			production_stamp(map, env)
 			local gw, gh = snapshot(map, env, "production")
 			stage_hashes.production = pass_hash(map)
+			capture_passgrids(map, env, "production")
 			rebuild(map)
 			snapshot(map, env, "baseline")
 			calibration(map, env, gw, gh)
@@ -258,6 +318,7 @@ CreateRealTimeThread(function()
 			apply_direct(map, plus1_boxes)
 			snapshot(map, env, "direct_plus1")
 			stage_hashes.direct_plus1 = pass_hash(map)
+			capture_passgrids(map, env, "direct_plus1")
 			rebuild(map)
 			snapshot(map, env, "plus1_bare")
 			stage_hashes.plus1_bare = pass_hash(map)
@@ -278,6 +339,7 @@ CreateRealTimeThread(function()
 			apply_direct(map, plus1_boxes)
 			snapshot(map, env, "post_rebuild_plus1")
 			stage_hashes.post_rebuild_plus1 = pass_hash(map)
+			capture_passgrids(map, env, "post_rebuild_plus1")
 			rebuild(map)
 			apply_direct(map, plus1_boxes)
 			snapshot(map, env, "post_rebuild_plus1_repeat")
