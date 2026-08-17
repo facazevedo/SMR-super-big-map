@@ -28,6 +28,7 @@ STAGES = (
 EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
 RESIDUAL_FIELDS = (
     "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
+    "production",
     "callback1", "marker1", "direct_plus1", "callback_plus1",
     "post_rebuild_plus1", "post_rebuild_plus1_repeat",
     "closed_box_member", "nearest_box_id", "nearest_box_kind",
@@ -95,6 +96,9 @@ def parse_probe(path: Path) -> dict[str, object]:
         elif parts[0] == "snapshot":
             row = kv(parts[1:])
             maps.setdefault(row["env"], {}).setdefault("snapshots", {})[row["stage"]] = row
+        elif parts[0] == "production":
+            row = kv(parts[1:])
+            maps.setdefault(row["env"], {})["production"] = row
         elif parts[0] == "hash":
             row = kv(parts[1:])
             maps.setdefault(row["env"], {})["hashes"] = row
@@ -178,6 +182,7 @@ def enumerate_residuals(
             "wy": int(y),
             "baseline": int(rasters["baseline"][sy, sx]),
             "direct": int(rasters["direct"][sy, sx]),
+            "production": int(rasters.get("production", rasters["baseline"])[sy, sx]),
             "callback1": int(rasters["callback1"][sy, sx]),
             "marker1": int(rasters["marker1"][sy, sx]),
             "direct_plus1": int(rasters["direct_plus1"][sy, sx]),
@@ -213,7 +218,9 @@ def score_map(
     gw, gh = int(meta["gw"]), int(meta["gh"])
     expected_dims = propertycheck.dims(estamp, env)
     geometry = propertycheck.geometry_for(estamp, env)
-    rasters = {stage: load_raw(probe_base, env, stage, gw, gh) for stage in STAGES}
+    production_stamp = live.get("production")
+    stages = (("production",) + STAGES) if production_stamp else STAGES
+    rasters = {stage: load_raw(probe_base, env, stage, gw, gh) for stage in stages}
 
     sy, sx = np.indices((gh, gw), dtype=np.float64)
     live_world = propertycheck.storage_to_world(geometry, sx.ravel(), sy.ravel())
@@ -358,6 +365,43 @@ def score_map(
             hashes["post_rebuild_plus1_repeat"] == hashes["direct_plus1"]),
         "cleanup_restores_hash": hashes["cleanup"] == hashes["baseline"],
     }
+    production_replay = None
+    if production_stamp:
+        production_stamp = dict(production_stamp)
+        stamp_checks = {
+            "version": int(production_stamp["version"]) == 1,
+            "stage_present": production_stamp["stage"] not in ("", "nil", "false", "?"),
+            "apply_count_positive": int(production_stamp["apply_count"]) >= 1,
+            "box_count": int(production_stamp["boxes"]) == len(boxes) == 162,
+            "box_partition": (
+                int(production_stamp["core_boxes"]) == 4
+                and int(production_stamp["fringe_boxes"]) == 158
+                and int(production_stamp["core_boxes"])
+                + int(production_stamp["fringe_boxes"]) == len(boxes)
+            ),
+            "fringe_sites": int(production_stamp["fringe_sites"]) == 236,
+            "orientation": production_stamp["orientation"] == "vertical",
+            "mapped_sites": int(production_stamp["mapped_sites"]) == int(source_border.size),
+            "border_sites": int(production_stamp["border_sites"]) == int(source_border.sum()),
+        }
+        production_residual = rasters["production"] != rasters["direct_plus1"]
+        residuals.extend(enumerate_residuals(
+            env, "production_vs_independent_plus1_control", production_residual,
+            live_world, rasters, full_membership, boxes))
+        production_replay = {
+            "stamp": production_stamp,
+            "stamp_checks": stamp_checks,
+            "raster_differences_from_independent_plus1_control": int(
+                np.count_nonzero(production_residual)),
+            "hash_matches_independent_plus1_control": (
+                hashes["production"] == hashes["direct_plus1"]),
+            "gate_ok": (
+                all(stamp_checks.values())
+                and not np.any(production_residual)
+                and hashes["production"] == hashes["direct_plus1"]
+            ),
+        }
+        checks["production_replay_matches_independent_control"] = production_replay["gate_ok"]
     report = {
         "storage": {"gw": gw, "gh": gh, "cells": gw * gh},
         "boxes": len(boxes),
@@ -415,8 +459,9 @@ def score_map(
             "gate_ok": not np.any(post_rebuild_residual)
             and not np.any(post_rebuild_repeat_residual),
         },
+        "production_replay": production_replay,
         "residual_rows": len(residuals),
-        "hashes": {stage: hashes[stage] for stage in STAGES},
+        "hashes": {stage: hashes[stage] for stage in stages},
         "checks": checks,
         "gate_ok": all(checks.values()),
     }

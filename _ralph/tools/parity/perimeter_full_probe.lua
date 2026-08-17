@@ -3,7 +3,7 @@
 -- The host binds one scenario-independent box list derived by perimetercheck.py.
 -- For both maps this probe preserves complete property-lattice passability rasters:
 --
---   baseline -> direct boxes -> bare rebuild
+--   production -> baseline -> direct boxes -> bare rebuild
 --     -> marker-free stock callback -> repeat -> cleanup
 --     -> real marker rebuild -> repeat -> cleanup
 --     -> max-plus-one direct boxes -> bare rebuild
@@ -130,6 +130,27 @@ CreateRealTimeThread(function()
 			if not ok_h then error("HashPassability failed: " .. tostring(value)) end
 			return tostring(value)
 		end
+		local function production_stamp(map, env)
+			local fields = {
+				{ "version", "SuperBigMapPassBorderReplayVersion" },
+				{ "stage", "SuperBigMapPassBorderReplayStage" },
+				{ "apply_count", "SuperBigMapPassBorderReplayApplyCount" },
+				{ "boxes", "SuperBigMapPassBorderReplayBoxes" },
+				{ "core_boxes", "SuperBigMapPassBorderReplayCoreBoxes" },
+				{ "fringe_boxes", "SuperBigMapPassBorderReplayFringeBoxes" },
+				{ "fringe_sites", "SuperBigMapPassBorderReplayFringeSites" },
+				{ "orientation", "SuperBigMapPassBorderReplayOrientation" },
+				{ "mapped_sites", "SuperBigMapPassBorderReplayMappedSites" },
+				{ "border_sites", "SuperBigMapPassBorderReplayBorderSites" },
+			}
+			local parts = { "production", "env=" .. env }
+			for i = 1, #fields do
+				local item = fields[i]
+				local ok_s, value = pcall(function() return map[item[2]] end)
+				parts[#parts + 1] = item[1] .. "=" .. tostring(ok_s and value or "?")
+			end
+			rows[#rows + 1] = table.concat(parts, ",")
+		end
 		local function apply_direct(map, box_list)
 			for i = 1, #box_list do
 				local ok_c, err_c = pcall(terrain.ClearPassabilityBox, map, box_list[i])
@@ -178,14 +199,17 @@ CreateRealTimeThread(function()
 			local state = { map = map, markers = {}, fakes = {} }
 			cleanup[#cleanup + 1] = state
 			local stage_names = {
-				"baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
+				"production", "baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
 				"marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
 				"callback_plus1", "callback_plus1_repeat",
 				"post_rebuild_plus1", "post_rebuild_plus1_repeat", "cleanup",
 			}
 			local stage_hashes = {}
+			production_stamp(map, env)
+			local gw, gh = snapshot(map, env, "production")
+			stage_hashes.production = pass_hash(map)
 			rebuild(map)
-			local gw, gh = snapshot(map, env, "baseline")
+			snapshot(map, env, "baseline")
 			calibration(map, env, gw, gh)
 			stage_hashes.baseline = pass_hash(map)
 
