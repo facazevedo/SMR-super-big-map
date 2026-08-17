@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import itertools
 import json
 import math
 from pathlib import Path
@@ -18,6 +20,12 @@ import propertycheck
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = HERE / "out"
 STAGES = ("baseline", "direct", "bare", "marker1", "marker2", "cleanup")
+EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
+RESIDUAL_FIELDS = (
+    "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
+    "marker1", "closed_box_member", "nearest_box_id", "nearest_box_kind",
+    "outside_dx", "outside_dy", "outside_chebyshev",
+)
 
 
 def canonical_sha(boxes: list[dict[str, int]]) -> str:
@@ -94,6 +102,85 @@ def load_raw(base: Path, env: str, stage: str, gw: int, gh: int) -> np.ndarray:
     return data.reshape((gh, gw)).astype(bool)
 
 
+def edge_membership(
+    world: np.ndarray,
+    boxes: list[dict[str, int]],
+    open_edges: tuple[bool, bool, bool, bool],
+) -> np.ndarray:
+    """Return box membership under one explicit four-edge convention."""
+    x, y = world
+    minx_open, maxx_open, miny_open, maxy_open = open_edges
+    result = np.zeros(x.shape, dtype=bool)
+    for box in boxes:
+        result |= (
+            ((x > box["minx"]) if minx_open else (x >= box["minx"]))
+            & ((x < box["maxx"]) if maxx_open else (x <= box["maxx"]))
+            & ((y > box["miny"]) if miny_open else (y >= box["miny"]))
+            & ((y < box["maxy"]) if maxy_open else (y <= box["maxy"]))
+        )
+    return result
+
+
+def edge_mode_name(open_edges: tuple[bool, bool, bool, bool]) -> str:
+    return "_".join(
+        f"{edge}_{'open' if is_open else 'closed'}"
+        for edge, is_open in zip(EDGE_NAMES, open_edges)
+    )
+
+
+def nearest_box(
+    x: float,
+    y: float,
+    boxes: list[dict[str, int]],
+) -> tuple[int, float, float, float]:
+    """Return 1-based box id and outside dx/dy/Chebyshev distance."""
+    candidates = []
+    for index, box in enumerate(boxes, 1):
+        dx = max(float(box["minx"]) - x, 0.0, x - float(box["maxx"]))
+        dy = max(float(box["miny"]) - y, 0.0, y - float(box["maxy"]))
+        candidates.append((max(dx, dy), index, dx, dy))
+    distance, index, dx, dy = min(candidates)
+    return index, dx, dy, distance
+
+
+def enumerate_residuals(
+    env: str,
+    comparison: str,
+    differing: np.ndarray,
+    world: np.ndarray,
+    rasters: dict[str, np.ndarray],
+    closed_membership: np.ndarray,
+    boxes: list[dict[str, int]],
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    gh, gw = differing.shape
+    for sy, sx in zip(*np.nonzero(differing)):
+        flat = int(sy) * gw + int(sx)
+        x, y = float(world[0, flat]), float(world[1, flat])
+        box_id, dx, dy, distance = nearest_box(x, y, boxes)
+        rows.append({
+            "env": env,
+            "comparison": comparison,
+            "sx": int(sx),
+            "sy": int(sy),
+            "wx": int(x),
+            "wy": int(y),
+            "baseline": int(rasters["baseline"][sy, sx]),
+            "direct": int(rasters["direct"][sy, sx]),
+            "marker1": int(rasters["marker1"][sy, sx]),
+            "closed_box_member": int(closed_membership[sy, sx]),
+            "nearest_box_id": box_id,
+            "nearest_box_kind": (
+                ("core_left", "core_right", "core_top", "core_bottom")[box_id - 1]
+                if box_id <= 4 else "fringe"
+            ),
+            "outside_dx": int(dx),
+            "outside_dy": int(dy),
+            "outside_chebyshev": int(distance),
+        })
+    return rows
+
+
 def score_map(
     env: str,
     probe: dict[str, object],
@@ -101,7 +188,7 @@ def score_map(
     vstamp: propertycheck.ProbeStamp,
     estamp: propertycheck.ProbeStamp,
     boxes: list[dict[str, int]],
-) -> dict[str, object]:
+) -> tuple[dict[str, object], list[dict[str, object]]]:
     maps: dict[str, dict[str, object]] = probe["maps"]  # type: ignore[assignment]
     live = maps[env]
     meta: dict[str, str] = live["map"]  # type: ignore[assignment]
@@ -115,6 +202,32 @@ def score_map(
     live_world = propertycheck.storage_to_world(geometry, sx.ravel(), sy.ravel())
     full_membership = perimetercheck.box_membership(live_world, boxes).reshape((gh, gw))
     predicted_direct = rasters["baseline"] & ~full_membership
+
+    edge_controls = {}
+    for open_edges in itertools.product((False, True), repeat=4):
+        membership = edge_membership(live_world, boxes, open_edges).reshape((gh, gw))
+        differences = int(np.count_nonzero(
+            rasters["direct"] != (rasters["baseline"] & ~membership)))
+        edge_controls[edge_mode_name(open_edges)] = differences
+    exact_edge_modes = sorted(
+        mode for mode, differences in edge_controls.items() if differences == 0)
+    inferred_edges = (False, True, False, False)
+    inferred_mode = edge_mode_name(inferred_edges)
+
+    # Stock ForcedImpassableMarker:GetArea constructs inclusive editor extents by adding
+    # one world unit to both maxima (CommonLua/Classes/marker.lua:749-762).  Applying that
+    # stock convention to the supplied integer boxes compensates for the observed open
+    # max-X raster edge without reaching another integer property-lattice site.
+    stock_inclusive_boxes = [
+        {**box, "maxx": box["maxx"] + 1, "maxy": box["maxy"] + 1}
+        for box in boxes
+    ]
+    inferred_membership = edge_membership(
+        live_world, boxes, inferred_edges).reshape((gh, gw))
+    inclusive_membership = edge_membership(
+        live_world, stock_inclusive_boxes, inferred_edges).reshape((gh, gw))
+    inclusive_candidate_differences = int(np.count_nonzero(
+        inclusive_membership != full_membership))
 
     mapping = propertycheck.map_sites(vstamp, estamp, env)
     ex = np.asarray(mapping["ex"])
@@ -140,6 +253,16 @@ def score_map(
     mapped_membership_diff = int(np.count_nonzero(mapped_membership != source_border))
     mapped_direct_diff = int(np.count_nonzero(direct_mapped != expected_mapped_direct))
     direct_changes = int(np.count_nonzero(rasters["direct"] != rasters["baseline"]))
+    direct_residual = rasters["direct"] != predicted_direct
+    marker_direct_residual = rasters["marker1"] != rasters["direct"]
+    marker_inside = int(np.count_nonzero(marker_direct_residual & full_membership))
+    marker_outside = int(np.count_nonzero(marker_direct_residual & ~full_membership))
+    residuals = enumerate_residuals(
+        env, "direct_vs_closed_geometry", direct_residual, live_world,
+        rasters, full_membership, boxes)
+    residuals.extend(enumerate_residuals(
+        env, "marker1_vs_direct", marker_direct_residual, live_world,
+        rasters, full_membership, boxes))
     checks = {
         "probe_dimensions_match_preserved_expanded_stamp": (gw, gh) == expected_dims,
         "all_engine_lattice_cells_match_closed_box_prediction": full_prediction_diff == 0,
@@ -155,7 +278,7 @@ def score_map(
         "marker_repeat_is_stable_hash": hashes["marker2"] == hashes["marker1"],
         "cleanup_restores_hash": hashes["cleanup"] == hashes["baseline"],
     }
-    return {
+    report = {
         "storage": {"gw": gw, "gh": gh, "cells": gw * gh},
         "boxes": len(boxes),
         "mapped_sites": int(source_border.size),
@@ -165,10 +288,40 @@ def score_map(
         "full_prediction_differences": full_prediction_diff,
         "mapped_membership_differences": mapped_membership_diff,
         "mapped_direct_differences": mapped_direct_diff,
+        "direct_boundary_model": {
+            "tested_edge_modes": len(edge_controls),
+            "difference_counts": edge_controls,
+            "exact_modes": exact_edge_modes,
+            "unique_exact_mode": exact_edge_modes == [inferred_mode],
+            "inferred_mode": inferred_mode,
+            "inferred_prediction_differences": int(np.count_nonzero(
+                rasters["direct"] != (rasters["baseline"] & ~inferred_membership))),
+            "all_closed_prediction_differences": full_prediction_diff,
+            "stock_inclusive_max_plus_one": {
+                "source": "CommonLua/Classes/marker.lua:749-762",
+                "candidate_membership_differences_from_intended_closed_union":
+                    inclusive_candidate_differences,
+                "model_gate_ok": inclusive_candidate_differences == 0,
+            },
+            "gate_ok": (
+                exact_edge_modes == [inferred_mode]
+                and inclusive_candidate_differences == 0
+            ),
+        },
+        "marker_direct_residual": {
+            "differences": int(np.count_nonzero(marker_direct_residual)),
+            "inside_closed_box_union": marker_inside,
+            "outside_closed_box_union": marker_outside,
+            "all_marker_changes_block": bool(np.all(
+                ~rasters["marker1"][marker_direct_residual])),
+            "requires_separate_live_mechanism_probe": bool(np.any(marker_direct_residual)),
+        },
+        "residual_rows": len(residuals),
         "hashes": {stage: hashes[stage] for stage in STAGES},
         "checks": checks,
         "gate_ok": all(checks.values()),
     }
+    return report, residuals
 
 
 def main() -> int:
@@ -179,6 +332,7 @@ def main() -> int:
     parser.add_argument("--expanded", required=True)
     parser.add_argument("--dump-dir", type=Path, default=DEFAULT_OUT_DIR)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--residuals", type=Path)
     args = parser.parse_args()
 
     boxes, source_sha, engine_sha = load_engine_boxes(args.box_report)
@@ -192,10 +346,12 @@ def main() -> int:
         args.dump_dir / f"property-{args.vanilla}-property.txt")
     estamp = propertycheck.parse_probe_stamp(
         args.dump_dir / f"property-{args.expanded}-property.txt")
-    maps = {
-        env: score_map(env, probe, args.probe_base, vstamp, estamp, boxes)
-        for env in ("surface", "underground")
-    }
+    maps = {}
+    residuals = []
+    for env in ("surface", "underground"):
+        maps[env], env_residuals = score_map(
+            env, probe, args.probe_base, vstamp, estamp, boxes)
+        residuals.extend(env_residuals)
     binding_checks = {
         "source_box_sha_matches": box_meta["source_sha"] == source_sha,
         "engine_box_sha_matches": box_meta["engine_sha"] == engine_sha,
@@ -205,7 +361,7 @@ def main() -> int:
             args.box_report.read_text(encoding="utf-8"))["gate_ok"]),
     }
     report = {
-        "schema": "smr.perimeterfullcheck.v1",
+        "schema": "smr.perimeterfullcheck.v2",
         "inputs": {
             "probe_base": str(args.probe_base),
             "box_report": str(args.box_report),
@@ -221,6 +377,11 @@ def main() -> int:
         "maps": maps,
         "checks": {
             "box_binding": all(binding_checks.values()),
+            "direct_boundary_models": all(
+                maps[env]["direct_boundary_model"]["gate_ok"]
+                for env in ("surface", "underground")),
+            "residuals_fully_enumerated": len(residuals) == sum(
+                maps[env]["residual_rows"] for env in ("surface", "underground")),
             "surface_gate": maps["surface"]["gate_ok"],
             "underground_gate": maps["underground"]["gate_ok"],
         },
@@ -228,6 +389,12 @@ def main() -> int:
     report["gate_ok"] = all(report["checks"].values())
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if args.residuals:
+        args.residuals.parent.mkdir(parents=True, exist_ok=True)
+        with args.residuals.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=RESIDUAL_FIELDS)
+            writer.writeheader()
+            writer.writerows(residuals)
     print(json.dumps(report, indent=2))
     return 0 if report["gate_ok"] else 1
 
