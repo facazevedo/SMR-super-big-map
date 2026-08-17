@@ -8,6 +8,7 @@ import json
 import math
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -30,6 +31,13 @@ def main() -> int:
         raise SystemExit("lua interpreter unavailable")
     module = PROJECT / "Code" / "sbm_pass_border.lua"
     stub = HERE / "passborderderive_stub.lua"
+    source_text = module.read_text(encoding="utf-8")
+    promotion_sites = [
+        "(expanded_gw * source_w + 0.0) / desired_w",
+        "(expanded_gh * source_h + 0.0) / desired_h",
+        "(desired_w + 0.0) / source_w",
+        "(desired_h + 0.0) / source_h",
+    ]
     run = subprocess.run(
         [lua, str(stub), str(module)], text=True, capture_output=True, check=False)
     if run.returncode != 0:
@@ -39,7 +47,13 @@ def main() -> int:
         raise SystemExit("production Lua derivation emitted no stats")
     actual_stats = fields(lines[0])
     actual_boxes = []
+    idiv_control = None
     for line in lines[1:]:
+        if line.startswith("idiv_control,"):
+            if idiv_control is not None:
+                raise SystemExit("production Lua derivation emitted duplicate idiv controls")
+            idiv_control = fields(line)
+            continue
         if not line.startswith("box,"):
             raise SystemExit(f"unexpected Lua output: {line}")
         row = fields(line)
@@ -74,7 +88,44 @@ def main() -> int:
         key: actual_stats.get(key) == expected
         for key, expected in expected_stats.items()
     }
-    source_text = module.read_text(encoding="utf-8")
+    expected_idiv_control = {
+        "promotions": "4",
+        "unpromoted_source_gw": "615",
+        "unpromoted_source_gh": "709",
+        "promoted_source_gw": "615",
+        "promoted_source_gh": "710",
+        "unpromoted_scale": "1.000000",
+        "promoted_scale": "1.333333",
+    }
+    idiv_checks = {
+        key: idiv_control is not None and idiv_control.get(key) == expected
+        for key, expected in expected_idiv_control.items()
+    }
+    missing_promotion_controls = []
+    temp_root = PROJECT / "_ralph" / "tmp"
+    with tempfile.TemporaryDirectory(
+            prefix=".tmp_fzp_passborderderive_", dir=temp_root) as temp_dir:
+        for index, promotion in enumerate(promotion_sites, start=1):
+            occurrence_count = source_text.count(promotion)
+            demoted_source = source_text.replace(
+                promotion, promotion.replace(" + 0.0", ""), 1)
+            demoted_module = Path(temp_dir) / f"sbm_pass_border_missing_{index}.lua"
+            demoted_module.write_text(demoted_source, encoding="utf-8")
+            control_run = subprocess.run(
+                [lua, str(stub), str(demoted_module)],
+                text=True, capture_output=True, check=False)
+            diagnostic = control_run.stdout + control_run.stderr
+            missing_promotion_controls.append({
+                "site": promotion,
+                "source_occurrences": occurrence_count,
+                "returncode": control_run.returncode,
+                "rejected": control_run.returncode != 0
+                and "lacks explicit float promotion" in diagnostic,
+            })
+    missing_promotion_controls_ok = all(
+        row["source_occurrences"] == 1 and row["rejected"]
+        for row in missing_promotion_controls
+    )
     forbidden_literals = ["136000", "683500", "33S163E", "5907906148490074980", "t97"]
     literal_hits = [literal for literal in forbidden_literals if literal in source_text]
     first_difference = None
@@ -86,10 +137,12 @@ def main() -> int:
         len(actual_boxes) == len(expected_boxes)
         and first_difference is None
         and all(stat_checks.values())
+        and all(idiv_checks.values())
+        and missing_promotion_controls_ok
         and not literal_hits
     )
     result = {
-        "schema": "smr.passborderderivecheck.v1",
+        "schema": "smr.passborderderivecheck.v2",
         "gate_ok": gate_ok,
         "production_module": str(module),
         "preserved_report": str(args.report.resolve()),
@@ -101,6 +154,10 @@ def main() -> int:
         "first_box_difference": first_difference,
         "stat_checks": stat_checks,
         "actual_stats": actual_stats,
+        "integer_division_control_checks": idiv_checks,
+        "integer_division_control": idiv_control,
+        "missing_promotion_controls_ok": missing_promotion_controls_ok,
+        "missing_promotion_controls": missing_promotion_controls,
         "forbidden_coordinate_or_scenario_literals": literal_hits,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -110,8 +110,8 @@ local function source_context(map)
 		error("expanded property lattice dimensions are invalid")
 	end
 	expanded_gw, expanded_gh = math.floor(expanded_gw), math.floor(expanded_gh)
-	local source_gw = round_nonnegative(expanded_gw * source_w / desired_w)
-	local source_gh = round_nonnegative(expanded_gh * source_h / desired_h)
+	local source_gw = round_nonnegative((expanded_gw * source_w + 0.0) / desired_w)
+	local source_gh = round_nonnegative((expanded_gh * source_h + 0.0) / desired_h)
 	if source_gw <= 0 or source_gh <= 0
 		or source_gw > expanded_gw or source_gh > expanded_gh then
 		error("derived source property lattice dimensions are invalid")
@@ -159,7 +159,8 @@ local function source_context(map)
 		expanded_gw = expanded_gw, expanded_gh = expanded_gh,
 		source_gw = source_gw, source_gh = source_gh,
 		source_world_w = source_w * tile, source_world_h = source_h * tile,
-		scale_x = desired_w / source_w, scale_y = desired_h / source_h,
+		scale_x = (desired_w + 0.0) / source_w,
+		scale_y = (desired_h + 0.0) / source_h,
 		border = original_border,
 		storage_to_world = storage_to_world,
 		world_to_storage = world_to_storage,
