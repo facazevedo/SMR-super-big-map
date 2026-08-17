@@ -10656,33 +10656,10 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	if not pass_ok then
 		error("final " .. label .. " passability rebuild failed: " .. tostring(pass_err))
 	end
-	-- PassBorder must remain zero on the expanded map for placement bounds, but the
-	-- corresponding vanilla property sites still need the exact stock impassable-border
-	-- verdict.  A scalar 4/3 border cannot express that set on the staggered lattice.
-	-- Apply the exhaustively validated, live-derived arbitrary-box union only after the
-	-- rebuild returns: the stock OnPassabilityRebuilding callback is too early and was
-	-- measured to add 32 incorrect surface cells.
-	local border_replay = SuperBigMap.PassBorderReplay
-	if cfg_bool("STRETCH_VANILLA_EXACT_PASSBORDER", false) then
-		if type(border_replay) ~= "table" or type(border_replay.Apply) ~= "function" then
-			error("final " .. label .. " exact pass-border replay is unavailable")
-		end
-		local border_started = GetPreciseTicks()
-		local border_token = LoadingBegin(label .. " exact pass-border replay (" .. stage .. ")", map)
-		local border_ok, applied, count_or_error, border_stats = pcall(border_replay.Apply, map, stage)
-		local replay_ok = border_ok and applied == true
-		LoadingEnd(border_token, {
-			error = replay_ok and "" or tostring(border_ok and count_or_error or applied),
-			boxes = replay_ok and count_or_error or 0,
-			orientation = replay_ok and type(border_stats) == "table"
-				and border_stats.orientation or "",
-		}, replay_ok)
-		map.SuperBigMapPassBorderReplayMs = GetPreciseTicks() - border_started
-		if not replay_ok then
-			error("final " .. label .. " exact pass-border replay failed: "
-				.. tostring(border_ok and count_or_error or applied))
-		end
-	end
+	-- The stock rebuild is the authoritative final terrain-property verdict. PassBorder
+	-- remains zero for full-map placement bounds; do not replay source-border overrides
+	-- afterward, because that would leave shipped passability different from a fresh
+	-- stock rebuild of the same final terrain.
 	map.SuperBigMapFinalPassHashAfter = pass_hash()
 	local rebuild_buildable = Global("RebuildBuildableGrid")
 	if type(rebuild_buildable) ~= "function" then
