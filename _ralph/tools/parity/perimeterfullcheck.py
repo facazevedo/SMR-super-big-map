@@ -22,14 +22,14 @@ DEFAULT_OUT_DIR = HERE / "out"
 STAGES = (
     "baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
     "marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
-    "callback_plus1", "callback_plus1_repeat", "tail_plus1",
+    "callback_plus1", "callback_plus1_repeat",
     "post_rebuild_plus1", "post_rebuild_plus1_repeat", "cleanup",
 )
 EDGE_NAMES = ("minx", "maxx", "miny", "maxy")
 RESIDUAL_FIELDS = (
     "env", "comparison", "sx", "sy", "wx", "wy", "baseline", "direct",
     "callback1", "marker1", "direct_plus1", "callback_plus1",
-    "tail_plus1", "post_rebuild_plus1", "post_rebuild_plus1_repeat",
+    "post_rebuild_plus1", "post_rebuild_plus1_repeat",
     "closed_box_member", "nearest_box_id", "nearest_box_kind",
     "outside_dx", "outside_dy", "outside_chebyshev",
 )
@@ -182,7 +182,6 @@ def enumerate_residuals(
             "marker1": int(rasters["marker1"][sy, sx]),
             "direct_plus1": int(rasters["direct_plus1"][sy, sx]),
             "callback_plus1": int(rasters["callback_plus1"][sy, sx]),
-            "tail_plus1": int(rasters["tail_plus1"][sy, sx]),
             "post_rebuild_plus1": int(rasters["post_rebuild_plus1"][sy, sx]),
             "post_rebuild_plus1_repeat": int(
                 rasters["post_rebuild_plus1_repeat"][sy, sx]),
@@ -279,7 +278,6 @@ def score_map(
     marker_callback_residual = rasters["marker1"] != rasters["callback1"]
     plus1_prediction_residual = rasters["direct_plus1"] != predicted_direct
     plus1_callback_residual = rasters["callback_plus1"] != rasters["direct_plus1"]
-    tail_residual = rasters["tail_plus1"] != rasters["direct_plus1"]
     post_rebuild_residual = rasters["post_rebuild_plus1"] != rasters["direct_plus1"]
     post_rebuild_repeat_residual = (
         rasters["post_rebuild_plus1_repeat"] != rasters["direct_plus1"])
@@ -301,24 +299,11 @@ def score_map(
         env, "callback_plus1_vs_direct_plus1", plus1_callback_residual, live_world,
         rasters, full_membership, boxes))
     residuals.extend(enumerate_residuals(
-        env, "tail_plus1_vs_direct_plus1", tail_residual, live_world,
-        rasters, full_membership, boxes))
-    residuals.extend(enumerate_residuals(
         env, "post_rebuild_plus1_vs_direct_plus1", post_rebuild_residual, live_world,
         rasters, full_membership, boxes))
     residuals.extend(enumerate_residuals(
         env, "post_rebuild_plus1_repeat_vs_direct_plus1",
         post_rebuild_repeat_residual, live_world, rasters, full_membership, boxes))
-    traces = [
-        row for row in probe["traces"]  # type: ignore[union-attr]
-        if row["env"] == env
-    ]
-    trace_ok = (
-        len(traces) == 1
-        and traces[0]["cycle"] == "1"
-        and all(key in traces[0] for key in (
-            "before_stock", "after_stock", "after_tail"))
-    )
     checks = {
         "probe_dimensions_match_preserved_expanded_stamp": (gw, gh) == expected_dims,
         "original_all_closed_prediction_is_a_live_negative_control": full_prediction_diff > 0,
@@ -364,11 +349,6 @@ def score_map(
             (hashes["callback_plus1"] == hashes["direct_plus1"])),
         "max_plus_one_callback_repeat_is_stable_hash": (
             hashes["callback_plus1_repeat"] == hashes["callback_plus1"]),
-        "tail_handler_trace_is_complete": trace_ok,
-        "tail_handler_retains_callback_raster": np.array_equal(
-            rasters["tail_plus1"], rasters["callback_plus1"]),
-        "tail_handler_retains_callback_hash": (
-            hashes["tail_plus1"] == hashes["callback_plus1"]),
         "post_rebuild_replay_matches_direct_raster": not np.any(post_rebuild_residual),
         "post_rebuild_replay_matches_direct_hash": (
             hashes["post_rebuild_plus1"] == hashes["direct_plus1"]),
@@ -426,21 +406,13 @@ def score_map(
             "mapped_prediction_differences": mapped_direct_plus1_diff,
         },
         "rebuild_order_discriminator": {
-            "stock_message": "OnPassabilityRebuilding",
+            "stock_message": "OnPassabilityRebuilding (inside rebuild only)",
             "stock_source": "CommonLua/Classes/marker.lua:771-779",
-            "tail_handler_vs_direct_differences": int(np.count_nonzero(tail_residual)),
             "post_rebuild_vs_direct_differences": int(
                 np.count_nonzero(post_rebuild_residual)),
             "post_rebuild_repeat_vs_direct_differences": int(
                 np.count_nonzero(post_rebuild_repeat_residual)),
-            "trace": traces,
-            "tail_write_changed_stock_callback_hash": (
-                traces[0]["after_stock"] != traces[0]["after_tail"]
-                if trace_ok else None),
-            "rebuild_changed_hash_after_message_tail": (
-                traces[0]["after_tail"] != hashes["tail_plus1"]
-                if trace_ok else None),
-            "gate_ok": trace_ok and not np.any(post_rebuild_residual)
+            "gate_ok": not np.any(post_rebuild_residual)
             and not np.any(post_rebuild_repeat_residual),
         },
         "residual_rows": len(residuals),

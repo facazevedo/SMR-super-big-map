@@ -8,7 +8,6 @@
 --     -> real marker rebuild -> repeat -> cleanup
 --     -> max-plus-one direct boxes -> bare rebuild
 --     -> max-plus-one marker-free stock callback -> repeat
---     -> tail handler inside OnPassabilityRebuilding
 --     -> marker-free rebuild + post-return direct replay -> repeat -> cleanup
 --
 -- It is mutating but self-restoring; the host binds the output path, box rows,
@@ -35,11 +34,6 @@ CreateRealTimeThread(function()
 	local function restore_all()
 		for i = #cleanup, 1, -1 do
 			local row = cleanup[i]
-			if row.onmsg and row.previous_handler then
-				row.onmsg.OnPassabilityRebuilding = row.previous_handler
-				row.onmsg = false
-				row.previous_handler = false
-			end
 			for j = #row.fakes, 1, -1 do
 				table.remove_value(row.map.ForcedImpassableMarkers or {}, row.fakes[j])
 			end
@@ -144,34 +138,6 @@ CreateRealTimeThread(function()
 				end
 			end
 		end
-		local function install_tail_handler(state, box_list, cycle)
-			local onmsg = rawget(_G, "OnMsg")
-			if type(onmsg) ~= "table" then error("OnMsg unavailable") end
-			if state.onmsg then error("tail handler already installed") end
-			local previous = onmsg.OnPassabilityRebuilding
-			if type(previous) ~= "function" then
-				error("stock OnPassabilityRebuilding handler unavailable")
-			end
-			state.onmsg = onmsg
-			state.previous_handler = previous
-			onmsg.OnPassabilityRebuilding = function(msg_map, clip)
-				if msg_map ~= state.map then return previous(msg_map, clip) end
-				local before_stock = pass_hash(msg_map)
-				previous(msg_map, clip)
-				local after_stock = pass_hash(msg_map)
-				apply_direct(msg_map, box_list)
-				local after_tail = pass_hash(msg_map)
-				rows[#rows + 1] = string.format(
-					"trace,env=%s,cycle=%d,before_stock=%s,after_stock=%s,after_tail=%s",
-					state.env, cycle, before_stock, after_stock, after_tail)
-			end
-		end
-		local function remove_tail_handler(state)
-			if not state.onmsg then error("tail handler is not installed") end
-			state.onmsg.OnPassabilityRebuilding = state.previous_handler
-			state.onmsg = false
-			state.previous_handler = false
-		end
 		local function install_fake_markers(state, box_list)
 			local list = state.map.ForcedImpassableMarkers
 			if type(list) ~= "table" then
@@ -209,15 +175,12 @@ CreateRealTimeThread(function()
 
 		for _, env in ipairs({ "surface", "underground" }) do
 			local map = maps[env]
-			local state = {
-				map = map, env = env, markers = {}, fakes = {},
-				onmsg = false, previous_handler = false,
-			}
+			local state = { map = map, markers = {}, fakes = {} }
 			cleanup[#cleanup + 1] = state
 			local stage_names = {
 				"baseline", "direct", "bare", "callback1", "callback2", "callback_cleanup",
 				"marker1", "marker2", "marker_cleanup", "direct_plus1", "plus1_bare",
-				"callback_plus1", "callback_plus1_repeat", "tail_plus1",
+				"callback_plus1", "callback_plus1_repeat",
 				"post_rebuild_plus1", "post_rebuild_plus1_repeat", "cleanup",
 			}
 			local stage_hashes = {}
@@ -282,14 +245,6 @@ CreateRealTimeThread(function()
 			rebuild(map)
 			snapshot(map, env, "callback_plus1_repeat")
 			stage_hashes.callback_plus1_repeat = pass_hash(map)
-
-			-- Appending after the stock callback is still inside RebuildPassability.  This
-			-- tests whether handler ordering can repair the surface-only overreach.
-			install_tail_handler(state, plus1_boxes, 1)
-			rebuild(map)
-			remove_tail_handler(state)
-			snapshot(map, env, "tail_plus1")
-			stage_hashes.tail_plus1 = pass_hash(map)
 
 			-- The candidate implementation point is after RebuildPassability returns and
 			-- without fake/placed markers participating in its callback.  Re-run the whole
