@@ -203,16 +203,33 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str) -> dict[str, np.ndarra
         fail(f"{env}: mapping is not one-to-one ({unique}/{vgw * vgh} unique)")
 
     rounded_world = storage_to_world(egeometry, target[0], target[1])
-    residual = np.linalg.norm(rounded_world - world * scale, axis=0)
+    displacement = rounded_world - world * scale
+    residual = np.linalg.norm(displacement, axis=0)
+    exact_world = residual <= 1e-9
+    vectors, vector_counts = np.unique(
+        np.round(displacement.T, decimals=9), axis=0, return_counts=True)
+    residual_classes = [
+        {
+            "dx": float(vector[0]),
+            "dy": float(vector[1]),
+            "distance": float(np.linalg.norm(vector)),
+            "sites": int(count),
+        }
+        for vector, count in zip(vectors, vector_counts)
+    ]
     return {
         "ex": ex,
         "ey": ey,
+        "exact_world": exact_world.reshape((vgh, vgw)),
         "scale": scale,
         "sites": vgw * vgh,
         "expanded_unmapped": egw * egh - unique,
         "geometry": "alternating_row_parity",
         "vanilla_calibration_max_error": vgeometry.calibration_max_error,
         "expanded_calibration_max_error": egeometry.calibration_max_error,
+        "exact_world_sites": int(exact_world.sum()),
+        "noncoincident_sites": int((~exact_world).sum()),
+        "residual_classes": residual_classes,
         "max_world_rounding_residual": float(residual.max(initial=0.0)),
         "p99_world_rounding_residual": float(np.percentile(residual, 99)) if residual.size else 0.0,
     }
@@ -616,7 +633,9 @@ def synthetic_controls() -> dict[str, object]:
     mapping = map_sites(vstamp, estamp, "surface")
     mapped_x = mapping["ex"]
     mapped_y = mapping["ey"]
-    assert isinstance(mapped_x, np.ndarray) and isinstance(mapped_y, np.ndarray)
+    exact_world = mapping["exact_world"]
+    assert (isinstance(mapped_x, np.ndarray) and isinstance(mapped_y, np.ndarray)
+            and isinstance(exact_world, np.ndarray))
     src_y, src_x = np.indices((18, 15), dtype=np.float64)
     old_affine_x = round_storage(src_x * (4.0 / 3.0))
     parity_discriminator = int((old_affine_x != mapped_x).sum())
@@ -680,6 +699,8 @@ def synthetic_controls() -> dict[str, object]:
             int(mapped_x[1, 1]) == 2 and int(mapped_y[1, 1]) == 1),
         "even_row_twin_mapping_is_parity_aware": (
             int(mapped_x[2, 2]) == 2 and int(mapped_y[2, 2]) == 3),
+        "exact_world_sublattice_is_detected": int(exact_world.sum()) == 30,
+        "noncoincident_residual_classes_are_detected": len(mapping["residual_classes"]) == 9,
         "phase_kernel_cross_replays_across_row_parity": phase_replay == {(6, 5)},
         "phase_kernel_mismatch_is_rejected": phase_replay != {(7, 5)},
         "phase_index_selects_matching_footprint": (
@@ -810,7 +831,9 @@ def main(argv: list[str] | None = None) -> int:
     for env in ("surface", "underground"):
         mapping = map_sites(vstamp, estamp, env)
         ex, ey = mapping.pop("ex"), mapping.pop("ey")
-        assert isinstance(ex, np.ndarray) and isinstance(ey, np.ndarray)
+        exact_world = mapping.pop("exact_world")
+        assert (isinstance(ex, np.ndarray) and isinstance(ey, np.ndarray)
+                and isinstance(exact_world, np.ndarray))
         affected_masks = {
             "passability": pass_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
             "buildability": build_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
@@ -819,6 +842,24 @@ def main(argv: list[str] | None = None) -> int:
         for name, bit in (("passability", 1), ("buildability", 2)):
             scored, different = compare_bits(vgrids[f"{env}:shipped"], egrids[f"{env}:shipped"],
                                              ex, ey, affected_masks[name], bit)
+            source_scope = affected_masks[name][ey, ex]
+            vanilla_values = (vgrids[f"{env}:shipped"] & bit) != 0
+            expanded_values = (egrids[f"{env}:shipped"][ey, ex] & bit) != 0
+            exact_outside = exact_world & ~source_scope
+            exact_inside = exact_world & source_scope
+            scored["exact_world_correspondence"] = {
+                "sites": int(exact_world.sum()),
+                "outside_sites": int(exact_outside.sum()),
+                "inside_sites": int(exact_inside.sum()),
+                "differences": int((different & exact_world).sum()),
+                "differences_outside": int((different & exact_outside).sum()),
+                "differences_inside": int((different & exact_inside).sum()),
+                "outside_false_to_true": int(
+                    (~vanilla_values & expanded_values & exact_outside).sum()),
+                "outside_true_to_false": int(
+                    (vanilla_values & ~expanded_values & exact_outside).sum()),
+                "outside_zero": int((different & exact_outside).sum()) == 0,
+            }
             scored["freshness_inside"] = affected_staleness(
                 vgrids[f"{env}:shipped"], vgrids[f"{env}:fresh"],
                 egrids[f"{env}:shipped"], egrids[f"{env}:fresh"],
