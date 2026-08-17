@@ -22,8 +22,8 @@ stamp cannot satisfy the current ruling.
 
 Typical use::
 
-  python propertycheck.py --vanilla t100a --expanded t100x \
-    --out artifacts/property_t100.json --differences artifacts/property_t100.csv
+  python propertycheck.py --vanilla vanilla_tag --expanded expanded_tag \
+    --out artifacts/property_case.json --differences artifacts/property_case.csv
 
 Run ``--self-test`` before live use.  It injects one outside-mask pass difference,
 one outside-mask build difference, and one stale in-mask verdict and requires the
