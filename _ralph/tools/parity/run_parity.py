@@ -34,6 +34,7 @@ GAME_DIR = Path(r"C:\Games\Surviving Mars Relaunched")
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 GEN_TEMPLATE = HERE / "gen_template.lua"
+FLIGHT_SANITATION = HERE / "flight_sanitation.lua"
 DUMP_TEMPLATE = HERE / "dump_template.lua"
 HEXGRID_TEMPLATE = HERE / "hexgrid_template.lua"
 SAVE_TEMPLATE = HERE / "save_template.lua"
@@ -4511,6 +4512,9 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         csv_path.unlink()
 
     gen_src = GEN_TEMPLATE.read_text(encoding="utf-8")
+    gen_src = gen_src.replace(
+        "__FLIGHT_SANITATION__", FLIGHT_SANITATION.read_text(encoding="utf-8").rstrip()
+    )
     gen_src = gen_src.replace("__EXPAND__", "true" if expand else "false")
     gen_src = gen_src.replace("__LAT__", str(int(lat)))
     gen_src = gen_src.replace("__LON__", str(int(lon)))

@@ -76,33 +76,7 @@ __UNDERGROUND_PIN_BLOCK__
 
 __EXTRA_SETUP__
 
-		-- Random-map rubble can call Flight:Mark/Unmark while GeneratingMap is true,
-		-- before the stock OnMsg.MapGenerated handler has initialized the flight
-		-- queues.  The stock class defaults are false, so those premature callbacks
-		-- otherwise produce Lua errors.  Ignoring only this pre-init window is neutral:
-		-- Flight_Init subsequently enumerates every attached object into a fresh mark
-		-- queue.  Once all three queues are tables, delegate exactly to the stock method.
-		do
-			local flight = rawget(_G, "Flight")
-			if type(flight) ~= "table" then
-				error("Flight class unavailable; cannot guard pre-init callbacks")
-			end
-			local function ready(self)
-				return type(self.objects_to_mark) == "table"
-					and type(self.objects_to_unmark) == "table"
-					and type(self.marked_objects) == "table"
-			end
-			for _, name in ipairs({ "Mark", "Unmark", "Remark" }) do
-				local original = flight[name]
-				if type(original) ~= "function" then
-					error("Flight:" .. name .. " unavailable; cannot guard pre-init callbacks")
-				end
-				flight[name] = function(self, ...)
-					if not ready(self) then return end
-					return original(self, ...)
-				end
-			end
-		end
+		__FLIGHT_SANITATION__
 
 		g_ParityStatus = "generating"
 		GenerateCurrentRandomMap()
