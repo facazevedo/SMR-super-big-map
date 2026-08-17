@@ -232,6 +232,8 @@ def replay_cells(geometry: HexGeometry, source: dict[str, object],
     source_node = np.asarray(source["node_world"], dtype=np.float64)
     target_node = np.asarray(target["node_world"], dtype=np.float64)
     rows = source[key]
+    if not rows:
+        return set()
     storage = np.asarray([[row["sx"], row["sy"]] for row in rows], dtype=np.int64)
     observed_world = storage_to_world(geometry, storage[:, 0], storage[:, 1]).T
     offsets = observed_world - source_node[None, :]
@@ -324,6 +326,17 @@ def validate_probe_controls(out_dir: Path, tag: str, stamp: ProbeStamp,
         "phase_count": len(controls),
         "cross_replays": len(cross_checks),
     }
+
+
+def compact_controls(control: dict[str, object]) -> dict[str, object]:
+    compact = {key: value for key, value in control.items()
+               if key not in {"controls", "anchor"}}
+    compact["controls"] = [
+        {key: value for key, value in item.items()
+         if key not in {"rows", "pass_rows", "build_rows"}}
+        for item in control["controls"]  # type: ignore[index,union-attr]
+    ]
+    return compact
 
 
 def load_probe_grids(out_dir: Path, tag: str, stamp: ProbeStamp) -> dict[str, np.ndarray]:
@@ -586,6 +599,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--vanilla", default="")
     ap.add_argument("--expanded", default="")
+    ap.add_argument("--probe-tag", default="")
     ap.add_argument("--out-dir", type=Path, default=DEFAULT_OUT_DIR)
     ap.add_argument("--pre", type=Path, default=None)
     ap.add_argument("--post", type=Path, default=None)
@@ -604,6 +618,35 @@ def main(argv: list[str] | None = None) -> int:
             args.out.write_text(rendered, encoding="utf-8")
         print(rendered, end="")
         return 0 if self_test["ok"] else 1
+    if args.probe_tag:
+        if args.out is None:
+            fail("single-tag probe validation needs --out")
+        tag = args.probe_tag
+        stamp = parse_probe_stamp(args.out_dir / f"property-{tag}-property.txt")
+        grids = load_probe_grids(args.out_dir, tag, stamp)
+        control = validate_probe_controls(args.out_dir, tag, stamp, grids)
+        freshness = freshness_report(grids)
+        stable = all(bool(row["stable"]) for row in freshness.values())
+        gate_ok = bool(self_test["ok"] and control["ok"] and stable)
+        payload = {
+            "schema": "smr.propertycheck.probe.v3",
+            "tag": tag,
+            "gate_ok": gate_ok,
+            "failed_checks": ([] if gate_ok else [
+                name for name, ok in (
+                    ("synthetic_controls", self_test["ok"]),
+                    ("live_phase_controls", control["ok"]),
+                    ("fresh_repeat_restore", stable),
+                ) if not ok]),
+            "self_test": self_test,
+            "probe_controls": compact_controls(control),
+            "freshness": freshness,
+        }
+        rendered = json.dumps(payload, indent=2) + "\n"
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(rendered, encoding="utf-8")
+        print(rendered, end="")
+        return 0 if gate_ok else 1
     if not args.vanilla or not args.expanded or args.out is None or args.differences is None:
         fail("live scoring needs --vanilla, --expanded, --out, and --differences")
 
@@ -623,16 +666,6 @@ def main(argv: list[str] | None = None) -> int:
         normalised, estamp, "surface", econtrol["anchor"], "passability")
     build_affected, build_foot = footprint_mask(
         normalised, estamp, "surface", econtrol["anchor"], "buildability")
-
-    def compact_controls(control: dict[str, object]) -> dict[str, object]:
-        compact = {key: value for key, value in control.items()
-                   if key not in {"controls", "anchor"}}
-        compact["controls"] = [
-            {key: value for key, value in item.items()
-             if key not in {"rows", "pass_rows", "build_rows"}}
-            for item in control["controls"]  # type: ignore[index,union-attr]
-        ]
-        return compact
 
     report: dict[str, object] = {
         "schema": "smr.propertycheck.v3",
