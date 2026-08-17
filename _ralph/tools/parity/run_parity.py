@@ -3687,7 +3687,7 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_writer_probe=False, pass_own_probe=False, pass_ablate_probe=False,
                     pass_imprint_probe=False, pass_move_probe=False, pass_class_probe=False,
                     pass_vis_probe=False, pass_fix_probe=False, build_probe=False,
-                    property_probe=False):
+                    property_probe=False, perimeter_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
 
     Shared by the generated twins and by the save-roundtrip loader so a post-load recount is
@@ -3783,6 +3783,37 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     if st == "error":
                         _, e = cli.marshal_value(client, "g_ParityBuildError", timeout=60.0)
                         log(f"  buildable probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if perimeter_probe:
+        # MUTATING, SELF-RESTORING, and intended to run alone. It derives a
+        # two-box union from each live map, compares direct ClearPassabilityBox
+        # with the stock ForcedImpassableMarker rebuild hook, repeats, and cleans up.
+        probe_src = (HERE / "perimeter_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace(
+            "__OUT_PATH__", cli.lua_path(OUT / f"perimeter-{tag}.csv"))
+        probe_path = OUT / f"perimeterprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  perimeter probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPerimeterStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(
+                            client, "g_ParityPerimeterInfo", timeout=60.0)
+                        log(f"  perimeter probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(
+                            client, "g_ParityPerimeterError", timeout=60.0)
+                        log(f"  perimeter probe error: {e}")
                         break
                 except dap.DapTimeout:
                     pass
@@ -4425,7 +4456,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
-             build_probe=False, property_probe=False):
+             build_probe=False, property_probe=False, perimeter_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4853,7 +4884,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             pass_imprint_probe=pass_imprint_probe, pass_move_probe=pass_move_probe,
             pass_class_probe=pass_class_probe, pass_vis_probe=pass_vis_probe,
             pass_fix_probe=pass_fix_probe, build_probe=build_probe,
-            property_probe=property_probe)
+            property_probe=property_probe, perimeter_probe=perimeter_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
                            ("g_ParityRasterDivBefore", "raster div before"),
                            ("g_ParityRasterDivAfter", "raster div seen by generator")):
@@ -4957,6 +4988,7 @@ def main():
         passfix = "passfix" in sys.argv[5:]
         buildableprobe = "buildableprobe" in sys.argv[5:]
         propertyprobe = "propertyprobe" in sys.argv[5:]
+        perimeterprobe = "perimeterprobe" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -4988,7 +5020,7 @@ def main():
             f"pass_imprint_probe={passimprint} pass_move_probe={passmove} "
             f"pass_class_probe={passclass} pass_vis_probe={passvis} "
             f"pass_fix_probe={passfix} build_probe={buildableprobe} "
-            f"property_probe={propertyprobe} "
+            f"property_probe={propertyprobe} perimeter_probe={perimeterprobe} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -5009,7 +5041,8 @@ def main():
                         pass_ablate_probe=passablate, pass_imprint_probe=passimprint,
                         pass_move_probe=passmove, pass_class_probe=passclass,
                         pass_vis_probe=passvis, pass_fix_probe=passfix,
-                        build_probe=buildableprobe, property_probe=propertyprobe)
+                        build_probe=buildableprobe, property_probe=propertyprobe,
+                        perimeter_probe=perimeterprobe)
         log(f"result: {json.dumps(info)}")
         return
 
