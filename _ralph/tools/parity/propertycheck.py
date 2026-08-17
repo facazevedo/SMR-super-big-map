@@ -569,6 +569,64 @@ def compare_bits(van_bits: np.ndarray, exp_bits: np.ndarray, ex: np.ndarray, ey:
     return report, different
 
 
+def property_border_distance(stamp: ProbeStamp, env: str) -> np.ndarray:
+    """Rectangular world distance from every property site to the height-map edge."""
+    gw, gh = dims(stamp, env)
+    row = stamp.maps[env]
+    geometry = geometry_for(stamp, env)
+    sy, sx = np.indices((gh, gw), dtype=np.int64)
+    world = storage_to_world(geometry, sx.ravel(), sy.ravel()).reshape((2, gh, gw))
+    width = int(row["height_gw"]) * float(row["tile"])
+    height = int(row["height_gh"]) * float(row["tile"])
+    return np.minimum.reduce((world[0], world[1], width - world[0], height - world[1]))
+
+
+def count_binary_partition(mask: np.ndarray, exact_world: np.ndarray, different: np.ndarray,
+                           vanilla: np.ndarray, expanded: np.ndarray) -> dict[str, int]:
+    selected = exact_world & mask
+    return {
+        "sites": int(selected.sum()),
+        "differences": int((different & selected).sum()),
+        "false_to_true": int((~vanilla & expanded & selected).sum()),
+        "true_to_false": int((vanilla & ~expanded & selected).sum()),
+    }
+
+
+def exact_world_stock_inputs(vstamp: ProbeStamp, estamp: ProbeStamp, env: str,
+                             exact_world: np.ndarray, different: np.ndarray,
+                             vanilla: np.ndarray, expanded: np.ndarray) -> dict[str, object]:
+    """Partition exact-world results by the stock map-border passability input.
+
+    This is diagnostic only: neither partition relaxes the production zero-difference gate.
+    The strict ``<`` convention is intentionally explicit and synthetic-controlled.
+    """
+    source_distance = property_border_distance(vstamp, env)
+    vanilla_border = float(vstamp.maps[env]["pass_border"])
+    expanded_border = float(estamp.maps[env]["pass_border"])
+    in_vanilla_border = source_distance < vanilla_border
+    exact_differences = exact_world & different
+    differing_distances = source_distance[exact_differences]
+    distance_summary = {
+        "minimum": float(differing_distances.min()) if differing_distances.size else 0.0,
+        "median": float(np.median(differing_distances)) if differing_distances.size else 0.0,
+        "maximum": float(differing_distances.max()) if differing_distances.size else 0.0,
+    }
+    return {
+        "input": "PassBorder",
+        "distance_geometry": "rectangular_world_distance_to_height_map_edge",
+        "membership_rule": "source_border_distance < vanilla_pass_border",
+        "vanilla_pass_border": vanilla_border,
+        "expanded_pass_border": expanded_border,
+        "pass_border_inputs_equal": vanilla_border == expanded_border,
+        "within_vanilla_pass_border": count_binary_partition(
+            in_vanilla_border, exact_world, different, vanilla, expanded),
+        "outside_vanilla_pass_border": count_binary_partition(
+            ~in_vanilla_border, exact_world, different, vanilla, expanded),
+        "exact_difference_source_border_distance": distance_summary,
+        "diagnostic_only": True,
+    }
+
+
 def affected_staleness(van_shipped: np.ndarray, van_fresh: np.ndarray,
                        exp_shipped: np.ndarray, exp_fresh: np.ndarray,
                        ex: np.ndarray, ey: np.ndarray, affected: np.ndarray,
@@ -619,9 +677,11 @@ def synthetic_controls() -> dict[str, object]:
         (0, 2): (0.0, 1732.0), (1, 2): (1000.0, 1732.0),
     }
     vmaps = {env: {"gw": "15", "gh": "18", "height_gw": "150", "height_gh": "150",
-                    "tile": "100"} for env in ("surface", "underground")}
+                    "tile": "100", "pass_border": "2000"}
+             for env in ("surface", "underground")}
     emaps = {env: {"gw": "20", "gh": "24", "height_gw": "200", "height_gh": "200",
-                    "tile": "100"} for env in ("surface", "underground")}
+                    "tile": "100", "pass_border": "0"}
+             for env in ("surface", "underground")}
     calibrations = {env: geometry_calibration for env in ("surface", "underground")}
     vstamp = ProbeStamp(vmaps, calibrations, {}, [])
     estamp = ProbeStamp(emaps, calibrations, {}, [])
@@ -682,6 +742,17 @@ def synthetic_controls() -> dict[str, object]:
         active_nodes, vstamp, "surface", phase_bank, "passability")
     inactive_footprint, inactive_detail = footprint_mask(
         inactive_nodes, vstamp, "surface", phase_bank, "passability")
+    synthetic_vbits = np.zeros((18, 15), dtype=np.uint8)
+    synthetic_ebits = np.zeros((24, 20), dtype=np.uint8)
+    synthetic_border = property_border_distance(vstamp, "surface") < 2000
+    injected_border = exact_world & synthetic_border
+    synthetic_ebits[mapped_y[injected_border], mapped_x[injected_border]] = 1
+    synthetic_vvalues = (synthetic_vbits & 1) != 0
+    synthetic_evalues = (synthetic_ebits[mapped_y, mapped_x] & 1) != 0
+    synthetic_different = synthetic_vvalues != synthetic_evalues
+    border_partition = exact_world_stock_inputs(
+        vstamp, estamp, "surface", exact_world, synthetic_different,
+        synthetic_vvalues, synthetic_evalues)
 
     checks = {
         "inside_differences_are_classified_inside": (
@@ -708,6 +779,14 @@ def synthetic_controls() -> dict[str, object]:
             and int(active_footprint.sum()) == 1 and active_detail["ok"]),
         "empty_phase_does_not_widen_footprint": (
             int(inactive_footprint.sum()) == 0 and inactive_detail["ok"]),
+        "pass_border_partition_is_exact": (
+            border_partition["within_vanilla_pass_border"]["differences"]
+            == int(injected_border.sum())
+            and border_partition["outside_vanilla_pass_border"]["differences"] == 0),
+        "pass_border_input_mismatch_is_reported": (
+            border_partition["vanilla_pass_border"] == 2000.0
+            and border_partition["expanded_pass_border"] == 0.0
+            and not border_partition["pass_border_inputs_equal"]),
     }
     return {"ok": all(checks.values()), "checks": checks,
             "geometry_control": {
@@ -720,6 +799,7 @@ def synthetic_controls() -> dict[str, object]:
                 "matching_affected_cells": int(active_footprint.sum()),
                 "empty_phase_affected_cells": int(inactive_footprint.sum()),
             },
+            "border_control": border_partition,
             "injected_counts": {"outside_pass": p_bad["differences_outside"],
                                 "outside_build": b_bad["differences_outside"],
                                 "stale": stale_report["vanilla_shipped_vs_fresh_inside"]}}
@@ -860,6 +940,8 @@ def main(argv: list[str] | None = None) -> int:
                     (vanilla_values & ~expanded_values & exact_outside).sum()),
                 "outside_zero": int((different & exact_outside).sum()) == 0,
             }
+            scored["exact_world_correspondence"]["stock_inputs"] = exact_world_stock_inputs(
+                vstamp, estamp, env, exact_world, different, vanilla_values, expanded_values)
             scored["freshness_inside"] = affected_staleness(
                 vgrids[f"{env}:shipped"], vgrids[f"{env}:fresh"],
                 egrids[f"{env}:shipped"], egrids[f"{env}:fresh"],
