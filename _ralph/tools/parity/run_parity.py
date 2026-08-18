@@ -3689,6 +3689,7 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_writer_probe=False, pass_own_probe=False, pass_ablate_probe=False,
                     pass_imprint_probe=False, pass_move_probe=False, pass_class_probe=False,
                     pass_vis_probe=False, pass_fix_probe=False, build_probe=False,
+                    build_init_probe=False,
                     property_probe=False, perimeter_probe=False,
                     perimeter_full_probe=False):
     """Dump every object on both maps, then (optionally) the read-only hexgrid census.
@@ -3755,6 +3756,36 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     if st == "error":
                         _, e = cli.marshal_value(client, "g_ParityPropertyError", timeout=60.0)
                         log(f"  property probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if build_init_probe:
+        # Read-only stock BuildableGrid phase discriminator. It allocates a fresh raw surface
+        # grid, runs InitBuildableGrid into it, saves the complete pre-Process values, and leaves
+        # the shipped grid untouched.
+        probe_src = (HERE / "buildinit_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__OUT_BASE__", cli.lua_path(OUT / f"buildinit-{tag}"))
+        probe_path = OUT / f"buildinitprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  build-init probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityBuildInitStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(
+                            client, "g_ParityBuildInitInfo", timeout=60.0)
+                        log(f"  build-init probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(
+                            client, "g_ParityBuildInitError", timeout=60.0)
+                        log(f"  build-init probe error: {e}")
                         break
                 except dap.DapTimeout:
                     pass
@@ -4499,7 +4530,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
-             build_probe=False, property_probe=False, perimeter_probe=False,
+             build_probe=False, build_init_probe=False, property_probe=False,
+             perimeter_probe=False,
              perimeter_full_probe=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
@@ -4931,6 +4963,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             pass_imprint_probe=pass_imprint_probe, pass_move_probe=pass_move_probe,
             pass_class_probe=pass_class_probe, pass_vis_probe=pass_vis_probe,
             pass_fix_probe=pass_fix_probe, build_probe=build_probe,
+            build_init_probe=build_init_probe,
             property_probe=property_probe, perimeter_probe=perimeter_probe,
             perimeter_full_probe=perimeter_full_probe)
         for var, label in (("g_ParityRasterTables", "raster const tables patched"),
@@ -5035,6 +5068,7 @@ def main():
         passvis = "passvis" in sys.argv[5:]
         passfix = "passfix" in sys.argv[5:]
         buildableprobe = "buildableprobe" in sys.argv[5:]
+        buildinitprobe = "buildinitprobe" in sys.argv[5:]
         propertyprobe = "propertyprobe" in sys.argv[5:]
         perimeterprobe = "perimeterprobe" in sys.argv[5:]
         perimeterfull = "perimeterfull" in sys.argv[5:]
@@ -5069,6 +5103,7 @@ def main():
             f"pass_imprint_probe={passimprint} pass_move_probe={passmove} "
             f"pass_class_probe={passclass} pass_vis_probe={passvis} "
             f"pass_fix_probe={passfix} build_probe={buildableprobe} "
+            f"build_init_probe={buildinitprobe} "
             f"property_probe={propertyprobe} perimeter_probe={perimeterprobe} "
             f"perimeter_full_probe={perimeterfull} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
@@ -5091,7 +5126,8 @@ def main():
                         pass_ablate_probe=passablate, pass_imprint_probe=passimprint,
                         pass_move_probe=passmove, pass_class_probe=passclass,
                         pass_vis_probe=passvis, pass_fix_probe=passfix,
-                        build_probe=buildableprobe, property_probe=propertyprobe,
+                        build_probe=buildableprobe, build_init_probe=buildinitprobe,
+                        property_probe=propertyprobe,
                         perimeter_probe=perimeterprobe,
                         perimeter_full_probe=perimeterfull)
         log(f"result: {json.dumps(info)}")
