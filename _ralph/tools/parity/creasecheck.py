@@ -545,6 +545,7 @@ def main(argv=None):
             jr["cell_phase_k_times_rise"] = round(float(phase), 4)
             jr["resolvable"] = bool(phase <= JOIN_RISE_MAX_PHASE)
         row["join_rise"] = jr
+        row["join_rise_applicable"] = bool(jr)
 
         # ---------- 3. sag on real cells, per t bin above the base ----------
         if sub_pre is not None and area:
@@ -582,9 +583,10 @@ def main(argv=None):
         # them overlapping between a correct join and a real crease (crease as low as 1.58 against
         # 2.77 measured here), so they cannot separate the two.  The rise across the join can:
         # a crease reads ~0 there.
-        if (row.get("join_rise", {}).get("ratio_over_predicted") is not None
-                and row["join_rise"].get("resolvable")):
-            checks.append(row["join_rise"]["ratio_over_predicted"] >= JOIN_RISE_TOL)
+        jr_check = row.get("join_rise") or {}
+        if (jr_check.get("ratio_over_predicted") is not None
+                and jr_check.get("resolvable")):
+            checks.append(jr_check["ratio_over_predicted"] >= JOIN_RISE_TOL)
         row["ok"] = bool(all(checks))
         rows.append(row)
         fig_rows.append((m, mask, band, sub_pre, sub_post, row))
@@ -629,10 +631,13 @@ def main(argv=None):
         summary["k_fit_over_k_stamped_median"] = round(float(np.median(kr)), 3) if kr else None
     if scored:
         jr = [r["join_rise"]["ratio_over_predicted"] for r in scored
-              if (r.get("join_rise", {}).get("ratio_over_predicted") is not None
+              if ((r.get("join_rise") or {}).get("ratio_over_predicted") is not None
                   and r["join_rise"].get("resolvable"))]
         summary["worst_join_rise_over_predicted"] = round(min(jr), 4) if jr else None
         summary["join_rise_scored"] = len(jr)
+        summary["join_rise_unavailable"] = [
+            r["index"] for r in scored if not r.get("join_rise")
+        ]
         summary["join_rise_unresolvable"] = [
             dict(index=r["index"], phase=r["join_rise"]["cell_phase_k_times_rise"],
                  ratio_over_predicted=r["join_rise"]["ratio_over_predicted"])
