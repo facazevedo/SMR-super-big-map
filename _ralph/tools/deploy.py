@@ -1,4 +1,4 @@
-"""Authoritative payload deploy + audit for the SuperBigMap external mod folder.
+"""Authoritative payload deploy + audit for the super-big-map external mod folder.
 
 The deployment target is `external` to the smr-harness (never `smr deploy`), so this
 script IS the mod project's documented deployment procedure and its authoritative
@@ -21,7 +21,7 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 DEST = Path(
-    r"C:\Users\fazevedo\AppData\Roaming\Surviving Mars Relaunched\Mods\SuperBigMap"
+    r"C:\Users\fazevedo\AppData\Roaming\Surviving Mars Relaunched\Mods\super-big-map"
 )
 PAYLOAD_DIRS = ("Code", "Images")
 PAYLOAD_FILES = ("metadata.lua", "items.lua")
