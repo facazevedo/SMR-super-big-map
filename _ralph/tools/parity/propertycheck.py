@@ -21,14 +21,27 @@ twins, plus a self-restoring bank of one-height-node sensitivity controls.  This
   repeat (and restored == fresh where present), so freshness is authoritative and
   global rather than an exception-local diagnostic.
 
-Every cross-twin difference is written to CSV.  There is no tolerance or allowlist.
-The scorer intentionally requires exact pre/post stretch dumps; a bbox-only massif
-stamp cannot satisfy the current ruling.
+By default every cross-twin difference is written to CSV.  Diagnostic
+``--differences-mode count`` retains the same exhaustive scoring and exact counts
+without materializing rows; it cannot replace the default full CSV in final evidence.
+There is no tolerance or allowlist. The scorer intentionally requires exact pre/post
+stretch dumps; a bbox-only massif stamp cannot satisfy the current ruling.
+
+Large rasters are read-only memory maps. Content-addressed caches retain only derived
+normalisation, footprint, and inverse-mapping arrays, verify every cached array hash,
+and invalidate on captured content, calibration, geometry, or measured-footprint
+changes. Surface/underground pass/build fields fan out to bounded offline workers;
+this never parallelizes live game instances. ``--reuse-if-unchanged`` additionally
+reuses a prior report only when all captured inputs, scorer sources, dependency
+versions, mode, and (for full evidence) detailed CSV hash match exactly.
 
 Typical use::
 
   python propertycheck.py --vanilla vanilla_tag --expanded expanded_tag \
     --out artifacts/property_case.json --differences artifacts/property_case.csv
+
+For several captured cases, ``propertybatch.py`` keeps imports resident and applies
+the same hash-bound checks from a manifest.
 
 Run ``--self-test`` before live use.  Its mandatory discriminator injects a single
 residual at an expanded site omitted by the superseded forward mapper and requires
@@ -40,9 +53,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import importlib.metadata
 import json
 import math
+import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +72,13 @@ import zonecheck
 HERE = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = HERE / "out"
 CAP = 65535
+MAPPING_CACHE_SCHEMA = "smr.property-map-cache.v1"
+NORMALISED_CACHE_SCHEMA = "smr.property-normalised-cache.v1"
+FOOTPRINT_CACHE_SCHEMA = "smr.property-footprint-cache.v1"
+INPUT_MANIFEST_SCHEMA = "smr.propertycheck-inputs.v1"
+MAPPING_ARRAY_KEYS = (
+    "vx", "vy", "in_source", "exact_world", "source_world_x", "source_world_y",
+)
 
 
 def fail(message: str) -> "NoReturn":
@@ -63,6 +87,156 @@ def fail(message: str) -> "NoReturn":
 
 def parse_fields(parts: list[str]) -> dict[str, str]:
     return dict(part.split("=", 1) for part in parts if "=" in part)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(4 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def canonical_digest(payload: object) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def probe_capture_paths(out_dir: Path, tag: str, stamp: "ProbeStamp") -> list[Path]:
+    paths = [out_dir / f"property-{tag}-property.txt"]
+    for env in ("surface", "underground"):
+        for stage in ("shipped", "fresh", "repeat"):
+            paths.append(out_dir / f"property-{tag}-{env}-property-{stage}.raw")
+        if env == "surface":
+            paths.append(out_dir / f"property-{tag}-{env}-property-restored.raw")
+            for meta in stamp.controls:
+                control_id = meta["id"]
+                paths.extend((
+                    out_dir / f"property-{tag}-{env}-property-control-{control_id}.raw",
+                    out_dir / f"property-{tag}-{env}-property-control-{control_id}.csv",
+                ))
+    return paths
+
+
+def live_input_manifest(out_dir: Path, vtag: str, etag: str,
+                        vstamp: "ProbeStamp", estamp: "ProbeStamp",
+                        pre: Path, post: Path, zone_stamp: Path) -> dict[str, object]:
+    paths = probe_capture_paths(out_dir, vtag, vstamp)
+    paths.extend(probe_capture_paths(out_dir, etag, estamp))
+    paths.extend((pre, post, zone_stamp))
+    unique = sorted({path.resolve() for path in paths}, key=lambda path: str(path).lower())
+    files = []
+    sha_by_path: dict[Path, str] = {}
+    for path in unique:
+        try:
+            relative = path.relative_to(out_dir.resolve()).as_posix()
+        except ValueError:
+            relative = str(path)
+        digest = sha256_file(path)
+        sha_by_path[path] = digest
+        files.append({
+            "path": relative,
+            "bytes": path.stat().st_size,
+            "sha256": digest,
+        })
+    scorer = {
+        "propertycheck_sha256": sha256_file(Path(__file__)),
+        "zonecheck_sha256": sha256_file(Path(zonecheck.__file__)),
+        "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        "numpy": np.__version__,
+        "scipy": importlib.metadata.version("scipy"),
+    }
+    digest = canonical_digest({
+        "schema": INPUT_MANIFEST_SCHEMA,
+        "scorer": scorer,
+        "files": files,
+    })
+    return {
+        "schema": INPUT_MANIFEST_SCHEMA,
+        "digest": digest,
+        "scorer": scorer,
+        "files": files,
+        "normalised_inputs": {
+            "pre": sha_by_path[pre.resolve()],
+            "post": sha_by_path[post.resolve()],
+            "stamp": sha_by_path[zone_stamp.resolve()],
+        },
+    }
+
+
+def reusable_report(path: Path, manifest: dict[str, object], difference_mode: str,
+                    differences: Path | None) -> dict[str, object] | None:
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+        if report.get("schema") != "smr.propertycheck.v5":
+            return None
+        if report.get("input_manifest", {}).get("digest") != manifest["digest"]:
+            return None
+        if report.get("difference_mode") != difference_mode:
+            return None
+        if difference_mode == "full":
+            if differences is None or not differences.is_file():
+                return None
+            recorded = report.get("difference_csv")
+            if recorded is None or Path(recorded).resolve() != differences.resolve():
+                return None
+            if sha256_file(differences) != report.get("difference_csv_sha256"):
+                return None
+        if not isinstance(report.get("gate_ok"), bool):
+            return None
+        return report
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def load_array_cache(entry: Path, schema: str, key: str,
+                     array_names: tuple[str, ...]) -> tuple[dict[str, object], dict[str, np.ndarray]] | None:
+    """Load a content-addressed derived-array cache, rejecting any partial/corrupt entry."""
+    meta_path = entry / "meta.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("schema") != schema or meta.get("key") != key:
+            return None
+        specs = meta.get("arrays", {})
+        arrays: dict[str, np.ndarray] = {}
+        for name in array_names:
+            spec = specs[name]
+            path = entry / f"{name}.npy"
+            if sha256_file(path) != spec["sha256"]:
+                return None
+            array = np.load(path, mmap_mode="r", allow_pickle=False)
+            if list(array.shape) != spec["shape"] or str(array.dtype) != spec["dtype"]:
+                return None
+            arrays[name] = array
+        summary = meta.get("summary", {})
+        if not isinstance(summary, dict):
+            return None
+        return summary, arrays
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def save_array_cache(entry: Path, schema: str, key: str, summary: dict[str, object],
+                     arrays: dict[str, np.ndarray]) -> None:
+    """Publish derived arrays atomically per file, with metadata written last."""
+    entry.mkdir(parents=True, exist_ok=True)
+    specs: dict[str, dict[str, object]] = {}
+    nonce = f"{os.getpid()}-{id(arrays)}"
+    for name, array in arrays.items():
+        path = entry / f"{name}.npy"
+        temp = entry / f".{name}.{nonce}.tmp"
+        with temp.open("wb") as fh:
+            np.save(fh, np.asarray(array), allow_pickle=False)
+        os.replace(temp, path)
+        specs[name] = {
+            "shape": list(array.shape),
+            "dtype": str(array.dtype),
+            "sha256": sha256_file(path),
+        }
+    meta = {"schema": schema, "key": key, "summary": summary, "arrays": specs}
+    temp_meta = entry / f".meta.{nonce}.tmp"
+    temp_meta.write_text(json.dumps(meta, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    os.replace(temp_meta, entry / "meta.json")
 
 
 @dataclass
@@ -116,12 +290,17 @@ def parse_probe_stamp(path: Path) -> ProbeStamp:
 
 
 def load_property(path: Path, gw: int, gh: int) -> np.ndarray:
-    raw = np.fromfile(path, dtype=np.uint8)
-    if raw.size != gw * gh:
-        fail(f"{path}: {raw.size} bytes, expected {gw}x{gh}={gw * gh}")
-    if raw.size and int(raw.max()) > 3:
+    expected = gw * gh
+    try:
+        actual = path.stat().st_size
+    except OSError as exc:
+        fail(f"{path}: cannot stat property raster: {exc}")
+    if actual != expected:
+        fail(f"{path}: {actual} bytes, expected {gw}x{gh}={expected}")
+    raw = np.memmap(path, dtype=np.uint8, mode="r", shape=(gh, gw))
+    if expected and int(raw.max()) > 3:
         fail(f"{path}: property byte outside bit mask 0..3")
-    return raw.reshape((gh, gw))
+    return raw
 
 
 def storage_to_world(geometry: HexGeometry, sx: np.ndarray, sy: np.ndarray) -> np.ndarray:
@@ -242,8 +421,26 @@ def forward_map_sites(van: ProbeStamp, exp: ProbeStamp,
     }
 
 
-def map_sites(van: ProbeStamp, exp: ProbeStamp,
-              env: str) -> dict[str, np.ndarray | float | int | str]:
+def mapping_cache_key(van: ProbeStamp, exp: ProbeStamp, env: str) -> str:
+    def stamp_identity(stamp: ProbeStamp) -> dict[str, object]:
+        return {
+            "map": dict(sorted(stamp.maps[env].items())),
+            "calibration": [
+                [sx, sy, wx, wy]
+                for (sx, sy), (wx, wy) in sorted(stamp.calibration[env].items())
+            ],
+        }
+
+    return canonical_digest({
+        "schema": MAPPING_CACHE_SCHEMA,
+        "env": env,
+        "vanilla": stamp_identity(van),
+        "expanded": stamp_identity(exp),
+    })
+
+
+def map_sites(van: ProbeStamp, exp: ProbeStamp, env: str,
+              cache_dir: Path | None = None) -> dict[str, object]:
     """Inverse-map every expanded property centre into the source spatial field.
 
     The finite vanilla storage raster does not contain a sample for a narrow strip
@@ -257,6 +454,14 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp,
     vh, eh = int(vrow["height_gw"]), int(erow["height_gw"])
     if vh <= 0 or eh <= vh:
         fail(f"{env}: expected expanded height grid larger than vanilla ({vh}, {eh})")
+    cache_key = mapping_cache_key(van, exp, env)
+    cache_entry = cache_dir / "mapping" / f"{env}-{cache_key}" if cache_dir else None
+    if cache_entry is not None:
+        cached = load_array_cache(
+            cache_entry, MAPPING_CACHE_SCHEMA, cache_key, MAPPING_ARRAY_KEYS)
+        if cached is not None:
+            summary, arrays = cached
+            return {**summary, **arrays}
     scale = eh / vh
     vgeometry = geometry_for(van, env)
     egeometry = geometry_for(exp, env)
@@ -290,7 +495,7 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp,
         }
         for vector, count in zip(vectors, vector_counts)
     ]
-    return {
+    result: dict[str, object] = {
         "vx": vx,
         "vy": vy,
         "in_source": in_source,
@@ -315,7 +520,18 @@ def map_sites(van: ProbeStamp, exp: ProbeStamp,
         "p99_world_rounding_residual": float(np.percentile(residual, 99)) if residual.size else 0.0,
         "source_continuous_x_range": [float(source_float[0].min()), float(source_float[0].max())],
         "source_continuous_y_range": [float(source_float[1].min()), float(source_float[1].max())],
+        "cache_schema": MAPPING_CACHE_SCHEMA,
+        "cache_key": cache_key,
     }
+    if cache_entry is not None:
+        arrays = {name: result[name] for name in MAPPING_ARRAY_KEYS}
+        assert all(isinstance(value, np.ndarray) for value in arrays.values())
+        summary = {name: value for name, value in result.items()
+                   if name not in MAPPING_ARRAY_KEYS}
+        save_array_cache(
+            cache_entry, MAPPING_CACHE_SCHEMA, cache_key, summary,
+            {name: value for name, value in arrays.items() if isinstance(value, np.ndarray)})
+    return result
 
 
 def parse_control_csv(path: Path) -> list[dict[str, int]]:
@@ -524,9 +740,44 @@ def freshness_report(grids: dict[str, np.ndarray]) -> dict[str, dict[str, object
     return report
 
 
-def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path) -> tuple[np.ndarray, dict]:
-    pre = zonecheck.load(str(pre_path), 0).astype(np.int64)
-    post = zonecheck.load(str(post_path), pre.shape[1]).astype(np.int64)
+def load_u16_square_memmap(path: Path, width: int = 0) -> np.ndarray:
+    try:
+        byte_count = path.stat().st_size
+    except OSError as exc:
+        fail(f"{path}: cannot stat height raster: {exc}")
+    if byte_count % 2:
+        fail(f"{path}: odd byte count for a U16 raster")
+    cells = byte_count // 2
+    side = math.isqrt(cells)
+    if side * side != cells:
+        fail(f"{path}: {cells} u16 values is not square")
+    if width and side != width:
+        fail(f"{path}: {side}^2, expected {width}^2")
+    return np.memmap(path, dtype="<u2", mode="r", shape=(side, side))
+
+
+def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path,
+                           cache_dir: Path | None = None,
+                           input_hashes: dict[str, str] | None = None) -> tuple[np.ndarray, dict]:
+    input_hashes = input_hashes or {
+        "pre": sha256_file(pre_path),
+        "post": sha256_file(post_path),
+        "stamp": sha256_file(stamp_path),
+    }
+    cache_key = canonical_digest({
+        "schema": NORMALISED_CACHE_SCHEMA,
+        "inputs": input_hashes,
+    })
+    cache_entry = cache_dir / "normalised" / cache_key if cache_dir else None
+    if cache_entry is not None:
+        cached = load_array_cache(
+            cache_entry, NORMALISED_CACHE_SCHEMA, cache_key, ("normalised",))
+        if cached is not None:
+            summary, arrays = cached
+            return arrays["normalised"], summary
+
+    pre = load_u16_square_memmap(pre_path)
+    post = load_u16_square_memmap(post_path, pre.shape[1])
     maps, massifs = zonecheck.parse_stamp(str(stamp_path))
     surf = maps.get("surface")
     if surf is None:
@@ -552,29 +803,86 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path) ->
             "rebuilt_cells": area,
             "cells_match": area == massif["cells"],
         })
-    affine = np.clip(pre * mul // div + add, 0, CAP)
-    normalised = components & (post != affine)
-    outside_post_diff = int(((post != affine) & ~components).sum())
+    normalised = np.zeros(pre.shape, dtype=bool)
+    outside_post_diff = 0
+    chunk_rows = max(1, min(512, 16 * 1024 * 1024 // (pre.shape[1] * 8)))
+    for y0 in range(0, pre.shape[0], chunk_rows):
+        y1 = min(pre.shape[0], y0 + chunk_rows)
+        source = np.asarray(pre[y0:y1], dtype=np.int64)
+        affine = np.clip(source * mul // div + add, 0, CAP)
+        different = np.asarray(post[y0:y1]) != affine
+        component_chunk = components[y0:y1]
+        normalised[y0:y1] = component_chunk & different
+        outside_post_diff += int((different & ~component_chunk).sum())
+    component_cells = int(components.sum())
+    normalised_cells = int(normalised.sum())
     summary = {
         "shape": list(pre.shape),
         "massifs": len(rebuilt),
-        "component_cells": int(components.sum()),
-        "normalised_height_nodes": int(normalised.sum()),
-        "affine_equal_nodes_inside_components": int((components & (post == affine)).sum()),
+        "component_cells": component_cells,
+        "normalised_height_nodes": normalised_cells,
+        "affine_equal_nodes_inside_components": component_cells - normalised_cells,
         "overlap_nodes": int(overlaps.sum()),
         "outside_component_post_vs_affine": outside_post_diff,
         "component_counts_match": all(row["cells_match"] for row in rebuilt),
         "detail": rebuilt,
+        "cache_schema": NORMALISED_CACHE_SCHEMA,
+        "cache_key": cache_key,
+        "input_sha256": input_hashes,
     }
     summary["ok"] = bool(summary["component_counts_match"] and not summary["overlap_nodes"]
                          and not outside_post_diff)
+    if cache_entry is not None:
+        save_array_cache(cache_entry, NORMALISED_CACHE_SCHEMA, cache_key, summary,
+                         {"normalised": normalised})
     return normalised, summary
 
 
+def footprint_cache_key(stamp: ProbeStamp, env: str, control_bank: dict[str, object],
+                        property_name: str, normalised_key: str) -> str:
+    phase_controls = control_bank["phase_controls"]
+    assert isinstance(phase_controls, dict)
+    phases = []
+    for phase in sorted(phase_controls):
+        control = phase_controls[phase]
+        phases.append({
+            "phase": list(phase),
+            "site_world": control["site_world"],
+            "pass_rows": control["pass_rows"],
+            "build_rows": control["build_rows"],
+        })
+    return canonical_digest({
+        "schema": FOOTPRINT_CACHE_SCHEMA,
+        "normalised_key": normalised_key,
+        "env": env,
+        "property": property_name,
+        "map": dict(sorted(stamp.maps[env].items())),
+        "calibration": [
+            [sx, sy, wx, wy]
+            for (sx, sy), (wx, wy) in sorted(stamp.calibration[env].items())
+        ],
+        "checks": control_bank["checks"],
+        "phases": phases,
+    })
+
+
 def footprint_mask(nodes: np.ndarray, stamp: ProbeStamp, env: str,
-                   control_bank: dict[str, object], property_name: str) -> tuple[np.ndarray, dict]:
+                   control_bank: dict[str, object], property_name: str,
+                   cache_dir: Path | None = None,
+                   normalised_key: str = "") -> tuple[np.ndarray, dict]:
     """Apply each measured node phase only at the matching phase around every site."""
     gw, gh = dims(stamp, env)
+    cache_key = ""
+    cache_entry = None
+    if cache_dir is not None and normalised_key:
+        cache_key = footprint_cache_key(
+            stamp, env, control_bank, property_name, normalised_key)
+        cache_entry = cache_dir / "footprint" / f"{env}-{property_name}-{cache_key}"
+        cached = load_array_cache(
+            cache_entry, FOOTPRINT_CACHE_SCHEMA, cache_key, ("affected",))
+        if cached is not None:
+            summary, arrays = cached
+            return arrays["affected"], summary
     geometry = geometry_for(stamp, env)
     key = "pass_rows" if property_name == "passability" else "build_rows"
     affected = np.zeros((gh, gw), dtype=bool)
@@ -635,8 +943,13 @@ def footprint_mask(nodes: np.ndarray, stamp: ProbeStamp, env: str,
         "affected_cells": int(affected.sum()),
         "height_nodes": int(nodes.sum()),
         "phases": phase_detail,
+        "cache_schema": FOOTPRINT_CACHE_SCHEMA if cache_entry is not None else None,
+        "cache_key": cache_key or None,
     }
     detail["ok"] = bool(control_bank["ok"] and total_kernel_cells > 0)
+    if cache_entry is not None:
+        save_array_cache(cache_entry, FOOTPRINT_CACHE_SCHEMA, cache_key, detail,
+                         {"affected": affected})
     return affected, detail
 
 
@@ -982,8 +1295,18 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--stamp", type=Path, default=None)
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument("--differences", type=Path, default=None)
+    ap.add_argument("--differences-mode", choices=("full", "count"), default="full",
+                    help="write every difference row (full) or retain exact counts only (count)")
+    ap.add_argument("--cache-dir", type=Path, default=None,
+                    help="content-addressed derived-array cache (default: OUT_DIR/.propertycheck-cache)")
+    ap.add_argument("--workers", type=int, default=min(4, os.cpu_count() or 1),
+                    help="parallel offline field workers; live game execution remains serial")
+    ap.add_argument("--reuse-if-unchanged", action="store_true",
+                    help="reuse a hash-identical prior report and verified detailed CSV")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args(argv)
+    if args.workers < 1:
+        fail("--workers must be at least 1")
 
     self_test = synthetic_controls()
     if args.self_test:
@@ -1023,30 +1346,55 @@ def main(argv: list[str] | None = None) -> int:
         args.out.write_text(rendered, encoding="utf-8")
         print(rendered, end="")
         return 0 if gate_ok else 1
-    if not args.vanilla or not args.expanded or args.out is None or args.differences is None:
-        fail("live scoring needs --vanilla, --expanded, --out, and --differences")
+    if not args.vanilla or not args.expanded or args.out is None:
+        fail("live scoring needs --vanilla, --expanded, and --out")
+    if args.differences_mode == "full" and args.differences is None:
+        fail("--differences-mode full needs --differences")
 
     out_dir = args.out_dir
+    cache_dir = args.cache_dir or out_dir / ".propertycheck-cache"
     vtag, etag = args.vanilla, args.expanded
     pre = args.pre or out_dir / f"stretch-{etag}-surface-pre.raw"
     post = args.post or out_dir / f"stretch-{etag}-surface-post.raw"
     zone_stamp = args.stamp or out_dir / f"height-{etag}-zones.txt"
     vstamp = parse_probe_stamp(out_dir / f"property-{vtag}-property.txt")
     estamp = parse_probe_stamp(out_dir / f"property-{etag}-property.txt")
+    input_manifest = live_input_manifest(
+        out_dir, vtag, etag, vstamp, estamp, pre, post, zone_stamp)
+    if args.reuse_if_unchanged:
+        prior = reusable_report(
+            args.out, input_manifest, args.differences_mode, args.differences)
+        if prior is not None:
+            print(json.dumps({
+                "reused": True,
+                "input_digest": input_manifest["digest"],
+                "gate_ok": prior["gate_ok"],
+                "failed_checks": prior.get("failed_checks", []),
+                "difference_rows": prior.get("difference_rows"),
+            }, indent=2))
+            return 0 if prior["gate_ok"] else 1
     vgrids = load_probe_grids(out_dir, vtag, vstamp)
     egrids = load_probe_grids(out_dir, etag, estamp)
     vcontrol = validate_probe_controls(out_dir, vtag, vstamp, vgrids)
     econtrol = validate_probe_controls(out_dir, etag, estamp, egrids)
-    normalised, zone_report = exact_normalised_nodes(pre, post, zone_stamp)
+    normalised_hashes = input_manifest["normalised_inputs"]
+    assert isinstance(normalised_hashes, dict)
+    normalised, zone_report = exact_normalised_nodes(
+        pre, post, zone_stamp, cache_dir,
+        {key: str(value) for key, value in normalised_hashes.items()})
+    normalised_key = str(zone_report["cache_key"])
     pass_affected, pass_foot = footprint_mask(
-        normalised, estamp, "surface", econtrol, "passability")
+        normalised, estamp, "surface", econtrol, "passability",
+        cache_dir, normalised_key)
     build_affected, build_foot = footprint_mask(
-        normalised, estamp, "surface", econtrol, "buildability")
+        normalised, estamp, "surface", econtrol, "buildability",
+        cache_dir, normalised_key)
 
     report: dict[str, object] = {
         "schema": "smr.propertycheck.v5",
         "vanilla": vtag,
         "expanded": etag,
+        "input_manifest": input_manifest,
         "gate_ok": False,
         "failed_checks": [],
         "self_test": self_test,
@@ -1086,14 +1434,25 @@ def main(argv: list[str] | None = None) -> int:
                     f"(pass={by_property['passability']['shipped_vs_fresh']}, "
                     f"build={by_property['buildability']['shipped_vs_fresh']})")
 
-    diff_rows: list[list[object]] = []
-    for env in ("surface", "underground"):
-        mapping = map_sites(vstamp, estamp, env)
-        vx, vy = mapping.pop("vx"), mapping.pop("vy")
-        in_source = mapping.pop("in_source")
-        exact_world = mapping.pop("exact_world")
-        source_world_x = mapping.pop("source_world_x")
-        source_world_y = mapping.pop("source_world_y")
+    env_order = ("surface", "underground")
+    mapping_workers = min(args.workers, len(env_order))
+    if mapping_workers == 1:
+        mappings = {env: map_sites(vstamp, estamp, env, cache_dir) for env in env_order}
+    else:
+        with ThreadPoolExecutor(max_workers=mapping_workers) as pool:
+            mappings = dict(zip(
+                env_order,
+                pool.map(lambda env: map_sites(vstamp, estamp, env, cache_dir), env_order),
+            ))
+
+    contexts: dict[str, dict[str, object]] = {}
+    for env in env_order:
+        mapping = mappings[env]
+        vx, vy = mapping["vx"], mapping["vy"]
+        in_source = mapping["in_source"]
+        exact_world = mapping["exact_world"]
+        source_world_x = mapping["source_world_x"]
+        source_world_y = mapping["source_world_y"]
         assert (isinstance(vx, np.ndarray) and isinstance(vy, np.ndarray)
                 and isinstance(in_source, np.ndarray) and isinstance(exact_world, np.ndarray)
                 and isinstance(source_world_x, np.ndarray)
@@ -1108,62 +1467,140 @@ def main(argv: list[str] | None = None) -> int:
             "passability": pass_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
             "buildability": build_affected if env == "surface" else np.zeros(dims(estamp, env)[::-1], dtype=bool),
         }
-        env_report: dict[str, object] = {"mapping": mapping}
-        for name, bit in (("passability", 1), ("buildability", 2)):
-            scored, different = compare_bits(
-                vgrids[f"{env}:fresh"], egrids[f"{env}:fresh"],
-                vx, vy, in_source, affected_masks[name], bit)
-            source_scope = affected_masks[name]
-            vanilla_values = inverse_expected(
-                vgrids[f"{env}:fresh"], vx, vy, in_source, bit)
-            expanded_values = (egrids[f"{env}:fresh"] & bit) != 0
-            exact_outside = exact_world & ~source_scope
-            exact_inside = exact_world & source_scope
-            scored["exact_world_correspondence"] = {
-                "sites": int(exact_world.sum()),
-                "outside_sites": int(exact_outside.sum()),
-                "inside_sites": int(exact_inside.sum()),
-                "differences": int((different & exact_world).sum()),
-                "differences_outside": int((different & exact_outside).sum()),
-                "differences_inside": int((different & exact_inside).sum()),
-                "outside_false_to_true": int(
-                    (~vanilla_values & expanded_values & exact_outside).sum()),
-                "outside_true_to_false": int(
-                    (vanilla_values & ~expanded_values & exact_outside).sum()),
-                "outside_zero": int((different & exact_outside).sum()) == 0,
-            }
-            scored["exact_world_correspondence"]["stock_inputs"] = exact_world_stock_inputs(
-                vstamp, estamp, env, exact_world, different, vanilla_values, expanded_values,
-                source_distance)
-            scored["freshness_inside"] = affected_staleness(
-                vgrids[f"{env}:shipped"], vgrids[f"{env}:fresh"],
-                egrids[f"{env}:shipped"], egrids[f"{env}:fresh"],
-                vx, vy, in_source, affected_masks[name], bit)
-            env_report[name] = scored
+        public_mapping = {key: value for key, value in mapping.items()
+                          if key not in MAPPING_ARRAY_KEYS}
+        report["maps"][env] = {"mapping": public_mapping}  # type: ignore[index]
+        contexts[env] = {
+            "vx": vx, "vy": vy, "in_source": in_source,
+            "exact_world": exact_world, "source_distance": source_distance,
+            "affected_masks": affected_masks,
+        }
+
+    tasks = [
+        (env, name, bit)
+        for env in env_order
+        for name, bit in (("passability", 1), ("buildability", 2))
+    ]
+
+    def score_field(task: tuple[str, str, int]) -> tuple[tuple[str, str], dict[str, object]]:
+        env, name, bit = task
+        context = contexts[env]
+        vx, vy = context["vx"], context["vy"]
+        in_source = context["in_source"]
+        exact_world = context["exact_world"]
+        source_distance = context["source_distance"]
+        affected_masks = context["affected_masks"]
+        assert (isinstance(vx, np.ndarray) and isinstance(vy, np.ndarray)
+                and isinstance(in_source, np.ndarray) and isinstance(exact_world, np.ndarray)
+                and isinstance(source_distance, np.ndarray) and isinstance(affected_masks, dict))
+        source_scope = affected_masks[name]
+        assert isinstance(source_scope, np.ndarray)
+        scored, different = compare_bits(
+            vgrids[f"{env}:fresh"], egrids[f"{env}:fresh"],
+            vx, vy, in_source, source_scope, bit)
+        vanilla_values = inverse_expected(
+            vgrids[f"{env}:fresh"], vx, vy, in_source, bit)
+        expanded_values = (egrids[f"{env}:fresh"] & bit) != 0
+        exact_outside = exact_world & ~source_scope
+        exact_inside = exact_world & source_scope
+        scored["exact_world_correspondence"] = {
+            "sites": int(exact_world.sum()),
+            "outside_sites": int(exact_outside.sum()),
+            "inside_sites": int(exact_inside.sum()),
+            "differences": int((different & exact_world).sum()),
+            "differences_outside": int((different & exact_outside).sum()),
+            "differences_inside": int((different & exact_inside).sum()),
+            "outside_false_to_true": int(
+                (~vanilla_values & expanded_values & exact_outside).sum()),
+            "outside_true_to_false": int(
+                (vanilla_values & ~expanded_values & exact_outside).sum()),
+            "outside_zero": int((different & exact_outside).sum()) == 0,
+        }
+        scored["exact_world_correspondence"]["stock_inputs"] = exact_world_stock_inputs(
+            vstamp, estamp, env, exact_world, different, vanilla_values, expanded_values,
+            source_distance)
+        scored["freshness_inside"] = affected_staleness(
+            vgrids[f"{env}:shipped"], vgrids[f"{env}:fresh"],
+            egrids[f"{env}:shipped"], egrids[f"{env}:fresh"],
+            vx, vy, in_source, source_scope, bit)
+        return (env, name), {
+            "scored": scored,
+            "different": different,
+            "vanilla_values": vanilla_values,
+            "expanded_values": expanded_values,
+            "scope": source_scope,
+            "vx": vx, "vy": vy, "in_source": in_source,
+        }
+
+    field_workers = min(args.workers, len(tasks))
+    if field_workers == 1:
+        field_results = dict(score_field(task) for task in tasks)
+    else:
+        with ThreadPoolExecutor(max_workers=field_workers) as pool:
+            field_results = dict(pool.map(score_field, tasks))
+
+    difference_count = 0
+    difference_writer = None
+    difference_handle = None
+    difference_temp = None
+    if args.differences_mode == "full":
+        assert args.differences is not None
+        args.differences.parent.mkdir(parents=True, exist_ok=True)
+        difference_temp = args.differences.with_name(
+            f".{args.differences.name}.{os.getpid()}.tmp")
+        difference_handle = difference_temp.open("w", encoding="utf-8", newline="")
+        difference_writer = csv.writer(difference_handle, lineterminator="\n")
+        difference_writer.writerow([
+            "env", "property", "scope", "van_sx", "van_sy", "exp_sx", "exp_sy",
+            "van_value", "exp_value", "affected", "in_source",
+        ])
+    try:
+        for env, name, _bit in tasks:
+            result = field_results[(env, name)]
+            scored = result["scored"]
+            assert isinstance(scored, dict)
+            report["maps"][env][name] = scored  # type: ignore[index]
             if not scored["outside_zero"]:
                 failed.append(f"{env}/{name}: {scored['differences_outside']} outside-mask differences")
-            if not scored["freshness_inside"]["inside_fresh"]:
+            freshness_inside = scored["freshness_inside"]
+            assert isinstance(freshness_inside, dict)
+            if not freshness_inside["inside_fresh"]:
                 failed.append(f"{env}/{name}: shipped verdict stale inside affected set")
+            different = result["different"]
+            assert isinstance(different, np.ndarray)
             dy, dx = np.nonzero(different)
-            scope = affected_masks[name]
-            for esy, esx in zip(dy.tolist(), dx.tolist()):
-                vsx, vsy = int(vx[esy, esx]), int(vy[esy, esx])
-                diff_rows.append([
-                    env, name, "inside" if scope[esy, esx] else "outside",
-                    vsx, vsy, esx, esy,
-                    int(vanilla_values[esy, esx]), int(expanded_values[esy, esx]),
-                    int(scope[esy, esx]), int(in_source[esy, esx]),
-                ])
-        report["maps"][env] = env_report  # type: ignore[index]
-
-    args.differences.parent.mkdir(parents=True, exist_ok=True)
-    with args.differences.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh, lineterminator="\n")
-        writer.writerow(["env", "property", "scope", "van_sx", "van_sy", "exp_sx", "exp_sy",
-                         "van_value", "exp_value", "affected", "in_source"])
-        writer.writerows(diff_rows)
-    report["difference_csv"] = str(args.differences)
-    report["difference_rows"] = len(diff_rows)
+            difference_count += int(dy.size)
+            if difference_writer is not None:
+                vx, vy = result["vx"], result["vy"]
+                scope, in_source = result["scope"], result["in_source"]
+                vanilla_values = result["vanilla_values"]
+                expanded_values = result["expanded_values"]
+                assert all(isinstance(value, np.ndarray) for value in (
+                    vx, vy, scope, in_source, vanilla_values, expanded_values))
+                difference_writer.writerows(
+                    (
+                        env, name, "inside" if scope[esy, esx] else "outside",
+                        int(vx[esy, esx]), int(vy[esy, esx]), esx, esy,
+                        int(vanilla_values[esy, esx]), int(expanded_values[esy, esx]),
+                        int(scope[esy, esx]), int(in_source[esy, esx]),
+                    )
+                    for esy, esx in zip(dy.tolist(), dx.tolist())
+                )
+    finally:
+        if difference_handle is not None:
+            difference_handle.close()
+    if difference_temp is not None:
+        assert args.differences is not None
+        os.replace(difference_temp, args.differences)
+        report["difference_csv"] = str(args.differences)
+        report["difference_csv_sha256"] = sha256_file(args.differences)
+    else:
+        report["difference_csv"] = None
+        report["difference_csv_sha256"] = None
+    report["difference_mode"] = args.differences_mode
+    report["difference_rows"] = difference_count
+    report["workers"] = field_workers
+    report["cache_dir"] = str(cache_dir)
     report["gate_ok"] = not failed
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
