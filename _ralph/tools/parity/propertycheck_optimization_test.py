@@ -67,6 +67,20 @@ class PropertycheckOptimizationTests(unittest.TestCase):
                 self.assertTrue(np.array_equal(cold[name], warm[name]), name)
                 self.assertIsInstance(warm[name], np.memmap)
             self.assertEqual(cold["cache_key"], warm["cache_key"])
+            # A concurrent peer may already hold the winning files as memmaps.
+            # Republishing identical content must retain those files on Windows.
+            entry = cache / "mapping" / f"surface-{cold['cache_key']}"
+            propertycheck.save_array_cache(
+                entry, propertycheck.MAPPING_CACHE_SCHEMA, cold["cache_key"],
+                {name: value for name, value in cold.items()
+                 if name not in propertycheck.MAPPING_ARRAY_KEYS},
+                {name: cold[name] for name in propertycheck.MAPPING_ARRAY_KEYS},
+            )
+            republished = propertycheck.load_array_cache(
+                entry, propertycheck.MAPPING_CACHE_SCHEMA, cold["cache_key"],
+                propertycheck.MAPPING_ARRAY_KEYS)
+            self.assertIsNotNone(republished)
+            close_memmaps(republished[1] if republished else {})
             altered = stamps()[1]
             altered.calibration["surface"][(1, 0)] = (1000.25, 0.0)
             self.assertNotEqual(

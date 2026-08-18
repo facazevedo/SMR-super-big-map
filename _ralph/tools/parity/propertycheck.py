@@ -216,9 +216,30 @@ def load_array_cache(entry: Path, schema: str, key: str,
         return None
 
 
+def publish_cache_file(temp: Path, destination: Path) -> str:
+    """Publish once without replacing a hash-identical file another process may mmap."""
+    expected = sha256_file(temp)
+    temp_exists = True
+    try:
+        os.link(temp, destination)
+    except FileExistsError:
+        # Content-addressed peers calculate the same bytes.  Keeping the winner is
+        # required on Windows, where replacing an already-mapped file is forbidden.
+        if sha256_file(destination) != expected:
+            os.replace(temp, destination)
+            temp_exists = False
+    finally:
+        if temp_exists:
+            temp.unlink(missing_ok=True)
+    actual = sha256_file(destination)
+    if actual != expected:
+        raise OSError(f"cache publication hash mismatch: {destination}")
+    return actual
+
+
 def save_array_cache(entry: Path, schema: str, key: str, summary: dict[str, object],
                      arrays: dict[str, np.ndarray]) -> None:
-    """Publish derived arrays atomically per file, with metadata written last."""
+    """Publish deterministic arrays once per hash key, with metadata written last."""
     entry.mkdir(parents=True, exist_ok=True)
     specs: dict[str, dict[str, object]] = {}
     nonce = f"{os.getpid()}-{id(arrays)}"
@@ -227,16 +248,15 @@ def save_array_cache(entry: Path, schema: str, key: str, summary: dict[str, obje
         temp = entry / f".{name}.{nonce}.tmp"
         with temp.open("wb") as fh:
             np.save(fh, np.asarray(array), allow_pickle=False)
-        os.replace(temp, path)
         specs[name] = {
             "shape": list(array.shape),
             "dtype": str(array.dtype),
-            "sha256": sha256_file(path),
+            "sha256": publish_cache_file(temp, path),
         }
     meta = {"schema": schema, "key": key, "summary": summary, "arrays": specs}
     temp_meta = entry / f".meta.{nonce}.tmp"
     temp_meta.write_text(json.dumps(meta, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-    os.replace(temp_meta, entry / "meta.json")
+    publish_cache_file(temp_meta, entry / "meta.json")
 
 
 @dataclass
