@@ -17,7 +17,10 @@ rawset(_G, "g_ParityBuildInitError", false)
 
 CreateRealTimeThread(function()
 	local ok, err = xpcall(function()
-		local out_base = "__OUT_BASE__"
+		local out_base = rawget(_G, "g_ParityBuildInitOutBase") or "__OUT_BASE__"
+		if type(out_base) ~= "string" or out_base == "" then
+			error("g_ParityBuildInitOutBase must be a non-empty string when provided")
+		end
 		local rows, info, object_rows = {}, {}, {}
 		local unbuildable_z = (type(buildUnbuildableZ) == "function")
 			and buildUnbuildableZ() or (2 ^ 16 - 1)
