@@ -13,6 +13,7 @@ import argparse
 import copy
 import hashlib
 import json
+import os
 import re
 import tempfile
 from pathlib import Path
@@ -118,9 +119,10 @@ def checked_artifact(
         errors.append(f"{context}: artifact path escapes root: {relative}")
         return None
     normalized = relative_path.as_posix()
-    if normalized in used_paths:
+    identity = os.path.normcase(str(resolved))
+    if identity in used_paths:
         errors.append(f"{context}: artifact path reused across capture records: {normalized}")
-    used_paths.add(normalized)
+    used_paths.add(identity)
     if not resolved.is_file():
         errors.append(f"{context}: artifact is missing: {normalized}")
         return None
