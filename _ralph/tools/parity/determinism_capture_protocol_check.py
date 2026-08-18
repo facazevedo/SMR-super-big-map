@@ -377,6 +377,14 @@ def self_test() -> dict[str, Any]:
         )
         results["reused_capture_path_red"] = not analyze(reused, root)["ok"]
 
+        aliased = copy.deepcopy(manifest)
+        aliased_record = copy.deepcopy(
+            aliased["runs"][0]["checkpoints"][0]["artifacts"]["rng_state"]
+        )
+        aliased_record["path"] = f"alias/../{aliased_record['path']}"
+        aliased["runs"][1]["checkpoints"][0]["artifacts"]["rng_state"] = aliased_record
+        results["aliased_capture_path_red"] = not analyze(aliased, root)["ok"]
+
         corrupt = copy.deepcopy(manifest)
         corrupt["runs"][0]["checkpoints"][0]["artifacts"]["rng_state"]["sha256"] = "C" * 64
         results["content_hash_mismatch_red"] = not analyze(corrupt, root)["ok"]
