@@ -53,6 +53,8 @@ DIAGNOSTIC, NOT SCORED
   distance bands   the same ratio binned by distance to the contour: same objection, stronger.
   sag on cells     S(t) = affine(pre) - post per t bin: S(0) = 0 with a flat start is the
                    tangency seen on cells; a slope step of size s would make S rise linearly.
+                   A massif with no sampled cell at t <= 5 reports this secondary statistic N/A;
+                   its boundary-pair and analytic-slope tests remain scored.
 
 The destination-only mode (`--post` and `--stamp`, no `--pre`) keeps the join-rise and analytic
 tests and drops everything that needs the source grid.  That is the mode for an END-OF-GENERATION
@@ -563,21 +565,25 @@ def main(argv=None):
                                      sag_max=int(sag_all[sel].max())))
             # a slope step of size s would make the sag rise by s per unit of t from t = 0;
             # measure the empirical secant over the first 5 units and compare with 0
-            first = sag_bins[0] if sag_bins else None
+            exact_base = next((b for b in sag_bins if b["t_lo"] == 0), None)
             near5 = [b for b in sag_bins if b["t_hi"] == 5]
+            base_near = exact_base or (near5[0] if near5 else None)
             secant = None
             if near5:
                 secant = round(float(near5[0]["sag_median"]) / 5.0, 5)
-            row["sag"] = dict(bins=sag_bins,
-                              sag_at_base=first["sag_median"] if first else None,
+            row["sag"] = dict(applicable=bool(base_near), bins=sag_bins,
+                              base_near_range=[base_near["t_lo"], base_near["t_hi"]]
+                              if base_near else None,
+                              sag_at_base=base_near["sag_median"] if base_near else None,
                               secant_slope_first5=secant,
-                              ok=bool(first is not None and abs(first["sag_median"]) <= 1
-                                      and (secant is None or abs(secant) <= 0.25)))
+                              ok=bool(abs(base_near["sag_median"]) <= 1
+                                      and (secant is None or abs(secant) <= 0.25))
+                              if base_near else None)
 
         checks = [abs(row["analytic_slope_at_base"] - TARGET_SLOPE) < 1e-9]
         if "boundary" in row:
             checks.append(bool(row["boundary"].get("ok")))
-        if "sag" in row:
+        if row.get("sag", {}).get("applicable"):
             checks.append(bool(row["sag"]["ok"]))
         # The curvature statistics are REPORTED, not scored: the positive control below measures
         # them overlapping between a correct join and a real crease (crease as low as 1.58 against
@@ -624,8 +630,12 @@ def main(argv=None):
         summary["massifs_without_strict_pairs"] = sum(
             1 for r in scored if not (r.get("boundary", {}).get("strict_pairs") or 0))
         summary["diagnostic_worst_step_at_join"] = max(steps) if steps else None
-        summary["worst_sag_at_base"] = max(abs(r["sag"]["sag_at_base"]) for r in scored
-                                           if r.get("sag", {}).get("sag_at_base") is not None)
+        sag_base = [abs(r["sag"]["sag_at_base"]) for r in scored
+                    if r.get("sag", {}).get("sag_at_base") is not None]
+        summary["worst_sag_at_base"] = max(sag_base) if sag_base else None
+        summary["sag_unavailable"] = [
+            r["index"] for r in scored if not r.get("sag", {}).get("applicable")
+        ]
         kr = [r["height_bins"]["k_ratio"] for r in scored
               if r.get("height_bins", {}).get("k_ratio") is not None]
         summary["k_fit_over_k_stamped_median"] = round(float(np.median(kr)), 3) if kr else None
