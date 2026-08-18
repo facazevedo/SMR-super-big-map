@@ -483,8 +483,8 @@ config.OptimizeDirectSourceTerrainStretch = true
 config.OptimizeTopUpPlacementPools = true
 -- On the surface, ask the finalized native buildable grid which sectors contain at least one
 -- buildable hex, then draw resource candidates uniformly from only those sectors, including the
--- anomaly perimeter ring. Every
--- selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion checks.
+-- anomaly perimeter ring. Every selected coordinate still runs the complete terrain, obstruction,
+-- and vanilla-repulsion checks.
 config.OptimizeSurfaceResourceSectorSampling = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.

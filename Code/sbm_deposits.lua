@@ -3812,7 +3812,6 @@ function DepositRules.TopUpDeposits(map)
 			if ok_unbuildable and type(unbuildable_z) == "number" then
 				local candidates = {}
 				for _, descriptor in ipairs(edge_ctx.sectors) do
-					local col, row = descriptor.col, descriptor.row
 					local sector = descriptor.sector_ref
 					if sector and not SectorIsScanned(sector) then
 						local x0 = math.max(lo_x, descriptor.area_x0 or lo_x)
