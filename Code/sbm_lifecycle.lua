@@ -1108,10 +1108,6 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 	if gen and type(gen.RestoreDeferredVehicleNightLights) == "function" then
 		gen.RestoreDeferredVehicleNightLights(map)
 	end
-	if IsModMap(map) and gen
-		and type(gen.RefreshBuriedWonderDarknessVisibility) == "function" then
-		SafeCall(gen.RefreshBuriedWonderDarknessVisibility, map, "CurrentMapChangeDone")
-	end
 	local entrance_highlight = SuperBigMap.SectorHighlight
 	if entrance_highlight and type(entrance_highlight.EnsureEntranceVisualsReady) == "function" then
 		SafeCall(entrance_highlight.EnsureEntranceVisualsReady, map, nil, "CurrentMapChangeDone")

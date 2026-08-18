@@ -154,10 +154,6 @@ local function SwitchToUnderground()
 		-- ordering of CurrentMapChangeDone relative to ChangeCurrentMapSlot's return.
 		local hr = Global("hr")
 		if type(hr) == "table" then hr.EnableDarknessReveal = 0 end
-		local darkness = SuperBigMap.BuriedWonderDarkness
-		if darkness and type(darkness.Refresh) == "function" then
-			SafeCall(darkness.Refresh, underground, "temporary underground switch button")
-		end
 		Audit("UNDERGROUND_SWITCH_COMPLETE", {
 			current_map = tostring(Global("CurrentMap")),
 			stretch_done = tostring(underground.SuperBigMapUndergroundStretchDone == true),

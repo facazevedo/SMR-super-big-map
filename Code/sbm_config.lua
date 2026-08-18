@@ -387,10 +387,6 @@ config.UndergroundRevealAllDarkness = false
 -- TEMP test aid: after underground stretching, top-ups, and reachability correction, invoke
 -- vanilla RevealDeposits for every final underground enrichment.
 config.RevealAllUndergroundEnrichmentsForTesting = false
--- The vanilla darkness shader dims emissive buried-wonder meshes but does not fully conceal them.
--- Keep expanded buried wonders invisible until vanilla IsRevealed reports that their location has
--- been uncovered. Their gameplay grids and rare-anomaly spawners remain active while concealed.
-config.ConcealBuriedWondersInDarkness = true
 -- Enable the vanilla OVERVIEW mode on the underground map (hover sector-highlight, sector
 -- rollover, scan-queue UI -- exactly the surface behavior). Vanilla ships underground maps with
 -- IsAllowedToEnterOverview=false, so without this there is no hover highlight underground.
@@ -900,7 +896,6 @@ C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergrou
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
-C.CONCEAL_BURIED_WONDERS_IN_DARKNESS = as_bool(config.ConcealBuriedWondersInDarkness)
 C.UNDERGROUND_OVERVIEW_ENABLED = as_bool(config.UndergroundOverviewEnabled)
 C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
