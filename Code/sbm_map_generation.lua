@@ -11051,11 +11051,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(repulsion_stats
 									and repulsion_stats.first_repulsion_violation))
 						end
-						if type(deposits.AuditSurfaceTopUpRingExclusivity) == "function" then
-							local ring_ok, ring_stats = TimedSafeCall("surface audit outer-ring exclusivity", map,
-								deposits.AuditSurfaceTopUpRingExclusivity, map)
+						if type(deposits.AuditSurfaceTopUpPlacement) == "function" then
+							local ring_ok, ring_stats = TimedSafeCall("surface top-up placement audit", map,
+								deposits.AuditSurfaceTopUpPlacement, map)
 							if ring_ok ~= true then
-								error("surface outer-ring anomaly audit failed: violations="
+								error("surface top-up placement audit failed: violations="
 									.. tostring(ring_stats and ring_stats.violations)
 									.. " overlap=" .. tostring(ring_stats and ring_stats.anomaly_overlap)
 									.. " outside_ring="

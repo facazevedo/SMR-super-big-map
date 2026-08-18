@@ -226,21 +226,22 @@ config.TopUpMinimumTerrainNormalZ = 4080
 -- original generated marker positions. If underground vanilla repulsion cannot fit every required
 -- marker, the residual fallback instead maximizes spacing from existing enrichments and uses
 -- lower-loaded sectors only as a secondary diversity rule. Surface anomaly extras keep their
--- separate outer-ring routing below.
+-- separate outer-ring routing below; other supported surface top-ups may also use that terrain.
 config.TopUpSectorBalancedPlacement = true
 -- The underground density fallback is allowed to relax vanilla's much larger, resource-specific
 -- repulsion radii so the expanded map can retain the exact scaled population. It must still keep
 -- every fallback marker a meaningful distance from every other enrichment. Candidate sampling
 -- continues until this hard axial-hex clearance is met; it never drops to adjacent unique hexes.
 config.UndergroundFallbackMinimumHexDistance = 6
--- Every eligible surface anomaly TOP-UP extra is reserved for this many sector rows/columns along
+-- Route every eligible surface anomaly TOP-UP extra to this many sector rows/columns along
 -- all four edges of the FINAL expanded map. Eligible kinds remain exactly the previously selected
 -- standard categories: completed/free-tech rewards, technology unlocks, and event sequences
 -- (including metal/rare-metal discoveries and large-cache/unique-scenic events). Breakthroughs
 -- remain game-pool-capped and are not topped up; unique/other anomaly families are not cloned.
--- Resource, Vista, Research Site, and Morale Vista top-ups avoid this ring. Vanilla-generated
--- markers are not moved by this routing rule.
--- 0 restores whole-map placement with no reserved ring.
+-- Resource, Vista, Research Site, and Morale Vista top-ups may use valid terrain in this ring;
+-- their complete buildable-footprint, overlap, obstruction, reachability, spacing, wonder,
+-- scan-gating, and density rules still apply. Vanilla-generated markers are not moved by this
+-- anomaly-routing rule. 0 restores whole-map anomaly placement with no perimeter routing.
 config.TopUpAnomalyOuterRingSectors = 3
 -- Two-stage surface placement first chooses a random outer-ring sector, independently of terrain.
 -- Inside that sector it accepts only flat, buildable, unobstructed terrain, sorts the viable
@@ -323,7 +324,7 @@ config.ExpansionStep12BuildEnrichmentOccupancy = true
 config.ExpansionStep13CalculateEnrichmentAdditions = false
 -- 14 (former 12): Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
 config.ExpansionStep14ValidateEnrichmentCandidates = true
--- 15 (former 13): Restrict each family to its configured region, including the anomaly outer ring.
+-- 15 (former 13): Apply configured category routing, including anomaly perimeter placement.
 config.ExpansionStep15ApplyCategoryRegions = true
 -- 16 (former 14): Run the randomized category-specific candidate selector.
 config.ExpansionStep16SelectCategoryCandidates = true
@@ -480,14 +481,15 @@ config.OptimizeDirectSourceTerrainStretch = true
 -- Build resource top-up candidates adaptively, then reuse validated leftovers for anomaly/effect
 -- top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
--- On the surface, ask the finalized native buildable grid which non-perimeter sectors contain at
--- least one buildable hex, then draw resource candidates uniformly from only those sectors. Every
+-- On the surface, ask the finalized native buildable grid which sectors contain at least one
+-- buildable hex, then draw resource candidates uniformly from only those sectors, including the
+-- anomaly perimeter ring. Every
 -- selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion checks.
 config.OptimizeSurfaceResourceSectorSampling = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
--- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe interior
+-- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe
 -- candidates. This preserves the complete perimeter sector list and placement constraints while
 -- avoiding an unconditional 153,600-point terrain scan.
 config.OptimizeAnomalyCandidateSearch = true
@@ -524,7 +526,7 @@ config.LimitBuildableGridToSource = true
 -- enabled effect types up to their source count x area factor. The three per-type switches above
 -- let each family be controlled separately. Every resource, anomaly, and effect top-up on both
 -- maps requires passable, flat, buildable, vanilla-unobstructed terrain. Surface resources and
--- effects are randomly distributed outside the anomaly-only outer ring.
+-- effects may use otherwise-valid candidates in the anomaly perimeter ring.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI

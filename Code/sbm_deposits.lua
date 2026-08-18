@@ -605,10 +605,11 @@ local function IsNativeEnrichmentMarker(marker)
 		and marker.SuperBigMapEnrichmentClone ~= true
 end
 
--- True for the N-sector-wide perimeter ring of the FINAL expanded map. This is the reserved
--- surface top-up ring: qualifying anomaly extras go here, while every other top-up family stays
--- out. Prefer the live sector's col/row; fall back to world-distance math when sector metadata is
--- unavailable. Vanilla-generated markers are never moved by this routing rule.
+-- True for the N-sector-wide perimeter ring of the FINAL expanded map. Qualifying anomaly extras
+-- are routed here; other supported surface top-up families may use the same ring when all of their
+-- ordinary placement rules pass. Prefer the live sector's col/row; fall back to world-distance
+-- math when sector metadata is unavailable. Vanilla-generated markers are never moved by this
+-- routing rule.
 local function NewFinalOuterSectorRingContext(map)
 	local city = map and map.City
 	local cols, rows = 0, 0
@@ -1178,7 +1179,6 @@ local function BadgeCandidateAllowed(marker, map, pt, x, y)
 	if not IsUndergroundMap(map) and ring_sectors > 0 then
 		local in_ring = IsInFinalOuterSectorRing(map, x, y, ring_sectors)
 		if marker.SuperBigMapEdgeTopUp and not in_ring then return false end
-		if (marker.SuperBigMapResourceTopUp or marker.SuperBigMapEffectTopUp) and in_ring then return false end
 	end
 	return true
 end
@@ -3785,8 +3785,6 @@ function DepositRules.TopUpDeposits(map)
 	local sequential_placement = optimize_placement_pool
 	local ignore_rubble_walls = underground
 		and cfg().UNDERGROUND_TOPUPS_IGNORE_RUBBLE_WALLS == true
-	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
-	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
 	-- Resource top-ups can only land on buildable terrain, yet the sequential sampler previously
 	-- drew from every interior sector and paid the complete Lua terrain/obstruction/repulsion cost
 	-- to reject points from wholly unbuildable sectors. Query the finalized native buildable grid
@@ -3813,15 +3811,10 @@ function DepositRules.TopUpDeposits(map)
 			local ok_unbuildable, unbuildable_z = pcall(unbuildable_fn)
 			if ok_unbuildable and type(unbuildable_z) == "number" then
 				local candidates = {}
-				local ring_n = math.max(0, math.floor(ring_sectors or 0))
 				for _, descriptor in ipairs(edge_ctx.sectors) do
 					local col, row = descriptor.col, descriptor.row
-					local in_ring = ring_n > 0 and (col < edge_ctx.min_col + ring_n
-						or row < edge_ctx.min_row + ring_n
-						or col > edge_ctx.max_col - ring_n
-						or row > edge_ctx.max_row - ring_n)
 					local sector = descriptor.sector_ref
-					if not in_ring and sector and not SectorIsScanned(sector) then
+					if sector and not SectorIsScanned(sector) then
 						local x0 = math.max(lo_x, descriptor.area_x0 or lo_x)
 						local y0 = math.max(lo_y, descriptor.area_y0 or lo_y)
 						local x1 = math.min(lo_x + span_x, descriptor.area_x1 or (lo_x + span_x))
@@ -3925,22 +3918,16 @@ function DepositRules.TopUpDeposits(map)
 				y = lo_y + RandInt(span_y)
 			end
 			-- Spread across the whole unscanned expanded destination, excluding only the scanned
-			-- start sector. The final surface perimeter remains reserved for anomaly extras.
+			-- start sector. The anomaly perimeter is valid for every supported top-up family.
 			-- Filtered descriptors are canonical half-open sector rectangles captured from the final
-			-- 20x20 grid. Their sector is already known, unscanned, and outside the reserved ring;
-			-- repeating GetMapSectorXY plus the ring lookup for every rejected random point cannot
-			-- change the answer. The whole-map/underground path retains both authoritative queries.
+			-- 20x20 grid. Their sector is already known and unscanned, so repeating GetMapSectorXY
+			-- for every rejected random point cannot change the answer. The whole-map/underground
+			-- path retains the authoritative sector query.
 			local sector = planned_sector or SectorAtPoint(map, x, y)
 			if planned_sector then
 				candidate_planned_sector_fast_path = candidate_planned_sector_fast_path + 1
 			end
-			local reserved_ring = false
-			if not planned_sector and not underground then
-				reserved_ring = IsInFinalOuterSectorRing(
-					map, x, y, ring_sectors, sector, ring_context)
-			end
-			if not (sector and (planned_sector or underground or not SectorIsScanned(sector))
-				and not reserved_ring) then
+			if not (sector and (planned_sector or underground or not SectorIsScanned(sector))) then
 				return false
 			end
 			local pt = point(x, y)
@@ -6157,8 +6144,8 @@ end
 -- deposits or anomalies, so neither existing top-up includes them. Top up each enabled
 -- deposit_type independently to preserve its exact source ratio. BeautyEffectDeposit,
 -- ResearchEffectDeposit, and MoraleEffectDeposit are separately gated. Unknown/custom
--- EffectDeposit subclasses are deliberately excluded. On the surface, these extras are randomly
--- selected outside the anomaly-only ring and require passable, flat, buildable, unobstructed hexes.
+-- EffectDeposit subclasses are deliberately excluded. On the surface, these extras may use the
+-- anomaly perimeter ring and require passable, flat, buildable, unobstructed hexes everywhere.
 local EFFECT_TOPUP_FLAG = {
 	BeautyEffectDeposit = "TOPUP_VISTAS",
 	ResearchEffectDeposit = "TOPUP_RESEARCH_SITES",
@@ -6262,8 +6249,6 @@ function DepositRules.TopUpEffectDeposits(map)
 	local reachability_checks, reachability_rejections = 0, 0
 	local wall_free_density_suite = underground
 		and rubble_wall_suite_token_by_map[map] ~= nil
-	local ring_sectors = cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3
-	local ring_context = not underground and NewFinalOuterSectorRingContext(map) or nil
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
 		local candidates = {}
@@ -6277,14 +6262,12 @@ function DepositRules.TopUpEffectDeposits(map)
 				if not sequential_underground and #candidates >= target_pool then break end
 				if not c.used then
 					local pt = point(c.x, c.y)
-					local reserved_ring = not underground and IsInFinalOuterSectorRing(
-						map, c.x, c.y, ring_sectors, c.sector, ring_context)
 					local can_reuse = (not underground or wall_free_density_suite)
 						and c._sbm_terrain_valid == true
 						and IsUnobstructedAt(map, pt, true, validation_context, c.q, c.r)
-					if not reserved_ring and (can_reuse
+					if can_reuse
 						or CanReceiveDeposit(map, pt, validation_context,
-							defer_candidate_reachability)) then
+							defer_candidate_reachability) then
 						candidates[#candidates + 1] = c
 					end
 				end
@@ -6303,9 +6286,7 @@ function DepositRules.TopUpEffectDeposits(map)
 				x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
 			end
 			local sector = planned_sector or SectorAtPoint(map, x, y)
-			local reserved_ring = not underground and IsInFinalOuterSectorRing(
-				map, x, y, ring_sectors, sector, ring_context)
-			if sector and (underground or not SectorIsScanned(sector)) and not reserved_ring then
+			if sector and (underground or not SectorIsScanned(sector)) then
 				local pt = point(x, y)
 				local can_receive, _, _, _, q, r = CanReceiveDeposit(
 					map, pt, validation_context, defer_candidate_reachability)
@@ -6772,9 +6753,9 @@ end
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
 -- passable, flat, engine-buildable, unobstructed terrain. Custom anomaly top-ups must be in the
 -- final outer ring; explicitly flagged vanilla fallbacks must be inside it. Anomalies occupy unique
--- hexes, resources/effects remain outside the reserved outer band, and only custom outer placements
--- are limited to one anomaly per sector.
-function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
+-- hexes and only custom outer anomaly placements are limited to one per sector. Resource and effect
+-- top-ups may use valid ring or interior terrain.
+function DepositRules.AuditSurfaceTopUpPlacement(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
@@ -6783,7 +6764,8 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 	local stats = {
 		anomaly_topups = 0, anomaly_inner_fallback = 0,
 		resource_topups = 0, effect_topups = 0,
-		anomaly_outside_ring = 0, non_anomaly_inside_ring = 0, missing_position = 0,
+		anomaly_outside_ring = 0, resource_inside_ring = 0, effect_inside_ring = 0,
+		missing_position = 0,
 		anomaly_fallback_inside_ring = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
 		anomaly_sector_overflow = 0,
@@ -6845,6 +6827,11 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 			or (has_position and audit_hex_key(x, y) or nil)
 		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
 		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
+		if in_ring and family == "resource" then
+			stats.resource_inside_ring = stats.resource_inside_ring + 1
+		elseif in_ring and family == "effect" then
+			stats.effect_inside_ring = stats.effect_inside_ring + 1
+		end
 		if family == "anomaly" and has_position and not inner_fallback then
 			if sector then
 				anomaly_topups_by_sector[sector] = (anomaly_topups_by_sector[sector] or 0) + 1
@@ -6883,9 +6870,6 @@ function DepositRules.AuditSurfaceTopUpRingExclusivity(map)
 		elseif family == "anomaly" and overlap then
 			stats.anomaly_overlap = stats.anomaly_overlap + 1
 			violation = "anomaly_topup_hex_overlap"
-		elseif family ~= "anomaly" and in_ring then
-			stats.non_anomaly_inside_ring = stats.non_anomaly_inside_ring + 1
-			violation = family .. "_topup_inside_reserved_ring"
 		elseif family == "effect" and not buildable then
 			stats.effect_unbuildable = stats.effect_unbuildable + 1
 			violation = "effect_topup_unbuildable"
@@ -8167,7 +8151,7 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		"diagnostic " .. tostring(reason))
 	local ring_ok, ring_stats = true, {}
 	if not underground then
-		ring_ok, ring_stats = DepositRules.AuditSurfaceTopUpRingExclusivity(map)
+		ring_ok, ring_stats = DepositRules.AuditSurfaceTopUpPlacement(map)
 	end
 	AuditEmit("FINAL_SUMMARY", {
 		reason = tostring(reason), markers = #entries, native = native_count, topups = topup_count,
