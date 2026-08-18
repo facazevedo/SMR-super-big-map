@@ -22,8 +22,10 @@ the values the mod's own zone discovery ran on, in source height units):
              that band would flood -- descend the contract's ladder from src_cap, and at the
              first step that grows past x3 bisect the interval to unit resolution, keeping the
              deepest level still within x3 of the last good one (v813; before it, the band
-             alone).  Controls: BAND = 1/4 and BAND = 1/2 must move rows, and the unclamped
-             band must differ on exactly the massifs whose stamp says it flooded.
+             alone).  Controls: BAND = 0 must move every row; BAND = 1/4 and BAND = 1/2
+             report rows where integer ceiling quantization makes an alternate band coincide
+             with the shipped 1/3 band.  The unclamped band must differ on exactly the massifs
+             whose stamp says it flooded.
   no_flood   descending the contract's own ladder from src_cap to the shipped base, the area of
              the 4-connected component holding the massif's peak never grows by more than x3 in
              one step.  This is the contract's persistence criterion read on the band the port
@@ -294,6 +296,16 @@ def score_case(label, pre_path, stamp_path, log):
                       if m["base"] != predicted_base(src_cap, m["peak"], 0.25))
     ctl_half = sum(1 for m in massifs
                    if m["base"] != predicted_base(src_cap, m["peak"], 0.5))
+    ctl_zero = sum(1 for m in massifs
+                   if m["base"] != predicted_base(src_cap, m["peak"], 0.0))
+    ctl_quarter_degenerate = [
+        m["index"] for m in massifs
+        if m["base"] == predicted_base(src_cap, m["peak"], 0.25)
+    ]
+    ctl_half_degenerate = [
+        m["index"] for m in massifs
+        if m["base"] == predicted_base(src_cap, m["peak"], 0.5)
+    ]
 
     # --- clause `monotone`: verified from the stamped parameters, not from the mod's flag
     mono_bad, mono_flag_disagree, ctl_mono = 0, 0, 0
@@ -344,7 +356,11 @@ def score_case(label, pre_path, stamp_path, log):
     case["clauses"] = dict(
         rule=dict(massifs=len(massifs), mismatches=rule_bad, band_mult=BAND_MULT,
                   ok=bool(rule_bad == 0), control_band_quarter_moves=ctl_quarter,
-                  control_band_half_moves=ctl_half, saddle_clamped_massifs=clamped,
+                  control_band_quarter_degenerate=ctl_quarter_degenerate,
+                  control_band_half_moves=ctl_half,
+                  control_band_half_degenerate=ctl_half_degenerate,
+                  control_band_zero_moves=ctl_zero,
+                  saddle_clamped_massifs=clamped,
                   control_unclamped_band_moves=ctl_unclamped, detail=rule_rows),
         monotone=dict(non_monotone_tables=mono_bad, stamp_flag_disagreements=mono_flag_disagree,
                       control_inversions_detected=ctl_mono, ok=bool(mono_bad == 0)),
@@ -382,7 +398,7 @@ def score_case(label, pre_path, stamp_path, log):
     c = case["clauses"]
     case["gate_ok"] = bool(c["rule"]["ok"] and c["monotone"]["ok"] and c["no_flood"]["ok"]
                            and c["disjoint"]["ok"]
-                           and c["rule"]["control_band_quarter_moves"] == len(massifs)
+                           and c["rule"]["control_band_zero_moves"] == len(massifs)
                            and c["monotone"]["control_inversions_detected"] == len(massifs))
     log(f"[{label}] rule {len(massifs) - rule_bad}/{len(massifs)}, "
         f"no-flood {len(massifs) - c['no_flood']['violations']}/{len(massifs)} "
