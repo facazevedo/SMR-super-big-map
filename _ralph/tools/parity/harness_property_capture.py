@@ -45,6 +45,8 @@ DEFAULT_LUAC = Path(r"C:\Users\fazevedo\.claude\tools\lua-5.4.8\bin\luac.exe")
 REFERENCE_UNDERGROUND_SEED = run_parity.REFERENCE_UNDERGROUND_SEED
 PLACEHOLDER_PREFIX = "__"
 STATUS_POLL_QUERY_SHA256 = "9f0a562cf2b897a575547d675bf06f4cdacd7b35ed143b78f78ad11f50128960"
+STATE_READ_ATTEMPTS = 3
+STATE_RETRY_DELAY_S = 2
 
 
 class CaptureError(RuntimeError):
@@ -243,9 +245,53 @@ def smr(args: list[str], events: list[dict[str, object]], timeout: float) -> dic
     return envelope
 
 
+def retryable_state_timeout(event: object) -> bool:
+    """Accept only the observed non-mutating DAP read interruption for retry.
+
+    A fresh ``smr state`` call opens a new DAP connection and does not alter game
+    state.  The retry is deliberately narrower than a generic connection retry:
+    the prior command must be the exact DAP-data timeout while crash diagnostics
+    still identity-verify the tracked process as running.  Errors, assertions,
+    stopped processes, malformed envelopes, and every other state failure remain
+    terminal.
+    """
+    if not isinstance(event, dict) or event.get("returncode") != 3:
+        return False
+    envelope = event.get("envelope")
+    if not isinstance(envelope, dict):
+        return False
+    data = envelope.get("data")
+    if not isinstance(data, dict):
+        return False
+    if data.get("error") != (
+        "could not connect to exact tracked daemon: timed out waiting for DAP data"
+    ):
+        return False
+    diagnostics = data.get("diagnostics")
+    return (
+        isinstance(diagnostics, dict)
+        and diagnostics.get("classification") == "running"
+        and diagnostics.get("detected") is False
+    )
+
+
 def state_value(query: str, events: list[dict[str, object]], timeout: float = 90) -> object:
-    envelope = smr(["state", query, "--timeout", str(timeout)], events, timeout + 30)
-    return envelope.get("data", {}).get("value")
+    for attempt in range(1, STATE_READ_ATTEMPTS + 1):
+        try:
+            envelope = smr(["state", query, "--timeout", str(timeout)], events, timeout + 30)
+            return envelope.get("data", {}).get("value")
+        except CaptureError:
+            event = events[-1] if events else None
+            if attempt == STATE_READ_ATTEMPTS or not retryable_state_timeout(event):
+                raise
+            event["recovery"] = {
+                "kind": "retry_exact_running_dap_data_timeout_v1",
+                "attempt": attempt,
+                "max_attempts": STATE_READ_ATTEMPTS,
+                "delay_s": STATE_RETRY_DELAY_S,
+            }
+            time.sleep(STATE_RETRY_DELAY_S)
+    raise AssertionError("state read retry loop exhausted unexpectedly")
 
 
 def status_query(status_name: str, error_name: str) -> str:
@@ -454,6 +500,26 @@ def command_self_test(args: argparse.Namespace) -> int:
     poll_query_sha256 = hashlib.sha256(poll_query.encode("utf-8")).hexdigest()
     if poll_query_sha256 != STATUS_POLL_QUERY_SHA256 or "rawget" in poll_query:
         raise CaptureError("status poll query is not the proven proxy-aware lookup")
+    retryable_event = {
+        "returncode": 3,
+        "envelope": {
+            "data": {
+                "error": "could not connect to exact tracked daemon: timed out waiting for DAP data",
+                "diagnostics": {"classification": "running", "detected": False},
+            }
+        },
+    }
+    nonretryable_event = {
+        "returncode": 3,
+        "envelope": {
+            "data": {
+                "error": "could not connect to exact tracked daemon: timed out waiting for DAP data",
+                "diagnostics": {"classification": "crash", "detected": True},
+            }
+        },
+    }
+    if not retryable_state_timeout(retryable_event) or retryable_state_timeout(nonretryable_event):
+        raise CaptureError("state retry discriminator is not fail-closed")
     for cli_args in (
         ["daemon", "start", "--help"],
         ["run-file", "--help"],
@@ -489,6 +555,13 @@ def command_self_test(args: argparse.Namespace) -> int:
                 "query": poll_query,
                 "query_sha256": poll_query_sha256,
                 "expected_query_sha256": STATUS_POLL_QUERY_SHA256,
+            },
+            "state_retry": {
+                "mode": "exact_running_dap_data_timeout_v1",
+                "attempts": STATE_READ_ATTEMPTS,
+                "delay_s": STATE_RETRY_DELAY_S,
+                "positive_discriminator": retryable_state_timeout(retryable_event),
+                "negative_discriminator": not retryable_state_timeout(nonretryable_event),
             },
             "temp_root": str(TMP_ROOT),
         }
