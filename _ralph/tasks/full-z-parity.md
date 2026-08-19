@@ -4,9 +4,9 @@
 
 Make the expanded SURFACE height transform a true 4/3 similarity everywhere except inside a small set of per-mountain compression zones, so that:
 
-1. **Slopes — and therefore passability — are EXACT outside the zones.** Today the surface scales XY by 4/3 but Z by only ~1.097 (adaptive reduction to fit the 16-bit ceiling), flattening every slope to ~82% of vanilla. Measured consequence at 42S28W: 289 of 4,692 surface objects stand on ground whose own-cell passability differs from vanilla, 223 of them one-way false->true (vanilla-impassable became walkable). The underground already scales Z by exactly 4/3 and shows only bidirectional noise (69, both ways) — that is the proof the similarity transform fixes it.
+1. **Slopes are EXACT outside the zones, and passability/buildability reflect the real final expanded map.** The surface must scale XY and Z by 4/3 outside the zones. Per the authoritative 2026-08-19 ruling, the stock engine's fixed native property lattice is authoritative: cross-twin verdict differences caused solely by its fixed sampling pitch are accepted, but the expanded verdicts must be freshly rebuilt from the final terrain and must never be copied, forced, or stale.
 2. **Only mountains that would pierce the engine ceiling are compressed, individually,** each normalized so its own peak lands EXACTLY on the ceiling, with a smooth join at its base (no crease along any isoline — a global piecewise transform is explicitly rejected).
-3. **Passability everywhere reflects the REAL final terrain** (user ruling): outside zones it must equal vanilla exactly; inside zones it must be exactly what the engine recomputes from the compressed ground — never faked toward vanilla, never left stale.
+3. **Passability and buildability everywhere reflect the REAL final terrain** (2026-08-19 user ruling): both outside and inside zones they must be exactly what the stock engine immediately recomputes from the final expanded ground and relevant stock inputs — never faked toward vanilla, never copied, and never left stale. Vanilla-to-expanded property differences are diagnostic rather than failures; outside-zone height similarity remains exact.
 
 ## The algorithm (user-designed; measured parameters at 42S28W)
 
@@ -25,7 +25,7 @@ Surface only — the underground never overflows (measured interior span 12,767;
 
 - `floors`: the entire 21-coordinate object-parity result (task `perfect-21`, all-green DONE) must stay green. Re-measure P1 (30S146E) and 45S82E after EVERY mod change; full sweep re-measure before DONE. The ratchet (`entrance-colocation-and-scale/artifacts/best.json` semantics) binds; a regression is fixed or reverted in-session. NOTE: this change ALTERS every surface Z — object-Z verdicts must follow the new transform (exact affine outside zones, SetTerrainZ inside), and that update must be justified in the gate code, never a silent tolerance.
 - `height-similarity-outside-zones`: dump both twins' surface height grids raw (`GridSaveRaw`, probe exists: `height_dump_probe.lua` via `run_parity.py twin ... zonesprobe`); offline, every cell OUTSIDE the zone masks must satisfy expanded == floor(vanilla*4/3) + shift exactly; every zone peak must equal exactly 65,535. numpy/scipy are available (2.5.0/1.18.0).
-- `pass-exact-outside-zones`: the per-object self-cell passability comparison (`pass_probe.lua` via `passall`) must show ZERO differences for objects outside zones, on at least 30S146E, 45S82E, 42S28W and two more batch-2 coordinates. (Ring counts are diagnostic only — ring geometry legitimately differs under the stretch; the gate is the self cell.)
+- `properties-real-final-terrain`: on at least 30S146E, 45S82E, 42S28W and two more batch-2 coordinates, expanded passability and buildability must match an immediate stock-engine rebuild/recalculation from the same final terrain and relevant stock inputs. Cover every required property site, including footprint-aware normalized-zone sites. Preserve vanilla-to-expanded differences as diagnostics, but do not fail them solely for fixed-native-lattice sampling differences.
 - `pass-real-inside-zones`: inside zones, sampled passability must match a fresh engine recompute of the final terrain (no stale pass data), and the zone masks + per-zone bases/peaks must be reported per map.
 - `underground-unchanged`: underground grids byte-identical to the pre-change pipeline on the same seeds.
 - `no-crease`: the in-zone remap's join is slope-continuous at the base by construction; verify numerically on the dumped grids (finite-difference slope across the base contour has no step discontinuity).
@@ -53,8 +53,11 @@ and only then port the validated algorithm into the mod's Lua.
 
 ## Completion gate
 
-DONE.md only when: all gates above green with per-coordinate tables (zone count, bases, peaks-at-cap, outside-zone height equality, self-cell passability zeros, in-zone recompute consistency); the 21-case object parity re-proven green on the final code; save-roundtrip re-run green at P1; every change committed and deployed with a green audit; no error/assert/crash/timeout in the final runs. Document the transform (formula, per-zone solve, zone stamps) in HANDOFF.
+DONE.md only when: all gates above are green with per-coordinate tables (zone count, bases, peaks-at-cap, outside-zone height equality, fresh final-terrain passability/buildability consistency, and diagnostic cross-twin property differences); the 21-case object parity is re-proven green on the final code; save-roundtrip is re-run green at P1; every change is committed and deployed with a green audit; and no error/assert/crash/timeout occurs in the final runs. Document the transform (formula, per-zone solve, zone stamps) and the accepted fixed-lattice property policy in HANDOFF.
 
 ## Blockers
 
 Per predecessors. Quota pauses are not blockers and do not consume budget. If a map is found whose INTERIOR span exceeds what even per-mountain compression can absorb while keeping bases joined at slope 4/3 (i.e., zones would cover a non-trivial fraction of the map), stop and present the numbers rather than silently widening zones: that is a design decision for the user.
+
+The fixed 50-world-unit native passability lattice established in iteration 787
+is explicitly accepted by `USER_RULING_2026-08-19.md` and is not a blocker.
