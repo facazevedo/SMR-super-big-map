@@ -72,6 +72,11 @@ CreateRealTimeThread(function()
 			return GetPreciseTicks() - st
 		end
 
+		-- A single height-node perturbation can change a small, offset footprint in
+		-- the property raster.  Keep every possible phase footprint away from a
+		-- pre-existing blocked bit so the replay control cannot be clipped.
+		local control_radius = 8
+
 		local function snapshot(map, env, stage, choose_control)
 			local b = map and map.buildable
 			local grid = type(b) == "table" and b.z_grid or nil
@@ -91,21 +96,47 @@ CreateRealTimeThread(function()
 					bytes[#bytes + 1] = string.char(bits)
 					if passable then n_pass = n_pass + 1 end
 					if buildable then n_build = n_build + 1 end
-					if choose_control and in_bounds and bits == 3 then
-						local dx, dy = sx - cx, sy - cy
-						local d = dx * dx + dy * dy
-						local parity = sy % 2
-						if nearest_d[parity] == nil or d < nearest_d[parity] then
-							nearest_d[parity] = d
-							nearest[parity] = { sx = sx, sy = sy, q = q, r = r, wx = wx, wy = wy }
+				end
+			end
+			local blob = table.concat(bytes)
+			if choose_control then
+				-- Integral-image bad-bit counts make the full 17x17 neighborhood test
+				-- O(1) per candidate instead of scanning a square for every hex.
+				local pw, prefix = gw + 1, {}
+				local function pidx(x, y) return y * pw + x + 1 end
+				for sy = 0, gh - 1 do
+					local row_bad = 0
+					prefix[pidx(0, sy + 1)] = prefix[pidx(0, sy)] or 0
+					for sx = 0, gw - 1 do
+						if string.byte(blob, sy * gw + sx + 1) ~= 3 then row_bad = row_bad + 1 end
+						prefix[pidx(sx + 1, sy + 1)] = (prefix[pidx(sx + 1, sy)] or 0) + row_bad
+					end
+				end
+				local function control_neighborhood_clear(sx, sy)
+					local x0, y0 = sx - control_radius, sy - control_radius
+					local x1, y1 = sx + control_radius + 1, sy + control_radius + 1
+					if x0 < 0 or y0 < 0 or x1 > gw or y1 > gh then return false end
+					local bad_sum = prefix[pidx(x1, y1)] - prefix[pidx(x0, y1)]
+						- prefix[pidx(x1, y0)] + prefix[pidx(x0, y0)]
+					return bad_sum == 0
+				end
+				for sy = 0, gh - 1 do
+					for sx = 0, gw - 1 do
+						if string.byte(blob, sy * gw + sx + 1) == 3 and control_neighborhood_clear(sx, sy) then
+							local dx, dy = sx - cx, sy - cy
+							local d, parity = dx * dx + dy * dy, sy % 2
+							if nearest_d[parity] == nil or d < nearest_d[parity] then
+								local q, r, wx, wy = storage_world(sx, sy)
+								nearest_d[parity] = d
+								nearest[parity] = { sx = sx, sy = sy, q = q, r = r, wx = wx, wy = wy }
+							end
 						end
 					end
 				end
 			end
-			local blob = table.concat(bytes)
 			write_blob(out_base .. "-" .. env .. "-property-" .. stage .. ".raw", blob)
-			emit(string.format("snapshot,%s,%s,cells=%d,passable=%d,buildable=%d,bytes=%d",
-				env, stage, gw * gh, n_pass, n_build, #blob))
+			emit(string.format("snapshot,%s,%s,cells=%d,passable=%d,buildable=%d,bytes=%d,control_radius=%d",
+				env, stage, gw * gh, n_pass, n_build, #blob, control_radius))
 			return blob, nearest, gw, gh
 		end
 

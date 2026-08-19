@@ -497,6 +497,17 @@ def command_capture_pair(args: argparse.Namespace) -> int:
 
 def command_self_test(args: argparse.Namespace) -> int:
     py_compile.compile(str(Path(__file__).resolve()), doraise=True)
+    property_probe = (Path(__file__).resolve().parent / "property_probe.lua").read_text(
+        encoding="utf-8"
+    )
+    control_selection_fragments = (
+        "local control_radius = 8",
+        "local function control_neighborhood_clear(sx, sy)",
+        "return bad_sum == 0",
+        "control_neighborhood_clear(sx, sy)",
+    )
+    if any(fragment not in property_probe for fragment in control_selection_fragments):
+        raise CaptureError("property control selection is not full-neighborhood guarded")
     poll_query = status_query("g_ParityStatus", "g_ParityError")
     poll_query_sha256 = hashlib.sha256(poll_query.encode("utf-8")).hexdigest()
     if poll_query_sha256 != STATUS_POLL_QUERY_SHA256 or "rawget" in poll_query:
@@ -564,6 +575,11 @@ def command_self_test(args: argparse.Namespace) -> int:
             "luac": str(args.luac.resolve()),
             "rendered_lua": manifest["lua"],
             "placeholder_free": True,
+            "control_site_selection": {
+                "mode": "full_passable_buildable_neighborhood_v1",
+                "radius_cells": 8,
+                "required_fragments": list(control_selection_fragments),
+            },
             "status_poll": {
                 "mode": "proxy_plain_global_v1",
                 "query": poll_query,
