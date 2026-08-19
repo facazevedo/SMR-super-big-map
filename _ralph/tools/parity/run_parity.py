@@ -836,6 +836,38 @@ SERIAL_RASTER_BLOCK = """		-- Serialize stock prefab rasterization for this cont
 		end"""
 
 
+# Diagnostic only, opt-in with the "passpitch100" argument. The expanded 819200-wu map
+# currently allocates a 16384-square native pass raster (50 wu/cell), while the vanilla
+# 614400-wu control allocates 8192 square (75 wu/cell). This bounded pre-generation control
+# tests whether the engine derives that allocation from the public pass-tile constant. It
+# changes no mod setting or terrain transform and restores the constant on completion/error.
+PASS_PITCH_100_BLOCK = """		do
+			local pass_pitch_const = rawget(_G, "const")
+			if type(pass_pitch_const) ~= "table" then
+				error("const table unavailable for pass-pitch allocation control")
+			end
+			local pass_pitch_original = tonumber(pass_pitch_const.PassTileSize)
+			if pass_pitch_original ~= 50 then
+				error("unexpected original PassTileSize " .. tostring(pass_pitch_original))
+			end
+			rawset(_G, "g_ParityPassPitchOriginal", pass_pitch_original)
+			rawset(_G, "g_ParityPassPitchTarget", 100)
+			rawset(_G, "g_ParityPassPitchRestored", false)
+			pass_pitch_const.PassTileSize = 100
+			if tonumber(pass_pitch_const.PassTileSize) ~= 100 then
+				error("PassTileSize write did not take effect")
+			end
+			CreateRealTimeThread(function()
+				while g_ParityStatus ~= "complete" and g_ParityStatus ~= "error" do
+					Sleep(100)
+				end
+				pass_pitch_const.PassTileSize = pass_pitch_original
+				g_ParityPassPitchRestored =
+					tonumber(pass_pitch_const.PassTileSize) == pass_pitch_original
+			end)
+		end"""
+
+
 # Diagnostic only, opt-in with the "entranceaudit" argument.  Turns on the mod's own gated
 # elevator audit channel (sbm_diagnostics.lua: DEBUG_LOGGING_ENABLED + DEBUG_ELEVATOR_SUPPLY)
 # so the passage planner's PASSAGE_PLAN_* records reach the game log.  It only flips two
@@ -4553,7 +4585,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
              stretch_dump=False, flatten_probe=False, pass_trace=False, pass_real_probe=False,
-             pass_lattice_probe=False, pass_native_probe=False, pass_rebuild_probe=False,
+             pass_lattice_probe=False, pass_native_probe=False, pass_pitch_control=False,
+             pass_rebuild_probe=False,
              pass_mask_probe=False,
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
@@ -4595,6 +4628,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
     extras = []
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
+    if pass_pitch_control:
+        extras.append(PASS_PITCH_100_BLOCK)
     # Before every probe and before the passage pin: it shadows `pairs` and DoGenerate, and a
     # probe that shadows DoGenerate too must wrap the pinned one, not the other way round.
     if tag_order_pin:
@@ -4744,6 +4779,34 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 f"vanilla underground pin not honoured ({tag}): holder seed "
                 f"{underground_seed} != pin {int(pin_seed)}"
             )
+
+        pass_pitch_info = None
+        if pass_pitch_control:
+            restored = False
+            for _ in range(30):
+                _, restored = cli.marshal_value(
+                    client, "g_ParityPassPitchRestored", timeout=30.0
+                )
+                if restored is True:
+                    break
+                time.sleep(0.1)
+            _, original_pitch = cli.marshal_value(
+                client, "g_ParityPassPitchOriginal", timeout=30.0
+            )
+            _, target_pitch = cli.marshal_value(
+                client, "g_ParityPassPitchTarget", timeout=30.0
+            )
+            pass_pitch_info = {
+                "original": original_pitch,
+                "target": target_pitch,
+                "restored": restored,
+            }
+            if original_pitch != 50 or target_pitch != 100 or restored is not True:
+                raise RuntimeError(
+                    f"pass-pitch allocation control did not restore cleanly ({tag}): "
+                    f"{pass_pitch_info}"
+                )
+            log(f"  pass-pitch allocation control: {pass_pitch_info}")
 
         tag_order = None
         if tag_order_pin:
@@ -5025,6 +5088,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "passage_pin_around": pin_around,
             "passage_pin_passable": pin_passable,
             "passage_pin_calls": pin_calls,
+            "pass_pitch_control": pass_pitch_info,
             "tag_order_pin": tag_order,
             "rows": rows,
             "csv": str(csv_path),
@@ -5086,6 +5150,7 @@ def main():
         passreal = "passreal" in sys.argv[5:]
         passlattice = "passlattice" in sys.argv[5:]
         passnative = "passnative" in sys.argv[5:]
+        passpitch100 = "passpitch100" in sys.argv[5:]
         passrebuild = "passrebuild" in sys.argv[5:]
         passmask = "passmask" in sys.argv[5:]
         passforced = "passforced" in sys.argv[5:]
@@ -5127,7 +5192,7 @@ def main():
             f"stretch_dump={stretchdump} flatten_probe={flattenprobe} "
             f"pass_trace={passtrace} "
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
-            f"pass_native_probe={passnative} "
+            f"pass_native_probe={passnative} pass_pitch_control={passpitch100} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
             f"pass_forced_probe={passforced} pass_writer_probe={passwriter} "
             f"pass_own_probe={passown} pass_ablate_probe={passablate} "
@@ -5151,7 +5216,7 @@ def main():
                         stretch_dump=stretchdump, flatten_probe=flattenprobe,
                         pass_trace=passtrace,
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
-                        pass_native_probe=passnative,
+                        pass_native_probe=passnative, pass_pitch_control=passpitch100,
                         pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
                         pass_forced_probe=passforced,
                         pass_writer_probe=passwriter, pass_own_probe=passown,
