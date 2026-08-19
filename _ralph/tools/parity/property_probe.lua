@@ -307,7 +307,7 @@ CreateRealTimeThread(function()
 				-- Keep the bank private until both parity signatures have been compared,
 				-- but give the DAP request loop a scheduling boundary after each fully
 				-- self-restoring control calculation. This changes no measured data.
-				if type(Sleep) == "function" then Sleep(1) end
+				if type(Sleep) == "function" then Sleep(100) end
 			end
 			return bank
 		end

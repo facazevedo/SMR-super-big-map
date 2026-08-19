@@ -500,6 +500,8 @@ def command_self_test(args: argparse.Namespace) -> int:
     property_probe = (Path(__file__).resolve().parent / "property_probe.lua").read_text(
         encoding="utf-8"
     )
+    private_control_yield = 'if type(Sleep) == "function" then Sleep(100) end'
+    published_control_yield = 'if type(Sleep) == "function" then Sleep(1) end'
     control_selection_fragments = (
         "local control_radius = 8",
         "local function control_neighborhood_clear(sx, sy)",
@@ -511,10 +513,15 @@ def command_self_test(args: argparse.Namespace) -> int:
         "local function control_banks_compatible(first, second)",
         "selected control bank footprint mismatch",
         "bank_footprints_exact=true",
-        'if type(Sleep) == "function" then Sleep(1) end',
+        private_control_yield,
+        published_control_yield,
         "output writes so a large raw control file cannot starve DAP",
     )
-    if any(fragment not in property_probe for fragment in control_selection_fragments):
+    if (
+        any(fragment not in property_probe for fragment in control_selection_fragments)
+        or property_probe.count(private_control_yield) != 1
+        or property_probe.count(published_control_yield) != 1
+    ):
         raise CaptureError("property control selection is not full-neighborhood guarded")
     poll_query = status_query("g_ParityStatus", "g_ParityError")
     poll_query_sha256 = hashlib.sha256(poll_query.encode("utf-8")).hexdigest()
