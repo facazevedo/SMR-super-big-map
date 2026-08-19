@@ -3684,7 +3684,7 @@ ANOM_PROBE_BLOCK = """		do
 
 def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     pass_probe_all=False, zones_probe=False, pass_real_probe=False,
-                    pass_lattice_probe=False, pass_rebuild_probe=False,
+                    pass_lattice_probe=False, pass_native_probe=False, pass_rebuild_probe=False,
                     pass_mask_probe=False, pass_forced_probe=False,
                     pass_writer_probe=False, pass_own_probe=False, pass_ablate_probe=False,
                     pass_imprint_probe=False, pass_move_probe=False, pass_class_probe=False,
@@ -3944,6 +3944,33 @@ def dump_and_census(client, tag, hexgrid, wonder_probe=False, ring_scale=1.0,
                     if st == "error":
                         _, e = cli.marshal_value(client, "g_ParityPassLatError", timeout=60.0)
                         log(f"  passlattice probe error: {e}")
+                        break
+                except dap.DapTimeout:
+                    pass
+                time.sleep(5)
+
+    if pass_native_probe:
+        # Read-only exact-red-point native pass-grid/lattice diagnostic for final-v823 45S82E.
+        probe_src = (HERE / "passnative_probe.lua").read_text(encoding="utf-8")
+        probe_src = probe_src.replace("__POS_SCALE__", repr(float(ring_scale)))
+        probe_src = probe_src.replace("__OUT_PATH__", cli.lua_path(OUT / f"passnative-{tag}.csv"))
+        probe_path = OUT / f"passnativeprobe-{tag}.lua"
+        probe_path.write_text(probe_src, encoding="utf-8")
+        perr, _ = cli.load_lua_file(client, probe_path, timeout=120.0)
+        if perr:
+            log(f"  passnative probe failed to load: {perr[2]}")
+        else:
+            deadline = time.time() + 1800
+            while time.time() < deadline:
+                try:
+                    _, st = cli.marshal_value(client, "g_ParityPassNativeStatus", timeout=60.0)
+                    if st == "ready":
+                        _, inf = cli.marshal_value(client, "g_ParityPassNativeInfo", timeout=60.0)
+                        log(f"  passnative probe: {inf}")
+                        break
+                    if st == "error":
+                        _, e = cli.marshal_value(client, "g_ParityPassNativeError", timeout=60.0)
+                        log(f"  passnative probe error: {e}")
                         break
                 except dap.DapTimeout:
                     pass
@@ -4526,7 +4553,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              anom_probe=False, place_probe=False, play_probe=False, tag_order_pin=False,
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
              stretch_dump=False, flatten_probe=False, pass_trace=False, pass_real_probe=False,
-             pass_lattice_probe=False, pass_rebuild_probe=False, pass_mask_probe=False,
+             pass_lattice_probe=False, pass_native_probe=False, pass_rebuild_probe=False,
+             pass_mask_probe=False,
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
              pass_ablate_probe=False, pass_imprint_probe=False, pass_move_probe=False,
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
@@ -4957,6 +4985,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             ring_scale=(8192.0 / 6144.0) if expand else 1.0,
             pass_probe_all=pass_probe_all, zones_probe=zones_probe,
             pass_real_probe=pass_real_probe, pass_lattice_probe=pass_lattice_probe,
+            pass_native_probe=pass_native_probe,
             pass_rebuild_probe=pass_rebuild_probe, pass_mask_probe=pass_mask_probe,
             pass_forced_probe=pass_forced_probe, pass_writer_probe=pass_writer_probe,
             pass_own_probe=pass_own_probe, pass_ablate_probe=pass_ablate_probe,
@@ -5056,6 +5085,7 @@ def main():
         passtrace = "passtrace" in sys.argv[5:]
         passreal = "passreal" in sys.argv[5:]
         passlattice = "passlattice" in sys.argv[5:]
+        passnative = "passnative" in sys.argv[5:]
         passrebuild = "passrebuild" in sys.argv[5:]
         passmask = "passmask" in sys.argv[5:]
         passforced = "passforced" in sys.argv[5:]
@@ -5097,6 +5127,7 @@ def main():
             f"stretch_dump={stretchdump} flatten_probe={flattenprobe} "
             f"pass_trace={passtrace} "
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
+            f"pass_native_probe={passnative} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
             f"pass_forced_probe={passforced} pass_writer_probe={passwriter} "
             f"pass_own_probe={passown} pass_ablate_probe={passablate} "
@@ -5120,6 +5151,7 @@ def main():
                         stretch_dump=stretchdump, flatten_probe=flattenprobe,
                         pass_trace=passtrace,
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
+                        pass_native_probe=passnative,
                         pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
                         pass_forced_probe=passforced,
                         pass_writer_probe=passwriter, pass_own_probe=passown,
