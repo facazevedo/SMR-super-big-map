@@ -157,6 +157,16 @@ def analyze(
     checks["producer_sorts_canonical_keys"] = (
         "table.sort(keys" in producer and "<cycle>" in producer and "<depth>" in producer
     )
+    checks["producer_guards_collision_surface_entity"] = (
+        re.search(
+            r"if\s+entity\s+and\s+collision_surface\s+and\s+type\(IsValidEntity\)"
+            r"\s*==\s*\"function\"\s+and\s+IsValidEntity\(entity\)\s+and\s+"
+            r"type\(HasAnySurfaces\).*?pcall\(HasAnySurfaces,\s*entity,\s*collision_surface\)",
+            producer,
+            re.DOTALL,
+        )
+        is not None
+    )
     checks["producer_uses_raw_grid_capture"] = producer.count("GridSaveRaw") >= 3
     checks["producer_serializes_pass_and_build_grids"] = (
         "terrain.GetPassGrid" in producer and producer.count("GridWriteStr") >= 3
@@ -214,6 +224,7 @@ def self_test(sources: tuple[str, str, str, str]) -> dict[str, object]:
         "stale_version_red": (2, "'version', 822,", "'version', 821,"),
         "forbidden_launcher_red": (3, "return \"fzp_determinism_capture_armed\"", "taskkill MarsDebug.exe"),
         "missing_final_artifact_red": (3, '"underground_buildable",', ""),
+        "missing_valid_entity_guard_red": (3, "and IsValidEntity(entity) ", ""),
     }
     controls: dict[str, bool] = {}
     for name, (index, old, new) in mutations.items():

@@ -142,7 +142,8 @@ local function object_rows(map, collision_only)
 			local entity = safe_call(obj.GetEntity, obj)
 			if collision_only then
 				local has_surface = false
-				if entity and collision_surface and type(HasAnySurfaces) == "function" then
+				if entity and collision_surface and type(IsValidEntity) == "function"
+						and IsValidEntity(entity) and type(HasAnySurfaces) == "function" then
 					local ok_surface, value = pcall(HasAnySurfaces, entity, collision_surface)
 					has_surface = ok_surface and value == true
 				end
