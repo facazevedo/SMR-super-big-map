@@ -14,12 +14,12 @@ twins, plus a self-restoring bank of one-height-node sensitivity controls.  This
   the vanilla/source field by the probes' own ``HexToWorld`` calibration and the
   measured height-grid ratio;
 * applies the complete, live-measured stock evaluation footprint to the exact
-  non-affine height-node set before classifying every expanded verdict;
-* requires zero fresh-stock field differences outside that footprint-aware set;
-  and
+  non-affine height-node set before classifying every expanded verdict; and
 * requires expanded shipped == fresh over the entire expanded map, plus fresh ==
   repeat (and restored == fresh where present), so freshness is authoritative and
-  global rather than an exception-local diagnostic.
+  global rather than an exception-local diagnostic. Cross-twin differences, including
+  those outside compression zones, are retained as exact diagnostics because the
+  engine's fixed native property lattice is authoritative (2026-08-19 ruling).
 
 By default every cross-twin difference is written to CSV.  Diagnostic
 ``--differences-mode count`` retains the same exhaustive scoring and exact counts
@@ -1430,6 +1430,8 @@ def main(argv: list[str] | None = None) -> int:
             "outside_source_value": "false_unbuildable",
             "normalisation_exception": "complete_live_measured_expanded_stock_footprint",
             "primary_gate": "expanded_shipped_equals_fresh_everywhere",
+            "cross_twin_differences": "diagnostic_only_fixed_native_lattice",
+            "ruling": "2026-08-19 fresh final-terrain property policy",
         },
         "freshness": {"vanilla": freshness_report(vgrids), "expanded": freshness_report(egrids)},
         "maps": {},
@@ -1580,8 +1582,6 @@ def main(argv: list[str] | None = None) -> int:
             scored = result["scored"]
             assert isinstance(scored, dict)
             report["maps"][env][name] = scored  # type: ignore[index]
-            if not scored["outside_zero"]:
-                failed.append(f"{env}/{name}: {scored['differences_outside']} outside-mask differences")
             freshness_inside = scored["freshness_inside"]
             assert isinstance(freshness_inside, dict)
             if not freshness_inside["inside_fresh"]:
