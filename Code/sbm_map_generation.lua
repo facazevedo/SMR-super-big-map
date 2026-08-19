@@ -85,6 +85,26 @@ local function cfg_bool(key, default)
 	return default
 end
 
+-- Test-only determinism capture seam. Normal gameplay never installs this hook, so the fast path
+-- is one table lookup and an immediate return. A deliberately armed capture is fail-closed: losing
+-- an early stock/object boundary would make a later identical final hash uninterpretable.
+local function NotifyDeterminismCaptureForTest(stage, map, details)
+	local state = SuperBigMap.State
+	local capture = type(state) == "table" and state.test_determinism_capture or nil
+	if type(capture) ~= "table" then return false end
+	if type(capture.hook) ~= "function" then
+		error("armed determinism capture hook is unavailable")
+	end
+	local ok, result = pcall(capture.hook, stage, map, details or false)
+	if not ok or result ~= true then
+		error("determinism capture failed at " .. tostring(stage) .. ": "
+			.. tostring(ok and result or result))
+	end
+	capture.counts = capture.counts or {}
+	capture.counts[stage] = (capture.counts[stage] or 0) + 1
+	return true
+end
+
 -- Establish the exact vanilla darkness renderer state as a synchronous transition boundary.
 -- ChangeCurrentMapSlot changes the engine map before it emits CurrentMapChangeDone; relying only
 -- on that later message leaves a render-thread-sized window in which a newly current Underground
@@ -4782,6 +4802,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			end
 		end
 		if type(source.SuspendPassEdits) == "function" then source:SuspendPassEdits("SuperBigMapVanillaSourceMigration") end
+		NotifyDeterminismCaptureForTest("pre_stock_generation", source, {
+			generator = generator,
+			destination = destination,
+		})
 		local generator_token = LoadingBegin("vanilla RandomMapGenerator.DoGenerate", source)
 		if generator_token then
 			local timed_results = PackValues(pcall(CallWithClutterCapture,
@@ -4797,6 +4821,10 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			results = PackValues(CallWithClutterCapture(source, original_do_generate, generator, source,
 				Unpack(call_args, 1, call_args.n)))
 		end
+		NotifyDeterminismCaptureForTest("stock_surface_output", source, {
+			generator = generator,
+			destination = destination,
+		})
 		ProbeNativeClutterAccess(source, "temporary source after DoGenerate")
 		local update_radius_token = LoadingBegin("refresh temporary source object radius", source)
 		local update_radius = Global("UpdateMapMaxObjRadius")
@@ -10794,6 +10822,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
+				NotifyDeterminismCaptureForTest("post_object_transform", map, {
+					pass_edits_suspended = pass_batch_active == true,
+				})
 				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
 				-- replacing the complete height/type terrain grids. The engine exposes no transformed
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
@@ -13272,6 +13303,23 @@ function MapGeneration.SetTwinUndergroundSeedForTest(seed, authority_tag)
 		authority_tag = tostring(authority_tag or "fresh_vanilla_twin"),
 	}
 	return true
+end
+
+-- Scenario-agnostic observer used only by the harness determinism cohort. The hook is deliberately
+-- stored in transient shared state, is never serialized, and must return literal true at every
+-- notification. This setter changes no production algorithm or game data by itself.
+function MapGeneration.SetDeterminismCaptureHookForTest(hook, authority_tag)
+	if type(hook) ~= "function" then return false, "hook must be a function" end
+	SuperBigMap.State.test_determinism_capture = {
+		hook = hook,
+		authority_tag = tostring(authority_tag or "harness_determinism_capture"),
+		counts = {},
+	}
+	return true
+end
+
+function MapGeneration.NotifyDeterminismCaptureForTest(stage, map, details)
+	return NotifyDeterminismCaptureForTest(stage, map, details)
 end
 
 MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled

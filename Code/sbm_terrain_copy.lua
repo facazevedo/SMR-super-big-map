@@ -52,6 +52,14 @@ local function LoadingStep(name, data, map)
 	end
 end
 
+local function NotifyDeterminismCaptureForTest(stage, map, details)
+	local generation = SuperBigMap.MapGeneration
+	local notify = type(generation) == "table"
+		and generation.NotifyDeterminismCaptureForTest or nil
+	if type(notify) ~= "function" then return false end
+	return notify(stage, map, details)
+end
+
 local function EntranceAudit(event, data, map)
 	local diagnostics = SuperBigMap.Diagnostics
 	if diagnostics and type(diagnostics.Elevator) == "function" then
@@ -1364,6 +1372,10 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
+			NotifyDeterminismCaptureForTest("pre_z_transform", map, {
+				grid = stretched,
+				grid_kind = scale_values and "surface_height" or "surface_terrain",
+			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
@@ -1511,6 +1523,10 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					end
 				end
 			end
+			NotifyDeterminismCaptureForTest("post_z_transform", map, {
+				grid = stretched,
+				grid_kind = scale_values and "surface_height" or "surface_terrain",
+			})
 			if scale_values then ZDumpHeightGrid(map, "post", stretched) end
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
