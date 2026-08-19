@@ -73,7 +73,7 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = HERE / "out"
 CAP = 65535
 MAPPING_CACHE_SCHEMA = "smr.property-map-cache.v1"
-NORMALISED_CACHE_SCHEMA = "smr.property-normalised-cache.v1"
+NORMALISED_CACHE_SCHEMA = "smr.property-normalised-cache.v2"
 FOOTPRINT_CACHE_SCHEMA = "smr.property-footprint-cache.v1"
 INPUT_MANIFEST_SCHEMA = "smr.propertycheck-inputs.v1"
 MAPPING_ARRAY_KEYS = (
@@ -814,6 +814,7 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path,
         wanted = labels[massif["peak_y"] - y0, massif["peak_x"] - x0]
         mask = labels == wanted if wanted else np.zeros(sub.shape, dtype=bool)
         prior = components[y0:y1, x0:x1]
+        overlap_with_prior_union = int((prior & mask).sum())
         overlaps[y0:y1, x0:x1] |= prior & mask
         prior |= mask
         area = int(mask.sum())
@@ -822,6 +823,10 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path,
             "stamped_cells": massif["cells"],
             "rebuilt_cells": area,
             "cells_match": area == massif["cells"],
+            # Overlap is descriptive, not a failed reconstruction: production applies
+            # massifs in stamp order, so the spatial normalisation domain is their
+            # exact union and a later massif legitimately owns shared nodes.
+            "overlap_with_prior_union_nodes": overlap_with_prior_union,
         })
     normalised = np.zeros(pre.shape, dtype=bool)
     outside_post_diff = 0
@@ -840,9 +845,11 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path,
         "shape": list(pre.shape),
         "massifs": len(rebuilt),
         "component_cells": component_cells,
+        "component_union_cells": component_cells,
         "normalised_height_nodes": normalised_cells,
         "affine_equal_nodes_inside_components": component_cells - normalised_cells,
         "overlap_nodes": int(overlaps.sum()),
+        "overlap_policy": "reported_per_massif; exact_union_is_authoritative",
         "outside_component_post_vs_affine": outside_post_diff,
         "component_counts_match": all(row["cells_match"] for row in rebuilt),
         "detail": rebuilt,
@@ -850,8 +857,12 @@ def exact_normalised_nodes(pre_path: Path, post_path: Path, stamp_path: Path,
         "cache_key": cache_key,
         "input_sha256": input_hashes,
     }
-    summary["ok"] = bool(summary["component_counts_match"] and not summary["overlap_nodes"]
-                         and not outside_post_diff)
+    # Each stamped component must rebuild exactly and every non-affine post node
+    # must be inside their union.  Requiring pairwise-disjoint components here was
+    # wrong: it rejected the production compositor's valid ordered overlaps while
+    # adding no protection against terrain differences outside the normalisation set.
+    summary["union_exact"] = bool(summary["component_counts_match"] and not outside_post_diff)
+    summary["ok"] = summary["union_exact"]
     if cache_entry is not None:
         save_array_cache(cache_entry, NORMALISED_CACHE_SCHEMA, cache_key, summary,
                          {"normalised": normalised})

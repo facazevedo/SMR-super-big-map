@@ -131,6 +131,38 @@ class PropertycheckOptimizationTests(unittest.TestCase):
             close_memmaps(cold_mask, changed_mask)
             del cold_mask, changed_mask
 
+    def test_normalised_union_accepts_reported_ordered_massif_overlap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pre_path, post_path = root / "pre.raw", root / "post.raw"
+            stamp_path = root / "zones.txt"
+            pre = np.zeros((8, 8), dtype="<u2")
+            pre[2:4, 2:4] = np.asarray([[12, 13], [14, 15]], dtype="<u2")
+            post = np.clip(pre.astype(np.int64) * 4 // 3, 0, propertycheck.CAP).astype("<u2")
+            post[2, 2] += 1
+            pre.tofile(pre_path)
+            post.tofile(post_path)
+            stamp_path.write_text(
+                "map,surface,zmul=4,zdiv=3,zadd=0\n"
+                "massif,surface,1,x0=2,y0=2,x1=4,y1=4,base=10,base_img=13,"
+                "peak=15,peak_img=20,peak_x=3,peak_y=3,cells=4,band_h=5,band_t=5,"
+                "k=1.0,monotone=true,escaped=false\n"
+                "massif,surface,2,x0=2,y0=2,x1=4,y1=4,base=10,base_img=13,"
+                "peak=15,peak_img=20,peak_x=2,peak_y=2,cells=4,band_h=5,band_t=5,"
+                "k=1.0,monotone=true,escaped=false\n",
+                encoding="utf-8",
+            )
+            mask, report = propertycheck.exact_normalised_nodes(pre_path, post_path, stamp_path)
+            self.assertTrue(report["ok"])
+            self.assertTrue(report["union_exact"])
+            self.assertEqual(report["component_union_cells"], 4)
+            self.assertEqual(report["overlap_nodes"], 4)
+            self.assertEqual(report["detail"][0]["overlap_with_prior_union_nodes"], 0)
+            self.assertEqual(report["detail"][1]["overlap_with_prior_union_nodes"], 4)
+            self.assertEqual(int(mask.sum()), 1)
+            close_memmaps(mask)
+            del mask
+
 
 if __name__ == "__main__":
     unittest.main()
