@@ -255,7 +255,7 @@ def retryable_state_timeout(event: object) -> bool:
     stopped processes, malformed envelopes, and every other state failure remain
     terminal.
     """
-    if not isinstance(event, dict) or event.get("returncode") != 3:
+    if not isinstance(event, dict) or event.get("returncode") not in (3, 4):
         return False
     envelope = event.get("envelope")
     if not isinstance(envelope, dict):
@@ -263,8 +263,9 @@ def retryable_state_timeout(event: object) -> bool:
     data = envelope.get("data")
     if not isinstance(data, dict):
         return False
-    if data.get("error") != (
-        "could not connect to exact tracked daemon: timed out waiting for DAP data"
+    if data.get("error") not in (
+        "could not connect to exact tracked daemon: timed out waiting for DAP data",
+        "timed out waiting for DAP data",
     ):
         return False
     diagnostics = data.get("diagnostics")
@@ -500,7 +501,7 @@ def command_self_test(args: argparse.Namespace) -> int:
     poll_query_sha256 = hashlib.sha256(poll_query.encode("utf-8")).hexdigest()
     if poll_query_sha256 != STATUS_POLL_QUERY_SHA256 or "rawget" in poll_query:
         raise CaptureError("status poll query is not the proven proxy-aware lookup")
-    retryable_event = {
+    retryable_connect_event = {
         "returncode": 3,
         "envelope": {
             "data": {
@@ -509,16 +510,29 @@ def command_self_test(args: argparse.Namespace) -> int:
             }
         },
     }
-    nonretryable_event = {
-        "returncode": 3,
+    retryable_read_event = {
+        "returncode": 4,
         "envelope": {
             "data": {
-                "error": "could not connect to exact tracked daemon: timed out waiting for DAP data",
+                "error": "timed out waiting for DAP data",
+                "diagnostics": {"classification": "running", "detected": False},
+            }
+        },
+    }
+    nonretryable_event = {
+        "returncode": 4,
+        "envelope": {
+            "data": {
+                "error": "timed out waiting for DAP data",
                 "diagnostics": {"classification": "crash", "detected": True},
             }
         },
     }
-    if not retryable_state_timeout(retryable_event) or retryable_state_timeout(nonretryable_event):
+    if (
+        not retryable_state_timeout(retryable_connect_event)
+        or not retryable_state_timeout(retryable_read_event)
+        or retryable_state_timeout(nonretryable_event)
+    ):
         raise CaptureError("state retry discriminator is not fail-closed")
     for cli_args in (
         ["daemon", "start", "--help"],
@@ -560,7 +574,8 @@ def command_self_test(args: argparse.Namespace) -> int:
                 "mode": "exact_running_dap_data_timeout_v1",
                 "attempts": STATE_READ_ATTEMPTS,
                 "delay_s": STATE_RETRY_DELAY_S,
-                "positive_discriminator": retryable_state_timeout(retryable_event),
+                "positive_connect_discriminator": retryable_state_timeout(retryable_connect_event),
+                "positive_read_discriminator": retryable_state_timeout(retryable_read_event),
                 "negative_discriminator": not retryable_state_timeout(nonretryable_event),
             },
             "temp_root": str(TMP_ROOT),
