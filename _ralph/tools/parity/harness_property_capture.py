@@ -511,6 +511,7 @@ def command_self_test(args: argparse.Namespace) -> int:
         "local function control_banks_compatible(first, second)",
         "selected control bank footprint mismatch",
         "bank_footprints_exact=true",
+        'if type(Sleep) == "function" then Sleep(1) end',
     )
     if any(fragment not in property_probe for fragment in control_selection_fragments):
         raise CaptureError("property control selection is not full-neighborhood guarded")

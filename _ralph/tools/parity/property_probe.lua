@@ -304,6 +304,10 @@ CreateRealTimeThread(function()
 					build_signature = table.concat(build_signature, "|"),
 					control_ms = control_ms, n_pass = n_pass, n_build = n_build,
 				}
+				-- Keep the bank private until both parity signatures have been compared,
+				-- but give the DAP request loop a scheduling boundary after each fully
+				-- self-restoring control calculation. This changes no measured data.
+				if type(Sleep) == "function" then Sleep(1) end
 			end
 			return bank
 		end
