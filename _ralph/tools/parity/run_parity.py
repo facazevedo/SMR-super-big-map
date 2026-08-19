@@ -868,6 +868,46 @@ PASS_PITCH_100_BLOCK = """		do
 		end"""
 
 
+# Diagnostic only, opt-in with the "maptiles8191" argument. The current 8192-tile
+# allocation is the first measured size whose native pass raster doubles from 8192 to
+# 16384 cells. This bounded control moves only the allocation one tile below that boundary
+# and disables the mod's normal 2048-tile alignment for the experiment. It restores both
+# config values on completion/error and never changes the production config file.
+MAP_TILES_8191_BLOCK = """		do
+			local C = SBM.Config
+			if type(C) ~= "table" then
+				error("SuperBigMap.Config unavailable for map-allocation threshold control")
+			end
+			local original_tiles = tonumber(C.EXPANDED_TERRAIN_TILES)
+			local original_align = tonumber(C.RENDERER_NODE_TILE_ALIGNMENT)
+			if original_tiles ~= 8192 or original_align ~= 2048 then
+				error(string.format("unexpected map-allocation config tiles=%s align=%s",
+					tostring(original_tiles), tostring(original_align)))
+			end
+			rawset(_G, "g_ParityMapTilesOriginal", original_tiles)
+			rawset(_G, "g_ParityMapTilesTarget", 8191)
+			rawset(_G, "g_ParityMapAlignOriginal", original_align)
+			rawset(_G, "g_ParityMapAlignTarget", 1)
+			rawset(_G, "g_ParityMapTilesRestored", false)
+			C.EXPANDED_TERRAIN_TILES = 8191
+			C.RENDERER_NODE_TILE_ALIGNMENT = 1
+			if tonumber(C.EXPANDED_TERRAIN_TILES) ~= 8191
+				or tonumber(C.RENDERER_NODE_TILE_ALIGNMENT) ~= 1 then
+				error("map-allocation threshold config write did not take effect")
+			end
+			CreateRealTimeThread(function()
+				while g_ParityStatus ~= "complete" and g_ParityStatus ~= "error" do
+					Sleep(100)
+				end
+				C.EXPANDED_TERRAIN_TILES = original_tiles
+				C.RENDERER_NODE_TILE_ALIGNMENT = original_align
+				g_ParityMapTilesRestored =
+					tonumber(C.EXPANDED_TERRAIN_TILES) == original_tiles
+					and tonumber(C.RENDERER_NODE_TILE_ALIGNMENT) == original_align
+			end)
+		end"""
+
+
 # Diagnostic only, opt-in with the "entranceaudit" argument.  Turns on the mod's own gated
 # elevator audit channel (sbm_diagnostics.lua: DEBUG_LOGGING_ENABLED + DEBUG_ELEVATOR_SUPPLY)
 # so the passage planner's PASSAGE_PLAN_* records reach the game log.  It only flips two
@@ -4586,6 +4626,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              save_as=None, keep_alive=False, wonder_probe=False, pass_probe_all=False, zones_probe=False,
              stretch_dump=False, flatten_probe=False, pass_trace=False, pass_real_probe=False,
              pass_lattice_probe=False, pass_native_probe=False, pass_pitch_control=False,
+             map_tiles_8191_control=False,
              pass_rebuild_probe=False,
              pass_mask_probe=False,
              pass_forced_probe=False, pass_writer_probe=False, pass_own_probe=False,
@@ -4630,6 +4671,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         extras.append(SERIAL_RASTER_BLOCK)
     if pass_pitch_control:
         extras.append(PASS_PITCH_100_BLOCK)
+    if map_tiles_8191_control:
+        extras.append(MAP_TILES_8191_BLOCK)
     # Before every probe and before the passage pin: it shadows `pairs` and DoGenerate, and a
     # probe that shadows DoGenerate too must wrap the pinned one, not the other way round.
     if tag_order_pin:
@@ -4807,6 +4850,38 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                     f"{pass_pitch_info}"
                 )
             log(f"  pass-pitch allocation control: {pass_pitch_info}")
+
+        map_tiles_info = None
+        if map_tiles_8191_control:
+            restored = False
+            for _ in range(30):
+                _, restored = cli.marshal_value(
+                    client, "g_ParityMapTilesRestored", timeout=30.0
+                )
+                if restored is True:
+                    break
+                time.sleep(0.1)
+            map_tiles_info = {}
+            for var, key in (
+                    ("g_ParityMapTilesOriginal", "original_tiles"),
+                    ("g_ParityMapTilesTarget", "target_tiles"),
+                    ("g_ParityMapAlignOriginal", "original_alignment"),
+                    ("g_ParityMapAlignTarget", "target_alignment")):
+                _, map_tiles_info[key] = cli.marshal_value(client, var, timeout=30.0)
+            map_tiles_info["restored"] = restored
+            expected = {
+                "original_tiles": 8192,
+                "target_tiles": 8191,
+                "original_alignment": 2048,
+                "target_alignment": 1,
+                "restored": True,
+            }
+            if map_tiles_info != expected:
+                raise RuntimeError(
+                    f"map-allocation threshold control did not restore cleanly ({tag}): "
+                    f"{map_tiles_info}"
+                )
+            log(f"  map-allocation threshold control: {map_tiles_info}")
 
         tag_order = None
         if tag_order_pin:
@@ -5045,7 +5120,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
         # generator's own compiled body reads, instead of a shadowed ambient `const`.
         rows, csv_path, hex_path = dump_and_census(
             client, tag, hexgrid, wonder_probe=wonder_probe,
-            ring_scale=(8192.0 / 6144.0) if expand else 1.0,
+            ring_scale=((8191.0 if map_tiles_8191_control else 8192.0) / 6144.0)
+            if expand else 1.0,
             pass_probe_all=pass_probe_all, zones_probe=zones_probe,
             pass_real_probe=pass_real_probe, pass_lattice_probe=pass_lattice_probe,
             pass_native_probe=pass_native_probe,
@@ -5089,6 +5165,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "passage_pin_passable": pin_passable,
             "passage_pin_calls": pin_calls,
             "pass_pitch_control": pass_pitch_info,
+            "map_tiles_8191_control": map_tiles_info,
             "tag_order_pin": tag_order,
             "rows": rows,
             "csv": str(csv_path),
@@ -5151,6 +5228,7 @@ def main():
         passlattice = "passlattice" in sys.argv[5:]
         passnative = "passnative" in sys.argv[5:]
         passpitch100 = "passpitch100" in sys.argv[5:]
+        maptiles8191 = "maptiles8191" in sys.argv[5:]
         passrebuild = "passrebuild" in sys.argv[5:]
         passmask = "passmask" in sys.argv[5:]
         passforced = "passforced" in sys.argv[5:]
@@ -5193,6 +5271,7 @@ def main():
             f"pass_trace={passtrace} "
             f"pass_real_probe={passreal} pass_lattice_probe={passlattice} "
             f"pass_native_probe={passnative} pass_pitch_control={passpitch100} "
+            f"map_tiles_8191_control={maptiles8191} "
             f"pass_rebuild_probe={passrebuild} pass_mask_probe={passmask} "
             f"pass_forced_probe={passforced} pass_writer_probe={passwriter} "
             f"pass_own_probe={passown} pass_ablate_probe={passablate} "
@@ -5217,6 +5296,7 @@ def main():
                         pass_trace=passtrace,
                         pass_real_probe=passreal, pass_lattice_probe=passlattice,
                         pass_native_probe=passnative, pass_pitch_control=passpitch100,
+                        map_tiles_8191_control=maptiles8191,
                         pass_rebuild_probe=passrebuild, pass_mask_probe=passmask,
                         pass_forced_probe=passforced,
                         pass_writer_probe=passwriter, pass_own_probe=passown,
