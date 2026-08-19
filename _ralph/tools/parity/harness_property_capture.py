@@ -44,6 +44,7 @@ DEPLOY = PROJECT / "_ralph" / "tools" / "deploy.py"
 DEFAULT_LUAC = Path(r"C:\Users\fazevedo\.claude\tools\lua-5.4.8\bin\luac.exe")
 REFERENCE_UNDERGROUND_SEED = run_parity.REFERENCE_UNDERGROUND_SEED
 PLACEHOLDER_PREFIX = "__"
+STATUS_POLL_QUERY_SHA256 = "9f0a562cf2b897a575547d675bf06f4cdacd7b35ed143b78f78ad11f50128960"
 
 
 class CaptureError(RuntimeError):
@@ -247,6 +248,16 @@ def state_value(query: str, events: list[dict[str, object]], timeout: float = 90
     return envelope.get("data", {}).get("value")
 
 
+def status_query(status_name: str, error_name: str) -> str:
+    """Read persisted globals through the DAP proxy metatable.
+
+    Each harness ``state`` evaluation receives a fresh proxy ``_G``.  A bare
+    global lookup follows that proxy's verified ``__index`` route to the real
+    global table; ``rawget(_G, ...)`` only reads the transient proxy itself.
+    """
+    return f"{{status={status_name},error={error_name}}}"
+
+
 def poll_status(
     status_name: str,
     error_name: str,
@@ -257,7 +268,7 @@ def poll_status(
     deadline = time.time() + timeout
     while time.time() < deadline:
         value = state_value(
-            f'{{status=rawget(_G,"{status_name}"),error=rawget(_G,"{error_name}")}}',
+            status_query(status_name, error_name),
             events,
         )
         if isinstance(value, dict):
@@ -439,6 +450,10 @@ def command_capture_pair(args: argparse.Namespace) -> int:
 
 def command_self_test(args: argparse.Namespace) -> int:
     py_compile.compile(str(Path(__file__).resolve()), doraise=True)
+    poll_query = status_query("g_ParityStatus", "g_ParityError")
+    poll_query_sha256 = hashlib.sha256(poll_query.encode("utf-8")).hexdigest()
+    if poll_query_sha256 != STATUS_POLL_QUERY_SHA256 or "rawget" in poll_query:
+        raise CaptureError("status poll query is not the proven proxy-aware lookup")
     for cli_args in (
         ["daemon", "start", "--help"],
         ["run-file", "--help"],
@@ -469,6 +484,12 @@ def command_self_test(args: argparse.Namespace) -> int:
             "luac": str(args.luac.resolve()),
             "rendered_lua": manifest["lua"],
             "placeholder_free": True,
+            "status_poll": {
+                "mode": "proxy_plain_global_v1",
+                "query": poll_query,
+                "query_sha256": poll_query_sha256,
+                "expected_query_sha256": STATUS_POLL_QUERY_SHA256,
+            },
             "temp_root": str(TMP_ROOT),
         }
     write_json(args.out.resolve(), result)
