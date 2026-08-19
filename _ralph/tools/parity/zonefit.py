@@ -11,7 +11,7 @@ Algorithm (task contract `_ralph/tasks/full-z-parity.md`):
   1. shift measured on the INTERIOR of the source grid (one cell of border excluded --
      the rim holds resample/generation artifacts).  The shift may only push terrain DOWN,
      never lift it, so it is clamped at zero:
-        shift   = min(0, FLOOR - floor(interior_min * 4/3))    FLOOR = 500 (5 in-game m)
+        shift   = min(0, FLOOR - floor(interior_min * 4/3))    FLOOR = 5000 (5 in-game m)
         src_cap = floor((65535 - shift) * 3/4)
      A map whose scaled interior minimum already sits at or below FLOOR gets shift = 0 and
      keeps its lowlands exactly where the vanilla affine puts them.
@@ -62,9 +62,9 @@ from scipy import ndimage
 from scipy.optimize import brentq
 
 CAP = 65535
-# Target height for the map's lowest interior cell, in world units (100 per in-game metre),
+# Target height for the map's lowest interior cell, in world units (1000 per in-game metre),
 # i.e. 5 metres.  The shift that realizes it is clamped to <= 0: down-only.
-FLOOR = 500
+FLOOR = 5000
 XY_MUL, XY_DIV = 8192, 6144  # destination / source tiles; ratio exactly 4/3
 TARGET_SLOPE = XY_MUL / XY_DIV
 

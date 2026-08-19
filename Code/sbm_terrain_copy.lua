@@ -694,7 +694,7 @@ end
 -- The wrap is why the affine is applied to a source grid pre-clamped to src_cap (a missed massif
 -- then degrades to a flat summit, never to an inverted pit), and why cells whose affine would go
 -- negative (rim artifacts below the interior minimum) are pinned to 0.
-local Z_FLOOR_WU = 500         -- lowest interior cell lands here: 5 in-game metres (100 wu/metre)
+local Z_FLOOR_WU = 5000        -- lowest interior cell lands here: 5 in-game metres (1000 wu/metre)
 local Z_BAND_MULT = 1.0 / 3.0  -- base = src_cap - Z_BAND_MULT * overflow (average slope factor 1/4)
 local Z_ZONE_PAD = 512         -- initial per-massif crop half-width, destination cells
 local Z_ZONE_PAD_GROWTH = 2    -- crop growth when the massif reaches an interior crop side
