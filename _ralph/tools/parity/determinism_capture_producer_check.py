@@ -58,7 +58,7 @@ def analyze(
     checks: dict[str, bool] = {}
 
     checks["map_generation_hook_defined_once"] = (
-        map_generation.count("local function NotifyDeterminismCaptureForTest") == 1
+        map_generation.count("function SuperBigMap.NotifyDeterminismCaptureForTest") == 1
     )
     checks["map_generation_setter_defined_once"] = (
         map_generation.count("function MapGeneration.SetDeterminismCaptureHookForTest") == 1
@@ -67,13 +67,13 @@ def analyze(
         map_generation.count("function MapGeneration.NotifyDeterminismCaptureForTest") == 1
     )
     checks["pre_stock_notification_once"] = (
-        map_generation.count('NotifyDeterminismCaptureForTest("pre_stock_generation"') == 1
+        map_generation.count('SuperBigMap.NotifyDeterminismCaptureForTest("pre_stock_generation"') == 1
     )
     checks["stock_output_notification_once"] = (
-        map_generation.count('NotifyDeterminismCaptureForTest("stock_surface_output"') == 1
+        map_generation.count('SuperBigMap.NotifyDeterminismCaptureForTest("stock_surface_output"') == 1
     )
     checks["post_object_notification_once"] = (
-        map_generation.count('NotifyDeterminismCaptureForTest("post_object_transform"') == 1
+        map_generation.count('SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform"') == 1
     )
     checks["hook_is_transient_state"] = (
         "SuperBigMap.State.test_determinism_capture = {" in map_generation
@@ -88,10 +88,10 @@ def analyze(
         and "determinism capture failed at" in map_generation
     )
 
-    pre_notice = map_generation.find('NotifyDeterminismCaptureForTest("pre_stock_generation"')
+    pre_notice = map_generation.find('SuperBigMap.NotifyDeterminismCaptureForTest("pre_stock_generation"')
     stock_call = map_generation.find("CallWithClutterCapture", pre_notice)
     stock_notice = map_generation.find(
-        'NotifyDeterminismCaptureForTest("stock_surface_output"', stock_call
+        'SuperBigMap.NotifyDeterminismCaptureForTest("stock_surface_output"', stock_call
     )
     source_probe = map_generation.find(
         'ProbeNativeClutterAccess(source, "temporary source after DoGenerate")', stock_notice
@@ -101,7 +101,7 @@ def analyze(
         and pre_notice < stock_call < stock_notice < source_probe
     )
 
-    post_object = map_generation.find('NotifyDeterminismCaptureForTest("post_object_transform"')
+    post_object = map_generation.find('SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform"')
     scale_markers = map_generation.rfind("ScaleMarkersToFull(map", 0, post_object)
     resume_pass = map_generation.find("ResumeCombinedPassEdits", post_object)
     checks["object_boundary_ordered"] = (
@@ -208,7 +208,7 @@ def analyze(
 def self_test(sources: tuple[str, str, str, str]) -> dict[str, object]:
     base = analyze(*sources)
     mutations = {
-        "missing_stock_hook_red": (0, 'NotifyDeterminismCaptureForTest("stock_surface_output"', "removed"),
+        "missing_stock_hook_red": (0, 'SuperBigMap.NotifyDeterminismCaptureForTest("stock_surface_output"', "removed"),
         "non_fail_closed_hook_red": (0, "if not ok or result ~= true then", "if false then"),
         "missing_type_capture_red": (1, 'NotifyDeterminismCaptureForTest("post_z_transform"', "removed"),
         "stale_version_red": (2, "'version', 822,", "'version', 821,"),

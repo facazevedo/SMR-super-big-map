@@ -88,7 +88,7 @@ end
 -- Test-only determinism capture seam. Normal gameplay never installs this hook, so the fast path
 -- is one table lookup and an immediate return. A deliberately armed capture is fail-closed: losing
 -- an early stock/object boundary would make a later identical final hash uninterpretable.
-local function NotifyDeterminismCaptureForTest(stage, map, details)
+function SuperBigMap.NotifyDeterminismCaptureForTest(stage, map, details)
 	local state = SuperBigMap.State
 	local capture = type(state) == "table" and state.test_determinism_capture or nil
 	if type(capture) ~= "table" then return false end
@@ -4802,7 +4802,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			end
 		end
 		if type(source.SuspendPassEdits) == "function" then source:SuspendPassEdits("SuperBigMapVanillaSourceMigration") end
-		NotifyDeterminismCaptureForTest("pre_stock_generation", source, {
+		SuperBigMap.NotifyDeterminismCaptureForTest("pre_stock_generation", source, {
 			generator = generator,
 			destination = destination,
 		})
@@ -4821,7 +4821,7 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 			results = PackValues(CallWithClutterCapture(source, original_do_generate, generator, source,
 				Unpack(call_args, 1, call_args.n)))
 		end
-		NotifyDeterminismCaptureForTest("stock_surface_output", source, {
+		SuperBigMap.NotifyDeterminismCaptureForTest("stock_surface_output", source, {
 			generator = generator,
 			destination = destination,
 		})
@@ -10822,7 +10822,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
-				NotifyDeterminismCaptureForTest("post_object_transform", map, {
+				SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform", map, {
 					pass_edits_suspended = pass_batch_active == true,
 				})
 				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
@@ -13319,7 +13319,7 @@ function MapGeneration.SetDeterminismCaptureHookForTest(hook, authority_tag)
 end
 
 function MapGeneration.NotifyDeterminismCaptureForTest(stage, map, details)
-	return NotifyDeterminismCaptureForTest(stage, map, details)
+	return SuperBigMap.NotifyDeterminismCaptureForTest(stage, map, details)
 end
 
 MapGeneration.RunUndergroundStretchIfEnabled = RunUndergroundStretchIfEnabled
