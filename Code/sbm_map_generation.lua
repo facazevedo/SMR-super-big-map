@@ -10822,9 +10822,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 					end
 				end
-				SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform", map, {
-					pass_edits_suspended = pass_batch_active == true,
-				})
 				-- This ResumePassEdits is the surface's sole authoritative passability rebuild after
 				-- replacing the complete height/type terrain grids. The engine exposes no transformed
 				-- passability-grid setter, so this cannot be omitted or narrowed without leaving stale
@@ -10839,6 +10836,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if not pass_resume_ok then
 					error("surface combined ResumePassEdits failed: " .. tostring(pass_resume_err))
 				end
+				-- A deterministic census iterates the complete object population (including collision
+				-- surfaces). It must follow the named resume: stock ResumePassEdits asserts that
+				-- GameTime is unchanged between suspend and normal resume.
+				SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform", map, {
+					pass_edits_suspended = pass_batch_active == true,
+				})
 				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
