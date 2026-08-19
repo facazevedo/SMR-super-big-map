@@ -76,13 +76,49 @@ CreateRealTimeThread(function()
 		-- the property raster.  Keep every possible phase footprint away from a
 		-- pre-existing blocked bit so the replay control cannot be clipped.
 		local control_radius = 8
+		local function positive_mod(value, modulus)
+			local remainder = value % modulus
+			return remainder < 0 and remainder + modulus or remainder
+		end
 
-		local function snapshot(map, env, stage, choose_control)
+		local function select_control_pair(by_phase)
+			local best
+			for _, even_site in pairs(by_phase[0] or {}) do
+				for _, odd_site in pairs(by_phase[1] or {}) do
+					local phase_dx = math.abs(even_site.phase_x - odd_site.phase_x)
+					local phase_dy = math.abs(even_site.phase_y - odd_site.phase_y)
+					local phase_distance = phase_dx * phase_dx + phase_dy * phase_dy
+					local centre_distance = even_site.centre_d + odd_site.centre_d
+					local better = not best
+						or phase_distance < best.phase_distance
+						or (phase_distance == best.phase_distance and centre_distance < best.centre_distance)
+						or (phase_distance == best.phase_distance and centre_distance == best.centre_distance
+							and (even_site.sy < best.even.sy
+								or (even_site.sy == best.even.sy and even_site.sx < best.even.sx)
+								or (even_site.sy == best.even.sy and even_site.sx == best.even.sx
+									and (odd_site.sy < best.odd.sy
+										or (odd_site.sy == best.odd.sy and odd_site.sx < best.odd.sx)))))
+					if better then
+						best = {
+							even = even_site, odd = odd_site,
+							phase_dx = phase_dx, phase_dy = phase_dy,
+							phase_distance = phase_distance, centre_distance = centre_distance,
+						}
+					end
+				end
+			end
+			if not best then
+				error("surface: no full-neighborhood control pair for both row parities")
+			end
+			return { [0] = best.even, [1] = best.odd }, best
+		end
+
+		local function snapshot(map, env, stage, choose_control, persist)
 			local b = map and map.buildable
 			local grid = type(b) == "table" and b.z_grid or nil
 			if not grid then error(env .. ": buildable grid unavailable") end
 			local gw, gh = grid:size()
-			local bytes, nearest, nearest_d = {}, {}, {}
+			local bytes, by_phase = {}, { [0] = {}, [1] = {} }
 			local cx, cy = (gw - 1) / 2, (gh - 1) / 2
 			local n_pass, n_build = 0, 0
 			for sy = 0, gh - 1 do
@@ -128,20 +164,31 @@ CreateRealTimeThread(function()
 					for sx = 0, gw - 1 do
 						if string.byte(blob, sy * gw + sx + 1) == 3 and control_neighborhood_clear(sx, sy) then
 							local dx, dy = sx - cx, sy - cy
-							local d, parity = dx * dx + dy * dy, sy % 2
-							if nearest_d[parity] == nil or d < nearest_d[parity] then
-								local q, r, wx, wy = storage_world(sx, sy)
-								nearest_d[parity] = d
-								nearest[parity] = { sx = sx, sy = sy, q = q, r = r, wx = wx, wy = wy }
+							local centre_d, parity = dx * dx + dy * dy, sy % 2
+							local q, r, wx, wy = storage_world(sx, sy)
+							local phase_x, phase_y = positive_mod(wx, tile), positive_mod(wy, tile)
+							local phase_key = tostring(phase_x) .. ":" .. tostring(phase_y)
+							local previous = by_phase[parity][phase_key]
+							if not previous or centre_d < previous.centre_d
+								or (centre_d == previous.centre_d
+									and (sy < previous.sy or (sy == previous.sy and sx < previous.sx))) then
+								by_phase[parity][phase_key] = {
+									sx = sx, sy = sy, q = q, r = r, wx = wx, wy = wy,
+									phase_x = phase_x, phase_y = phase_y, centre_d = centre_d,
+								}
 							end
 						end
 					end
 				end
 			end
-			write_blob(out_base .. "-" .. env .. "-property-" .. stage .. ".raw", blob)
-			emit(string.format("snapshot,%s,%s,cells=%d,passable=%d,buildable=%d,bytes=%d,control_radius=%d",
-				env, stage, gw * gh, n_pass, n_build, #blob, control_radius))
-			return blob, nearest, gw, gh
+			local selected, selection
+			if choose_control then selected, selection = select_control_pair(by_phase) end
+			if persist ~= false then
+				write_blob(out_base .. "-" .. env .. "-property-" .. stage .. ".raw", blob)
+				emit(string.format("snapshot,%s,%s,cells=%d,passable=%d,buildable=%d,bytes=%d,control_radius=%d",
+					env, stage, gw * gh, n_pass, n_build, #blob, control_radius))
+			end
+			return blob, selected, gw, gh, selection, n_pass, n_build
 		end
 
 		local function calibration(map, env, gw, gh)
@@ -180,17 +227,19 @@ CreateRealTimeThread(function()
 			local shipped, _, gw, gh = snapshot(map, env, "shipped", false)
 			calibration(map, env, gw, gh)
 			local ms1 = rebuild_stock(map)
-			local fresh_blob, candidate = snapshot(map, env, "fresh", env == "surface")
+			local fresh_blob, candidate, _, _, selection = snapshot(map, env, "fresh", env == "surface")
 			local ms2 = rebuild_stock(map)
 			local repeat_blob = snapshot(map, env, "repeat", false)
-			fresh[env] = { blob = fresh_blob, candidate = candidate, gw = gw, gh = gh }
+			fresh[env] = {
+				blob = fresh_blob, candidate = candidate, selection = selection, gw = gw, gh = gh,
+			}
 			emit(string.format("freshness,%s,shipped_diff=%d,repeat_diff=%d,rebuild1_ms=%d,rebuild2_ms=%d",
 				env, byte_diff(shipped, fresh_blob), byte_diff(fresh_blob, repeat_blob), ms1, ms2))
 		end
 
 		-- The phase controls below use the retained fresh surface blob.  The node
 		-- offsets are data-independent and local; the two sites are selected from
-		-- the live grid by row parity and proximity to its centre.
+		-- the live grid by row parity, sub-tile phase, and proximity to its centre.
 		local surface = maps.surface
 		local candidates = fresh.surface.candidate
 		if not candidates[0] or not candidates[1] then
@@ -206,13 +255,11 @@ CreateRealTimeThread(function()
 		local changed = saved:new_instance(hgw, hgh)
 		if not changed or type(changed.copyrect) ~= "function" then error("height-grid control copy unavailable") end
 		local offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1}, {-1, 0}, {0, -1} }
-		local controls, control_id = {}, 0
-		for parity = 0, 1 do
-			local site = candidates[parity]
+		local function control_bank(site)
+			local bank = {}
 			local base_gx = math.floor(site.wx / tile + 0.5)
 			local base_gy = math.floor(site.wy / tile + 0.5)
-			for _, offset in ipairs(offsets) do
-				control_id = control_id + 1
+			for offset_id, offset in ipairs(offsets) do
 				local gx = math.max(1, math.min(hgw - 2, base_gx + offset[1]))
 				local gy = math.max(1, math.min(hgh - 2, base_gy + offset[2]))
 				changed:copyrect(saved, box(0, 0, hgw, hgh), point(0, 0))
@@ -222,10 +269,10 @@ CreateRealTimeThread(function()
 				local set_err = terrain.SetHeightGrid(surface, changed)
 				if set_err then error("control SetHeightGrid failed: " .. tostring(set_err)) end
 				local control_ms = rebuild_stock(surface)
-				local stage = string.format("control-%02d", control_id)
-				local perturbed = snapshot(surface, "surface", stage, false)
+				local perturbed, _, _, _, _, n_pass, n_build = snapshot(
+					surface, "surface", false, false, false)
 
-				local control_rows = { "sx,sy,dsx,dsy,fresh_bits,control_bits" }
+				local control_rows, pass_signature, build_signature = {}, {}, {}
 				local control_diff, pass_diff, build_diff = 0, 0, 0
 				for i = 1, #fresh.surface.blob do
 					local a, b = string.byte(fresh.surface.blob, i), string.byte(perturbed, i)
@@ -233,19 +280,88 @@ CreateRealTimeThread(function()
 						local idx = i - 1
 						local sy, sx = math.floor(idx / fresh.surface.gw), idx % fresh.surface.gw
 						control_diff = control_diff + 1
-						if a % 2 ~= b % 2 then pass_diff = pass_diff + 1 end
-						if math.floor(a / 2) % 2 ~= math.floor(b / 2) % 2 then build_diff = build_diff + 1 end
-						control_rows[#control_rows + 1] = table.concat({ sx, sy, sx - site.sx,
-							sy - site.sy, a, b }, ",")
+						local pass_changed = a % 2 ~= b % 2
+						local build_changed = math.floor(a / 2) % 2 ~= math.floor(b / 2) % 2
+						if pass_changed then pass_diff = pass_diff + 1 end
+						if build_changed then build_diff = build_diff + 1 end
+						local _, _, cell_wx, cell_wy = storage_world(sx, sy)
+						local signature = tostring(cell_wx - gx * tile) .. ":" .. tostring(cell_wy - gy * tile)
+						if pass_changed then pass_signature[#pass_signature + 1] = signature end
+						if build_changed then build_signature[#build_signature + 1] = signature end
+						control_rows[#control_rows + 1] = {
+							sx = sx, sy = sy, dsx = sx - site.sx, dsy = sy - site.sy,
+							fresh_bits = a, control_bits = b,
+						}
 					end
 				end
-				write_blob(out_base .. "-surface-property-" .. stage .. ".csv",
-					table.concat(control_rows, "\n"))
-				controls[#controls + 1] = {
-					id = control_id, site = site, gx = gx, gy = gy, old_h = old_h, new_h = new_h,
+				table.sort(pass_signature)
+				table.sort(build_signature)
+				bank[#bank + 1] = {
+					offset_id = offset_id, site = site, gx = gx, gy = gy,
+					old_h = old_h, new_h = new_h, blob = perturbed, rows = control_rows,
 					diff = control_diff, pass_diff = pass_diff, build_diff = build_diff,
-					control_ms = control_ms,
+					pass_signature = table.concat(pass_signature, "|"),
+					build_signature = table.concat(build_signature, "|"),
+					control_ms = control_ms, n_pass = n_pass, n_build = n_build,
 				}
+			end
+			return bank
+		end
+
+		local function control_banks_compatible(first, second)
+			if #first ~= #second or #first ~= #offsets then return false, "bank_size" end
+			for i = 1, #first do
+				if first[i].pass_signature ~= second[i].pass_signature then
+					return false, "passability_offset_" .. tostring(i)
+				end
+				if first[i].build_signature ~= second[i].build_signature then
+					return false, "buildability_offset_" .. tostring(i)
+				end
+			end
+			return true, "exact"
+		end
+
+		-- The comparator itself is fail-closed: an otherwise identical synthetic pair
+		-- must be accepted and a one-signature passability mismatch must be rejected.
+		local synthetic_a, synthetic_b = {}, {}
+		for i = 1, #offsets do
+			synthetic_a[i] = { pass_signature = "p" .. i, build_signature = "b" .. i }
+			synthetic_b[i] = { pass_signature = "p" .. i, build_signature = "b" .. i }
+		end
+		local synthetic_equal = control_banks_compatible(synthetic_a, synthetic_b)
+		synthetic_b[2].pass_signature = "mismatch"
+		local synthetic_mismatch = control_banks_compatible(synthetic_a, synthetic_b)
+		if not synthetic_equal or synthetic_mismatch then error("control bank comparator self-test failed") end
+
+		local banks = { [0] = control_bank(candidates[0]), [1] = control_bank(candidates[1]) }
+		local footprints_exact, mismatch = control_banks_compatible(banks[0], banks[1])
+		if not footprints_exact then
+			error("surface: selected control bank footprint mismatch: " .. tostring(mismatch))
+		end
+		local selection = fresh.surface.selection
+		emit(string.format(
+			"control_bank,surface,mode=phase_nearest_live_footprint_exact_v2,phase_dx=%s,phase_dy=%s,"
+			.. "phase_distance=%s,footprints_exact=true",
+			tostring(selection.phase_dx), tostring(selection.phase_dy), tostring(selection.phase_distance)))
+
+		local controls, control_id = {}, 0
+		for parity = 0, 1 do
+			for _, control in ipairs(banks[parity]) do
+				control_id = control_id + 1
+				local stage = string.format("control-%02d", control_id)
+				write_blob(out_base .. "-surface-property-" .. stage .. ".raw", control.blob)
+				emit(string.format(
+					"snapshot,surface,%s,cells=%d,passable=%d,buildable=%d,bytes=%d,control_radius=%d",
+					stage, fresh.surface.gw * fresh.surface.gh, control.n_pass, control.n_build,
+					#control.blob, control_radius))
+				local csv_rows = { "sx,sy,dsx,dsy,fresh_bits,control_bits" }
+				for _, row in ipairs(control.rows) do
+					csv_rows[#csv_rows + 1] = table.concat({ row.sx, row.sy, row.dsx, row.dsy,
+						row.fresh_bits, row.control_bits }, ",")
+				end
+				write_blob(out_base .. "-surface-property-" .. stage .. ".csv", table.concat(csv_rows, "\n"))
+				control.id = control_id
+				controls[#controls + 1] = control
 			end
 		end
 
@@ -260,12 +376,14 @@ CreateRealTimeThread(function()
 			emit(string.format(
 				"control,surface,id=%02d,site_sx=%d,site_sy=%d,site_q=%s,site_r=%s,site_wx=%s,site_wy=%s,"
 				.. "node_gx=%d,node_gy=%d,node_wx=%d,node_wy=%d,old_h=%d,new_h=%d,delta_h=%d,"
-				.. "diff=%d,pass_diff=%d,build_diff=%d,restore_diff=%d,control_ms=%d,restore_ms=%d",
+				.. "diff=%d,pass_diff=%d,build_diff=%d,restore_diff=%d,control_ms=%d,restore_ms=%d,"
+				.. "site_phase_x=%s,site_phase_y=%s,bank_footprints_exact=true",
 				control.id, site.sx, site.sy, tostring(site.q), tostring(site.r),
 				tostring(site.wx), tostring(site.wy), control.gx, control.gy,
 				control.gx * tile, control.gy * tile, control.old_h, control.new_h,
 				control.new_h - control.old_h, control.diff, control.pass_diff, control.build_diff,
-				restore_diff, control.control_ms, restore_ms))
+				restore_diff, control.control_ms, restore_ms,
+				tostring(site.phase_x), tostring(site.phase_y)))
 		end
 
 		if type(changed.free) == "function" then changed:free() end

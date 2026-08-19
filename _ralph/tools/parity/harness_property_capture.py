@@ -506,6 +506,11 @@ def command_self_test(args: argparse.Namespace) -> int:
         "for sx = 0, gw do prefix[pidx(sx, 0)] = 0 end",
         "return bad_sum == 0",
         "control_neighborhood_clear(sx, sy)",
+        "local function select_control_pair(by_phase)",
+        "local phase_distance = phase_dx * phase_dx + phase_dy * phase_dy",
+        "local function control_banks_compatible(first, second)",
+        "selected control bank footprint mismatch",
+        "bank_footprints_exact=true",
     )
     if any(fragment not in property_probe for fragment in control_selection_fragments):
         raise CaptureError("property control selection is not full-neighborhood guarded")
@@ -577,8 +582,11 @@ def command_self_test(args: argparse.Namespace) -> int:
             "rendered_lua": manifest["lua"],
             "placeholder_free": True,
             "control_site_selection": {
-                "mode": "full_passable_buildable_neighborhood_v1",
+                "mode": "phase_nearest_live_footprint_exact_v2",
                 "radius_cells": 8,
+                "published_controls": 12,
+                "selection": "minimum_subtile_phase_distance_then_centre_distance",
+                "live_gate": "all_six_passability_and_buildability_kernel_signatures_exact",
                 "required_fragments": list(control_selection_fragments),
             },
             "status_poll": {
