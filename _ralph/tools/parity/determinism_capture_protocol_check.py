@@ -20,12 +20,12 @@ from pathlib import Path
 from typing import Any
 
 
-EXPECTED_DISPLAYS = (
-    "DISPLAY1 3840x2160@60 x=0 y=0",
-    "DISPLAY2 2560x1440@59 x=3840 y=1",
-    "DISPLAY3 2560x1440@59 x=-2560 y=14",
-)
 DISPLAY_READS = ("prelaunch", "startup", "shutdown_immediate", "shutdown_settled")
+DISPLAY_SAFETY_FIELDS = {
+    "display_setting_api_calls": 0,
+    "fullscreen_requested": False,
+    "connected_monitor_mode_change": False,
+}
 IMMUTABLE_FIELDS = (
     "source_head",
     "payload_sha256",
@@ -211,8 +211,23 @@ def analyze(manifest: dict[str, Any], artifact_root: Path) -> dict[str, Any]:
         display_reads = nested(run, "display_reads", errors, context)
         for state in DISPLAY_READS:
             actual = nested(display_reads, state, errors, f"{context}.display_reads")
-            if actual != list(EXPECTED_DISPLAYS):
-                errors.append(f"{context}.display_reads.{state}: exact tuple required")
+            if not isinstance(actual, list) or any(
+                not isinstance(item, str) or not item.strip() for item in actual
+            ):
+                errors.append(
+                    f"{context}.display_reads.{state}: expected diagnostic string list"
+                )
+
+        # Physical endpoints may be absent and the desktop may expose a fallback framebuffer.
+        # The four reads remain mandatory diagnostics, while the user-ruled safety conditions are
+        # fail-closed independently of whatever modes those reads happened to enumerate.
+        display_safety = nested(run, "display_safety", errors, context)
+        for field, expected in DISPLAY_SAFETY_FIELDS.items():
+            actual = nested(display_safety, field, errors, f"{context}.display_safety")
+            if actual != expected:
+                errors.append(
+                    f"{context}.display_safety.{field}: expected {expected!r}"
+                )
 
         checkpoints = nested(run, "checkpoints", errors, context)
         if not isinstance(checkpoints, list):
@@ -323,7 +338,15 @@ def self_test() -> dict[str, Any]:
                 "stop_ok": True,
             },
             "log": {field: 0 for field in LOG_ZERO_FIELDS},
-            "display_reads": {state: list(EXPECTED_DISPLAYS) for state in DISPLAY_READS},
+            "display_reads": {
+                state: [
+                    "DISPLAY1 3840x2160@60 x=0 y=0",
+                    "DISPLAY2 2560x1440@59 x=3840 y=1",
+                    "DISPLAY3 2560x1440@59 x=-2560 y=14",
+                ]
+                for state in DISPLAY_READS
+            },
+            "display_safety": dict(DISPLAY_SAFETY_FIELDS),
             "checkpoints": [],
         }
         runs = []
@@ -390,6 +413,39 @@ def self_test() -> dict[str, Any]:
         corrupt = copy.deepcopy(manifest)
         corrupt["runs"][0]["checkpoints"][0]["artifacts"]["rng_state"]["sha256"] = "C" * 64
         results["content_hash_mismatch_red"] = not analyze(corrupt, root)["ok"]
+
+        headless = copy.deepcopy(manifest)
+        for run in headless["runs"]:
+            run["display_reads"] = {
+                state: ["DISPLAY1 1024x768@60 x=0 y=0 (headless fallback)"]
+                for state in DISPLAY_READS
+            }
+        results["headless_fallback_green"] = analyze(headless, root)["ok"]
+
+        endpoint_absent = copy.deepcopy(manifest)
+        for run in endpoint_absent["runs"]:
+            run["display_reads"] = {state: [] for state in DISPLAY_READS}
+        results["endpoint_absence_green"] = analyze(endpoint_absent, root)["ok"]
+
+        malformed_display = copy.deepcopy(manifest)
+        malformed_display["runs"][0]["display_reads"]["startup"] = "DISPLAY1 1024x768"
+        results["malformed_display_diagnostics_red"] = not analyze(
+            malformed_display, root
+        )["ok"]
+
+        display_mutation = copy.deepcopy(manifest)
+        display_mutation["runs"][1]["display_safety"]["display_setting_api_calls"] = 1
+        results["display_setting_mutation_red"] = not analyze(display_mutation, root)["ok"]
+
+        fullscreen = copy.deepcopy(manifest)
+        fullscreen["runs"][1]["display_safety"]["fullscreen_requested"] = True
+        results["fullscreen_request_red"] = not analyze(fullscreen, root)["ok"]
+
+        connected_change = copy.deepcopy(manifest)
+        connected_change["runs"][1]["display_safety"]["connected_monitor_mode_change"] = True
+        results["connected_monitor_mode_change_red"] = not analyze(
+            connected_change, root
+        )["ok"]
 
         return {
             "schema": "smr.ralph.determinism_capture_protocol_self_test.v1",
