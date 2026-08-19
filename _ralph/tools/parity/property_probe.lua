@@ -366,6 +366,10 @@ CreateRealTimeThread(function()
 				write_blob(out_base .. "-surface-property-" .. stage .. ".csv", table.concat(csv_rows, "\n"))
 				control.id = control_id
 				controls[#controls + 1] = control
+				-- The bank was fully compared before publication. Yield between physical
+				-- output writes so a large raw control file cannot starve DAP until all
+				-- twelve controls have been serialized.
+				if type(Sleep) == "function" then Sleep(1) end
 			end
 		end
 
