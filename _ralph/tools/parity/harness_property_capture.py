@@ -503,6 +503,7 @@ def command_self_test(args: argparse.Namespace) -> int:
     control_selection_fragments = (
         "local control_radius = 8",
         "local function control_neighborhood_clear(sx, sy)",
+        "for sx = 0, gw do prefix[pidx(sx, 0)] = 0 end",
         "return bad_sum == 0",
         "control_neighborhood_clear(sx, sy)",
     )

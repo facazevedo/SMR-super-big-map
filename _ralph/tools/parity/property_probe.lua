@@ -104,6 +104,10 @@ CreateRealTimeThread(function()
 				-- O(1) per candidate instead of scanning a square for every hex.
 				local pw, prefix = gw + 1, {}
 				local function pidx(x, y) return y * pw + x + 1 end
+				-- The inclusion/exclusion sum reads the complete y=0 row for candidates
+				-- whose neighborhood reaches the top edge.  Initialize every top-row
+				-- prefix coordinate, not only its x=0 corner.
+				for sx = 0, gw do prefix[pidx(sx, 0)] = 0 end
 				for sy = 0, gh - 1 do
 					local row_bad = 0
 					prefix[pidx(0, sy + 1)] = prefix[pidx(0, sy)] or 0
