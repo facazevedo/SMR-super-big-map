@@ -1035,5 +1035,66 @@
       }
     },
     "verdict": "COMPARED"
+  },
+  "v823-sweep-08": {
+    "case": "v823-sweep-08",
+    "label": "18S141E",
+    "lat": 1080,
+    "lon": 8460,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 6648961165281895575,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 23119,
+        "content_expanded_objects": 23119,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 23119,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 4537,
+        "content_expanded_objects": 4537,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 4537,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "CaveOfWonders"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
   }
 }
