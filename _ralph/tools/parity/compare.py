@@ -1389,8 +1389,14 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
 
     vc, ec, same, diff = census(vrows, erows)
     w(f"\n-- A. CLASS CENSUS --")
+    # The raw totals are EXPECTED to differ on an expanded map - the expansion is a bigger
+    # sector grid, and the engine derives more hex buckets from it. Say by how much and
+    # leave the verdict to section E (which proves each infrastructure class against its own
+    # expectation) and section F/G (which prove the content bijection); calling this bare
+    # difference a MISMATCH reads as a failure when it is the expansion working.
     w(f"   total objects       : vanilla {len(vrows)} vs expanded {len(erows)}  "
-      f"{'MATCH' if len(vrows) == len(erows) else 'MISMATCH (' + str(len(erows) - len(vrows)) + ')'}")
+      f"{'MATCH' if len(vrows) == len(erows) else 'delta ' + f'{len(erows) - len(vrows):+d}'}"
+      f"{'' if len(vrows) == len(erows) else ' (infrastructure; accounted for in E)'}")
     w(f"   distinct classes    : vanilla {len(vc)} vs expanded {len(ec)}")
     w(f"   classes matching 1:1: {len(same)}")
     w(f"   classes differing   : {len(diff)}")
@@ -1481,6 +1487,13 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
     w(f"   infrastructure gate  : {'GREEN' if infra_ok else 'RED'} "
       f"(ok={sum(1 for e in infra if e['verdict'] == 'ok')}/{len(infra)}, "
       f"initial reveal measured on the vanilla control = {revealed} sector(s))")
+    # Close the loop on section A: the whole raw difference must be these classes and
+    # nothing else, at exactly the size their own rules predict.
+    infra_delta = sum(e["expected_expanded"] - e["expected_vanilla"] for e in infra)
+    raw_delta = len(erows) - len(vrows)
+    w(f"   raw-census accounting: raw delta {raw_delta:+d} vs infrastructure-predicted "
+      f"{infra_delta:+d} -> {'FULLY EXPLAINED' if raw_delta == infra_delta else 'UNEXPLAINED'}"
+      f"{'' if raw_delta == infra_delta else f' ({raw_delta - infra_delta:+d} unaccounted)'}")
 
     cv = [r for r in vrows if r["class"] not in INFRASTRUCTURE]
     ce = [r for r in erows if r["class"] not in INFRASTRUCTURE]
@@ -1756,10 +1769,31 @@ def main():
                            and s["vanilla_hash"] == s["expanded_hash"])
         s["vanilla_tiles"] = vw
         s["expanded_tiles"] = ew
-        s["bijection_ok"] = (s["provenance_unmatched_expanded"] == 0
-                             and s["provenance_unstamped_expanded"] == 0
-                             and s["provenance_unconsumed_vanilla"] == 0
-                             and s["vanilla_objects"] == s["expanded_objects"])
+        # RAW-CENSUS ACCOUNTING.  The earlier form of this field demanded
+        # vanilla_objects == expanded_objects over the RAW census, which no expanded map
+        # can ever satisfy: the expansion IS a bigger sector grid (400 MapSector against
+        # vanilla's 100, one SectorUnexplored decal each) and the engine derives more
+        # hex-collision buckets from the same gridded population on the larger hex grid.
+        # A field that is False on every correct run is worse than no field: it reads as a
+        # failure and it can never flip on a real one.
+        #
+        # Ask instead the question that has to hold: the raw difference must be ENTIRELY
+        # accounted for by the infrastructure classes that carry a proven per-class
+        # expectation, each matching that expectation exactly.  Every other class must be
+        # in exact 1:1 correspondence.  So a regression that adds or drops even one object
+        # of any other class - or that moves a proven infrastructure class off its own
+        # derived expectation - still turns this False.
+        infra_delta = sum(entry["expected_expanded"] - entry["expected_vanilla"]
+                          for entry in s.get("infrastructure", []))
+        raw_delta = s["expanded_objects"] - s["vanilla_objects"]
+        s["raw_delta"] = raw_delta
+        s["infrastructure_expected_delta"] = infra_delta
+        s["raw_delta_fully_explained"] = (raw_delta == infra_delta)
+        s["bijection_ok"] = (bool(s.get("content_bijection_ok"))
+                             and bool(s.get("unexplained_bijection_ok"))
+                             and bool(s.get("infrastructure_ok"))
+                             and s.get("infrastructure_unproven", 0) == 0
+                             and raw_delta == infra_delta)
 
     lines.extend(entrance_lines)
     summary["entrance"] = entrance
