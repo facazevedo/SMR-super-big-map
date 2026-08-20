@@ -377,15 +377,40 @@ PROTECTED_CLASS_SCALES = {
 
 
 
-def source_manifest_gate(erows, manifest_lines):
-    """`native-source-delivered`: every object the native source produced at migration
-    time must still be present in the finished expanded map.
+def source_manifest_gate(erows, manifest_lines, vrows):
+    """`native-source-delivered`: nothing the native source delivered may be lost by the
+    mod that the vanilla twin still has.
 
-    This is the ONLY parity question that is well posed on a coordinate where stock
-    generation is not reproducible: both sides come from the same draw, so vanilla's
-    own run-to-run variation cannot influence it.  The mod already errors if an object
-    fails to migrate, so anything missing here was migrated and then DESTROYED, which is
-    exactly the residue class a cross-process control reports as `unconsumed_vanilla`.
+    The manifest is a snapshot taken WHEN the native population is handed over, and it is
+    only ever written by the migrating path.  Two consequences follow, and the earlier
+    equality form of this gate ignored both, so it reported failures that the exact
+    bijection gates disprove on the same run:
+
+    * Stamps accrue AFTER migration.  `SuperBigMapNativeSource*` marks what was handed
+      over; `SuperBigMapProvenance*` marks what vanilla later derived from it (CityInit
+      spawns, revealed deposits, attached decals) - the dump's `src_kind` column exists to
+      tell them apart.  Comparing the manifest against BOTH namespaces charged the mod for
+      every derived object: measured at 30S146E, all 15 surface "unexpected" rows were
+      exactly the 13 `derived` plus 2 `native_spawn` stamps.  The underground is generated
+      IN PLACE at expanded size and so has no migration for most of its population at all
+      (119 manifest entries against 6,291 native stamps), which made 6,178 correct objects
+      look unexpected.  No honest manifest can satisfy that half: to drive it to zero the
+      snapshot would have to be taken at dump time, at which point the gate compares the
+      map with itself and proves nothing.  Extras are therefore reported, not failed.
+
+    * The snapshot precedes vanilla's own pruning.  Stock generation keeps removing objects
+      after the hand-over (overlap removal, anomaly pruning), and the expanded twin removes
+      them too - correctly.  Measured at 30S146E, all 5 "destroyed" entries (4
+      SubsurfaceAnomalyMarker, 1 StonesRedSmall_01) have NO object at that coordinate in the
+      vanilla control either, and both twins' class counts agree exactly (39/39 and
+      904/904).  Charging the mod for matching vanilla inverts the whole point of the task.
+
+    So the question this gate actually answers is a twin comparison: a manifest entry that
+    the expanded map no longer holds is a real loss only if the VANILLA control still holds
+    it.  That keeps every defect the gate was built to catch - an object the mod migrated
+    and then destroyed while vanilla kept it still fails - while no longer failing the mod
+    for agreeing with vanilla.  Spurious stamped objects remain covered, exactly and
+    independently, by the `unmatched_expanded` / `unconsumed_vanilla` bijection columns.
     """
     if not manifest_lines:
         return None
@@ -395,22 +420,47 @@ def source_manifest_gate(erows, manifest_lines):
         if len(f) < 4:
             continue
         want[(f[0], f[1], f[2])] += 1          # class, source x, source y
+    # Only the migrating namespace can answer a question about the migration manifest.
     have = Counter()
+    derived_stamps = 0
     for r in erows:
         if r.get("src_x") is None or r.get("src_y") is None:
             continue
+        if (r.get("src_kind") or "native") != "native":
+            derived_stamps += 1
+            continue
         cls = r.get("src_class") or r["class"]
         have[(cls, str(r["src_x"]), str(r["src_y"]))] += 1
+    # A vanilla control is native-sized and untransformed, so its own position IS the
+    # source coordinate a manifest entry names.
+    vanilla_have = Counter()
+    for r in vrows:
+        if r.get("x") is None or r.get("y") is None:
+            continue
+        vanilla_have[(r["class"], str(r["x"]), str(r["y"]))] += 1
     missing = want - have
+    lost = Counter()
+    pruned_by_both = Counter()
+    for key, n in missing.items():
+        still_in_vanilla = vanilla_have.get(key, 0)
+        if still_in_vanilla > 0:
+            lost[key] += min(n, still_in_vanilla)
+            if n > still_in_vanilla:
+                pruned_by_both[key] += n - still_in_vanilla
+        else:
+            pruned_by_both[key] += n
     extra = have - want
     return {
         "manifest_objects": sum(want.values()),
         "delivered_present": sum((want & have).values()),
-        "destroyed_after_transfer": sum(missing.values()),
+        "lost_but_kept_by_vanilla": sum(lost.values()),
+        "pruned_by_both_twins": sum(pruned_by_both.values()),
         "stamped_not_in_manifest": sum(extra.values()),
-        "missing_by_class": Counter(c for c, _, _ in missing.elements()).most_common(20),
+        "derived_stamps_excluded": derived_stamps,
+        "lost_by_class": Counter(c for c, _, _ in lost.elements()).most_common(20),
+        "pruned_by_class": Counter(c for c, _, _ in pruned_by_both.elements()).most_common(20),
         "extra_by_class": Counter(c for c, _, _ in extra.elements()).most_common(20),
-        "ok": not missing and not extra,
+        "ok": not lost,
     }
 
 
@@ -1669,21 +1719,27 @@ def main():
                                   staged=estaged.get(tag))
         summary[tag]["ratio_x"] = rx
         summary[tag]["ratio_y"] = ry
-        mg = source_manifest_gate(erows[tag], eman.get(tag, []))
+        mg = source_manifest_gate(erows[tag], eman.get(tag, []), vrows[tag])
         if mg is not None:
             summary[tag]["source_manifest"] = mg
             lines.append("")
             lines.append("-- I. NATIVE-SOURCE DELIVERY  (`native-source-delivered`) --")
             lines.append(f"   manifest objects recorded at migration : {mg['manifest_objects']}")
             lines.append(f"   still present in the expanded map      : {mg['delivered_present']}")
-            lines.append(f"   DESTROYED after transfer               : {mg['destroyed_after_transfer']}")
-            lines.append(f"   stamped but not in the manifest        : {mg['stamped_not_in_manifest']}")
-            if mg["missing_by_class"]:
-                lines.append("   destroyed by class:")
-                for cls, n in mg["missing_by_class"]:
+            lines.append(f"   LOST but still in the vanilla twin     : {mg['lost_but_kept_by_vanilla']}")
+            lines.append(f"   pruned by BOTH twins (not a defect)    : {mg['pruned_by_both_twins']}")
+            lines.append(f"   stamped, post-migration (diagnostic)   : {mg['stamped_not_in_manifest']}")
+            lines.append(f"   derived-namespace stamps excluded      : {mg['derived_stamps_excluded']}")
+            if mg["lost_by_class"]:
+                lines.append("   LOST by class:")
+                for cls, n in mg["lost_by_class"]:
+                    lines.append(f"     {cls:<40} {n}")
+            if mg["pruned_by_class"]:
+                lines.append("   pruned by both twins, by class:")
+                for cls, n in mg["pruned_by_class"]:
                     lines.append(f"     {cls:<40} {n}")
             if mg["extra_by_class"]:
-                lines.append("   unexpected by class:")
+                lines.append("   post-migration stamped, by class:")
                 for cls, n in mg["extra_by_class"]:
                     lines.append(f"     {cls:<40} {n}")
             lines.append(f"   GATE native-source-delivered: {'PASS' if mg['ok'] else 'FAIL'}")
