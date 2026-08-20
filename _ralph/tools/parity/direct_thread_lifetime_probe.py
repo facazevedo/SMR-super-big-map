@@ -58,8 +58,11 @@ def lua_parses(source: str) -> tuple[bool, str | None]:
 
 def check(source: str) -> dict[str, object]:
     parsed, parse_error = lua_parses(source)
+    executable = "\n".join(
+        line for line in source.splitlines() if not line.lstrip().startswith("--")
+    )
     checks = {
-        "direct_chunk_not_harness_scenario": "HARNESS.scenario" not in source,
+        "direct_chunk_not_harness_scenario": "HARNESS.scenario" not in executable,
         "exactly_one_direct_realtime_worker": source.count("CreateRealTimeThread(function()") == 1,
         "worker_writes_length_guarded_sentinel": "HARNESS.marshal(DATA, DONE" in source,
         "worker_records_parent_status": "parent_status_at_entry = parent_status" in source,
