@@ -115,6 +115,16 @@ def main():
         if "--redo" not in sys.argv and results.get(c["case"], {}).get("verdict") == "COMPARED":
             log(f"{c['case']} {c['label']}: already COMPARED, skipping")
             continue
+        # BOTH twins run with the tag-order pin. Lua `pairs()` order over the prefab
+        # group-tag tables is not stable across processes, and the generator takes
+        # `dither_seed = rand()` from ONE shared rand_state whose position depends on how
+        # many draws happened before it. So a different enumeration order shifts every
+        # subsequent draw and moves every placed object - it behaves exactly like an
+        # unpinned seed. Measured at 42S85E: two vanilla controls, same surface seed, same
+        # generation hash, same MapLoadRandom, shared ZERO object positions for
+        # StonesSlate_02 (1501 vs 1510) and 3 of 1423 for PrefabMarker. With the pin, two
+        # runs are byte-identical. Pinning one side only would be worse than pinning
+        # neither: the twins would canonicalize differently.
         slug = c["case"].replace("-", "")
         tag_v, tag_e = f"f{slug}v", f"f{slug}e"
         log(f"=== {c['case']} {c['label']} lat={c['lat']} lon={c['lon']} ===")
@@ -122,7 +132,7 @@ def main():
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_v, "0", "-",
                                              f"lat={c['lat']}", f"lon={c['lon']}", "nopin", "serial", "passagepin",
-                                             "hexgrid"])
+                                             "hexgrid", "tagorder"])
         rec["vanilla_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "VANILLA_FAILED"
@@ -149,7 +159,7 @@ def main():
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_e, "1", str(seed),
                                              f"lat={c['lat']}", f"lon={c['lon']}", "serial", "passagepin",
-                                             "hexgrid"])
+                                             "hexgrid", "tagorder"])
         rec["expanded_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "EXPANDED_FAILED"
