@@ -181,5 +181,72 @@
       }
     },
     "verdict": "COMPARED"
+  },
+  "v823-b2-02": {
+    "case": "v823-b2-02",
+    "label": "42S28W",
+    "lat": 2520,
+    "lon": -1680,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 3045553875360276605,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 4721,
+        "content_expanded_objects": 4719,
+        "content_classes_differing": 1,
+        "content_class_diffs": [
+          {
+            "class": "ParSystem",
+            "vanilla": 11,
+            "expanded": 9
+          }
+        ],
+        "content_matched": 4719,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 2,
+        "content_bijection_ok": false,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 5774,
+        "content_expanded_objects": 5774,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 5774,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
   }
 }
