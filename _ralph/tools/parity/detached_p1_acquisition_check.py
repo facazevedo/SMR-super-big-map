@@ -75,7 +75,8 @@ def analyze(rendered: str, generator: str) -> dict[str, object]:
         and "HARNESS.marshal(PRODUCER_DATA, PRODUCER_DONE, result)" in producer
     )
     checks["all_payload_outputs_have_unique_root"] = (
-        rendered.count(ARTIFACT_ROOT) == 6
+        # Six executable uses plus the two inherited, rendered template comments.
+        rendered.count(ARTIFACT_ROOT) == 8
         and "iter874_p1_inline_acquisition" not in rendered
     )
     checks["producer_reports_protected_values"] = all(
