@@ -324,8 +324,78 @@ local function CloneObjectAtOffset(map, source, offset, skip_deposit_processing)
 	return clone
 end
 
+-- ============================================================================
+-- WHICH OBJECTS GROW WITH THE TERRAIN
+-- ============================================================================
+-- The expansion is a similarity transform, so COSMETIC DECORATION scales with the ground
+-- it sits on -- that is the default, and it covers most classes (Cliff*, Dec*, Rocks*,
+-- Stones*, Underground_Arch*, ...). FUNCTIONAL objects keep their vanilla scale, because
+-- their size is gameplay or generation geometry (deposit scan radius, entrance/elevator
+-- hex footprint, sector extent, prefab placement footprint, sound/particle reach) rather
+-- than art. `ScaleMarkersToFull` already states that rule for the marker pass it owns;
+-- this predicate is the same rule for every object the decoration pass walks, so a class
+-- is judged by WHAT IT IS and never by which map or coordinate is being generated.
+--
+-- Measured at 30S146E before this existed: the decoration pass scaled whatever it walked,
+-- so PrefabMarker (1,424 of 1,475 at 250 -> 333, the other 51 untouched), PrefabDecorMarker,
+-- SoundSource and the underground's ParSystem all grew, while the surface's ParSystem did
+-- not. That inconsistency is what makes it a defect rather than a policy: the same category
+-- of object has to answer the same way on both maps and on every map.
+local scale_keep_kinds = {
+	"DepositMarker", "Deposit", "Anomaly", "Marker", "Passage", "Tunnel", "Sign",
+	"Elevator", "MapSector", "Sector", "GridObjectList", "RandomMapGeneratorHolder",
+	"CameraObj", "ParSystem", "SoundSource",
+}
+
+local scale_keep_exact = {
+	SurfacePassage = true,
+	UndergroundPassage = true,
+	SurfaceTunnelMarker = true,
+	UndergroundTunnelMarker = true,
+	SurfaceUndergroundTunnelSign = true,
+	ElevatorBuildIndicator_SurfaceDecal = true,
+	ElevatorBuildIndicator_UndergroundPassageImprint = true,
+}
+
+-- Functional classes that DO grow anyway, by explicit user decision: they are sculpted into
+-- the terrain, so a feature that grew with the ground it was carved from is consistent.
+local scale_stretch_allowlist = {
+	PrefabFeatureMarker = true,   -- geysers and every other prefab feature
+	CaveInRubble = true,
+	TunnelBlockerRubble = true,
+	BottomlessPit = true,
+	JumboCave = true,
+}
+
+-- True when this class name is expected to grow by the stretch ratio. Name-based, matching
+-- the parity gate `class-scale-expected`, so the mod and the gate cannot drift apart.
+local function ClassScalesWithTerrain(cls)
+	if type(cls) ~= "string" or cls == "" then
+		return true                        -- unknown class: keep the decoration default
+	end
+	if scale_stretch_allowlist[cls] then
+		return true                        -- explicit exception, checked first
+	end
+	if scale_keep_exact[cls] then
+		return false
+	end
+	for i = 1, #scale_keep_kinds do
+		if string.find(cls, scale_keep_kinds[i], 1, true) then
+			return false
+		end
+	end
+	return true
+end
+
+local function ObjectScalesWithTerrain(obj)
+	if not obj then return false end
+	return ClassScalesWithTerrain(rawget(obj, "class") or obj.class)
+end
+
 -- Public API consumed by the stretch and enrichment modules.
 local ObjectClone = {
+	ClassScalesWithTerrain = ClassScalesWithTerrain,
+	ObjectScalesWithTerrain = ObjectScalesWithTerrain,
 	IsLiveGameObject = IsLiveGameObject,
 	IsMysteryRelatedObject = IsMysteryRelatedObject,
 	MatchUndergroundAccessName = MatchUndergroundAccessName,

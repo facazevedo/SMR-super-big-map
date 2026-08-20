@@ -148,8 +148,10 @@ assert(type(ObjectClone) == "table",
 local ShouldSkipObject = ObjectClone.ShouldSkipObject
 local IsImportantSectorObject = ObjectClone.IsImportantSectorObject
 local CloneObjectAtOffset = ObjectClone.CloneObjectAtOffset
+local ObjectScalesWithTerrain = ObjectClone.ObjectScalesWithTerrain
 assert(type(ShouldSkipObject) == "function" and type(CloneObjectAtOffset) == "function"
-	and type(IsImportantSectorObject) == "function",
+	and type(IsImportantSectorObject) == "function"
+	and type(ObjectScalesWithTerrain) == "function",
 	"sbm_terrain_copy: required ObjectClone helpers missing (check sbm_object_clone exports)")
 
 -- Re-invalidate the entire terrain so the renderer re-streams height and texture
@@ -2798,8 +2800,13 @@ local function ScaleDecorationsToFull(map, pass_edits_already_suspended)
 					DecorationAuditFields("actual_", actual, data)
 					UndergroundDecorationAudit("POST", data, map)
 				end
-				-- Grow the object to match the enlarged terrain features.
-				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function" then
+				-- Grow the object to match the enlarged terrain features -- but only if it is
+				-- decoration. A functional object's size is gameplay or generation geometry
+				-- (scan radius, hex footprint, prefab placement footprint, sound/particle
+				-- reach), so it keeps its vanilla scale, exactly as ScaleMarkersToFull already
+				-- does for the markers it owns. See ObjectClone.ClassScalesWithTerrain.
+				if type(obj.GetScale) == "function" and type(obj.SetScale) == "function"
+					and ObjectScalesWithTerrain(obj) then
 					local s = type(obj.SuperBigMapNativeSourceScale) == "number"
 						and obj.SuperBigMapNativeSourceScale or SafeCall(obj.GetScale, obj)
 					if type(s) == "number" and s > 0 then
