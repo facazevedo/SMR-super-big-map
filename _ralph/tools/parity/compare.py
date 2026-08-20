@@ -81,6 +81,53 @@ MAPS = ("surface", "underground")
 FX_CARRIER_CLASSES = {"ParSystem"}
 FX_ANCHOR_MAX_Z = 200
 
+# ---------------------------------------------------------------------------
+# WALL-CLOCK ONE-SHOT FX CARRIERS - not scoreable population, dropped on BOTH sides
+#
+# `ActionFXParticles:PlayFX` does not always leave a durable object behind: when the
+# particle system is not eternal it starts a thread that sleeps the system's own duration
+# and then `StopParticles` -> `DoneObject` (CommonLua/Classes/ActionFX.lua:2466-2499), and
+# `ActionFX:CreateThread` takes that thread's CLOCK from the particle system itself
+# (`IsParticleSystemGameTime`). So a carrier's durability is a measured per-object property
+# with two parts, both emitted by dump_template.lua:
+#
+#   * eternal        - never scheduled to be destroyed at all;
+#   * game-time      - scheduled, but on the game clock, which a headless generation run
+#                      barely advances, so the object is still there whenever the dump runs
+#                      and both twins see it (measured: `ConstructionSite_Spawn`,
+#                      duration 2500, alive in every dump on both twins);
+#   * real-time      - scheduled on the WALL CLOCK (measured: `AnomalyMarker_Revealed`,
+#                      duration 1500, dead 1.5 s after the reveal).
+#
+# A wall-clock one-shot therefore has no reproducible presence: whether a dump sees it is
+# decided by how long that run took, not by what the map contains. Measured at 42S28W: four
+# identical same-seed vanilla runs dumped 11, 9, 9 and 9 surface ParSystem, the difference
+# being exactly these carriers (artifacts/parsystem_transient_42S28W/,
+# artifacts/fx_lifetime_columns/). Scoring them makes the census a coin flip, so they are
+# removed from BOTH sides before anything is counted, and the count removed per side is
+# reported as evidence.
+#
+# The rule names no particle, no coordinate and no case: it reads the two measured flags off
+# the row. A dump that does not carry them (older run) leaves them unknown and drops
+# nothing - fail closed.
+# ---------------------------------------------------------------------------
+
+
+def is_wall_clock_oneshot(r):
+    return (r["class"] in FX_CARRIER_CLASSES
+            and r["fx_eternal"] is False and r["fx_gametime"] is False)
+
+
+def drop_wall_clock_oneshots(rows):
+    """(kept rows, Counter of dropped rows keyed by particle name and duration)."""
+    kept, dropped = [], Counter()
+    for r in rows:
+        if is_wall_clock_oneshot(r):
+            dropped[(r["fx_particles"], r["fx_duration"])] += 1
+        else:
+            kept.append(r)
+    return kept, dropped
+
 
 def annotate_fx_anchors(rows):
     """Resolve each standalone FX carrier's anchor identity from the dump rows alone.
@@ -846,6 +893,15 @@ def _num(v):
             return None
 
 
+def _flag(v):
+    """A dumped boolean column: "1"/"0", or None when the dump does not carry it."""
+    if v == "1":
+        return True
+    if v == "0":
+        return False
+    return None
+
+
 def parse_dump(path):
     meta = defaultdict(dict)
     manifest = {}
@@ -894,6 +950,13 @@ def parse_dump(path):
             rclass = parts[16] if len(parts) > 16 else ""
             rx = parts[17] if len(parts) > 17 else ""
             ry = parts[18] if len(parts) > 18 else ""
+            # Measured particle-carrier lifetime (dumps from 73f87dd on; see
+            # `drop_wall_clock_oneshots`). parts[19] is `is_placed`, which nothing reads yet.
+            fx_name = parts[20] if len(parts) > 20 else ""
+            fx_eternal = parts[21] if len(parts) > 21 else ""
+            fx_gametime = parts[22] if len(parts) > 22 else ""
+            fx_realtime = parts[23] if len(parts) > 23 else ""
+            fx_duration = parts[24] if len(parts) > 24 else ""
 
             rows[map_tag].append({
                 "class": cls,
@@ -907,6 +970,11 @@ def parse_dump(path):
                 "src_from": sfrom or "",
                 "root_class": rclass or None,
                 "root_x": _num(rx), "root_y": _num(ry),
+                "fx_particles": fx_name,
+                "fx_eternal": _flag(fx_eternal),
+                "fx_gametime": _flag(fx_gametime),
+                "fx_realtime": _flag(fx_realtime),
+                "fx_duration": _num(fx_duration),
             })
     return meta, rows, manifest, staged
 
@@ -1745,6 +1813,16 @@ def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "out"
     vmeta, vrows, _vman, _vstaged = parse_dump(out_dir / "objects-vanilla.csv")
     emeta, erows, eman, estaged = parse_dump(out_dir / "objects-expanded.csv")
+
+    # Remove the population no dump can observe reproducibly, symmetrically and before any
+    # scoring (see `drop_wall_clock_oneshots`), so census, bijection, geometry, class-scale,
+    # E/F/G, exemption 1 and the raw delta all work on the same scoreable rows.
+    fx_dropped = {}
+    for tag in MAPS:
+        vrows[tag], v_drop = drop_wall_clock_oneshots(vrows[tag])
+        erows[tag], e_drop = drop_wall_clock_oneshots(erows[tag])
+        fx_dropped[tag] = (v_drop, e_drop)
+
     hexgrid = hexgrid_evidence(out_dir, vrows, erows)
     camera = camera_evidence(vmeta, emeta, vrows, erows)
 
@@ -1775,6 +1853,12 @@ def main():
             if k in ("gen_seed", "gen_hash") and v != "-" and e != "-":
                 flag = "   <== MATCH" if v == e else "   <== DIFFERENT"
             lines.append(f"   {k:<38} vanilla={v:<14} expanded={e}{flag}")
+        v_drop, e_drop = fx_dropped[tag]
+        lines.append(f"   {'wall-clock one-shot FX excluded':<38} "
+                     f"vanilla={sum(v_drop.values()):<14} expanded={sum(e_drop.values())}")
+        for side, drop in (("vanilla", v_drop), ("expanded", e_drop)):
+            for (name, duration), n in sorted(drop.items()):
+                lines.append(f"      {side:<8} {name or '?':<32} duration={duration}  x{n}")
 
     summary = {}
     for tag in ("surface", "underground"):
@@ -1819,6 +1903,13 @@ def main():
         # Machine-readable gate inputs (seed/hash equality is a contract gate and must
         # not have to be re-read out of the prose report).
         s = summary[tag]
+        v_drop, e_drop = fx_dropped[tag]
+        s["transient_fx_excluded"] = {
+            "vanilla": sum(v_drop.values()),
+            "expanded": sum(e_drop.values()),
+            "vanilla_by_particles": {f"{n or '?'}:{d}": c for (n, d), c in v_drop.items()},
+            "expanded_by_particles": {f"{n or '?'}:{d}": c for (n, d), c in e_drop.items()},
+        }
         s["vanilla_seed"] = vmeta[tag].get("gen_seed")
         s["expanded_seed"] = emeta[tag].get("gen_seed")
         s["vanilla_hash"] = vmeta[tag].get("gen_hash")
