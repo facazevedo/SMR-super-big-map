@@ -121,7 +121,8 @@ def main():
         rec = {"case": c["case"], "label": c["label"], "lat": c["lat"], "lon": c["lon"]}
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_v, "0", "-",
-                                             f"lat={c['lat']}", f"lon={c['lon']}", "nopin", "serial", "passagepin"])
+                                             f"lat={c['lat']}", f"lon={c['lon']}", "nopin", "serial", "passagepin",
+                                             "hexgrid"])
         rec["vanilla_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "VANILLA_FAILED"
@@ -147,7 +148,8 @@ def main():
         log(f"  vanilla ok, ug seed {seed}")
 
         rc, outp, tries = run_twin_retrying([str(RUN), "twin", tag_e, "1", str(seed),
-                                             f"lat={c['lat']}", f"lon={c['lon']}", "serial", "passagepin"])
+                                             f"lat={c['lat']}", f"lon={c['lon']}", "serial", "passagepin",
+                                             "hexgrid"])
         rec["expanded_attempts"] = tries
         if rc != 0:
             rec["verdict"] = "EXPANDED_FAILED"
@@ -159,8 +161,20 @@ def main():
         log("  expanded ok")
 
         # normalize dump names for compare.py, then compare
+        # Stage BOTH the dumps and this case's own hex-grid census under the fixed names
+        # compare.py reads. The census supplies the expected GridObjectList count, so a
+        # case that does not stage its own leaves compare.py reading whatever pair was
+        # left behind by an earlier coordinate - which is exactly how a six-day-old
+        # census came to answer for every sweep case. Delete any leftover first, so a
+        # twin that failed to write a census can never inherit the previous one.
+        for dst in ("hexgrid-vanilla.txt", "hexgrid-expanded.txt"):
+            stale = OUT / dst
+            if stale.exists():
+                stale.unlink()
         for src, dst in ((f"objects-{tag_v}.csv", "objects-vanilla.csv"),
-                         (f"objects-{tag_e}.csv", "objects-expanded.csv")):
+                         (f"objects-{tag_e}.csv", "objects-expanded.csv"),
+                         (f"hexgrid-{tag_v}.txt", "hexgrid-vanilla.txt"),
+                         (f"hexgrid-{tag_e}.txt", "hexgrid-expanded.txt")):
             s, d = OUT / src, OUT / dst
             if s.exists():
                 d.write_bytes(s.read_bytes())

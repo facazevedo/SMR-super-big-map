@@ -235,14 +235,66 @@ INFRASTRUCTURE = {
 # unexplained residue that must reach zero.  See
 # artifacts/run_iter009_hexgrid/gridobjectlist_verdict.md for the decision evidence.
 # ---------------------------------------------------------------------------
-def hexgrid_evidence(out_dir):
+def _census_belongs_to_run(objects_by_map, rows_by_map):
+    """True when this census describes the SAME run as the dumps beside it.
+
+    The census files are read by fixed name (`hexgrid-vanilla.txt` /
+    `hexgrid-expanded.txt`), so a stale pair left in the working directory by an
+    earlier coordinate is picked up silently. Both maps of every coordinate share the
+    same shape (8192 wide, 820 hex cells), so a dimension check cannot tell them apart -
+    and the consequence is severe, because the census is what SUPPLIES the expected
+    GridObjectList count. Measured 2026-08-20: a six-day-old census was answering for
+    every sweep case, expecting 308/574 on all of them; 51S13W observed 292/535 and was
+    reported as a mod defect, while 45S82E passed only because its own counts happened to
+    coincide with the stale pair.
+
+    Bind identity to something coordinate-specific instead: every gridded object the
+    census lists must exist in the dump at the same class and position. A census from
+    another map fails that immediately, and the caller then treats it as ABSENT rather
+    than believing it - so GridObjectList scores `unproven`, never a fabricated `ok`.
+    """
+    for mp, objects in objects_by_map.items():
+        if not objects:
+            continue
+        dumped = {(r["class"], str(r["x"]), str(r["y"]))
+                  for r in rows_by_map.get(mp, [])}
+        if not dumped:
+            return False
+        for o in objects:
+            x, y = o["pos"]
+            if (o["class"], str(x), str(y)) not in dumped:
+                return False
+    return True
+
+
+def infrastructure_expected_delta(infra):
+    """Sum of expected_expanded - expected_vanilla, or None if any class is unproven.
+
+    None means the raw census difference cannot be accounted for at all, which must read
+    as a refusal: a class with no proven expectation can hide any number of objects.
+    """
+    total = 0
+    for entry in infra:
+        ev, ee = entry.get("expected_vanilla"), entry.get("expected_expanded")
+        if not isinstance(ev, int) or not isinstance(ee, int):
+            return None
+        total += ee - ev
+    return total
+
+
+def hexgrid_evidence(out_dir, vrows=None, erows=None):
     """Per-map proof (or refusal) that GridObjectList counts are derived, not divergent."""
     sides = {}
+    side_rows = {"vanilla": vrows, "expanded": erows}
     for side in ("vanilla", "expanded"):
         path = Path(out_dir) / f"hexgrid-{side}.txt"
         if not path.exists():
             continue
         meta, buckets, objects = hexgrid_analyze.parse(path)
+        rows = side_rows.get(side)
+        if rows is not None and not _census_belongs_to_run(objects, rows):
+            # Stale census from another run: refuse it outright.
+            continue
         sides[side] = {}
         for mp in MAPS:
             if meta.get(mp, {}).get("present") != "true":
@@ -1489,11 +1541,19 @@ def report_map(tag, vrows, erows, rx, ry, out, hexgrid=None, camera=None,
       f"initial reveal measured on the vanilla control = {revealed} sector(s))")
     # Close the loop on section A: the whole raw difference must be these classes and
     # nothing else, at exactly the size their own rules predict.
-    infra_delta = sum(e["expected_expanded"] - e["expected_vanilla"] for e in infra)
+    # An `unproven` class has no numeric expectation, so the delta cannot be accounted
+    # for at all - that is a refusal, not a pass.
+    infra_delta = infrastructure_expected_delta(infra)
     raw_delta = len(erows) - len(vrows)
-    w(f"   raw-census accounting: raw delta {raw_delta:+d} vs infrastructure-predicted "
-      f"{infra_delta:+d} -> {'FULLY EXPLAINED' if raw_delta == infra_delta else 'UNEXPLAINED'}"
-      f"{'' if raw_delta == infra_delta else f' ({raw_delta - infra_delta:+d} unaccounted)'}")
+    if infra_delta is None:
+        unproven = [e["class"] for e in infra if e["expected_expanded"] is None
+                    or e["expected_vanilla"] is None]
+        w(f"   raw-census accounting: raw delta {raw_delta:+d} vs infrastructure-predicted "
+          f"UNPROVEN -> UNEXPLAINED (no expectation for {', '.join(unproven)})")
+    else:
+        w(f"   raw-census accounting: raw delta {raw_delta:+d} vs infrastructure-predicted "
+          f"{infra_delta:+d} -> {'FULLY EXPLAINED' if raw_delta == infra_delta else 'UNEXPLAINED'}"
+          f"{'' if raw_delta == infra_delta else f' ({raw_delta - infra_delta:+d} unaccounted)'}")
 
     cv = [r for r in vrows if r["class"] not in INFRASTRUCTURE]
     ce = [r for r in erows if r["class"] not in INFRASTRUCTURE]
@@ -1685,7 +1745,7 @@ def main():
     out_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).resolve().parent / "out"
     vmeta, vrows, _vman, _vstaged = parse_dump(out_dir / "objects-vanilla.csv")
     emeta, erows, eman, estaged = parse_dump(out_dir / "objects-expanded.csv")
-    hexgrid = hexgrid_evidence(out_dir)
+    hexgrid = hexgrid_evidence(out_dir, vrows, erows)
     camera = camera_evidence(vmeta, emeta, vrows, erows)
 
     lines = []
@@ -1783,17 +1843,17 @@ def main():
         # in exact 1:1 correspondence.  So a regression that adds or drops even one object
         # of any other class - or that moves a proven infrastructure class off its own
         # derived expectation - still turns this False.
-        infra_delta = sum(entry["expected_expanded"] - entry["expected_vanilla"]
-                          for entry in s.get("infrastructure", []))
+        infra_delta = infrastructure_expected_delta(s.get("infrastructure", []))
         raw_delta = s["expanded_objects"] - s["vanilla_objects"]
         s["raw_delta"] = raw_delta
         s["infrastructure_expected_delta"] = infra_delta
-        s["raw_delta_fully_explained"] = (raw_delta == infra_delta)
+        s["raw_delta_fully_explained"] = (infra_delta is not None
+                                          and raw_delta == infra_delta)
         s["bijection_ok"] = (bool(s.get("content_bijection_ok"))
                              and bool(s.get("unexplained_bijection_ok"))
                              and bool(s.get("infrastructure_ok"))
                              and s.get("infrastructure_unproven", 0) == 0
-                             and raw_delta == infra_delta)
+                             and s["raw_delta_fully_explained"])
 
     lines.extend(entrance_lines)
     summary["entrance"] = entrance
