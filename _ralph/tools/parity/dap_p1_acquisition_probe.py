@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Render and validate a direct-DAP P1 acquisition worker.
+"""Render and validate a pre-menu direct-DAP P1 acquisition worker.
 
 The delayed direct-DAP worker proved that a real-time thread can survive a
-``smr run-file`` return.  This probe puts the protected P1 generator and its
+``smr run-file`` return. This probe puts the protected P1 generator and its
 existing acquisition tail in that proven lifetime, rather than inside a
-HARNESS scenario callback.  Its artifact directory is deliberately created by
-the host before the one permitted game-side invocation.
+HARNESS scenario callback. It has no artificial post-loader sleep: ``smr
+daemon start --startup-file`` evaluates it before the normal menu-ready gate.
+Its artifact directory is deliberately created by the host before the one
+permitted game-side invocation.
 """
 
 from __future__ import annotations
@@ -50,8 +52,8 @@ def acquisition_tail(source: str, artifact_root: str) -> str:
 
 
 def render(body: str, tail: str, artifact_root: str) -> str:
-    return f'''-- Rendered for the full-z-parity direct-DAP P1 acquisition probe.
--- Run only through smr-harness run-file after the host creates this output root.
+    return f'''-- Rendered for the full-z-parity pre-menu direct-DAP P1 acquisition probe.
+-- Run only through smr-harness daemon start --startup-file after the host creates this output root.
 -- Protected iter780 generator SHA256: {GENERATOR_SHA256}
 -- Inline acquisition SHA256: {INLINE_SHA256}
 local START = "{artifact_root}/worker_started.json"
@@ -62,9 +64,8 @@ local DONE = "{artifact_root}/producer.done"
 g_ParityDapP1Status = "loader_before_schedule"
 local created = CreateRealTimeThread(function()
     local ok, err = sprocall(function()
-        Sleep(250)
-        g_ParityDapP1Status = "worker_entered_after_dap_return"
-        local start = '{{"schema":"smr.ralph.full-z-parity.dap-p1-acquisition.v1","status":"worker_started"}}'
+        g_ParityDapP1Status = "worker_entered_pre_menu"
+        local start = '{{"schema":"smr.ralph.full-z-parity.dap-p1-startup-acquisition.v1","status":"worker_started"}}'
         local write_err = AsyncStringToFile(START, start)
         if write_err then
             g_ParityDapP1Status = "start_write_error:" .. tostring(write_err)
@@ -76,8 +77,8 @@ local created = CreateRealTimeThread(function()
             return
         end
         local result = {{
-            schema = "smr.ralph.full-z-parity.dap-p1-acquisition.v1",
-            protocol = "direct_dap_worker_after_loader_return",
+            schema = "smr.ralph.full-z-parity.dap-p1-startup-acquisition.v1",
+            protocol = "direct_dap_worker_pre_menu_without_post_loader_delay",
             protected_generator_sha256 = "{GENERATOR_SHA256}",
             inline_source_sha256 = "{INLINE_SHA256}",
             ok = false,
@@ -117,7 +118,7 @@ local created = CreateRealTimeThread(function()
 end)
 g_ParityDapP1CreateType = type(created)
 g_ParityDapP1Status = "loader_returned"
-return "dap_p1_acquisition_scheduled"
+return "dap_p1_startup_acquisition_scheduled"
 '''
 
 
@@ -143,7 +144,8 @@ def check(source: str, artifact_root: str) -> dict[str, object]:
         "lua_load_parse_green": parsed,
         "not_a_harness_scenario": "HARNESS.scenario" not in executable,
         "one_direct_realtime_worker": executable.count("CreateRealTimeThread(function()") >= 1,
-        "yield_after_dap_return": "Sleep(250)" in executable,
+        "startup_protocol_is_named": "direct_dap_worker_pre_menu_without_post_loader_delay" in executable,
+        "no_post_loader_artificial_delay": "Sleep(" not in executable[: executable.find("local generated, generation_error")],
         "host_unique_output_root_only": artifact_root in executable and "iter874_p1_inline_acquisition" not in executable,
         "start_sentinel_precedes_generation": executable.find("AsyncStringToFile(START_DONE") < executable.find("local generated, generation_error"),
         "result_is_length_guarded": "HARNESS.marshal(DATA, DONE, result)" in executable,
@@ -157,7 +159,7 @@ def check(source: str, artifact_root: str) -> dict[str, object]:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     return {
-        "schema": "smr.ralph.full-z-parity.dap-p1-acquisition-static.v1",
+        "schema": "smr.ralph.full-z-parity.dap-p1-startup-acquisition-static.v1",
         "ok": not failed,
         "checks": checks,
         "passed": sum(checks.values()),
@@ -187,7 +189,7 @@ def main() -> int:
         acquisition_tail(INLINE.read_text(encoding="utf-8"), artifact_root.as_posix()),
         artifact_root.as_posix(),
     )
-    output = args.staging / "dap_p1_acquisition.lua"
+    output = args.staging / "dap_p1_startup_acquisition.lua"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(source, encoding="utf-8")
     result = check(source, artifact_root.as_posix())
