@@ -17,22 +17,21 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-STAGING = ROOT / "_ralph/tmp/full_z_parity_iter887_dap_delayed_thread"
-OUTPUT = STAGING / "dap_delayed_thread.lua"
-ARTIFACT_ROOT = (
+DEFAULT_STAGING = ROOT / "_ralph/tmp/full_z_parity_iter887_dap_delayed_thread"
+DEFAULT_ARTIFACT_ROOT = (
     "D:/PROJS/SMR/super-big-map/_ralph/runs/full-z-parity/artifacts/"
     "iter887_dap_delayed_thread"
 )
 
 
-def render() -> str:
+def render(artifact_root: str) -> str:
     return f'''-- Rendered for Ralph iteration 887. Run only through smr-harness run-file.
 -- It differs from iter886 by yielding beyond the DAP evaluation, avoiding rawset,
 -- and writing an independent entry sentinel before HARNESS.marshal.
-local ENTRY = "{ARTIFACT_ROOT}/worker_entry.json"
-local ENTRY_DONE = "{ARTIFACT_ROOT}/worker_entry.done"
-local DATA = "{ARTIFACT_ROOT}/worker_result.json"
-local DONE = "{ARTIFACT_ROOT}/worker_result.done"
+local ENTRY = "{artifact_root}/worker_entry.json"
+local ENTRY_DONE = "{artifact_root}/worker_entry.done"
+local DATA = "{artifact_root}/worker_result.json"
+local DONE = "{artifact_root}/worker_result.done"
 
 g_ParityDapDelayedThreadStatus = "loader_before_schedule"
 local created = CreateRealTimeThread(function()
@@ -124,10 +123,17 @@ def check(source: str) -> dict[str, object]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--staging", type=Path, default=DEFAULT_STAGING)
+    parser.add_argument("--artifact-root", type=Path, default=Path(DEFAULT_ARTIFACT_ROOT))
     args = parser.parse_args()
-    source = render()
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(source, encoding="utf-8")
+    artifact_root = args.artifact_root.resolve()
+    # The game-side worker cannot create this directory.  Host setup is part of
+    # the probe contract and deliberately occurs before its sole invocation.
+    artifact_root.mkdir(parents=True, exist_ok=False)
+    source = render(artifact_root.as_posix())
+    output = args.staging / "dap_delayed_thread.lua"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(source, encoding="utf-8")
     result = check(source)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
