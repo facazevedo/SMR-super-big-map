@@ -1096,5 +1096,66 @@
       }
     },
     "verdict": "COMPARED"
+  },
+  "v823-sweep-09": {
+    "case": "v823-sweep-09",
+    "label": "62N13W",
+    "lat": -3720,
+    "lon": -780,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 3097115350692176098,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 11014,
+        "content_expanded_objects": 11014,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 11014,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 4591,
+        "content_expanded_objects": 4591,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 4591,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "AncientArtifact",
+      "JumboCave"
+    ],
+    "wonder_scales": {
+      "AncientArtifact": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "JumboCave": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
   }
 }
