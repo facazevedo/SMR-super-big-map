@@ -1,0 +1,127 @@
+{
+  "note": "final v823 floors-gate re-measure on the fixed (post-iter930 GameInit) measurement path; P1 already re-proven as f11a/f11x",
+  "source": "_ralph/runs/perfect-21/artifacts/cases.json",
+  "mod_version": 823,
+  "cases": [
+    {
+      "case": "v823-sweep-07",
+      "lat": 2700,
+      "lon": 4920,
+      "label": "45S82E"
+    },
+    {
+      "case": "v823-b2-01",
+      "lat": 3060,
+      "lon": -780,
+      "label": "51S13W"
+    },
+    {
+      "case": "v823-b2-02",
+      "lat": 2520,
+      "lon": -1680,
+      "label": "42S28W"
+    },
+    {
+      "case": "v823-b2-03",
+      "lat": 3900,
+      "lon": -660,
+      "label": "65S11W"
+    },
+    {
+      "case": "v823-b2-04",
+      "lat": 240,
+      "lon": 6420,
+      "label": "4S107E"
+    },
+    {
+      "case": "v823-b2-05",
+      "lat": 1320,
+      "lon": 3180,
+      "label": "22S53E"
+    },
+    {
+      "case": "v823-b2-06",
+      "lat": 2520,
+      "lon": 5100,
+      "label": "42S85E"
+    },
+    {
+      "case": "v823-b2-07",
+      "lat": 3300,
+      "lon": 9840,
+      "label": "55S164E"
+    },
+    {
+      "case": "v823-b2-08",
+      "lat": 1680,
+      "lon": -2880,
+      "label": "28S48W"
+    },
+    {
+      "case": "v823-b2-09",
+      "lat": 1800,
+      "lon": -1440,
+      "label": "30S24W"
+    },
+    {
+      "case": "v823-b2-10",
+      "lat": 3060,
+      "lon": -6600,
+      "label": "51S110W"
+    },
+    {
+      "case": "v823-sweep-01",
+      "lat": 1860,
+      "lon": -240,
+      "label": "31S4W"
+    },
+    {
+      "case": "v823-sweep-02",
+      "lat": 1440,
+      "lon": -5820,
+      "label": "24S97W"
+    },
+    {
+      "case": "v823-sweep-03",
+      "lat": 1980,
+      "lon": 9780,
+      "label": "33S163E"
+    },
+    {
+      "case": "v823-sweep-04",
+      "lat": -1020,
+      "lon": -7320,
+      "label": "17N122W"
+    },
+    {
+      "case": "v823-sweep-05",
+      "lat": -1260,
+      "lon": -4200,
+      "label": "21N70W"
+    },
+    {
+      "case": "v823-sweep-06",
+      "lat": 3120,
+      "lon": -9540,
+      "label": "52S159W"
+    },
+    {
+      "case": "v823-sweep-08",
+      "lat": 1080,
+      "lon": 8460,
+      "label": "18S141E"
+    },
+    {
+      "case": "v823-sweep-09",
+      "lat": -3720,
+      "lon": -780,
+      "label": "62N13W"
+    },
+    {
+      "case": "v823-sweep-10",
+      "lat": 2100,
+      "lon": -7200,
+      "label": "35S120W"
+    }
+  ]
+}
