@@ -49,6 +49,47 @@ CreateRealTimeThread(function()
 			return nil
 		end
 
+		local function bool_col(v)
+			if v == nil then return "" end
+			return v and "1" or "0"
+		end
+
+		-- MEASURED PARTICLE-CARRIER LIFETIME.
+		--
+		-- A ParSystem placed by `ActionFXParticles:PlayFX` is not necessarily durable: when the
+		-- system is not eternal (or the preset sets Time), PlayFX spawns a thread that sleeps the
+		-- system's own duration and then calls `StopParticles` -> `DoneObject`
+		-- (CommonLua/Classes/ActionFX.lua:2466-2499). Whether the dump still sees such a carrier
+		-- therefore depends on WHEN the dump runs, and the clock that thread sleeps on decides
+		-- whether that is reproducible at all: a game-time sleep is deterministic in a twin, a
+		-- real-time sleep races the wall clock. So report, per object and measured from the object
+		-- itself, the system's identity, its finiteness, its clock and its duration - and let the
+		-- comparer decide. No particle-name knowledge is encoded here.
+		local function global_fn(name)
+			local fn = rawget(_G, name)
+			if type(fn) == "function" then return fn end
+			return nil
+		end
+
+		local function measure(name, obj)
+			local fn = global_fn(name)
+			if not fn then return nil end
+			local ok_m, v = pcall(fn, obj)
+			if ok_m then return v end
+			return nil
+		end
+
+		local function fx_columns(obj)
+			if type(obj.GetParticlesName) ~= "function" then return "", "", "", "", "" end
+			local name = safe_call(obj.GetParticlesName, obj)
+			local eternal = measure("IsParticleSystemEternal", obj)
+			local gametime = measure("IsParticleSystemGameTime", obj)
+			local duration = measure("GetParticleSystemDuration", obj)
+			local realtime = safe_call(obj.GetRealtimeAnim, obj)
+			return tostring(name or ""), bool_col(eternal), bool_col(gametime),
+				bool_col(realtime), num(duration)
+		end
+
 		-- Creation chain, mirroring Code/sbm_provenance.lua field for field. Walking it to the
 		-- TOP gives an anchor that both twins compute the same way: on the vanilla twin every
 		-- live position IS the native position, on the expanded twin the root carries a recorded
@@ -239,6 +280,8 @@ CreateRealTimeThread(function()
 						local pz = safe_call(pos.z, pos)
 						x, y, z = num(px), num(py), num(pz)
 					end
+					local fx_name, fx_eternal, fx_gametime, fx_realtime, fx_duration =
+						fx_columns(obj)
 					emit(table.concat({
 						tag,
 						cls,
@@ -258,6 +301,7 @@ CreateRealTimeThread(function()
 						root == obj and cls or tostring(root.class or "?"),
 						num(rx), num(ry),
 						rawget(obj, "is_placed") and "1" or "",
+						fx_name, fx_eternal, fx_gametime, fx_realtime, fx_duration,
 					}, ","))
 					rows = rows + 1
 				end
@@ -291,7 +335,7 @@ CreateRealTimeThread(function()
 					.. (tostring(e.trace):gsub("%s+", " ")))
 			end
 		end
-		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from,root_class,root_x,root_y")
+		emit("#columns,map,class,x,y,z,scale,angle,src_x,src_y,src_z,src_scale,src_angle,src_class,transferred,src_kind,src_from,root_class,root_x,root_y,is_placed,fx_particles,fx_eternal,fx_gametime,fx_realtime,fx_duration")
 		dump_map(surface, "surface")
 		dump_map(underground, "underground")
 
