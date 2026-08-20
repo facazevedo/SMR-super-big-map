@@ -10846,9 +10846,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
 				-- positive-overlap equivalent of the transformed vanilla winner is passed through the
-				-- original vanilla InitialReveal resource/heat/buildability logic, and only its first
-				-- winner is scanned. Mutually exclusive with legacy relocation (which would re-scale a
-				-- freshly scanned destination sector).
+				-- original vanilla InitialReveal resource/heat/buildability logic, and exactly the
+				-- sectors vanilla's own reveal scanned are scanned here (its first winner, plus the
+				-- auxiliary nearest-concrete sector when its fallback branch returns one). Mutually
+				-- exclusive with legacy relocation (which would re-scale a freshly scanned destination
+				-- sector).
 				local sectors_mod = SuperBigMap.SectorExploration
 				local vanilla_start_pending = sectors_mod
 					and type(sectors_mod.HasPendingVanillaStartSelection) == "function"
@@ -10858,8 +10860,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						local initial_reveal_token = LoadingBegin(
 							"surface select stretched vanilla initial reveal", map)
 						local n_rev = SafeCall(sectors_mod.RevealVanillaStartSectors, map)
-						LoadingEnd(initial_reveal_token, { scanned = n_rev }, n_rev == 1)
-						if n_rev ~= 1 then
+						-- The callee already verifies fail-closed that it scanned exactly the sectors
+						-- vanilla's reveal scanned, so the caller only requires that the annotated
+						-- reveal happened at all; its skip paths and failures both yield < 1.
+						local reveal_ok = type(n_rev) == "number" and n_rev >= 1
+						LoadingEnd(initial_reveal_token, { scanned = n_rev }, reveal_ok)
+						if not reveal_ok then
 							error("stretched vanilla initial reveal failed: scanned=" .. tostring(n_rev))
 						end
 					end
