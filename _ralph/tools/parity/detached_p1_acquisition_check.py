@@ -23,7 +23,8 @@ def sha256(path: Path) -> str:
 def protected_body(source: str) -> str:
     opener = "CreateRealTimeThread(function()\n"
     closer = 'end)\nreturn "parity_thread_started"'
-    return source[len(opener) : source.index(closer)]
+    outer = source.index(opener)
+    return source[outer + len(opener) : source.index(closer, outer)]
 
 
 def lua_parses(source: str) -> tuple[bool, str | None]:
