@@ -791,5 +791,66 @@
       }
     },
     "verdict": "COMPARED"
+  },
+  "v823-sweep-03": {
+    "case": "v823-sweep-03",
+    "label": "33S163E",
+    "lat": 1980,
+    "lon": 9780,
+    "vanilla_attempts": 1,
+    "vanilla_underground_seed": 2348013699664035147,
+    "expanded_attempts": 1,
+    "compare_rc": 0,
+    "summary": {
+      "surface": {
+        "content_vanilla_objects": 30731,
+        "content_expanded_objects": 30731,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 30731,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      },
+      "underground": {
+        "content_vanilla_objects": 4589,
+        "content_expanded_objects": 4589,
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
+        "content_matched": 4589,
+        "content_unmatched_expanded": 0,
+        "content_unstamped_expanded": 0,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
+        "seed_equal": true,
+        "hash_equal": true
+      }
+    },
+    "wonders_present": [
+      "BottomlessPit",
+      "CaveOfWonders"
+    ],
+    "wonder_scales": {
+      "BottomlessPit": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      },
+      "CaveOfWonders": {
+        "vanilla": {
+          "100": 1
+        },
+        "expanded": {
+          "133": 1
+        }
+      }
+    },
+    "verdict": "COMPARED"
   }
 }
