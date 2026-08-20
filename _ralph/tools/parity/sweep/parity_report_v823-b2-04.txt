@@ -16,13 +16,14 @@
    SuperBigMapUndergroundPrepared         vanilla=false          expanded=false
    raw_object_count                       vanilla=5599           expanded=6199
    dumped_object_count                    vanilla=5599           expanded=6199
+   wall-clock one-shot FX excluded        vanilla=0              expanded=0
 
 [underground] metadata
    mapdata_width                          vanilla=6144           expanded=8192
    mapdata_height                         vanilla=6144           expanded=8192
    blank_map_id                           vanilla=BlankUnderground_02 expanded=BlankUnderground_02
-   gen_seed                               vanilla=962194843325569887 expanded=962194843325569887   <== MATCH
-   gen_hash                               vanilla=-7546038407271260949 expanded=-7546038407271260949   <== MATCH
+   gen_seed                               vanilla=3309282432910152445 expanded=3309282432910152445   <== MATCH
+   gen_hash                               vanilla=3832947160916444738 expanded=3832947160916444738   <== MATCH
    SuperBigMapSourceWidthTiles            vanilla=nil            expanded=6144
    SuperBigMapDesiredWidthTiles           vanilla=nil            expanded=8192
    SuperBigMapZScaleMul                   vanilla=nil            expanded=8192
@@ -30,8 +31,9 @@
    SuperBigMapZScaleAdd                   vanilla=nil            expanded=-12333
    SuperBigMapExpanded                    vanilla=false          expanded=true
    SuperBigMapUndergroundPrepared         vanilla=false          expanded=true
-   raw_object_count                       vanilla=6015           expanded=6751
-   dumped_object_count                    vanilla=6015           expanded=6751
+   raw_object_count                       vanilla=6114           expanded=6850
+   dumped_object_count                    vanilla=6114           expanded=6850
+   wall-clock one-shot FX excluded        vanilla=0              expanded=0
 
 [surface] derived stretch ratio: x=1.333333  y=1.333333 (6144->8192 tiles)
 
@@ -74,14 +76,14 @@
      CameraObj                                          1
 
 -- C. STRETCH PROPORTIONALITY  (|actual_xy - src_xy * 1.333333|, world units) --
-   all stamped objects : n=5395 max=287904 p99=2848 median=0 mean=1599.7
+   all stamped objects : n=5395 max=287904 p99=2848 median=0 mean=1600.0
    within 1 wu (pure rounding) : 4978/5395 (92.271%)
    classes with residual > 1 wu (top 15 by max):
      PrefabMarker                           n=1570 max=287904 p99=229200 median=0 mean=4934.9
-     UndergroundTunnelMarker                n=2 max=216369 p99=216369 median=110212 mean=110211.7
-     SurfaceUndergroundTunnelSign           n=2 max=177651 p99=177651 median=89426 mean=89426.4
-     ElevatorBuildIndicator_SurfaceDecal    n=2 max=174069 p99=174069 median=88458 mean=88458.2
-     UndergroundPassage                     n=2 max=174069 p99=174069 median=88458 mean=88458.2
+     UndergroundTunnelMarker                n=2 max=216932 p99=216932 median=110493 mean=110493.2
+     SurfaceUndergroundTunnelSign           n=2 max=177966 p99=177966 median=89584 mean=89583.9
+     ElevatorBuildIndicator_SurfaceDecal    n=2 max=174344 p99=174344 median=88596 mean=88595.9
+     UndergroundPassage                     n=2 max=174344 p99=174344 median=88596 mean=88595.9
      SubsurfaceAnomalyMarker                n=46 max=578 p99=578 median=334 mean=366.2
      SubsurfaceDepositMarker                n=48 max=578 p99=578 median=334 mean=371.8
      TerrainDepositMarker                   n=22 max=578 p99=578 median=333 mean=275.7
@@ -95,10 +97,10 @@
    matched pairs        : 5578
    vanilla unmatched    : 21
    expanded left over   : 621
-   residual distance    : n=5578 max=193334 p99=40839 median=0 mean=3131.1
+   residual distance    : n=5578 max=193334 p99=40839 median=0 mean=3130.9
      within      1 wu : 4438/5578 (79.563%)
      within    100 wu : 4442/5578 (79.634%)
-     within   1000 wu : 4803/5578 (86.106%)
+     within   1000 wu : 4804/5578 (86.124%)
      within  10000 wu : 5007/5578 (89.763%)
 
 -- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --
@@ -243,11 +245,11 @@
 [underground] derived stretch ratio: x=1.333333  y=1.333333 (6144->8192 tiles)
 
 ==============================================================================
-  UNDERGROUND   vanilla=6015 objects   expanded=6751 objects
+  UNDERGROUND   vanilla=6114 objects   expanded=6850 objects
 ==============================================================================
 
 -- A. CLASS CENSUS --
-   total objects       : vanilla 6015 vs expanded 6751  delta +736 (infrastructure; accounted for in E)
+   total objects       : vanilla 6114 vs expanded 6850  delta +736 (infrastructure; accounted for in E)
    distinct classes    : vanilla 36 vs expanded 36
    classes matching 1:1: 33
    classes differing   : 3
@@ -257,8 +259,8 @@
      GridObjectList                              161       297     +136
 
 -- B. PROVENANCE BIJECTION (expanded source stamp -> vanilla object) --
-   expanded objects carrying a source stamp : 6053
-   ... matched to a distinct vanilla object : 5653
+   expanded objects carrying a source stamp : 6152
+   ... matched to a distinct vanilla object : 5752
    ... of those, paired by donor root       : 7
    staged start spawns vanilla MOVED        : 0
    ... additionally paired at the moved spawn: 0
@@ -269,7 +271,7 @@
    expanded objects with NO source stamp    : 698
    stamp provenance kind (stamped / matched):
      derived                      9 /       9
-     native                    6044 /    5644
+     native                    6143 /    5743
    vanilla objects never claimed by a stamp : 362
    unstamped expanded classes (top 15):
      SectorUnexplored                                 400
@@ -282,31 +284,31 @@
      CameraObj                                          1
 
 -- C. STRETCH PROPORTIONALITY  (|actual_xy - src_xy * 1.333333|, world units) --
-   all stamped objects : n=6053 max=376520 p99=289792 median=0 mean=13873.6
-   within 1 wu (pure rounding) : 5539/6053 (91.508%)
+   all stamped objects : n=6152 max=376520 p99=285906 median=0 mean=13648.1
+   within 1 wu (pure rounding) : 5650/6152 (91.840%)
    classes with residual > 1 wu (top 15 by max):
      MapSector                              n=400 max=376520 p99=357733 median=216955 mean=208899.9
-     SurfaceTunnelMarker                    n=2 max=99279 p99=99279 median=51973 mean=51973.0
-     ElevatorBuildIndicator_UndergroundPass n=2 max=94320 p99=94320 median=47327 mean=47326.7
-     SurfacePassage                         n=2 max=94320 p99=94320 median=47327 mean=47326.7
-     SubsurfaceSpecialAnomalyMarker         n=2 max=29037 p99=29037 median=14518 mean=14518.4
-     ParSystem                              n=5 max=14596 p99=14596 median=11367 mean=7861.1
-     SubsurfaceDepositMarker                n=29 max=9609 p99=9609 median=334 mean=915.3
-     SubsurfaceAnomalyMarker                n=30 max=648 p99=648 median=375 mean=388.5
-     TerrainDepositMarker                   n=4 max=577 p99=577 median=334 mean=394.6
-     EffectDepositMarker                    n=4 max=577 p99=577 median=334 mean=394.6
+     SurfaceTunnelMarker                    n=2 max=97797 p99=97797 median=51232 mean=51232.2
+     ElevatorBuildIndicator_UndergroundPass n=2 max=92867 p99=92867 median=46600 mean=46600.1
+     SurfacePassage                         n=2 max=92867 p99=92867 median=46600 mean=46600.1
+     ParSystem                              n=5 max=14596 p99=14596 median=11368 mean=7861.0
+     SubsurfaceDepositMarker                n=29 max=12979 p99=12979 median=334 mean=1482.7
+     EffectDepositMarker                    n=4 max=6806 p99=6806 median=167 mean=1785.0
+     SubsurfaceAnomalyMarker                n=31 max=578 p99=578 median=372 mean=360.4
+     TerrainDepositMarker                   n=3 max=578 p99=578 median=334 mean=414.8
+     SubsurfaceSpecialAnomalyMarker         n=2 max=577 p99=577 median=288 mean=288.5
      SubsurfaceRareAnomalyMarker            n=3 max=572 p99=572 median=456 mean=434.2
-     SurfaceDepositMarker                   n=37 max=550 p99=550 median=381 mean=343.8
+     SurfaceDepositMarker                   n=31 max=530 p99=530 median=342 mean=332.4
 
 -- D. STAMP-INDEPENDENT GEOMETRIC MATCH (vanilla_xy * ratio -> nearest expanded) --
-   matched pairs        : 6014
+   matched pairs        : 6113
    vanilla unmatched    : 1
    expanded left over   : 737
-   residual distance    : n=6014 max=94320 p99=21588 median=0 mean=690.8
-     within      1 wu : 5555/6014 (92.368%)
-     within    100 wu : 5561/6014 (92.468%)
-     within   1000 wu : 5802/6014 (96.475%)
-     within  10000 wu : 5882/6014 (97.805%)
+   residual distance    : n=6113 max=92867 p99=21588 median=0 mean=677.4
+     within      1 wu : 5666/6113 (92.688%)
+     within    100 wu : 5669/6113 (92.737%)
+     within   1000 wu : 5900/6113 (96.516%)
+     within  10000 wu : 5979/6113 (97.808%)
 
 -- E. INFRASTRUCTURE ENUMERATION (classes exempt from the bijection) --
    hex-grid census evidence : PROVEN - derivation exact on both twins, identical gridded population (48 objects)
@@ -322,9 +324,9 @@
    raw-census accounting: raw delta +736 vs infrastructure-predicted +736 -> FULLY EXPLAINED
 
 -- F. CONTENT-ONLY BIJECTION (E excluded on both sides) --
-   content objects      : vanilla 5652 vs expanded 5652  MATCH
+   content objects      : vanilla 5751 vs expanded 5751  MATCH
    classes differing    : 0
-   matched              : 5652
+   matched              : 5751
    ... of those, staged moved spawn     : 0
    ... of those, exemption 1 (entrance) : 0
    unmatched expanded   : 0
@@ -335,9 +337,9 @@
 -- G. UNEXPLAINED RESIDUE (content + infrastructure whose rule is not proven) --
    ok-infrastructure classes exempted here : CameraObj, GridObjectList, MapSector, RandomMapGeneratorHolder, SectorScanned, SectorUnexplored
    records exempted     : vanilla 363 / expanded 1099
-   unexplained objects  : vanilla 5652 vs expanded 5652  MATCH
+   unexplained objects  : vanilla 5751 vs expanded 5751  MATCH
    classes differing    : 0
-   matched              : 5652
+   matched              : 5751
    ... of those, staged moved spawn     : 0
    ... of those, exemption 1 (entrance) : 0
    unmatched expanded   : 0
@@ -353,38 +355,38 @@
      BottomlessPit                          100                           133                           ok             stretched
      CameraObj                              100                           100                           ok             identical
      CaveInRubble                           100x26                        133x26                        ok             stretched
-     Cliff_01                               38x2,73,81                    51x2,97,108                   ok             stretched
-     Cliff_02                               46x6,49x12,55x10,76           61x6,65x12,73x10,101          ok             stretched
-     Cliff_02_100                           67                            89                            ok             stretched
+     Cliff_01                               38x2,68,73,81,86              51x2,91,97,108,115            ok             stretched
+     Cliff_02                               46x2,49x2,76                  61x2,65x2,101                 ok             stretched
+     Cliff_02_100                           62,67                         83,89                         ok             stretched
      EffectDepositMarker                    110x4                         110x4                         ok             identical
      ElevatorBuildIndicator_UndergroundPass 100x2                         100x2                         ok             identical
      GridObjectList                         100x161                       100x297                       ok_cardinality identical_values_counts_differ
      MapSector                              100x100                       100x400                       ok_cardinality identical_values_counts_differ
      ParSystem                              100x5                         100x5                         ok             identical
-     PrefabMarker                           150x4823                      150x4823                      ok             identical
+     PrefabMarker                           150x4998                      150x4998                      ok             identical
      RandomMapGeneratorHolder               100                           100                           ok             identical
-     RemovableRocks_01                      84x64,102x28,106x13           112x64,136x28,141x13          ok             stretched
-     RemovableRocks_02                      80x4,84x26,94x55,102x53,113x2 107x4,112x26,125x55,136x53,15 ok             stretched
-     Rocks_01                               83x5,84x5,123x6,158,195       111x5,112x5,164x6,211,260     ok             stretched
-     Rocks_01_100                           243                           324                           ok             stretched
-     Rocks_03                               65x3,78x6,82x3,84,85x15,87,98 87x3,104x6,109x3,112,113x15,1 ok             stretched
-     Rocks_03_100                           83x5,111x6,147x6,164x3        111x5,148x6,196x6,219x3       ok             stretched
-     Rocks_03_33                            143x2,161x16,168x5,219x6,220x 191x2,215x16,224x5,292x6,293x ok             stretched
-     Rocks_04                               80,84,86,100x56,113x2,118x27, 107,112,115,133x56,151x2,157x ok             stretched
+     RemovableRocks_01                      84x68,102x36,106x15           112x68,136x36,141x15          ok             stretched
+     RemovableRocks_02                      80x2,84x19,94x48,102x67,118x8 107x2,112x19,125x48,136x67,15 ok             stretched
+     Rocks_01                               123                           164                           ok             stretched
+     Rocks_01_100                           243x2                         324x2                         ok             stretched
+     Rocks_02                               76                            101                           ok             stretched
+     Rocks_03                               65,78,82,84,85x17,87,98,100x4 87,104,109,112,113x17,116,131 ok             stretched
+     Rocks_03_100                           111,147,164                   148,196,219                   ok             stretched
+     Rocks_03_33                            161,219,220                   215,292,293                   ok             stretched
+     Rocks_04                               80,84,86,100x51,113x2,118x45, 107,112,115,133x51,151x2,157x ok             stretched
      SectorUnexplored                       411x100                       411x400                       ok_cardinality identical_values_counts_differ
-     SoundSource                            250x45                        250x45                        ok             identical
-     SubsurfaceAnomalyMarker                110x30                        110x30                        ok             identical
+     SoundSource                            250x51                        250x51                        ok             identical
+     SubsurfaceAnomalyMarker                110x31                        110x31                        ok             identical
      SubsurfaceDepositMarker                110x29                        110x29                        ok             identical
      SubsurfaceRareAnomalyMarker            110x3                         110x3                         ok             identical
      SubsurfaceSpecialAnomalyMarker         110x2                         110x2                         ok             identical
-     SurfaceDepositMarker                   53x2,59,66,70x2,97,110x25,128 53x2,59,66,70x2,97,110x25,128 ok             identical
+     SurfaceDepositMarker                   53,64,70,110x24,128x4         53,64,70,110x24,128x4         ok             identical
      SurfacePassage                         100x2                         100x2                         ok             identical
      SurfaceTunnelMarker                    110x2                         110x2                         ok             identical
-     TerrainDepositMarker                   110x4                         110x4                         ok             identical
+     TerrainDepositMarker                   110x3                         110x3                         ok             identical
      TunnelBlockerRubble                    100x18                        133x18                        ok             stretched
-     Underground_Arch_02                    100                           133                           ok             stretched
-     Underground_Arch_05                    96                            128                           ok             stretched
-     Underground_Arch_08                    100x2                         133x2                         ok             stretched
+     Underground_Arch_04                    100                           133                           ok             stretched
+     Underground_Arch_05                    96x2                          128x2                         ok             stretched
    contract-stated entrance-family constants (both twins):
      ElevatorBuildIndicator_UndergroundPassageImp expect  100  vanilla 100x2          expanded 100x2          ok
      SurfacePassage                               expect  100  vanilla 100x2          expanded 100x2          ok
@@ -392,33 +394,33 @@
    GATE class-scale-expected: classes=36 ok=36 mismatched=0 unscoreable=0 -> PASS
 
 -- I. NATIVE-SOURCE DELIVERY  (`native-source-delivered`) --
-   manifest objects recorded at migration : 107
-   still present in the expanded map      : 107
+   manifest objects recorded at migration : 101
+   still present in the expanded map      : 101
    LOST but still in the vanilla twin     : 0
    pruned by BOTH twins (not a defect)    : 0
-   stamped, post-migration (diagnostic)   : 5937
+   stamped, post-migration (diagnostic)   : 6042
    derived-namespace stamps excluded      : 9
    post-migration stamped, by class:
-     PrefabMarker                             4823
+     PrefabMarker                             4998
      MapSector                                400
-     RemovableRocks_02                        207
-     RemovableRocks_01                        105
-     Rocks_03                                 98
-     Rocks_04                                 96
-     SoundSource                              45
-     Rocks_03_33                              35
-     Cliff_02                                 29
+     RemovableRocks_02                        221
+     RemovableRocks_01                        119
+     Rocks_04                                 104
+     Rocks_03                                 72
+     SoundSource                              51
      CaveInRubble                             26
-     Rocks_03_100                             20
-     Rocks_01                                 18
      TunnelBlockerRubble                      18
-     Cliff_01                                 4
+     Cliff_01                                 6
+     Cliff_02                                 5
+     Rocks_03_33                              3
+     Rocks_03_100                             3
+     Rocks_01_100                             2
+     Cliff_02_100                             2
      ParSystem                                2
-     Underground_Arch_08                      2
+     Underground_Arch_05                      2
      SurfacePassage                           2
      RandomMapGeneratorHolder                 1
-     Underground_Arch_05                      1
-     BottomlessPit                            1
+     Rocks_01                                 1
    GATE native-source-delivered: PASS
 
 ==============================================================================
@@ -427,14 +429,14 @@
    vanilla linked pairs=2   expanded linked pairs=2
 
    pair 1  CO-LOCATED
-      surface     UndergroundPassage       hex (137,349) = (311500,302234)
-      underground SurfacePassage           hex (137,349) = (311500,302234)
+      surface     UndergroundPassage       hex (133,353) = (309500,305698)
+      underground SurfacePassage           hex (133,353) = (309500,305698)
       endpoint separation: hexes=0 world=0
       vanilla source: surface (124500,155014) underground (163500,217366) (vanilla's own endpoints 73544 apart)
       stretched image of the vanilla SURFACE coordinate: hex (47,238) = (166000,206108)
-      drift surface endpoint -> that image: 174386 wu (201 hexes)
-      drift underground endpoint -> that image: 174386 wu
-      drift underground endpoint -> image of its OWN vanilla coordinate: 94398 wu
+      drift surface endpoint -> that image: 174672 wu (201 hexes)
+      drift underground endpoint -> that image: 174672 wu
+      drift underground endpoint -> image of its OWN vanilla coordinate: 92968 wu
 
    pair 2  CO-LOCATED
       surface     UndergroundPassage       hex (329,444) = (551000,384504)
@@ -447,4 +449,4 @@
       drift underground endpoint -> image of its OWN vanilla coordinate: 0 wu
 
    GATE entrance-colocation: pairs=2 colocated=2 differing=0 -> PASS
-   REPORTED entrance-minimal-drift: max surface drift from the exact stretched image = 174386 wu
+   REPORTED entrance-minimal-drift: max surface drift from the exact stretched image = 174672 wu
