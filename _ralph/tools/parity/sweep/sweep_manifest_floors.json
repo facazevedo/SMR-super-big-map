@@ -1,0 +1,19 @@
+{
+  "note": "floors-gate re-measure pair required after EVERY mod change: P1 (30S146E) first, then 45S82E. Same pinned twin protocol as the main sweep; kept in its own manifest so the 20-coordinate sweep checkpoint is not disturbed.",
+  "source": "_ralph/runs/perfect-21/artifacts/cases.json",
+  "mod_version": 825,
+  "cases": [
+    {
+      "case": "v825-fp1",
+      "lat": 1800,
+      "lon": 8760,
+      "label": "30S146E"
+    },
+    {
+      "case": "v825-f07",
+      "lat": 2700,
+      "lon": 4920,
+      "label": "45S82E"
+    }
+  ]
+}
