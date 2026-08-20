@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -23,6 +24,39 @@ GENERATOR = ROOT / "_ralph/tools/parity/out/gen-u80a.lua"
 INLINE = ROOT / "_ralph/tmp/full_z_parity_iter874_p1_inline_acquisition/p1_inline_acquisition.lua"
 GENERATOR_SHA256 = "fcdd02994b2ff444274d79e76e16c8c0389fff83dc5f19609c44ee4607d66a9f"
 INLINE_SHA256 = "cf4d5a1d7e0121cb667772f9459751dd230a42ad76ecb4a428a9d4dba87a8b86"
+
+# MarsDebug reports the first ordinary write to an unknown global as an error.
+# Predeclare every g_Parity* value assigned by the startup wrapper, protected
+# generator, or acquisition tail before the worker is scheduled.  The static
+# checker independently derives the assigned names from the rendered source so
+# a future copied-body assignment cannot silently escape this list.
+PREDECLARED_GLOBALS = (
+    "g_ParityStatus",
+    "g_ParityError",
+    "g_ParitySurfaceSeed",
+    "g_ParityUndergroundSeed",
+    "g_ParityUndergroundPin",
+    "g_ParityUndergroundPinApplied",
+    "g_ParityRasterTables",
+    "g_ParityRasterDivBefore",
+    "g_ParityRasterDivAfter",
+    "g_ParityPassagePin",
+    "g_ParityPassagePinAround",
+    "g_ParityPassagePinPassable",
+    "g_ParityPassagePinCalls",
+    "g_ParityP1ReadinessStatus",
+    "g_ParityP1ReadinessError",
+    "g_ParityP1ReadinessResult",
+    "g_ParityDumpStatus",
+    "g_ParityDumpError",
+    "g_ParityDumpRows",
+    "g_ParityHexStatus",
+    "g_ParityHexError",
+    "g_ParityHexBuckets",
+    "g_ParityDapP1Status",
+    "g_ParityDapP1Result",
+    "g_ParityDapP1CreateType",
+)
 
 
 def sha256(path: Path) -> str:
@@ -52,6 +86,9 @@ def acquisition_tail(source: str, artifact_root: str) -> str:
 
 
 def render(body: str, tail: str, artifact_root: str) -> str:
+    declarations = "\n".join(
+        f'rawset(_G, "{name}", false)' for name in PREDECLARED_GLOBALS
+    )
     return f'''-- Rendered for the full-z-parity pre-menu direct-DAP P1 acquisition probe.
 -- Run only through smr-harness daemon start --startup-file after the host creates this output root.
 -- Protected iter780 generator SHA256: {GENERATOR_SHA256}
@@ -61,6 +98,7 @@ local START_DONE = "{artifact_root}/worker_started.done"
 local DATA = "{artifact_root}/producer.json"
 local DONE = "{artifact_root}/producer.done"
 
+{declarations}
 g_ParityDapP1Status = "loader_before_schedule"
 local created = CreateRealTimeThread(function()
     local ok, err = sprocall(function()
@@ -135,10 +173,61 @@ def lua_parses(source: str) -> tuple[bool, str | None]:
         return False, str(exc)
 
 
+def parity_global_declaration_facts(
+    executable: str,
+) -> tuple[set[str], set[str], bool]:
+    worker_start = executable.find("CreateRealTimeThread(function()")
+    assignment_matches = list(
+        re.finditer(r"\b(g_Parity[A-Za-z0-9_]*)\s*=(?!=)", executable)
+    )
+    worker_rawset_matches = list(
+        re.finditer(
+            r'rawset\(_G,\s*"(g_Parity[A-Za-z0-9_]*)"\s*,',
+            executable[worker_start:] if worker_start >= 0 else "",
+        )
+    )
+    declaration_matches = list(
+        re.finditer(
+            r'rawset\(_G, "(g_Parity[A-Za-z0-9_]*)", false\)',
+            executable[:worker_start] if worker_start >= 0 else "",
+        )
+    )
+    assigned = {match.group(1) for match in assignment_matches} | {
+        match.group(1) for match in worker_rawset_matches
+    }
+    declared = {match.group(1) for match in declaration_matches}
+    assignment_offsets = [match.start() for match in assignment_matches]
+    assignment_offsets.extend(
+        worker_start + match.start() for match in worker_rawset_matches
+    )
+    first_assignment = min(assignment_offsets, default=-1)
+    declarations_end = max((match.end() for match in declaration_matches), default=-1)
+    exact_and_early = (
+        assigned == declared == set(PREDECLARED_GLOBALS)
+        and declarations_end >= 0
+        and first_assignment > declarations_end
+        and worker_start > declarations_end
+        and len(declaration_matches) == len(PREDECLARED_GLOBALS)
+    )
+    return assigned, declared, exact_and_early
+
+
 def check(source: str, artifact_root: str) -> dict[str, object]:
     parsed, parse_error = lua_parses(source)
     executable = "\n".join(
         line for line in source.splitlines() if not line.lstrip().startswith("--")
+    )
+    assigned_globals, declared_globals, declaration_contract = (
+        parity_global_declaration_facts(executable)
+    )
+    _, _, unexpected_assignment_contract = parity_global_declaration_facts(
+        executable + "\ng_ParityStaticNegativeControl = true\n"
+    )
+    missing_declaration = executable.replace(
+        f'rawset(_G, "{PREDECLARED_GLOBALS[0]}", false)\n', "", 1
+    )
+    _, _, missing_declaration_contract = parity_global_declaration_facts(
+        missing_declaration
     )
     checks = {
         "lua_load_parse_green": parsed,
@@ -152,6 +241,9 @@ def check(source: str, artifact_root: str) -> dict[str, object]:
         "protected_generator_is_marked": "BEGIN EXACT ITER780 GENERATOR BODY" in source and "END EXACT ITER780 GENERATOR BODY" in source,
         "worker_errors_are_caught": "sprocall(function()" in executable and "worker_vm_error:" in executable,
         "generation_and_acquisition_errors_are_reported": "generation_error" in executable and "acquisition_error" in executable,
+        "all_assigned_parity_globals_predeclared_exactly_before_worker": declaration_contract,
+        "checker_rejects_unexpected_parity_assignment": not unexpected_assignment_contract,
+        "checker_rejects_missing_parity_predeclaration": not missing_declaration_contract,
         "no_forbidden_control_surface": not any(
             token in executable.lower()
             for token in ("taskkill", "marsdebug.exe", "subprocess", "os.execute", "io.popen")
@@ -168,6 +260,8 @@ def check(source: str, artifact_root: str) -> dict[str, object]:
         "rendered_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
         "protected_generator_sha256": GENERATOR_SHA256,
         "inline_source_sha256": INLINE_SHA256,
+        "assigned_parity_globals": sorted(assigned_globals),
+        "predeclared_parity_globals": sorted(declared_globals),
         "lua_parse_error": parse_error,
     }
 
