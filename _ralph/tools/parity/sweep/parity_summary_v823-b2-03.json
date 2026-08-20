@@ -4555,7 +4555,7 @@
     "scale_expected_ok": true,
     "scale_table": [
       {
-        "class": "BottomlessPit",
+        "class": "AncientArtifact",
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
@@ -4619,25 +4619,25 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "38": 2,
-          "73": 1,
-          "81": 1,
-          "68": 1,
-          "86": 1
+          "68": 3,
+          "86": 3,
+          "38": 4,
+          "73": 2,
+          "81": 2
         },
         "expanded": {
-          "97": 1,
-          "51": 2,
-          "108": 1,
-          "115": 1,
-          "91": 1
+          "115": 3,
+          "91": 3,
+          "97": 2,
+          "51": 4,
+          "108": 2
         },
         "expected_expanded": {
-          "51": 2,
-          "97": 1,
-          "108": 1,
-          "91": 1,
-          "115": 1
+          "91": 3,
+          "115": 3,
+          "51": 4,
+          "97": 2,
+          "108": 2
         },
         "verdict": "ok"
       },
@@ -4646,19 +4646,19 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "76": 1,
-          "49": 2,
-          "46": 2
+          "55": 4,
+          "76": 2,
+          "49": 2
         },
         "expanded": {
-          "65": 2,
-          "101": 1,
-          "61": 2
+          "73": 4,
+          "101": 2,
+          "65": 2
         },
         "expected_expanded": {
-          "101": 1,
-          "65": 2,
-          "61": 2
+          "73": 4,
+          "101": 2,
+          "65": 2
         },
         "verdict": "ok"
       },
@@ -4667,16 +4667,16 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "67": 1,
-          "62": 1
+          "67": 5,
+          "62": 3
         },
         "expanded": {
-          "89": 1,
-          "83": 1
+          "83": 3,
+          "89": 5
         },
         "expected_expanded": {
-          "89": 1,
-          "83": 1
+          "89": 5,
+          "83": 3
         },
         "verdict": "ok"
       },
@@ -4715,13 +4715,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical_values_counts_differ",
         "vanilla": {
-          "100": 161
+          "100": 184
         },
         "expanded": {
-          "100": 297
+          "100": 337
         },
         "expected_expanded": {
-          "100": 161
+          "100": 184
         },
         "verdict": "ok_cardinality",
         "why": "enumerated infrastructure with an `ok` cardinality rule on this run; scale VALUES identical, counts fixed by the rule"
@@ -4747,13 +4747,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "100": 5
+          "100": 2
         },
         "expanded": {
-          "100": 5
+          "100": 2
         },
         "expected_expanded": {
-          "100": 5
+          "100": 2
         },
         "verdict": "ok"
       },
@@ -4762,13 +4762,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "150": 4985
+          "150": 4990
         },
         "expanded": {
-          "150": 4985
+          "150": 4990
         },
         "expected_expanded": {
-          "150": 4985
+          "150": 4990
         },
         "verdict": "ok"
       },
@@ -4792,19 +4792,19 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "106": 20,
-          "84": 77,
-          "102": 32
+          "106": 17,
+          "102": 35,
+          "84": 57
         },
         "expanded": {
-          "141": 20,
-          "112": 77,
-          "136": 32
+          "141": 17,
+          "136": 35,
+          "112": 57
         },
         "expected_expanded": {
-          "141": 20,
-          "112": 77,
-          "136": 32
+          "141": 17,
+          "136": 35,
+          "112": 57
         },
         "verdict": "ok"
       },
@@ -4813,30 +4813,30 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "84": 38,
-          "94": 39,
-          "118": 62,
-          "113": 1,
-          "102": 65,
-          "80": 1,
+          "94": 60,
+          "102": 70,
+          "84": 25,
+          "118": 48,
+          "113": 2,
+          "80": 2,
           "125": 1
         },
         "expanded": {
-          "112": 38,
-          "125": 39,
-          "157": 62,
-          "151": 1,
-          "136": 65,
-          "107": 1,
+          "125": 60,
+          "136": 70,
+          "112": 25,
+          "157": 48,
+          "151": 2,
+          "107": 2,
           "167": 1
         },
         "expected_expanded": {
-          "112": 38,
-          "125": 39,
-          "157": 62,
-          "151": 1,
-          "136": 65,
-          "107": 1,
+          "125": 60,
+          "136": 70,
+          "112": 25,
+          "157": 48,
+          "151": 2,
+          "107": 2,
           "167": 1
         },
         "verdict": "ok"
@@ -4846,12 +4846,24 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
+          "158": 2,
+          "195": 2,
+          "84": 2,
+          "83": 2,
           "123": 1
         },
         "expanded": {
+          "211": 2,
+          "260": 2,
+          "111": 2,
+          "112": 2,
           "164": 1
         },
         "expected_expanded": {
+          "211": 2,
+          "260": 2,
+          "112": 2,
+          "111": 2,
           "164": 1
         },
         "verdict": "ok"
@@ -4861,13 +4873,13 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "243": 2
+          "243": 5
         },
         "expanded": {
-          "324": 2
+          "324": 5
         },
         "expected_expanded": {
-          "324": 2
+          "324": 5
         },
         "verdict": "ok"
       },
@@ -4876,13 +4888,13 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "76": 1
+          "76": 3
         },
         "expanded": {
-          "101": 1
+          "101": 3
         },
         "expected_expanded": {
-          "101": 1
+          "101": 3
         },
         "verdict": "ok"
       },
@@ -4891,49 +4903,43 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "87": 1,
-          "128": 1,
+          "118": 27,
+          "85": 23,
+          "100": 11,
+          "207": 4,
+          "84": 1,
+          "87": 2,
+          "128": 2,
           "98": 1,
           "157": 1,
           "120": 1,
-          "78": 1,
-          "100": 4,
-          "85": 13,
-          "118": 42,
-          "65": 1,
-          "82": 1,
-          "131": 1,
-          "84": 1
+          "78": 1
         },
         "expanded": {
+          "157": 27,
+          "113": 23,
+          "133": 11,
+          "276": 4,
+          "112": 1,
+          "171": 2,
+          "116": 2,
           "104": 1,
           "160": 1,
           "209": 1,
-          "131": 1,
-          "171": 1,
-          "116": 1,
-          "133": 4,
-          "113": 13,
-          "157": 42,
-          "175": 1,
-          "109": 1,
-          "87": 1,
-          "112": 1
+          "131": 1
         },
         "expected_expanded": {
-          "116": 1,
-          "171": 1,
+          "157": 27,
+          "113": 23,
+          "133": 11,
+          "276": 4,
+          "112": 1,
+          "116": 2,
+          "171": 2,
           "131": 1,
           "209": 1,
           "160": 1,
-          "104": 1,
-          "133": 4,
-          "113": 13,
-          "157": 42,
-          "87": 1,
-          "109": 1,
-          "175": 1,
-          "112": 1
+          "104": 1
         },
         "verdict": "ok"
       },
@@ -4942,19 +4948,19 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
+          "83": 2,
           "111": 1,
-          "147": 1,
-          "164": 1
+          "147": 1
         },
         "expanded": {
+          "111": 2,
           "196": 1,
-          "148": 1,
-          "219": 1
+          "148": 1
         },
         "expected_expanded": {
+          "111": 2,
           "148": 1,
-          "196": 1,
-          "219": 1
+          "196": 1
         },
         "verdict": "ok"
       },
@@ -4963,17 +4969,23 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "161": 1,
+          "143": 4,
+          "168": 2,
+          "161": 5,
           "220": 1,
           "219": 1
         },
         "expanded": {
+          "191": 4,
+          "215": 5,
+          "224": 2,
           "292": 1,
-          "293": 1,
-          "215": 1
+          "293": 1
         },
         "expected_expanded": {
-          "215": 1,
+          "191": 4,
+          "224": 2,
+          "215": 5,
           "293": 1,
           "292": 1
         },
@@ -4984,22 +4996,37 @@
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "80": 4,
-          "100": 41,
-          "283": 1,
-          "118": 20
+          "100": 62,
+          "118": 23,
+          "232": 2,
+          "288": 2,
+          "113": 1,
+          "80": 3,
+          "84": 1,
+          "86": 1,
+          "283": 1
         },
         "expanded": {
-          "107": 4,
-          "133": 41,
-          "377": 1,
-          "157": 20
+          "133": 62,
+          "157": 23,
+          "384": 2,
+          "309": 2,
+          "151": 1,
+          "107": 3,
+          "112": 1,
+          "115": 1,
+          "377": 1
         },
         "expected_expanded": {
-          "107": 4,
-          "133": 41,
-          "377": 1,
-          "157": 20
+          "133": 62,
+          "157": 23,
+          "309": 2,
+          "384": 2,
+          "151": 1,
+          "107": 3,
+          "112": 1,
+          "115": 1,
+          "377": 1
         },
         "verdict": "ok"
       },
@@ -5024,13 +5051,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "250": 25
+          "250": 29
         },
         "expanded": {
-          "250": 25
+          "250": 29
         },
         "expected_expanded": {
-          "250": 25
+          "250": 29
         },
         "verdict": "ok"
       },
@@ -5039,13 +5066,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "110": 29
+          "110": 31
         },
         "expanded": {
-          "110": 29
+          "110": 31
         },
         "expected_expanded": {
-          "110": 29
+          "110": 31
         },
         "verdict": "ok"
       },
@@ -5054,13 +5081,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "110": 28
+          "110": 30
         },
         "expanded": {
-          "110": 28
+          "110": 30
         },
         "expected_expanded": {
-          "110": 28
+          "110": 30
         },
         "verdict": "ok"
       },
@@ -5099,34 +5126,28 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "110": 33,
-          "53": 2,
-          "70": 2,
-          "128": 5,
-          "59": 1,
-          "97": 1,
-          "66": 1,
-          "64": 1
+          "110": 43,
+          "64": 1,
+          "128": 2,
+          "66": 2,
+          "97": 2,
+          "59": 2
         },
         "expanded": {
-          "110": 33,
-          "53": 2,
-          "70": 2,
-          "128": 5,
-          "97": 1,
-          "59": 1,
-          "66": 1,
-          "64": 1
+          "110": 43,
+          "64": 1,
+          "128": 2,
+          "66": 2,
+          "97": 2,
+          "59": 2
         },
         "expected_expanded": {
-          "110": 33,
-          "53": 2,
-          "70": 2,
-          "128": 5,
-          "59": 1,
-          "97": 1,
-          "66": 1,
-          "64": 1
+          "110": 43,
+          "64": 1,
+          "128": 2,
+          "66": 2,
+          "97": 2,
+          "59": 2
         },
         "verdict": "ok"
       },
@@ -5165,13 +5186,13 @@
         "rule": "vanilla scale unchanged (functional)",
         "observed_behaviour": "identical",
         "vanilla": {
-          "110": 5
+          "110": 4
         },
         "expanded": {
-          "110": 5
+          "110": 4
         },
         "expected_expanded": {
-          "110": 5
+          "110": 4
         },
         "verdict": "ok"
       },
@@ -5191,23 +5212,23 @@
         "verdict": "ok"
       },
       {
-        "class": "Underground_Arch_05",
+        "class": "Underground_Arch_02",
         "rule": "scales with the terrain (cosmetic decoration or settled exception)",
         "observed_behaviour": "stretched",
         "vanilla": {
-          "96": 2
+          "100": 2
         },
         "expanded": {
-          "128": 2
+          "133": 2
         },
         "expected_expanded": {
-          "128": 2
+          "133": 2
         },
         "verdict": "ok"
       }
     ],
-    "vanilla_objects": 6043,
-    "expanded_objects": 6779,
+    "vanilla_objects": 6138,
+    "expanded_objects": 6891,
     "infrastructure": [
       {
         "class": "MapSector",
@@ -5262,11 +5283,11 @@
       {
         "class": "GridObjectList",
         "reason": "Engine hex-grid collision bucket created implicitly by HexGridShapeAddObject when two or more object shapes occupy one hex node (Lua/GridObject.lua); invisible, non-colliding bookkeeping.",
-        "rule": "DERIVED: one bucket per hex node covered by >= 2 registered gridded footprints, recomputed offline from this run's census -> 161 vanilla / 297 expanded predicted; derivation exact on both twins, identical gridded population (48 objects)",
-        "vanilla": 161,
-        "expanded": 297,
-        "expected_vanilla": 161,
-        "expected_expanded": 297,
+        "rule": "DERIVED: one bucket per hex node covered by >= 2 registered gridded footprints, recomputed offline from this run's census -> 184 vanilla / 337 expanded predicted; derivation exact on both twins, identical gridded population (48 objects)",
+        "vanilla": 184,
+        "expanded": 337,
+        "expected_vanilla": 184,
+        "expected_expanded": 337,
         "verdict": "ok"
       }
     ],
@@ -5276,10 +5297,10 @@
     "hexgrid_evidence": {
       "census_present": true,
       "proven": true,
-      "predicted_vanilla": 161,
-      "predicted_expanded": 297,
-      "observed_vanilla": 161,
-      "observed_expanded": 297,
+      "predicted_vanilla": 184,
+      "predicted_expanded": 337,
+      "observed_vanilla": 184,
+      "observed_expanded": 337,
       "derivation_exact_vanilla": true,
       "derivation_exact_expanded": true,
       "gridded_objects_vanilla": 48,
@@ -5300,11 +5321,11 @@
       "why": "both twins carry exactly one camera and it is that map's own MapVar camera (no foreign camera, census agrees with the dumped rows)"
     },
     "initial_revealed_sectors": 0,
-    "content_vanilla_objects": 5680,
-    "content_expanded_objects": 5680,
+    "content_vanilla_objects": 5752,
+    "content_expanded_objects": 5752,
     "content_classes_differing": 0,
     "content_class_diffs": [],
-    "content_matched": 5680,
+    "content_matched": 5752,
     "content_unmatched_expanded": 0,
     "content_unstamped_expanded": 0,
     "content_unconsumed_vanilla": 0,
@@ -5317,13 +5338,13 @@
       "SectorScanned",
       "SectorUnexplored"
     ],
-    "ok_infrastructure_vanilla_objects": 363,
-    "ok_infrastructure_expanded_objects": 1099,
-    "unexplained_vanilla_objects": 5680,
-    "unexplained_expanded_objects": 5680,
+    "ok_infrastructure_vanilla_objects": 386,
+    "ok_infrastructure_expanded_objects": 1139,
+    "unexplained_vanilla_objects": 5752,
+    "unexplained_expanded_objects": 5752,
     "unexplained_classes_differing": 0,
     "unexplained_class_diffs": [],
-    "unexplained_matched": 5680,
+    "unexplained_matched": 5752,
     "unexplained_unmatched_expanded": 0,
     "unexplained_unstamped_expanded": 0,
     "unexplained_unconsumed_vanilla": 0,
@@ -5334,8 +5355,8 @@
     "class_diffs": [
       {
         "class": "GridObjectList",
-        "vanilla": 161,
-        "expanded": 297
+        "vanilla": 184,
+        "expanded": 337
       },
       {
         "class": "MapSector",
@@ -5348,12 +5369,12 @@
         "expanded": 400
       }
     ],
-    "provenance_stamped": 6081,
-    "provenance_matched": 5681,
+    "provenance_stamped": 6153,
+    "provenance_matched": 5753,
     "provenance_unmatched_expanded": 400,
-    "provenance_unstamped_expanded": 698,
-    "provenance_unconsumed_vanilla": 362,
-    "provenance_matched_by_root": 6,
+    "provenance_unstamped_expanded": 738,
+    "provenance_unconsumed_vanilla": 385,
+    "provenance_matched_by_root": 3,
     "staged_moved_records": 0,
     "provenance_matched_by_staged_move": 0,
     "content_matched_by_staged_move": 0,
@@ -5373,38 +5394,38 @@
       "pairs": [],
       "reason": "inert - no entrance-family residue on either side"
     },
-    "fx_carriers_vanilla": 5,
-    "fx_carriers_expanded": 5,
+    "fx_carriers_vanilla": 2,
+    "fx_carriers_expanded": 2,
     "fx_carriers_anchored_vanilla": 2,
     "fx_carriers_anchored_expanded": 0,
     "provenance_stamped_by_kind": {
-      "native": 6072,
-      "derived": 9
+      "native": 6147,
+      "derived": 6
     },
     "provenance_matched_by_kind": {
-      "native": 5672,
-      "derived": 9
+      "native": 5747,
+      "derived": 6
     },
     "stretch_max_residual": 376520.21884621284,
-    "geometric_matched": 6039,
+    "geometric_matched": 6134,
     "geometric_unmatched_vanilla": 4,
-    "geometric_leftover_expanded": 740,
-    "geometric_max_residual": 87115.28458887109,
+    "geometric_leftover_expanded": 757,
+    "geometric_max_residual": 83030.75146594785,
     "ratio_x": 1.3333333333333333,
     "ratio_y": 1.3333333333333333,
     "source_manifest": {
-      "manifest_objects": 115,
-      "delivered_present": 115,
+      "manifest_objects": 124,
+      "delivered_present": 124,
       "lost_but_kept_by_vanilla": 0,
       "pruned_by_both_twins": 0,
-      "stamped_not_in_manifest": 5957,
-      "derived_stamps_excluded": 9,
+      "stamped_not_in_manifest": 6023,
+      "derived_stamps_excluded": 6,
       "lost_by_class": [],
       "pruned_by_class": [],
       "extra_by_class": [
         [
           "PrefabMarker",
-          4985
+          4990
         ],
         [
           "MapSector",
@@ -5412,27 +5433,27 @@
         ],
         [
           "RemovableRocks_02",
-          207
+          208
         ],
         [
           "RemovableRocks_01",
-          129
-        ],
-        [
-          "Rocks_03",
-          69
+          109
         ],
         [
           "Rocks_04",
-          66
+          96
+        ],
+        [
+          "Rocks_03",
+          74
+        ],
+        [
+          "SoundSource",
+          29
         ],
         [
           "CaveInRubble",
           26
-        ],
-        [
-          "SoundSource",
-          25
         ],
         [
           "TunnelBlockerRubble",
@@ -5440,18 +5461,34 @@
         ],
         [
           "Cliff_01",
-          6
+          14
+        ],
+        [
+          "Rocks_03_33",
+          13
+        ],
+        [
+          "Rocks_01",
+          9
+        ],
+        [
+          "Cliff_02_100",
+          8
         ],
         [
           "Cliff_02",
+          8
+        ],
+        [
+          "Rocks_01_100",
           5
         ],
         [
           "Rocks_03_100",
-          3
+          4
         ],
         [
-          "Rocks_03_33",
+          "Rocks_02",
           3
         ],
         [
@@ -5459,28 +5496,12 @@
           2
         ],
         [
-          "Rocks_01_100",
-          2
-        ],
-        [
-          "Cliff_02_100",
-          2
-        ],
-        [
           "ParSystem",
           2
         ],
         [
-          "Underground_Arch_05",
+          "Underground_Arch_02",
           2
-        ],
-        [
-          "RandomMapGeneratorHolder",
-          1
-        ],
-        [
-          "Rocks_01",
-          1
         ]
       ],
       "ok": true
@@ -5491,16 +5512,16 @@
       "vanilla_by_particles": {},
       "expanded_by_particles": {}
     },
-    "vanilla_seed": "9159148429315695922",
-    "expanded_seed": "9159148429315695922",
-    "vanilla_hash": "7277254742732236302",
-    "expanded_hash": "7277254742732236302",
+    "vanilla_seed": "5928430118478359930",
+    "expanded_seed": "5928430118478359930",
+    "vanilla_hash": "-2392435596802971693",
+    "expanded_hash": "-2392435596802971693",
     "seed_equal": true,
     "hash_equal": true,
     "vanilla_tiles": 6144,
     "expanded_tiles": 8192,
-    "raw_delta": 736,
-    "infrastructure_expected_delta": 736,
+    "raw_delta": 753,
+    "infrastructure_expected_delta": 753,
     "raw_delta_fully_explained": true,
     "bijection_ok": true
   },
@@ -5511,7 +5532,7 @@
     "pairs_differing": 0,
     "pairs_unlinked": 0,
     "max_hex_delta": 0,
-    "max_surface_drift": 116202.28162992325,
+    "max_surface_drift": 115658.79869685661,
     "colocation_ok": true,
     "records": [
       {
@@ -5520,20 +5541,20 @@
         "surface_class": "UndergroundPassage",
         "underground_class": "SurfacePassage",
         "surface_hex": [
-          148,
-          264
+          144,
+          269
         ],
         "underground_hex": [
-          148,
-          264
+          144,
+          269
         ],
         "surface_xy": [
-          280000,
-          228624
+          278500,
+          232954
         ],
         "underground_xy": [
-          280000,
-          228624
+          278500,
+          232954
         ],
         "surface_source_xy": [
           124500,
@@ -5558,10 +5579,10 @@
         "hex_delta": 0,
         "endpoint_distance": 0.0,
         "colocated": true,
-        "surface_drift": 116202.28162992325,
-        "surface_drift_hexes": 127,
-        "underground_drift_from_surface_image": 116202.28162992325,
-        "underground_own_image_drift": 86710.92434059276,
+        "surface_drift": 115658.79869685661,
+        "surface_drift_hexes": 128,
+        "underground_drift_from_surface_image": 115658.79869685661,
+        "underground_own_image_drift": 82636.6389684382,
         "vanilla_surface_xy": [
           124500,
           155014
@@ -5580,20 +5601,20 @@
         "surface_class": "UndergroundPassage",
         "underground_class": "SurfacePassage",
         "surface_hex": [
-          302,
-          205
+          307,
+          220
         ],
         "underground_hex": [
-          302,
-          205
+          307,
+          220
         ],
         "surface_xy": [
-          404500,
-          177530
+          417000,
+          190520
         ],
         "underground_xy": [
-          404500,
-          177530
+          417000,
+          190520
         ],
         "surface_source_xy": [
           363500,
@@ -5618,10 +5639,10 @@
         "hex_delta": 0,
         "endpoint_distance": 0.0,
         "colocated": true,
-        "surface_drift": 80727.92480920094,
-        "surface_drift_hexes": 84,
-        "underground_drift_from_surface_image": 80727.92480920094,
-        "underground_own_image_drift": 253575.40629169857,
+        "surface_drift": 68352.00936329523,
+        "surface_drift_hexes": 72,
+        "underground_drift_from_surface_image": 68352.00936329523,
+        "underground_own_image_drift": 235766.39339821102,
         "vanilla_surface_xy": [
           363500,
           137694
