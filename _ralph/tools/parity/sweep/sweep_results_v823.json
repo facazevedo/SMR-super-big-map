@@ -188,35 +188,29 @@
     "lat": 2520,
     "lon": -1680,
     "vanilla_attempts": 1,
-    "vanilla_underground_seed": 3045553875360276605,
+    "vanilla_underground_seed": 6684685037229699232,
     "expanded_attempts": 1,
     "compare_rc": 0,
     "summary": {
       "surface": {
-        "content_vanilla_objects": 4721,
+        "content_vanilla_objects": 4719,
         "content_expanded_objects": 4719,
-        "content_classes_differing": 1,
-        "content_class_diffs": [
-          {
-            "class": "ParSystem",
-            "vanilla": 11,
-            "expanded": 9
-          }
-        ],
+        "content_classes_differing": 0,
+        "content_class_diffs": [],
         "content_matched": 4719,
         "content_unmatched_expanded": 0,
         "content_unstamped_expanded": 0,
-        "content_unconsumed_vanilla": 2,
-        "content_bijection_ok": false,
+        "content_unconsumed_vanilla": 0,
+        "content_bijection_ok": true,
         "seed_equal": true,
         "hash_equal": true
       },
       "underground": {
-        "content_vanilla_objects": 5774,
-        "content_expanded_objects": 5774,
+        "content_vanilla_objects": 5668,
+        "content_expanded_objects": 5668,
         "content_classes_differing": 0,
         "content_class_diffs": [],
-        "content_matched": 5774,
+        "content_matched": 5668,
         "content_unmatched_expanded": 0,
         "content_unstamped_expanded": 0,
         "content_unconsumed_vanilla": 0,
@@ -226,11 +220,11 @@
       }
     },
     "wonders_present": [
-      "BottomlessPit",
-      "JumboCave"
+      "AncientArtifact",
+      "BottomlessPit"
     ],
     "wonder_scales": {
-      "BottomlessPit": {
+      "AncientArtifact": {
         "vanilla": {
           "100": 1
         },
@@ -238,7 +232,7 @@
           "133": 1
         }
       },
-      "JumboCave": {
+      "BottomlessPit": {
         "vanilla": {
           "100": 1
         },
