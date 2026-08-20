@@ -310,7 +310,7 @@
     "lat": 240,
     "lon": 6420,
     "vanilla_attempts": 1,
-    "vanilla_underground_seed": 3309282432910152445,
+    "vanilla_underground_seed": 8253354948948524856,
     "expanded_attempts": 1,
     "compare_rc": 0,
     "summary": {
@@ -328,11 +328,11 @@
         "hash_equal": true
       },
       "underground": {
-        "content_vanilla_objects": 5751,
-        "content_expanded_objects": 5751,
+        "content_vanilla_objects": 5719,
+        "content_expanded_objects": 5719,
         "content_classes_differing": 0,
         "content_class_diffs": [],
-        "content_matched": 5751,
+        "content_matched": 5719,
         "content_unmatched_expanded": 0,
         "content_unstamped_expanded": 0,
         "content_unconsumed_vanilla": 0,
@@ -342,11 +342,11 @@
       }
     },
     "wonders_present": [
-      "AncientArtifact",
-      "BottomlessPit"
+      "CaveOfWonders",
+      "JumboCave"
     ],
     "wonder_scales": {
-      "AncientArtifact": {
+      "CaveOfWonders": {
         "vanilla": {
           "100": 1
         },
@@ -354,7 +354,7 @@
           "133": 1
         }
       },
-      "BottomlessPit": {
+      "JumboCave": {
         "vanilla": {
           "100": 1
         },
