@@ -5009,6 +5009,19 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
                 cam_status = f"unavailable ({exc})"
             log(f"camera probe: {cam_status} -> {cam_path}")
 
+        if fx_probe:
+            # Diagnostic only: never fail the twin because the probe file lagged.  Without this
+            # wait the probe's real-time thread races the shutdown: it only writes __FX_OUT__
+            # after `g_ParityStatus` reads complete, which is also when the driver stops the
+            # process, so the log came back missing or truncated.
+            try:
+                fx_status = poll_status(
+                    client, "g_ParityFxProbeStatus", {"complete"}, set(), 120, f"fx-{tag}"
+                )
+            except RuntimeError as exc:
+                fx_status = f"unavailable ({exc})"
+            log(f"fx probe: {fx_status} -> {fx_path}")
+
         if pit_probe:
             # Diagnostic only: never fail the twin because the probe file lagged.
             try:
