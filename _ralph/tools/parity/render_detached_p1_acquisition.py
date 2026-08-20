@@ -24,7 +24,7 @@ def sha256(path: Path) -> str:
 def generator_body(source: str) -> str:
     opener = "CreateRealTimeThread(function()\n"
     closer = 'end)\nreturn "parity_thread_started"'
-    if not source.startswith(opener) or source.count(opener) != 1 or source.count(closer) != 1:
+    if not source.startswith(opener) or source.count(closer) != 1:
         raise ValueError("unexpected protected generator wrapper")
     return source[len(opener) : source.index(closer)]
 
