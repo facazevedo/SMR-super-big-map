@@ -1433,6 +1433,29 @@ FX_PROBE_BLOCK = """		do
 				fx_log("PlayFX unavailable - reveal actors not instrumented")
 			end
 
+			-- The carrier's own durability, read AT CREATION TIME so a carrier that self-destructs
+			-- before the postmortem still leaves its measured lifetime on record.  PlayFX destroys
+			-- a non-eternal system after its duration, on the clock IsParticleSystemGameTime names
+			-- (CommonLua/Classes/ActionFX.lua:2443-2499, ActionFX:CreateThread).
+			local function fx_lifetime(o)
+				if type(o) ~= "table" then return "noobj" end
+				local function measured(fn_name)
+					local fn = rawget(_G, fn_name)
+					if type(fn) ~= "function" then return "n/a" end
+					local ok_m, v = pcall(fn, o)
+					if ok_m then return tostring(v) end
+					return "err"
+				end
+				local realtime = "n/a"
+				if type(o.GetRealtimeAnim) == "function" then
+					local ok_r, v = pcall(o.GetRealtimeAnim, o)
+					realtime = ok_r and tostring(v) or "err"
+				end
+				return string.format("eternal=%s gametime=%s realtime=%s duration=%s",
+					measured("IsParticleSystemEternal"), measured("IsParticleSystemGameTime"),
+					realtime, measured("GetParticleSystemDuration"))
+			end
+
 			local original_place_particles = rawget(_G, "PlaceParticles")
 			if type(original_place_particles) == "function" then
 				_G.PlaceParticles = function(map, name, class, components)
@@ -1442,7 +1465,7 @@ FX_PROBE_BLOCK = """		do
 						par_records[#par_records + 1] = {
 							index = par_creations, obj = o, name = tostring(name),
 							map_key = fx_map_key(map), actor = fx_current_actor,
-							moment = fx_current_moment,
+							moment = fx_current_moment, lifetime = fx_lifetime(o),
 							traceback = par_creations <= 40 and debug.traceback("", 2) or nil,
 						}
 					end
@@ -1527,8 +1550,9 @@ FX_PROBE_BLOCK = """		do
 					local obj = rec.obj
 					local live = "gone"
 					if type(obj) == "table" and IsValid(obj) then live = fx_desc(obj) end
-					fx_log(string.format("creation #%d map=%s particles=%s moment=%s\\n    now=%s\\n    actor=%s%s",
-						rec.index, rec.map_key, rec.name, tostring(rec.moment), live,
+					fx_log(string.format("creation #%d map=%s particles=%s moment=%s lifetime=[%s]\\n    now=%s\\n    actor=%s%s",
+						rec.index, rec.map_key, rec.name, tostring(rec.moment),
+						tostring(rec.lifetime), live,
 						tostring(rec.actor), rec.traceback and ("\\n" .. rec.traceback) or ""))
 				end
 				local werr = AsyncStringToFile("__FX_OUT__", table.concat(fx_lines, "\\n"))
