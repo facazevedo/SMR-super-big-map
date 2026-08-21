@@ -4654,22 +4654,66 @@ end
 -- allocated expanded map as the final destination. The temporary map never emits MapGenerated,
 -- never runs the mod lifecycle, and is unloaded immediately after terrain/object migration.
 local function GenerateOnTemporaryVanillaBacking(generator, destination, original_do_generate, ...)
-	if not cfg_bool("GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING", false)
-		or not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
-		or not destination or not destination.mapdata
-		or destination.mapdata.Environment ~= "Surface"
-		or destination.SuperBigMapExpansionPending ~= true then
-		return false
+	if not cfg_bool("GENERATE_VANILLA_SOURCE_ON_TEMPORARY_BACKING", false) then
+		return false, "temporary vanilla backing is disabled"
 	end
+	if not cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false) then
+		return false, "vanilla source capture is disabled"
+	end
+	if not destination or not destination.mapdata then
+		return false, "expanded destination map data is unavailable"
+	end
+	if destination.mapdata.Environment ~= "Surface" then
+		return false, "destination is not a surface map"
+	end
+
+	-- NewMapObject normally attaches the complete name-keyed pending record.  Some stock launch
+	-- paths, especially a landing-flow mod reload, can create the Map before that message handler
+	-- observes the final name.  The MapData preset still carries the immutable native dimensions,
+	-- so make the generator boundary self-contained instead of depending on message timing.
+	AttachPendingMapState(destination)
+	local mapdata = destination.mapdata
 	local source_width = tonumber(destination.SuperBigMapGeneratorWidthTiles)
+		or tonumber(destination.SuperBigMapSourceWidthTiles)
+		or tonumber(mapdata.SuperBigMapSourceWidthTiles)
+		or tonumber(mapdata.SuperBigMapOriginalWidthTiles)
 	local source_height = tonumber(destination.SuperBigMapGeneratorHeightTiles)
+		or tonumber(destination.SuperBigMapSourceHeightTiles)
+		or tonumber(mapdata.SuperBigMapSourceHeightTiles)
+		or tonumber(mapdata.SuperBigMapOriginalHeightTiles)
 	local desired_width = tonumber(destination.SuperBigMapDesiredWidthTiles)
+		or tonumber(mapdata.Width)
 	local desired_height = tonumber(destination.SuperBigMapDesiredHeightTiles)
+		or tonumber(mapdata.Height)
 	if not source_width or not source_height or not desired_width or not desired_height
 		or source_width <= 0 or source_height <= 0
 		or desired_width <= source_width or desired_height <= source_height then
-		return false
+		return false, string.format(
+			"invalid backing geometry: source=%sx%s destination=%sx%s pending=%s",
+			tostring(source_width), tostring(source_height), tostring(desired_width),
+			tostring(desired_height), tostring(destination.SuperBigMapExpansionPending))
 	end
+	local const_tbl = Global("const")
+	local height_tile_size = type(const_tbl) == "table"
+		and tonumber(const_tbl.HeightTileSize) or 1
+	if height_tile_size <= 0 then height_tile_size = 1 end
+	destination.SuperBigMapExpansionPending = true
+	destination.SuperBigMapOriginalWidthTiles = destination.SuperBigMapOriginalWidthTiles or source_width
+	destination.SuperBigMapOriginalHeightTiles = destination.SuperBigMapOriginalHeightTiles or source_height
+	destination.SuperBigMapSourceWidthTiles = destination.SuperBigMapSourceWidthTiles or source_width
+	destination.SuperBigMapSourceHeightTiles = destination.SuperBigMapSourceHeightTiles or source_height
+	destination.SuperBigMapDesiredWidthTiles = desired_width
+	destination.SuperBigMapDesiredHeightTiles = desired_height
+	destination.SuperBigMapGeneratorWidthTiles = source_width
+	destination.SuperBigMapGeneratorHeightTiles = source_height
+	destination.SuperBigMapSourceWidth = destination.SuperBigMapSourceWidth
+		or source_width * height_tile_size
+	destination.SuperBigMapSourceHeight = destination.SuperBigMapSourceHeight
+		or source_height * height_tile_size
+	destination.SuperBigMapGeneratorWidth = destination.SuperBigMapGeneratorWidth
+		or source_width * height_tile_size
+	destination.SuperBigMapGeneratorHeight = destination.SuperBigMapGeneratorHeight
+		or source_height * height_tile_size
 	local change_map_in_slot = Global("ChangeMapInSlot")
 	local change_current_slot = Global("ChangeCurrentMapSlot")
 	local set_current_map = Global("SetCurrentMap")
@@ -9774,18 +9818,24 @@ local function PatchRandomMapGenerator()
 				-- EXPAND MAP is off (or the map is ineligible). Leave vanilla generation untouched.
 				return original_generate(self, params)
 			end
-			if params.map_slot then
-				params.mapdata = params.mapdata or instance.mapdata
-				params.RandomMapGenObject = params.RandomMapGenObject or self
-				params.SuperBigMapExpansionPending = instance.SuperBigMapExpansionPending
-				params.SuperBigMapGenerationReadinessVersion =
-					SuperBigMap.GenerationReadiness.VERSION
-				params.SuperBigMapSourceWidth = instance.SuperBigMapSourceWidth
-				params.SuperBigMapSourceHeight = instance.SuperBigMapSourceHeight
-				params.SuperBigMapOriginalWidthTiles = instance.SuperBigMapOriginalWidthTiles
-				params.SuperBigMapOriginalHeightTiles = instance.SuperBigMapOriginalHeightTiles
-				params.SuperBigMapDesiredWidthTiles = instance.SuperBigMapDesiredWidthTiles
-				params.SuperBigMapDesiredHeightTiles = instance.SuperBigMapDesiredHeightTiles
+			-- ChangeMapInSlot constructs Map directly from this table.  Carry the complete source /
+			-- destination geometry so DoGenerate never depends on NewMapObject attaching a second,
+			-- name-keyed copy at exactly the right time.
+			params.mapdata = params.mapdata or instance.mapdata
+			params.RandomMapGenObject = params.RandomMapGenObject or self
+			params.SuperBigMapExpansionPending = instance.SuperBigMapExpansionPending
+			params.SuperBigMapGenerationReadinessVersion =
+				SuperBigMap.GenerationReadiness.VERSION
+			for _, field in ipairs({
+				"SuperBigMapSourceWidth", "SuperBigMapSourceHeight",
+				"SuperBigMapSourceX", "SuperBigMapSourceY",
+				"SuperBigMapOriginalWidthTiles", "SuperBigMapOriginalHeightTiles",
+				"SuperBigMapSourceWidthTiles", "SuperBigMapSourceHeightTiles",
+				"SuperBigMapDesiredWidthTiles", "SuperBigMapDesiredHeightTiles",
+				"SuperBigMapGeneratorWidth", "SuperBigMapGeneratorHeight",
+				"SuperBigMapGeneratorWidthTiles", "SuperBigMapGeneratorHeightTiles",
+			}) do
+				params[field] = instance[field]
 			end
 		end
 		return original_generate(self, params)
@@ -9914,7 +9964,8 @@ local function PatchRandomMapGenerator()
 			local backing_environment = (type(mapdata) == "table" and mapdata.Environment)
 				or (type(template) == "table" and template.Environment)
 			if backing_environment ~= "Underground" then
-				error("expanded surface generation requires the exact temporary vanilla backing transaction")
+				error("expanded surface generation requires the exact temporary vanilla backing transaction: "
+					.. tostring(migrated_results))
 			end
 
 			-- Underground generation cannot use the temporary surface migration transaction:
