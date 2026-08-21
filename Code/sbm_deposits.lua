@@ -3830,7 +3830,8 @@ function DepositRules.TopUpDeposits(map)
 							if ok_ratio and type(ratio) == "number" then
 								if ratio > 0 then
 									candidates[#candidates + 1] = {
-										sector = sector, col = col, row = row,
+										sector = sector,
+										col = descriptor.col, row = descriptor.row,
 										x0 = x0, y0 = y0, x1 = x1, y1 = y1,
 									}
 									surface_buildable_sectors = surface_buildable_sectors + 1
@@ -3839,7 +3840,8 @@ function DepositRules.TopUpDeposits(map)
 								end
 							else
 								candidates[#candidates + 1] = {
-									sector = sector, col = col, row = row,
+									sector = sector,
+									col = descriptor.col, row = descriptor.row,
 									x0 = x0, y0 = y0, x1 = x1, y1 = y1,
 								}
 								surface_buildable_unknown = surface_buildable_unknown + 1
