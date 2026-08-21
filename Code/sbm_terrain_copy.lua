@@ -1062,49 +1062,6 @@ local function ZInteriorMinMax(grid)
 	return mn, mx
 end
 
--- Replace the native height grid's artificial one-cell frame with the nearest trustworthy
--- interior samples. Do this in SOURCE space: the existing interpolating GridResample then
--- feathers the extension naturally across the expanded destination. Four narrow scratch grids
--- avoid a second full-size height-grid allocation. Horizontal edges are repaired first so the
--- vertical copies also carry valid values into all four corners.
-local function RepairHeightGridRim(grid)
-	local NewComputeGrid = Global("NewComputeGrid")
-	local IsComputeGrid = Global("IsComputeGrid")
-	local box_fn = Global("box")
-	local point_fn = Global("point")
-	if type(NewComputeGrid) ~= "function" or type(IsComputeGrid) ~= "function"
-		or type(box_fn) ~= "function" or type(point_fn) ~= "function"
-		or not grid or type(grid.size) ~= "function" or type(grid.copyrect) ~= "function" then
-		return false, "height-rim grid operations unavailable"
-	end
-
-	local ok_size, w, h = pcall(grid.size, grid)
-	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 3 or h < 3 then
-		return false, "height grid is too small for rim repair"
-	end
-	local fmt, bits = IsComputeGrid(grid)
-
-	local function copy_strip(src_box, dst_point, strip_w, strip_h)
-		local strip = NewComputeGrid(strip_w, strip_h, fmt, bits)
-		if not strip then error("height-rim scratch-grid allocation failed") end
-		local ok_copy, copy_err = pcall(function()
-			strip:copyrect(grid, src_box, point_fn(0, 0))
-			grid:copyrect(strip, box_fn(0, 0, strip_w, strip_h), dst_point)
-		end)
-		pcall(function() if type(strip.free) == "function" then strip:free() end end)
-		if not ok_copy then error(copy_err) end
-	end
-
-	local ok_repair, repair_err = pcall(function()
-		copy_strip(box_fn(0, 1, w, 2), point_fn(0, 0), w, 1)
-		copy_strip(box_fn(0, h - 2, w, h - 1), point_fn(0, h - 1), w, 1)
-		copy_strip(box_fn(1, 0, 2, h), point_fn(0, 0), 1, h)
-		copy_strip(box_fn(w - 2, 0, w - 1, h), point_fn(w - 1, 0), 1, h)
-	end)
-	if not ok_repair then return false, tostring(repair_err) end
-	return true
-end
-
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
 -- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
 -- between its own input ("pre", straight out of GridResample) and its output ("post", right after
@@ -1353,7 +1310,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		end
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
-		local height_rim_repaired = false
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
@@ -1415,11 +1371,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if native_sub and src_sub ~= native_sub then
 				free_grid(native_sub)
 				native_sub = nil
-			end
-			if scale_values and cfg_bool("STRETCH_REPAIR_HEIGHT_RIM", true) then
-				local rim_ok, rim_err = RepairHeightGridRim(src_sub)
-				if not rim_ok then error("source height-rim repair failed: " .. tostring(rim_err)) end
-				height_rim_repaired = true
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
@@ -1590,7 +1541,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		LoadingEnd(grid_token, {
 			full_cells = tostring(measured_fw) .. "x" .. tostring(measured_fh),
 			extraction_path = extraction_path,
-			height_rim_repaired = tostring(height_rim_repaired),
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success
