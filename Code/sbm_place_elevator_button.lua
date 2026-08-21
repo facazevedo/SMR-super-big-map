@@ -22,6 +22,7 @@ local WINDOW_ID = "SBMPlaceElevator"
 local SWITCH_WINDOW_ID = "SBMSwitchToUnderground"
 local REVEAL_SURFACE_WINDOW_ID = "SBMRevealSurfaceSectors"
 local REVEAL_UNDERGROUND_WINDOW_ID = "SBMRevealUndergroundAll"
+local SURFACE_REVEAL_PASS_REASON = "SuperBigMap_RevealSurfaceSectors"
 local RETIRED_WINDOW_IDS = {
 	"SBMPlaceArtifactInterface",
 	"SBMPlaceBottomlessPitLab",
@@ -134,6 +135,18 @@ local function SetButtonLabel(state_key, text)
 	end
 end
 
+-- v828 yielded between SuspendPassEdits and ResumePassEdits while revealing 400 sectors. The
+-- engine requires that pair to complete in the same game-time millisecond, so an interactive
+-- assert could leave this mod-owned reason behind. Clear only that exact legacy reason with the
+-- engine's explicit ignore_errors recovery path; current reveals no longer suspend pass edits.
+local function ClearLegacySurfaceRevealPassSuspension(map)
+	map = map or Global("MainMap")
+	if type(map) == "table" and type(map.ResumePassEdits) == "function" then
+		return pcall(map.ResumePassEdits, map, SURFACE_REVEAL_PASS_REASON, true)
+	end
+	return false
+end
+
 local function RevealAllSurfaceSectors()
 	if State.reveal_surface_sectors_running == true then return false end
 	local map = Global("MainMap")
@@ -163,10 +176,8 @@ local function RevealAllSurfaceSectors()
 					{}, map)
 			end
 		end
+		ClearLegacySurfaceRevealPassSuspension(map)
 		local scanned, already_deep, failed = 0, 0, 0
-		local suspend_ok = type(map.SuspendPassEdits) == "function"
-			and type(map.ResumePassEdits) == "function"
-			and pcall(map.SuspendPassEdits, map, "SuperBigMap_RevealSurfaceSectors")
 		local sleep = Global("Sleep")
 		local processed = 0
 		local ok, scan_error = pcall(function()
@@ -194,9 +205,6 @@ local function RevealAllSurfaceSectors()
 				column = column + 1
 			end
 		end)
-		if suspend_ok then
-			pcall(map.ResumePassEdits, map, "SuperBigMap_RevealSurfaceSectors")
-		end
 		State.reveal_surface_sectors_running = nil
 		SetButtonLabel("reveal_surface_sectors_button_window", "Reveal Surface Sectors")
 		if not ok then
@@ -631,6 +639,7 @@ function PlaceElevatorButton.Show()
 		return PlaceElevatorButton.Hide()
 	end
 	local desktop = (Global("terminal") or {}).desktop
+	ClearLegacySurfaceRevealPassSuspension(Global("MainMap"))
 	RemoveRetiredTestButtons(desktop)
 	local elevator_ok = true
 	local button = ResolveExistingButton(desktop)
@@ -703,6 +712,8 @@ PlaceElevatorButton.HandleConstructionSitePlaced = HandleConstructionSitePlaced
 PlaceElevatorButton.SwitchToUnderground = SwitchToUnderground
 PlaceElevatorButton.RevealAllSurfaceSectors = RevealAllSurfaceSectors
 PlaceElevatorButton.RevealAllUnderground = RevealAllUnderground
+PlaceElevatorButton.ClearLegacySurfaceRevealPassSuspension =
+	ClearLegacySurfaceRevealPassSuspension
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
 
 State.place_elevator_button_message_handler = HandleConstructionSitePlaced
