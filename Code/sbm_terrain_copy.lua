@@ -649,9 +649,9 @@ local Z_FLOOR_WU = 1000
 -- A few vanilla height fields contain a long one-cell discontinuity in the left part of the map.
 -- Resampling makes that bad source edge much easier to see as a striped vertical wall. This is not
 -- the outside map skirt, so changing column zero cannot fix it. Detect a coherent INTERNAL step,
--- then fill only its lower side toward the untouched upper edge over a smooth, narrow feather.
--- Mountain peaks and the high side are never lowered, and version 738's affine transform still
--- runs exactly once on the repaired source grid below.
+-- then translate the entire lower region between that step and the left map edge upward by the
+-- measured step offset. This retains its local relief instead of flattening it into a shelf. The
+-- high side is never changed, and version 738's affine transform still runs exactly once below.
 local function RepairInternalHeightStep(grid)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
@@ -760,7 +760,8 @@ local function RepairInternalHeightStep(grid)
 			local span = track.last_y - track.first_y + 1
 			local dense = span > 0 and track.count / span or 0
 			local average = track.count > 0 and track.sum_jump / track.count or 0
-			if track.count >= min_count and dense >= 0.55 and average >= threshold * 1.25
+			if track.low_left and track.count >= min_count and dense >= 0.55
+				and average >= threshold * 1.25
 				and track.max_jump >= threshold * 1.75 then
 				local score = track.sum_jump * dense
 				if not best_score or score > best_score then best, best_score = track, score end
@@ -768,7 +769,7 @@ local function RepairInternalHeightStep(grid)
 		end
 		if not best then return end
 
-		-- Fill the occasional single missing row so the repair itself cannot leave stripes.
+		-- Fill short detection gaps so the translated region cannot retain isolated wall stripes.
 		local points = {}
 		for i, point in ipairs(best.points) do
 			points[#points + 1] = point
@@ -786,32 +787,35 @@ local function RepairInternalHeightStep(grid)
 			end
 		end
 
-		local feather = math.min(32, math.max(8, math.floor(w / 192)))
-		local modified = 0
+		local modified, clamped = 0, 0
+		local min_offset, max_offset
 		for _, point in ipairs(points) do
 			local x, y = point.x, point.y
-			local high_x = best.low_left and x + 1 or x
-			local high = grid:get(high_x, y)
-			if type(high) == "number" then
-				for d = 0, feather do
-					local px = best.low_left and x - d or x + 1 + d
-					if px >= 0 and px < w then
-						local original = grid:get(px, y)
-						if type(original) == "number" and original < high then
-							local t = (d + 0.0) / feather
-							local weight = 1.0 - t * t * (3.0 - 2.0 * t)
-							local raised = math.floor(original + (high - original) * weight + 0.5)
-							if raised > original then
-								grid:set(px, y, raised)
-								modified = modified + 1
-							end
+			local low, high = grid:get(x, y), grid:get(x + 1, y)
+			if type(low) == "number" and type(high) == "number" and high > low then
+				local offset = high - low
+				min_offset = not min_offset and offset or math.min(min_offset, offset)
+				max_offset = not max_offset and offset or math.max(max_offset, offset)
+				-- Apply one translation to every lower-side cell in the row. Capping at the
+				-- original source maximum prevents the repair itself from creating a new peak
+				-- that would force extra whole-map normalization.
+				for px = 0, x do
+					local original = grid:get(px, y)
+					if type(original) == "number" then
+						local raised = math.min(mx, original + offset)
+						if raised > original then
+							grid:set(px, y, raised)
+							modified = modified + 1
+							if raised < original + offset then clamped = clamped + 1 end
 						end
 					end
 				end
 			end
 		end
 		best.modified = modified
-		best.feather = feather
+		best.clamped = clamped
+		best.min_offset = min_offset
+		best.max_offset = max_offset
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
 	if not ok_repair then
@@ -829,10 +833,11 @@ local function RepairInternalHeightStep(grid)
 		}
 	end
 	return true, {
-		reason = "lower side raised", threshold = threshold, scan_x1 = scan_x1,
+		reason = "lower region raised to left edge", threshold = threshold, scan_x1 = scan_x1,
 		first_y = best.first_y, last_y = best.last_y, edge_x = best.last_x,
-		rows = best.count, feather = best.feather, modified = best.modified,
-		low_side = best.low_left and "left" or "right", min = mn, max = mx,
+		rows = best.count, modified = best.modified, clamped = best.clamped,
+		min_offset = best.min_offset, max_offset = best.max_offset,
+		low_side = "left", min = mn, max = mx,
 	}
 end
 
