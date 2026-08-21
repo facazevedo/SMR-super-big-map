@@ -204,19 +204,19 @@ config.HideClonedDepositsUntilScan = true
 -- Keep added deposits at least this many tiles away from the map's outer border (no
 -- deposit is placed within this margin of the edge).
 config.DepositEdgeMarginTiles = 4
--- Strict source correspondence: the expansion transforms the one vanilla population and never
--- creates density extras. Every resource, anomaly, effect site, and decoration therefore has one
--- and only one counterpart on the expanded map.
-config.TopUpResources = false
+-- Restore vanilla enrichment density across the larger destination after the native population is
+-- stretched. Added resource markers use the complete flat/buildable/passable/obstruction and
+-- spacing validation path and remain hidden until their final sector is scanned.
+config.TopUpResources = true
 -- Underground additions are density content that may legitimately sit behind removable cave-in/
 -- collapsed-tunnel walls. Temporarily exclude only CaveInRubble and TunnelBlockerRubble grid
 -- footprints while the complete resource/anomaly/effect top-up suite runs, then restore every
 -- wall before final audits. The legacy option name is retained for save/config compatibility.
 config.UndergroundResourceTopUpsIgnoreRubbleWalls = true
-config.TopUpAnomalies = false
-config.TopUpVistas = false
-config.TopUpResearchSites = false
-config.TopUpMoraleVistas = false
+config.TopUpAnomalies = true
+config.TopUpVistas = true
+config.TopUpResearchSites = true
+config.TopUpMoraleVistas = true
 -- Hard terrain-evenness rule for every added enrichment on both maps. terrain normal Z uses
 -- 4096 for perfectly horizontal ground; 4080 limits accepted top-up positions to approximately
 -- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
@@ -321,8 +321,9 @@ config.ExpansionStep10VerifyNativeScale = true
 config.ExpansionStep11RebuildGameplayGrids = true
 -- 12 (former 10): Build the coordinate, hex, family, layer, and vanilla-repulsion occupancy index.
 config.ExpansionStep12BuildEnrichmentOccupancy = true
--- 13 (former 11): Retired for strict one-to-one expansion; no enrichment additions are allowed.
-config.ExpansionStep13CalculateEnrichmentAdditions = false
+-- 13 (former 11): Calculate and place the additional enrichments needed to restore vanilla
+-- density over the larger surface and underground areas.
+config.ExpansionStep13CalculateEnrichmentAdditions = true
 -- 14 (former 12): Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
 config.ExpansionStep14ValidateEnrichmentCandidates = true
 -- 15 (former 13): Apply configured category routing, including anomaly perimeter placement.
