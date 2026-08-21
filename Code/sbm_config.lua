@@ -601,9 +601,9 @@ config.UndergroundMarkGridBackingScale = true
 -- range. This preserves substantially more mountain relief than reserving a five-metre floor.
 config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
--- Erode a narrow band along a raised left surface boundary before resampling. This tapers the
--- terrain to its existing minimum and prevents the renderer from exposing a striped vertical wall.
-config.StretchErodeLeftHeightRim = true
+-- Repair a long one-cell discontinuity found in the left portion of some vanilla surface height
+-- fields. Only the lower side is raised through a narrow feather; the upper terrain is untouched.
+config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -937,7 +937,7 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 	and as_bool(config.UndergroundMarkGridBackingScale)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
-C.STRETCH_ERODE_LEFT_HEIGHT_RIM = as_bool(config.StretchErodeLeftHeightRim)
+C.STRETCH_REPAIR_INTERNAL_HEIGHT_STEP = as_bool(config.StretchRepairInternalHeightStep)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"

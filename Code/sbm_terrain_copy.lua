@@ -646,12 +646,13 @@ end
 -- visibly flattened mountains produced by reserving a five-metre floor.
 local Z_FLOOR_WU = 1000
 
--- Some vanilla scenarios carry high terrain directly into the left map boundary. The renderer
--- extrudes that boundary down to the map floor, exposing the long vertical stripes seen from the
--- expanded overview. Erode only a narrow source-space band: the outer column reaches the existing
--- map minimum and a cubic smoothstep restores the untouched terrain with zero slope at both ends.
--- This changes no normalization arithmetic; version 738's transform runs on the eroded grid below.
-local function ErodeLeftHeightRim(grid)
+-- A few vanilla height fields contain a long one-cell discontinuity in the left part of the map.
+-- Resampling makes that bad source edge much easier to see as a striped vertical wall. This is not
+-- the outside map skirt, so changing column zero cannot fix it. Detect a coherent INTERNAL step,
+-- then fill only its lower side toward the untouched upper edge over a smooth, narrow feather.
+-- Mountain peaks and the high side are never lowered, and version 738's affine transform still
+-- runs exactly once on the repaired source grid below.
+local function RepairInternalHeightStep(grid)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
 		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
@@ -666,49 +667,172 @@ local function ErodeLeftHeightRim(grid)
 		return false, { reason = "height range unavailable" }
 	end
 
-	-- 64 source height cells = about 6.4 km on the standard map: wide enough to hide the skirt,
-	-- still only about one sixth of a sector. Scale down proportionally for tiny test grids.
-	local band = math.min(64, math.max(4, math.floor(w / 96)))
-	local threshold = mn + math.max(1000, (mx - mn) * 0.05)
-	local raised_rows, edge_peak = 0, mn
-	for y = 0, h - 1 do
-		local v = grid:get(0, y)
-		if type(v) == "number" then
-			if v > threshold then raised_rows = raised_rows + 1 end
-			if v > edge_peak then edge_peak = v end
+
+	local relief = mx - mn
+	local threshold = math.max(512, math.floor(relief * 0.025 + 0.5))
+	local scan_x1 = math.max(4, math.min(w - 3, math.floor(w * 0.45)))
+	local max_per_row = 6
+	local max_row_gap = 4
+	local tracks, active = {}, {}
+
+	local function offer_candidate(row, x, low_left, jump)
+		-- Collapse several adjacent samples from the same cliff face to its strongest edge.
+		for i = 1, #row do
+			if math.abs(row[i].x - x) <= 3 then
+				if jump > row[i].jump then
+					row[i] = { x = x, low_left = low_left, jump = jump }
+				end
+				return
+			end
 		end
-	end
-	local required_rows = math.max(4, math.floor(h / 1000))
-	if raised_rows < required_rows then
-		return false, {
-			reason = "left edge already low", band = band, raised_rows = raised_rows,
-			threshold = threshold, edge_peak = edge_peak, min = mn, max = mx,
-		}
+		row[#row + 1] = { x = x, low_left = low_left, jump = jump }
+		table.sort(row, function(a, b) return a.jump > b.jump end)
+		if #row > max_per_row then row[#row] = nil end
 	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then pcall(pause, "SBMLeftHeightRimErosion") end
-	local ok_erode, erode_err = pcall(function()
-		local denom = band - 1
+	if type(pause) == "function" then pcall(pause, "SBMInternalHeightStepRepair") end
+	local ok_repair, repair_err = pcall(function()
+		-- Retain only jumps that are much sharper than the slopes immediately to either side.
+		-- The coherence tracker then rejects isolated cliffs and follows the long bad contour.
 		for y = 0, h - 1 do
-			for x = 0, band - 1 do
-				local v = grid:get(x, y)
-				if type(v) == "number" then
-					local t = (x + 0.0) / denom
-					local weight = t * t * (3.0 - 2.0 * t)
-					grid:set(x, y, mn + math.floor((v - mn) * weight + 0.5))
+			local row = {}
+			local v0, v1, v2 = grid:get(0, y), grid:get(1, y), grid:get(2, y)
+			if type(v0) == "number" and type(v1) == "number" and type(v2) == "number" then
+				for x = 1, scan_x1 do
+					local v3 = grid:get(x + 2, y)
+					if type(v3) ~= "number" then break end
+					local jump = math.abs(v2 - v1)
+					local flank = math.max(math.abs(v1 - v0), math.abs(v3 - v2), 1)
+					if jump >= threshold and jump >= flank * 3 then
+						offer_candidate(row, x, v1 < v2, jump)
+					end
+					v0, v1, v2 = v1, v2, v3
+				end
+			end
+
+			local used = {}
+			for _, candidate in ipairs(row) do
+				local best_i, best_distance
+				for i, track in ipairs(active) do
+					if not used[i] and candidate.low_left == track.low_left
+						and y - track.last_y <= max_row_gap then
+						local distance = math.abs(candidate.x - track.last_x)
+						local allowed_distance = 5 * (y - track.last_y)
+						if distance <= allowed_distance
+							and (not best_distance or distance < best_distance) then
+							best_i, best_distance = i, distance
+						end
+					end
+				end
+				local track = best_i and active[best_i] or nil
+				if not track then
+					track = {
+						low_left = candidate.low_left, first_y = y, last_y = y,
+						last_x = candidate.x, count = 0, sum_jump = 0, max_jump = 0,
+						points = {},
+					}
+					tracks[#tracks + 1] = track
+					active[#active + 1] = track
+					best_i = #active
+				end
+				used[best_i] = true
+				track.last_y, track.last_x = y, candidate.x
+				track.count = track.count + 1
+				track.sum_jump = track.sum_jump + candidate.jump
+				track.max_jump = math.max(track.max_jump, candidate.jump)
+				track.points[#track.points + 1] = {
+					x = candidate.x, y = y, jump = candidate.jump,
+				}
+			end
+
+			local still_active = {}
+			for _, track in ipairs(active) do
+				if y - track.last_y <= max_row_gap then still_active[#still_active + 1] = track end
+			end
+			active = still_active
+		end
+
+		local min_count = math.max(24, math.floor(h / 100))
+		local best, best_score
+		for _, track in ipairs(tracks) do
+			local span = track.last_y - track.first_y + 1
+			local dense = span > 0 and track.count / span or 0
+			local average = track.count > 0 and track.sum_jump / track.count or 0
+			if track.count >= min_count and dense >= 0.55 and average >= threshold * 1.25
+				and track.max_jump >= threshold * 1.75 then
+				local score = track.sum_jump * dense
+				if not best_score or score > best_score then best, best_score = track, score end
+			end
+		end
+		if not best then return end
+
+		-- Fill the occasional single missing row so the repair itself cannot leave stripes.
+		local points = {}
+		for i, point in ipairs(best.points) do
+			points[#points + 1] = point
+			local next_point = best.points[i + 1]
+			if next_point and next_point.y > point.y + 1 then
+				local gap = next_point.y - point.y
+				for dy = 1, gap - 1 do
+					local t = (dy + 0.0) / gap
+					points[#points + 1] = {
+						x = math.floor(point.x + (next_point.x - point.x) * t + 0.5),
+						y = point.y + dy,
+						jump = math.floor(point.jump + (next_point.jump - point.jump) * t + 0.5),
+					}
 				end
 			end
 		end
+
+		local feather = math.min(32, math.max(8, math.floor(w / 192)))
+		local modified = 0
+		for _, point in ipairs(points) do
+			local x, y = point.x, point.y
+			local high_x = best.low_left and x + 1 or x
+			local high = grid:get(high_x, y)
+			if type(high) == "number" then
+				for d = 0, feather do
+					local px = best.low_left and x - d or x + 1 + d
+					if px >= 0 and px < w then
+						local original = grid:get(px, y)
+						if type(original) == "number" and original < high then
+							local t = (d + 0.0) / feather
+							local weight = 1.0 - t * t * (3.0 - 2.0 * t)
+							local raised = math.floor(original + (high - original) * weight + 0.5)
+							if raised > original then
+								grid:set(px, y, raised)
+								modified = modified + 1
+							end
+						end
+					end
+				end
+			end
+		end
+		best.modified = modified
+		best.feather = feather
 	end)
-	if type(resume) == "function" then pcall(resume, "SBMLeftHeightRimErosion") end
-	if not ok_erode then
-		return false, { reason = tostring(erode_err), band = band, raised_rows = raised_rows }
+	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
+	if not ok_repair then
+		return false, { reason = tostring(repair_err), threshold = threshold, min = mn, max = mx }
+	end
+
+	local best
+	for _, track in ipairs(tracks) do
+		if track.modified and track.modified > 0 then best = track break end
+	end
+	if not best then
+		return false, {
+			reason = "no coherent internal step", threshold = threshold,
+			scan_x1 = scan_x1, candidates = #tracks, min = mn, max = mx,
+		}
 	end
 	return true, {
-		reason = "eroded", band = band, raised_rows = raised_rows,
-		threshold = threshold, edge_peak = edge_peak, min = mn, max = mx,
+		reason = "lower side raised", threshold = threshold, scan_x1 = scan_x1,
+		first_y = best.first_y, last_y = best.last_y, edge_x = best.last_x,
+		rows = best.count, feather = best.feather, modified = best.modified,
+		low_side = best.low_left and "left" or "right", min = mn, max = mx,
 	}
 end
 
@@ -960,7 +1084,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		end
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
-		local left_rim_erosion
+		local internal_step_repair
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
@@ -1025,9 +1149,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			end
 			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
 			if scale_values and environment ~= "Underground"
-				and cfg_bool("STRETCH_ERODE_LEFT_HEIGHT_RIM", true) then
-				local _, report = ErodeLeftHeightRim(src_sub)
-				left_rim_erosion = report
+				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local _, report = RepairInternalHeightStep(src_sub)
+				internal_step_repair = report
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
@@ -1149,9 +1273,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		LoadingEnd(grid_token, {
 			full_cells = tostring(measured_fw) .. "x" .. tostring(measured_fh),
 			extraction_path = extraction_path,
-			left_rim_erosion = left_rim_erosion and left_rim_erosion.reason or "not requested",
-			left_rim_band = left_rim_erosion and left_rim_erosion.band or 0,
-			left_rim_raised_rows = left_rim_erosion and left_rim_erosion.raised_rows or 0,
+			internal_step_repair = internal_step_repair and internal_step_repair.reason or "not requested",
+			internal_step_rows = internal_step_repair and internal_step_repair.rows or 0,
+			internal_step_modified = internal_step_repair and internal_step_repair.modified or 0,
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success
