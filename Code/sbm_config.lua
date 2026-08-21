@@ -408,6 +408,13 @@ config.UndergroundExplorationUI = true
 -- only X/Y is stretched and slopes become shallower.
 config.StretchScaleHeights = true
 
+-- The native height grid carries a one-cell artificial outer rim (commonly zero height). With
+-- PassBorder=0 that rim is visible and can form a sheer cliff against valid interior terrain.
+-- Before the interpolating stretch, extend the nearest trustworthy interior row/column over the
+-- rim; GridResample then feathers the repaired edge into the expanded destination without giving
+-- up any playable area.
+config.StretchRepairHeightRim = true
+
 -- RELIEF-AWARE decoration Z (user-designed): before the terrain stretch, annotate each object's
 -- relationship to its ground (dz = z - terrain height); after the stretch, place it at the
 -- ACTUAL stretched terrain height at its new spot + dz * (full/source). Preserves intentional
@@ -903,6 +910,7 @@ C.UNDERGROUND_EXPLORATION_UI = as_bool(config.UndergroundExplorationUI)
 C.STRETCH_MOVE_ENTRANCE_VISUALS = expansion_step_08
 	and as_bool(config.StretchMoveEntranceVisuals)
 C.STRETCH_SCALE_HEIGHTS = as_bool(config.StretchScaleHeights)
+C.STRETCH_REPAIR_HEIGHT_RIM = as_bool(config.StretchRepairHeightRim)
 C.STRETCH_RELIEF_AWARE_DECOR = as_bool(config.StretchReliefAwareDecor)
 C.STRETCH_STAMP_OUT_OF_BOX_SOURCES = as_bool(config.StretchStampOutOfBoxSources)
 C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxContent)
