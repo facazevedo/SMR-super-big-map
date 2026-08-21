@@ -7959,11 +7959,17 @@ function DepositRules.RelocateUnreachableUndergroundEnrichments(map)
 	return unresolved == 0, stats
 end
 
--- TEMP test aid: use vanilla placement for every final underground marker, then force the
--- resulting marker/deposit object visible so the complete distribution can be inspected.
-function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
-	if cfg().UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING ~= true then
-		return true, { markers = 0, requested = 0, placed = 0, revealed = 0 }
+-- TEMP test aid: use vanilla placement for every final underground marker, then force every
+-- underground ExplorableObject visible so resources, anomalies, effects, and buried wonders can
+-- all be inspected. The explicit-force path is owned by the temporary on-screen reveal button;
+-- ordinary lifecycle calls still require the config flag.
+function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map, explicit_force)
+	if explicit_force ~= true
+		and cfg().UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING ~= true then
+		return true, {
+			markers = 0, requested = 0, placed = 0, revealed = 0,
+			explorable_objects = 0, explorable_revealed = 0,
+		}
 	end
 	map = map or Global("CurrentMap")
 	if not IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
@@ -7971,9 +7977,13 @@ function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
 	end
 
 	local markers = {}
-	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+	local enumerate_ok, enumerate_error = pcall(
+		map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if IsEnrichmentMarker(marker) then markers[#markers + 1] = marker end
 	end)
+	if not enumerate_ok then
+		return false, { error = tostring(enumerate_error), markers = 0 }
+	end
 	local reveal_deposits = Global("RevealDeposits")
 	if type(reveal_deposits) ~= "function" then
 		return false, { error = "RevealDeposits unavailable", markers = #markers }
@@ -8004,8 +8014,31 @@ function DepositRules.RevealAllUndergroundEnrichmentsForTesting(map)
 		SetRevealedState(visible_object, true)
 		if visible_object.revealed == true then revealed = revealed + 1 end
 	end
+
+	-- RevealDeposits materializes every final DepositMarker. Sweep the complete live
+	-- ExplorableObject set afterward as the test button's "everything" postcondition. This also
+	-- covers already-placed deposits/anomalies and vanilla UndergroundWonder subclasses.
+	local explorable_objects, explorable_revealed = 0, 0
+	local sweep_ok, sweep_error = pcall(
+		map.MapForEach, map, "map", "ExplorableObject", function(obj)
+		explorable_objects = explorable_objects + 1
+		SetRevealedState(obj, true)
+		if obj.revealed == true then
+			explorable_revealed = explorable_revealed + 1
+		end
+	end)
+	if not sweep_ok then
+		return false, {
+			error = tostring(sweep_error), markers = #markers, requested = #requested,
+			placed = placed, revealed = revealed,
+			explorable_objects = explorable_objects,
+			explorable_revealed = explorable_revealed,
+		}
+	end
 	return true, {
 		markers = #markers, requested = #requested, placed = placed, revealed = revealed,
+		explorable_objects = explorable_objects,
+		explorable_revealed = explorable_revealed,
 	}
 end
 

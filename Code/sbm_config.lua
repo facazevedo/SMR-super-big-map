@@ -167,8 +167,9 @@ config.PreventLandingPadFlatten = true
 config.PreventElevatorFlatten = true
 
 -- TEMP test aids: show bottom-right buttons that (1) open the normal Elevator placement cursor,
--- unlock and quick-build the next placed Elevator, and (2) follow the normal underground map
--- switch path to finish deferred generation and remove the darkness blanket for inspection.
+-- unlock and quick-build the next placed Elevator, (2) follow the normal underground map switch
+-- path, (3) reveal every surface sector, and (4) reveal all underground resources, anomalies,
+-- effects, buried wonders, and darkness for inspection.
 config.PlaceElevatorButtonEnabled = true
 
 -- Impassable edge border (WORLD UNITS) kept around the expanded map. DEFAULT is full

@@ -1,9 +1,10 @@
--- Super Big Map -- temporary Elevator placement button.
+-- Super Big Map -- temporary gameplay inspection buttons.
 --
 -- This test aid uses the normal Elevator construction cursor and snap rules, then quick-builds
 -- the complete two-map construction group. A second temporary button follows the normal map
 -- switch path so deferred underground generation finishes, opens the underground, and removes
--- its darkness blanket for visual parity inspection.
+-- its darkness blanket for visual parity inspection. Two additional buttons reveal every surface
+-- sector and every underground enrichment for whole-map inspection.
 
 local SuperBigMap = rawget(_G, "SuperBigMap")
 if type(SuperBigMap) ~= "table" then
@@ -19,6 +20,8 @@ SuperBigMap.State = State
 
 local WINDOW_ID = "SBMPlaceElevator"
 local SWITCH_WINDOW_ID = "SBMSwitchToUnderground"
+local REVEAL_SURFACE_WINDOW_ID = "SBMRevealSurfaceSectors"
+local REVEAL_UNDERGROUND_WINDOW_ID = "SBMRevealUndergroundAll"
 local RETIRED_WINDOW_IDS = {
 	"SBMPlaceArtifactInterface",
 	"SBMPlaceBottomlessPitLab",
@@ -122,6 +125,157 @@ local function ReportFailure(reason, data, map)
 	data.reason = tostring(reason)
 	Audit("FAILED", data, map)
 	return false
+end
+
+local function SetButtonLabel(state_key, text)
+	local button = State[state_key]
+	if WindowLive(button) and type(button.SetText) == "function" then
+		SafeCall(button.SetText, button, tostring(text))
+	end
+end
+
+local function RevealAllSurfaceSectors()
+	if State.reveal_surface_sectors_running == true then return false end
+	local map = Global("MainMap")
+	if not CanUseOnMap(map) or map.mapdata.Environment ~= "Surface" then
+		return ReportFailure("expanded surface map is unavailable", {}, map)
+	end
+	local city = map.City
+	local grid = city and city.MapSectors
+	if type(grid) ~= "table" then
+		return ReportFailure("surface sector grid is unavailable", {}, map)
+	end
+	local create_thread = Global("CreateRealTimeThread")
+	local change_map = Global("ChangeCurrentMapSlot")
+	if type(create_thread) ~= "function" or type(change_map) ~= "function" then
+		return ReportFailure("map-switch or real-time task API is unavailable", {}, map)
+	end
+
+	State.reveal_surface_sectors_running = true
+	SetButtonLabel("reveal_surface_sectors_button_window", "Revealing Surface...")
+	create_thread(function()
+		if Global("CurrentMap") ~= map then
+			local switch_ok, switch_error = pcall(change_map, map.slot, true)
+			if not switch_ok or Global("CurrentMap") ~= map then
+				State.reveal_surface_sectors_running = nil
+				SetButtonLabel("reveal_surface_sectors_button_window", "Reveal Surface Sectors")
+				return ReportFailure("surface map switch failed: " .. tostring(switch_error),
+					{}, map)
+			end
+		end
+		local scanned, already_deep, failed = 0, 0, 0
+		local suspend_ok = type(map.SuspendPassEdits) == "function"
+			and type(map.ResumePassEdits) == "function"
+			and pcall(map.SuspendPassEdits, map, "SuperBigMap_RevealSurfaceSectors")
+		local sleep = Global("Sleep")
+		local processed = 0
+		local ok, scan_error = pcall(function()
+			local column = 1
+			while type(grid[column]) == "table" do
+				local row = 1
+				while grid[column][row] ~= nil do
+					local sector = grid[column][row]
+					if type(sector) ~= "table" or type(sector.Scan) ~= "function" then
+						failed = failed + 1
+					elseif sector.status == "deep scanned" then
+						already_deep = already_deep + 1
+					else
+						local scan_ok = pcall(sector.Scan, sector, "deep scanned", nil)
+						if scan_ok and sector.status == "deep scanned" then
+							scanned = scanned + 1
+						else
+							failed = failed + 1
+						end
+					end
+					processed = processed + 1
+					if type(sleep) == "function" and processed % 8 == 0 then sleep(1) end
+					row = row + 1
+				end
+				column = column + 1
+			end
+		end)
+		if suspend_ok then
+			pcall(map.ResumePassEdits, map, "SuperBigMap_RevealSurfaceSectors")
+		end
+		State.reveal_surface_sectors_running = nil
+		SetButtonLabel("reveal_surface_sectors_button_window", "Reveal Surface Sectors")
+		if not ok then
+			return ReportFailure("surface sector reveal failed: " .. tostring(scan_error), {
+				scanned = scanned, already_deep = already_deep, failed = failed,
+			}, map)
+		end
+		Audit("SURFACE_REVEAL_COMPLETE", {
+			scanned = scanned, already_deep = already_deep, failed = failed,
+		}, map)
+		return failed == 0
+	end)
+	return true
+end
+
+local function RevealAllUnderground()
+	if State.reveal_underground_all_running == true then return false end
+	local current_map = Global("CurrentMap")
+	if not CanUseOnMap(current_map) then return false end
+	local underground = Global("UndergroundMap")
+	if not IsGameplayMap(underground) or not IsExpandedSessionMap(underground) then
+		return ReportFailure("expanded underground map is unavailable", {}, current_map)
+	end
+	local change_map = Global("ChangeCurrentMapSlot")
+	local create_thread = Global("CreateRealTimeThread")
+	if type(change_map) ~= "function" or type(create_thread) ~= "function" then
+		return ReportFailure("normal underground map-switch API is unavailable", {}, current_map)
+	end
+
+	State.reveal_underground_all_running = true
+	State.switch_to_underground_button_force_reveal = true
+	SetButtonLabel("reveal_underground_all_button_window", "Revealing Underground...")
+	create_thread(function()
+		if Global("CurrentMap") ~= underground then
+			local switch_ok, switch_error = pcall(change_map, underground.slot, true)
+			if not switch_ok then
+				State.reveal_underground_all_running = nil
+				SetButtonLabel("reveal_underground_all_button_window", "Reveal Underground All")
+				return ReportFailure("underground map switch failed: " .. tostring(switch_error),
+					{}, current_map)
+			end
+		end
+
+		if Global("CurrentMap") ~= underground
+			or underground.SuperBigMapUndergroundStretchDone ~= true then
+			State.reveal_underground_all_running = nil
+			SetButtonLabel("reveal_underground_all_button_window", "Reveal Underground All")
+			return ReportFailure("underground preparation did not complete", {
+				current_map = tostring(Global("CurrentMap")),
+				stretch_done = tostring(underground.SuperBigMapUndergroundStretchDone == true),
+			}, underground)
+		end
+
+		local hr = Global("hr")
+		if type(hr) == "table" then hr.EnableDarknessReveal = 0 end
+		local deposits = SuperBigMap.DepositRules
+		local reveal = deposits and deposits.RevealAllUndergroundEnrichmentsForTesting
+		local reveal_ok, stats
+		if type(reveal) == "function" then
+			reveal_ok, stats = SafeCall(reveal, underground, true)
+		else
+			reveal_ok, stats = false, { error = "underground reveal API is unavailable" }
+		end
+		State.reveal_underground_all_running = nil
+		SetButtonLabel("reveal_underground_all_button_window", "Reveal Underground All")
+		if reveal_ok ~= true then
+			return ReportFailure("underground reveal failed: "
+				.. tostring(stats and stats.error or "unknown error"), {}, underground)
+		end
+		Audit("UNDERGROUND_REVEAL_COMPLETE", {
+			markers = tostring(stats.markers), placed = tostring(stats.placed),
+			revealed = tostring(stats.revealed),
+			explorable_objects = tostring(stats.explorable_objects),
+			explorable_revealed = tostring(stats.explorable_revealed),
+			darkness = type(hr) == "table" and tostring(hr.EnableDarknessReveal) or "unavailable",
+		}, underground)
+		return true
+	end)
+	return true
 end
 
 local function SwitchToUnderground()
@@ -292,6 +446,26 @@ local function ResolveExistingSwitchButton(desktop)
 	return nil
 end
 
+local function ResolveExistingRevealSurfaceButton(desktop)
+	local window = State.reveal_surface_sectors_button_window
+	if WindowLive(window) then return window end
+	if desktop and type(desktop.ResolveId) == "function" then
+		local resolved = SafeCall(desktop.ResolveId, desktop, REVEAL_SURFACE_WINDOW_ID)
+		if WindowLive(resolved) then return resolved end
+	end
+	return nil
+end
+
+local function ResolveExistingRevealUndergroundButton(desktop)
+	local window = State.reveal_underground_all_button_window
+	if WindowLive(window) then return window end
+	if desktop and type(desktop.ResolveId) == "function" then
+		local resolved = SafeCall(desktop.ResolveId, desktop, REVEAL_UNDERGROUND_WINDOW_ID)
+		if WindowLive(resolved) then return resolved end
+	end
+	return nil
+end
+
 local function BuildButton()
 	local desktop = (Global("terminal") or {}).desktop
 	local button_class = Global("XTextButton")
@@ -356,6 +530,70 @@ local function BuildSwitchButton()
 	return button
 end
 
+local function BuildRevealSurfaceButton()
+	local desktop = (Global("terminal") or {}).desktop
+	local button_class = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(button_class) ~= "table" or type(box) ~= "function" then return nil end
+
+	local button = button_class:new({
+		Id = REVEAL_SURFACE_WINDOW_ID,
+		Text = "Reveal Surface Sectors",
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 110),
+		Padding = box(12, 4, 12, 4),
+		Background = Color(38, 78, 52, 235),
+		RolloverBackground = Color(55, 110, 72, 235),
+		PressedBackground = Color(28, 58, 38, 235),
+		RolloverTextColor = Color(236, 236, 238, 255),
+		DisabledTextColor = Color(236, 236, 238, 255),
+		DisabledRolloverTextColor = Color(236, 236, 238, 255),
+		ZOrder = 100000,
+		OnPress = function() RevealAllSurfaceSectors() end,
+	}, desktop)
+	State.reveal_surface_sectors_button_window = button
+	if WindowLive(button) and type(button.SetTextColor) == "function" then
+		button:SetTextColor(Color(236, 236, 238, 255))
+	end
+	if WindowLive(button) and type(button.Open) == "function" then pcall(button.Open, button) end
+	return button
+end
+
+local function BuildRevealUndergroundButton()
+	local desktop = (Global("terminal") or {}).desktop
+	local button_class = Global("XTextButton")
+	local box = Global("box")
+	if not desktop or type(button_class) ~= "table" or type(box) ~= "function" then return nil end
+
+	local button = button_class:new({
+		Id = REVEAL_UNDERGROUND_WINDOW_ID,
+		Text = "Reveal Underground All",
+		Translate = false,
+		TextStyle = "ConsoleLog",
+		HAlign = "right",
+		VAlign = "bottom",
+		Margins = box(0, 0, 30, 150),
+		Padding = box(12, 4, 12, 4),
+		Background = Color(62, 45, 82, 235),
+		RolloverBackground = Color(88, 65, 115, 235),
+		PressedBackground = Color(46, 34, 62, 235),
+		RolloverTextColor = Color(236, 236, 238, 255),
+		DisabledTextColor = Color(236, 236, 238, 255),
+		DisabledRolloverTextColor = Color(236, 236, 238, 255),
+		ZOrder = 100000,
+		OnPress = function() RevealAllUnderground() end,
+	}, desktop)
+	State.reveal_underground_all_button_window = button
+	if WindowLive(button) and type(button.SetTextColor) == "function" then
+		button:SetTextColor(Color(236, 236, 238, 255))
+	end
+	if WindowLive(button) and type(button.Open) == "function" then pcall(button.Open, button) end
+	return button
+end
+
 local function RemoveRetiredTestButtons(desktop)
 	desktop = desktop or (Global("terminal") or {}).desktop
 	local seen = {}
@@ -397,9 +635,17 @@ function PlaceElevatorButton.Show()
 	local elevator_ok = true
 	local button = ResolveExistingButton(desktop)
 	local switch_button = ResolveExistingSwitchButton(desktop)
+	local reveal_surface_button = ResolveExistingRevealSurfaceButton(desktop)
+	local reveal_underground_button = ResolveExistingRevealUndergroundButton(desktop)
 	local show_elevator = CanUseOnMap(map)
 	if show_elevator and not WindowLive(button) then button = BuildButton() end
 	if show_elevator and not WindowLive(switch_button) then switch_button = BuildSwitchButton() end
+	if show_elevator and not WindowLive(reveal_surface_button) then
+		reveal_surface_button = BuildRevealSurfaceButton()
+	end
+	if show_elevator and not WindowLive(reveal_underground_button) then
+		reveal_underground_button = BuildRevealUndergroundButton()
+	end
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, show_elevator)
 	elseif show_elevator then
@@ -407,6 +653,17 @@ function PlaceElevatorButton.Show()
 	end
 	if WindowLive(switch_button) and type(switch_button.SetVisible) == "function" then
 		SafeCall(switch_button.SetVisible, switch_button, show_elevator)
+	elseif show_elevator then
+		elevator_ok = false
+	end
+	if WindowLive(reveal_surface_button) and type(reveal_surface_button.SetVisible) == "function" then
+		SafeCall(reveal_surface_button.SetVisible, reveal_surface_button, show_elevator)
+	elseif show_elevator then
+		elevator_ok = false
+	end
+	if WindowLive(reveal_underground_button)
+		and type(reveal_underground_button.SetVisible) == "function" then
+		SafeCall(reveal_underground_button.SetVisible, reveal_underground_button, show_elevator)
 	elseif show_elevator then
 		elevator_ok = false
 	end
@@ -418,14 +675,25 @@ function PlaceElevatorButton.Hide()
 	RemoveRetiredTestButtons(desktop)
 	local button = ResolveExistingButton(desktop)
 	local switch_button = ResolveExistingSwitchButton(desktop)
+	local reveal_surface_button = ResolveExistingRevealSurfaceButton(desktop)
+	local reveal_underground_button = ResolveExistingRevealUndergroundButton(desktop)
 	if WindowLive(button) and type(button.SetVisible) == "function" then
 		SafeCall(button.SetVisible, button, false)
 	end
 	if WindowLive(switch_button) and type(switch_button.SetVisible) == "function" then
 		SafeCall(switch_button.SetVisible, switch_button, false)
 	end
+	if WindowLive(reveal_surface_button) and type(reveal_surface_button.SetVisible) == "function" then
+		SafeCall(reveal_surface_button.SetVisible, reveal_surface_button, false)
+	end
+	if WindowLive(reveal_underground_button)
+		and type(reveal_underground_button.SetVisible) == "function" then
+		SafeCall(reveal_underground_button.SetVisible, reveal_underground_button, false)
+	end
 	State.place_elevator_button_armed = nil
 	State.switch_to_underground_button_force_reveal = nil
+	State.reveal_surface_sectors_running = nil
+	State.reveal_underground_all_running = nil
 	return true
 end
 
@@ -433,6 +701,8 @@ PlaceElevatorButton.ApplyModBehavior = PlaceElevatorButton.Show
 PlaceElevatorButton.RestoreVanillaBehavior = PlaceElevatorButton.Hide
 PlaceElevatorButton.HandleConstructionSitePlaced = HandleConstructionSitePlaced
 PlaceElevatorButton.SwitchToUnderground = SwitchToUnderground
+PlaceElevatorButton.RevealAllSurfaceSectors = RevealAllSurfaceSectors
+PlaceElevatorButton.RevealAllUnderground = RevealAllUnderground
 SuperBigMap.PlaceElevatorButton = PlaceElevatorButton
 
 State.place_elevator_button_message_handler = HandleConstructionSitePlaced
