@@ -139,6 +139,10 @@ function Diagnostics.UndergroundSeedReservationEnabled()
 	return Config().TRACE_UNDERGROUND_SEED_RESERVATION == true
 end
 
+function Diagnostics.TerrainCreaseRepairEnabled()
+	return Config().TRACE_TERRAIN_CREASE_REPAIR == true
+end
+
 function Diagnostics.RockParityEnabled()
 	return Config().TRACE_UNDERGROUND_ROCK_PARITY == true
 end
@@ -199,6 +203,13 @@ end
 function Diagnostics.UndergroundSeedReservation(event, data, map)
 	if not Diagnostics.UndergroundSeedReservationEnabled() then return false end
 	return Print("UndergroundSeedReservation", event, CopyData(data, map))
+end
+
+-- Focused terrain-repair trace. Scalar-only and independent from broad debug logging so failed
+-- detections remain visible in an ordinary user log without enabling the noisy diagnostics suite.
+function Diagnostics.TerrainCreaseRepair(event, data, map)
+	if not Diagnostics.TerrainCreaseRepairEnabled() then return false end
+	return Print("TerrainCreaseRepair", event, CopyData(data, map))
 end
 
 -- Dedicated deterministic rock-parity trace. Keep this independent from broad debug logging so
