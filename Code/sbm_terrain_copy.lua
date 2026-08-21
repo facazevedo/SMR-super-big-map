@@ -646,12 +646,12 @@ end
 -- visibly flattened mountains produced by reserving a five-metre floor.
 local Z_FLOOR_WU = 1000
 
--- A few vanilla height fields contain a long one-cell discontinuity in the left part of the map.
+-- A few vanilla height fields contain a long one-cell discontinuity near a map edge.
 -- Resampling makes that bad source edge much easier to see as a striped vertical wall. This is not
--- the outside map skirt, so changing column zero cannot fix it. Detect a coherent INTERNAL step,
--- then translate the entire lower region between that step and the left map edge upward by the
--- measured step offset. This retains its local relief instead of flattening it into a shelf. The
--- high side is never changed, and version 738's affine transform still runs exactly once below.
+-- the outside map skirt, so changing column zero cannot fix it. Detect a coherent INTERNAL step on
+-- either X edge, then raise every lower cell between that step and its adjacent edge to at least
+-- the high-side boundary height. The high side is never changed, and version 738's affine
+-- transform still runs exactly once below.
 local function RepairInternalHeightStep(grid)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
@@ -669,25 +669,49 @@ local function RepairInternalHeightStep(grid)
 
 
 	local relief = mx - mn
-	local threshold = math.max(512, math.floor(relief * 0.025 + 0.5))
-	local scan_x1 = math.max(4, math.min(w - 3, math.floor(w * 0.45)))
+	-- 14N134W's source crease is about 0.7-1.0% of total relief per cell. The former 2.5%
+	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
+	local threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
+	local edge_margin = math.min(64, math.max(8, math.floor(w / 192)))
+	local left_scan_x1 = math.max(edge_margin, math.floor(w * 0.30))
+	local right_scan_x0 = math.min(w - edge_margin - 2, math.ceil(w * 0.70))
+	local right_scan_x1 = w - edge_margin - 2
 	local max_per_row = 6
 	local max_row_gap = 4
 	local tracks, active = {}, {}
 
-	local function offer_candidate(row, x, low_left, jump)
+	local function offer_candidate(row, x, edge, low_left, jump)
 		-- Collapse several adjacent samples from the same cliff face to its strongest edge.
 		for i = 1, #row do
-			if math.abs(row[i].x - x) <= 3 then
+			if row[i].edge == edge and math.abs(row[i].x - x) <= 3 then
 				if jump > row[i].jump then
-					row[i] = { x = x, low_left = low_left, jump = jump }
+					row[i] = { x = x, edge = edge, low_left = low_left, jump = jump }
 				end
 				return
 			end
 		end
-		row[#row + 1] = { x = x, low_left = low_left, jump = jump }
+		row[#row + 1] = { x = x, edge = edge, low_left = low_left, jump = jump }
 		table.sort(row, function(a, b) return a.jump > b.jump end)
 		if #row > max_per_row then row[#row] = nil end
+	end
+
+	local function scan_row_range(row, y, x0, x1, edge)
+		if x1 < x0 then return end
+		local v0, v1, v2 = grid:get(x0 - 1, y), grid:get(x0, y), grid:get(x0 + 1, y)
+		if type(v0) ~= "number" or type(v1) ~= "number" or type(v2) ~= "number" then return end
+		for x = x0, x1 do
+			local v3 = grid:get(x + 2, y)
+			if type(v3) ~= "number" then break end
+			local jump = math.abs(v2 - v1)
+			local flank = math.max(math.abs(v1 - v0), math.abs(v3 - v2), 1)
+			local low_left = v1 < v2
+			local low_points_to_edge = (edge == "left" and low_left)
+				or (edge == "right" and not low_left)
+			if low_points_to_edge and jump >= threshold and jump >= flank * 2 then
+				offer_candidate(row, x, edge, low_left, jump)
+			end
+			v0, v1, v2 = v1, v2, v3
+		end
 	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
@@ -698,25 +722,15 @@ local function RepairInternalHeightStep(grid)
 		-- The coherence tracker then rejects isolated cliffs and follows the long bad contour.
 		for y = 0, h - 1 do
 			local row = {}
-			local v0, v1, v2 = grid:get(0, y), grid:get(1, y), grid:get(2, y)
-			if type(v0) == "number" and type(v1) == "number" and type(v2) == "number" then
-				for x = 1, scan_x1 do
-					local v3 = grid:get(x + 2, y)
-					if type(v3) ~= "number" then break end
-					local jump = math.abs(v2 - v1)
-					local flank = math.max(math.abs(v1 - v0), math.abs(v3 - v2), 1)
-					if jump >= threshold and jump >= flank * 3 then
-						offer_candidate(row, x, v1 < v2, jump)
-					end
-					v0, v1, v2 = v1, v2, v3
-				end
-			end
+			scan_row_range(row, y, edge_margin, left_scan_x1, "left")
+			scan_row_range(row, y, right_scan_x0, right_scan_x1, "right")
 
 			local used = {}
 			for _, candidate in ipairs(row) do
 				local best_i, best_distance
 				for i, track in ipairs(active) do
-					if not used[i] and candidate.low_left == track.low_left
+					if not used[i] and candidate.edge == track.edge
+						and candidate.low_left == track.low_left
 						and y - track.last_y <= max_row_gap then
 						local distance = math.abs(candidate.x - track.last_x)
 						local allowed_distance = 5 * (y - track.last_y)
@@ -729,7 +743,8 @@ local function RepairInternalHeightStep(grid)
 				local track = best_i and active[best_i] or nil
 				if not track then
 					track = {
-						low_left = candidate.low_left, first_y = y, last_y = y,
+						edge = candidate.edge, low_left = candidate.low_left,
+						first_y = y, last_y = y,
 						last_x = candidate.x, count = 0, sum_jump = 0, max_jump = 0,
 						points = {},
 					}
@@ -760,7 +775,7 @@ local function RepairInternalHeightStep(grid)
 			local span = track.last_y - track.first_y + 1
 			local dense = span > 0 and track.count / span or 0
 			local average = track.count > 0 and track.sum_jump / track.count or 0
-			if track.low_left and track.count >= min_count and dense >= 0.55
+			if track.count >= min_count and dense >= 0.55
 				and average >= threshold * 1.25
 				and track.max_jump >= threshold * 1.75 then
 				local score = track.sum_jump * dense
@@ -787,35 +802,30 @@ local function RepairInternalHeightStep(grid)
 			end
 		end
 
-		local modified, clamped = 0, 0
-		local min_offset, max_offset
+		local modified = 0
+		local min_target, max_target
 		for _, point in ipairs(points) do
 			local x, y = point.x, point.y
-			local low, high = grid:get(x, y), grid:get(x + 1, y)
+			local low_x = best.edge == "left" and x or x + 1
+			local high_x = best.edge == "left" and x + 1 or x
+			local low, high = grid:get(low_x, y), grid:get(high_x, y)
 			if type(low) == "number" and type(high) == "number" and high > low then
-				local offset = high - low
-				min_offset = not min_offset and offset or math.min(min_offset, offset)
-				max_offset = not max_offset and offset or math.max(max_offset, offset)
-				-- Apply one translation to every lower-side cell in the row. Capping at the
-				-- original source maximum prevents the repair itself from creating a new peak
-				-- that would force extra whole-map normalization.
-				for px = 0, x do
+				min_target = not min_target and high or math.min(min_target, high)
+				max_target = not max_target and high or math.max(max_target, high)
+				local px0 = best.edge == "left" and 0 or x + 1
+				local px1 = best.edge == "left" and x or w - 1
+				for px = px0, px1 do
 					local original = grid:get(px, y)
-					if type(original) == "number" then
-						local raised = math.min(mx, original + offset)
-						if raised > original then
-							grid:set(px, y, raised)
-							modified = modified + 1
-							if raised < original + offset then clamped = clamped + 1 end
-						end
+					if type(original) == "number" and original < high then
+						grid:set(px, y, high)
+						modified = modified + 1
 					end
 				end
 			end
 		end
 		best.modified = modified
-		best.clamped = clamped
-		best.min_offset = min_offset
-		best.max_offset = max_offset
+		best.min_target = min_target
+		best.max_target = max_target
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
 	if not ok_repair then
@@ -829,15 +839,17 @@ local function RepairInternalHeightStep(grid)
 	if not best then
 		return false, {
 			reason = "no coherent internal step", threshold = threshold,
-			scan_x1 = scan_x1, candidates = #tracks, min = mn, max = mx,
+			left_scan_x1 = left_scan_x1, right_scan_x0 = right_scan_x0,
+			candidates = #tracks, min = mn, max = mx,
 		}
 	end
 	return true, {
-		reason = "lower region raised to left edge", threshold = threshold, scan_x1 = scan_x1,
+		reason = "lower region raised to " .. best.edge .. " edge", threshold = threshold,
+		left_scan_x1 = left_scan_x1, right_scan_x0 = right_scan_x0,
 		first_y = best.first_y, last_y = best.last_y, edge_x = best.last_x,
-		rows = best.count, modified = best.modified, clamped = best.clamped,
-		min_offset = best.min_offset, max_offset = best.max_offset,
-		low_side = "left", min = mn, max = mx,
+		rows = best.count, modified = best.modified,
+		min_target = best.min_target, max_target = best.max_target,
+		low_side = best.edge, min = mn, max = mx,
 	}
 end
 

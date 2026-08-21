@@ -601,9 +601,9 @@ config.UndergroundMarkGridBackingScale = true
 -- range. This preserves substantially more mountain relief than reserving a five-metre floor.
 config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
--- Repair a long one-cell discontinuity found in the left portion of some vanilla surface height
--- fields. The lower terrain is translated upward from the crease through the left map edge while
--- retaining its local relief; the upper terrain is untouched.
+-- Repair a long discontinuity near either X edge of some vanilla surface height fields. Every
+-- lower cell from the crease through its adjacent edge is raised to the high-side boundary level;
+-- the upper terrain is untouched.
 config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
