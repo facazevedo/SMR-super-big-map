@@ -596,25 +596,11 @@ config.PassageNativeSpawnNoFlatten = true
 -- exactly vanilla's 800 wu, with the generated source view in the lower 768x768 corner. The mark
 -- grid is never combined with another grid, so no other generator grid is affected.
 config.UndergroundMarkGridBackingScale = true
--- HEIGHT BUDGET (sbm_terrain_copy stretch_one). The height grid is 16-bit (0..65535); on
--- high-relief maps the x4/3 height scale overflows the ceiling (60657*4/3 = 80876) and the
--- tallest peaks clip into flat plateaus. Two remedies (user decision "shift + adaptive
--- z-scale"), applied as one affine transform h' = h*zmul/zdiv + zadd:
--- Shift the whole height field down so the SOURCE minimum lands ~1 m above 0 -- frees
--- min*scale of headroom at the top. Pure translation: slopes and relief unchanged.
+-- HEIGHT BUDGET (version 738 mode). Shift the whole field so the source minimum lands one metre
+-- above zero. If its full-scale span would overflow, normalize every map height into the remaining
+-- range. This preserves substantially more mountain relief than reserving a five-metre floor.
 config.StretchShiftHeightsDown = true
--- If the span STILL overflows after the shift, reduce ONLY the Z scale to exactly fit:
--- zmul/zdiv = (cap-margin)/(max-min) (~1.20 on the reference map vs 1.333). Slopes come out
--- ~90% of vanilla steepness ONLY on maps that need it; most maps keep the full 4/3. The
--- relief-dz and height-range consumers read the stamped factor, so seating stays correct.
 config.StretchAdaptiveZScale = true
--- SUPERSEDES the adaptive Z reduction on the SURFACE: keep Z at the full 4/3 everywhere (so
--- slopes, and therefore passability, are bit-exact vanilla) and absorb the 16-bit overflow only
--- inside the individual mountains that would pierce the ceiling, each normalized so its own peak
--- lands exactly on it and its base stays tangent to the 4/3 affine (no crease). Measured at
--- 42S28W: 28 such massifs covering 1.5% of the map. The adaptive reduction above stays as the
--- fallback for a build that lacks one of the grid ops this needs.
-config.StretchZoneCompression = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -948,7 +934,6 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 	and as_bool(config.UndergroundMarkGridBackingScale)
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
-C.STRETCH_ZONE_COMPRESSION = as_bool(config.StretchZoneCompression)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
