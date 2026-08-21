@@ -646,6 +646,72 @@ end
 -- visibly flattened mountains produced by reserving a five-metre floor.
 local Z_FLOOR_WU = 1000
 
+-- Some vanilla scenarios carry high terrain directly into the left map boundary. The renderer
+-- extrudes that boundary down to the map floor, exposing the long vertical stripes seen from the
+-- expanded overview. Erode only a narrow source-space band: the outer column reaches the existing
+-- map minimum and a cubic smoothstep restores the untouched terrain with zero slope at both ends.
+-- This changes no normalization arithmetic; version 738's transform runs on the eroded grid below.
+local function ErodeLeftHeightRim(grid)
+	local GridMinMax = Global("GridMinMax")
+	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
+		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
+		return false, { reason = "height-grid access unavailable" }
+	end
+	local ok_size, w, h = pcall(grid.size, grid)
+	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 8 or h < 2 then
+		return false, { reason = "height grid too small" }
+	end
+	local ok_mm, mn, mx = pcall(GridMinMax, grid)
+	if not ok_mm or type(mn) ~= "number" or type(mx) ~= "number" or mx <= mn then
+		return false, { reason = "height range unavailable" }
+	end
+
+	-- 64 source height cells = about 6.4 km on the standard map: wide enough to hide the skirt,
+	-- still only about one sixth of a sector. Scale down proportionally for tiny test grids.
+	local band = math.min(64, math.max(4, math.floor(w / 96)))
+	local threshold = mn + math.max(1000, (mx - mn) * 0.05)
+	local raised_rows, edge_peak = 0, mn
+	for y = 0, h - 1 do
+		local v = grid:get(0, y)
+		if type(v) == "number" then
+			if v > threshold then raised_rows = raised_rows + 1 end
+			if v > edge_peak then edge_peak = v end
+		end
+	end
+	local required_rows = math.max(4, math.floor(h / 1000))
+	if raised_rows < required_rows then
+		return false, {
+			reason = "left edge already low", band = band, raised_rows = raised_rows,
+			threshold = threshold, edge_peak = edge_peak, min = mn, max = mx,
+		}
+	end
+
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMLeftHeightRimErosion") end
+	local ok_erode, erode_err = pcall(function()
+		local denom = band - 1
+		for y = 0, h - 1 do
+			for x = 0, band - 1 do
+				local v = grid:get(x, y)
+				if type(v) == "number" then
+					local t = (x + 0.0) / denom
+					local weight = t * t * (3.0 - 2.0 * t)
+					grid:set(x, y, mn + math.floor((v - mn) * weight + 0.5))
+				end
+			end
+		end
+	end)
+	if type(resume) == "function" then pcall(resume, "SBMLeftHeightRimErosion") end
+	if not ok_erode then
+		return false, { reason = tostring(erode_err), band = band, raised_rows = raised_rows }
+	end
+	return true, {
+		reason = "eroded", band = band, raised_rows = raised_rows,
+		threshold = threshold, edge_peak = edge_peak, min = mn, max = mx,
+	}
+end
+
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
 -- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
 -- between its own input ("pre", straight out of GridResample) and its output ("post", right after
@@ -894,6 +960,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		end
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
+		local left_rim_erosion
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
@@ -955,6 +1022,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if native_sub and src_sub ~= native_sub then
 				free_grid(native_sub)
 				native_sub = nil
+			end
+			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
+			if scale_values and environment ~= "Underground"
+				and cfg_bool("STRETCH_ERODE_LEFT_HEIGHT_RIM", true) then
+				local _, report = ErodeLeftHeightRim(src_sub)
+				left_rim_erosion = report
 			end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
@@ -1076,6 +1149,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		LoadingEnd(grid_token, {
 			full_cells = tostring(measured_fw) .. "x" .. tostring(measured_fh),
 			extraction_path = extraction_path,
+			left_rim_erosion = left_rim_erosion and left_rim_erosion.reason or "not requested",
+			left_rim_band = left_rim_erosion and left_rim_erosion.band or 0,
+			left_rim_raised_rows = left_rim_erosion and left_rim_erosion.raised_rows or 0,
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success
