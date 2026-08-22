@@ -655,10 +655,12 @@ local Z_FLOOR_WU = 1000
 
 -- A few vanilla height fields contain long one-cell discontinuities in the narrow outer terrain
 -- skirt. Resampling makes those bad source edges much easier to see as striped vertical walls.
--- Detect coherent OUTER-SKIRT steps facing any grid edge, then raise every lower cell from each
--- crease through its adjacent edge to at least the high-side boundary height. The scan is confined
--- to the outer band so ordinary Rough Terrain cliffs cannot be mistaken for a skirt defect. The
--- high side is never changed, and version 738's affine transform still runs exactly once below.
+-- Detect coherent OUTER-SKIRT steps facing any grid edge, then translate the lower terrain from
+-- each crease through its adjacent edge by the measured boundary offset. Keeping every relative
+-- height on the low side avoids the flat shelves and segment-end caps produced by clamping that
+-- whole region to one height. The scan is confined to the outer band so ordinary Rough Terrain
+-- cliffs cannot be mistaken for a skirt defect. The high side is never changed, and version 738's
+-- affine transform still runs exactly once below.
 local function RepairInternalHeightStep(grid)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
@@ -680,6 +682,10 @@ local function RepairInternalHeightStep(grid)
 	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
 	local threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
 	local edge_margin = math.min(64, math.max(8, math.floor(math.min(w, h) / 192)))
+	-- The last eight samples are the engine's physical map-edge guard, not rendered terrain. A
+	-- coherent sentinel transition there can dwarf the real source-skirt crease and must never be
+	-- translated into the map. The 14N134W source boundaries resample 21 and 32 cells inward.
+	local outer_guard = math.min(8, math.max(2, math.floor(math.min(w, h) / 1024)))
 	local max_per_row = 6
 	local max_row_gap = 4
 	local tracks = {}
@@ -695,13 +701,13 @@ local function RepairInternalHeightStep(grid)
 		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
 	end
 
-	local function offer_candidate(row, axis, perp, edge, low_before, jump)
+	local function offer_candidate(row, axis, perp, width, edge, low_before, jump)
 		-- Collapse several adjacent samples from the same cliff face to its strongest edge.
 		for i = 1, #row do
 			if row[i].edge == edge and math.abs(row[i].perp - perp) <= 3 then
 				if jump > row[i].jump then
 					row[i] = {
-						axis = axis, perp = perp, edge = edge,
+						axis = axis, perp = perp, width = width, edge = edge,
 						low_before = low_before, jump = jump,
 					}
 				end
@@ -709,7 +715,8 @@ local function RepairInternalHeightStep(grid)
 			end
 		end
 		row[#row + 1] = {
-			axis = axis, perp = perp, edge = edge, low_before = low_before, jump = jump,
+			axis = axis, perp = perp, width = width, edge = edge,
+			low_before = low_before, jump = jump,
 		}
 		table.sort(row, function(a, b) return a.jump > b.jump end)
 		if #row > max_per_row then row[#row] = nil end
@@ -717,33 +724,40 @@ local function RepairInternalHeightStep(grid)
 
 	local function scan_line_range(row, axis, along, perp0, perp1, edge)
 		if perp1 < perp0 then return end
-		local v0, v1, v2 = at(axis, perp0 - 1, along), at(axis, perp0, along),
-			at(axis, perp0 + 1, along)
-		if type(v0) ~= "number" or type(v1) ~= "number" or type(v2) ~= "number" then return end
 		for perp = perp0, perp1 do
-			local v3 = at(axis, perp + 2, along)
-			if type(v3) ~= "number" then break end
-			local jump = math.abs(v2 - v1)
-			local flank = math.max(math.abs(v1 - v0), math.abs(v3 - v2), 1)
-			local low_before = v1 < v2
-			local before_edge = edge == "left" or edge == "top"
-			local low_points_to_edge = (before_edge and low_before)
-				or (not before_edge and not low_before)
-			if low_points_to_edge and jump >= threshold and jump >= flank * 2 then
-				offer_candidate(row, axis, perp, edge, low_before, jump)
+			-- Bilinear resampling spreads a one-source-cell step across two destination cells at
+			-- 6144 -> 8192. Inspect spans through three cells so the two half-jumps at 14N134W's
+			-- x=8160/8161 boundary are evaluated as the original coherent discontinuity. Endpoint
+			-- flanks still reject an ordinary sustained slope.
+			for width = 1, 3 do
+				local v0, a = at(axis, perp - 1, along), at(axis, perp, along)
+				local b, v3 = at(axis, perp + width, along),
+					at(axis, perp + width + 1, along)
+				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
+					and type(v3) == "number" then
+					local jump = math.abs(b - a)
+					local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
+					local low_before = a < b
+					local before_edge = edge == "left" or edge == "top"
+					local low_points_to_edge = (before_edge and low_before)
+						or (not before_edge and not low_before)
+					if low_points_to_edge and jump >= threshold and jump >= flank * 2 then
+						offer_candidate(row, axis, perp, width, edge, low_before, jump)
+					end
+				end
 			end
-			v0, v1, v2 = v1, v2, v3
 		end
 	end
 
 	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge)
 		local active = {}
+		local before_perp0 = outer_guard
 		local before_perp1 = math.min(edge_margin, perp_n - 3)
 		local after_perp0 = math.max(1, perp_n - edge_margin - 2)
-		local after_perp1 = perp_n - 3
+		local after_perp1 = perp_n - outer_guard - 3
 		for along = 0, along_n - 1 do
 			local row = {}
-			scan_line_range(row, axis, along, 1, before_perp1, before_edge)
+			scan_line_range(row, axis, along, before_perp0, before_perp1, before_edge)
 			scan_line_range(row, axis, along, after_perp0, after_perp1, after_edge)
 
 			local used = {}
@@ -781,7 +795,8 @@ local function RepairInternalHeightStep(grid)
 				track.sum_jump = track.sum_jump + candidate.jump
 				track.max_jump = math.max(track.max_jump, candidate.jump)
 				track.points[#track.points + 1] = {
-					perp = candidate.perp, along = along, jump = candidate.jump,
+					perp = candidate.perp, width = candidate.width,
+					along = along, jump = candidate.jump,
 				}
 			end
 
@@ -795,33 +810,37 @@ local function RepairInternalHeightStep(grid)
 		end
 	end
 
-	local function refine_perp(track, along, predicted)
+	local function refine_step(track, along, predicted)
 		local before_edge = track.edge == "left" or track.edge == "top"
 		local lo = math.max(1, predicted - 6)
 		local hi = math.min(track.perp_n - 3, predicted + 6)
-		local best_perp, best_distance, best_jump
+		local best_perp, best_width, best_distance, best_jump
 		for perp = lo, hi do
-			local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
-			local b, v3 = at(track.axis, perp + 1, along), at(track.axis, perp + 2, along)
-			if type(v0) == "number" and type(a) == "number" and type(b) == "number"
-				and type(v3) == "number" then
-				local low_before = a < b
-				local points_to_edge = (before_edge and low_before)
-					or (not before_edge and not low_before)
-				local jump = math.abs(b - a)
-				local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
-				local distance = math.abs(perp - predicted)
-				-- Interpolated gaps must satisfy the identical directional, contrast, and flank tests
-				-- as stored candidates. Choosing an arbitrary stronger outward drop here could extend a
-				-- repaired strip to a neighbouring natural contour and make a new cap of our own.
-				if points_to_edge and jump >= threshold and jump >= flank * 2
-					and (not best_distance or distance < best_distance
-						or (distance == best_distance and jump > best_jump)) then
-					best_perp, best_distance, best_jump = perp, distance, jump
+			for width = 1, 3 do
+				local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
+				local b, v3 = at(track.axis, perp + width, along),
+					at(track.axis, perp + width + 1, along)
+				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
+					and type(v3) == "number" then
+					local low_before = a < b
+					local points_to_edge = (before_edge and low_before)
+						or (not before_edge and not low_before)
+					local jump = math.abs(b - a)
+					local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
+					local distance = math.abs(perp - predicted)
+					-- Interpolated gaps must satisfy the identical directional, contrast, and flank
+					-- tests as stored candidates. Choosing an arbitrary stronger outward drop here
+					-- could extend a repaired strip to a neighbouring natural contour.
+					if points_to_edge and jump >= threshold and jump >= flank * 2
+						and (not best_distance or distance < best_distance
+							or (distance == best_distance and jump > best_jump)) then
+						best_perp, best_width = perp, width
+						best_distance, best_jump = distance, jump
+					end
 				end
 			end
 		end
-		return best_perp
+		return best_perp, best_width
 	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
@@ -835,18 +854,26 @@ local function RepairInternalHeightStep(grid)
 		local qualified = {}
 		for _, track in ipairs(tracks) do
 			local span = track.last_along - track.first_along + 1
-			local dense = span > 0 and track.count / span or 0
-			-- Every stored point already passed the per-cell jump, two-flank, and edge-facing tests
-			-- inside the narrow skirt. Do not reject short/fragmented tracks here: the engine splits
-			-- some genuine 14N134W perimeter runs even though every constituent step is valid.
-			track.score = track.sum_jump * dense
-			qualified[#qualified + 1] = track
+			-- This runtime performs integer division for int/int. Promote explicitly: otherwise a
+			-- real 1,192-of-1,194-cell boundary track reads as density ZERO and is discarded.
+			local dense = span > 0 and (track.count + 0.0) / span or 0
+			local average = track.count > 0 and track.sum_jump / track.count or 0
+			-- A span-based detector also sees short steep pieces of ordinary outer mountains. Only
+			-- a long, dense line is the inherited source-grid boundary that can become the user's
+			-- segmented wall. This retains all four long 14N134W perimeter runs while rejecting the
+			-- 1,200+ short fragments found by the first multi-cell candidate.
+			local min_count = math.max(96, math.floor(track.along_n / 50))
+			if track.count >= min_count and dense >= 0.95
+				and average >= threshold * 1.25 and track.max_jump >= threshold * 1.75 then
+				track.score = track.sum_jump * dense
+				qualified[#qualified + 1] = track
+			end
 		end
 		if #qualified == 0 then return end
 		table.sort(qualified, function(a, b) return a.score > b.score end)
-		-- Every qualifying track is already confined to the narrow outer skirt. Repairing all of
-		-- them handles separated portions of the same bad perimeter without selecting any interior
-		-- mountain wall.
+		-- The length/density/average/max gate above reduces the first multi-cell attempt's 1,249
+		-- fragments to the small coherent boundary cohort at 14N134W. Keep all of those tracks: a
+		-- second relative-score cutoff discarded a real bottom segment and left a 1,171-cell wall.
 		selected_tracks = qualified
 
 		for _, selected in ipairs(selected_tracks) do
@@ -862,6 +889,8 @@ local function RepairInternalHeightStep(grid)
 						points[#points + 1] = {
 							perp = math.floor(point.perp
 								+ (next_point.perp - point.perp) * t + 0.5),
+							width = math.floor(point.width
+								+ (next_point.width - point.width) * t + 0.5),
 							along = point.along + da,
 							jump = math.floor(point.jump
 								+ (next_point.jump - point.jump) * t + 0.5),
@@ -871,24 +900,40 @@ local function RepairInternalHeightStep(grid)
 			end
 
 			local modified = 0
-			local min_target, max_target
+			local min_offset, max_offset
 			for _, point in ipairs(points) do
 				local along = point.along
-				local perp = refine_perp(selected, along, point.perp)
+				local perp, width = refine_step(selected, along, point.perp)
 				if perp then
 					local before_edge = selected.edge == "left" or selected.edge == "top"
-					local low_perp = before_edge and perp or perp + 1
-					local high_perp = before_edge and perp + 1 or perp
+					local low_perp = before_edge and perp or perp + width
+					local high_perp = before_edge and perp + width or perp
 					local low = at(selected.axis, low_perp, along)
 					local high = at(selected.axis, high_perp, along)
 					if type(low) == "number" and type(high) == "number" and high > low then
-						min_target = not min_target and high or math.min(min_target, high)
-						max_target = not max_target and high or math.max(max_target, high)
-						local perp0 = before_edge and 0 or perp + 1
+						local offset = high - low
+						min_offset = not min_offset and offset or math.min(min_offset, offset)
+						max_offset = not max_offset and offset or math.max(max_offset, offset)
+						-- Translate the low region, but cancel the resampler's two-cell ramp
+						-- progressively. Starting the full translation only after the ramp merely
+						-- moved 14N134W's x=8160 wall to x=8162 in the first candidate.
+						local perp0 = before_edge and 0 or perp + width
 						local perp1 = before_edge and perp or selected.perp_n - 1
 						for p = perp0, perp1 do
 							local original = at(selected.axis, p, along)
-							if type(original) == "number" and original < high then
+							if type(original) == "number" then
+								put(selected.axis, p, along, math.min(mx, original + offset))
+								modified = modified + 1
+							end
+						end
+						for k = 1, width - 1 do
+							local p = perp + k
+							local original = at(selected.axis, p, along)
+							if type(original) == "number" then
+								-- The engine's interpolation weights are not exposed and the chosen span
+								-- may include one quiet flank cell. Seat only these one/two transition
+								-- samples at the high boundary; the translated outer relief begins after
+								-- them. A guessed linear fraction left half-height walls at x=8171/y=8175.
 								put(selected.axis, p, along, high)
 								modified = modified + 1
 							end
@@ -897,8 +942,8 @@ local function RepairInternalHeightStep(grid)
 				end
 			end
 			selected.modified = modified
-			selected.min_target = min_target
-			selected.max_target = max_target
+			selected.min_offset = min_offset
+			selected.max_offset = max_offset
 		end
 		selected_tracks[1].qualified = #qualified
 	end)
@@ -909,22 +954,22 @@ local function RepairInternalHeightStep(grid)
 
 	local modified = 0
 	local edges, axes = {}, {}
-	local min_target, max_target
+	local min_offset, max_offset
 	for _, selected in ipairs(selected_tracks) do
 		modified = modified + (selected.modified or 0)
 		edges[#edges + 1] = selected.edge
 		axes[#axes + 1] = selected.axis
-		if selected.min_target then
-			min_target = not min_target and selected.min_target
-				or math.min(min_target, selected.min_target)
-			max_target = not max_target and selected.max_target
-				or math.max(max_target, selected.max_target)
+		if selected.min_offset then
+			min_offset = not min_offset and selected.min_offset
+				or math.min(min_offset, selected.min_offset)
+			max_offset = not max_offset and selected.max_offset
+				or math.max(max_offset, selected.max_offset)
 		end
 	end
 	if modified <= 0 then
 		return false, {
 			reason = "no edge-facing outer-skirt step", threshold = threshold,
-			edge_margin = edge_margin, candidates = #tracks,
+			edge_margin = edge_margin, outer_guard = outer_guard, candidates = #tracks,
 			left_tracks = track_counts.left, right_tracks = track_counts.right,
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 			min = mn, max = mx,
@@ -932,13 +977,13 @@ local function RepairInternalHeightStep(grid)
 	end
 	local primary = selected_tracks[1]
 	return true, {
-		reason = "outer-skirt lower regions raised through adjacent edges",
-		threshold = threshold, edge_margin = edge_margin,
+		reason = "outer-skirt lower regions translated through adjacent edges",
+		threshold = threshold, edge_margin = edge_margin, outer_guard = outer_guard,
 		axis = table.concat(axes, ","), edge = table.concat(edges, ","),
 		first_along = primary.first_along, last_along = primary.last_along,
 		edge_perp = primary.last_perp, rows = primary.count,
 		repairs = #selected_tracks, qualified = primary.qualified,
-		modified = modified, min_target = min_target, max_target = max_target,
+		modified = modified, min_offset = min_offset, max_offset = max_offset,
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 		min = mn, max = mx,

@@ -605,8 +605,9 @@ config.UndergroundMarkGridBackingScale = true
 config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
 -- Repair coherent discontinuities in the narrow outer skirt on any of the four edges of some
--- vanilla surface height fields. Every lower cell from the crease through its adjacent edge is
--- raised to the high-side boundary level; interior cliffs and the upper terrain are untouched.
+-- vanilla surface height fields. Translate every lower cell from the crease through its adjacent
+-- edge by the measured discontinuity so the outer relief survives without flat shelves or caps;
+-- interior cliffs and the upper terrain are untouched.
 config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
