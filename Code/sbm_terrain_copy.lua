@@ -653,15 +653,15 @@ end
 -- visibly flattened mountains produced by reserving a five-metre floor.
 local Z_FLOOR_WU = 1000
 
--- A few vanilla height fields contain long one-cell discontinuities in the narrow outer terrain
--- skirt. Resampling makes those bad source edges much easier to see as striped vertical walls.
--- Detect coherent OUTER-SKIRT steps facing any grid edge, then translate the lower terrain from
--- each crease through its adjacent edge by the measured boundary offset. Keeping every relative
--- height on the low side avoids the flat shelves and segment-end caps produced by clamping that
--- whole region to one height. The scan is confined to the outer band so ordinary Rough Terrain
--- cliffs cannot be mistaken for a skirt defect. The high side is never changed, and version 738's
--- affine transform still runs exactly once below.
-local function RepairInternalHeightStep(grid)
+-- A few vanilla height fields contain long one-cell discontinuities in their perimeter terrain.
+-- Resampling makes those bad source edges much easier to see as striped vertical walls. Detect
+-- coherent steps facing any grid edge within the two-sector outer ring, then translate the lower
+-- terrain from each crease through its adjacent edge by the measured boundary offset. Keeping
+-- every relative height on the low side avoids the flat shelves and segment-end caps produced by
+-- clamping that whole region to one height. The central 16 x 16 sectors are never scanned, ordinary
+-- broken Rough Terrain cliffs fail the long/dense-track gate, the high side is never changed, and
+-- version 738's affine transform still runs exactly once below.
+local function RepairInternalHeightStep(grid, wide_ring_only)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
 		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
@@ -681,7 +681,16 @@ local function RepairInternalHeightStep(grid)
 	-- 14N134W's source crease is about 0.7-1.0% of total relief per cell. The former 2.5%
 	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
 	local threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
-	local edge_margin = math.min(64, math.max(8, math.floor(math.min(w, h) / 192)))
+	-- The expanded map has 20 sectors per side. Scan exactly the two outermost sector widths;
+	-- 14N134W also carries a second coherent right-edge defect around x=7902, about 290 samples
+	-- from the physical edge, which the former 64-cell skirt scan could never observe.
+	local edge_margin = math.min(math.min(w, h) - 3,
+		math.max(8, math.ceil(math.min(w, h) * 2 / 20)))
+	-- Preserve the inexpensive full-resolution scan used by v839 beside the physical edge. The
+	-- remainder of the two-sector ring is sampled every eight rows; a qualified sampled path is
+	-- still refined and repaired on every individual row below.
+	local near_margin = math.min(64, math.max(8, math.floor(math.min(w, h) / 192)))
+	local wide_sample_step = 8
 	-- The last eight samples are the engine's physical map-edge guard, not rendered terrain. A
 	-- coherent sentinel transition there can dwarf the real source-skirt crease and must never be
 	-- translated into the map. The 14N134W source boundaries resample 21 and 32 cells inward.
@@ -752,8 +761,10 @@ local function RepairInternalHeightStep(grid)
 			-- Bilinear resampling spreads a one-source-cell step across two destination cells at
 			-- 6144 -> 8192. Inspect spans through three cells so the two half-jumps at 14N134W's
 			-- x=8160/8161 boundary are evaluated as the original coherent discontinuity. Endpoint
-			-- flanks still reject an ordinary sustained slope.
-			for width = 1, 3 do
+			-- flanks still reject an ordinary sustained slope. On the vanilla-size source pass the
+			-- discontinuity is still one cell wide, so wider probes only waste startup time.
+			local max_width = wide_ring_only and 1 or 3
+			for width = 1, max_width do
 				local v0, a = at(axis, perp - 1, along), at(axis, perp, along)
 				local b, v3 = at(axis, perp + width, along),
 					at(axis, perp + width + 1, along)
@@ -773,13 +784,11 @@ local function RepairInternalHeightStep(grid)
 		end
 	end
 
-	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge)
+	local function collect_axis(axis, perp_n, along_n, before_edge, after_edge,
+			before_perp0, before_perp1, after_perp0, after_perp1, sample_step)
 		local active = {}
-		local before_perp0 = outer_guard
-		local before_perp1 = math.min(edge_margin, perp_n - 3)
-		local after_perp0 = math.max(1, perp_n - edge_margin - 2)
-		local after_perp1 = perp_n - outer_guard - 3
-		for along = 0, along_n - 1 do
+		sample_step = math.max(1, sample_step or 1)
+		for along = 0, along_n - 1, sample_step do
 			local row = {}
 			scan_line_range(row, axis, along, before_perp0, before_perp1, before_edge)
 			scan_line_range(row, axis, along, after_perp0, after_perp1, after_edge)
@@ -790,9 +799,13 @@ local function RepairInternalHeightStep(grid)
 				for i, track in ipairs(active) do
 					if not used[i] and candidate.edge == track.edge
 						and candidate.low_before == track.low_before
-						and along - track.last_along <= max_row_gap then
+						and along - track.last_along <= max_row_gap * sample_step then
 						local distance = math.abs(candidate.perp - track.last_perp)
-						local allowed_distance = 5 * (along - track.last_along)
+						-- Wide-ring discovery is deliberately grid-aligned: inherited height-field seams
+						-- stay almost fixed in the perpendicular coordinate. Do not let a sampled path
+						-- wander onto a neighbouring natural contour between eight-row samples.
+						local allowed_distance = sample_step > 1 and 3
+							or 5 * (along - track.last_along)
 						if distance <= allowed_distance
 							and (not best_distance or distance < best_distance) then
 							best_i, best_distance = i, distance
@@ -803,7 +816,8 @@ local function RepairInternalHeightStep(grid)
 				if not track then
 					track = {
 						axis = axis, edge = candidate.edge, low_before = candidate.low_before,
-						perp_n = perp_n, along_n = along_n,
+							perp_n = perp_n, along_n = along_n,
+							sample_step = sample_step,
 						first_along = along, last_along = along,
 						last_perp = candidate.perp, count = 0,
 						sum_jump = 0, max_jump = 0, points = {},
@@ -826,7 +840,7 @@ local function RepairInternalHeightStep(grid)
 
 			local still_active = {}
 			for _, track in ipairs(active) do
-				if along - track.last_along <= max_row_gap then
+				if along - track.last_along <= max_row_gap * sample_step then
 					still_active[#still_active + 1] = track
 				end
 			end
@@ -867,27 +881,157 @@ local function RepairInternalHeightStep(grid)
 		return best_perp, best_width
 	end
 
+	local function validate_sampled_track(track)
+		if (track.sample_step or 1) <= 1 then return end
+		local predictions = {}
+		local function add_prediction(along, perp, width, jump)
+			if along >= 0 and along < track.along_n then
+				predictions[#predictions + 1] = {
+					along = along, perp = perp, width = width, jump = jump,
+				}
+			end
+		end
+		for i, point in ipairs(track.points) do
+			add_prediction(point.along, point.perp, point.width, point.jump)
+			local next_point = track.points[i + 1]
+			if next_point then
+				local gap = next_point.along - point.along
+				for da = 1, gap - 1 do
+					local t = (da + 0.0) / gap
+					add_prediction(point.along + da,
+						math.floor(point.perp + (next_point.perp - point.perp) * t + 0.5),
+						math.floor(point.width + (next_point.width - point.width) * t + 0.5),
+						math.floor(point.jump + (next_point.jump - point.jump) * t + 0.5))
+				end
+			end
+		end
+		local validated = {}
+		local function validated_point(along, predicted)
+			local perp, width = refine_step(track, along, predicted)
+			if not perp then return end
+			local a = at(track.axis, perp, along)
+			local b = at(track.axis, perp + width, along)
+			return { along = along, perp = perp, width = width, jump = math.abs(b - a) }
+		end
+		for _, prediction in ipairs(predictions) do
+			local point = validated_point(prediction.along, prediction.perp)
+			if point then validated[#validated + 1] = point end
+		end
+
+		-- A sampled endpoint may fall just before a taper where only the two/three-cell validation
+		-- probe still sees the inherited step. Walk outward until four consecutive rows fail instead
+		-- of leaving a short segment-end cap (14N134W continues 13 rows beyond its last width-1 hit).
+		if #validated > 0 then
+			local prefix, first = {}, validated[1]
+			local misses = 0
+			for delta = 1, track.sample_step * 4 do
+				local along = first.along - delta
+				if along < 0 then break end
+				local point = validated_point(along, first.perp)
+				if point then
+					prefix[#prefix + 1] = point
+					misses = 0
+				else
+					misses = misses + 1
+					if misses >= 4 then break end
+				end
+			end
+			for i = 1, #prefix do table.insert(validated, 1, prefix[i]) end
+
+			local last = validated[#validated]
+			misses = 0
+			for delta = 1, track.sample_step * 4 do
+				local along = last.along + delta
+				if along >= track.along_n then break end
+				local point = validated_point(along, last.perp)
+				if point then
+					validated[#validated + 1] = point
+					misses = 0
+				else
+					misses = misses + 1
+					if misses >= 4 then break end
+				end
+			end
+		end
+
+		local sum_jump, max_jump = 0, 0
+		for _, point in ipairs(validated) do
+			sum_jump = sum_jump + point.jump
+			max_jump = math.max(max_jump, point.jump)
+		end
+		track.points = validated
+		track.count = #validated
+		track.sum_jump = sum_jump
+		track.max_jump = max_jump
+		track.sample_step = 1
+		if #validated > 0 then
+			track.first_along = validated[1].along
+			track.last_along = validated[#validated].along
+			track.last_perp = validated[#validated].perp
+		end
+	end
+
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMInternalHeightStepRepair") end
 	local ok_repair, repair_err = pcall(function()
 		-- X scans catch left/right edge-facing walls; transposed Y scans catch top/bottom walls.
-		collect_axis("x", w, h, "left", "right")
-		collect_axis("y", h, w, "top", "bottom")
+		-- Keep v839's full-resolution near-edge pass, then coarsely discover paths in the rest of
+		-- the two-sector ring. Every accepted coarse path is refined per-row before it can write.
+		local function collect_ring(axis, perp_n, along_n, before_edge, after_edge)
+			if not wide_ring_only then
+				collect_axis(axis, perp_n, along_n, before_edge, after_edge,
+					outer_guard, math.min(near_margin, perp_n - 3),
+					math.max(1, perp_n - near_margin - 2),
+					perp_n - outer_guard - 3, 1)
+			elseif edge_margin > near_margin + 4 then
+				collect_axis(axis, perp_n, along_n, before_edge, after_edge,
+					near_margin + 1, math.min(edge_margin, perp_n - 3),
+					math.max(1, perp_n - edge_margin - 2),
+					perp_n - near_margin - 3, wide_sample_step)
+			end
+		end
+		collect_ring("x", w, h, "left", "right")
+		collect_ring("y", h, w, "top", "bottom")
 
 		local qualified = {}
 		for _, track in ipairs(tracks) do
+			local coarse_span = track.last_along - track.first_along + 1
+			local coarse_min_perp, coarse_max_perp
+			for _, point in ipairs(track.points) do
+				coarse_min_perp = not coarse_min_perp and point.perp
+					or math.min(coarse_min_perp, point.perp)
+				coarse_max_perp = not coarse_max_perp and point.perp
+					or math.max(coarse_max_perp, point.perp)
+			end
+			local coarse_perp_span = (coarse_max_perp or 0) - (coarse_min_perp or 0)
+			local coarse_straight = not wide_ring_only
+				or coarse_perp_span <= math.max(3, math.floor(coarse_span / 100))
+			-- Coarse discovery is read-only. Before a wide-ring path can write anything, rescan its
+			-- complete physical span and require the same per-row contrast/direction test as v839.
+			if coarse_straight then validate_sampled_track(track) end
 			local span = track.last_along - track.first_along + 1
+			local samples_in_span = math.floor((span - 1) / track.sample_step) + 1
 			-- This runtime performs integer division for int/int. Promote explicitly: otherwise a
 			-- real 1,192-of-1,194-cell boundary track reads as density ZERO and is discarded.
-			local dense = span > 0 and (track.count + 0.0) / span or 0
+			local dense = samples_in_span > 0
+				and (track.count + 0.0) / samples_in_span or 0
 			local average = track.count > 0 and track.sum_jump / track.count or 0
 			-- A span-based detector also sees short steep pieces of ordinary outer mountains. Only
 			-- a long, dense line is the inherited source-grid boundary that can become the user's
 			-- segmented wall. This retains all four long 14N134W perimeter runs while rejecting the
 			-- 1,200+ short fragments found by the first multi-cell candidate.
-			local min_count = math.max(96, math.floor(track.along_n / 50))
-			if track.count >= min_count and dense >= 0.95
+			local min_span = math.max(96, math.floor(track.along_n / 50))
+			local min_count = math.max(8, math.ceil(min_span / track.sample_step))
+			local min_perp, max_perp
+			for _, point in ipairs(track.points) do
+				min_perp = not min_perp and point.perp or math.min(min_perp, point.perp)
+				max_perp = not max_perp and point.perp or math.max(max_perp, point.perp)
+			end
+			local perp_span = (max_perp or 0) - (min_perp or 0)
+			local straight = not wide_ring_only
+				or perp_span <= math.max(3, math.floor(span / 100))
+			if coarse_straight and straight and track.count >= min_count and dense >= 0.95
 				and average >= threshold * 1.25 and track.max_jump >= threshold * 1.75 then
 				track.score = track.sum_jump * dense
 				qualified[#qualified + 1] = track
@@ -903,6 +1047,16 @@ local function RepairInternalHeightStep(grid)
 		for _, selected in ipairs(selected_tracks) do
 			-- Fill short detection gaps so the translated region cannot retain isolated wall stripes.
 			local points = {}
+			local first_point = selected.points[1]
+			if first_point and selected.sample_step > 1 then
+				for along = math.max(0, first_point.along - selected.sample_step + 1),
+						first_point.along - 1 do
+					points[#points + 1] = {
+						perp = first_point.perp, width = first_point.width,
+						along = along, jump = first_point.jump,
+					}
+				end
+			end
 			for i, point in ipairs(selected.points) do
 				points[#points + 1] = point
 				local next_point = selected.points[i + 1]
@@ -920,6 +1074,17 @@ local function RepairInternalHeightStep(grid)
 								+ (next_point.jump - point.jump) * t + 0.5),
 						}
 					end
+				end
+			end
+			local last_point = selected.points[#selected.points]
+			if last_point and selected.sample_step > 1 then
+				for along = last_point.along + 1,
+						math.min(selected.along_n - 1,
+							last_point.along + selected.sample_step - 1) do
+					points[#points + 1] = {
+						perp = last_point.perp, width = last_point.width,
+						along = along, jump = last_point.jump,
+					}
 				end
 			end
 
@@ -990,8 +1155,9 @@ local function RepairInternalHeightStep(grid)
 	end
 	if modified <= 0 then
 		return false, {
-			reason = "no edge-facing outer-skirt step", threshold = threshold,
-			edge_margin = edge_margin, outer_guard = outer_guard, candidates = #tracks,
+			reason = "no edge-facing outer-ring step", threshold = threshold,
+			edge_margin = wide_ring_only and edge_margin or near_margin,
+			outer_guard = outer_guard, candidates = #tracks,
 			left_tracks = track_counts.left, right_tracks = track_counts.right,
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 			min = mn, max = mx,
@@ -999,8 +1165,10 @@ local function RepairInternalHeightStep(grid)
 	end
 	local primary = selected_tracks[1]
 	return true, {
-		reason = "outer-skirt lower regions translated with slope-matched feathered joins",
-		threshold = threshold, edge_margin = edge_margin, outer_guard = outer_guard,
+		reason = (wide_ring_only and "vanilla outer-ring" or "destination edge")
+			.. " lower regions translated with slope-matched feathered joins",
+		threshold = threshold,
+		edge_margin = wide_ring_only and edge_margin or near_margin, outer_guard = outer_guard,
 		axis = table.concat(axes, ","), edge = table.concat(edges, ","),
 		first_along = primary.first_along, last_along = primary.last_along,
 		edge_perp = primary.last_perp, rows = primary.count,
@@ -1324,6 +1492,18 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				native_sub = nil
 			end
 			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
+			-- Repair coherent perimeter defects while the grid is still at vanilla resolution. This
+			-- is substantially cheaper than discovering them across the 8192-square destination, and
+			-- the stock interpolating resample naturally carries the feathered join into the stretch.
+			-- Diagnostic source dumps are test-only because the configured prefix is empty in release.
+			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
+			if scale_values and environment ~= "Underground"
+				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local repaired, report = RepairInternalHeightStep(src_sub, true)
+				internal_step_repair = report
+				TerrainCreaseAudit(repaired and "SOURCE_REPAIRED" or "SOURCE_SKIPPED", report, map)
+			end
+			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
 			local stretched = GridResample(src_sub, fw, fh, interpolate == true)
 			NotifyDeterminismCaptureForTest("pre_z_transform", map, {
@@ -1331,13 +1511,23 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
-			-- The bad outer-skirt step is introduced or amplified by resampling, so inspect the
-			-- destination grid. This still runs before version 738's one affine Z transform below.
+			-- Retain v839's proven full-resolution destination-edge pass. The source-side pass above
+			-- only handles deeper, grid-aligned defects; this one keeps the immediate resampled skirt
+			-- seamless exactly as before.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
-				local repaired, report = RepairInternalHeightStep(stretched)
-				internal_step_repair = report
-				TerrainCreaseAudit(repaired and "REPAIRED" or "SKIPPED", report, map)
+				local repaired, report = RepairInternalHeightStep(stretched, false)
+				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
+					or "DESTINATION_SKIPPED", report, map)
+				if internal_step_repair and report then
+					internal_step_repair = {
+						reason = tostring(internal_step_repair.reason) .. "; " .. tostring(report.reason),
+						rows = (internal_step_repair.rows or 0) + (report.rows or 0),
+						modified = (internal_step_repair.modified or 0) + (report.modified or 0),
+					}
+				else
+					internal_step_repair = report or internal_step_repair
+				end
 			end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla

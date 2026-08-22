@@ -604,11 +604,11 @@ config.UndergroundMarkGridBackingScale = true
 -- range. This preserves substantially more mountain relief than reserving a five-metre floor.
 config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
--- Repair coherent discontinuities in the narrow outer skirt on any of the four edges of some
--- vanilla surface height fields. Translate every lower cell from the crease through its adjacent
--- edge by the measured discontinuity, then feather the narrow join to match the natural slopes on
--- both sides. Outer relief survives without flat shelves, caps, or lighting seams; interior cliffs
--- and the upper terrain are untouched.
+-- Repair coherent discontinuities facing any edge within the two-sector outer ring of some vanilla
+-- surface height fields. Translate every lower cell from the crease through its adjacent edge by
+-- the measured discontinuity, then feather the narrow join to match the natural slopes on both
+-- sides. Outer relief survives without flat shelves, caps, or lighting seams; the central 16 x 16
+-- sectors and ordinary broken mountain cliffs are untouched.
 config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
