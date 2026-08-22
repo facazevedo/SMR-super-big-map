@@ -1316,6 +1316,7 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 	end
 
 	local modified, rows, tracks, min_offset, max_offset = 0, 0, 0
+	local coherent_profile_modified, coherent_profile_rows = 0, 0
 	local bounded_strips, edge_strips = 0, 0
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
@@ -1697,8 +1698,86 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 			end
 		end
 
+		local function remove_coherent_track_profile(plan)
+			-- Even after the step itself has gone, a long source-grid boundary can retain one
+			-- ruler-straight normal: the same broad cross-profile is repeated on almost every
+			-- row.  Replacing that band outright removes the normal but exposes a flat ribbon.
+			-- Instead, decompose each cross-row against distant untouched anchors and remove
+			-- only the component coherent along the track.  Each cell keeps its own along-track
+			-- high-pass residual, while C2 envelopes make the filter exactly zero at both cross
+			-- anchors and both finite endpoints.  The construction is axis-neutral and does not
+			-- depend on whether the qualified strip is raised, depressed, bounded, or edge-facing.
+			local geometry = densify(plan)
+			local first_geometry = geometry[plan.first_along]
+			local last_geometry = geometry[plan.last_along]
+			if not first_geometry or not last_geometry then return end
+			local half_span = math.max(32, math.min(48, math.floor(plan.perp_n / 170)))
+			local edge_taper = math.min(14, math.max(8, math.floor(half_span / 3)))
+			local along_radius = math.min(12, math.max(6,
+				math.floor((plan.last_along - plan.first_along + 1) / 16)))
+			local endpoint_taper = math.min(40, math.max(20,
+				math.floor((plan.last_along - plan.first_along + 1) / 6)))
+			local lo_along = math.max(0, plan.first_along - endpoint_taper)
+			local hi_along = math.min(plan.along_n - 1, plan.last_along + endpoint_taper)
+			local residual, original, centers = {}, {}, {}
+			for along = lo_along, hi_along do
+				local sample = geometry[along]
+					or (along < plan.first_along and first_geometry or last_geometry)
+				local center = math.floor(sample.perp + sample.width * 0.5 + 0.5)
+				center = math.max(half_span, math.min(plan.perp_n - half_span - 1, center))
+				centers[along] = center
+				local left = at(plan.axis, center - half_span, along)
+				local right = at(plan.axis, center + half_span, along)
+				if type(left) == "number" and type(right) == "number" then
+					local residual_row, original_row = {}, {}
+					for offset = -half_span, half_span do
+						local value = at(plan.axis, center + offset, along)
+						if type(value) == "number" then
+							local t = (offset + half_span + 0.0) / (2 * half_span)
+							original_row[offset] = value
+							residual_row[offset] = value - (left + (right - left) * t)
+						end
+					end
+					residual[along], original[along] = residual_row, original_row
+				end
+			end
+			for along = lo_along, hi_along do
+				local residual_row, original_row, center = residual[along], original[along], centers[along]
+				local end_alpha = endpoint_alpha(along, plan.first_along,
+					plan.last_along, endpoint_taper)
+				if residual_row and original_row and center and end_alpha > 0 then
+					local row_changed = false
+					for offset = -half_span + 1, half_span - 1 do
+						local sum, count = 0, 0
+						for q = math.max(lo_along, along - along_radius),
+								math.min(hi_along, along + along_radius) do
+							local qrow = residual[q]
+							if qrow and type(qrow[offset]) == "number" then
+								sum, count = sum + qrow[offset], count + 1
+							end
+						end
+						if count > 0 and type(original_row[offset]) == "number" then
+							local distance = math.min(offset + half_span, half_span - offset)
+							local cross_alpha = quintic(math.min(1,
+								(distance + 0.0) / edge_taper))
+							local value = blend_value(original_row[offset],
+								original_row[offset] - sum / count, end_alpha * cross_alpha)
+							if value ~= original_row[offset] then
+								put(plan.axis, center + offset, along, value)
+								modified = modified + 1
+								coherent_profile_modified = coherent_profile_modified + 1
+								row_changed = true
+							end
+						end
+					end
+					if row_changed then coherent_profile_rows = coherent_profile_rows + 1 end
+				end
+			end
+		end
+
 		for _, pair in ipairs(pairs) do apply_bounded(pair) end
 		for i, plan in ipairs(plans) do if not paired[i] then apply_edge(plan) end end
+		for _, plan in ipairs(plans) do remove_coherent_track_profile(plan) end
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMResampledBorderInterpolation") end
 	if not ok_finish then
@@ -1707,11 +1786,13 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 	end
 	return modified > 0, {
 		reason = modified > 0
-			and "source-qualified edge and bounded strips repaired with two-dimensional C2 interpolation"
+			and "source-qualified strips repaired with C2 interpolation and coherent-profile removal"
 			or "no source-qualified destination wall refined",
 		threshold = threshold, outer_guard = outer_guard,
 		tracks = tracks, edge_strips = edge_strips, bounded_strips = bounded_strips,
 		rows = rows, modified = modified,
+		coherent_profile_rows = coherent_profile_rows,
+		coherent_profile_modified = coherent_profile_modified,
 		min_offset = min_offset, max_offset = max_offset,
 	}
 end
