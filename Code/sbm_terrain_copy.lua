@@ -1711,14 +1711,27 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 			local first_geometry = geometry[plan.first_along]
 			local last_geometry = geometry[plan.last_along]
 			if not first_geometry or not last_geometry then return end
-			local half_span = math.max(32, math.min(48, math.floor(plan.perp_n / 170)))
-			local edge_taper = math.min(14, math.max(8, math.floor(half_span / 3)))
+			-- Keep the untouched anchors outside the complete resampling shoulder.  A 48-cell
+			-- half-span removed the original step but its C2 return began while the broad far-side
+			-- shoulder was still coherent, leaving a much smaller parallel normal.  The 64-cell
+			-- scale still lies well inside one outer-ring sector, while the retained per-cell
+			-- high-pass residual prevents the wider fit from turning dune relief into a plane.
+			local half_span = math.max(40, math.min(64, math.floor(plan.perp_n / 128)))
+			local edge_taper = math.min(20, math.max(10, math.floor(half_span / 3)))
 			local along_radius = math.min(12, math.max(6,
 				math.floor((plan.last_along - plan.first_along + 1) / 16)))
 			local endpoint_taper = math.min(40, math.max(20,
 				math.floor((plan.last_along - plan.first_along + 1) / 6)))
-			local lo_along = math.max(0, plan.first_along - endpoint_taper)
-			local hi_along = math.min(plan.along_n - 1, plan.last_along + endpoint_taper)
+			-- Source thresholding locates the strongest core of a coherent track.  The same normal
+			-- can remain visible through the immediately adjacent sub-threshold rows, so tapering
+			-- from the detector endpoint merely moves the scar into that taper.  Hold the full
+			-- correction for one taper width beyond each endpoint, then apply the existing C2
+			-- return where the coherent normal has actually ended.
+			local endpoint_hold = endpoint_taper
+			local full_first = plan.first_along - endpoint_hold
+			local full_last = plan.last_along + endpoint_hold
+			local lo_along = math.max(0, full_first - endpoint_taper)
+			local hi_along = math.min(plan.along_n - 1, full_last + endpoint_taper)
 			local residual, original, centers = {}, {}, {}
 			for along = lo_along, hi_along do
 				local sample = geometry[along]
@@ -1743,8 +1756,8 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 			end
 			for along = lo_along, hi_along do
 				local residual_row, original_row, center = residual[along], original[along], centers[along]
-				local end_alpha = endpoint_alpha(along, plan.first_along,
-					plan.last_along, endpoint_taper)
+				local end_alpha = endpoint_alpha(along, full_first,
+					full_last, endpoint_taper)
 				if residual_row and original_row and center and end_alpha > 0 then
 					local row_changed = false
 					for offset = -half_span + 1, half_span - 1 do
