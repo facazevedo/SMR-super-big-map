@@ -701,6 +701,30 @@ local function RepairInternalHeightStep(grid)
 		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
 	end
 
+	local function feather_join(axis, along, lo, hi)
+		-- Blend two locally extrapolated terrain slopes with a quintic weight. The weight has zero
+		-- first and second derivatives at both ends, so the repaired strip meets the untouched high
+		-- terrain and translated low terrain without a lighting/curvature seam. Only the narrow
+		-- cross-skirt join is resynthesized; relative relief on either side remains intact.
+		if hi - lo < 4 then return 0 end
+		local v0, v0_prev = at(axis, lo, along), at(axis, lo - 1, along)
+		local v1, v1_next = at(axis, hi, along), at(axis, hi + 1, along)
+		if type(v0) ~= "number" or type(v0_prev) ~= "number"
+			or type(v1) ~= "number" or type(v1_next) ~= "number" then return 0 end
+		local slope0, slope1 = v0 - v0_prev, v1_next - v1
+		local span, changed = hi - lo, 0
+		for p = lo + 1, hi - 1 do
+			local t = (p - lo + 0.0) / span
+			local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+			local left = v0 + slope0 * (p - lo)
+			local right = v1 + slope1 * (p - hi)
+			local value = math.floor(left + (right - left) * smooth + 0.5)
+			put(axis, p, along, math.max(0, math.min(mx, value)))
+			changed = changed + 1
+		end
+		return changed
+	end
+
 	local function offer_candidate(row, axis, perp, width, edge, low_before, jump)
 		-- Collapse several adjacent samples from the same cliff face to its strongest edge.
 		for i = 1, #row do
@@ -914,9 +938,8 @@ local function RepairInternalHeightStep(grid)
 						local offset = high - low
 						min_offset = not min_offset and offset or math.min(min_offset, offset)
 						max_offset = not max_offset and offset or math.max(max_offset, offset)
-						-- Translate the low region, but cancel the resampler's two-cell ramp
-						-- progressively. Starting the full translation only after the ramp merely
-						-- moved 14N134W's x=8160 wall to x=8162 in the first candidate.
+						-- Translate the low region. The feather below then replaces the inherited
+						-- resampling ramp and a few samples on both sides with a slope-matched join.
 						local perp0 = before_edge and 0 or perp + width
 						local perp1 = before_edge and perp or selected.perp_n - 1
 						for p = perp0, perp1 do
@@ -926,18 +949,17 @@ local function RepairInternalHeightStep(grid)
 								modified = modified + 1
 							end
 						end
-						for k = 1, width - 1 do
-							local p = perp + k
-							local original = at(selected.axis, p, along)
-							if type(original) == "number" then
-								-- The engine's interpolation weights are not exposed and the chosen span
-								-- may include one quiet flank cell. Seat only these one/two transition
-								-- samples at the high boundary; the translated outer relief begins after
-								-- them. A guessed linear fraction left half-height walls at x=8171/y=8175.
-								put(selected.axis, p, along, high)
-								modified = modified + 1
-							end
+						local join_lo, join_hi
+						if before_edge then
+							join_lo = math.max(outer_guard + 1, perp - 6)
+							join_hi = math.min(selected.perp_n - 2, perp + width + 12)
+						else
+							join_lo = math.max(1, perp - 12)
+							join_hi = math.min(selected.perp_n - outer_guard - 2,
+								perp + width + 6)
 						end
+						modified = modified
+							+ feather_join(selected.axis, along, join_lo, join_hi)
 					end
 				end
 			end
@@ -977,7 +999,7 @@ local function RepairInternalHeightStep(grid)
 	end
 	local primary = selected_tracks[1]
 	return true, {
-		reason = "outer-skirt lower regions translated through adjacent edges",
+		reason = "outer-skirt lower regions translated with slope-matched feathered joins",
 		threshold = threshold, edge_margin = edge_margin, outer_guard = outer_guard,
 		axis = table.concat(axes, ","), edge = table.concat(edges, ","),
 		first_along = primary.first_along, last_along = primary.last_along,
