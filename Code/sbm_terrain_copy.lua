@@ -1123,8 +1123,15 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 							join_hi = math.min(selected.perp_n - outer_guard - 2,
 								perp + width + 6)
 						end
-						modified = modified
-							+ feather_join(selected.axis, along, join_lo, join_hi)
+						-- Wide-ring source discovery performs the expensive detection and raises the
+						-- lower region before stretching, but leaves the one final feather to the
+						-- destination-resolution hint pass below. Double-feathering at two resolutions
+						-- creates a faint handoff at the outer anchor. Immediate-edge v839 repairs still
+						-- use their original destination feather here.
+						if not wide_ring_only then
+							modified = modified
+								+ feather_join(selected.axis, along, join_lo, join_hi)
+						end
 					end
 				end
 			end
@@ -1165,8 +1172,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	end
 	local primary = selected_tracks[1]
 	return true, {
-		reason = (wide_ring_only and "vanilla outer-ring" or "destination edge")
-			.. " lower regions translated with slope-matched feathered joins",
+		reason = wide_ring_only
+			and "vanilla outer-ring lower regions translated before destination feather"
+			or "destination edge lower regions translated with slope-matched feathered joins",
 		threshold = threshold,
 		edge_margin = wide_ring_only and edge_margin or near_margin, outer_guard = outer_guard,
 		axis = table.concat(axes, ","), edge = table.concat(edges, ","),
@@ -1177,6 +1185,117 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 		min = mn, max = mx,
+	}, selected_tracks
+end
+
+-- The source repair above removes the height wall before the expensive 6144 -> 8192 resample.
+-- Resampling the translated boundary can leave a faint straight normal discontinuity even though
+-- no large height step remains to detect. Feather only the already qualified source tracks on the
+-- destination grid. This is the exact slope-matched destination treatment used for the proven
+-- near-edge repair, without scanning or changing any additional terrain.
+local function FinishResampledHeightSteps(grid, source_w, source_h, source_tracks)
+	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function"
+		or type(grid.set) ~= "function" or type(source_tracks) ~= "table"
+		or #source_tracks == 0 or type(source_w) ~= "number" or source_w < 2
+		or type(source_h) ~= "number" or source_h < 2 then
+		return false, { reason = "no qualified source tracks" }
+	end
+	local ok_size, w, h = pcall(grid.size, grid)
+	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 8 or h < 8 then
+		return false, { reason = "destination height grid unavailable" }
+	end
+
+	local function at(axis, perp, along)
+		if axis == "x" then return grid:get(perp, along) end
+		return grid:get(along, perp)
+	end
+	local function put(axis, perp, along, value)
+		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
+	end
+	local function mapped_index(value, source_n, destination_n)
+		return math.max(0, math.min(destination_n - 1,
+			math.floor(value * destination_n / source_n + 0.5)))
+	end
+	local function feather_join(axis, along, lo, hi)
+		if hi - lo < 4 then return 0 end
+		local v0, v0_prev = at(axis, lo, along), at(axis, lo - 1, along)
+		local v1, v1_next = at(axis, hi, along), at(axis, hi + 1, along)
+		if type(v0) ~= "number" or type(v0_prev) ~= "number"
+			or type(v1) ~= "number" or type(v1_next) ~= "number" then return 0 end
+		local slope0, slope1 = v0 - v0_prev, v1_next - v1
+		local span, changed = hi - lo, 0
+		for p = lo + 1, hi - 1 do
+			local t = (p - lo + 0.0) / span
+			local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+			local left = v0 + slope0 * (p - lo)
+			local right = v1 + slope1 * (p - hi)
+			put(axis, p, along, math.max(0,
+				math.min(65535, math.floor(left + (right - left) * smooth + 0.5))))
+			changed = changed + 1
+		end
+		return changed
+	end
+
+	local modified, rows, tracks = 0, 0, 0
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMResampledHeightStepFinish") end
+	local ok_finish, finish_err = pcall(function()
+		for _, source_track in ipairs(source_tracks) do
+			local axis = source_track.axis
+			local source_perp_n = axis == "x" and source_w or source_h
+			local source_along_n = axis == "x" and source_h or source_w
+			local destination_perp_n = axis == "x" and w or h
+			local destination_along_n = axis == "x" and h or w
+			local mapped = {}
+			for _, point in ipairs(source_track.points or {}) do
+				mapped[#mapped + 1] = {
+					along = mapped_index(point.along, source_along_n, destination_along_n),
+					perp = mapped_index(point.perp, source_perp_n, destination_perp_n),
+					width = math.max(1, math.floor((point.width or 1)
+						* destination_perp_n / source_perp_n + 0.5)),
+				}
+			end
+			if #mapped > 0 then
+				tracks = tracks + 1
+				for i, point in ipairs(mapped) do
+					local next_point = mapped[i + 1]
+					local last_along = next_point and next_point.along - 1 or point.along
+					last_along = math.max(point.along, last_along)
+					for along = point.along, last_along do
+						local t = next_point and next_point.along > point.along
+							and (along - point.along + 0.0) / (next_point.along - point.along)
+							or 0
+						local perp = math.floor(point.perp + (next_point and
+							(next_point.perp - point.perp) * t or 0) + 0.5)
+						local width = math.floor(point.width + (next_point and
+							(next_point.width - point.width) * t or 0) + 0.5)
+						local before_edge = source_track.edge == "left"
+							or source_track.edge == "top"
+						-- Match v839's seamless destination join exactly: six samples into the
+						-- translated low side and twelve into the untouched high side.
+						local low_span, high_span = 6, 12
+						local lo = before_edge and perp - low_span or perp - high_span
+						local hi = before_edge and perp + width + high_span
+							or perp + width + low_span
+						lo = math.max(1, lo)
+						hi = math.min(destination_perp_n - 2, hi)
+						modified = modified + feather_join(axis, along, lo, hi)
+						rows = rows + 1
+					end
+				end
+			end
+		end
+	end)
+	if type(resume) == "function" then pcall(resume, "SBMResampledHeightStepFinish") end
+	if not ok_finish then
+		return false, { reason = tostring(finish_err), tracks = tracks, rows = rows,
+			modified = modified }
+	end
+	return modified > 0, {
+		reason = modified > 0 and "resampled source joins re-feathered at destination resolution"
+			or "no resampled source join changed",
+		tracks = tracks, rows = rows, modified = modified,
 	}
 end
 
@@ -1429,6 +1548,19 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
 		local internal_step_repair
+		local source_step_tracks
+		local function merge_step_report(report)
+			if not report then return end
+			if internal_step_repair then
+				internal_step_repair = {
+					reason = tostring(internal_step_repair.reason) .. "; " .. tostring(report.reason),
+					rows = (internal_step_repair.rows or 0) + (report.rows or 0),
+					modified = (internal_step_repair.modified or 0) + (report.modified or 0),
+				}
+			else
+				internal_step_repair = report
+			end
+		end
 		local ok_all, res = pcall(function()
 			local full_c
 			local ok_size, fw, fh = pcall(function() return raw:size() end)
@@ -1499,8 +1631,11 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
-				local repaired, report = RepairInternalHeightStep(src_sub, true)
+				local repaired, report, tracks = RepairInternalHeightStep(src_sub, true)
 				internal_step_repair = report
+				if repaired then
+					source_step_tracks = tracks
+				end
 				TerrainCreaseAudit(repaired and "SOURCE_REPAIRED" or "SOURCE_SKIPPED", report, map)
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
@@ -1511,6 +1646,18 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
+			-- A translated source boundary can retain a faint normal seam after interpolation. Finish
+			-- only the source tracks already proven defective, now at destination resolution; no second
+			-- outer-ring scan is needed and no unrelated terrain can enter this pass.
+			if scale_values and environment ~= "Underground" and source_step_tracks
+				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local repaired, report = FinishResampledHeightSteps(stretched,
+					scw, sch, source_step_tracks)
+				TerrainCreaseAudit(repaired and "DESTINATION_FINISHED"
+					or "DESTINATION_FINISH_SKIPPED", report, map)
+				merge_step_report(report)
+			end
+			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- Retain v839's proven full-resolution destination-edge pass. The source-side pass above
 			-- only handles deeper, grid-aligned defects; this one keeps the immediate resampled skirt
 			-- seamless exactly as before.
@@ -1519,15 +1666,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				local repaired, report = RepairInternalHeightStep(stretched, false)
 				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
 					or "DESTINATION_SKIPPED", report, map)
-				if internal_step_repair and report then
-					internal_step_repair = {
-						reason = tostring(internal_step_repair.reason) .. "; " .. tostring(report.reason),
-						rows = (internal_step_repair.rows or 0) + (report.rows or 0),
-						modified = (internal_step_repair.modified or 0) + (report.modified or 0),
-					}
-				else
-					internal_step_repair = report or internal_step_repair
-				end
+				merge_step_report(report)
 			end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
