@@ -1288,11 +1288,27 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 		return profile
 	end
 	local function signed_after_correction(axis, perp, width, along)
+		local before_prev = at(axis, perp - 1, along)
 		local before = at(axis, perp, along)
 		local after = at(axis, perp + width, along)
-		if type(before) ~= "number" or type(after) ~= "number" then return nil end
-		-- Amount which must be added to the AFTER side to meet the BEFORE side.
-		return before - after
+		local after_next = at(axis, perp + width + 1, along)
+		if type(before_prev) ~= "number" or type(before) ~= "number"
+			or type(after) ~= "number" or type(after_next) ~= "number" then return nil end
+		-- Preserve the terrain's local grade through the resampled ramp.  Matching AFTER directly
+		-- to BEFORE made an otherwise continuous hillside locally level; the resulting planar ribbon
+		-- had a bright straight shoulder at its far side even though the original step was gone.
+		-- Extrapolate the two untouched flank slopes through the ramp and translate AFTER only by the
+		-- unexplained residual.  The detector guarantees the ramp dominates both flank slopes; the
+		-- half-offset clamp is a final guard against an unusual pair of disagreeing natural slopes.
+		local raw = before - after
+		local slope = ((before - before_prev) + (after_next - after)) * 0.5
+		local correction = raw + slope * width
+		if raw > 0 then
+			correction = math.max(raw * 0.5, math.min(raw * 1.5, correction))
+		else
+			correction = math.min(raw * 0.5, math.max(raw * 1.5, correction))
+		end
+		return correction
 	end
 	local function blend_value(original, target, alpha)
 		return math.max(0, math.min(mx,
@@ -1442,6 +1458,13 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 
 		local function apply_edge(plan)
 			local geometry, profile = densify(plan)
+			-- The source-qualified interior step is already localized to a 1--3-cell
+			-- resampling ramp.  Reconstruct only that abnormal ramp, using the adjacent
+			-- untouched samples as slope constraints.  Including those constraints in
+			-- the writable band erased real relief and exposed the band as a pale ribbon.
+			-- One anchor sample gives the 1--3-cell ramp enough room to match both slopes
+			-- without creating the sharp normal that a zero-anchor reconstruction leaves.
+			local anchor = 1
 			local taper = math.min(40, math.max(20,
 				math.floor((plan.last_along - plan.first_along + 1) / 6)))
 			local lo_along = math.max(0, plan.first_along - taper)
@@ -1453,9 +1476,8 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 			for along = plan.first_along, plan.last_along do
 				local sample = geometry[along]
 				if sample then
-					band_lo = math.min(band_lo, sample.perp - (before_edge and 6 or 12))
-					band_hi = math.max(band_hi,
-						sample.perp + sample.width + (before_edge and 12 or 6))
+					band_lo = math.min(band_lo, sample.perp - anchor)
+					band_hi = math.max(band_hi, sample.perp + sample.width + anchor)
 				end
 			end
 			band_lo = math.max(1, band_lo)
@@ -1472,14 +1494,9 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 					local correction = before_edge and -correction_after or correction_after
 					correction_by_along[along] = correction
 					alpha_by_along[along] = alpha
-					local join_lo, join_hi
-					if before_edge then
-						join_lo = math.max(1, sample.perp - 6)
-						join_hi = math.min(plan.perp_n - 2, sample.perp + sample.width + 12)
-					else
-						join_lo = math.max(1, sample.perp - 12)
-						join_hi = math.min(plan.perp_n - 2, sample.perp + sample.width + 6)
-					end
+					local join_lo = math.max(1, sample.perp - anchor)
+					local join_hi = math.min(plan.perp_n - 2,
+						sample.perp + sample.width + anchor)
 					local v0, v0_prev = at(plan.axis, join_lo, along),
 						at(plan.axis, join_lo - 1, along)
 					local v1, v1_next = at(plan.axis, join_hi, along),
@@ -1517,7 +1534,9 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 			-- The v839 target is derived per row.  Smooth only its correction in the narrow join
 			-- band so changes of resampling width (two cells on one row, three on the next) cannot
 			-- become a cross-track normal.  Outer terrain keeps the already-smooth profile exactly.
-			for _ = 1, 2 do
+			-- One pass removes width-change cuts while retaining enough row variation
+			-- that the repaired normal does not read as a ruler-straight terrain feature.
+			for _ = 1, 1 do
 				local next_band = {}
 				for along = lo_along, hi_along do
 					if band[along] then
