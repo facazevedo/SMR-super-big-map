@@ -1099,7 +1099,7 @@ local DepositRules = {}
 -- unrevealed markers reserve their future badge hex too. Adjacent hexes are allowed; only an
 -- identical hex is a collision.
 -- ---------------------------------------------------------------------------------------
-local BADGE_SPACING_PATCH_VERSION = 2
+local BADGE_SPACING_PATCH_VERSION = 3
 local BADGE_SEARCH_MAX_RADIUS = 64
 
 local function BadgeSpacingEnabledOnMap(map)
@@ -1112,7 +1112,10 @@ end
 
 local function IsBadgeMarker(obj)
 	if obj == nil then return false end
-	return IsKindOfSafe(obj, "SubsurfaceDepositMarker")
+	-- Surface deposits do not use the same overview badge art, but their marker hex is still
+	-- part of the universal top-up uniqueness invariant and must enter the same repair pass.
+	return IsKindOfSafe(obj, "SurfaceDepositMarker")
+		or IsKindOfSafe(obj, "SubsurfaceDepositMarker")
 		or IsKindOfSafe(obj, "TerrainDepositMarker")
 		or IsKindOfSafe(obj, "SubsurfaceAnomalyMarker")
 		or IsKindOfSafe(obj, "EffectDepositMarker")
@@ -1236,8 +1239,22 @@ end
 
 local function MoveBadgeMarker(marker, map, candidate, previous_sector)
 	if not marker or not candidate or type(marker.SetPos) ~= "function" then return false end
+	local old_marker_pos = ObjectPos(marker)
 	local ok = pcall(marker.SetPos, marker, candidate.point)
 	if not ok then return false end
+	-- A top-up can be placed immediately when it is registered with an already-scanned
+	-- sector. Keep that live badge synchronized when the final overlap pass relocates its
+	-- marker. This makes the pass independent of sector scan state and registration timing.
+	local placed = marker.is_placed == true and marker.placed_obj or nil
+	local is_valid = Global("IsValid")
+	local placed_valid = placed and (type(is_valid) ~= "function" or SafeCall(is_valid, placed) == true)
+	if placed_valid and type(placed.SetPos) == "function" then
+		local placed_ok = pcall(placed.SetPos, placed, candidate.point)
+		if not placed_ok then
+			if old_marker_pos then pcall(marker.SetPos, marker, old_marker_pos) end
+			return false
+		end
+	end
 	local new_sector = candidate.sector
 	if previous_sector and new_sector and previous_sector ~= new_sector then
 		if type(previous_sector.UnregisterDeposit) == "function" then
@@ -1326,8 +1343,9 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 			or marker.SuperBigMapEffectTopUp == true
 			or marker.SuperBigMapEnrichmentClone == true)
 	end
-	-- Start with fixed live badges. Unplaced markers are then claimed one at a time; the first
-	-- claimant stays and only a later collision is moved.
+	-- Start with fixed live badges. Additional markers are then claimed one at a time; the first
+	-- claimant stays and only a later collision is moved. Placed additions remain movable: sector
+	-- registration can place a top-up immediately when its destination sector is already scanned.
 	local occupied = {}
 	local function reserve_object(obj)
 		local _, _, key = BadgeObjectHex(obj)
@@ -1342,17 +1360,17 @@ function DepositRules.ResolveBadgeMarkerOverlaps(map, reason)
 	for _, marker in ipairs(markers) do
 		-- Native transformed markers are immutable stage-03 obstacles. Reserve their hexes before
 		-- inspecting additions so only an added marker can ever be displaced by this pass.
-		if marker.is_placed == true or not is_additional(marker) then reserve_object(marker) end
+		if not is_additional(marker) then reserve_object(marker) end
 	end
 	local moved, unresolved = 0, 0
 	for _, marker in ipairs(markers) do
-		if is_additional(marker) and marker.is_placed ~= true then
+		if is_additional(marker) then
 			local pos = ObjectPos(marker)
 			local x, y
 			if pos and type(pos.xy) == "function" then x, y = pos:xy() end
 			local q, r, key = BadgeObjectHex(marker)
 			if key and BadgeHexOccupied(occupied, q, r) then
-		local candidate = FindNearestFreeBadgePosition(marker, map, x, y, occupied)
+				local candidate = FindNearestFreeBadgePosition(marker, map, x, y, occupied)
 				local old_sector = SectorAtPoint(map, x, y)
 				if candidate and MoveBadgeMarker(marker, map, candidate, old_sector) then
 					occupied[BadgeHexKey(candidate.q, candidate.r)] = true
@@ -6539,7 +6557,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
-		first_repulsion_violation = "",
+		first_duplicate_hex_pair = "", first_repulsion_violation = "",
 		outer_ring_spacing_violations = 0,
 		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
 		underground_well_spaced_fallback_topups = 0,
@@ -6664,7 +6682,20 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			else
 				stats.checked_pairs = stats.checked_pairs + 1
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
-				if duplicate_hex then stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1 end
+				if duplicate_hex then
+					stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1
+					if stats.first_duplicate_hex_pair == "" then
+						stats.first_duplicate_hex_pair = table.concat({
+							tostring(a.marker and a.marker.class or "?"),
+							a.topup and "topup" or "native",
+							(a.marker and a.marker.is_placed == true) and "placed" or "unplaced",
+							tostring(b.marker and b.marker.class or "?"),
+							b.topup and "topup" or "native",
+							(b.marker and b.marker.is_placed == true) and "placed" or "unplaced",
+							tostring(a.hex),
+						}, "|")
+					end
+				end
 				local has_outer_ring_topup = a.outer_ring_topup or b.outer_ring_topup
 				local has_density_fallback = a.density_fallback or b.density_fallback
 				if a.well_spaced_fallback or b.well_spaced_fallback then
@@ -8202,6 +8233,8 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		invalid_topups = invalid_topups, repulsion_ok = tostring(repulsion_ok),
 		repulsion_density_failures = tostring(repulsion_stats and repulsion_stats.density_failures),
 		repulsion_duplicate_hex_pairs = tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs),
+		repulsion_first_duplicate_hex_pair = tostring(
+			repulsion_stats and repulsion_stats.first_duplicate_hex_pair),
 		repulsion_violations = tostring(repulsion_stats and repulsion_stats.repulsion_violations),
 		ring_ok = tostring(ring_ok), ring_violations = tostring(ring_stats and ring_stats.violations),
 		resource_status = type(density.resources) == "table" and tostring(density.resources.complete) or "missing",

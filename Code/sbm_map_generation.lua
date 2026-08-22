@@ -10993,6 +10993,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							topups = repulsion_stats and repulsion_stats.topups,
 							density_status = repulsion_stats and repulsion_stats.density_status,
 							duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
+							first_duplicate_hex_pair = repulsion_stats
+								and repulsion_stats.first_duplicate_hex_pair,
 							violations = repulsion_stats and repulsion_stats.repulsion_violations,
 							first_repulsion_violation = repulsion_stats
 								and repulsion_stats.first_repulsion_violation,
@@ -11004,6 +11006,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(repulsion_stats and repulsion_stats.density_failures)
 								.. " duplicate_hex_pairs="
 								.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
+								.. " first_duplicate_hex_pair="
+								.. tostring(repulsion_stats
+									and repulsion_stats.first_duplicate_hex_pair)
 								.. " repulsion_violations="
 								.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
 								.. " outer_ring_spacing_violations="
@@ -11991,6 +11996,8 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 						wall_aware_shared_candidates = repulsion_stats
 							and repulsion_stats.wall_aware_shared_candidates,
 						duplicate_hex_pairs = repulsion_stats and repulsion_stats.duplicate_hex_pairs,
+						first_duplicate_hex_pair = repulsion_stats
+							and repulsion_stats.first_duplicate_hex_pair,
 						violations = repulsion_stats and repulsion_stats.repulsion_violations,
 						first_violation = repulsion_stats
 							and repulsion_stats.first_repulsion_violation,
@@ -12028,6 +12035,9 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 							.. tostring(repulsion_stats and repulsion_stats.effect_shortfall)
 							.. " duplicate_hex_pairs="
 							.. tostring(repulsion_stats and repulsion_stats.duplicate_hex_pairs)
+							.. " first_duplicate_hex_pair="
+							.. tostring(repulsion_stats
+								and repulsion_stats.first_duplicate_hex_pair)
 							.. " repulsion_violations="
 							.. tostring(repulsion_stats and repulsion_stats.repulsion_violations)
 							.. " first_violation="
