@@ -1216,6 +1216,9 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 		return math.max(0, math.min(destination_n - 1,
 			math.floor(value * destination_n / source_n + 0.5)))
 	end
+	local function quintic(t)
+		return t * t * t * (t * (t * 6 - 15) + 10)
+	end
 	local function feather_join(axis, along, lo, hi)
 		if hi - lo < 4 then return 0 end
 		local v0, v0_prev = at(axis, lo, along), at(axis, lo - 1, along)
@@ -1226,7 +1229,7 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 		local span, changed = hi - lo, 0
 		for p = lo + 1, hi - 1 do
 			local t = (p - lo + 0.0) / span
-			local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+			local smooth = quintic(t)
 			local left = v0 + slope0 * (p - lo)
 			local right = v1 + slope1 * (p - hi)
 			put(axis, p, along, math.max(0,
@@ -1259,7 +1262,7 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 			if #mapped > 0 then
 				tracks = tracks + 1
 				local band_rows = {}
-				local first_band_along, last_band_along
+				local first_band_along, last_band_along, min_band_perp, max_band_perp
 				for i, point in ipairs(mapped) do
 					local next_point = mapped[i + 1]
 					local last_along = next_point and next_point.along - 1 or point.along
@@ -1282,13 +1285,46 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 							or perp + width + low_span
 						lo = math.max(1, lo)
 						hi = math.min(destination_perp_n - 2, hi)
-						modified = modified + feather_join(axis, along, lo, hi)
 						band_rows[along] = { lo = lo, hi = hi }
 						first_band_along = not first_band_along and along
 							or math.min(first_band_along, along)
 						last_band_along = not last_band_along and along
 							or math.max(last_band_along, along)
+						min_band_perp = not min_band_perp and lo or math.min(min_band_perp, lo)
+						max_band_perp = not max_band_perp and hi or math.max(max_band_perp, hi)
 						rows = rows + 1
+					end
+				end
+
+				-- Preserve the unmodified relief around the qualified join. The macro repair below
+				-- deliberately removes the inherited wall, but pure interpolation/relaxation also
+				-- removes the surrounding Rough Terrain's fine relief and leaves a pale straight
+				-- strip. Donor samples are kept far enough to either side that the original wall is
+				-- never copied back into the repaired surface.
+				local original = {}
+				if first_band_along and last_band_along then
+					local detail_radius = 4
+					local donor_margin = detail_radius
+					local snapshot_lo = math.max(detail_radius,
+						min_band_perp - donor_margin)
+					local snapshot_hi = math.min(destination_perp_n - detail_radius - 1,
+						max_band_perp + donor_margin)
+					local snapshot_first = math.max(detail_radius,
+						first_band_along - detail_radius)
+					local snapshot_last = math.min(destination_along_n - detail_radius - 1,
+						last_band_along + detail_radius)
+					for along = snapshot_first, snapshot_last do
+						local original_row = {}
+						for p = snapshot_lo, snapshot_hi do
+							original_row[p] = at(axis, p, along)
+						end
+						original[along] = original_row
+					end
+					for along = first_band_along, last_band_along do
+						local band = band_rows[along]
+						if band then
+							modified = modified + feather_join(axis, along, band.lo, band.hi)
+						end
 					end
 				end
 
@@ -1331,6 +1367,63 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 						end
 						modified = modified + #pending
 					end
+
+					-- Put natural fine relief back on top of the repaired macro surface. Stable donor
+					-- columns just outside the band provide their nine-row high-frequency residual;
+					-- blending those two signals across the join restores variation along the valley
+					-- without copying the old cross-track wall or creating a new normal. Quintic
+					-- perimeter weights keep the repair exactly continuous with untouched terrain and
+					-- fade it cleanly at the track endpoints.
+					local function original_at(perp, along)
+						local original_row = original[along]
+						return original_row and original_row[perp]
+					end
+					local function detail_at(perp, along)
+						local center = original_at(perp, along)
+						if type(center) ~= "number" then return 0 end
+						local sum, count = 0, 0
+						for da = -4, 4 do
+							local value = original_at(perp, along + da)
+							if type(value) == "number" then
+								sum, count = sum + value, count + 1
+							end
+						end
+						return count > 0 and center - sum / count or 0
+					end
+					local left_donor_perp = min_band_perp - 4
+					local right_donor_perp = max_band_perp + 4
+					for along = first_band_along + 1, last_band_along - 1 do
+						local band = band_rows[along]
+						if band and band.hi - band.lo >= 4 then
+							local span = band.hi - band.lo
+							local left_detail = detail_at(left_donor_perp, along)
+							local right_detail = detail_at(right_donor_perp, along)
+							local donor_details = {}
+							for p = band.lo, band.hi do
+								local distance = p - band.lo
+								local t = distance / span
+								local blend = quintic(t)
+								donor_details[p] = left_detail
+									+ (right_detail - left_detail) * blend
+							end
+							local along_t = math.min(along - first_band_along,
+								last_band_along - along, 8) / 8.0
+							local along_weight = quintic(along_t)
+							for p = band.lo + 1, band.hi - 1 do
+								local distance = math.min(p - band.lo, band.hi - p, 4)
+								local cross_weight = quintic(distance / 4.0)
+								local detail = (donor_details[p - 1]
+									+ donor_details[p] * 2 + donor_details[p + 1]) / 4.0
+								local center = at(axis, p, along)
+								if type(center) == "number" then
+									put(axis, p, along, math.max(0, math.min(65535,
+										math.floor(center + detail * 2.0 * cross_weight
+											* along_weight + 0.5))))
+									modified = modified + 1
+								end
+							end
+						end
+					end
 				end
 			end
 		end
@@ -1342,7 +1435,7 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 	end
 	return modified > 0, {
 		reason = modified > 0
-			and "resampled source joins re-feathered and two-dimensionally relaxed"
+			and "resampled source joins relaxed with tapered natural-relief transfer"
 			or "no resampled source join changed",
 		tracks = tracks, rows = rows, modified = modified,
 	}
