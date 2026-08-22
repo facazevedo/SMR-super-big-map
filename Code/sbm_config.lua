@@ -605,11 +605,11 @@ config.UndergroundMarkGridBackingScale = true
 config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
 -- Repair coherent discontinuities facing any edge within the two-sector outer ring of some vanilla
--- surface height fields. Translate every lower cell from the crease through its adjacent edge by
--- the measured discontinuity, then feather and two-dimensionally relax only the narrow join. A
--- tapered transfer from stable terrain columns on both sides restores the join's natural fine
--- relief without copying the old wall. Outer relief survives without flat shelves, caps, or smooth
--- lighting scars; the central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
+-- surface height fields. Detect them cheaply and without writes on the vanilla-size source, then at
+-- destination resolution apply version 839's proven border algorithm: translate every lower cell
+-- from the crease through its adjacent edge and replace the wall with a slope-matched quintic
+-- interpolation. Outer relief survives without flat shelves, caps, or synthetic smooth strips; the
+-- central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
 config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
