@@ -1258,6 +1258,8 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 			end
 			if #mapped > 0 then
 				tracks = tracks + 1
+				local band_rows = {}
+				local first_band_along, last_band_along
 				for i, point in ipairs(mapped) do
 					local next_point = mapped[i + 1]
 					local last_along = next_point and next_point.along - 1 or point.along
@@ -1281,7 +1283,53 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 						lo = math.max(1, lo)
 						hi = math.min(destination_perp_n - 2, hi)
 						modified = modified + feather_join(axis, along, lo, hi)
+						band_rows[along] = { lo = lo, hi = hi }
+						first_band_along = not first_band_along and along
+							or math.min(first_band_along, along)
+						last_band_along = not last_band_along and along
+							or math.max(last_band_along, along)
 						rows = rows + 1
+					end
+				end
+
+				-- The cross-track feather removes the wall, but independent row profiles can
+				-- retain the old junction as a faint straight normal scar. Relax only the narrow
+				-- feather band in two dimensions while holding its complete perimeter fixed.
+				-- Thirty-two weak Jacobi passes converge the high-frequency scar toward the
+				-- surrounding natural surface; a four-cell/eight-row taper preserves both cross-
+				-- track slopes and track endpoints without introducing a replacement boundary.
+				if first_band_along and last_band_along
+					and last_band_along - first_band_along >= 4 then
+					for _ = 1, 32 do
+						local pending = {}
+						for along = first_band_along + 1, last_band_along - 1 do
+							local band = band_rows[along]
+							if band then
+								local along_distance = math.min(along - first_band_along,
+									last_band_along - along, 8)
+								for p = band.lo + 1, band.hi - 1 do
+									local center = at(axis, p, along)
+									local left, right = at(axis, p - 1, along), at(axis, p + 1, along)
+									local up, down = at(axis, p, along - 1), at(axis, p, along + 1)
+									if type(center) == "number" and type(left) == "number"
+										and type(right) == "number" and type(up) == "number"
+										and type(down) == "number" then
+										local cross_distance = math.min(p - band.lo, band.hi - p, 4)
+										local weight = cross_distance * along_distance / 32.0
+										local average = (left + right + up + down) / 4.0
+										pending[#pending + 1] = {
+											p = p, along = along,
+											value = math.floor(center + (average - center) * weight + 0.5),
+										}
+									end
+								end
+							end
+						end
+						for _, change in ipairs(pending) do
+							put(axis, change.p, change.along,
+								math.max(0, math.min(65535, change.value)))
+						end
+						modified = modified + #pending
 					end
 				end
 			end
@@ -1293,7 +1341,8 @@ local function FinishResampledHeightSteps(grid, source_w, source_h, source_track
 			modified = modified }
 	end
 	return modified > 0, {
-		reason = modified > 0 and "resampled source joins re-feathered at destination resolution"
+		reason = modified > 0
+			and "resampled source joins re-feathered and two-dimensionally relaxed"
 			or "no resampled source join changed",
 		tracks = tracks, rows = rows, modified = modified,
 	}

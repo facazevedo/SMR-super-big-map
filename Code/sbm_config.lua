@@ -606,9 +606,9 @@ config.StretchShiftHeightsDown = true
 config.StretchAdaptiveZScale = true
 -- Repair coherent discontinuities facing any edge within the two-sector outer ring of some vanilla
 -- surface height fields. Translate every lower cell from the crease through its adjacent edge by
--- the measured discontinuity, then feather the narrow join to match the natural slopes on both
--- sides. Outer relief survives without flat shelves, caps, or lighting seams; the central 16 x 16
--- sectors and ordinary broken mountain cliffs are untouched.
+-- the measured discontinuity, then feather and two-dimensionally relax only the narrow join to
+-- match the natural surface on every side. Outer relief survives without flat shelves, caps, or
+-- lighting seams; the central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
 config.StretchRepairInternalHeightStep = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
