@@ -29,8 +29,8 @@ config.DebugUndergroundDecorationPositions = false
 -- Focused temporary parity trace: scalar-only and independent from the broad release-debug gate.
 -- Keep enabled until the fresh vanilla/expanded twin isolates reservation versus consumer drift.
 config.TraceUndergroundSeedReservation = true
--- Focused terrain-crease trace used by the 14N134W Rough Terrain Ralph loop. It records only
--- detector/repair scalars and is independent from the broad release-debug gate.
+-- Focused outer-ring terrain-crease trace. It records only detector/repair scalars and is
+-- independent from the broad release-debug gate.
 config.TraceTerrainCreaseRepair = true
 -- Diagnostic: record what the native source actually produced, at migration time, so a run can
 -- prove nothing was destroyed after transfer without needing a second reproducible vanilla process.
