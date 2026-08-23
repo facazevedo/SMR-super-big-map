@@ -220,6 +220,10 @@ config.TopUpAnomalies = true
 config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
+-- Added dome-effect bonuses belong where a dome can realistically use them. Keep Vista, Research
+-- Site, and marker-backed Morale Vista TOP-UPS out of the final three sector rows/columns along
+-- every map edge. Native vanilla markers are never moved; underground effects are unchanged.
+config.TopUpDomeEffectOuterRingExclusionSectors = 3
 -- Hard terrain-evenness rule for every added enrichment on both maps. terrain normal Z uses
 -- 4096 for perfectly horizontal ground; 4080 limits accepted top-up positions to approximately
 -- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
@@ -257,6 +261,19 @@ config.TopUpAnomalyMountainBaseCandidatesPerSector = 8
 -- Ignore tiny rolling-ground height differences: at least one surrounding sample must rise this
 -- many metres above the flat candidate, and relief must appear in at least two ring samples.
 config.TopUpAnomalyMountainBaseMinimumRiseMeters = 5
+
+-- A few enclosing mountain sectors contain no naturally buildable foothill at all, leaving
+-- otherwise eligible resource/anomaly top-ups nowhere to go. After the exact v738 whole-map
+-- height transform, form a sparse set of small, gently graded aprons at qualifying mountain
+-- bases in the final three-sector perimeter. Each core follows a locally fitted slope instead of
+-- becoming a level platform, and a broad irregular quintic feather returns to untouched terrain
+-- with matching value/slope/curvature. This is a general terrain-shape rule; it never consults
+-- scenario coordinates or sector names.
+config.CreateNaturalMountainBaseBuildableAprons = true
+config.MountainBaseApronOuterRingSectors = 3
+config.MountainBaseApronMaximumCount = 36
+config.MountainBaseApronCoreRadiusHexes = 3
+config.MountainBaseApronFeatherRadiusHexes = 8
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
@@ -531,8 +548,9 @@ config.LimitBuildableGridToSource = true
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
 -- enabled effect types up to their source count x area factor. The three per-type switches above
--- let each family be controlled separately. Every resource, anomaly, and effect top-up on both
--- maps requires passable, flat, buildable, vanilla-unobstructed terrain.
+-- let each family be controlled separately. Surface dome-effect additions exclude the final three
+-- sector rows/columns at every edge; native markers remain exact. Every resource, anomaly, and
+-- effect top-up on both maps requires passable, flat, buildable, vanilla-unobstructed terrain.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI
@@ -786,6 +804,8 @@ C.TOPUP_RESEARCH_SITES = expansion_step_13
 	and as_bool(config.TopUpResearchSites)
 C.TOPUP_MORALE_VISTAS = expansion_step_13
 	and as_bool(config.TopUpMoraleVistas)
+C.TOPUP_DOME_EFFECT_OUTER_RING_EXCLUSION_SECTORS = math.max(0,
+	math.floor(as_number(config.TopUpDomeEffectOuterRingExclusionSectors, 3)))
 C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
 	as_number(config.TopUpMinimumTerrainNormalZ, 4080)))
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
@@ -801,6 +821,17 @@ C.TOPUP_ANOMALY_MOUNTAIN_BASE_CANDIDATES_PER_SECTOR = math.max(1, math.min(32,
 	math.floor(as_number(config.TopUpAnomalyMountainBaseCandidatesPerSector, 8))))
 C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_RISE_METERS = math.max(1,
 	as_number(config.TopUpAnomalyMountainBaseMinimumRiseMeters, 5))
+C.CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS =
+	as_bool(config.CreateNaturalMountainBaseBuildableAprons)
+C.MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS = math.max(0,
+	math.floor(as_number(config.MountainBaseApronOuterRingSectors, 3)))
+C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
+	math.floor(as_number(config.MountainBaseApronMaximumCount, 36)))
+C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
+	as_number(config.MountainBaseApronCoreRadiusHexes, 3))
+C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
+	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
+	as_number(config.MountainBaseApronFeatherRadiusHexes, 8))
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)

@@ -2089,7 +2089,8 @@ assert(type(ReinvalidateExpandedTerrain) == "function"
 	and type(RestoreCaveInShapePointsPatch) == "function"
 	and type(PatchUndergroundWonderShapePoints) == "function"
 	and type(RestoreUndergroundWonderShapePointsPatch) == "function"
-	and type(ScaleHexShapeForExpansion) == "function",
+	and type(ScaleHexShapeForExpansion) == "function"
+	and type(TerrainCopy.AuditNaturalMountainBaseBuildableAprons) == "function",
 	"sbm_map_generation: required TerrainCopy helpers missing (check sbm_terrain_copy exports)")
 
 local function StorePendingMap(map_name, pending)
@@ -10941,6 +10942,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							error("final surface RebuildBuildableGrid failed: " .. tostring(rebuild_err))
 						end
 						map.SuperBigMapSurfaceBuildableCurrent = true
+						local apron_ok, apron_stats =
+							TerrainCopy.AuditNaturalMountainBaseBuildableAprons(map)
+						LoadingStep("surface mountain-base apron buildable verdict", {
+							ok = tostring(apron_ok == true),
+							created = apron_stats and apron_stats.created or 0,
+							buildable_centers = apron_stats and apron_stats.buildable_centers or 0,
+							failed_centers = apron_stats and apron_stats.failed_centers or 0,
+							reason = apron_stats and apron_stats.reason or "audit unavailable",
+						}, map)
 					else
 						error("final surface RebuildBuildableGrid unavailable")
 					end

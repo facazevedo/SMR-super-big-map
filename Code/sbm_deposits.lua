@@ -605,11 +605,10 @@ local function IsNativeEnrichmentMarker(marker)
 		and marker.SuperBigMapEnrichmentClone ~= true
 end
 
--- True for the N-sector-wide perimeter ring of the FINAL expanded map. Qualifying anomaly extras
--- are routed here; other supported surface top-up families may use the same ring when all of their
--- ordinary placement rules pass. Prefer the live sector's col/row; fall back to world-distance
--- math when sector metadata is unavailable. Vanilla-generated markers are never moved by this
--- routing rule.
+-- True for the N-sector-wide perimeter ring of the FINAL expanded map. The same geometry helper
+-- serves both positive placement preferences and exclusion policies. Prefer the live sector's
+-- col/row; fall back to world-distance math when sector metadata is unavailable. Vanilla-generated
+-- markers are never moved by any top-up routing rule.
 local function NewFinalOuterSectorRingContext(map)
 	local city = map and map.City
 	local cols, rows = 0, 0
@@ -6368,8 +6367,10 @@ end
 -- deposits or anomalies, so neither existing top-up includes them. Top up each enabled
 -- deposit_type independently to preserve its exact source ratio. BeautyEffectDeposit,
 -- ResearchEffectDeposit, and MoraleEffectDeposit are separately gated. Unknown/custom
--- EffectDeposit subclasses are deliberately excluded. On the surface, these extras may use the
--- anomaly perimeter ring and require passable, flat, buildable, unobstructed hexes everywhere.
+-- EffectDeposit subclasses are deliberately excluded. Surface additions stay outside the final
+-- three-sector perimeter so every dome-effect bonus remains in the usable interior; underground
+-- additions retain their whole-map cave-floor placement. Both require passable, flat, buildable,
+-- unobstructed hexes everywhere.
 local EFFECT_TOPUP_FLAG = {
 	BeautyEffectDeposit = "TOPUP_VISTAS",
 	ResearchEffectDeposit = "TOPUP_RESEARCH_SITES",
@@ -6466,6 +6467,17 @@ function DepositRules.TopUpEffectDeposits(map)
 	local validation_context = IsUndergroundMap(map)
 		and SharedTopUpValidationContext(map) or NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
+	local surface_exclusion_ring_sectors = not underground and math.max(0, math.floor(
+		cfg().TOPUP_DOME_EFFECT_OUTER_RING_EXCLUSION_SECTORS or 3)) or 0
+	local surface_exclusion_ring_context = surface_exclusion_ring_sectors > 0
+		and NewFinalOuterSectorRingContext(map) or nil
+	local surface_ring_cached_rejected, surface_ring_sample_rejected = 0, 0
+	local function surface_effect_candidate_allowed(x, y, sector)
+		if underground or surface_exclusion_ring_sectors <= 0 then return true end
+		if type(x) ~= "number" or type(y) ~= "number" then return false end
+		return not IsInFinalOuterSectorRing(map, x, y, surface_exclusion_ring_sectors,
+			sector, surface_exclusion_ring_context)
+	end
 	local sequential_underground = underground
 		and cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 	local defer_candidate_reachability = underground
@@ -6485,14 +6497,18 @@ function DepositRules.TopUpEffectDeposits(map)
 			for _, c in ipairs(cached) do
 				if not sequential_underground and #candidates >= target_pool then break end
 				if not c.used then
-					local pt = point(c.x, c.y)
-					local can_reuse = (not underground or wall_free_density_suite)
-						and c._sbm_terrain_valid == true
-						and IsUnobstructedAt(map, pt, true, validation_context, c.q, c.r)
-					if can_reuse
-						or CanReceiveDeposit(map, pt, validation_context,
-							defer_candidate_reachability) then
-						candidates[#candidates + 1] = c
+					if not surface_effect_candidate_allowed(c.x, c.y, c.sector) then
+						surface_ring_cached_rejected = surface_ring_cached_rejected + 1
+					else
+						local pt = point(c.x, c.y)
+						local can_reuse = (not underground or wall_free_density_suite)
+							and c._sbm_terrain_valid == true
+							and IsUnobstructedAt(map, pt, true, validation_context, c.q, c.r)
+						if can_reuse
+							or CanReceiveDeposit(map, pt, validation_context,
+								defer_candidate_reachability) then
+							candidates[#candidates + 1] = c
+						end
 					end
 				end
 			end
@@ -6510,7 +6526,11 @@ function DepositRules.TopUpEffectDeposits(map)
 				x, y = lo_x + RandInt(span_x), lo_y + RandInt(span_y)
 			end
 			local sector = planned_sector or SectorAtPoint(map, x, y)
-			if sector and (underground or not SectorIsScanned(sector)) then
+			local region_allowed = sector
+				and surface_effect_candidate_allowed(x, y, sector)
+			if sector and not region_allowed then
+				surface_ring_sample_rejected = surface_ring_sample_rejected + 1
+			elseif sector and (underground or not SectorIsScanned(sector)) then
 				local pt = point(x, y)
 				local can_receive, _, _, _, q, r = CanReceiveDeposit(
 					map, pt, validation_context, defer_candidate_reachability)
@@ -6538,7 +6558,10 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 		local function new_strict_selector()
 			return NewSectorBalancedCandidateSelector(map, candidates, "effects",
-				function(candidate, profile) return repulsion.CanPlace(candidate, profile) end)
+				function(candidate, profile)
+					return surface_effect_candidate_allowed(candidate.x, candidate.y, candidate.sector)
+						and repulsion.CanPlace(candidate, profile)
+				end)
 		end
 		local selector = new_strict_selector()
 		local relaxed_selector
@@ -6618,6 +6641,7 @@ function DepositRules.TopUpEffectDeposits(map)
 						active_selector.Commit(c)
 						clone.SuperBigMapEffectTopUp = true
 						clone.SuperBigMapEffectTopUpType = deposit_type
+						clone.SuperBigMapDomeEffectInteriorTopUp = not underground or nil
 						clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
 							and rubble_wall_suite_token_by_map[map] ~= nil or nil
 						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
@@ -6710,6 +6734,9 @@ function DepositRules.TopUpEffectDeposits(map)
 			and UndergroundTopUpSamplingState(map).sector_samples or 0,
 		shared_candidate_whole_map_samples = underground
 			and UndergroundTopUpSamplingState(map).whole_map_samples or 0,
+		surface_exclusion_ring_sectors = surface_exclusion_ring_sectors,
+		surface_exclusion_cached_rejected = surface_ring_cached_rejected,
+		surface_exclusion_sample_rejected = surface_ring_sample_rejected,
 	})
 	if cfg().DEBUG_LOADING_TIMINGS == true then
 		local print_fn = Global("print")
@@ -6729,6 +6756,9 @@ function DepositRules.TopUpEffectDeposits(map)
 				.. " deferred_reachability=" .. tostring(defer_candidate_reachability)
 				.. " reachability_checks=" .. tostring(reachability_checks)
 				.. " reachability_rejections=" .. tostring(reachability_rejections)
+				.. " exclusion_ring=" .. tostring(surface_exclusion_ring_sectors)
+				.. " ring_rejected=" .. tostring(
+					surface_ring_cached_rejected + surface_ring_sample_rejected)
 				.. " remaining=" .. tostring(remaining_shortfall))
 		end
 	end
@@ -6991,12 +7021,15 @@ end
 -- passable, nearly horizontal, engine-buildable, unobstructed terrain. Surface anomalies may occupy
 -- any unscanned sector in the scenario and must use unique hexes. Mountain-base placement is a
 -- per-sector preference over this strict terrain set, so plains remain eligible and density can be
--- completed without ever relaxing the steepness rule.
+-- completed without ever relaxing the steepness rule. Dome-effect top-ups (Vistas, Research Sites,
+-- and Morale Vistas) must remain outside their configured final perimeter exclusion ring.
 function DepositRules.AuditSurfaceTopUpPlacement(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then return true end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 0))
+	local effect_exclusion_ring_sectors = math.max(0, math.floor(
+		cfg().TOPUP_DOME_EFFECT_OUTER_RING_EXCLUSION_SECTORS or 3))
 	local stats = {
 		anomaly_topups = 0, anomaly_inner_fallback = 0,
 		resource_topups = 0, effect_topups = 0,
@@ -7008,12 +7041,15 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		anomaly_mountain_base = 0, anomaly_not_mountain_base = 0, resource_obstructed = 0,
 		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
+		effect_inside_exclusion_ring = 0,
 	}
 	local violation_count = 0
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local validation_context = NewDepositValidationContext(map)
 	local ring_context = ring_sectors > 0 and NewFinalOuterSectorRingContext(map) or nil
+	local effect_ring_context = effect_exclusion_ring_sectors > 0
+		and NewFinalOuterSectorRingContext(map) or nil
 	local function audit_hex_key(x, y)
 		if type(world_to_hex) == "function" and type(point_fn) == "function" then
 			local ok_h, q, r = pcall(world_to_hex, point_fn(x, y))
@@ -7045,6 +7081,9 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		local sector = has_position and SectorAtPoint(map, x, y) or nil
 		local in_ring = ring_sectors > 0 and has_position and IsInFinalOuterSectorRing(
 			map, x, y, ring_sectors, sector, ring_context) or false
+		local in_effect_exclusion_ring = family == "effect" and effect_exclusion_ring_sectors > 0
+			and has_position and IsInFinalOuterSectorRing(map, x, y,
+				effect_exclusion_ring_sectors, sector, effect_ring_context) or false
 		local inner_fallback = family == "anomaly"
 			and marker.SuperBigMapInnerRingFallback == true
 		local reachable = has_position and PassableAt(map, pt, validation_context) or false
@@ -7072,6 +7111,9 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			stats.resource_inside_ring = stats.resource_inside_ring + 1
 		elseif in_ring and family == "effect" then
 			stats.effect_inside_ring = stats.effect_inside_ring + 1
+		end
+		if in_effect_exclusion_ring then
+			stats.effect_inside_exclusion_ring = stats.effect_inside_exclusion_ring + 1
 		end
 		if family == "anomaly" and has_position and not inner_fallback then
 			if sector then
@@ -7103,6 +7145,8 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		elseif ring_sectors > 0 and family == "anomaly" and not inner_fallback and not in_ring then
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
+		elseif family == "effect" and in_effect_exclusion_ring then
+			violation = "dome_effect_topup_inside_excluded_outer_ring"
 		elseif not even_terrain then
 			violation = family .. "_topup_not_flat_buildable_terrain"
 		elseif family == "anomaly" and not reachable then

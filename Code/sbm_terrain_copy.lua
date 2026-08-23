@@ -32,6 +32,14 @@ local function cfg_str(key, default)
 	return default
 end
 
+local function cfg_number(key, default)
+	local value = (SuperBigMap.Config or {})[key]
+	if type(value) == "number" then
+		return value
+	end
+	return default
+end
+
 local function LoadingBegin(name, map, data)
 	local diagnostics = SuperBigMap.Diagnostics
 	return diagnostics and type(diagnostics.LoadingBegin) == "function"
@@ -1363,6 +1371,335 @@ local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
 	}
 end
 
+-- Create a small number of genuinely buildable foothill pockets without drawing artificial
+-- platforms into the terrain. This runs on the final destination height grid, AFTER the exact
+-- v738 affine Z transform has been captured/dumped and BEFORE the authoritative passability and
+-- buildable-grid rebuilds. Candidate discovery is deterministic and geometry-only: marginal
+-- (roughly 5-18 degree) ground must have substantial higher terrain in several directions, and
+-- only the final configurable perimeter band is considered. No scenario/coordinate special case
+-- is involved.
+--
+-- Each accepted patch has a gently tilted planar core (rather than a level shelf), oriented with
+-- its short axis toward the adjacent mountain. A wide, slightly lobed quintic feather blends the
+-- core into the original height field. The quintic has zero first and second derivative at both
+-- ends, so neither the core join nor the untouched outer boundary leaves a lighting scar.
+local function CreateNaturalMountainBaseBuildableAprons(map, grid)
+	if not cfg_bool("CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS", true) then
+		return false, { reason = "disabled", created = 0, modified = 0 }
+	end
+	local mapdata = map and map.mapdata
+	if type(mapdata) ~= "table" or mapdata.Environment == "Underground"
+		or not grid or type(grid.size) ~= "function"
+		or type(grid.get) ~= "function" or type(grid.set) ~= "function" then
+		return false, { reason = "surface height grid unavailable", created = 0, modified = 0 }
+	end
+	local ok_size, width, height = pcall(grid.size, grid)
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width < 512 or height < 512 then
+		return false, { reason = "destination height grid too small", created = 0, modified = 0 }
+	end
+
+	local ring_sectors = math.max(0,
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 3)))
+	local maximum_count = math.max(0,
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 36)))
+	if ring_sectors <= 0 or maximum_count <= 0 then
+		return false, { reason = "empty apron policy", created = 0, modified = 0 }
+	end
+
+	local const_tbl = Global("const")
+	local height_tile = (type(const_tbl) == "table"
+		and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
+		and const_tbl.HeightTileSize or 100
+	local hex_size = (type(const_tbl) == "table"
+		and type(const_tbl.HexSize) == "number" and const_tbl.HexSize > 0)
+		and const_tbl.HexSize or 1000
+	local guim_v = tonumber(Global("guim")) or 100
+	local cells_per_hex = math.max(1, (hex_size + 0.0) / height_tile)
+	local core_hexes = math.max(2,
+		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 3))
+	local feather_hexes = math.max(core_hexes + 2,
+		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 8))
+	local core_fraction = math.min(0.65, math.max(0.20,
+		(core_hexes + 0.0) / feather_hexes))
+	local outer_short = feather_hexes * cells_per_hex
+	local outer_long = outer_short * 1.35
+	local edge_margin = math.ceil(outer_long + cells_per_hex * 2)
+
+	-- A sector remains the vanilla 409.6 height tiles wide. Derive the final count from the grid
+	-- rather than reading process-global const.SectorCount, which can temporarily describe the
+	-- other map during paired surface/underground generation.
+	local vanilla_sector_tiles = (4096 + 0.0) / 10
+	local count_x = math.max(10, math.floor(width / vanilla_sector_tiles + 0.5))
+	local count_y = math.max(10, math.floor(height / vanilla_sector_tiles + 0.5))
+	ring_sectors = math.min(ring_sectors, math.floor(math.min(count_x, count_y) / 2))
+	local sector_w = (width + 0.0) / count_x
+	local sector_h = (height + 0.0) / count_y
+
+	local function sample(x, y)
+		x = math.max(0, math.min(width - 1, math.floor(x + 0.5)))
+		y = math.max(0, math.min(height - 1, math.floor(y + 0.5)))
+		local value = grid:get(x, y)
+		return type(value) == "number" and value or nil
+	end
+
+	local directions = {
+		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
+		{ 0.70710678, 0.70710678 }, { -0.70710678, 0.70710678 },
+		{ 0.70710678, -0.70710678 }, { -0.70710678, -0.70710678 },
+	}
+	local relief_rings = {
+		{ 4 * cells_per_hex, 4 },
+		{ 8 * cells_per_hex, 2 },
+		{ 12 * cells_per_hex, 1 },
+	}
+	local fit_radius = math.max(2, math.floor(2 * cells_per_hex + 0.5))
+	local minimum_rise = math.max(5 * guim_v, 400)
+	local offsets = { 0.16, 0.29, 0.42, 0.55, 0.68, 0.81 }
+	local candidates = {}
+	local considered, relief_rejections, slope_rejections = 0, 0, 0
+
+	local function qualify(cx, cy, sx, sy)
+		considered = considered + 1
+		if cx < edge_margin or cy < edge_margin
+			or cx >= width - edge_margin or cy >= height - edge_margin then return nil end
+		local center = sample(cx, cy)
+		local left, right = sample(cx - fit_radius, cy), sample(cx + fit_radius, cy)
+		local top, bottom = sample(cx, cy - fit_radius), sample(cx, cy + fit_radius)
+		if not (center and left and right and top and bottom) then return nil end
+
+		local gx = (right - left + 0.0) / (2 * fit_radius)
+		local gy = (bottom - top + 0.0) / (2 * fit_radius)
+		local maximum_local_slope = math.max(math.abs(gx), math.abs(gy))
+		for _, direction in ipairs(directions) do
+			local z = sample(cx + direction[1] * fit_radius,
+				cy + direction[2] * fit_radius)
+			if z then
+				maximum_local_slope = math.max(maximum_local_slope,
+					math.abs(z - center) / fit_radius)
+			end
+		end
+		-- Below about five degrees the location is already useful; above about eighteen degrees a
+		-- small apron would need an obvious cut wall. Modify only the marginal band between them.
+		if maximum_local_slope < 9 or maximum_local_slope > 32 then
+			slope_rejections = slope_rejections + 1
+			return nil
+		end
+
+		local relief_score, maximum_rise, higher_samples, lower_samples = 0, 0, 0, 0
+		local mountain_x, mountain_y = 0, 0
+		for _, ring in ipairs(relief_rings) do
+			for _, direction in ipairs(directions) do
+				local z = sample(cx + direction[1] * ring[1],
+					cy + direction[2] * ring[1])
+				if z then
+					local rise = z - center
+					if rise >= minimum_rise then higher_samples = higher_samples + 1 end
+					if rise <= -minimum_rise then lower_samples = lower_samples + 1 end
+					if rise > 0 then
+						relief_score = relief_score + rise * ring[2]
+						maximum_rise = math.max(maximum_rise, rise)
+						mountain_x = mountain_x + direction[1] * rise * ring[2]
+						mountain_y = mountain_y + direction[2] * rise * ring[2]
+					end
+				end
+			end
+		end
+		if maximum_rise < minimum_rise or higher_samples < 3 or lower_samples > 7 then
+			relief_rejections = relief_rejections + 1
+			return nil
+		end
+
+		local mountain_length = math.sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
+		if mountain_length < 1 then
+			mountain_x, mountain_y = gx, gy
+			mountain_length = math.sqrt(mountain_x * mountain_x + mountain_y * mountain_y)
+		end
+		if mountain_length < 1 then mountain_x, mountain_y, mountain_length = 1, 0, 1 end
+		mountain_x, mountain_y = mountain_x / mountain_length, mountain_y / mountain_length
+
+		-- Leave a gentle natural grade in the core. Four height units per 100-wu tile is well under
+		-- the top-up suite's five-degree terrain-normal ceiling, even diagonally.
+		local gradient_length = math.sqrt(gx * gx + gy * gy)
+		if gradient_length > 4 then
+			gx, gy = gx * 4 / gradient_length, gy * 4 / gradient_length
+		end
+		return {
+			x = math.floor(cx + 0.5), y = math.floor(cy + 0.5),
+			sector_x = sx, sector_y = sy, center = center,
+			gx = gx, gy = gy, mountain_x = mountain_x, mountain_y = mountain_y,
+			score = relief_score - maximum_local_slope * guim_v * 2
+				- lower_samples * minimum_rise,
+			maximum_rise = maximum_rise, local_slope = maximum_local_slope,
+		}
+	end
+
+	-- Keep only the strongest candidate in each outer sector. This creates broad geographic
+	-- coverage without turning a single scenic basin into a cluster of platforms.
+	for sy = 0, count_y - 1 do
+		for sx = 0, count_x - 1 do
+			local outer = sx < ring_sectors or sy < ring_sectors
+				or sx >= count_x - ring_sectors or sy >= count_y - ring_sectors
+			if outer then
+				local best
+				for _, oy in ipairs(offsets) do
+					for _, ox in ipairs(offsets) do
+						local candidate = qualify((sx + ox) * sector_w, (sy + oy) * sector_h,
+							sx, sy)
+						if candidate and (not best or candidate.score > best.score) then best = candidate end
+					end
+				end
+				if best then candidates[#candidates + 1] = best end
+			end
+		end
+	end
+	table.sort(candidates, function(a, b)
+		if a.score == b.score then
+			if a.sector_y == b.sector_y then return a.sector_x < b.sector_x end
+			return a.sector_y < b.sector_y
+		end
+		return a.score > b.score
+	end)
+
+	local selected = {}
+	local minimum_spacing = outer_long * 2.15
+	local minimum_spacing_sq = minimum_spacing * minimum_spacing
+	for _, candidate in ipairs(candidates) do
+		local separated = true
+		for _, prior in ipairs(selected) do
+			local dx, dy = candidate.x - prior.x, candidate.y - prior.y
+			if dx * dx + dy * dy < minimum_spacing_sq then separated = false break end
+		end
+		if separated then
+			selected[#selected + 1] = candidate
+			if #selected >= maximum_count then break end
+		end
+	end
+
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
+	local modified = 0
+	local ok_apply, apply_error = pcall(function()
+		for index, candidate in ipairs(selected) do
+			-- Vary scale and lobe phase deterministically by sector; there is no random-stream cost.
+			local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31 + index * 13) % 9) - 4
+			local short_radius = outer_short * (1 + variant * 0.012)
+			local long_radius = outer_long * (1 - variant * 0.009)
+			local x0 = math.max(0, math.floor(candidate.x - long_radius - 2))
+			local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
+			local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
+			local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
+			for y = y0, y1 do
+				for x = x0, x1 do
+					local dx, dy = x - candidate.x, y - candidate.y
+					local u = dx * candidate.mountain_x + dy * candidate.mountain_y
+					local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
+					local ru, rv = u / short_radius, v / long_radius
+					local radius = math.sqrt(ru * ru + rv * rv)
+					if radius < 1.12 then
+						local nx, ny = 1, 0
+						if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
+						local lobe3 = nx * nx * nx - 3 * nx * ny * ny
+						local lobe2 = nx * nx - ny * ny
+						local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+						local normalized = radius / boundary
+						if normalized < 1 then
+							local weight
+							if normalized <= core_fraction then
+								weight = 1
+							else
+								local t = (normalized - core_fraction) / (1 - core_fraction)
+								local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+								weight = 1 - smooth
+							end
+							local old = grid:get(x, y)
+							if type(old) == "number" then
+								local target = candidate.center + candidate.gx * dx + candidate.gy * dy
+								local value = math.floor(old + (target - old) * weight + 0.5)
+								value = math.max(0, math.min(65535, value))
+								if value ~= old then grid:set(x, y, value) modified = modified + 1 end
+							end
+						end
+					end
+				end
+			end
+		end
+	end)
+	if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+
+	local centers = {}
+	if ok_apply then
+		for _, candidate in ipairs(selected) do
+			centers[#centers + 1] = {
+				x = math.floor(candidate.x * height_tile + 0.5),
+				y = math.floor(candidate.y * height_tile + 0.5),
+				sector_x = candidate.sector_x, sector_y = candidate.sector_y,
+				maximum_rise = candidate.maximum_rise,
+				original_local_slope = candidate.local_slope,
+			}
+		end
+	end
+	map.SuperBigMapNaturalMountainBaseApronCenters = centers
+	local report = {
+		reason = ok_apply and (#selected > 0 and "created" or "no qualifying marginal bases")
+			or "height-grid write failed",
+		created = ok_apply and #selected or 0,
+		modified = ok_apply and modified or 0,
+		candidates = #candidates, considered = considered,
+		relief_rejections = relief_rejections, slope_rejections = slope_rejections,
+		ring_sectors = ring_sectors, error = ok_apply and "" or tostring(apply_error),
+	}
+	map.SuperBigMapNaturalMountainBaseApronReport = report
+	LoadingStep("natural mountain-base buildable aprons", report, map)
+	return ok_apply and #selected > 0, report
+end
+
+-- Score the centers after the engine has rebuilt its destination-sized buildable grid. This does
+-- not move or relax a top-up candidate; it proves how many of the terrain edits actually became
+-- usable construction coordinates under the game's own final grid.
+local function AuditNaturalMountainBaseBuildableAprons(map)
+	local centers = map and map.SuperBigMapNaturalMountainBaseApronCenters
+	if type(centers) ~= "table" or #centers == 0 then
+		return true, { created = 0, buildable_centers = 0, reason = "no aprons" }
+	end
+	local world_to_hex = Global("WorldToHex")
+	local point_fn = Global("point")
+	local unbuildable_fn = Global("buildUnbuildableZ")
+	local buildable = map and map.buildable
+	local get_z = buildable and buildable.GetZ
+	if type(world_to_hex) ~= "function" or type(point_fn) ~= "function"
+		or type(unbuildable_fn) ~= "function"
+		or not buildable or type(get_z) ~= "function" then
+		return false, { created = #centers, buildable_centers = 0,
+			reason = "buildable-grid API unavailable" }
+	end
+	local ok_u, unbuildable = pcall(unbuildable_fn)
+	if not ok_u or type(unbuildable) ~= "number" then
+		return false, { created = #centers, buildable_centers = 0,
+			reason = "unbuildable sentinel unavailable" }
+	end
+	local buildable_centers = 0
+	for _, center in ipairs(centers) do
+		local ok_h, q, r = pcall(world_to_hex, point_fn(center.x, center.y))
+		if ok_h and type(q) == "number" and type(r) == "number" then
+			local ok_z, z = pcall(get_z, buildable, q, r)
+			if ok_z and type(z) == "number" and z ~= unbuildable then
+				buildable_centers = buildable_centers + 1
+			end
+		end
+	end
+	local report = {
+		created = #centers, buildable_centers = buildable_centers,
+		failed_centers = #centers - buildable_centers,
+		reason = buildable_centers > 0 and "final grid contains usable apron centers"
+			or "no apron center became buildable",
+	}
+	map.SuperBigMapNaturalMountainBaseApronAudit = report
+	LoadingStep("natural mountain-base buildable apron audit", report, map)
+	return buildable_centers > 0, report
+end
+
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
 -- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
 -- between its own input ("pre", straight out of GridResample) and its output ("post", right after
@@ -1825,6 +2162,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "post", stretched) end
+			-- Keep the v738 transform above byte-for-byte auditable. Natural foothill aprons are an
+			-- explicit, localized post-transform terrain operation and therefore run only after the
+			-- pure-transform capture/dump, but before this grid is committed and rebuilt for gameplay.
+			if scale_values and environment ~= "Underground" then
+				CreateNaturalMountainBaseBuildableAprons(map, stretched)
+			end
 			local ok_set = pcall(set_fn, map, stretched)
 			if type(invalidate_fn) == "function" then pcall(invalidate_fn, map) end
 			free_grid(src_sub)
@@ -5508,5 +5851,6 @@ local TerrainCopy = {
 	RestoreDeferredElevatorMigration = RestoreDeferredElevatorMigration,
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,
+	AuditNaturalMountainBaseBuildableAprons = AuditNaturalMountainBaseBuildableAprons,
 }
 SuperBigMap.TerrainCopy = TerrainCopy
