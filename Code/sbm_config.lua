@@ -283,6 +283,26 @@ config.MountainBaseApronMaximumCount = 288
 config.MountainBaseApronCoreRadiusHexes = 3
 config.MountainBaseApronFeatherRadiusHexes = 8
 
+-- Once resource top-ups have chosen their final coordinates, prepare only the terrain that their
+-- gameplay actually needs in the physical outer two-sector band.  Subsurface and terrain deposits
+-- receive a small extractor-buildable core; exposed surface resources keep a passable collection
+-- hex.  Four-or-more-resource mountain clusters may additionally receive one nearby pad sized from
+-- RocketLandingSite's live flatten shape.  Every edit uses the same C2 quintic feather as the
+-- seamless mountain-base repair and is skipped when the final engine grids already satisfy the
+-- requirement.  The rule is geometry-only and contains no scenario or sector-name cases.
+config.PrepareOuterResourceTerrain = true
+config.OuterResourceExtractorCoreRadiusHexes = 3
+config.OuterResourceExtractorFeatherRadiusHexes = 7
+config.OuterResourceSurfaceCoreRadiusHexes = 1
+config.OuterResourceSurfaceFeatherRadiusHexes = 4
+config.OuterResourceClusterMinimumDeposits = 4
+config.OuterResourceClusterRadiusHexes = 12
+config.OuterResourceRocketPadExtraFeatherHexes = 6
+config.OuterResourceRocketPadMaximumCount = 24
+-- A dome-effect top-up may enter the otherwise excluded perimeter only at a newly modified,
+-- engine-verified mountain rocket pad.  Ordinary perimeter terrain remains excluded.
+config.MountainRocketPadsAllowDomeEffects = true
+
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
 -- deposits are cloned onto validated final-terrain coordinates until the total reaches
@@ -847,6 +867,27 @@ C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
 	as_number(config.MountainBaseApronFeatherRadiusHexes, 8))
+C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
+C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
+	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
+C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(
+	C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES + 2,
+	as_number(config.OuterResourceExtractorFeatherRadiusHexes, 7))
+C.OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES = math.max(1,
+	as_number(config.OuterResourceSurfaceCoreRadiusHexes, 1))
+C.OUTER_RESOURCE_SURFACE_FEATHER_RADIUS_HEXES = math.max(
+	C.OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES + 2,
+	as_number(config.OuterResourceSurfaceFeatherRadiusHexes, 4))
+C.OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS = math.max(4,
+	math.floor(as_number(config.OuterResourceClusterMinimumDeposits, 4)))
+C.OUTER_RESOURCE_CLUSTER_RADIUS_HEXES = math.max(4,
+	math.floor(as_number(config.OuterResourceClusterRadiusHexes, 12)))
+C.OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES = math.max(3,
+	as_number(config.OuterResourceRocketPadExtraFeatherHexes, 6))
+C.OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT = math.max(0,
+	math.floor(as_number(config.OuterResourceRocketPadMaximumCount, 24)))
+C.MOUNTAIN_ROCKET_PADS_ALLOW_DOME_EFFECTS =
+	as_bool(config.MountainRocketPadsAllowDomeEffects)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)

@@ -45,6 +45,20 @@ CreateRealTimeThread(function()
 		-- switches production code into its placed-object acceptance mode.
 		local _, before = deposits.CensusFinalOuterResourceTopUps(map,
 			"headless pre-outer-deep-scan", false)
+		local registered_anomaly_markers = {}
+		for _, sector in ipairs(sectors) do
+			for _, marker_list in pairs(sector.markers or {}) do
+				if type(marker_list) == "table" then
+					for _, marker in ipairs(marker_list) do
+						if marker and marker.SuperBigMapAnomalyTopUp == true then
+							registered_anomaly_markers[marker] = true
+						end
+					end
+				end
+			end
+		end
+		local registered_anomalies = 0
+		for _ in pairs(registered_anomaly_markers) do registered_anomalies = registered_anomalies + 1 end
 		local scanned, failed = 0, 0
 		for _, sector in ipairs(sectors) do
 			local outer = sector.col <= min_col + 1 or sector.col >= max_col - 1
@@ -67,7 +81,7 @@ CreateRealTimeThread(function()
 			return #rows > 0 and table.concat(rows, "+") or "none"
 		end
 		g_OuterRingRevealSummary = string.format(
-			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] audit_violations=%s shortfall=%d outermost_shortfall=%d",
+			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d registered_anomalies=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] terrain_resources=%s terrain_modified=%s rocket_pads=%s rocket_modified=%s verified_mountain_pads=%s terrain_failures=%s/%s failure_reasons=[%s/%s] first_failures=[%s/%s] audit_violations=%s shortfall=%d outermost_shortfall=%d",
 			scanned, before.ordinary_resource_topups or -1, census.ordinary_resource_topups or -1,
 			census.ordinary_resource_topups_placed or -1,
 			census.ordinary_resource_topups_outermost or -1,
@@ -76,11 +90,42 @@ CreateRealTimeThread(function()
 			census.outermost_minimum or -1,
 			breakdown(census.resource_breakdown),
 			census.anomaly_topups or -1, census.anomaly_topups_total or -1,
-			census.anomaly_topups_placed or -1, breakdown(census.anomaly_breakdown),
+			census.anomaly_topups_placed or -1, registered_anomalies,
+			breakdown(census.anomaly_breakdown),
 			census.anomaly_topups_outside_ring or -1, census.effect_topups or -1,
-			breakdown(census.effect_breakdown), audit and tostring(audit.violations) or "n/a",
+			breakdown(census.effect_breakdown),
+			map.SuperBigMapOuterResourceTerrainReport
+				and tostring(map.SuperBigMapOuterResourceTerrainReport.resources) or "n/a",
+			map.SuperBigMapOuterResourceTerrainReport
+				and tostring(map.SuperBigMapOuterResourceTerrainReport.resource_sites_modified) or "n/a",
+			map.SuperBigMapOuterResourceTerrainReport
+				and tostring(map.SuperBigMapOuterResourceTerrainReport.rocket_pads) or "n/a",
+			map.SuperBigMapOuterResourceTerrainReport
+				and tostring(map.SuperBigMapOuterResourceTerrainReport.rocket_pads_modified) or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and tostring(map.SuperBigMapOuterResourceTerrainAudit.verified_modified_mountain_rocket_pads)
+				or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and tostring(map.SuperBigMapOuterResourceTerrainAudit.resource_failures) or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and tostring(map.SuperBigMapOuterResourceTerrainAudit.rocket_failures) or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and breakdown(map.SuperBigMapOuterResourceTerrainAudit.resource_failure_breakdown)
+				or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and breakdown(map.SuperBigMapOuterResourceTerrainAudit.rocket_failure_breakdown)
+				or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and tostring(map.SuperBigMapOuterResourceTerrainAudit.first_resource_failure) or "n/a",
+			map.SuperBigMapOuterResourceTerrainAudit
+				and tostring(map.SuperBigMapOuterResourceTerrainAudit.first_rocket_failure) or "n/a",
+			audit and tostring(audit.violations) or "n/a",
 			census.shortfall or -1, census.outermost_shortfall or -1)
-		g_OuterRingRevealPassed = census_ok == true and audit_ok == true
+		local terrain_audit = map.SuperBigMapOuterResourceTerrainAudit
+		local terrain_ok = terrain_audit ~= nil
+			and terrain_audit.resource_failures == 0
+			and terrain_audit.rocket_failures == 0
+		g_OuterRingRevealPassed = census_ok == true and audit_ok == true and terrain_ok
 		if g_OuterRingRevealPassed ~= true then
 			g_OuterRingRevealError = "outer ring placed-object gate failed: " .. g_OuterRingRevealSummary
 			g_OuterRingRevealStatus = "error"

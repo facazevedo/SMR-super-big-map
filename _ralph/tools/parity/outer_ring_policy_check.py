@@ -62,9 +62,11 @@ def mountain_base_relief(maximum_rise_m: float, higher_samples: int) -> bool:
     return maximum_rise_m >= 5 and higher_samples >= 2
 
 
-def dome_effect_topup_allowed(edge_layer: int, underground: bool = False) -> bool:
-    """Only added surface dome effects exclude the final two-sector perimeter."""
-    return underground or edge_layer > 2
+def dome_effect_topup_allowed(
+    edge_layer: int, underground: bool = False, verified_mountain_pad: bool = False
+) -> bool:
+    """Perimeter effects require an exact, newly shaped, engine-verified mountain pad."""
+    return underground or edge_layer > 2 or verified_mountain_pad
 
 
 def quota_hex_clearance(a: tuple[int, int], b: tuple[int, int], minimum: int = 2) -> bool:
@@ -129,6 +131,11 @@ aprons = section(
     "local function CreateNaturalMountainBaseBuildableAprons",
     "local function AuditNaturalMountainBaseBuildableAprons",
 )
+outer_resource_terrain = section(
+    TERRAIN,
+    "local function PrepareOuterResourceTerrain",
+    "-- TEST-ONLY SEAM",
+)
 
 static_checks = {
     "anomaly_outer_ring_is_two_sectors": "config.TopUpAnomalyOuterRingSectors = 2" in CONFIG,
@@ -182,6 +189,61 @@ static_checks = {
     ),
     "effect_exclusion_is_surface_only": "if underground or surface_exclusion_ring_sectors <= 0" in effects,
     "effect_exclusion_is_audited": "dome_effect_topup_inside_excluded_outer_ring" in audit,
+    "outer_resource_terrain_preparation_is_enabled": (
+        "config.PrepareOuterResourceTerrain = true" in CONFIG
+        and "C.PREPARE_OUTER_RESOURCE_TERRAIN" in CONFIG
+    ),
+    "outer_resource_terrain_uses_two_sector_world_band": (
+        'cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)' in outer_resource_terrain
+        and "map_w * ring_sectors / 20" in outer_resource_terrain
+    ),
+    "outer_resource_terrain_uses_live_extractor_shapes": (
+        'pcall(get_extended_shape, template_name, 0)' in outer_resource_terrain
+        and 'Concrete = "RegolithExtractor"' in outer_resource_terrain
+        and 'Metals = "MetalsExtractor"' in outer_resource_terrain
+        and 'PreciousMetals = "PreciousMetalsExtractor"' in outer_resource_terrain
+        and 'Water = "WaterExtractor"' in outer_resource_terrain
+    ),
+    "surface_resources_require_exact_rover_tile_passability": (
+        'local surface_offsets = { { 0, 0 } }' in outer_resource_terrain
+        and 'site.kind == "extractor"' in outer_resource_terrain
+    ),
+    "resource_clusters_are_general_hex_distance_components": (
+        "axial_distance(seed.q, seed.r, entry.q, entry.r) <= cluster_radius"
+        in outer_resource_terrain
+        and "OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS" in outer_resource_terrain
+    ),
+    "resource_clusters_use_live_rocket_shape": (
+        'pcall(get_extended_shape, "RocketLandingSite", 1)' in outer_resource_terrain
+        and "ready_offsets(site.q, site.r, rocket_offsets, true)" in outer_resource_terrain
+    ),
+    "resource_terrain_uses_seamless_quintic_feather": (
+        "t * t * t * (t * (t * 6 - 15) + 10)" in outer_resource_terrain
+        and "weight = 1 - smooth" in outer_resource_terrain
+    ),
+    "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
+        GENERATION.index('"surface prepare outer resource terrain"')
+        < GENERATION.index('"surface top-up anomalies"')
+        < GENERATION.index('"surface top-up effect deposits"')
+        and 'RebuildFinal(\n\t\t\t\t\t\t\t\tmap, "after outer resource terrain preparation")'
+        in GENERATION
+    ),
+    "resource_terrain_audit_is_fail_closed": (
+        "outer resource terrain audit failed" in GENERATION
+        and "resource_failures == 0 and rocket_failures == 0" in outer_resource_terrain
+    ),
+    "mountain_pad_effect_exception_requires_exact_verified_hex": (
+        "VerifiedMountainRocketPadAt" in effects
+        and "pad.modified == true and pad.verified == true" in effects
+        and "pad.q == q and pad.r == r" in DEPOSITS
+        and "SuperBigMapMountainRocketPadEffectTopUp" in audit
+    ),
+    "general_cluster_and_terrain_rules_have_no_scenario_special_case": (
+        "14N134W" not in outer_resource_terrain
+        and "A17" not in outer_resource_terrain
+        and "14N134W" not in effects
+        and "A17" not in effects
+    ),
     "natural_aprons_enabled": "config.CreateNaturalMountainBaseBuildableAprons = true" in CONFIG,
     "natural_aprons_use_outer_two_sectors": "config.MountainBaseApronOuterRingSectors = 2" in CONFIG,
     "mountain_base_resource_minimum_is_70": (
@@ -293,7 +355,8 @@ static_checks = {
     ),
     "resource_census_always_rejects_wrong_family_ring_placement": (
         "and stats.anomaly_topups_outside_ring == 0" in census
-        and "and stats.effect_topups == 0" in census
+        and "and stats.unverified_outer_effect_topups == 0" in census
+        and "VerifiedMountainRocketPadAt(map, x, y)" in census
         and "not stats.require_placed or stats.anomaly_unplaced == 0" in census
     ),
     "resource_census_runs_before_and_after_deferred_initialization": (
@@ -308,7 +371,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_859": "'version', 859" in METADATA,
+    "version_is_860": "'version', 860" in METADATA,
 }
 
 case_results = []
@@ -341,6 +404,10 @@ effect_checks = {
         not dome_effect_topup_allowed(layer) for layer in (1, 2)
     ),
     "surface_layer_three_is_allowed": dome_effect_topup_allowed(3),
+    "verified_mountain_pad_is_narrow_exception": dome_effect_topup_allowed(
+        1, verified_mountain_pad=True
+    ),
+    "unverified_mountain_perimeter_remains_excluded": not dome_effect_topup_allowed(1),
     "underground_is_unchanged": all(
         dome_effect_topup_allowed(layer, underground=True) for layer in (1, 2, 3, 4)
     ),
@@ -374,7 +441,7 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 6,
+    "schema_version": 7,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,

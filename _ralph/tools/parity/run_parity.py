@@ -41,6 +41,15 @@ SAVE_TEMPLATE = HERE / "save_template.lua"
 LOAD_TEMPLATE = HERE / "load_template.lua"
 OUTER_RING_REVEAL_TEMPLATE = HERE / "outer_ring_reveal_template.lua"
 
+ROUGH_TERRAIN_BLOCK = """\t\tif type(Game) ~= \"table\"
+\t\t\tor type(Game.AddGameRule) ~= \"function\" then
+\t\t\terror(\"Rough Terrain harness rule requested but Game:AddGameRule is unavailable\")
+\t\tend
+\t\tGame:AddGameRule(\"RoughTerrain\")
+\t\tif not IsGameRuleActive(\"RoughTerrain\") then
+\t\t\terror(\"Rough Terrain harness rule did not activate\")
+\t\tend"""
+
 # The stock underground seed is drawn from AsyncRand inside FillRandomMapGen
 # (ModTools PreGameMenus.lua:166, because MapData["BlankUnderground_0X"].map_randomizeseed
 # is true), so three identical vanilla runs generated three different undergrounds
@@ -4659,7 +4668,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
              build_probe=False, build_init_probe=False, property_probe=False,
              perimeter_probe=False,
-             perimeter_full_probe=False, outer_ring_reveal=False):
+             perimeter_full_probe=False, outer_ring_reveal=False, rough_terrain=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4692,6 +4701,8 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "__UNDERGROUND_PIN_BLOCK__", UNDERGROUND_PIN_BLOCK.format(seed=int(pin_seed))
         )
     extras = []
+    if rough_terrain:
+        extras.append(ROUGH_TERRAIN_BLOCK)
     if serial_raster:
         extras.append(SERIAL_RASTER_BLOCK)
     if pass_pitch_control:
@@ -5299,6 +5310,7 @@ def main():
         perimeterprobe = "perimeterprobe" in sys.argv[5:]
         perimeterfull = "perimeterfull" in sys.argv[5:]
         outerringreveal = "outerringreveal" in sys.argv[5:]
+        roughterrain = "roughterrain" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -5336,6 +5348,7 @@ def main():
             f"property_probe={propertyprobe} perimeter_probe={perimeterprobe} "
             f"perimeter_full_probe={perimeterfull} "
             f"outer_ring_reveal={outerringreveal} "
+            f"rough_terrain={roughterrain} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -5362,7 +5375,8 @@ def main():
                         property_probe=propertyprobe,
                         perimeter_probe=perimeterprobe,
                         perimeter_full_probe=perimeterfull,
-                        outer_ring_reveal=outerringreveal)
+                        outer_ring_reveal=outerringreveal,
+                        rough_terrain=roughterrain)
         log(f"result: {json.dumps(info)}")
         return
 

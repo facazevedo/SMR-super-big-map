@@ -1717,9 +1717,11 @@ local function MoveConcreteImprints(map, moves)
 
 end
 
--- Register added RESOURCE markers with their final map sectors so scanning them spawns
--- the deposit (vanilla RevealDeposits
--- reads sector.markers, which is populated by sector:RegisterDeposit). Idempotent.
+-- Register every added enrichment marker with its final map sector so scanning it spawns the
+-- deposit/anomaly/effect (vanilla RevealDeposits reads sector.markers, which is populated by
+-- sector:RegisterDeposit).  This final idempotent sweep is intentionally retained when the
+-- optimized candidate pool is active: per-clone registration is the fast path, while this sweep
+-- is the lifecycle guarantee after any final terrain rebuild or marker-overlap repair.
 -- SURFACE ONLY: underground enrichments must not depend on sector mechanics (user directive)
 -- -- there the unplaced clone markers are placed+revealed by the proximity DepositRevealer.
 function DepositRules.RegisterClonedMarkers(map)
@@ -1730,9 +1732,6 @@ function DepositRules.RegisterClonedMarkers(map)
 	if IsUndergroundMap(map) then
 		return
 	end
-	if cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true then
-		return
-	end
 	local city = map and map.City
 	local get_sector = Global("GetMapSectorXY")
 	if not city or type(map.MapForEach) ~= "function" or type(get_sector) ~= "function" then
@@ -1740,7 +1739,10 @@ function DepositRules.RegisterClonedMarkers(map)
 	end
 	local count = 0
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
-		if marker and marker.SuperBigMapEnrichmentClone and IsResourceDepositMarker(marker) then
+		if marker and marker.SuperBigMapEnrichmentClone
+			and (marker.SuperBigMapResourceTopUp == true
+				or marker.SuperBigMapAnomalyTopUp == true
+				or marker.SuperBigMapEffectTopUp == true) then
 			local pos = ObjectPos(marker)
 			if pos and type(pos.xy) == "function" then
 				local x, y = pos:xy()
@@ -6787,6 +6789,28 @@ local function EffectDepositTopUpEnabled(deposit_type)
 	return flag ~= nil and cfg()[flag] == true
 end
 
+-- The ordinary surface rule keeps dome modifiers out of the outer perimeter.  A narrow exception
+-- is published by the post-resource terrain audit: a coordinate must be a newly shaped mountain
+-- pad and must pass RocketLandingSite's live footprint against the rebuilt engine grids.  Matching
+-- by final hex makes this independent of scenario names, sector labels, and world-coordinate
+-- round-off while preventing an unverified nearby point from inheriting the exception.
+local function VerifiedMountainRocketPadAt(map, x, y)
+	if cfg().MOUNTAIN_ROCKET_PADS_ALLOW_DOME_EFFECTS ~= true
+		or not map or type(x) ~= "number" or type(y) ~= "number" then return nil end
+	local pads = map.SuperBigMapVerifiedMountainRocketPads
+	local point_fn = Global("point")
+	local world_to_hex = Global("WorldToHex")
+	if type(pads) ~= "table" or type(point_fn) ~= "function"
+		or type(world_to_hex) ~= "function" then return nil end
+	local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
+	if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then return nil end
+	for _, pad in ipairs(pads) do
+		if pad and pad.modified == true and pad.verified == true
+			and pad.q == q and pad.r == r then return pad end
+	end
+	return nil
+end
+
 function DepositRules.TopUpEffectDeposits(map)
 	if not ExpansionAdditionStagesReady("effect top-up") then return end
 	map = map or Global("CurrentMap")
@@ -6880,6 +6904,7 @@ function DepositRules.TopUpEffectDeposits(map)
 	local function surface_effect_candidate_allowed(x, y, sector)
 		if underground or surface_exclusion_ring_sectors <= 0 then return true end
 		if type(x) ~= "number" or type(y) ~= "number" then return false end
+		if VerifiedMountainRocketPadAt(map, x, y) then return true end
 		return not IsInFinalOuterSectorRing(map, x, y, surface_exclusion_ring_sectors,
 			sector, surface_exclusion_ring_context)
 	end
@@ -6892,17 +6917,50 @@ function DepositRules.TopUpEffectDeposits(map)
 		and rubble_wall_suite_token_by_map[map] ~= nil
 	RunPaused("SuperBigMapEffectDepositTopUp", function()
 		local repulsion = NewTopUpRepulsionTracker(map, "effects")
-		local candidates = {}
+		local candidates, mountain_pad_candidates, mountain_pad_hexes = {}, {}, {}
 		local MAX_SAMPLES, MAX_POOL = 6000, 2500
 		local target_pool = sequential_underground and 0
 			or math.min(MAX_POOL, math.max(512, total_shortfall * 32))
 		local candidate_samples = 0
+		-- Give verified pads one exact candidate each.  They remain subject to normal terrain,
+		-- obstruction, scan-gate, and vanilla effect-family repulsion checks.  No resource marker or
+		-- pad coordinate is moved, and the general pool skips the same hex to prevent duplicates.
+		if not underground and cfg().MOUNTAIN_ROCKET_PADS_ALLOW_DOME_EFFECTS == true then
+			for _, pad in ipairs(map.SuperBigMapVerifiedMountainRocketPads or {}) do
+				if pad and pad.modified == true and pad.verified == true
+					and type(pad.x) == "number" and type(pad.y) == "number"
+					and type(pad.q) == "number" and type(pad.r) == "number" then
+					local sector = SectorAtPoint(map, pad.x, pad.y)
+					local pt = point(pad.x, pad.y)
+					local can_receive, _, _, _, q, r = CanReceiveDeposit(
+						map, pt, validation_context, false)
+					if sector and not SectorIsScanned(sector) and can_receive then
+						local key = tostring(q) .. ":" .. tostring(r)
+						local candidate = {
+							x = pad.x, y = pad.y,
+							terrain_type = TerrainTypeAt(map, pt, validation_context) or -1,
+							sector = sector, sector_id = sector.id,
+							q = q, r = r, _sbm_terrain_valid = true,
+							_sbm_repulsion_hex = key,
+							_sbm_verified_mountain_rocket_pad = true,
+						}
+						candidates[#candidates + 1] = candidate
+						mountain_pad_candidates[#mountain_pad_candidates + 1] = candidate
+						mountain_pad_hexes[key] = true
+					end
+				end
+			end
+		end
 		local cached = CachedTopUpCandidates(map)
 		if cached then
 			for _, c in ipairs(cached) do
 				if not sequential_underground and #candidates >= target_pool then break end
 				if not c.used then
-					if not surface_effect_candidate_allowed(c.x, c.y, c.sector) then
+					local candidate_key = type(c.q) == "number" and type(c.r) == "number"
+						and (tostring(c.q) .. ":" .. tostring(c.r)) or nil
+					if candidate_key and mountain_pad_hexes[candidate_key] then
+						-- The exact audited object above owns this pad coordinate.
+					elseif not surface_effect_candidate_allowed(c.x, c.y, c.sector) then
 						surface_ring_cached_rejected = surface_ring_cached_rejected + 1
 					else
 						local pt = point(c.x, c.y)
@@ -6961,14 +7019,24 @@ function DepositRules.TopUpEffectDeposits(map)
 			if #candidates >= target_pool then break end
 			sample_fresh_candidate()
 		end
+		local shared_effect_loads = BuildEnrichmentSectorLoads(map)
 		local function new_strict_selector()
 			return NewSectorBalancedCandidateSelector(map, candidates, "effects",
 				function(candidate, profile)
 					return surface_effect_candidate_allowed(candidate.x, candidate.y, candidate.sector)
 						and repulsion.CanPlace(candidate, profile)
-				end)
+				end, shared_effect_loads)
+		end
+		local function new_mountain_pad_selector()
+			return NewSectorBalancedCandidateSelector(map, mountain_pad_candidates,
+				"verified mountain rocket-pad effects",
+				function(candidate, profile)
+					return candidate._sbm_verified_mountain_rocket_pad == true
+						and repulsion.CanPlace(candidate, profile)
+				end, shared_effect_loads)
 		end
 		local selector = new_strict_selector()
+		local mountain_pad_selector = new_mountain_pad_selector()
 		local relaxed_selector
 		local function take_reachable_candidate(active, profile)
 			while active do
@@ -6984,6 +7052,7 @@ function DepositRules.TopUpEffectDeposits(map)
 		end
 		local function rebuild_effect_selectors()
 			selector = new_strict_selector()
+			mountain_pad_selector = new_mountain_pad_selector()
 			relaxed_selector = nil
 		end
 		for _, deposit_type in ipairs(types) do
@@ -6993,8 +7062,12 @@ function DepositRules.TopUpEffectDeposits(map)
 			-- Continue after a failed clone. Take consumes one candidate, so this loop is
 			-- bounded by the validated pool even when every clone attempt fails.
 			while (added_by_type[deposit_type] or 0) < shortfall do
-				local c = take_reachable_candidate(selector, effect_profile)
-				local active_selector = c and selector or nil
+				local c = take_reachable_candidate(mountain_pad_selector, effect_profile)
+				local active_selector = c and mountain_pad_selector or nil
+				if not c then
+					c = take_reachable_candidate(selector, effect_profile)
+					active_selector = c and selector or nil
+				end
 				local density_fallback = false
 				if not c and sequential_underground then
 					local strict_sample_limit = math.min(MAX_SAMPLES, candidate_samples + 128)
@@ -7046,7 +7119,10 @@ function DepositRules.TopUpEffectDeposits(map)
 						active_selector.Commit(c)
 						clone.SuperBigMapEffectTopUp = true
 						clone.SuperBigMapEffectTopUpType = deposit_type
-						clone.SuperBigMapDomeEffectInteriorTopUp = not underground or nil
+						clone.SuperBigMapMountainRocketPadEffectTopUp =
+							c._sbm_verified_mountain_rocket_pad == true or nil
+						clone.SuperBigMapDomeEffectInteriorTopUp = not underground
+							and c._sbm_verified_mountain_rocket_pad ~= true or nil
 						clone.SuperBigMapTopUpIgnoredRubbleWalls = underground
 							and rubble_wall_suite_token_by_map[map] ~= nil or nil
 						clone.SuperBigMapUndergroundDensityFallback = density_fallback or nil
@@ -7475,7 +7551,10 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		anomaly_topups = 0, anomaly_topups_total = 0,
 		anomaly_topups_placed = 0, anomaly_topups_outside_ring = 0,
 		effect_topups = 0, effect_topups_total = 0,
-		effect_topups_placed = 0, native_resources = 0,
+		effect_topups_placed = 0,
+		verified_mountain_rocket_pad_effect_topups = 0,
+		unverified_outer_effect_topups = 0,
+		native_resources = 0,
 		missing_position = 0,
 		resource_breakdown = {}, anomaly_breakdown = {}, effect_breakdown = {},
 	}
@@ -7561,9 +7640,17 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		if not (marker and marker.SuperBigMapEffectTopUp == true) then return end
 		stats.effect_topups_total = stats.effect_topups_total + 1
 		count_breakdown(stats.effect_breakdown, marker, "effect")
-		if in_band(marker) then
+		local x, y = marker_xy(marker)
+		if x and IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors) then
 			stats.effect_topups = stats.effect_topups + 1
 			if placed(marker) then stats.effect_topups_placed = stats.effect_topups_placed + 1 end
+			if marker.SuperBigMapMountainRocketPadEffectTopUp == true
+				and VerifiedMountainRocketPadAt(map, x, y) then
+				stats.verified_mountain_rocket_pad_effect_topups =
+					stats.verified_mountain_rocket_pad_effect_topups + 1
+			else
+				stats.unverified_outer_effect_topups = stats.unverified_outer_effect_topups + 1
+			end
 		end
 	end)
 	local minimum = math.max(0, math.floor(
@@ -7581,7 +7668,8 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		or stats.guaranteed_resource_topups_outermost
 	stats.outermost_shortfall = math.max(0, outermost_minimum - accepted_outermost)
 	stats.anomaly_unplaced = stats.anomaly_topups_total - stats.anomaly_topups_placed
-	stats.lifecycle_violations = stats.anomaly_topups_outside_ring + stats.effect_topups
+	stats.lifecycle_violations = stats.anomaly_topups_outside_ring
+		+ stats.unverified_outer_effect_topups
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTopUpCensus] phase=" .. tostring(phase or "unspecified")
@@ -7597,6 +7685,10 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			.. " anomaly_topups_outside_ring=" .. tostring(stats.anomaly_topups_outside_ring)
 			.. " effect_topups=" .. tostring(stats.effect_topups)
 			.. " effect_topups_placed=" .. tostring(stats.effect_topups_placed)
+			.. " verified_mountain_rocket_pad_effect_topups="
+			.. tostring(stats.verified_mountain_rocket_pad_effect_topups)
+			.. " unverified_outer_effect_topups="
+			.. tostring(stats.unverified_outer_effect_topups)
 			.. " native_resources=" .. tostring(stats.native_resources)
 			.. " resource_breakdown=" .. tostring(CountMapString(stats.resource_breakdown))
 			.. " anomaly_breakdown=" .. tostring(CountMapString(stats.anomaly_breakdown))
@@ -7610,7 +7702,7 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 	return stats.shortfall == 0
 		and stats.outermost_shortfall == 0
 		and stats.anomaly_topups_outside_ring == 0
-		and stats.effect_topups == 0
+		and stats.unverified_outer_effect_topups == 0
 		and (not stats.require_placed or stats.anomaly_unplaced == 0), stats
 end
 
@@ -7649,7 +7741,8 @@ end
 -- passable, nearly horizontal, engine-buildable, unobstructed terrain. Every surface anomaly top-up
 -- must occupy the configured final perimeter and use a unique hex; there is no interior fallback.
 -- Dome-effect top-ups (Vistas, Research Sites, and Morale Vistas) must remain outside their
--- configured final perimeter exclusion ring.
+-- configured final perimeter exclusion ring, except at the exact newly modified mountain rocket
+-- pads published by the post-rebuild terrain audit.
 function DepositRules.AuditSurfaceTopUpPlacement(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
@@ -7677,6 +7770,8 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
 		effect_inside_exclusion_ring = 0,
+		effect_verified_mountain_rocket_pad = 0,
+		effect_unverified_outer = 0,
 	}
 	local violation_count = 0
 	local point_fn = Global("point")
@@ -7721,6 +7816,9 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		local in_effect_exclusion_ring = family == "effect" and effect_exclusion_ring_sectors > 0
 			and has_position and IsInFinalOuterSectorRing(map, x, y,
 				effect_exclusion_ring_sectors, sector, effect_ring_context) or false
+		local verified_mountain_pad_effect = family == "effect"
+			and marker.SuperBigMapMountainRocketPadEffectTopUp == true
+			and has_position and VerifiedMountainRocketPadAt(map, x, y) ~= nil or false
 		local inner_fallback = family == "anomaly"
 			and marker.SuperBigMapInnerRingFallback == true
 		local reachable = has_position and PassableAt(map, pt, validation_context) or false
@@ -7772,6 +7870,12 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		end
 		if in_effect_exclusion_ring then
 			stats.effect_inside_exclusion_ring = stats.effect_inside_exclusion_ring + 1
+			if verified_mountain_pad_effect then
+				stats.effect_verified_mountain_rocket_pad =
+					stats.effect_verified_mountain_rocket_pad + 1
+			else
+				stats.effect_unverified_outer = stats.effect_unverified_outer + 1
+			end
 		end
 		if family == "anomaly" and has_position and not inner_fallback then
 			if sector then
@@ -7800,7 +7904,8 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		elseif ring_sectors > 0 and family == "anomaly" and not in_ring then
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
-		elseif family == "effect" and in_effect_exclusion_ring then
+		elseif family == "effect" and in_effect_exclusion_ring
+			and not verified_mountain_pad_effect then
 			violation = "dome_effect_topup_inside_excluded_outer_ring"
 		elseif reserved_mountain_base and not in_ring then
 			violation = "mountain_base_resource_topup_outside_final_ring"

@@ -10973,6 +10973,40 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							TimedSafeCall("surface top-up resources", map,
 								deposits.TopUpDeposits, map)
 						end
+						-- Resource coordinates are final now.  Prepare only failed extractor/collection
+						-- footprints and nearby four-resource mountain-cluster rocket pads, then ask the
+						-- stock engine for the authoritative passability/buildability verdict before any
+						-- anomaly or dome-effect candidate consumes terrain state.
+						if type(TerrainCopy.PrepareOuterResourceTerrain) ~= "function"
+							or type(TerrainCopy.AuditOuterResourceTerrain) ~= "function" then
+							error("outer resource terrain preparation is unavailable")
+						end
+						local resource_terrain_changed, resource_terrain_stats = TimedSafeCall(
+							"surface prepare outer resource terrain", map,
+							TerrainCopy.PrepareOuterResourceTerrain, map)
+						if resource_terrain_stats and resource_terrain_stats.error
+							and resource_terrain_stats.error ~= "" then
+							error("outer resource terrain preparation failed: "
+								.. tostring(resource_terrain_stats.error))
+						end
+						if resource_terrain_changed == true then
+							SuperBigMap.GenerationGrids.RebuildFinal(
+								map, "after outer resource terrain preparation")
+							-- TopUpDeposits may have published candidates validated against the old grids.
+							-- Force anomaly/effect selection to observe the rebuilt terrain instead.
+							if type(deposits.ClearTopUpPlacementPool) == "function" then
+								deposits.ClearTopUpPlacementPool(map)
+							end
+						end
+						local resource_terrain_ok, resource_terrain_audit =
+							TerrainCopy.AuditOuterResourceTerrain(map)
+						if resource_terrain_ok ~= true then
+							error("outer resource terrain audit failed: resource_failures="
+								.. tostring(resource_terrain_audit
+									and resource_terrain_audit.resource_failures)
+								.. " rocket_failures=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.rocket_failures))
+						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
 						-- layouts diverge from vanilla).

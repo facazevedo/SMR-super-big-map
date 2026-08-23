@@ -1734,6 +1734,834 @@ local function AuditNaturalMountainBaseBuildableAprons(map)
 	return buildable_centers > 0, report
 end
 
+-- The resource layout is not known when the stretch-time foothill opportunity grid is prepared.
+-- Complete the terrain contract after TopUpDeposits has committed its final marker coordinates:
+-- exposed resources need a rover-passable collection hex, extractor resources need a compact
+-- buildable footprint, and a mountain cluster of four or more resources may receive one nearby
+-- RocketLandingSite footprint.  No marker is moved.  Flat/passable/buildable terrain is left
+-- byte-for-byte unchanged; only failed footprints are shaped, with the same C2 quintic feather as
+-- the natural foothill aprons above.
+local function PrepareOuterResourceTerrain(map)
+	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
+		return false, { reason = "disabled", resources = 0, patches = 0 }
+	end
+	local mapdata = map and map.mapdata
+	if type(mapdata) ~= "table" or mapdata.Environment == "Underground"
+		or type(map.MapForEach) ~= "function" then
+		return false, { reason = "surface map unavailable", resources = 0, patches = 0 }
+	end
+	local terrain_api = Global("terrain")
+	local grid_to_compute = Global("GridToCompute")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local point_fn = Global("point")
+	if type(terrain_api) ~= "table" or type(terrain_api.GetHeightGrid) ~= "function"
+		or type(terrain_api.SetHeightGrid) ~= "function"
+		or type(grid_to_compute) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" or type(point_fn) ~= "function" then
+		return false, { reason = "terrain/hex APIs unavailable", resources = 0, patches = 0 }
+	end
+
+	local raw = terrain_api.GetHeightGrid(map)
+	local grid = raw and grid_to_compute(raw) or nil
+	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function"
+		or type(grid.set) ~= "function" then
+		return false, { reason = "height compute grid unavailable", resources = 0, patches = 0 }
+	end
+	local ok_size, width, height = pcall(grid.size, grid)
+	if not ok_size or type(width) ~= "number" or type(height) ~= "number"
+		or width < 512 or height < 512 then
+		if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+		return false, { reason = "height grid dimensions unavailable", resources = 0, patches = 0 }
+	end
+
+	local const_tbl = Global("const")
+	local height_tile = (type(const_tbl) == "table"
+		and type(const_tbl.HeightTileSize) == "number" and const_tbl.HeightTileSize > 0)
+		and const_tbl.HeightTileSize or 100
+	local hex_size = (type(const_tbl) == "table"
+		and type(const_tbl.HexSize) == "number" and const_tbl.HexSize > 0)
+		and const_tbl.HexSize or 1000
+	local guim_v = tonumber(Global("guim")) or 100
+	local cells_per_hex = math.max(1, (hex_size + 0.0) / height_tile)
+	local map_w, map_h = TerrainSize(map)
+	local ring_sectors = math.max(0, math.min(20,
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2))))
+	local band_x = map_w * ring_sectors / 20
+	local band_y = map_h * ring_sectors / 20
+	local function in_outer_band(x, y)
+		return type(x) == "number" and type(y) == "number"
+			and x >= 0 and y >= 0 and x < map_w and y < map_h
+			and (x < band_x or y < band_y or x >= map_w - band_x or y >= map_h - band_y)
+	end
+	local function axial_distance(q1, r1, q2, r2)
+		local dq, dr = q1 - q2, r1 - r2
+		return math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+	end
+	local function grid_value(x, y)
+		x = math.max(0, math.min(width - 1, math.floor(x + 0.5)))
+		y = math.max(0, math.min(height - 1, math.floor(y + 0.5)))
+		local value = grid:get(x, y)
+		return type(value) == "number" and value or nil
+	end
+	local function world_xy(q, r)
+		local ok, x, y = pcall(hex_to_world, q, r)
+		if ok and type(x) == "number" and type(y) == "number" then return x, y end
+		return nil, nil
+	end
+
+	local resources = {}
+	local class_counts = { surface = 0, extractor = 0 }
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not marker then return end
+		local surface = IsKindOfSafe(marker, "SurfaceDepositMarker")
+		local extractor = IsKindOfSafe(marker, "SubsurfaceDepositMarker")
+			or IsKindOfSafe(marker, "TerrainDepositMarker")
+		if not surface and not extractor then return end
+		local pos = ObjectPosition(marker)
+		local x, y = PointXY(pos)
+		if not in_outer_band(x, y) then return end
+		local ok_hex, q, r = pcall(world_to_hex, point_fn(x, y))
+		if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then return end
+		local kind = extractor and "extractor" or "surface"
+		class_counts[kind] = class_counts[kind] + 1
+		resources[#resources + 1] = {
+			marker = marker, x = x, y = y, q = q, r = r, kind = kind,
+			resource = tostring(marker.resource or marker.class or "?"),
+		}
+	end)
+	table.sort(resources, function(a, b)
+		if a.q == b.q then
+			if a.r == b.r then return a.resource < b.resource end
+			return a.r < b.r
+		end
+		return a.q < b.q
+	end)
+
+	local buildable = map.buildable
+	local buildable_get_z = buildable and buildable.GetZ
+	local unbuildable_fn = Global("buildUnbuildableZ")
+	local ok_unbuildable, unbuildable = false, nil
+	if type(unbuildable_fn) == "function" then
+		ok_unbuildable, unbuildable = pcall(unbuildable_fn)
+	end
+	local function hex_passable(q, r)
+		if type(terrain_api.IsPassable) ~= "function" then return true end
+		local x, y = world_xy(q, r)
+		if not x then return false end
+		local ok, value = pcall(terrain_api.IsPassable, map, point_fn(x, y))
+		return ok and value == true
+	end
+	local function axial_disk_ready(q, r, radius, require_level)
+		local level
+		for dq = -radius, radius do
+			for dr = -radius, radius do
+				if math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)) <= radius then
+					local hq, hr = q + dq, r + dr
+					if not hex_passable(hq, hr) then return false end
+					if require_level then
+						if not (buildable and type(buildable_get_z) == "function"
+							and ok_unbuildable and type(unbuildable) == "number") then return false end
+						local ok_z, z = pcall(buildable_get_z, buildable, hq, hr)
+						if not ok_z or type(z) ~= "number" or z == unbuildable then return false end
+						if level == nil then level = z elseif z ~= level then return false end end
+				end
+			end
+		end
+		return true
+	end
+	local function exact_offsets_ready(q, r, offsets, require_level)
+		local level
+		for _, offset in ipairs(offsets or {}) do
+			local hq, hr = q + offset[1], r + offset[2]
+			if not hex_passable(hq, hr) then return false end
+			if require_level then
+				if not (buildable and type(buildable_get_z) == "function"
+					and ok_unbuildable and type(unbuildable) == "number") then return false end
+				local ok_z, z = pcall(buildable_get_z, buildable, hq, hr)
+				if not ok_z or type(z) ~= "number" or z == unbuildable then return false end
+				if level == nil then level = z elseif z ~= level then return false end
+			end
+		end
+		return type(offsets) == "table" and #offsets > 0
+	end
+
+	local rocket_shape, rocket_offsets = nil, {}
+	local get_extended_shape = Global("GetExtendedSpawnShape")
+	if type(get_extended_shape) == "function" then
+		local ok_shape, shape = pcall(get_extended_shape, "RocketLandingSite", 1)
+		if ok_shape and type(shape) == "table" and #shape > 0 then rocket_shape = shape end
+	end
+	local rocket_hex_radius = 0
+	for _, shape_pt in ipairs(rocket_shape or {}) do
+		local dq, dr = PointXY(shape_pt)
+		if type(dq) == "number" and type(dr) == "number" then
+			dq, dr = math.floor(dq + 0.5), math.floor(dr + 0.5)
+			rocket_offsets[#rocket_offsets + 1] = { dq, dr }
+			rocket_hex_radius = math.max(rocket_hex_radius,
+				math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)))
+		end
+	end
+	if #rocket_offsets == 0 then
+		rocket_hex_radius = 7
+		for dq = -rocket_hex_radius, rocket_hex_radius do
+			for dr = -rocket_hex_radius, rocket_hex_radius do
+				if math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+					<= rocket_hex_radius then
+					rocket_offsets[#rocket_offsets + 1] = { dq, dr }
+				end
+			end
+		end
+	end
+	local function rocket_shape_ready(q, r)
+		return exact_offsets_ready(q, r, rocket_offsets, true)
+	end
+
+	local patches, resource_sites, rocket_sites = {}, {}, {}
+	local extractor_core = math.max(2,
+		cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3))
+	local extractor_feather = math.max(extractor_core + 2,
+		cfg_number("OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES", 7))
+	local surface_core = math.max(1,
+		cfg_number("OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES", 1))
+	local surface_feather = math.max(surface_core + 2,
+		cfg_number("OUTER_RESOURCE_SURFACE_FEATHER_RADIUS_HEXES", 4))
+	local function median_height(cx, cy, radius_cells)
+		local values = {}
+		local sample_radius = math.max(1, radius_cells * 0.75)
+		local offsets = {
+			{ 0, 0 }, { sample_radius, 0 }, { -sample_radius, 0 },
+			{ 0, sample_radius }, { 0, -sample_radius },
+			{ sample_radius * 0.7071, sample_radius * 0.7071 },
+			{ -sample_radius * 0.7071, sample_radius * 0.7071 },
+			{ sample_radius * 0.7071, -sample_radius * 0.7071 },
+			{ -sample_radius * 0.7071, -sample_radius * 0.7071 },
+		}
+		for _, offset in ipairs(offsets) do
+			local value = grid_value(cx + offset[1], cy + offset[2])
+			if value then values[#values + 1] = value end
+		end
+		table.sort(values)
+		return #values > 0 and values[math.floor((#values + 1) / 2)] or grid_value(cx, cy)
+	end
+	local function add_patch(kind, x, y, q, r, core_hexes, feather_hexes, details)
+		local cx, cy = x / height_tile, y / height_tile
+		local core_cells = core_hexes * cells_per_hex
+		local outer_cells = feather_hexes * cells_per_hex
+		local target = median_height(cx, cy, core_cells)
+		if not target then return nil end
+		local patch = {
+			kind = kind, x = x, y = y, q = q, r = r, cx = cx, cy = cy,
+			core_cells = core_cells, outer_cells = outer_cells, target = target,
+			phase = (math.abs(q * 37 + r * 61) % 6283) / 1000,
+		}
+		if type(details) == "table" then
+			for key, value in pairs(details) do patch[key] = value end
+		end
+		patches[#patches + 1] = patch
+		return patch
+	end
+	local extractor_template_by_resource = {
+		Concrete = "RegolithExtractor",
+		Metals = "MetalsExtractor",
+		PreciousMetals = "PreciousMetalsExtractor",
+		Water = "WaterExtractor",
+	}
+	local extractor_offsets_by_resource = {}
+	local function extractor_offsets(resource)
+		if extractor_offsets_by_resource[resource] ~= nil then
+			return extractor_offsets_by_resource[resource] or nil
+		end
+		local template_name = extractor_template_by_resource[resource]
+		local offsets = {}
+		if template_name and type(get_extended_shape) == "function" then
+			-- Zero extension returns the building's live flatten shape.  This is the exact extractor
+			-- footprint; the configured core is retained only as a conservative fallback for custom
+			-- resource types without a standard surface extractor.
+			local ok_shape, shape = pcall(get_extended_shape, template_name, 0)
+			if ok_shape and type(shape) == "table" then
+				for _, shape_pt in ipairs(shape) do
+					local dq, dr = PointXY(shape_pt)
+					if type(dq) == "number" and type(dr) == "number" then
+						offsets[#offsets + 1] = {
+							math.floor(dq + 0.5), math.floor(dr + 0.5),
+						}
+					end
+				end
+			end
+		end
+		extractor_offsets_by_resource[resource] = #offsets > 0 and offsets or false
+		return #offsets > 0 and offsets or nil
+	end
+	local function offsets_radius(offsets, fallback)
+		local radius = fallback or 0
+		for _, offset in ipairs(offsets or {}) do
+			radius = math.max(radius,
+				math.max(math.abs(offset[1]), math.abs(offset[2]),
+					math.abs(offset[1] + offset[2])))
+		end
+		return radius
+	end
+	local function offsets_world_radius_hexes(q, r, offsets, fallback)
+		local center_x, center_y = world_xy(q, r)
+		if not center_x then return fallback or 0 end
+		local radius = fallback or 0
+		for _, offset in ipairs(offsets or {}) do
+			local x, y = world_xy(q + offset[1], r + offset[2])
+			if x then
+				radius = math.max(radius,
+					math.sqrt((x - center_x) * (x - center_x) + (y - center_y) * (y - center_y))
+						/ hex_size)
+			end
+		end
+		return radius
+	end
+
+	local protected_ready_sites = {}
+	local maximum_resource_core = 0
+	for _, entry in ipairs(resources) do
+		local exact_extractor_offsets = entry.kind == "extractor"
+			and extractor_offsets(entry.resource) or nil
+		local radius = entry.kind == "extractor"
+			and offsets_radius(exact_extractor_offsets, math.floor(extractor_core + 0.5)) or 0
+		local world_radius = entry.kind == "extractor"
+			and offsets_world_radius_hexes(entry.q, entry.r, exact_extractor_offsets, radius) or 0
+		local required_core = entry.kind == "extractor"
+			and math.max(extractor_core, math.ceil(world_radius + 3))
+			or surface_core + 2
+		maximum_resource_core = math.max(maximum_resource_core, required_core)
+		local ready = exact_extractor_offsets
+			and exact_offsets_ready(entry.q, entry.r, exact_extractor_offsets, true)
+			or axial_disk_ready(entry.q, entry.r, radius, entry.kind == "extractor")
+		local site = {
+			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
+			kind = entry.kind, resource = entry.resource, ready_before = ready,
+			core_radius = radius, world_core_radius = world_radius,
+			required_core_radius = required_core,
+			extractor_offsets = exact_extractor_offsets,
+			modified = false,
+		}
+		if ready then
+			-- A terrain patch for a nearby cluster must never invalidate a resource footprint that
+			-- the engine had already accepted.  It remains byte-for-byte untouched inside this guard.
+			protected_ready_sites[#protected_ready_sites + 1] = {
+				cx = entry.x / height_tile, cy = entry.y / height_tile,
+				radius = required_core * cells_per_hex,
+				x = entry.x, y = entry.y, q = entry.q, r = entry.r,
+				core_hexes = required_core, kind = entry.kind, site = site,
+			}
+		else
+			local required_feather = entry.kind == "extractor"
+				and math.max(extractor_feather, required_core + 4) or surface_feather
+			local patch = add_patch(entry.kind, entry.x, entry.y, entry.q, entry.r,
+				required_core, required_feather,
+				{ resource_site = site })
+			if patch then site.modified = true end
+		end
+		resource_sites[#resource_sites + 1] = site
+	end
+
+	-- A cluster is discovered from marker-to-marker axial distance, never from a scenario or sector
+	-- identity.  Candidate landing centers are chosen beside (not on top of) the deposits, minimizing
+	-- height range first and distance to the cluster second.
+	local cluster_minimum = math.max(4,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 4)))
+	local cluster_radius = math.max(4,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
+	local maximum_rocket_pads = math.max(0,
+		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 24)))
+	local rocket_extra_feather = math.max(3,
+		cfg_number("OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES", 6))
+	local radius_reference = resources[1]
+	local rocket_world_radius = radius_reference
+		and offsets_world_radius_hexes(radius_reference.q, radius_reference.r,
+			rocket_offsets, rocket_hex_radius) or rocket_hex_radius
+	local rocket_required_core = math.ceil(rocket_world_radius + 3)
+	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
+	local claimed = {}
+	local function resource_clearance(q, r)
+		local minimum = rocket_required_core + maximum_resource_core + 1
+		for _, entry in ipairs(resources) do
+			if axial_distance(q, r, entry.q, entry.r) < minimum then return false end
+		end
+		return true
+	end
+	local function separated_from_rocket_pads(q, r)
+		local minimum = rocket_hex_radius * 2 + 4
+		for _, pad in ipairs(rocket_sites) do
+			if axial_distance(q, r, pad.q, pad.r) < minimum then return false end
+		end
+		return true
+	end
+	local relief_directions = {
+		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
+		{ 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 },
+	}
+	local function candidate_score(q, r, cq, cr)
+		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
+		local x, y = world_xy(q, r)
+		if not x or not in_outer_band(x, y) then return nil end
+		local edge_world = (rocket_outer_radius + 1) * hex_size
+		if x < edge_world or y < edge_world or x >= map_w - edge_world
+			or y >= map_h - edge_world then return nil end
+		local cx, cy = x / height_tile, y / height_tile
+		local center = grid_value(cx, cy)
+		if not center then return nil end
+		local range_min, range_max = center, center
+		for _, offset in ipairs(rocket_offsets) do
+			local hx, hy = world_xy(q + offset[1], r + offset[2])
+			if not hx then return nil end
+			local z = grid_value(hx / height_tile, hy / height_tile)
+			if not z then return nil end
+			range_min, range_max = math.min(range_min, z), math.max(range_max, z)
+		end
+		local maximum_rise, higher = 0, 0
+		for _, direction in ipairs(relief_directions) do
+			local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
+				cy + direction[2] * 12 * cells_per_hex)
+			if z and z - center >= 5 * guim_v then
+				maximum_rise = math.max(maximum_rise, z - center)
+				higher = higher + 1
+			end
+		end
+		local mountain = maximum_rise >= 5 * guim_v and higher >= 2
+		local ready = rocket_shape_ready(q, r)
+		return {
+			x = x, y = y, q = q, r = r, ready_before = ready,
+			mountain = mountain, maximum_rise = maximum_rise, higher_samples = higher,
+			height_range = range_max - range_min,
+			score = (ready and -1000000000 or 0) + (range_max - range_min) * 100
+				+ axial_distance(q, r, cq, cr),
+		}
+	end
+	for seed_index, seed in ipairs(resources) do
+		if #rocket_sites >= maximum_rocket_pads then break end
+		if not claimed[seed_index] then
+			local members, sum_q, sum_r = {}, 0, 0
+			for index, entry in ipairs(resources) do
+				if not claimed[index]
+					and axial_distance(seed.q, seed.r, entry.q, entry.r) <= cluster_radius then
+					members[#members + 1] = index
+					sum_q, sum_r = sum_q + entry.q, sum_r + entry.r
+				end
+			end
+			if #members >= cluster_minimum then
+				local cq = math.floor(sum_q / #members + 0.5)
+				local cr = math.floor(sum_r / #members + 0.5)
+				local best
+				local search_limit = cluster_radius + rocket_outer_radius
+					+ maximum_resource_core + 4
+				for dq = -search_limit, search_limit do
+					for dr = -search_limit, search_limit do
+						local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+						if distance <= search_limit then
+							local candidate = candidate_score(cq + dq, cr + dr, cq, cr)
+							if candidate and (not best or candidate.score < best.score) then
+								best = candidate
+							end
+						end
+					end
+				end
+				if best then
+					best.members = #members
+					best.modified = not best.ready_before
+					best.shape_radius = rocket_hex_radius
+					best.world_shape_radius = rocket_world_radius
+					if best.modified then
+						add_patch("rocket", best.x, best.y, best.q, best.r,
+							-- As with extractors, the live shape is center-based but the final buildable
+							-- verdict consumes the surrounding cells of every edge hex.
+							rocket_required_core,
+							rocket_outer_radius,
+							{ rocket_site = best })
+					end
+					rocket_sites[#rocket_sites + 1] = best
+					for _, index in ipairs(members) do claimed[index] = true end
+				end
+			end
+		end
+	end
+
+	-- If a required new core actually intersects an already-valid resource guard, preserving the old
+	-- pixels cannot satisfy both footprints.  Promote just that connected guard to a shaped core;
+	-- the component harmonization below gives the touching footprints one shared minimum-movement
+	-- elevation.  Guards touched only by a feather remain completely unchanged.
+	local promoted = true
+	while promoted do
+		promoted = false
+		for index = #protected_ready_sites, 1, -1 do
+			local protected = protected_ready_sites[index]
+			local intersects_core = false
+			for _, patch in ipairs(patches) do
+				local dx, dy = protected.cx - patch.cx, protected.cy - patch.cy
+				local radius = protected.radius + patch.core_cells
+				if dx * dx + dy * dy <= radius * radius then
+					intersects_core = true
+					break
+				end
+			end
+			if intersects_core then
+				local site = protected.site
+				local feather = protected.core_hexes
+					+ (protected.kind == "extractor" and 4 or 3)
+				if add_patch(protected.kind, protected.x, protected.y, protected.q, protected.r,
+					protected.core_hexes, feather, { resource_site = site }) then
+					site.modified = true
+				end
+				table.remove(protected_ready_sites, index)
+				promoted = true
+			end
+		end
+	end
+
+	-- Overlapping required cores must describe one plane; otherwise the last patch would make the
+	-- preceding footprint non-buildable.  Connected components are geometric and deterministic, and
+	-- receive the median of their local target heights to minimize total vertical displacement.
+	local parents = {}
+	for index = 1, #patches do parents[index] = index end
+	local function root(index)
+		while parents[index] ~= index do
+			parents[index] = parents[parents[index]]
+			index = parents[index]
+		end
+		return index
+	end
+	local function join(a, b)
+		a, b = root(a), root(b)
+		if a ~= b then parents[math.max(a, b)] = math.min(a, b) end
+	end
+	for a = 1, #patches do
+		for b = a + 1, #patches do
+			local dx = patches[a].cx - patches[b].cx
+			local dy = patches[a].cy - patches[b].cy
+			local radius = patches[a].core_cells + patches[b].core_cells
+			if dx * dx + dy * dy <= radius * radius then join(a, b) end
+		end
+	end
+	local target_groups = {}
+	for index, patch in ipairs(patches) do
+		local group = root(index)
+		target_groups[group] = target_groups[group] or {}
+		target_groups[group][#target_groups[group] + 1] = patch.target
+	end
+	for group, targets in pairs(target_groups) do
+		table.sort(targets)
+		local target = targets[math.floor((#targets + 1) / 2)]
+		for index, patch in ipairs(patches) do
+			if root(index) == group then patch.target = target end
+		end
+	end
+	local function is_protected_ready_cell(x, y)
+		for _, protected in ipairs(protected_ready_sites) do
+			local dx, dy = x - protected.cx, y - protected.cy
+			if dx * dx + dy * dy <= protected.radius * protected.radius then return true end
+		end
+		return false
+	end
+
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
+	local modified_cells, shaped_patches = 0, 0
+	local ok_apply, apply_error = pcall(function()
+		-- Resource access first, then rocket pads.  A rocket core therefore remains exactly level even
+		-- where its feather overlaps a smaller resource-access feather.
+		local patch_order = { surface = 1, extractor = 2, rocket = 3 }
+		table.sort(patches, function(a, b)
+			local a_order = patch_order[a.kind] or 2
+			local b_order = patch_order[b.kind] or 2
+			if a_order == b_order then
+				if a.q == b.q then return a.r < b.r end
+				return a.q < b.q
+			end
+			return a_order < b_order
+		end)
+		for _, patch in ipairs(patches) do
+			shaped_patches = shaped_patches + 1
+			local radius = patch.outer_cells
+			local x0 = math.max(0, math.floor(patch.cx - radius - 2))
+			local y0 = math.max(0, math.floor(patch.cy - radius - 2))
+			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 2))
+			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 2))
+			for y = y0, y1 do
+				for x = x0, x1 do
+					local dx, dy = x - patch.cx, y - patch.cy
+					local angle = math.atan2 and math.atan2(dy, dx) or 0
+					local lobe = 1 + 0.025 * math.sin(3 * angle + patch.phase)
+						+ 0.015 * math.sin(5 * angle - patch.phase)
+					local distance = math.sqrt(dx * dx + dy * dy)
+					local outer_radius = radius * lobe
+					if distance < outer_radius and not is_protected_ready_cell(x, y) then
+						local weight
+						-- The irregular lobe belongs only to the feather.  The guaranteed flat core is
+						-- an exact circle and must never shrink on a negative lobe, otherwise live
+						-- extractor/rocket edge hexes can straddle the blend and fail after rebuild.
+						if distance <= patch.core_cells then
+							weight = 1
+						else
+							local t = (distance - patch.core_cells)
+								/ math.max(0.0001, outer_radius - patch.core_cells)
+							t = math.max(0, math.min(1, t))
+							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+							weight = 1 - smooth
+						end
+						local old = grid:get(x, y)
+						if type(old) == "number" then
+							local value = math.floor(old + (patch.target - old) * weight + 0.5)
+							value = math.max(0, math.min(65535, value))
+							if value ~= old then
+								grid:set(x, y, value)
+								modified_cells = modified_cells + 1
+							end
+						end
+					end
+				end
+			end
+		end
+		-- A second pass makes every required core an exact plane after all nearby feather blends.
+		-- Ready-before resource guards remain untouched; rocket/resource core clearance prevents a
+		-- landing footprint from depending on any guarded cell.
+		for _, patch in ipairs(patches) do
+			local radius = patch.core_cells
+			local x0 = math.max(0, math.floor(patch.cx - radius - 1))
+			local y0 = math.max(0, math.floor(patch.cy - radius - 1))
+			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 1))
+			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 1))
+			for y = y0, y1 do
+				for x = x0, x1 do
+					local dx, dy = x - patch.cx, y - patch.cy
+					if dx * dx + dy * dy <= radius * radius
+						and not is_protected_ready_cell(x, y) then
+						local old = grid:get(x, y)
+						if type(old) == "number" and old ~= patch.target then
+							grid:set(x, y, patch.target)
+							modified_cells = modified_cells + 1
+						end
+					end
+				end
+			end
+		end
+	end)
+	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
+	local set_ok, set_error = false, "no terrain changes"
+	if ok_apply and modified_cells > 0 then
+		set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
+	elseif ok_apply then
+		set_ok = true
+	end
+	if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+
+	map.SuperBigMapOuterResourceTerrainSites = resource_sites
+	map.SuperBigMapOuterResourceRocketPads = rocket_sites
+	local report = {
+		reason = not ok_apply and "height-grid shaping failed"
+			or not set_ok and "height-grid installation failed"
+			or modified_cells > 0 and "minimal resource terrain prepared"
+			or "all resource terrain already valid",
+		resources = #resources, surface_resources = class_counts.surface,
+		extractor_resources = class_counts.extractor,
+		resource_sites_modified = 0, rocket_pads = #rocket_sites,
+		rocket_pads_modified = 0, rocket_shape_hexes = #rocket_offsets,
+		rocket_shape_radius = rocket_hex_radius,
+		patches = shaped_patches, modified_cells = modified_cells,
+		ring_sectors = ring_sectors,
+		error = not ok_apply and tostring(apply_error)
+			or not set_ok and tostring(set_error) or "",
+	}
+	for _, site in ipairs(resource_sites) do
+		if site.modified then report.resource_sites_modified = report.resource_sites_modified + 1 end
+	end
+	for _, site in ipairs(rocket_sites) do
+		if site.modified then report.rocket_pads_modified = report.rocket_pads_modified + 1 end
+	end
+	map.SuperBigMapOuterResourceTerrainReport = report
+	LoadingStep("outer resource access and cluster landing terrain", report, map)
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][OuterResourceTerrain] resources=" .. tostring(report.resources)
+			.. " surface=" .. tostring(report.surface_resources)
+			.. " extractor=" .. tostring(report.extractor_resources)
+			.. " resource_modified=" .. tostring(report.resource_sites_modified)
+			.. " rocket_pads=" .. tostring(report.rocket_pads)
+			.. " rocket_modified=" .. tostring(report.rocket_pads_modified)
+			.. " rocket_shape_radius=" .. tostring(report.rocket_shape_radius)
+			.. " patches=" .. tostring(report.patches)
+			.. " modified_cells=" .. tostring(report.modified_cells)
+			.. " error=" .. tostring(report.error))
+	end
+	return set_ok and modified_cells > 0, report
+end
+
+-- Run only after the engine has rebuilt passability and the buildable grid from the edited height
+-- field.  This is the hard gameplay verdict and also publishes the only perimeter coordinates at
+-- which a dome-effect top-up may bypass the ordinary exclusion ring.
+local function AuditOuterResourceTerrain(map)
+	local resource_sites = map and map.SuperBigMapOuterResourceTerrainSites
+	local rocket_sites = map and map.SuperBigMapOuterResourceRocketPads
+	if type(resource_sites) ~= "table" then
+		return false, { reason = "resource terrain plan missing", resource_failures = 1 }
+	end
+	rocket_sites = type(rocket_sites) == "table" and rocket_sites or {}
+	local terrain_api = Global("terrain")
+	local point_fn = Global("point")
+	local hex_to_world = Global("HexToWorld")
+	local buildable = map and map.buildable
+	local get_z = buildable and buildable.GetZ
+	local unbuildable_fn = Global("buildUnbuildableZ")
+	if type(terrain_api) ~= "table" or type(point_fn) ~= "function"
+		or type(hex_to_world) ~= "function" or not buildable or type(get_z) ~= "function"
+		or type(unbuildable_fn) ~= "function" then
+		return false, { reason = "final terrain APIs unavailable", resource_failures = #resource_sites }
+	end
+	local ok_u, unbuildable = pcall(unbuildable_fn)
+	if not ok_u then
+		return false, { reason = "unbuildable sentinel unavailable", resource_failures = #resource_sites }
+	end
+	local function ready_offsets(q, r, offsets, require_level)
+		local level
+		for _, offset in ipairs(offsets) do
+			local hq, hr = q + offset[1], r + offset[2]
+			local ok_xy, x, y = pcall(hex_to_world, hq, hr)
+			if not ok_xy or type(x) ~= "number" or type(y) ~= "number" then
+				return false, "world"
+			end
+			if type(terrain_api.IsPassable) == "function" then
+				local ok_p, passable = pcall(terrain_api.IsPassable, map, point_fn(x, y))
+				if not ok_p or passable ~= true then return false, "passability" end
+			end
+			if require_level then
+				local ok_z, z = pcall(get_z, buildable, hq, hr)
+				if not ok_z or type(z) ~= "number" or z == unbuildable then
+					return false, "unbuildable"
+				end
+				if level == nil then level = z elseif z ~= level then return false, "zone_mismatch" end
+			end
+		end
+		return true, "ready"
+	end
+	local function disk_offsets(radius)
+		local offsets = {}
+		for dq = -radius, radius do
+			for dr = -radius, radius do
+				if math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr)) <= radius then
+					offsets[#offsets + 1] = { dq, dr }
+				end
+			end
+		end
+		return offsets
+	end
+	local surface_offsets = { { 0, 0 } }
+	local extractor_radius = math.max(2,
+		math.floor(cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3) + 0.5))
+	local extractor_offsets = disk_offsets(extractor_radius)
+	local rocket_offsets = {}
+	local get_extended_shape = Global("GetExtendedSpawnShape")
+	if type(get_extended_shape) == "function" then
+		local ok_shape, shape = pcall(get_extended_shape, "RocketLandingSite", 1)
+		if ok_shape and type(shape) == "table" then
+			for _, shape_pt in ipairs(shape) do
+				local dq, dr = PointXY(shape_pt)
+				if type(dq) == "number" and type(dr) == "number" then
+					rocket_offsets[#rocket_offsets + 1] = {
+						math.floor(dq + 0.5), math.floor(dr + 0.5),
+					}
+				end
+			end
+		end
+	end
+	if #rocket_offsets == 0 then
+		local radius = map.SuperBigMapOuterResourceTerrainReport
+			and map.SuperBigMapOuterResourceTerrainReport.rocket_shape_radius or 7
+		rocket_offsets = disk_offsets(math.max(1, math.floor(radius)))
+	end
+
+	local resource_failures, surface_passable, extractor_buildable = 0, 0, 0
+	local resource_failure_breakdown, first_resource_failure = {}, nil
+	local const_tbl = Global("const")
+	local invalid_z = type(const_tbl) == "table" and const_tbl.InvalidZ or nil
+	for _, site in ipairs(resource_sites) do
+		local offsets = site.kind == "extractor"
+			and (type(site.extractor_offsets) == "table" and #site.extractor_offsets > 0
+				and site.extractor_offsets or extractor_offsets) or surface_offsets
+		local ready, failure_reason = ready_offsets(
+			site.q, site.r, offsets, site.kind == "extractor")
+		site.verified = ready
+		site.failure_reason = ready and nil or failure_reason
+		if ready then
+			if site.kind == "extractor" then
+				extractor_buildable = extractor_buildable + 1
+			else
+				surface_passable = surface_passable + 1
+			end
+		else
+			resource_failures = resource_failures + 1
+			resource_failure_breakdown[failure_reason] =
+				(resource_failure_breakdown[failure_reason] or 0) + 1
+			first_resource_failure = first_resource_failure or (tostring(site.kind) .. ":"
+				.. tostring(site.resource) .. "@" .. tostring(site.q) .. ":" .. tostring(site.r)
+				.. ":" .. tostring(failure_reason))
+		end
+		-- Height edits do not change XY.  Re-snap both the marker and any revealed deposit so their
+		-- visuals and interaction point agree with the rebuilt terrain.
+		if invalid_z ~= nil and site.marker and type(site.marker.SetPos) == "function" then
+			pcall(site.marker.SetPos, site.marker, site.x, site.y, invalid_z)
+			local placed = site.marker.placed_obj
+			if placed and type(placed.SetPos) == "function" then
+				pcall(placed.SetPos, placed, site.x, site.y, invalid_z)
+			end
+		end
+	end
+	local verified_mountain_pads, rocket_failures = {}, 0
+	local rocket_failure_breakdown, first_rocket_failure = {}, nil
+	for _, site in ipairs(rocket_sites) do
+		local ready, failure_reason = ready_offsets(site.q, site.r, rocket_offsets, true)
+		site.verified = ready
+		site.failure_reason = ready and nil or failure_reason
+		if not ready then
+			rocket_failures = rocket_failures + 1
+			rocket_failure_breakdown[failure_reason] =
+				(rocket_failure_breakdown[failure_reason] or 0) + 1
+			first_rocket_failure = first_rocket_failure or (tostring(site.q) .. ":"
+				.. tostring(site.r) .. ":" .. tostring(failure_reason))
+		elseif site.modified == true and site.mountain == true then
+			verified_mountain_pads[#verified_mountain_pads + 1] = {
+				x = site.x, y = site.y, q = site.q, r = site.r,
+				members = site.members, modified = true, verified = true,
+				maximum_rise = site.maximum_rise,
+			}
+		end
+	end
+	map.SuperBigMapVerifiedMountainRocketPads = verified_mountain_pads
+	local report = {
+		resources = #resource_sites, surface_passable = surface_passable,
+		extractor_buildable = extractor_buildable, resource_failures = resource_failures,
+		rocket_pads = #rocket_sites, rocket_failures = rocket_failures,
+		resource_failure_breakdown = resource_failure_breakdown,
+		rocket_failure_breakdown = rocket_failure_breakdown,
+		first_resource_failure = first_resource_failure or "",
+		first_rocket_failure = first_rocket_failure or "",
+		verified_modified_mountain_rocket_pads = #verified_mountain_pads,
+		reason = resource_failures == 0 and rocket_failures == 0
+			and "all outer resource terrain contracts verified" or "final terrain contract failed",
+	}
+	map.SuperBigMapOuterResourceTerrainAudit = report
+	LoadingStep("outer resource terrain final audit", report, map)
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][OuterResourceTerrainAudit] resources=" .. tostring(report.resources)
+			.. " surface_passable=" .. tostring(report.surface_passable)
+			.. " extractor_buildable=" .. tostring(report.extractor_buildable)
+			.. " resource_failures=" .. tostring(report.resource_failures)
+			.. " rocket_pads=" .. tostring(report.rocket_pads)
+			.. " rocket_failures=" .. tostring(report.rocket_failures)
+			.. " first_resource_failure=" .. tostring(report.first_resource_failure)
+			.. " first_rocket_failure=" .. tostring(report.first_rocket_failure)
+			.. " verified_mountain_effect_candidates="
+			.. tostring(report.verified_modified_mountain_rocket_pads))
+	end
+	return resource_failures == 0 and rocket_failures == 0, report
+end
+
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
 -- grid to "<prefix>-<environment>-<stage>.raw" so the offline gate can score the PURE transform
 -- between its own input ("pre", straight out of GridResample) and its output ("post", right after
@@ -5886,5 +6714,7 @@ local TerrainCopy = {
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,
 	AuditNaturalMountainBaseBuildableAprons = AuditNaturalMountainBaseBuildableAprons,
+	PrepareOuterResourceTerrain = PrepareOuterResourceTerrain,
+	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
 SuperBigMap.TerrainCopy = TerrainCopy
