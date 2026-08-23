@@ -11049,6 +11049,23 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 										and ring_stats.resource_mountain_base_quota_shortfall))
 							end
 						end
+						if type(deposits.CensusFinalOuterResourceTopUps) == "function" then
+							local quota_ok, quota_stats = deposits.CensusFinalOuterResourceTopUps(map,
+								"pre-deferred-GameInit surface final")
+							map.SuperBigMapOuterResourceCensusPreGameInit = quota_stats
+							if quota_ok ~= true then
+								error("outer resource top-up census failed: ordinary_resource_topups="
+									.. tostring(quota_stats and quota_stats.ordinary_resource_topups)
+									.. " anomaly_topups=" .. tostring(quota_stats and quota_stats.anomaly_topups)
+									.. " effect_topups=" .. tostring(quota_stats and quota_stats.effect_topups)
+									.. " native_resources=" .. tostring(quota_stats and quota_stats.native_resources)
+									.. " shortfall=" .. tostring(quota_stats and quota_stats.shortfall))
+							end
+						end
+						if type(deposits.SchedulePostDeferredSurfaceResourceTopUpCensus) == "function" then
+							deposits.SchedulePostDeferredSurfaceResourceTopUpCensus(map,
+								"surface final density suite")
+						end
 						if type(deposits.DebugAuditFinalEnrichments) == "function" then
 							local audit_token = LoadingBegin("diagnostic surface enrichment audit", map)
 							local call_ok, audit_ok, audit_stats = pcall(

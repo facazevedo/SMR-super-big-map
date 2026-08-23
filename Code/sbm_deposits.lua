@@ -1070,6 +1070,27 @@ local function MountainBaseMinimumRiseWorld()
 	return math.max(1, (tonumber(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_RISE_METERS) or 5) * guim)
 end
 
+-- The 20 x 20 expanded layout has a single, physical definition of its outer sector band:
+-- three twentieths of the final world extent on every edge.  Do not derive this particular
+-- resource guarantee from MapSectors table keys or col/row bases; both can be temporarily stale
+-- while the destination is being finalized and their base is an engine implementation detail.
+-- This deliberately remains separate from the legacy helper above, which continues to serve its
+-- existing anomaly/effect policy callers.
+local FINAL_EXPANDED_SECTORS_PER_AXIS = 20
+local function IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors)
+	ring_sectors = math.max(0, math.min(FINAL_EXPANDED_SECTORS_PER_AXIS,
+		math.floor(ring_sectors or 0)))
+	if ring_sectors <= 0 or type(x) ~= "number" or type(y) ~= "number" then return false end
+	local map_w, map_h = MapWorldSize(map)
+	if type(map_w) ~= "number" or type(map_h) ~= "number" or map_w <= 0 or map_h <= 0 then
+		return false
+	end
+	local band_x = map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	local band_y = map_h * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	return x >= 0 and y >= 0 and x < map_w and y < map_h
+		and (x < band_x or y < band_y or x >= map_w - band_x or y >= map_h - band_y)
+end
+
 local function IsMountainBaseRelief(score, maximum_rise, higher_samples)
 	return (tonumber(score) or 0) > 0
 		and (tonumber(maximum_rise) or 0) >= MountainBaseMinimumRiseWorld()
@@ -4045,7 +4066,6 @@ function DepositRules.TopUpDeposits(map)
 		if not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0 then
 			local centers = map.SuperBigMapNaturalMountainBaseApronCenters
-			local ring_context = NewFinalOuterSectorRingContext(map)
 			local mountain_base_hexes = {}
 			local const_tbl = Global("const")
 			local hex_size = type(const_tbl) == "table"
@@ -4065,8 +4085,8 @@ function DepositRules.TopUpDeposits(map)
 						local x, y = center.x + offset[1], center.y + offset[2]
 						local sector = SectorAtPoint(map, x, y)
 						if sector and not SectorIsScanned(sector)
-							and IsInFinalOuterSectorRing(map, x, y,
-								surface_mountain_base_ring_sectors, sector, ring_context) then
+							and IsInFinalOuterResourceWorldBand(map, x, y,
+								surface_mountain_base_ring_sectors) then
 							local pt = point(x, y)
 							local can_receive, _, _, _, q, r = CanReceiveDeposit(
 								map, pt, validation_context, false)
@@ -7242,6 +7262,103 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	return ok, stats
 end
 
+-- Count the final physical outer-three-sector world band without relying on MapSectors' storage
+-- order, its coordinate base, or the sector lookup's shared-boundary choice.  This is both the
+-- quota's acceptance census and a compact lifecycle diagnostic: resources, anomalies, effects,
+-- and native deposits are deliberately reported separately so only ordinary resource top-ups can
+-- satisfy the 32-marker guarantee.
+function DepositRules.CensusFinalOuterResourceTopUps(map, phase)
+	map = map or Global("CurrentMap")
+	local ring_sectors = math.max(0, math.floor(
+		cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 3))
+	local stats = {
+		ring_sectors = ring_sectors,
+		ordinary_resource_topups = 0, ordinary_resource_topups_placed = 0,
+		anomaly_topups = 0, effect_topups = 0, native_resources = 0,
+		missing_position = 0,
+	}
+	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
+		stats.error = "surface map API unavailable"
+		return false, stats
+	end
+	local function in_band(marker)
+		local pos = marker and ObjectPos(marker)
+		if not (pos and type(pos.xy) == "function") then
+			stats.missing_position = stats.missing_position + 1
+			return false
+		end
+		local x, y = pos:xy()
+		return IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors)
+	end
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
+		if not (marker and IsResourceDepositMarker(marker) and in_band(marker)) then return end
+		if marker.SuperBigMapResourceTopUp == true then
+			stats.ordinary_resource_topups = stats.ordinary_resource_topups + 1
+			if marker.is_placed == true then
+				stats.ordinary_resource_topups_placed = stats.ordinary_resource_topups_placed + 1
+			end
+		else
+			stats.native_resources = stats.native_resources + 1
+		end
+	end)
+	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
+		if marker and marker.SuperBigMapAnomalyTopUp == true and in_band(marker) then
+			stats.anomaly_topups = stats.anomaly_topups + 1
+		end
+	end)
+	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
+		if marker and marker.SuperBigMapEffectTopUp == true and in_band(marker) then
+			stats.effect_topups = stats.effect_topups + 1
+		end
+	end)
+	local minimum = math.max(0, math.floor(
+		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 32))
+	stats.minimum = minimum
+	stats.shortfall = math.max(0, minimum - stats.ordinary_resource_topups)
+	local print_fn = Global("print")
+	if type(print_fn) == "function" then
+		print_fn("[Super Big Map][OuterResourceTopUpCensus] phase=" .. tostring(phase or "unspecified")
+			.. " ordinary_resource_topups=" .. tostring(stats.ordinary_resource_topups)
+			.. " ordinary_resource_topups_placed=" .. tostring(stats.ordinary_resource_topups_placed)
+			.. " anomaly_topups=" .. tostring(stats.anomaly_topups)
+			.. " effect_topups=" .. tostring(stats.effect_topups)
+			.. " native_resources=" .. tostring(stats.native_resources)
+			.. " minimum=" .. tostring(minimum)
+			.. " shortfall=" .. tostring(stats.shortfall))
+	end
+	return stats.shortfall == 0, stats
+end
+
+-- Queue a second census after the engine's deferred GameInit threads have had a game-time turn.
+-- A marker can survive the generation transaction yet be consumed or moved by a deferred init;
+-- recording both points makes that lifecycle loss visible without changing any placement rules.
+function DepositRules.SchedulePostDeferredSurfaceResourceTopUpCensus(map, reason)
+	map = map or Global("CurrentMap")
+	if not map or IsUndergroundMap(map) or map.SuperBigMapOuterResourceCensusScheduled == true then
+		return false
+	end
+	map.SuperBigMapOuterResourceCensusScheduled = true
+	local function run()
+		local sleep = Global("Sleep")
+		if type(sleep) == "function" then sleep(100) end
+		local ok, stats = DepositRules.CensusFinalOuterResourceTopUps(map,
+			"post-deferred-GameInit " .. tostring(reason or "surface final"))
+		map.SuperBigMapOuterResourceCensusPostGameInit = stats
+		map.SuperBigMapOuterResourceCensusPostGameInitOK = ok == true
+	end
+	if type(map.CreateGameTimeThread) == "function" then
+		map:CreateGameTimeThread(run)
+		return true
+	end
+	local create = Global("CreateGameTimeThread")
+	if type(create) == "function" then
+		create(run)
+		return true
+	end
+	map.SuperBigMapOuterResourceCensusScheduled = nil
+	return false
+end
+
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
 -- passable, nearly horizontal, engine-buildable, unobstructed terrain. Surface anomalies may occupy
@@ -7280,8 +7397,6 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 	local world_to_hex = Global("WorldToHex")
 	local validation_context = NewDepositValidationContext(map)
 	local ring_context = ring_sectors > 0 and NewFinalOuterSectorRingContext(map) or nil
-	local resource_ring_context = resource_ring_sectors > 0
-		and NewFinalOuterSectorRingContext(map) or nil
 	local effect_ring_context = effect_exclusion_ring_sectors > 0
 		and NewFinalOuterSectorRingContext(map) or nil
 	local function audit_hex_key(x, y)
@@ -7314,8 +7429,8 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		local pt = has_position and pos or nil
 		local sector = has_position and SectorAtPoint(map, x, y) or nil
 		local in_ring = family == "resource"
-			and resource_ring_sectors > 0 and has_position and IsInFinalOuterSectorRing(
-				map, x, y, resource_ring_sectors, sector, resource_ring_context)
+			and resource_ring_sectors > 0 and has_position and IsInFinalOuterResourceWorldBand(
+				map, x, y, resource_ring_sectors)
 			or (family ~= "resource" and ring_sectors > 0 and has_position
 				and IsInFinalOuterSectorRing(map, x, y, ring_sectors, sector, ring_context)) or false
 		local in_effect_exclusion_ring = family == "effect" and effect_exclusion_ring_sectors > 0

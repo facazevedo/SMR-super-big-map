@@ -108,6 +108,11 @@ resources = section(
     "function DepositRules.TopUpDeposits",
     "function DepositRules.TopUpAnomalies",
 )
+census = section(
+    DEPOSITS,
+    "function DepositRules.CensusFinalOuterResourceTopUps",
+    "function DepositRules.AuditSurfaceTopUpPlacement",
+)
 effects = section(
     DEPOSITS,
     "function DepositRules.TopUpEffectDeposits",
@@ -217,10 +222,34 @@ static_checks = {
         "resource_mountain_base_quota_shortfall" in audit
         and "mountain_base_resource_topup_outside_final_ring" in audit
     ),
+    "resource_quota_uses_physical_outer_three_sector_band": (
+        "IsInFinalOuterResourceWorldBand" in DEPOSITS
+        and "FINAL_EXPANDED_SECTORS_PER_AXIS = 20" in DEPOSITS
+        and "map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS" in DEPOSITS
+    ),
+    "resource_census_counts_only_ordinary_topups_toward_minimum": (
+        "ordinary_resource_topups" in census
+        and "marker.SuperBigMapResourceTopUp == true" in census
+        and "minimum - stats.ordinary_resource_topups" in census
+    ),
+    "resource_census_separates_anomalies_effects_and_native_resources": (
+        "anomaly_topups" in census
+        and "effect_topups" in census
+        and "native_resources" in census
+    ),
+    "resource_census_runs_before_and_after_deferred_initialization": (
+        "pre-deferred-GameInit surface final" in GENERATION
+        and "SchedulePostDeferredSurfaceResourceTopUpCensus" in GENERATION
+        and "post-deferred-GameInit" in census
+    ),
+    "resource_census_preinit_gate_is_fail_closed": (
+        "outer resource top-up census failed" in GENERATION
+    ),
     "resource_quota_has_no_scenario_special_case": (
         "14N134W" not in resources and "A17" not in resources
+        and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_854": "'version', 854" in METADATA,
+    "version_is_855": "'version', 855" in METADATA,
 }
 
 case_results = []
