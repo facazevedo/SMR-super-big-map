@@ -80,8 +80,9 @@ CreateRealTimeThread(function()
 			table.sort(rows)
 			return #rows > 0 and table.concat(rows, "+") or "none"
 		end
+		local terrain_audit = map.SuperBigMapOuterResourceTerrainAudit
 		g_OuterRingRevealSummary = string.format(
-			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d registered_anomalies=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] terrain_resources=%s terrain_modified=%s rocket_pads=%s rocket_modified=%s verified_mountain_pads=%s terrain_failures=%s/%s failure_reasons=[%s/%s] first_failures=[%s/%s] audit_violations=%s shortfall=%d outermost_shortfall=%d",
+			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d registered_anomalies=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] terrain_resources=%s terrain_modified=%s rocket_pads=%s rocket_modified=%s verified_mountain_pads=%s terrain_failures=%s/%s failure_reasons=[%s/%s] first_failures=[%s/%s] audit_violations=%s shortfall=%d outermost_shortfall=%d inner_band=%d/%d inner_shortfall=%d quota=%d/%d clusters=%s[%s-%s] cluster_shortfall=%s cluster_excess=%s anomaly_cluster_max=%d anomaly_cluster_overflow=%d",
 			scanned, before.ordinary_resource_topups or -1, census.ordinary_resource_topups or -1,
 			census.ordinary_resource_topups_placed or -1,
 			census.ordinary_resource_topups_outermost or -1,
@@ -120,11 +121,22 @@ CreateRealTimeThread(function()
 			map.SuperBigMapOuterResourceTerrainAudit
 				and tostring(map.SuperBigMapOuterResourceTerrainAudit.first_rocket_failure) or "n/a",
 			audit and tostring(audit.violations) or "n/a",
-			census.shortfall or -1, census.outermost_shortfall or -1)
-		local terrain_audit = map.SuperBigMapOuterResourceTerrainAudit
+			census.shortfall or -1, census.outermost_shortfall or -1,
+			census.guaranteed_resource_topups_inner_band_placed or -1,
+			census.inner_band_minimum or -1, census.inner_band_shortfall or -1,
+			census.guaranteed_resource_topups_placed or -1, census.minimum or -1,
+			terrain_audit and tostring(terrain_audit.resource_clusters) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_minimum) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_maximum) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_shortfall) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_excess) or "n/a",
+			census.maximum_anomalies_in_resource_cluster or -1,
+			census.anomaly_resource_cluster_overflow or -1)
 		local terrain_ok = terrain_audit ~= nil
 			and terrain_audit.resource_failures == 0
 			and terrain_audit.rocket_failures == 0
+			and terrain_audit.cluster_shortfall == 0
+			and terrain_audit.cluster_excess == 0
 		g_OuterRingRevealPassed = census_ok == true and audit_ok == true and terrain_ok
 		if g_OuterRingRevealPassed ~= true then
 			g_OuterRingRevealError = "outer ring placed-object gate failed: " .. g_OuterRingRevealSummary

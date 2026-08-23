@@ -269,8 +269,10 @@ config.TopUpAnomalyMountainBaseMinimumRiseMeters = 5
 -- coordinates or sector names.
 config.CreateNaturalMountainBaseBuildableAprons = true
 config.MountainBaseApronOuterRingSectors = 2
-config.MountainBaseOuterRingResourceMinimum = 70
-config.MountainBaseOutermostResourceMinimumPercent = 40
+config.MountainBaseOuterRingResourceMinimum = 50
+-- Split the guaranteed quota across the two disjoint bands: 60% in sectors touching the map edge,
+-- with the remaining 40% in the adjacent (inner) sector band.
+config.MountainBaseOutermostResourceMinimumPercent = 60
 -- Vanilla resource-family repulsion cannot carry the fixed perimeter quota on every terrain.
 -- The guaranteed quota therefore uses its own conservative clearance: quota markers never share
 -- a hex or occupy adjacent hexes. Sector-load balancing supplies the wider geographic pressure.
@@ -297,8 +299,10 @@ config.OuterResourceSurfaceCoreRadiusHexes = 1
 config.OuterResourceSurfaceFeatherRadiusHexes = 4
 config.OuterResourceClusterMinimumDeposits = 4
 config.OuterResourceClusterRadiusHexes = 12
+config.OuterResourceClusterMinimumCount = 6
+config.OuterResourceClusterMaximumAnomalies = 3
 config.OuterResourceRocketPadExtraFeatherHexes = 6
-config.OuterResourceRocketPadMaximumCount = 24
+config.OuterResourceRocketPadMaximumCount = 10
 -- A dome-effect top-up may enter the otherwise excluded perimeter only at a newly modified,
 -- engine-verified mountain rocket pad.  Ordinary perimeter terrain remains excluded.
 config.MountainRocketPadsAllowDomeEffects = true
@@ -855,9 +859,9 @@ C.CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS =
 C.MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS = math.max(0,
 	math.floor(as_number(config.MountainBaseApronOuterRingSectors, 2)))
 C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM = math.max(0,
-	math.floor(as_number(config.MountainBaseOuterRingResourceMinimum, 70)))
+	math.floor(as_number(config.MountainBaseOuterRingResourceMinimum, 50)))
 C.MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT = math.max(0, math.min(100,
-	as_number(config.MountainBaseOutermostResourceMinimumPercent, 40)))
+	as_number(config.MountainBaseOutermostResourceMinimumPercent, 60)))
 C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE = math.max(1,
 	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 2)))
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
@@ -882,10 +886,14 @@ C.OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS = math.max(4,
 	math.floor(as_number(config.OuterResourceClusterMinimumDeposits, 4)))
 C.OUTER_RESOURCE_CLUSTER_RADIUS_HEXES = math.max(4,
 	math.floor(as_number(config.OuterResourceClusterRadiusHexes, 12)))
+C.OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT = math.max(0,
+	math.floor(as_number(config.OuterResourceClusterMinimumCount, 6)))
+C.OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES = math.max(0,
+	math.floor(as_number(config.OuterResourceClusterMaximumAnomalies, 3)))
 C.OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES = math.max(3,
 	as_number(config.OuterResourceRocketPadExtraFeatherHexes, 6))
 C.OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT = math.max(0,
-	math.floor(as_number(config.OuterResourceRocketPadMaximumCount, 24)))
+	math.floor(as_number(config.OuterResourceRocketPadMaximumCount, 10)))
 C.MOUNTAIN_ROCKET_PADS_ALLOW_DOME_EFFECTS =
 	as_bool(config.MountainRocketPadsAllowDomeEffects)
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)

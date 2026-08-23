@@ -2027,7 +2027,9 @@ local function PrepareOuterResourceTerrain(map)
 		local world_radius = entry.kind == "extractor"
 			and offsets_world_radius_hexes(entry.q, entry.r, exact_extractor_offsets, radius) or 0
 		local required_core = entry.kind == "extractor"
-			and math.max(extractor_core, math.ceil(world_radius + 3))
+			-- BuildableGrid samples beyond each occupied hex center. A five-hex guard keeps the
+			-- live extractor boundary wholly inside one rebuilt buildable zone on rough terrain.
+			and math.max(extractor_core, math.ceil(world_radius + 5))
 			or surface_core + 2
 		maximum_resource_core = math.max(maximum_resource_core, required_core)
 		local ready = exact_extractor_offsets
@@ -2069,7 +2071,7 @@ local function PrepareOuterResourceTerrain(map)
 	local cluster_radius = math.max(4,
 		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
 	local maximum_rocket_pads = math.max(0,
-		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 24)))
+		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
 	local rocket_extra_feather = math.max(3,
 		cfg_number("OUTER_RESOURCE_ROCKET_PAD_EXTRA_FEATHER_HEXES", 6))
 	local radius_reference = resources[1]
@@ -2164,6 +2166,7 @@ local function PrepareOuterResourceTerrain(map)
 				end
 				if best then
 					best.members = #members
+					best.cluster_q, best.cluster_r = cq, cr
 					best.modified = not best.ready_before
 					best.shape_radius = rocket_hex_radius
 					best.world_shape_radius = rocket_world_radius
@@ -2365,6 +2368,7 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_shape_radius = rocket_hex_radius,
 		patches = shaped_patches, modified_cells = modified_cells,
 		ring_sectors = ring_sectors,
+		resource_clusters = #rocket_sites,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
 	}
@@ -2404,6 +2408,7 @@ local function AuditOuterResourceTerrain(map)
 	rocket_sites = type(rocket_sites) == "table" and rocket_sites or {}
 	local terrain_api = Global("terrain")
 	local point_fn = Global("point")
+	local box_fn = Global("box")
 	local hex_to_world = Global("HexToWorld")
 	local buildable = map and map.buildable
 	local get_z = buildable and buildable.GetZ
@@ -2450,6 +2455,29 @@ local function AuditOuterResourceTerrain(map)
 		end
 		return offsets
 	end
+	local const_tbl = Global("const")
+	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
+	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
+	local passability_clear_half = math.max(1, math.floor(hex_size * 0.46))
+	local passability_clears = 0
+	local function clear_exact_offsets(q, r, offsets)
+		if type(terrain_api.ClearPassabilityBox) ~= "function"
+			or type(box_fn) ~= "function" then return false end
+		local cleared = false
+		for _, offset in ipairs(offsets) do
+			local ok_xy, x, y = pcall(hex_to_world, q + offset[1], r + offset[2])
+			if ok_xy and type(x) == "number" and type(y) == "number" then
+				local ok_box, area = pcall(box_fn,
+					point_fn(x - passability_clear_half, y - passability_clear_half),
+					point_fn(x + passability_clear_half, y + passability_clear_half))
+				if ok_box and area and pcall(terrain_api.ClearPassabilityBox, map, area) then
+					cleared = true
+					passability_clears = passability_clears + 1
+				end
+			end
+		end
+		return cleared
+	end
 	local surface_offsets = { { 0, 0 } }
 	local extractor_radius = math.max(2,
 		math.floor(cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3) + 0.5))
@@ -2477,7 +2505,6 @@ local function AuditOuterResourceTerrain(map)
 
 	local resource_failures, surface_passable, extractor_buildable = 0, 0, 0
 	local resource_failure_breakdown, first_resource_failure = {}, nil
-	local const_tbl = Global("const")
 	local invalid_z = type(const_tbl) == "table" and const_tbl.InvalidZ or nil
 	for _, site in ipairs(resource_sites) do
 		local offsets = site.kind == "extractor"
@@ -2485,6 +2512,14 @@ local function AuditOuterResourceTerrain(map)
 				and site.extractor_offsets or extractor_offsets) or surface_offsets
 		local ready, failure_reason = ready_offsets(
 			site.q, site.r, offsets, site.kind == "extractor")
+		-- Expanded maps intentionally have no artificial out-of-bounds passability border. If a
+		-- height-prepared resource footprint is buildable but retained a stale border bit, clear only
+		-- its exact live hexes and immediately rerun the full passability/buildability contract.
+		if not ready and failure_reason == "passability"
+			and clear_exact_offsets(site.q, site.r, offsets) then
+			ready, failure_reason = ready_offsets(
+				site.q, site.r, offsets, site.kind == "extractor")
+		end
 		site.verified = ready
 		site.failure_reason = ready and nil or failure_reason
 		if ready then
@@ -2532,16 +2567,27 @@ local function AuditOuterResourceTerrain(map)
 		end
 	end
 	map.SuperBigMapVerifiedMountainRocketPads = verified_mountain_pads
+	local cluster_minimum = math.max(0,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT", 6)))
+	local cluster_maximum = math.max(cluster_minimum,
+		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
+	local cluster_shortfall = math.max(0, cluster_minimum - #rocket_sites)
+	local cluster_excess = math.max(0, #rocket_sites - cluster_maximum)
 	local report = {
 		resources = #resource_sites, surface_passable = surface_passable,
 		extractor_buildable = extractor_buildable, resource_failures = resource_failures,
 		rocket_pads = #rocket_sites, rocket_failures = rocket_failures,
 		resource_failure_breakdown = resource_failure_breakdown,
+		passability_clears = passability_clears,
 		rocket_failure_breakdown = rocket_failure_breakdown,
 		first_resource_failure = first_resource_failure or "",
 		first_rocket_failure = first_rocket_failure or "",
 		verified_modified_mountain_rocket_pads = #verified_mountain_pads,
+		resource_clusters = #rocket_sites, cluster_minimum = cluster_minimum,
+		cluster_maximum = cluster_maximum, cluster_shortfall = cluster_shortfall,
+		cluster_excess = cluster_excess,
 		reason = resource_failures == 0 and rocket_failures == 0
+			and cluster_shortfall == 0 and cluster_excess == 0
 			and "all outer resource terrain contracts verified" or "final terrain contract failed",
 	}
 	map.SuperBigMapOuterResourceTerrainAudit = report
@@ -2554,12 +2600,17 @@ local function AuditOuterResourceTerrain(map)
 			.. " resource_failures=" .. tostring(report.resource_failures)
 			.. " rocket_pads=" .. tostring(report.rocket_pads)
 			.. " rocket_failures=" .. tostring(report.rocket_failures)
+			.. " passability_clears=" .. tostring(report.passability_clears)
+			.. " resource_clusters=" .. tostring(report.resource_clusters)
+			.. " cluster_shortfall=" .. tostring(report.cluster_shortfall)
+			.. " cluster_excess=" .. tostring(report.cluster_excess)
 			.. " first_resource_failure=" .. tostring(report.first_resource_failure)
 			.. " first_rocket_failure=" .. tostring(report.first_rocket_failure)
 			.. " verified_mountain_effect_candidates="
 			.. tostring(report.verified_modified_mountain_rocket_pads))
 	end
-	return resource_failures == 0 and rocket_failures == 0, report
+	return resource_failures == 0 and rocket_failures == 0
+		and cluster_shortfall == 0 and cluster_excess == 0, report
 end
 
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height

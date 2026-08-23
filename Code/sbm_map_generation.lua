@@ -11005,7 +11005,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. tostring(resource_terrain_audit
 									and resource_terrain_audit.resource_failures)
 								.. " rocket_failures=" .. tostring(resource_terrain_audit
-									and resource_terrain_audit.rocket_failures))
+									and resource_terrain_audit.rocket_failures)
+								.. " cluster_shortfall=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_shortfall)
+								.. " cluster_excess=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_excess))
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
@@ -11085,6 +11089,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(ring_stats and ring_stats.anomaly_fallback_inside_ring)
 									.. " sector_overflow="
 									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow)
+									.. " cluster_overflow="
+									.. tostring(ring_stats
+										and ring_stats.anomaly_resource_cluster_overflow)
 									.. " quota_resources="
 									.. tostring(ring_stats
 										and ring_stats.resource_quota_topups)
@@ -11093,7 +11100,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 										and ring_stats.resource_quota_shortfall)
 									.. " outermost_quota_shortfall="
 									.. tostring(ring_stats
-										and ring_stats.resource_outermost_quota_shortfall))
+										and ring_stats.resource_outermost_quota_shortfall)
+									.. " inner_band_quota_shortfall="
+									.. tostring(ring_stats
+										and ring_stats.resource_inner_band_quota_shortfall))
 							end
 						end
 						if type(deposits.CensusFinalOuterResourceTopUps) == "function" then
@@ -11110,7 +11120,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(quota_stats and quota_stats.anomaly_topups_outside_ring)
 									.. " effect_topups=" .. tostring(quota_stats and quota_stats.effect_topups)
 									.. " native_resources=" .. tostring(quota_stats and quota_stats.native_resources)
-									.. " shortfall=" .. tostring(quota_stats and quota_stats.shortfall))
+									.. " shortfall=" .. tostring(quota_stats and quota_stats.shortfall)
+									.. " outermost_shortfall="
+									.. tostring(quota_stats and quota_stats.outermost_shortfall)
+									.. " inner_band_shortfall="
+									.. tostring(quota_stats and quota_stats.inner_band_shortfall)
+									.. " anomaly_cluster_overflow="
+									.. tostring(quota_stats
+										and quota_stats.anomaly_resource_cluster_overflow))
 							end
 						end
 						if type(deposits.SchedulePostDeferredSurfaceResourceTopUpCensus) == "function" then

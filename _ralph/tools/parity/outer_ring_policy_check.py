@@ -246,8 +246,8 @@ static_checks = {
     ),
     "natural_aprons_enabled": "config.CreateNaturalMountainBaseBuildableAprons = true" in CONFIG,
     "natural_aprons_use_outer_two_sectors": "config.MountainBaseApronOuterRingSectors = 2" in CONFIG,
-    "mountain_base_resource_minimum_is_70": (
-        "config.MountainBaseOuterRingResourceMinimum = 70" in CONFIG
+    "mountain_base_resource_minimum_is_50": (
+        "config.MountainBaseOuterRingResourceMinimum = 50" in CONFIG
     ),
     "mountain_base_resource_minimum_is_compiled": (
         "C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM" in CONFIG
@@ -305,11 +305,12 @@ static_checks = {
         "SurfaceQuotaBadgeContext" in DEPOSITS
         and "SurfaceQuotaBadgeCandidateAllowed" in DEPOSITS
         and "context.preserve_outermost" in DEPOSITS
+        and "context.preserve_inner_band" in DEPOSITS
         and "AxialHexDistance(q, r, other.q, other.r)" in DEPOSITS
         and "BadgeCandidateAllowed(marker, map, pt, cx, cy, q, r" in DEPOSITS
     ),
     "resource_quota_places_before_general_resources": (
-        resources.index('"mountain-base resource quota"')
+        resources.index('"inner-band mountain-base resource quota"')
         < resources.index("if sequential_placement then")
     ),
     "resource_quota_marks_ordinary_resource_topups": (
@@ -325,18 +326,23 @@ static_checks = {
         and "FINAL_EXPANDED_SECTORS_PER_AXIS = 20" in DEPOSITS
         and "map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS" in DEPOSITS
     ),
-    "resource_census_counts_only_ordinary_topups_toward_minimum": (
-        "ordinary_resource_topups" in census
+    "resource_census_counts_only_guaranteed_quota_topups_toward_minimum": (
+        "guaranteed_resource_topups" in census
         and "marker.SuperBigMapResourceTopUp == true" in census
         and "minimum - accepted_resources" in census
-        and "stats.ordinary_resource_topups_placed" in census
+        and "stats.guaranteed_resource_topups_placed" in census
         and "stats.require_placed = require_placed == true" in census
     ),
-    "resource_quota_guarantees_outermost_share": (
-        "MountainBaseOutermostResourceMinimumPercent = 40" in CONFIG
+    "resource_quota_guarantees_60_40_disjoint_band_split": (
+        "MountainBaseOutermostResourceMinimumPercent = 60" in CONFIG
         and "outermost mountain-base resource quota" in resources
+        and "inner-band mountain-base resource quota" in resources
+        and "inner_band_mountain_base_candidates" in resources
+        and "inner_band_perimeter_quota_candidates" in resources
         and "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
+        and "clone.SuperBigMapInnerBandResourceTopUp" in resources
         and "outermost mountain-base resource quota failed" in resources
+        and "inner-band mountain-base resource quota failed" in resources
     ),
     "anomaly_ten_hex_policy_gets_complete_plan_capacity": (
         "local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 2048" in DEPOSITS
@@ -347,6 +353,23 @@ static_checks = {
         "guaranteed_resource_topups_outermost" in census
         and "outermost_minimum" in census
         and "stats.outermost_shortfall == 0" in census
+    ),
+    "resource_census_reports_and_gates_inner_band_share": (
+        "guaranteed_resource_topups_inner_band" in census
+        and "inner_band_minimum" in census
+        and "stats.inner_band_shortfall == 0" in census
+    ),
+    "resource_cluster_count_is_six_to_ten": (
+        "config.OuterResourceClusterMinimumCount = 6" in CONFIG
+        and "config.OuterResourceRocketPadMaximumCount = 10" in CONFIG
+        and "cluster_shortfall == 0 and cluster_excess == 0" in outer_resource_terrain
+    ),
+    "anomalies_are_capped_at_three_per_resource_cluster": (
+        "config.OuterResourceClusterMaximumAnomalies = 3" in CONFIG
+        and "candidate_resource_cluster" in DEPOSITS
+        and "maximum_anomalies_per_cluster" in DEPOSITS
+        and "anomaly_resource_cluster_overflow" in census
+        and "and stats.anomaly_resource_cluster_overflow == 0" in census
     ),
     "resource_census_separates_anomalies_effects_and_native_resources": (
         "anomaly_topups" in census
@@ -371,7 +394,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_860": "'version', 860" in METADATA,
+    "version_is_861": "'version', 861" in METADATA,
 }
 
 case_results = []
@@ -441,7 +464,7 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 7,
+    "schema_version": 8,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,

@@ -1191,6 +1191,7 @@ local function SurfaceQuotaBadgeContext(marker, map)
 		minimum_hex_distance = math.max(1, math.floor(
 			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2)),
 		preserve_outermost = marker.SuperBigMapOutermostResourceTopUp == true,
+		preserve_inner_band = marker.SuperBigMapInnerBandResourceTopUp == true,
 		occupied = {},
 	}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(other)
@@ -1212,6 +1213,8 @@ local function SurfaceQuotaBadgeCandidateAllowed(map, x, y, q, r, context)
 	end
 	if context.preserve_outermost
 		and not IsInFinalOuterResourceWorldBand(map, x, y, 1) then return false end
+	if context.preserve_inner_band
+		and IsInFinalOuterResourceWorldBand(map, x, y, 1) then return false end
 	if type(q) ~= "number" or type(r) ~= "number" then return false end
 	for _, other in ipairs(context.occupied) do
 		if AxialHexDistance(q, r, other.q, other.r) < context.minimum_hex_distance then
@@ -3740,12 +3743,12 @@ function DepositRules.TopUpDeposits(map)
 	end
 	local surface_mountain_base_minimum = not IsUndergroundMap(map)
 		and math.max(0, math.floor(
-			cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 70)) or 0
+			cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 50)) or 0
 	local surface_mountain_base_ring_sectors = not IsUndergroundMap(map)
 		and math.max(0, math.floor(cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2)) or 0
 	local surface_outermost_resource_minimum_percent = not IsUndergroundMap(map)
 		and math.max(0, math.min(100,
-			cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 40)) or 0
+			cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 60)) or 0
 	local surface_quota_minimum_hex_distance = not IsUndergroundMap(map)
 		and math.max(1, math.floor(
 			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2)) or 0
@@ -3905,6 +3908,7 @@ function DepositRules.TopUpDeposits(map)
 	local surface_resource_quota_added = 0
 	local surface_resource_quota_candidates = 0
 	local surface_outermost_resource_added = 0
+	local surface_inner_band_resource_added = 0
 
 	local added = 0
 	local validation_context = IsUndergroundMap(map)
@@ -4122,8 +4126,10 @@ function DepositRules.TopUpDeposits(map)
 		-- every opportunity contributes at most one deposit and untouched foothills stay untouched.
 		local mountain_base_candidates = {}
 		local outermost_mountain_base_candidates = {}
+		local inner_band_mountain_base_candidates = {}
 		local perimeter_quota_candidates = {}
 		local outermost_perimeter_quota_candidates = {}
+		local inner_band_perimeter_quota_candidates = {}
 		if not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0 then
 			local centers = map.SuperBigMapNaturalMountainBaseApronCenters
@@ -4270,11 +4276,16 @@ function DepositRules.TopUpDeposits(map)
 				if IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y, 1) then
 					candidate._sbm_outermost_resource_band = true
 					outermost_mountain_base_candidates[#outermost_mountain_base_candidates + 1] = candidate
+				else
+					candidate._sbm_inner_resource_band = true
+					inner_band_mountain_base_candidates[#inner_band_mountain_base_candidates + 1] = candidate
 				end
 			end
 			for _, candidate in ipairs(perimeter_quota_candidates) do
 				if IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y, 1) then
 					outermost_perimeter_quota_candidates[#outermost_perimeter_quota_candidates + 1] = candidate
+				else
+					inner_band_perimeter_quota_candidates[#inner_band_perimeter_quota_candidates + 1] = candidate
 				end
 			end
 		end
@@ -4284,7 +4295,7 @@ function DepositRules.TopUpDeposits(map)
 		end
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
 		-- The fixed surface quota is intentionally narrower than the ordinary top-up planner. Exact
-		-- vanilla family radii leave some legitimate two-sector bands with fewer than 70 slots. Its
+		-- vanilla family radii leave some legitimate two-sector bands with fewer than 50 slots. Its
 		-- fallback is still deterministic and conservative: globally unique non-adjacent hexes,
 		-- sector-load balancing, and every normal terrain gate. Only these
 		-- flagged quota markers are exempt; all later resource additions continue through CanPlace.
@@ -4379,7 +4390,8 @@ function DepositRules.TopUpDeposits(map)
 		-- A candidate is reserved by Take. If cloning that candidate fails, keep trying unused
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
 		local function place_from(active, density_fallback, allow_any_terrain,
-			maximum_this_pass, mountain_base_resource, outermost_resource, surface_quota_resource)
+			maximum_this_pass, mountain_base_resource, outermost_resource,
+			surface_quota_resource, inner_band_resource)
 			active_selector = active
 			local placed_this_pass = 0
 			maximum_this_pass = maximum_this_pass or shortfall
@@ -4401,6 +4413,7 @@ function DepositRules.TopUpDeposits(map)
 						clone.SuperBigMapOuterRingResourceQuotaTopUp =
 							surface_quota_resource or nil
 						clone.SuperBigMapOutermostResourceTopUp = outermost_resource or nil
+						clone.SuperBigMapInnerBandResourceTopUp = inner_band_resource or nil
 						if mountain_base_resource then
 							surface_mountain_base_resource_added =
 								surface_mountain_base_resource_added + 1
@@ -4411,6 +4424,10 @@ function DepositRules.TopUpDeposits(map)
 						end
 						if outermost_resource then
 							surface_outermost_resource_added = surface_outermost_resource_added + 1
+						end
+						if inner_band_resource then
+							surface_inner_band_resource_added =
+								surface_inner_band_resource_added + 1
 						end
 						clone.SuperBigMapResourceTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
 						clone.SuperBigMapTopUpIgnoredRubbleWalls = ignore_rubble_walls or nil
@@ -4612,9 +4629,10 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
-		-- Reserve the first 70 (configurable) surface additions for validated two-sector perimeter
-		-- opportunities, preferring natural foothills. Unique hexes, the quota-only hard clearance,
-		-- unobstructed terrain, and the
+		-- Reserve the first 50 (configurable) surface additions for validated two-sector perimeter
+		-- opportunities: 60% in the edge-touching band and 40% in the adjacent inner band. The pools
+		-- are disjoint, so filling one band can never silently satisfy the other band's quota. Unique
+		-- hexes, the quota-only hard clearance, unobstructed terrain, and the
 		-- engine's final buildable grid remain mandatory; terrain-type matching may relax because a
 		-- cloned deposit does not require the source marker's cosmetic terrain material.
 		if not underground and surface_mountain_base_minimum > 0 then
@@ -4626,7 +4644,8 @@ function DepositRules.TopUpDeposits(map)
 					map, outermost_mountain_base_candidates, "outermost mountain-base resource quota",
 					function(candidate) return surface_quota_can_place(candidate) end,
 					surface_selector_loads)
-				place_from(outermost_selector, false, true, outermost_required, true, true, true)
+				place_from(outermost_selector, false, true,
+					outermost_required, true, true, true, false)
 				if surface_outermost_resource_added < outermost_required then
 					local outermost_flat_selector = NewSectorBalancedCandidateSelector(
 						map, outermost_perimeter_quota_candidates,
@@ -4634,7 +4653,8 @@ function DepositRules.TopUpDeposits(map)
 						function(candidate) return surface_quota_can_place(candidate) end,
 						surface_selector_loads)
 					place_from(outermost_flat_selector, false, true,
-						outermost_required - surface_outermost_resource_added, false, true, true)
+						outermost_required - surface_outermost_resource_added,
+						false, true, true, false)
 				end
 				if surface_outermost_resource_added < outermost_required then
 					error("outermost mountain-base resource quota failed: required="
@@ -4643,19 +4663,31 @@ function DepositRules.TopUpDeposits(map)
 						.. tostring(surface_outermost_resource_added))
 				end
 			end
-			local foothill_selector = NewSectorBalancedCandidateSelector(
-				map, mountain_base_candidates, "mountain-base resource quota",
-				function(candidate) return surface_quota_can_place(candidate) end,
-				surface_selector_loads)
-			place_from(foothill_selector, false, true,
-				required - surface_resource_quota_added, true, false, true)
-			if surface_resource_quota_added < required then
-				local flat_perimeter_selector = NewSectorBalancedCandidateSelector(
-					map, perimeter_quota_candidates, "flat perimeter resource quota",
+			local inner_required = required - outermost_required
+			if inner_required > 0 then
+				local inner_selector = NewSectorBalancedCandidateSelector(
+					map, inner_band_mountain_base_candidates,
+					"inner-band mountain-base resource quota",
 					function(candidate) return surface_quota_can_place(candidate) end,
 					surface_selector_loads)
-				place_from(flat_perimeter_selector, false, true,
-					required - surface_resource_quota_added, false, false, true)
+				place_from(inner_selector, false, true,
+					inner_required, true, false, true, true)
+				if surface_inner_band_resource_added < inner_required then
+					local inner_flat_selector = NewSectorBalancedCandidateSelector(
+						map, inner_band_perimeter_quota_candidates,
+						"inner-band flat perimeter resource quota",
+						function(candidate) return surface_quota_can_place(candidate) end,
+						surface_selector_loads)
+					place_from(inner_flat_selector, false, true,
+						inner_required - surface_inner_band_resource_added,
+						false, false, true, true)
+				end
+				if surface_inner_band_resource_added < inner_required then
+					error("inner-band mountain-base resource quota failed: required="
+						.. tostring(inner_required) .. " candidates="
+						.. tostring(#inner_band_mountain_base_candidates) .. " placed="
+						.. tostring(surface_inner_band_resource_added))
+				end
 			end
 			if surface_resource_quota_added < required then
 				error("outer-ring resource quota failed: required=" .. tostring(required)
@@ -4791,6 +4823,7 @@ function DepositRules.TopUpDeposits(map)
 		surface_resource_quota_candidates = surface_resource_quota_candidates,
 		surface_outermost_resource_minimum_percent = surface_outermost_resource_minimum_percent,
 		surface_outermost_resource_added = surface_outermost_resource_added,
+		surface_inner_band_resource_added = surface_inner_band_resource_added,
 		surface_quota_minimum_hex_distance = surface_quota_minimum_hex_distance,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
@@ -6080,9 +6113,8 @@ end
 -- Replace every TOP-UP anomaly in the final N-sector perimeter ring. Native anomalies are never
 -- selected or moved. First plan the complete top-up population, then move it, so a failed search can
 -- never leave a half-redistributed map. Outer-ring top-ups deliberately use a simple custom rule:
--- unique hexes, at least 10 hexes from every other anomaly, and at most 1 top-up per sector. If the
--- outer band cannot hold the full population, only the remainder falls back to reachable interior
--- sectors and uses vanilla anomaly repulsion.
+-- unique hexes, at least 10 hexes from every other anomaly, and no more than three top-ups inside
+-- any detected resource cluster. There is no per-sector cap and no interior fallback.
 RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local stats = {
 		moved = 0, planned = 0, ring_sectors = 0, expected_ring_sectors = 0,
@@ -6313,6 +6345,37 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		stats.error = "WorldToHex API unavailable for outer-ring anomaly spacing"
 		return false, stats
 	end
+	local resource_cluster_radius = math.max(1,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+	local maximum_anomalies_per_cluster = math.max(0,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES or 3))
+	local resource_clusters = {}
+	for _, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+		and map.SuperBigMapOuterResourceRocketPads or {}) do
+		local q, r = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+		if type(q) == "number" and type(r) == "number" then
+			resource_clusters[#resource_clusters + 1] = { q = q, r = r }
+		end
+	end
+	local function candidate_resource_cluster(candidate)
+		if not candidate then return nil end
+		if candidate._sbm_resource_cluster_checked == true then
+			return candidate._sbm_resource_cluster_index
+		end
+		local best_index, best_distance
+		for index, cluster in ipairs(resource_clusters) do
+			local distance = AxialHexDistance(candidate.q, candidate.r, cluster.q, cluster.r)
+			if distance and distance <= resource_cluster_radius
+				and (not best_distance or distance < best_distance) then
+				best_index, best_distance = index, distance
+			end
+		end
+		candidate._sbm_resource_cluster_checked = true
+		candidate._sbm_resource_cluster_index = best_index
+		return best_index
+	end
+	stats.resource_clusters = #resource_clusters
+	stats.maximum_anomalies_per_cluster = maximum_anomalies_per_cluster
 	local fixed_anomaly_hexes, fixed_anomalies = {}, {}
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if ignored[marker] == true then return end
@@ -6469,13 +6532,18 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 	end
 	local function new_outer_attempt_tracker()
-		local occupied, spaced_anomalies, sector_counts = {}, {}, {}
+		local occupied, spaced_anomalies, sector_counts, cluster_counts = {}, {}, {}, {}
 		local function can_place(candidate)
 			if not candidate or fixed_anomaly_hexes[candidate.hex_key]
 				or occupied[candidate.hex_key] then return false end
 			if not clears_fixed_anomalies(candidate) then return false end
 			for _, prior in ipairs(spaced_anomalies) do
 				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
+			end
+			local cluster_index = candidate_resource_cluster(candidate)
+			if cluster_index and maximum_anomalies_per_cluster >= 0
+				and (cluster_counts[cluster_index] or 0) >= maximum_anomalies_per_cluster then
+				return false
 			end
 			return true
 		end
@@ -6485,9 +6553,13 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			spaced_anomalies[#spaced_anomalies + 1] = candidate
 			sector_counts[candidate.target_sector] =
 				(sector_counts[candidate.target_sector] or 0) + 1
+			local cluster_index = candidate_resource_cluster(candidate)
+			if cluster_index then
+				cluster_counts[cluster_index] = (cluster_counts[cluster_index] or 0) + 1
+			end
 			return true
 		end
-		return can_place, commit, sector_counts
+		return can_place, commit, sector_counts, cluster_counts
 	end
 
 	local function find_candidate(item, sectors, predicate, allow_sampling)
@@ -6535,7 +6607,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	-- from 32 to 128 random probes before it is considered unavailable; the explicit rollback mode
 	-- has already populated the historical 384-probe pools above.
 	local plans, outer_plans, remaining = {}, {}, {}
-	local can_place_outer, commit_outer, outer_sector_counts = new_outer_attempt_tracker()
+	local can_place_outer, commit_outer, outer_sector_counts, outer_cluster_counts =
+		new_outer_attempt_tracker()
 	local marker_order = {}
 	for i = 1, #moving do marker_order[i] = moving[i] end
 	shuffle(marker_order)
@@ -6576,7 +6649,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		local MAX_COMPLETE_PLAN_ATTEMPTS = 512
 		for attempt = 2, MAX_COMPLETE_PLAN_ATTEMPTS do
 			planning_attempts_run = attempt
-			local retry_can_place, retry_commit, retry_sector_counts =
+			local retry_can_place, retry_commit, retry_sector_counts, retry_cluster_counts =
 				new_outer_attempt_tracker()
 			local retry_order, retry_plans, retry_remaining = {}, {}, {}
 			for i = 1, #moving do retry_order[i] = moving[i] end
@@ -6602,6 +6675,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 				outer_plans = retry_plans
 				remaining = retry_remaining
 				outer_sector_counts = retry_sector_counts
+				outer_cluster_counts = retry_cluster_counts
 				outer_exhausted_at = retry_exhausted_at
 				best_outer_planned = #retry_plans
 				best_total_planned = #retry_plans
@@ -6625,6 +6699,11 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	for _, count in pairs(outer_sector_counts) do
 		stats.selected_outer_sectors = stats.selected_outer_sectors + 1
 		stats.maximum_per_sector = math.max(stats.maximum_per_sector, count)
+	end
+	stats.maximum_anomalies_in_resource_cluster = 0
+	for _, count in pairs(outer_cluster_counts) do
+		stats.maximum_anomalies_in_resource_cluster = math.max(
+			stats.maximum_anomalies_in_resource_cluster, count)
 	end
 
 	if #remaining > 0 then
@@ -6651,6 +6730,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		item.after_x, item.after_y = winner.x, winner.y
 		item.target_sector = winner.target_sector
 		item.in_outer_ring = plan.in_outer_ring == true
+		item.resource_cluster_index = candidate_resource_cluster(winner)
 		item.shared_candidate_source = winner._sbm_shared_source
 		finalized_plans[#finalized_plans + 1] = item
 	end
@@ -6713,6 +6793,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		item.marker.SuperBigMapEdgeRedistributed = true
 		item.marker.SuperBigMapOuterRingRedistributed = item.in_outer_ring == true or nil
+		item.marker.SuperBigMapResourceClusterIndex = item.resource_cluster_index
 		item.marker.SuperBigMapInnerRingFallback = nil
 		-- The resource-pool wrapper and its source describe this same hex. Retire the source only
 		-- after the complete move/register transaction succeeds so the effect pass neither revalidates
@@ -6740,6 +6821,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
+			.. " maximum_anomalies_in_resource_cluster="
+			.. tostring(stats.maximum_anomalies_in_resource_cluster)
 			.. (include_positions and (" positions=" .. format_positions(plans, true)) or ""))
 	end
 	return true, stats
@@ -7536,7 +7619,7 @@ end
 -- order, its coordinate base, or the sector lookup's shared-boundary choice.  This is both the
 -- quota's acceptance census and a compact lifecycle diagnostic: resources, anomalies, effects,
 -- and native deposits are deliberately reported separately so only ordinary resource top-ups can
--- satisfy the 70-marker guarantee.
+-- satisfy the 50-marker guarantee and its disjoint 30-edge/20-inner split.
 function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 	map = map or Global("CurrentMap")
 	local ring_sectors = math.max(0, math.floor(
@@ -7546,10 +7629,16 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		ordinary_resource_topups = 0, ordinary_resource_topups_placed = 0,
 		ordinary_resource_topups_visible = 0,
 		ordinary_resource_topups_outermost = 0,
+		guaranteed_resource_topups = 0,
+		guaranteed_resource_topups_placed = 0,
 		guaranteed_resource_topups_outermost = 0,
 		guaranteed_resource_topups_outermost_placed = 0,
+		guaranteed_resource_topups_inner_band = 0,
+		guaranteed_resource_topups_inner_band_placed = 0,
 		anomaly_topups = 0, anomaly_topups_total = 0,
 		anomaly_topups_placed = 0, anomaly_topups_outside_ring = 0,
+		anomaly_resource_cluster_overflow = 0,
+		maximum_anomalies_in_resource_cluster = 0,
 		effect_topups = 0, effect_topups_total = 0,
 		effect_topups_placed = 0,
 		verified_mountain_rocket_pad_effect_topups = 0,
@@ -7613,18 +7702,46 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 				stats.ordinary_resource_topups_placed = stats.ordinary_resource_topups_placed + 1
 				stats.ordinary_resource_topups_visible = stats.ordinary_resource_topups_visible + 1
 			end
-			if outermost and marker.SuperBigMapOuterRingResourceQuotaTopUp == true then
-				stats.guaranteed_resource_topups_outermost =
-					stats.guaranteed_resource_topups_outermost + 1
-				if placed(marker) then
-					stats.guaranteed_resource_topups_outermost_placed =
-						stats.guaranteed_resource_topups_outermost_placed + 1
+			if marker.SuperBigMapOuterRingResourceQuotaTopUp == true then
+				stats.guaranteed_resource_topups = stats.guaranteed_resource_topups + 1
+				local is_placed = placed(marker)
+				if is_placed then
+					stats.guaranteed_resource_topups_placed =
+						stats.guaranteed_resource_topups_placed + 1
+				end
+				if outermost then
+					stats.guaranteed_resource_topups_outermost =
+						stats.guaranteed_resource_topups_outermost + 1
+					if is_placed then
+						stats.guaranteed_resource_topups_outermost_placed =
+							stats.guaranteed_resource_topups_outermost_placed + 1
+					end
+				else
+					stats.guaranteed_resource_topups_inner_band =
+						stats.guaranteed_resource_topups_inner_band + 1
+					if is_placed then
+						stats.guaranteed_resource_topups_inner_band_placed =
+							stats.guaranteed_resource_topups_inner_band_placed + 1
+					end
 				end
 			end
 		else
 			stats.native_resources = stats.native_resources + 1
 		end
 	end)
+	local world_to_hex = Global("WorldToHex")
+	local anomaly_cluster_radius = math.max(1,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+	local anomaly_cluster_maximum = math.max(0,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES or 3))
+	local anomaly_resource_clusters, anomaly_cluster_counts = {}, {}
+	for _, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+		and map.SuperBigMapOuterResourceRocketPads or {}) do
+		local q, r = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+		if type(q) == "number" and type(r) == "number" then
+			anomaly_resource_clusters[#anomaly_resource_clusters + 1] = { q = q, r = r }
+		end
+	end
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not (marker and marker.SuperBigMapAnomalyTopUp == true) then return end
 		stats.anomaly_topups_total = stats.anomaly_topups_total + 1
@@ -7632,6 +7749,29 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		if in_band(marker) then
 			stats.anomaly_topups = stats.anomaly_topups + 1
 			if placed(marker) then stats.anomaly_topups_placed = stats.anomaly_topups_placed + 1 end
+			local pos = ObjectPos(marker)
+			local ok_hex, q, r = false, nil, nil
+			if type(world_to_hex) == "function" then ok_hex, q, r = pcall(world_to_hex, pos) end
+			if ok_hex and type(q) == "number" and type(r) == "number" then
+				local nearest_index, nearest_distance
+				for index, cluster in ipairs(anomaly_resource_clusters) do
+					local distance = AxialHexDistance(q, r, cluster.q, cluster.r)
+					if distance and distance <= anomaly_cluster_radius
+						and (not nearest_distance or distance < nearest_distance) then
+						nearest_index, nearest_distance = index, distance
+					end
+				end
+				if nearest_index then
+					local count = (anomaly_cluster_counts[nearest_index] or 0) + 1
+					anomaly_cluster_counts[nearest_index] = count
+					stats.maximum_anomalies_in_resource_cluster = math.max(
+						stats.maximum_anomalies_in_resource_cluster, count)
+					if count > anomaly_cluster_maximum then
+						stats.anomaly_resource_cluster_overflow =
+							stats.anomaly_resource_cluster_overflow + 1
+					end
+				end
+			end
 		else
 			stats.anomaly_topups_outside_ring = stats.anomaly_topups_outside_ring + 1
 		end
@@ -7654,21 +7794,28 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 		end
 	end)
 	local minimum = math.max(0, math.floor(
-		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 70))
+		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 50))
 	local outermost_minimum = math.ceil(minimum * math.max(0, math.min(100,
-		cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 40)) / 100)
+		cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 60)) / 100)
+	local inner_band_minimum = math.max(0, minimum - outermost_minimum)
 	stats.minimum = minimum
 	stats.outermost_minimum = outermost_minimum
+	stats.inner_band_minimum = inner_band_minimum
 	stats.require_placed = require_placed == true
 	local accepted_resources = stats.require_placed
-		and stats.ordinary_resource_topups_placed or stats.ordinary_resource_topups
+		and stats.guaranteed_resource_topups_placed or stats.guaranteed_resource_topups
 	stats.shortfall = math.max(0, minimum - accepted_resources)
 	local accepted_outermost = stats.require_placed
 		and stats.guaranteed_resource_topups_outermost_placed
 		or stats.guaranteed_resource_topups_outermost
 	stats.outermost_shortfall = math.max(0, outermost_minimum - accepted_outermost)
+	local accepted_inner_band = stats.require_placed
+		and stats.guaranteed_resource_topups_inner_band_placed
+		or stats.guaranteed_resource_topups_inner_band
+	stats.inner_band_shortfall = math.max(0, inner_band_minimum - accepted_inner_band)
 	stats.anomaly_unplaced = stats.anomaly_topups_total - stats.anomaly_topups_placed
 	stats.lifecycle_violations = stats.anomaly_topups_outside_ring
+		+ stats.anomaly_resource_cluster_overflow
 		+ stats.unverified_outer_effect_topups
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
@@ -7679,10 +7826,16 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			.. " ordinary_resource_topups_outermost=" .. tostring(stats.ordinary_resource_topups_outermost)
 			.. " guaranteed_resource_topups_outermost="
 			.. tostring(stats.guaranteed_resource_topups_outermost)
+			.. " guaranteed_resource_topups_inner_band="
+			.. tostring(stats.guaranteed_resource_topups_inner_band)
 			.. " anomaly_topups=" .. tostring(stats.anomaly_topups)
 			.. " anomaly_topups_total=" .. tostring(stats.anomaly_topups_total)
 			.. " anomaly_topups_placed=" .. tostring(stats.anomaly_topups_placed)
 			.. " anomaly_topups_outside_ring=" .. tostring(stats.anomaly_topups_outside_ring)
+			.. " maximum_anomalies_in_resource_cluster="
+			.. tostring(stats.maximum_anomalies_in_resource_cluster)
+			.. " anomaly_resource_cluster_overflow="
+			.. tostring(stats.anomaly_resource_cluster_overflow)
 			.. " effect_topups=" .. tostring(stats.effect_topups)
 			.. " effect_topups_placed=" .. tostring(stats.effect_topups_placed)
 			.. " verified_mountain_rocket_pad_effect_topups="
@@ -7696,12 +7849,16 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 			.. " require_placed=" .. tostring(stats.require_placed)
 			.. " minimum=" .. tostring(minimum)
 			.. " outermost_minimum=" .. tostring(outermost_minimum)
+			.. " inner_band_minimum=" .. tostring(inner_band_minimum)
 			.. " shortfall=" .. tostring(stats.shortfall)
-			.. " outermost_shortfall=" .. tostring(stats.outermost_shortfall))
+			.. " outermost_shortfall=" .. tostring(stats.outermost_shortfall)
+			.. " inner_band_shortfall=" .. tostring(stats.inner_band_shortfall))
 	end
 	return stats.shortfall == 0
 		and stats.outermost_shortfall == 0
+		and stats.inner_band_shortfall == 0
 		and stats.anomaly_topups_outside_ring == 0
+		and stats.anomaly_resource_cluster_overflow == 0
 		and stats.unverified_outer_effect_topups == 0
 		and (not stats.require_placed or stats.anomaly_unplaced == 0), stats
 end
@@ -7753,7 +7910,7 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 	local resource_ring_sectors = math.max(0, math.floor(
 		cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2))
 	local resource_quota_minimum = math.max(0, math.floor(
-		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 70))
+		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 50))
 	local stats = {
 		anomaly_topups = 0, anomaly_inner_fallback = 0,
 		resource_topups = 0, effect_topups = 0,
@@ -7762,11 +7919,14 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		anomaly_fallback_inside_ring = 0,
 		anomaly_unreachable = 0, anomaly_unbuildable = 0, anomaly_obstructed = 0, anomaly_overlap = 0,
 		anomaly_sector_overflow = 0,
+		anomaly_resource_cluster_overflow = 0,
+		maximum_anomalies_in_resource_cluster = 0,
 		anomaly_mountain_base = 0, anomaly_not_mountain_base = 0, resource_obstructed = 0,
 		resource_mountain_base_topups = 0, resource_mountain_base_outside_ring = 0,
 		resource_quota_topups = 0, resource_quota_outside_ring = 0,
 		resource_quota_shortfall = 0,
 		resource_outermost_quota_topups = 0, resource_outermost_quota_shortfall = 0,
+		resource_inner_band_quota_topups = 0, resource_inner_band_quota_shortfall = 0,
 		topup_uneven = 0, resource_uneven = 0, anomaly_uneven = 0, effect_uneven = 0,
 		effect_unbuildable = 0, effect_obstructed = 0,
 		effect_inside_exclusion_ring = 0,
@@ -7790,6 +7950,19 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 	end
 	local occupied_anomaly_hexes = {}
 	local anomaly_topups_by_sector = {}
+	local anomaly_resource_cluster_counts = {}
+	local anomaly_cluster_radius = math.max(1,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+	local anomaly_cluster_maximum = math.max(0,
+		math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_ANOMALIES or 3))
+	local anomaly_resource_clusters = {}
+	for _, pad in ipairs(type(map.SuperBigMapOuterResourceRocketPads) == "table"
+		and map.SuperBigMapOuterResourceRocketPads or {}) do
+		local q, r = pad.cluster_q or pad.q, pad.cluster_r or pad.r
+		if type(q) == "number" and type(r) == "number" then
+			anomaly_resource_clusters[#anomaly_resource_clusters + 1] = { q = q, r = r }
+		end
+	end
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
 		if not (marker and marker.SuperBigMapAnomalyTopUp) then
 			local pos = marker and ObjectPos(marker)
@@ -7846,6 +8019,28 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			or (has_position and audit_hex_key(x, y) or nil)
 		local overlap = family == "anomaly" and hex_key and occupied_anomaly_hexes[hex_key] == true or false
 		if family == "anomaly" and hex_key then occupied_anomaly_hexes[hex_key] = true end
+		local anomaly_cluster_overflow = false
+		if family == "anomaly" and type(q) == "number" and type(r) == "number" then
+			local nearest_index, nearest_distance
+			for index, cluster in ipairs(anomaly_resource_clusters) do
+				local distance = AxialHexDistance(q, r, cluster.q, cluster.r)
+				if distance and distance <= anomaly_cluster_radius
+					and (not nearest_distance or distance < nearest_distance) then
+					nearest_index, nearest_distance = index, distance
+				end
+			end
+			if nearest_index then
+				local count = (anomaly_resource_cluster_counts[nearest_index] or 0) + 1
+				anomaly_resource_cluster_counts[nearest_index] = count
+				stats.maximum_anomalies_in_resource_cluster = math.max(
+					stats.maximum_anomalies_in_resource_cluster, count)
+				if count > anomaly_cluster_maximum then
+					stats.anomaly_resource_cluster_overflow =
+						stats.anomaly_resource_cluster_overflow + 1
+					anomaly_cluster_overflow = true
+				end
+			end
+		end
 		if in_ring and family == "resource" then
 			stats.resource_inside_ring = stats.resource_inside_ring + 1
 		elseif in_ring and family == "effect" then
@@ -7867,6 +8062,9 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		if reserved_resource_quota
 			and has_position and IsInFinalOuterResourceWorldBand(map, x, y, 1) then
 			stats.resource_outermost_quota_topups = stats.resource_outermost_quota_topups + 1
+		elseif reserved_resource_quota and in_ring then
+			stats.resource_inner_band_quota_topups =
+				stats.resource_inner_band_quota_topups + 1
 		end
 		if in_effect_exclusion_ring then
 			stats.effect_inside_exclusion_ring = stats.effect_inside_exclusion_ring + 1
@@ -7911,6 +8109,8 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			violation = "mountain_base_resource_topup_outside_final_ring"
 		elseif reserved_resource_quota and not in_ring then
 			violation = "outer_ring_resource_quota_topup_outside_final_ring"
+		elseif family == "anomaly" and anomaly_cluster_overflow then
+			violation = "anomaly_topup_resource_cluster_overflow"
 		elseif not even_terrain then
 			violation = family .. "_topup_not_flat_buildable_terrain"
 		elseif family == "anomaly" and not reachable then
@@ -7954,10 +8154,15 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		resource_quota_minimum - stats.resource_quota_topups)
 	violation_count = violation_count + stats.resource_quota_shortfall
 	local resource_outermost_minimum = math.ceil(resource_quota_minimum * math.max(0,
-		math.min(100, cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 40)) / 100)
+		math.min(100, cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 60)) / 100)
 	stats.resource_outermost_quota_shortfall = math.max(0,
 		resource_outermost_minimum - stats.resource_outermost_quota_topups)
 	violation_count = violation_count + stats.resource_outermost_quota_shortfall
+	local resource_inner_band_minimum = math.max(0,
+		resource_quota_minimum - resource_outermost_minimum)
+	stats.resource_inner_band_quota_shortfall = math.max(0,
+		resource_inner_band_minimum - stats.resource_inner_band_quota_topups)
+	violation_count = violation_count + stats.resource_inner_band_quota_shortfall
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
 		if marker and marker.SuperBigMapEffectTopUp then
 			stats.effect_topups = stats.effect_topups + 1
