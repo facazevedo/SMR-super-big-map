@@ -655,11 +655,11 @@ local Z_FLOOR_WU = 1000
 
 -- A few vanilla height fields contain long one-cell discontinuities in their perimeter terrain.
 -- Resampling makes those bad source edges much easier to see as striped vertical walls. Detect
--- coherent steps facing any grid edge within the two-sector outer ring. Wide-ring source discovery
--- is read-only and returns track hints for the destination-resolution border repair below; the
--- immediate-edge destination pass still performs version 839's complete translation and quintic
--- interpolation here. The central 16 x 16 sectors are never scanned, ordinary broken Rough Terrain
--- cliffs fail the long/dense-track gate, and version 738's affine transform still runs exactly once.
+-- coherent steps facing any grid edge within the two-sector outer ring. Qualified wide-ring tracks
+-- are repaired on the vanilla grid before resampling; the immediate-edge destination pass still
+-- performs version 839's complete translation and quintic interpolation. The central 16 x 16
+-- sectors are never scanned, ordinary broken Rough Terrain cliffs fail the long/dense-track gate,
+-- and version 738's affine transform still runs exactly once.
 local function RepairInternalHeightStep(grid, wide_ring_only)
 	local GridMinMax = Global("GridMinMax")
 	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
@@ -679,7 +679,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local relief = mx - mn
 	-- A source crease can be about 0.7-1.0% of total relief per cell. The former 2.5%
 	-- threshold was therefore higher than the wall itself and guaranteed a no-op on that map.
-	local threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
+	-- Once a source path satisfies the wide-ring coherence gate, smaller companion creases in
+	-- the same vanilla perimeter field must remain discoverable too.  A 0.2%-relief one-cell
+	-- step is still far above normal local gradients, while the long/dense/straight/flank tests
+	-- below continue to reject ordinary Rough Terrain.  Keep v839's destination threshold exact.
+	local threshold = wide_ring_only
+		and math.max(128, math.floor(relief * 0.002 + 0.5))
+		or math.max(256, math.floor(relief * 0.005 + 0.5))
 	-- The expanded map has 20 sectors per side. Scan exactly the two outermost sector widths.
 	-- Some maps also carry a second coherent defect farther inside the outer ring, hundreds of samples
 	-- from the physical edge, which the former 64-cell skirt scan could never observe.
@@ -857,7 +863,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local hi = math.min(track.perp_n - 3, predicted + 6)
 		local best_perp, best_width, best_distance, best_jump
 		for perp = lo, hi do
-			for width = 1, 3 do
+			-- Source discovery admits only the real one-cell discontinuity.  Allowing the
+			-- validation pass to widen it to three cells moved the recorded edge outward and
+			-- caused every later source-qualified repair to leave the actual wall untouched.
+			local max_width = wide_ring_only and 1 or 3
+			for width = 1, max_width do
 				local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
 				local b, v3 = at(track.axis, perp + width, along),
 					at(track.axis, perp + width + 1, along)
@@ -1113,10 +1123,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						min_offset = not min_offset and offset or math.min(min_offset, offset)
 						max_offset = not max_offset and offset or math.max(max_offset, offset)
 						detected = detected + 1
-						-- Wide-ring discovery is read-only. The proven v839 border algorithm must see
-						-- and repair the real resampled wall at destination resolution; translating here
-						-- first forced later passes to synthesize an already erased boundary and produced
-						-- a straight pale strip in the destination terrain.
+						-- Wide-ring discovery is read-only here.  Its qualified tracks are repaired by
+						-- RepairQualifiedSourceHeightSteps after this detector returns; the immediate
+						-- physical-edge path below retains v839's destination behavior.
 						if not wide_ring_only then
 							-- Translate the low region. The feather below then replaces the inherited
 							-- resampling ramp and a few samples on both sides with a slope-matched join.
@@ -1184,7 +1193,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local primary = selected_tracks[1]
 	return true, {
 		reason = wide_ring_only
-			and "vanilla outer-ring steps detected for destination border interpolation"
+			and "vanilla outer-ring steps qualified for pre-resample repair"
 			or "destination edge lower regions translated with slope-matched feathered joins",
 		threshold = threshold,
 		edge_margin = wide_ring_only and edge_margin or near_margin, outer_guard = outer_guard,
@@ -1200,36 +1209,23 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	}, selected_tracks
 end
 
--- Finish source-qualified defects after resampling.  A single boundary denotes a strip which
--- reaches its adjacent physical edge; two overlapping, opposite-facing boundaries denote a finite
--- raised/depressed strip.  Edge strips retain v839's translate-plus-quintic row repair, but the
--- complete repaired row is blended in two dimensions with a C2 envelope at the track endpoints.
--- This removes the abrupt row starts which made a second, perpendicular scar.  A finite strip is
--- raised/lowered and tilted between both flanks, then joined to both sides with the same C2 row
--- interpolation.  Detection and correction are sign agnostic and are confined to the two-sector
--- source-qualified outer ring; no map, seed, or coordinate is used here.
-local function FinishResampledHeightStepsWithBorderInterpolation(grid,
-		source_w, source_h, source_tracks)
-	local GridMinMax = Global("GridMinMax")
-	if type(GridMinMax) ~= "function" or not grid or type(grid.size) ~= "function"
-		or type(grid.get) ~= "function" or type(grid.set) ~= "function"
-		or type(source_tracks) ~= "table" or #source_tracks == 0
-		or type(source_w) ~= "number" or source_w < 2
-		or type(source_h) ~= "number" or source_h < 2 then
+-- Repair already-qualified outer-ring creases on the vanilla grid, before interpolation can
+-- magnify a one-cell discontinuity into a broad destination-space lighting scar.  Preserve every
+-- source relief sample and tilt only the edge-facing side: the measured continuity correction at
+-- the crease decays to exactly zero height/slope/curvature at a distant outer anchor.  The complete
+-- correction is blended on and off along the finite detected track with another quintic envelope.
+-- Discovery remains the strict, sign-agnostic outer-ring pass above; this function never scans or
+-- admits additional terrain.
+local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
+	if not grid or type(grid.size) ~= "function" or type(grid.get) ~= "function"
+		or type(grid.set) ~= "function" or type(source_tracks) ~= "table"
+		or #source_tracks == 0 then
 		return false, { reason = "no qualified source tracks" }
 	end
 	local ok_size, w, h = pcall(grid.size, grid)
-	if not ok_size or type(w) ~= "number" or type(h) ~= "number" or w < 8 or h < 8 then
-		return false, { reason = "destination height grid unavailable" }
+	if not ok_size or type(w) ~= "number" or type(h) ~= "number" then
+		return false, { reason = "source height grid unavailable" }
 	end
-	local ok_mm, mn, mx = pcall(GridMinMax, grid)
-	if not ok_mm or type(mn) ~= "number" or type(mx) ~= "number" or mx <= mn then
-		return false, { reason = "destination height range unavailable" }
-	end
-
-	local relief = mx - mn
-	local threshold = math.max(256, math.floor(relief * 0.005 + 0.5))
-	local outer_guard = math.min(8, math.max(2, math.floor(math.min(w, h) / 1024)))
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
 		return grid:get(along, perp)
@@ -1237,576 +1233,133 @@ local function FinishResampledHeightStepsWithBorderInterpolation(grid,
 	local function put(axis, perp, along, value)
 		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
 	end
-	local function mapped_index(value, source_n, destination_n)
-		return math.max(0, math.min(destination_n - 1,
-			math.floor(value * destination_n / source_n + 0.5)))
-	end
 	local function quintic(t)
 		t = math.max(0, math.min(1, t))
 		return t * t * t * (t * (t * 6 - 15) + 10)
 	end
-	local function refine_step(axis, perp_n, along, predicted, expected_low_before)
-		local lo = math.max(1, predicted - 6)
-		local hi = math.min(perp_n - 3, predicted + 6)
-		local best_perp, best_width, best_distance, best_jump
-		for perp = lo, hi do
-			for width = 1, 3 do
-				local v0, a = at(axis, perp - 1, along), at(axis, perp, along)
-				local b, v3 = at(axis, perp + width, along),
-					at(axis, perp + width + 1, along)
-				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
-					and type(v3) == "number" then
-					local low_before = a < b
-					local jump = math.abs(b - a)
-					local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
-					local distance = math.abs(perp - predicted)
-					if low_before == expected_low_before
-						and jump >= threshold and jump >= flank * 2
-						and (not best_distance or distance < best_distance
-							or (distance == best_distance and jump > best_jump)) then
-						best_perp, best_width = perp, width
-						best_distance, best_jump = distance, jump
-					end
-				end
-			end
-		end
-		return best_perp, best_width, best_jump
-	end
-
-	local function smooth_profile(profile, lo, hi, radius, passes)
-		for _ = 1, passes do
-			local next_profile = {}
-			for along = lo, hi do
-				local sum, count = 0, 0
-				for q = math.max(lo, along - radius), math.min(hi, along + radius) do
-					sum, count = sum + (profile[q] or 0), count + 1
-				end
-				next_profile[along] = sum / math.max(1, count)
-			end
-			profile = next_profile
-		end
-		return profile
-	end
-	local function signed_after_correction(axis, perp, width, along)
-		local before_prev = at(axis, perp - 1, along)
-		local before = at(axis, perp, along)
-		local after = at(axis, perp + width, along)
-		local after_next = at(axis, perp + width + 1, along)
-		if type(before_prev) ~= "number" or type(before) ~= "number"
-			or type(after) ~= "number" or type(after_next) ~= "number" then return nil end
-		-- Preserve the terrain's local grade through the resampled ramp.  Matching AFTER directly
-		-- to BEFORE made an otherwise continuous hillside locally level; the resulting planar ribbon
-		-- had a bright straight shoulder at its far side even though the original step was gone.
-		-- Extrapolate the two untouched flank slopes through the ramp and translate AFTER only by the
-		-- unexplained residual.  The detector guarantees the ramp dominates both flank slopes; the
-		-- half-offset clamp is a final guard against an unusual pair of disagreeing natural slopes.
-		local raw = before - after
-		local slope = ((before - before_prev) + (after_next - after)) * 0.5
-		local correction = raw + slope * width
-		if raw > 0 then
-			correction = math.max(raw * 0.5, math.min(raw * 1.5, correction))
-		else
-			correction = math.min(raw * 0.5, math.max(raw * 1.5, correction))
-		end
-		return correction
-	end
-	local function blend_value(original, target, alpha)
-		return math.max(0, math.min(mx,
-			math.floor(original + (target - original) * alpha + 0.5)))
-	end
-
-	local modified, rows, tracks, min_offset, max_offset = 0, 0, 0
-	local coherent_profile_modified, coherent_profile_rows = 0, 0
-	local bounded_strips, edge_strips = 0, 0
-	local pause = Global("PauseInfiniteLoopDetection")
-	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then pcall(pause, "SBMResampledBorderInterpolation") end
-	local ok_finish, finish_err = pcall(function()
-		local plans = {}
-		for _, source_track in ipairs(source_tracks) do
-			local axis, edge = source_track.axis, source_track.edge
-			local source_perp_n = axis == "x" and source_w or source_h
-			local source_along_n = axis == "x" and source_h or source_w
-			local destination_perp_n = axis == "x" and w or h
-			local destination_along_n = axis == "x" and h or w
-			local mapped = {}
-			for _, point in ipairs(source_track.points or {}) do
-				mapped[#mapped + 1] = {
-					along = mapped_index(point.along, source_along_n, destination_along_n),
-					perp = mapped_index(point.perp, source_perp_n, destination_perp_n),
-				}
-			end
-			if #mapped > 0 then
-				tracks = tracks + 1
-				local processed = {}
-				local samples, first_along, last_along = {}, nil, nil
-				for i, point in ipairs(mapped) do
-					local next_point = mapped[i + 1]
-					local segment_last_along = next_point and next_point.along - 1 or point.along
-					segment_last_along = math.max(point.along, segment_last_along)
-					for along = point.along, segment_last_along do
-						if not processed[along] then
-							processed[along] = true
-							local t = next_point and next_point.along > point.along
-								and (along - point.along + 0.0)
-									/ (next_point.along - point.along) or 0
-							local predicted = math.floor(point.perp + (next_point and
-								(next_point.perp - point.perp) * t or 0) + 0.5)
-							local perp, width = refine_step(axis,
-								destination_perp_n, along, predicted,
-								source_track.low_before == true)
-							if perp then
-								local correction = signed_after_correction(axis, perp, width, along)
-								if type(correction) == "number" then
-									local magnitude = math.abs(correction)
-									min_offset = not min_offset and magnitude or math.min(min_offset, magnitude)
-									max_offset = not max_offset and magnitude or math.max(max_offset, magnitude)
-									samples[along] = {
-										perp = perp, width = width, correction_after = correction,
-									}
-									first_along = not first_along and along or math.min(first_along, along)
-									last_along = not last_along and along or math.max(last_along, along)
-								end
-							end
-						end
-					end
-				end
-				if first_along and last_along then
-					local sum_perp, sum_correction, sample_count = 0, 0, 0
-					for _, sample in pairs(samples) do
-						sum_perp = sum_perp + sample.perp
-						sum_correction = sum_correction + sample.correction_after
-						sample_count = sample_count + 1
-					end
-					plans[#plans + 1] = {
-						axis = axis, edge = edge, perp_n = destination_perp_n,
-						along_n = destination_along_n,
-						first_along = first_along, last_along = last_along, samples = samples,
-						low_before = source_track.low_before == true,
-						mean_perp = sum_perp / math.max(1, sample_count),
-						mean_correction_after = sum_correction / math.max(1, sample_count),
-					}
-				end
-			end
-		end
-
-		local function densify(plan)
-			local keys = {}
-			for along in pairs(plan.samples) do keys[#keys + 1] = along end
-			table.sort(keys)
-			local geometry, profile = {}, {}
-			for i, along0 in ipairs(keys) do
-				local a = plan.samples[along0]
-				local along1 = keys[i + 1] or along0
-				local b = plan.samples[along1] or a
-				for along = along0, along1 do
-					local t = along1 > along0 and (along - along0 + 0.0) / (along1 - along0) or 0
-					geometry[along] = {
-						perp = math.floor(a.perp + (b.perp - a.perp) * t + 0.5),
-						width = math.floor(a.width + (b.width - a.width) * t + 0.5),
-					}
-					profile[along] = a.correction_after
-						+ (b.correction_after - a.correction_after) * t
-				end
-			end
-			profile = smooth_profile(profile, plan.first_along, plan.last_along, 2, 2)
-			return geometry, profile
-		end
-
-		local paired, pairs = {}, {}
-		for i = 1, #plans do
-			if not paired[i] then
-				local best_j, best_distance
-				for j = i + 1, #plans do
-					local a, b = plans[i], plans[j]
-					local overlap = math.min(a.last_along, b.last_along)
-						- math.max(a.first_along, b.first_along) + 1
-					local min_span = math.min(a.last_along - a.first_along + 1,
-						b.last_along - b.first_along + 1)
-					local distance = math.abs(a.mean_perp - b.mean_perp)
-					local left, right = a, b
-					if left.mean_perp > right.mean_perp then left, right = right, left end
-					local enclosed_same_direction = left.mean_correction_after
-						* (-right.mean_correction_after) > 0
-					if not paired[j] and a.axis == b.axis and a.edge == b.edge
-						and a.low_before ~= b.low_before and overlap >= min_span * 0.75
-						and enclosed_same_direction
-						and distance >= 8 and distance <= a.perp_n / 10
-						and (not best_distance or distance < best_distance) then
-						best_j, best_distance = j, distance
-					end
-				end
-				if best_j then
-					paired[i], paired[best_j] = true, true
-					pairs[#pairs + 1] = { plans[i], plans[best_j] }
-				end
-			end
-		end
-		bounded_strips = #pairs
-		edge_strips = #plans - bounded_strips * 2
-
-		local function endpoint_alpha(along, first_along, last_along, taper)
-			-- This runtime uses integer division for int/int.  Promote before constructing the
-			-- envelope or the intended C2 taper collapses back into a one-row step.
-			if along < first_along then
-				return quintic((along - (first_along - taper) + 0.0) / taper)
-			end
-			if along > last_along then
-				return 1 - quintic((along - last_along + 0.0) / taper)
-			end
-			return 1
-		end
-
-		local function apply_edge(plan)
-			local geometry, profile = densify(plan)
-			-- The source-qualified interior step is already localized to a 1--3-cell
-			-- resampling ramp.  Reconstruct only that abnormal ramp, using the adjacent
-			-- untouched samples as slope constraints.  Including those constraints in
-			-- the writable band erased real relief and exposed the band as a pale ribbon.
-			-- One anchor sample gives the 1--3-cell ramp enough room to match both slopes
-			-- without creating the sharp normal that a zero-anchor reconstruction leaves.
-			local anchor = 1
-			local taper = math.min(40, math.max(20,
-				math.floor((plan.last_along - plan.first_along + 1) / 6)))
-			local lo_along = math.max(0, plan.first_along - taper)
-			local hi_along = math.min(plan.along_n - 1, plan.last_along + taper)
-			local first_geometry = geometry[plan.first_along]
-			local last_geometry = geometry[plan.last_along]
-			local before_edge = plan.edge == "left" or plan.edge == "top"
-			local band_lo, band_hi = plan.perp_n - 1, 0
-			for along = plan.first_along, plan.last_along do
-				local sample = geometry[along]
-				if sample then
-					band_lo = math.min(band_lo, sample.perp - anchor)
-					band_hi = math.max(band_hi, sample.perp + sample.width + anchor)
-				end
-			end
-			band_lo = math.max(1, band_lo)
-			band_hi = math.min(plan.perp_n - 2, band_hi)
-			local band, correction_by_along, alpha_by_along = {}, {}, {}
+	local modified, rows = 0, 0
+	for _, track in ipairs(source_tracks) do
+		local points = {}
+		for _, point in ipairs(track.points or empty_table) do points[point.along] = point end
+		local first_point = points[track.first_along]
+		local last_point = points[track.last_along]
+		if first_point and last_point then
+			local perp_n = track.perp_n or (track.axis == "x" and w or h)
+			local support = math.max(72, math.min(112, math.floor(perp_n / 64)))
+			local taper = math.min(32, math.max(16,
+				math.floor((track.last_along - track.first_along + 1) / 6)))
+			local hold = taper
+			local full_first = track.first_along - hold
+			local full_last = track.last_along + hold
+			local lo_along = math.max(0, full_first - taper)
+			local along_n = track.along_n or (track.axis == "x" and h or w)
+			local hi_along = math.min(along_n - 1, full_last + taper)
+			-- Measure the correction field before writing.  Raw per-row jump amplitudes contain
+			-- small high-frequency changes which become transverse contour terraces after a wide
+			-- tilt.  They are measurement noise, not longitudinal terrain relief (the original
+			-- row remains untouched and is retained below), so smooth only these two coefficients.
+			local specs, offsets, derivatives = {}, {}, {}
 			for along = lo_along, hi_along do
-				local sample = geometry[along]
-					or (along < plan.first_along and first_geometry or last_geometry)
-				local correction_after = profile[along]
-					or (along < plan.first_along and profile[plan.first_along]
-						or profile[plan.last_along])
-				local alpha = endpoint_alpha(along, plan.first_along, plan.last_along, taper)
-				if sample and type(correction_after) == "number" and alpha > 0 then
-					local correction = before_edge and -correction_after or correction_after
-					correction_by_along[along] = correction
-					alpha_by_along[along] = alpha
-					local join_lo = math.max(1, sample.perp - anchor)
-					local join_hi = math.min(plan.perp_n - 2,
-						sample.perp + sample.width + anchor)
-					local v0, v0_prev = at(plan.axis, join_lo, along),
-						at(plan.axis, join_lo - 1, along)
-					local v1, v1_next = at(plan.axis, join_hi, along),
-						at(plan.axis, join_hi + 1, along)
-					if type(v0) == "number" and type(v0_prev) == "number"
-						and type(v1) == "number" and type(v1_next) == "number" then
-						if before_edge then v0, v0_prev = v0 + correction, v0_prev + correction
-						else v1, v1_next = v1 + correction, v1_next + correction end
-						local slope0, slope1 = v0 - v0_prev, v1_next - v1
-						local span = join_hi - join_lo
-						local row = {}
-						for p = band_lo, band_hi do
-							local original = at(plan.axis, p, along)
-							if type(original) == "number" then
-								local target
-								if p > join_lo and p < join_hi then
-									local t = (p - join_lo + 0.0) / span
-									local s = quintic(t)
-									local left = v0 + slope0 * (p - join_lo)
-									local right = v1 + slope1 * (p - join_hi)
-									target = left + (right - left) * s
-								elseif (before_edge and p <= join_lo)
-									or (not before_edge and p >= join_hi) then
-									target = original + correction
-								else
-									target = original
-								end
-								row[p] = target - original
-							end
-						end
-						band[along] = row
-					end
+				local sample = points[along]
+					or (along < track.first_along and first_point or last_point)
+				local before_edge = track.edge == "left" or track.edge == "top"
+				local outward = before_edge and -1 or 1
+				local inner_perp = before_edge and sample.perp + sample.width or sample.perp
+				local edge_perp = before_edge and sample.perp or sample.perp + sample.width
+				local inner_next = inner_perp - outward
+				local edge_next = edge_perp + outward
+				local inner = at(track.axis, inner_perp, along)
+				local inner_neighbor = at(track.axis, inner_next, along)
+				local edge_value = at(track.axis, edge_perp, along)
+				local edge_neighbor = at(track.axis, edge_next, along)
+				local available = outward > 0 and perp_n - 2 - edge_perp or edge_perp - 1
+				local span = math.min(support, available)
+				if span >= 8 and type(inner) == "number" and type(inner_neighbor) == "number"
+					and type(edge_value) == "number" and type(edge_neighbor) == "number" then
+					local inner_slope = inner - inner_neighbor
+					local edge_slope = edge_neighbor - edge_value
+					specs[along] = { edge_perp = edge_perp, outward = outward, span = span }
+					offsets[along] = inner + inner_slope * sample.width - edge_value
+					derivatives[along] = (inner_slope - edge_slope) * span
 				end
 			end
-			-- The v839 target is derived per row.  Smooth only its correction in the narrow join
-			-- band so changes of resampling width (two cells on one row, three on the next) cannot
-			-- become a cross-track normal.  Outer terrain keeps the already-smooth profile exactly.
-			-- One pass removes width-change cuts while retaining enough row variation
-			-- that the repaired normal does not read as a ruler-straight terrain feature.
-			for _ = 1, 1 do
-				local next_band = {}
-				for along = lo_along, hi_along do
-					if band[along] then
-						local row = {}
-						for p = band_lo, band_hi do
-							local sum, count = 0, 0
-							for q = math.max(lo_along, along - 2), math.min(hi_along, along + 2) do
-								if band[q] and type(band[q][p]) == "number" then
-									sum, count = sum + band[q][p], count + 1
-								end
-							end
-							if count > 0 then row[p] = sum / count end
-						end
-						next_band[along] = row
-					end
-				end
-				band = next_band
-			end
+			local smooth_radius = math.min(12, math.max(6,
+				math.floor((track.last_along - track.first_along + 1) / 16)))
 			for along = lo_along, hi_along do
-				local correction = correction_by_along[along]
-				local alpha = alpha_by_along[along]
-				if type(correction) == "number" and type(alpha) == "number" then
-					local p0 = before_edge and 0 or band_lo
-					local p1 = before_edge and band_hi or plan.perp_n - 1
-					for p = p0, p1 do
-						local original = at(plan.axis, p, along)
+				local spec = specs[along]
+				if spec then
+					local offset_sum, derivative_sum, count = 0, 0, 0
+					for q = math.max(lo_along, along - smooth_radius),
+							math.min(hi_along, along + smooth_radius) do
+						if type(offsets[q]) == "number" and type(derivatives[q]) == "number" then
+							offset_sum = offset_sum + offsets[q]
+							derivative_sum = derivative_sum + derivatives[q]
+							count = count + 1
+						end
+					end
+					local offset = count > 0 and offset_sum / count or offsets[along]
+					local d0 = count > 0 and derivative_sum / count or derivatives[along]
+					local row_residual = offsets[along] - offset
+					local row_derivative_residual = derivatives[along] - d0
+					local derivative_limit = math.max(128, math.abs(offset) * 3 / 2)
+					d0 = math.max(-derivative_limit, math.min(derivative_limit, d0))
+					-- Quintic correction: offset and slope adjustment at the crease, then
+					-- zero correction, slope, and curvature at the untouched outer anchor.
+					local a0, a1, a2 = offset, d0, 0
+					local aa = -a0 - a1
+					local bb = -a1
+					local cc = 0
+					local a3 = 10 * aa - 4 * bb + cc / 2
+					local a4 = -15 * aa + 7 * bb - cc
+					local a5 = 6 * aa - 3 * bb + cc / 2
+					local end_alpha = 1
+					if along < full_first then end_alpha = quintic((along - lo_along) / taper)
+					elseif along > full_last then end_alpha = quintic((hi_along - along) / taper) end
+					local changed = false
+					local correction_lo = math.min(0, offset) - math.abs(offset) / 4
+					local correction_hi = math.max(0, offset) + math.abs(offset) / 4
+					for distance = 0, spec.span - 1 do
+						local perp = spec.edge_perp + spec.outward * distance
+						local original = at(track.axis, perp, along)
 						if type(original) == "number" then
-							local delta = (p >= band_lo and p <= band_hi and band[along]
-								and band[along][p]) or correction
-							put(plan.axis, p, along,
-								blend_value(original, original + delta, alpha))
-							modified = modified + 1
+							local t = (distance + 0.0) / spec.span
+							local correction = a0 + a1 * t + a2 * t * t + a3 * t ^ 3
+								+ a4 * t ^ 4 + a5 * t ^ 5
+							correction = math.max(correction_lo, math.min(correction_hi, correction))
+							-- Cancel the measured row's wall exactly at distance zero, but let
+							-- its noisy residual disappear inside a short C2 collar.  The broad
+							-- correction remains the along-smoothed field, preventing terraces.
+							local residual_span = math.min(10, math.max(6,
+								math.floor(spec.span / 12)))
+							if distance < residual_span then
+								local rt = (distance + 0.0) / residual_span
+								local ra0 = row_residual
+								local ra1 = row_derivative_residual
+									* residual_span / spec.span
+								local raa = -ra0 - ra1
+								local rbb = -ra1
+								local ra3 = 10 * raa - 4 * rbb
+								local ra4 = -15 * raa + 7 * rbb
+								local ra5 = 6 * raa - 3 * rbb
+								correction = correction + ra0 + ra1 * rt + ra3 * rt ^ 3
+									+ ra4 * rt ^ 4 + ra5 * rt ^ 5
+							end
+							local value = math.floor(original + correction * end_alpha + 0.5)
+							if value ~= original then
+								put(track.axis, perp, along, value)
+								modified, changed = modified + 1, true
+							end
 						end
 					end
-					rows = rows + 1
+					if changed then rows = rows + 1 end
 				end
 			end
 		end
-
-		local function apply_bounded(pair)
-			local left, right = pair[1], pair[2]
-			if left.mean_perp > right.mean_perp then left, right = right, left end
-			local lg, lp = densify(left)
-			local rg, rp = densify(right)
-			local first_along = math.max(left.first_along, right.first_along)
-			local last_along = math.min(left.last_along, right.last_along)
-			local taper = math.min(40, math.max(20, math.floor((last_along - first_along + 1) / 6)))
-			local lo_along = math.max(0, first_along - taper)
-			local hi_along = math.min(left.along_n - 1, last_along + taper)
-			local band_lo = math.max(1, math.floor(left.mean_perp - 12))
-			local band_hi = math.min(left.perp_n - 2, math.ceil(right.mean_perp + 12))
-			local band, alpha_by_along = {}, {}
-			for along = lo_along, hi_along do
-				local lc = math.max(left.first_along, math.min(left.last_along, along))
-				local rc = math.max(right.first_along, math.min(right.last_along, along))
-				local l, r = lg[lc], rg[rc]
-				local corr_l = lp[lc]
-				local corr_r = rp[rc] and -rp[rc] or nil
-				local alpha = endpoint_alpha(along, first_along, last_along, taper)
-				-- Both flank corrections must move the enclosed strip in the same direction;
-				-- otherwise these are unrelated natural walls rather than a bounded defect.
-				if l and r and type(corr_l) == "number" and type(corr_r) == "number"
-					and corr_l * corr_r > 0 and alpha > 0 then
-					local join_l = math.max(1, l.perp - 10)
-					local core_l = math.min(right.perp_n - 2, l.perp + l.width + 8)
-					local core_r = math.max(1, r.perp - 8)
-					local join_r = math.min(right.perp_n - 2, r.perp + r.width + 10)
-					if core_l < core_r then
-						local function inside_correction(p)
-							local u = (p - core_l + 0.0) / (core_r - core_l)
-							u = math.max(0, math.min(1, u))
-							-- Linear interpolation is the actual tilt requested for a finite strip:
-							-- it matches independently measured translations at both flanks.
-							return corr_l + (corr_r - corr_l) * u
-						end
-						local lv0, lv0_prev = at(left.axis, join_l, along),
-							at(left.axis, join_l - 1, along)
-						local lv1, lv1_next = at(left.axis, core_l, along),
-							at(left.axis, core_l + 1, along)
-						local rv0, rv0_prev = at(left.axis, core_r, along),
-							at(left.axis, core_r - 1, along)
-						local rv1, rv1_next = at(left.axis, join_r, along),
-							at(left.axis, join_r + 1, along)
-						if type(lv0) == "number" and type(lv0_prev) == "number"
-							and type(lv1) == "number" and type(lv1_next) == "number"
-							and type(rv0) == "number" and type(rv0_prev) == "number"
-							and type(rv1) == "number" and type(rv1_next) == "number" then
-							lv1 = lv1 + inside_correction(core_l)
-							lv1_next = lv1_next + inside_correction(core_l + 1)
-							rv0 = rv0 + inside_correction(core_r)
-							rv0_prev = rv0_prev + inside_correction(core_r - 1)
-							local ls0, ls1 = lv0 - lv0_prev, lv1_next - lv1
-							local rs0, rs1 = rv0 - rv0_prev, rv1_next - rv1
-							local lspan, rspan = core_l - join_l, join_r - core_r
-							local row = {}
-							for p = band_lo, band_hi do
-								local original = at(left.axis, p, along)
-								if type(original) == "number" then
-									local target = original
-									if p > join_l and p < core_l then
-										local t = (p - join_l + 0.0) / lspan
-										local s = quintic(t)
-										local a = lv0 + ls0 * (p - join_l)
-										local b = lv1 + ls1 * (p - core_l)
-										target = a + (b - a) * s
-									elseif p >= core_l and p <= core_r then
-										target = original + inside_correction(p)
-									elseif p > core_r and p < join_r then
-										local t = (p - core_r + 0.0) / rspan
-										local s = quintic(t)
-										local a = rv0 + rs0 * (p - core_r)
-										local b = rv1 + rs1 * (p - join_r)
-										target = a + (b - a) * s
-									end
-									row[p] = target - original
-								end
-							end
-							band[along] = row
-							alpha_by_along[along] = alpha
-						end
-					end
-				end
-			end
-			-- Coons-like cross joins above are exact per row; a short longitudinal relaxation
-			-- makes their derivatives continuous through width changes without flattening the strip.
-			for _ = 1, 2 do
-				local next_band = {}
-				for along = lo_along, hi_along do
-					if band[along] then
-						local row = {}
-						for p = band_lo, band_hi do
-							local sum, count = 0, 0
-							for q = math.max(lo_along, along - 2), math.min(hi_along, along + 2) do
-								if band[q] and type(band[q][p]) == "number" then
-									sum, count = sum + band[q][p], count + 1
-								end
-							end
-							if count > 0 then row[p] = sum / count end
-						end
-						next_band[along] = row
-					end
-				end
-				band = next_band
-			end
-			for along = lo_along, hi_along do
-				local row, alpha = band[along], alpha_by_along[along]
-				if row and alpha then
-					for p = band_lo, band_hi do
-						local original, delta = at(left.axis, p, along), row[p]
-						if type(original) == "number" and type(delta) == "number" then
-							put(left.axis, p, along,
-								blend_value(original, original + delta, alpha))
-							modified = modified + 1
-						end
-					end
-					rows = rows + 1
-				end
-			end
-		end
-
-		local function remove_coherent_track_profile(plan)
-			-- Even after the step itself has gone, a long source-grid boundary can retain one
-			-- ruler-straight normal: the same broad cross-profile is repeated on almost every
-			-- row.  Replacing that band outright removes the normal but exposes a flat ribbon.
-			-- Instead, decompose each cross-row against distant untouched anchors and remove
-			-- only the component coherent along the track.  Each cell keeps its own along-track
-			-- high-pass residual, while C2 envelopes make the filter exactly zero at both cross
-			-- anchors and both finite endpoints.  The construction is axis-neutral and does not
-			-- depend on whether the qualified strip is raised, depressed, bounded, or edge-facing.
-			local geometry = densify(plan)
-			local first_geometry = geometry[plan.first_along]
-			local last_geometry = geometry[plan.last_along]
-			if not first_geometry or not last_geometry then return end
-			-- Keep the untouched anchors outside the complete resampling shoulder.  A 48-cell
-			-- half-span removed the original step but its C2 return began while the broad far-side
-			-- shoulder was still coherent, leaving a much smaller parallel normal.  The 64-cell
-			-- scale still lies well inside one outer-ring sector, while the retained per-cell
-			-- high-pass residual prevents the wider fit from turning dune relief into a plane.
-			local half_span = math.max(40, math.min(64, math.floor(plan.perp_n / 128)))
-			local edge_taper = math.min(20, math.max(10, math.floor(half_span / 3)))
-			local along_radius = math.min(12, math.max(6,
-				math.floor((plan.last_along - plan.first_along + 1) / 16)))
-			local endpoint_taper = math.min(40, math.max(20,
-				math.floor((plan.last_along - plan.first_along + 1) / 6)))
-			-- Source thresholding locates the strongest core of a coherent track.  The same normal
-			-- can remain visible through the immediately adjacent sub-threshold rows, so tapering
-			-- from the detector endpoint merely moves the scar into that taper.  Hold the full
-			-- correction for one taper width beyond each endpoint, then apply the existing C2
-			-- return where the coherent normal has actually ended.
-			local endpoint_hold = endpoint_taper
-			local full_first = plan.first_along - endpoint_hold
-			local full_last = plan.last_along + endpoint_hold
-			local lo_along = math.max(0, full_first - endpoint_taper)
-			local hi_along = math.min(plan.along_n - 1, full_last + endpoint_taper)
-			local residual, original, centers = {}, {}, {}
-			for along = lo_along, hi_along do
-				local sample = geometry[along]
-					or (along < plan.first_along and first_geometry or last_geometry)
-				local center = math.floor(sample.perp + sample.width * 0.5 + 0.5)
-				center = math.max(half_span, math.min(plan.perp_n - half_span - 1, center))
-				centers[along] = center
-				local left = at(plan.axis, center - half_span, along)
-				local right = at(plan.axis, center + half_span, along)
-				if type(left) == "number" and type(right) == "number" then
-					local residual_row, original_row = {}, {}
-					for offset = -half_span, half_span do
-						local value = at(plan.axis, center + offset, along)
-						if type(value) == "number" then
-							local t = (offset + half_span + 0.0) / (2 * half_span)
-							original_row[offset] = value
-							residual_row[offset] = value - (left + (right - left) * t)
-						end
-					end
-					residual[along], original[along] = residual_row, original_row
-				end
-			end
-			for along = lo_along, hi_along do
-				local residual_row, original_row, center = residual[along], original[along], centers[along]
-				local end_alpha = endpoint_alpha(along, full_first,
-					full_last, endpoint_taper)
-				if residual_row and original_row and center and end_alpha > 0 then
-					local row_changed = false
-					for offset = -half_span + 1, half_span - 1 do
-						local sum, count = 0, 0
-						for q = math.max(lo_along, along - along_radius),
-								math.min(hi_along, along + along_radius) do
-							local qrow = residual[q]
-							if qrow and type(qrow[offset]) == "number" then
-								sum, count = sum + qrow[offset], count + 1
-							end
-						end
-						if count > 0 and type(original_row[offset]) == "number" then
-							local distance = math.min(offset + half_span, half_span - offset)
-							local cross_alpha = quintic(math.min(1,
-								(distance + 0.0) / edge_taper))
-							local value = blend_value(original_row[offset],
-								original_row[offset] - sum / count, end_alpha * cross_alpha)
-							if value ~= original_row[offset] then
-								put(plan.axis, center + offset, along, value)
-								modified = modified + 1
-								coherent_profile_modified = coherent_profile_modified + 1
-								row_changed = true
-							end
-						end
-					end
-					if row_changed then coherent_profile_rows = coherent_profile_rows + 1 end
-				end
-			end
-		end
-
-		for _, pair in ipairs(pairs) do apply_bounded(pair) end
-		for i, plan in ipairs(plans) do if not paired[i] then apply_edge(plan) end end
-		for _, plan in ipairs(plans) do remove_coherent_track_profile(plan) end
-	end)
-	if type(resume) == "function" then pcall(resume, "SBMResampledBorderInterpolation") end
-	if not ok_finish then
-		return false, { reason = tostring(finish_err), tracks = tracks, rows = rows,
-			modified = modified }
 	end
 	return modified > 0, {
-		reason = modified > 0
-			and "source-qualified strips repaired with C2 interpolation and coherent-profile removal"
-			or "no source-qualified destination wall refined",
-		threshold = threshold, outer_guard = outer_guard,
-		tracks = tracks, edge_strips = edge_strips, bounded_strips = bounded_strips,
-		rows = rows, modified = modified,
-		coherent_profile_rows = coherent_profile_rows,
-		coherent_profile_modified = coherent_profile_modified,
-		min_offset = min_offset, max_offset = max_offset,
+		reason = modified > 0 and "qualified vanilla crease side tilted before resampling"
+			or "no qualified source crease repaired",
+		modified = modified, rows = rows, tracks = #source_tracks,
 	}
 end
 
@@ -2059,7 +1612,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
 		local internal_step_repair
-		local source_step_tracks
 		local function merge_step_report(report)
 			if not report then return end
 			if internal_step_repair then
@@ -2135,20 +1687,22 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				native_sub = nil
 			end
 			local environment = type(map.mapdata) == "table" and map.mapdata.Environment or nil
-			-- Detect coherent perimeter defects while the grid is still at vanilla resolution. This
-			-- is substantially cheaper than discovering them across the 8192-square destination. The
-			-- source remains byte-for-byte untouched so the destination pass can apply v839's complete
-			-- translate-plus-interpolate border algorithm to the real resampled wall.
+			-- Detect and repair coherent perimeter defects while the grid is still at vanilla
+			-- resolution.  The engine's interpolation then carries the C2 surface into the expanded
+			-- destination without fitting the already-repaired track a second time.
 			-- Diagnostic source dumps are test-only because the configured prefix is empty in release.
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
 				local detected, report, tracks = RepairInternalHeightStep(src_sub, true)
 				internal_step_repair = report
-				if detected then
-					source_step_tracks = tracks
-				end
 				TerrainCreaseAudit(detected and "SOURCE_DETECTED" or "SOURCE_SKIPPED", report, map)
+				if detected and tracks then
+					local repaired, source_report = RepairQualifiedSourceHeightSteps(src_sub, tracks)
+					TerrainCreaseAudit(repaired and "SOURCE_REPAIRED"
+						or "SOURCE_REPAIR_SKIPPED", source_report, map)
+					merge_step_report(source_report)
+				end
 			end
 			if scale_values then ZDumpHeightGrid(map, "source-post", src_sub) end
 			local fmt, bits = IsComputeGrid(src_sub)
@@ -2158,21 +1712,9 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				grid_kind = scale_values and "surface_height" or "surface_terrain",
 			})
 			if scale_values then ZDumpHeightGrid(map, "pre", stretched) end
-			-- Repair only the source tracks already proven defective, now at destination resolution,
-			-- with the edge-reaching or bounded-strip interpolation selected from those tracks. No
-			-- second outer-ring scan is needed and no unrelated terrain can enter this pass.
-			if scale_values and environment ~= "Underground" and source_step_tracks
-				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
-				local repaired, report = FinishResampledHeightStepsWithBorderInterpolation(stretched,
-					scw, sch, source_step_tracks)
-				TerrainCreaseAudit(repaired and "DESTINATION_FINISHED"
-					or "DESTINATION_FINISH_SKIPPED", report, map)
-				merge_step_report(report)
-			end
-			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- Retain v839's proven full-resolution destination-edge pass. The source-side pass above
 			-- only handles deeper, grid-aligned defects; this one keeps the immediate resampled skirt
-			-- seamless exactly as before.
+			-- seamless exactly as before.  It runs only after the source repair has been resampled.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
 				local repaired, report = RepairInternalHeightStep(stretched, false)
@@ -2180,6 +1722,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)
 			end
+			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
 			-- full/source factor as X/Y, making the stretch a true similarity transform -- vanilla
 			-- slope steepness and object seating geometry are preserved (XY-only stretching made
