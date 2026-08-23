@@ -227,31 +227,27 @@ config.TopUpMoraleVistas = true
 config.TopUpMinimumTerrainNormalZ = 4080
 -- Choose strict whole-map top-up positions by the live enrichment load divided by each sector's
 -- sampled eligible terrain capacity. This preserves vanilla's terrain-driven pockets and the
--- original generated marker positions. If underground vanilla repulsion cannot fit every required
--- marker, the residual fallback instead maximizes spacing from existing enrichments and uses
--- lower-loaded sectors only as a secondary diversity rule. Surface anomaly extras keep their
--- separate outer-ring routing below; other supported surface top-ups may also use that terrain.
+-- original generated marker positions. Surface anomaly extras use this same whole-map balancing;
+-- inside a sector they prefer locally flat pockets with higher surrounding terrain (mountain
+-- bases), while a strict normal/buildability gate excludes steep slopes. If underground vanilla
+-- repulsion cannot fit every required marker, the residual fallback instead maximizes spacing from
+-- existing enrichments and uses lower-loaded sectors only as a secondary diversity rule.
 config.TopUpSectorBalancedPlacement = true
 -- The underground density fallback is allowed to relax vanilla's much larger, resource-specific
 -- repulsion radii so the expanded map can retain the exact scaled population. It must still keep
 -- every fallback marker a meaningful distance from every other enrichment. Candidate sampling
 -- continues until this hard axial-hex clearance is met; it never drops to adjacent unique hexes.
 config.UndergroundFallbackMinimumHexDistance = 6
--- Route every eligible surface anomaly TOP-UP extra to this many sector rows/columns along
--- all four edges of the FINAL expanded map. Eligible kinds remain exactly the previously selected
--- standard categories: completed/free-tech rewards, technology unlocks, and event sequences
--- (including metal/rare-metal discoveries and large-cache/unique-scenic events). Breakthroughs
--- remain game-pool-capped and are not topped up; unique/other anomaly families are not cloned.
--- Resource, Vista, Research Site, and Morale Vista top-ups may use valid terrain in this ring;
--- their complete buildable-footprint, overlap, obstruction, reachability, spacing, wonder,
--- scan-gating, and density rules still apply. Vanilla-generated markers are not moved by this
--- anomaly-routing rule. 0 restores whole-map anomaly placement with no perimeter routing.
-config.TopUpAnomalyOuterRingSectors = 3
--- Two-stage surface placement first chooses a random outer-ring sector, independently of terrain.
--- Inside that sector it accepts only flat, buildable, unobstructed terrain, sorts the viable
--- candidates by terrain height, and randomly chooses within this lowest percentage. 35 means the
--- lowest 35% of that valid pool. Anomaly-hex non-overlap remains a hard requirement.
+-- Legacy compatibility switches. Perimeter-only anomaly routing is disabled: surface anomaly
+-- top-ups are distributed across the complete unscanned scenario. The values remain defined so an
+-- older save/config table cannot accidentally reactivate the removed three-sector policy.
+config.TopUpAnomalyOuterRingSectors = 0
 config.TopUpAnomalyLowAreaPercent = 35
+-- Keep mountain-base anomalies visible in the final distribution rather than treating bases as a
+-- rare tie-breaker. This percentage of each surface anomaly shortfall is selected first from
+-- strict flat/buildable candidates beside higher terrain. If terrain or vanilla repulsion cannot
+-- supply the quota, density completion may use other strict flat terrain; steep slopes never enter.
+config.TopUpAnomalyMountainBaseMinimumPercent = 35
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
@@ -329,7 +325,7 @@ config.ExpansionStep12BuildEnrichmentOccupancy = true
 config.ExpansionStep13CalculateEnrichmentAdditions = true
 -- 14 (former 12): Apply common bounds, terrain, reachability, uniqueness, and repulsion validation.
 config.ExpansionStep14ValidateEnrichmentCandidates = true
--- 15 (former 13): Apply configured category routing, including anomaly perimeter placement.
+-- 15 (former 13): Apply category routing, including whole-map surface anomaly placement.
 config.ExpansionStep15ApplyCategoryRegions = true
 -- 16 (former 14): Run the randomized category-specific candidate selector.
 config.ExpansionStep16SelectCategoryCandidates = true
@@ -483,16 +479,16 @@ config.OptimizeDirectSourceTerrainStretch = true
 -- top-ups and register stretch-mode clones at creation time instead of rescanning.
 config.OptimizeTopUpPlacementPools = true
 -- On the surface, ask the finalized native buildable grid which sectors contain at least one
--- buildable hex, then draw resource candidates uniformly from only those sectors, including the
--- anomaly perimeter ring. Every selected coordinate still runs the complete terrain, obstruction,
--- and vanilla-repulsion checks.
+-- buildable hex, then draw resource candidates uniformly from those sectors across the whole map.
+-- Every selected coordinate still runs the complete terrain, obstruction, and vanilla-repulsion
+-- checks.
 config.OptimizeSurfaceResourceSectorSampling = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
--- Validate outer-ring anomaly terrain lazily and reuse the resource pass's safe
--- candidates. This preserves the complete perimeter sector list and placement constraints while
--- avoiding an unconditional 153,600-point terrain scan.
+-- Validate anomaly terrain lazily and reuse the resource pass's safe candidates. This preserves
+-- whole-map sector coverage and the complete placement constraints while avoiding an unconditional
+-- 153,600-point terrain scan.
 config.OptimizeAnomalyCandidateSearch = true
 -- Reuse class-invariant DepositMarker property metadata and the immutable XYZ captured by stage 01
 -- while serializing native enrichment records from the temporary source.
@@ -519,15 +515,15 @@ config.LimitGeneratorToSource = true
 config.LimitBuildableGridToSource = true
 -- POST-GENERATION anomaly top-up (sbm_deposits.lua TopUpAnomalies). After exact vanilla
 -- generation and proportional marker recreation, clone eligible ordinary anomaly families up to
--- the observed vanilla population times the area factor. Surface additions are restricted to the
--- outer ring; underground additions use reachable buildable terrain across the whole map.
+-- the observed vanilla population times the area factor. Surface additions are sector-balanced
+-- across the whole scenario and prefer flat mountain-base pockets; underground additions use
+-- reachable buildable terrain across the whole map.
 -- EFFECT-DEPOSIT TOP-UP (sbm_deposits.lua TopUpEffectDeposits). EffectDepositMarker is the
 -- marker family behind Vistas, Research Sites, and marker-backed Morale Vistas. Stretching increases the terrain area by
 -- ~1.78x but otherwise leaves their generator counts unchanged, so this independently tops
 -- enabled effect types up to their source count x area factor. The three per-type switches above
 -- let each family be controlled separately. Every resource, anomaly, and effect top-up on both
--- maps requires passable, flat, buildable, vanilla-unobstructed terrain. Surface resources and
--- effects may use otherwise-valid candidates in the anomaly perimeter ring.
+-- maps requires passable, flat, buildable, vanilla-unobstructed terrain.
 -- VANILLA-EXACT PLAY ZONE (sbm_map_generation DoGenerate). The expansion zeroes
 -- mapdata.PassBorder before ChangeMap so the whole expanded map is passable -- but the
 -- generator also reads PassBorder to compute its play zone (GetPlayableArea, BiomeFiller POI
@@ -786,8 +782,10 @@ C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.UNDERGROUND_FALLBACK_MINIMUM_HEX_DISTANCE = math.max(2,
 	math.floor(as_number(config.UndergroundFallbackMinimumHexDistance, 6)))
-C.TOPUP_ANOMALY_OUTER_RING_SECTORS = as_number(config.TopUpAnomalyOuterRingSectors, 3)
+C.TOPUP_ANOMALY_OUTER_RING_SECTORS = 0
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
+C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT = math.max(0, math.min(100,
+	as_number(config.TopUpAnomalyMountainBaseMinimumPercent, 35)))
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)
