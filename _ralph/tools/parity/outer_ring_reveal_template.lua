@@ -1,4 +1,4 @@
--- Headless acceptance probe: reveal/deep-scan only the final physical three-sector surface band,
+-- Headless acceptance probe: reveal/deep-scan only the final physical two-sector surface band,
 -- then ask production code for the placed-object census.  It deliberately derives the band from
 -- the live 20x20 sector grid and never refers to a map name, coordinate, seed, or sector label.
 rawset(_G, "g_OuterRingRevealStatus", "running")
@@ -47,8 +47,8 @@ CreateRealTimeThread(function()
 			"headless pre-outer-deep-scan", false)
 		local scanned, failed = 0, 0
 		for _, sector in ipairs(sectors) do
-			local outer = sector.col <= min_col + 2 or sector.col >= max_col - 2
-				or sector.row <= min_row + 2 or sector.row >= max_row - 2
+			local outer = sector.col <= min_col + 1 or sector.col >= max_col - 1
+				or sector.row <= min_row + 1 or sector.row >= max_row - 1
 			if outer then
 				local scan_ok = type(sector.Scan) == "function"
 					and pcall(sector.Scan, sector, "deep scanned", nil)
@@ -67,22 +67,32 @@ CreateRealTimeThread(function()
 			return #rows > 0 and table.concat(rows, "+") or "none"
 		end
 		g_OuterRingRevealSummary = string.format(
-			"scanned=%d pre_resources=%d post_resources=%d placed=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] audit_violations=%s shortfall=%d",
+			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] audit_violations=%s shortfall=%d outermost_shortfall=%d",
 			scanned, before.ordinary_resource_topups or -1, census.ordinary_resource_topups or -1,
-			census.ordinary_resource_topups_placed or -1, breakdown(census.resource_breakdown),
+			census.ordinary_resource_topups_placed or -1,
+			census.ordinary_resource_topups_outermost or -1,
+			census.guaranteed_resource_topups_outermost or -1,
+			census.guaranteed_resource_topups_outermost_placed or -1,
+			census.outermost_minimum or -1,
+			breakdown(census.resource_breakdown),
 			census.anomaly_topups or -1, census.anomaly_topups_total or -1,
 			census.anomaly_topups_placed or -1, breakdown(census.anomaly_breakdown),
 			census.anomaly_topups_outside_ring or -1, census.effect_topups or -1,
 			breakdown(census.effect_breakdown), audit and tostring(audit.violations) or "n/a",
-			census.shortfall or -1)
+			census.shortfall or -1, census.outermost_shortfall or -1)
 		g_OuterRingRevealPassed = census_ok == true and audit_ok == true
-		if g_OuterRingRevealPassed ~= true then error("outer ring placed-object gate failed: " .. g_OuterRingRevealSummary) end
+		if g_OuterRingRevealPassed ~= true then
+			g_OuterRingRevealError = "outer ring placed-object gate failed: " .. g_OuterRingRevealSummary
+			g_OuterRingRevealStatus = "error"
+			return
+		end
 	end, debug.traceback)
 	if not ok then
 		g_OuterRingRevealError = tostring(err)
 		g_OuterRingRevealStatus = "error"
 		return
 	end
+	if g_OuterRingRevealStatus == "error" then return end
 	g_OuterRingRevealStatus = "complete"
 end)
 return "outer_ring_reveal_started"

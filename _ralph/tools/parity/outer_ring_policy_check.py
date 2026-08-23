@@ -63,8 +63,14 @@ def mountain_base_relief(maximum_rise_m: float, higher_samples: int) -> bool:
 
 
 def dome_effect_topup_allowed(edge_layer: int, underground: bool = False) -> bool:
-    """Only added surface dome effects exclude the final three-sector perimeter."""
-    return underground or edge_layer > 3
+    """Only added surface dome effects exclude the final two-sector perimeter."""
+    return underground or edge_layer > 2
+
+
+def quota_hex_clearance(a: tuple[int, int], b: tuple[int, int], minimum: int = 2) -> bool:
+    """Model the hard axial clearance used only by guaranteed surface resources."""
+    dq, dr = a[0] - b[0], a[1] - b[1]
+    return max(abs(dq), abs(dr), abs(dq + dr)) >= minimum
 
 
 def apron_weight(normalized_radius: float, core_fraction: float = 3 / 8) -> float:
@@ -125,9 +131,9 @@ aprons = section(
 )
 
 static_checks = {
-    "anomaly_outer_ring_is_three_sectors": "config.TopUpAnomalyOuterRingSectors = 3" in CONFIG,
+    "anomaly_outer_ring_is_two_sectors": "config.TopUpAnomalyOuterRingSectors = 2" in CONFIG,
     "compiled_anomaly_outer_ring_uses_config": (
-        "as_number(config.TopUpAnomalyOuterRingSectors, 3)" in CONFIG
+        "as_number(config.TopUpAnomalyOuterRingSectors, 2)" in CONFIG
     ),
     "anomaly_path_uses_live_outer_ring": "TOPUP_ANOMALY_OUTER_RING_SECTORS" in anomalies,
     "anomaly_redistribution_is_fail_closed": (
@@ -162,8 +168,8 @@ static_checks = {
     "audit_requires_flat_buildable": "flatness >= validation_context.flatness_minimum" in audit,
     "audit_requires_unobstructed": "IsUnobstructedAt(map, pt, true" in audit,
     "generation_enforces_surface_audit": "AuditSurfaceTopUpPlacement" in GENERATION,
-    "dome_effect_exclusion_is_three_sectors": (
-        "config.TopUpDomeEffectOuterRingExclusionSectors = 3" in CONFIG
+    "dome_effect_exclusion_is_two_sectors": (
+        "config.TopUpDomeEffectOuterRingExclusionSectors = 2" in CONFIG
     ),
     "effect_cached_pool_checks_exclusion": (
         "surface_effect_candidate_allowed(c.x, c.y, c.sector)" in effects
@@ -177,20 +183,20 @@ static_checks = {
     "effect_exclusion_is_surface_only": "if underground or surface_exclusion_ring_sectors <= 0" in effects,
     "effect_exclusion_is_audited": "dome_effect_topup_inside_excluded_outer_ring" in audit,
     "natural_aprons_enabled": "config.CreateNaturalMountainBaseBuildableAprons = true" in CONFIG,
-    "natural_aprons_use_outer_three_sectors": "config.MountainBaseApronOuterRingSectors = 3" in CONFIG,
-    "mountain_base_resource_minimum_is_32": (
-        "config.MountainBaseOuterRingResourceMinimum = 32" in CONFIG
+    "natural_aprons_use_outer_two_sectors": "config.MountainBaseApronOuterRingSectors = 2" in CONFIG,
+    "mountain_base_resource_minimum_is_70": (
+        "config.MountainBaseOuterRingResourceMinimum = 70" in CONFIG
     ),
     "mountain_base_resource_minimum_is_compiled": (
         "C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM" in CONFIG
     ),
-    "natural_aprons_reserve_72_opportunities": (
-        "config.MountainBaseApronMaximumCount = 72" in CONFIG
+    "natural_aprons_reserve_288_opportunities": (
+        "config.MountainBaseApronMaximumCount = 288" in CONFIG
     ),
     "resource_quota_scans_final_grid_generally": (
         "local SAMPLES_AXIS = 32" in resources
-        and "local MAX_CANDIDATES_PER_SECTOR = 16" in resources
-        and "local MAX_FINAL_BASE_CANDIDATES = 1024" in resources
+        and "local MAX_CANDIDATES_PER_SECTOR = 24" in resources
+        and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" in resources
     ),
     "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 36" in aprons,
     "already_buildable_foothills_are_unchanged": (
@@ -220,23 +226,32 @@ static_checks = {
     "resource_quota_uses_authoritative_terrain_validation": (
         "CanReceiveDeposit(" in resources and "mountain_base_candidates" in resources
     ),
-    "resource_quota_preserves_exact_repulsion": (
+    "ordinary_resources_preserve_exact_repulsion": (
         'NewTopUpRepulsionTracker(map, "resources")' in resources
+        and 'label or "resources strict reserve"' in resources
         and "repulsion.CanPlace(candidate, profile)" in resources
+    ),
+    "resource_quota_has_documented_nonadjacent_policy": (
+        "config.MountainBaseQuotaMinimumHexDistance = 2" in CONFIG
+        and "C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE" in CONFIG
+        and "surface_quota_can_place" in resources
+        and "repulsion.CanPlaceUnique(candidate)" in resources
+        and "< surface_quota_minimum_hex_distance" in resources
+        and "surface_quota_spacing_violations" in DEPOSITS
     ),
     "resource_quota_places_before_general_resources": (
         resources.index('"mountain-base resource quota"')
         < resources.index("if sequential_placement then")
     ),
     "resource_quota_marks_ordinary_resource_topups": (
-        "clone.SuperBigMapMountainBaseResourceTopUp" in resources
+        "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
     ),
-    "resource_quota_is_fail_closed": "mountain-base resource quota failed" in resources,
+    "resource_quota_is_fail_closed": "outer-ring resource quota failed" in resources,
     "resource_quota_is_audited": (
-        "resource_mountain_base_quota_shortfall" in audit
-        and "mountain_base_resource_topup_outside_final_ring" in audit
+        "resource_quota_shortfall" in audit
+        and "outer_ring_resource_quota_topup_outside_final_ring" in audit
     ),
-    "resource_quota_uses_physical_outer_three_sector_band": (
+    "resource_quota_uses_physical_outer_two_sector_band": (
         "IsInFinalOuterResourceWorldBand" in DEPOSITS
         and "FINAL_EXPANDED_SECTORS_PER_AXIS = 20" in DEPOSITS
         and "map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS" in DEPOSITS
@@ -247,6 +262,22 @@ static_checks = {
         and "minimum - accepted_resources" in census
         and "stats.ordinary_resource_topups_placed" in census
         and "stats.require_placed = require_placed == true" in census
+    ),
+    "resource_quota_guarantees_outermost_share": (
+        "MountainBaseOutermostResourceMinimumPercent = 40" in CONFIG
+        and "outermost mountain-base resource quota" in resources
+        and "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
+        and "outermost mountain-base resource quota failed" in resources
+    ),
+    "anomaly_ten_hex_policy_gets_complete_plan_capacity": (
+        "local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 2048" in DEPOSITS
+        and "local MAX_COMPLETE_PLAN_ATTEMPTS = 512" in DEPOSITS
+        and "local MIN_TOPUP_HEX_DISTANCE = 10" in DEPOSITS
+    ),
+    "resource_census_reports_and_gates_outermost_share": (
+        "guaranteed_resource_topups_outermost" in census
+        and "outermost_minimum" in census
+        and "stats.outermost_shortfall == 0" in census
     ),
     "resource_census_separates_anomalies_effects_and_native_resources": (
         "anomaly_topups" in census
@@ -270,7 +301,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_857": "'version', 857" in METADATA,
+    "version_is_858": "'version', 858" in METADATA,
 }
 
 case_results = []
@@ -299,12 +330,22 @@ relief_checks = {
 }
 
 effect_checks = {
-    "surface_layers_one_to_three_are_excluded": all(
-        not dome_effect_topup_allowed(layer) for layer in (1, 2, 3)
+    "surface_layers_one_and_two_are_excluded": all(
+        not dome_effect_topup_allowed(layer) for layer in (1, 2)
     ),
-    "surface_layer_four_is_allowed": dome_effect_topup_allowed(4),
+    "surface_layer_three_is_allowed": dome_effect_topup_allowed(3),
     "underground_is_unchanged": all(
         dome_effect_topup_allowed(layer, underground=True) for layer in (1, 2, 3, 4)
+    ),
+}
+
+quota_spacing_checks = {
+    "same_hex_is_rejected": not quota_hex_clearance((12, -3), (12, -3)),
+    "adjacent_hex_is_rejected": not quota_hex_clearance((0, 0), (1, 0)),
+    "two_hexes_is_accepted": quota_hex_clearance((0, 0), (2, 0)),
+    "diagonal_axial_distance_is_enforced": (
+        not quota_hex_clearance((0, 0), (1, 0))
+        and quota_hex_clearance((0, 0), (1, 1))
     ),
 }
 
@@ -326,12 +367,13 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 5,
+    "schema_version": 6,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
     "relief_checks": relief_checks,
     "effect_checks": effect_checks,
+    "quota_spacing_checks": quota_spacing_checks,
     "feather_checks": feather_checks,
     "preferred_candidates": preferred,
 }
@@ -345,6 +387,8 @@ report["relief_passed"] = sum(relief_checks.values())
 report["relief_total"] = len(relief_checks)
 report["effect_passed"] = sum(effect_checks.values())
 report["effect_total"] = len(effect_checks)
+report["quota_spacing_passed"] = sum(quota_spacing_checks.values())
+report["quota_spacing_total"] = len(quota_spacing_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
 report["ok"] = (
@@ -353,6 +397,7 @@ report["ok"] = (
     and all(preference_checks.values())
     and all(relief_checks.values())
     and all(effect_checks.values())
+    and all(quota_spacing_checks.values())
     and all(feather_checks.values())
 )
 

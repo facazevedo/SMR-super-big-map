@@ -1399,9 +1399,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	end
 
 	local ring_sectors = math.max(0,
-		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 3)))
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)))
 	local maximum_count = math.max(0,
-		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 72)))
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 288)))
 	if ring_sectors <= 0 or maximum_count <= 0 then
 		return false, { reason = "empty apron policy", created = 0, modified = 0 }
 	end

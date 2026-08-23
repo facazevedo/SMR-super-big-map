@@ -221,9 +221,9 @@ config.TopUpVistas = true
 config.TopUpResearchSites = true
 config.TopUpMoraleVistas = true
 -- Added dome-effect bonuses belong where a dome can realistically use them. Keep Vista, Research
--- Site, and marker-backed Morale Vista TOP-UPS out of the final three sector rows/columns along
+-- Site, and marker-backed Morale Vista TOP-UPS out of the final two sector rows/columns along
 -- every map edge. Native vanilla markers are never moved; underground effects are unchanged.
-config.TopUpDomeEffectOuterRingExclusionSectors = 3
+config.TopUpDomeEffectOuterRingExclusionSectors = 2
 -- Hard terrain-evenness rule for every added enrichment on both maps. terrain normal Z uses
 -- 4096 for perfectly horizontal ground; 4080 limits accepted top-up positions to approximately
 -- five degrees or less, and the candidate must also pass the engine's buildable-grid test.
@@ -244,7 +244,7 @@ config.TopUpSectorBalancedPlacement = true
 config.UndergroundFallbackMinimumHexDistance = 6
 -- Surface anomaly density additions use the final physical perimeter. The placement code derives
 -- that band from the live final sector geometry; this value is only its general width.
-config.TopUpAnomalyOuterRingSectors = 3
+config.TopUpAnomalyOuterRingSectors = 2
 config.TopUpAnomalyLowAreaPercent = 35
 -- Emphasize mountain bases in the added population rather than treating them as a rare tie-breaker.
 -- This percentage of each surface anomaly shortfall is selected first from strict flat/buildable
@@ -262,15 +262,24 @@ config.TopUpAnomalyMountainBaseCandidatesPerSector = 8
 config.TopUpAnomalyMountainBaseMinimumRiseMeters = 5
 
 -- Reserve pseudorandom mountain-base opportunities for ordinary resource top-ups in the final
--- three-sector perimeter. Naturally buildable foothills are kept unchanged. Only marginally
+-- two-sector perimeter. Naturally buildable foothills are kept unchanged. Only marginally
 -- sloped opportunities receive a small gently graded apron after the exact v738 whole-map height
 -- transform; a broad irregular quintic feather returns to untouched terrain with matching
 -- value/slope/curvature. This is a general terrain-shape rule and never consults scenario
 -- coordinates or sector names.
 config.CreateNaturalMountainBaseBuildableAprons = true
-config.MountainBaseApronOuterRingSectors = 3
-config.MountainBaseOuterRingResourceMinimum = 32
-config.MountainBaseApronMaximumCount = 72
+config.MountainBaseApronOuterRingSectors = 2
+config.MountainBaseOuterRingResourceMinimum = 70
+config.MountainBaseOutermostResourceMinimumPercent = 40
+-- Vanilla resource-family repulsion cannot carry the fixed perimeter quota on every terrain.
+-- The guaranteed quota therefore uses its own conservative clearance: quota markers never share
+-- a hex or occupy adjacent hexes. Sector-load balancing supplies the wider geographic pressure.
+-- Non-quota resource additions retain vanilla family repulsion unchanged.
+config.MountainBaseQuotaMinimumHexDistance = 2
+-- A two-sector ring has materially less natural flat foothill area than the prior three-sector
+-- policy. Retain only the smallest extra set of deterministic low-slope foothills needed to
+-- satisfy vanilla's unchanged resource clearance, never broad terrain shelves.
+config.MountainBaseApronMaximumCount = 288
 config.MountainBaseApronCoreRadiusHexes = 3
 config.MountainBaseApronFeatherRadiusHexes = 8
 
@@ -804,14 +813,14 @@ C.TOPUP_RESEARCH_SITES = expansion_step_13
 C.TOPUP_MORALE_VISTAS = expansion_step_13
 	and as_bool(config.TopUpMoraleVistas)
 C.TOPUP_DOME_EFFECT_OUTER_RING_EXCLUSION_SECTORS = math.max(0,
-	math.floor(as_number(config.TopUpDomeEffectOuterRingExclusionSectors, 3)))
+	math.floor(as_number(config.TopUpDomeEffectOuterRingExclusionSectors, 2)))
 C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
 	as_number(config.TopUpMinimumTerrainNormalZ, 4080)))
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.UNDERGROUND_FALLBACK_MINIMUM_HEX_DISTANCE = math.max(2,
 	math.floor(as_number(config.UndergroundFallbackMinimumHexDistance, 6)))
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = math.max(0,
-	math.floor(as_number(config.TopUpAnomalyOuterRingSectors, 3)))
+	math.floor(as_number(config.TopUpAnomalyOuterRingSectors, 2)))
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT = math.max(0, math.min(100,
 	as_number(config.TopUpAnomalyMountainBaseMinimumPercent, 75)))
@@ -824,11 +833,15 @@ C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_RISE_METERS = math.max(1,
 C.CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS =
 	as_bool(config.CreateNaturalMountainBaseBuildableAprons)
 C.MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS = math.max(0,
-	math.floor(as_number(config.MountainBaseApronOuterRingSectors, 3)))
+	math.floor(as_number(config.MountainBaseApronOuterRingSectors, 2)))
 C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM = math.max(0,
-	math.floor(as_number(config.MountainBaseOuterRingResourceMinimum, 32)))
+	math.floor(as_number(config.MountainBaseOuterRingResourceMinimum, 70)))
+C.MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT = math.max(0, math.min(100,
+	as_number(config.MountainBaseOutermostResourceMinimumPercent, 40)))
+C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE = math.max(1,
+	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 2)))
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
-	math.floor(as_number(config.MountainBaseApronMaximumCount, 72)))
+	math.floor(as_number(config.MountainBaseApronMaximumCount, 288)))
 C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.MountainBaseApronCoreRadiusHexes, 3))
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(

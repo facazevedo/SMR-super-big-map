@@ -11010,6 +11010,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								and repulsion_stats.first_repulsion_violation,
 							outer_ring_spacing_violations = repulsion_stats
 								and repulsion_stats.outer_ring_spacing_violations,
+							surface_quota_topups = repulsion_stats
+								and repulsion_stats.surface_quota_topups,
+							surface_quota_spacing_violations = repulsion_stats
+								and repulsion_stats.surface_quota_spacing_violations,
 						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
 							error("surface top-up spacing audit failed: density_failures="
@@ -11024,6 +11028,12 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. " outer_ring_spacing_violations="
 								.. tostring(repulsion_stats
 									and repulsion_stats.outer_ring_spacing_violations)
+								.. " surface_quota_spacing_violations="
+								.. tostring(repulsion_stats
+									and repulsion_stats.surface_quota_spacing_violations)
+								.. " first_surface_quota_spacing_violation="
+								.. tostring(repulsion_stats
+									and repulsion_stats.first_surface_quota_spacing_violation)
 								.. " first_repulsion_violation="
 								.. tostring(repulsion_stats
 									and repulsion_stats.first_repulsion_violation))
@@ -11041,12 +11051,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(ring_stats and ring_stats.anomaly_fallback_inside_ring)
 									.. " sector_overflow="
 									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow)
-									.. " mountain_base_resources="
+									.. " quota_resources="
 									.. tostring(ring_stats
-										and ring_stats.resource_mountain_base_topups)
-									.. " mountain_base_quota_shortfall="
+										and ring_stats.resource_quota_topups)
+									.. " quota_shortfall="
 									.. tostring(ring_stats
-										and ring_stats.resource_mountain_base_quota_shortfall))
+										and ring_stats.resource_quota_shortfall)
+									.. " outermost_quota_shortfall="
+									.. tostring(ring_stats
+										and ring_stats.resource_outermost_quota_shortfall))
 							end
 						end
 						if type(deposits.CensusFinalOuterResourceTopUps) == "function" then
