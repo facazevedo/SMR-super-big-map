@@ -262,16 +262,16 @@ config.TopUpAnomalyMountainBaseCandidatesPerSector = 8
 -- many metres above the flat candidate, and relief must appear in at least two ring samples.
 config.TopUpAnomalyMountainBaseMinimumRiseMeters = 5
 
--- A few enclosing mountain sectors contain no naturally buildable foothill at all, leaving
--- otherwise eligible resource/anomaly top-ups nowhere to go. After the exact v738 whole-map
--- height transform, form a sparse set of small, gently graded aprons at qualifying mountain
--- bases in the final three-sector perimeter. Each core follows a locally fitted slope instead of
--- becoming a level platform, and a broad irregular quintic feather returns to untouched terrain
--- with matching value/slope/curvature. This is a general terrain-shape rule; it never consults
--- scenario coordinates or sector names.
+-- Reserve pseudorandom mountain-base opportunities for ordinary resource top-ups in the final
+-- three-sector perimeter. Naturally buildable foothills are kept unchanged. Only marginally
+-- sloped opportunities receive a small gently graded apron after the exact v738 whole-map height
+-- transform; a broad irregular quintic feather returns to untouched terrain with matching
+-- value/slope/curvature. This is a general terrain-shape rule and never consults scenario
+-- coordinates or sector names.
 config.CreateNaturalMountainBaseBuildableAprons = true
 config.MountainBaseApronOuterRingSectors = 3
-config.MountainBaseApronMaximumCount = 36
+config.MountainBaseOuterRingResourceMinimum = 32
+config.MountainBaseApronMaximumCount = 72
 config.MountainBaseApronCoreRadiusHexes = 3
 config.MountainBaseApronFeatherRadiusHexes = 8
 
@@ -825,8 +825,10 @@ C.CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS =
 	as_bool(config.CreateNaturalMountainBaseBuildableAprons)
 C.MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS = math.max(0,
 	math.floor(as_number(config.MountainBaseApronOuterRingSectors, 3)))
+C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM = math.max(0,
+	math.floor(as_number(config.MountainBaseOuterRingResourceMinimum, 32)))
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
-	math.floor(as_number(config.MountainBaseApronMaximumCount, 36)))
+	math.floor(as_number(config.MountainBaseApronMaximumCount, 72)))
 C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.MountainBaseApronCoreRadiusHexes, 3))
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(

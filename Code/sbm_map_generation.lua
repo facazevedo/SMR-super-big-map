@@ -11040,7 +11040,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. " fallback_inside_ring="
 									.. tostring(ring_stats and ring_stats.anomaly_fallback_inside_ring)
 									.. " sector_overflow="
-									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow))
+									.. tostring(ring_stats and ring_stats.anomaly_sector_overflow)
+									.. " mountain_base_resources="
+									.. tostring(ring_stats
+										and ring_stats.resource_mountain_base_topups)
+									.. " mountain_base_quota_shortfall="
+									.. tostring(ring_stats
+										and ring_stats.resource_mountain_base_quota_shortfall))
 							end
 						end
 						if type(deposits.DebugAuditFinalEnrichments) == "function" then

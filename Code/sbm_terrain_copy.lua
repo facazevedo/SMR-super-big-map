@@ -1371,13 +1371,12 @@ local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
 	}
 end
 
--- Create a small number of genuinely buildable foothill pockets without drawing artificial
--- platforms into the terrain. This runs on the final destination height grid, AFTER the exact
--- v738 affine Z transform has been captured/dumped and BEFORE the authoritative passability and
--- buildable-grid rebuilds. Candidate discovery is deterministic and geometry-only: marginal
--- (roughly 5-18 degree) ground must have substantial higher terrain in several directions, and
--- only the final configurable perimeter band is considered. No scenario/coordinate special case
--- is involved.
+-- Reserve genuinely buildable foothill opportunities without drawing artificial platforms into
+-- the terrain. This runs on the final destination height grid, AFTER the exact v738 affine Z
+-- transform has been captured/dumped and BEFORE the authoritative passability and buildable-grid
+-- rebuilds. Candidate discovery is deterministic and geometry-only: ground must have substantial
+-- higher terrain in several directions, and only the final configurable perimeter band is
+-- considered. No scenario/coordinate special case is involved.
 --
 -- Each accepted patch has a gently tilted planar core (rather than a level shelf), oriented with
 -- its short axis toward the adjacent mountain. A wide, slightly lobed quintic feather blends the
@@ -1402,7 +1401,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local ring_sectors = math.max(0,
 		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 3)))
 	local maximum_count = math.max(0,
-		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 36)))
+		math.floor(cfg_number("MOUNTAIN_BASE_APRON_MAXIMUM_COUNT", 72)))
 	if ring_sectors <= 0 or maximum_count <= 0 then
 		return false, { reason = "empty apron policy", created = 0, modified = 0 }
 	end
@@ -1455,7 +1454,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	}
 	local fit_radius = math.max(2, math.floor(2 * cells_per_hex + 0.5))
 	local minimum_rise = math.max(5 * guim_v, 400)
-	local offsets = { 0.16, 0.29, 0.42, 0.55, 0.68, 0.81 }
+	-- Eight irregular interior samples per axis expose narrow foothill bands without ever touching
+	-- the sector boundary. The resulting opportunity set is ranked by minimum terrain work first
+	-- and a coordinate hash second, giving reproducible pseudorandom choices without consuming or
+	-- perturbing the game's generation RNG stream.
+	local offsets = { 0.12, 0.229, 0.337, 0.446, 0.554, 0.663, 0.771, 0.88 }
 	local candidates = {}
 	local considered, relief_rejections, slope_rejections = 0, 0, 0
 
@@ -1479,9 +1482,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 					math.abs(z - center) / fit_radius)
 			end
 		end
-		-- Below about five degrees the location is already useful; above about eighteen degrees a
-		-- small apron would need an obvious cut wall. Modify only the marginal band between them.
-		if maximum_local_slope < 9 or maximum_local_slope > 32 then
+		-- Ground below about five degrees is already useful and must remain bit-for-bit untouched.
+		-- Above about twenty degrees a small apron would need an obvious cut wall, so reject it.
+		if maximum_local_slope > 36 then
 			slope_rejections = slope_rejections + 1
 			return nil
 		end
@@ -1524,6 +1527,11 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		if gradient_length > 4 then
 			gx, gy = gx * 4 / gradient_length, gy * 4 / gradient_length
 		end
+		local edit_tier = maximum_local_slope < 9 and 0
+			or math.max(1, math.ceil((maximum_local_slope - 8) / 4))
+		local pseudorandom_rank = (math.floor(cx + 0.5) * 73856093
+			+ math.floor(cy + 0.5) * 19349663
+			+ sx * 83492791 + sy * 2654435761) % 2147483647
 		return {
 			x = math.floor(cx + 0.5), y = math.floor(cy + 0.5),
 			sector_x = sx, sector_y = sy, center = center,
@@ -1531,11 +1539,13 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			score = relief_score - maximum_local_slope * guim_v * 2
 				- lower_samples * minimum_rise,
 			maximum_rise = maximum_rise, local_slope = maximum_local_slope,
+			requires_edit = maximum_local_slope >= 9,
+			edit_tier = edit_tier, pseudorandom_rank = pseudorandom_rank,
 		}
 	end
 
-	-- Keep only the strongest candidate in each outer sector. This creates broad geographic
-	-- coverage without turning a single scenic basin into a cluster of platforms.
+	-- Keep one low-impact pseudorandom candidate in each outer sector. This creates broad
+	-- geographic coverage without turning one scenic basin into a cluster of platforms.
 	for sy = 0, count_y - 1 do
 		for sx = 0, count_x - 1 do
 			local outer = sx < ring_sectors or sy < ring_sectors
@@ -1546,7 +1556,12 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 					for _, ox in ipairs(offsets) do
 						local candidate = qualify((sx + ox) * sector_w, (sy + oy) * sector_h,
 							sx, sy)
-						if candidate and (not best or candidate.score > best.score) then best = candidate end
+						if candidate and (not best
+							or candidate.edit_tier < best.edit_tier
+							or (candidate.edit_tier == best.edit_tier
+								and candidate.pseudorandom_rank < best.pseudorandom_rank)) then
+							best = candidate
+						end
 					end
 				end
 				if best then candidates[#candidates + 1] = best end
@@ -1554,6 +1569,10 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		end
 	end
 	table.sort(candidates, function(a, b)
+		if a.edit_tier ~= b.edit_tier then return a.edit_tier < b.edit_tier end
+		if a.pseudorandom_rank ~= b.pseudorandom_rank then
+			return a.pseudorandom_rank < b.pseudorandom_rank
+		end
 		if a.score == b.score then
 			if a.sector_y == b.sector_y then return a.sector_x < b.sector_x end
 			return a.sector_y < b.sector_y
@@ -1580,45 +1599,56 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
 	local modified = 0
+	local shaped = 0
 	local ok_apply, apply_error = pcall(function()
 		for index, candidate in ipairs(selected) do
-			-- Vary scale and lobe phase deterministically by sector; there is no random-stream cost.
-			local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31 + index * 13) % 9) - 4
-			local short_radius = outer_short * (1 + variant * 0.012)
-			local long_radius = outer_long * (1 - variant * 0.009)
-			local x0 = math.max(0, math.floor(candidate.x - long_radius - 2))
-			local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
-			local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
-			local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
-			for y = y0, y1 do
-				for x = x0, x1 do
-					local dx, dy = x - candidate.x, y - candidate.y
-					local u = dx * candidate.mountain_x + dy * candidate.mountain_y
-					local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
-					local ru, rv = u / short_radius, v / long_radius
-					local radius = math.sqrt(ru * ru + rv * rv)
-					if radius < 1.12 then
-						local nx, ny = 1, 0
-						if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
-						local lobe3 = nx * nx * nx - 3 * nx * ny * ny
-						local lobe2 = nx * nx - ny * ny
-						local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
-						local normalized = radius / boundary
-						if normalized < 1 then
-							local weight
-							if normalized <= core_fraction then
-								weight = 1
-							else
-								local t = (normalized - core_fraction) / (1 - core_fraction)
-								local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-								weight = 1 - smooth
-							end
-							local old = grid:get(x, y)
-							if type(old) == "number" then
-								local target = candidate.center + candidate.gx * dx + candidate.gy * dy
-								local value = math.floor(old + (target - old) * weight + 0.5)
-								value = math.max(0, math.min(65535, value))
-								if value ~= old then grid:set(x, y, value) modified = modified + 1 end
+			-- An already-flat mountain base is a zero-edit opportunity. Retain its original terrain
+			-- exactly; only marginal sites enter the feathered shaping loop below.
+			if candidate.requires_edit then
+				shaped = shaped + 1
+				-- Vary scale and lobe phase deterministically by sector; there is no random-stream cost.
+				local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31
+					+ index * 13) % 9) - 4
+				local short_radius = outer_short * (1 + variant * 0.012)
+				local long_radius = outer_long * (1 - variant * 0.009)
+				local x0 = math.max(0, math.floor(candidate.x - long_radius - 2))
+				local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
+				local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
+				local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
+				for y = y0, y1 do
+					for x = x0, x1 do
+						local dx, dy = x - candidate.x, y - candidate.y
+						local u = dx * candidate.mountain_x + dy * candidate.mountain_y
+						local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
+						local ru, rv = u / short_radius, v / long_radius
+						local radius = math.sqrt(ru * ru + rv * rv)
+						if radius < 1.12 then
+							local nx, ny = 1, 0
+							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
+							local lobe3 = nx * nx * nx - 3 * nx * ny * ny
+							local lobe2 = nx * nx - ny * ny
+							local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+							local normalized = radius / boundary
+							if normalized < 1 then
+								local weight
+								if normalized <= core_fraction then
+									weight = 1
+								else
+									local t = (normalized - core_fraction) / (1 - core_fraction)
+									local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+									weight = 1 - smooth
+								end
+								local old = grid:get(x, y)
+								if type(old) == "number" then
+									local target = candidate.center
+										+ candidate.gx * dx + candidate.gy * dy
+									local value = math.floor(old + (target - old) * weight + 0.5)
+									value = math.max(0, math.min(65535, value))
+									if value ~= old then
+										grid:set(x, y, value)
+										modified = modified + 1
+									end
+								end
 							end
 						end
 					end
@@ -1637,14 +1667,18 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				sector_x = candidate.sector_x, sector_y = candidate.sector_y,
 				maximum_rise = candidate.maximum_rise,
 				original_local_slope = candidate.local_slope,
+				terrain_modified = candidate.requires_edit == true,
+				pseudorandom_rank = candidate.pseudorandom_rank,
 			}
 		end
 	end
 	map.SuperBigMapNaturalMountainBaseApronCenters = centers
 	local report = {
-		reason = ok_apply and (#selected > 0 and "created" or "no qualifying marginal bases")
+		reason = ok_apply and (#selected > 0 and "reserved" or "no qualifying mountain bases")
 			or "height-grid write failed",
 		created = ok_apply and #selected or 0,
+		shaped = ok_apply and shaped or 0,
+		unchanged = ok_apply and (#selected - shaped) or 0,
 		modified = ok_apply and modified or 0,
 		candidates = #candidates, considered = considered,
 		relief_rejections = relief_rejections, slope_rejections = slope_rejections,

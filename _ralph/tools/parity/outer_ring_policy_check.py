@@ -103,6 +103,11 @@ audit = section(
     "function DepositRules.AuditSurfaceTopUpPlacement",
     "function DepositRules.PrepareUndergroundReachability",
 )
+resources = section(
+    DEPOSITS,
+    "function DepositRules.TopUpDeposits",
+    "function DepositRules.TopUpAnomalies",
+)
 effects = section(
     DEPOSITS,
     "function DepositRules.TopUpEffectDeposits",
@@ -154,9 +159,27 @@ static_checks = {
     "effect_exclusion_is_audited": "dome_effect_topup_inside_excluded_outer_ring" in audit,
     "natural_aprons_enabled": "config.CreateNaturalMountainBaseBuildableAprons = true" in CONFIG,
     "natural_aprons_use_outer_three_sectors": "config.MountainBaseApronOuterRingSectors = 3" in CONFIG,
-    "natural_aprons_are_sparse": "config.MountainBaseApronMaximumCount = 36" in CONFIG,
-    "natural_aprons_require_marginal_slope": (
-        "maximum_local_slope < 9 or maximum_local_slope > 32" in aprons
+    "mountain_base_resource_minimum_is_32": (
+        "config.MountainBaseOuterRingResourceMinimum = 32" in CONFIG
+    ),
+    "mountain_base_resource_minimum_is_compiled": (
+        "C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM" in CONFIG
+    ),
+    "natural_aprons_reserve_72_opportunities": (
+        "config.MountainBaseApronMaximumCount = 72" in CONFIG
+    ),
+    "resource_quota_scans_final_grid_generally": (
+        "local SAMPLES_AXIS = 32" in resources
+        and "local MAX_CANDIDATES_PER_SECTOR = 16" in resources
+        and "local MAX_FINAL_BASE_CANDIDATES = 1024" in resources
+    ),
+    "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 36" in aprons,
+    "already_buildable_foothills_are_unchanged": (
+        "requires_edit = maximum_local_slope >= 9" in aprons
+        and "if candidate.requires_edit then" in aprons
+    ),
+    "foothill_selection_is_pseudorandom_without_rng_cost": (
+        "pseudorandom_rank" in aprons and "73856093" in aprons
     ),
     "natural_aprons_require_mountain_relief": "higher_samples < 3" in aprons,
     "natural_aprons_keep_gentle_grade": "if gradient_length > 4" in aprons,
@@ -172,7 +195,32 @@ static_checks = {
     "final_buildable_grid_audits_aprons": (
         "TerrainCopy.AuditNaturalMountainBaseBuildableAprons(map)" in GENERATION
     ),
-    "version_is_853": "'version', 853" in METADATA,
+    "resource_quota_uses_published_apron_centers": (
+        "map.SuperBigMapNaturalMountainBaseApronCenters" in resources
+    ),
+    "resource_quota_uses_authoritative_terrain_validation": (
+        "CanReceiveDeposit(" in resources and "mountain_base_candidates" in resources
+    ),
+    "resource_quota_preserves_exact_repulsion": (
+        'NewTopUpRepulsionTracker(map, "resources")' in resources
+        and "repulsion.CanPlace(candidate, profile)" in resources
+    ),
+    "resource_quota_places_before_general_resources": (
+        resources.index('"mountain-base resource quota"')
+        < resources.index("if sequential_placement then")
+    ),
+    "resource_quota_marks_ordinary_resource_topups": (
+        "clone.SuperBigMapMountainBaseResourceTopUp" in resources
+    ),
+    "resource_quota_is_fail_closed": "mountain-base resource quota failed" in resources,
+    "resource_quota_is_audited": (
+        "resource_mountain_base_quota_shortfall" in audit
+        and "mountain_base_resource_topup_outside_final_ring" in audit
+    ),
+    "resource_quota_has_no_scenario_special_case": (
+        "14N134W" not in resources and "A17" not in resources
+    ),
+    "version_is_854": "'version', 854" in METADATA,
 }
 
 case_results = []
@@ -228,7 +276,7 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 4,
+    "schema_version": 5,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
