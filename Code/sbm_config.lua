@@ -243,11 +243,20 @@ config.UndergroundFallbackMinimumHexDistance = 6
 -- older save/config table cannot accidentally reactivate the removed three-sector policy.
 config.TopUpAnomalyOuterRingSectors = 0
 config.TopUpAnomalyLowAreaPercent = 35
--- Keep mountain-base anomalies visible in the final distribution rather than treating bases as a
--- rare tie-breaker. This percentage of each surface anomaly shortfall is selected first from
--- strict flat/buildable candidates beside higher terrain. If terrain or vanilla repulsion cannot
--- supply the quota, density completion may use other strict flat terrain; steep slopes never enter.
-config.TopUpAnomalyMountainBaseMinimumPercent = 35
+-- Emphasize mountain bases in the added population rather than treating them as a rare tie-breaker.
+-- This percentage of each surface anomaly shortfall is selected first from strict flat/buildable
+-- candidates beside higher terrain. If terrain or vanilla repulsion cannot supply the quota,
+-- density completion may use other strict flat terrain; steep slopes never enter.
+config.TopUpAnomalyMountainBaseMinimumPercent = 75
+-- Mountain-foot terrain is often a narrow band, especially around a scenario's enclosing ranges.
+-- Sample every unscanned sector evenly instead of relying on the ordinary whole-map random pool to
+-- hit those bands by chance. Only the strongest few base candidates per sector enter the reserved
+-- mountain-base selector, preventing broad central flats from overwhelming narrow mountain feet.
+config.TopUpAnomalySurfaceSamplesPerSector = 64
+config.TopUpAnomalyMountainBaseCandidatesPerSector = 8
+-- Ignore tiny rolling-ground height differences: at least one surrounding sample must rise this
+-- many metres above the flat candidate, and relief must appear in at least two ring samples.
+config.TopUpAnomalyMountainBaseMinimumRiseMeters = 5
 
 -- RESOURCE TOP-UP (sbm_deposits.lua TopUpDeposits). The generator places the native (Big) deposit
 -- count; over the larger 20x20 that is below vanilla density. When true, extra source resource
@@ -785,7 +794,13 @@ C.UNDERGROUND_FALLBACK_MINIMUM_HEX_DISTANCE = math.max(2,
 C.TOPUP_ANOMALY_OUTER_RING_SECTORS = 0
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT = math.max(0, math.min(100,
-	as_number(config.TopUpAnomalyMountainBaseMinimumPercent, 35)))
+	as_number(config.TopUpAnomalyMountainBaseMinimumPercent, 75)))
+C.TOPUP_ANOMALY_SURFACE_SAMPLES_PER_SECTOR = math.max(8, math.min(256,
+	math.floor(as_number(config.TopUpAnomalySurfaceSamplesPerSector, 64))))
+C.TOPUP_ANOMALY_MOUNTAIN_BASE_CANDIDATES_PER_SECTOR = math.max(1, math.min(32,
+	math.floor(as_number(config.TopUpAnomalyMountainBaseCandidatesPerSector, 8))))
+C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_RISE_METERS = math.max(1,
+	as_number(config.TopUpAnomalyMountainBaseMinimumRiseMeters, 5))
 C.DEPOSIT_COUNT_SCALE_OVERRIDE = (type(config.DepositCountScaleOverride) == "number" and config.DepositCountScaleOverride > 0)
 	and config.DepositCountScaleOverride or false
 C.FIX_ROCKET_LANDING_Z = as_bool(config.FixRocketLandingZ)

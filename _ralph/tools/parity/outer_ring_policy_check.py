@@ -56,6 +56,11 @@ def preferred_by_sector(candidates: tuple[Candidate, ...]) -> tuple[str, ...]:
     )
 
 
+def mountain_base_relief(maximum_rise_m: float, higher_samples: int) -> bool:
+    """Model the production relief discriminator after the strict terrain gate."""
+    return maximum_rise_m >= 5 and higher_samples >= 2
+
+
 CASES = (
     Candidate("plain_flat", "plain"),
     Candidate("mountain_base_flat", "mountain", mountain_base=True),
@@ -87,10 +92,16 @@ static_checks = {
     "compiled_outer_ring_forced_off": "C.TOPUP_ANOMALY_OUTER_RING_SECTORS = 0" in CONFIG,
     "anomaly_path_forces_whole_map": "local ring_sectors = 0" in anomalies,
     "surface_uses_sector_balancing": "whole_map_sector_balanced" in anomalies,
-    "surface_scores_mountain_bases": "valley_score = ValleyScore(map, pt)" in anomalies,
+    "surface_scores_mountain_bases": "ValleyScore(map, pt)" in anomalies,
+    "surface_stratifies_every_sector": "SAMPLES_PER_SURFACE_SECTOR" in anomalies,
+    "surface_sampling_plan_is_shuffled": "Sampling may stop when the validated pool" in anomalies,
     "preference_is_per_sector": "base_by_sector[key]" in anomalies,
-    "preference_keeps_plain_sectors": "base_by_sector[key] ~= true or" in anomalies,
+    "preference_keeps_plain_sectors": "base_by_sector[key] == nil or" in anomalies,
+    "base_selector_is_capped_per_sector": "MOUNTAIN_BASE_CANDIDATES_PER_SECTOR" in anomalies,
     "base_quota_is_configured": "TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT" in anomalies,
+    "base_quota_is_emphasized": "config.TopUpAnomalyMountainBaseMinimumPercent = 75" in CONFIG,
+    "minor_relief_is_excluded": "TopUpAnomalyMountainBaseMinimumRiseMeters = 5" in CONFIG,
+    "relief_requires_multiple_samples": "higher_samples) or 0) >= 2" in DEPOSITS,
     "base_quota_selector_exists": "surface anomaly mountain-base quota" in anomalies,
     "steepness_never_relaxed": "only relaxes the nearby-higher-terrain preference" in anomalies,
     "topups_clear_edge_marker": "clone.SuperBigMapEdgeTopUp = nil" in anomalies,
@@ -100,7 +111,7 @@ static_checks = {
     "audit_requires_flat_buildable": "flatness >= validation_context.flatness_minimum" in audit,
     "audit_requires_unobstructed": "IsUnobstructedAt(map, pt, true" in audit,
     "generation_enforces_surface_audit": "AuditSurfaceTopUpPlacement" in GENERATION,
-    "version_is_851": "'version', 851" in METADATA,
+    "version_is_852": "'version', 852" in METADATA,
 }
 
 case_results = []
@@ -122,12 +133,19 @@ preference_checks = {
     "steep_slope_is_rejected": "steep_slope" not in preferred,
 }
 
+relief_checks = {
+    "real_mountain_foot_is_accepted": mountain_base_relief(18, 4),
+    "rolling_ground_is_rejected": not mountain_base_relief(2, 8),
+    "single_height_outlier_is_rejected": not mountain_base_relief(18, 1),
+}
+
 report = {
     "schema": "smr.ralph.whole_map_mountain_base_policy_check",
-    "schema_version": 2,
+    "schema_version": 3,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
+    "relief_checks": relief_checks,
     "preferred_candidates": preferred,
 }
 report["static_passed"] = sum(static_checks.values())
@@ -136,10 +154,13 @@ report["synthetic_passed"] = sum(row["ok"] for row in case_results)
 report["synthetic_total"] = len(case_results)
 report["preference_passed"] = sum(preference_checks.values())
 report["preference_total"] = len(preference_checks)
+report["relief_passed"] = sum(relief_checks.values())
+report["relief_total"] = len(relief_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
     and all(preference_checks.values())
+    and all(relief_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))

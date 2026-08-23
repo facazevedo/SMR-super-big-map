@@ -1058,9 +1058,27 @@ local function NewWellSpacedUndergroundFallbackSelector(map, candidates, label, 
 	return { Take = take, Commit = commit, Remaining = function() return remaining end, Stats = stats }
 end
 
--- How much higher the surrounding terrain is than this already-flat/buildable candidate.
--- Best-of-N random selection uses this only as a preference, keeping placement random while
--- favoring low pockets between mountains over isolated mountaintops.
+local MOUNTAIN_BASE_SAMPLE_RINGS = { { 4, 4 }, { 8, 2 }, { 12, 1 } }
+local MOUNTAIN_BASE_SAMPLE_DIRECTIONS = {
+	{ 10, 0 }, { -10, 0 }, { 0, 10 }, { 0, -10 },
+	{ 7, 7 }, { -7, 7 }, { 7, -7 }, { -7, -7 },
+}
+
+local function MountainBaseMinimumRiseWorld()
+	local guim = tonumber(Global("guim")) or 100
+	return math.max(1, (tonumber(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_RISE_METERS) or 5) * guim)
+end
+
+local function IsMountainBaseRelief(score, maximum_rise, higher_samples)
+	return (tonumber(score) or 0) > 0
+		and (tonumber(maximum_rise) or 0) >= MountainBaseMinimumRiseWorld()
+		and (tonumber(higher_samples) or 0) >= 2
+end
+
+-- How much higher the surrounding terrain is than this already-flat/buildable candidate. Three
+-- concentric rings detect both a mountain immediately beside the point and the wider flat apron at
+-- its foot. Nearer relief is weighted more strongly. Selection uses this only as a preference;
+-- passability, buildability, obstruction, and the hard local slope limit remain authoritative.
 local function ValleyScore(map, pt)
 	local terrain_api = Global("terrain")
 	local point = Global("point")
@@ -1072,19 +1090,23 @@ local function ValleyScore(map, pt)
 	local const_tbl = Global("const")
 	local hex = (type(const_tbl) == "table" and type(const_tbl.HexSize) == "number"
 		and const_tbl.HexSize > 0) and const_tbl.HexSize or 1000
-	local radius = 4 * hex
-	local diagonal = math.floor(radius * 7 / 10)
-	local offsets = {
-		{ radius, 0 }, { -radius, 0 }, { 0, radius }, { 0, -radius },
-		{ diagonal, diagonal }, { -diagonal, diagonal },
-		{ diagonal, -diagonal }, { -diagonal, -diagonal },
-	}
-	local score = 0
-	for _, o in ipairs(offsets) do
-		local ok_h, z = pcall(terrain_api.GetHeight, map, point(x + o[1], y + o[2]))
-		if ok_h and type(z) == "number" and z > center_z then score = score + (z - center_z) end
+	local score, maximum_rise, higher_samples = 0, 0, 0
+	for _, ring in ipairs(MOUNTAIN_BASE_SAMPLE_RINGS) do
+		local radius = ring[1] * hex
+		local weight = ring[2]
+		for _, direction in ipairs(MOUNTAIN_BASE_SAMPLE_DIRECTIONS) do
+			local dx = math.floor(radius * direction[1] / 10)
+			local dy = math.floor(radius * direction[2] / 10)
+			local ok_h, z = pcall(terrain_api.GetHeight, map, point(x + dx, y + dy))
+			if ok_h and type(z) == "number" and z > center_z then
+				local rise = z - center_z
+				score = score + rise * weight
+				maximum_rise = math.max(maximum_rise, rise)
+				higher_samples = higher_samples + 1
+			end
+		end
 	end
-	return score
+	return score, maximum_rise, higher_samples
 end
 
 local DepositRules = {}
@@ -4666,7 +4688,7 @@ function DepositRules.TopUpAnomalies(map)
 		and SharedTopUpValidationContext(map) or NewDepositValidationContext(map)
 	local underground = validation_context.underground == true
 	local surface_mountain_base_percent = not underground and math.max(0, math.min(100,
-		math.floor(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT or 35))) or 0
+		math.floor(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT or 75))) or 0
 	local surface_mountain_base_target = not underground
 		and math.min(shortfall, math.ceil(shortfall * surface_mountain_base_percent / 100)) or 0
 	local sequential_underground = underground
@@ -4761,12 +4783,14 @@ function DepositRules.TopUpAnomalies(map)
 		local ring_sector_pool = {}
 		local BASE_WHOLE_MAP_SAMPLES = 6000
 		local SAMPLES_PER_RING_SECTOR = 32
+		local SAMPLES_PER_SURFACE_SECTOR = math.max(8, math.min(256,
+			math.floor(cfg().TOPUP_ANOMALY_SURFACE_SAMPLES_PER_SECTOR or 64)))
 		local STAGE_TWO_AREA_SAMPLES = 96
 		local MAX_POOL = 10000
 		-- Build the live, index-base-independent edge context. Surface sampling is stratified by
 		-- every live ring sector so random sampling
 		-- cannot silently omit the final bottom/right runs (or any other part of the perimeter).
-		edge_ctx = surface_edge_ring and BuildTopUpEdgeContext(map) or nil
+		edge_ctx = not underground and BuildTopUpEdgeContext(map) or nil
 		local sampling_plan = {}
 		local function ring_edges_for_sector(s)
 			if not (edge_ctx and s) then return "whole_map" end
@@ -4795,6 +4819,25 @@ function DepositRules.TopUpAnomalies(map)
 					for _ = 1, SAMPLES_PER_RING_SECTOR do sampling_plan[#sampling_plan + 1] = s end
 				end
 			end
+		elseif not underground and edge_ctx and type(edge_ctx.sector_step) == "number" then
+			-- The flat apron at a mountain foot can occupy only a few hexes. Give every unscanned
+			-- sector the same number of trials so wide central plains cannot monopolize the candidate
+			-- pool before those narrow bands are observed.
+			for _, s in ipairs(edge_ctx.sectors) do
+				if s.sector_ref and not SectorIsScanned(s.sector_ref)
+					and type(s.area_x0) == "number" and type(s.area_y0) == "number"
+					and type(s.area_x1) == "number" and type(s.area_y1) == "number" then
+					for _ = 1, SAMPLES_PER_SURFACE_SECTOR do
+						sampling_plan[#sampling_plan + 1] = s
+					end
+				end
+			end
+			-- Sampling may stop when the validated pool reaches its ceiling. Shuffle first so such a
+			-- stop is geographically neutral rather than favoring the first rows of the sector grid.
+			for i = #sampling_plan, 2, -1 do
+				local j = RandInt(i) + 1
+				sampling_plan[i], sampling_plan[j] = sampling_plan[j], sampling_plan[i]
+			end
 		end
 		local MAX_SAMPLES = #sampling_plan > 0 and #sampling_plan or BASE_WHOLE_MAP_SAMPLES
 		local cached = not surface_edge_ring and CachedTopUpCandidates(map)
@@ -4806,6 +4849,7 @@ function DepositRules.TopUpAnomalies(map)
 		end
 		local optimize_placement_pool = cfg().OPTIMIZE_TOPUP_PLACEMENT_POOLS == true
 		local initial_candidate_target = sequential_underground and #candidates
+			or (not underground and MAX_POOL)
 			or (optimize_placement_pool
 				and math.min(MAX_POOL, math.max(512, shortfall * 32)) or MAX_POOL)
 		local candidate_samples = 0
@@ -4847,7 +4891,8 @@ function DepositRules.TopUpAnomalies(map)
 				map, x, y, ring_sectors, sector, ring_context)
 			local scanned = sector and SectorIsScanned(sector) or false
 			local passable, can_receive, buildable, unobstructed = false, false, false, false
-			local valley_score, flatness, terrain_z, restriction_tier = 0, 0, nil, nil
+			local valley_score, mountain_base_rise, mountain_base_higher_samples = 0, 0, 0
+			local flatness, terrain_z, restriction_tier = 0, nil, nil
 			local sector_matches_plan = not expected_sector or (sector
 				and sector.id == expected_sector.id
 				and sector.col == expected_sector.col and sector.row == expected_sector.row)
@@ -4875,7 +4920,10 @@ function DepositRules.TopUpAnomalies(map)
 				elseif not can_receive then
 					rejection = "not_flat_buildable_terrain"
 				else
-					if not underground then valley_score = ValleyScore(map, pt) end
+					if not underground then
+						valley_score, mountain_base_rise, mountain_base_higher_samples =
+							ValleyScore(map, pt)
+					end
 					if surface_edge_ring then
 						-- Terrain never influences the stage-one sector lottery, but it is a hard
 						-- stage-two constraint: every accepted point is flat and buildable.
@@ -4893,7 +4941,10 @@ function DepositRules.TopUpAnomalies(map)
 						map, evaluated_q, evaluated_r)
 					if duplicate then return end
 					local candidate = {
-						x = x, y = y, valley_score = valley_score, passable = passable,
+						x = x, y = y, valley_score = valley_score,
+						mountain_base_rise = mountain_base_rise,
+						mountain_base_higher_samples = mountain_base_higher_samples,
+						passable = passable,
 						flatness = flatness, buildable = buildable, unobstructed = unobstructed,
 						terrain_z = terrain_z, restriction_tier = restriction_tier,
 						terrain_type = underground and -1 or nil,
@@ -4940,23 +4991,51 @@ function DepositRules.TopUpAnomalies(map)
 				local _, key = CandidateSector(map, candidate)
 				if key then
 					all_sector_keys[key] = true
-					if type(candidate.valley_score) ~= "number" then
-						candidate.valley_score = type(point_fn) == "function"
-							and ValleyScore(map, point_fn(candidate.x, candidate.y)) or 0
+					if type(candidate.valley_score) ~= "number"
+						or type(candidate.mountain_base_rise) ~= "number"
+						or type(candidate.mountain_base_higher_samples) ~= "number" then
+						if type(point_fn) == "function" then
+							candidate.valley_score, candidate.mountain_base_rise,
+								candidate.mountain_base_higher_samples =
+								ValleyScore(map, point_fn(candidate.x, candidate.y))
+						else
+							candidate.valley_score, candidate.mountain_base_rise,
+								candidate.mountain_base_higher_samples = 0, 0, 0
+						end
 					end
-					if candidate.valley_score > 0 then
-						base_by_sector[key] = true
+					candidate.mountain_base = IsMountainBaseRelief(candidate.valley_score,
+						candidate.mountain_base_rise, candidate.mountain_base_higher_samples)
+					if candidate.mountain_base then
+						local sector_candidates = base_by_sector[key]
+						if not sector_candidates then
+							sector_candidates = {}
+							base_by_sector[key] = sector_candidates
+						end
+						sector_candidates[#sector_candidates + 1] = candidate
 						base_candidates = base_candidates + 1
-						mountain_base_surface_candidates[#mountain_base_surface_candidates + 1] = candidate
 					end
 				end
 			end
 			local preferred, base_sectors, total_sectors = {}, 0, 0
+			local base_cap = math.max(1, math.min(32,
+				math.floor(cfg().TOPUP_ANOMALY_MOUNTAIN_BASE_CANDIDATES_PER_SECTOR or 8)))
 			for _ in pairs(all_sector_keys) do total_sectors = total_sectors + 1 end
-			for _ in pairs(base_by_sector) do base_sectors = base_sectors + 1 end
+			for _, sector_candidates in pairs(base_by_sector) do
+				base_sectors = base_sectors + 1
+				table.sort(sector_candidates, function(a, b)
+					if (a.valley_score or 0) ~= (b.valley_score or 0) then
+						return (a.valley_score or 0) > (b.valley_score or 0)
+					end
+					return (a.sample_n or 0) < (b.sample_n or 0)
+				end)
+				for i = 1, math.min(base_cap, #sector_candidates) do
+					mountain_base_surface_candidates[#mountain_base_surface_candidates + 1] =
+						sector_candidates[i]
+				end
+			end
 			for _, candidate in ipairs(candidates) do
 				local _, key = CandidateSector(map, candidate)
-				if key and (base_by_sector[key] ~= true or (candidate.valley_score or 0) > 0) then
+				if key and (base_by_sector[key] == nil or candidate.mountain_base == true) then
 					preferred[#preferred + 1] = candidate
 				end
 			end
@@ -4964,6 +5043,7 @@ function DepositRules.TopUpAnomalies(map)
 			surface_base_preference_stats = {
 				candidate_sectors = total_sectors, mountain_base_sectors = base_sectors,
 				mountain_base_candidates = base_candidates,
+				mountain_base_selector_candidates = #mountain_base_surface_candidates,
 				preferred_candidates = #preferred_surface_candidates,
 			}
 		end
@@ -5174,7 +5254,10 @@ function DepositRules.TopUpAnomalies(map)
 			local low_count = math.max(1, math.ceil(#eligible * (low_area_percent + 0.0) / 100))
 			local winner = eligible[RandInt(low_count) + 1]
 			local key = anomaly_hex_key(winner.x, winner.y)
-			winner.valley_score = ValleyScore(map, point(winner.x, winner.y))
+			winner.valley_score, winner.mountain_base_rise,
+				winner.mountain_base_higher_samples = ValleyScore(map, point(winner.x, winner.y))
+			winner.mountain_base = IsMountainBaseRelief(winner.valley_score,
+				winner.mountain_base_rise, winner.mountain_base_higher_samples)
 			return winner, key, best_tier, low_count, #eligible, #source
 		end
 		local function coverage_sector_index(side, target_bin, target_layer)
@@ -5354,9 +5437,9 @@ function DepositRules.TopUpAnomalies(map)
 					clone.SuperBigMapAnomalyTopUp = true
 					clone.SuperBigMapEdgeTopUp = nil
 					clone.SuperBigMapMountainBaseTopUp = not underground
-						and (c.valley_score or 0) > 0 or nil
+						and c.mountain_base == true or nil
 					if not underground then
-						if (c.valley_score or 0) > 0 then
+						if c.mountain_base == true then
 							surface_mountain_base_added = surface_mountain_base_added + 1
 						else
 							surface_plain_added = surface_plain_added + 1
@@ -5499,6 +5582,8 @@ function DepositRules.TopUpAnomalies(map)
 			and surface_base_preference_stats.mountain_base_sectors or 0,
 		surface_mountain_base_candidates = surface_base_preference_stats
 			and surface_base_preference_stats.mountain_base_candidates or 0,
+		surface_mountain_base_selector_candidates = surface_base_preference_stats
+			and surface_base_preference_stats.mountain_base_selector_candidates or 0,
 		outer_ring_redistributed = redistribution_stats and redistribution_stats.moved or 0,
 		outer_ring_placed = redistribution_stats and redistribution_stats.outer_planned or 0,
 		inner_ring_fallback = redistribution_stats and redistribution_stats.inner_fallback or 0,
@@ -6972,7 +7057,12 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			and flatness >= validation_context.flatness_minimum and buildable == true
 		local unobstructed = has_position
 			and IsUnobstructedAt(map, pt, true, validation_context, q, r) or false
-		local valley_score = family == "anomaly" and has_position and ValleyScore(map, pt) or 0
+		local valley_score, mountain_base_rise, mountain_base_higher_samples = 0, 0, 0
+		if family == "anomaly" and has_position then
+			valley_score, mountain_base_rise, mountain_base_higher_samples = ValleyScore(map, pt)
+		end
+		local mountain_base = family == "anomaly" and IsMountainBaseRelief(valley_score,
+			mountain_base_rise, mountain_base_higher_samples) or false
 		local hex_key = type(q) == "number" and type(r) == "number"
 			and (tostring(q) .. ":" .. tostring(r))
 			or (has_position and audit_hex_key(x, y) or nil)
@@ -6992,7 +7082,7 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 			stats.anomaly_unbuildable = stats.anomaly_unbuildable + 1
 		end
 		if family == "anomaly" then
-			if valley_score > 0 then
+			if mountain_base then
 				stats.anomaly_mountain_base = stats.anomaly_mountain_base + 1
 			else
 				stats.anomaly_not_mountain_base = stats.anomaly_not_mountain_base + 1
