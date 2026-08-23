@@ -6077,7 +6077,6 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local random_sample_limit = optimized_candidate_search and 128
 		or LEGACY_RANDOM_SAMPLES_PER_SECTOR
 	local MIN_TOPUP_HEX_DISTANCE = 10
-	local MAX_TOPUPS_PER_SECTOR = 1
 	-- The outer perimeter is mostly cliffs/void on stretched maps. Before this filter, sequential
 	-- placement still spent 128 complete Lua terrain/obstruction probes in every one of the 204
 	-- perimeter sectors merely to prove that most sectors contained no buildable hex at all. Ask the
@@ -6322,9 +6321,6 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		local function can_place(candidate)
 			if not candidate or fixed_anomaly_hexes[candidate.hex_key]
 				or occupied[candidate.hex_key] then return false end
-			if (sector_counts[candidate.target_sector] or 0) >= MAX_TOPUPS_PER_SECTOR then
-				return false
-			end
 			if not clears_fixed_anomalies(candidate) then return false end
 			for _, prior in ipairs(spaced_anomalies) do
 				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
@@ -6339,7 +6335,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 				(sector_counts[candidate.target_sector] or 0) + 1
 			return true
 		end
-		return can_place, commit
+		return can_place, commit, sector_counts
 	end
 
 	local function find_candidate(item, sectors, predicate, allow_sampling)
@@ -6387,33 +6383,22 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	-- from 32 to 128 random probes before it is considered unavailable; the explicit rollback mode
 	-- has already populated the historical 384-probe pools above.
 	local plans, outer_plans, remaining = {}, {}, {}
-	local can_place_outer, commit_outer = new_outer_attempt_tracker()
+	local can_place_outer, commit_outer, outer_sector_counts = new_outer_attempt_tracker()
 	local marker_order = {}
 	for i = 1, #moving do marker_order[i] = moving[i] end
 	shuffle(marker_order)
-	local available_outer = {}
-	for i = 1, #outer_search_sectors do available_outer[i] = outer_search_sectors[i] end
-	local function remove_outer_sector(target)
-		for i = #available_outer, 1, -1 do
-			if available_outer[i] == target then
-				table.remove(available_outer, i)
-				return
-			end
-		end
-	end
 	local outer_exhausted_at
 	for marker_i, item in ipairs(marker_order) do
 		local winner
 		local passes = optimized_candidate_search and 2 or 1
 		for _ = 1, passes do
-			winner = find_candidate(item, available_outer, can_place_outer, true)
+			winner = find_candidate(item, outer_search_sectors, can_place_outer, true)
 			if winner then break end
 		end
 		if winner and commit_outer(winner) then
 			local plan = { item = item, candidate = winner, in_outer_ring = true }
 			plans[#plans + 1] = plan
 			outer_plans[#outer_plans + 1] = plan
-			remove_outer_sector(winner.target_sector)
 		else
 			outer_exhausted_at = marker_i
 			for rest_i = marker_i, #marker_order do
@@ -6425,16 +6410,57 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local best_outer_planned = #outer_plans
 	local best_total_planned = #plans
 	local planning_attempts_run = 1
-	stats.selected_plan_attempt = 1
+	local selected_plan_attempt = 1
+	-- A single randomized greedy pass can paint itself into a corner on cliff-heavy maps even
+	-- when the perimeter has enough valid, mutually spaced hexes. Only after that fast path fails,
+	-- grow every eligible perimeter sector to the legacy 384-sample budget and retry complete plans
+	-- from clean reservation trackers. This consumes no interior candidates and never relaxes the
+	-- ten-hex separation rule.
+	if #remaining > 0 and optimized_candidate_search then
+		random_sample_limit = LEGACY_RANDOM_SAMPLES_PER_SECTOR
+		for _, sector in ipairs(outer_search_sectors) do
+			sample_sector_candidates(sector, random_sample_limit)
+		end
+		local MAX_COMPLETE_PLAN_ATTEMPTS = 32
+		for attempt = 2, MAX_COMPLETE_PLAN_ATTEMPTS do
+			planning_attempts_run = attempt
+			local retry_can_place, retry_commit, retry_sector_counts =
+				new_outer_attempt_tracker()
+			local retry_order, retry_plans, retry_remaining = {}, {}, {}
+			for i = 1, #moving do retry_order[i] = moving[i] end
+			shuffle(retry_order)
+			local retry_exhausted_at
+			for marker_i, item in ipairs(retry_order) do
+				local winner = find_candidate(item, outer_search_sectors,
+					retry_can_place, false)
+				if winner and retry_commit(winner) then
+					retry_plans[#retry_plans + 1] = {
+						item = item, candidate = winner, in_outer_ring = true,
+					}
+				else
+					retry_exhausted_at = marker_i
+					for rest_i = marker_i, #retry_order do
+						retry_remaining[#retry_remaining + 1] = retry_order[rest_i]
+					end
+					break
+				end
+			end
+			if #retry_plans > best_outer_planned then
+				plans = retry_plans
+				outer_plans = retry_plans
+				remaining = retry_remaining
+				outer_sector_counts = retry_sector_counts
+				outer_exhausted_at = retry_exhausted_at
+				best_outer_planned = #retry_plans
+				best_total_planned = #retry_plans
+				selected_plan_attempt = attempt
+			end
+			if best_outer_planned == #moving then break end
+		end
+	end
+	stats.selected_plan_attempt = selected_plan_attempt
 	stats.sequential_candidate_placement = true
 	stats.outer_exhausted_at = outer_exhausted_at or 0
-
-	if #remaining > 0 then
-		-- Do not trade the all-in-ring requirement for density. An interior marker would become a
-		-- player-visible violation after reveal, so insufficient perimeter capacity must fail closed.
-		stats.error = "complete outer-ring anomaly plan exhausted (no interior fallback permitted)"
-		return false, stats
-	end
 	stats.planning_attempts = planning_attempts_run
 	stats.reachable_candidates = outer_candidate_count
 	stats.inner_reachable_candidates = inner_candidate_count
@@ -6442,6 +6468,24 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.inner_random_samples = fresh_inner_samples
 	stats.inner_reused_candidates = reused_inner_candidates
 	stats.candidate_search_optimized = optimized_candidate_search
+	stats.selected_outer_sectors = 0
+	stats.maximum_per_sector = 0
+	for _, count in pairs(outer_sector_counts) do
+		stats.selected_outer_sectors = stats.selected_outer_sectors + 1
+		stats.maximum_per_sector = math.max(stats.maximum_per_sector, count)
+	end
+
+	if #remaining > 0 then
+		-- Do not trade the all-in-ring requirement for density. An interior marker would become a
+		-- player-visible violation after reveal, so insufficient perimeter capacity must fail closed.
+		stats.error = "complete outer-ring anomaly plan exhausted (no interior fallback permitted; planned="
+			.. tostring(best_outer_planned) .. "/" .. tostring(#moving)
+			.. ", outer_candidates=" .. tostring(outer_candidate_count)
+			.. ", selected_sectors=" .. tostring(stats.selected_outer_sectors)
+			.. ", max_per_sector=" .. tostring(stats.maximum_per_sector)
+			.. ", random_samples=" .. tostring(fresh_outer_samples) .. ")"
+		return false, stats
+	end
 	if #plans ~= #moving then
 		stats.error = "no complete sequential outer-plus-vanilla-interior anomaly plan (best="
 			.. tostring(best_total_planned) .. "/" .. tostring(#moving)
@@ -6463,7 +6507,6 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.outer_planned = best_outer_planned
 	stats.inner_fallback = 0
 	stats.minimum_hex_distance = MIN_TOPUP_HEX_DISTANCE
-	stats.maximum_per_sector = MAX_TOPUPS_PER_SECTOR
 
 	for _, item in ipairs(plans) do
 		local old_sector = item.source_sector and item.source_sector.sector_ref

@@ -134,6 +134,10 @@ static_checks = {
         "no interior fallback permitted" in DEPOSITS
         and "sequential inner vanilla fallback exhausted" not in DEPOSITS
     ),
+    "anomaly_capacity_has_no_one_per_sector_cap": (
+        "MAX_TOPUPS_PER_SECTOR" not in DEPOSITS
+        and "remove_outer_sector(winner.target_sector)" not in DEPOSITS
+    ),
     "audit_rejects_every_anomaly_outside_ring": (
         'family == "anomaly" and not in_ring' in audit
         and "not inner_fallback and not in_ring" not in audit
@@ -266,7 +270,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_856": "'version', 856" in METADATA,
+    "version_is_857": "'version', 857" in METADATA,
 }
 
 case_results = []
