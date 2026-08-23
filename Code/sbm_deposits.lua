@@ -1140,10 +1140,11 @@ local DepositRules = {}
 -- anomalies and effect deposits), TerrainDeposit, and SurfaceUndergroundTunnelSign. Moving a
 -- spawned resource sign independently from its marker would desynchronise gameplay, so resolve
 -- collisions while DepositMarker:FindSectorPos is choosing the final spawn position. Hidden,
--- unrevealed markers reserve their future badge hex too. Adjacent hexes are allowed; only an
--- identical hex is a collision.
+-- unrevealed markers reserve their future badge hex too. Ordinary markers may remain adjacent;
+-- surface quota resources additionally retain their hard non-adjacent spacing and physical
+-- perimeter-band assignment whenever an overlap repair moves them.
 -- ---------------------------------------------------------------------------------------
-local BADGE_SPACING_PATCH_VERSION = 3
+local BADGE_SPACING_PATCH_VERSION = 4
 local BADGE_SEARCH_MAX_RADIUS = 64
 
 local function BadgeSpacingEnabledOnMap(map)
@@ -1177,6 +1178,47 @@ local function BadgeObjectHex(obj)
 	local ok, q, r = pcall(world_to_hex, pos)
 	if not ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
 	return q, r, BadgeHexKey(q, r)
+end
+
+local function SurfaceQuotaBadgeContext(marker, map)
+	if not (marker and map and not IsUndergroundMap(map)
+		and marker.SuperBigMapResourceTopUp == true
+		and marker.SuperBigMapOuterRingResourceQuotaTopUp == true
+		and type(map.MapForEach) == "function") then return nil end
+	local context = {
+		ring_sectors = math.max(0, math.floor(
+			cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2)),
+		minimum_hex_distance = math.max(1, math.floor(
+			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2)),
+		preserve_outermost = marker.SuperBigMapOutermostResourceTopUp == true,
+		occupied = {},
+	}
+	pcall(map.MapForEach, map, "map", "DepositMarker", function(other)
+		if other == marker or not (other
+			and other.SuperBigMapResourceTopUp == true
+			and other.SuperBigMapOuterRingResourceQuotaTopUp == true) then return end
+		local q, r = BadgeObjectHex(other)
+		if type(q) == "number" and type(r) == "number" then
+			context.occupied[#context.occupied + 1] = { q = q, r = r }
+		end
+	end)
+	return context
+end
+
+local function SurfaceQuotaBadgeCandidateAllowed(map, x, y, q, r, context)
+	if type(context) ~= "table" then return true end
+	if not IsInFinalOuterResourceWorldBand(map, x, y, context.ring_sectors) then
+		return false
+	end
+	if context.preserve_outermost
+		and not IsInFinalOuterResourceWorldBand(map, x, y, 1) then return false end
+	if type(q) ~= "number" or type(r) ~= "number" then return false end
+	for _, other in ipairs(context.occupied) do
+		if AxialHexDistance(q, r, other.q, other.r) < context.minimum_hex_distance then
+			return false
+		end
+	end
+	return true
 end
 
 local function StampResolvedBadgeHex(marker, q, r)
@@ -1220,8 +1262,9 @@ local function BadgeHexOccupied(occupied, q, r)
 	return type(value) == "number" and value > 0 or value == true
 end
 
-local function BadgeCandidateAllowed(marker, map, pt, x, y)
+local function BadgeCandidateAllowed(marker, map, pt, x, y, q, r, quota_context)
 	if not CanReceiveDeposit(map, pt) then return false end
+	if not SurfaceQuotaBadgeCandidateAllowed(map, x, y, q, r, quota_context) then return false end
 	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 0))
 	if not IsUndergroundMap(map) and ring_sectors > 0 then
 		local in_ring = IsInFinalOuterSectorRing(map, x, y, ring_sectors)
@@ -1241,7 +1284,10 @@ local function FindNearestFreeBadgePosition(marker, map, x, y, occupied)
 		return nil, "origin hex unavailable"
 	end
 	occupied = occupied or BuildBadgeOccupancy(map, marker, nil, false)
-	if not BadgeHexOccupied(occupied, center_q, center_r) then return nil, "free" end
+	local quota_context = SurfaceQuotaBadgeContext(marker, map)
+	if not BadgeHexOccupied(occupied, center_q, center_r)
+		and SurfaceQuotaBadgeCandidateAllowed(
+			map, x, y, center_q, center_r, quota_context) then return nil, "free" end
 	local original_sector = SectorAtPoint(map, x, y)
 	local map_w, map_h = MapWorldSize(map)
 	for radius = 1, BADGE_SEARCH_MAX_RADIUS do
@@ -1257,7 +1303,8 @@ local function FindNearestFreeBadgePosition(marker, map, x, y, occupied)
 							and (type(map_w) ~= "number" or (cx >= 0 and cx < map_w))
 							and (type(map_h) ~= "number" or (cy >= 0 and cy < map_h)) then
 							local pt = point_fn(cx, cy)
-							if BadgeCandidateAllowed(marker, map, pt, cx, cy) then
+							if BadgeCandidateAllowed(marker, map, pt, cx, cy, q, r,
+								quota_context) then
 								if type(pt.SetTerrainZ) == "function" then
 									local ok_z, snapped = pcall(pt.SetTerrainZ, pt, map)
 									if ok_z and snapped then pt = snapped end

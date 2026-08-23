@@ -239,6 +239,13 @@ static_checks = {
         and "< surface_quota_minimum_hex_distance" in resources
         and "surface_quota_spacing_violations" in DEPOSITS
     ),
+    "badge_relocation_preserves_resource_quota_policy": (
+        "SurfaceQuotaBadgeContext" in DEPOSITS
+        and "SurfaceQuotaBadgeCandidateAllowed" in DEPOSITS
+        and "context.preserve_outermost" in DEPOSITS
+        and "AxialHexDistance(q, r, other.q, other.r)" in DEPOSITS
+        and "BadgeCandidateAllowed(marker, map, pt, cx, cy, q, r" in DEPOSITS
+    ),
     "resource_quota_places_before_general_resources": (
         resources.index('"mountain-base resource quota"')
         < resources.index("if sequential_placement then")
@@ -301,7 +308,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_858": "'version', 858" in METADATA,
+    "version_is_859": "'version', 859" in METADATA,
 }
 
 case_results = []
