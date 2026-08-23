@@ -39,6 +39,7 @@ DUMP_TEMPLATE = HERE / "dump_template.lua"
 HEXGRID_TEMPLATE = HERE / "hexgrid_template.lua"
 SAVE_TEMPLATE = HERE / "save_template.lua"
 LOAD_TEMPLATE = HERE / "load_template.lua"
+OUTER_RING_REVEAL_TEMPLATE = HERE / "outer_ring_reveal_template.lua"
 
 # The stock underground seed is drawn from AsyncRand inside FillRandomMapGen
 # (ModTools PreGameMenus.lua:166, because MapData["BlankUnderground_0X"].map_randomizeseed
@@ -4658,7 +4659,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
              pass_class_probe=False, pass_vis_probe=False, pass_fix_probe=False,
              build_probe=False, build_init_probe=False, property_probe=False,
              perimeter_probe=False,
-             perimeter_full_probe=False):
+             perimeter_full_probe=False, outer_ring_reveal=False):
     """Boot a fresh game, generate the twin, dump all objects.  Returns metadata.
 
     `pin_seed` applies only to a vanilla control and forces its underground holder seed to
@@ -4837,6 +4838,20 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             _, detail = cli.marshal_value(client, "g_ParityError", timeout=60.0)
             raise RuntimeError(f"generation failed ({tag}): {detail}")
         log(f"generation complete ({tag})")
+
+        outer_ring_summary = None
+        if outer_ring_reveal:
+            load_err, prose = cli.load_lua_file(client, OUTER_RING_REVEAL_TEMPLATE, timeout=60.0)
+            if load_err:
+                raise RuntimeError(f"outer-ring reveal script failed to load: {load_err[2]}")
+            status = poll_status(client, "g_OuterRingRevealStatus", {"complete"}, {"error"},
+                                 300, f"outer-ring-reveal-{tag}")
+            _, outer_ring_summary = cli.marshal_value(client, "g_OuterRingRevealSummary", timeout=60.0)
+            if status != "complete":
+                _, detail = cli.marshal_value(client, "g_OuterRingRevealError", timeout=60.0)
+                raise RuntimeError(f"outer-ring placed-object gate failed ({tag}): {detail}; "
+                                   f"summary={outer_ring_summary}")
+            log(f"  outer-ring reveal gate: {outer_ring_summary}")
 
         _, surface_seed = cli.marshal_value(client, "g_ParitySurfaceSeed", timeout=60.0)
         _, underground_seed = cli.marshal_value(client, "g_ParityUndergroundSeed", timeout=60.0)
@@ -5197,6 +5212,7 @@ def run_twin(tag, expand, twin_seed, serial_raster=False, max_wait=1800, lat=180
             "surface_seed": surface_seed,
             "underground_seed": underground_seed,
             "underground_pin": None if (expand or pin_seed is None) else int(pin_seed),
+            "outer_ring_reveal": outer_ring_summary,
             "passage_pin": int(PASSAGE_FALLBACK_PIN_SEED) if passage_pin else None,
             "passage_pin_around": pin_around,
             "passage_pin_passable": pin_passable,
@@ -5282,6 +5298,7 @@ def main():
         propertyprobe = "propertyprobe" in sys.argv[5:]
         perimeterprobe = "perimeterprobe" in sys.argv[5:]
         perimeterfull = "perimeterfull" in sys.argv[5:]
+        outerringreveal = "outerringreveal" in sys.argv[5:]
         hexgrid = "hexgrid" in sys.argv[5:]
         # "saveas=<display>" saves the finished session through the engine's own SaveGame path
         # after the dump and the census, for the save-roundtrip acceptance condition.
@@ -5318,6 +5335,7 @@ def main():
             f"build_init_probe={buildinitprobe} "
             f"property_probe={propertyprobe} perimeter_probe={perimeterprobe} "
             f"perimeter_full_probe={perimeterfull} "
+            f"outer_ring_reveal={outerringreveal} "
             f"save_as={save_as} lat={lat} lon={lon} ===")
         info = run_twin(tag, expand=expand, twin_seed=seed, serial_raster=serial, lat=lat, lon=lon,
                         pin_seed=pin, decal_probe=probe, hexgrid=hexgrid, camera_probe=camera,
@@ -5343,7 +5361,8 @@ def main():
                         build_probe=buildableprobe, build_init_probe=buildinitprobe,
                         property_probe=propertyprobe,
                         perimeter_probe=perimeterprobe,
-                        perimeter_full_probe=perimeterfull)
+                        perimeter_full_probe=perimeterfull,
+                        outer_ring_reveal=outerringreveal)
         log(f"result: {json.dumps(info)}")
         return
 

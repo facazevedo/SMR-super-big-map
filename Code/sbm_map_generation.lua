@@ -11051,12 +11051,16 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 						if type(deposits.CensusFinalOuterResourceTopUps) == "function" then
 							local quota_ok, quota_stats = deposits.CensusFinalOuterResourceTopUps(map,
-								"pre-deferred-GameInit surface final")
+								"pre-reveal marker census surface final", false)
 							map.SuperBigMapOuterResourceCensusPreGameInit = quota_stats
 							if quota_ok ~= true then
 								error("outer resource top-up census failed: ordinary_resource_topups="
 									.. tostring(quota_stats and quota_stats.ordinary_resource_topups)
 									.. " anomaly_topups=" .. tostring(quota_stats and quota_stats.anomaly_topups)
+									.. " anomaly_topups_total="
+									.. tostring(quota_stats and quota_stats.anomaly_topups_total)
+									.. " anomaly_topups_outside_ring="
+									.. tostring(quota_stats and quota_stats.anomaly_topups_outside_ring)
 									.. " effect_topups=" .. tostring(quota_stats and quota_stats.effect_topups)
 									.. " native_resources=" .. tostring(quota_stats and quota_stats.native_resources)
 									.. " shortfall=" .. tostring(quota_stats and quota_stats.shortfall))

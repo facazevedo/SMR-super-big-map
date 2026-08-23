@@ -4862,9 +4862,9 @@ function DepositRules.TopUpAnomalies(map)
 		shortfall = shortfall + math.max(0, count - (current_by_kind[kind] or 0))
 	end
 	table.sort(target_keys)
-	-- Surface anomaly top-ups now use the complete scenario. Keep the legacy value readable only
-	-- so old save/config tables cannot reactivate the removed perimeter scheduler.
-	local ring_sectors = 0
+	-- Surface anomaly top-ups are deliberately constrained to the final physical perimeter.
+	-- This is a live-sector policy, not a coordinate or scenario exception.
+	local ring_sectors = math.max(0, math.floor(cfg().TOPUP_ANOMALY_OUTER_RING_SECTORS or 3))
 	local surface_edge_ring = not IsUndergroundMap(map) and ring_sectors > 0
 	local redistribution_stats
 	if shortfall <= 0 or #templates == 0 then
@@ -6012,7 +6012,9 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			local x, y = pos:xy()
 			local source_sector = type(x) == "number" and type(y) == "number"
 				and sector_at_canonical_position(x, y) or nil
-			if not in_ring(source_sector) then return end
+			-- Every top-up participates, including a save-loaded marker from before the perimeter
+			-- policy that still sits in the interior. Leaving it there would visibly violate the
+			-- all-in-ring rule once that sector is revealed.
 			local placed_obj = marker.placed_obj
 			local is_valid = Global("IsValid")
 			local placed = marker.is_placed == true or (placed_obj ~= nil
@@ -6428,46 +6430,10 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.outer_exhausted_at = outer_exhausted_at or 0
 
 	if #remaining > 0 then
-		local repulsion = NewTopUpRepulsionTracker(map, "inner-ring sequential anomaly fallback", ignored)
-		-- Outer-ring placements deliberately use the custom one-per-sector/ten-hex rules, but an
-		-- anomaly that falls back into the inner ring must obey vanilla repulsion against *every*
-		-- anomaly, including the outer placements planned earlier in this transaction. The tracker
-		-- cannot see those destinations yet because the live markers have not moved, and all moving
-		-- markers are intentionally excluded from its source-position seed. Register the provisional
-		-- outer destinations explicitly before selecting the first inner fallback.
-		for _, plan in ipairs(outer_plans) do
-			if not repulsion.Commit(plan.candidate, anomaly_profile, plan.item.marker) then
-				stats.error = "could not seed planned outer anomaly for inner vanilla fallback"
-				return false, stats
-			end
-		end
-		local function inner_candidate_allowed(candidate)
-			for _, plan in ipairs(outer_plans) do
-				if hex_distance(candidate, plan.candidate) < MIN_TOPUP_HEX_DISTANCE then return false end
-			end
-			return repulsion.CanPlace(candidate, anomaly_profile)
-		end
-		for _, item in ipairs(remaining) do
-			-- Consume the resource pass's fully validated cache first. Only if it cannot provide a
-			-- vanilla-spaced position do we sample fresh inner terrain, one bounded pass at a time.
-			local winner = find_candidate(item, inner, inner_candidate_allowed, false)
-			if not winner then
-				local passes = optimized_candidate_search and 5 or 1
-				if optimized_candidate_search then
-					random_sample_limit = LEGACY_RANDOM_SAMPLES_PER_SECTOR
-				end
-				for _ = 1, passes do
-					winner = find_candidate(item, inner, inner_candidate_allowed, true)
-					if winner then break end
-				end
-			end
-			if not winner or not repulsion.Commit(winner, anomaly_profile, item.marker) then
-				stats.error = "sequential inner vanilla fallback exhausted"
-				return false, stats
-			end
-			plans[#plans + 1] = { item = item, candidate = winner, in_outer_ring = false }
-			best_total_planned = #plans
-		end
+		-- Do not trade the all-in-ring requirement for density. An interior marker would become a
+		-- player-visible violation after reveal, so insufficient perimeter capacity must fail closed.
+		stats.error = "complete outer-ring anomaly plan exhausted (no interior fallback permitted)"
+		return false, stats
 	end
 	stats.planning_attempts = planning_attempts_run
 	stats.reachable_candidates = outer_candidate_count
@@ -6495,7 +6461,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	plans = finalized_plans
 	stats.planned = #plans
 	stats.outer_planned = best_outer_planned
-	stats.inner_fallback = #plans - best_outer_planned
+	stats.inner_fallback = 0
 	stats.minimum_hex_distance = MIN_TOPUP_HEX_DISTANCE
 	stats.maximum_per_sector = MAX_TOPUPS_PER_SECTOR
 
@@ -6552,7 +6518,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 		end
 		item.marker.SuperBigMapEdgeRedistributed = true
 		item.marker.SuperBigMapOuterRingRedistributed = item.in_outer_ring == true or nil
-		item.marker.SuperBigMapInnerRingFallback = item.in_outer_ring ~= true or nil
+		item.marker.SuperBigMapInnerRingFallback = nil
 		-- The resource-pool wrapper and its source describe this same hex. Retire the source only
 		-- after the complete move/register transaction succeeds so the effect pass neither revalidates
 		-- an occupied coordinate nor counts it in capacity-normalized sector weights.
@@ -7267,15 +7233,20 @@ end
 -- quota's acceptance census and a compact lifecycle diagnostic: resources, anomalies, effects,
 -- and native deposits are deliberately reported separately so only ordinary resource top-ups can
 -- satisfy the 32-marker guarantee.
-function DepositRules.CensusFinalOuterResourceTopUps(map, phase)
+function DepositRules.CensusFinalOuterResourceTopUps(map, phase, require_placed)
 	map = map or Global("CurrentMap")
 	local ring_sectors = math.max(0, math.floor(
 		cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 3))
 	local stats = {
 		ring_sectors = ring_sectors,
 		ordinary_resource_topups = 0, ordinary_resource_topups_placed = 0,
-		anomaly_topups = 0, effect_topups = 0, native_resources = 0,
+		ordinary_resource_topups_visible = 0,
+		anomaly_topups = 0, anomaly_topups_total = 0,
+		anomaly_topups_placed = 0, anomaly_topups_outside_ring = 0,
+		effect_topups = 0, effect_topups_total = 0,
+		effect_topups_placed = 0, native_resources = 0,
 		missing_position = 0,
+		resource_breakdown = {}, anomaly_breakdown = {}, effect_breakdown = {},
 	}
 	if not map or IsUndergroundMap(map) or type(map.MapForEach) ~= "function" then
 		stats.error = "surface map API unavailable"
@@ -7290,43 +7261,95 @@ function DepositRules.CensusFinalOuterResourceTopUps(map, phase)
 		local x, y = pos:xy()
 		return IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors)
 	end
+	local is_valid = Global("IsValid")
+	local function placed(marker)
+		if not marker then return false end
+		if marker.is_placed == true then return true end
+		local object = marker.placed_obj
+		return object ~= nil and object ~= false
+			and (type(is_valid) ~= "function" or is_valid(object) == true)
+	end
+	local function count_breakdown(target, marker, family)
+		local key
+		if family == "anomaly" then
+			key = marker.tech_action
+			if key == nil or key == "" then key = marker.sequence end
+		elseif family == "effect" then
+			key = marker.deposit_type
+		else
+			key = marker.resource
+		end
+		if key == nil or key == "" then key = marker.class end
+		if key == nil or key == "" then key = "unknown" end
+		key = tostring(key)
+		target[key] = (target[key] or 0) + 1
+	end
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
 		if not (marker and IsResourceDepositMarker(marker) and in_band(marker)) then return end
 		if marker.SuperBigMapResourceTopUp == true then
 			stats.ordinary_resource_topups = stats.ordinary_resource_topups + 1
-			if marker.is_placed == true then
+			count_breakdown(stats.resource_breakdown, marker, "resource")
+			if placed(marker) then
 				stats.ordinary_resource_topups_placed = stats.ordinary_resource_topups_placed + 1
+				stats.ordinary_resource_topups_visible = stats.ordinary_resource_topups_visible + 1
 			end
 		else
 			stats.native_resources = stats.native_resources + 1
 		end
 	end)
 	pcall(map.MapForEach, map, "map", "SubsurfaceAnomalyMarker", function(marker)
-		if marker and marker.SuperBigMapAnomalyTopUp == true and in_band(marker) then
+		if not (marker and marker.SuperBigMapAnomalyTopUp == true) then return end
+		stats.anomaly_topups_total = stats.anomaly_topups_total + 1
+		count_breakdown(stats.anomaly_breakdown, marker, "anomaly")
+		if in_band(marker) then
 			stats.anomaly_topups = stats.anomaly_topups + 1
+			if placed(marker) then stats.anomaly_topups_placed = stats.anomaly_topups_placed + 1 end
+		else
+			stats.anomaly_topups_outside_ring = stats.anomaly_topups_outside_ring + 1
 		end
 	end)
 	pcall(map.MapForEach, map, "map", "EffectDepositMarker", function(marker)
-		if marker and marker.SuperBigMapEffectTopUp == true and in_band(marker) then
+		if not (marker and marker.SuperBigMapEffectTopUp == true) then return end
+		stats.effect_topups_total = stats.effect_topups_total + 1
+		count_breakdown(stats.effect_breakdown, marker, "effect")
+		if in_band(marker) then
 			stats.effect_topups = stats.effect_topups + 1
+			if placed(marker) then stats.effect_topups_placed = stats.effect_topups_placed + 1 end
 		end
 	end)
 	local minimum = math.max(0, math.floor(
 		cfg().MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM or 32))
 	stats.minimum = minimum
-	stats.shortfall = math.max(0, minimum - stats.ordinary_resource_topups)
+	stats.require_placed = require_placed == true
+	local accepted_resources = stats.require_placed
+		and stats.ordinary_resource_topups_placed or stats.ordinary_resource_topups
+	stats.shortfall = math.max(0, minimum - accepted_resources)
+	stats.anomaly_unplaced = stats.anomaly_topups_total - stats.anomaly_topups_placed
+	stats.lifecycle_violations = stats.anomaly_topups_outside_ring + stats.effect_topups
 	local print_fn = Global("print")
 	if type(print_fn) == "function" then
 		print_fn("[Super Big Map][OuterResourceTopUpCensus] phase=" .. tostring(phase or "unspecified")
 			.. " ordinary_resource_topups=" .. tostring(stats.ordinary_resource_topups)
 			.. " ordinary_resource_topups_placed=" .. tostring(stats.ordinary_resource_topups_placed)
+			.. " ordinary_resource_topups_visible=" .. tostring(stats.ordinary_resource_topups_visible)
 			.. " anomaly_topups=" .. tostring(stats.anomaly_topups)
+			.. " anomaly_topups_total=" .. tostring(stats.anomaly_topups_total)
+			.. " anomaly_topups_placed=" .. tostring(stats.anomaly_topups_placed)
+			.. " anomaly_topups_outside_ring=" .. tostring(stats.anomaly_topups_outside_ring)
 			.. " effect_topups=" .. tostring(stats.effect_topups)
+			.. " effect_topups_placed=" .. tostring(stats.effect_topups_placed)
 			.. " native_resources=" .. tostring(stats.native_resources)
+			.. " resource_breakdown=" .. tostring(CountMapString(stats.resource_breakdown))
+			.. " anomaly_breakdown=" .. tostring(CountMapString(stats.anomaly_breakdown))
+			.. " effect_breakdown=" .. tostring(CountMapString(stats.effect_breakdown))
+			.. " require_placed=" .. tostring(stats.require_placed)
 			.. " minimum=" .. tostring(minimum)
 			.. " shortfall=" .. tostring(stats.shortfall))
 	end
-	return stats.shortfall == 0, stats
+	return stats.shortfall == 0
+		and stats.anomaly_topups_outside_ring == 0
+		and stats.effect_topups == 0
+		and (not stats.require_placed or stats.anomaly_unplaced == 0), stats
 end
 
 -- Queue a second census after the engine's deferred GameInit threads have had a game-time turn.
@@ -7342,7 +7365,7 @@ function DepositRules.SchedulePostDeferredSurfaceResourceTopUpCensus(map, reason
 		local sleep = Global("Sleep")
 		if type(sleep) == "function" then sleep(100) end
 		local ok, stats = DepositRules.CensusFinalOuterResourceTopUps(map,
-			"post-deferred-GameInit " .. tostring(reason or "surface final"))
+			"post-deferred-GameInit " .. tostring(reason or "surface final"), false)
 		map.SuperBigMapOuterResourceCensusPostGameInit = stats
 		map.SuperBigMapOuterResourceCensusPostGameInitOK = ok == true
 	end
@@ -7361,11 +7384,10 @@ end
 
 -- Final invariant check for the surface density suite. Only markers created by the three top-up
 -- passes are inspected: vanilla/generated enrichments remain untouched. Every top-up must be on
--- passable, nearly horizontal, engine-buildable, unobstructed terrain. Surface anomalies may occupy
--- any unscanned sector in the scenario and must use unique hexes. Mountain-base placement is a
--- per-sector preference over this strict terrain set, so plains remain eligible and density can be
--- completed without ever relaxing the steepness rule. Dome-effect top-ups (Vistas, Research Sites,
--- and Morale Vistas) must remain outside their configured final perimeter exclusion ring.
+-- passable, nearly horizontal, engine-buildable, unobstructed terrain. Every surface anomaly top-up
+-- must occupy the configured final perimeter and use a unique hex; there is no interior fallback.
+-- Dome-effect top-ups (Vistas, Research Sites, and Morale Vistas) must remain outside their
+-- configured final perimeter exclusion ring.
 function DepositRules.AuditSurfaceTopUpPlacement(map)
 	if not ExpansionStepEnabled(3) or not ExpansionStepEnabled(21) then return true end
 	map = map or Global("CurrentMap")
@@ -7500,10 +7522,7 @@ function DepositRules.AuditSurfaceTopUpPlacement(map)
 		if not has_position then
 			stats.missing_position = stats.missing_position + 1
 			violation = "missing_position"
-		elseif ring_sectors > 0 and family == "anomaly" and inner_fallback and in_ring then
-			stats.anomaly_fallback_inside_ring = stats.anomaly_fallback_inside_ring + 1
-			violation = "anomaly_vanilla_fallback_inside_outer_ring"
-		elseif ring_sectors > 0 and family == "anomaly" and not inner_fallback and not in_ring then
+		elseif ring_sectors > 0 and family == "anomaly" and not in_ring then
 			stats.anomaly_outside_ring = stats.anomaly_outside_ring + 1
 			violation = "anomaly_topup_outside_final_ring"
 		elseif family == "effect" and in_effect_exclusion_ring then

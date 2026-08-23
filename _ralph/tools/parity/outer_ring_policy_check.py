@@ -125,9 +125,19 @@ aprons = section(
 )
 
 static_checks = {
-    "legacy_outer_ring_disabled": "config.TopUpAnomalyOuterRingSectors = 0" in CONFIG,
-    "compiled_outer_ring_forced_off": "C.TOPUP_ANOMALY_OUTER_RING_SECTORS = 0" in CONFIG,
-    "anomaly_path_forces_whole_map": "local ring_sectors = 0" in anomalies,
+    "anomaly_outer_ring_is_three_sectors": "config.TopUpAnomalyOuterRingSectors = 3" in CONFIG,
+    "compiled_anomaly_outer_ring_uses_config": (
+        "as_number(config.TopUpAnomalyOuterRingSectors, 3)" in CONFIG
+    ),
+    "anomaly_path_uses_live_outer_ring": "TOPUP_ANOMALY_OUTER_RING_SECTORS" in anomalies,
+    "anomaly_redistribution_is_fail_closed": (
+        "no interior fallback permitted" in DEPOSITS
+        and "sequential inner vanilla fallback exhausted" not in DEPOSITS
+    ),
+    "audit_rejects_every_anomaly_outside_ring": (
+        'family == "anomaly" and not in_ring' in audit
+        and "not inner_fallback and not in_ring" not in audit
+    ),
     "surface_uses_sector_balancing": "whole_map_sector_balanced" in anomalies,
     "surface_scores_mountain_bases": "ValleyScore(map, pt)" in anomalies,
     "surface_stratifies_every_sector": "SAMPLES_PER_SURFACE_SECTOR" in anomalies,
@@ -230,15 +240,22 @@ static_checks = {
     "resource_census_counts_only_ordinary_topups_toward_minimum": (
         "ordinary_resource_topups" in census
         and "marker.SuperBigMapResourceTopUp == true" in census
-        and "minimum - stats.ordinary_resource_topups" in census
+        and "minimum - accepted_resources" in census
+        and "stats.ordinary_resource_topups_placed" in census
+        and "stats.require_placed = require_placed == true" in census
     ),
     "resource_census_separates_anomalies_effects_and_native_resources": (
         "anomaly_topups" in census
         and "effect_topups" in census
         and "native_resources" in census
     ),
+    "resource_census_always_rejects_wrong_family_ring_placement": (
+        "and stats.anomaly_topups_outside_ring == 0" in census
+        and "and stats.effect_topups == 0" in census
+        and "not stats.require_placed or stats.anomaly_unplaced == 0" in census
+    ),
     "resource_census_runs_before_and_after_deferred_initialization": (
-        "pre-deferred-GameInit surface final" in GENERATION
+        "pre-reveal marker census surface final" in GENERATION
         and "SchedulePostDeferredSurfaceResourceTopUpCensus" in GENERATION
         and "post-deferred-GameInit" in census
     ),
@@ -249,7 +266,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_855": "'version', 855" in METADATA,
+    "version_is_856": "'version', 856" in METADATA,
 }
 
 case_results = []

@@ -242,10 +242,9 @@ config.TopUpSectorBalancedPlacement = true
 -- every fallback marker a meaningful distance from every other enrichment. Candidate sampling
 -- continues until this hard axial-hex clearance is met; it never drops to adjacent unique hexes.
 config.UndergroundFallbackMinimumHexDistance = 6
--- Legacy compatibility switches. Perimeter-only anomaly routing is disabled: surface anomaly
--- top-ups are distributed across the complete unscanned scenario. The values remain defined so an
--- older save/config table cannot accidentally reactivate the removed three-sector policy.
-config.TopUpAnomalyOuterRingSectors = 0
+-- Surface anomaly density additions use the final physical perimeter. The placement code derives
+-- that band from the live final sector geometry; this value is only its general width.
+config.TopUpAnomalyOuterRingSectors = 3
 config.TopUpAnomalyLowAreaPercent = 35
 -- Emphasize mountain bases in the added population rather than treating them as a rare tie-breaker.
 -- This percentage of each surface anomaly shortfall is selected first from strict flat/buildable
@@ -811,7 +810,8 @@ C.TOPUP_MINIMUM_TERRAIN_NORMAL_Z = math.max(0, math.min(4096,
 C.TOPUP_SECTOR_BALANCED_PLACEMENT = as_bool(config.TopUpSectorBalancedPlacement)
 C.UNDERGROUND_FALLBACK_MINIMUM_HEX_DISTANCE = math.max(2,
 	math.floor(as_number(config.UndergroundFallbackMinimumHexDistance, 6)))
-C.TOPUP_ANOMALY_OUTER_RING_SECTORS = 0
+C.TOPUP_ANOMALY_OUTER_RING_SECTORS = math.max(0,
+	math.floor(as_number(config.TopUpAnomalyOuterRingSectors, 3)))
 C.TOPUP_ANOMALY_LOW_AREA_PERCENT = as_number(config.TopUpAnomalyLowAreaPercent, 35)
 C.TOPUP_ANOMALY_MOUNTAIN_BASE_MINIMUM_PERCENT = math.max(0, math.min(100,
 	as_number(config.TopUpAnomalyMountainBaseMinimumPercent, 75)))
