@@ -274,15 +274,15 @@ config.MountainBaseOuterRingResourceMinimum = 50
 -- with the remaining 40% in the adjacent (inner) sector band.
 config.MountainBaseOutermostResourceMinimumPercent = 60
 -- Vanilla resource-family repulsion cannot carry the fixed perimeter quota on every terrain.
--- The guaranteed quota therefore uses its own conservative clearance: quota markers never share
--- a hex or occupy adjacent hexes. Sector-load balancing supplies the wider geographic pressure.
+-- The guaranteed quota therefore uses its own conservative clearance: quota marker centers stay
+-- at least three hexes apart. Sector-load balancing supplies the wider geographic pressure.
 -- Non-quota resource additions retain vanilla family repulsion unchanged.
-config.MountainBaseQuotaMinimumHexDistance = 2
+config.MountainBaseQuotaMinimumHexDistance = 3
 -- A two-sector ring has materially less natural flat foothill area than the prior three-sector
 -- policy. Retain only the smallest extra set of deterministic low-slope foothills needed to
 -- satisfy vanilla's unchanged resource clearance, never broad terrain shelves.
 config.MountainBaseApronMaximumCount = 288
-config.MountainBaseApronCoreRadiusHexes = 3
+config.MountainBaseApronCoreRadiusHexes = 6
 config.MountainBaseApronFeatherRadiusHexes = 8
 
 -- Once resource top-ups have chosen their final coordinates, prepare only the terrain that their
@@ -297,7 +297,8 @@ config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
 config.OuterResourceSurfaceFeatherRadiusHexes = 4
-config.OuterResourceClusterMinimumDeposits = 4
+config.OuterResourceClusterMinimumDeposits = 2
+config.OuterResourceClusterMinimumExtractorDeposits = 2
 config.OuterResourceClusterRadiusHexes = 12
 config.OuterResourceClusterMinimumCount = 6
 config.OuterResourceClusterMaximumAnomalies = 3
@@ -863,11 +864,11 @@ C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM = math.max(0,
 C.MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT = math.max(0, math.min(100,
 	as_number(config.MountainBaseOutermostResourceMinimumPercent, 60)))
 C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE = math.max(1,
-	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 2)))
+	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 3)))
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
 	math.floor(as_number(config.MountainBaseApronMaximumCount, 288)))
 C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
-	as_number(config.MountainBaseApronCoreRadiusHexes, 3))
+	as_number(config.MountainBaseApronCoreRadiusHexes, 6))
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
 	as_number(config.MountainBaseApronFeatherRadiusHexes, 8))
@@ -882,8 +883,10 @@ C.OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES = math.max(1,
 C.OUTER_RESOURCE_SURFACE_FEATHER_RADIUS_HEXES = math.max(
 	C.OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES + 2,
 	as_number(config.OuterResourceSurfaceFeatherRadiusHexes, 4))
-C.OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS = math.max(4,
-	math.floor(as_number(config.OuterResourceClusterMinimumDeposits, 4)))
+C.OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS = math.max(2,
+	math.floor(as_number(config.OuterResourceClusterMinimumDeposits, 2)))
+C.OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS = math.max(2,
+	math.floor(as_number(config.OuterResourceClusterMinimumExtractorDeposits, 2)))
 C.OUTER_RESOURCE_CLUSTER_RADIUS_HEXES = math.max(4,
 	math.floor(as_number(config.OuterResourceClusterRadiusHexes, 12)))
 C.OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT = math.max(0,

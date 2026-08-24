@@ -1141,10 +1141,10 @@ local DepositRules = {}
 -- spawned resource sign independently from its marker would desynchronise gameplay, so resolve
 -- collisions while DepositMarker:FindSectorPos is choosing the final spawn position. Hidden,
 -- unrevealed markers reserve their future badge hex too. Ordinary markers may remain adjacent;
--- surface quota resources additionally retain their hard non-adjacent spacing and physical
+-- surface quota resources additionally retain their hard three-hex spacing and physical
 -- perimeter-band assignment whenever an overlap repair moves them.
 -- ---------------------------------------------------------------------------------------
-local BADGE_SPACING_PATCH_VERSION = 4
+local BADGE_SPACING_PATCH_VERSION = 5
 local BADGE_SEARCH_MAX_RADIUS = 64
 
 local function BadgeSpacingEnabledOnMap(map)
@@ -1189,7 +1189,7 @@ local function SurfaceQuotaBadgeContext(marker, map)
 		ring_sectors = math.max(0, math.floor(
 			cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2)),
 		minimum_hex_distance = math.max(1, math.floor(
-			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2)),
+			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 3)),
 		preserve_outermost = marker.SuperBigMapOutermostResourceTopUp == true,
 		preserve_inner_band = marker.SuperBigMapInnerBandResourceTopUp == true,
 		occupied = {},
@@ -3751,7 +3751,7 @@ function DepositRules.TopUpDeposits(map)
 			cfg().MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT or 60)) or 0
 	local surface_quota_minimum_hex_distance = not IsUndergroundMap(map)
 		and math.max(1, math.floor(
-			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2)) or 0
+			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 3)) or 0
 	-- Area factor = (desired/generated)^2; an explicit resource-only override may force it.
 	local area_factor = 1.0
 	local override = cfg().DEPOSIT_COUNT_SCALE_OVERRIDE
@@ -4194,7 +4194,7 @@ function DepositRules.TopUpDeposits(map)
 			-- This changes sampling only: every retained point still passes the unchanged final
 			-- buildable/passable/unobstructed gate and the quota-specific spacing tracker.
 			local MAX_FINAL_QUOTA_CANDIDATES = 4096
-			local MAX_CANDIDATES_PER_SECTOR = 24
+			local MAX_CANDIDATES_PER_SECTOR = 64
 			local SAMPLES_AXIS = 32
 			local SAMPLES_PER_SECTOR = SAMPLES_AXIS * SAMPLES_AXIS
 			if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
@@ -4296,7 +4296,8 @@ function DepositRules.TopUpDeposits(map)
 		local repulsion = NewTopUpRepulsionTracker(map, "resources")
 		-- The fixed surface quota is intentionally narrower than the ordinary top-up planner. Exact
 		-- vanilla family radii leave some legitimate two-sector bands with fewer than 50 slots. Its
-		-- fallback is still deterministic and conservative: globally unique non-adjacent hexes,
+		-- fallback is still deterministic and conservative: globally unique hexes at least three
+		-- hexes apart,
 		-- sector-load balancing, and every normal terrain gate. Only these
 		-- flagged quota markers are exempt; all later resource additions continue through CanPlace.
 		local surface_quota_hexes = {}
@@ -4353,7 +4354,11 @@ function DepositRules.TopUpDeposits(map)
 			end
 			return nil
 		end
-		local function select_needed_placement(allow_any_terrain)
+		local function extractor_template(template)
+			return IsKindOfSafe(template, "SubsurfaceDepositMarker")
+				or IsKindOfSafe(template, "TerrainDepositMarker")
+		end
+		local function select_needed_placement(allow_any_terrain, require_extractor)
 			local preferred = choose_needed_type()
 			if not preferred then return nil end
 			local order, others = { preferred }, {}
@@ -4373,7 +4378,8 @@ function DepositRules.TopUpDeposits(map)
 				local seen_options = {}
 				for offset = 0, #type_templates - 1 do
 					local template = type_templates[((start + offset - 1) % #type_templates) + 1]
-					local option = template_option(template)
+					local option = (require_extractor ~= true or extractor_template(template))
+						and template_option(template) or nil
 					if option then
 						if not seen_options[option.key] then
 							seen_options[option.key] = true
@@ -4391,13 +4397,14 @@ function DepositRules.TopUpDeposits(map)
 		-- candidates until the exact type targets are met or the validated pool is exhausted.
 		local function place_from(active, density_fallback, allow_any_terrain,
 			maximum_this_pass, mountain_base_resource, outermost_resource,
-			surface_quota_resource, inner_band_resource)
+			surface_quota_resource, inner_band_resource, require_extractor)
 			active_selector = active
 			local placed_this_pass = 0
 			maximum_this_pass = maximum_this_pass or shortfall
 			while added < shortfall and placed_this_pass < maximum_this_pass
 				and active_selector.Remaining() > 0 do
-				local c, template, tpos, profile = select_needed_placement(allow_any_terrain)
+				local c, template, tpos, profile =
+					select_needed_placement(allow_any_terrain, require_extractor)
 				if not c then break end
 				if tpos and type(tpos.xy) == "function" then
 					local tx, ty = tpos:xy()
@@ -4408,13 +4415,15 @@ function DepositRules.TopUpDeposits(map)
 						placed_this_pass = placed_this_pass + 1
 						local res = tostring(template.resource or template.class or "?")
 						clone.SuperBigMapResourceTopUp = true
-						clone.SuperBigMapMountainBaseResourceTopUp =
-							mountain_base_resource or nil
+						local selected_mountain_base = mountain_base_resource == "candidate"
+							and c._sbm_mountain_base_apron == true or mountain_base_resource == true
+						clone.SuperBigMapMountainBaseResourceTopUp = selected_mountain_base or nil
 						clone.SuperBigMapOuterRingResourceQuotaTopUp =
 							surface_quota_resource or nil
 						clone.SuperBigMapOutermostResourceTopUp = outermost_resource or nil
 						clone.SuperBigMapInnerBandResourceTopUp = inner_band_resource or nil
-						if mountain_base_resource then
+						clone.SuperBigMapResourceClusterPlan = c._sbm_resource_cluster_plan
+						if selected_mountain_base then
 							surface_mountain_base_resource_added =
 								surface_mountain_base_resource_added + 1
 						end
@@ -4629,66 +4638,285 @@ function DepositRules.TopUpDeposits(map)
 			end
 		end
 
+		-- Build deterministic geometric batches before placing the fixed quota. Candidate reservations
+		-- enforce the configured three-hex spacing across every batch, and the first two placements in
+		-- every batch must clone extractor markers. Small continuation batches may attach to an existing
+		-- connected cluster; the final terrain audit evaluates the visible 6..10 components rather than
+		-- these internal batches. Everything is driven by geometry, without coordinate or sector cases.
+		local planned_cluster_candidates = {}
+		local reserved_cluster_candidates = {}
+		local next_resource_cluster_plan = 0
+		local cluster_plan_diagnostic = {
+			stage = "initializing", error = "", quota = 0, outermost = 0, inner_band = 0,
+			results = "", strategy = "selector_local_v2",
+		}
+		map.SuperBigMapResourceClusterPlanDiagnostic = cluster_plan_diagnostic
+		local function cluster_plan_fail(message)
+			cluster_plan_diagnostic.error = tostring(message)
+			cluster_plan_diagnostic.quota = surface_resource_quota_added
+			cluster_plan_diagnostic.outermost = surface_outermost_resource_added
+			cluster_plan_diagnostic.inner_band = surface_inner_band_resource_added
+			error(message)
+		end
+		local resource_cluster_radius = math.max(4,
+			math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+		local resource_cluster_member_radius = math.max(3,
+			math.floor(resource_cluster_radius))
+		local minimum_cluster_extractors = math.max(2,
+			math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS or 2))
+		local const_tbl = Global("const")
+		local cluster_hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
+		cluster_hex_size = type(cluster_hex_size) == "number" and cluster_hex_size > 0
+			and cluster_hex_size or 1000
+		local extractor_edge_margin = cluster_hex_size * math.max(4,
+			math.floor((cfg().OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES or 3) + 1))
+		local function extractor_footprint_within_map(candidate)
+			local x, y = candidate and candidate.x, candidate and candidate.y
+			return type(x) == "number" and type(y) == "number"
+				and x >= extractor_edge_margin and y >= extractor_edge_margin
+				and x <= map_w - extractor_edge_margin and y <= map_h - extractor_edge_margin
+		end
+		local function cluster_target(total, count, index)
+			local base = math.floor(total / count)
+			return base + (index <= total % count and 1 or 0)
+		end
+		local function candidate_distance(a, b)
+			return AxialHexDistance(a.q, a.r, b.q, b.r) or math.huge
+		end
+		local function build_quota_cluster_plans(preferred, fallback, cluster_count, total, label,
+			must_attach)
+			local candidates, seen = {}, {}
+			for _, source in ipairs({ preferred or {}, fallback or {} }) do
+				for _, candidate in ipairs(source) do
+					local _, sector_key = CandidateSector(map, candidate)
+					if sector_key and not seen[candidate]
+						and extractor_footprint_within_map(candidate)
+						and surface_quota_can_place(candidate) then
+						seen[candidate] = true
+						candidates[#candidates + 1] = candidate
+					end
+				end
+			end
+			table.sort(candidates, function(a, b)
+				local ar = tonumber(a._sbm_mountain_base_rank) or math.huge
+				local br = tonumber(b._sbm_mountain_base_rank) or math.huge
+				if ar == br then
+					if a.q == b.q then return (a.r or 0) < (b.r or 0) end
+					return (a.q or 0) < (b.q or 0)
+				end
+				return ar < br
+			end)
+			local plans = {}
+			for cluster_index = 1, cluster_count do
+				local target = cluster_target(total, cluster_count, cluster_index)
+				local chosen_anchor, chosen_pool
+				for _, anchor in ipairs(candidates) do
+					if not reserved_cluster_candidates[anchor] then
+						local separated = true
+						local attached = must_attach ~= true
+						for _, prior in ipairs(planned_cluster_candidates) do
+							local distance = candidate_distance(anchor, prior)
+							if distance <= resource_cluster_radius then attached = true end
+							if distance < surface_quota_minimum_hex_distance then
+								separated = false
+								break
+							end
+						end
+						if separated and attached then
+							local neighbours = {}
+							for _, candidate in ipairs(candidates) do
+								if not reserved_cluster_candidates[candidate]
+									and candidate_distance(anchor, candidate)
+										<= resource_cluster_member_radius then
+									local clear_of_plans = true
+									for _, prior in ipairs(planned_cluster_candidates) do
+										if candidate_distance(candidate, prior)
+											< surface_quota_minimum_hex_distance then
+											clear_of_plans = false
+											break
+										end
+									end
+									if clear_of_plans then neighbours[#neighbours + 1] = candidate end
+								end
+							end
+							table.sort(neighbours, function(a, b)
+								local ad, bd = candidate_distance(anchor, a), candidate_distance(anchor, b)
+								if ad == bd then
+									return (tonumber(a._sbm_mountain_base_rank) or math.huge)
+										< (tonumber(b._sbm_mountain_base_rank) or math.huge)
+								end
+								return ad < bd
+							end)
+							local spaced = {}
+							for _, candidate in ipairs(neighbours) do
+								local clear = true
+								for _, selected in ipairs(spaced) do
+									if candidate_distance(candidate, selected)
+										< surface_quota_minimum_hex_distance then
+										clear = false
+										break
+									end
+								end
+								if clear then spaced[#spaced + 1] = candidate end
+							end
+							if #spaced >= target then
+								chosen_anchor, chosen_pool = anchor, {}
+								for index = 1, target do chosen_pool[index] = spaced[index] end
+								break
+							end
+						end
+					end
+				end
+				if not chosen_anchor then
+					cluster_plan_fail(tostring(label) .. " cluster plan exhausted: cluster="
+						.. tostring(cluster_index) .. " target=" .. tostring(target)
+						.. " candidates=" .. tostring(#candidates))
+				end
+				next_resource_cluster_plan = next_resource_cluster_plan + 1
+				for _, candidate in ipairs(chosen_pool) do
+					reserved_cluster_candidates[candidate] = true
+					planned_cluster_candidates[#planned_cluster_candidates + 1] = candidate
+					candidate._sbm_resource_cluster_plan = next_resource_cluster_plan
+				end
+				plans[#plans + 1] = {
+					id = next_resource_cluster_plan, target = target, candidates = chosen_pool,
+				}
+			end
+			return plans
+		end
+		local function new_planned_cluster_selector(candidates)
+			-- Keep attempt state in this selector. Candidate tables are shared with the legacy
+			-- pool and can retain transient fields from its validation passes.
+			local consumed = {}
+			local function remaining()
+				local count = 0
+				for _, candidate in ipairs(candidates or {}) do
+					if not consumed[candidate] then count = count + 1 end
+				end
+				return count
+			end
+			local function take(terrain_type)
+				for _, candidate in ipairs(candidates or {}) do
+					if not consumed[candidate]
+						and (terrain_type == nil or candidate.terrain_type == terrain_type)
+						and surface_quota_can_place(candidate) then
+						consumed[candidate] = true
+						return candidate
+					end
+				end
+				return nil
+			end
+			local function commit(candidate)
+				-- Candidate.used belongs to the legacy selectors. Publish it only after cloning
+				-- succeeds; pool-building may set it speculatively before this deliberate plan runs.
+				if candidate then candidate.used = true end
+				return candidate ~= nil
+			end
+			return {
+				Take = take,
+				Commit = commit,
+				Remaining = remaining,
+				Stats = function() return { remaining_candidates = remaining() } end,
+			}
+		end
+		local function place_quota_cluster_plans(plans, outermost, inner_band, label)
+			for _, plan in ipairs(plans) do
+				cluster_plan_diagnostic.stage = "placing " .. tostring(label)
+				cluster_plan_diagnostic.cluster = plan.id
+				cluster_plan_diagnostic.cluster_target = plan.target
+				local before = surface_resource_quota_added
+				local selector = new_planned_cluster_selector(plan.candidates)
+				local available_before, placeable_before = selector.Remaining(), 0
+				for _, candidate in ipairs(plan.candidates) do
+					if surface_quota_can_place(candidate) then
+						placeable_before = placeable_before + 1
+					end
+				end
+				local global_added_before = added
+				place_from(selector, false, true, minimum_cluster_extractors,
+					"candidate", outermost, true, inner_band, true)
+				local extractors_added = surface_resource_quota_added - before
+				if extractors_added < minimum_cluster_extractors then
+					cluster_plan_fail(tostring(label) .. " extractor pair failed: cluster="
+						.. tostring(plan.id) .. " required=" .. tostring(minimum_cluster_extractors)
+						.. " placed=" .. tostring(extractors_added))
+				end
+				place_from(selector, false, true, plan.target - extractors_added,
+					"candidate", outermost, true, inner_band, false)
+				local cluster_added = surface_resource_quota_added - before
+				local result = table.concat({
+					tostring(plan.id), outermost and "outer" or "inner",
+					"target=" .. tostring(plan.target),
+					"extractors=" .. tostring(extractors_added),
+					"total=" .. tostring(cluster_added),
+					"available=" .. tostring(available_before),
+					"placeable=" .. tostring(placeable_before),
+					"global=" .. tostring(global_added_before) .. "/" .. tostring(shortfall),
+				}, "/")
+				cluster_plan_diagnostic.results = cluster_plan_diagnostic.results == ""
+					and result or cluster_plan_diagnostic.results .. "," .. result
+				if cluster_added < plan.target then
+					cluster_plan_fail(tostring(label) .. " cluster quota failed: cluster="
+						.. tostring(plan.id) .. " required=" .. tostring(plan.target)
+						.. " placed=" .. tostring(cluster_added))
+				end
+			end
+		end
+
 		-- Reserve the first 50 (configurable) surface additions for validated two-sector perimeter
-		-- opportunities: 60% in the edge-touching band and 40% in the adjacent inner band. The pools
-		-- are disjoint, so filling one band can never silently satisfy the other band's quota. Unique
-		-- hexes, the quota-only hard clearance, unobstructed terrain, and the
-		-- engine's final buildable grid remain mandatory; terrain-type matching may relax because a
-		-- cloned deposit does not require the source marker's cosmetic terrain material.
+		-- opportunities: 60% in the edge-touching band and 40% in the adjacent inner band.
 		if not underground and surface_mountain_base_minimum > 0 then
 			local required = math.min(surface_mountain_base_minimum, shortfall)
 			local outermost_required = math.min(required, math.ceil(required
 				* surface_outermost_resource_minimum_percent / 100))
-			if outermost_required > 0 then
-				local outermost_selector = NewSectorBalancedCandidateSelector(
-					map, outermost_mountain_base_candidates, "outermost mountain-base resource quota",
-					function(candidate) return surface_quota_can_place(candidate) end,
-					surface_selector_loads)
-				place_from(outermost_selector, false, true,
-					outermost_required, true, true, true, false)
-				if surface_outermost_resource_added < outermost_required then
-					local outermost_flat_selector = NewSectorBalancedCandidateSelector(
-						map, outermost_perimeter_quota_candidates,
-						"outermost flat perimeter resource quota",
-						function(candidate) return surface_quota_can_place(candidate) end,
-						surface_selector_loads)
-					place_from(outermost_flat_selector, false, true,
-						outermost_required - surface_outermost_resource_added,
-						false, true, true, false)
-				end
-				if surface_outermost_resource_added < outermost_required then
-					error("outermost mountain-base resource quota failed: required="
-						.. tostring(outermost_required) .. " candidates="
-						.. tostring(#outermost_mountain_base_candidates) .. " placed="
-						.. tostring(surface_outermost_resource_added))
-				end
-			end
 			local inner_required = required - outermost_required
-			if inner_required > 0 then
-				local inner_selector = NewSectorBalancedCandidateSelector(
-					map, inner_band_mountain_base_candidates,
-					"inner-band mountain-base resource quota",
-					function(candidate) return surface_quota_can_place(candidate) end,
-					surface_selector_loads)
-				place_from(inner_selector, false, true,
-					inner_required, true, false, true, true)
-				if surface_inner_band_resource_added < inner_required then
-					local inner_flat_selector = NewSectorBalancedCandidateSelector(
-						map, inner_band_perimeter_quota_candidates,
-						"inner-band flat perimeter resource quota",
-						function(candidate) return surface_quota_can_place(candidate) end,
-						surface_selector_loads)
-					place_from(inner_flat_selector, false, true,
-						inner_required - surface_inner_band_resource_added,
-						false, false, true, true)
-				end
-				if surface_inner_band_resource_added < inner_required then
-					error("inner-band mountain-base resource quota failed: required="
-						.. tostring(inner_required) .. " candidates="
-						.. tostring(#inner_band_mountain_base_candidates) .. " placed="
-						.. tostring(surface_inner_band_resource_added))
+			local minimum_clusters = math.max(6,
+				math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 6))
+			local maximum_clusters = math.max(minimum_clusters,
+				math.floor(cfg().OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT or 10))
+			-- Five-deposit batches fit small natural foothill aprons. Nearby batches may merge into
+			-- one visible connected cluster, but their locally reserved candidates retain the global
+			-- three-hex separation and contribute an additional extractor pair to that cluster.
+			local total_clusters = math.min(maximum_clusters, math.max(minimum_clusters,
+				math.floor((required + 4) / 5)))
+			local outermost_clusters = math.max(1, math.ceil(total_clusters
+				* surface_outermost_resource_minimum_percent / 100))
+			local inner_clusters = math.max(1, total_clusters - outermost_clusters)
+			local outermost_tail_required = math.min(5, outermost_required)
+			local outermost_primary_required = outermost_required - outermost_tail_required
+			local outermost_primary_clusters = math.max(1, outermost_clusters - 1)
+			local outermost_plans = build_quota_cluster_plans(
+				outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
+				outermost_primary_clusters, outermost_primary_required,
+				"outermost resource primary")
+			local outermost_tail_plans = build_quota_cluster_plans(
+				outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
+				1, math.min(3, outermost_tail_required),
+				"outermost resource attached continuation", true)
+			for _, plan in ipairs(outermost_tail_plans) do
+				outermost_plans[#outermost_plans + 1] = plan
+			end
+			local outermost_final_required = math.max(0, outermost_tail_required - 3)
+			if outermost_final_required > 0 then
+				local outermost_final_plans = build_quota_cluster_plans(
+					outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
+					1, outermost_final_required, "outermost resource final extractor pair")
+				for _, plan in ipairs(outermost_final_plans) do
+					outermost_plans[#outermost_plans + 1] = plan
 				end
 			end
+			local inner_plans = build_quota_cluster_plans(
+				inner_band_mountain_base_candidates, inner_band_perimeter_quota_candidates,
+				inner_clusters, inner_required, "inner-band resource")
+			cluster_plan_diagnostic.required = required
+			cluster_plan_diagnostic.outermost_required = outermost_required
+			cluster_plan_diagnostic.inner_required = inner_required
+			place_quota_cluster_plans(outermost_plans, true, false, "outermost resource")
+			place_quota_cluster_plans(inner_plans, false, true, "inner-band resource")
+			cluster_plan_diagnostic.stage = "complete"
+			cluster_plan_diagnostic.quota = surface_resource_quota_added
+			cluster_plan_diagnostic.outermost = surface_outermost_resource_added
+			cluster_plan_diagnostic.inner_band = surface_inner_band_resource_added
 			if surface_resource_quota_added < required then
 				error("outer-ring resource quota failed: required=" .. tostring(required)
 					.. " centers=" .. tostring(surface_mountain_base_centers)
@@ -7517,7 +7745,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 					local hex_distance = math.max(
 						math.abs(dq), math.abs(dr), math.abs(dq + dr))
 					local required_hex_distance = math.max(1, math.floor(
-						cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 2))
+						cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 3))
 					if hex_distance < required_hex_distance then
 						stats.surface_quota_spacing_violations =
 							stats.surface_quota_spacing_violations + 1

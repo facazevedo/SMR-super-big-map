@@ -11009,7 +11009,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								.. " cluster_shortfall=" .. tostring(resource_terrain_audit
 									and resource_terrain_audit.cluster_shortfall)
 								.. " cluster_excess=" .. tostring(resource_terrain_audit
-									and resource_terrain_audit.cluster_excess))
+									and resource_terrain_audit.cluster_excess)
+								.. " cluster_extractor_shortfall="
+								.. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_extractor_shortfall))
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded

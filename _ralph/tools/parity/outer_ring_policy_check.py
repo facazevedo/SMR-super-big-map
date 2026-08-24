@@ -69,13 +69,13 @@ def dome_effect_topup_allowed(
     return underground or edge_layer > 2 or verified_mountain_pad
 
 
-def quota_hex_clearance(a: tuple[int, int], b: tuple[int, int], minimum: int = 2) -> bool:
+def quota_hex_clearance(a: tuple[int, int], b: tuple[int, int], minimum: int = 3) -> bool:
     """Model the hard axial clearance used only by guaranteed surface resources."""
     dq, dr = a[0] - b[0], a[1] - b[1]
     return max(abs(dq), abs(dr), abs(dq + dr)) >= minimum
 
 
-def apron_weight(normalized_radius: float, core_fraction: float = 3 / 8) -> float:
+def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float:
     """Production C2 core-to-original feather."""
     if normalized_radius <= core_fraction:
         return 1.0
@@ -213,6 +213,11 @@ static_checks = {
         in outer_resource_terrain
         and "OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS" in outer_resource_terrain
     ),
+    "resource_cluster_minimum_is_two_extractor_deposits": (
+        "config.OuterResourceClusterMinimumDeposits = 2" in CONFIG
+        and "config.OuterResourceClusterMinimumExtractorDeposits = 2" in CONFIG
+        and "cluster_extractor_shortfall == 0" in outer_resource_terrain
+    ),
     "resource_clusters_use_live_rocket_shape": (
         'pcall(get_extended_shape, "RocketLandingSite", 1)' in outer_resource_terrain
         and "ready_offsets(site.q, site.r, rocket_offsets, true)" in outer_resource_terrain
@@ -257,7 +262,7 @@ static_checks = {
     ),
     "resource_quota_scans_final_grid_generally": (
         "local SAMPLES_AXIS = 32" in resources
-        and "local MAX_CANDIDATES_PER_SECTOR = 24" in resources
+        and "local MAX_CANDIDATES_PER_SECTOR = 64" in resources
         and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" in resources
     ),
     "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 36" in aprons,
@@ -288,13 +293,21 @@ static_checks = {
     "resource_quota_uses_authoritative_terrain_validation": (
         "CanReceiveDeposit(" in resources and "mountain_base_candidates" in resources
     ),
+    "resource_quota_rejects_edge_crossing_extractor_footprints": (
+        "extractor_footprint_within_map(candidate)" in resources
+        and "extractor_edge_margin" in resources
+    ),
+    "resource_quota_uses_attached_and_final_extractor_continuations": (
+        '"outermost resource attached continuation", true' in resources
+        and '"outermost resource final extractor pair"' in resources
+    ),
     "ordinary_resources_preserve_exact_repulsion": (
         'NewTopUpRepulsionTracker(map, "resources")' in resources
         and 'label or "resources strict reserve"' in resources
         and "repulsion.CanPlace(candidate, profile)" in resources
     ),
-    "resource_quota_has_documented_nonadjacent_policy": (
-        "config.MountainBaseQuotaMinimumHexDistance = 2" in CONFIG
+    "resource_quota_has_documented_three_hex_policy": (
+        "config.MountainBaseQuotaMinimumHexDistance = 3" in CONFIG
         and "C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE" in CONFIG
         and "surface_quota_can_place" in resources
         and "repulsion.CanPlaceUnique(candidate)" in resources
@@ -310,7 +323,7 @@ static_checks = {
         and "BadgeCandidateAllowed(marker, map, pt, cx, cy, q, r" in DEPOSITS
     ),
     "resource_quota_places_before_general_resources": (
-        resources.index('"inner-band mountain-base resource quota"')
+        resources.index("build_quota_cluster_plans")
         < resources.index("if sequential_placement then")
     ),
     "resource_quota_marks_ordinary_resource_topups": (
@@ -335,14 +348,14 @@ static_checks = {
     ),
     "resource_quota_guarantees_60_40_disjoint_band_split": (
         "MountainBaseOutermostResourceMinimumPercent = 60" in CONFIG
-        and "outermost mountain-base resource quota" in resources
-        and "inner-band mountain-base resource quota" in resources
+        and '"outermost resource"' in resources
+        and '"inner-band resource"' in resources
         and "inner_band_mountain_base_candidates" in resources
         and "inner_band_perimeter_quota_candidates" in resources
         and "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
         and "clone.SuperBigMapInnerBandResourceTopUp" in resources
-        and "outermost mountain-base resource quota failed" in resources
-        and "inner-band mountain-base resource quota failed" in resources
+        and "place_quota_cluster_plans" in resources
+        and "cluster quota failed" in resources
     ),
     "anomaly_ten_hex_policy_gets_complete_plan_capacity": (
         "local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 2048" in DEPOSITS
@@ -363,6 +376,13 @@ static_checks = {
         "config.OuterResourceClusterMinimumCount = 6" in CONFIG
         and "config.OuterResourceRocketPadMaximumCount = 10" in CONFIG
         and "cluster_shortfall == 0 and cluster_excess == 0" in outer_resource_terrain
+    ),
+    "every_resource_cluster_requires_two_extractors": (
+        "config.OuterResourceClusterMinimumExtractorDeposits = 2" in CONFIG
+        and "OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS" in outer_resource_terrain
+        and 'entry.kind == "extractor"' in outer_resource_terrain
+        and "extractor_members >= cluster_minimum_extractors" in outer_resource_terrain
+        and "cluster_extractor_shortfall == 0" in outer_resource_terrain
     ),
     "anomalies_are_capped_at_three_per_resource_cluster": (
         "config.OuterResourceClusterMaximumAnomalies = 3" in CONFIG
@@ -394,7 +414,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_861": "'version', 861" in METADATA,
+    "version_is_876": "'version', 876" in METADATA,
 }
 
 case_results = []
@@ -439,16 +459,17 @@ effect_checks = {
 quota_spacing_checks = {
     "same_hex_is_rejected": not quota_hex_clearance((12, -3), (12, -3)),
     "adjacent_hex_is_rejected": not quota_hex_clearance((0, 0), (1, 0)),
-    "two_hexes_is_accepted": quota_hex_clearance((0, 0), (2, 0)),
+    "two_hexes_is_rejected": not quota_hex_clearance((0, 0), (2, 0)),
+    "three_hexes_is_accepted": quota_hex_clearance((0, 0), (3, 0)),
     "diagonal_axial_distance_is_enforced": (
-        not quota_hex_clearance((0, 0), (1, 0))
-        and quota_hex_clearance((0, 0), (1, 1))
+        not quota_hex_clearance((0, 0), (1, 1))
+        and quota_hex_clearance((0, 0), (1, 2))
     ),
 }
 
 eps = 1e-4
 feather_checks = {
-    "core_is_fully_graded": apron_weight(0) == 1 and apron_weight(3 / 8) == 1,
+    "core_is_fully_graded": apron_weight(0) == 1 and apron_weight(0.75) == 1,
     "outer_terrain_is_untouched": apron_weight(1) == 0 and apron_weight(1.1) == 0,
     "weight_is_monotone": all(
         apron_weight(i / 100) >= apron_weight((i + 1) / 100)
@@ -464,7 +485,7 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 8,
+    "schema_version": 9,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,

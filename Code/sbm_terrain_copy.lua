@@ -1419,7 +1419,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 3))
 	local feather_hexes = math.max(core_hexes + 2,
 		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 8))
-	local core_fraction = math.min(0.65, math.max(0.20,
+	local core_fraction = math.min(0.75, math.max(0.20,
 		(core_hexes + 0.0) / feather_hexes))
 	local outer_short = feather_hexes * cells_per_hex
 	local outer_long = outer_short * 1.35
@@ -2066,8 +2066,10 @@ local function PrepareOuterResourceTerrain(map)
 	-- A cluster is discovered from marker-to-marker axial distance, never from a scenario or sector
 	-- identity.  Candidate landing centers are chosen beside (not on top of) the deposits, minimizing
 	-- height range first and distance to the cluster second.
-	local cluster_minimum = math.max(4,
-		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 4)))
+	local cluster_minimum = math.max(2,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 2)))
+	local cluster_minimum_extractors = math.max(2,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 2)))
 	local cluster_radius = math.max(4,
 		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
 	local maximum_rocket_pads = math.max(0,
@@ -2139,15 +2141,18 @@ local function PrepareOuterResourceTerrain(map)
 	for seed_index, seed in ipairs(resources) do
 		if #rocket_sites >= maximum_rocket_pads then break end
 		if not claimed[seed_index] then
-			local members, sum_q, sum_r = {}, 0, 0
+			local members, extractor_members, sum_q, sum_r = {}, 0, 0, 0
 			for index, entry in ipairs(resources) do
 				if not claimed[index]
 					and axial_distance(seed.q, seed.r, entry.q, entry.r) <= cluster_radius then
 					members[#members + 1] = index
+					if entry.kind == "extractor" then
+						extractor_members = extractor_members + 1
+					end
 					sum_q, sum_r = sum_q + entry.q, sum_r + entry.r
 				end
 			end
-			if #members >= cluster_minimum then
+			if #members >= cluster_minimum and extractor_members >= cluster_minimum_extractors then
 				local cq = math.floor(sum_q / #members + 0.5)
 				local cr = math.floor(sum_r / #members + 0.5)
 				local best
@@ -2166,6 +2171,7 @@ local function PrepareOuterResourceTerrain(map)
 				end
 				if best then
 					best.members = #members
+					best.extractor_members = extractor_members
 					best.cluster_q, best.cluster_r = cq, cr
 					best.modified = not best.ready_before
 					best.shape_radius = rocket_hex_radius
@@ -2458,7 +2464,7 @@ local function AuditOuterResourceTerrain(map)
 	local const_tbl = Global("const")
 	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
 	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
-	local passability_clear_half = math.max(1, math.floor(hex_size * 0.46))
+	local passability_clear_half = math.max(1, math.floor(hex_size * 1.05))
 	local passability_clears = 0
 	local function clear_exact_offsets(q, r, offsets)
 		if type(terrain_api.ClearPassabilityBox) ~= "function"
@@ -2573,6 +2579,16 @@ local function AuditOuterResourceTerrain(map)
 		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
 	local cluster_shortfall = math.max(0, cluster_minimum - #rocket_sites)
 	local cluster_excess = math.max(0, #rocket_sites - cluster_maximum)
+	local cluster_extractor_minimum = math.max(2,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 2)))
+	local minimum_cluster_extractors, cluster_extractor_shortfall = nil, 0
+	for _, site in ipairs(rocket_sites) do
+		local count = math.max(0, math.floor(tonumber(site.extractor_members) or 0))
+		minimum_cluster_extractors = minimum_cluster_extractors == nil
+			and count or math.min(minimum_cluster_extractors, count)
+		cluster_extractor_shortfall = cluster_extractor_shortfall
+			+ math.max(0, cluster_extractor_minimum - count)
+	end
 	local report = {
 		resources = #resource_sites, surface_passable = surface_passable,
 		extractor_buildable = extractor_buildable, resource_failures = resource_failures,
@@ -2586,8 +2602,12 @@ local function AuditOuterResourceTerrain(map)
 		resource_clusters = #rocket_sites, cluster_minimum = cluster_minimum,
 		cluster_maximum = cluster_maximum, cluster_shortfall = cluster_shortfall,
 		cluster_excess = cluster_excess,
+		cluster_extractor_minimum = cluster_extractor_minimum,
+		minimum_cluster_extractors = minimum_cluster_extractors or 0,
+		cluster_extractor_shortfall = cluster_extractor_shortfall,
 		reason = resource_failures == 0 and rocket_failures == 0
 			and cluster_shortfall == 0 and cluster_excess == 0
+			and cluster_extractor_shortfall == 0
 			and "all outer resource terrain contracts verified" or "final terrain contract failed",
 	}
 	map.SuperBigMapOuterResourceTerrainAudit = report
@@ -2604,13 +2624,16 @@ local function AuditOuterResourceTerrain(map)
 			.. " resource_clusters=" .. tostring(report.resource_clusters)
 			.. " cluster_shortfall=" .. tostring(report.cluster_shortfall)
 			.. " cluster_excess=" .. tostring(report.cluster_excess)
+			.. " cluster_min_extractors=" .. tostring(report.minimum_cluster_extractors)
+			.. " cluster_extractor_shortfall=" .. tostring(report.cluster_extractor_shortfall)
 			.. " first_resource_failure=" .. tostring(report.first_resource_failure)
 			.. " first_rocket_failure=" .. tostring(report.first_rocket_failure)
 			.. " verified_mountain_effect_candidates="
 			.. tostring(report.verified_modified_mountain_rocket_pads))
 	end
 	return resource_failures == 0 and rocket_failures == 0
-		and cluster_shortfall == 0 and cluster_excess == 0, report
+		and cluster_shortfall == 0 and cluster_excess == 0
+		and cluster_extractor_shortfall == 0, report
 end
 
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height
