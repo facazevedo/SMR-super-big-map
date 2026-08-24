@@ -242,6 +242,11 @@ local function TopUpFlatnessMinimum()
 	return math.max(0, math.min(4096, value))
 end
 
+local function TopUpEnrichmentMinimumHexDistance()
+	return math.max(1, math.floor(
+		tonumber(cfg().TOPUP_ENRICHMENT_MINIMUM_HEX_DISTANCE) or 3))
+end
+
 -- A density pass evaluates thousands of immutable terrain/grid queries. Resolve the native
 -- functions and constants once per pass rather than rebuilding the same lookup chain for every
 -- random candidate. Fail-open/fail-closed rules remain unchanged.
@@ -1144,7 +1149,7 @@ local DepositRules = {}
 -- surface quota resources additionally retain their hard three-hex spacing and physical
 -- perimeter-band assignment whenever an overlap repair moves them.
 -- ---------------------------------------------------------------------------------------
-local BADGE_SPACING_PATCH_VERSION = 5
+local BADGE_SPACING_PATCH_VERSION = 6
 local BADGE_SEARCH_MAX_RADIUS = 64
 
 local function BadgeSpacingEnabledOnMap(map)
@@ -1181,26 +1186,31 @@ local function BadgeObjectHex(obj)
 end
 
 local function SurfaceQuotaBadgeContext(marker, map)
-	if not (marker and map and not IsUndergroundMap(map)
+	local topup = marker and (marker.SuperBigMapResourceTopUp == true
+		or marker.SuperBigMapAnomalyTopUp == true
+		or marker.SuperBigMapEffectTopUp == true)
+	if not (topup and map and type(map.MapForEach) == "function") then return nil end
+	local quota = not IsUndergroundMap(map)
 		and marker.SuperBigMapResourceTopUp == true
 		and marker.SuperBigMapOuterRingResourceQuotaTopUp == true
-		and type(map.MapForEach) == "function") then return nil end
 	local context = {
+		enforce_quota = quota,
 		ring_sectors = math.max(0, math.floor(
 			cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2)),
-		minimum_hex_distance = math.max(1, math.floor(
-			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 3)),
+		minimum_hex_distance = TopUpEnrichmentMinimumHexDistance(),
+		marker_surface = IsKindOfSafe(marker, "SurfaceDepositMarker"),
 		preserve_outermost = marker.SuperBigMapOutermostResourceTopUp == true,
 		preserve_inner_band = marker.SuperBigMapInnerBandResourceTopUp == true,
 		occupied = {},
 	}
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(other)
-		if other == marker or not (other
-			and other.SuperBigMapResourceTopUp == true
-			and other.SuperBigMapOuterRingResourceQuotaTopUp == true) then return end
+		if other == marker or not IsBadgeMarker(other) then return end
 		local q, r = BadgeObjectHex(other)
 		if type(q) == "number" and type(r) == "number" then
-			context.occupied[#context.occupied + 1] = { q = q, r = r }
+			context.occupied[#context.occupied + 1] = {
+				q = q, r = r,
+				surface = IsKindOfSafe(other, "SurfaceDepositMarker"),
+			}
 		end
 	end)
 	return context
@@ -1208,16 +1218,21 @@ end
 
 local function SurfaceQuotaBadgeCandidateAllowed(map, x, y, q, r, context)
 	if type(context) ~= "table" then return true end
-	if not IsInFinalOuterResourceWorldBand(map, x, y, context.ring_sectors) then
+	if context.enforce_quota
+		and not IsInFinalOuterResourceWorldBand(map, x, y, context.ring_sectors) then
 		return false
 	end
-	if context.preserve_outermost
+	if context.enforce_quota and context.preserve_outermost
 		and not IsInFinalOuterResourceWorldBand(map, x, y, 1) then return false end
-	if context.preserve_inner_band
+	if context.enforce_quota and context.preserve_inner_band
 		and IsInFinalOuterResourceWorldBand(map, x, y, 1) then return false end
 	if type(q) ~= "number" or type(r) ~= "number" then return false end
 	for _, other in ipairs(context.occupied) do
-		if AxialHexDistance(q, r, other.q, other.r) < context.minimum_hex_distance then
+		local distance = AxialHexDistance(q, r, other.q, other.r)
+		local surface_neighbours = distance and distance > 0
+			and context.marker_surface == true and other.surface == true
+		if distance and not surface_neighbours
+			and distance < context.minimum_hex_distance then
 			return false
 		end
 	end
@@ -1906,13 +1921,14 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 	local point_fn = Global("point")
 	local world_to_hex = Global("WorldToHex")
 	local BUCKET_SIZE = 65536
-	local buckets, occupied_hexes = {}, {}
+	local buckets, occupied_hexes, enrichment_hexes = {}, {}, {}
 	local placement_cache, profile_keys, obstacle_generation = {}, {}, 0
 	local max_same, max_layer, max_all = 0, 0, 0
 	local stats = {
 		label = tostring(label or "top-up"), seeded = 0, committed = 0,
 		checks = 0, nearby_pair_checks = 0, duplicate_hex_rejects = 0,
 		repulsion_rejects = 0, missing_profile_rejects = 0,
+		minimum_hex_distance_rejects = 0,
 		invalid_position_rejects = 0, seed_missing_profile = 0,
 		first_rejection = "", last_rejection = "",
 	}
@@ -1948,11 +1964,32 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		return bucket
 	end
 
-	local function hex_key(x, y)
+	local function hex_position(x, y)
 		if type(point_fn) ~= "function" or type(world_to_hex) ~= "function" then return nil end
 		local ok, q, r = pcall(world_to_hex, point_fn(x, y))
 		if not ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
-		return tostring(q) .. ":" .. tostring(r)
+		return q, r, tostring(q) .. ":" .. tostring(r)
+	end
+
+	local function hex_key(x, y)
+		local _, _, key = hex_position(x, y)
+		return key
+	end
+
+	local function reserve_enrichment_hex(x, y, marker)
+		local q, r, key = hex_position(x, y)
+		if not key then return nil, nil, nil end
+		local entry = enrichment_hexes[key]
+		if not entry then
+			entry = { q = q, r = r, surface = 0, non_surface = 0 }
+			enrichment_hexes[key] = entry
+		end
+		if IsKindOfSafe(marker, "SurfaceDepositMarker") then
+			entry.surface = entry.surface + 1
+		else
+			entry.non_surface = entry.non_surface + 1
+		end
+		return q, r, key
 	end
 
 	local function add_entry(x, y, profile, marker, is_topup)
@@ -1961,7 +1998,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		bucket[#bucket + 1] = {
 			x = x, y = y, profile = profile, marker = marker, is_topup = is_topup == true,
 		}
-		local hkey = hex_key(x, y)
+		local _, _, hkey = reserve_enrichment_hex(x, y, marker)
 		if hkey then occupied_hexes[hkey] = (occupied_hexes[hkey] or 0) + 1 end
 		max_same = math.max(max_same, profile.repulse_same or 0)
 		max_layer = math.max(max_layer, profile.repulse_layer or 0)
@@ -2010,7 +2047,11 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 			local x, y = pos:xy()
 			local profile = VanillaRepulsionProfileForMarker(map, marker)
 			if not profile then
-				local hkey = type(x) == "number" and type(y) == "number" and hex_key(x, y) or nil
+				local hkey
+				if type(x) == "number" and type(y) == "number" then
+					local _, _, key = reserve_enrichment_hex(x, y, marker)
+					hkey = key
+				end
 				if hkey then occupied_hexes[hkey] = (occupied_hexes[hkey] or 0) + 1 end
 				stats.seed_missing_profile = stats.seed_missing_profile + 1
 				return
@@ -2024,6 +2065,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 		end)
 	end
 
+	local can_place_minimum
 	local function can_place(candidate, profile)
 		stats.checks = stats.checks + 1
 		if not profile then
@@ -2051,6 +2093,9 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 			end
 			return false
 		end
+		local candidate_is_surface = profile.layer == "surf" and profile.resource ~= "Effects"
+		if not can_place_minimum(candidate, candidate_is_surface,
+			TopUpEnrichmentMinimumHexDistance()) then return false end
 		local profile_key = profile_cache_key(profile)
 		local cached = cached_verdict(candidate, profile_key)
 		if cached ~= nil then return cached end
@@ -2134,6 +2179,42 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 			end
 			return false
 		end
+		if not can_place_minimum(candidate, false,
+			TopUpEnrichmentMinimumHexDistance()) then return false end
+		return true
+	end
+
+	-- Universal top-up spacing rule. A surface rock pile may neighbour another surface rock pile,
+	-- but every pair involving an extractor, anomaly, or effect marker keeps the configured axial
+	-- distance. Same-hex placement is never permitted, including surface/surface pairs.
+	can_place_minimum = function(candidate, candidate_is_surface, minimum_distance)
+		minimum_distance = math.max(1, math.floor(tonumber(minimum_distance)
+			or TopUpEnrichmentMinimumHexDistance()))
+		local q, r = candidate and candidate.q, candidate and candidate.r
+		if type(q) ~= "number" or type(r) ~= "number" then
+			q, r = hex_position(candidate and candidate.x, candidate and candidate.y)
+		end
+		if type(q) ~= "number" or type(r) ~= "number" then
+			stats.invalid_position_rejects = stats.invalid_position_rejects + 1
+			return false
+		end
+		local radius = minimum_distance - 1
+		for dq = -radius, radius do
+			for dr = -radius, radius do
+				local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+				if distance < minimum_distance then
+					local occupied = enrichment_hexes[
+						tostring(q + dq) .. ":" .. tostring(r + dr)]
+					local surface_neighbours = distance > 0 and candidate_is_surface == true
+						and occupied and occupied.non_surface == 0
+					if occupied and not surface_neighbours then
+						stats.minimum_hex_distance_rejects =
+							stats.minimum_hex_distance_rejects + 1
+						return false
+					end
+				end
+			end
+		end
 		return true
 	end
 
@@ -2148,6 +2229,7 @@ local function NewTopUpRepulsionTracker(map, label, ignored_markers, capture_rej
 	return {
 		CanPlace = can_place,
 		CanPlaceUnique = can_place_unique,
+		CanPlaceMinimum = can_place_minimum,
 		Commit = commit,
 		Stats = function() return stats end,
 	}
@@ -4387,6 +4469,8 @@ function DepositRules.TopUpDeposits(map)
 		end
 		local function surface_quota_can_place(candidate)
 			return repulsion.CanPlaceUnique(candidate)
+				and repulsion.CanPlaceMinimum(candidate, false,
+					TopUpEnrichmentMinimumHexDistance())
 				and surface_quota_spacing_clear(candidate)
 		end
 		local function surface_quota_commit(candidate)
@@ -6623,6 +6707,9 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	local random_sample_limit = optimized_candidate_search and 128
 		or LEGACY_RANDOM_SAMPLES_PER_SECTOR
 	local MIN_TOPUP_HEX_DISTANCE = 10
+	local MIN_ENRICHMENT_HEX_DISTANCE = TopUpEnrichmentMinimumHexDistance()
+	local enrichment_spacing = NewTopUpRepulsionTracker(
+		map, "outer-ring anomaly enrichment spacing", ignored)
 	-- The outer perimeter is mostly cliffs/void on stretched maps. Before this filter, sequential
 	-- placement still spent 128 complete Lua terrain/obstruction probes in every one of the 204
 	-- perimeter sectors merely to prove that most sectors contained no buildable hex at all. Ask the
@@ -6911,6 +6998,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			if not candidate or fixed_anomaly_hexes[candidate.hex_key]
 				or occupied[candidate.hex_key] then return false end
 			if not clears_fixed_anomalies(candidate) then return false end
+			if not enrichment_spacing.CanPlaceMinimum(
+				candidate, false, MIN_ENRICHMENT_HEX_DISTANCE) then return false end
 			for _, prior in ipairs(spaced_anomalies) do
 				if hex_distance(candidate, prior) < MIN_TOPUP_HEX_DISTANCE then return false end
 			end
@@ -7120,6 +7209,7 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 	stats.outer_planned = best_outer_planned
 	stats.inner_fallback = 0
 	stats.minimum_hex_distance = MIN_TOPUP_HEX_DISTANCE
+	stats.minimum_enrichment_hex_distance = MIN_ENRICHMENT_HEX_DISTANCE
 
 	for _, item in ipairs(plans) do
 		local old_sector = item.source_sector and item.source_sector.sector_ref
@@ -7201,6 +7291,8 @@ RedistributeOuterRingTopUpAnomalies = function(map, ring_sectors)
 			.. " unknown_buildable_sectors=" .. tostring(stats.outer_buildable_unknown)
 			.. " planning_attempts=" .. tostring(stats.planning_attempts)
 			.. " minimum_hex_distance=" .. tostring(stats.minimum_hex_distance)
+			.. " minimum_enrichment_hex_distance="
+			.. tostring(stats.minimum_enrichment_hex_distance)
 			.. " maximum_per_sector=" .. tostring(stats.maximum_per_sector)
 			.. " maximum_anomalies_in_resource_cluster="
 			.. tostring(stats.maximum_anomalies_in_resource_cluster)
@@ -7756,12 +7848,16 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	local entries = {}
 	local underground = IsUndergroundMap(map)
 	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 10
+	local MIN_ENRICHMENT_HEX_DISTANCE = TopUpEnrichmentMinimumHexDistance()
 	local stats = {
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
 		missing_topup_profiles = 0, duplicate_hex_pairs = 0, repulsion_violations = 0,
 		first_duplicate_hex_pair = "", first_repulsion_violation = "",
 		outer_ring_spacing_violations = 0,
+		enrichment_spacing_violations = 0,
+		minimum_enrichment_hex_distance = MIN_ENRICHMENT_HEX_DISTANCE,
+		first_enrichment_spacing_violation = "",
 		surface_quota_topups = 0, surface_quota_spacing_violations = 0,
 		first_surface_quota_spacing_violation = "",
 		underground_density_fallback_topups = 0, density_fallback_pairs_skipped = 0,
@@ -7840,6 +7936,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 			density_fallback = density_fallback,
 			well_spaced_fallback = well_spaced_fallback,
 			anomaly = IsAnomalyMarker(marker),
+			surface_deposit = IsKindOfSafe(marker, "SurfaceDepositMarker"),
 			profile = profile, x = x, y = y,
 			q = ok_hex and type(q) == "number" and q or nil,
 			r = ok_hex and type(r) == "number" and r or nil,
@@ -7912,6 +8009,27 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 				local has_density_fallback = a.density_fallback or b.density_fallback
 				local has_surface_quota_resource = a.surface_quota_resource
 					or b.surface_quota_resource
+				if type(a.q) == "number" and type(a.r) == "number"
+					and type(b.q) == "number" and type(b.r) == "number" then
+					local dq, dr = a.q - b.q, a.r - b.r
+					local hex_distance = math.max(
+						math.abs(dq), math.abs(dr), math.abs(dq + dr))
+					local surface_neighbours = hex_distance > 0
+						and a.surface_deposit == true and b.surface_deposit == true
+					if not surface_neighbours
+						and hex_distance < MIN_ENRICHMENT_HEX_DISTANCE then
+						stats.enrichment_spacing_violations =
+							stats.enrichment_spacing_violations + 1
+						if stats.first_enrichment_spacing_violation == "" then
+							stats.first_enrichment_spacing_violation = table.concat({
+								tostring(a.marker and a.marker.class or "?"), tostring(a.hex),
+								tostring(b.marker and b.marker.class or "?"), tostring(b.hex),
+								"required=" .. tostring(MIN_ENRICHMENT_HEX_DISTANCE),
+								"actual=" .. tostring(hex_distance),
+							}, "|")
+						end
+					end
+				end
 				if a.surface_quota_resource and b.surface_quota_resource
 					and type(a.q) == "number" and type(a.r) == "number"
 					and type(b.q) == "number" and type(b.r) == "number" then
@@ -8010,6 +8128,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		and stats.missing_positions == 0 and stats.missing_topup_profiles == 0
 		and stats.duplicate_hex_pairs == 0 and stats.repulsion_violations == 0
 		and stats.outer_ring_spacing_violations == 0
+		and stats.enrichment_spacing_violations == 0
 		and stats.surface_quota_spacing_violations == 0
 		and stats.underground_fallback_strategy_failures == 0
 	-- Underground fallback spacing is a maximin preference, not a hard density gate. A closer

@@ -274,16 +274,18 @@ config.MountainBaseApronOuterRingSectors = 2
 -- sectors touching the map edge and 40% in the adjacent (inner) sector band.
 config.MountainBaseOuterRingResourceMinimum = 0
 config.MountainBaseOutermostResourceMinimumPercent = 60
--- Cluster members use their own conservative clearance: marker centers stay at least three hexes
--- apart. Sector-load balancing supplies the wider geographic pressure. Ordinary resource additions
--- retain vanilla family repulsion unchanged.
+-- Every new enrichment marker keeps three hexes from existing resources/anomalies/effects and from
+-- earlier top-ups.  Surface-deposit pairs are the sole exception: their physical rock piles may sit
+-- on neighbouring hexes, though never on the same hex. Cluster planning remains conservative when
+-- the eventual resource type is not known yet.
 config.MountainBaseQuotaMinimumHexDistance = 3
+config.TopUpEnrichmentMinimumHexDistance = 3
 -- A two-sector ring has materially less natural flat foothill area than the prior three-sector
 -- policy. Retain only the smallest extra set of deterministic low-slope foothills needed to
 -- satisfy vanilla's unchanged resource clearance, never broad terrain shelves.
 config.MountainBaseApronMaximumCount = 288
-config.MountainBaseApronCoreRadiusHexes = 6
-config.MountainBaseApronFeatherRadiusHexes = 8
+config.MountainBaseApronCoreRadiusHexes = 4
+config.MountainBaseApronFeatherRadiusHexes = 12
 
 -- Once resource top-ups have chosen their final coordinates, prepare only the terrain that their
 -- gameplay actually needs in the physical outer two-sector band.  Subsurface and terrain deposits
@@ -291,9 +293,10 @@ config.MountainBaseApronFeatherRadiusHexes = 8
 -- hex.  Each planned mountain cluster may additionally receive one nearby pad sized from
 -- RocketLandingSite's live flatten shape.  Every edit keeps an exact level gameplay core, then
 -- returns to untouched relief through a broad C2 quintic transition whose width is varied around
--- the perimeter and aligned with the local slope.  This avoids the circular terrace/ring silhouette
--- of a uniform radial feather.  The rule is geometry-only and contains no scenario or sector-name
--- cases.
+-- the perimeter and aligned with the local slope. Native small-scale relief is retained through
+-- most of that transition, while only the live building footprint and a narrow safety margin stay
+-- perfectly level. This avoids the smooth artificial terrace left by flattening the full rebuild
+-- guard. The rule is geometry-only and contains no scenario or sector-name cases.
 config.PrepareOuterResourceTerrain = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
@@ -877,13 +880,15 @@ C.MOUNTAIN_BASE_OUTERMOST_RESOURCE_MINIMUM_PERCENT = math.max(0, math.min(100,
 	as_number(config.MountainBaseOutermostResourceMinimumPercent, 60)))
 C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE = math.max(1,
 	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 3)))
+C.TOPUP_ENRICHMENT_MINIMUM_HEX_DISTANCE = math.max(1,
+	math.floor(as_number(config.TopUpEnrichmentMinimumHexDistance, 3)))
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
 	math.floor(as_number(config.MountainBaseApronMaximumCount, 288)))
 C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
-	as_number(config.MountainBaseApronCoreRadiusHexes, 6))
+	as_number(config.MountainBaseApronCoreRadiusHexes, 4))
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
-	as_number(config.MountainBaseApronFeatherRadiusHexes, 8))
+	as_number(config.MountainBaseApronFeatherRadiusHexes, 12))
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))

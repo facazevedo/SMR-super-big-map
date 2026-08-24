@@ -1416,9 +1416,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local guim_v = tonumber(Global("guim")) or 100
 	local cells_per_hex = math.max(1, (hex_size + 0.0) / height_tile)
 	local core_hexes = math.max(2,
-		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 3))
+		cfg_number("MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES", 4))
 	local feather_hexes = math.max(core_hexes + 2,
-		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 8))
+		cfg_number("MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES", 12))
 	local core_fraction = math.min(0.75, math.max(0.20,
 		(core_hexes + 0.0) / feather_hexes))
 	local outer_short = feather_hexes * cells_per_hex
@@ -1594,6 +1594,22 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if #selected >= maximum_count then break end
 		end
 	end
+	local detail_step = math.max(2, math.floor(cells_per_hex * 0.65 + 0.5))
+	local function split_local_detail(x, y, old)
+		local total, count = 0, 0
+		for oy = -1, 1 do
+			for ox = -1, 1 do
+				local sx = math.max(0, math.min(width - 1, x + ox * detail_step))
+				local sy = math.max(0, math.min(height - 1, y + oy * detail_step))
+				local value = grid:get(sx, sy)
+				if type(value) == "number" then
+					total, count = total + value, count + 1
+				end
+			end
+		end
+		local base = count > 0 and total / count or old
+		return base, old - base
+	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
@@ -1642,7 +1658,10 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 								if type(old) == "number" then
 									local target = candidate.center
 										+ candidate.gx * dx + candidate.gy * dy
-									local value = math.floor(old + (target - old) * weight + 0.5)
+									local base, detail = split_local_detail(x, y, old)
+									local detail_retention = 1 - weight * weight * weight
+									local value = math.floor(base + (target - base) * weight
+										+ detail * detail_retention + 0.5)
 									value = math.max(0, math.min(65535, value))
 									if value ~= old then
 										grid:set(x, y, value)
@@ -1987,6 +2006,7 @@ local function PrepareOuterResourceTerrain(map)
 		local patch = {
 			kind = kind, x = x, y = y, q = q, r = r, cx = cx, cy = cy,
 			core_cells = core_cells, outer_cells = outer_cells, target = target,
+			support_cells = core_cells,
 			phase = phase, relief_x = relief_x, relief_y = relief_y,
 		}
 		if type(details) == "table" then
@@ -2065,6 +2085,9 @@ local function PrepareOuterResourceTerrain(map)
 			-- live extractor boundary wholly inside one rebuilt buildable zone on rough terrain.
 			and math.max(extractor_core, math.ceil(world_radius + 5))
 			or surface_core + 2
+		local level_core = entry.kind == "extractor"
+			and math.max(extractor_core, math.ceil(world_radius + 1))
+			or surface_core
 		maximum_resource_core = math.max(maximum_resource_core, required_core)
 		local ready = exact_extractor_offsets
 			and exact_offsets_ready(entry.q, entry.r, exact_extractor_offsets, true)
@@ -2073,7 +2096,7 @@ local function PrepareOuterResourceTerrain(map)
 			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
 			kind = entry.kind, resource = entry.resource, ready_before = ready,
 			core_radius = radius, world_core_radius = world_radius,
-			required_core_radius = required_core,
+			required_core_radius = required_core, level_core_radius = level_core,
 			extractor_offsets = exact_extractor_offsets,
 			modified = false,
 		}
@@ -2085,13 +2108,15 @@ local function PrepareOuterResourceTerrain(map)
 				radius = required_core * cells_per_hex,
 				x = entry.x, y = entry.y, q = entry.q, r = entry.r,
 				core_hexes = required_core, kind = entry.kind, site = site,
+				level_core_hexes = level_core,
 			}
 		else
 			local required_feather = entry.kind == "extractor"
 				and math.max(extractor_feather, required_core + 4) or surface_feather
 			local patch = add_patch(entry.kind, entry.x, entry.y, entry.q, entry.r,
-				required_core, required_feather,
-				{ resource_site = site })
+				level_core, required_feather,
+				{ resource_site = site,
+					support_cells = required_core * cells_per_hex })
 			if patch then site.modified = true end
 		end
 		resource_sites[#resource_sites + 1] = site
@@ -2119,6 +2144,7 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_world_radius = radius_reference
 		and offsets_world_radius_hexes(radius_reference.q, radius_reference.r,
 			rocket_offsets, rocket_hex_radius) or rocket_hex_radius
+	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
 	local function resource_clearance(q, r)
@@ -2246,10 +2272,12 @@ local function PrepareOuterResourceTerrain(map)
 					if best.modified then
 						add_patch("rocket", best.x, best.y, best.q, best.r,
 							-- As with extractors, the live shape is center-based but the final buildable
-							-- verdict consumes the surrounding cells of every edge hex.
-							rocket_required_core,
+							-- verdict consumes the surrounding cells of every edge hex. Keep that broad
+							-- support band gently graded; only the shape plus one hex is perfectly level.
+							rocket_level_core,
 							rocket_outer_radius,
-							{ rocket_site = best })
+							{ rocket_site = best,
+								support_cells = rocket_required_core * cells_per_hex })
 					end
 					rocket_sites[#rocket_sites + 1] = best
 				end
@@ -2268,7 +2296,7 @@ local function PrepareOuterResourceTerrain(map)
 			local intersects_core = false
 			for _, patch in ipairs(patches) do
 				local dx, dy = protected.cx - patch.cx, protected.cy - patch.cy
-				local radius = protected.radius + patch.core_cells
+				local radius = protected.radius + patch.support_cells
 				if dx * dx + dy * dy <= radius * radius then
 					intersects_core = true
 					break
@@ -2279,7 +2307,8 @@ local function PrepareOuterResourceTerrain(map)
 				local feather = protected.core_hexes
 					+ (protected.kind == "extractor" and 4 or 3)
 				if add_patch(protected.kind, protected.x, protected.y, protected.q, protected.r,
-					protected.core_hexes, feather, { resource_site = site }) then
+					protected.level_core_hexes, feather, { resource_site = site,
+						support_cells = protected.core_hexes * cells_per_hex }) then
 					site.modified = true
 				end
 				table.remove(protected_ready_sites, index)
@@ -2308,7 +2337,7 @@ local function PrepareOuterResourceTerrain(map)
 		for b = a + 1, #patches do
 			local dx = patches[a].cx - patches[b].cx
 			local dy = patches[a].cy - patches[b].cy
-			local radius = patches[a].core_cells + patches[b].core_cells
+			local radius = patches[a].support_cells + patches[b].support_cells
 			if dx * dx + dy * dy <= radius * radius then join(a, b) end
 		end
 	end
@@ -2331,6 +2360,22 @@ local function PrepareOuterResourceTerrain(map)
 			if dx * dx + dy * dy <= protected.radius * protected.radius then return true end
 		end
 		return false
+	end
+	local detail_step = math.max(2, math.floor(cells_per_hex * 0.65 + 0.5))
+	local function split_local_detail(x, y, old)
+		local total, count = 0, 0
+		for oy = -1, 1 do
+			for ox = -1, 1 do
+				local sx = math.max(0, math.min(width - 1, x + ox * detail_step))
+				local sy = math.max(0, math.min(height - 1, y + oy * detail_step))
+				local sample = grid:get(sx, sy)
+				if type(sample) == "number" then
+					total, count = total + sample, count + 1
+				end
+			end
+		end
+		local base = count > 0 and total / count or old
+		return base, old - base
 	end
 
 	local pause = Global("PauseInfiniteLoopDetection")
@@ -2393,7 +2438,13 @@ local function PrepareOuterResourceTerrain(map)
 						end
 						local old = grid:get(x, y)
 						if type(old) == "number" then
-							local value = math.floor(old + (patch.target - old) * weight + 0.5)
+							-- Blend the broad landform toward the pad elevation but return native
+							-- small-scale relief much faster than the low-frequency grade. This retains
+							-- the surrounding terrain's visual texture instead of exposing a smooth halo.
+							local base, detail = split_local_detail(x, y, old)
+							local detail_retention = 1 - weight * weight * weight
+							local value = math.floor(base + (patch.target - base) * weight
+								+ detail * detail_retention + 0.5)
 							value = math.max(0, math.min(65535, value))
 							if value ~= old then
 								grid:set(x, y, value)

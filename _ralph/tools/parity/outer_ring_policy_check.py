@@ -245,6 +245,17 @@ static_checks = {
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
     ),
+    "resource_terrain_levels_only_live_footprint_margin": (
+        "math.ceil(world_radius + 1)" in outer_resource_terrain
+        and "local rocket_level_core = math.ceil(rocket_world_radius + 1)" in outer_resource_terrain
+        and "support_cells = required_core * cells_per_hex" in outer_resource_terrain
+        and "patches[a].support_cells + patches[b].support_cells" in outer_resource_terrain
+    ),
+    "resource_terrain_preserves_native_transition_detail": (
+        "local function split_local_detail" in outer_resource_terrain
+        and "local detail_retention = 1 - weight * weight * weight" in outer_resource_terrain
+        and "detail * detail_retention" in outer_resource_terrain
+    ),
     "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
         GENERATION.index('"surface prepare outer resource terrain"')
         < GENERATION.index('"surface top-up anomalies"')
@@ -294,6 +305,11 @@ static_checks = {
     ),
     "natural_aprons_require_mountain_relief": "higher_samples < 3" in aprons,
     "natural_aprons_keep_gentle_grade": "if gradient_length > 4" in aprons,
+    "natural_aprons_use_small_core_and_broad_transition": (
+        "config.MountainBaseApronCoreRadiusHexes = 4" in CONFIG
+        and "config.MountainBaseApronFeatherRadiusHexes = 12" in CONFIG
+        and "detail * detail_retention" in aprons
+    ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
     "natural_aprons_have_no_scenario_special_case": (
@@ -336,13 +352,37 @@ static_checks = {
         and "< surface_quota_minimum_hex_distance" in resources
         and "surface_quota_spacing_violations" in DEPOSITS
     ),
+    "all_topups_enforce_three_hex_enrichment_spacing": (
+        "config.TopUpEnrichmentMinimumHexDistance = 3" in CONFIG
+        and "C.TOPUP_ENRICHMENT_MINIMUM_HEX_DISTANCE" in CONFIG
+        and "TopUpEnrichmentMinimumHexDistance" in DEPOSITS
+        and "CanPlaceMinimum = can_place_minimum" in DEPOSITS
+        and "stats.enrichment_spacing_violations == 0" in DEPOSITS
+    ),
+    "surface_deposit_pairs_are_the_only_neighbour_exception": (
+        'IsKindOfSafe(marker, "SurfaceDepositMarker")' in DEPOSITS
+        and "distance > 0 and candidate_is_surface == true" in DEPOSITS
+        and "occupied.non_surface == 0" in DEPOSITS
+        and "a.surface_deposit == true and b.surface_deposit == true" in DEPOSITS
+    ),
+    "outer_anomalies_clear_all_existing_enrichments": (
+        'map, "outer-ring anomaly enrichment spacing", ignored' in DEPOSITS
+        and "enrichment_spacing.CanPlaceMinimum(" in DEPOSITS
+        and "MIN_ENRICHMENT_HEX_DISTANCE" in DEPOSITS
+    ),
     "badge_relocation_preserves_resource_quota_policy": (
-        "SurfaceQuotaBadgeContext" in DEPOSITS
+        "local BADGE_SPACING_PATCH_VERSION = 6" in DEPOSITS
+        and "SurfaceQuotaBadgeContext" in DEPOSITS
         and "SurfaceQuotaBadgeCandidateAllowed" in DEPOSITS
         and "context.preserve_outermost" in DEPOSITS
         and "context.preserve_inner_band" in DEPOSITS
         and "AxialHexDistance(q, r, other.q, other.r)" in DEPOSITS
         and "BadgeCandidateAllowed(marker, map, pt, cx, cy, q, r" in DEPOSITS
+    ),
+    "badge_relocation_preserves_three_hex_topup_spacing": (
+        "minimum_hex_distance = TopUpEnrichmentMinimumHexDistance()" in DEPOSITS
+        and "context.marker_surface == true and other.surface == true" in DEPOSITS
+        and "distance < context.minimum_hex_distance" in DEPOSITS
     ),
     "resource_quota_places_before_general_resources": (
         resources.index("build_quota_cluster_plans")
@@ -458,7 +498,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_879": "'version', 879" in METADATA,
+    "version_is_880": "'version', 880" in METADATA,
 }
 
 case_results = []
@@ -529,7 +569,7 @@ feather_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 9,
+    "schema_version": 10,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
