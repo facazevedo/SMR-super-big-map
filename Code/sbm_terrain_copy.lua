@@ -2263,19 +2263,20 @@ local function PrepareOuterResourceTerrain(map)
 					best.anchor_members = group.anchors
 					best.premium_members = group.premiums
 					best.cluster_q, best.cluster_r = cq, cr
-					best.modified = not best.ready_before
+					-- Rebuild every planned landing footprint from the finalized height field. The
+					-- engine's pre-rebuild buildable grid can report a pad ready and then invalidate an
+					-- edge hex on the authoritative rebuild, so readiness is not safe as a write skip.
+					best.modified = true
 					best.shape_radius = rocket_hex_radius
 					best.world_shape_radius = rocket_world_radius
-					if best.modified then
-						add_patch("rocket", best.x, best.y, best.q, best.r,
-							-- As with extractors, the live shape is center-based but the final buildable
-							-- verdict consumes the surrounding cells of every edge hex. Keep that broad
-							-- support band gently graded; only the shape plus one hex is perfectly level.
-							rocket_level_core,
-							rocket_outer_radius,
-							{ rocket_site = best,
-								support_cells = rocket_required_core * cells_per_hex })
-					end
+					add_patch("rocket", best.x, best.y, best.q, best.r,
+						-- As with extractors, the live shape is center-based but the final buildable
+						-- verdict consumes the surrounding cells of every edge hex. Keep that broad
+						-- support band gently graded; only the shape plus one hex is perfectly level.
+						rocket_level_core,
+						rocket_outer_radius,
+						{ rocket_site = best,
+							support_cells = rocket_required_core * cells_per_hex })
 					rocket_sites[#rocket_sites + 1] = best
 				end
 		end

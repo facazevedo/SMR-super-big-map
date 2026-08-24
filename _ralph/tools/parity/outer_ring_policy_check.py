@@ -228,6 +228,11 @@ static_checks = {
         'pcall(get_extended_shape, "RocketLandingSite", 1)' in outer_resource_terrain
         and "ready_offsets(site.q, site.r, rocket_offsets, true)" in outer_resource_terrain
     ),
+    "resource_cluster_pads_are_rebuilt_from_final_height_field": (
+        "best.modified = true" in outer_resource_terrain
+        and 'add_patch("rocket", best.x, best.y, best.q, best.r,' in outer_resource_terrain
+        and "pre-rebuild buildable grid" in outer_resource_terrain
+    ),
     "resource_terrain_uses_seamless_quintic_feather": (
         "t * t * t * (t * (t * 6 - 15) + 10)" in outer_resource_terrain
         and "weight = 1 - smooth" in outer_resource_terrain
@@ -512,7 +517,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_884": "'version', 884" in METADATA,
+    "version_is_885": "'version', 885" in METADATA,
 }
 
 case_results = []
