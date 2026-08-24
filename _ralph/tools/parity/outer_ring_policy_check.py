@@ -207,6 +207,7 @@ static_checks = {
     "surface_resources_require_exact_rover_tile_passability": (
         'local surface_offsets = { { 0, 0 } }' in outer_resource_terrain
         and 'site.kind == "extractor"' in outer_resource_terrain
+        and "one consistent API value before observing the" in outer_resource_terrain
     ),
     "resource_clusters_are_general_seeded_plan_components": (
         "cluster_plan = tonumber(marker.SuperBigMapResourceClusterPlan)"
@@ -298,7 +299,10 @@ static_checks = {
     ),
     "resource_quota_rejects_edge_crossing_extractor_footprints": (
         "extractor_footprint_within_map(candidate)" in resources
-        and "extractor_edge_margin" in resources
+        and "surface_extractor_safe_margin" in resources
+        and "surface_extractor_footprint_within_map(c)" in resources
+        and "local extractor_safe_margin = 10 * hex_size" in TERRAIN
+        and "Move only those centers minimally inward" in TERRAIN
     ),
     "resource_clusters_are_separated_beyond_the_cluster_radius": (
         "distance <= resource_cluster_radius" in resources
@@ -407,8 +411,11 @@ static_checks = {
         'strength = "standard"' in resources
         and 'strength = "strong"' in resources
         and 'strength = "rare_three_extractor"' in resources
-        and 'strength, resource_target, extractor_target = "exceptional_anomaly", 2, 1'
-        in resources
+        and '"exceptional_anomaly", 5, 1, 2' in resources
+        and "minimum_resource_target = 3" in resources
+        and "minimum_resource_target = 4" in resources
+        and "local resource_target = reward_target - anomaly_capacity" in resources
+        and "reward_capacity = reward_target" in resources
         and 'template_policy ~= "premium"' in resources
         and 'template_policy ~= "nonpremium"' in resources
         and "SuperBigMapResourceClusterAnchor" in resources
@@ -436,7 +443,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_877": "'version', 877" in METADATA,
+    "version_is_878": "'version', 878" in METADATA,
 }
 
 case_results = []

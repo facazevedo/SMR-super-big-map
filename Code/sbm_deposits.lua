@@ -3741,6 +3741,19 @@ function DepositRules.TopUpDeposits(map)
 	if span_x <= 0 or span_y <= 0 then
 		return
 	end
+	local const_tbl = Global("const")
+	local surface_hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
+	surface_hex_size = type(surface_hex_size) == "number" and surface_hex_size > 0
+		and surface_hex_size or 1000
+	local surface_extractor_safe_margin = 10 * surface_hex_size
+	local function surface_extractor_footprint_within_map(candidate)
+		if IsUndergroundMap(map) then return true end
+		local x, y = candidate and candidate.x, candidate and candidate.y
+		return type(x) == "number" and type(y) == "number"
+			and x >= surface_extractor_safe_margin and y >= surface_extractor_safe_margin
+			and x <= map_w - surface_extractor_safe_margin
+			and y <= map_h - surface_extractor_safe_margin
+	end
 	local resource_cluster_minimum_count = not IsUndergroundMap(map)
 		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 6)) or 0
 	local resource_cluster_maximum_count = not IsUndergroundMap(map)
@@ -3763,38 +3776,46 @@ function DepositRules.TopUpDeposits(map)
 	local surface_mountain_base_minimum = 0
 	for cluster_index = 1, desired_resource_cluster_count do
 		local strength_roll = RandInt(100)
-		local strength, resource_target, extractor_target
+		local strength, reward_target, extractor_target, minimum_resource_target
 		if strength_roll < 70 then
 			strength = "standard"
-			resource_target = 3 + RandInt(2)
+			reward_target = 3 + RandInt(2)
 			extractor_target = 1
+			minimum_resource_target = 3
 		elseif strength_roll < 95 then
 			strength = "strong"
-			resource_target = 4 + RandInt(2)
+			reward_target = 4 + RandInt(2)
 			extractor_target = 2
+			minimum_resource_target = 4
 		else
 			strength = "rare_three_extractor"
-			resource_target = 4 + RandInt(2)
+			reward_target = 4 + RandInt(2)
 			extractor_target = 3
+			minimum_resource_target = 4
 		end
 		local anomaly_roll = RandInt(1000)
 		local anomaly_capacity = anomaly_roll < 550 and 0
 			or anomaly_roll < 930 and 1 or anomaly_roll < 990 and 2 or 3
-		-- The exceptional three-anomaly group keeps only two deposits so the same five-reward ceiling
-		-- remains absolute. All other groups retain the ordinary 3..5-deposit balance.
+		-- Choose the total reward budget first. Anomalies consume that budget instead of being
+		-- appended to it: standard groups stay at 3..4 total rewards, strong/rare groups at 4..5,
+		-- and the exceptional group reserves two deposit slots plus three anomaly slots.
 		if anomaly_capacity == 3 then
-			strength, resource_target, extractor_target = "exceptional_anomaly", 2, 1
+			strength, reward_target, extractor_target, minimum_resource_target =
+				"exceptional_anomaly", 5, 1, 2
 		end
+		reward_target = math.max(1, math.min(resource_cluster_maximum_total, reward_target))
+		anomaly_capacity = math.max(0, math.min(maximum_cluster_anomalies,
+			reward_target - minimum_resource_target, anomaly_capacity))
+		local resource_target = reward_target - anomaly_capacity
 		resource_target = math.max(resource_cluster_minimum_deposits,
 			math.min(resource_cluster_maximum_deposits, resource_target))
 		extractor_target = math.max(1, math.min(3, resource_target, extractor_target))
-		anomaly_capacity = math.max(0, math.min(maximum_cluster_anomalies,
-			resource_cluster_maximum_total - resource_target, anomaly_capacity))
+		reward_target = resource_target + anomaly_capacity
 		planned_resource_cluster_specs[#planned_resource_cluster_specs + 1] = {
 			index = cluster_index, strength = strength,
 			resource_target = resource_target, extractor_target = extractor_target,
 			anomaly_capacity = anomaly_capacity,
-			reward_capacity = resource_target + anomaly_capacity,
+			reward_capacity = reward_target,
 		}
 		surface_mountain_base_minimum = surface_mountain_base_minimum + resource_target
 	end
@@ -4452,8 +4473,12 @@ function DepositRules.TopUpDeposits(map)
 					if option then
 						if not seen_options[option.key] then
 							seen_options[option.key] = true
-							local c = take(option.terrain_type, option.profile)
-							if not c and allow_any_terrain == true then c = take_any(option.profile) end
+							local c
+							repeat
+								c = take(option.terrain_type, option.profile)
+								if not c and allow_any_terrain == true then c = take_any(option.profile) end
+							until not c or not is_extractor
+								or surface_extractor_footprint_within_map(c)
 							if c then return c, template, option.position, option.profile end
 						end
 					end
@@ -4752,23 +4777,12 @@ function DepositRules.TopUpDeposits(map)
 		local maximum_cluster_extractors = math.max(minimum_cluster_extractors,
 			math.min(resource_cluster_maximum_deposits,
 				math.floor(cfg().OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS or 3)))
-		local const_tbl = Global("const")
-		local cluster_hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
-		cluster_hex_size = type(cluster_hex_size) == "number" and cluster_hex_size > 0
-			and cluster_hex_size or 1000
 		-- The live extractor shape itself is smaller than the terrain core that survives a final
 		-- BuildableGrid rebuild. Keep the whole nine-hex guarded core (live shape radius plus the
 		-- terrain pass's five-hex rebuild allowance) inside the physical map. This prevents a valid
 		-- candidate near any edge from later inheriting the engine's immutable boundary bit.
-		local extractor_edge_margin_hexes = math.max(4,
-			math.ceil((cfg().OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES or 3) + 6),
-			math.ceil((cfg().OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES or 7) + 2))
-		local extractor_edge_margin = cluster_hex_size * extractor_edge_margin_hexes
 		local function extractor_footprint_within_map(candidate)
-			local x, y = candidate and candidate.x, candidate and candidate.y
-			return type(x) == "number" and type(y) == "number"
-				and x >= extractor_edge_margin and y >= extractor_edge_margin
-				and x <= map_w - extractor_edge_margin and y <= map_h - extractor_edge_margin
+			return surface_extractor_footprint_within_map(candidate)
 		end
 		local function candidate_distance(a, b)
 			return AxialHexDistance(a.q, a.r, b.q, b.r) or math.huge
@@ -4979,6 +4993,7 @@ function DepositRules.TopUpDeposits(map)
 				local result = table.concat({
 					tostring(plan.id), outermost and "outer" or "inner",
 					"target=" .. tostring(plan.target),
+					"reward_budget=" .. tostring(plan.reward_capacity),
 					"strength=" .. tostring(plan.strength),
 					"extractors=" .. tostring(extractors_added),
 					"premium=" .. tostring(premium_added or 0),

@@ -2510,7 +2510,7 @@ local function AuditOuterResourceTerrain(map)
 	local function set_exact_offsets_passable(q, r, offsets)
 		if type(terrain_api.SetPassability) ~= "function"
 			or type(box_fn) ~= "function" then return false end
-		local repaired = false
+		local areas = {}
 		local passable_values = { true, 1, false, 0 }
 		for _, offset in ipairs(offsets) do
 			local ok_xy, x, y = pcall(hex_to_world, q + offset[1], r + offset[2])
@@ -2518,21 +2518,24 @@ local function AuditOuterResourceTerrain(map)
 				local ok_box, area = pcall(box_fn,
 					point_fn(x - passability_clear_half, y - passability_clear_half),
 					point_fn(x + passability_clear_half, y + passability_clear_half))
-				if ok_box and area then
-					local point = point_fn(x, y)
-					for _, value in ipairs(passable_values) do
-						pcall(terrain_api.SetPassability, map, area, value)
-						local ok_p, is_passable = pcall(terrain_api.IsPassable, map, point)
-						if ok_p and is_passable == true then
-							repaired = true
-							passability_clears = passability_clears + 1
-							break
-						end
-					end
-				end
+				if ok_box and area then areas[#areas + 1] = area end
 			end
 		end
-		return repaired
+		if #areas ~= #offsets then return false end
+		-- Set every overlapping footprint box with one consistent API value before observing the
+		-- result.  Selecting a value independently per hex allowed a later overlapping box to undo
+		-- an earlier one on some edge-facing extractor shapes.
+		for _, value in ipairs(passable_values) do
+			for _, area in ipairs(areas) do
+				pcall(terrain_api.SetPassability, map, area, value)
+			end
+			local ready = ready_offsets(q, r, offsets, false)
+			if ready then
+				passability_clears = passability_clears + #areas
+				return true
+			end
+		end
+		return false
 	end
 	local surface_offsets = { { 0, 0 } }
 	local extractor_radius = math.max(2,
@@ -4606,6 +4609,12 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 	local scale_y = (full_th + 0.0) / sh_tiles
 	local source_origin_x = tonumber(map.SuperBigMapSourceX) or 0
 	local source_origin_y = tonumber(map.SuperBigMapSourceY) or 0
+	local mapdata = map.mapdata
+	local surface_map = type(mapdata) ~= "table" or mapdata.Environment ~= "Underground"
+	local hex_size = type(const_tbl) == "table" and tonumber(const_tbl.HexSize) or 1000
+	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
+	local extractor_safe_margin = 10 * hex_size
+	local full_world_w, full_world_h = full_tw * hts, full_th * hts
 	local src_box = box_fn(0, 0, sw_tiles * hts, sh_tiles * hts)
 	local marker_class_cache = {}
 	local function is_marker(obj)
@@ -4698,6 +4707,18 @@ local function ScaleMarkersToFull(map, _, pass_edits_already_suspended)
 				local raw_ny = math.floor(source_origin_y
 					+ (source_y - source_origin_y) * scale_y + 0.5)
 				local nx, ny = raw_nx, raw_ny
+				local extractor_marker = surface_map and (IsKindOfSafe(obj, "SubsurfaceDepositMarker")
+					or IsKindOfSafe(obj, "TerrainDepositMarker"))
+				if extractor_marker then
+					-- Native extractor markers can originate within a few source hexes of an edge.
+					-- Stretching preserves that relative position, but their live building footprint then
+					-- crosses the immutable physical boundary. Move only those centers minimally inward;
+					-- they remain in the outermost sector and can now receive a complete buildable pad.
+					nx = math.max(extractor_safe_margin,
+						math.min(full_world_w - extractor_safe_margin, nx))
+					ny = math.max(extractor_safe_margin,
+						math.min(full_world_h - extractor_safe_margin, ny))
+				end
 				local captured_native = type(capture_owner.SuperBigMapNativeSourceX) == "number"
 					and type(capture_owner.SuperBigMapNativeSourceY) == "number"
 				if captured_native and not is_buried_wonder_marker
