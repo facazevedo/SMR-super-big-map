@@ -230,6 +230,21 @@ static_checks = {
         "t * t * t * (t * (t * 6 - 15) + 10)" in outer_resource_terrain
         and "weight = 1 - smooth" in outer_resource_terrain
     ),
+    "resource_terrain_transition_is_broad_and_irregular": (
+        "config.OuterResourceTransitionMinimumWidthHexes = 6" in CONFIG
+        and "config.OuterResourceTransitionIrregularityPercent = 38" in CONFIG
+        and "patch.outer_cells - patch.core_cells" in outer_resource_terrain
+        and "local harmonic =" in outer_resource_terrain
+    ),
+    "resource_terrain_transition_tracks_local_relief": (
+        "local relief_probe =" in outer_resource_terrain
+        and "relief_x, relief_y = relief_x / relief_length" in outer_resource_terrain
+        and "local along_relief =" in outer_resource_terrain
+    ),
+    "resource_terrain_irregularity_never_shrinks_level_core": (
+        "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
+        and "if distance <= patch.core_cells then" in outer_resource_terrain
+    ),
     "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
         GENERATION.index('"surface prepare outer resource terrain"')
         < GENERATION.index('"surface top-up anomalies"')
@@ -443,7 +458,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_878": "'version', 878" in METADATA,
+    "version_is_879": "'version', 879" in METADATA,
 }
 
 case_results = []

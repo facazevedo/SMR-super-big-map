@@ -1739,8 +1739,9 @@ end
 -- exposed resources need a rover-passable collection hex, extractor resources need a compact
 -- buildable footprint, and a mountain cluster of four or more resources may receive one nearby
 -- RocketLandingSite footprint.  No marker is moved.  Flat/passable/buildable terrain is left
--- byte-for-byte unchanged; only failed footprints are shaped, with the same C2 quintic feather as
--- the natural foothill aprons above.
+-- byte-for-byte unchanged; only failed footprints are shaped.  The required gameplay core remains
+-- exactly level, while a slope-aligned, irregular-width C2 quintic feather prevents the transition
+-- from reading as a stamped circular terrace.
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -1936,6 +1937,10 @@ local function PrepareOuterResourceTerrain(map)
 		cfg_number("OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES", 1))
 	local surface_feather = math.max(surface_core + 2,
 		cfg_number("OUTER_RESOURCE_SURFACE_FEATHER_RADIUS_HEXES", 4))
+	local transition_minimum_width = math.max(2,
+		cfg_number("OUTER_RESOURCE_TRANSITION_MINIMUM_WIDTH_HEXES", 6))
+	local transition_irregularity = math.max(0, math.min(0.45,
+		cfg_number("OUTER_RESOURCE_TRANSITION_IRREGULARITY_PERCENT", 38) / 100))
 	local function median_height(cx, cy, radius_cells)
 		local values = {}
 		local sample_radius = math.max(1, radius_cells * 0.75)
@@ -1957,13 +1962,32 @@ local function PrepareOuterResourceTerrain(map)
 	local function add_patch(kind, x, y, q, r, core_hexes, feather_hexes, details)
 		local cx, cy = x / height_tile, y / height_tile
 		local core_cells = core_hexes * cells_per_hex
-		local outer_cells = feather_hexes * cells_per_hex
+		local outer_cells = math.max(feather_hexes,
+			core_hexes + transition_minimum_width) * cells_per_hex
 		local target = median_height(cx, cy, core_cells)
 		if not target then return nil end
+		-- Orient the broad asymmetry along the measured local relief.  Nearly level ground receives a
+		-- deterministic coordinate-derived axis instead, so this visual naturalization never consumes
+		-- or perturbs the map generator's random stream.
+		local relief_probe = math.max(core_cells + cells_per_hex,
+			(core_cells + outer_cells) * 0.5)
+		local left, right = grid_value(cx - relief_probe, cy),
+			grid_value(cx + relief_probe, cy)
+		local top, bottom = grid_value(cx, cy - relief_probe),
+			grid_value(cx, cy + relief_probe)
+		local relief_x = left and right and right - left or 0
+		local relief_y = top and bottom and bottom - top or 0
+		local relief_length = math.sqrt(relief_x * relief_x + relief_y * relief_y)
+		local phase = (math.abs(q * 37 + r * 61) % 6283) / 1000
+		if relief_length < 1 then
+			relief_x, relief_y = math.cos(phase), math.sin(phase)
+		else
+			relief_x, relief_y = relief_x / relief_length, relief_y / relief_length
+		end
 		local patch = {
 			kind = kind, x = x, y = y, q = q, r = r, cx = cx, cy = cy,
 			core_cells = core_cells, outer_cells = outer_cells, target = target,
-			phase = (math.abs(q * 37 + r * 61) % 6283) / 1000,
+			phase = phase, relief_x = relief_x, relief_y = relief_y,
 		}
 		if type(details) == "table" then
 			for key, value in pairs(details) do patch[key] = value end
@@ -2328,7 +2352,12 @@ local function PrepareOuterResourceTerrain(map)
 		end)
 		for _, patch in ipairs(patches) do
 			shaped_patches = shaped_patches + 1
-			local radius = patch.outer_cells
+			local base_transition = math.max(cells_per_hex * 2,
+				patch.outer_cells - patch.core_cells)
+			-- The angular warp is applied to transition width, not total pad radius.  Therefore even the
+			-- narrowest inward lobe leaves the exact circular gameplay core wholly intact.
+			local maximum_width_scale = 1.55
+			local radius = patch.core_cells + base_transition * maximum_width_scale
 			local x0 = math.max(0, math.floor(patch.cx - radius - 2))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 2))
 			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 2))
@@ -2336,16 +2365,23 @@ local function PrepareOuterResourceTerrain(map)
 			for y = y0, y1 do
 				for x = x0, x1 do
 					local dx, dy = x - patch.cx, y - patch.cy
-					local angle = math.atan2 and math.atan2(dy, dx) or 0
-					local lobe = 1 + 0.025 * math.sin(3 * angle + patch.phase)
-						+ 0.015 * math.sin(5 * angle - patch.phase)
 					local distance = math.sqrt(dx * dx + dy * dy)
-					local outer_radius = radius * lobe
+					local angle = math.atan2 and math.atan2(dy, dx) or 0
+					local ux, uy = 1, 0
+					if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
+					local along_relief = ux * patch.relief_x + uy * patch.relief_y
+					local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
+						+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
+						+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+					local width_scale = 1 + transition_irregularity * harmonic
+						+ 0.12 * (2 * along_relief * along_relief - 1)
+						- 0.06 * along_relief
+					width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
+					local outer_radius = patch.core_cells + base_transition * width_scale
 					if distance < outer_radius and not is_protected_ready_cell(x, y) then
 						local weight
-						-- The irregular lobe belongs only to the feather.  The guaranteed flat core is
-						-- an exact circle and must never shrink on a negative lobe, otherwise live
-						-- extractor/rocket edge hexes can straddle the blend and fail after rebuild.
+						-- The guaranteed flat core is an exact circle and never participates in the
+						-- boundary warp, so live extractor/rocket edge hexes cannot straddle the blend.
 						if distance <= patch.core_cells then
 							weight = 1
 						else
