@@ -252,7 +252,8 @@ static_checks = {
         and "patches[a].support_cells + patches[b].support_cells" in outer_resource_terrain
     ),
     "resource_terrain_preserves_native_transition_detail": (
-        "local function split_local_detail" in outer_resource_terrain
+        "local local_plane = patch.target" in outer_resource_terrain
+        and "local detail = old - local_plane" in outer_resource_terrain
         and "local detail_retention = 1 - weight * weight * weight" in outer_resource_terrain
         and "detail * detail_retention" in outer_resource_terrain
     ),
@@ -498,7 +499,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_880": "'version', 880" in METADATA,
+    "version_is_881": "'version', 881" in METADATA,
 }
 
 case_results = []

@@ -1594,23 +1594,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if #selected >= maximum_count then break end
 		end
 	end
-	local detail_step = math.max(2, math.floor(cells_per_hex * 0.65 + 0.5))
-	local function split_local_detail(x, y, old)
-		local total, count = 0, 0
-		for oy = -1, 1 do
-			for ox = -1, 1 do
-				local sx = math.max(0, math.min(width - 1, x + ox * detail_step))
-				local sy = math.max(0, math.min(height - 1, y + oy * detail_step))
-				local value = grid:get(sx, sy)
-				if type(value) == "number" then
-					total, count = total + value, count + 1
-				end
-			end
-		end
-		local base = count > 0 and total / count or old
-		return base, old - base
-	end
-
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
@@ -1658,9 +1641,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 								if type(old) == "number" then
 									local target = candidate.center
 										+ candidate.gx * dx + candidate.gy * dy
-									local base, detail = split_local_detail(x, y, old)
+									local detail = old - target
 									local detail_retention = 1 - weight * weight * weight
-									local value = math.floor(base + (target - base) * weight
+									local value = math.floor(target
 										+ detail * detail_retention + 0.5)
 									value = math.max(0, math.min(65535, value))
 									if value ~= old then
@@ -1996,6 +1979,8 @@ local function PrepareOuterResourceTerrain(map)
 			grid_value(cx, cy + relief_probe)
 		local relief_x = left and right and right - left or 0
 		local relief_y = top and bottom and bottom - top or 0
+		local grade_x = relief_x / (2 * relief_probe)
+		local grade_y = relief_y / (2 * relief_probe)
 		local relief_length = math.sqrt(relief_x * relief_x + relief_y * relief_y)
 		local phase = (math.abs(q * 37 + r * 61) % 6283) / 1000
 		if relief_length < 1 then
@@ -2008,6 +1993,7 @@ local function PrepareOuterResourceTerrain(map)
 			core_cells = core_cells, outer_cells = outer_cells, target = target,
 			support_cells = core_cells,
 			phase = phase, relief_x = relief_x, relief_y = relief_y,
+			grade_x = grade_x, grade_y = grade_y,
 		}
 		if type(details) == "table" then
 			for key, value in pairs(details) do patch[key] = value end
@@ -2361,23 +2347,6 @@ local function PrepareOuterResourceTerrain(map)
 		end
 		return false
 	end
-	local detail_step = math.max(2, math.floor(cells_per_hex * 0.65 + 0.5))
-	local function split_local_detail(x, y, old)
-		local total, count = 0, 0
-		for oy = -1, 1 do
-			for ox = -1, 1 do
-				local sx = math.max(0, math.min(width - 1, x + ox * detail_step))
-				local sy = math.max(0, math.min(height - 1, y + oy * detail_step))
-				local sample = grid:get(sx, sy)
-				if type(sample) == "number" then
-					total, count = total + sample, count + 1
-				end
-			end
-		end
-		local base = count > 0 and total / count or old
-		return base, old - base
-	end
-
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
 	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
@@ -2441,9 +2410,12 @@ local function PrepareOuterResourceTerrain(map)
 							-- Blend the broad landform toward the pad elevation but return native
 							-- small-scale relief much faster than the low-frequency grade. This retains
 							-- the surrounding terrain's visual texture instead of exposing a smooth halo.
-							local base, detail = split_local_detail(x, y, old)
+							local local_plane = patch.target
+								+ patch.grade_x * dx + patch.grade_y * dy
+							local detail = old - local_plane
 							local detail_retention = 1 - weight * weight * weight
-							local value = math.floor(base + (patch.target - base) * weight
+							local value = math.floor(local_plane
+								+ (patch.target - local_plane) * weight
 								+ detail * detail_retention + 0.5)
 							value = math.max(0, math.min(65535, value))
 							if value ~= old then
