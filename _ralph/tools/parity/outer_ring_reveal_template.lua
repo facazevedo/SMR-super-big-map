@@ -83,7 +83,7 @@ CreateRealTimeThread(function()
 		local terrain_audit = map.SuperBigMapOuterResourceTerrainAudit
 		local cluster_plan = map.SuperBigMapResourceClusterPlanDiagnostic or {}
 		g_OuterRingRevealSummary = string.format(
-			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d registered_anomalies=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] terrain_resources=%s terrain_modified=%s rocket_pads=%s rocket_modified=%s verified_mountain_pads=%s terrain_failures=%s/%s failure_reasons=[%s/%s] first_failures=[%s/%s] audit_violations=%s shortfall=%d outermost_shortfall=%d inner_band=%d/%d inner_shortfall=%d quota=%d/%d clusters=%s[%s-%s] cluster_shortfall=%s cluster_excess=%s cluster_extractors=%s/%s cluster_extractor_shortfall=%s anomaly_cluster_max=%d anomaly_cluster_overflow=%d cluster_plan=%s:%s:%s/%s/%s required=%s/%s/%s results=[%s]",
+			"scanned=%d pre_resources=%d post_resources=%d placed=%d outermost_resources=%d guaranteed_outermost=%d guaranteed_outermost_placed=%d outermost_minimum=%d resources=[%s] anomalies=%d/%d anomaly_placed=%d registered_anomalies=%d anomaly_types=[%s] outside=%d effects_in_ring=%d effect_types=[%s] terrain_resources=%s terrain_modified=%s rocket_pads=%s rocket_modified=%s verified_mountain_pads=%s terrain_failures=%s/%s failure_reasons=[%s/%s] first_failures=[%s/%s] audit_violations=%s shortfall=%d outermost_shortfall=%d inner_band=%d/%d inner_shortfall=%d quota=%d/%d clusters=%s[%s-%s] cluster_shortfall=%s cluster_excess=%s cluster_resources=%s-%s resource_excess=%s cluster_extractors=%s-%s extractor_excess=%s anomaly_cluster_max=%d anomaly_cluster_overflow=%d cluster_total_max=%d cluster_total_overflow=%d cluster_plan=%s:%s:%s/%s/%s count=%s/%s required=%s/%s/%s results=[%s]",
 			scanned, before.ordinary_resource_topups or -1, census.ordinary_resource_topups or -1,
 			census.ordinary_resource_topups_placed or -1,
 			census.ordinary_resource_topups_outermost or -1,
@@ -131,16 +131,22 @@ CreateRealTimeThread(function()
 			terrain_audit and tostring(terrain_audit.cluster_maximum) or "n/a",
 			terrain_audit and tostring(terrain_audit.cluster_shortfall) or "n/a",
 			terrain_audit and tostring(terrain_audit.cluster_excess) or "n/a",
+			terrain_audit and tostring(terrain_audit.minimum_cluster_resources) or "n/a",
+			terrain_audit and tostring(terrain_audit.maximum_cluster_resources) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_resource_excess) or "n/a",
 			terrain_audit and tostring(terrain_audit.minimum_cluster_extractors) or "n/a",
-			terrain_audit and tostring(terrain_audit.cluster_extractor_minimum) or "n/a",
-			terrain_audit and tostring(terrain_audit.cluster_extractor_shortfall) or "n/a",
+			terrain_audit and tostring(terrain_audit.maximum_cluster_extractors) or "n/a",
+			terrain_audit and tostring(terrain_audit.cluster_extractor_excess) or "n/a",
 			census.maximum_anomalies_in_resource_cluster or -1,
 			census.anomaly_resource_cluster_overflow or -1,
+			census.maximum_total_members_in_resource_cluster or -1,
+			census.cluster_total_member_overflow or -1,
 			(tostring(cluster_plan.stage or "missing") .. "/"
 				.. tostring(cluster_plan.strategy or "legacy")),
 			tostring(cluster_plan.error or ""),
 			tostring(cluster_plan.quota or 0), tostring(cluster_plan.outermost or 0),
-			tostring(cluster_plan.inner_band or 0), tostring(cluster_plan.required or 0),
+			tostring(cluster_plan.inner_band or 0), tostring(cluster_plan.placed_clusters or 0),
+			tostring(cluster_plan.desired_clusters or 0), tostring(cluster_plan.required or 0),
 			tostring(cluster_plan.outermost_required or 0),
 			tostring(cluster_plan.inner_required or 0), tostring(cluster_plan.results or ""))
 		local terrain_ok = terrain_audit ~= nil
@@ -148,7 +154,11 @@ CreateRealTimeThread(function()
 			and terrain_audit.rocket_failures == 0
 			and terrain_audit.cluster_shortfall == 0
 			and terrain_audit.cluster_excess == 0
+			and terrain_audit.cluster_resource_shortfall == 0
+			and terrain_audit.cluster_resource_excess == 0
 			and terrain_audit.cluster_extractor_shortfall == 0
+			and terrain_audit.cluster_extractor_excess == 0
+			and (census.cluster_total_member_overflow or 0) == 0
 		g_OuterRingRevealPassed = census_ok == true and audit_ok == true and terrain_ok
 		if g_OuterRingRevealPassed ~= true then
 			g_OuterRingRevealError = "outer ring placed-object gate failed: " .. g_OuterRingRevealSummary

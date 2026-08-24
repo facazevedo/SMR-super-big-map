@@ -1828,6 +1828,16 @@ local function PrepareOuterResourceTerrain(map)
 		resources[#resources + 1] = {
 			marker = marker, x = x, y = y, q = q, r = r, kind = kind,
 			resource = tostring(marker.resource or marker.class or "?"),
+			cluster_plan = tonumber(marker.SuperBigMapResourceClusterPlan),
+			cluster_strength = marker.SuperBigMapResourceClusterStrength,
+			cluster_resource_target = tonumber(marker.SuperBigMapResourceClusterResourceTarget),
+			cluster_extractor_target = tonumber(marker.SuperBigMapResourceClusterExtractorTarget),
+			cluster_anomaly_capacity = tonumber(
+				marker.SuperBigMapResourceClusterAnomalyCapacity),
+			cluster_reward_capacity = tonumber(
+				marker.SuperBigMapResourceClusterRewardCapacity),
+			cluster_anchor = marker.SuperBigMapResourceClusterAnchor == true,
+			cluster_premium = marker.SuperBigMapResourceClusterPremium == true,
 		}
 	end)
 	table.sort(resources, function(a, b)
@@ -2066,10 +2076,15 @@ local function PrepareOuterResourceTerrain(map)
 	-- A cluster is discovered from marker-to-marker axial distance, never from a scenario or sector
 	-- identity.  Candidate landing centers are chosen beside (not on top of) the deposits, minimizing
 	-- height range first and distance to the cluster second.
-	local cluster_minimum = math.max(2,
-		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 2)))
-	local cluster_minimum_extractors = math.max(2,
-		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 2)))
+	local cluster_minimum = math.max(1,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 1)))
+	local cluster_maximum_resources = math.max(cluster_minimum,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_DEPOSITS", 5)))
+	local cluster_minimum_extractors = math.max(1,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 1)))
+	local cluster_maximum_extractors = math.max(cluster_minimum_extractors,
+		math.min(cluster_maximum_resources,
+			math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS", 3))))
 	local cluster_radius = math.max(4,
 		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_RADIUS_HEXES", 12)))
 	local maximum_rocket_pads = math.max(0,
@@ -2082,7 +2097,6 @@ local function PrepareOuterResourceTerrain(map)
 			rocket_offsets, rocket_hex_radius) or rocket_hex_radius
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
-	local claimed = {}
 	local function resource_clearance(q, r)
 		local minimum = rocket_required_core + maximum_resource_core + 1
 		for _, entry in ipairs(resources) do
@@ -2138,21 +2152,42 @@ local function PrepareOuterResourceTerrain(map)
 				+ axial_distance(q, r, cq, cr),
 		}
 	end
-	for seed_index, seed in ipairs(resources) do
-		if #rocket_sites >= maximum_rocket_pads then break end
-		if not claimed[seed_index] then
-			local members, extractor_members, sum_q, sum_r = {}, 0, 0, 0
-			for index, entry in ipairs(resources) do
-				if not claimed[index]
-					and axial_distance(seed.q, seed.r, entry.q, entry.r) <= cluster_radius then
-					members[#members + 1] = index
-					if entry.kind == "extractor" then
-						extractor_members = extractor_members + 1
-					end
-					sum_q, sum_r = sum_q + entry.q, sum_r + entry.r
-				end
+	local cluster_groups_by_plan, cluster_groups = {}, {}
+	for index, entry in ipairs(resources) do
+		if entry.cluster_plan then
+			local group = cluster_groups_by_plan[entry.cluster_plan]
+			if not group then
+				group = {
+					plan = entry.cluster_plan, members = {},
+					strength = entry.cluster_strength,
+					resource_target = entry.cluster_resource_target,
+					extractor_target = entry.cluster_extractor_target,
+					anomaly_capacity = entry.cluster_anomaly_capacity,
+					reward_capacity = entry.cluster_reward_capacity,
+					anchors = 0, premiums = 0,
+				}
+				cluster_groups_by_plan[entry.cluster_plan] = group
+				cluster_groups[#cluster_groups + 1] = group
 			end
-			if #members >= cluster_minimum and extractor_members >= cluster_minimum_extractors then
+			group.members[#group.members + 1] = index
+			if entry.cluster_anchor then group.anchors = group.anchors + 1 end
+			if entry.cluster_premium then group.premiums = group.premiums + 1 end
+		end
+	end
+	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
+	for _, group in ipairs(cluster_groups) do
+		if #rocket_sites >= maximum_rocket_pads then break end
+		local members, extractor_members, sum_q, sum_r = group.members, 0, 0, 0
+		for _, index in ipairs(members) do
+			local entry = resources[index]
+			if entry.kind == "extractor" then
+				extractor_members = extractor_members + 1
+			end
+			sum_q, sum_r = sum_q + entry.q, sum_r + entry.r
+		end
+		if #members >= cluster_minimum and #members <= cluster_maximum_resources
+			and extractor_members >= cluster_minimum_extractors
+			and extractor_members <= cluster_maximum_extractors then
 				local cq = math.floor(sum_q / #members + 0.5)
 				local cr = math.floor(sum_r / #members + 0.5)
 				local best
@@ -2172,6 +2207,14 @@ local function PrepareOuterResourceTerrain(map)
 				if best then
 					best.members = #members
 					best.extractor_members = extractor_members
+					best.cluster_plan = group.plan
+					best.strength = group.strength
+					best.resource_target = group.resource_target
+					best.extractor_target = group.extractor_target
+					best.anomaly_capacity = group.anomaly_capacity
+					best.reward_capacity = group.reward_capacity
+					best.anchor_members = group.anchors
+					best.premium_members = group.premiums
 					best.cluster_q, best.cluster_r = cq, cr
 					best.modified = not best.ready_before
 					best.shape_radius = rocket_hex_radius
@@ -2185,9 +2228,7 @@ local function PrepareOuterResourceTerrain(map)
 							{ rocket_site = best })
 					end
 					rocket_sites[#rocket_sites + 1] = best
-					for _, index in ipairs(members) do claimed[index] = true end
 				end
-			end
 		end
 	end
 
@@ -2466,23 +2507,32 @@ local function AuditOuterResourceTerrain(map)
 	hex_size = type(hex_size) == "number" and hex_size > 0 and hex_size or 1000
 	local passability_clear_half = math.max(1, math.floor(hex_size * 1.05))
 	local passability_clears = 0
-	local function clear_exact_offsets(q, r, offsets)
-		if type(terrain_api.ClearPassabilityBox) ~= "function"
+	local function set_exact_offsets_passable(q, r, offsets)
+		if type(terrain_api.SetPassability) ~= "function"
 			or type(box_fn) ~= "function" then return false end
-		local cleared = false
+		local repaired = false
+		local passable_values = { true, 1, false, 0 }
 		for _, offset in ipairs(offsets) do
 			local ok_xy, x, y = pcall(hex_to_world, q + offset[1], r + offset[2])
 			if ok_xy and type(x) == "number" and type(y) == "number" then
 				local ok_box, area = pcall(box_fn,
 					point_fn(x - passability_clear_half, y - passability_clear_half),
 					point_fn(x + passability_clear_half, y + passability_clear_half))
-				if ok_box and area and pcall(terrain_api.ClearPassabilityBox, map, area) then
-					cleared = true
-					passability_clears = passability_clears + 1
+				if ok_box and area then
+					local point = point_fn(x, y)
+					for _, value in ipairs(passable_values) do
+						pcall(terrain_api.SetPassability, map, area, value)
+						local ok_p, is_passable = pcall(terrain_api.IsPassable, map, point)
+						if ok_p and is_passable == true then
+							repaired = true
+							passability_clears = passability_clears + 1
+							break
+						end
+					end
 				end
 			end
 		end
-		return cleared
+		return repaired
 	end
 	local surface_offsets = { { 0, 0 } }
 	local extractor_radius = math.max(2,
@@ -2522,7 +2572,7 @@ local function AuditOuterResourceTerrain(map)
 		-- height-prepared resource footprint is buildable but retained a stale border bit, clear only
 		-- its exact live hexes and immediately rerun the full passability/buildability contract.
 		if not ready and failure_reason == "passability"
-			and clear_exact_offsets(site.q, site.r, offsets) then
+			and set_exact_offsets_passable(site.q, site.r, offsets) then
 			ready, failure_reason = ready_offsets(
 				site.q, site.r, offsets, site.kind == "extractor")
 		end
@@ -2540,7 +2590,11 @@ local function AuditOuterResourceTerrain(map)
 				(resource_failure_breakdown[failure_reason] or 0) + 1
 			first_resource_failure = first_resource_failure or (tostring(site.kind) .. ":"
 				.. tostring(site.resource) .. "@" .. tostring(site.q) .. ":" .. tostring(site.r)
-				.. ":" .. tostring(failure_reason))
+				.. ":xy=" .. tostring(site.x) .. "," .. tostring(site.y)
+				.. ":" .. tostring(failure_reason)
+				.. ":ready_before=" .. tostring(site.ready_before == true)
+				.. ":modified=" .. tostring(site.modified == true)
+				.. ":core=" .. tostring(site.required_core_radius or site.core_radius or "?"))
 		end
 		-- Height edits do not change XY.  Re-snap both the marker and any revealed deposit so their
 		-- visuals and interaction point agree with the rebuilt terrain.
@@ -2565,11 +2619,9 @@ local function AuditOuterResourceTerrain(map)
 			first_rocket_failure = first_rocket_failure or (tostring(site.q) .. ":"
 				.. tostring(site.r) .. ":" .. tostring(failure_reason))
 		elseif site.modified == true and site.mountain == true then
-			verified_mountain_pads[#verified_mountain_pads + 1] = {
-				x = site.x, y = site.y, q = site.q, r = site.r,
-				members = site.members, modified = true, verified = true,
-				maximum_rise = site.maximum_rise,
-			}
+			-- Publish the same pad object used by anomaly planning so the combined resource/anomaly/effect
+			-- member count remains one shared source of truth through all three placement passes.
+			verified_mountain_pads[#verified_mountain_pads + 1] = site
 		end
 	end
 	map.SuperBigMapVerifiedMountainRocketPads = verified_mountain_pads
@@ -2579,15 +2631,47 @@ local function AuditOuterResourceTerrain(map)
 		math.floor(cfg_number("OUTER_RESOURCE_ROCKET_PAD_MAXIMUM_COUNT", 10)))
 	local cluster_shortfall = math.max(0, cluster_minimum - #rocket_sites)
 	local cluster_excess = math.max(0, #rocket_sites - cluster_maximum)
-	local cluster_extractor_minimum = math.max(2,
-		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 2)))
-	local minimum_cluster_extractors, cluster_extractor_shortfall = nil, 0
+	local cluster_resource_minimum = math.max(1,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS", 1)))
+	local cluster_resource_maximum = math.max(cluster_resource_minimum,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_DEPOSITS", 5)))
+	local cluster_extractor_minimum = math.max(1,
+		math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS", 1)))
+	local cluster_extractor_maximum = math.max(cluster_extractor_minimum,
+		math.min(cluster_resource_maximum,
+			math.floor(cfg_number("OUTER_RESOURCE_CLUSTER_MAXIMUM_EXTRACTOR_DEPOSITS", 3))))
+	local minimum_cluster_resources, maximum_cluster_resources = nil, 0
+	local cluster_resource_shortfall, cluster_resource_excess = 0, 0
+	local minimum_cluster_extractors, maximum_cluster_extractors = nil, 0
+	local cluster_extractor_shortfall, cluster_extractor_excess = 0, 0
+	local cluster_weighted_composition_failures = 0
+	local cluster_anchor_failures, cluster_premium_excess = 0, 0
 	for _, site in ipairs(rocket_sites) do
+		local resources = math.max(0, math.floor(tonumber(site.members) or 0))
+		minimum_cluster_resources = minimum_cluster_resources == nil
+			and resources or math.min(minimum_cluster_resources, resources)
+		maximum_cluster_resources = math.max(maximum_cluster_resources, resources)
+		cluster_resource_shortfall = cluster_resource_shortfall
+			+ math.max(0, cluster_resource_minimum - resources)
+		cluster_resource_excess = cluster_resource_excess
+			+ math.max(0, resources - cluster_resource_maximum)
 		local count = math.max(0, math.floor(tonumber(site.extractor_members) or 0))
 		minimum_cluster_extractors = minimum_cluster_extractors == nil
 			and count or math.min(minimum_cluster_extractors, count)
+		maximum_cluster_extractors = math.max(maximum_cluster_extractors, count)
 		cluster_extractor_shortfall = cluster_extractor_shortfall
 			+ math.max(0, cluster_extractor_minimum - count)
+		cluster_extractor_excess = cluster_extractor_excess
+			+ math.max(0, count - cluster_extractor_maximum)
+		if resources ~= math.max(0, math.floor(tonumber(site.resource_target) or -1))
+			or count ~= math.max(0, math.floor(tonumber(site.extractor_target) or -1)) then
+			cluster_weighted_composition_failures = cluster_weighted_composition_failures + 1
+		end
+		if math.max(0, math.floor(tonumber(site.anchor_members) or 0)) ~= 1 then
+			cluster_anchor_failures = cluster_anchor_failures + 1
+		end
+		cluster_premium_excess = cluster_premium_excess
+			+ math.max(0, math.floor(tonumber(site.premium_members) or 0) - 1)
 	end
 	local report = {
 		resources = #resource_sites, surface_passable = surface_passable,
@@ -2602,12 +2686,27 @@ local function AuditOuterResourceTerrain(map)
 		resource_clusters = #rocket_sites, cluster_minimum = cluster_minimum,
 		cluster_maximum = cluster_maximum, cluster_shortfall = cluster_shortfall,
 		cluster_excess = cluster_excess,
+		cluster_resource_minimum = cluster_resource_minimum,
+		cluster_resource_maximum = cluster_resource_maximum,
+		minimum_cluster_resources = minimum_cluster_resources or 0,
+		maximum_cluster_resources = maximum_cluster_resources,
+		cluster_resource_shortfall = cluster_resource_shortfall,
+		cluster_resource_excess = cluster_resource_excess,
 		cluster_extractor_minimum = cluster_extractor_minimum,
+		cluster_extractor_maximum = cluster_extractor_maximum,
 		minimum_cluster_extractors = minimum_cluster_extractors or 0,
+		maximum_cluster_extractors = maximum_cluster_extractors,
 		cluster_extractor_shortfall = cluster_extractor_shortfall,
+		cluster_extractor_excess = cluster_extractor_excess,
+		cluster_weighted_composition_failures = cluster_weighted_composition_failures,
+		cluster_anchor_failures = cluster_anchor_failures,
+		cluster_premium_excess = cluster_premium_excess,
 		reason = resource_failures == 0 and rocket_failures == 0
 			and cluster_shortfall == 0 and cluster_excess == 0
-			and cluster_extractor_shortfall == 0
+			and cluster_resource_shortfall == 0 and cluster_resource_excess == 0
+			and cluster_extractor_shortfall == 0 and cluster_extractor_excess == 0
+			and cluster_weighted_composition_failures == 0
+			and cluster_anchor_failures == 0 and cluster_premium_excess == 0
 			and "all outer resource terrain contracts verified" or "final terrain contract failed",
 	}
 	map.SuperBigMapOuterResourceTerrainAudit = report
@@ -2624,8 +2723,16 @@ local function AuditOuterResourceTerrain(map)
 			.. " resource_clusters=" .. tostring(report.resource_clusters)
 			.. " cluster_shortfall=" .. tostring(report.cluster_shortfall)
 			.. " cluster_excess=" .. tostring(report.cluster_excess)
+			.. " cluster_resources=" .. tostring(report.minimum_cluster_resources)
+			.. "-" .. tostring(report.maximum_cluster_resources)
+			.. " cluster_resource_excess=" .. tostring(report.cluster_resource_excess)
 			.. " cluster_min_extractors=" .. tostring(report.minimum_cluster_extractors)
+			.. " cluster_max_extractors=" .. tostring(report.maximum_cluster_extractors)
 			.. " cluster_extractor_shortfall=" .. tostring(report.cluster_extractor_shortfall)
+			.. " cluster_extractor_excess=" .. tostring(report.cluster_extractor_excess)
+			.. " weighted_failures=" .. tostring(report.cluster_weighted_composition_failures)
+			.. " anchor_failures=" .. tostring(report.cluster_anchor_failures)
+			.. " premium_excess=" .. tostring(report.cluster_premium_excess)
 			.. " first_resource_failure=" .. tostring(report.first_resource_failure)
 			.. " first_rocket_failure=" .. tostring(report.first_rocket_failure)
 			.. " verified_mountain_effect_candidates="
@@ -2633,7 +2740,10 @@ local function AuditOuterResourceTerrain(map)
 	end
 	return resource_failures == 0 and rocket_failures == 0
 		and cluster_shortfall == 0 and cluster_excess == 0
-		and cluster_extractor_shortfall == 0, report
+		and cluster_resource_shortfall == 0 and cluster_resource_excess == 0
+		and cluster_extractor_shortfall == 0 and cluster_extractor_excess == 0
+		and cluster_weighted_composition_failures == 0
+		and cluster_anchor_failures == 0 and cluster_premium_excess == 0, report
 end
 
 -- TEST-ONLY SEAM (config StretchHeightGridDumpPath, empty = off). Writes a destination height

@@ -10974,7 +10974,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								deposits.TopUpDeposits, map)
 						end
 						-- Resource coordinates are final now.  Prepare only failed extractor/collection
-						-- footprints and nearby four-resource mountain-cluster rocket pads, then ask the
+						-- footprints and the planned mountain-cluster rocket pads, then ask the
 						-- stock engine for the authoritative passability/buildability verdict before any
 						-- anomaly or dome-effect candidate consumes terrain state.
 						if type(TerrainCopy.PrepareOuterResourceTerrain) ~= "function"
@@ -11000,6 +11000,34 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 						local resource_terrain_ok, resource_terrain_audit =
 							TerrainCopy.AuditOuterResourceTerrain(map)
+						-- A whole-map buildable-grid rebuild can occasionally reject a footprint that
+						-- was valid on the pre-edit grid even though no local height cell was touched.
+						-- Feed that authoritative verdict back through the same scenario-agnostic
+						-- preparation pass. On retries, every valid site is protected and only failed
+						-- extractor/collection or landing footprints are shaped. This is bounded so a
+						-- genuine policy failure remains fail-closed instead of looping indefinitely.
+						local terrain_repair_attempt = 0
+						while resource_terrain_ok ~= true and terrain_repair_attempt < 2
+							and resource_terrain_audit
+							and ((tonumber(resource_terrain_audit.resource_failures) or 0) > 0
+								or (tonumber(resource_terrain_audit.rocket_failures) or 0) > 0) do
+							terrain_repair_attempt = terrain_repair_attempt + 1
+							local repair_changed, repair_stats = TimedSafeCall(
+								"surface repair failed outer resource terrain", map,
+								TerrainCopy.PrepareOuterResourceTerrain, map)
+							if repair_stats and repair_stats.error and repair_stats.error ~= "" then
+								error("outer resource terrain repair failed: "
+									.. tostring(repair_stats.error))
+							end
+							if repair_changed ~= true then break end
+							SuperBigMap.GenerationGrids.RebuildFinal(map,
+								"after outer resource terrain repair " .. tostring(terrain_repair_attempt))
+							if type(deposits.ClearTopUpPlacementPool) == "function" then
+								deposits.ClearTopUpPlacementPool(map)
+							end
+							resource_terrain_ok, resource_terrain_audit =
+								TerrainCopy.AuditOuterResourceTerrain(map)
+						end
 						if resource_terrain_ok ~= true then
 							error("outer resource terrain audit failed: resource_failures="
 								.. tostring(resource_terrain_audit
@@ -11010,9 +11038,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									and resource_terrain_audit.cluster_shortfall)
 								.. " cluster_excess=" .. tostring(resource_terrain_audit
 									and resource_terrain_audit.cluster_excess)
+								.. " cluster_resource_excess="
+								.. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_resource_excess)
 								.. " cluster_extractor_shortfall="
 								.. tostring(resource_terrain_audit
-									and resource_terrain_audit.cluster_extractor_shortfall))
+									and resource_terrain_audit.cluster_extractor_shortfall)
+								.. " cluster_extractor_excess="
+								.. tostring(resource_terrain_audit
+									and resource_terrain_audit.cluster_extractor_excess)
+								.. " first_resource_failure=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.first_resource_failure)
+								.. " first_rocket_failure=" .. tostring(resource_terrain_audit
+									and resource_terrain_audit.first_rocket_failure))
 						end
 						-- TopUpAnomalies: post-gen replacement for the in-generation anomaly count
 						-- scaling (which shifted the generator's random stream and made expanded
@@ -11095,6 +11133,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. " cluster_overflow="
 									.. tostring(ring_stats
 										and ring_stats.anomaly_resource_cluster_overflow)
+									.. " cluster_total_overflow="
+									.. tostring(ring_stats
+										and ring_stats.cluster_total_member_overflow)
 									.. " quota_resources="
 									.. tostring(ring_stats
 										and ring_stats.resource_quota_topups)
@@ -11130,7 +11171,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 									.. tostring(quota_stats and quota_stats.inner_band_shortfall)
 									.. " anomaly_cluster_overflow="
 									.. tostring(quota_stats
-										and quota_stats.anomaly_resource_cluster_overflow))
+										and quota_stats.anomaly_resource_cluster_overflow)
+									.. " cluster_total_overflow="
+									.. tostring(quota_stats
+										and quota_stats.cluster_total_member_overflow))
 							end
 						end
 						if type(deposits.SchedulePostDeferredSurfaceResourceTopUpCensus) == "function" then

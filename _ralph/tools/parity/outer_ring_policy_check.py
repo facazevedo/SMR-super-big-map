@@ -208,15 +208,18 @@ static_checks = {
         'local surface_offsets = { { 0, 0 } }' in outer_resource_terrain
         and 'site.kind == "extractor"' in outer_resource_terrain
     ),
-    "resource_clusters_are_general_hex_distance_components": (
-        "axial_distance(seed.q, seed.r, entry.q, entry.r) <= cluster_radius"
+    "resource_clusters_are_general_seeded_plan_components": (
+        "cluster_plan = tonumber(marker.SuperBigMapResourceClusterPlan)"
         in outer_resource_terrain
-        and "OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS" in outer_resource_terrain
+        and "cluster_groups_by_plan" in outer_resource_terrain
     ),
-    "resource_cluster_minimum_is_two_extractor_deposits": (
-        "config.OuterResourceClusterMinimumDeposits = 2" in CONFIG
-        and "config.OuterResourceClusterMinimumExtractorDeposits = 2" in CONFIG
-        and "cluster_extractor_shortfall == 0" in outer_resource_terrain
+    "resource_cluster_bounds_are_one_to_five_with_one_to_three_extractors": (
+        "config.OuterResourceClusterMinimumDeposits = 1" in CONFIG
+        and "config.OuterResourceClusterMaximumDeposits = 5" in CONFIG
+        and "config.OuterResourceClusterMinimumExtractorDeposits = 1" in CONFIG
+        and "config.OuterResourceClusterMaximumExtractorDeposits = 3" in CONFIG
+        and "cluster_resource_excess == 0" in outer_resource_terrain
+        and "cluster_extractor_excess == 0" in outer_resource_terrain
     ),
     "resource_clusters_use_live_rocket_shape": (
         'pcall(get_extended_shape, "RocketLandingSite", 1)' in outer_resource_terrain
@@ -251,8 +254,8 @@ static_checks = {
     ),
     "natural_aprons_enabled": "config.CreateNaturalMountainBaseBuildableAprons = true" in CONFIG,
     "natural_aprons_use_outer_two_sectors": "config.MountainBaseApronOuterRingSectors = 2" in CONFIG,
-    "mountain_base_resource_minimum_is_50": (
-        "config.MountainBaseOuterRingResourceMinimum = 50" in CONFIG
+    "fixed_mountain_base_resource_quota_is_removed": (
+        "config.MountainBaseOuterRingResourceMinimum = 0" in CONFIG
     ),
     "mountain_base_resource_minimum_is_compiled": (
         "C.MOUNTAIN_BASE_OUTER_RING_RESOURCE_MINIMUM" in CONFIG
@@ -297,9 +300,9 @@ static_checks = {
         "extractor_footprint_within_map(candidate)" in resources
         and "extractor_edge_margin" in resources
     ),
-    "resource_quota_uses_attached_and_final_extractor_continuations": (
-        '"outermost resource attached continuation", true' in resources
-        and '"outermost resource final extractor pair"' in resources
+    "resource_clusters_are_separated_beyond_the_cluster_radius": (
+        "distance <= resource_cluster_radius" in resources
+        and "selector_local_v3" in resources
     ),
     "ordinary_resources_preserve_exact_repulsion": (
         'NewTopUpRepulsionTracker(map, "resources")' in resources
@@ -329,7 +332,7 @@ static_checks = {
     "resource_quota_marks_ordinary_resource_topups": (
         "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
     ),
-    "resource_quota_is_fail_closed": "outer-ring resource quota failed" in resources,
+    "resource_cluster_count_is_fail_closed": "outer-ring resource cluster count failed" in resources,
     "resource_quota_is_audited": (
         "resource_quota_shortfall" in audit
         and "outer_ring_resource_quota_topup_outside_final_ring" in audit
@@ -348,14 +351,14 @@ static_checks = {
     ),
     "resource_quota_guarantees_60_40_disjoint_band_split": (
         "MountainBaseOutermostResourceMinimumPercent = 60" in CONFIG
-        and '"outermost resource"' in resources
+        and '"outermost resource cluster"' in resources
         and '"inner-band resource"' in resources
         and "inner_band_mountain_base_candidates" in resources
         and "inner_band_perimeter_quota_candidates" in resources
         and "clone.SuperBigMapOuterRingResourceQuotaTopUp" in resources
         and "clone.SuperBigMapInnerBandResourceTopUp" in resources
         and "place_quota_cluster_plans" in resources
-        and "cluster quota failed" in resources
+        and "placed_clusters" in resources
     ),
     "anomaly_ten_hex_policy_gets_complete_plan_capacity": (
         "local LEGACY_RANDOM_SAMPLES_PER_SECTOR = 2048" in DEPOSITS
@@ -377,12 +380,15 @@ static_checks = {
         and "config.OuterResourceRocketPadMaximumCount = 10" in CONFIG
         and "cluster_shortfall == 0 and cluster_excess == 0" in outer_resource_terrain
     ),
-    "every_resource_cluster_requires_two_extractors": (
-        "config.OuterResourceClusterMinimumExtractorDeposits = 2" in CONFIG
+    "every_resource_cluster_requires_one_to_three_extractors": (
+        "config.OuterResourceClusterMinimumExtractorDeposits = 1" in CONFIG
+        and "config.OuterResourceClusterMaximumExtractorDeposits = 3" in CONFIG
         and "OUTER_RESOURCE_CLUSTER_MINIMUM_EXTRACTOR_DEPOSITS" in outer_resource_terrain
         and 'entry.kind == "extractor"' in outer_resource_terrain
         and "extractor_members >= cluster_minimum_extractors" in outer_resource_terrain
+        and "extractor_members <= cluster_maximum_extractors" in outer_resource_terrain
         and "cluster_extractor_shortfall == 0" in outer_resource_terrain
+        and "cluster_extractor_excess == 0" in outer_resource_terrain
     ),
     "anomalies_are_capped_at_three_per_resource_cluster": (
         "config.OuterResourceClusterMaximumAnomalies = 3" in CONFIG
@@ -390,6 +396,22 @@ static_checks = {
         and "maximum_anomalies_per_cluster" in DEPOSITS
         and "anomaly_resource_cluster_overflow" in census
         and "and stats.anomaly_resource_cluster_overflow == 0" in census
+    ),
+    "combined_cluster_rewards_are_capped_at_five": (
+        "config.OuterResourceClusterMaximumTotalMembers = 5" in CONFIG
+        and "math.min(maximum_total_cluster_members, planned_total) - resources" in DEPOSITS
+        and "cluster_total_member_overflow" in census
+        and "and stats.cluster_total_member_overflow == 0" in census
+    ),
+    "cluster_strength_weighting_and_single_anchor_are_explicit": (
+        'strength = "standard"' in resources
+        and 'strength = "strong"' in resources
+        and 'strength = "rare_three_extractor"' in resources
+        and 'strength, resource_target, extractor_target = "exceptional_anomaly", 2, 1'
+        in resources
+        and 'template_policy ~= "premium"' in resources
+        and 'template_policy ~= "nonpremium"' in resources
+        and "SuperBigMapResourceClusterAnchor" in resources
     ),
     "resource_census_separates_anomalies_effects_and_native_resources": (
         "anomaly_topups" in census
@@ -414,7 +436,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_876": "'version', 876" in METADATA,
+    "version_is_877": "'version', 877" in METADATA,
 }
 
 case_results = []

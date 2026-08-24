@@ -1066,6 +1066,25 @@ RegisterOnce("CurrentMapChangeDone", function(map_slot, map)
 		map.SuperBigMapSkipNextLifecycleBoundsRebuild = nil
 	end
 	Lifecycle.Apply(map, not defer_rebuild and not skip_final_underground_rebuild)
+	-- Lifecycle.Apply may rebuild passability after the surface generation pipeline has already
+	-- verified its resource footprints. Reassert the exact rover/extractor hexes at this final
+	-- boundary so PassBorder=0 remains true in gameplay even when stock terrain/object processing
+	-- restores a local blocked bit. The audit uses terrain.SetPassability only on a failed live
+	-- footprint; it neither changes heights nor opens unrelated mountain terrain.
+	local terrain_copy = SuperBigMap.TerrainCopy
+	if IsModMap(map) and map and map.mapdata and map.mapdata.Environment == "Surface"
+		and type(map.SuperBigMapOuterResourceTerrainSites) == "table"
+		and terrain_copy and type(terrain_copy.AuditOuterResourceTerrain) == "function" then
+		local call_ok, audit_ok, audit_stats = pcall(
+			terrain_copy.AuditOuterResourceTerrain, map)
+		LoadingLifecycle("CurrentMapChangeDone outer resource access audit", map, {
+			call_ok = tostring(call_ok), audit_ok = tostring(audit_ok == true),
+			resource_failures = audit_stats and audit_stats.resource_failures,
+			rocket_failures = audit_stats and audit_stats.rocket_failures,
+			passability_repairs = audit_stats and audit_stats.passability_clears,
+			error = call_ok and "" or tostring(audit_ok),
+		})
+	end
 	if IsModMap(map) and gen
 		and type(gen.ReseatExpandedUndergroundWonders) == "function" then
 		local reseat_ok, reseat_result = gen.ReseatExpandedUndergroundWonders(
