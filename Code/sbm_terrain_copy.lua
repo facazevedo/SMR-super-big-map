@@ -1626,7 +1626,9 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
 							local lobe3 = nx * nx * nx - 3 * nx * ny * ny
 							local lobe2 = nx * nx - ny * ny
-							local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+							local lobe5 = nx * nx * nx * nx * nx
+								- 10 * nx * nx * nx * ny * ny + 5 * nx * ny * ny * ny * ny
+							local boundary = 1 + 0.16 * lobe3 + 0.09 * lobe2 + 0.06 * lobe5
 							local normalized = radius / boundary
 							if normalized < 1 then
 								local weight
@@ -1741,9 +1743,9 @@ end
 -- exposed resources need a rover-passable collection hex, extractor resources need a compact
 -- buildable footprint, and a mountain cluster of four or more resources may receive one nearby
 -- RocketLandingSite footprint.  No marker is moved.  Flat/passable/buildable terrain is left
--- byte-for-byte unchanged; only failed footprints are shaped.  The required gameplay core remains
--- exactly level, while a slope-aligned, irregular-width C2 quintic feather prevents the transition
--- from reading as a stamped circular terrace.
+-- byte-for-byte unchanged; only failed footprints are shaped. Building gameplay cores remain exact
+-- planes, while surface collection cores retain a safe fitted grade. A slope-aligned, irregular-width
+-- C2 quintic feather prevents either transition from reading as a stamped circular terrace.
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -1981,6 +1983,15 @@ local function PrepareOuterResourceTerrain(map)
 		local relief_y = top and bottom and bottom - top or 0
 		local grade_x = relief_x / (2 * relief_probe)
 		local grade_y = relief_y / (2 * relief_probe)
+		-- Surface piles only need a rover-passable approach, not a level building pad. Preserve the
+		-- mountain's fitted local grade and merely cap it below the terrain-normal limit; otherwise
+		-- the exact collection core reads as a circular, constant-height stamp.
+		if kind == "surface" then
+			local grade_length = math.sqrt(grade_x * grade_x + grade_y * grade_y)
+			if grade_length > 3 then
+				grade_x, grade_y = grade_x * 3 / grade_length, grade_y * 3 / grade_length
+			end
+		end
 		local relief_length = math.sqrt(relief_x * relief_x + relief_y * relief_y)
 		local phase = (math.abs(q * 37 + r * 61) % 6283) / 1000
 		if relief_length < 1 then
@@ -2416,8 +2427,10 @@ local function PrepareOuterResourceTerrain(map)
 								+ patch.grade_x * dx + patch.grade_y * dy
 							local detail = old - local_plane
 							local detail_retention = 1 - weight * weight * weight
+							local shape_target = patch.kind == "surface"
+								and local_plane or patch.target
 							local value = math.floor(local_plane
-								+ (patch.target - local_plane) * weight
+								+ (shape_target - local_plane) * weight
 								+ detail * detail_retention + 0.5)
 							value = math.max(0, math.min(65535, value))
 							if value ~= old then
@@ -2429,7 +2442,8 @@ local function PrepareOuterResourceTerrain(map)
 				end
 			end
 		end
-		-- A second pass makes every required core an exact plane after all nearby feather blends.
+		-- A second pass makes building footprints exact planes after nearby feather blends. Surface
+		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
 		-- Ready-before resource guards remain untouched; rocket/resource core clearance prevents a
 		-- landing footprint from depending on any guarded cell.
 		for _, patch in ipairs(patches) do
@@ -2443,9 +2457,14 @@ local function PrepareOuterResourceTerrain(map)
 					local dx, dy = x - patch.cx, y - patch.cy
 					if dx * dx + dy * dy <= radius * radius
 						and not is_protected_ready_cell(x, y) then
+						local core_target = patch.kind == "surface"
+							and math.floor(patch.target + patch.grade_x * dx
+								+ patch.grade_y * dy + 0.5)
+							or patch.target
+						core_target = math.max(0, math.min(65535, core_target))
 						local old = grid:get(x, y)
-						if type(old) == "number" and old ~= patch.target then
-							grid:set(x, y, patch.target)
+						if type(old) == "number" and old ~= core_target then
+							grid:set(x, y, core_target)
 							modified_cells = modified_cells + 1
 						end
 					end

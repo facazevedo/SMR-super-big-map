@@ -196,6 +196,8 @@ static_checks = {
     "outer_resource_terrain_uses_two_sector_world_band": (
         'cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)' in outer_resource_terrain
         and "map_w * ring_sectors / 20" in outer_resource_terrain
+        and "if not in_outer_band(x, y) then return end" in outer_resource_terrain
+        and 'map.MapForEach, map, "map", "DepositMarker"' in outer_resource_terrain
     ),
     "outer_resource_terrain_uses_live_extractor_shapes": (
         'pcall(get_extended_shape, template_name, 0)' in outer_resource_terrain
@@ -257,6 +259,12 @@ static_checks = {
         and "local detail_retention = 1 - weight * weight * weight" in outer_resource_terrain
         and "detail * detail_retention" in outer_resource_terrain
     ),
+    "surface_resource_repairs_retain_a_safe_local_grade": (
+        'if kind == "surface" then' in outer_resource_terrain
+        and "if grade_length > 3 then" in outer_resource_terrain
+        and 'local shape_target = patch.kind == "surface"' in outer_resource_terrain
+        and 'local core_target = patch.kind == "surface"' in outer_resource_terrain
+    ),
     "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
         GENERATION.index('"surface prepare outer resource terrain"')
         < GENERATION.index('"surface top-up anomalies"')
@@ -311,7 +319,9 @@ static_checks = {
         and "config.MountainBaseApronFeatherRadiusHexes = 12" in CONFIG
         and "detail * detail_retention" in aprons
     ),
-    "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
+    "natural_aprons_use_irregular_boundary": (
+        "lobe3" in aprons and "lobe2" in aprons and "lobe5" in aprons
+    ),
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
@@ -499,7 +509,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_882": "'version', 882" in METADATA,
+    "version_is_883": "'version', 883" in METADATA,
 }
 
 case_results = []
