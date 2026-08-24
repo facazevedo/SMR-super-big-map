@@ -2073,7 +2073,9 @@ local function PrepareOuterResourceTerrain(map)
 			or surface_core + 2
 		local level_core = entry.kind == "extractor"
 			and math.max(extractor_core, math.ceil(world_radius + 1))
-			or surface_core
+			-- Exposed piles need the surrounding two hexes passable for rover collection. This
+			-- remains a compact three-hex core and is far smaller than an extractor platform.
+			or surface_core + 2
 		maximum_resource_core = math.max(maximum_resource_core, required_core)
 		local ready = exact_extractor_offsets
 			and exact_offsets_ready(entry.q, entry.r, exact_extractor_offsets, true)
