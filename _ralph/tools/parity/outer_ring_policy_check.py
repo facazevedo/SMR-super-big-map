@@ -233,10 +233,15 @@ static_checks = {
         and "weight = 1 - smooth" in outer_resource_terrain
     ),
     "resource_terrain_transition_is_broad_and_irregular": (
-        "config.OuterResourceTransitionMinimumWidthHexes = 6" in CONFIG
-        and "config.OuterResourceTransitionIrregularityPercent = 38" in CONFIG
+        "config.OuterResourceTransitionMinimumWidthHexes = 14" in CONFIG
+        and "config.OuterResourceTransitionIrregularityPercent = 12" in CONFIG
         and "patch.outer_cells - patch.core_cells" in outer_resource_terrain
         and "local harmonic =" in outer_resource_terrain
+    ),
+    "resource_terrain_transition_expands_with_cut_fill_height": (
+        "local adaptive_transition_cap = 36 * cells_per_hex" in outer_resource_terrain
+        and "maximum_core_delta * 0.65" in outer_resource_terrain
+        and "math.max(existing_transition, adaptive_transition)" in outer_resource_terrain
     ),
     "resource_terrain_transition_tracks_local_relief": (
         "local relief_probe =" in outer_resource_terrain
@@ -304,7 +309,7 @@ static_checks = {
         and "local MAX_CANDIDATES_PER_SECTOR = 64" in resources
         and "local MAX_FINAL_QUOTA_CANDIDATES = 4096" in resources
     ),
-    "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 36" in aprons,
+    "natural_aprons_reject_obvious_cliffs": "maximum_local_slope > 24" in aprons,
     "already_buildable_foothills_are_unchanged": (
         "requires_edit = maximum_local_slope >= 9" in aprons
         and "if candidate.requires_edit then" in aprons
@@ -316,12 +321,10 @@ static_checks = {
     "natural_aprons_keep_gentle_grade": "if gradient_length > 4" in aprons,
     "natural_aprons_use_small_core_and_broad_transition": (
         "config.MountainBaseApronCoreRadiusHexes = 4" in CONFIG
-        and "config.MountainBaseApronFeatherRadiusHexes = 12" in CONFIG
+        and "config.MountainBaseApronFeatherRadiusHexes = 20" in CONFIG
         and "detail * detail_retention" in aprons
     ),
-    "natural_aprons_use_irregular_boundary": (
-        "lobe3" in aprons and "lobe2" in aprons and "lobe5" in aprons
-    ),
+    "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
@@ -509,7 +512,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_883": "'version', 883" in METADATA,
+    "version_is_884": "'version', 884" in METADATA,
 }
 
 case_results = []

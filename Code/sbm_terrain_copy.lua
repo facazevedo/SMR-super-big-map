@@ -1483,8 +1483,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			end
 		end
 		-- Ground below about five degrees is already useful and must remain bit-for-bit untouched.
-		-- Above about twenty degrees a small apron would need an obvious cut wall, so reject it.
-		if maximum_local_slope > 36 then
+		-- Above about thirteen degrees even a broad apron needs a perceptible cut wall, so reject it.
+		if maximum_local_slope > 24 then
 			slope_rejections = slope_rejections + 1
 			return nil
 		end
@@ -1626,9 +1626,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
 							local lobe3 = nx * nx * nx - 3 * nx * ny * ny
 							local lobe2 = nx * nx - ny * ny
-							local lobe5 = nx * nx * nx * nx * nx
-								- 10 * nx * nx * nx * ny * ny + 5 * nx * ny * ny * ny * ny
-							local boundary = 1 + 0.16 * lobe3 + 0.09 * lobe2 + 0.06 * lobe5
+							local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
 							local normalized = radius / boundary
 							if normalized < 1 then
 								local weight
@@ -2353,6 +2351,35 @@ local function PrepareOuterResourceTerrain(map)
 			if root(index) == group then patch.target = target end
 		end
 	end
+
+	-- A fixed feather width can be mathematically continuous yet remain visible when a mountain
+	-- footprint needs a large cut or fill. Measure the finalized core delta after overlapping pads
+	-- have been harmonized, then enlarge only its transition until the added grade is gentle. The
+	-- cap bounds generation cost; the low-amplitude angular warp below adds shape without creating
+	-- the scalloped shadow arcs produced by aggressive boundary distortion.
+	local adaptive_transition_cap = 36 * cells_per_hex
+	for _, patch in ipairs(patches) do
+		local maximum_core_delta = 0
+		for sample_index = 0, 23 do
+			local angle = sample_index * math.pi * 2 / 24
+			local dx = math.cos(angle) * patch.core_cells
+			local dy = math.sin(angle) * patch.core_cells
+			local old = grid_value(patch.cx + dx, patch.cy + dy)
+			if old then
+				local shape_target = patch.kind == "surface"
+					and (patch.target + patch.grade_x * dx + patch.grade_y * dy)
+					or patch.target
+				maximum_core_delta = math.max(maximum_core_delta,
+					math.abs(old - shape_target))
+			end
+		end
+		local existing_transition = patch.outer_cells - patch.core_cells
+		local adaptive_transition = math.min(adaptive_transition_cap,
+			maximum_core_delta * 0.65)
+		patch.outer_cells = patch.core_cells
+			+ math.max(existing_transition, adaptive_transition)
+		patch.maximum_core_delta = maximum_core_delta
+	end
 	local function is_protected_ready_cell(x, y)
 		for _, protected in ipairs(protected_ready_sites) do
 			local dx, dy = x - protected.cx, y - protected.cy
@@ -2383,7 +2410,7 @@ local function PrepareOuterResourceTerrain(map)
 				patch.outer_cells - patch.core_cells)
 			-- The angular warp is applied to transition width, not total pad radius.  Therefore even the
 			-- narrowest inward lobe leaves the exact circular gameplay core wholly intact.
-			local maximum_width_scale = 1.55
+			local maximum_width_scale = 1.35
 			local radius = patch.core_cells + base_transition * maximum_width_scale
 			local x0 = math.max(0, math.floor(patch.cx - radius - 2))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 2))

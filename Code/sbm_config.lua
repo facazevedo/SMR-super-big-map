@@ -285,28 +285,30 @@ config.TopUpEnrichmentMinimumHexDistance = 3
 -- satisfy vanilla's unchanged resource clearance, never broad terrain shelves.
 config.MountainBaseApronMaximumCount = 288
 config.MountainBaseApronCoreRadiusHexes = 4
-config.MountainBaseApronFeatherRadiusHexes = 12
+config.MountainBaseApronFeatherRadiusHexes = 20
 
 -- Once resource top-ups have chosen their final coordinates, prepare only the terrain that their
 -- gameplay actually needs in the physical outer two-sector band.  Subsurface and terrain deposits
 -- receive a small extractor-buildable core; exposed surface resources keep a passable collection
 -- hex.  Each planned mountain cluster may additionally receive one nearby pad sized from
--- RocketLandingSite's live flatten shape.  Every edit keeps an exact level gameplay core, then
--- returns to untouched relief through a broad C2 quintic transition whose width is varied around
--- the perimeter and aligned with the local slope. Native small-scale relief is retained through
--- most of that transition, while only the live building footprint and a narrow safety margin stay
--- perfectly level. This avoids the smooth artificial terrace left by flattening the full rebuild
--- guard. The rule is geometry-only and contains no scenario or sector-name cases.
+-- RocketLandingSite's live flatten shape. Building edits keep an exact level gameplay core, while
+-- exposed surface piles retain a safe local grade. Every edit then
+-- returns to untouched relief through a broad C2 quintic transition whose width expands with the
+-- actual cut/fill height and stays aligned with the local slope. Native small-scale relief is
+-- retained through most of that transition, while only the live building footprint and a narrow
+-- safety margin stay perfectly level. This avoids the smooth artificial terrace left by flattening
+-- the full rebuild guard. The rule is geometry-only and contains no scenario or sector-name cases.
 config.PrepareOuterResourceTerrain = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
 config.OuterResourceSurfaceFeatherRadiusHexes = 4
 -- Even when a live extractor footprint expands the required core beyond the nominal values above,
--- retain enough transition width to absorb the cut/fill without drawing a sharp berm.  Angular
--- irregularity affects only that transition; it can never shrink or disturb the level core.
-config.OuterResourceTransitionMinimumWidthHexes = 6
-config.OuterResourceTransitionIrregularityPercent = 38
+-- retain enough transition width to absorb the cut/fill without drawing a sharp berm. The runtime
+-- expands this minimum further when the measured height delta needs it. Low angular irregularity
+-- prevents a geometric outline without turning broad height changes into scalloped shadow arcs.
+config.OuterResourceTransitionMinimumWidthHexes = 14
+config.OuterResourceTransitionIrregularityPercent = 12
 config.OuterResourceClusterMinimumDeposits = 1
 config.OuterResourceClusterMaximumDeposits = 5
 config.OuterResourceClusterMinimumExtractorDeposits = 1
@@ -888,7 +890,7 @@ C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.MountainBaseApronCoreRadiusHexes, 4))
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
-	as_number(config.MountainBaseApronFeatherRadiusHexes, 12))
+	as_number(config.MountainBaseApronFeatherRadiusHexes, 20))
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
@@ -901,9 +903,9 @@ C.OUTER_RESOURCE_SURFACE_FEATHER_RADIUS_HEXES = math.max(
 	C.OUTER_RESOURCE_SURFACE_CORE_RADIUS_HEXES + 2,
 	as_number(config.OuterResourceSurfaceFeatherRadiusHexes, 4))
 C.OUTER_RESOURCE_TRANSITION_MINIMUM_WIDTH_HEXES = math.max(2,
-	as_number(config.OuterResourceTransitionMinimumWidthHexes, 6))
+	as_number(config.OuterResourceTransitionMinimumWidthHexes, 14))
 C.OUTER_RESOURCE_TRANSITION_IRREGULARITY_PERCENT = math.max(0, math.min(45,
-	as_number(config.OuterResourceTransitionIrregularityPercent, 38)))
+	as_number(config.OuterResourceTransitionIrregularityPercent, 12)))
 C.OUTER_RESOURCE_CLUSTER_MINIMUM_DEPOSITS = math.max(1,
 	math.floor(as_number(config.OuterResourceClusterMinimumDeposits, 1)))
 C.OUTER_RESOURCE_CLUSTER_MAXIMUM_DEPOSITS = math.max(
