@@ -54,7 +54,7 @@ def lua_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 892) -> str:
+def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 893) -> str:
     writer_proof = Path(str(start) + ".arm_writer_preflight")
     return f'''-- Generated Ralph player-visible loading-profile arm.
 CreateRealTimeThread(function()
@@ -141,6 +141,7 @@ def static_checks(
     landing = (GAME_SRC / "Lua" / "XDef" / "PGMissionLandingSpotRemastered.generated.lua").read_text(encoding="utf-8")
     mission = (GAME_SRC / "Lua" / "PreGameMission.lua").read_text(encoding="utf-8")
     popup = (GAME_SRC / "Data" / "PopupNotifications" / "PopupNotificationPreset-System.lua").read_text(encoding="utf-8")
+    native_pregame = (GAME_SRC / "Lua" / "UI" / "PreGameMenus.lua").read_text(encoding="utf-8")
     return {
         "arm_adds_and_verifies_roughterrain": (
             'Game:AddGameRule("RoughTerrain")' in text
@@ -188,17 +189,47 @@ def static_checks(
         "profile_start_is_fail_closed": (
             "diagnostics.RalphProfileStart({" in pregame
             and "}) ~= true then" in pregame
-            and 'error("Ralph profile rejected START before generation")' in pregame
+            and 'error("Ralph profile rejected START or preset proof before generation")' in pregame
             and "return false" in pregame
             and "return false" in diagnostics[
                 diagnostics.index("function Diagnostics.RalphProfileStart"):
-                diagnostics.index("function Diagnostics.RalphProfileRecordPreset")
+                diagnostics.index("function Diagnostics.RalphProfileFinalDisplay")
             ]
         ),
-        "surface_preset_is_fail_closed": (
-            "RalphProfileRecordPreset" in pregame
-            and 'preset ~= "RoughTerrain"' in diagnostics
-            and "RalphProfileRecordPreset(map_name, preset_name) ~= true" in pregame
+        "installed_preset_resolution_source_anchor": (
+            "local map = GetCurrentRandomMapName()" in native_pregame
+            and 'local randomMapPresetName = MapData[map].RandomMapPreset or "MAIN"' in native_pregame
+            and 'if IsGameRuleActive("RoughTerrain") and MapData[map].Environment == "Surface" then' in native_pregame
+            and 'randomMapPresetName = "RoughTerrain"' in native_pregame
+            and "GenerateRandomMap(map, randomMapPresetName)" in native_pregame
+        ),
+        "surface_preset_is_source_anchored_and_fail_closed": (
+            "function Diagnostics.RalphProfileResolveCurrentPreset()" in diagnostics
+            and 'local get_current_map_name = Global("GetCurrentRandomMapName")' in diagnostics
+            and 'local map_data_table = Global("MapData")' in diagnostics
+            and 'local preset = map_data.RandomMapPreset or "MAIN"' in diagnostics
+            and 'if is_rule_active("RoughTerrain") == true and map_data.Environment == "Surface" then' in diagnostics
+            and 'if map_data.Environment ~= "Surface" then' in diagnostics
+            and 'if is_rule_active("RoughTerrain") ~= true then' in diagnostics
+            and 'if preset ~= "RoughTerrain" then' in diagnostics
+            and "params.SuperBigMapRalphProfileSelectedPreset = preset" in diagnostics
+            and "return false" in diagnostics[
+                diagnostics.index("function Diagnostics.RalphProfileResolveCurrentPreset"):
+                diagnostics.index("function Diagnostics.RalphProfileStart")
+            ]
+        ),
+        "preset_proof_precedes_start_and_native_submission": (
+            "diagnostics.RalphProfileResolveCurrentPreset() ~= true" in pregame
+            and pregame.index("diagnostics.RalphProfileResolveCurrentPreset()")
+            < pregame.index("diagnostics.RalphProfileStart({")
+            < pregame.index(
+                "return original_on_action(action, host, source",
+                pregame.index("diagnostics.RalphProfileStart({"),
+            )
+            and '"selected_random_map_preset=RoughTerrain"' in diagnostics[
+                diagnostics.index("function Diagnostics.RalphProfileStart"):
+                diagnostics.index("function Diagnostics.RalphProfileFinalDisplay")
+            ]
         ),
         "final_waits_first_render_frame": (
             'context.id ~= "WelcomeGameInfo"' in diagnostics
@@ -270,6 +301,8 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "coordinate": COORDINATE,
         "expand_map": "true",
         "rough_terrain": "true",
+        "selected_random_map_environment": "Surface",
+        "selected_random_map_preset": "RoughTerrain",
         "source": "PGMissionLandingSpotRemastered.ActionId.start",
     }
     required_final = {
@@ -277,6 +310,7 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "event": "welcome_close_display_first_visible_frame",
         "coordinate": COORDINATE,
         "rough_terrain": "true",
+        "selected_random_map_environment": "Surface",
         "selected_random_map_preset": "RoughTerrain",
         "dialog_class": "PopupNotification",
         "dialog_context_id": "WelcomeGameInfo",
@@ -294,7 +328,9 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "surface_seed_present_and_equal": bool(start.get("surface_seed")) and start.get("surface_seed") == final.get("surface_seed"),
         "input_hash_pinned_and_equal": start.get("input_hash") == INPUT_HASH and final.get("input_hash") == INPUT_HASH,
         "commit_present_and_equal": bool(start.get("commit")) and start.get("commit") == final.get("commit"),
-        "mod_version_892_and_equal": start.get("mod_version") == "892" and final.get("mod_version") == "892",
+        "mod_version_893_and_equal": start.get("mod_version") == "893" and final.get("mod_version") == "893",
+        "selected_map_present_and_equal": bool(start.get("selected_random_map_name"))
+        and start.get("selected_random_map_name") == final.get("selected_random_map_name"),
         "roughterrain_listed_at_start": "RoughTerrain" in start.get("active_rule_ids", "").split(","),
         "roughterrain_listed_at_final": "RoughTerrain" in final.get("active_rule_ids", "").split(","),
         "positive_external_duration": duration_ms > 0,
@@ -447,6 +483,24 @@ def self_test(args: argparse.Namespace) -> int:
     fail_open_start = (PROJECT / "Code" / "sbm_pregame_toggle.lua").read_text(encoding="utf-8").replace(
         "}) ~= true then", "}) == false then", 1,
     )
+    diagnostics_source = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8")
+    pregame_source = (PROJECT / "Code" / "sbm_pregame_toggle.lua").read_text(encoding="utf-8")
+    wrong_resolved_preset = diagnostics_source.replace(
+        'local preset = map_data.RandomMapPreset or "MAIN"', 'local preset = "MAIN"', 1,
+    )
+    inactive_rule_fail_open = diagnostics_source.replace(
+        'if is_rule_active("RoughTerrain") ~= true then', "if false then", 1,
+    )
+    non_surface_fail_open = diagnostics_source.replace(
+        'if map_data.Environment ~= "Surface" then', "if false then", 1,
+    )
+    post_start_preset_proof = pregame_source.replace(
+        "diagnostics.RalphProfileResolveCurrentPreset()",
+        "diagnostics.RalphProfileResolveCurrentPresetDeferred()", 1,
+    ).replace(
+        "if type(original_on_action) == \"function\" then",
+        "diagnostics.RalphProfileResolveCurrentPreset()\n\t\t\tif type(original_on_action) == \"function\" then", 1,
+    )
     fail_open_final = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8").replace(
         'error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")\n\t\t\treturn',
         'error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")', 1,
@@ -474,6 +528,18 @@ def self_test(args: argparse.Namespace) -> int:
         "fail_open_start_mutation_rejected": not static_checks(
             text, pregame_override=fail_open_start
         )["profile_start_is_fail_closed"],
+        "wrong_resolved_preset_mutation_rejected": not static_checks(
+            text, diagnostics_override=wrong_resolved_preset
+        )["surface_preset_is_source_anchored_and_fail_closed"],
+        "inactive_rule_fail_open_mutation_rejected": not static_checks(
+            text, diagnostics_override=inactive_rule_fail_open
+        )["surface_preset_is_source_anchored_and_fail_closed"],
+        "non_surface_fail_open_mutation_rejected": not static_checks(
+            text, diagnostics_override=non_surface_fail_open
+        )["surface_preset_is_source_anchored_and_fail_closed"],
+        "post_start_preset_proof_mutation_rejected": not static_checks(
+            text, pregame_override=post_start_preset_proof
+        )["preset_proof_precedes_start_and_native_submission"],
         "fail_open_final_mutation_rejected": not static_checks(
             text, diagnostics_override=fail_open_final
         )["final_guards_abort_before_write"],
@@ -488,7 +554,9 @@ def self_test(args: argparse.Namespace) -> int:
         "active_rule_ids": "RoughTerrain",
         "source": "PGMissionLandingSpotRemastered.ActionId.start",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "892",
+        "commit": "deadbeef", "mod_version": "893",
+        "selected_random_map_name": "BlankBigTerraceCMix_03",
+        "selected_random_map_environment": "Surface", "selected_random_map_preset": "RoughTerrain",
     }
     final_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -500,7 +568,9 @@ def self_test(args: argparse.Namespace) -> int:
         "stretch_pipeline_pending": "false", "post_pipeline_revalidation_complete": "true",
         "expansion_loading_visible": "false",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "892",
+        "commit": "deadbeef", "mod_version": "893",
+        "selected_random_map_name": "BlankBigTerraceCMix_03",
+        "selected_random_map_environment": "Surface",
     }
     log_fixture = "\n".join((
         "[Super Big Map][LoadingTiming] SESSION_BEGIN {session=1}",

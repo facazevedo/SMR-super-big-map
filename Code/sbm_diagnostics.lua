@@ -279,6 +279,52 @@ local function ActiveRuleIds()
 	return ids
 end
 
+function Diagnostics.RalphProfileResolveCurrentPreset()
+	local params = RalphProfileParams()
+	if not params then return false end
+	if params.SuperBigMapRalphProfileSelectedPreset then
+		error("Ralph profile resolved the surface preset more than once")
+		return false
+	end
+	local get_current_map_name = Global("GetCurrentRandomMapName")
+	local map_data_table = Global("MapData")
+	local is_rule_active = Global("IsGameRuleActive")
+	if type(get_current_map_name) ~= "function" or type(map_data_table) ~= "table"
+		or type(is_rule_active) ~= "function" then
+		error("Ralph profile current-map preset resolver is unavailable")
+		return false
+	end
+	local ok, map_name = pcall(get_current_map_name)
+	local map_data = ok and type(map_name) == "string" and map_data_table[map_name] or nil
+	if type(map_data) ~= "table" then
+		error("Ralph profile current random map did not resolve")
+		return false
+	end
+	-- Mirror GenerateCurrentRandomMap in the installed engine source. This is a
+	-- read-only proof immediately before the unchanged native START action; the
+	-- seeded resolver is pure and consumes no process RNG state.
+	local preset = map_data.RandomMapPreset or "MAIN"
+	if is_rule_active("RoughTerrain") == true and map_data.Environment == "Surface" then
+		preset = "RoughTerrain"
+	end
+	if map_data.Environment ~= "Surface" then
+		error("Ralph profile current random map is not a surface map")
+		return false
+	end
+	if is_rule_active("RoughTerrain") ~= true then
+		error("Ralph profile preset proof requires active RoughTerrain rule")
+		return false
+	end
+	if preset ~= "RoughTerrain" then
+		error("Ralph profile selected surface preset " .. tostring(preset) .. " instead of RoughTerrain")
+		return false
+	end
+	params.SuperBigMapRalphProfileSelectedMap = map_name
+	params.SuperBigMapRalphProfileSelectedMapEnvironment = "Surface"
+	params.SuperBigMapRalphProfileSelectedPreset = preset
+	return true
+end
+
 function Diagnostics.RalphProfileStart(data)
 	local params = RalphProfileParams()
 	if not params then return false end
@@ -291,7 +337,14 @@ function Diagnostics.RalphProfileStart(data)
 	local input_hash = ProfileField(params, "SuperBigMapRalphProfileInputHash")
 	local path = ProfileField(params, "SuperBigMapRalphProfileStartSentinel")
 	local final_path = ProfileField(params, "SuperBigMapRalphProfileFinalSentinel")
-	if not token or not commit or not input_hash or not path or not final_path then return false end
+	local selected_map = ProfileField(params, "SuperBigMapRalphProfileSelectedMap")
+	if not token or not commit or not input_hash or not path or not final_path
+		or not selected_map then return false end
+	if params.SuperBigMapRalphProfileSelectedMapEnvironment ~= "Surface"
+		or params.SuperBigMapRalphProfileSelectedPreset ~= "RoughTerrain" then
+		error("Ralph profile START lacks pre-generation RoughTerrain preset proof")
+		return false
+	end
 	if params.SuperBigMapExpandMap ~= true or not (data and data.expand_selected == true) then
 		error("Ralph profile START requires selected EXPAND MAP")
 		return false
@@ -321,6 +374,9 @@ function Diagnostics.RalphProfileStart(data)
 		"expand_map=true",
 		"rough_terrain=true",
 		"active_rule_ids=" .. table.concat(ActiveRuleIds(), ","),
+		"selected_random_map_name=" .. selected_map,
+		"selected_random_map_environment=Surface",
+		"selected_random_map_preset=RoughTerrain",
 		"surface_seed=" .. tostring(params.Seed),
 		"input_hash=" .. input_hash,
 		"commit=" .. commit,
@@ -330,24 +386,6 @@ function Diagnostics.RalphProfileStart(data)
 	}) ~= true then return false end
 	params.SuperBigMapRalphProfileStartAccepted = true
 	params.SuperBigMapRalphProfileStartPreciseTicks = ticks
-	return true
-end
-
-function Diagnostics.RalphProfileRecordPreset(map_name, preset_name)
-	local params = RalphProfileParams()
-	if not params then return false end
-	local map_data = type(Global("MapData")) == "table" and Global("MapData")[map_name]
-	if not map_data or map_data.Environment ~= "Surface" then return false end
-	if params.SuperBigMapRalphProfileSelectedPreset then
-		error("Ralph profile observed the surface preset more than once")
-		return false
-	end
-	local preset = tostring(preset_name)
-	if preset ~= "RoughTerrain" then
-		error("Ralph profile selected surface preset " .. preset .. " instead of RoughTerrain")
-		return false
-	end
-	params.SuperBigMapRalphProfileSelectedPreset = preset
 	return true
 end
 
@@ -416,6 +454,8 @@ function Diagnostics.RalphProfileFinalDisplay(dialog)
 			"coordinate=14N134W",
 			"rough_terrain=true",
 			"active_rule_ids=" .. table.concat(ActiveRuleIds(), ","),
+			"selected_random_map_name=" .. tostring(params.SuperBigMapRalphProfileSelectedMap),
+			"selected_random_map_environment=Surface",
 			"selected_random_map_preset=RoughTerrain",
 			"surface_seed=" .. tostring(params.Seed),
 			"input_hash=" .. input_hash,

@@ -474,17 +474,6 @@ local function InstallLandingDialogAction(dialog)
 			local expand = IsSelected()
 			local diagnostics = SuperBigMap.Diagnostics
 			local params = Global("g_CurrentMapParams")
-			if type(params) == "table" and params.SuperBigMapRalphProfileEnabled == true then
-				if not diagnostics or type(diagnostics.RalphProfileStart) ~= "function"
-					or diagnostics.RalphProfileStart({
-					expand_selected = expand,
-					action_id = action and action.ActionId,
-					source = source,
-					}) ~= true then
-					error("Ralph profile rejected START before generation")
-					return false
-				end
-			end
 			SetStartArmed(expand, "start")
 			-- START is the ownership boundary for every gameplay modification. Until this
 			-- exact moment only the pregame opt-in control exists; OFF explicitly keeps the
@@ -496,24 +485,22 @@ local function InstallLandingDialogAction(dialog)
 			elseif lifecycle and type(lifecycle.BeginVanillaSession) == "function" then
 				SafeCall(lifecycle.BeginVanillaSession, "pregame START without EXPAND MAP", false)
 			end
-			-- Install this observer after lifecycle wrappers so it sees the exact preset
-			-- chosen by GenerateCurrentRandomMap without displacing any gameplay wrapper.
-			if type(params) == "table" and params.SuperBigMapRalphProfileEnabled == true
-				and params.SuperBigMapRalphProfilePresetWrapped ~= true then
-				local live_generate_random_map = Global("GenerateRandomMap")
-				if type(live_generate_random_map) ~= "function" then
-					error("GenerateRandomMap unavailable for Ralph profile preset proof")
+			-- Resolve the preset from the same inputs and branch used by native
+			-- GenerateCurrentRandomMap, after lifecycle setup and immediately before
+			-- accepting/submitting the unchanged native START action.
+			if type(params) == "table" and params.SuperBigMapRalphProfileEnabled == true then
+				if not diagnostics
+					or type(diagnostics.RalphProfileResolveCurrentPreset) ~= "function"
+					or diagnostics.RalphProfileResolveCurrentPreset() ~= true
+					or type(diagnostics.RalphProfileStart) ~= "function"
+					or diagnostics.RalphProfileStart({
+						expand_selected = expand,
+						action_id = action and action.ActionId,
+						source = source,
+						}) ~= true then
+					error("Ralph profile rejected START or preset proof before generation")
 					return false
 				end
-				GenerateRandomMap = function(map_name, preset_name, generate_params)
-					if type(diagnostics.RalphProfileRecordPreset) ~= "function"
-						or diagnostics.RalphProfileRecordPreset(map_name, preset_name) ~= true then
-						error("Ralph profile rejected the selected random-map preset")
-						return false
-					end
-					return live_generate_random_map(map_name, preset_name, generate_params)
-				end
-				params.SuperBigMapRalphProfilePresetWrapped = true
 			end
 			if type(original_on_action) == "function" then
 				return original_on_action(action, host, source, ...)
