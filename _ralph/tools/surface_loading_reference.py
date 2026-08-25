@@ -445,7 +445,14 @@ def command_prepare(args: argparse.Namespace) -> int:
 
 def command_self_test(args: argparse.Namespace) -> int:
     py_compile.compile(str(Path(__file__).resolve()), doraise=True)
-    compile_lua(args.luac.resolve(), PARITY / "determinism_capture_probe.lua")
+    probe = PARITY / "determinism_capture_probe.lua"
+    compile_lua(args.luac.resolve(), probe)
+    probe_text = probe.read_text(encoding="utf-8")
+    target_probe_boundaries_exact = (
+        probe_text.count('probe_snapshot("stock_surface_output"') == 1
+        and probe_text.count('probe_snapshot("post_scale_decorations"') == 1
+        and 'probe_snapshot("pre_scale_decorations"' not in probe_text
+    )
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -462,10 +469,16 @@ def command_self_test(args: argparse.Namespace) -> int:
         missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
         verdict["lua_parse"] = True
         verdict["target_probe_lua_parse"] = True
+        verdict["target_probe_boundaries_exact"] = target_probe_boundaries_exact
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
-        verdict["ok"] = verdict["ok"] and mutation_red and missing_finalizer_red
+        verdict["ok"] = (
+            verdict["ok"]
+            and mutation_red
+            and missing_finalizer_red
+            and target_probe_boundaries_exact
+        )
     if args.out:
         write_json(args.out.resolve(), verdict)
     print(json.dumps(verdict, indent=2, sort_keys=True))

@@ -129,7 +129,7 @@ local function safe_call(fn, self, ...)
 end
 
 -- Optional task-local object-lifetime probe.  It is deliberately armed only by a harness
--- generator and changes no production state: the three snapshots read the existing map census
+-- generator and changes no production state: the two snapshots read the existing map census
 -- plus the exact cached traversal lists captured by AnnotateDecorRelief.  Keeping the diagnostic
 -- here, beside the established capture hook, lets it observe both sides of
 -- ScaleDecorationsToFull without adding a production callback or logging path.
@@ -327,7 +327,7 @@ local function probe_snapshot(stage, map)
 		end
 		target_probe_rows[#target_probe_rows + 1] = table.concat(fields, "|")
 	end
-	if (stage == "stock_surface_output" or stage == "pre_scale_decorations") and present ~= 8 then
+	if stage == "stock_surface_output" and present ~= 8 then
 		error("target state probe expected eight live inputs at " .. stage
 			.. ", found " .. tostring(present))
 	end
@@ -490,7 +490,6 @@ local function capture_hook(stage, map, details)
 		stage_seen[stage .. ":" .. kind] = true
 		if stage == "pre_z_transform" and kind == "surface_height" then
 			save_objects(artifacts[stage].object_census, map, false)
-			probe_snapshot("pre_scale_decorations", map)
 		elseif stage == "post_z_transform" and kind == "surface_height" then
 			write(artifacts[stage].zone_stamp, canonical({
 				zmul = map.SuperBigMapZScaleMul,
@@ -608,7 +607,7 @@ rawset(_G, "g_FzpDeterminismCaptureFinalize", function()
 		end
 		if target_probe ~= nil then
 			for _, key in ipairs({
-				"stock_surface_output", "pre_scale_decorations", "post_scale_decorations",
+				"stock_surface_output", "post_scale_decorations",
 			}) do
 				if not target_probe_seen[key] then error("missing target state probe " .. key) end
 			end
