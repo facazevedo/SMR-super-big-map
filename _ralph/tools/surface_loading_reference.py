@@ -34,6 +34,7 @@ LAT = -840
 LON = -8040
 EXPECTED_PRESET = "RoughTerrain"
 REFERENCE_UNDERGROUND_SEED = run_parity.REFERENCE_UNDERGROUND_SEED
+DEFAULT_ASYNC_RAND_SEED = 301460103
 REFERENCE_GENERATION_SHA256 = "FB201DC57591DF2F97A1B512C391D3EF65F7CDF1928CCA800F7F84770DE58D58"
 REFERENCE_PROBE_SHA256 = "6D991C11C58CFD1D803D44A2B7DA269C77DD42E9E46B8BDAC71C5EFE13AA0A07"
 PLACEHOLDER_PREFIX = "__"
@@ -78,15 +79,39 @@ def unresolved(text: str) -> list[str]:
 
 
 def benchmark_block(
-    capture_base: Path, stable_sentinel: Path, final_sentinel: Path
+    capture_base: Path,
+    stable_sentinel: Path,
+    final_sentinel: Path,
+    async_rand_seed: int,
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
     return f'''\t\tdo
 \t\t\tlocal state = {{
-\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v2",
+\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v3",
 \t\t\t\tcoordinate = "{COORDINATE}", latitude = {LAT}, longitude = {LON},
 \t\t\t\texpected_preset = "{EXPECTED_PRESET}", selected_preset = false,
+\t\t\t\tasync_rand_initial_seed = {async_rand_seed},
+\t\t\t\tasync_rand_final_seed = {async_rand_seed},
+\t\t\t\tasync_rand_draw_count = 0,
 \t\t\t}}
+\t\t\tif type(BraidRandom) ~= "function" then
+\t\t\t\terror("BraidRandom unavailable; cannot pin AsyncRand")
+\t\t\tend
+\t\t\tif type(AsyncRand) ~= "function" then
+\t\t\t\terror("AsyncRand unavailable; cannot install deterministic capture stream")
+\t\t\tend
+\t\t\tlocal async_rand_seed = state.async_rand_initial_seed
+\t\t\tlocal function pinned_async_rand(...)
+\t\t\t\tlocal value
+\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\tstate.async_rand_final_seed = async_rand_seed
+\t\t\t\treturn value
+\t\t\tend
+\t\t\trawset(_G, "AsyncRand", pinned_async_rand)
+\t\t\tif rawget(_G, "AsyncRand") ~= pinned_async_rand then
+\t\t\t\terror("deterministic AsyncRand capture stream did not install")
+\t\t\tend
 \t\t\tlocal function active_rule_ids()
 \t\t\t\tlocal ids = {{}}
 \t\t\t\tfor id, active in pairs((Game and Game.game_rules) or empty_table) do
@@ -123,6 +148,9 @@ def benchmark_block(
 \t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
 \t\t\tend
 \t\t\trawset(_G, "g_SmrRalphPublishSurfaceStable", function(surface)
+\t\t\t\tif rawget(_G, "AsyncRand") ~= pinned_async_rand then
+\t\t\t\t\terror("deterministic AsyncRand capture stream was replaced before T1")
+\t\t\t\tend
 \t\t\t\tif type(surface) ~= "table" or surface.SuperBigMapSurfaceStretchDone ~= true then
 \t\t\t\t\terror("surface stable publisher requires completed stretch")
 \t\t\t\tend
@@ -174,6 +202,9 @@ def benchmark_block(
 \t\t\t\t\t"active_rule_ids_at_generation_start=" .. table.concat(state.active_rule_ids_at_generation_start, ","),
 \t\t\t\t\t"active_rule_ids_at_t1=" .. table.concat(state.active_rule_ids_at_t1, ","),
 \t\t\t\t\t"selected_random_map_preset=" .. tostring(state.selected_preset),
+\t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
+\t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
+\t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
 \t\t\t\t\t"surface_stretch_done=" .. tostring(state.surface_stretch_done),
 \t\t\t\t\t"surface_expansion_pending=" .. tostring(state.surface_expansion_pending),
 \t\t\t\t\t"stretch_pipeline_pending=" .. tostring(state.stretch_pipeline_pending),
@@ -210,6 +241,9 @@ def benchmark_block(
 \t\t\t\t\t"finalization_after_surface_stable=true",
 \t\t\t\t\t"capture_finalized=" .. tostring(finalized),
 \t\t\t\t\t"capture_status=" .. status,
+\t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
+\t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
+\t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
 \t\t\t\t}}, "\\n") .. "\\n"
 \t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
 \t\t\t\tif write_error then error("final sentinel write failed: " .. tostring(write_error)) end
@@ -220,7 +254,10 @@ def benchmark_block(
 
 
 def render_generation(
-    capture_base: Path, stable_sentinel: Path, final_sentinel: Path
+    capture_base: Path,
+    stable_sentinel: Path,
+    final_sentinel: Path,
+    async_rand_seed: int = DEFAULT_ASYNC_RAND_SEED,
 ) -> str:
     text = run_parity.GEN_TEMPLATE.read_text(encoding="utf-8")
     text = text.replace(
@@ -235,7 +272,7 @@ def render_generation(
     )
     text = text.replace("__UNDERGROUND_PIN_BLOCK__", "")
     extra = run_parity.ROUGH_TERRAIN_BLOCK + "\n\n" + benchmark_block(
-        capture_base, stable_sentinel, final_sentinel
+        capture_base, stable_sentinel, final_sentinel, async_rand_seed
     )
     text = text.replace("__EXTRA_SETUP__", extra)
     publish_marker = '''\t\tif __EXPAND__ then
@@ -297,6 +334,7 @@ def static_verdict(text: str) -> dict[str, object]:
         "new_game": text.find('NewGame({ seed_text = "LOZL3FQr" })'),
         "rough_rule": text.find('Game:AddGameRule("RoughTerrain")'),
         "preset_wrapper": text.find("GenerateRandomMap = function(map_name, preset_name, params)"),
+        "async_rand_pin": text.find('rawset(_G, "AsyncRand", pinned_async_rand)'),
         "generation": text.find("pcall(GenerateCurrentRandomMap)"),
         "stable_publish": text.find("publish_surface_stable(surface)"),
         "underground_visit": text.find('g_ParityStatus = "entering_underground"'),
@@ -310,6 +348,20 @@ def static_verdict(text: str) -> dict[str, object]:
         "rough_activation_precedes_preset_and_generation": (
             0 <= positions["new_game"] < positions["rough_rule"]
             < positions["preset_wrapper"] < positions["generation"]
+        ),
+        "async_rand_pin_precedes_generation": (
+            0 <= positions["new_game"] < positions["async_rand_pin"] < positions["generation"]
+            and text.count('rawset(_G, "AsyncRand", pinned_async_rand)') == 1
+        ),
+        "async_rand_pin_fail_closed": (
+            'type(BraidRandom) ~= "function"' in text
+            and 'type(AsyncRand) ~= "function"' in text
+            and 'rawget(_G, "AsyncRand") ~= pinned_async_rand' in text
+        ),
+        "async_rand_state_recorded_twice": (
+            text.count('"async_rand_initial_seed="') == 2
+            and text.count('"async_rand_final_seed="') == 2
+            and text.count('"async_rand_draw_count="') == 2
         ),
         "preset_fail_closed": 'state.selected_preset ~= state.expected_preset' in text,
         "preset_required_roughterrain": f'expected_preset = "{EXPECTED_PRESET}"' in text,
@@ -393,14 +445,16 @@ def command_prepare(args: argparse.Namespace) -> int:
     capture_base = args.capture_base.resolve()
     stable_sentinel = args.stable_sentinel.resolve()
     final_sentinel = args.final_sentinel.resolve()
-    text = render_generation(capture_base, stable_sentinel, final_sentinel)
+    text = render_generation(
+        capture_base, stable_sentinel, final_sentinel, args.async_rand_seed
+    )
     generation.write_text(text, encoding="utf-8")
     compile_lua(args.luac.resolve(), generation)
     verdict = static_verdict(text)
     if not verdict["ok"]:
         raise ReferenceError(f"rendered generation failed static checks: {verdict['failed']}")
     manifest = {
-        "schema": "smr.ralph.surface_loading_reference_manifest.v2",
+        "schema": "smr.ralph.surface_loading_reference_manifest.v3",
         "source_head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True, timeout=30
         ).strip(),
@@ -411,6 +465,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "rough_terrain_required": True,
         "selected_random_map_preset_required": EXPECTED_PRESET,
         "reference_underground_seed": REFERENCE_UNDERGROUND_SEED,
+        "async_rand_seed": args.async_rand_seed,
         "generation_script": str(generation),
         "generation_script_bytes": generation.stat().st_size,
         "generation_script_sha256": sha256_file(generation),
@@ -444,6 +499,10 @@ def command_self_test(args: argparse.Namespace) -> int:
         mutation_red = static_verdict(mutation)["ok"] is False
         missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
         missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
+        missing_async_pin = text.replace(
+            '\n\t\t\trawset(_G, "AsyncRand", pinned_async_rand)', "", 1
+        )
+        missing_async_pin_red = static_verdict(missing_async_pin)["ok"] is False
         verdict["lua_parse"] = True
         verdict["reference_probe_lua_parse"] = True
         verdict["reference_probe_sha256"] = probe_sha256
@@ -452,10 +511,12 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
+        verdict["missing_async_rand_pin_mutation_red"] = missing_async_pin_red
         verdict["ok"] = (
             verdict["ok"]
             and mutation_red
             and missing_finalizer_red
+            and missing_async_pin_red
             and verdict["reference_probe_exact"]
         )
     if args.out:
@@ -578,6 +639,7 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--capture-base", type=Path, required=True)
     prepare.add_argument("--stable-sentinel", type=Path, required=True)
     prepare.add_argument("--final-sentinel", type=Path, required=True)
+    prepare.add_argument("--async-rand-seed", type=int, required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
     prepare.set_defaults(func=command_prepare)
