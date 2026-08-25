@@ -75,11 +75,13 @@ def unresolved(text: str) -> list[str]:
     return sorted(tokens)
 
 
-def benchmark_block(capture_base: Path, stable_sentinel: Path) -> str:
+def benchmark_block(
+    capture_base: Path, stable_sentinel: Path, final_sentinel: Path
+) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
     return f'''\t\tdo
 \t\t\tlocal state = {{
-\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v1",
+\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v2",
 \t\t\t\tcoordinate = "{COORDINATE}", latitude = {LAT}, longitude = {LON},
 \t\t\t\texpected_preset = "{EXPECTED_PRESET}", selected_preset = false,
 \t\t\t}}
@@ -178,12 +180,46 @@ def benchmark_block(capture_base: Path, stable_sentinel: Path) -> str:
 \t\t\t\t}}, "\\n") .. "\\n"
 \t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(stable_sentinel)}", text)
 \t\t\t\tif write_error then error("stable sentinel write failed: " .. tostring(write_error)) end
+\t\t\t\tstate.surface_stable_published = true
+\t\t\t\treturn true
+\t\t\tend)
+\t\t\trawset(_G, "g_SmrRalphFinalizeReferenceCapture", function()
+\t\t\t\tif state.surface_stable_published ~= true then
+\t\t\t\t\terror("determinism finalizer cannot precede stable T1 publication")
+\t\t\t\tend
+\t\t\t\tlocal finalizer = rawget(_G, "g_FzpDeterminismCaptureFinalize")
+\t\t\t\tif type(finalizer) ~= "function" then
+\t\t\t\t\terror("determinism capture finalizer is unavailable")
+\t\t\t\tend
+\t\t\t\tlocal result = finalizer()
+\t\t\t\tlocal finalized = rawget(_G, "g_FzpDeterminismCaptureFinalized") == true
+\t\t\t\tlocal status = tostring(rawget(_G, "g_FzpDeterminismCaptureStatus"))
+\t\t\t\tlocal capture_error = rawget(_G, "g_FzpDeterminismCaptureError")
+\t\t\t\tif result ~= true or not finalized or status ~= "complete" or capture_error then
+\t\t\t\t\terror("determinism capture finalization failed: result=" .. tostring(result)
+\t\t\t\t\t\t.. " finalized=" .. tostring(finalized)
+\t\t\t\t\t\t.. " status=" .. status
+\t\t\t\t\t\t.. " error=" .. tostring(capture_error))
+\t\t\t\tend
+\t\t\t\tlocal text = table.concat({{
+\t\t\t\t\t"schema=smr.ralph.surface_loading_reference_final.v1",
+\t\t\t\t\t"coordinate=" .. state.coordinate,
+\t\t\t\t\t"surface_stable_published=" .. tostring(state.surface_stable_published),
+\t\t\t\t\t"finalization_after_surface_stable=true",
+\t\t\t\t\t"capture_finalized=" .. tostring(finalized),
+\t\t\t\t\t"capture_status=" .. status,
+\t\t\t\t}}, "\\n") .. "\\n"
+\t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
+\t\t\t\tif write_error then error("final sentinel write failed: " .. tostring(write_error)) end
+\t\t\t\tstate.capture_finalized = true
 \t\t\t\treturn true
 \t\t\tend)
 \t\tend'''
 
 
-def render_generation(capture_base: Path, stable_sentinel: Path) -> str:
+def render_generation(
+    capture_base: Path, stable_sentinel: Path, final_sentinel: Path
+) -> str:
     text = run_parity.GEN_TEMPLATE.read_text(encoding="utf-8")
     text = text.replace(
         "__FLIGHT_SANITATION__",
@@ -197,7 +233,7 @@ def render_generation(capture_base: Path, stable_sentinel: Path) -> str:
     )
     text = text.replace("__UNDERGROUND_PIN_BLOCK__", "")
     extra = run_parity.ROUGH_TERRAIN_BLOCK + "\n\n" + benchmark_block(
-        capture_base, stable_sentinel
+        capture_base, stable_sentinel, final_sentinel
     )
     text = text.replace("__EXTRA_SETUP__", extra)
     publish_marker = '''\t\tif __EXPAND__ then
@@ -220,6 +256,22 @@ def render_generation(capture_base: Path, stable_sentinel: Path) -> str:
 \t\tpublish_surface_stable(surface)
 
 \t\t-- Capture the generator holders BEFORE any game time is allowed to advance:''',
+        1,
+    )
+    parity_complete = '''\t\tg_ParityStatus = "complete"
+\tend, debug.traceback)'''
+    if text.count(parity_complete) != 1:
+        raise ReferenceError("parity completion marker changed")
+    text = text.replace(
+        parity_complete,
+        '''\t\tlocal finalize_reference_capture = rawget(_G, "g_SmrRalphFinalizeReferenceCapture")
+\t\tif type(finalize_reference_capture) ~= "function" then
+\t\t\terror("reference capture finalizer is unavailable")
+\t\tend
+\t\tfinalize_reference_capture()
+
+\t\tg_ParityStatus = "complete"
+\tend, debug.traceback)''',
         1,
     )
     missing = unresolved(text)
@@ -246,6 +298,8 @@ def static_verdict(text: str) -> dict[str, object]:
         "generation": text.find("pcall(GenerateCurrentRandomMap)"),
         "stable_publish": text.find("publish_surface_stable(surface)"),
         "underground_visit": text.find('g_ParityStatus = "entering_underground"'),
+        "finalizer_invoke": text.find("\n\t\tfinalize_reference_capture()"),
+        "parity_complete": text.find('\n\t\tg_ParityStatus = "complete"'),
     }
     checks = {
         "coordinate_is_14N134W": f"latitude = {LAT}, longitude = {LON}" in text,
@@ -281,6 +335,21 @@ def static_verdict(text: str) -> dict[str, object]:
         ),
         "determinism_capture_armed_before_generation": (
             text.find("g_FzpDeterminismCaptureOutBase") < positions["generation"]
+        ),
+        "finalizer_follows_stable_t1_and_underground": (
+            0 <= positions["stable_publish"] < positions["underground_visit"]
+            < positions["finalizer_invoke"] < positions["parity_complete"]
+        ),
+        "finalizer_fail_closed_and_single_invocation": (
+            text.count("\n\t\tfinalize_reference_capture()") == 1
+            and 'type(finalize_reference_capture) ~= "function"' in text
+            and 'g_FzpDeterminismCaptureFinalized") == true' in text
+            and 'status ~= "complete"' in text
+        ),
+        "distinct_final_sentinel_after_verified_finalization": (
+            "smr.ralph.surface_loading_reference_final.v1" in text
+            and "finalization_after_surface_stable=true" in text
+            and "final sentinel write failed" in text
         ),
         "no_unresolved_placeholders": not unresolved(text),
         "no_direct_game_launcher": "MarsDebug.exe" not in text and "taskkill" not in text.lower(),
@@ -320,14 +389,15 @@ def command_prepare(args: argparse.Namespace) -> int:
     generation = staging / "generate_14N134W_rough_reference.lua"
     capture_base = args.capture_base.resolve()
     stable_sentinel = args.stable_sentinel.resolve()
-    text = render_generation(capture_base, stable_sentinel)
+    final_sentinel = args.final_sentinel.resolve()
+    text = render_generation(capture_base, stable_sentinel, final_sentinel)
     generation.write_text(text, encoding="utf-8")
     compile_lua(args.luac.resolve(), generation)
     verdict = static_verdict(text)
     if not verdict["ok"]:
         raise ReferenceError(f"rendered generation failed static checks: {verdict['failed']}")
     manifest = {
-        "schema": "smr.ralph.surface_loading_reference_manifest.v1",
+        "schema": "smr.ralph.surface_loading_reference_manifest.v2",
         "source_head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True, timeout=30
         ).strip(),
@@ -343,6 +413,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "generation_script_sha256": sha256_file(generation),
         "capture_base": str(capture_base),
         "stable_sentinel": str(stable_sentinel),
+        "final_sentinel": str(final_sentinel),
         "static_verdict": verdict,
         "luac": str(args.luac.resolve()),
     }
@@ -357,16 +428,21 @@ def command_self_test(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
         generation = root / "generation.lua"
-        text = render_generation(root / "capture", root / "stable.sentinel")
+        text = render_generation(
+            root / "capture", root / "stable.sentinel", root / "final.sentinel"
+        )
         generation.write_text(text, encoding="utf-8")
         compile_lua(args.luac.resolve(), generation)
         verdict = static_verdict(text)
         mutation = text.replace('expected_preset = "RoughTerrain"', 'expected_preset = "MAIN"', 1)
         mutation_red = static_verdict(mutation)["ok"] is False
+        missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
+        missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
         verdict["lua_parse"] = True
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
-        verdict["ok"] = verdict["ok"] and mutation_red
+        verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
+        verdict["ok"] = verdict["ok"] and mutation_red and missing_finalizer_red
     if args.out:
         write_json(args.out.resolve(), verdict)
     print(json.dumps(verdict, indent=2, sort_keys=True))
@@ -380,6 +456,7 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--staging", type=Path, required=True)
     prepare.add_argument("--capture-base", type=Path, required=True)
     prepare.add_argument("--stable-sentinel", type=Path, required=True)
+    prepare.add_argument("--final-sentinel", type=Path, required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
     prepare.set_defaults(func=command_prepare)
