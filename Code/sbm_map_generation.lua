@@ -11258,6 +11258,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- surface lost none. Idempotent, whole-map, same engine sequence as both other sites.
 				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
 					SetLoadingPhase("Finalizing surface gameplay grids")
+					SuperBigMap.GenerationGrids.RebuildFinal(map, "after last object-grid transaction")
 				end
 			end)
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.
