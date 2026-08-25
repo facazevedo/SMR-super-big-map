@@ -86,6 +86,31 @@ def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float
     return 1 - smooth
 
 
+def protected_by_any(
+    x: float, y: float, guards: tuple[tuple[float, float, float], ...]
+) -> bool:
+    """Model the production exact per-cell protected-circle predicate."""
+    return any(
+        (x - cx) ** 2 + (y - cy) ** 2 <= radius**2
+        for cx, cy, radius in guards
+    )
+
+
+def nearby_protected_guards(
+    patch_x: float,
+    patch_y: float,
+    visit_radius: float,
+    guards: tuple[tuple[float, float, float], ...],
+) -> tuple[tuple[float, float, float], ...]:
+    """Model the conservative per-patch triangle-inequality prefilter."""
+    return tuple(
+        guard
+        for guard in guards
+        if (guard[0] - patch_x) ** 2 + (guard[1] - patch_y) ** 2
+        <= (visit_radius + guard[2]) ** 2
+    )
+
+
 CASES = (
     Candidate("plain_flat", "plain"),
     Candidate("mountain_base_flat", "mountain", mountain_base=True),
@@ -256,6 +281,14 @@ static_checks = {
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
+    ),
+    "resource_terrain_prefilters_protected_guards_per_patch": (
+        "local function protected_ready_sites_near(cx, cy, visit_radius)"
+        in outer_resource_terrain
+        and "local reach = visit_radius + protected.radius" in outer_resource_terrain
+        and "local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)"
+        in outer_resource_terrain
+        and "is_protected_ready_cell(x, y, nearby_protected)" in outer_resource_terrain
     ),
     "resource_terrain_levels_only_live_footprint_margin": (
         "math.ceil(world_radius + 1)" in outer_resource_terrain
@@ -517,7 +550,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_893": "'version', 893" in METADATA,
+    "version_is_894": "'version', 894" in METADATA,
 }
 
 case_results = []
@@ -586,9 +619,60 @@ feather_checks = {
     ) < 1e-5,
 }
 
+guard_prefilter_guards = (
+    (-8.0, 1.0, 2.0),
+    (0.0, 0.0, 1.5),
+    (4.0, 3.0, 2.25),
+    (7.0, 0.0, 2.0),
+    (40.0, -30.0, 4.0),
+)
+guard_prefilter_cases = (
+    (0.0, 0.0, 5.0),
+    (2.5, -1.5, 3.5),
+    (-4.0, 2.0, 4.0),
+    (10.0, 0.0, 1.0),
+)
+guard_equivalent = True
+guard_samples = 0
+for patch_x, patch_y, visit_radius in guard_prefilter_cases:
+    nearby = nearby_protected_guards(
+        patch_x, patch_y, visit_radius, guard_prefilter_guards
+    )
+    for ix in range(-24, 25):
+        for iy in range(-24, 25):
+            x = patch_x + ix / 4
+            y = patch_y + iy / 4
+            if (x - patch_x) ** 2 + (y - patch_y) ** 2 <= visit_radius**2:
+                guard_samples += 1
+                guard_equivalent = guard_equivalent and (
+                    protected_by_any(x, y, guard_prefilter_guards)
+                    == protected_by_any(x, y, nearby)
+                )
+
+guard_prefilter_checks = {
+    "exhaustive_visited_pixels_match_full_scan": guard_equivalent,
+    "exhaustive_sample_count_is_stable": guard_samples == 2716,
+    "tangent_guard_is_retained": (
+        (7.0, 0.0, 2.0)
+        in nearby_protected_guards(0.0, 0.0, 5.0, guard_prefilter_guards)
+    ),
+    "nonintersecting_guard_is_pruned": (
+        (40.0, -30.0, 4.0)
+        not in nearby_protected_guards(0.0, 0.0, 5.0, guard_prefilter_guards)
+    ),
+    "guard_order_is_preserved": (
+        nearby_protected_guards(0.0, 0.0, 10.0, guard_prefilter_guards)
+        == tuple(
+            guard
+            for guard in guard_prefilter_guards
+            if (guard[0] ** 2 + guard[1] ** 2) <= (10.0 + guard[2]) ** 2
+        )
+    ),
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 10,
+    "schema_version": 11,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -596,6 +680,7 @@ report = {
     "effect_checks": effect_checks,
     "quota_spacing_checks": quota_spacing_checks,
     "feather_checks": feather_checks,
+    "guard_prefilter_checks": guard_prefilter_checks,
     "preferred_candidates": preferred,
 }
 report["static_passed"] = sum(static_checks.values())
@@ -612,6 +697,9 @@ report["quota_spacing_passed"] = sum(quota_spacing_checks.values())
 report["quota_spacing_total"] = len(quota_spacing_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
+report["guard_prefilter_passed"] = sum(guard_prefilter_checks.values())
+report["guard_prefilter_total"] = len(guard_prefilter_checks)
+report["guard_prefilter_samples"] = guard_samples
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -620,6 +708,7 @@ report["ok"] = (
     and all(effect_checks.values())
     and all(quota_spacing_checks.values())
     and all(feather_checks.values())
+    and all(guard_prefilter_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
