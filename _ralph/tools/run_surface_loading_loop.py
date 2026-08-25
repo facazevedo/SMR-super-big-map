@@ -119,6 +119,9 @@ def main() -> int:
         None,
         task_name=TASK_NAME,
         dry_run=args.dry_run,
+        # The task digest and scope remain pinned; this only installs newer
+        # runner-owned session contracts and compact-memory files safely.
+        migrate_prompt=True,
     )
     executable = shutil.which("codex")
     if executable is None:
