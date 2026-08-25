@@ -67,6 +67,13 @@ local function TerrainCreaseAudit(event, data, map)
 	end
 end
 
+local function OuterResourceRetryProvenance(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.OuterResourceRetryProvenance) == "function" then
+		diagnostics.OuterResourceRetryProvenance(event, data, map)
+	end
+end
+
 local function NotifyDeterminismCaptureForTest(stage, map, details)
 	local generation = SuperBigMap.MapGeneration
 	local notify = type(generation) == "table"
@@ -1818,7 +1825,7 @@ local function PrepareOuterResourceTerrain(map)
 	-- carry the marker identity into the bounded retry so it becomes a patch
 	-- candidate even if a transient grid read says it is ready again.  This does
 	-- not broaden terrain edits: all other ready footprints remain protected.
-	local retry_failed_sites = {}
+	local retry_failed_sites, retry_failed_markers, retry_failed_resource_kinds = {}, {}, {}
 	if type(map.SuperBigMapOuterResourceTerrainSites) == "table" then
 		for _, previous in ipairs(map.SuperBigMapOuterResourceTerrainSites) do
 			if previous and previous.verified ~= true
@@ -1826,6 +1833,15 @@ local function PrepareOuterResourceTerrain(map)
 				local key = tostring(previous.kind) .. "|" .. tostring(previous.resource)
 					.. "|" .. tostring(previous.q) .. "|" .. tostring(previous.r)
 				retry_failed_sites[key] = true
+				retry_failed_markers[previous.marker] = key
+				retry_failed_resource_kinds[tostring(previous.kind) .. "|"
+					.. tostring(previous.resource)] = true
+				OuterResourceRetryProvenance("PRIOR_FAILURE", {
+					prior_key = key, kind = tostring(previous.kind),
+					resource = tostring(previous.resource), q = previous.q, r = previous.r,
+					ready_before = tostring(previous.ready_before == true),
+					modified = tostring(previous.modified == true),
+				}, map)
 			end
 		end
 	end
@@ -2123,6 +2139,9 @@ local function PrepareOuterResourceTerrain(map)
 			extractor_offsets = exact_extractor_offsets,
 			modified = false,
 		}
+		local patch_result = ready and "protected_ready" or "nil"
+		local required_feather = entry.kind == "extractor"
+			and math.max(extractor_feather, required_core + 4) or surface_feather
 		if ready then
 			-- A terrain patch for a nearby cluster must never invalidate a resource footprint that
 			-- the engine had already accepted.  It remains byte-for-byte untouched inside this guard.
@@ -2135,13 +2154,23 @@ local function PrepareOuterResourceTerrain(map)
 			}
 		else
 			if entry.force_retry then forced_resource_repairs = forced_resource_repairs + 1 end
-			local required_feather = entry.kind == "extractor"
-				and math.max(extractor_feather, required_core + 4) or surface_feather
 			local patch = add_patch(entry.kind, entry.x, entry.y, entry.q, entry.r,
 				level_core, required_feather,
 				{ resource_site = site,
 					support_cells = required_core * cells_per_hex })
 			if patch then site.modified = true end
+			patch_result = patch and "installed" or "nil"
+		end
+		if entry.force_retry or retry_failed_markers[entry.marker]
+			or retry_failed_resource_kinds[entry.kind .. "|" .. entry.resource] then
+			OuterResourceRetryProvenance("CURRENT_CANDIDATE", {
+				current_key = resource_site_key(entry.kind, entry.resource, entry.q, entry.r),
+				prior_marker_key = tostring(retry_failed_markers[entry.marker] or ""),
+				force_retry = tostring(entry.force_retry == true), patch_result = patch_result,
+				kind = entry.kind, resource = entry.resource, q = entry.q, r = entry.r,
+				core_radius = radius, required_core_radius = required_core,
+				level_core_radius = level_core, feather_radius = required_feather,
+			}, map)
 		end
 		resource_sites[#resource_sites + 1] = site
 	end

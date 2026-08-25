@@ -143,6 +143,10 @@ function Diagnostics.TerrainCreaseRepairEnabled()
 	return Config().TRACE_TERRAIN_CREASE_REPAIR == true
 end
 
+function Diagnostics.OuterResourceRetryProvenanceEnabled()
+	return Config().TRACE_OUTER_RESOURCE_RETRY_PROVENANCE == true
+end
+
 function Diagnostics.RockParityEnabled()
 	return Config().TRACE_UNDERGROUND_ROCK_PARITY == true
 end
@@ -210,6 +214,13 @@ end
 function Diagnostics.TerrainCreaseRepair(event, data, map)
 	if not Diagnostics.TerrainCreaseRepairEnabled() then return false end
 	return Print("TerrainCreaseRepair", event, CopyData(data, map))
+end
+
+-- Bounded failed-footprint retry provenance. Keep this separate from the broader terrain-crease
+-- stream so a fresh generation can decide whether the retry key missed or patch construction failed.
+function Diagnostics.OuterResourceRetryProvenance(event, data, map)
+	if not Diagnostics.OuterResourceRetryProvenanceEnabled() then return false end
+	return Print("OuterResourceRetryProvenance", event, CopyData(data, map))
 end
 
 -- Dedicated deterministic rock-parity trace. Keep this independent from broad debug logging so
