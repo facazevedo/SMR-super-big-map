@@ -253,13 +253,12 @@ local function ProfileField(params, key)
 	return value
 end
 
-local function WriteProfileSentinel(path, rows)
-	-- AsyncStringToFile is inherited from the engine environment. Engine.Global uses
-	-- rawget on the mod environment, which does not preserve this inherited callable
-	-- at the player START action boundary.
-	local write = AsyncStringToFile
+local function WriteProfileSentinel(params, path, rows)
+	-- The task-local DAP arm captures the engine writer before entering the mod
+	-- sandbox and retains only a two-path closure on the profile parameter table.
+	local write = params and params.SuperBigMapRalphProfileWrite
 	if type(write) ~= "function" then
-		error("AsyncStringToFile unavailable for Ralph profile sentinel")
+		error("injected Ralph profile sentinel writer unavailable")
 	end
 	local err = write(path, table.concat(rows, "\n") .. "\n")
 	if err then error("Ralph profile sentinel write failed: " .. tostring(err)) end
@@ -298,7 +297,7 @@ function Diagnostics.RalphProfileStart(data)
 		error("Ralph profile START coordinate is not pinned 14N134W")
 	end
 	local ticks = Now()
-	WriteProfileSentinel(path, {
+	WriteProfileSentinel(params, path, {
 		"schema=" .. RALPH_PROFILE_SCHEMA,
 		"event=start_action_accepted",
 		"token=" .. token,
@@ -386,7 +385,7 @@ function Diagnostics.RalphProfileFinalDisplay(dialog)
 		local input_hash = ProfileField(params, "SuperBigMapRalphProfileInputHash")
 		local path = ProfileField(params, "SuperBigMapRalphProfileFinalSentinel")
 		local ticks = Now()
-		WriteProfileSentinel(path, {
+		WriteProfileSentinel(params, path, {
 			"schema=" .. RALPH_PROFILE_SCHEMA,
 			"event=welcome_close_display_first_visible_frame",
 			"token=" .. token,

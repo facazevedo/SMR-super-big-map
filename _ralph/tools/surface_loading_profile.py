@@ -54,10 +54,32 @@ def lua_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 890) -> str:
+def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 891) -> str:
+    writer_proof = Path(str(start) + ".arm_writer_preflight")
     return f'''-- Generated Ralph player-visible loading-profile arm.
 CreateRealTimeThread(function()
 \tlocal ok, err = xpcall(function()
+\t\tlocal engine_write = AsyncStringToFile
+\t\tif type(engine_write) ~= "function" then
+\t\t\terror("engine-scope Ralph profile sentinel writer unavailable")
+\t\tend
+\t\tlocal start_path = {lua_string(lua_path(start))}
+\t\tlocal final_path = {lua_string(lua_path(final))}
+\t\tlocal writer_proof_path = {lua_string(lua_path(writer_proof))}
+\t\tlocal proof_error = engine_write(writer_proof_path,
+\t\t\t"schema=smr.ralph.surface_loading_profile_writer_preflight.v1\\n"
+\t\t\t.. "token=" .. {lua_string(token)} .. "\\n"
+\t\t\t.. "commit=" .. {lua_string(commit)} .. "\\n"
+\t\t\t.. "mod_version=" .. tostring({mod_version}) .. "\\n")
+\t\tif proof_error then
+\t\t\terror("Ralph profile sentinel writer preflight failed: " .. tostring(proof_error))
+\t\tend
+\t\tlocal function profile_write(path, text)
+\t\t\tif path ~= start_path and path ~= final_path then
+\t\t\t\treturn "Ralph profile sentinel writer rejected unpinned path"
+\t\t\tend
+\t\t\treturn engine_write(path, text)
+\t\tend
 \t\tif type(Game) ~= "table" or type(Game.AddGameRule) ~= "function" then
 \t\t\terror("Rough Terrain benchmark rule requested but Game:AddGameRule is unavailable")
 \t\tend
@@ -76,8 +98,9 @@ CreateRealTimeThread(function()
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileModVersion = {mod_version}
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileInputHash = "{INPUT_HASH}"
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileCoordinate = "{COORDINATE}"
-\t\tg_CurrentMapParams.SuperBigMapRalphProfileStartSentinel = {lua_string(lua_path(start))}
-\t\tg_CurrentMapParams.SuperBigMapRalphProfileFinalSentinel = {lua_string(lua_path(final))}
+\t\tg_CurrentMapParams.SuperBigMapRalphProfileStartSentinel = start_path
+\t\tg_CurrentMapParams.SuperBigMapRalphProfileFinalSentinel = final_path
+\t\tg_CurrentMapParams.SuperBigMapRalphProfileWrite = profile_write
 \t\tlocal mod
 \t\tfor _, candidate in ipairs(ModsLoaded or empty_table) do
 \t\t\tif candidate.id == "SuperBigMap" then mod = candidate break end
@@ -132,9 +155,17 @@ def static_checks(
             "SuperBigMapRalphProfileEnabled == true" in diagnostics
             and "SuperBigMapRalphProfileEnabled = true" not in diagnostics
         ),
-        "profile_writer_uses_inherited_engine_global": (
-            "local write = AsyncStringToFile" in diagnostics
+        "arm_preflights_and_injects_narrow_engine_writer": (
+            "local engine_write = AsyncStringToFile" in text
+            and "engine_write(writer_proof_path" in text
+            and "path ~= start_path and path ~= final_path" in text
+            and "SuperBigMapRalphProfileWrite = profile_write" in text
+        ),
+        "profile_writer_uses_only_injected_closure": (
+            "local write = params and params.SuperBigMapRalphProfileWrite" in diagnostics
+            and "AsyncStringToFile" not in diagnostics
             and 'Global("AsyncStringToFile")' not in diagnostics
+            and 'rawget(_G, "AsyncStringToFile")' not in diagnostics
         ),
         "real_start_wrapper_is_instrumented": (
             'ActionById(dialog, "start")' in pregame
@@ -222,7 +253,7 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "surface_seed_present_and_equal": bool(start.get("surface_seed")) and start.get("surface_seed") == final.get("surface_seed"),
         "input_hash_pinned_and_equal": start.get("input_hash") == INPUT_HASH and final.get("input_hash") == INPUT_HASH,
         "commit_present_and_equal": bool(start.get("commit")) and start.get("commit") == final.get("commit"),
-        "mod_version_890_and_equal": start.get("mod_version") == "890" and final.get("mod_version") == "890",
+        "mod_version_891_and_equal": start.get("mod_version") == "891" and final.get("mod_version") == "891",
         "roughterrain_listed_at_start": "RoughTerrain" in start.get("active_rule_ids", "").split(","),
         "roughterrain_listed_at_final": "RoughTerrain" in final.get("active_rule_ids", "").split(","),
         "positive_external_duration": duration_ms > 0,
@@ -338,6 +369,7 @@ def prepare(args: argparse.Namespace) -> int:
         "input_hash": INPUT_HASH,
         "arm": str(arm),
         "arm_sha256": sha256_file(arm),
+        "writer_preflight": str(Path(str(start) + ".arm_writer_preflight")),
         "start_sentinel": str(start),
         "final_sentinel": str(final),
         "checks": checks,
@@ -360,16 +392,24 @@ def self_test(args: argparse.Namespace) -> int:
         'context.id ~= "WelcomeGameInfo"', 'context.id ~= "UnrelatedPopup"', 1
     )
     wrong_writer = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8").replace(
-        "local write = AsyncStringToFile", 'local write = Global("AsyncStringToFile")', 1
+        "local write = params and params.SuperBigMapRalphProfileWrite",
+        'local write = Global("AsyncStringToFile")', 1,
+    )
+    broad_writer = text.replace(
+        "if path ~= start_path and path ~= final_path then",
+        "if false then", 1,
     )
     mutation_checks = {
         "wrong_rule_mutation_rejected": not static_checks(wrong_rule)["arm_adds_and_verifies_roughterrain"],
         "wrong_final_mutation_rejected": not static_checks(
             text, diagnostics_override=wrong_final
         )["final_waits_first_render_frame"],
-        "rawget_writer_mutation_rejected": not static_checks(
+        "engine_global_writer_mutation_rejected": not static_checks(
             text, diagnostics_override=wrong_writer
-        )["profile_writer_uses_inherited_engine_global"],
+        )["profile_writer_uses_only_injected_closure"],
+        "broad_injected_writer_mutation_rejected": not static_checks(
+            broad_writer
+        )["arm_preflights_and_injects_narrow_engine_writer"],
     }
     start_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -378,7 +418,7 @@ def self_test(args: argparse.Namespace) -> int:
         "active_rule_ids": "RoughTerrain",
         "source": "PGMissionLandingSpotRemastered.ActionId.start",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "890",
+        "commit": "deadbeef", "mod_version": "891",
     }
     final_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -390,7 +430,7 @@ def self_test(args: argparse.Namespace) -> int:
         "stretch_pipeline_pending": "false", "post_pipeline_revalidation_complete": "true",
         "expansion_loading_visible": "false",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "890",
+        "commit": "deadbeef", "mod_version": "891",
     }
     log_fixture = "\n".join((
         "[Super Big Map][LoadingTiming] SESSION_BEGIN {session=1}",
