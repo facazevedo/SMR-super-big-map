@@ -87,30 +87,53 @@ def benchmark_block(
     probe = PARITY / "determinism_capture_probe.lua"
     return f'''\t\tdo
 \t\t\tlocal state = {{
-\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v3",
+\t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v4",
 \t\t\t\tcoordinate = "{COORDINATE}", latitude = {LAT}, longitude = {LON},
 \t\t\t\texpected_preset = "{EXPECTED_PRESET}", selected_preset = false,
+\t\t\t\tasync_rand_scope = "mod_owned_engine_rand_int",
 \t\t\t\tasync_rand_initial_seed = {async_rand_seed},
 \t\t\t\tasync_rand_final_seed = {async_rand_seed},
 \t\t\t\tasync_rand_draw_count = 0,
+\t\t\t\tforeign_async_rand_draw_count = 0,
 \t\t\t}}
 \t\t\tif type(BraidRandom) ~= "function" then
-\t\t\t\terror("BraidRandom unavailable; cannot pin AsyncRand")
+\t\t\t\terror("BraidRandom unavailable; cannot create private mod RNG stream")
 \t\t\tend
-\t\t\tif type(AsyncRand) ~= "function" then
-\t\t\t\terror("AsyncRand unavailable; cannot install deterministic capture stream")
+\t\t\tlocal original_async_rand = rawget(_G, "AsyncRand")
+\t\t\tif type(original_async_rand) ~= "function" then
+\t\t\t\terror("AsyncRand unavailable; cannot forward foreign RNG consumers")
+\t\t\tend
+\t\t\tlocal mod_rand_int = type(SBM) == "table" and type(SBM.Engine) == "table"
+\t\t\t\tand SBM.Engine.RandInt or nil
+\t\t\tif type(mod_rand_int) ~= "function" then
+\t\t\t\terror("SuperBigMap.Engine.RandInt unavailable for private capture stream")
+\t\t\tend
+\t\t\tif type(debug) ~= "table" or type(debug.getinfo) ~= "function" then
+\t\t\t\terror("debug.getinfo unavailable for mod RNG caller identity")
 \t\t\tend
 \t\t\tlocal async_rand_seed = state.async_rand_initial_seed
-\t\t\tlocal function pinned_async_rand(...)
-\t\t\t\tlocal value
-\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
-\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
-\t\t\t\tstate.async_rand_final_seed = async_rand_seed
-\t\t\t\treturn value
+\t\t\tlocal function called_by_mod_rand_int()
+\t\t\t\tfor level = 2, 8 do
+\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
+\t\t\t\t\tif not ok or type(info) ~= "table" then break end
+\t\t\t\t\tif info.func == mod_rand_int then return true end
+\t\t\t\tend
+\t\t\t\treturn false
 \t\t\tend
-\t\t\trawset(_G, "AsyncRand", pinned_async_rand)
-\t\t\tif rawget(_G, "AsyncRand") ~= pinned_async_rand then
-\t\t\t\terror("deterministic AsyncRand capture stream did not install")
+\t\t\tlocal function scoped_async_rand(...)
+\t\t\t\tif called_by_mod_rand_int() then
+\t\t\t\t\tlocal value
+\t\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
+\t\t\t\t\treturn value
+\t\t\t\tend
+\t\t\t\tstate.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1
+\t\t\t\treturn original_async_rand(...)
+\t\t\tend
+\t\t\trawset(_G, "AsyncRand", scoped_async_rand)
+\t\t\tif rawget(_G, "AsyncRand") ~= scoped_async_rand then
+\t\t\t\terror("scoped AsyncRand capture dispatcher did not install")
 \t\t\tend
 \t\t\tlocal function active_rule_ids()
 \t\t\t\tlocal ids = {{}}
@@ -148,8 +171,8 @@ def benchmark_block(
 \t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
 \t\t\tend
 \t\t\trawset(_G, "g_SmrRalphPublishSurfaceStable", function(surface)
-\t\t\t\tif rawget(_G, "AsyncRand") ~= pinned_async_rand then
-\t\t\t\t\terror("deterministic AsyncRand capture stream was replaced before T1")
+\t\t\t\tif rawget(_G, "AsyncRand") ~= scoped_async_rand then
+\t\t\t\t\terror("scoped AsyncRand capture dispatcher was replaced before T1")
 \t\t\t\tend
 \t\t\t\tif type(surface) ~= "table" or surface.SuperBigMapSurfaceStretchDone ~= true then
 \t\t\t\t\terror("surface stable publisher requires completed stretch")
@@ -202,9 +225,11 @@ def benchmark_block(
 \t\t\t\t\t"active_rule_ids_at_generation_start=" .. table.concat(state.active_rule_ids_at_generation_start, ","),
 \t\t\t\t\t"active_rule_ids_at_t1=" .. table.concat(state.active_rule_ids_at_t1, ","),
 \t\t\t\t\t"selected_random_map_preset=" .. tostring(state.selected_preset),
+\t\t\t\t\t"async_rand_scope=" .. state.async_rand_scope,
 \t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
 \t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
 \t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
+\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),
 \t\t\t\t\t"surface_stretch_done=" .. tostring(state.surface_stretch_done),
 \t\t\t\t\t"surface_expansion_pending=" .. tostring(state.surface_expansion_pending),
 \t\t\t\t\t"stretch_pipeline_pending=" .. tostring(state.stretch_pipeline_pending),
@@ -234,16 +259,30 @@ def benchmark_block(
 \t\t\t\t\t\t.. " status=" .. status
 \t\t\t\t\t\t.. " error=" .. tostring(capture_error))
 \t\t\t\tend
+\t\t\t\tif rawget(_G, "AsyncRand") ~= scoped_async_rand then
+\t\t\t\t\terror("scoped AsyncRand capture dispatcher was replaced before finalization")
+\t\t\t\tend
+\t\t\t\tif state.async_rand_draw_count <= 0 then
+\t\t\t\t\terror("private mod RNG stream consumed no draws")
+\t\t\t\tend
+\t\t\t\trawset(_G, "AsyncRand", original_async_rand)
+\t\t\t\tstate.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand
+\t\t\t\tif not state.async_rand_dispatcher_restored then
+\t\t\t\t\terror("original AsyncRand was not restored after capture")
+\t\t\t\tend
 \t\t\t\tlocal text = table.concat({{
-\t\t\t\t\t"schema=smr.ralph.surface_loading_reference_final.v1",
+\t\t\t\t\t"schema=smr.ralph.surface_loading_reference_final.v2",
 \t\t\t\t\t"coordinate=" .. state.coordinate,
 \t\t\t\t\t"surface_stable_published=" .. tostring(state.surface_stable_published),
 \t\t\t\t\t"finalization_after_surface_stable=true",
 \t\t\t\t\t"capture_finalized=" .. tostring(finalized),
 \t\t\t\t\t"capture_status=" .. status,
+\t\t\t\t\t"async_rand_scope=" .. state.async_rand_scope,
 \t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
 \t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
 \t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
+\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),
+\t\t\t\t\t"async_rand_dispatcher_restored=" .. tostring(state.async_rand_dispatcher_restored),
 \t\t\t\t}}, "\\n") .. "\\n"
 \t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
 \t\t\t\tif write_error then error("final sentinel write failed: " .. tostring(write_error)) end
@@ -329,12 +368,72 @@ def compile_lua(luac: Path, path: Path) -> None:
         raise ReferenceError(proc.stderr.strip() or proc.stdout.strip() or "Lua parse failed")
 
 
+def exercise_scoped_dispatch(lua: Path) -> dict[str, object]:
+    if not lua.is_file():
+        raise ReferenceError(f"Lua interpreter missing: {lua}")
+    script = r'''
+local foreign_draws, private_draws, private_seed = 0, 0, 3
+local function original_async_rand(n)
+  foreign_draws = foreign_draws + 1
+  return n - 1
+end
+rawset(_G, "AsyncRand", original_async_rand)
+local Engine = {}
+function Engine.RandInt(n)
+  local async_rand = rawget(_G, "AsyncRand")
+  local ok, value = pcall(async_rand, n)
+  if ok and type(value) == "number" and value >= 0 and value < n then return value end
+  error("invalid draw")
+end
+local mod_rand_int = Engine.RandInt
+local function called_by_mod_rand_int()
+  for level = 2, 8 do
+    local ok, info = pcall(debug.getinfo, level, "f")
+    if not ok or type(info) ~= "table" then break end
+    if info.func == mod_rand_int then return true end
+  end
+  return false
+end
+local function scoped_async_rand(n)
+  if called_by_mod_rand_int() then
+    local value = private_seed % n
+    private_seed = private_seed + 7
+    private_draws = private_draws + 1
+    return value
+  end
+  return original_async_rand(n)
+end
+rawset(_G, "AsyncRand", scoped_async_rand)
+assert(Engine.RandInt(10) == 3)
+assert(rawget(_G, "AsyncRand")(10) == 9)
+assert(Engine.RandInt(10) == 0)
+assert(private_draws == 2 and foreign_draws == 1 and private_seed == 17)
+rawset(_G, "AsyncRand", original_async_rand)
+assert(rawget(_G, "AsyncRand") == original_async_rand)
+io.write("scoped_dispatch_ok")
+'''
+    proc = subprocess.run(
+        [str(lua), "-"], input=script, capture_output=True, text=True, timeout=60
+    )
+    ok = proc.returncode == 0 and proc.stdout == "scoped_dispatch_ok" and not proc.stderr
+    return {
+        "ok": ok,
+        "interpreter": str(lua),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "returncode": proc.returncode,
+        "private_draws": 2 if ok else None,
+        "foreign_draws": 1 if ok else None,
+        "dispatcher_restored": ok,
+    }
+
+
 def static_verdict(text: str) -> dict[str, object]:
     positions = {
         "new_game": text.find('NewGame({ seed_text = "LOZL3FQr" })'),
         "rough_rule": text.find('Game:AddGameRule("RoughTerrain")'),
         "preset_wrapper": text.find("GenerateRandomMap = function(map_name, preset_name, params)"),
-        "async_rand_pin": text.find('rawset(_G, "AsyncRand", pinned_async_rand)'),
+        "async_rand_dispatcher": text.find('rawset(_G, "AsyncRand", scoped_async_rand)'),
         "generation": text.find("pcall(GenerateCurrentRandomMap)"),
         "stable_publish": text.find("publish_surface_stable(surface)"),
         "underground_visit": text.find('g_ParityStatus = "entering_underground"'),
@@ -349,19 +448,38 @@ def static_verdict(text: str) -> dict[str, object]:
             0 <= positions["new_game"] < positions["rough_rule"]
             < positions["preset_wrapper"] < positions["generation"]
         ),
-        "async_rand_pin_precedes_generation": (
-            0 <= positions["new_game"] < positions["async_rand_pin"] < positions["generation"]
-            and text.count('rawset(_G, "AsyncRand", pinned_async_rand)') == 1
+        "private_mod_stream_precedes_generation": (
+            0 <= positions["new_game"] < positions["async_rand_dispatcher"]
+            < positions["generation"]
+            and text.count('rawset(_G, "AsyncRand", scoped_async_rand)') == 1
         ),
-        "async_rand_pin_fail_closed": (
+        "private_mod_stream_fail_closed": (
             'type(BraidRandom) ~= "function"' in text
-            and 'type(AsyncRand) ~= "function"' in text
-            and 'rawget(_G, "AsyncRand") ~= pinned_async_rand' in text
+            and 'type(original_async_rand) ~= "function"' in text
+            and 'type(mod_rand_int) ~= "function"' in text
+            and 'type(debug.getinfo) ~= "function"' in text
+            and 'rawget(_G, "AsyncRand") ~= scoped_async_rand' in text
         ),
-        "async_rand_state_recorded_twice": (
-            text.count('"async_rand_initial_seed="') == 2
+        "private_mod_stream_scoped_by_function_identity": (
+            'info.func == mod_rand_int' in text
+            and 'if called_by_mod_rand_int() then' in text
+            and 'return original_async_rand(...)' in text
+            and 'foreign_async_rand_draw_count' in text
+            and "pinned_async_rand" not in text
+        ),
+        "private_mod_stream_state_recorded_twice": (
+            text.count('"async_rand_scope="') == 2
+            and text.count('"async_rand_initial_seed="') == 2
             and text.count('"async_rand_final_seed="') == 2
             and text.count('"async_rand_draw_count="') == 2
+            and text.count('"foreign_async_rand_draw_count="') == 2
+        ),
+        "dispatcher_restored_after_verified_finalization": (
+            'rawset(_G, "AsyncRand", original_async_rand)' in text
+            and 'state.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand'
+            in text
+            and 'if state.async_rand_draw_count <= 0 then' in text
+            and '"async_rand_dispatcher_restored="' in text
         ),
         "preset_fail_closed": 'state.selected_preset ~= state.expected_preset' in text,
         "preset_required_roughterrain": f'expected_preset = "{EXPECTED_PRESET}"' in text,
@@ -402,7 +520,7 @@ def static_verdict(text: str) -> dict[str, object]:
             and 'status ~= "complete"' in text
         ),
         "distinct_final_sentinel_after_verified_finalization": (
-            "smr.ralph.surface_loading_reference_final.v1" in text
+            "smr.ralph.surface_loading_reference_final.v2" in text
             and "finalization_after_surface_stable=true" in text
             and "final sentinel write failed" in text
         ),
@@ -460,7 +578,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         timeout=30,
     ).strip()
     manifest = {
-        "schema": "smr.ralph.surface_loading_reference_manifest.v3",
+        "schema": "smr.ralph.surface_loading_reference_manifest.v4",
         "source_head": source_head,
         "coordinate": COORDINATE,
         "latitude": LAT,
@@ -469,6 +587,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "rough_terrain_required": True,
         "selected_random_map_preset_required": EXPECTED_PRESET,
         "reference_underground_seed": REFERENCE_UNDERGROUND_SEED,
+        "async_rand_scope": "mod_owned_engine_rand_int",
         "async_rand_seed": args.async_rand_seed,
         "generation_script": str(generation),
         "generation_script_bytes": generation.stat().st_size,
@@ -489,6 +608,7 @@ def command_self_test(args: argparse.Namespace) -> int:
     probe = PARITY / "determinism_capture_probe.lua"
     compile_lua(args.luac.resolve(), probe)
     probe_sha256 = sha256_file(probe)
+    dispatch_test = exercise_scoped_dispatch(args.luac.resolve().with_name("lua.exe"))
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -503,10 +623,18 @@ def command_self_test(args: argparse.Namespace) -> int:
         mutation_red = static_verdict(mutation)["ok"] is False
         missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
         missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
-        missing_async_pin = text.replace(
-            '\n\t\t\trawset(_G, "AsyncRand", pinned_async_rand)', "", 1
+        missing_dispatcher = text.replace(
+            '\n\t\t\trawset(_G, "AsyncRand", scoped_async_rand)', "", 1
         )
-        missing_async_pin_red = static_verdict(missing_async_pin)["ok"] is False
+        missing_dispatcher_red = static_verdict(missing_dispatcher)["ok"] is False
+        unscoped_dispatcher = text.replace(
+            "if info.func == mod_rand_int then return true end",
+            "if false then return true end",
+            1,
+        )
+        unscoped_dispatcher_red = static_verdict(unscoped_dispatcher)["ok"] is False
+        missing_foreign_forward = text.replace("return original_async_rand(...)", "return 0", 1)
+        missing_foreign_forward_red = static_verdict(missing_foreign_forward)["ok"] is False
         verdict["lua_parse"] = True
         verdict["reference_probe_lua_parse"] = True
         verdict["reference_probe_sha256"] = probe_sha256
@@ -515,12 +643,18 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
-        verdict["missing_async_rand_pin_mutation_red"] = missing_async_pin_red
+        verdict["scoped_dispatch_runtime"] = dispatch_test
+        verdict["missing_scoped_dispatcher_mutation_red"] = missing_dispatcher_red
+        verdict["unscoped_dispatcher_mutation_red"] = unscoped_dispatcher_red
+        verdict["missing_foreign_forward_mutation_red"] = missing_foreign_forward_red
         verdict["ok"] = (
             verdict["ok"]
             and mutation_red
             and missing_finalizer_red
-            and missing_async_pin_red
+            and dispatch_test["ok"]
+            and missing_dispatcher_red
+            and unscoped_dispatcher_red
+            and missing_foreign_forward_red
             and verdict["reference_probe_exact"]
         )
     if args.out:
@@ -649,9 +783,9 @@ def command_verify_paired_inputs(args: argparse.Namespace) -> int:
         timeout=30,
     ).strip()
     checks = {
-        "manifest_schema_v3": (
-            first.get("schema") == "smr.ralph.surface_loading_reference_manifest.v3"
-            and second.get("schema") == "smr.ralph.surface_loading_reference_manifest.v3"
+        "manifest_schema_v4": (
+            first.get("schema") == "smr.ralph.surface_loading_reference_manifest.v4"
+            and second.get("schema") == "smr.ralph.surface_loading_reference_manifest.v4"
         ),
         "source_head_exact": (
             first.get("source_head") == expected_source_head
@@ -660,6 +794,10 @@ def command_verify_paired_inputs(args: argparse.Namespace) -> int:
         "async_rand_seed_exact": (
             first.get("async_rand_seed") == args.expected_async_rand_seed
             and second.get("async_rand_seed") == args.expected_async_rand_seed
+        ),
+        "async_rand_scope_is_private_mod_stream": (
+            first.get("async_rand_scope") == "mod_owned_engine_rand_int"
+            and second.get("async_rand_scope") == "mod_owned_engine_rand_int"
         ),
         "raw_generation_scripts_are_distinct": first_sha256 != second_sha256,
         "first_output_identities_occur_once": all(
