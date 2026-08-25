@@ -1813,6 +1813,27 @@ local function PrepareOuterResourceTerrain(map)
 		return nil, nil
 	end
 
+	-- The first authoritative rebuild can expose a footprint that the pre-rebuild
+	-- grid reported as valid.  Audit marks that exact prior site as unverified;
+	-- carry the marker identity into the bounded retry so it becomes a patch
+	-- candidate even if a transient grid read says it is ready again.  This does
+	-- not broaden terrain edits: all other ready footprints remain protected.
+	local retry_failed_sites = {}
+	if type(map.SuperBigMapOuterResourceTerrainSites) == "table" then
+		for _, previous in ipairs(map.SuperBigMapOuterResourceTerrainSites) do
+			if previous and previous.verified ~= true
+				and type(previous.q) == "number" and type(previous.r) == "number" then
+				local key = tostring(previous.kind) .. "|" .. tostring(previous.resource)
+					.. "|" .. tostring(previous.q) .. "|" .. tostring(previous.r)
+				retry_failed_sites[key] = true
+			end
+		end
+	end
+	local function resource_site_key(kind, resource, q, r)
+		return tostring(kind) .. "|" .. tostring(resource) .. "|" .. tostring(q)
+			.. "|" .. tostring(r)
+	end
+
 	local resources = {}
 	local class_counts = { surface = 0, extractor = 0 }
 	pcall(map.MapForEach, map, "map", "DepositMarker", function(marker)
@@ -1828,9 +1849,11 @@ local function PrepareOuterResourceTerrain(map)
 		if not ok_hex or type(q) ~= "number" or type(r) ~= "number" then return end
 		local kind = extractor and "extractor" or "surface"
 		class_counts[kind] = class_counts[kind] + 1
+		local resource = tostring(marker.resource or marker.class or "?")
 		resources[#resources + 1] = {
 			marker = marker, x = x, y = y, q = q, r = r, kind = kind,
-			resource = tostring(marker.resource or marker.class or "?"),
+			resource = resource,
+			force_retry = retry_failed_sites[resource_site_key(kind, resource, q, r)] == true,
 			cluster_plan = tonumber(marker.SuperBigMapResourceClusterPlan),
 			cluster_strength = marker.SuperBigMapResourceClusterStrength,
 			cluster_resource_target = tonumber(marker.SuperBigMapResourceClusterResourceTarget),
@@ -2067,6 +2090,7 @@ local function PrepareOuterResourceTerrain(map)
 	end
 
 	local protected_ready_sites = {}
+	local forced_resource_repairs = 0
 	local maximum_resource_core = 0
 	for _, entry in ipairs(resources) do
 		local exact_extractor_offsets = entry.kind == "extractor"
@@ -2086,12 +2110,14 @@ local function PrepareOuterResourceTerrain(map)
 			-- remains a compact three-hex core and is far smaller than an extractor platform.
 			or surface_core + 2
 		maximum_resource_core = math.max(maximum_resource_core, required_core)
-		local ready = exact_extractor_offsets
+		local grid_ready = exact_extractor_offsets
 			and exact_offsets_ready(entry.q, entry.r, exact_extractor_offsets, true)
 			or axial_disk_ready(entry.q, entry.r, radius, entry.kind == "extractor")
+		local ready = grid_ready and entry.force_retry ~= true
 		local site = {
 			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
-			kind = entry.kind, resource = entry.resource, ready_before = ready,
+			kind = entry.kind, resource = entry.resource, ready_before = grid_ready,
+			force_retry = entry.force_retry == true,
 			core_radius = radius, world_core_radius = world_radius,
 			required_core_radius = required_core, level_core_radius = level_core,
 			extractor_offsets = exact_extractor_offsets,
@@ -2108,6 +2134,7 @@ local function PrepareOuterResourceTerrain(map)
 				level_core_hexes = level_core,
 			}
 		else
+			if entry.force_retry then forced_resource_repairs = forced_resource_repairs + 1 end
 			local required_feather = entry.kind == "extractor"
 				and math.max(extractor_feather, required_core + 4) or surface_feather
 			local patch = add_patch(entry.kind, entry.x, entry.y, entry.q, entry.r,
@@ -2519,6 +2546,7 @@ local function PrepareOuterResourceTerrain(map)
 		resources = #resources, surface_resources = class_counts.surface,
 		extractor_resources = class_counts.extractor,
 		resource_sites_modified = 0, rocket_pads = #rocket_sites,
+		forced_resource_repairs = forced_resource_repairs,
 		rocket_pads_modified = 0, rocket_shape_hexes = #rocket_offsets,
 		rocket_shape_radius = rocket_hex_radius,
 		patches = shaped_patches, modified_cells = modified_cells,
