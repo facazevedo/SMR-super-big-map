@@ -2477,31 +2477,33 @@ local function PrepareOuterResourceTerrain(map)
 				for x = x0, x1 do
 					local dx, dy = x - patch.cx, y - patch.cy
 					local distance = math.sqrt(dx * dx + dy * dy)
-					local angle = math.atan2 and math.atan2(dy, dx) or 0
-					local ux, uy = 1, 0
-					if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
-					local along_relief = ux * patch.relief_x + uy * patch.relief_y
-					local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
-						+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
-						+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
-					local width_scale = 1 + transition_irregularity * harmonic
-						+ 0.12 * (2 * along_relief * along_relief - 1)
-						- 0.06 * along_relief
-					width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
-					local outer_radius = patch.core_cells + base_transition * width_scale
-					if distance < outer_radius and not is_protected_ready_cell(x, y) then
-						local weight
-						-- The guaranteed flat core is an exact circle and never participates in the
-						-- boundary warp, so live extractor/rocket edge hexes cannot straddle the blend.
-						if distance <= patch.core_cells then
-							weight = 1
-						else
+					local weight
+					-- The exact core is admitted with constant weight, so none of the angular warp
+					-- arithmetic below can affect its branch or output.
+					if distance <= patch.core_cells then
+						weight = 1
+					else
+						local angle = math.atan2 and math.atan2(dy, dx) or 0
+						local ux, uy = 1, 0
+						if distance > 0.0001 then ux, uy = dx / distance, dy / distance end
+						local along_relief = ux * patch.relief_x + uy * patch.relief_y
+						local harmonic = 0.52 * math.sin(3 * angle + patch.phase)
+							+ 0.30 * math.sin(5 * angle - patch.phase * 1.37)
+							+ 0.18 * math.sin(7 * angle + patch.phase * 0.73)
+						local width_scale = 1 + transition_irregularity * harmonic
+							+ 0.12 * (2 * along_relief * along_relief - 1)
+							- 0.06 * along_relief
+						width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
+						local outer_radius = patch.core_cells + base_transition * width_scale
+						if distance < outer_radius then
 							local t = (distance - patch.core_cells)
 								/ math.max(0.0001, outer_radius - patch.core_cells)
 							t = math.max(0, math.min(1, t))
 							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
 							weight = 1 - smooth
 						end
+					end
+					if weight and not is_protected_ready_cell(x, y) then
 						local old = grid:get(x, y)
 						if type(old) == "number" then
 							-- Blend the broad landform toward the pad elevation but return native

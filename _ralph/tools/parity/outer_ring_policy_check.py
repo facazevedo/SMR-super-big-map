@@ -86,6 +86,21 @@ def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float
     return 1 - smooth
 
 
+def resource_patch_weight(
+    distance: float, core_cells: float, base_transition: float, width_scale: float
+) -> float | None:
+    """Executable model of the production exact-core fast path and feather admission."""
+    if distance <= core_cells:
+        return 1.0
+    outer_radius = core_cells + base_transition * width_scale
+    if distance >= outer_radius:
+        return None
+    t = (distance - core_cells) / max(0.0001, outer_radius - core_cells)
+    t = max(0.0, min(1.0, t))
+    smooth = t**3 * (t * (t * 6 - 15) + 10)
+    return 1 - smooth
+
+
 CASES = (
     Candidate("plain_flat", "plain"),
     Candidate("mountain_base_flat", "mountain", mountain_base=True),
@@ -135,6 +150,11 @@ outer_resource_terrain = section(
     TERRAIN,
     "local function PrepareOuterResourceTerrain",
     "-- TEST-ONLY SEAM",
+)
+first_patch_traversal = section(
+    outer_resource_terrain,
+    "-- Resource access first, then rocket pads.",
+    "-- A second pass makes building footprints exact planes",
 )
 
 static_checks = {
@@ -256,6 +276,22 @@ static_checks = {
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
+    ),
+    "resource_terrain_core_fast_path_precedes_warp_arithmetic": (
+        first_patch_traversal.index("if distance <= patch.core_cells then")
+        < first_patch_traversal.index("local angle =")
+    ),
+    "resource_terrain_core_fast_path_sets_exact_weight": (
+        "if distance <= patch.core_cells then\n\t\t\t\t\t\tweight = 1\n\t\t\t\t\telse"
+        in first_patch_traversal
+    ),
+    "resource_terrain_warp_is_confined_to_noncore_branch": (
+        "else\n\t\t\t\t\t\tlocal angle =" in first_patch_traversal
+        and "if distance < outer_radius then" in first_patch_traversal
+    ),
+    "resource_terrain_guard_follows_weight_admission": (
+        "if weight and not is_protected_ready_cell(x, y) then"
+        in first_patch_traversal
     ),
     "resource_terrain_scans_full_protected_guard_set": (
         "local function is_protected_ready_cell(x, y)" in outer_resource_terrain
@@ -523,7 +559,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_904": "'version', 904" in METADATA,
+    "version_is_905": "'version', 905" in METADATA,
 }
 
 case_results = []
@@ -592,9 +628,41 @@ feather_checks = {
     ) < 1e-5,
 }
 
+core_fast_path_checks = {
+    "minimum_outer_radius_is_strictly_outside_core": all(
+        core + transition * width > core
+        for core in (0.0, 1.0, 17.0, 113.5)
+        for transition in (0.5, 2.0, 64.0)
+        for width in (0.50, 0.75, 1.0, 1.35)
+    ),
+    "center_and_core_boundary_keep_exact_weight_one": all(
+        resource_patch_weight(distance, core, transition, width) == 1.0
+        for core in (1.0, 17.0, 113.5)
+        for distance in (0.0, core / 2, core)
+        for transition in (2.0, 64.0)
+        for width in (0.50, 1.35)
+    ),
+    "first_noncore_point_uses_feather": all(
+        0.0 < resource_patch_weight(core + 0.01, core, 2.0, width) < 1.0
+        for core in (1.0, 17.0, 113.5)
+        for width in (0.50, 1.35)
+    ),
+    "outer_boundary_and_beyond_remain_unadmitted": all(
+        resource_patch_weight(core + transition * width, core, transition, width)
+        is None
+        and resource_patch_weight(
+            core + transition * width + 0.01, core, transition, width
+        )
+        is None
+        for core in (1.0, 17.0, 113.5)
+        for transition in (2.0, 64.0)
+        for width in (0.50, 1.35)
+    ),
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 12,
+    "schema_version": 13,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -602,6 +670,7 @@ report = {
     "effect_checks": effect_checks,
     "quota_spacing_checks": quota_spacing_checks,
     "feather_checks": feather_checks,
+    "core_fast_path_checks": core_fast_path_checks,
     "preferred_candidates": preferred,
 }
 report["static_passed"] = sum(static_checks.values())
@@ -618,6 +687,8 @@ report["quota_spacing_passed"] = sum(quota_spacing_checks.values())
 report["quota_spacing_total"] = len(quota_spacing_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
+report["core_fast_path_passed"] = sum(core_fast_path_checks.values())
+report["core_fast_path_total"] = len(core_fast_path_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -626,6 +697,7 @@ report["ok"] = (
     and all(effect_checks.values())
     and all(quota_spacing_checks.values())
     and all(feather_checks.values())
+    and all(core_fast_path_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
