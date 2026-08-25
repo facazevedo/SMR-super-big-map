@@ -74,6 +74,13 @@ local function OuterResourceRetryProvenance(event, data, map)
 	end
 end
 
+local function OuterResourceRetryPatchProfile(event, data, map)
+	local diagnostics = SuperBigMap.Diagnostics
+	if diagnostics and type(diagnostics.OuterResourceRetryPatchProfile) == "function" then
+		diagnostics.OuterResourceRetryPatchProfile(event, data, map)
+	end
+end
+
 local function NotifyDeterminismCaptureForTest(stage, map, details)
 	local generation = SuperBigMap.MapGeneration
 	local notify = type(generation) == "table"
@@ -1760,6 +1767,19 @@ local function PrepareOuterResourceTerrain(map)
 		or type(map.MapForEach) ~= "function" then
 		return false, { reason = "surface map unavailable", resources = 0, patches = 0 }
 	end
+	local prepare_ordinal = tonumber(map.SuperBigMapOuterResourceTerrainPrepareOrdinal) or 0
+	map.SuperBigMapOuterResourceTerrainPrepareOrdinal = prepare_ordinal + 1
+	local retry_ordinal = math.max(0, prepare_ordinal)
+	local retry_patch_profile = retry_ordinal == 1
+		and cfg_bool("TRACE_OUTER_RESOURCE_RETRY_PATCH_PROFILE", false)
+	local precise_ticks = Global("GetPreciseTicks") or Global("RealTime")
+	local function profile_now()
+		if type(precise_ticks) == "function" then
+			local ok, value = pcall(precise_ticks)
+			if ok and type(value) == "number" then return value end
+		end
+		return 0
+	end
 	local terrain_api = Global("terrain")
 	local grid_to_compute = Global("GridToCompute")
 	local world_to_hex = Global("WorldToHex")
@@ -2437,6 +2457,35 @@ local function PrepareOuterResourceTerrain(map)
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
 	end
+	-- Profile-only exact terrain digest. Two independent modular accumulators are
+	-- evaluated in stable row-major order over the patch's complete write bounding box.
+	-- Products remain below 2^53, so Lua-number arithmetic is exact before each modulus.
+	local digest_modulus = 2147483647
+	local function patch_bounds(patch)
+		local base_transition = math.max(cells_per_hex * 2,
+			patch.outer_cells - patch.core_cells)
+		local radius = patch.core_cells + base_transition * 1.35
+		return math.max(0, math.floor(patch.cx - radius - 2)),
+			math.max(0, math.floor(patch.cy - radius - 2)),
+			math.min(width - 1, math.ceil(patch.cx + radius + 2)),
+			math.min(height - 1, math.ceil(patch.cy + radius + 2))
+	end
+	local function patch_digest(patch)
+		local x0, y0, x1, y1 = patch_bounds(patch)
+		local hash_a, hash_b, cells = 146959810, 109951163, 0
+		for y = y0, y1 do
+			for x = x0, x1 do
+				local value = grid:get(x, y)
+				value = type(value) == "number" and value or 0
+				hash_a = (hash_a * 65599 + value + 1) % digest_modulus
+				hash_b = (hash_b * 131071 + value + (x - x0) * 17
+					+ (y - y0) * 31 + 1) % digest_modulus
+				cells = cells + 1
+			end
+		end
+		return tostring(hash_a) .. ":" .. tostring(hash_b) .. ":" .. tostring(cells),
+			x0, y0, x1, y1
+	end
 	local function is_protected_ready_cell(x, y)
 		for _, protected in ipairs(protected_ready_sites) do
 			local dx, dy = x - protected.cx, y - protected.cy
@@ -2461,7 +2510,23 @@ local function PrepareOuterResourceTerrain(map)
 			end
 			return a_order < b_order
 		end)
+		if retry_patch_profile then
+			for index, patch in ipairs(patches) do
+				local digest_at = profile_now()
+				local digest, x0, y0, x1, y1 = patch_digest(patch)
+				patch.retry_profile = {
+					index = index, before_digest = digest,
+					digest_before_ms = profile_now() - digest_at,
+					x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+					blend_visited = 0, blend_guarded = 0, blend_changed = 0,
+					core_visited = 0, core_guarded = 0, core_changed = 0,
+					blend_ms = 0, core_ms = 0,
+				}
+			end
+		end
 		for _, patch in ipairs(patches) do
+			local patch_profile = patch.retry_profile
+			local branch_at = patch_profile and profile_now() or 0
 			shaped_patches = shaped_patches + 1
 			local base_transition = math.max(cells_per_hex * 2,
 				patch.outer_cells - patch.core_cells)
@@ -2475,6 +2540,7 @@ local function PrepareOuterResourceTerrain(map)
 			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 2))
 			for y = y0, y1 do
 				for x = x0, x1 do
+					if patch_profile then patch_profile.blend_visited = patch_profile.blend_visited + 1 end
 					local dx, dy = x - patch.cx, y - patch.cy
 					local distance = math.sqrt(dx * dx + dy * dy)
 					local angle = math.atan2 and math.atan2(dy, dx) or 0
@@ -2489,7 +2555,11 @@ local function PrepareOuterResourceTerrain(map)
 						- 0.06 * along_relief
 					width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
 					local outer_radius = patch.core_cells + base_transition * width_scale
-					if distance < outer_radius and not is_protected_ready_cell(x, y) then
+					local protected = distance < outer_radius and is_protected_ready_cell(x, y)
+					if patch_profile and protected then
+						patch_profile.blend_guarded = patch_profile.blend_guarded + 1
+					end
+					if distance < outer_radius and not protected then
 						local weight
 						-- The guaranteed flat core is an exact circle and never participates in the
 						-- boundary warp, so live extractor/rocket edge hexes cannot straddle the blend.
@@ -2520,17 +2590,23 @@ local function PrepareOuterResourceTerrain(map)
 							if value ~= old then
 								grid:set(x, y, value)
 								modified_cells = modified_cells + 1
+								if patch_profile then
+									patch_profile.blend_changed = patch_profile.blend_changed + 1
+								end
 							end
 						end
 					end
 				end
 			end
+			if patch_profile then patch_profile.blend_ms = profile_now() - branch_at end
 		end
 		-- A second pass makes building footprints exact planes after nearby feather blends. Surface
 		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
 		-- Ready-before resource guards remain untouched; rocket/resource core clearance prevents a
 		-- landing footprint from depending on any guarded cell.
 		for _, patch in ipairs(patches) do
+			local patch_profile = patch.retry_profile
+			local branch_at = patch_profile and profile_now() or 0
 			local radius = patch.core_cells
 			local x0 = math.max(0, math.floor(patch.cx - radius - 1))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 1))
@@ -2538,9 +2614,14 @@ local function PrepareOuterResourceTerrain(map)
 			local y1 = math.min(height - 1, math.ceil(patch.cy + radius + 1))
 			for y = y0, y1 do
 				for x = x0, x1 do
+					if patch_profile then patch_profile.core_visited = patch_profile.core_visited + 1 end
 					local dx, dy = x - patch.cx, y - patch.cy
-					if dx * dx + dy * dy <= radius * radius
-						and not is_protected_ready_cell(x, y) then
+					local in_core = dx * dx + dy * dy <= radius * radius
+					local protected = in_core and is_protected_ready_cell(x, y)
+					if patch_profile and protected then
+						patch_profile.core_guarded = patch_profile.core_guarded + 1
+					end
+					if in_core and not protected then
 						local core_target = patch.kind == "surface"
 							and math.floor(patch.target + patch.grade_x * dx
 								+ patch.grade_y * dy + 0.5)
@@ -2550,9 +2631,44 @@ local function PrepareOuterResourceTerrain(map)
 						if type(old) == "number" and old ~= core_target then
 							grid:set(x, y, core_target)
 							modified_cells = modified_cells + 1
+							if patch_profile then
+								patch_profile.core_changed = patch_profile.core_changed + 1
+							end
 						end
 					end
 				end
+			end
+			if patch_profile then patch_profile.core_ms = profile_now() - branch_at end
+		end
+		if retry_patch_profile then
+			for _, patch in ipairs(patches) do
+				local profile = patch.retry_profile
+				local digest_at = profile_now()
+				profile.after_digest = patch_digest(patch)
+				profile.digest_after_ms = profile_now() - digest_at
+				local site = patch.resource_site or patch.rocket_site or {}
+				local classification = patch.kind == "rocket" and "already_passing_rocket"
+					or site.force_retry == true and "forced_failure"
+					or "unclassified_resource"
+				OuterResourceRetryPatchProfile("PATCH", {
+					retry_ordinal = retry_ordinal, patch_index = profile.index,
+					classification = classification, kind = patch.kind,
+					resource = tostring(site.resource or ""), q = patch.q, r = patch.r,
+					ready_before = tostring(site.ready_before == true),
+					force_retry = tostring(site.force_retry == true),
+					before_digest = profile.before_digest,
+					after_digest = profile.after_digest,
+					digest_equal = tostring(profile.before_digest == profile.after_digest),
+					x0 = profile.x0, y0 = profile.y0, x1 = profile.x1, y1 = profile.y1,
+					blend_ms = profile.blend_ms, blend_visited = profile.blend_visited,
+					blend_guarded = profile.blend_guarded,
+					blend_changed = profile.blend_changed,
+					core_ms = profile.core_ms, core_visited = profile.core_visited,
+					core_guarded = profile.core_guarded,
+					core_changed = profile.core_changed,
+					digest_before_ms = profile.digest_before_ms,
+					digest_after_ms = profile.digest_after_ms,
+				}, map)
 			end
 		end
 	end)

@@ -14,8 +14,8 @@ local config = {}
 -- ============================================================================
 -- Diagnostic channels remain available for targeted troubleshooting and stay
 -- disabled in published builds.
-config.DebugLoggingEnabled = false
-config.DebugLoadingTimings = false
+config.DebugLoggingEnabled = true
+config.DebugLoadingTimings = true
 config.DebugEnrichmentAudit = false
 config.DebugElevatorTraversal = false
 config.DebugElevatorSupply = false
@@ -35,6 +35,9 @@ config.TraceTerrainCreaseRepair = true
 -- Focused one-run audit of the bounded failed-footprint retry.  It records only
 -- prior/current site provenance and patch construction, independent of broad debug logging.
 config.TraceOuterResourceRetryProvenance = true
+-- Temporary v901 profiler: retry ordinal 1 only. Records deterministic per-patch
+-- before/after height digests plus visited/changed counts and branch durations.
+config.TraceOuterResourceRetryPatchProfile = true
 -- Diagnostic: record what the native source actually produced, at migration time, so a run can
 -- prove nothing was destroyed after transfer without needing a second reproducible vanilla process.
 config.NativeSourceManifest = true
@@ -830,6 +833,7 @@ C.DEBUG_UNDERGROUND_DECORATION_POSITIONS = debug_logging_enabled
 C.TRACE_UNDERGROUND_SEED_RESERVATION = as_bool(config.TraceUndergroundSeedReservation)
 C.TRACE_TERRAIN_CREASE_REPAIR = as_bool(config.TraceTerrainCreaseRepair)
 C.TRACE_OUTER_RESOURCE_RETRY_PROVENANCE = as_bool(config.TraceOuterResourceRetryProvenance)
+C.TRACE_OUTER_RESOURCE_RETRY_PATCH_PROFILE = as_bool(config.TraceOuterResourceRetryPatchProfile)
 C.NATIVE_SOURCE_MANIFEST = as_bool(config.NativeSourceManifest)
 C.TRACE_UNDERGROUND_ROCK_PARITY = as_bool(config.TraceUndergroundRockParity)
 
