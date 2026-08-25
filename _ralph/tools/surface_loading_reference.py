@@ -34,6 +34,8 @@ LAT = -840
 LON = -8040
 EXPECTED_PRESET = "RoughTerrain"
 REFERENCE_UNDERGROUND_SEED = run_parity.REFERENCE_UNDERGROUND_SEED
+REFERENCE_GENERATION_SHA256 = "FB201DC57591DF2F97A1B512C391D3EF65F7CDF1928CCA800F7F84770DE58D58"
+REFERENCE_PROBE_SHA256 = "6D991C11C58CFD1D803D44A2B7DA269C77DD42E9E46B8BDAC71C5EFE13AA0A07"
 PLACEHOLDER_PREFIX = "__"
 
 
@@ -79,7 +81,6 @@ def benchmark_block(
     capture_base: Path, stable_sentinel: Path, final_sentinel: Path
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
-    target_probe_path = Path(str(capture_base) + "-target_state_probe.bin")
     return f'''\t\tdo
 \t\t\tlocal state = {{
 \t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v2",
@@ -117,19 +118,6 @@ def benchmark_block(
 \t\t\tend
 \t\t\trawset(_G, "g_SmrRalphSurfaceReferenceState", state)
 \t\t\trawset(_G, "g_FzpDeterminismCaptureOutBase", "{lua_path(capture_base)}")
-\t\t\trawset(_G, "g_FzpTargetObjectStateProbe", {{
-\t\t\t\tpath = "{lua_path(target_probe_path)}",
-\t\t\t\ttargets = {{
-\t\t\t\t\t{{ class="StonesDarkSmall_01", x=472209, y=437237, z=7100, angle=1056 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_02", x=473324, y=439142, z=7100, angle=2976 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_03", x=472647, y=438087, z=7100, angle=6216 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_03", x=472669, y=440296, z=7099, angle=7656 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_04", x=471592, y=434243, z=7100, angle=10776 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_05", x=470270, y=435459, z=7102, angle=12816 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_05", x=471775, y=437217, z=7100, angle=19716 }},
-\t\t\t\t\t{{ class="StonesDarkSmall_05", x=474723, y=439647, z=7099, angle=5796 }},
-\t\t\t\t}},
-\t\t\t}})
 \t\t\tlocal probe_result = dofile("{lua_path(probe)}")
 \t\t\tif probe_result ~= "fzp_determinism_capture_armed" then
 \t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
@@ -350,12 +338,7 @@ def static_verdict(text: str) -> dict[str, object]:
         "determinism_capture_armed_before_generation": (
             text.find("g_FzpDeterminismCaptureOutBase") < positions["generation"]
         ),
-        "target_state_probe_armed_before_capture_and_generation": (
-            text.count('rawset(_G, "g_FzpTargetObjectStateProbe"') == 1
-            and text.count("StonesDarkSmall_") == 8
-            and text.find("g_FzpTargetObjectStateProbe")
-            < text.find("determinism_capture_probe.lua") < positions["generation"]
-        ),
+        "target_state_probe_absent": "g_FzpTargetObjectStateProbe" not in text,
         "finalizer_follows_stable_t1_and_underground": (
             0 <= positions["stable_publish"] < positions["underground_visit"]
             < positions["finalizer_invoke"] < positions["parity_complete"]
@@ -432,7 +415,6 @@ def command_prepare(args: argparse.Namespace) -> int:
         "generation_script_bytes": generation.stat().st_size,
         "generation_script_sha256": sha256_file(generation),
         "capture_base": str(capture_base),
-        "target_state_probe": str(Path(str(capture_base) + "-target_state_probe.bin")),
         "stable_sentinel": str(stable_sentinel),
         "final_sentinel": str(final_sentinel),
         "static_verdict": verdict,
@@ -447,26 +429,7 @@ def command_self_test(args: argparse.Namespace) -> int:
     py_compile.compile(str(Path(__file__).resolve()), doraise=True)
     probe = PARITY / "determinism_capture_probe.lua"
     compile_lua(args.luac.resolve(), probe)
-    probe_text = probe.read_text(encoding="utf-8")
-    target_probe_boundaries_exact = (
-        probe_text.count('probe_snapshot("stock_surface_output"') == 1
-        and probe_text.count('probe_snapshot("post_scale_decorations"') == 1
-        and 'probe_snapshot("pre_scale_decorations"' not in probe_text
-    )
-    target_transfer_probe_exact = (
-        probe_text.count("local function probe_install_transfer_observer()") == 1
-        and probe_text.count("probe_install_transfer_observer()") == 2
-        and "probe_find_function_upvalue" not in probe_text
-        and "dbg.setupvalue" not in probe_text
-        and probe_text.count("deposits.CaptureNativeEnrichmentRecords = function(...)") == 1
-        and probe_text.count("deposits.StageNativeEnrichmentRecords = function(destination, ...)") == 1
-        and probe_text.count('rawset(source, "MapGet", function(self, ...)') == 1
-        and probe_text.count("probe_transfer_pre(source, destination, result,") == 1
-        and probe_text.count("probe_transfer_post(source, destination, result)") == 1
-        and 'return "fzp_determinism_capture_arm_failed:"' in probe_text
-        and '"stock_surface_output", "transfer_pre", "transfer_post",' in probe_text
-        and "smr.ralph.target_object_state_probe.v2" in probe_text
-    )
+    probe_sha256 = sha256_file(probe)
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -482,9 +445,10 @@ def command_self_test(args: argparse.Namespace) -> int:
         missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
         missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
         verdict["lua_parse"] = True
-        verdict["target_probe_lua_parse"] = True
-        verdict["target_probe_boundaries_exact"] = target_probe_boundaries_exact
-        verdict["target_transfer_probe_exact"] = target_transfer_probe_exact
+        verdict["reference_probe_lua_parse"] = True
+        verdict["reference_probe_sha256"] = probe_sha256
+        verdict["reference_probe_sha256_expected"] = REFERENCE_PROBE_SHA256
+        verdict["reference_probe_exact"] = probe_sha256 == REFERENCE_PROBE_SHA256
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
@@ -492,13 +456,118 @@ def command_self_test(args: argparse.Namespace) -> int:
             verdict["ok"]
             and mutation_red
             and missing_finalizer_red
-            and target_probe_boundaries_exact
-            and target_transfer_probe_exact
+            and verdict["reference_probe_exact"]
         )
     if args.out:
         write_json(args.out.resolve(), verdict)
     print(json.dumps(verdict, indent=2, sort_keys=True))
     return 0 if verdict["ok"] else 1
+
+
+def load_capture_manifest(path: Path) -> tuple[dict[str, object], Path, str]:
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ReferenceError(f"capture manifest must contain one object: {path}")
+    script_value = manifest.get("generation_script")
+    declared_sha256 = manifest.get("generation_script_sha256")
+    if not isinstance(script_value, str) or not script_value:
+        raise ReferenceError(f"capture manifest has no generation_script: {path}")
+    if not isinstance(declared_sha256, str) or not declared_sha256:
+        raise ReferenceError(f"capture manifest has no generation_script_sha256: {path}")
+    script = Path(script_value).resolve()
+    if not script.is_file():
+        raise ReferenceError(f"generation script is missing: {script}")
+    actual_sha256 = sha256_file(script)
+    if actual_sha256 != declared_sha256.upper():
+        raise ReferenceError(
+            f"generation script hash mismatch for {script}: "
+            f"{actual_sha256} != {declared_sha256}"
+        )
+    return manifest, script, actual_sha256
+
+
+def normalize_output_identity(text: str, manifest: dict[str, object]) -> tuple[str, dict[str, int]]:
+    counts: dict[str, int] = {}
+    for field in ("capture_base", "stable_sentinel", "final_sentinel"):
+        value = manifest.get(field)
+        if not isinstance(value, str) or not value:
+            raise ReferenceError(f"capture manifest has no {field}")
+        rendered = lua_path(Path(value))
+        counts[field] = text.count(rendered)
+        text = text.replace(rendered, f"__OUTPUT_IDENTITY_{field.upper()}__")
+    return text, counts
+
+
+def command_verify_reference_equivalence(args: argparse.Namespace) -> int:
+    reference, reference_script, reference_sha256 = load_capture_manifest(
+        args.reference_manifest.resolve()
+    )
+    candidate, candidate_script, candidate_sha256 = load_capture_manifest(
+        args.candidate_manifest.resolve()
+    )
+    reference_text = reference_script.read_text(encoding="utf-8")
+    candidate_text = candidate_script.read_text(encoding="utf-8")
+    normalized_reference, reference_counts = normalize_output_identity(
+        reference_text, reference
+    )
+    normalized_candidate, candidate_counts = normalize_output_identity(
+        candidate_text, candidate
+    )
+    probe = PARITY / "determinism_capture_probe.lua"
+    probe_text = probe.read_text(encoding="utf-8")
+    probe_sha256 = sha256_file(probe)
+    checks = {
+        "reference_generation_is_pinned_iteration_4": (
+            reference_sha256 == REFERENCE_GENERATION_SHA256
+        ),
+        "raw_generation_scripts_are_distinct": reference_sha256 != candidate_sha256,
+        "reference_output_identities_occur_once": all(
+            count == 1 for count in reference_counts.values()
+        ),
+        "candidate_output_identities_occur_once": all(
+            count == 1 for count in candidate_counts.values()
+        ),
+        "normalized_generation_scripts_are_exact": (
+            normalized_reference == normalized_candidate
+        ),
+        "candidate_has_no_target_state_probe": (
+            "g_FzpTargetObjectStateProbe" not in candidate_text
+        ),
+        "probe_is_exact_reference_era_source": probe_sha256 == REFERENCE_PROBE_SHA256,
+        "probe_has_no_target_state_probe": "g_FzpTargetObjectStateProbe" not in probe_text,
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    report = {
+        "schema": "smr.ralph.observer_free_capture_equivalence.v1",
+        "ok": not failed,
+        "checks": checks,
+        "passed": sum(checks.values()),
+        "total": len(checks),
+        "failed": failed,
+        "allowed_differences": ["capture_base", "stable_sentinel", "final_sentinel"],
+        "reference": {
+            "manifest": str(args.reference_manifest.resolve()),
+            "generation_script": str(reference_script),
+            "generation_script_bytes": reference_script.stat().st_size,
+            "generation_script_sha256": reference_sha256,
+            "output_identity_occurrences": reference_counts,
+        },
+        "candidate": {
+            "manifest": str(args.candidate_manifest.resolve()),
+            "generation_script": str(candidate_script),
+            "generation_script_bytes": candidate_script.stat().st_size,
+            "generation_script_sha256": candidate_sha256,
+            "output_identity_occurrences": candidate_counts,
+        },
+        "probe": {
+            "path": str(probe),
+            "sha256": probe_sha256,
+            "expected_reference_sha256": REFERENCE_PROBE_SHA256,
+        },
+    }
+    write_json(args.out.resolve(), report)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
 
 
 def parser() -> argparse.ArgumentParser:
@@ -516,6 +585,11 @@ def parser() -> argparse.ArgumentParser:
     self_test.add_argument("--out", type=Path)
     self_test.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
     self_test.set_defaults(func=command_self_test)
+    verify = sub.add_parser("verify-reference-equivalence")
+    verify.add_argument("--reference-manifest", type=Path, required=True)
+    verify.add_argument("--candidate-manifest", type=Path, required=True)
+    verify.add_argument("--out", type=Path, required=True)
+    verify.set_defaults(func=command_verify_reference_equivalence)
     return ap
 
 
