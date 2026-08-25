@@ -128,6 +128,216 @@ local function safe_call(fn, self, ...)
 	return nil
 end
 
+-- Optional task-local object-lifetime probe.  It is deliberately armed only by a harness
+-- generator and changes no production state: the three snapshots read the existing map census
+-- plus the exact cached traversal lists captured by AnnotateDecorRelief.  Keeping the diagnostic
+-- here, beside the established capture hook, lets it observe both sides of
+-- ScaleDecorationsToFull without adding a production callback or logging path.
+local target_probe = rawget(_G, "g_FzpTargetObjectStateProbe")
+local target_probe_rows = {}
+local target_probe_seen = {}
+if target_probe ~= nil then
+	if type(target_probe) ~= "table" or type(target_probe.path) ~= "string"
+		or target_probe.path == "" or type(target_probe.targets) ~= "table"
+		or #target_probe.targets ~= 8 then
+		error("g_FzpTargetObjectStateProbe must name one path and exactly eight targets")
+	end
+end
+
+local function probe_scalar(value)
+	if value == nil then return "nil" end
+	local text = tostring(value)
+	return (text:gsub("[\r\n|]", "_"))
+end
+
+local function probe_call(obj, name, ...)
+	local fn = obj and obj[name]
+	if type(fn) ~= "function" then return false, "unavailable" end
+	local ok, value, b, c = pcall(fn, obj, ...)
+	if not ok then return false, "error:" .. probe_scalar(value) end
+	return true, value, b, c
+end
+
+local function probe_valid(obj)
+	local fn = rawget(_G, "IsValid")
+	if type(fn) ~= "function" then return obj ~= nil end
+	local ok, value = pcall(fn, obj)
+	return ok and value == true
+end
+
+local function probe_source_identity(obj, allow_methods)
+	local class = obj and tostring(obj.class or "?") or "nil"
+	local x = obj and obj.SuperBigMapNativeSourceX or nil
+	local y = obj and obj.SuperBigMapNativeSourceY or nil
+	local z = obj and obj.SuperBigMapNativeSourceZ or nil
+	local angle = obj and obj.SuperBigMapNativeSourceAngle or nil
+	if allow_methods and (type(x) ~= "number" or type(y) ~= "number" or type(z) ~= "number") then
+		local ok, px, py, pz = probe_call(obj, "GetVisualPosXYZ")
+		if ok then
+			x = type(x) == "number" and x or px
+			y = type(y) == "number" and y or py
+			z = type(z) == "number" and z or pz
+		end
+	end
+	if allow_methods and type(angle) ~= "number" then
+		local ok, value = probe_call(obj, "GetAngle")
+		if ok then angle = value end
+	end
+	return class, x, y, z, angle
+end
+
+local function probe_target_matches(obj, target, allow_methods)
+	local class, x, y, z, angle = probe_source_identity(obj, allow_methods)
+	return class == target.class and x == target.x and y == target.y
+		and z == target.z and angle == target.angle
+end
+
+local function probe_find_upvalue(fn, wanted)
+	local dbg = rawget(_G, "debug")
+	if type(fn) ~= "function" or type(dbg) ~= "table"
+		or type(dbg.getupvalue) ~= "function" then return nil, "debug.getupvalue unavailable" end
+	for index = 1, 128 do
+		local name, value = dbg.getupvalue(fn, index)
+		if name == nil then break end
+		if name == wanted then return value end
+	end
+	return nil, "upvalue " .. wanted .. " unavailable"
+end
+
+local function probe_related(obj)
+	if obj == nil then return "nil" end
+	local valid = probe_valid(obj)
+	local class, x, y, z, angle = probe_source_identity(obj, valid)
+	local entity = "unreadable"
+	if valid then
+		local ok, value = probe_call(obj, "GetEntity")
+		entity = ok and value or "unavailable"
+	end
+	return table.concat({
+		"token=" .. probe_scalar(obj), "valid=" .. tostring(valid),
+		"class=" .. probe_scalar(class), "entity=" .. probe_scalar(entity),
+		"source_x=" .. probe_scalar(x), "source_y=" .. probe_scalar(y),
+		"source_z=" .. probe_scalar(z), "source_angle=" .. probe_scalar(angle),
+	}, ";")
+end
+
+local function probe_snapshot(stage, map)
+	if target_probe == nil then return end
+	if target_probe_seen[stage] then error("target state probe repeated " .. stage) end
+	local map_objects = map and safe_call(map.MapGet, map, "map") or {}
+	local scale_fn = type(SBM) == "table" and type(SBM.TerrainCopy) == "table"
+		and SBM.TerrainCopy.ScaleDecorationsToFull or nil
+	local all_by_map, all_error = probe_find_upvalue(scale_fn, "decor_objects_by_map")
+	local eligible_by_map, eligible_error = probe_find_upvalue(
+		scale_fn, "decor_eligible_objects_by_map")
+	local cached_all = type(all_by_map) == "table" and all_by_map[map] or nil
+	local cached_eligible = type(eligible_by_map) == "table" and eligible_by_map[map] or nil
+	local candidates, metadata, candidate_seen = {}, {}, {}
+	local function add(list, kind)
+		if type(list) ~= "table" then return end
+		for ordinal = 1, #list do
+			local obj = list[ordinal]
+			if obj ~= nil then
+				if not candidate_seen[obj] then
+					candidate_seen[obj] = true
+					candidates[#candidates + 1] = obj
+					metadata[obj] = {}
+				end
+				metadata[obj][kind] = ordinal
+			end
+		end
+	end
+	add(map_objects, "map_ordinal")
+	add(cached_all, "cached_all_ordinal")
+	add(cached_eligible, "cached_eligible_ordinal")
+
+	target_probe_rows[#target_probe_rows + 1] = table.concat({
+		"#stage", stage, "map_count=" .. tostring(#(map_objects or empty_table)),
+		"cached_all_count=" .. tostring(type(cached_all) == "table" and #cached_all or -1),
+		"cached_eligible_count=" .. tostring(
+			type(cached_eligible) == "table" and #cached_eligible or -1),
+		"cached_all_error=" .. probe_scalar(all_error),
+		"cached_eligible_error=" .. probe_scalar(eligible_error),
+	}, "|")
+	local present = 0
+	for target_index, target in ipairs(target_probe.targets) do
+		local matches = {}
+		for _, obj in ipairs(candidates) do
+			local valid = probe_valid(obj)
+			if probe_target_matches(obj, target, valid) then matches[#matches + 1] = obj end
+		end
+		if #matches > 1 then
+			error("target state probe found duplicate target " .. tostring(target_index)
+				.. " at " .. stage)
+		end
+		local obj = matches[1]
+		if obj then present = present + 1 end
+		local fields = {
+			"target", tostring(target_index), stage,
+			"class=" .. probe_scalar(target.class),
+			"source_x=" .. tostring(target.x), "source_y=" .. tostring(target.y),
+			"source_z=" .. tostring(target.z), "source_angle=" .. tostring(target.angle),
+			"present=" .. tostring(obj ~= nil),
+		}
+		if obj then
+			local valid = probe_valid(obj)
+			local meta = metadata[obj] or {}
+			fields[#fields + 1] = "token=" .. probe_scalar(obj)
+			fields[#fields + 1] = "valid=" .. tostring(valid)
+			fields[#fields + 1] = "in_map=" .. tostring(meta.map_ordinal ~= nil)
+			fields[#fields + 1] = "map_ordinal=" .. probe_scalar(meta.map_ordinal)
+			fields[#fields + 1] = "cached_all_ordinal=" .. probe_scalar(meta.cached_all_ordinal)
+			fields[#fields + 1] = "cached_eligible_ordinal="
+				.. probe_scalar(meta.cached_eligible_ordinal)
+			if valid then
+				local ok_xyz, x, y, z = probe_call(obj, "GetVisualPosXYZ")
+				fields[#fields + 1] = "visual_x=" .. probe_scalar(ok_xyz and x or nil)
+				fields[#fields + 1] = "visual_y=" .. probe_scalar(ok_xyz and y or nil)
+				fields[#fields + 1] = "visual_z=" .. probe_scalar(ok_xyz and z or nil)
+				local ok_enum, enum_flags = probe_call(obj, "GetEnumFlags")
+				local ok_game, game_flags = probe_call(obj, "GetGameFlags")
+				fields[#fields + 1] = "enum_flags=" .. probe_scalar(ok_enum and enum_flags or nil)
+				fields[#fields + 1] = "game_flags=" .. probe_scalar(ok_game and game_flags or nil)
+				local ok_parent, parent = probe_call(obj, "GetParent")
+				local ok_attach_parent, attach_parent = probe_call(obj, "GetAttachParent")
+				local ok_attach_spot, attach_spot = probe_call(obj, "GetAttachSpot")
+				fields[#fields + 1] = "get_parent_ok=" .. tostring(ok_parent)
+				fields[#fields + 1] = "parent={" .. probe_related(ok_parent and parent or nil) .. "}"
+				fields[#fields + 1] = "get_attach_parent_ok=" .. tostring(ok_attach_parent)
+				fields[#fields + 1] = "attach_parent={"
+					.. probe_related(ok_attach_parent and attach_parent or nil) .. "}"
+				fields[#fields + 1] = "get_attach_spot_ok=" .. tostring(ok_attach_spot)
+				fields[#fields + 1] = "attach_spot=" .. probe_scalar(ok_attach_spot and attach_spot or nil)
+				local owner = (ok_attach_parent and attach_parent) or (ok_parent and parent) or nil
+				local attach_ordinal, attach_count = nil, nil
+				if owner and probe_valid(owner) then
+					local ok_attaches, attaches = probe_call(owner, "GetAttaches")
+					if ok_attaches and type(attaches) == "table" then
+						attach_count = #attaches
+						for ordinal, child in ipairs(attaches) do
+							if child == obj then attach_ordinal = ordinal break end
+						end
+					end
+				end
+				fields[#fields + 1] = "parent_attach_count=" .. probe_scalar(attach_count)
+				fields[#fields + 1] = "parent_attach_ordinal=" .. probe_scalar(attach_ordinal)
+			else
+				fields[#fields + 1] = "invalid_wrapper_methods_skipped=true"
+			end
+		end
+		target_probe_rows[#target_probe_rows + 1] = table.concat(fields, "|")
+	end
+	if (stage == "stock_surface_output" or stage == "pre_scale_decorations") and present ~= 8 then
+		error("target state probe expected eight live inputs at " .. stage
+			.. ", found " .. tostring(present))
+	end
+	target_probe_rows[#target_probe_rows + 1] = "#summary|" .. stage
+		.. "|present=" .. tostring(present) .. "|targets=8"
+	write(target_probe.path, "schema=smr.ralph.target_object_state_probe.v1\n"
+		.. table.concat(target_probe_rows, "\n") .. "\n")
+	target_probe_seen[stage] = true
+end
+
 local function object_rows(map, collision_only)
 	local rows = {}
 	local objects = map and safe_call(map.MapGet, map, "map") or {}
@@ -268,6 +478,7 @@ local function capture_hook(stage, map, details)
 		if stage_seen[stage] then error(stage .. " repeated") end
 		save_terrain_pair(stage, map)
 		save_objects(artifacts[stage].object_census, map, false)
+		probe_snapshot("stock_surface_output", map)
 		stage_seen[stage] = true
 	elseif stage == "pre_z_transform" or stage == "post_z_transform" then
 		local kind = details and details.grid_kind
@@ -279,6 +490,7 @@ local function capture_hook(stage, map, details)
 		stage_seen[stage .. ":" .. kind] = true
 		if stage == "pre_z_transform" and kind == "surface_height" then
 			save_objects(artifacts[stage].object_census, map, false)
+			probe_snapshot("pre_scale_decorations", map)
 		elseif stage == "post_z_transform" and kind == "surface_height" then
 			write(artifacts[stage].zone_stamp, canonical({
 				zmul = map.SuperBigMapZScaleMul,
@@ -292,6 +504,7 @@ local function capture_hook(stage, map, details)
 		if stage_seen[stage] then error(stage .. " repeated") end
 		save_objects(artifacts[stage].object_census, map, false)
 		save_objects(artifacts[stage].collision_census, map, true)
+		probe_snapshot("post_scale_decorations", map)
 		stage_seen[stage] = true
 	else
 		error("unknown determinism capture stage " .. tostring(stage))
@@ -392,6 +605,13 @@ rawset(_G, "g_FzpDeterminismCaptureFinalize", function()
 			"post_z_transform:surface_height", "post_z_transform:surface_terrain",
 		}) do
 			if not stage_seen[key] then error("missing early capture " .. key) end
+		end
+		if target_probe ~= nil then
+			for _, key in ipairs({
+				"stock_surface_output", "pre_scale_decorations", "post_scale_decorations",
+			}) do
+				if not target_probe_seen[key] then error("missing target state probe " .. key) end
+			end
 		end
 		local maps = find_maps()
 		if maps.surface.SuperBigMapSurfaceStretchDone ~= true

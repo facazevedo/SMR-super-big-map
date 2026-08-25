@@ -79,6 +79,7 @@ def benchmark_block(
     capture_base: Path, stable_sentinel: Path, final_sentinel: Path
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
+    target_probe_path = Path(str(capture_base) + "-target_state_probe.bin")
     return f'''\t\tdo
 \t\t\tlocal state = {{
 \t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v2",
@@ -116,6 +117,19 @@ def benchmark_block(
 \t\t\tend
 \t\t\trawset(_G, "g_SmrRalphSurfaceReferenceState", state)
 \t\t\trawset(_G, "g_FzpDeterminismCaptureOutBase", "{lua_path(capture_base)}")
+\t\t\trawset(_G, "g_FzpTargetObjectStateProbe", {{
+\t\t\t\tpath = "{lua_path(target_probe_path)}",
+\t\t\t\ttargets = {{
+\t\t\t\t\t{{ class="StonesDarkSmall_01", x=472209, y=437237, z=7100, angle=1056 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_02", x=473324, y=439142, z=7100, angle=2976 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_03", x=472647, y=438087, z=7100, angle=6216 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_03", x=472669, y=440296, z=7099, angle=7656 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_04", x=471592, y=434243, z=7100, angle=10776 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_05", x=470270, y=435459, z=7102, angle=12816 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_05", x=471775, y=437217, z=7100, angle=19716 }},
+\t\t\t\t\t{{ class="StonesDarkSmall_05", x=474723, y=439647, z=7099, angle=5796 }},
+\t\t\t\t}},
+\t\t\t}})
 \t\t\tlocal probe_result = dofile("{lua_path(probe)}")
 \t\t\tif probe_result ~= "fzp_determinism_capture_armed" then
 \t\t\t\terror("determinism capture producer did not arm: " .. tostring(probe_result))
@@ -336,6 +350,12 @@ def static_verdict(text: str) -> dict[str, object]:
         "determinism_capture_armed_before_generation": (
             text.find("g_FzpDeterminismCaptureOutBase") < positions["generation"]
         ),
+        "target_state_probe_armed_before_capture_and_generation": (
+            text.count('rawset(_G, "g_FzpTargetObjectStateProbe"') == 1
+            and text.count("StonesDarkSmall_") == 8
+            and text.find("g_FzpTargetObjectStateProbe")
+            < text.find("determinism_capture_probe.lua") < positions["generation"]
+        ),
         "finalizer_follows_stable_t1_and_underground": (
             0 <= positions["stable_publish"] < positions["underground_visit"]
             < positions["finalizer_invoke"] < positions["parity_complete"]
@@ -412,6 +432,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "generation_script_bytes": generation.stat().st_size,
         "generation_script_sha256": sha256_file(generation),
         "capture_base": str(capture_base),
+        "target_state_probe": str(Path(str(capture_base) + "-target_state_probe.bin")),
         "stable_sentinel": str(stable_sentinel),
         "final_sentinel": str(final_sentinel),
         "static_verdict": verdict,
@@ -424,6 +445,7 @@ def command_prepare(args: argparse.Namespace) -> int:
 
 def command_self_test(args: argparse.Namespace) -> int:
     py_compile.compile(str(Path(__file__).resolve()), doraise=True)
+    compile_lua(args.luac.resolve(), PARITY / "determinism_capture_probe.lua")
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -439,6 +461,7 @@ def command_self_test(args: argparse.Namespace) -> int:
         missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
         missing_finalizer_red = static_verdict(missing_finalizer)["ok"] is False
         verdict["lua_parse"] = True
+        verdict["target_probe_lua_parse"] = True
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
