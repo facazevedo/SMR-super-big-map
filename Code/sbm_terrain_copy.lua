@@ -2530,7 +2530,10 @@ local function PrepareOuterResourceTerrain(map)
 		-- collection cores instead retain their capped fitted grade, eliminating a level circular scar.
 		-- Ready-before resource guards remain untouched; rocket/resource core clearance prevents a
 		-- landing footprint from depending on any guarded cell.
-		for _, patch in ipairs(patches) do
+		for patch_index, patch in ipairs(patches) do
+			-- The terminal patch's first pass already leaves its complete core at the exact
+			-- guarded target, and no later feather can disturb it before this pass.
+			if patch_index == #patches then break end
 			local radius = patch.core_cells
 			local x0 = math.max(0, math.floor(patch.cx - radius - 1))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 1))
