@@ -147,10 +147,6 @@ function Diagnostics.OuterResourceRetryProvenanceEnabled()
 	return Config().TRACE_OUTER_RESOURCE_RETRY_PROVENANCE == true
 end
 
-function Diagnostics.OuterResourceRetryPatchProfileEnabled()
-	return Config().TRACE_OUTER_RESOURCE_RETRY_PATCH_PROFILE == true
-end
-
 function Diagnostics.RockParityEnabled()
 	return Config().TRACE_UNDERGROUND_ROCK_PARITY == true
 end
@@ -225,13 +221,6 @@ end
 function Diagnostics.OuterResourceRetryProvenance(event, data, map)
 	if not Diagnostics.OuterResourceRetryProvenanceEnabled() then return false end
 	return Print("OuterResourceRetryProvenance", event, CopyData(data, map))
-end
-
--- Temporary retry-ordinal profiler. The caller supplies scalar-only measurements after
--- terrain mutation; this channel performs no grid reads and no gameplay operation.
-function Diagnostics.OuterResourceRetryPatchProfile(event, data, map)
-	if not Diagnostics.OuterResourceRetryPatchProfileEnabled() then return false end
-	return Print("OuterResourceRetryPatchProfile", event, CopyData(data, map))
 end
 
 -- Dedicated deterministic rock-parity trace. Keep this independent from broad debug logging so
