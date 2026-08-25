@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Launch the surface-loading Ralph loop on Codex Sol/xhigh.
+"""Launch the Rough Terrain surface-loading Ralph loop on Codex Sol.
 
 The stock harness intentionally owns workspace creation, session memory, incident
-routing, and stop signals. This thin project-local entry point selects the user-approved
-top model/effort from the first iteration and waits for a manually launched game to exit
-before handing game control to the unattended loop.
+routing, and stop signals. This thin project-local entry point uses high reasoning by
+default, lets the harness escalate to extra-high only after a measured plateau, and
+waits for a manually launched game to exit before handing game control to the
+unattended loop.
 """
 
 from __future__ import annotations
@@ -20,9 +21,10 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 HARNESS = PROJECT.parent / "smr-harness"
-TASK_NAME = "surface-loading-under-60s"
+TASK_NAME = "surface-loading-under-60s-rough"
 MODEL = "gpt-5.6-sol"
-REASONING_EFFORT = "xhigh"
+BASE_REASONING_EFFORT = "high"
+ESCALATED_REASONING_EFFORT = "xhigh"
 
 
 def load_harness_loop():
@@ -104,12 +106,12 @@ def main() -> int:
     args = parse_args()
     loop = load_harness_loop()
 
-    # Keep the harness's restart-safe plateau/audit machinery, but make every compute
-    # rung the explicitly approved Sol/xhigh configuration.
+    # Keep the harness's restart-safe plateau/audit machinery. Both ordinary rungs use
+    # Sol/high; only its sustained no-progress rung may escalate Sol to extra-high.
     loop.CODEX_DEFAULT_MODEL = MODEL
     loop.CODEX_ESCALATED_MODEL = MODEL
-    loop.CODEX_BASE_REASONING_EFFORT = REASONING_EFFORT
-    loop.CODEX_ESCALATED_REASONING_EFFORT = REASONING_EFFORT
+    loop.CODEX_BASE_REASONING_EFFORT = BASE_REASONING_EFFORT
+    loop.CODEX_ESCALATED_REASONING_EFFORT = ESCALATED_REASONING_EFFORT
 
     context, status = loop.make_context(
         str(PROJECT),
@@ -126,7 +128,7 @@ def main() -> int:
         executable,
         context,
         codex_model=MODEL,
-        codex_reasoning_effort=REASONING_EFFORT,
+        codex_reasoning_effort=BASE_REASONING_EFFORT,
     )
 
     if args.dry_run:
@@ -147,7 +149,7 @@ def main() -> int:
         max_launch_failures=3,
         pause_seconds=5,
         adaptive_reasoning=True,
-        codex_reasoning_effort=REASONING_EFFORT,
+        codex_reasoning_effort=BASE_REASONING_EFFORT,
         max_sessions_without_progress=None,
     )
 
