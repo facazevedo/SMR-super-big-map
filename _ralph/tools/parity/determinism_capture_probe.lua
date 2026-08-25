@@ -138,6 +138,9 @@ local target_probe_rows = {}
 local target_probe_seen = {}
 local target_transfer_refs = {}
 local target_transfer_plan = {}
+local target_transfer_source
+local target_transfer_destination
+local target_transfer_excluded
 local probe_scalar, probe_call, probe_valid, probe_target_matches
 if target_probe ~= nil then
 	if type(target_probe) ~= "table" or type(target_probe.path) ~= "string"
@@ -155,10 +158,11 @@ local function probe_list_ordinal(list, wanted)
 	return nil
 end
 
--- Reproduce TransferGeneratedObjects' root selection against the exact object array returned to
--- production. This is diagnostic-only and never calls RNG or mutates an object. Keeping the
--- decision record here avoids adding target-specific branches or logging to the deployed mod.
-local function probe_transfer_plan(source, objects, source_baseline, excluded_objects)
+-- Reproduce the exclusion/root portion of TransferGeneratedObjects against the exact object
+-- array returned to production. The baseline set is intentionally not guessed: the watched
+-- identities are retained from the post-generation stock boundary, while the exact enrichment
+-- exclusion table is intercepted from production's public capture API below.
+local function probe_transfer_plan(source, objects, excluded_objects)
 	local transfer_excluded = excluded_objects
 	local source_camera = source and rawget(source, "g_CameraObj") or nil
 	if source_camera and probe_valid(source_camera) then
@@ -176,7 +180,7 @@ local function probe_transfer_plan(source, objects, source_baseline, excluded_ob
 			local ok_parent, parent = probe_call(current, "GetParent")
 			if not ok_parent then break end
 			local parent_valid = parent and probe_valid(parent)
-			if not parent_valid or (source_baseline and source_baseline[parent]) then break end
+			if not parent_valid then break end
 			current = parent
 			depth = depth + 1
 		end
@@ -187,11 +191,8 @@ local function probe_transfer_plan(source, objects, source_baseline, excluded_ob
 		local decision = { input_ordinal = ordinal }
 		decisions[obj] = decision
 		decision.valid = probe_valid(obj)
-		decision.baseline = source_baseline and source_baseline[obj] == true or false
 		if not decision.valid then
 			decision.reason = "invalid"
-		elseif decision.baseline then
-			decision.reason = "source_baseline"
 		else
 			local root, excluded = resolve_generated_root(obj)
 			decision.root = root
@@ -212,34 +213,27 @@ local function probe_transfer_plan(source, objects, source_baseline, excluded_ob
 	return roots, decisions, transfer_excluded
 end
 
-local function probe_transfer_pre(source, destination, objects, source_baseline, excluded_objects)
+local function probe_transfer_pre(source, destination, objects, excluded_objects)
 	if target_probe == nil then return end
 	local stage = "transfer_pre"
 	if target_probe_seen[stage] then error("target state probe repeated " .. stage) end
 	local roots, decisions, effective_excluded = probe_transfer_plan(
-		source, objects, source_baseline, excluded_objects)
+		source, objects, excluded_objects)
 	target_transfer_plan = decisions
 	target_probe_rows[#target_probe_rows + 1] = table.concat({
 		"#stage", stage, "object_count=" .. tostring(#(objects or empty_table)),
 		"root_count=" .. tostring(#roots),
 	}, "|")
-	local present, baseline_count, excluded_count, selected_count = 0, 0, 0, 0
+	local present, excluded_count, selected_count = 0, 0, 0
 	for target_index, target in ipairs(target_probe.targets) do
-		local matches = {}
-		for _, obj in ipairs(objects or empty_table) do
-			if probe_target_matches(obj, target, probe_valid(obj)) then
-				matches[#matches + 1] = obj
-			end
-		end
-		if #matches ~= 1 then
+		local obj = target_transfer_refs[target_index]
+		local input_ordinal = probe_list_ordinal(objects, obj)
+		if obj == nil or input_ordinal == nil then
 			error("transfer probe expected one target " .. tostring(target_index)
-				.. ", found " .. tostring(#matches))
+				.. " from the stock boundary in production's input array")
 		end
-		local obj = matches[1]
-		target_transfer_refs[target_index] = obj
 		present = present + 1
 		local decision = decisions[obj] or {}
-		if decision.baseline then baseline_count = baseline_count + 1 end
 		if decision.excluded then excluded_count = excluded_count + 1 end
 		if decision.reason == "selected_root" then selected_count = selected_count + 1 end
 		local root = decision.root
@@ -249,9 +243,10 @@ local function probe_transfer_pre(source, destination, objects, source_baseline,
 			"source_x=" .. tostring(target.x), "source_y=" .. tostring(target.y),
 			"source_z=" .. tostring(target.z), "source_angle=" .. tostring(target.angle),
 			"token=" .. probe_scalar(obj),
-			"input_ordinal=" .. probe_scalar(decision.input_ordinal),
+			"input_ordinal=" .. probe_scalar(input_ordinal),
 			"valid=" .. tostring(decision.valid == true),
-			"source_baseline=" .. tostring(decision.baseline == true),
+			"baseline_membership=not_observed",
+			"identity_boundary=stock_surface_output",
 			"directly_excluded=" .. tostring(effective_excluded
 				and effective_excluded[obj] == true or false),
 			"filter_reason=" .. probe_scalar(decision.reason),
@@ -263,7 +258,6 @@ local function probe_transfer_pre(source, destination, objects, source_baseline,
 	end
 	target_probe_rows[#target_probe_rows + 1] = table.concat({
 		"#summary", stage, "present=" .. tostring(present),
-		"baseline=" .. tostring(baseline_count),
 		"excluded=" .. tostring(excluded_count),
 		"selected=" .. tostring(selected_count), "targets=8",
 	}, "|")
@@ -272,15 +266,13 @@ local function probe_transfer_pre(source, destination, objects, source_baseline,
 	target_probe_seen[stage] = true
 end
 
-local function probe_transfer_post(source, destination, remaining_objects, call_ok, call_result)
+local function probe_transfer_post(source, destination, remaining_objects)
 	if target_probe == nil then return end
 	local stage = "transfer_post"
 	if target_probe_seen[stage] then error("target state probe repeated " .. stage) end
 	if not target_probe_seen.transfer_pre then error("target transfer post preceded pre") end
 	target_probe_rows[#target_probe_rows + 1] = table.concat({
 		"#stage", stage,
-		"call_ok=" .. tostring(call_ok == true),
-		"call_result=" .. probe_scalar(call_result),
 		"remaining_count=" .. tostring(type(remaining_objects) == "table"
 			and #remaining_objects or -1),
 	}, "|")
@@ -327,81 +319,83 @@ local function probe_transfer_post(source, destination, remaining_objects, call_
 	target_probe_seen[stage] = true
 end
 
-local function probe_find_function_upvalue(fn, wanted, seen, depth)
-	local dbg = rawget(_G, "debug")
-	if type(fn) ~= "function" or type(dbg) ~= "table"
-		or type(dbg.getupvalue) ~= "function" then return nil end
-	seen, depth = seen or {}, depth or 0
-	if seen[fn] or depth > 8 then return nil end
-	seen[fn] = true
-	for index = 1, 128 do
-		local name, value = dbg.getupvalue(fn, index)
-		if name == nil then break end
-		if name == wanted and type(value) == "function" then
-			return fn, index, value
-		end
-		if type(value) == "function" then
-			local owner, child_index, found = probe_find_function_upvalue(
-				value, wanted, seen, depth + 1)
-			if owner then return owner, child_index, found end
-		end
-	end
-	return nil
+local function probe_pack(...)
+	return { n = select("#", ...), ... }
 end
 
--- Install a one-shot task-local wrapper around the exact production closure. Its MapGet shim
--- observes the two arrays production itself consumes (initial collection and final remaining
--- audit), so the diagnostic adds no extra object census that could perturb wrapper allocation.
-local function probe_install_transfer_wrapper()
+local probe_unpack = table.unpack or unpack
+
+-- Install task-local wrappers on the public enrichment APIs. StageNativeEnrichmentRecords is the
+-- exact production entry point immediately before TransferGeneratedObjects, so its successful
+-- return can install a one-shot MapGet shim without closure introspection or an extra census. The
+-- shim observes only production's initial collection and final remaining-object audit, restoring
+-- the source method before it records the latter.
+local function probe_install_transfer_observer()
 	if target_probe == nil then return true end
-	local dbg = rawget(_G, "debug")
-	if type(dbg) ~= "table" or type(dbg.setupvalue) ~= "function" then
-		error("target transfer probe requires debug.setupvalue")
+	local deposits = type(SBM) == "table" and SBM.DepositRules or nil
+	if type(deposits) ~= "table" then return nil, "deposit rules unavailable" end
+	local original_capture = deposits.CaptureNativeEnrichmentRecords
+	local original_stage = deposits.StageNativeEnrichmentRecords
+	if type(original_capture) ~= "function" then
+		return nil, "CaptureNativeEnrichmentRecords unavailable"
 	end
-	local state = type(SBM) == "table" and SBM.State or nil
-	local root = type(state) == "table" and state.generator_do_generate_wrapper or nil
-	if type(root) ~= "function" and type(RandomMapGenerator) == "table" then
-		root = RandomMapGenerator.DoGenerate
+	if type(original_stage) ~= "function" then
+		return nil, "StageNativeEnrichmentRecords unavailable"
 	end
-	local owner, index, original = probe_find_function_upvalue(
-		root, "TransferGeneratedObjects")
-	if not owner then error("TransferGeneratedObjects closure is unavailable") end
-	local wrapper
-	wrapper = function(source, destination, source_baseline, excluded_objects)
-		local restored = dbg.setupvalue(owner, index, original)
-		if restored ~= "TransferGeneratedObjects" then
-			error("could not restore TransferGeneratedObjects closure")
+
+	deposits.CaptureNativeEnrichmentRecords = function(...)
+		local results = probe_pack(pcall(original_capture, ...))
+		deposits.CaptureNativeEnrichmentRecords = original_capture
+		if results[1] ~= true then error(results[2]) end
+		target_transfer_excluded = results[3]
+		if type(target_transfer_excluded) ~= "table" then
+			error("target transfer probe received no enrichment exclusion set")
 		end
-		if type(source) ~= "table" or type(source.MapGet) ~= "function" then
-			error("target transfer probe source MapGet is unavailable")
-		end
-		local saved_raw_map_get = rawget(source, "MapGet")
-		local real_map_get = source.MapGet
-		local map_query_count = 0
-		local remaining_objects
-		rawset(source, "MapGet", function(self, ...)
-			local result = real_map_get(self, ...)
-			if select("#", ...) == 1 and (...) == "map" and type(result) == "table" then
-				map_query_count = map_query_count + 1
-				if map_query_count == 1 then
-					probe_transfer_pre(source, destination, result,
-						source_baseline, excluded_objects)
-				elseif map_query_count == 2 then
-					remaining_objects = result
-				end
+		return probe_unpack(results, 2, results.n)
+	end
+
+	deposits.StageNativeEnrichmentRecords = function(destination, ...)
+		local results = probe_pack(pcall(original_stage, destination, ...))
+		deposits.StageNativeEnrichmentRecords = original_stage
+		if results[1] ~= true then error(results[2]) end
+		if results[2] == true then
+			local source = target_transfer_source
+			if type(source) ~= "table" or type(source.MapGet) ~= "function" then
+				error("target transfer probe source MapGet is unavailable at staging")
 			end
-			return result
-		end)
-		local call_ok, call_result = pcall(
-			original, source, destination, source_baseline, excluded_objects)
-		rawset(source, "MapGet", saved_raw_map_get)
-		probe_transfer_post(source, destination, remaining_objects, call_ok, call_result)
-		if not call_ok then error(call_result) end
-		return call_result
-	end
-	local installed = dbg.setupvalue(owner, index, wrapper)
-	if installed ~= "TransferGeneratedObjects" then
-		error("could not install TransferGeneratedObjects diagnostic wrapper")
+			if destination ~= target_transfer_destination then
+				error("target transfer probe staging destination changed")
+			end
+			if type(target_transfer_excluded) ~= "table" then
+				error("target transfer probe exclusions were not captured before staging")
+			end
+			local saved_raw_map_get = rawget(source, "MapGet")
+			local real_map_get = source.MapGet
+			local map_query_count = 0
+			rawset(source, "MapGet", function(self, ...)
+				local call = probe_pack(pcall(real_map_get, self, ...))
+				if call[1] ~= true then
+					rawset(source, "MapGet", saved_raw_map_get)
+					error(call[2])
+				end
+				local result = call[2]
+				if select("#", ...) == 1 and (...) == "map" and type(result) == "table" then
+					map_query_count = map_query_count + 1
+					if map_query_count == 1 then
+						probe_transfer_pre(source, destination, result,
+							target_transfer_excluded)
+					elseif map_query_count == 2 then
+						rawset(source, "MapGet", saved_raw_map_get)
+						probe_transfer_post(source, destination, result)
+					else
+						rawset(source, "MapGet", saved_raw_map_get)
+						error("target transfer probe observed unexpected source MapGet count")
+					end
+				end
+				return probe_unpack(call, 2, call.n)
+			end)
+		end
+		return probe_unpack(results, 2, results.n)
 	end
 	return true
 end
@@ -534,6 +528,9 @@ local function probe_snapshot(stage, map)
 		end
 		local obj = matches[1]
 		if obj then present = present + 1 end
+		if stage == "stock_surface_output" then
+			target_transfer_refs[target_index] = obj
+		end
 		local fields = {
 			"target", tostring(target_index), stage,
 			"class=" .. probe_scalar(target.class),
@@ -738,6 +735,13 @@ local function capture_hook(stage, map, details)
 		stage_seen[stage] = true
 	elseif stage == "stock_surface_output" then
 		if stage_seen[stage] then error(stage .. " repeated") end
+		if target_probe ~= nil then
+			target_transfer_source = map
+			target_transfer_destination = details and details.destination or nil
+			if type(target_transfer_destination) ~= "table" then
+				error("target transfer probe stock destination is unavailable")
+			end
+		end
 		save_terrain_pair(stage, map)
 		save_objects(artifacts[stage].object_census, map, false)
 		probe_snapshot("stock_surface_output", map)
@@ -776,7 +780,10 @@ end
 local armed, arm_error = generation.SetDeterminismCaptureHookForTest(
 	capture_hook, "full_z_parity_42S85E_cohort")
 if armed ~= true then error("could not arm capture hook: " .. tostring(arm_error)) end
-probe_install_transfer_wrapper()
+local transfer_observer_armed, transfer_observer_error = probe_install_transfer_observer()
+if transfer_observer_armed ~= true then
+	return "fzp_determinism_capture_arm_failed:" .. tostring(transfer_observer_error)
+end
 
 local function find_maps()
 	local found = {}

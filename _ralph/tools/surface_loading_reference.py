@@ -454,12 +454,16 @@ def command_self_test(args: argparse.Namespace) -> int:
         and 'probe_snapshot("pre_scale_decorations"' not in probe_text
     )
     target_transfer_probe_exact = (
-        probe_text.count("local function probe_install_transfer_wrapper()") == 1
-        and probe_text.count("\nprobe_install_transfer_wrapper()") == 1
-        and probe_text.count('root, "TransferGeneratedObjects"') == 1
-        and probe_text.count("dbg.setupvalue(owner, index, wrapper)") == 1
+        probe_text.count("local function probe_install_transfer_observer()") == 1
+        and probe_text.count("probe_install_transfer_observer()") == 2
+        and "probe_find_function_upvalue" not in probe_text
+        and "dbg.setupvalue" not in probe_text
+        and probe_text.count("deposits.CaptureNativeEnrichmentRecords = function(...)") == 1
+        and probe_text.count("deposits.StageNativeEnrichmentRecords = function(destination, ...)") == 1
+        and probe_text.count('rawset(source, "MapGet", function(self, ...)') == 1
         and probe_text.count("probe_transfer_pre(source, destination, result,") == 1
-        and probe_text.count("\n\t\tprobe_transfer_post(source, destination, remaining_objects,") == 1
+        and probe_text.count("probe_transfer_post(source, destination, result)") == 1
+        and 'return "fzp_determinism_capture_arm_failed:"' in probe_text
         and '"stock_surface_output", "transfer_pre", "transfer_post",' in probe_text
         and "smr.ralph.target_object_state_probe.v2" in probe_text
     )
