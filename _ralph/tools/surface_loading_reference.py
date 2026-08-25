@@ -453,11 +453,15 @@ def command_prepare(args: argparse.Namespace) -> int:
     verdict = static_verdict(text)
     if not verdict["ok"]:
         raise ReferenceError(f"rendered generation failed static checks: {verdict['failed']}")
+    source_head = subprocess.check_output(
+        ["git", "rev-parse", f"{args.source_head}^{{commit}}"],
+        cwd=PROJECT,
+        text=True,
+        timeout=30,
+    ).strip()
     manifest = {
         "schema": "smr.ralph.surface_loading_reference_manifest.v3",
-        "source_head": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=PROJECT, text=True, timeout=30
-        ).strip(),
+        "source_head": source_head,
         "coordinate": COORDINATE,
         "latitude": LAT,
         "longitude": LON,
@@ -631,6 +635,82 @@ def command_verify_reference_equivalence(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def command_verify_paired_inputs(args: argparse.Namespace) -> int:
+    first, first_script, first_sha256 = load_capture_manifest(args.first.resolve())
+    second, second_script, second_sha256 = load_capture_manifest(args.second.resolve())
+    first_text = first_script.read_text(encoding="utf-8")
+    second_text = second_script.read_text(encoding="utf-8")
+    normalized_first, first_counts = normalize_output_identity(first_text, first)
+    normalized_second, second_counts = normalize_output_identity(second_text, second)
+    expected_source_head = subprocess.check_output(
+        ["git", "rev-parse", f"{args.expected_source_head}^{{commit}}"],
+        cwd=PROJECT,
+        text=True,
+        timeout=30,
+    ).strip()
+    checks = {
+        "manifest_schema_v3": (
+            first.get("schema") == "smr.ralph.surface_loading_reference_manifest.v3"
+            and second.get("schema") == "smr.ralph.surface_loading_reference_manifest.v3"
+        ),
+        "source_head_exact": (
+            first.get("source_head") == expected_source_head
+            and second.get("source_head") == expected_source_head
+        ),
+        "async_rand_seed_exact": (
+            first.get("async_rand_seed") == args.expected_async_rand_seed
+            and second.get("async_rand_seed") == args.expected_async_rand_seed
+        ),
+        "raw_generation_scripts_are_distinct": first_sha256 != second_sha256,
+        "first_output_identities_occur_once": all(
+            count == 1 for count in first_counts.values()
+        ),
+        "second_output_identities_occur_once": all(
+            count == 1 for count in second_counts.values()
+        ),
+        "normalized_generation_scripts_are_exact": (
+            normalized_first == normalized_second
+        ),
+        "static_verdicts_green": (
+            isinstance(first.get("static_verdict"), dict)
+            and first["static_verdict"].get("ok") is True
+            and isinstance(second.get("static_verdict"), dict)
+            and second["static_verdict"].get("ok") is True
+        ),
+        "target_state_probe_absent": (
+            "g_FzpTargetObjectStateProbe" not in first_text
+            and "g_FzpTargetObjectStateProbe" not in second_text
+        ),
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    report = {
+        "schema": "smr.ralph.paired_capture_inputs.v1",
+        "ok": not failed,
+        "checks": checks,
+        "passed": sum(checks.values()),
+        "total": len(checks),
+        "failed": failed,
+        "expected_source_head": expected_source_head,
+        "expected_async_rand_seed": args.expected_async_rand_seed,
+        "allowed_differences": ["capture_base", "stable_sentinel", "final_sentinel"],
+        "first": {
+            "manifest": str(args.first.resolve()),
+            "generation_script": str(first_script),
+            "generation_script_sha256": first_sha256,
+            "output_identity_occurrences": first_counts,
+        },
+        "second": {
+            "manifest": str(args.second.resolve()),
+            "generation_script": str(second_script),
+            "generation_script_sha256": second_sha256,
+            "output_identity_occurrences": second_counts,
+        },
+    }
+    write_json(args.out.resolve(), report)
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
+
+
 def parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -640,6 +720,7 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--stable-sentinel", type=Path, required=True)
     prepare.add_argument("--final-sentinel", type=Path, required=True)
     prepare.add_argument("--async-rand-seed", type=int, required=True)
+    prepare.add_argument("--source-head", required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
     prepare.set_defaults(func=command_prepare)
@@ -652,6 +733,13 @@ def parser() -> argparse.ArgumentParser:
     verify.add_argument("--candidate-manifest", type=Path, required=True)
     verify.add_argument("--out", type=Path, required=True)
     verify.set_defaults(func=command_verify_reference_equivalence)
+    paired = sub.add_parser("verify-paired-inputs")
+    paired.add_argument("--first", type=Path, required=True)
+    paired.add_argument("--second", type=Path, required=True)
+    paired.add_argument("--expected-source-head", required=True)
+    paired.add_argument("--expected-async-rand-seed", type=int, required=True)
+    paired.add_argument("--out", type=Path, required=True)
+    paired.set_defaults(func=command_verify_paired_inputs)
     return ap
 
 
