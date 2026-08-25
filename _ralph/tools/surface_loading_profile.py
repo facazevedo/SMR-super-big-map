@@ -54,7 +54,7 @@ def lua_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 891) -> str:
+def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 892) -> str:
     writer_proof = Path(str(start) + ".arm_writer_preflight")
     return f'''-- Generated Ralph player-visible loading-profile arm.
 CreateRealTimeThread(function()
@@ -91,6 +91,10 @@ CreateRealTimeThread(function()
 \t\t\terror("colony-site map parameters are unavailable")
 \t\tend
 \t\tGetOverlayValues({LATITUDE}, {LONGITUDE}, nil, g_CurrentMapParams)
+\t\tif tonumber(g_CurrentMapParams.latitude) ~= -14
+\t\t\tor tonumber(g_CurrentMapParams.longitude) ~= -134 then
+\t\t\terror("14N134W overlay inputs did not normalize to pinned degrees")
+\t\tend
 \t\tg_CurrentMapParams.map = ""
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileEnabled = true
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileToken = {lua_string(token)}
@@ -98,6 +102,8 @@ CreateRealTimeThread(function()
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileModVersion = {mod_version}
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileInputHash = "{INPUT_HASH}"
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileCoordinate = "{COORDINATE}"
+\t\tg_CurrentMapParams.SuperBigMapRalphProfileLatitudeArcMinutes = {LATITUDE}
+\t\tg_CurrentMapParams.SuperBigMapRalphProfileLongitudeArcMinutes = {LONGITUDE}
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileStartSentinel = start_path
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileFinalSentinel = final_path
 \t\tg_CurrentMapParams.SuperBigMapRalphProfileWrite = profile_write
@@ -126,10 +132,12 @@ return "surface_loading_profile_arm_started"
 
 
 def static_checks(
-    text: str, *, diagnostics_override: str | None = None, pregame_override: str | None = None
+    text: str, *, diagnostics_override: str | None = None, pregame_override: str | None = None,
+    generation_override: str | None = None,
 ) -> dict[str, bool]:
     diagnostics = diagnostics_override or (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8")
     pregame = pregame_override or (PROJECT / "Code" / "sbm_pregame_toggle.lua").read_text(encoding="utf-8")
+    generation = generation_override or (PROJECT / "Code" / "sbm_map_generation.lua").read_text(encoding="utf-8")
     landing = (GAME_SRC / "Lua" / "XDef" / "PGMissionLandingSpotRemastered.generated.lua").read_text(encoding="utf-8")
     mission = (GAME_SRC / "Lua" / "PreGameMission.lua").read_text(encoding="utf-8")
     popup = (GAME_SRC / "Data" / "PopupNotifications" / "PopupNotificationPreset-System.lua").read_text(encoding="utf-8")
@@ -141,6 +149,10 @@ def static_checks(
         "arm_pins_14n134w": (
             f"GetOverlayValues({LATITUDE}, {LONGITUDE}" in text
             and f'SuperBigMapRalphProfileCoordinate = "{COORDINATE}"' in text
+            and f"SuperBigMapRalphProfileLatitudeArcMinutes = {LATITUDE}" in text
+            and f"SuperBigMapRalphProfileLongitudeArcMinutes = {LONGITUDE}" in text
+            and "tonumber(g_CurrentMapParams.latitude) ~= -14" in text
+            and "tonumber(g_CurrentMapParams.longitude) ~= -134" in text
         ),
         "arm_pins_identity": (
             "SuperBigMapRalphProfileCommit" in text
@@ -173,9 +185,20 @@ def static_checks(
             and pregame.index("diagnostics.RalphProfileStart")
             < pregame.index("original_on_action(action, host, source", pregame.index("diagnostics.RalphProfileStart"))
         ),
+        "profile_start_is_fail_closed": (
+            "diagnostics.RalphProfileStart({" in pregame
+            and "}) ~= true then" in pregame
+            and 'error("Ralph profile rejected START before generation")' in pregame
+            and "return false" in pregame
+            and "return false" in diagnostics[
+                diagnostics.index("function Diagnostics.RalphProfileStart"):
+                diagnostics.index("function Diagnostics.RalphProfileRecordPreset")
+            ]
+        ),
         "surface_preset_is_fail_closed": (
             "RalphProfileRecordPreset" in pregame
             and 'preset ~= "RoughTerrain"' in diagnostics
+            and "RalphProfileRecordPreset(map_name, preset_name) ~= true" in pregame
         ),
         "final_waits_first_render_frame": (
             'context.id ~= "WelcomeGameInfo"' in diagnostics
@@ -192,8 +215,26 @@ def static_checks(
                 "ExpansionLoadingVisible",
             )
         ),
+        "final_guards_abort_before_write": (
+            'error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")\n\t\t\treturn' in diagnostics
+            and "if WriteProfileSentinel(params, path" in diagnostics
+            and ") ~= true then return end" in diagnostics
+        ),
         "loading_timings_runtime_only": (
             "or RalphProfileParams() ~= nil" in diagnostics
+        ),
+        "one_timing_session_spans_post_pipeline_revalidation": (
+            generation.count('LoadingFinish("surface expansion complete"') == 2
+            and 'LoadingFinish("surface expansion complete"' not in generation[
+                generation.index('SignalExpansionReadinessChanged(map, "surface stretch complete")'):
+                generation.index("map.SuperBigMapSurfacePostPipelineRevalidationComplete = true")
+            ]
+            and generation.index("map.SuperBigMapSurfacePostPipelineRevalidationComplete = true")
+            < generation.index(
+                'LoadingFinish("surface expansion complete"',
+                generation.index("map.SuperBigMapSurfacePostPipelineRevalidationComplete = true"),
+            )
+            and "finish_after_revalidation = true" in generation
         ),
         "installed_start_source_anchor": (
             'ActionId = "start"' in landing
@@ -253,7 +294,7 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "surface_seed_present_and_equal": bool(start.get("surface_seed")) and start.get("surface_seed") == final.get("surface_seed"),
         "input_hash_pinned_and_equal": start.get("input_hash") == INPUT_HASH and final.get("input_hash") == INPUT_HASH,
         "commit_present_and_equal": bool(start.get("commit")) and start.get("commit") == final.get("commit"),
-        "mod_version_891_and_equal": start.get("mod_version") == "891" and final.get("mod_version") == "891",
+        "mod_version_892_and_equal": start.get("mod_version") == "892" and final.get("mod_version") == "892",
         "roughterrain_listed_at_start": "RoughTerrain" in start.get("active_rule_ids", "").split(","),
         "roughterrain_listed_at_final": "RoughTerrain" in final.get("active_rule_ids", "").split(","),
         "positive_external_duration": duration_ms > 0,
@@ -399,6 +440,23 @@ def self_test(args: argparse.Namespace) -> int:
         "if path ~= start_path and path ~= final_path then",
         "if false then", 1,
     )
+    wrong_coordinate = text.replace(
+        f"SuperBigMapRalphProfileLatitudeArcMinutes = {LATITUDE}",
+        "SuperBigMapRalphProfileLatitudeArcMinutes = -14", 1,
+    )
+    fail_open_start = (PROJECT / "Code" / "sbm_pregame_toggle.lua").read_text(encoding="utf-8").replace(
+        "}) ~= true then", "}) == false then", 1,
+    )
+    fail_open_final = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8").replace(
+        'error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")\n\t\t\treturn',
+        'error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")', 1,
+    )
+    split_session = (PROJECT / "Code" / "sbm_map_generation.lua").read_text(encoding="utf-8").replace(
+        "map.SuperBigMapSurfacePostPipelineRevalidationComplete = true",
+        'LoadingFinish("surface expansion complete", map, surface_finish_data, surface_finish_ok)\n'
+        "\t\t\t\t\tmap.SuperBigMapSurfacePostPipelineRevalidationComplete = true",
+        1,
+    )
     mutation_checks = {
         "wrong_rule_mutation_rejected": not static_checks(wrong_rule)["arm_adds_and_verifies_roughterrain"],
         "wrong_final_mutation_rejected": not static_checks(
@@ -410,6 +468,18 @@ def self_test(args: argparse.Namespace) -> int:
         "broad_injected_writer_mutation_rejected": not static_checks(
             broad_writer
         )["arm_preflights_and_injects_narrow_engine_writer"],
+        "raw_coordinate_mutation_rejected": not static_checks(
+            wrong_coordinate
+        )["arm_pins_14n134w"],
+        "fail_open_start_mutation_rejected": not static_checks(
+            text, pregame_override=fail_open_start
+        )["profile_start_is_fail_closed"],
+        "fail_open_final_mutation_rejected": not static_checks(
+            text, diagnostics_override=fail_open_final
+        )["final_guards_abort_before_write"],
+        "split_timing_session_mutation_rejected": not static_checks(
+            text, generation_override=split_session
+        )["one_timing_session_spans_post_pipeline_revalidation"],
     }
     start_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -418,7 +488,7 @@ def self_test(args: argparse.Namespace) -> int:
         "active_rule_ids": "RoughTerrain",
         "source": "PGMissionLandingSpotRemastered.ActionId.start",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "891",
+        "commit": "deadbeef", "mod_version": "892",
     }
     final_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -430,7 +500,7 @@ def self_test(args: argparse.Namespace) -> int:
         "stretch_pipeline_pending": "false", "post_pipeline_revalidation_complete": "true",
         "expansion_loading_visible": "false",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "891",
+        "commit": "deadbeef", "mod_version": "892",
     }
     log_fixture = "\n".join((
         "[Super Big Map][LoadingTiming] SESSION_BEGIN {session=1}",

@@ -10693,6 +10693,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	local schedule_ok = pcall(create_thread, function()
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
 		-- readiness/setup errors take the normal full-rebuild fallback.
+		local surface_finish_data = nil
+		local surface_finish_ok = true
 		local thread_ok, thread_err = yield_protected_call(function()
 		local function end_loading()
 			-- Fail-safe: if the stretch exited before its final lightweight refresh, restore the
@@ -11297,9 +11299,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			map.SuperBigMapExpanded = true
 			end_loading()
 			SignalExpansionReadinessChanged(map, "surface stretch complete")
-			LoadingFinish("surface expansion complete", map, {
+			surface_finish_data = {
 				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
-			}, ok_branch)
+			}
+			surface_finish_ok = ok_branch
 			return
 		end
 
@@ -11309,6 +11312,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		-- real-time-thread entry after this protected pipeline is the earliest stable boundary, and
 		-- one ordinary RebuildFinal there is sufficient. Keep the immediate call above for ordering
 		-- and queue this surface-only revalidation exactly once after a successful pipeline return.
+		local finish_after_revalidation = false
 		if thread_ok
 			and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
 			and map.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
@@ -11330,6 +11334,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 				if revalidation_ok then
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
+					LoadingFinish("surface expansion complete", map,
+						surface_finish_data, surface_finish_ok)
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
@@ -11342,7 +11348,13 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				thread_ok = false
 				thread_err = "surface post-pipeline revalidation scheduling failed: "
 					.. tostring(revalidation_schedule_err)
+			else
+				finish_after_revalidation = true
 			end
+		end
+		if thread_ok and not finish_after_revalidation then
+			LoadingFinish("surface expansion complete", map,
+				surface_finish_data, surface_finish_ok)
 		end
 		if not thread_ok then
 			if map.SuperBigMapStretchPipelinePending == true then

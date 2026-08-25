@@ -249,6 +249,7 @@ local function ProfileField(params, key)
 	local value = params and params[key]
 	if type(value) ~= "string" or value == "" or value:find("[\r\n]") then
 		error("invalid Ralph profile field " .. tostring(key))
+		return false
 	end
 	return value
 end
@@ -259,9 +260,13 @@ local function WriteProfileSentinel(params, path, rows)
 	local write = params and params.SuperBigMapRalphProfileWrite
 	if type(write) ~= "function" then
 		error("injected Ralph profile sentinel writer unavailable")
+		return false
 	end
 	local err = write(path, table.concat(rows, "\n") .. "\n")
-	if err then error("Ralph profile sentinel write failed: " .. tostring(err)) end
+	if err then
+		error("Ralph profile sentinel write failed: " .. tostring(err))
+		return false
+	end
 	return true
 end
 
@@ -279,31 +284,40 @@ function Diagnostics.RalphProfileStart(data)
 	if not params then return false end
 	if params.SuperBigMapRalphProfileStartAccepted == true then
 		error("duplicate Ralph profile START acceptance")
+		return false
 	end
 	local token = ProfileField(params, "SuperBigMapRalphProfileToken")
 	local commit = ProfileField(params, "SuperBigMapRalphProfileCommit")
 	local input_hash = ProfileField(params, "SuperBigMapRalphProfileInputHash")
 	local path = ProfileField(params, "SuperBigMapRalphProfileStartSentinel")
-	ProfileField(params, "SuperBigMapRalphProfileFinalSentinel")
+	local final_path = ProfileField(params, "SuperBigMapRalphProfileFinalSentinel")
+	if not token or not commit or not input_hash or not path or not final_path then return false end
 	if params.SuperBigMapExpandMap ~= true or not (data and data.expand_selected == true) then
 		error("Ralph profile START requires selected EXPAND MAP")
+		return false
 	end
 	local is_rule_active = Global("IsGameRuleActive")
 	if type(is_rule_active) ~= "function" or is_rule_active("RoughTerrain") ~= true then
 		error("Ralph profile START requires active RoughTerrain rule")
+		return false
 	end
 	if tostring(params.SuperBigMapRalphProfileCoordinate) ~= "14N134W"
-		or tonumber(params.latitude) ~= -840 or tonumber(params.longitude) ~= -8040 then
+		or tonumber(params.SuperBigMapRalphProfileLatitudeArcMinutes) ~= -840
+		or tonumber(params.SuperBigMapRalphProfileLongitudeArcMinutes) ~= -8040
+		or tonumber(params.latitude) ~= -14 or tonumber(params.longitude) ~= -134 then
 		error("Ralph profile START coordinate is not pinned 14N134W")
+		return false
 	end
 	local ticks = Now()
-	WriteProfileSentinel(params, path, {
+	if WriteProfileSentinel(params, path, {
 		"schema=" .. RALPH_PROFILE_SCHEMA,
 		"event=start_action_accepted",
 		"token=" .. token,
 		"coordinate=14N134W",
-		"latitude=-840",
-		"longitude=-8040",
+		"latitude_arcminutes=" .. tostring(params.SuperBigMapRalphProfileLatitudeArcMinutes),
+		"longitude_arcminutes=" .. tostring(params.SuperBigMapRalphProfileLongitudeArcMinutes),
+		"stored_latitude_degrees=" .. tostring(params.latitude),
+		"stored_longitude_degrees=" .. tostring(params.longitude),
 		"expand_map=true",
 		"rough_terrain=true",
 		"active_rule_ids=" .. table.concat(ActiveRuleIds(), ","),
@@ -313,7 +327,7 @@ function Diagnostics.RalphProfileStart(data)
 		"mod_version=" .. tostring(params.SuperBigMapRalphProfileModVersion),
 		"game_precise_ticks=" .. tostring(ticks),
 		"source=PGMissionLandingSpotRemastered.ActionId.start",
-	})
+	}) ~= true then return false end
 	params.SuperBigMapRalphProfileStartAccepted = true
 	params.SuperBigMapRalphProfileStartPreciseTicks = ticks
 	return true
@@ -326,10 +340,12 @@ function Diagnostics.RalphProfileRecordPreset(map_name, preset_name)
 	if not map_data or map_data.Environment ~= "Surface" then return false end
 	if params.SuperBigMapRalphProfileSelectedPreset then
 		error("Ralph profile observed the surface preset more than once")
+		return false
 	end
 	local preset = tostring(preset_name)
 	if preset ~= "RoughTerrain" then
 		error("Ralph profile selected surface preset " .. preset .. " instead of RoughTerrain")
+		return false
 	end
 	params.SuperBigMapRalphProfileSelectedPreset = preset
 	return true
@@ -343,30 +359,36 @@ function Diagnostics.RalphProfileFinalDisplay(dialog)
 	end
 	if params.SuperBigMapRalphProfileFinalPublished == true then
 		error("duplicate Ralph profile final display")
+		return false
 	end
 	local create_thread = Global("CreateRealTimeThread")
 	local wait_frame = Global("WaitNextFrame")
 	if type(create_thread) ~= "function" or type(wait_frame) ~= "function" then
 		error("Ralph profile final-display render boundary unavailable")
+		return false
 	end
 	create_thread(function()
 		wait_frame()
 		if not dialog or dialog.window_state == "destroying" or dialog.window_state == "destroyed"
 			or type(dialog.GetVisible) == "function" and dialog:GetVisible() ~= true then
 			error("Ralph profile final display was not visible after its first render boundary")
+			return
 		end
 		local action = type(dialog.ActionById) == "function" and dialog:ActionById("idChoice1")
 		if not action or tostring(action.ActionId) ~= "idChoice1"
 			or tostring(context.choice1) == "" then
 			error("Ralph profile final display lacks its Close control")
+			return
 		end
 		if params.SuperBigMapRalphProfileStartAccepted ~= true
 			or params.SuperBigMapRalphProfileSelectedPreset ~= "RoughTerrain" then
 			error("Ralph profile final display lacks accepted START or RoughTerrain preset proof")
+			return
 		end
 		local is_rule_active = Global("IsGameRuleActive")
 		if type(is_rule_active) ~= "function" or is_rule_active("RoughTerrain") ~= true then
 			error("Ralph profile final display requires active RoughTerrain rule")
+			return
 		end
 		local map = Global("CurrentMap")
 		local mapdata = map and map.mapdata
@@ -379,13 +401,15 @@ function Diagnostics.RalphProfileFinalDisplay(dialog)
 			or map.SuperBigMapSurfacePostPipelineRevalidationComplete ~= true
 			or loading_visible then
 			error("Ralph profile final display appeared before the stable surface boundary")
+			return
 		end
 		local token = ProfileField(params, "SuperBigMapRalphProfileToken")
 		local commit = ProfileField(params, "SuperBigMapRalphProfileCommit")
 		local input_hash = ProfileField(params, "SuperBigMapRalphProfileInputHash")
 		local path = ProfileField(params, "SuperBigMapRalphProfileFinalSentinel")
+		if not token or not commit or not input_hash or not path then return end
 		local ticks = Now()
-		WriteProfileSentinel(params, path, {
+		if WriteProfileSentinel(params, path, {
 			"schema=" .. RALPH_PROFILE_SCHEMA,
 			"event=welcome_close_display_first_visible_frame",
 			"token=" .. token,
@@ -406,7 +430,7 @@ function Diagnostics.RalphProfileFinalDisplay(dialog)
 			"post_pipeline_revalidation_complete=true",
 			"expansion_loading_visible=false",
 			"game_precise_ticks=" .. tostring(ticks),
-		})
+		}) ~= true then return end
 		params.SuperBigMapRalphProfileFinalPublished = true
 		params.SuperBigMapRalphProfileFinalPreciseTicks = ticks
 	end)
