@@ -2437,8 +2437,24 @@ local function PrepareOuterResourceTerrain(map)
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
 	end
-	local function is_protected_ready_cell(x, y)
+	-- A patch can only visit cells within its maximum radius. By triangle inequality, a protected
+	-- guard whose center lies beyond visit_radius + guard_radius cannot contain any visited cell.
+	-- Build that conservative subset once per patch/pass, then retain the exact original per-cell
+	-- circle predicate and guard order. This removes a whole protected-site scan from millions of
+	-- terrain pixels without changing which pixels are protected.
+	local function protected_ready_sites_near(cx, cy, visit_radius)
+		local nearby = {}
 		for _, protected in ipairs(protected_ready_sites) do
+			local dx, dy = protected.cx - cx, protected.cy - cy
+			local reach = visit_radius + protected.radius
+			if dx * dx + dy * dy <= reach * reach then
+				nearby[#nearby + 1] = protected
+			end
+		end
+		return nearby
+	end
+	local function is_protected_ready_cell(x, y, nearby)
+		for _, protected in ipairs(nearby) do
 			local dx, dy = x - protected.cx, y - protected.cy
 			if dx * dx + dy * dy <= protected.radius * protected.radius then return true end
 		end
@@ -2469,6 +2485,7 @@ local function PrepareOuterResourceTerrain(map)
 			-- narrowest inward lobe leaves the exact circular gameplay core wholly intact.
 			local maximum_width_scale = 1.35
 			local radius = patch.core_cells + base_transition * maximum_width_scale
+			local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)
 			local x0 = math.max(0, math.floor(patch.cx - radius - 2))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 2))
 			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 2))
@@ -2489,7 +2506,8 @@ local function PrepareOuterResourceTerrain(map)
 						- 0.06 * along_relief
 					width_scale = math.max(0.50, math.min(maximum_width_scale, width_scale))
 					local outer_radius = patch.core_cells + base_transition * width_scale
-					if distance < outer_radius and not is_protected_ready_cell(x, y) then
+					if distance < outer_radius
+						and not is_protected_ready_cell(x, y, nearby_protected) then
 						local weight
 						-- The guaranteed flat core is an exact circle and never participates in the
 						-- boundary warp, so live extractor/rocket edge hexes cannot straddle the blend.
@@ -2532,6 +2550,7 @@ local function PrepareOuterResourceTerrain(map)
 		-- landing footprint from depending on any guarded cell.
 		for _, patch in ipairs(patches) do
 			local radius = patch.core_cells
+			local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)
 			local x0 = math.max(0, math.floor(patch.cx - radius - 1))
 			local y0 = math.max(0, math.floor(patch.cy - radius - 1))
 			local x1 = math.min(width - 1, math.ceil(patch.cx + radius + 1))
@@ -2540,7 +2559,7 @@ local function PrepareOuterResourceTerrain(map)
 				for x = x0, x1 do
 					local dx, dy = x - patch.cx, y - patch.cy
 					if dx * dx + dy * dy <= radius * radius
-						and not is_protected_ready_cell(x, y) then
+						and not is_protected_ready_cell(x, y, nearby_protected) then
 						local core_target = patch.kind == "surface"
 							and math.floor(patch.target + patch.grade_x * dx
 								+ patch.grade_y * dy + 0.5)
