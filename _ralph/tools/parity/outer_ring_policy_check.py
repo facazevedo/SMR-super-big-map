@@ -517,7 +517,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_887": "'version', 887" in METADATA,
+    "version_is_888": "'version', 888" in METADATA,
 }
 
 case_results = []

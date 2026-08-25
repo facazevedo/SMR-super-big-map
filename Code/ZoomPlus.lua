@@ -662,6 +662,22 @@ local function ZoomPlus_EnterOverviewModeForDisable(reason)
 	end
 
 	local mode_dialog = igi.mode_dialog
+	-- InGameInterface:SetMode closes the current mode dialog unconditionally. During
+	-- map/session normalization the interface can still retain a dialog whose XWindow
+	-- has already entered `destroying` (or has not opened yet); XWindow:Close asserts
+	-- before pcall can keep the debug error dialog off-screen. Only ask SetMode to
+	-- replace a dialog in one of the two states its Close contract explicitly accepts.
+	local mode_dialog_state = mode_dialog and mode_dialog.window_state
+	if mode_dialog
+		and mode_dialog_state ~= "open"
+		and mode_dialog_state ~= "closing"
+	then
+		ZoomPlus_Audit("DISABLE_OVERVIEW_SKIPPED", {
+			reason = tostring(reason or "?"),
+			mode_dialog_state = tostring(mode_dialog_state),
+		})
+		return false
+	end
 	if
 		mode_dialog
 		and type(mode_dialog.AllowExitToOverview) == "function"
