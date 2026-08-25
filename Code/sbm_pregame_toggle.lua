@@ -473,6 +473,14 @@ local function InstallLandingDialogAction(dialog)
 		start_action.OnAction = function(action, host, source, ...)
 			local expand = IsSelected()
 			SetStartArmed(expand, "start")
+			local diagnostics = SuperBigMap.Diagnostics
+			if diagnostics and type(diagnostics.RalphProfileStart) == "function" then
+				diagnostics.RalphProfileStart({
+					expand_selected = expand,
+					action_id = action and action.ActionId,
+					source = source,
+				})
+			end
 			-- START is the ownership boundary for every gameplay modification. Until this
 			-- exact moment only the pregame opt-in control exists; OFF explicitly keeps the
 			-- full lifecycle disabled, while ON installs the generation hooks before vanilla
@@ -482,6 +490,21 @@ local function InstallLandingDialogAction(dialog)
 				SafeCall(lifecycle.BeginExpandedSession, "pregame START with EXPAND MAP")
 			elseif lifecycle and type(lifecycle.BeginVanillaSession) == "function" then
 				SafeCall(lifecycle.BeginVanillaSession, "pregame START without EXPAND MAP", false)
+			end
+			-- Install this observer after lifecycle wrappers so it sees the exact preset
+			-- chosen by GenerateCurrentRandomMap without displacing any gameplay wrapper.
+			local params = Global("g_CurrentMapParams")
+			if type(params) == "table" and params.SuperBigMapRalphProfileEnabled == true
+				and params.SuperBigMapRalphProfilePresetWrapped ~= true then
+				local live_generate_random_map = Global("GenerateRandomMap")
+				if type(live_generate_random_map) ~= "function" then
+					error("GenerateRandomMap unavailable for Ralph profile preset proof")
+				end
+				GenerateRandomMap = function(map_name, preset_name, generate_params)
+					diagnostics.RalphProfileRecordPreset(map_name, preset_name)
+					return live_generate_random_map(map_name, preset_name, generate_params)
+				end
+				params.SuperBigMapRalphProfilePresetWrapped = true
 			end
 			if type(original_on_action) == "function" then
 				return original_on_action(action, host, source, ...)
