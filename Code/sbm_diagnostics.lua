@@ -254,7 +254,10 @@ local function ProfileField(params, key)
 end
 
 local function WriteProfileSentinel(path, rows)
-	local write = Global("AsyncStringToFile")
+	-- AsyncStringToFile is inherited from the engine environment. Engine.Global uses
+	-- rawget on the mod environment, which does not preserve this inherited callable
+	-- at the player START action boundary.
+	local write = AsyncStringToFile
 	if type(write) ~= "function" then
 		error("AsyncStringToFile unavailable for Ralph profile sentinel")
 	end

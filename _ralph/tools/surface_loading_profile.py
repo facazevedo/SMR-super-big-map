@@ -54,7 +54,7 @@ def lua_string(value: str) -> str:
     return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 889) -> str:
+def render_arm(start: Path, final: Path, token: str, commit: str = "SELF_TEST", mod_version: int = 890) -> str:
     return f'''-- Generated Ralph player-visible loading-profile arm.
 CreateRealTimeThread(function()
 \tlocal ok, err = xpcall(function()
@@ -131,6 +131,10 @@ def static_checks(
         "runtime_profile_default_off": (
             "SuperBigMapRalphProfileEnabled == true" in diagnostics
             and "SuperBigMapRalphProfileEnabled = true" not in diagnostics
+        ),
+        "profile_writer_uses_inherited_engine_global": (
+            "local write = AsyncStringToFile" in diagnostics
+            and 'Global("AsyncStringToFile")' not in diagnostics
         ),
         "real_start_wrapper_is_instrumented": (
             'ActionById(dialog, "start")' in pregame
@@ -218,7 +222,7 @@ def score_values(start: dict[str, str], final: dict[str, str], log_text: str, du
         "surface_seed_present_and_equal": bool(start.get("surface_seed")) and start.get("surface_seed") == final.get("surface_seed"),
         "input_hash_pinned_and_equal": start.get("input_hash") == INPUT_HASH and final.get("input_hash") == INPUT_HASH,
         "commit_present_and_equal": bool(start.get("commit")) and start.get("commit") == final.get("commit"),
-        "mod_version_889_and_equal": start.get("mod_version") == "889" and final.get("mod_version") == "889",
+        "mod_version_890_and_equal": start.get("mod_version") == "890" and final.get("mod_version") == "890",
         "roughterrain_listed_at_start": "RoughTerrain" in start.get("active_rule_ids", "").split(","),
         "roughterrain_listed_at_final": "RoughTerrain" in final.get("active_rule_ids", "").split(","),
         "positive_external_duration": duration_ms > 0,
@@ -355,11 +359,17 @@ def self_test(args: argparse.Namespace) -> int:
     wrong_final = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8").replace(
         'context.id ~= "WelcomeGameInfo"', 'context.id ~= "UnrelatedPopup"', 1
     )
+    wrong_writer = (PROJECT / "Code" / "sbm_diagnostics.lua").read_text(encoding="utf-8").replace(
+        "local write = AsyncStringToFile", 'local write = Global("AsyncStringToFile")', 1
+    )
     mutation_checks = {
         "wrong_rule_mutation_rejected": not static_checks(wrong_rule)["arm_adds_and_verifies_roughterrain"],
         "wrong_final_mutation_rejected": not static_checks(
             text, diagnostics_override=wrong_final
         )["final_waits_first_render_frame"],
+        "rawget_writer_mutation_rejected": not static_checks(
+            text, diagnostics_override=wrong_writer
+        )["profile_writer_uses_inherited_engine_global"],
     }
     start_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -368,7 +378,7 @@ def self_test(args: argparse.Namespace) -> int:
         "active_rule_ids": "RoughTerrain",
         "source": "PGMissionLandingSpotRemastered.ActionId.start",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "889",
+        "commit": "deadbeef", "mod_version": "890",
     }
     final_fixture = {
         "schema": "smr.ralph.surface_loading_profile.v1",
@@ -380,7 +390,7 @@ def self_test(args: argparse.Namespace) -> int:
         "stretch_pipeline_pending": "false", "post_pipeline_revalidation_complete": "true",
         "expansion_loading_visible": "false",
         "surface_seed": "123", "input_hash": INPUT_HASH,
-        "commit": "deadbeef", "mod_version": "889",
+        "commit": "deadbeef", "mod_version": "890",
     }
     log_fixture = "\n".join((
         "[Super Big Map][LoadingTiming] SESSION_BEGIN {session=1}",
