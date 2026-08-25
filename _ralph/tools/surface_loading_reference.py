@@ -453,6 +453,16 @@ def command_self_test(args: argparse.Namespace) -> int:
         and probe_text.count('probe_snapshot("post_scale_decorations"') == 1
         and 'probe_snapshot("pre_scale_decorations"' not in probe_text
     )
+    target_transfer_probe_exact = (
+        probe_text.count("local function probe_install_transfer_wrapper()") == 1
+        and probe_text.count("\nprobe_install_transfer_wrapper()") == 1
+        and probe_text.count('root, "TransferGeneratedObjects"') == 1
+        and probe_text.count("dbg.setupvalue(owner, index, wrapper)") == 1
+        and probe_text.count("probe_transfer_pre(source, destination, result,") == 1
+        and probe_text.count("\n\t\tprobe_transfer_post(source, destination, remaining_objects,") == 1
+        and '"stock_surface_output", "transfer_pre", "transfer_post",' in probe_text
+        and "smr.ralph.target_object_state_probe.v2" in probe_text
+    )
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -470,6 +480,7 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["lua_parse"] = True
         verdict["target_probe_lua_parse"] = True
         verdict["target_probe_boundaries_exact"] = target_probe_boundaries_exact
+        verdict["target_transfer_probe_exact"] = target_transfer_probe_exact
         verdict["python_compile"] = True
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
@@ -478,6 +489,7 @@ def command_self_test(args: argparse.Namespace) -> int:
             and mutation_red
             and missing_finalizer_red
             and target_probe_boundaries_exact
+            and target_transfer_probe_exact
         )
     if args.out:
         write_json(args.out.resolve(), verdict)
