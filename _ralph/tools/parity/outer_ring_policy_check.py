@@ -309,8 +309,11 @@ static_checks = {
         and "if patch_index == #patches then break end" in outer_resource_terrain
     ),
     "native_raster_hard_restores_inner_rectangle": (
-        "local inner_x0 = math.ceil(band_x / height_tile)" in outer_resource_terrain
+        "math.ceil(width * 0.1 - 0.5)" in outer_resource_terrain
+        and "math.ceil(width * 0.9 - 0.5) - 1" in outer_resource_terrain
         and "result:copyrect(height_grid, restore_box" in outer_resource_terrain
+        and "grid:copyrect(raw, inner_box, point_fn(inner_x0, inner_y0))"
+        in outer_resource_terrain
         and "keeping any transition entirely on the ring side" in outer_resource_terrain
     ),
     "native_raster_avoids_circular_terrain_setter": (
@@ -650,7 +653,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_911": "'version', 911" in METADATA,
+    "version_is_912": "'version', 912" in METADATA,
 }
 
 case_results = []

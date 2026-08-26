@@ -2491,11 +2491,14 @@ local function PrepareOuterResourceTerrain(map)
 	local native_weight_scale, native_height_scale = 4096, 256
 	local native_tile_step = math.floor(height_tile + 0.5)
 	local native_sample_step = 4
-	local inner_x0 = math.ceil(band_x / height_tile)
-	local inner_y0 = math.ceil(band_y / height_tile)
-	local inner_x1 = math.ceil((map_w - band_x) / height_tile) - 1
-	local inner_y1 = math.ceil((map_h - band_y) / height_tile) - 1
+	-- Grid cells are classified by their centers. The central 80% is therefore the exact
+	-- 16x16-sector no-write rectangle used by the retained raw-grid comparator.
+	local inner_x0 = math.ceil(width * 0.1 - 0.5)
+	local inner_y0 = math.ceil(height * 0.1 - 0.5)
+	local inner_x1 = math.ceil(width * 0.9 - 0.5) - 1
+	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
 	local native_raster_cells, native_mask_samples = 0, 0
+	local native_inner_restore_cells = 0
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
 
@@ -2591,7 +2594,7 @@ local function PrepareOuterResourceTerrain(map)
 			local plane = own(native_resample(plane_seed, local_width, local_height, true))
 			assert(plane, "native plane resample failed")
 
-			local mask
+			local mask, mask_samples = nil, 0
 			local center_x = math.floor((patch.cx - x0) * height_tile + 0.5)
 			local center_y = math.floor((patch.cy - y0) * height_tile + 0.5)
 			local core_radius_world = math.floor(patch.core_cells * height_tile + 0.5)
@@ -2730,6 +2733,12 @@ local function PrepareOuterResourceTerrain(map)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
 		end
+		-- Restore the complete protected rectangle once more from the untouched transaction
+		-- source. This makes the outer-ring scope independent of patch overlap/order and also
+		-- gives the final install a simple, auditable no-write guarantee.
+		local inner_box = box_fn(inner_x0, inner_y0, inner_x1 + 1, inner_y1 + 1)
+		grid:copyrect(raw, inner_box, point_fn(inner_x0, inner_y0))
+		native_inner_restore_cells = (inner_x1 - inner_x0 + 1) * (inner_y1 - inner_y0 + 1)
 	end
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
@@ -2856,7 +2865,7 @@ local function PrepareOuterResourceTerrain(map)
 			native_raster_fallback = true
 			native_raster_error = tostring(native_error)
 			modified_cells, shaped_patches = 0, 0
-			native_raster_cells, native_mask_samples = 0, 0
+			native_raster_cells, native_mask_samples, native_inner_restore_cells = 0, 0, 0
 			local reset_ok, reset_error = pcall(function()
 				local failed_grid = grid
 				grid = raw
@@ -2909,6 +2918,7 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_fallback = native_raster_fallback,
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
+		native_inner_restore_cells = native_inner_restore_cells,
 		native_sample_step = native_sample_step,
 		native_raster_error = native_raster_error,
 		error = not ok_apply and tostring(apply_error)
@@ -2937,6 +2947,7 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_fallback=" .. tostring(report.native_raster_fallback)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
+			.. " native_inner_restore=" .. tostring(report.native_inner_restore_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
 			.. " error=" .. tostring(report.error))
 	end
