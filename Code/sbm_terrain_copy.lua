@@ -689,6 +689,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	if not ok_mm or type(mn) ~= "number" or type(mx) ~= "number" or mx <= mn then
 		return false, { reason = "height range unavailable" }
 	end
+	local grid_get, grid_set = grid.get, grid.set
 
 
 	local relief = mx - mn
@@ -722,12 +723,13 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local selected_tracks = {}
 
 	local function at(axis, perp, along)
-		if axis == "x" then return grid:get(perp, along) end
-		return grid:get(along, perp)
+		if axis == "x" then return grid_get(grid, perp, along) end
+		return grid_get(grid, along, perp)
 	end
 
 	local function put(axis, perp, along, value)
-		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
+		if axis == "x" then grid_set(grid, perp, along, value)
+		else grid_set(grid, along, perp, value) end
 	end
 
 	local function feather_join(axis, along, lo, hi)
@@ -1241,12 +1243,14 @@ local function RepairQualifiedSourceHeightSteps(grid, source_tracks)
 	if not ok_size or type(w) ~= "number" or type(h) ~= "number" then
 		return false, { reason = "source height grid unavailable" }
 	end
+	local grid_get, grid_set = grid.get, grid.set
 	local function at(axis, perp, along)
-		if axis == "x" then return grid:get(perp, along) end
-		return grid:get(along, perp)
+		if axis == "x" then return grid_get(grid, perp, along) end
+		return grid_get(grid, along, perp)
 	end
 	local function put(axis, perp, along, value)
-		if axis == "x" then grid:set(perp, along, value) else grid:set(along, perp, value) end
+		if axis == "x" then grid_set(grid, perp, along, value)
+		else grid_set(grid, along, perp, value) end
 	end
 	local function quintic(t)
 		t = math.max(0, math.min(1, t))
@@ -1404,6 +1408,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		or width < 512 or height < 512 then
 		return false, { reason = "destination height grid too small", created = 0, modified = 0 }
 	end
+	local grid_get, grid_set = grid.get, grid.set
 
 	local ring_sectors = math.max(0,
 		math.floor(cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)))
@@ -1445,7 +1450,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	local function sample(x, y)
 		x = math.max(0, math.min(width - 1, math.floor(x + 0.5)))
 		y = math.max(0, math.min(height - 1, math.floor(y + 0.5)))
-		local value = grid:get(x, y)
+		local value = grid_get(grid, x, y)
 		return type(value) == "number" and value or nil
 	end
 
@@ -1644,7 +1649,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 									local smooth = t * t * t * (t * (t * 6 - 15) + 10)
 									weight = 1 - smooth
 								end
-								local old = grid:get(x, y)
+								local old = grid_get(grid, x, y)
 								if type(old) == "number" then
 									local target = candidate.center
 										+ candidate.gx * dx + candidate.gy * dy
@@ -1654,7 +1659,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 										+ detail * detail_retention + 0.5)
 									value = math.max(0, math.min(65535, value))
 									if value ~= old then
-										grid:set(x, y, value)
+										grid_set(grid, x, y, value)
 										modified = modified + 1
 									end
 								end
