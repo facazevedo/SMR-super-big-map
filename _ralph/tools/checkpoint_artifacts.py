@@ -189,6 +189,8 @@ def command_watch(args: argparse.Namespace) -> int:
         command.extend(["-AbortSentinel", str(args.abort_sentinel.resolve())])
     if args.ready_sentinel:
         command.extend(["-ReadySentinel", str(args.ready_sentinel.resolve())])
+    if args.shadow_retention_dir:
+        command.extend(["-ShadowRetentionDirectory", str(args.shadow_retention_dir.resolve())])
     return subprocess.run(command, check=False).returncode
 
 
@@ -226,6 +228,7 @@ def parse_args() -> argparse.Namespace:
     watch.add_argument("--abort-sentinel", type=Path)
     watch.add_argument("--ready-sentinel", type=Path)
     watch.add_argument("--mode", choices=("HashOnly", "Full"), default="HashOnly")
+    watch.add_argument("--shadow-retention-dir", type=Path)
     watch.add_argument("--timeout-seconds", type=int, default=1800)
     watch.set_defaults(func=command_watch)
     return parser.parse_args()
