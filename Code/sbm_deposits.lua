@@ -1096,6 +1096,28 @@ local function IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors)
 		and (x < band_x or y < band_y or x >= map_w - band_x or y >= map_h - band_y)
 end
 
+-- An extractor selected inside the terrain-editable perimeter must leave its complete guarded
+-- footprint on that same side of the inner rectangle. Otherwise the later support pass would have
+-- to choose between an unbuildable extractor and writing terrain into one of the 256 inner sectors.
+-- Candidates already outside the perimeter are naturally buildable and need no outer-ring shaping,
+-- so this predicate leaves them unchanged.
+local function SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y,
+		safe_margin, ring_sectors)
+	if not IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors) then return true end
+	local map_w, map_h = MapWorldSize(map)
+	if type(map_w) ~= "number" or type(map_h) ~= "number"
+		or type(x) ~= "number" or type(y) ~= "number" then return false end
+	ring_sectors = math.max(0, math.min(FINAL_EXPANDED_SECTORS_PER_AXIS,
+		math.floor(ring_sectors or 0)))
+	safe_margin = math.max(0, tonumber(safe_margin) or 0)
+	local band_x = map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	local band_y = map_h * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	-- Reject exact tangency as well: the terrain raster uses inclusive footprint predicates, so a
+	-- boundary-touching cell would already belong to the inner rectangle.
+	return x < band_x - safe_margin or y < band_y - safe_margin
+		or x > map_w - band_x + safe_margin or y > map_h - band_y + safe_margin
+end
+
 local function IsMountainBaseRelief(score, maximum_rise, higher_samples)
 	return (tonumber(score) or 0) > 0
 		and (tonumber(maximum_rise) or 0) >= MountainBaseMinimumRiseWorld()
@@ -3828,6 +3850,8 @@ function DepositRules.TopUpDeposits(map)
 	surface_hex_size = type(surface_hex_size) == "number" and surface_hex_size > 0
 		and surface_hex_size or 1000
 	local surface_extractor_safe_margin = 10 * surface_hex_size
+	local surface_resource_ring_sectors = math.max(0, math.floor(
+		cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2))
 	local function surface_extractor_footprint_within_map(candidate)
 		if IsUndergroundMap(map) then return true end
 		local x, y = candidate and candidate.x, candidate and candidate.y
@@ -3835,6 +3859,8 @@ function DepositRules.TopUpDeposits(map)
 			and x >= surface_extractor_safe_margin and y >= surface_extractor_safe_margin
 			and x <= map_w - surface_extractor_safe_margin
 			and y <= map_h - surface_extractor_safe_margin
+			and SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y,
+				surface_extractor_safe_margin, surface_resource_ring_sectors)
 	end
 	local resource_cluster_minimum_count = not IsUndergroundMap(map)
 		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 6)) or 0

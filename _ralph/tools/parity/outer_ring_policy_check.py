@@ -90,6 +90,34 @@ def rocket_footprint_clear_of_inner_rectangle(
     return dx * dx + dy * dy > radius * radius
 
 
+def extractor_footprint_within_editable_area(
+    x: float,
+    y: float,
+    *,
+    map_width: float = 819200.0,
+    map_height: float = 819200.0,
+    ring_sectors: int = 2,
+    safe_margin: float = 10000.0,
+) -> bool:
+    """Model the surface extractor square-footprint perimeter predicate."""
+    band_x = map_width * ring_sectors / 20
+    band_y = map_height * ring_sectors / 20
+    in_ring = (
+        x < band_x
+        or y < band_y
+        or x >= map_width - band_x
+        or y >= map_height - band_y
+    )
+    if not in_ring:
+        return True
+    return (
+        x < band_x - safe_margin
+        or y < band_y - safe_margin
+        or x > map_width - band_x + safe_margin
+        or y > map_height - band_y + safe_margin
+    )
+
+
 def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float:
     """Production C2 core-to-original feather."""
     if normalized_radius <= core_fraction:
@@ -612,6 +640,14 @@ static_checks = {
         and "local extractor_safe_margin = 10 * hex_size" in TERRAIN
         and "Move only those centers minimally inward" in TERRAIN
     ),
+    "resource_quota_rejects_inner_crossing_extractor_footprints": (
+        "local function SurfaceExtractorFootprintWithinTerrainEditableArea" in DEPOSITS
+        and "if not IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors) then return true end"
+        in DEPOSITS
+        and "x < band_x - safe_margin or y < band_y - safe_margin" in DEPOSITS
+        and "SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y," in resources
+        and "surface_extractor_safe_margin, surface_resource_ring_sectors" in resources
+    ),
     "resource_clusters_are_separated_beyond_the_cluster_radius": (
         "distance <= resource_cluster_radius" in resources
         and "selector_local_v3" in resources
@@ -775,7 +811,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_919": "'version', 919" in METADATA,
+    "version_is_920": "'version', 920" in METADATA,
 }
 
 case_results = []
@@ -872,6 +908,27 @@ rocket_inner_boundary_checks = {
             rocket_live_radius,
             inner_rectangle,
         )
+    ),
+}
+
+extractor_inner_boundary_checks = {
+    "observed_iter138_failure_is_rejected": not extractor_footprint_within_editable_area(
+        81473.0, 627497.0
+    ),
+    "exact_tangency_is_rejected": not extractor_footprint_within_editable_area(
+        71920.0, 300000.0
+    ),
+    "one_world_unit_outside_guard_is_retained": extractor_footprint_within_editable_area(
+        71919.0, 300000.0
+    ),
+    "one_world_unit_inside_guard_is_rejected": not extractor_footprint_within_editable_area(
+        71921.0, 300000.0
+    ),
+    "corner_candidate_can_be_safe_on_either_axis": extractor_footprint_within_editable_area(
+        80000.0, 70000.0
+    ),
+    "naturally_buildable_inner_candidate_is_unchanged": extractor_footprint_within_editable_area(
+        100000.0, 100000.0
     ),
 }
 
@@ -1191,6 +1248,7 @@ report = {
     "effect_checks": effect_checks,
     "quota_spacing_checks": quota_spacing_checks,
     "rocket_inner_boundary_checks": rocket_inner_boundary_checks,
+    "extractor_inner_boundary_checks": extractor_inner_boundary_checks,
     "feather_checks": feather_checks,
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
@@ -1228,6 +1286,8 @@ report["quota_spacing_passed"] = sum(quota_spacing_checks.values())
 report["quota_spacing_total"] = len(quota_spacing_checks)
 report["rocket_inner_boundary_passed"] = sum(rocket_inner_boundary_checks.values())
 report["rocket_inner_boundary_total"] = len(rocket_inner_boundary_checks)
+report["extractor_inner_boundary_passed"] = sum(extractor_inner_boundary_checks.values())
+report["extractor_inner_boundary_total"] = len(extractor_inner_boundary_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
 report["guard_prefilter_passed"] = sum(guard_prefilter_checks.values())
@@ -1245,6 +1305,7 @@ report["ok"] = (
     and all(effect_checks.values())
     and all(quota_spacing_checks.values())
     and all(rocket_inner_boundary_checks.values())
+    and all(extractor_inner_boundary_checks.values())
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
