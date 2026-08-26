@@ -27,6 +27,7 @@ MODEL = "gpt-5.6-sol"
 BASE_REASONING_EFFORT = "high"
 ESCALATED_REASONING_EFFORT = "xhigh"
 FASTLANE_GUIDE = PROJECT / "_ralph" / "tools" / "FASTLANE.md"
+DELIVERY_POLICY = PROJECT / "_ralph" / "tools" / "DELIVERY_POLICY.md"
 FASTLANE_REQUIRED = (
     "guard_shadow_oracle.py",
     "guard_corpus_probe.lua",
@@ -117,6 +118,8 @@ def main() -> int:
 
     if not FASTLANE_GUIDE.is_file():
         raise RuntimeError(f"Ralph fast-lane guide not found: {FASTLANE_GUIDE}")
+    if not DELIVERY_POLICY.is_file():
+        raise RuntimeError(f"Ralph delivery policy not found: {DELIVERY_POLICY}")
     for name in FASTLANE_REQUIRED:
         path = FASTLANE_GUIDE.parent / name
         if not path.is_file():
@@ -149,6 +152,11 @@ def main() -> int:
         context,
         codex_model=MODEL,
         codex_reasoning_effort=BASE_REASONING_EFFORT,
+    )
+    command[-1] = (
+        f"{command[-1]} After reading those files, read {DELIVERY_POLICY} in full "
+        "and follow it as the operator's efficiency policy. It narrows the work "
+        "strategy but never weakens the immutable task or LOOP contracts."
     )
 
     if args.dry_run:
