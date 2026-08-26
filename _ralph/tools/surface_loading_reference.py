@@ -61,6 +61,161 @@ def lua_path(path: Path) -> str:
     return str(path.resolve()).replace("\\", "/")
 
 
+def load_surface_thread_trace(path: Path) -> list[tuple[list[int], int]]:
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if not lines or lines[0] != "schema=smr.ralph.surface_thread_async_rand_trace.v1":
+        raise ReferenceError(f"invalid surface-thread RNG trace header: {path}")
+    calls: list[tuple[list[int], int]] = []
+    for line_no, line in enumerate(lines[1:], 2):
+        fields = line.split("\t")
+        if len(fields) < 3 or fields[0] != "draw":
+            raise ReferenceError(f"invalid surface-thread RNG trace row {line_no}: {path}")
+        try:
+            argc = int(fields[1])
+            values = [int(value) for value in fields[2:]]
+        except ValueError as exc:
+            raise ReferenceError(
+                f"non-integer surface-thread RNG trace row {line_no}: {path}"
+            ) from exc
+        if argc < 0 or len(values) != argc + 1:
+            raise ReferenceError(f"wrong surface-thread RNG arity at row {line_no}: {path}")
+        calls.append((values[:-1], values[-1]))
+    if not calls:
+        raise ReferenceError(f"surface-thread RNG trace contains no draws: {path}")
+    return calls
+
+
+def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str, str]:
+    if mode == "forward":
+        if trace_path is not None:
+            raise ReferenceError("surface-thread RNG trace is invalid in forward mode")
+        return "", "", ""
+    if mode not in {"record", "replay"} or trace_path is None:
+        raise ReferenceError("surface-thread RNG mode record/replay requires a trace path")
+    replay_calls = load_surface_thread_trace(trace_path) if mode == "replay" else []
+    replay_rows = ",\n".join(
+        "\t\t\t\t{ args = { "
+        + ", ".join(str(value) for value in args)
+        + " }, value = "
+        + str(value)
+        + " }"
+        for args, value in replay_calls
+    )
+    if not replay_rows:
+        replay_rows = "\t\t\t\t"
+    setup = f'''
+\t\t\tlocal surface_thread_rng_mode = "{mode}"
+\t\t\tlocal surface_thread_rng_trace = {{
+{replay_rows}
+\t\t\t}}
+\t\t\tlocal surface_thread_rng_index = 0
+\t\t\tlocal surface_generation_thread = false
+\t\t\tlocal current_thread = rawget(_G, "CurrentThread")
+\t\t\tlocal original_create_real_time_thread = rawget(_G, "CreateRealTimeThread")
+\t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
+\t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
+\t\t\tif type(current_thread) ~= "function" then
+\t\t\t\terror("CurrentThread unavailable for surface-generation RNG scope")
+\t\t\tend
+\t\t\tif type(original_create_real_time_thread) ~= "function" then
+\t\t\t\terror("CreateRealTimeThread unavailable for surface-generation RNG scope")
+\t\t\tend
+\t\t\tif type(surface_scheduler) ~= "function" then
+\t\t\t\terror("RunSurfaceStretchIfEnabled unavailable for surface-generation RNG scope")
+\t\t\tend
+\t\t\tlocal function called_by_surface_scheduler()
+\t\t\t\tfor level = 2, 12 do
+\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
+\t\t\t\t\tif not ok or type(info) ~= "table" then break end
+\t\t\t\t\tif info.func == surface_scheduler then return true end
+\t\t\t\tend
+\t\t\t\treturn false
+\t\t\tend
+\t\t\tlocal scoped_create_real_time_thread
+\t\t\tscoped_create_real_time_thread = function(fn, ...)
+\t\t\t\tif not called_by_surface_scheduler() then
+\t\t\t\t\treturn original_create_real_time_thread(fn, ...)
+\t\t\t\tend
+\t\t\t\tif state.surface_generation_thread_scheduled then
+\t\t\t\t\terror("surface-generation thread scheduled more than once")
+\t\t\t\tend
+\t\t\t\tstate.surface_generation_thread_scheduled = true
+\t\t\t\trawset(_G, "CreateRealTimeThread", original_create_real_time_thread)
+\t\t\t\tstate.create_thread_dispatcher_restored =
+\t\t\t\t\trawget(_G, "CreateRealTimeThread") == original_create_real_time_thread
+\t\t\t\tif not state.create_thread_dispatcher_restored then
+\t\t\t\t\terror("CreateRealTimeThread dispatcher did not restore")
+\t\t\t\tend
+\t\t\t\treturn original_create_real_time_thread(function(...)
+\t\t\t\t\tsurface_generation_thread = current_thread()
+\t\t\t\t\tstate.surface_generation_thread_identified =
+\t\t\t\t\t\tsurface_generation_thread ~= nil and surface_generation_thread ~= false
+\t\t\t\t\tif not state.surface_generation_thread_identified then
+\t\t\t\t\t\terror("CurrentThread returned no surface-generation identity")
+\t\t\t\t\tend
+\t\t\t\t\treturn fn(...)
+\t\t\t\tend, ...)
+\t\t\tend
+\t\t\trawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)
+\t\t\tif rawget(_G, "CreateRealTimeThread") ~= scoped_create_real_time_thread then
+\t\t\t\terror("CreateRealTimeThread capture dispatcher did not install")
+\t\t\tend'''
+    dispatch = '''
+\t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
+\t\t\t\t\tsurface_thread_rng_index = surface_thread_rng_index + 1
+\t\t\t\t\tstate.surface_thread_async_rand_draw_count = surface_thread_rng_index
+\t\t\t\t\tlocal args = { ... }
+\t\t\t\t\tif surface_thread_rng_mode == "record" then
+\t\t\t\t\t\tlocal value = original_async_rand(...)
+\t\t\t\t\t\tsurface_thread_rng_trace[surface_thread_rng_index] = { args = args, value = value }
+\t\t\t\t\t\treturn value
+\t\t\t\t\tend
+\t\t\t\t\tlocal expected = surface_thread_rng_trace[surface_thread_rng_index]
+\t\t\t\t\tif type(expected) ~= "table" or type(expected.args) ~= "table"
+\t\t\t\t\t\tor #expected.args ~= #args then
+\t\t\t\t\t\terror("surface-thread AsyncRand replay exhausted or arity changed at draw "
+\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index))
+\t\t\t\t\tend
+\t\t\t\t\tfor i = 1, #args do
+\t\t\t\t\t\tif expected.args[i] ~= args[i] then
+\t\t\t\t\t\t\terror("surface-thread AsyncRand replay argument changed at draw "
+\t\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index) .. " argument " .. tostring(i))
+\t\t\t\t\t\tend
+\t\t\t\t\tend
+\t\t\t\t\treturn expected.value
+\t\t\t\tend'''
+    finalize = f'''
+\t\t\t\tif state.surface_generation_thread_scheduled ~= true
+\t\t\t\t\tor state.surface_generation_thread_identified ~= true
+\t\t\t\t\tor state.create_thread_dispatcher_restored ~= true then
+\t\t\t\t\terror("surface-generation thread discriminator did not complete")
+\t\t\t\tend
+\t\t\t\tif surface_thread_rng_index <= 0 then
+\t\t\t\t\terror("surface-generation thread consumed no direct AsyncRand draws")
+\t\t\t\tend
+\t\t\t\tif surface_thread_rng_mode == "replay"
+\t\t\t\t\tand surface_thread_rng_index ~= #surface_thread_rng_trace then
+\t\t\t\t\terror("surface-thread AsyncRand replay left unused draws: consumed="
+\t\t\t\t\t\t.. tostring(surface_thread_rng_index) .. " expected="
+\t\t\t\t\t\t.. tostring(#surface_thread_rng_trace))
+\t\t\t\tend
+\t\t\t\tif surface_thread_rng_mode == "record" then
+\t\t\t\t\tlocal rows = {{ "schema=smr.ralph.surface_thread_async_rand_trace.v1" }}
+\t\t\t\t\tfor i = 1, #surface_thread_rng_trace do
+\t\t\t\t\t\tlocal record = surface_thread_rng_trace[i]
+\t\t\t\t\t\tlocal fields = {{ "draw", tostring(#record.args) }}
+\t\t\t\t\t\tfor j = 1, #record.args do fields[#fields + 1] = tostring(record.args[j]) end
+\t\t\t\t\t\tfields[#fields + 1] = tostring(record.value)
+\t\t\t\t\t\trows[#rows + 1] = table.concat(fields, "\\t")
+\t\t\t\t\tend
+\t\t\t\t\tlocal trace_error = AsyncStringToFile("{lua_path(trace_path)}",
+\t\t\t\t\t\ttable.concat(rows, "\\n") .. "\\n")
+\t\t\t\t\tif trace_error then error("surface-thread RNG trace write failed: "
+\t\t\t\t\t\t.. tostring(trace_error)) end
+\t\t\t\tend'''
+    return setup, dispatch, finalize
+
+
 def unresolved(text: str) -> list[str]:
     tokens: set[str] = set()
     start = 0
@@ -83,8 +238,19 @@ def benchmark_block(
     stable_sentinel: Path,
     final_sentinel: Path,
     async_rand_seed: int,
+    surface_thread_rng_mode: str = "forward",
+    surface_thread_rng_trace: Path | None = None,
 ) -> str:
     probe = PARITY / "determinism_capture_probe.lua"
+    thread_setup, thread_dispatch, thread_finalize = surface_thread_rng_lua(
+        surface_thread_rng_mode, surface_thread_rng_trace
+    )
+    thread_state = "" if surface_thread_rng_mode == "forward" else f'''
+\t\t\t\tsurface_thread_rng_mode = "{surface_thread_rng_mode}",
+\t\t\t\tsurface_thread_async_rand_draw_count = 0,'''
+    thread_sentinel = "" if surface_thread_rng_mode == "forward" else '''
+\t\t\t\t\t"surface_thread_rng_mode=" .. state.surface_thread_rng_mode,
+\t\t\t\t\t"surface_thread_async_rand_draw_count=" .. tostring(state.surface_thread_async_rand_draw_count),'''
     return f'''\t\tdo
 \t\t\tlocal state = {{
 \t\t\t\tschema = "smr.ralph.surface_loading_reference_state.v4",
@@ -94,7 +260,7 @@ def benchmark_block(
 \t\t\t\tasync_rand_initial_seed = {async_rand_seed},
 \t\t\t\tasync_rand_final_seed = {async_rand_seed},
 \t\t\t\tasync_rand_draw_count = 0,
-\t\t\t\tforeign_async_rand_draw_count = 0,
+\t\t\t\tforeign_async_rand_draw_count = 0,{thread_state}
 \t\t\t}}
 \t\t\tif type(BraidRandom) ~= "function" then
 \t\t\t\terror("BraidRandom unavailable; cannot create private mod RNG stream")
@@ -110,7 +276,7 @@ def benchmark_block(
 \t\t\tend
 \t\t\tif type(debug) ~= "table" or type(debug.getinfo) ~= "function" then
 \t\t\t\terror("debug.getinfo unavailable for mod RNG caller identity")
-\t\t\tend
+\t\t\tend{thread_setup}
 \t\t\tlocal async_rand_seed = state.async_rand_initial_seed
 \t\t\tlocal function called_by_mod_rand_int()
 \t\t\t\tfor level = 2, 8 do
@@ -127,7 +293,7 @@ def benchmark_block(
 \t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
 \t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
 \t\t\t\t\treturn value
-\t\t\t\tend
+\t\t\t\tend{thread_dispatch}
 \t\t\t\tstate.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1
 \t\t\t\treturn original_async_rand(...)
 \t\t\tend
@@ -229,7 +395,7 @@ def benchmark_block(
 \t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
 \t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
 \t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
-\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),
+\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),{thread_sentinel}
 \t\t\t\t\t"surface_stretch_done=" .. tostring(state.surface_stretch_done),
 \t\t\t\t\t"surface_expansion_pending=" .. tostring(state.surface_expansion_pending),
 \t\t\t\t\t"stretch_pipeline_pending=" .. tostring(state.stretch_pipeline_pending),
@@ -264,7 +430,7 @@ def benchmark_block(
 \t\t\t\tend
 \t\t\t\tif state.async_rand_draw_count <= 0 then
 \t\t\t\t\terror("private mod RNG stream consumed no draws")
-\t\t\t\tend
+\t\t\t\tend{thread_finalize}
 \t\t\t\trawset(_G, "AsyncRand", original_async_rand)
 \t\t\t\tstate.async_rand_dispatcher_restored = rawget(_G, "AsyncRand") == original_async_rand
 \t\t\t\tif not state.async_rand_dispatcher_restored then
@@ -281,7 +447,7 @@ def benchmark_block(
 \t\t\t\t\t"async_rand_initial_seed=" .. tostring(state.async_rand_initial_seed),
 \t\t\t\t\t"async_rand_final_seed=" .. tostring(state.async_rand_final_seed),
 \t\t\t\t\t"async_rand_draw_count=" .. tostring(state.async_rand_draw_count),
-\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),
+\t\t\t\t\t"foreign_async_rand_draw_count=" .. tostring(state.foreign_async_rand_draw_count),{thread_sentinel}
 \t\t\t\t\t"async_rand_dispatcher_restored=" .. tostring(state.async_rand_dispatcher_restored),
 \t\t\t\t}}, "\\n") .. "\\n"
 \t\t\t\tlocal write_error = AsyncStringToFile("{lua_path(final_sentinel)}", text)
@@ -297,6 +463,8 @@ def render_generation(
     stable_sentinel: Path,
     final_sentinel: Path,
     async_rand_seed: int = DEFAULT_ASYNC_RAND_SEED,
+    surface_thread_rng_mode: str = "forward",
+    surface_thread_rng_trace: Path | None = None,
 ) -> str:
     text = run_parity.GEN_TEMPLATE.read_text(encoding="utf-8")
     text = text.replace(
@@ -311,7 +479,8 @@ def render_generation(
     )
     text = text.replace("__UNDERGROUND_PIN_BLOCK__", "")
     extra = run_parity.ROUGH_TERRAIN_BLOCK + "\n\n" + benchmark_block(
-        capture_base, stable_sentinel, final_sentinel, async_rand_seed
+        capture_base, stable_sentinel, final_sentinel, async_rand_seed,
+        surface_thread_rng_mode, surface_thread_rng_trace,
     )
     text = text.replace("__EXTRA_SETUP__", extra)
     publish_marker = '''\t\tif __EXPAND__ then
@@ -543,6 +712,61 @@ def static_verdict(text: str) -> dict[str, object]:
     }
 
 
+def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]:
+    checks = {
+        "mode_is_record_or_replay": mode in {"record", "replay"},
+        "scheduler_scoped_by_function_identity": (
+            "info.func == surface_scheduler" in text
+            and "called_by_surface_scheduler()" in text
+            and "SBM.Generation.RunSurfaceStretchIfEnabled" in text
+        ),
+        "thread_identified_inside_scheduled_callback": (
+            "surface_generation_thread = current_thread()" in text
+            and "state.surface_generation_thread_identified" in text
+        ),
+        "create_dispatcher_is_one_shot_and_restored": (
+            text.count('rawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)') == 1
+            and 'rawset(_G, "CreateRealTimeThread", original_create_real_time_thread)' in text
+            and "state.create_thread_dispatcher_restored" in text
+        ),
+        "mod_private_stream_has_priority": (
+            text.find("if called_by_mod_rand_int() then")
+            < text.find("current_thread() == surface_generation_thread")
+        ),
+        "surface_direct_calls_scoped_by_current_thread": (
+            "surface_generation_thread and current_thread() == surface_generation_thread" in text
+            and "state.surface_thread_async_rand_draw_count" in text
+        ),
+        "unrelated_consumers_forwarded": (
+            "state.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1\n"
+            "\t\t\t\treturn original_async_rand(...)" in text
+        ),
+        "replay_checks_arity_arguments_and_exhaustion": (
+            "surface-thread AsyncRand replay exhausted or arity changed" in text
+            and "surface-thread AsyncRand replay argument changed" in text
+            and "surface-thread AsyncRand replay left unused draws" in text
+        ),
+        "record_writes_versioned_trace": (
+            "schema=smr.ralph.surface_thread_async_rand_trace.v1" in text
+            and "surface-thread RNG trace write failed" in text
+        ),
+        "finalizer_requires_identified_thread_and_draws": (
+            "surface-generation thread discriminator did not complete" in text
+            and "surface-generation thread consumed no direct AsyncRand draws" in text
+        ),
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    return {
+        "schema": "smr.ralph.surface_thread_rng_static.v1",
+        "ok": not failed,
+        "mode": mode,
+        "checks": checks,
+        "passed": sum(checks.values()),
+        "total": len(checks),
+        "failed": failed,
+    }
+
+
 def require_tmp_path(path: Path) -> Path:
     resolved = path.resolve()
     try:
@@ -563,12 +787,25 @@ def command_prepare(args: argparse.Namespace) -> int:
     capture_base = args.capture_base.resolve()
     stable_sentinel = args.stable_sentinel.resolve()
     final_sentinel = args.final_sentinel.resolve()
+    thread_trace = (
+        args.surface_thread_rng_trace.resolve()
+        if args.surface_thread_rng_trace is not None
+        else None
+    )
     text = render_generation(
-        capture_base, stable_sentinel, final_sentinel, args.async_rand_seed
+        capture_base, stable_sentinel, final_sentinel, args.async_rand_seed,
+        args.surface_thread_rng_mode, thread_trace,
     )
     generation.write_text(text, encoding="utf-8")
     compile_lua(args.luac.resolve(), generation)
     verdict = static_verdict(text)
+    thread_verdict = None
+    if args.surface_thread_rng_mode != "forward":
+        thread_verdict = surface_thread_rng_static_verdict(
+            text, args.surface_thread_rng_mode
+        )
+        verdict["surface_thread_rng"] = thread_verdict
+        verdict["ok"] = verdict["ok"] and thread_verdict["ok"]
     if not verdict["ok"]:
         raise ReferenceError(f"rendered generation failed static checks: {verdict['failed']}")
     source_head = subprocess.check_output(
@@ -578,7 +815,11 @@ def command_prepare(args: argparse.Namespace) -> int:
         timeout=30,
     ).strip()
     manifest = {
-        "schema": "smr.ralph.surface_loading_reference_manifest.v4",
+        "schema": (
+            "smr.ralph.surface_loading_reference_manifest.v4"
+            if args.surface_thread_rng_mode == "forward"
+            else "smr.ralph.surface_loading_reference_manifest.v5"
+        ),
         "source_head": source_head,
         "coordinate": COORDINATE,
         "latitude": LAT,
@@ -589,6 +830,13 @@ def command_prepare(args: argparse.Namespace) -> int:
         "reference_underground_seed": REFERENCE_UNDERGROUND_SEED,
         "async_rand_scope": "mod_owned_engine_rand_int",
         "async_rand_seed": args.async_rand_seed,
+        "surface_thread_rng_mode": args.surface_thread_rng_mode,
+        "surface_thread_rng_trace": str(thread_trace) if thread_trace else None,
+        "surface_thread_rng_trace_sha256": (
+            sha256_file(thread_trace)
+            if args.surface_thread_rng_mode == "replay" and thread_trace
+            else None
+        ),
         "generation_script": str(generation),
         "generation_script_bytes": generation.stat().st_size,
         "generation_script_sha256": sha256_file(generation),
@@ -619,6 +867,30 @@ def command_self_test(args: argparse.Namespace) -> int:
         generation.write_text(text, encoding="utf-8")
         compile_lua(args.luac.resolve(), generation)
         verdict = static_verdict(text)
+        trace = root / "surface_thread_rng.trace"
+        trace.write_text(
+            "schema=smr.ralph.surface_thread_async_rand_trace.v1\n"
+            "draw\t0\t17\n"
+            "draw\t2\t41\t99\t7\n",
+            encoding="utf-8",
+        )
+        record_text = render_generation(
+            root / "record_capture", root / "record.stable", root / "record.final",
+            surface_thread_rng_mode="record", surface_thread_rng_trace=trace,
+        )
+        replay_text = render_generation(
+            root / "replay_capture", root / "replay.stable", root / "replay.final",
+            surface_thread_rng_mode="replay", surface_thread_rng_trace=trace,
+        )
+        record_generation = root / "record_generation.lua"
+        replay_generation = root / "replay_generation.lua"
+        record_generation.write_text(record_text, encoding="utf-8")
+        replay_generation.write_text(replay_text, encoding="utf-8")
+        compile_lua(args.luac.resolve(), record_generation)
+        compile_lua(args.luac.resolve(), replay_generation)
+        record_verdict = surface_thread_rng_static_verdict(record_text, "record")
+        replay_verdict = surface_thread_rng_static_verdict(replay_text, "replay")
+        trace_calls = load_surface_thread_trace(trace)
         mutation = text.replace('expected_preset = "RoughTerrain"', 'expected_preset = "MAIN"', 1)
         mutation_red = static_verdict(mutation)["ok"] is False
         missing_finalizer = text.replace("\n\t\tfinalize_reference_capture()", "", 1)
@@ -647,6 +919,11 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["missing_scoped_dispatcher_mutation_red"] = missing_dispatcher_red
         verdict["unscoped_dispatcher_mutation_red"] = unscoped_dispatcher_red
         verdict["missing_foreign_forward_mutation_red"] = missing_foreign_forward_red
+        verdict["surface_thread_record_static"] = record_verdict
+        verdict["surface_thread_replay_static"] = replay_verdict
+        verdict["surface_thread_trace_round_trip"] = trace_calls == [([], 17), ([41, 99], 7)]
+        verdict["surface_thread_record_lua_parse"] = True
+        verdict["surface_thread_replay_lua_parse"] = True
         verdict["ok"] = (
             verdict["ok"]
             and mutation_red
@@ -656,6 +933,9 @@ def command_self_test(args: argparse.Namespace) -> int:
             and unscoped_dispatcher_red
             and missing_foreign_forward_red
             and verdict["reference_probe_exact"]
+            and record_verdict["ok"]
+            and replay_verdict["ok"]
+            and verdict["surface_thread_trace_round_trip"]
         )
     if args.out:
         write_json(args.out.resolve(), verdict)
@@ -858,6 +1138,12 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--stable-sentinel", type=Path, required=True)
     prepare.add_argument("--final-sentinel", type=Path, required=True)
     prepare.add_argument("--async-rand-seed", type=int, required=True)
+    prepare.add_argument(
+        "--surface-thread-rng-mode",
+        choices=("forward", "record", "replay"),
+        default="forward",
+    )
+    prepare.add_argument("--surface-thread-rng-trace", type=Path)
     prepare.add_argument("--source-head", required=True)
     prepare.add_argument("--out", type=Path, required=True)
     prepare.add_argument("--luac", type=Path, default=DEFAULT_LUAC)
