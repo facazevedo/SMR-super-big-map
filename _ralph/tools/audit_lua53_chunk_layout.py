@@ -379,7 +379,7 @@ def main() -> int:
         "artifacts/run_iter104_direct_guard_probe/candidate_probe.lua"
     )
     generator_proto_index = locate_proto(
-        generator_ir, {"dofile", generator_probe_path, "parity_thread_started"}
+        generator_ir, {"dofile", generator_probe_path}
     )
     probe_proto_index = locate_proto(
         probe_ir, {"post_object_transform", "collision_census", "object_census"}
@@ -401,7 +401,7 @@ def main() -> int:
     )
 
     generator_locations = relevant_locations(
-        generator_proto, ["dofile", generator_probe_path, "parity_thread_started"]
+        generator_proto, ["dofile", generator_probe_path]
     )
     probe_locations = relevant_locations(
         probe_proto,
