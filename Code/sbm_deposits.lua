@@ -4067,6 +4067,13 @@ function DepositRules.TopUpDeposits(map)
 	local surface_resource_quota_candidates = 0
 	local surface_outermost_resource_added = 0
 	local surface_inner_band_resource_added = 0
+	local surface_candidate_first = false
+	local surface_candidate_first_seed = 0
+	local surface_candidate_first_outer_target = 0
+	local surface_candidate_first_inner_target = 0
+	local surface_candidate_first_outer_candidates = 0
+	local surface_candidate_first_inner_candidates = 0
+	local surface_candidate_first_sectors_visited = 0
 
 	local added = 0
 	local validation_context = IsUndergroundMap(map)
@@ -4343,9 +4350,10 @@ function DepositRules.TopUpDeposits(map)
 
 			-- Raw-height discovery deliberately samples only a few possible centers per sector. The
 			-- final buildable grid is authoritative and often contains narrow natural flats between
-			-- those samples. Walk every perimeter sector with a deterministic 32x32 stratified pattern,
-			-- retaining flat/buildable/unobstructed quota points generally and tagging the natural
-			-- mountain-base subset for the preferred pass. This does not grade any additional terrain.
+			-- those samples. Candidate-first mode visits perimeter sectors in a scenario-seeded stable
+			-- order and stops each physical band after a bounded reserve exists for its planned clusters.
+			-- Every sampled coordinate still passes the unchanged complete local validation below; this
+			-- path neither scans nor edits the 256 inner sectors and never grades rejected candidates.
 			local edge_ctx = type(BuildTopUpEdgeContext) == "function"
 				and BuildTopUpEdgeContext(map) or nil
 			-- The two-sector guarantee needs more than a single sparse candidate per local foothill.
@@ -4358,8 +4366,82 @@ function DepositRules.TopUpDeposits(map)
 			if type(edge_ctx) == "table" and type(edge_ctx.sectors) == "table"
 				and type(edge_ctx.min_col) == "number" and type(edge_ctx.max_col) == "number"
 				and type(edge_ctx.min_row) == "number" and type(edge_ctx.max_row) == "number" then
-				for _, descriptor in ipairs(edge_ctx.sectors) do
-					if #perimeter_quota_candidates >= MAX_FINAL_QUOTA_CANDIDATES then break end
+				surface_candidate_first = cfg().OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST == true
+				local outer_cluster_count = math.max(1, math.ceil(desired_resource_cluster_count
+					* surface_outermost_resource_minimum_percent / 100))
+				local outer_resource_target, inner_resource_target = 0, 0
+				for index, spec in ipairs(planned_resource_cluster_specs) do
+					if index <= outer_cluster_count then
+						outer_resource_target = outer_resource_target + spec.resource_target
+					else
+						inner_resource_target = inner_resource_target + spec.resource_target
+					end
+				end
+				-- Sixteen choices per required member plus a 64-choice reserve per cluster is far above
+				-- the final 1..5-member demand, but remains bounded by quota rather than map area.
+				surface_candidate_first_outer_target = math.min(MAX_FINAL_QUOTA_CANDIDATES,
+					math.max(64 * outer_cluster_count, 16 * outer_resource_target))
+				local inner_cluster_count = math.max(0,
+					desired_resource_cluster_count - outer_cluster_count)
+				surface_candidate_first_inner_target = inner_cluster_count > 0
+					and math.min(MAX_FINAL_QUOTA_CANDIDATES,
+						math.max(64 * inner_cluster_count, 16 * inner_resource_target)) or 0
+				for _, candidate in ipairs(perimeter_quota_candidates) do
+					if IsInFinalOuterResourceWorldBand(map, candidate.x, candidate.y, 1) then
+						surface_candidate_first_outer_candidates =
+							surface_candidate_first_outer_candidates + 1
+					else
+						surface_candidate_first_inner_candidates =
+							surface_candidate_first_inner_candidates + 1
+					end
+				end
+				local descriptors = edge_ctx.sectors
+				if surface_candidate_first then
+					local generator = map.RandomMapGenObject
+					local numeric_seed = type(generator) == "table"
+						and tonumber(generator.Seed) or 0
+					local seed_material = tostring(type(generator) == "table"
+						and generator.GenerationHash or "") .. "|"
+						.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+					local modulus = 2147483647
+					surface_candidate_first_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
+					for index = 1, #seed_material do
+						surface_candidate_first_seed = (surface_candidate_first_seed * 48271
+							+ string.byte(seed_material, index) + 1) % modulus
+					end
+					descriptors = {}
+					for _, descriptor in ipairs(edge_ctx.sectors) do
+						local outer = descriptor.col <= edge_ctx.min_col
+							+ surface_mountain_base_ring_sectors - 1
+							or descriptor.col >= edge_ctx.max_col
+								- surface_mountain_base_ring_sectors + 1
+							or descriptor.row <= edge_ctx.min_row
+								+ surface_mountain_base_ring_sectors - 1
+							or descriptor.row >= edge_ctx.max_row
+								- surface_mountain_base_ring_sectors + 1
+						if outer then
+							descriptors[#descriptors + 1] = {
+								descriptor = descriptor,
+								rank = (surface_candidate_first_seed
+									+ (descriptor.col + 17) * 73856093
+									+ (descriptor.row + 31) * 19349663) % modulus,
+							}
+						end
+					end
+					table.sort(descriptors, function(a, b)
+						if a.rank == b.rank then
+							if a.descriptor.row == b.descriptor.row then
+								return a.descriptor.col < b.descriptor.col
+							end
+							return a.descriptor.row < b.descriptor.row
+						end
+						return a.rank < b.rank
+					end)
+				end
+				for _, ordered_descriptor in ipairs(descriptors) do
+					local descriptor = ordered_descriptor.descriptor or ordered_descriptor
+					if not surface_candidate_first
+						and #perimeter_quota_candidates >= MAX_FINAL_QUOTA_CANDIDATES then break end
 					local sector = descriptor.sector_ref
 					local outer = descriptor.col <= edge_ctx.min_col
 							+ surface_mountain_base_ring_sectors - 1
@@ -4369,15 +4451,28 @@ function DepositRules.TopUpDeposits(map)
 							+ surface_mountain_base_ring_sectors - 1
 						or descriptor.row >= edge_ctx.max_row
 							- surface_mountain_base_ring_sectors + 1
-					if outer and sector and not SectorIsScanned(sector)
+					local outermost_descriptor = descriptor.col == edge_ctx.min_col
+						or descriptor.col == edge_ctx.max_col
+						or descriptor.row == edge_ctx.min_row
+						or descriptor.row == edge_ctx.max_row
+					local band_needs_candidates = not surface_candidate_first
+						or (outermost_descriptor and surface_candidate_first_outer_candidates
+							< surface_candidate_first_outer_target)
+						or (not outermost_descriptor and surface_candidate_first_inner_candidates
+							< surface_candidate_first_inner_target)
+					if outer and band_needs_candidates and sector and not SectorIsScanned(sector)
 						and type(descriptor.area_x0) == "number"
 						and type(descriptor.area_y0) == "number"
 						and type(descriptor.area_x1) == "number"
 						and type(descriptor.area_y1) == "number" then
 						local span_sector_x = descriptor.area_x1 - descriptor.area_x0
 						local span_sector_y = descriptor.area_y1 - descriptor.area_y0
+						surface_candidate_first_sectors_visited =
+							surface_candidate_first_sectors_visited + 1
 						local seed = ((descriptor.col + 17) * 73856093
-							+ (descriptor.row + 31) * 19349663) % SAMPLES_PER_SECTOR
+							+ (descriptor.row + 31) * 19349663
+							+ (surface_candidate_first and surface_candidate_first_seed or 0))
+							% SAMPLES_PER_SECTOR
 						local accepted_in_sector = 0
 						for sample_index = 0, SAMPLES_PER_SECTOR - 1 do
 							surface_mountain_base_sample_attempts =
@@ -4410,6 +4505,13 @@ function DepositRules.TopUpDeposits(map)
 											((math.floor(x) * 73856093 + math.floor(y) * 19349663) % 2147483647) * 8
 										perimeter_quota_candidates[#perimeter_quota_candidates + 1] = candidate
 										surface_resource_quota_candidates = surface_resource_quota_candidates + 1
+										if outermost_descriptor then
+											surface_candidate_first_outer_candidates =
+												surface_candidate_first_outer_candidates + 1
+										else
+											surface_candidate_first_inner_candidates =
+												surface_candidate_first_inner_candidates + 1
+										end
 										if mountain_base then
 											candidate._sbm_mountain_base_apron = true
 											candidate._sbm_mountain_base_natural = true
@@ -4418,8 +4520,18 @@ function DepositRules.TopUpDeposits(map)
 											surface_mountain_base_sampled_candidates = surface_mountain_base_sampled_candidates + 1
 										end
 										accepted_in_sector = accepted_in_sector + 1
+										local band_target_reached = surface_candidate_first
+											and ((outermost_descriptor
+												and surface_candidate_first_outer_candidates
+													>= surface_candidate_first_outer_target)
+												or (not outermost_descriptor
+													and surface_candidate_first_inner_candidates
+														>= surface_candidate_first_inner_target))
 										if accepted_in_sector >= MAX_CANDIDATES_PER_SECTOR
-											or #perimeter_quota_candidates >= MAX_FINAL_QUOTA_CANDIDATES then break end
+											or band_target_reached
+											or (not surface_candidate_first
+												and #perimeter_quota_candidates
+													>= MAX_FINAL_QUOTA_CANDIDATES) then break end
 									end
 								end
 							end
@@ -5271,6 +5383,13 @@ function DepositRules.TopUpDeposits(map)
 		surface_outermost_resource_added = surface_outermost_resource_added,
 		surface_inner_band_resource_added = surface_inner_band_resource_added,
 		surface_quota_minimum_hex_distance = surface_quota_minimum_hex_distance,
+		surface_candidate_first = surface_candidate_first,
+		surface_candidate_first_seed = surface_candidate_first_seed,
+		surface_candidate_first_outer_target = surface_candidate_first_outer_target,
+		surface_candidate_first_inner_target = surface_candidate_first_inner_target,
+		surface_candidate_first_outer_candidates = surface_candidate_first_outer_candidates,
+		surface_candidate_first_inner_candidates = surface_candidate_first_inner_candidates,
+		surface_candidate_first_sectors_visited = surface_candidate_first_sectors_visited,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats
@@ -8029,6 +8148,11 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 							}, "|")
 						end
 					end
+					if surface_candidate_first
+						and surface_candidate_first_outer_candidates
+							>= surface_candidate_first_outer_target
+						and surface_candidate_first_inner_candidates
+							>= surface_candidate_first_inner_target then break end
 				end
 				if a.surface_quota_resource and b.surface_quota_resource
 					and type(a.q) == "number" and type(a.r) == "number"
