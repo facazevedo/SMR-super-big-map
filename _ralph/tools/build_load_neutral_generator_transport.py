@@ -201,7 +201,7 @@ def direct_callable_source(source: bytes) -> bytes:
     if sha256_bytes(source) != BASE_DIRECT_SHA256:
         raise BuildError("direct guard source hash changed")
     old = b'return "smr_guard_preparation_input_probe_armed"\n'
-    new = b"return tostring\n"
+    new = b"return bool\n"
     if source.count(old) != 1:
         raise BuildError("direct guard terminal return was not unique")
     return source.replace(old, new, 1)
@@ -210,7 +210,7 @@ def direct_callable_source(source: bytes) -> bytes:
 def run_direct_lifecycle(lua: Path, direct: Path, temp_root: Path) -> list[dict[str, object]]:
     harness_text = MOCK_HARNESS.replace(
         'assert(armed == "smr_guard_preparation_input_probe_armed")',
-        'assert(type(armed) == "function")\nassert(armed() == "nil")',
+        'assert(type(armed) == "function")\nassert(armed() == "false")',
     )
     runs: list[dict[str, object]] = []
     with tempfile.TemporaryDirectory(prefix=".tmp_iter104_transport_", dir=temp_root) as tmp:
@@ -320,7 +320,7 @@ def main() -> int:
             probe_before[0]["closures"][-1] == probe_after[0]["closures"][-1]
         ),
         "direct_chunk_lua_parse": bool(direct_ir),
-        "direct_chunk_returns_callable": args.direct_out.resolve().read_bytes().endswith(b"return tostring\n"),
+        "direct_chunk_returns_callable": args.direct_out.resolve().read_bytes().endswith(b"return bool\n"),
         "direct_lifecycle_1_to_3_green": all(item["ok"] for item in lifecycle),
         "direct_path_matches_generator_existing_constant": (
             args.direct_out.resolve().as_posix()
