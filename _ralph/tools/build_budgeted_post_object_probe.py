@@ -166,15 +166,10 @@ def main() -> int:
 
     args.accepted.parent.mkdir(parents=True, exist_ok=True)
     args.candidate.parent.mkdir(parents=True, exist_ok=True)
-    args.direct_loader.parent.mkdir(parents=True, exist_ok=True)
     args.accepted.write_text(source, encoding="utf-8", newline="\n")
     args.candidate.write_text(candidate, encoding="utf-8", newline="\n")
-    args.direct_loader.write_text(
-        '-- Iteration 97 direct-loader placeholder; loaded only after checkpoint 13.\n'
-        'return true\n',
-        encoding="utf-8",
-        newline="\n",
-    )
+    if not args.direct_loader.is_file():
+        raise BuildError(f"direct loader is missing: {args.direct_loader}")
 
     accepted_listing = listing(args.luac.resolve(), args.accepted.resolve())
     candidate_listing = listing(args.luac.resolve(), args.candidate.resolve())
@@ -228,7 +223,7 @@ def main() -> int:
             "path": str(args.direct_loader.resolve()),
             "source_bytes": args.direct_loader.stat().st_size,
             "sha256": sha256_bytes(args.direct_loader.read_bytes()),
-            "role": "syntax-only placeholder loaded after checkpoint 13",
+            "role": "self-contained direct guard-input probe loaded after checkpoint 13",
         },
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
