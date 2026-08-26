@@ -2436,6 +2436,13 @@ local function PrepareOuterResourceTerrain(map)
 		patch.outer_cells = patch.core_cells
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
+		local diagnostic_site = patch.resource_site or patch.rocket_site
+		if diagnostic_site then
+			diagnostic_site.patch_maximum_core_delta = maximum_core_delta
+			diagnostic_site.patch_core_cells = patch.core_cells
+			diagnostic_site.patch_transition_cells = patch.outer_cells - patch.core_cells
+			diagnostic_site.patch_target = patch.target
+		end
 	end
 	-- A patch can visit only cells inside its maximum radius. By triangle inequality, a protected
 	-- guard whose center is farther away than visit_radius + guard_radius cannot contain any visited
@@ -3108,7 +3115,11 @@ local function AuditOuterResourceTerrain(map)
 				.. ":" .. tostring(failure_reason)
 				.. ":ready_before=" .. tostring(site.ready_before == true)
 				.. ":modified=" .. tostring(site.modified == true)
-				.. ":core=" .. tostring(site.required_core_radius or site.core_radius or "?"))
+				.. ":core=" .. tostring(site.required_core_radius or site.core_radius or "?")
+				.. ":level_core=" .. tostring(site.level_core_radius or "?")
+				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
+				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
+				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?"))
 		end
 		-- Height edits do not change XY.  Re-snap both the marker and any revealed deposit so their
 		-- visuals and interaction point agree with the rebuilt terrain.
@@ -3131,7 +3142,10 @@ local function AuditOuterResourceTerrain(map)
 			rocket_failure_breakdown[failure_reason] =
 				(rocket_failure_breakdown[failure_reason] or 0) + 1
 			first_rocket_failure = first_rocket_failure or (tostring(site.q) .. ":"
-				.. tostring(site.r) .. ":" .. tostring(failure_reason))
+				.. tostring(site.r) .. ":" .. tostring(failure_reason)
+				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
+				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
+				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?"))
 		elseif site.modified == true and site.mountain == true then
 			-- Publish the same pad object used by anomaly planning so the combined resource/anomaly/effect
 			-- member count remains one shared source of truth through all three placement passes.
