@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,14 @@ TASK_NAME = "surface-loading-under-60s-rough"
 MODEL = "gpt-5.6-sol"
 BASE_REASONING_EFFORT = "high"
 ESCALATED_REASONING_EFFORT = "xhigh"
+FASTLANE_GUIDE = PROJECT / "_ralph" / "tools" / "FASTLANE.md"
+FASTLANE_REQUIRED = (
+    "guard_shadow_oracle.py",
+    "guard_corpus_probe.lua",
+    "evidence_cache.py",
+    "checkpoint_artifacts.py",
+    "watch_checkpoints.ps1",
+)
 
 
 def load_harness_loop():
@@ -105,6 +114,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     loop = load_harness_loop()
+
+    if not FASTLANE_GUIDE.is_file():
+        raise RuntimeError(f"Ralph fast-lane guide not found: {FASTLANE_GUIDE}")
+    for name in FASTLANE_REQUIRED:
+        path = FASTLANE_GUIDE.parent / name
+        if not path.is_file():
+            raise RuntimeError(f"Ralph fast-lane tool not found: {path}")
+    os.environ["SMR_RALPH_FASTLANE_GUIDE"] = str(FASTLANE_GUIDE)
 
     # Keep the harness's restart-safe plateau/audit machinery. Both ordinary rungs use
     # Sol/high; only its sustained no-progress rung may escalate Sol to extra-high.
