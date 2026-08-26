@@ -53,6 +53,10 @@ production refactor, not for extending infrastructure work.
 - Use the event-driven 36-checkpoint HashOnly screen for the first live verdict.
   Stop on the first mismatch and discard the raced full capture. Produce a full
   1.4 GB capture only for a HashOnly survivor.
+- Observation mode is part of checkpoint-reference identity. Never compare a Full
+  retaining run with the frozen HashOnly/legacy reference. A Full verdict requires a
+  fresh accepted-production control reference recorded under the same Full protocol;
+  the tool must reject cross-mode comparisons before game launch.
 - A HashOnly survivor proceeds directly to ordinary exact equivalence and then
   cold timing. Avoid an extra planning iteration between gates.
 - Add debug output only to distinguish two concrete causes. Remove or disable it
@@ -60,36 +64,32 @@ production refactor, not for extending infrastructure work.
 - Final integrity should validate the evidence already produced, not introduce a
   new custom scorer unless an existing required gate is genuinely missing.
 
-## Current mandatory sequence: validate the Full observer
+## Repaired Full-observer protocol
 
-Pause source-migration candidate work. The accepted payload is v906 at rollback
-commit `9e028e9`. The reverted v907 height-accessor candidate passed the complete
-36/36 HashOnly comparison, but two retaining Full runs failed identically at
-checkpoint 13, before the accessor's hot region. The failure may therefore be an
-observer effect rather than a candidate effect.
+The accepted payload is v906 at rollback commit `9e028e9`. The reverted v907
+height-accessor candidate passed the complete 36/36 HashOnly comparison. Three Full
+runs—v907 and two unchanged-v906 controls—matched checkpoints 1-12 and then omitted
+the same eight decorative stones at checkpoint 13. The last control removed every
+candidate filename immediately but retained 519,805,580 bytes elsewhere, proving that
+candidate-namespace retention was not the cause and that the old cross-mode Full
+comparison was non-authoritative.
 
-1. Run one accepted-v906 retaining Full control before constructing another
-   production optimization. Use the same corrected-RoughTerrain private-stream
-   reference, frozen observer, watcher-first ordering, cold-start boundary,
-   capture mode, and checkpoint order as iteration 115. Do not load or stage any
-   v907 candidate code.
-2. Match the control generator's executable structure and path/string footprint
-   to the allocation-matched revised iteration-115 Full input wherever output
-   identities permit. Record all unavoidable semantic differences explicitly.
-3. If accepted v906 reproduces checkpoint-13 census
-   `C45E51CC...F3B7` / 2,204,134 bytes, classify the retaining Full protocol as
-   non-authoritative for candidate causality. Preserve that red control, repair
-   the observer with the smallest cause-specific change, and require accepted
-   v906 to reproduce the frozen 36/36 reference before using Full mode on any
-   candidate again.
-4. If accepted v906 instead passes all 36 Full checkpoints under the identical
-   protocol, the observer is validated and the v907 rejection remains causal.
-   Record that conclusion and resume the next measured optimization family.
-5. If the control produces a different mismatch family, diagnose only the
-   control/reference protocol. Do not attribute it to v907 and do not start a
-   new optimization until the accepted baseline has a reproducible Full gate.
+1. The frozen/legacy corrected-RoughTerrain reference is valid only for HashOnly.
+   HashOnly must remain exact 36/36 before any candidate advances.
+2. If retained bytes are needed for a survivor, first record a fresh Full reference
+   from unchanged accepted v906 under the exact same private-stream generator,
+   watcher ordering, cold-start boundary, output footprint, and retention protocol.
+   Tag it `observer_mode=Full` when building the reference.
+3. Compare the survivor's Full run only with that mode-matched accepted control. The
+   validator must record both observer modes in the verdict and reject an untagged,
+   HashOnly, or otherwise mismatched reference before watcher readiness/game launch.
+4. Full evidence is diagnostic retention evidence. It does not replace the ordinary
+   default-off, observer-free exact-equivalence and cold timing gates.
+5. Resume source-migration optimization after the repaired validator self-test passes.
+   The prior v907 Full rejection is non-causal and must not be cited against the
+   accessor optimization family.
 
-HashOnly plus an analytic certificate remains useful screening evidence, but it
-does not replace an immutable final task gate. The purpose of this control is to
-repair or validate that gate, not silently weaken it. No new general-purpose
-instrumentation is allowed.
+HashOnly plus an analytic certificate remains screening evidence and never replaces
+an immutable final task gate. Mode-matched Full evidence prevents the observer from
+being mistaken for candidate behavior; it does not weaken placement, terrain, visual,
+ordinary equivalence, or timing requirements.

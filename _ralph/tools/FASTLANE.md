@@ -18,8 +18,10 @@ and every placement, terrain, spacing, audit, and visual gate.
    immediately after hashing.
 4. Terminate a red candidate as soon as the abort receipt exists. Do not generate or
    score later artifacts.
-5. Only a hash-only 36/36 survivor may be rerun in `Full` mode. That second run retains
-   the normal artifacts and remains subject to the authoritative cold gates.
+5. Only a hash-only 36/36 survivor may be rerun in `Full` mode. A Full verdict must use
+   a separate accepted-control reference recorded under Full retention; cross-mode
+   reference comparisons fail closed. Full evidence remains subject to the ordinary
+   observer-free cold gates.
 
 ## Real protected-guard corpus
 
@@ -85,6 +87,7 @@ python _ralph/tools/checkpoint_artifacts.py build-reference `
   --task _ralph/tasks/surface-loading-under-60s-rough.md `
   --scenario-input <pinned-generation-script> `
   --capture-tool _ralph/tools/parity/determinism_capture_probe.lua `
+  --observer-mode HashOnly `
   --out <checkpoint-reference.json>
 ```
 
@@ -100,8 +103,11 @@ python _ralph/tools/checkpoint_artifacts.py watch `
   --out <hash-verdict.json> --abort-sentinel <abort.json> --mode HashOnly
 ```
 
-Use `--mode Full` only for a prior hash-only survivor. The watcher is event-driven; it
-does not poll checkpoint files on a timer.
+Use `--mode Full` only for a prior hash-only survivor and only with a reference built
+from unchanged accepted production under the same Full observation protocol. Build
+that reference with `--observer-mode Full`. Legacy untagged references are valid only
+for HashOnly and are rejected for Full. The watcher is event-driven; it does not poll
+checkpoint files on a timer.
 
 ## Optimization scheduling
 

@@ -134,8 +134,10 @@ def test_evidence_cache(root: Path) -> dict:
             "live_gate_rejected": True, "wrong_expected_digest_rejected": True}
 
 
-def create_reference(root: Path) -> tuple[Path, Path, dict[str, Path | str]]:
-    base = root / "reference" / "vref"
+def create_reference(
+    root: Path, observer_mode: str = "HashOnly", name: str = "reference"
+) -> tuple[Path, Path, dict[str, Path | str]]:
+    base = root / name / "vref"
     base.parent.mkdir(parents=True)
     for stage, kinds in checkpoints.STAGE_ORDER:
         for kind in kinds:
@@ -147,12 +149,13 @@ def create_reference(root: Path) -> tuple[Path, Path, dict[str, Path | str]]:
     task.write_text("task\n", encoding="utf-8")
     scenario.write_bytes(b"scenario\n")
     capture.write_text("return true\n", encoding="utf-8")
-    manifest = root / "reference.json"
+    manifest = root / f"{name}.json"
     run([
         sys.executable, str(TOOLS / "checkpoint_artifacts.py"), "build-reference",
         "--reference-base", str(base), "--source-commit", "self-test",
         "--task", str(task), "--scenario-input", str(scenario),
-        "--capture-tool", str(capture), "--out", str(manifest),
+        "--capture-tool", str(capture), "--observer-mode", observer_mode,
+        "--out", str(manifest),
     ])
     identity = {
         "expected_reference_commit": "self-test",
@@ -179,7 +182,7 @@ def write_candidate(reference_base: Path, candidate_base: Path, *, wrong_first: 
 
 def launch_watcher(
     manifest: Path, candidate_base: Path, verdict: Path, abort: Path,
-    ready: Path, identity: dict[str, Path | str],
+    ready: Path, identity: dict[str, Path | str], mode: str = "HashOnly",
 ) -> subprocess.Popen[str]:
     return subprocess.Popen([
         sys.executable, str(TOOLS / "checkpoint_artifacts.py"), "watch",
@@ -190,7 +193,7 @@ def launch_watcher(
         "--capture-tool", str(identity["capture_tool"]),
         "--out", str(verdict), "--abort-sentinel", str(abort),
         "--ready-sentinel", str(ready),
-        "--mode", "HashOnly", "--timeout-seconds", "30",
+        "--mode", mode, "--timeout-seconds", "30",
     ], cwd=PROJECT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
        encoding="utf-8", errors="replace")
 
@@ -236,6 +239,63 @@ def test_checkpoint_pipeline(root: Path) -> dict:
     require(not list(candidate.parent.glob(candidate.name + "-*")),
             "hash-only survivor retained full artifacts")
 
+    # A retaining verdict needs a separately recorded, explicitly Full accepted-control
+    # reference.  Cross-mode comparisons must fail before watcher readiness.
+    full_base, full_manifest, full_identity = create_reference(root, "Full", "full-reference")
+    full_candidate = root / "full-candidate" / "vfull"
+    full_verdict = root / "event-full-green.json"
+    full_ready = root / "event-full-green.ready.json"
+    full_watcher = launch_watcher(
+        full_manifest, full_candidate, full_verdict, root / "event-full.abort.json",
+        full_ready, full_identity, "Full",
+    )
+    wait_ready(full_watcher, full_ready)
+    write_candidate(full_base, full_candidate)
+    finish(full_watcher, 0)
+    full_green = json.loads(full_verdict.read_text(encoding="utf-8-sig"))
+    require(full_green["ok"] is True and full_green["mode_matched_reference"] is True,
+            "mode-matched Full watcher did not pass")
+    require(full_green["reference_observer_mode"] == "Full"
+            and full_green["candidate_observer_mode"] == "Full",
+            "Full verdict did not preserve both observer identities")
+    require(len(list(full_candidate.parent.glob(full_candidate.name + "-*"))) == 36,
+            "mode-matched Full survivor did not retain all artifacts")
+
+    cross_mode = launch_watcher(
+        manifest, root / "cross-mode" / "vcross", root / "cross-mode.json",
+        root / "cross-mode.abort.json", root / "cross-mode.ready.json", identity, "Full",
+    )
+    cross_stdout, cross_stderr = finish(cross_mode, 2)
+    require("observer-mode mismatch" in cross_stderr,
+            f"cross-mode Full comparison did not fail closed: {cross_stdout} {cross_stderr}")
+
+    legacy = root / "legacy-reference.json"
+    legacy_payload = json.loads(manifest.read_text(encoding="utf-8"))
+    del legacy_payload["identity"]["observer_mode"]
+    legacy.write_text(json.dumps(legacy_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    legacy_cross = launch_watcher(
+        legacy, root / "legacy-cross" / "vlegacy", root / "legacy-cross.json",
+        root / "legacy-cross.abort.json", root / "legacy-cross.ready.json", identity, "Full",
+    )
+    legacy_stdout, legacy_stderr = finish(legacy_cross, 2)
+    require("legacy untagged reference is HashOnly" in legacy_stderr,
+            f"legacy Full comparison did not fail closed: {legacy_stdout} {legacy_stderr}")
+
+    legacy_candidate = root / "legacy-hashonly" / "vlegacy"
+    legacy_verdict = root / "legacy-hashonly.json"
+    legacy_ready = root / "legacy-hashonly.ready.json"
+    legacy_watcher = launch_watcher(
+        legacy, legacy_candidate, legacy_verdict, root / "legacy-hashonly.abort.json",
+        legacy_ready, identity, "HashOnly",
+    )
+    wait_ready(legacy_watcher, legacy_ready)
+    write_candidate(reference_base, legacy_candidate)
+    finish(legacy_watcher, 0)
+    legacy_green = json.loads(legacy_verdict.read_text(encoding="utf-8-sig"))
+    require(legacy_green["reference_observer_mode"] == "HashOnly"
+            and legacy_green["reference_observer_mode_inferred"] is True,
+            "legacy HashOnly compatibility did not record explicit inference")
+
     bad = root / "bad" / "vbad"
     bad_verdict, bad_abort = root / "event-red.json", root / "event-red.abort.json"
     bad_ready = root / "event-red.ready.json"
@@ -247,7 +307,9 @@ def test_checkpoint_pipeline(root: Path) -> dict:
     require(red["ok"] is False and red["checked"] == 1 and bad_abort.is_file(),
             "event watcher did not fail fast on first mutation")
     return {"ok": True, "event_driven": True, "green_checkpoints": 36,
-            "red_stopped_after": red["checked"], "full_capture_retained": False}
+            "red_stopped_after": red["checked"], "hashonly_capture_retained": False,
+            "mode_matched_full_retained": 36, "cross_mode_rejected": True,
+            "legacy_full_rejected": True, "legacy_hashonly_supported": True}
 
 
 def main() -> int:

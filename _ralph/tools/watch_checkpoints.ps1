@@ -5,6 +5,8 @@ param(
     [string]$AbortSentinel = "",
     [string]$ReadySentinel = "",
     [ValidateSet("HashOnly", "Full")][string]$Mode = "HashOnly",
+    [ValidateSet("HashOnly", "Full")][string]$ExpectedReferenceMode = "HashOnly",
+    [ValidateSet("True", "False")][string]$ReferenceModeInferred = "False",
     [ValidateRange(1, 86400)][int]$TimeoutSeconds = 1800
 )
 
@@ -45,6 +47,10 @@ function Publish-Failure([string]$Reason, [object]$Rows, [object]$FirstMismatch,
         schema = $Schema
         ok = $false
         mode = $Mode
+        candidate_observer_mode = $Mode
+        reference_observer_mode = $ExpectedReferenceMode
+        reference_observer_mode_inferred = $ReferenceModeInferred -eq "True"
+        mode_matched_reference = $true
         event_driven = $true
         reason = $Reason
         first_mismatch = $FirstMismatch
@@ -73,6 +79,25 @@ $referencePath = [IO.Path]::GetFullPath($ReferenceManifest)
 $reference = Get-Content -LiteralPath $referencePath -Raw | ConvertFrom-Json
 if ($reference.schema -ne "smr.ralph.checkpoint_reference.v1" -or -not $reference.ok) {
     throw "invalid checkpoint reference manifest"
+}
+$modeProperty = $reference.identity.PSObject.Properties["observer_mode"]
+$manifestMode = if ($null -eq $modeProperty) { $null } else { [string]$modeProperty.Value }
+$manifestModeInferred = $false
+if ([string]::IsNullOrWhiteSpace([string]$manifestMode)) {
+    $manifestMode = "HashOnly"
+    $manifestModeInferred = $true
+}
+if ($manifestMode -notin @("HashOnly", "Full")) {
+    throw "checkpoint reference has invalid observer_mode: $manifestMode"
+}
+if ($manifestMode -ne $ExpectedReferenceMode) {
+    throw "reference observer mode changed after validation"
+}
+if ($manifestModeInferred -ne ($ReferenceModeInferred -eq "True")) {
+    throw "reference observer-mode inference changed after validation"
+}
+if ($Mode -ne $manifestMode) {
+    throw "observer-mode mismatch: reference is $manifestMode, candidate is $Mode"
 }
 $basePath = [IO.Path]::GetFullPath($CandidateBase)
 $directory = [IO.Path]::GetDirectoryName($basePath)
@@ -154,6 +179,10 @@ try {
         schema = $Schema
         ok = $true
         mode = $Mode
+        candidate_observer_mode = $Mode
+        reference_observer_mode = $ExpectedReferenceMode
+        reference_observer_mode_inferred = $ReferenceModeInferred -eq "True"
+        mode_matched_reference = $true
         event_driven = $true
         reason = "all ordered checkpoint hashes match"
         checked = $rows.Count

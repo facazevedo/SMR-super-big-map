@@ -3,8 +3,8 @@
 
 Hash-only candidate runs discard each completed artifact immediately after its exact
 size/SHA-256 is recorded.  A first mismatch writes an abort sentinel and stops scoring
-later artifacts.  Only candidates that survive this screen may be rerun in full mode,
-which retains the ordinary 36-file capture for authoritative equivalence.
+later artifacts.  Observation modes are part of reference identity: a retaining Full
+run may only be compared with an accepted-control reference recorded in Full mode.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from pathlib import Path
 
 REFERENCE_SCHEMA = "smr.ralph.checkpoint_reference.v1"
 COMPARE_SCHEMA = "smr.ralph.checkpoint_compare.v1"
+OBSERVER_MODES = ("HashOnly", "Full")
 STAGE_ORDER = (
     ("pre_stock_generation", ("rng_state", "prefab_order", "generation_inputs")),
     ("stock_surface_output", ("surface_height", "surface_terrain", "object_census")),
@@ -94,6 +95,7 @@ def command_build(args: argparse.Namespace) -> int:
         "task_sha256": sha256(args.task.resolve()),
         "scenario_input_sha256": sha256(args.scenario_input.resolve()),
         "capture_tool_sha256": sha256(args.capture_tool.resolve()),
+        "observer_mode": args.observer_mode,
     }
     if args.task_sha256:
         expected = validate_sha(args.task_sha256, "--task-sha256")
@@ -125,7 +127,27 @@ def load_reference(path: Path) -> dict:
     return manifest
 
 
-def verify_reference_inputs(manifest: dict, args: argparse.Namespace) -> None:
+def reference_observer_mode(manifest: dict) -> tuple[str, bool]:
+    """Return the reference observation mode and whether it was inferred.
+
+    The frozen v888 manifest predates explicit mode tagging.  It is retained only for
+    the low-retention HashOnly screen that has reproduced it 36/36.  Treating an
+    untagged reference as Full caused the checkpoint-13 false rejection, so legacy
+    inference deliberately fails closed for every retaining comparison.
+    """
+
+    identity = manifest.get("identity", {})
+    mode = identity.get("observer_mode")
+    if mode is None:
+        return "HashOnly", True
+    if mode not in OBSERVER_MODES:
+        raise ValueError(f"checkpoint reference has invalid observer_mode: {mode!r}")
+    return mode, False
+
+
+def verify_reference_inputs(
+    manifest: dict, args: argparse.Namespace, candidate_mode: str
+) -> tuple[str, bool]:
     identity = manifest["identity"]
     actual = {
         "source_commit": args.expected_reference_commit,
@@ -140,11 +162,21 @@ def verify_reference_inputs(manifest: dict, args: argparse.Namespace) -> None:
     if mismatches:
         raise ValueError("checkpoint reference identity mismatch: "
                          + json.dumps(mismatches, sort_keys=True))
+    reference_mode, inferred = reference_observer_mode(manifest)
+    if reference_mode != candidate_mode:
+        qualifier = "legacy untagged " if inferred else ""
+        raise ValueError(
+            f"observer-mode mismatch: {qualifier}reference is {reference_mode}, "
+            f"candidate is {candidate_mode}; record an accepted-control "
+            f"{candidate_mode} reference before comparing this mode"
+        )
+    return reference_mode, inferred
 
 
 def command_compare(args: argparse.Namespace) -> int:
     reference = load_reference(args.reference.resolve())
-    verify_reference_inputs(reference, args)
+    candidate_mode = "HashOnly" if args.discard else "Full"
+    reference_mode, inferred_mode = verify_reference_inputs(reference, args, candidate_mode)
     actual_rows = checkpoint_rows(args.candidate_base.resolve(), require=False)
     checked = []
     first_mismatch = None
@@ -164,7 +196,11 @@ def command_compare(args: argparse.Namespace) -> int:
             break
     result = {
         "schema": COMPARE_SCHEMA, "ok": first_mismatch is None,
-        "mode": "HashOnly" if args.discard else "Full", "checked": len(checked),
+        "mode": candidate_mode, "checked": len(checked),
+        "candidate_observer_mode": candidate_mode,
+        "reference_observer_mode": reference_mode,
+        "reference_observer_mode_inferred": inferred_mode,
+        "mode_matched_reference": True,
         "event_driven": False, "checkpoints": checked, "first_mismatch": first_mismatch,
         "full_capture_retained": not args.discard,
     }
@@ -175,7 +211,7 @@ def command_compare(args: argparse.Namespace) -> int:
 
 def command_watch(args: argparse.Namespace) -> int:
     reference = load_reference(args.reference.resolve())
-    verify_reference_inputs(reference, args)
+    reference_mode, inferred_mode = verify_reference_inputs(reference, args, args.mode)
     powershell = shutil.which("pwsh") or shutil.which("powershell")
     if powershell is None:
         raise ValueError("PowerShell is required for event-driven checkpoint watching")
@@ -184,6 +220,8 @@ def command_watch(args: argparse.Namespace) -> int:
                "-ReferenceManifest", str(args.reference.resolve()),
                "-CandidateBase", str(args.candidate_base.resolve()),
                "-Verdict", str(args.out.resolve()), "-Mode", args.mode,
+               "-ExpectedReferenceMode", reference_mode,
+               "-ReferenceModeInferred", str(inferred_mode),
                "-TimeoutSeconds", str(args.timeout_seconds)]
     if args.abort_sentinel:
         command.extend(["-AbortSentinel", str(args.abort_sentinel.resolve())])
@@ -209,6 +247,8 @@ def parse_args() -> argparse.Namespace:
     build.add_argument("--task-sha256")
     build.add_argument("--scenario-input", type=Path, required=True)
     build.add_argument("--capture-tool", type=Path, required=True)
+    build.add_argument("--observer-mode", choices=OBSERVER_MODES, required=True,
+                       help="observation mode used while producing the reference files")
     build.add_argument("--out", type=Path, required=True)
     build.set_defaults(func=command_build)
     compare = sub.add_parser("compare-existing")
