@@ -60,21 +60,36 @@ production refactor, not for extending infrastructure work.
 - Final integrity should validate the evidence already produced, not introduce a
   new custom scorer unless an existing required gate is genuinely missing.
 
-## Current mandatory sequence
+## Current mandatory sequence: validate the Full observer
 
-The Lua 5.3.6 compiler and exact chunk layout are already pinned at commit
-`1819130`. Do not revisit compiler discovery or chunk-format characterization.
+Pause source-migration candidate work. The accepted payload is v906 at rollback
+commit `9e028e9`. The reverted v907 height-accessor candidate passed the complete
+36/36 HashOnly comparison, but two retaining Full runs failed identically at
+checkpoint 13, before the accessor's hot region. The failure may therefore be an
+observer effect rather than a candidate effect.
 
-1. Build the Lua-5.3 allocation-identity transport and run the existing complete
-   compiler-visible identity gate in the next iteration.
-2. If green, run the real watcher-first HashOnly screen in the immediately
-   following iteration, using the accepted production payload and corrected
-   RoughTerrain private-stream reference.
-3. If that screen is 36/36, capture the ordered guard corpus once, disarm the
-   probe, and implement the exact protected-resource spatial index.
-4. If the transport screen fails, permit one cause-specific correction and one
-   revised live screen only. Then abandon this capture route and implement/test
-   the next highest-saving semantics-preserving terrain-preparation candidate.
+1. Run one accepted-v906 retaining Full control before constructing another
+   production optimization. Use the same corrected-RoughTerrain private-stream
+   reference, frozen observer, watcher-first ordering, cold-start boundary,
+   capture mode, and checkpoint order as iteration 115. Do not load or stage any
+   v907 candidate code.
+2. Match the control generator's executable structure and path/string footprint
+   to the allocation-matched revised iteration-115 Full input wherever output
+   identities permit. Record all unavoidable semantic differences explicitly.
+3. If accepted v906 reproduces checkpoint-13 census
+   `C45E51CC...F3B7` / 2,204,134 bytes, classify the retaining Full protocol as
+   non-authoritative for candidate causality. Preserve that red control, repair
+   the observer with the smallest cause-specific change, and require accepted
+   v906 to reproduce the frozen 36/36 reference before using Full mode on any
+   candidate again.
+4. If accepted v906 instead passes all 36 Full checkpoints under the identical
+   protocol, the observer is validated and the v907 rejection remains causal.
+   Record that conclusion and resume the next measured optimization family.
+5. If the control produces a different mismatch family, diagnose only the
+   control/reference protocol. Do not attribute it to v907 and do not start a
+   new optimization until the accepted baseline has a reproducible Full gate.
 
-No additional general-purpose instrumentation is allowed before the next live
-verdict.
+HashOnly plus an analytic certificate remains useful screening evidence, but it
+does not replace an immutable final task gate. The purpose of this control is to
+repair or validate that gate, not silently weaken it. No new general-purpose
+instrumentation is allowed.
