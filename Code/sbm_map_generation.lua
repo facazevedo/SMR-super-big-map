@@ -11064,8 +11064,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								resource_terrain_stats and resource_terrain_stats.native_precondition_enabled
 							final_resource_terrain_report.initial_native_precondition_patches =
 								resource_terrain_stats and resource_terrain_stats.native_precondition_patches
+							final_resource_terrain_report.initial_native_precondition_sites =
+								resource_terrain_stats and resource_terrain_stats.native_precondition_sites
 							final_resource_terrain_report.initial_native_precondition_cells =
 								resource_terrain_stats and resource_terrain_stats.native_precondition_cells
+							final_resource_terrain_report.initial_native_raster_cells =
+								resource_terrain_stats and resource_terrain_stats.native_raster_cells
+							final_resource_terrain_report.initial_native_mask_samples =
+								resource_terrain_stats and resource_terrain_stats.native_mask_samples
 						end
 						if resource_terrain_ok ~= true then
 							error("outer resource terrain audit failed: resource_failures="

@@ -2510,7 +2510,9 @@ local function PrepareOuterResourceTerrain(map)
 	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
 	local native_raster_cells, native_mask_samples = 0, 0
 	local native_inner_restored_patch_cells = 0
-	local native_precondition_patches, native_precondition_cells = 0, 0
+	local native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
+	local native_precondition_extra_passes = 2
+	local native_precondition_site_records = {}
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
 
@@ -2743,27 +2745,37 @@ local function PrepareOuterResourceTerrain(map)
 			native_mask_samples = native_mask_samples + mask_samples
 			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
-		-- A second composition of the same non-surface formula preconditions only the extractor and
-		-- landing-pad slopes that consume buildable zones. It retains the identical target, organic
-		-- support boundary, protected guards, patch order, and outer-ring clipping, while replacing
-		-- the prior whole-grid prepare/rebuild retry with bounded native patch work.
+		-- Only substantial cut/fill pads need more conditioning. Two extra compositions give those
+		-- few sites a third total organic blend while retaining the identical target, support boundary,
+		-- guards, patch order, and outer-ring clipping. Ordinary pads are not directly recomposed, and
+		-- the full gameplay core set is repaired after the filtered passes finish.
 		if native_precondition_enabled then
-			for _, patch in ipairs(patches) do
-				if patch.kind ~= "surface" then
-					local changed, raster_cells, mask_samples, restored_patch_cells =
-						apply_native_patch(patch, false)
-					modified_cells = modified_cells + changed
-					native_raster_cells = native_raster_cells + raster_cells
-					native_mask_samples = native_mask_samples + mask_samples
-					native_inner_restored_patch_cells = native_inner_restored_patch_cells
-						+ restored_patch_cells
-					native_precondition_patches = native_precondition_patches + 1
-					native_precondition_cells = native_precondition_cells + raster_cells
+			local minimum_delta = 2 * guim_v
+			for pass = 1, native_precondition_extra_passes do
+				for _, patch in ipairs(patches) do
+					if patch.kind ~= "surface" and patch.maximum_core_delta >= minimum_delta then
+						local changed, raster_cells, mask_samples, restored_patch_cells =
+							apply_native_patch(patch, false)
+						modified_cells = modified_cells + changed
+						native_raster_cells = native_raster_cells + raster_cells
+						native_mask_samples = native_mask_samples + mask_samples
+						native_inner_restored_patch_cells = native_inner_restored_patch_cells
+							+ restored_patch_cells
+						native_precondition_patches = native_precondition_patches + 1
+						native_precondition_cells = native_precondition_cells + raster_cells
+						if pass == 1 then
+							native_precondition_sites = native_precondition_sites + 1
+							local site = patch.resource_site or patch.rocket_site
+							if site then
+								native_precondition_site_records[#native_precondition_site_records + 1] = site
+							end
+						end
+					end
 				end
 			end
 		end
 		for patch_index, patch in ipairs(patches) do
-			if patch_index == #patches then break end
+			if patch_index == #patches and native_precondition_patches == 0 then break end
 			local changed, raster_cells, _, restored_patch_cells = apply_native_patch(patch, true)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
@@ -2896,7 +2908,7 @@ local function PrepareOuterResourceTerrain(map)
 			native_raster_error = tostring(native_error)
 			modified_cells, shaped_patches = 0, 0
 			native_raster_cells, native_mask_samples, native_inner_restored_patch_cells = 0, 0, 0
-			native_precondition_patches, native_precondition_cells = 0, 0
+			native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
 			local reset_ok, reset_error = pcall(function()
 				local failed_grid = grid
 				grid = raw
@@ -2926,6 +2938,11 @@ local function PrepareOuterResourceTerrain(map)
 	elseif ok_apply then
 		set_ok = true
 	end
+	if native_raster_used and set_ok then
+		for _, site in ipairs(native_precondition_site_records) do
+			site.patch_precondition_passes = native_precondition_extra_passes
+		end
+	end
 	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 
 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
@@ -2951,6 +2968,7 @@ local function PrepareOuterResourceTerrain(map)
 		native_mask_samples = native_mask_samples,
 		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
 		native_precondition_enabled = native_precondition_enabled,
+		native_precondition_sites = native_precondition_sites,
 		native_precondition_patches = native_precondition_patches,
 		native_precondition_cells = native_precondition_cells,
 		native_sample_step = native_sample_step,
@@ -2982,6 +3000,7 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
 			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
+			.. " native_precondition_sites=" .. tostring(report.native_precondition_sites)
 			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)
 			.. " native_precondition_cells=" .. tostring(report.native_precondition_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
@@ -3148,7 +3167,9 @@ local function AuditOuterResourceTerrain(map)
 				.. ":level_core=" .. tostring(site.level_core_radius or "?")
 				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
 				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
-				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?"))
+				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?")
+				.. ":patch_target=" .. tostring(site.patch_target or "?")
+				.. ":patch_precondition_passes=" .. tostring(site.patch_precondition_passes or 0))
 		end
 		-- Height edits do not change XY.  Re-snap both the marker and any revealed deposit so their
 		-- visuals and interaction point agree with the rebuilt terrain.
@@ -3174,7 +3195,9 @@ local function AuditOuterResourceTerrain(map)
 				.. tostring(site.r) .. ":" .. tostring(failure_reason)
 				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
 				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
-				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?"))
+				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?")
+				.. ":patch_target=" .. tostring(site.patch_target or "?")
+				.. ":patch_precondition_passes=" .. tostring(site.patch_precondition_passes or 0))
 		elseif site.modified == true and site.mountain == true then
 			-- Publish the same pad object used by anomaly planning so the combined resource/anomaly/effect
 			-- member count remains one shared source of truth through all three placement passes.

@@ -307,9 +307,9 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
--- Compose the same organic native patch a second time for extractor and landing footprints on the
--- initial pass. This preconditions the surrounding slope before the one authoritative grid rebuild,
--- avoiding the identical full-grid preparation/rebuild retry that rough terrain otherwise needs.
+-- On the initial pass, compose the same organic native patch two extra times only for extractor and
+-- landing footprints whose measured cut/fill is at least two metres. This targets the high-relief pads
+-- that otherwise need an identical whole-grid repair/rebuild without perturbing ordinary pads.
 config.OptimizeOuterResourceTerrainNativePrecondition = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
