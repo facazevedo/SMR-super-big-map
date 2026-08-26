@@ -90,9 +90,21 @@ def main() -> int:
             and "next(capture.counts) ~= nil" in wrapper
         ),
         "ordinary_callback_runs_before_wrapper_install": (
-            0
-            < line_of(wrapper, "original_capture_hook(stage, map, details)")
-            < line_of(wrapper, "terrain_copy.PrepareOuterResourceTerrain = wrapped_prepare")
+            (
+                legacy_branch := wrapper.find("decorated_hook = function")
+            )
+            >= 0
+            and 0
+            < line_of(
+                wrapper,
+                "original_capture_hook(stage, map, details)",
+                start=legacy_branch,
+            )
+            < line_of(
+                wrapper,
+                "terrain_copy.PrepareOuterResourceTerrain = wrapped_prepare",
+                start=legacy_branch,
+            )
         ),
         "decorator_restores_ordinary_callback_at_boundary": (
             "capture.hook = original_capture_hook" in wrapper

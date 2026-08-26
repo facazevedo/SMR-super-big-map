@@ -1,12 +1,12 @@
 -- Diagnostic-only pre-call input capture for PrepareOuterResourceTerrain.
 --
--- Load the ordinary determinism_capture_probe.lua first, then load this file before submitting
--- expanded generation.  This probe decorates the already-armed post_object_transform callback.
--- After that accepted boundary has been captured, it restores the ordinary callback and installs
--- a temporary table-level PrepareOuterResourceTerrain wrapper.  The wrapper snapshots every input
--- needed to reconstruct resource readiness and protected-guard order immediately before each
--- initial/repair call, then invokes the untouched original function.  Probe-enabled output and
--- timing are diagnostic only.
+-- Preferred staged mode loads this file from the ordinary determinism probe only after that probe
+-- has written its post_object_transform checkpoint.  Legacy decorator mode remains available for
+-- offline lifecycle tests, but is known to perturb the live pre-generation path and must not be
+-- used for another game capture.  Both modes install the same temporary table-level
+-- PrepareOuterResourceTerrain wrapper.  The wrapper snapshots every input needed to reconstruct
+-- resource readiness and protected-guard order immediately before each initial/repair call, then
+-- invokes the untouched original function.  Probe-enabled output and timing are diagnostic only.
 
 local out_base = rawget(_G, "g_SbmGuardInputCaptureOutBase")
 local identity = rawget(_G, "g_SbmGuardInputCaptureIdentity")
@@ -39,6 +39,8 @@ local state = type(SBM) == "table" and SBM.State or nil
 local terrain_copy = type(SBM) == "table" and SBM.TerrainCopy or nil
 local engine = type(SBM) == "table" and SBM.Engine or nil
 local capture = type(state) == "table" and state.test_determinism_capture or nil
+local staged_context = rawget(_G, "g_SbmGuardInputCaptureStagedContext")
+local staged_mode = type(staged_context) == "table"
 if type(terrain_copy) ~= "table"
 	or type(terrain_copy.PrepareOuterResourceTerrain) ~= "function" then
 	error("table-level PrepareOuterResourceTerrain export is unavailable")
@@ -46,8 +48,32 @@ end
 if type(capture) ~= "table" or type(capture.hook) ~= "function" then
 	error("ordinary determinism capture must be armed before guard input probe")
 end
-if type(capture.counts) ~= "table" or next(capture.counts) ~= nil then
-	error("guard input probe must be armed before the first determinism checkpoint")
+if type(capture.counts) ~= "table" then error("determinism capture counts are unavailable") end
+if staged_mode then
+	if staged_context.stage ~= "post_object_transform"
+		or staged_context.map == nil
+		or type(staged_context.capture_hook) ~= "function"
+		or staged_context.capture_hook ~= capture.hook
+		or staged_context.ordinary_checkpoint_written ~= true then
+		error("invalid staged post-object guard context")
+	end
+	local expected_counts = {
+		pre_stock_generation = 1, stock_surface_output = 1,
+		pre_z_transform = 2, post_z_transform = 2,
+	}
+	for key, value in pairs(capture.counts) do
+		if expected_counts[key] ~= value then
+			error("unexpected staged capture count " .. tostring(key) .. "=" .. tostring(value))
+		end
+		expected_counts[key] = nil
+	end
+	if next(expected_counts) ~= nil or capture.counts.post_object_transform ~= nil then
+		error("staged guard probe did not run inside the first post-object callback")
+	end
+else
+	if next(capture.counts) ~= nil then
+		error("guard input decorator must be armed before the first determinism checkpoint")
+	end
 end
 for _, name in ipairs({ "AsyncStringToFile", "GridWriteStr", "WorldToHex", "HexToWorld",
 	"point", "GetExtendedSpawnShape", "buildUnbuildableZ" }) do
@@ -431,26 +457,37 @@ wrapped_prepare = function(map)
 end
 
 local decorated_hook
-decorated_hook = function(stage, map, details)
-	local result = original_capture_hook(stage, map, details)
-	if result ~= true then error("ordinary determinism hook did not return true") end
-	if stage == "post_object_transform" then
-		if wrapper_installed or expected_map then error("post_object_transform repeated") end
-		expected_map = map
-		terrain_copy.PrepareOuterResourceTerrain = wrapped_prepare
-		wrapper_installed = true
-		if capture.hook ~= decorated_hook then error("determinism hook changed during decoration") end
-		capture.hook = original_capture_hook
-		rawset(_G, "g_SbmGuardInputCaptureStatus", "armed")
+if staged_mode then
+	expected_map = staged_context.map
+	if terrain_copy.PrepareOuterResourceTerrain ~= original_prepare then
+		error("PrepareOuterResourceTerrain changed before staged installation")
 	end
-	return true
+	terrain_copy.PrepareOuterResourceTerrain = wrapped_prepare
+	wrapper_installed = true
+	rawset(_G, "g_SbmGuardInputCaptureStagedContext", false)
+	rawset(_G, "g_SbmGuardInputCaptureStatus", "armed")
+else
+	decorated_hook = function(stage, map, details)
+		local result = original_capture_hook(stage, map, details)
+		if result ~= true then error("ordinary determinism hook did not return true") end
+		if stage == "post_object_transform" then
+			if wrapper_installed or expected_map then error("post_object_transform repeated") end
+			expected_map = map
+			terrain_copy.PrepareOuterResourceTerrain = wrapped_prepare
+			wrapper_installed = true
+			if capture.hook ~= decorated_hook then error("determinism hook changed during decoration") end
+			capture.hook = original_capture_hook
+			rawset(_G, "g_SbmGuardInputCaptureStatus", "armed")
+		end
+		return true
+	end
+	capture.hook = decorated_hook
+	rawset(_G, "g_SbmGuardInputCaptureStatus", "waiting_post_object_transform")
 end
-capture.hook = decorated_hook
 
-rawset(_G, "g_SbmGuardInputCaptureStatus", "waiting_post_object_transform")
 rawset(_G, "g_SbmGuardInputCaptureError", false)
 rawset(_G, "g_SbmGuardInputCaptureFinalize", function()
-	if capture.hook == decorated_hook then
+	if not staged_mode and capture.hook == decorated_hook then
 		capture.hook = original_capture_hook
 		error("guard input finalizer ran before post_object_transform")
 	end
@@ -475,7 +512,7 @@ rawset(_G, "g_SbmGuardInputCaptureFinalize", function()
 	return true
 end)
 rawset(_G, "g_SbmGuardInputCaptureAbort", function(reason)
-	if capture.hook == decorated_hook then capture.hook = original_capture_hook end
+	if not staged_mode and capture.hook == decorated_hook then capture.hook = original_capture_hook end
 	if wrapper_installed then restore_prepare("abort") end
 	rawset(_G, "g_SbmGuardInputCaptureStatus", "aborted")
 	rawset(_G, "g_SbmGuardInputCaptureError", tostring(reason or "host abort"))

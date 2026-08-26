@@ -36,6 +36,12 @@ if type(terrain) ~= "table" or type(terrain.GetHeightGrid) ~= "function"
 	error("required terrain capture APIs are unavailable")
 end
 
+-- Optional diagnostic staging seam.  The host may provide a loader function after this probe is
+-- armed, but the function is not even resolved until both post-object census files have been
+-- written and the ordinary checkpoint is marked complete.  This keeps all guard-probe source and
+-- setup outside the pre-checkpoint path.
+local post_object_loader_ran = false
+
 rawset(_G, "g_FzpDeterminismCaptureStatus", "armed")
 rawset(_G, "g_FzpDeterminismCaptureError", false)
 rawset(_G, "g_FzpDeterminismCaptureFinalized", false)
@@ -293,6 +299,20 @@ local function capture_hook(stage, map, details)
 		save_objects(artifacts[stage].object_census, map, false)
 		save_objects(artifacts[stage].collision_census, map, true)
 		stage_seen[stage] = true
+		local post_object_loader = rawget(_G, "g_FzpDeterminismCapturePostObjectLoader")
+		if post_object_loader then
+			if type(post_object_loader) ~= "function" then
+				error("g_FzpDeterminismCapturePostObjectLoader must be a function when provided")
+			end
+			if post_object_loader_ran then error("post-object loader repeated") end
+			post_object_loader_ran = true
+			local loader_result = post_object_loader(stage, map, details, capture_hook)
+			if loader_result ~= true then
+				error("post-object loader did not return true: " .. tostring(loader_result))
+			end
+			post_object_loader = nil
+			rawset(_G, "g_FzpDeterminismCapturePostObjectLoader", false)
+		end
 	else
 		error("unknown determinism capture stage " .. tostring(stage))
 	end
