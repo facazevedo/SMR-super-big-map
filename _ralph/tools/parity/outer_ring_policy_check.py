@@ -308,12 +308,12 @@ static_checks = {
         and "0, native_tile_step)" in outer_resource_terrain
         and "if patch_index == #patches then break end" in outer_resource_terrain
     ),
-    "native_raster_hard_restores_inner_rectangle": (
+    "native_raster_hard_restores_inner_patch_intersections": (
         "math.ceil(width * 0.1 - 0.5)" in outer_resource_terrain
         and "math.ceil(width * 0.9 - 0.5) - 1" in outer_resource_terrain
         and "result:copyrect(height_grid, restore_box" in outer_resource_terrain
-        and "grid:copyrect(raw, inner_box, point_fn(inner_x0, inner_y0))"
-        in outer_resource_terrain
+        and "native_inner_restored_patch_cells" in outer_resource_terrain
+        and "grid:copyrect(raw, inner_box" not in outer_resource_terrain
         and "keeping any transition entirely on the ring side" in outer_resource_terrain
     ),
     "native_raster_avoids_circular_terrain_setter": (
@@ -653,7 +653,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_913": "'version', 913" in METADATA,
+    "version_is_914": "'version', 914" in METADATA,
 }
 
 case_results = []

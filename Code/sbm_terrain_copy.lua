@@ -2505,7 +2505,7 @@ local function PrepareOuterResourceTerrain(map)
 	local inner_x1 = math.ceil(width * 0.9 - 0.5) - 1
 	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
 	local native_raster_cells, native_mask_samples = 0, 0
-	local native_inner_restore_cells = 0
+	local native_inner_restored_patch_cells = 0
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
 
@@ -2559,7 +2559,7 @@ local function PrepareOuterResourceTerrain(map)
 			end
 			return value
 		end
-		local ok, changed, raster_cells, mask_samples = pcall(function()
+		local ok, changed, raster_cells, mask_samples, inner_restored_patch_cells = pcall(function()
 			local base_transition = math.max(cells_per_hex * 2,
 				patch.outer_cells - patch.core_cells)
 			local maximum_width_scale = 1.35
@@ -2696,11 +2696,14 @@ local function PrepareOuterResourceTerrain(map)
 			-- patch snapshot after native interpolation, keeping any transition entirely on the ring side.
 			local restore_x0, restore_y0 = math.max(x0, inner_x0), math.max(y0, inner_y0)
 			local restore_x1, restore_y1 = math.min(x1, inner_x1), math.min(y1, inner_y1)
+			local restored_patch_cells = 0
 			if restore_x0 <= restore_x1 and restore_y0 <= restore_y1 then
 				local restore_box = box_fn(restore_x0 - x0, restore_y0 - y0,
 					restore_x1 - x0 + 1, restore_y1 - y0 + 1)
 				result:copyrect(height_grid, restore_box,
 					point_fn(restore_x0 - x0, restore_y0 - y0))
+				restored_patch_cells = (restore_x1 - restore_x0 + 1)
+					* (restore_y1 - restore_y0 + 1)
 			end
 
 			-- Native integer division truncates. Add half a fixed-point height unit first to retain the
@@ -2715,37 +2718,33 @@ local function PrepareOuterResourceTerrain(map)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native result conversion failed")
 			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
-			return changed_cells, local_width * local_height, mask_samples
+			return changed_cells, local_width * local_height, mask_samples, restored_patch_cells
 		end)
 		for index = #owned, 1, -1 do
 			local value = owned[index]
 			if value and type(value.free) == "function" then pcall(value.free, value) end
 		end
 		if not ok then error(changed, 0) end
-		return changed, raster_cells, mask_samples
+		return changed, raster_cells, mask_samples, inner_restored_patch_cells
 	end
 
 	local function apply_native_raster()
 		patch_sort()
 		for _, patch in ipairs(patches) do
 			shaped_patches = shaped_patches + 1
-			local changed, raster_cells, mask_samples = apply_native_patch(patch, false)
+			local changed, raster_cells, mask_samples, restored_patch_cells = apply_native_patch(patch, false)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
 			native_mask_samples = native_mask_samples + mask_samples
+			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
 		for patch_index, patch in ipairs(patches) do
 			if patch_index == #patches then break end
-			local changed, raster_cells = apply_native_patch(patch, true)
+			local changed, raster_cells, _, restored_patch_cells = apply_native_patch(patch, true)
 			modified_cells = modified_cells + changed
 			native_raster_cells = native_raster_cells + raster_cells
+			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
-		-- Restore the complete protected rectangle once more from the untouched transaction
-		-- source. This makes the outer-ring scope independent of patch overlap/order and also
-		-- gives the final install a simple, auditable no-write guarantee.
-		local inner_box = box_fn(inner_x0, inner_y0, inner_x1 + 1, inner_y1 + 1)
-		grid:copyrect(raw, inner_box, point_fn(inner_x0, inner_y0))
-		native_inner_restore_cells = (inner_x1 - inner_x0 + 1) * (inner_y1 - inner_y0 + 1)
 	end
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
@@ -2872,7 +2871,7 @@ local function PrepareOuterResourceTerrain(map)
 			native_raster_fallback = true
 			native_raster_error = tostring(native_error)
 			modified_cells, shaped_patches = 0, 0
-			native_raster_cells, native_mask_samples, native_inner_restore_cells = 0, 0, 0
+			native_raster_cells, native_mask_samples, native_inner_restored_patch_cells = 0, 0, 0
 			local reset_ok, reset_error = pcall(function()
 				local failed_grid = grid
 				grid = raw
@@ -2925,7 +2924,7 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_fallback = native_raster_fallback,
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
-		native_inner_restore_cells = native_inner_restore_cells,
+		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
 		native_sample_step = native_sample_step,
 		native_raster_error = native_raster_error,
 		error = not ok_apply and tostring(apply_error)
@@ -2954,7 +2953,7 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_fallback=" .. tostring(report.native_raster_fallback)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
-			.. " native_inner_restore=" .. tostring(report.native_inner_restore_cells)
+			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
 			.. " error=" .. tostring(report.error))
 	end
