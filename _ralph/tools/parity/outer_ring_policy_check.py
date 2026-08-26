@@ -166,6 +166,36 @@ def organic_resource_weight(
     return 1 - smooth
 
 
+def organic_apron_weight(
+    x: float,
+    y: float,
+    *,
+    short_radius: float,
+    long_radius: float,
+    mountain: tuple[float, float],
+    core_fraction: float,
+) -> tuple[float, bool]:
+    """Executable model of the rotated, lobed mountain-apron feather."""
+    u = x * mountain[0] + y * mountain[1]
+    v = -x * mountain[1] + y * mountain[0]
+    ru, rv = u / short_radius, v / long_radius
+    radius = math.hypot(ru, rv)
+    if radius >= 1.12:
+        return 0.0, False
+    nx, ny = (1.0, 0.0) if radius <= 0.0001 else (ru / radius, rv / radius)
+    lobe3 = nx**3 - 3 * nx * ny**2
+    lobe2 = nx**2 - ny**2
+    boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+    normalized = radius / boundary
+    if normalized >= 1:
+        return 0.0, False
+    if normalized <= core_fraction:
+        return 1.0, True
+    t = (normalized - core_fraction) / (1 - core_fraction)
+    smooth = t**3 * (t * (t * 6 - 15) + 10)
+    return 1 - smooth, False
+
+
 CASES = (
     Candidate("plain_flat", "plain"),
     Candidate("mountain_base_flat", "mountain", mountain_base=True),
@@ -524,6 +554,41 @@ static_checks = {
     ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
+    "native_mountain_apron_raster_is_enabled": (
+        "config.OptimizeMountainBaseApronNativeRaster = true" in CONFIG
+        and "C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER" in CONFIG
+        and 'cfg_bool("OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER", true)' in aprons
+    ),
+    "native_mountain_apron_uses_transactional_clone_and_legacy_fallback": (
+        "local working = grid:clone()" in aprons
+        and "native apron transactional clone unavailable" in aprons
+        and "pcall(legacy_apply, grid)" in aprons
+        and "native_raster_fallback = true" in aprons
+        and "local _, _, apron_grid = CreateNaturalMountainBaseBuildableAprons(map, stretched)"
+        in TERRAIN
+        and "stretched = apron_grid" in TERRAIN
+    ),
+    "native_mountain_apron_preserves_formula_and_exact_core": all(
+        token in aprons
+        for token in (
+            "local native_weight_scale, native_height_scale = 4096, 256",
+            "local native_sample_step = 4",
+            "local mask = own(native_resample(coarse, local_width, local_height, true))",
+            "if in_core then mask:set(x - x0, y - y0, native_weight_scale) end",
+            "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
+            "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
+            "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
+        )
+    ),
+    "native_mountain_apron_hard_restores_inner_patch_intersections": (
+        "math.ceil(ring_sectors * sector_w - 0.5)" in aprons
+        and "math.ceil((count_x - ring_sectors) * sector_w - 0.5) - 1" in aprons
+        and "result:copyrect(height_grid, restore_box" in aprons
+        and "native_inner_restored_patch_cells" in aprons
+    ),
+    "native_mountain_apron_avoids_circular_terrain_setter": (
+        "SetHeightCircle" not in aprons and "terrain.SetHeightCircle" not in aprons
+    ),
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
     ),
@@ -710,7 +775,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_918": "'version', 918" in METADATA,
+    "version_is_919": "'version', 919" in METADATA,
 }
 
 case_results = []
@@ -1001,6 +1066,121 @@ native_raster_checks = {
     "rocket_only_retry_disables_native_precondition": not native_precondition_enabled(None, []),
 }
 
+# Compact mountain-apron corpus. It models the exact v919 endpoint-aligned sampler, fixed-point
+# mask, native bilinear resample, and full-resolution core override without generating a map.
+apron_short_radius = 200.0
+apron_long_radius = 270.0
+apron_mountain = (math.cos(0.713), math.sin(0.713))
+apron_core_fraction = 0.20
+apron_min = math.floor(-apron_long_radius - 2)
+apron_max = math.ceil(apron_long_radius + 2)
+apron_size = apron_max - apron_min + 1
+apron_coarse_size = math.ceil((apron_size - 1) / native_step) + 1
+apron_core_extent = math.ceil(
+    apron_long_radius * apron_core_fraction * 1.10 + 2
+)
+
+apron_coarse = [
+    [
+        round(
+            organic_apron_weight(
+                apron_min
+                + coarse_x * (apron_size - 1) / (apron_coarse_size - 1),
+                apron_min
+                + coarse_y * (apron_size - 1) / (apron_coarse_size - 1),
+                short_radius=apron_short_radius,
+                long_radius=apron_long_radius,
+                mountain=apron_mountain,
+                core_fraction=apron_core_fraction,
+            )[0]
+            * native_scale
+        )
+        / native_scale
+        for coarse_x in range(apron_coarse_size)
+    ]
+    for coarse_y in range(apron_coarse_size)
+]
+
+
+def native_apron_resampled_weight(x: int, y: int) -> float:
+    """Model the v919 endpoint-aligned native apron mask and exact core override."""
+    exact, in_core = organic_apron_weight(
+        x,
+        y,
+        short_radius=apron_short_radius,
+        long_radius=apron_long_radius,
+        mountain=apron_mountain,
+        core_fraction=apron_core_fraction,
+    )
+    if in_core:
+        return 1.0
+    fx = (x - apron_min) * (apron_coarse_size - 1) / (apron_size - 1)
+    fy = (y - apron_min) * (apron_coarse_size - 1) / (apron_size - 1)
+    ix = min(apron_coarse_size - 2, max(0, math.floor(fx)))
+    iy = min(apron_coarse_size - 2, max(0, math.floor(fy)))
+    tx, ty = fx - ix, fy - iy
+    top = apron_coarse[iy][ix] * (1 - tx) + apron_coarse[iy][ix + 1] * tx
+    bottom = (
+        apron_coarse[iy + 1][ix] * (1 - tx)
+        + apron_coarse[iy + 1][ix + 1] * tx
+    )
+    return max(0.0, min(1.0, top * (1 - ty) + bottom * ty))
+
+
+apron_errors: list[float] = []
+apron_core_exact = True
+apron_boundary_zero = True
+for y in range(apron_min, apron_max + 1):
+    for x in range(apron_min, apron_max + 1):
+        exact, in_core = organic_apron_weight(
+            x,
+            y,
+            short_radius=apron_short_radius,
+            long_radius=apron_long_radius,
+            mountain=apron_mountain,
+            core_fraction=apron_core_fraction,
+        )
+        resampled = native_apron_resampled_weight(x, y)
+        apron_errors.append(abs(exact - resampled))
+        if in_core:
+            apron_core_exact = apron_core_exact and resampled == 1.0
+        if x in (apron_min, apron_max) or y in (apron_min, apron_max):
+            apron_boundary_zero = apron_boundary_zero and resampled == 0.0
+
+apron_errors_sorted = sorted(apron_errors)
+apron_mean_error = sum(apron_errors) / len(apron_errors)
+apron_p99_error = apron_errors_sorted[math.floor(0.99 * len(apron_errors))]
+apron_max_error = max(apron_errors)
+apron_lua_sample_reduction = (apron_size * apron_size) / (
+    apron_coarse_size * apron_coarse_size + (2 * apron_core_extent + 1) ** 2
+)
+
+
+def native_apron_height(x: int, y: int) -> int:
+    old = 22000 + x - 2 * y
+    plane = 21900 + 0.75 * x - 0.5 * y
+    weight = native_apron_resampled_weight(x, y)
+    shaped = round(plane + (old - plane) * (1 - weight**3))
+    # Model the exact patch-local restore from the fixed-point snapshot.
+    return old if x >= 160 and -80 <= y <= 80 else shaped
+
+
+apron_inner_restore_exact = all(
+    native_apron_height(x, y) == 22000 + x - 2 * y
+    for x, y in ((160, -80), (190, 0), (240, 80))
+)
+
+native_apron_checks = {
+    "realistic_apron_corpus_size_is_stable": apron_size * apron_size == 297025,
+    "lua_mask_samples_drop_by_at_least_8x": apron_lua_sample_reduction >= 8,
+    "mean_mask_error_below_0_00010": apron_mean_error < 0.00010,
+    "p99_mask_error_below_0_0007": apron_p99_error < 0.0007,
+    "maximum_mask_error_below_0_002": apron_max_error < 0.002,
+    "full_resolution_lobed_core_is_exact": apron_core_exact,
+    "bounded_patch_edge_remains_zero": apron_boundary_zero,
+    "inner_rectangle_restore_is_exact": apron_inner_restore_exact,
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
     "schema_version": 16,
@@ -1021,6 +1201,16 @@ report = {
         "mask_mean_absolute_error": native_mask_mean_error,
         "mask_p99_absolute_error": native_mask_p99_error,
         "mask_max_absolute_error": native_mask_max_error,
+    },
+    "native_apron_checks": native_apron_checks,
+    "native_apron_metrics": {
+        "full_cells": apron_size * apron_size,
+        "coarse_samples": apron_coarse_size * apron_coarse_size,
+        "core_samples": (2 * apron_core_extent + 1) ** 2,
+        "lua_sample_reduction": apron_lua_sample_reduction,
+        "mask_mean_absolute_error": apron_mean_error,
+        "mask_p99_absolute_error": apron_p99_error,
+        "mask_max_absolute_error": apron_max_error,
     },
     "preferred_candidates": preferred,
 }
@@ -1045,6 +1235,8 @@ report["guard_prefilter_total"] = len(guard_prefilter_checks)
 report["guard_prefilter_samples"] = guard_samples
 report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
+report["native_apron_passed"] = sum(native_apron_checks.values())
+report["native_apron_total"] = len(native_apron_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1056,6 +1248,7 @@ report["ok"] = (
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
+    and all(native_apron_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
