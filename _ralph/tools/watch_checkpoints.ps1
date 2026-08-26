@@ -5,7 +5,6 @@ param(
     [string]$AbortSentinel = "",
     [string]$ReadySentinel = "",
     [ValidateSet("HashOnly", "Full")][string]$Mode = "HashOnly",
-    [string]$ShadowRetentionDirectory = "",
     [ValidateRange(1, 86400)][int]$TimeoutSeconds = 1800
 )
 
@@ -53,12 +52,6 @@ function Publish-Failure([string]$Reason, [object]$Rows, [object]$FirstMismatch,
         checkpoints = @($Rows)
         elapsed_ms = [math]::Round(((Get-Date) - $Started).TotalMilliseconds, 3)
     }
-    if ($null -ne $script:shadowDirectory) {
-        $payload.shadow_retention = $true
-        $payload.shadow_retention_directory = $script:shadowDirectory
-        $payload.retained_file_count = @($Rows | Where-Object { $_.moved_to_shadow }).Count
-        $payload.full_capture_retained = $true
-    }
     Write-JsonAtomic $Verdict $payload
     if ($AbortSentinel) {
         Write-JsonAtomic $AbortSentinel ([ordered]@{
@@ -85,25 +78,6 @@ $basePath = [IO.Path]::GetFullPath($CandidateBase)
 $directory = [IO.Path]::GetDirectoryName($basePath)
 $prefix = [IO.Path]::GetFileName($basePath)
 [IO.Directory]::CreateDirectory($directory) | Out-Null
-$shadowDirectory = $null
-if ($ShadowRetentionDirectory) {
-    if ($Mode -ne "Full") {
-        throw "shadow retention is valid only in Full mode"
-    }
-    $shadowDirectory = [IO.Path]::GetFullPath($ShadowRetentionDirectory)
-    if ([string]::Equals($shadowDirectory, $directory, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "shadow retention directory must differ from the candidate directory"
-    }
-    $candidateRoot = [IO.Path]::GetPathRoot($basePath)
-    $shadowRoot = [IO.Path]::GetPathRoot($shadowDirectory)
-    if (-not [string]::Equals($candidateRoot, $shadowRoot, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "shadow retention directory must be on the candidate volume"
-    }
-    if (Test-Path -LiteralPath $shadowDirectory) {
-        throw "shadow retention directory is not fresh: $shadowDirectory"
-    }
-    [IO.Directory]::CreateDirectory($shadowDirectory) | Out-Null
-}
 $existing = @(Get-ChildItem -LiteralPath $directory -File | Where-Object { $_.Name.StartsWith($prefix) })
 if ($existing.Count -ne 0) {
     throw "candidate base is not fresh; found $($existing.Count) existing files"
@@ -162,13 +136,6 @@ try {
         if ($Mode -eq "HashOnly") {
             Remove-Item -LiteralPath $candidate -Force
             $row.discarded_after_hash = $true
-        } elseif ($null -ne $shadowDirectory) {
-            $retained = Join-Path $shadowDirectory ([IO.Path]::GetFileName($candidate))
-            [IO.File]::Move($candidate, $retained, $false)
-            $row.discarded_after_hash = $false
-            $row.moved_to_shadow = $true
-            $row.retained_path = $retained
-            $row.candidate_removed_after_hash = -not (Test-Path -LiteralPath $candidate)
         } else {
             $row.discarded_after_hash = $false
         }
@@ -194,11 +161,6 @@ try {
         aggregate_sha256 = $aggregate
         elapsed_ms = [math]::Round(((Get-Date) - $started).TotalMilliseconds, 3)
         full_capture_retained = $Mode -eq "Full"
-    }
-    if ($null -ne $shadowDirectory) {
-        $payload.shadow_retention = $true
-        $payload.shadow_retention_directory = $shadowDirectory
-        $payload.retained_file_count = @($rows | Where-Object { $_.moved_to_shadow }).Count
     }
     Write-JsonAtomic $Verdict $payload
     $payload | ConvertTo-Json -Depth 30
