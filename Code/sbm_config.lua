@@ -307,6 +307,10 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
+-- Compose the same organic native patch a second time for extractor and landing footprints on the
+-- initial pass. This preconditions the surrounding slope before the one authoritative grid rebuild,
+-- avoiding the identical full-grid preparation/rebuild retry that rough terrain otherwise needs.
+config.OptimizeOuterResourceTerrainNativePrecondition = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
@@ -908,6 +912,8 @@ C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
+C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
+	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
 C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(

@@ -265,6 +265,12 @@ static_checks = {
         and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)'
         in outer_resource_terrain
     ),
+    "native_outer_resource_precondition_is_enabled": (
+        "config.OptimizeOuterResourceTerrainNativePrecondition = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION" in CONFIG
+        and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION", true)'
+        in outer_resource_terrain
+    ),
     "native_raster_retains_legacy_fallback_from_raw_source": (
         "local function apply_legacy_raster()" in outer_resource_terrain
         and "local working = grid:clone()" in outer_resource_terrain
@@ -289,6 +295,13 @@ static_checks = {
             "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
             "native_mul_div_add(target_delta, mask, native_weight_scale, 0)",
         )
+    ),
+    "native_raster_preconditions_only_non_surface_patches": (
+        'if patch.kind ~= "surface" then' in outer_resource_terrain
+        and "apply_native_patch(patch, false)" in outer_resource_terrain
+        and "native_precondition_patches" in outer_resource_terrain
+        and "not prior_terrain_plan_present" in outer_resource_terrain
+        and "type(map.SuperBigMapOuterResourceRocketPads)" in outer_resource_terrain
     ),
     "native_raster_converts_only_patch_local_grids": (
         "local source_native = own(grid:new_instance(local_width, local_height))"
@@ -653,7 +666,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_914": "'version', 914" in METADATA,
+    "version_is_915": "'version', 915" in METADATA,
 }
 
 case_results = []
@@ -889,6 +902,12 @@ native_inner_restore_exact = all(
     native_synthetic_height(x, y) == 12345 + 2 * x - y
     for x, y in ((160, -60), (180, 0), (220, 60))
 )
+
+
+def native_precondition_enabled(previous_resource_plan, previous_rocket_plan) -> bool:
+    return previous_resource_plan is None and previous_rocket_plan is None
+
+
 native_raster_checks = {
     "realistic_corpus_size_is_stable": (
         native_size * native_size == 201601
@@ -902,6 +921,9 @@ native_raster_checks = {
     "maximum_support_boundary_is_exact": native_support_exact,
     "protected_circle_assignment_is_exact": native_guard_exact,
     "inner_rectangle_copy_restore_is_exact": native_inner_restore_exact,
+    "initial_plan_enables_native_precondition": native_precondition_enabled(None, None),
+    "resource_only_retry_disables_native_precondition": not native_precondition_enabled([], None),
+    "rocket_only_retry_disables_native_precondition": not native_precondition_enabled(None, []),
 }
 
 report = {

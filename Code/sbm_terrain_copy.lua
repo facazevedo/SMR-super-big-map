@@ -1825,6 +1825,8 @@ local function PrepareOuterResourceTerrain(map)
 	-- carry the marker identity into the bounded retry so it becomes a patch
 	-- candidate even if a transient grid read says it is ready again.  This does
 	-- not broaden terrain edits: all other ready footprints remain protected.
+	local prior_terrain_plan_present = type(map.SuperBigMapOuterResourceTerrainSites) == "table"
+		or type(map.SuperBigMapOuterResourceRocketPads) == "table"
 	local retry_failed_sites, retry_failed_markers, retry_failed_resource_kinds = {}, {}, {}
 	if type(map.SuperBigMapOuterResourceTerrainSites) == "table" then
 		for _, previous in ipairs(map.SuperBigMapOuterResourceTerrainSites) do
@@ -2486,6 +2488,8 @@ local function PrepareOuterResourceTerrain(map)
 	local native_is_compute = Global("IsComputeGrid")
 	local box_fn = Global("box")
 	local native_requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)
+	local native_precondition_enabled = native_requested and not prior_terrain_plan_present
+		and cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION", true)
 	local native_available = native_requested
 		and type(native_new_grid) == "function" and type(native_resample) == "function"
 		and type(native_mul_div_add) == "function" and type(native_add_mul_div) == "function"
@@ -2506,6 +2510,7 @@ local function PrepareOuterResourceTerrain(map)
 	local inner_y1 = math.ceil(height * 0.9 - 0.5) - 1
 	local native_raster_cells, native_mask_samples = 0, 0
 	local native_inner_restored_patch_cells = 0
+	local native_precondition_patches, native_precondition_cells = 0, 0
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
 
@@ -2738,6 +2743,25 @@ local function PrepareOuterResourceTerrain(map)
 			native_mask_samples = native_mask_samples + mask_samples
 			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
+		-- A second composition of the same non-surface formula preconditions only the extractor and
+		-- landing-pad slopes that consume buildable zones. It retains the identical target, organic
+		-- support boundary, protected guards, patch order, and outer-ring clipping, while replacing
+		-- the prior whole-grid prepare/rebuild retry with bounded native patch work.
+		if native_precondition_enabled then
+			for _, patch in ipairs(patches) do
+				if patch.kind ~= "surface" then
+					local changed, raster_cells, mask_samples, restored_patch_cells =
+						apply_native_patch(patch, false)
+					modified_cells = modified_cells + changed
+					native_raster_cells = native_raster_cells + raster_cells
+					native_mask_samples = native_mask_samples + mask_samples
+					native_inner_restored_patch_cells = native_inner_restored_patch_cells
+						+ restored_patch_cells
+					native_precondition_patches = native_precondition_patches + 1
+					native_precondition_cells = native_precondition_cells + raster_cells
+				end
+			end
+		end
 		for patch_index, patch in ipairs(patches) do
 			if patch_index == #patches then break end
 			local changed, raster_cells, _, restored_patch_cells = apply_native_patch(patch, true)
@@ -2872,6 +2896,7 @@ local function PrepareOuterResourceTerrain(map)
 			native_raster_error = tostring(native_error)
 			modified_cells, shaped_patches = 0, 0
 			native_raster_cells, native_mask_samples, native_inner_restored_patch_cells = 0, 0, 0
+			native_precondition_patches, native_precondition_cells = 0, 0
 			local reset_ok, reset_error = pcall(function()
 				local failed_grid = grid
 				grid = raw
@@ -2925,6 +2950,9 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
 		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
+		native_precondition_enabled = native_precondition_enabled,
+		native_precondition_patches = native_precondition_patches,
+		native_precondition_cells = native_precondition_cells,
 		native_sample_step = native_sample_step,
 		native_raster_error = native_raster_error,
 		error = not ok_apply and tostring(apply_error)
@@ -2954,6 +2982,8 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
 			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
+			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)
+			.. " native_precondition_cells=" .. tostring(report.native_precondition_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
 			.. " error=" .. tostring(report.error))
 	end
