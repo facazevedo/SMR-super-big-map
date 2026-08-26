@@ -10583,19 +10583,51 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	local pass_started = GetPreciseTicks()
 	local passability_token = LoadingBegin(
 		label .. " final RebuildPassability (" .. stage .. ")", map)
+	local trace_scheduled_subcalls = stage == "post-pipeline scheduled revalidation"
+	local subcall_token = false
 	local pass_ok, pass_err
 	if invalidate_final then
 		-- The measured sequence (iteration 034), box form when the engine box
 		-- constructor is available and whole-map form otherwise.
 		pass_ok, pass_err = pcall(function()
 			if final_pass_box then
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final InvalidateHeight (" .. stage .. ")", map)
+				end
 				terrain_api.InvalidateHeight(map, final_pass_box)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final InvalidateType (" .. stage .. ")", map)
+				end
 				terrain_api.InvalidateType(map, final_pass_box)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final RebuildPassability core (" .. stage .. ")", map)
+				end
 				terrain_api.RebuildPassability(map, final_pass_box)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
 			else
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final InvalidateHeight (" .. stage .. ")", map)
+				end
 				terrain_api.InvalidateHeight(map)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final InvalidateType (" .. stage .. ")", map)
+				end
 				terrain_api.InvalidateType(map)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
+				if trace_scheduled_subcalls then
+					subcall_token = LoadingBegin(
+						label .. " final RebuildPassability core (" .. stage .. ")", map)
+				end
 				terrain_api.RebuildPassability(map)
+				if trace_scheduled_subcalls then LoadingEnd(subcall_token, nil, true) end
 			end
 		end)
 	else
