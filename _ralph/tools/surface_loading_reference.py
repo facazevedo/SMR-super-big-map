@@ -113,27 +113,50 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\tlocal surface_thread_rng_index = 0
 \t\t\tlocal surface_generation_thread = false
 \t\t\tlocal current_thread = rawget(_G, "CurrentThread")
-\t\t\tlocal original_create_real_time_thread = rawget(_G, "CreateRealTimeThread")
-\t\t\tlocal original_global = rawget(_G, "Global")
 \t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
 \t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
 \t\t\tif type(current_thread) ~= "function" then
 \t\t\t\terror("CurrentThread unavailable for surface-generation RNG scope")
 \t\t\tend
-\t\t\tif type(original_create_real_time_thread) ~= "function" then
-\t\t\t\terror("CreateRealTimeThread unavailable for surface-generation RNG scope")
-\t\t\tend
-\t\t\tif type(original_global) ~= "function" then
-\t\t\t\terror("Global unavailable for surface scheduler census")
-\t\t\tend
 \t\t\tif type(surface_scheduler) ~= "function" then
 \t\t\t\terror("RunSurfaceStretchIfEnabled unavailable for surface-generation RNG scope")
 \t\t\tend
+\t\t\tif type(debug) ~= "table" or type(debug.getupvalue) ~= "function"
+\t\t\t\tor type(debug.setupvalue) ~= "function" then
+\t\t\t\terror("debug upvalue API unavailable for surface scheduler scope")
+\t\t\tend
+\t\t\tlocal scheduler_global_upvalue_index = false
+\t\t\tlocal scheduler_global_upvalue_name = false
+\t\t\tlocal original_global = false
+\t\t\tfor index = 1, 64 do
+\t\t\t\tlocal ok, name, value = pcall(debug.getupvalue, surface_scheduler, index)
+\t\t\t\tif not ok then
+\t\t\t\t\terror("surface scheduler upvalue inspection failed at " .. tostring(index))
+\t\t\t\tend
+\t\t\t\tif name == nil then break end
+\t\t\t\tif name == "Global" then
+\t\t\t\t\tif scheduler_global_upvalue_index then
+\t\t\t\t\t\terror("surface scheduler has multiple Global upvalues")
+\t\t\t\t\tend
+\t\t\t\t\tscheduler_global_upvalue_index = index
+\t\t\t\t\tscheduler_global_upvalue_name = name
+\t\t\t\t\toriginal_global = value
+\t\t\t\tend
+\t\t\tend
+\t\t\tif not scheduler_global_upvalue_index or type(original_global) ~= "function" then
+\t\t\t\terror("RunSurfaceStretchIfEnabled Global upvalue unavailable")
+\t\t\tend
+\t\t\tlocal original_create_real_time_thread = original_global("CreateRealTimeThread")
+\t\t\tif type(original_create_real_time_thread) ~= "function" then
+\t\t\t\terror("CreateRealTimeThread unavailable through scheduler Global upvalue")
+\t\t\tend
 \t\t\tlocal scheduler_census_nonce = "{census_nonce}"
 \t\t\tlocal scheduler_census_rows = {{
-\t\t\t\t"schema=smr.ralph.surface_scheduler_census.v1",
+\t\t\t\t"schema=smr.ralph.surface_scheduler_upvalue_census.v2",
 \t\t\t\t"nonce=" .. scheduler_census_nonce,
 \t\t\t\t"setup_executed=true",
+\t\t\t\t"upvalue_index=" .. tostring(scheduler_global_upvalue_index),
+\t\t\t\t"upvalue_name=" .. tostring(scheduler_global_upvalue_name),
 \t\t\t}}
 \t\t\tlocal scheduler_lookup_count = 0
 \t\t\tlocal function write_scheduler_census(stage)
@@ -146,63 +169,46 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\terror("surface scheduler census write failed: " .. tostring(census_error))
 \t\t\t\tend
 \t\t\tend
-\t\t\tlocal function append_scheduler_stack(event_index)
-\t\t\t\tfor level = 2, 16 do
-\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "nSfl")
-\t\t\t\t\tif not ok or type(info) ~= "table" then break end
-\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
-\t\t\t\t\t\t"frame", tostring(event_index), tostring(level),
-\t\t\t\t\t\ttostring(info.name), tostring(info.short_src),
-\t\t\t\t\t\ttostring(info.linedefined), tostring(info.currentline),
-\t\t\t\t\t\ttostring(info.func == surface_scheduler),
-\t\t\t\t\t}}, "\\t")
-\t\t\t\tend
-\t\t\tend
-\t\t\tlocal function called_by_surface_scheduler()
-\t\t\t\tfor level = 2, 12 do
-\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
-\t\t\t\t\tif not ok or type(info) ~= "table" then break end
-\t\t\t\t\tif info.func == surface_scheduler then return true end
-\t\t\t\tend
-\t\t\t\treturn false
-\t\t\tend
 \t\t\tlocal scoped_create_real_time_thread
 \t\t\tlocal scoped_global
 \t\t\tscoped_global = function(name, ...)
 \t\t\t\tlocal value = original_global(name, ...)
 \t\t\t\tif name == "CreateRealTimeThread" then
+\t\t\t\t\tif scheduler_lookup_count ~= 0 then
+\t\t\t\t\t\terror("surface scheduler CreateRealTimeThread lookup repeated")
+\t\t\t\t\tend
 \t\t\t\t\tscheduler_lookup_count = scheduler_lookup_count + 1
 \t\t\t\t\tstate.surface_scheduler_global_lookup_count = scheduler_lookup_count
-\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
-\t\t\t\t\t\t"lookup", tostring(scheduler_lookup_count),
-\t\t\t\t\t\t"returned_scoped=" .. tostring(value == scoped_create_real_time_thread),
-\t\t\t\t\t\t"returned_original=" .. tostring(value == original_create_real_time_thread),
-\t\t\t\t\t\t"raw_scoped=" .. tostring(rawget(_G, "CreateRealTimeThread") == scoped_create_real_time_thread),
-\t\t\t\t\t}}, "\\t")
-\t\t\t\t\tappend_scheduler_stack(scheduler_lookup_count)
-\t\t\t\t\twrite_scheduler_census("global_lookup")
+\t\t\t\t\tif value ~= original_create_real_time_thread then
+\t\t\t\t\t\terror("scheduler Global returned unexpected CreateRealTimeThread identity")
+\t\t\t\t\tend
+\t\t\t\t\tlocal restored_name = debug.setupvalue(surface_scheduler,
+\t\t\t\t\t\tscheduler_global_upvalue_index, original_global)
+\t\t\t\t\tlocal verify_name, verify_value = debug.getupvalue(surface_scheduler,
+\t\t\t\t\t\tscheduler_global_upvalue_index)
+\t\t\t\t\tstate.surface_scheduler_upvalue_restored =
+\t\t\t\t\t\trestored_name == scheduler_global_upvalue_name
+\t\t\t\t\t\tand verify_name == scheduler_global_upvalue_name
+\t\t\t\t\t\tand verify_value == original_global
+\t\t\t\t\tif not state.surface_scheduler_upvalue_restored then
+\t\t\t\t\t\terror("surface scheduler Global upvalue did not restore")
+\t\t\t\t\tend
+\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] =
+\t\t\t\t\t\t"lookup=1\\tupvalue_restored=true\\treturned_scoped=true"
+\t\t\t\t\twrite_scheduler_census("create_thread_lookup")
+\t\t\t\t\treturn scoped_create_real_time_thread
 \t\t\t\tend
 \t\t\t\treturn value
 \t\t\tend
 \t\t\tscoped_create_real_time_thread = function(fn, ...)
-\t\t\t\tif not called_by_surface_scheduler() then
-\t\t\t\t\treturn original_create_real_time_thread(fn, ...)
-\t\t\t\tend
 \t\t\t\tif state.surface_generation_thread_scheduled then
 \t\t\t\t\terror("surface-generation thread scheduled more than once")
 \t\t\t\tend
 \t\t\t\tstate.surface_generation_thread_scheduled = true
-\t\t\t\trawset(_G, "CreateRealTimeThread", original_create_real_time_thread)
-\t\t\t\tif rawget(_G, "Global") == scoped_global then
-\t\t\t\t\trawset(_G, "Global", original_global)
+\t\t\t\tif state.surface_scheduler_upvalue_restored ~= true then
+\t\t\t\t\terror("surface thread scheduled before Global upvalue restoration")
 \t\t\t\tend
-\t\t\t\tstate.create_thread_dispatcher_restored =
-\t\t\t\t\trawget(_G, "CreateRealTimeThread") == original_create_real_time_thread
-\t\t\t\tstate.global_dispatcher_restored = rawget(_G, "Global") == original_global
-\t\t\t\tif not state.create_thread_dispatcher_restored then
-\t\t\t\t\terror("CreateRealTimeThread dispatcher did not restore")
-\t\t\t\tend
-\t\t\t\twrite_scheduler_census("scheduler_intercepted")
+\t\t\t\twrite_scheduler_census("thread_scheduled")
 \t\t\t\treturn original_create_real_time_thread(function(...)
 \t\t\t\t\tsurface_generation_thread = current_thread()
 \t\t\t\t\tstate.surface_generation_thread_identified =
@@ -210,27 +216,33 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\tif not state.surface_generation_thread_identified then
 \t\t\t\t\t\terror("CurrentThread returned no surface-generation identity")
 \t\t\t\t\tend
+\t\t\t\t\twrite_scheduler_census("thread_identified")
 \t\t\t\t\treturn fn(...)
 \t\t\t\tend, ...)
 \t\t\tend
-\t\t\trawset(_G, "Global", scoped_global)
-\t\t\tif rawget(_G, "Global") ~= scoped_global then
-\t\t\t\terror("Global scheduler census dispatcher did not install")
-\t\t\tend
-\t\t\trawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)
-\t\t\tif rawget(_G, "CreateRealTimeThread") ~= scoped_create_real_time_thread then
-\t\t\t\terror("CreateRealTimeThread capture dispatcher did not install")
+\t\t\tlocal installed_name = debug.setupvalue(surface_scheduler,
+\t\t\t\tscheduler_global_upvalue_index, scoped_global)
+\t\t\tlocal installed_verify_name, installed_verify_value = debug.getupvalue(
+\t\t\t\tsurface_scheduler, scheduler_global_upvalue_index)
+\t\t\tstate.surface_scheduler_upvalue_installed =
+\t\t\t\tinstalled_name == scheduler_global_upvalue_name
+\t\t\t\tand installed_verify_name == scheduler_global_upvalue_name
+\t\t\t\tand installed_verify_value == scoped_global
+\t\t\tif not state.surface_scheduler_upvalue_installed then
+\t\t\t\terror("surface scheduler Global upvalue dispatcher did not install")
 \t\t\tend
 \t\t\tstate.surface_scheduler_census_nonce = scheduler_census_nonce
-\t\t\tstate.global_dispatcher_installed = true
 \t\t\twrite_scheduler_census("setup")'''
     dispatch = '''
-\t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
+\t\t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
 \t\t\t\t\tsurface_thread_rng_index = surface_thread_rng_index + 1
 \t\t\t\t\tstate.surface_thread_async_rand_draw_count = surface_thread_rng_index
 \t\t\t\t\tlocal args = { ... }
 \t\t\t\t\tif surface_thread_rng_mode == "record" then
-\t\t\t\t\t\tlocal value = original_async_rand(...)
+\t\t\t\t\t\tlocal value
+\t\t\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
 \t\t\t\t\t\tsurface_thread_rng_trace[surface_thread_rng_index] = { args = args, value = value }
 \t\t\t\t\t\treturn value
 \t\t\t\t\tend
@@ -246,17 +258,28 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index) .. " argument " .. tostring(i))
 \t\t\t\t\t\tend
 \t\t\t\t\tend
+\t\t\t\t\tlocal ignored
+\t\t\t\t\tignored, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
 \t\t\t\t\treturn expected.value
-\t\t\t\tend'''
+\t\t\t\t\tend'''
     finalize = f'''
 \t\t\t\twrite_scheduler_census("finalizer_entry")
-\t\t\t\tif state.surface_generation_thread_scheduled ~= true
+\t\t\t\tlocal final_upvalue_name, final_upvalue_value = debug.getupvalue(
+\t\t\t\t\tsurface_scheduler, scheduler_global_upvalue_index)
+\t\t\t\tif state.surface_scheduler_upvalue_installed ~= true
+\t\t\t\t\tor state.surface_scheduler_upvalue_restored ~= true
+\t\t\t\t\tor final_upvalue_name ~= scheduler_global_upvalue_name
+\t\t\t\t\tor final_upvalue_value ~= original_global
+\t\t\t\t\tor scheduler_lookup_count ~= 1
+\t\t\t\t\tor state.surface_generation_thread_scheduled ~= true
 \t\t\t\t\tor state.surface_generation_thread_identified ~= true
-\t\t\t\t\tor state.create_thread_dispatcher_restored ~= true then
+\t\t\t\tthen
 \t\t\t\t\terror("surface-generation thread discriminator did not complete")
 \t\t\t\tend
 \t\t\t\tif surface_thread_rng_index <= 0 then
-\t\t\t\t\terror("surface-generation thread consumed no direct AsyncRand draws")
+\t\t\t\t\terror("surface-generation thread consumed no mod-owned AsyncRand draws")
 \t\t\t\tend
 \t\t\t\tif surface_thread_rng_mode == "replay"
 \t\t\t\t\tand surface_thread_rng_index ~= #surface_thread_rng_trace then
@@ -352,13 +375,13 @@ def benchmark_block(
 \t\t\t\treturn false
 \t\t\tend
 \t\t\tlocal function scoped_async_rand(...)
-\t\t\t\tif called_by_mod_rand_int() then
+\t\t\t\tif called_by_mod_rand_int() then{thread_dispatch}
 \t\t\t\t\tlocal value
 \t\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
 \t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
 \t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
 \t\t\t\t\treturn value
-\t\t\t\tend{thread_dispatch}
+\t\t\t\tend
 \t\t\t\tstate.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1
 \t\t\t\treturn original_async_rand(...)
 \t\t\tend
@@ -662,6 +685,88 @@ io.write("scoped_dispatch_ok")
     }
 
 
+def exercise_scheduler_upvalue_dispatch(lua: Path) -> dict[str, object]:
+    if not lua.is_file():
+        raise ReferenceError(f"Lua interpreter missing: {lua}")
+    script = r'''
+local original_create_calls, wrapper_create_calls = 0, 0
+local function original_create(fn)
+  original_create_calls = original_create_calls + 1
+  return fn()
+end
+local function original_sprocall(fn)
+  return fn()
+end
+local lookup_names = {}
+local function original_global(name)
+  lookup_names[#lookup_names + 1] = name
+  if name == "CreateRealTimeThread" then return original_create end
+  if name == "sprocall" then return original_sprocall end
+end
+local Global = original_global
+local function surface_scheduler()
+  local create_thread = Global("CreateRealTimeThread")
+  local yield_protected_call = Global("sprocall")
+  return create_thread(function()
+    return yield_protected_call(function() return "scheduled" end)
+  end)
+end
+local upvalue_index, upvalue_name
+for index = 1, 16 do
+  local name, value = debug.getupvalue(surface_scheduler, index)
+  if name == nil then break end
+  if name == "Global" then
+    assert(not upvalue_index and value == original_global)
+    upvalue_index, upvalue_name = index, name
+  end
+end
+assert(upvalue_index and upvalue_name == "Global")
+local wrapper
+local function scoped_global(name, ...)
+  local value = original_global(name, ...)
+  if name == "CreateRealTimeThread" then
+    assert(debug.setupvalue(surface_scheduler, upvalue_index, original_global) == upvalue_name)
+    local verify_name, verify_value = debug.getupvalue(surface_scheduler, upvalue_index)
+    assert(verify_name == upvalue_name and verify_value == original_global)
+    return wrapper
+  end
+  return value
+end
+wrapper = function(fn, ...)
+  wrapper_create_calls = wrapper_create_calls + 1
+  return original_create(fn, ...)
+end
+assert(debug.setupvalue(surface_scheduler, upvalue_index, scoped_global) == upvalue_name)
+assert(surface_scheduler() == "scheduled")
+local final_name, final_value = debug.getupvalue(surface_scheduler, upvalue_index)
+assert(final_name == upvalue_name and final_value == original_global)
+assert(wrapper_create_calls == 1 and original_create_calls == 1)
+assert(#lookup_names == 2)
+assert(lookup_names[1] == "CreateRealTimeThread" and lookup_names[2] == "sprocall")
+io.write("scheduler_upvalue_dispatch_ok")
+'''
+    proc = subprocess.run(
+        [str(lua), "-"], input=script, capture_output=True, text=True, timeout=60
+    )
+    ok = (
+        proc.returncode == 0
+        and proc.stdout == "scheduler_upvalue_dispatch_ok"
+        and not proc.stderr
+    )
+    return {
+        "ok": ok,
+        "interpreter": str(lua),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "returncode": proc.returncode,
+        "exact_global_upvalue_found": ok,
+        "wrapper_create_calls": 1 if ok else None,
+        "original_create_calls": 1 if ok else None,
+        "lookup_order": ["CreateRealTimeThread", "sprocall"] if ok else None,
+        "upvalue_restored_before_second_lookup": ok,
+    }
+
+
 def static_verdict(text: str) -> dict[str, object]:
     positions = {
         "new_game": text.find('NewGame({ seed_text = "LOZL3FQr" })'),
@@ -780,45 +885,66 @@ def static_verdict(text: str) -> dict[str, object]:
 def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]:
     checks = {
         "mode_is_record_or_replay": mode in {"record", "replay"},
-        "scheduler_scoped_by_function_identity": (
-            "info.func == surface_scheduler" in text
-            and "called_by_surface_scheduler()" in text
+        "scheduler_exact_global_upvalue_located_fail_closed": (
+            'pcall(debug.getupvalue, surface_scheduler, index)' in text
+            and 'if name == "Global" then' in text
             and "SBM.Generation.RunSurfaceStretchIfEnabled" in text
+            and "surface scheduler has multiple Global upvalues" in text
+            and "RunSurfaceStretchIfEnabled Global upvalue unavailable" in text
+            and 'type(debug.setupvalue) ~= "function"' in text
         ),
         "scheduler_census_has_executed_nonce_and_immediate_write": (
-            "schema=smr.ralph.surface_scheduler_census.v1" in text
+            "schema=smr.ralph.surface_scheduler_upvalue_census.v2" in text
             and "setup_executed=true" in text
             and 'write_scheduler_census("setup")' in text
             and "state.surface_scheduler_census_nonce" in text
         ),
-        "scheduler_census_wraps_global_lookup_without_changing_return": (
-            'rawset(_G, "Global", scoped_global)' in text
-            and 'if name == "CreateRealTimeThread" then' in text
-            and "returned_scoped=" in text
-            and "returned_original=" in text
-            and "return value" in text
+        "scheduler_upvalue_installed_and_verified": (
+            'local installed_name = debug.setupvalue(surface_scheduler,' in text
+            and "state.surface_scheduler_upvalue_installed" in text
+            and "installed_verify_value == scoped_global" in text
+            and "surface scheduler Global upvalue dispatcher did not install" in text
         ),
-        "scheduler_census_records_function_identity_stack": (
-            'pcall(debug.getinfo, level, "nSfl")' in text
-            and "tostring(info.func == surface_scheduler)" in text
-            and 'write_scheduler_census("global_lookup")' in text
+        "scheduler_upvalue_restored_at_single_matching_lookup": (
+            'if name == "CreateRealTimeThread" then' in text
+            and "scheduler_lookup_count ~= 0" in text
+            and "scheduler_global_upvalue_index, original_global" in text
+            and "state.surface_scheduler_upvalue_restored" in text
+            and 'write_scheduler_census("create_thread_lookup")' in text
+            and "return scoped_create_real_time_thread" in text
+            and text.find("scheduler_global_upvalue_index, original_global")
+            < text.find("return scoped_create_real_time_thread")
         ),
         "thread_identified_inside_scheduled_callback": (
             "surface_generation_thread = current_thread()" in text
             and "state.surface_generation_thread_identified" in text
+            and 'write_scheduler_census("thread_identified")' in text
         ),
-        "create_dispatcher_is_one_shot_and_restored": (
-            text.count('rawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)') == 1
-            and 'rawset(_G, "CreateRealTimeThread", original_create_real_time_thread)' in text
-            and "state.create_thread_dispatcher_restored" in text
+        "thread_wrapper_is_upvalue_scoped_only": (
+            'rawset(_G, "Global", scoped_global)' not in text
+            and 'rawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)' not in text
+            and "surface thread scheduled before Global upvalue restoration" in text
+            and "return original_create_real_time_thread(function(...)" in text
         ),
-        "mod_private_stream_has_priority": (
+        "mod_private_stream_thread_capture_has_priority": (
             text.find("if called_by_mod_rand_int() then")
             < text.find("current_thread() == surface_generation_thread")
+            < text.find("surface_thread_rng_index = surface_thread_rng_index + 1")
         ),
-        "surface_direct_calls_scoped_by_current_thread": (
+        "surface_mod_draws_scoped_by_current_thread": (
             "surface_generation_thread and current_thread() == surface_generation_thread" in text
             and "state.surface_thread_async_rand_draw_count" in text
+            and "surface-generation thread consumed no mod-owned AsyncRand draws" in text
+        ),
+        "record_preserves_private_stream_value": (
+            'if surface_thread_rng_mode == "record" then' in text
+            and "value, async_rand_seed = BraidRandom(async_rand_seed, ...)" in text
+            and "surface_thread_rng_trace[surface_thread_rng_index]" in text
+            and "return value" in text
+        ),
+        "replay_advances_private_stream_before_recorded_return": (
+            "ignored, async_rand_seed = BraidRandom(async_rand_seed, ...)" in text
+            and "return expected.value" in text
         ),
         "unrelated_consumers_forwarded": (
             "state.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1\n"
@@ -835,12 +961,14 @@ def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]
         ),
         "finalizer_requires_identified_thread_and_draws": (
             "surface-generation thread discriminator did not complete" in text
-            and "surface-generation thread consumed no direct AsyncRand draws" in text
+            and "surface-generation thread consumed no mod-owned AsyncRand draws" in text
+            and "final_upvalue_value ~= original_global" in text
+            and "scheduler_lookup_count ~= 1" in text
         ),
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
     return {
-        "schema": "smr.ralph.surface_thread_rng_static.v1",
+        "schema": "smr.ralph.surface_thread_rng_static.v2",
         "ok": not failed,
         "mode": mode,
         "checks": checks,
@@ -901,7 +1029,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "schema": (
             "smr.ralph.surface_loading_reference_manifest.v4"
             if args.surface_thread_rng_mode == "forward"
-            else "smr.ralph.surface_loading_reference_manifest.v5"
+            else "smr.ralph.surface_loading_reference_manifest.v6"
         ),
         "source_head": source_head,
         "coordinate": COORDINATE,
@@ -940,6 +1068,9 @@ def command_self_test(args: argparse.Namespace) -> int:
     compile_lua(args.luac.resolve(), probe)
     probe_sha256 = sha256_file(probe)
     dispatch_test = exercise_scoped_dispatch(args.luac.resolve().with_name("lua.exe"))
+    scheduler_dispatch_test = exercise_scheduler_upvalue_dispatch(
+        args.luac.resolve().with_name("lua.exe")
+    )
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -990,6 +1121,24 @@ def command_self_test(args: argparse.Namespace) -> int:
         unscoped_dispatcher_red = static_verdict(unscoped_dispatcher)["ok"] is False
         missing_foreign_forward = text.replace("return original_async_rand(...)", "return 0", 1)
         missing_foreign_forward_red = static_verdict(missing_foreign_forward)["ok"] is False
+        missing_upvalue_install = record_text.replace(
+            "local installed_name = debug.setupvalue(surface_scheduler,",
+            "local installed_name = removed_setupvalue(surface_scheduler,",
+            1,
+        )
+        missing_upvalue_install_red = (
+            surface_thread_rng_static_verdict(missing_upvalue_install, "record")["ok"]
+            is False
+        )
+        missing_upvalue_restore = record_text.replace(
+            "scheduler_global_upvalue_index, original_global)",
+            "scheduler_global_upvalue_index, scoped_global)",
+            1,
+        )
+        missing_upvalue_restore_red = (
+            surface_thread_rng_static_verdict(missing_upvalue_restore, "record")["ok"]
+            is False
+        )
         verdict["lua_parse"] = True
         verdict["reference_probe_lua_parse"] = True
         verdict["reference_probe_sha256"] = probe_sha256
@@ -999,6 +1148,7 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
         verdict["scoped_dispatch_runtime"] = dispatch_test
+        verdict["scheduler_upvalue_dispatch_runtime"] = scheduler_dispatch_test
         verdict["missing_scoped_dispatcher_mutation_red"] = missing_dispatcher_red
         verdict["unscoped_dispatcher_mutation_red"] = unscoped_dispatcher_red
         verdict["missing_foreign_forward_mutation_red"] = missing_foreign_forward_red
@@ -1007,11 +1157,14 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["surface_thread_trace_round_trip"] = trace_calls == [([], 17), ([41, 99], 7)]
         verdict["surface_thread_record_lua_parse"] = True
         verdict["surface_thread_replay_lua_parse"] = True
+        verdict["missing_scheduler_upvalue_install_mutation_red"] = missing_upvalue_install_red
+        verdict["missing_scheduler_upvalue_restore_mutation_red"] = missing_upvalue_restore_red
         verdict["ok"] = (
             verdict["ok"]
             and mutation_red
             and missing_finalizer_red
             and dispatch_test["ok"]
+            and scheduler_dispatch_test["ok"]
             and missing_dispatcher_red
             and unscoped_dispatcher_red
             and missing_foreign_forward_red
@@ -1019,6 +1172,8 @@ def command_self_test(args: argparse.Namespace) -> int:
             and record_verdict["ok"]
             and replay_verdict["ok"]
             and verdict["surface_thread_trace_round_trip"]
+            and missing_upvalue_install_red
+            and missing_upvalue_restore_red
         )
     if args.out:
         write_json(args.out.resolve(), verdict)
