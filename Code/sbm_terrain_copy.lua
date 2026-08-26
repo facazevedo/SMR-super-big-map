@@ -2407,7 +2407,10 @@ local function PrepareOuterResourceTerrain(map)
 		table.sort(targets)
 		local target = targets[math.floor((#targets + 1) / 2)]
 		for index, patch in ipairs(patches) do
-			if root(index) == group then patch.target = target end
+			if root(index) == group then
+				patch.target = target
+				patch.component = group
+			end
 		end
 	end
 
@@ -2435,6 +2438,7 @@ local function PrepareOuterResourceTerrain(map)
 		local existing_transition = patch.outer_cells - patch.core_cells
 		local adaptive_transition = math.min(adaptive_transition_cap,
 			maximum_core_delta * 0.65)
+		patch.base_transition_cells = existing_transition
 		patch.outer_cells = patch.core_cells
 			+ math.max(existing_transition, adaptive_transition)
 		patch.maximum_core_delta = maximum_core_delta
@@ -2444,6 +2448,25 @@ local function PrepareOuterResourceTerrain(map)
 			diagnostic_site.patch_core_cells = patch.core_cells
 			diagnostic_site.patch_transition_cells = patch.outer_cells - patch.core_cells
 			diagnostic_site.patch_target = patch.target
+		end
+	end
+	-- A successful repair does not repeat the original broad high-relief masks. It replans after the
+	-- first rebuild, where the fitted cores already have zero residual delta and therefore contract to
+	-- the configured minimum transition. Mark whole connected components here so a later base-width
+	-- settling pass retains the same shared target and overlap order for their surface members.
+	local precondition_components = {}
+	local precondition_minimum_delta = 2 * guim_v
+	for _, patch in ipairs(patches) do
+		if patch.kind ~= "surface" and patch.maximum_core_delta >= precondition_minimum_delta then
+			precondition_components[patch.component] = true
+		end
+	end
+	for _, patch in ipairs(patches) do
+		patch.precondition_selected = precondition_components[patch.component] == true
+		local diagnostic_site = patch.resource_site or patch.rocket_site
+		if diagnostic_site then
+			diagnostic_site.patch_component = patch.component
+			diagnostic_site.patch_base_transition_cells = patch.base_transition_cells
 		end
 	end
 	-- A patch can visit only cells inside its maximum radius. By triangle inequality, a protected
@@ -2511,7 +2534,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_raster_cells, native_mask_samples = 0, 0
 	local native_inner_restored_patch_cells = 0
 	local native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
-	local native_precondition_extra_passes = 2
+	local native_precondition_extra_passes = 1
 	local native_precondition_site_records = {}
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
@@ -2557,7 +2580,7 @@ local function PrepareOuterResourceTerrain(map)
 		return x0, y0, x1, y1, sample_step
 	end
 
-	local function apply_native_patch(patch, core_only)
+	local function apply_native_patch(patch, core_only, transition_override)
 		local owned, owned_lookup = {}, {}
 		local function own(value)
 			if value and not owned_lookup[value] then
@@ -2568,7 +2591,7 @@ local function PrepareOuterResourceTerrain(map)
 		end
 		local ok, changed, raster_cells, mask_samples, inner_restored_patch_cells = pcall(function()
 			local base_transition = math.max(cells_per_hex * 2,
-				patch.outer_cells - patch.core_cells)
+				transition_override or (patch.outer_cells - patch.core_cells))
 			local maximum_width_scale = 1.35
 			local radius = core_only and patch.core_cells
 				or patch.core_cells + base_transition * maximum_width_scale
@@ -2745,17 +2768,15 @@ local function PrepareOuterResourceTerrain(map)
 			native_mask_samples = native_mask_samples + mask_samples
 			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
-		-- Only substantial cut/fill pads need more conditioning. Two extra compositions give those
-		-- few sites a third total organic blend while retaining the identical target, support boundary,
-		-- guards, patch order, and outer-ring clipping. Ordinary pads are not directly recomposed, and
-		-- the full gameplay core set is repaired after the filtered passes finish.
+		-- Keep the broad first feather for visual continuity, then settle each at-risk connected
+		-- component once with its pre-adaptive transition. This reproduces the contracted geometry of
+		-- the successful repair while retaining identical targets, guards, order, and ring clipping.
 		if native_precondition_enabled then
-			local minimum_delta = 2 * guim_v
 			for pass = 1, native_precondition_extra_passes do
 				for _, patch in ipairs(patches) do
-					if patch.kind ~= "surface" and patch.maximum_core_delta >= minimum_delta then
+					if patch.precondition_selected then
 						local changed, raster_cells, mask_samples, restored_patch_cells =
-							apply_native_patch(patch, false)
+							apply_native_patch(patch, false, patch.base_transition_cells)
 						modified_cells = modified_cells + changed
 						native_raster_cells = native_raster_cells + raster_cells
 						native_mask_samples = native_mask_samples + mask_samples
@@ -2940,6 +2961,7 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	if native_raster_used and set_ok then
 		for _, site in ipairs(native_precondition_site_records) do
+			site.patch_precondition_selected = true
 			site.patch_precondition_passes = native_precondition_extra_passes
 		end
 	end
@@ -3168,6 +3190,9 @@ local function AuditOuterResourceTerrain(map)
 				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
 				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
 				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?")
+				.. ":patch_base_transition_cells=" .. tostring(
+					site.patch_base_transition_cells or "?")
+				.. ":patch_component=" .. tostring(site.patch_component or "?")
 				.. ":patch_target=" .. tostring(site.patch_target or "?")
 				.. ":patch_precondition_passes=" .. tostring(site.patch_precondition_passes or 0))
 		end
@@ -3196,6 +3221,9 @@ local function AuditOuterResourceTerrain(map)
 				.. ":patch_delta=" .. tostring(site.patch_maximum_core_delta or "?")
 				.. ":patch_core_cells=" .. tostring(site.patch_core_cells or "?")
 				.. ":patch_transition_cells=" .. tostring(site.patch_transition_cells or "?")
+				.. ":patch_base_transition_cells=" .. tostring(
+					site.patch_base_transition_cells or "?")
+				.. ":patch_component=" .. tostring(site.patch_component or "?")
 				.. ":patch_target=" .. tostring(site.patch_target or "?")
 				.. ":patch_precondition_passes=" .. tostring(site.patch_precondition_passes or 0))
 		elseif site.modified == true and site.mountain == true then

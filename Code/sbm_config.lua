@@ -307,9 +307,9 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
--- On the initial pass, compose the same organic native patch two extra times only for extractor and
--- landing footprints whose measured cut/fill is at least two metres. This targets the high-relief pads
--- that otherwise need an identical whole-grid repair/rebuild without perturbing ordinary pads.
+-- On the initial pass, retain the broad natural feather, then settle connected components containing
+-- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
+-- successful post-rebuild repair geometry without discarding the seamless outer blend.
 config.OptimizeOuterResourceTerrainNativePrecondition = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7

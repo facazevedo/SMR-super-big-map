@@ -296,15 +296,27 @@ static_checks = {
             "native_mul_div_add(target_delta, mask, native_weight_scale, 0)",
         )
     ),
-    "native_raster_preconditions_only_non_surface_patches": (
-        'if patch.kind ~= "surface" and patch.maximum_core_delta >= minimum_delta then'
+    "native_raster_preconditions_at_risk_components": (
+        'if patch.kind ~= "surface" and patch.maximum_core_delta >= precondition_minimum_delta then'
         in outer_resource_terrain
-        and "local minimum_delta = 2 * guim_v" in outer_resource_terrain
-        and "local native_precondition_extra_passes = 2" in outer_resource_terrain
+        and "local precondition_minimum_delta = 2 * guim_v" in outer_resource_terrain
+        and "precondition_components[patch.component] = true" in outer_resource_terrain
+        and "patch.precondition_selected = precondition_components[patch.component] == true"
+        in outer_resource_terrain
+        and "patch.base_transition_cells = existing_transition" in outer_resource_terrain
+        and "apply_native_patch(patch, false, patch.base_transition_cells)"
+        in outer_resource_terrain
+        and "local native_precondition_extra_passes = 1" in outer_resource_terrain
         and "native_precondition_sites" in outer_resource_terrain
         and "native_precondition_patches" in outer_resource_terrain
         and "patch_index == #patches and native_precondition_patches == 0" in outer_resource_terrain
         and "for _, site in ipairs(native_precondition_site_records) do" in outer_resource_terrain
+        and (
+            "if native_raster_used and set_ok then\n"
+            "\t\tfor _, site in ipairs(native_precondition_site_records) do\n"
+            "\t\t\tsite.patch_precondition_selected = true\n"
+            "\t\t\tsite.patch_precondition_passes = native_precondition_extra_passes"
+        ) in outer_resource_terrain
         and "not prior_terrain_plan_present" in outer_resource_terrain
         and "type(map.SuperBigMapOuterResourceRocketPads)" in outer_resource_terrain
     ),
@@ -671,7 +683,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_916": "'version', 916" in METADATA,
+    "version_is_917": "'version', 917" in METADATA,
 }
 
 case_results = []
@@ -933,7 +945,7 @@ native_raster_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 14,
+    "schema_version": 15,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
