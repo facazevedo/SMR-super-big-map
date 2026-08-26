@@ -2202,6 +2202,14 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
+	local function inner_rectangle_clearance(x, y)
+		local inner_left, inner_top = band_x, band_y
+		local inner_right, inner_bottom = map_w - band_x, map_h - band_y
+		local nearest_x = math.max(inner_left, math.min(inner_right, x))
+		local nearest_y = math.max(inner_top, math.min(inner_bottom, y))
+		local dx, dy = x - nearest_x, y - nearest_y
+		return math.sqrt(dx * dx + dy * dy)
+	end
 	local function resource_clearance(q, r)
 		local minimum = rocket_required_core + maximum_resource_core + 1
 		for _, entry in ipairs(resources) do
@@ -2224,6 +2232,11 @@ local function PrepareOuterResourceTerrain(map)
 		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
 		local x, y = world_xy(q, r)
 		if not x or not in_outer_band(x, y) then return nil end
+		-- The central 16x16 sectors are a hard no-write area. Keep the conservative live landing
+		-- footprint wholly on the outer side before scoring the candidate; the broader natural
+		-- feather may approach that boundary because the raster restores all inner cells exactly.
+		local inner_clearance = inner_rectangle_clearance(x, y)
+		if inner_clearance <= rocket_world_radius * hex_size then return nil end
 		local edge_world = (rocket_outer_radius + 1) * hex_size
 		if x < edge_world or y < edge_world or x >= map_w - edge_world
 			or y >= map_h - edge_world then return nil end
@@ -2253,6 +2266,7 @@ local function PrepareOuterResourceTerrain(map)
 			x = x, y = y, q = q, r = r, ready_before = ready,
 			mountain = mountain, maximum_rise = maximum_rise, higher_samples = higher,
 			height_range = range_max - range_min,
+			inner_clearance = inner_clearance,
 			score = (ready and -1000000000 or 0) + (range_max - range_min) * 100
 				+ axial_distance(q, r, cq, cr),
 		}
@@ -3224,6 +3238,7 @@ local function AuditOuterResourceTerrain(map)
 				.. ":patch_base_transition_cells=" .. tostring(
 					site.patch_base_transition_cells or "?")
 				.. ":patch_component=" .. tostring(site.patch_component or "?")
+				.. ":inner_clearance=" .. tostring(site.inner_clearance or "?")
 				.. ":patch_target=" .. tostring(site.patch_target or "?")
 				.. ":patch_precondition_passes=" .. tostring(site.patch_precondition_passes or 0))
 		elseif site.modified == true and site.mountain == true then

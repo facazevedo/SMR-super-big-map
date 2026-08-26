@@ -76,6 +76,20 @@ def quota_hex_clearance(a: tuple[int, int], b: tuple[int, int], minimum: int = 3
     return max(abs(dq), abs(dr), abs(dq + dr)) >= minimum
 
 
+def rocket_footprint_clear_of_inner_rectangle(
+    x: float,
+    y: float,
+    radius: float,
+    inner: tuple[float, float, float, float],
+) -> bool:
+    """Model the conservative production circle-to-inner-rectangle exclusion."""
+    left, top, right, bottom = inner
+    nearest_x = max(left, min(right, x))
+    nearest_y = max(top, min(bottom, y))
+    dx, dy = x - nearest_x, y - nearest_y
+    return dx * dx + dy * dy > radius * radius
+
+
 def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float:
     """Production C2 core-to-original feather."""
     if normalized_radius <= core_fraction:
@@ -201,6 +215,11 @@ outer_resource_terrain = section(
     TERRAIN,
     "local function PrepareOuterResourceTerrain",
     "-- TEST-ONLY SEAM",
+)
+rocket_terrain_audit = section(
+    outer_resource_terrain,
+    "local verified_mountain_pads, rocket_failures",
+    "map.SuperBigMapVerifiedMountainRocketPads",
 )
 
 static_checks = {
@@ -422,6 +441,14 @@ static_checks = {
         and "local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)"
         in outer_resource_terrain
         and "is_protected_ready_cell(x, y, nearby_protected)" in outer_resource_terrain
+    ),
+    "rocket_live_shape_stays_outside_inner_no_write_rectangle": (
+        "local function inner_rectangle_clearance(x, y)" in outer_resource_terrain
+        and "if inner_clearance <= rocket_world_radius * hex_size then return nil end"
+        in outer_resource_terrain
+        and "inner_clearance = inner_clearance" in outer_resource_terrain
+        and '":inner_clearance=" .. tostring(site.inner_clearance or "?")'
+        in rocket_terrain_audit
     ),
     "resource_terrain_levels_only_live_footprint_margin": (
         "math.ceil(world_radius + 1)" in outer_resource_terrain
@@ -683,7 +710,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_917": "'version', 917" in METADATA,
+    "version_is_918": "'version', 918" in METADATA,
 }
 
 case_results = []
@@ -750,6 +777,37 @@ feather_checks = {
     "outer_join_has_zero_slope": abs(
         (apron_weight(1) - apron_weight(1 - eps)) / eps
     ) < 1e-5,
+}
+
+inner_rectangle = (81920.0, 81920.0, 737280.0, 737280.0)
+rocket_live_radius = 9350.0
+rocket_inner_boundary_checks = {
+    "observed_failed_site_is_rejected": not rocket_footprint_clear_of_inner_rectangle(
+        77500.0, 601870.0, rocket_live_radius, inner_rectangle
+    ),
+    "observed_nearest_passing_site_is_retained": rocket_footprint_clear_of_inner_rectangle(
+        71000.0, 133364.0, rocket_live_radius, inner_rectangle
+    ),
+    "exact_tangency_is_rejected": not rocket_footprint_clear_of_inner_rectangle(
+        inner_rectangle[0] - rocket_live_radius,
+        200000.0,
+        rocket_live_radius,
+        inner_rectangle,
+    ),
+    "diagonal_corner_distance_is_euclidean": (
+        not rocket_footprint_clear_of_inner_rectangle(
+            inner_rectangle[0] - 6000.0,
+            inner_rectangle[1] - 6000.0,
+            rocket_live_radius,
+            inner_rectangle,
+        )
+        and rocket_footprint_clear_of_inner_rectangle(
+            inner_rectangle[0] - 7000.0,
+            inner_rectangle[1] - 7000.0,
+            rocket_live_radius,
+            inner_rectangle,
+        )
+    ),
 }
 
 guard_prefilter_guards = (
@@ -945,13 +1003,14 @@ native_raster_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 15,
+    "schema_version": 16,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
     "relief_checks": relief_checks,
     "effect_checks": effect_checks,
     "quota_spacing_checks": quota_spacing_checks,
+    "rocket_inner_boundary_checks": rocket_inner_boundary_checks,
     "feather_checks": feather_checks,
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
@@ -977,6 +1036,8 @@ report["effect_passed"] = sum(effect_checks.values())
 report["effect_total"] = len(effect_checks)
 report["quota_spacing_passed"] = sum(quota_spacing_checks.values())
 report["quota_spacing_total"] = len(quota_spacing_checks)
+report["rocket_inner_boundary_passed"] = sum(rocket_inner_boundary_checks.values())
+report["rocket_inner_boundary_total"] = len(rocket_inner_boundary_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
 report["guard_prefilter_passed"] = sum(guard_prefilter_checks.values())
@@ -991,6 +1052,7 @@ report["ok"] = (
     and all(relief_checks.values())
     and all(effect_checks.values())
     and all(quota_spacing_checks.values())
+    and all(rocket_inner_boundary_checks.values())
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())

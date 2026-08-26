@@ -199,7 +199,7 @@ def source_certificate() -> dict[str, bool]:
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_917": "'version', 917" in metadata,
+        "version_918": "'version', 918" in metadata,
         "scenario_seed_inputs": all(token in candidate for token in ("generator.Seed", "generator.GenerationHash", "RandomMapPreset")),
         "local_complete_validation_retained": all(token in candidate for token in ("CanReceiveDeposit(", "ValleyScore(map, pt)", "TerrainTypeAt(map, pt")),
         "physical_two_band_filter": all(token in candidate for token in ("surface_mountain_base_ring_sectors", "outermost_descriptor", "surface_candidate_first_inner_target")),
