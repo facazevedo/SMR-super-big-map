@@ -7,6 +7,7 @@ The historical filename is retained so existing harness commands keep working.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -109,6 +110,46 @@ def nearby_protected_guards(
         if (guard[0] - patch_x) ** 2 + (guard[1] - patch_y) ** 2
         <= (visit_radius + guard[2]) ** 2
     )
+
+
+def organic_resource_weight(
+    x: float,
+    y: float,
+    *,
+    core: float,
+    transition: float,
+    phase: float,
+    relief: tuple[float, float],
+    irregularity: float = 0.12,
+) -> float:
+    """Executable model of the production slope-aligned quintic resource feather."""
+    distance = math.hypot(x, y)
+    angle = math.atan2(y, x)
+    ux, uy = (1.0, 0.0) if distance <= 0.0001 else (x / distance, y / distance)
+    along_relief = ux * relief[0] + uy * relief[1]
+    harmonic = (
+        0.52 * math.sin(3 * angle + phase)
+        + 0.30 * math.sin(5 * angle - phase * 1.37)
+        + 0.18 * math.sin(7 * angle + phase * 0.73)
+    )
+    width_scale = max(
+        0.50,
+        min(
+            1.35,
+            1
+            + irregularity * harmonic
+            + 0.12 * (2 * along_relief * along_relief - 1)
+            - 0.06 * along_relief,
+        ),
+    )
+    outer = core + transition * width_scale
+    if distance <= core:
+        return 1.0
+    if distance >= outer:
+        return 0.0
+    t = (distance - core) / max(0.0001, outer - core)
+    smooth = t**3 * (t * (t * 6 - 15) + 10)
+    return 1 - smooth
 
 
 CASES = (
@@ -217,6 +258,51 @@ static_checks = {
     "outer_resource_terrain_preparation_is_enabled": (
         "config.PrepareOuterResourceTerrain = true" in CONFIG
         and "C.PREPARE_OUTER_RESOURCE_TERRAIN" in CONFIG
+    ),
+    "native_outer_resource_raster_is_enabled": (
+        "config.OptimizeOuterResourceTerrainNativeRaster = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER" in CONFIG
+        and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)'
+        in outer_resource_terrain
+    ),
+    "native_raster_retains_legacy_fallback_from_raw_source": (
+        "local function apply_legacy_raster()" in outer_resource_terrain
+        and "grid = grid_to_compute(raw)" in outer_resource_terrain
+        and "ok_apply, apply_error = pcall(apply_legacy_raster)"
+        in outer_resource_terrain
+        and "native_raster_fallback = true" in outer_resource_terrain
+    ),
+    "native_raster_uses_patch_local_fixed_point_formula": all(
+        token in outer_resource_terrain
+        for token in (
+            "local native_weight_scale, native_height_scale = 4096, 256",
+            "local native_sample_step = 4",
+            "native_resample(coarse, local_width, local_height, true)",
+            "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
+            "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
+            "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
+            "native_mul_div_add(target_delta, mask, native_weight_scale, 0)",
+        )
+    ),
+    "native_raster_preserves_exact_cores_and_guards": (
+        "native_circle_set(mask, native_weight_scale, center_x, center_y"
+        in outer_resource_terrain
+        and "for _, protected in ipairs(nearby_protected) do"
+        in outer_resource_terrain
+        and "native_circle_set(mask, 0," in outer_resource_terrain
+        and "math.floor(protected.radius * height_tile + 0.5),"
+        in outer_resource_terrain
+        and "0, native_tile_step)" in outer_resource_terrain
+        and "if patch_index == #patches then break end" in outer_resource_terrain
+    ),
+    "native_raster_hard_restores_inner_rectangle": (
+        "local inner_x0 = math.ceil(band_x / height_tile)" in outer_resource_terrain
+        and "result:copyrect(height_grid, restore_box" in outer_resource_terrain
+        and "keeping any transition entirely on the ring side" in outer_resource_terrain
+    ),
+    "native_raster_avoids_circular_terrain_setter": (
+        "SetHeightCircle" not in outer_resource_terrain
+        and "terrain.SetHeightCircle" not in outer_resource_terrain
     ),
     "outer_resource_terrain_uses_two_sector_world_band": (
         'cfg_number("MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS", 2)' in outer_resource_terrain
@@ -551,7 +637,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_909": "'version', 909" in METADATA,
+    "version_is_910": "'version', 910" in METADATA,
 }
 
 case_results = []
@@ -671,9 +757,140 @@ guard_prefilter_checks = {
     ),
 }
 
+# Compact, deterministic raster corpus: one realistic broad resource transition replaces a
+# multi-million-cell map run while preserving the exact production equations and 4-cell sampler.
+native_core = 30.0
+native_transition = 140.0
+native_phase = 1.234
+native_relief = (0.6, 0.8)
+native_step = 4
+native_scale = 4096
+native_support_radius = native_core + native_transition * 1.35
+native_min = math.floor((-native_support_radius - 2) / native_step) * native_step
+native_max = math.ceil((native_support_radius + 2) / native_step) * native_step
+native_size = native_max - native_min + 1
+native_coarse_size = (native_size - 1) // native_step + 1
+
+native_coarse = [
+    [
+        round(
+            organic_resource_weight(
+                native_min + coarse_x * native_step,
+                native_min + coarse_y * native_step,
+                core=native_core,
+                transition=native_transition,
+                phase=native_phase,
+                relief=native_relief,
+            )
+            * native_scale
+        )
+        / native_scale
+        for coarse_x in range(native_coarse_size)
+    ]
+    for coarse_y in range(native_coarse_size)
+]
+
+
+def native_resampled_weight(x: int, y: int) -> float:
+    """Model endpoint-aligned native bilinear resampling plus exact full-res disks."""
+    distance = math.hypot(x, y)
+    if distance > native_support_radius:
+        return 0.0
+    if distance <= native_core:
+        return 1.0
+    fx = (x - native_min) / native_step
+    fy = (y - native_min) / native_step
+    ix = min(native_coarse_size - 2, max(0, math.floor(fx)))
+    iy = min(native_coarse_size - 2, max(0, math.floor(fy)))
+    tx, ty = fx - ix, fy - iy
+    top = native_coarse[iy][ix] * (1 - tx) + native_coarse[iy][ix + 1] * tx
+    bottom = (
+        native_coarse[iy + 1][ix] * (1 - tx)
+        + native_coarse[iy + 1][ix + 1] * tx
+    )
+    return max(0.0, min(1.0, top * (1 - ty) + bottom * ty))
+
+
+native_errors: list[float] = []
+native_core_exact = True
+native_support_exact = True
+for y in range(native_min, native_max + 1):
+    for x in range(native_min, native_max + 1):
+        exact = organic_resource_weight(
+            x,
+            y,
+            core=native_core,
+            transition=native_transition,
+            phase=native_phase,
+            relief=native_relief,
+        )
+        resampled = native_resampled_weight(x, y)
+        native_errors.append(abs(exact - resampled))
+        distance = math.hypot(x, y)
+        if distance <= native_core:
+            native_core_exact = native_core_exact and resampled == 1.0
+        if distance > native_support_radius:
+            native_support_exact = native_support_exact and resampled == 0.0
+
+native_errors_sorted = sorted(native_errors)
+native_mask_mean_error = sum(native_errors) / len(native_errors)
+native_mask_p99_error = native_errors_sorted[math.floor(0.99 * len(native_errors))]
+native_mask_max_error = max(native_errors)
+native_trig_reduction = (native_size * native_size) / (
+    native_coarse_size * native_coarse_size
+)
+
+guard_center, guard_radius = (46.0, -50.0), 7.0
+
+
+def native_guarded_weight(x: int, y: int) -> float:
+    if (x - guard_center[0]) ** 2 + (y - guard_center[1]) ** 2 <= guard_radius**2:
+        return 0.0
+    return native_resampled_weight(x, y)
+
+
+native_guard_exact = all(
+    native_guarded_weight(x, y) == 0.0
+    for y in range(-57, -42)
+    for x in range(39, 54)
+    if (x - guard_center[0]) ** 2 + (y - guard_center[1]) ** 2 <= guard_radius**2
+)
+
+
+def native_synthetic_height(x: int, y: int) -> int:
+    old = 12345 + 2 * x - y
+    plane = 12200 + 0.75 * x - 0.5 * y
+    target = 12180
+    weight = native_guarded_weight(x, y)
+    shaped = round(
+        plane + (target - plane) * weight + (old - plane) * (1 - weight**3)
+    )
+    # Model the production post-interpolation copyrect from the scaled patch snapshot.
+    return old if x >= 160 and -60 <= y <= 60 else shaped
+
+
+native_inner_restore_exact = all(
+    native_synthetic_height(x, y) == 12345 + 2 * x - y
+    for x, y in ((160, -60), (180, 0), (220, 60))
+)
+native_raster_checks = {
+    "realistic_corpus_size_is_stable": (
+        native_size * native_size == 201601
+        and native_coarse_size * native_coarse_size == 12769
+    ),
+    "trigonometric_samples_drop_by_at_least_15x": native_trig_reduction >= 15,
+    "coarse_mask_mean_error_below_0_00015": native_mask_mean_error < 0.00015,
+    "coarse_mask_p99_error_below_0_0008": native_mask_p99_error < 0.0008,
+    "coarse_mask_max_error_below_0_0013": native_mask_max_error < 0.0013,
+    "full_resolution_core_is_exact": native_core_exact,
+    "maximum_support_boundary_is_exact": native_support_exact,
+    "protected_circle_assignment_is_exact": native_guard_exact,
+    "inner_rectangle_copy_restore_is_exact": native_inner_restore_exact,
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 13,
+    "schema_version": 14,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -682,6 +899,15 @@ report = {
     "quota_spacing_checks": quota_spacing_checks,
     "feather_checks": feather_checks,
     "guard_prefilter_checks": guard_prefilter_checks,
+    "native_raster_checks": native_raster_checks,
+    "native_raster_metrics": {
+        "full_cells": native_size * native_size,
+        "coarse_samples": native_coarse_size * native_coarse_size,
+        "trigonometric_sample_reduction": native_trig_reduction,
+        "mask_mean_absolute_error": native_mask_mean_error,
+        "mask_p99_absolute_error": native_mask_p99_error,
+        "mask_max_absolute_error": native_mask_max_error,
+    },
     "preferred_candidates": preferred,
 }
 report["static_passed"] = sum(static_checks.values())
@@ -701,6 +927,8 @@ report["feather_total"] = len(feather_checks)
 report["guard_prefilter_passed"] = sum(guard_prefilter_checks.values())
 report["guard_prefilter_total"] = len(guard_prefilter_checks)
 report["guard_prefilter_samples"] = guard_samples
+report["native_raster_passed"] = sum(native_raster_checks.values())
+report["native_raster_total"] = len(native_raster_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -710,6 +938,7 @@ report["ok"] = (
     and all(quota_spacing_checks.values())
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
+    and all(native_raster_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))

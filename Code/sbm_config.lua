@@ -302,6 +302,11 @@ config.MountainBaseApronFeatherRadiusHexes = 20
 -- safety margin stay perfectly level. This avoids the smooth artificial terrace left by flattening
 -- the full rebuild guard. The rule is geometry-only and contains no scenario or sector-name cases.
 config.PrepareOuterResourceTerrain = true
+-- Preserve the terrain formula and patch order while evaluating its broad organic feather on a
+-- bounded coarse mask and applying the millions of height blends with native grid arithmetic.
+-- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
+-- legacy rasterizer from the untouched source height grid.
+config.OptimizeOuterResourceTerrainNativeRaster = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
@@ -901,6 +906,8 @@ C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
 	as_number(config.MountainBaseApronFeatherRadiusHexes, 20))
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
+C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
+	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
 C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(
