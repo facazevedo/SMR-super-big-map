@@ -523,20 +523,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_908": "'version', 908" in METADATA,
-    "guard_corpus_seam_is_default_off": (
-        "local outer_resource_guard_corpus_hook" in TERRAIN
-        and "local function SetOuterResourceGuardCorpusHookForTest(hook)" in TERRAIN
-        and 'if type(outer_resource_guard_corpus_hook) == "function" then' in outer_resource_terrain
-        and "pcall(outer_resource_guard_corpus_hook" in outer_resource_terrain
-        and "SetOuterResourceGuardCorpusHookForTest = SetOuterResourceGuardCorpusHookForTest"
-        in TERRAIN
-        and "AsyncRand" not in section(
-            outer_resource_terrain,
-            'if type(outer_resource_guard_corpus_hook) == "function" then',
-            'if type(pause) == "function"',
-        )
-    ),
+    "version_is_906": "'version', 906" in METADATA,
 }
 
 case_results = []

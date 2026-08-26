@@ -1751,19 +1751,6 @@ end
 -- byte-for-byte unchanged; only failed footprints are shaped. Building gameplay cores remain exact
 -- planes, while surface collection cores retain a safe fitted grade. A slope-aligned, irregular-width
 -- C2 quintic feather prevents either transition from reading as a stamped circular terrace.
--- Diagnostic-only observer installed explicitly by the Ralph guard-corpus probe.  The production
--- path leaves this nil, so ordinary generation performs no logging, serialization, file I/O, RNG
--- work, or observer callback.  Keeping the seam here lets one real ordered corpus replace millions
--- of repeated pixel/guard checks in offline candidate screening.
-local outer_resource_guard_corpus_hook
-local function SetOuterResourceGuardCorpusHookForTest(hook)
-	if hook ~= nil and type(hook) ~= "function" then
-		return false, "outer resource guard corpus hook must be a function or nil"
-	end
-	outer_resource_guard_corpus_hook = hook
-	return true
-end
-
 local function PrepareOuterResourceTerrain(map)
 	if not cfg_bool("PREPARE_OUTER_RESOURCE_TERRAIN", true) then
 		return false, { reason = "disabled", resources = 0, patches = 0 }
@@ -2459,44 +2446,6 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	local pause = Global("PauseInfiniteLoopDetection")
 	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(outer_resource_guard_corpus_hook) == "function" then
-		local guard_rows, pass_rows = {}, {}
-		for index, protected in ipairs(protected_ready_sites) do
-			local site = protected.site or {}
-			guard_rows[index] = {
-				id = table.concat({ tostring(protected.kind or site.kind or "?"),
-					tostring(protected.q or site.q or "?"),
-					tostring(protected.r or site.r or "?"),
-					tostring(site.resource or "?") }, "|"),
-				cx = protected.cx, cy = protected.cy, radius = protected.radius,
-			}
-		end
-		for index, patch in ipairs(patches) do
-			local base_transition = math.max(cells_per_hex * 2,
-				patch.outer_cells - patch.core_cells)
-			local base_id = table.concat({ tostring(patch.kind or "?"),
-				tostring(patch.q or "?"), tostring(patch.r or "?") }, "|")
-			pass_rows[#pass_rows + 1] = {
-				id = base_id .. "|shaping", cx = patch.cx, cy = patch.cy,
-				visit_radius = patch.core_cells + base_transition * 1.35,
-				width = width, height = height,
-			}
-			if index < #patches then
-				pass_rows[#pass_rows + 1] = {
-					id = base_id .. "|core", cx = patch.cx, cy = patch.cy,
-					visit_radius = patch.core_cells, width = width, height = height,
-				}
-			end
-		end
-		local hook_ok, hook_error = pcall(outer_resource_guard_corpus_hook, {
-			schema = "smr.ralph.protected_guard_observation.v1",
-			map_width = width, map_height = height, ring_sectors = ring_sectors,
-			height_tile = height_tile, cells_per_hex = cells_per_hex,
-			guards = guard_rows, passes = pass_rows,
-		})
-		if not hook_ok then error("outer resource guard corpus hook failed: "
-			.. tostring(hook_error)) end
-	end
 	if type(pause) == "function" then pcall(pause, "SBMOuterResourceTerrain") end
 	local modified_cells, shaped_patches = 0, 0
 	local ok_apply, apply_error = pcall(function()
@@ -7138,7 +7087,6 @@ local TerrainCopy = {
 	AnnotateDecorRelief = AnnotateDecorRelief,
 	ClearDecorRelief = ClearDecorRelief,
 	AuditNaturalMountainBaseBuildableAprons = AuditNaturalMountainBaseBuildableAprons,
-	SetOuterResourceGuardCorpusHookForTest = SetOuterResourceGuardCorpusHookForTest,
 	PrepareOuterResourceTerrain = PrepareOuterResourceTerrain,
 	AuditOuterResourceTerrain = AuditOuterResourceTerrain,
 }
