@@ -109,6 +109,38 @@ def full_listing(luac: Path, chunk: Path) -> str:
     return result.stdout
 
 
+def normalize_lua53_listing(text: str) -> str:
+    """Add Lua 5.4-style constant tags so the shared listing parser can be reused."""
+    normalized: list[str] = []
+    in_constants = False
+    constant_line = re.compile(r"^(\s*)(\d+)\s+(.+)$")
+    integer = re.compile(r"^[+-]?\d+$")
+    for line in text.splitlines():
+        if line.startswith("constants ("):
+            in_constants = True
+            normalized.append(line)
+            continue
+        if line.startswith(("locals (", "upvalues (", "main <", "function <")):
+            in_constants = False
+        if in_constants:
+            match = constant_line.match(line)
+            if match:
+                raw = match.group(3)
+                if raw.startswith('"'):
+                    tag = "S"
+                elif raw == "nil":
+                    tag = "N"
+                elif raw in ("true", "false"):
+                    tag = "B"
+                elif integer.fullmatch(raw):
+                    tag = "I"
+                else:
+                    tag = "F"
+                line = f"{match.group(1)}{match.group(2)} {tag} {raw}"
+        normalized.append(line)
+    return "\n".join(normalized) + "\n"
+
+
 class ChunkReader:
     """Minimal Lua 5.3 binary reader sufficient to locate prototype code arrays."""
 
@@ -337,8 +369,8 @@ def main() -> int:
     (out_dir / "generator_listing.txt").write_text(generator_listing, encoding="utf-8")
     (out_dir / "probe_listing.txt").write_text(probe_listing, encoding="utf-8")
 
-    generator_ir = parse_listing(generator_listing)
-    probe_ir = parse_listing(probe_listing)
+    generator_ir = parse_listing(normalize_lua53_listing(generator_listing))
+    probe_ir = parse_listing(normalize_lua53_listing(probe_listing))
     generator_raw = ChunkReader(generator_chunk.read_bytes()).parse()
     probe_raw = ChunkReader(probe_chunk.read_bytes()).parse()
 
