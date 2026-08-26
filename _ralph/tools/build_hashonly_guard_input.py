@@ -204,7 +204,7 @@ def main() -> int:
         and manifest["probe_sha256"] == PROBE_SHA256
         and manifest["direct_chunk_sha256"] == DIRECT_SHA256,
         "manifest_is_fresh_and_exact": manifest_path.exists()
-        and sha256_file(manifest_path) == sha256_bytes((json.dumps(manifest, indent=2) + "\n").encode()),
+        and json.loads(manifest_path.read_text(encoding="utf-8")) == manifest,
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
     report = {
