@@ -187,6 +187,8 @@ def command_watch(args: argparse.Namespace) -> int:
                "-TimeoutSeconds", str(args.timeout_seconds)]
     if args.abort_sentinel:
         command.extend(["-AbortSentinel", str(args.abort_sentinel.resolve())])
+    if args.ready_sentinel:
+        command.extend(["-ReadySentinel", str(args.ready_sentinel.resolve())])
     return subprocess.run(command, check=False).returncode
 
 
@@ -222,6 +224,7 @@ def parse_args() -> argparse.Namespace:
     watch.add_argument("--candidate-base", type=Path, required=True)
     watch.add_argument("--out", type=Path, required=True)
     watch.add_argument("--abort-sentinel", type=Path)
+    watch.add_argument("--ready-sentinel", type=Path)
     watch.add_argument("--mode", choices=("HashOnly", "Full"), default="HashOnly")
     watch.add_argument("--timeout-seconds", type=int, default=1800)
     watch.set_defaults(func=command_watch)

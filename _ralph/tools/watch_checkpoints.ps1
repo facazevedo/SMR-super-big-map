@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)][string]$CandidateBase,
     [Parameter(Mandatory = $true)][string]$Verdict,
     [string]$AbortSentinel = "",
+    [string]$ReadySentinel = "",
     [ValidateSet("HashOnly", "Full")][string]$Mode = "HashOnly",
     [ValidateRange(1, 86400)][int]$TimeoutSeconds = 1800
 )
@@ -87,6 +88,14 @@ $watcher.NotifyFilter = [IO.NotifyFilters]::FileName -bor [IO.NotifyFilters]::Si
 $watcher.InternalBufferSize = 65536
 $watcher.EnableRaisingEvents = $true
 $started = Get-Date
+if ($ReadySentinel) {
+    Write-JsonAtomic $ReadySentinel ([ordered]@{
+        schema = "smr.ralph.checkpoint_watcher_ready.v1"
+        candidate_base = $basePath
+        watcher_pid = $PID
+        started_utc = $started.ToUniversalTime().ToString("o")
+    })
+}
 $deadline = $started.AddSeconds($TimeoutSeconds)
 $rows = [Collections.Generic.List[object]]::new()
 

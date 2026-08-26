@@ -179,7 +179,7 @@ def write_candidate(reference_base: Path, candidate_base: Path, *, wrong_first: 
 
 def launch_watcher(
     manifest: Path, candidate_base: Path, verdict: Path, abort: Path,
-    identity: dict[str, Path | str],
+    ready: Path, identity: dict[str, Path | str],
 ) -> subprocess.Popen[str]:
     return subprocess.Popen([
         sys.executable, str(TOOLS / "checkpoint_artifacts.py"), "watch",
@@ -189,9 +189,27 @@ def launch_watcher(
         "--reference-scenario-input", str(identity["reference_scenario_input"]),
         "--capture-tool", str(identity["capture_tool"]),
         "--out", str(verdict), "--abort-sentinel", str(abort),
+        "--ready-sentinel", str(ready),
         "--mode", "HashOnly", "--timeout-seconds", "30",
     ], cwd=PROJECT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
        encoding="utf-8", errors="replace")
+
+
+def wait_ready(process: subprocess.Popen[str], ready: Path, timeout: float = 15) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if ready.is_file():
+            payload = json.loads(ready.read_text(encoding="utf-8-sig"))
+            require(payload.get("schema") == "smr.ralph.checkpoint_watcher_ready.v1",
+                    "watcher ready sentinel has the wrong schema")
+            return
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise Failure(f"watcher exited before ready\n{stdout}\n{stderr}")
+        time.sleep(0.05)
+    process.terminate()
+    stdout, stderr = process.communicate(timeout=5)
+    raise Failure(f"watcher did not publish readiness within {timeout}s\n{stdout}\n{stderr}")
 
 
 def finish(process: subprocess.Popen[str], expected: int) -> tuple[str, str]:
@@ -205,8 +223,9 @@ def test_checkpoint_pipeline(root: Path) -> dict:
     reference_base, manifest, identity = create_reference(root)
     candidate = root / "candidate" / "vcandidate"
     verdict, abort = root / "event-green.json", root / "event-green.abort.json"
-    watcher = launch_watcher(manifest, candidate, verdict, abort, identity)
-    time.sleep(0.5)
+    ready = root / "event-green.ready.json"
+    watcher = launch_watcher(manifest, candidate, verdict, abort, ready, identity)
+    wait_ready(watcher, ready)
     write_candidate(reference_base, candidate)
     finish(watcher, 0)
     green = json.loads(verdict.read_text(encoding="utf-8-sig"))
@@ -219,8 +238,9 @@ def test_checkpoint_pipeline(root: Path) -> dict:
 
     bad = root / "bad" / "vbad"
     bad_verdict, bad_abort = root / "event-red.json", root / "event-red.abort.json"
-    bad_watcher = launch_watcher(manifest, bad, bad_verdict, bad_abort, identity)
-    time.sleep(0.5)
+    bad_ready = root / "event-red.ready.json"
+    bad_watcher = launch_watcher(manifest, bad, bad_verdict, bad_abort, bad_ready, identity)
+    wait_ready(bad_watcher, bad_ready)
     write_candidate(reference_base, bad, wrong_first=True)
     finish(bad_watcher, 1)
     red = json.loads(bad_verdict.read_text(encoding="utf-8-sig"))
