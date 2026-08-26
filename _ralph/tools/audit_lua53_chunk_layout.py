@@ -382,7 +382,13 @@ def main() -> int:
         generator_ir, {"dofile", generator_probe_path}
     )
     probe_proto_index = locate_proto(
-        probe_ir, {"post_object_transform", "collision_census", "object_census"}
+        probe_ir,
+        {
+            "post_object_transform",
+            "collision_census",
+            "object_census",
+            "unknown determinism capture stage ",
+        },
     )
     generator_proto = generator_ir[generator_proto_index]
     probe_proto = probe_ir[probe_proto_index]
