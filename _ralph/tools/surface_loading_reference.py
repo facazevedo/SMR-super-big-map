@@ -103,6 +103,8 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
     )
     if not replay_rows:
         replay_rows = "\t\t\t\t"
+    census_path = trace_path.with_suffix(".scheduler_census.txt")
+    census_nonce = hashlib.sha256(str(census_path).encode("utf-8")).hexdigest()[:16]
     setup = f'''
 \t\t\tlocal surface_thread_rng_mode = "{mode}"
 \t\t\tlocal surface_thread_rng_trace = {{
@@ -112,6 +114,7 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\tlocal surface_generation_thread = false
 \t\t\tlocal current_thread = rawget(_G, "CurrentThread")
 \t\t\tlocal original_create_real_time_thread = rawget(_G, "CreateRealTimeThread")
+\t\t\tlocal original_global = rawget(_G, "Global")
 \t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
 \t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
 \t\t\tif type(current_thread) ~= "function" then
@@ -120,8 +123,40 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\tif type(original_create_real_time_thread) ~= "function" then
 \t\t\t\terror("CreateRealTimeThread unavailable for surface-generation RNG scope")
 \t\t\tend
+\t\t\tif type(original_global) ~= "function" then
+\t\t\t\terror("Global unavailable for surface scheduler census")
+\t\t\tend
 \t\t\tif type(surface_scheduler) ~= "function" then
 \t\t\t\terror("RunSurfaceStretchIfEnabled unavailable for surface-generation RNG scope")
+\t\t\tend
+\t\t\tlocal scheduler_census_nonce = "{census_nonce}"
+\t\t\tlocal scheduler_census_rows = {{
+\t\t\t\t"schema=smr.ralph.surface_scheduler_census.v1",
+\t\t\t\t"nonce=" .. scheduler_census_nonce,
+\t\t\t\t"setup_executed=true",
+\t\t\t}}
+\t\t\tlocal scheduler_lookup_count = 0
+\t\t\tlocal function write_scheduler_census(stage)
+\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = "stage=" .. tostring(stage)
+\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] =
+\t\t\t\t\t"lookup_count=" .. tostring(scheduler_lookup_count)
+\t\t\t\tlocal census_error = AsyncStringToFile("{lua_path(census_path)}",
+\t\t\t\t\ttable.concat(scheduler_census_rows, "\\n") .. "\\n")
+\t\t\t\tif census_error then
+\t\t\t\t\terror("surface scheduler census write failed: " .. tostring(census_error))
+\t\t\t\tend
+\t\t\tend
+\t\t\tlocal function append_scheduler_stack(event_index)
+\t\t\t\tfor level = 2, 16 do
+\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "nSfl")
+\t\t\t\t\tif not ok or type(info) ~= "table" then break end
+\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
+\t\t\t\t\t\t"frame", tostring(event_index), tostring(level),
+\t\t\t\t\t\ttostring(info.name), tostring(info.short_src),
+\t\t\t\t\t\ttostring(info.linedefined), tostring(info.currentline),
+\t\t\t\t\t\ttostring(info.func == surface_scheduler),
+\t\t\t\t\t}}, "\\t")
+\t\t\t\tend
 \t\t\tend
 \t\t\tlocal function called_by_surface_scheduler()
 \t\t\t\tfor level = 2, 12 do
@@ -132,6 +167,23 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\treturn false
 \t\t\tend
 \t\t\tlocal scoped_create_real_time_thread
+\t\t\tlocal scoped_global
+\t\t\tscoped_global = function(name, ...)
+\t\t\t\tlocal value = original_global(name, ...)
+\t\t\t\tif name == "CreateRealTimeThread" then
+\t\t\t\t\tscheduler_lookup_count = scheduler_lookup_count + 1
+\t\t\t\t\tstate.surface_scheduler_global_lookup_count = scheduler_lookup_count
+\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
+\t\t\t\t\t\t"lookup", tostring(scheduler_lookup_count),
+\t\t\t\t\t\t"returned_scoped=" .. tostring(value == scoped_create_real_time_thread),
+\t\t\t\t\t\t"returned_original=" .. tostring(value == original_create_real_time_thread),
+\t\t\t\t\t\t"raw_scoped=" .. tostring(rawget(_G, "CreateRealTimeThread") == scoped_create_real_time_thread),
+\t\t\t\t\t}}, "\\t")
+\t\t\t\t\tappend_scheduler_stack(scheduler_lookup_count)
+\t\t\t\t\twrite_scheduler_census("global_lookup")
+\t\t\t\tend
+\t\t\t\treturn value
+\t\t\tend
 \t\t\tscoped_create_real_time_thread = function(fn, ...)
 \t\t\t\tif not called_by_surface_scheduler() then
 \t\t\t\t\treturn original_create_real_time_thread(fn, ...)
@@ -141,11 +193,16 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\tend
 \t\t\t\tstate.surface_generation_thread_scheduled = true
 \t\t\t\trawset(_G, "CreateRealTimeThread", original_create_real_time_thread)
+\t\t\t\tif rawget(_G, "Global") == scoped_global then
+\t\t\t\t\trawset(_G, "Global", original_global)
+\t\t\t\tend
 \t\t\t\tstate.create_thread_dispatcher_restored =
 \t\t\t\t\trawget(_G, "CreateRealTimeThread") == original_create_real_time_thread
+\t\t\t\tstate.global_dispatcher_restored = rawget(_G, "Global") == original_global
 \t\t\t\tif not state.create_thread_dispatcher_restored then
 \t\t\t\t\terror("CreateRealTimeThread dispatcher did not restore")
 \t\t\t\tend
+\t\t\t\twrite_scheduler_census("scheduler_intercepted")
 \t\t\t\treturn original_create_real_time_thread(function(...)
 \t\t\t\t\tsurface_generation_thread = current_thread()
 \t\t\t\t\tstate.surface_generation_thread_identified =
@@ -156,10 +213,17 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\treturn fn(...)
 \t\t\t\tend, ...)
 \t\t\tend
+\t\t\trawset(_G, "Global", scoped_global)
+\t\t\tif rawget(_G, "Global") ~= scoped_global then
+\t\t\t\terror("Global scheduler census dispatcher did not install")
+\t\t\tend
 \t\t\trawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)
 \t\t\tif rawget(_G, "CreateRealTimeThread") ~= scoped_create_real_time_thread then
 \t\t\t\terror("CreateRealTimeThread capture dispatcher did not install")
-\t\t\tend'''
+\t\t\tend
+\t\t\tstate.surface_scheduler_census_nonce = scheduler_census_nonce
+\t\t\tstate.global_dispatcher_installed = true
+\t\t\twrite_scheduler_census("setup")'''
     dispatch = '''
 \t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
 \t\t\t\t\tsurface_thread_rng_index = surface_thread_rng_index + 1
@@ -185,6 +249,7 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\treturn expected.value
 \t\t\t\tend'''
     finalize = f'''
+\t\t\t\twrite_scheduler_census("finalizer_entry")
 \t\t\t\tif state.surface_generation_thread_scheduled ~= true
 \t\t\t\t\tor state.surface_generation_thread_identified ~= true
 \t\t\t\t\tor state.create_thread_dispatcher_restored ~= true then
@@ -719,6 +784,24 @@ def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]
             "info.func == surface_scheduler" in text
             and "called_by_surface_scheduler()" in text
             and "SBM.Generation.RunSurfaceStretchIfEnabled" in text
+        ),
+        "scheduler_census_has_executed_nonce_and_immediate_write": (
+            "schema=smr.ralph.surface_scheduler_census.v1" in text
+            and "setup_executed=true" in text
+            and 'write_scheduler_census("setup")' in text
+            and "state.surface_scheduler_census_nonce" in text
+        ),
+        "scheduler_census_wraps_global_lookup_without_changing_return": (
+            'rawset(_G, "Global", scoped_global)' in text
+            and 'if name == "CreateRealTimeThread" then' in text
+            and "returned_scoped=" in text
+            and "returned_original=" in text
+            and "return value" in text
+        ),
+        "scheduler_census_records_function_identity_stack": (
+            'pcall(debug.getinfo, level, "nSfl")' in text
+            and "tostring(info.func == surface_scheduler)" in text
+            and 'write_scheduler_census("global_lookup")' in text
         ),
         "thread_identified_inside_scheduled_callback": (
             "surface_generation_thread = current_thread()" in text
