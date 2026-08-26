@@ -28,6 +28,12 @@ DIRECT_SHA256 = "0B0BBA344E1078E27592390DCCA4E48B68DFFBE60F594AB9BAEE7C1C5E8E489
 REUSED_TRANSPORT_AUDIT_SHA256 = "40831ADF10A8071D15FCC41F7EC5045E85B17EBCA86722D932B337F405ED623F"
 LUA_SHA256 = "1B4AB9BD2ADB768B5B4DC5F36797DAC23E1C1379DDCA33D62259CE40DFA6DF10"
 LUAC_SHA256 = "FA0C4520068BB37978683F1C1FB5EFDE1AEDF1B86CB88162533077F9E6A94D2E"
+STANDARD_GENERATOR_SHA256 = "1EABB948C4E29FBEA309B89B76C01FD54EC0DA1E72CBA49AB3C17719F84F7772"
+STANDARD_PROBE_SHA256 = "4C655A2D065F99B329FD8A2AD94A9B83950FDE5C54EE449A79EED2E7DECFC32E"
+GAME_ABI_GENERATOR_SHA256 = "B90A5F73BE97D109C00917BE88136E9F76F10171F8FCD487CC9779762F299CB2"
+GAME_ABI_PROBE_SHA256 = "3CC39916895333745D972D86C791FED2B4F600B9F90975A3A42221D4869E5371"
+STANDARD_ABI_FIELDS = bytes.fromhex("0408040808")
+GAME_ABI_FIELDS = bytes.fromhex("040408")
 
 GENERATOR_PROTOTYPE = 2
 PROBE_MAIN_PROTOTYPE = 0
@@ -135,6 +141,18 @@ def raw_opcode_listing_exact(chunk: bytes, ir: list[dict[str, object]]) -> bool:
     )
 
 
+def to_game_abi(chunk: bytes) -> bytes:
+    if chunk[12:17] != STANDARD_ABI_FIELDS:
+        raise BuildError(f"unexpected standard Lua 5.3 ABI fields: {chunk[12:17].hex()}")
+    return chunk[:12] + bytes((chunk[12], chunk[14], chunk[13])) + chunk[17:]
+
+
+def from_game_abi(chunk: bytes) -> bytes:
+    if chunk[12:15] != GAME_ABI_FIELDS:
+        raise BuildError(f"unexpected game Lua 5.3 ABI fields: {chunk[12:15].hex()}")
+    return chunk[:12] + STANDARD_ABI_FIELDS + chunk[15:]
+
+
 def patch_generator(source: bytes, code_start: int) -> bytes:
     data = bytearray(source)
     put(data, code_start, 350, abc("CALL", 10, 2, 4))
@@ -227,20 +245,26 @@ def main() -> int:
         300: ("RETURN", "27 2"),
     }, "probe main")
 
-    candidate_generator = patch_generator(
+    standard_generator = patch_generator(
         generator, generator_raw["prototypes"][GENERATOR_PROTOTYPE]["code_start"]
     )
-    candidate_probe = patch_probe(
+    standard_probe = patch_probe(
         probe,
         probe_raw["prototypes"][PROBE_MAIN_PROTOTYPE]["code_start"],
         probe_raw["prototypes"][PROBE_CAPTURE_PROTOTYPE]["code_start"],
     )
+    candidate_generator = to_game_abi(standard_generator)
+    candidate_probe = to_game_abi(standard_probe)
+    generator_standard_out = out_dir / "candidate_generator_lua53_standard.luac"
+    probe_standard_out = out_dir / "candidate_probe_lua53_standard.luac"
     generator_out = out_dir / "candidate_generator_lua53.luac"
     probe_out = out_dir / "candidate_probe_lua53.luac"
+    generator_standard_out.write_bytes(standard_generator)
+    probe_standard_out.write_bytes(standard_probe)
     generator_out.write_bytes(candidate_generator)
     probe_out.write_bytes(candidate_probe)
-    generator_listing = full_listing(args.luac.resolve(), generator_out)
-    probe_listing = full_listing(args.luac.resolve(), probe_out)
+    generator_listing = full_listing(args.luac.resolve(), generator_standard_out)
+    probe_listing = full_listing(args.luac.resolve(), probe_standard_out)
     (out_dir / "candidate_generator_listing.txt").write_text(generator_listing, encoding="utf-8")
     (out_dir / "candidate_probe_listing.txt").write_text(probe_listing, encoding="utf-8")
     generator_after = listing_ir(generator_listing)
@@ -280,9 +304,20 @@ def main() -> int:
     direct_record = reused_audit.get("direct", {})
     checks = {
         "pinned_inputs_exact": True,
-        "candidate_chunks_are_lua_5_3": candidate_generator[4] == 0x53 and candidate_probe[4] == 0x53,
-        "generator_binary_size_exact": len(generator) == len(candidate_generator),
-        "probe_binary_size_exact": len(probe) == len(candidate_probe),
+        "standard_candidates_are_lua_5_3": standard_generator[4] == 0x53 and standard_probe[4] == 0x53,
+        "game_abi_candidates_are_lua_5_3": candidate_generator[4] == 0x53 and candidate_probe[4] == 0x53,
+        "standard_generator_hash_exact": sha256_bytes(standard_generator) == STANDARD_GENERATOR_SHA256,
+        "standard_probe_hash_exact": sha256_bytes(standard_probe) == STANDARD_PROBE_SHA256,
+        "game_abi_generator_hash_exact": sha256_bytes(candidate_generator) == GAME_ABI_GENERATOR_SHA256,
+        "game_abi_probe_hash_exact": sha256_bytes(candidate_probe) == GAME_ABI_PROBE_SHA256,
+        "generator_game_abi_size_delta_exact": len(candidate_generator) == len(standard_generator) - 2,
+        "probe_game_abi_size_delta_exact": len(candidate_probe) == len(standard_probe) - 2,
+        "generator_game_abi_header_exact": candidate_generator[12:15] == GAME_ABI_FIELDS,
+        "probe_game_abi_header_exact": candidate_probe[12:15] == GAME_ABI_FIELDS,
+        "generator_game_abi_body_exact": candidate_generator[15:] == standard_generator[17:],
+        "probe_game_abi_body_exact": candidate_probe[15:] == standard_probe[17:],
+        "generator_reverse_roundtrip_exact": from_game_abi(candidate_generator) == standard_generator,
+        "probe_reverse_roundtrip_exact": from_game_abi(candidate_probe) == standard_probe,
         "generator_load_allocation_identity_exact": identity(generator_before) == identity(generator_after),
         "probe_load_allocation_identity_exact": identity(probe_before) == identity(probe_after),
         "generator_changes_exactly_scoped": generator_locations == expected_generator_locations,
@@ -296,8 +331,8 @@ def main() -> int:
             probe_before[PROBE_MAIN_PROTOTYPE]["closures"][-1]
             == probe_after[PROBE_MAIN_PROTOTYPE]["closures"][-1]
         ),
-        "generator_raw_listing_opcodes_exact": raw_opcode_listing_exact(candidate_generator, generator_after),
-        "probe_raw_listing_opcodes_exact": raw_opcode_listing_exact(candidate_probe, probe_after),
+        "generator_raw_listing_opcodes_exact": raw_opcode_listing_exact(standard_generator, generator_after),
+        "probe_raw_listing_opcodes_exact": raw_opcode_listing_exact(standard_probe, probe_after),
         "reused_direct_lifecycle_certificate_hash_exact": sha256_bytes(reused_audit_bytes) == REUSED_TRANSPORT_AUDIT_SHA256,
         "reused_direct_lifecycle_green": (
             reused_audit.get("ok") is True
@@ -307,7 +342,7 @@ def main() -> int:
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
     report = {
-        "schema": "smr.ralph.iter110.lua53_allocation_identity_transport.v1",
+        "schema": "smr.ralph.iter113.lua53_game_abi_allocation_identity_transport.v1",
         "ok": not failed,
         "checks": checks,
         "passed": sum(checks.values()),
@@ -320,17 +355,23 @@ def main() -> int:
         "generator": {
             "accepted": str(args.accepted_generator.resolve()),
             "accepted_sha256": GENERATOR_SHA256,
+            "standard_candidate": str(generator_standard_out),
+            "standard_candidate_sha256": sha256_bytes(standard_generator),
             "candidate": str(generator_out),
             "candidate_sha256": sha256_bytes(candidate_generator),
             "bytes": len(candidate_generator),
+            "reverse_roundtrip_to_standard_exact": from_game_abi(candidate_generator) == standard_generator,
             "differences": generator_diff,
         },
         "probe": {
             "accepted": str(args.accepted_probe.resolve()),
             "accepted_sha256": PROBE_SHA256,
+            "standard_candidate": str(probe_standard_out),
+            "standard_candidate_sha256": sha256_bytes(standard_probe),
             "candidate": str(probe_out),
             "candidate_sha256": sha256_bytes(candidate_probe),
             "bytes": len(candidate_probe),
+            "reverse_roundtrip_to_standard_exact": from_game_abi(candidate_probe) == standard_probe,
             "differences": probe_diff,
         },
         "direct": {
@@ -341,11 +382,12 @@ def main() -> int:
         },
         "conclusion": (
             "The exact pinned Lua 5.3 chunks carry the allocation-identity transport with "
-            "unchanged descriptors, constants, first-seen strings, debug names, closures, and "
-            "binary sizes; every opcode/operand change is exhaustively scoped."
+            "unchanged descriptors, constants, first-seen strings, debug names, and closures; "
+            "every opcode/operand change is exhaustively scoped, and the certified game-ABI "
+            "serialization reverses byte-exactly to both standard candidates."
             if not failed else "The Lua 5.3 allocation-identity transport failed closed."
         ),
-        "next_gate": "Run one watcher-first 36-checkpoint HashOnly screen in the next iteration.",
+        "next_gate": "Run the one remaining watcher-first 36-checkpoint HashOnly screen.",
     }
     report_path = out_dir / "identity_audit.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
