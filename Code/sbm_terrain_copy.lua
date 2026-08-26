@@ -2785,7 +2785,7 @@ local function PrepareOuterResourceTerrain(map)
 	local native_raster_cells, native_mask_samples = 0, 0
 	local native_inner_restored_patch_cells = 0
 	local native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
-	local native_precondition_extra_passes = 1
+	local native_precondition_extra_passes = 2
 	local native_precondition_site_records = {}
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
@@ -3020,8 +3020,9 @@ local function PrepareOuterResourceTerrain(map)
 			native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored_patch_cells
 		end
 		-- Keep the broad first feather for visual continuity, then settle each at-risk connected
-		-- component once with its pre-adaptive transition. This reproduces the contracted geometry of
-		-- the successful repair while retaining identical targets, guards, order, and ring clipping.
+		-- component twice with its pre-adaptive transition. The second bounded composition is cheaper
+		-- than a failed audit's whole-grid prepare/rebuild retry and retains identical targets, guards,
+		-- order, and ring clipping.
 		if native_precondition_enabled then
 			for pass = 1, native_precondition_extra_passes do
 				for _, patch in ipairs(patches) do

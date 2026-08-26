@@ -383,7 +383,7 @@ static_checks = {
         and "patch.base_transition_cells = existing_transition" in outer_resource_terrain
         and "apply_native_patch(patch, false, patch.base_transition_cells)"
         in outer_resource_terrain
-        and "local native_precondition_extra_passes = 1" in outer_resource_terrain
+        and "local native_precondition_extra_passes = 2" in outer_resource_terrain
         and "native_precondition_sites" in outer_resource_terrain
         and "native_precondition_patches" in outer_resource_terrain
         and "patch_index == #patches and native_precondition_patches == 0" in outer_resource_terrain
@@ -811,7 +811,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_920": "'version', 920" in METADATA,
+    "version_is_921": "'version', 921" in METADATA,
 }
 
 case_results = []
