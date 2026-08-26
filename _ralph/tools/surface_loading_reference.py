@@ -114,149 +114,115 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\tlocal surface_generation_thread = false
 \t\t\tlocal current_thread = rawget(_G, "CurrentThread")
 \t\t\tlocal original_create_real_time_thread = rawget(_G, "CreateRealTimeThread")
-\t\t\tlocal original_global = rawget(_G, "Global")
-\t\t\tlocal surface_scheduler = type(SBM) == "table" and type(SBM.Generation) == "table"
-\t\t\t\tand SBM.Generation.RunSurfaceStretchIfEnabled or nil
 \t\t\tif type(current_thread) ~= "function" then
 \t\t\t\terror("CurrentThread unavailable for surface-generation RNG scope")
 \t\t\tend
 \t\t\tif type(original_create_real_time_thread) ~= "function" then
 \t\t\t\terror("CreateRealTimeThread unavailable for surface-generation RNG scope")
 \t\t\tend
-\t\t\tif type(original_global) ~= "function" then
-\t\t\t\terror("Global unavailable for surface scheduler census")
+\t\t\tif type(SBM) ~= "table" or type(SBM.State) ~= "table" then
+\t\t\t\terror("SuperBigMap.State unavailable for surface scheduler capture seam")
 \t\t\tend
-\t\t\tif type(surface_scheduler) ~= "function" then
-\t\t\t\terror("RunSurfaceStretchIfEnabled unavailable for surface-generation RNG scope")
+\t\t\tif SBM.State.test_surface_scheduler_capture ~= nil then
+\t\t\t\terror("surface scheduler capture seam was already armed")
 \t\t\tend
 \t\t\tlocal scheduler_census_nonce = "{census_nonce}"
 \t\t\tlocal scheduler_census_rows = {{
-\t\t\t\t"schema=smr.ralph.surface_scheduler_census.v1",
+\t\t\t\t"schema=smr.ralph.surface_scheduler_explicit_seam_census.v3",
 \t\t\t\t"nonce=" .. scheduler_census_nonce,
 \t\t\t\t"setup_executed=true",
 \t\t\t}}
-\t\t\tlocal scheduler_lookup_count = 0
+\t\t\tlocal scheduler_seam_count = 0
 \t\t\tlocal function write_scheduler_census(stage)
 \t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = "stage=" .. tostring(stage)
 \t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] =
-\t\t\t\t\t"lookup_count=" .. tostring(scheduler_lookup_count)
+\t\t\t\t\t"seam_count=" .. tostring(scheduler_seam_count)
 \t\t\t\tlocal census_error = AsyncStringToFile("{lua_path(census_path)}",
 \t\t\t\t\ttable.concat(scheduler_census_rows, "\\n") .. "\\n")
 \t\t\t\tif census_error then
 \t\t\t\t\terror("surface scheduler census write failed: " .. tostring(census_error))
 \t\t\t\tend
 \t\t\tend
-\t\t\tlocal function append_scheduler_stack(event_index)
-\t\t\t\tfor level = 2, 16 do
-\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "nSfl")
-\t\t\t\t\tif not ok or type(info) ~= "table" then break end
-\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
-\t\t\t\t\t\t"frame", tostring(event_index), tostring(level),
-\t\t\t\t\t\ttostring(info.name), tostring(info.short_src),
-\t\t\t\t\t\ttostring(info.linedefined), tostring(info.currentline),
-\t\t\t\t\t\ttostring(info.func == surface_scheduler),
-\t\t\t\t\t}}, "\\t")
+\t\t\tlocal scheduler_capture = {{}}
+\t\t\tscheduler_capture.wrap_create_thread = function(create_thread, map, readiness_source)
+\t\t\t\tif scheduler_seam_count ~= 0 then
+\t\t\t\t\terror("surface scheduler capture seam invoked more than once")
 \t\t\t\tend
-\t\t\tend
-\t\t\tlocal function called_by_surface_scheduler()
-\t\t\t\tfor level = 2, 12 do
-\t\t\t\t\tlocal ok, info = pcall(debug.getinfo, level, "f")
-\t\t\t\t\tif not ok or type(info) ~= "table" then break end
-\t\t\t\t\tif info.func == surface_scheduler then return true end
+\t\t\t\tif create_thread ~= original_create_real_time_thread then
+\t\t\t\t\terror("surface scheduler seam received unexpected CreateRealTimeThread identity")
 \t\t\t\tend
-\t\t\t\treturn false
-\t\t\tend
-\t\t\tlocal scoped_create_real_time_thread
-\t\t\tlocal scoped_global
-\t\t\tscoped_global = function(name, ...)
-\t\t\t\tlocal value = original_global(name, ...)
-\t\t\t\tif name == "CreateRealTimeThread" then
-\t\t\t\t\tscheduler_lookup_count = scheduler_lookup_count + 1
-\t\t\t\t\tstate.surface_scheduler_global_lookup_count = scheduler_lookup_count
-\t\t\t\t\tscheduler_census_rows[#scheduler_census_rows + 1] = table.concat({{
-\t\t\t\t\t\t"lookup", tostring(scheduler_lookup_count),
-\t\t\t\t\t\t"returned_scoped=" .. tostring(value == scoped_create_real_time_thread),
-\t\t\t\t\t\t"returned_original=" .. tostring(value == original_create_real_time_thread),
-\t\t\t\t\t\t"raw_scoped=" .. tostring(rawget(_G, "CreateRealTimeThread") == scoped_create_real_time_thread),
-\t\t\t\t\t}}, "\\t")
-\t\t\t\t\tappend_scheduler_stack(scheduler_lookup_count)
-\t\t\t\t\twrite_scheduler_census("global_lookup")
-\t\t\t\tend
-\t\t\t\treturn value
-\t\t\tend
-\t\t\tscoped_create_real_time_thread = function(fn, ...)
-\t\t\t\tif not called_by_surface_scheduler() then
-\t\t\t\t\treturn original_create_real_time_thread(fn, ...)
-\t\t\t\tend
-\t\t\t\tif state.surface_generation_thread_scheduled then
-\t\t\t\t\terror("surface-generation thread scheduled more than once")
-\t\t\t\tend
-\t\t\t\tstate.surface_generation_thread_scheduled = true
-\t\t\t\trawset(_G, "CreateRealTimeThread", original_create_real_time_thread)
-\t\t\t\tif rawget(_G, "Global") == scoped_global then
-\t\t\t\t\trawset(_G, "Global", original_global)
-\t\t\t\tend
-\t\t\t\tstate.create_thread_dispatcher_restored =
-\t\t\t\t\trawget(_G, "CreateRealTimeThread") == original_create_real_time_thread
-\t\t\t\tstate.global_dispatcher_restored = rawget(_G, "Global") == original_global
-\t\t\t\tif not state.create_thread_dispatcher_restored then
-\t\t\t\t\terror("CreateRealTimeThread dispatcher did not restore")
-\t\t\t\tend
-\t\t\t\twrite_scheduler_census("scheduler_intercepted")
-\t\t\t\treturn original_create_real_time_thread(function(...)
-\t\t\t\t\tsurface_generation_thread = current_thread()
-\t\t\t\t\tstate.surface_generation_thread_identified =
-\t\t\t\t\t\tsurface_generation_thread ~= nil and surface_generation_thread ~= false
-\t\t\t\t\tif not state.surface_generation_thread_identified then
-\t\t\t\t\t\terror("CurrentThread returned no surface-generation identity")
+\t\t\t\tscheduler_seam_count = scheduler_seam_count + 1
+\t\t\t\tstate.surface_scheduler_seam_count = scheduler_seam_count
+\t\t\t\tstate.surface_scheduler_readiness_source = tostring(readiness_source)
+\t\t\t\tstate.surface_scheduler_map_matches = map ~= nil
+\t\t\t\twrite_scheduler_census("seam_invoked")
+\t\t\t\treturn function(fn, ...)
+\t\t\t\t\tif state.surface_generation_thread_scheduled then
+\t\t\t\t\t\terror("surface-generation thread scheduled more than once")
 \t\t\t\t\tend
-\t\t\t\t\treturn fn(...)
-\t\t\t\tend, ...)
+\t\t\t\t\tstate.surface_generation_thread_scheduled = true
+\t\t\t\t\twrite_scheduler_census("thread_scheduled")
+\t\t\t\t\treturn original_create_real_time_thread(function(...)
+\t\t\t\t\t\tsurface_generation_thread = current_thread()
+\t\t\t\t\t\tstate.surface_generation_thread_identified =
+\t\t\t\t\t\t\tsurface_generation_thread ~= nil and surface_generation_thread ~= false
+\t\t\t\t\t\tif not state.surface_generation_thread_identified then
+\t\t\t\t\t\t\terror("CurrentThread returned no surface-generation identity")
+\t\t\t\t\t\tend
+\t\t\t\t\t\twrite_scheduler_census("thread_identified")
+\t\t\t\t\t\treturn fn(...)
+\t\t\t\t\tend, ...)
+\t\t\t\tend
 \t\t\tend
-\t\t\trawset(_G, "Global", scoped_global)
-\t\t\tif rawget(_G, "Global") ~= scoped_global then
-\t\t\t\terror("Global scheduler census dispatcher did not install")
-\t\t\tend
-\t\t\trawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)
-\t\t\tif rawget(_G, "CreateRealTimeThread") ~= scoped_create_real_time_thread then
-\t\t\t\terror("CreateRealTimeThread capture dispatcher did not install")
+\t\t\tSBM.State.test_surface_scheduler_capture = scheduler_capture
+\t\t\tif SBM.State.test_surface_scheduler_capture ~= scheduler_capture then
+\t\t\t\terror("surface scheduler capture seam did not arm")
 \t\t\tend
 \t\t\tstate.surface_scheduler_census_nonce = scheduler_census_nonce
-\t\t\tstate.global_dispatcher_installed = true
 \t\t\twrite_scheduler_census("setup")'''
     dispatch = '''
-\t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
-\t\t\t\t\tsurface_thread_rng_index = surface_thread_rng_index + 1
-\t\t\t\t\tstate.surface_thread_async_rand_draw_count = surface_thread_rng_index
-\t\t\t\t\tlocal args = { ... }
-\t\t\t\t\tif surface_thread_rng_mode == "record" then
-\t\t\t\t\t\tlocal value = original_async_rand(...)
-\t\t\t\t\t\tsurface_thread_rng_trace[surface_thread_rng_index] = { args = args, value = value }
-\t\t\t\t\t\treturn value
-\t\t\t\t\tend
-\t\t\t\t\tlocal expected = surface_thread_rng_trace[surface_thread_rng_index]
-\t\t\t\t\tif type(expected) ~= "table" or type(expected.args) ~= "table"
-\t\t\t\t\t\tor #expected.args ~= #args then
-\t\t\t\t\t\terror("surface-thread AsyncRand replay exhausted or arity changed at draw "
-\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index))
-\t\t\t\t\tend
-\t\t\t\t\tfor i = 1, #args do
-\t\t\t\t\t\tif expected.args[i] ~= args[i] then
-\t\t\t\t\t\t\terror("surface-thread AsyncRand replay argument changed at draw "
-\t\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index) .. " argument " .. tostring(i))
+\t\t\t\t\tif surface_generation_thread and current_thread() == surface_generation_thread then
+\t\t\t\t\t\tsurface_thread_rng_index = surface_thread_rng_index + 1
+\t\t\t\t\t\tstate.surface_thread_async_rand_draw_count = surface_thread_rng_index
+\t\t\t\t\t\tlocal args = { ... }
+\t\t\t\t\t\tif surface_thread_rng_mode == "record" then
+\t\t\t\t\t\t\tlocal value
+\t\t\t\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
+\t\t\t\t\t\t\tsurface_thread_rng_trace[surface_thread_rng_index] = { args = args, value = value }
+\t\t\t\t\t\t\treturn value
 \t\t\t\t\t\tend
-\t\t\t\t\tend
-\t\t\t\t\treturn expected.value
-\t\t\t\tend'''
+\t\t\t\t\t\tlocal expected = surface_thread_rng_trace[surface_thread_rng_index]
+\t\t\t\t\t\tif type(expected) ~= "table" or type(expected.args) ~= "table"
+\t\t\t\t\t\t\tor #expected.args ~= #args then
+\t\t\t\t\t\t\terror("surface-thread AsyncRand replay exhausted or arity changed at draw "
+\t\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index))
+\t\t\t\t\t\tend
+\t\t\t\t\t\tfor i = 1, #args do
+\t\t\t\t\t\t\tif expected.args[i] ~= args[i] then
+\t\t\t\t\t\t\t\terror("surface-thread AsyncRand replay argument changed at draw "
+\t\t\t\t\t\t\t\t\t.. tostring(surface_thread_rng_index) .. " argument " .. tostring(i))
+\t\t\t\t\t\t\tend
+\t\t\t\t\t\tend
+\t\t\t\t\t\tlocal ignored
+\t\t\t\t\t\tignored, async_rand_seed = BraidRandom(async_rand_seed, ...)
+\t\t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
+\t\t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
+\t\t\t\t\t\treturn expected.value
+\t\t\t\t\tend'''
     finalize = f'''
 \t\t\t\twrite_scheduler_census("finalizer_entry")
-\t\t\t\tif state.surface_generation_thread_scheduled ~= true
+\t\t\t\tif SBM.State.test_surface_scheduler_capture ~= scheduler_capture
+\t\t\t\t\tor scheduler_capture.used ~= true
+\t\t\t\t\tor scheduler_seam_count ~= 1
+\t\t\t\t\tor state.surface_generation_thread_scheduled ~= true
 \t\t\t\t\tor state.surface_generation_thread_identified ~= true
-\t\t\t\t\tor state.create_thread_dispatcher_restored ~= true then
+\t\t\t\tthen
 \t\t\t\t\terror("surface-generation thread discriminator did not complete")
 \t\t\t\tend
 \t\t\t\tif surface_thread_rng_index <= 0 then
-\t\t\t\t\terror("surface-generation thread consumed no direct AsyncRand draws")
+\t\t\t\t\terror("surface-generation thread consumed no mod-owned AsyncRand draws")
 \t\t\t\tend
 \t\t\t\tif surface_thread_rng_mode == "replay"
 \t\t\t\t\tand surface_thread_rng_index ~= #surface_thread_rng_trace then
@@ -277,6 +243,12 @@ def surface_thread_rng_lua(mode: str, trace_path: Path | None) -> tuple[str, str
 \t\t\t\t\t\ttable.concat(rows, "\\n") .. "\\n")
 \t\t\t\t\tif trace_error then error("surface-thread RNG trace write failed: "
 \t\t\t\t\t\t.. tostring(trace_error)) end
+\t\t\t\tend
+\t\t\t\tSBM.State.test_surface_scheduler_capture = nil
+\t\t\t\tstate.surface_scheduler_seam_restored =
+\t\t\t\t\tSBM.State.test_surface_scheduler_capture == nil
+\t\t\t\tif not state.surface_scheduler_seam_restored then
+\t\t\t\t\terror("surface scheduler capture seam did not restore")
 \t\t\t\tend'''
     return setup, dispatch, finalize
 
@@ -352,13 +324,13 @@ def benchmark_block(
 \t\t\t\treturn false
 \t\t\tend
 \t\t\tlocal function scoped_async_rand(...)
-\t\t\t\tif called_by_mod_rand_int() then
+\t\t\t\tif called_by_mod_rand_int() then{thread_dispatch}
 \t\t\t\t\tlocal value
 \t\t\t\t\tvalue, async_rand_seed = BraidRandom(async_rand_seed, ...)
 \t\t\t\t\tstate.async_rand_draw_count = state.async_rand_draw_count + 1
 \t\t\t\t\tstate.async_rand_final_seed = async_rand_seed
 \t\t\t\t\treturn value
-\t\t\t\tend{thread_dispatch}
+\t\t\t\tend
 \t\t\t\tstate.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1
 \t\t\t\treturn original_async_rand(...)
 \t\t\tend
@@ -662,6 +634,80 @@ io.write("scoped_dispatch_ok")
     }
 
 
+def exercise_scheduler_explicit_seam(lua: Path) -> dict[str, object]:
+    if not lua.is_file():
+        raise ReferenceError(f"Lua interpreter missing: {lua}")
+    script = r'''
+local State = {}
+local original_calls, wrapper_calls = 0, 0
+local function original_create(fn)
+  original_calls = original_calls + 1
+  return fn()
+end
+local function resolve_create_thread()
+  local create_thread = original_create
+  local scheduler_capture = State.test_surface_scheduler_capture
+  if scheduler_capture ~= nil then
+    if type(scheduler_capture) ~= "table"
+        or type(scheduler_capture.wrap_create_thread) ~= "function" then
+      error("armed surface scheduler capture hook is unavailable")
+    end
+    if scheduler_capture.used == true then
+      error("surface scheduler capture hook was used more than once")
+    end
+    local capture_ok, captured_create_thread = pcall(
+      scheduler_capture.wrap_create_thread, create_thread, {}, "runtime-test")
+    if not capture_ok or type(captured_create_thread) ~= "function" then
+      error("surface scheduler capture hook failed: "
+        .. tostring(capture_ok and captured_create_thread or captured_create_thread))
+    end
+    scheduler_capture.used = true
+    create_thread = captured_create_thread
+  end
+  return create_thread
+end
+assert(resolve_create_thread()(function() return "default" end) == "default")
+assert(original_calls == 1 and wrapper_calls == 0)
+local capture = {}
+capture.wrap_create_thread = function(create_thread, map, source)
+  assert(create_thread == original_create and type(map) == "table" and source == "runtime-test")
+  return function(fn)
+    wrapper_calls = wrapper_calls + 1
+    return create_thread(fn)
+  end
+end
+State.test_surface_scheduler_capture = capture
+assert(resolve_create_thread()(function() return "wrapped" end) == "wrapped")
+assert(capture.used == true and original_calls == 2 and wrapper_calls == 1)
+assert(not pcall(resolve_create_thread))
+State.test_surface_scheduler_capture = { wrap_create_thread = function() return false end }
+assert(not pcall(resolve_create_thread))
+State.test_surface_scheduler_capture = {}
+assert(not pcall(resolve_create_thread))
+io.write("scheduler_explicit_seam_ok")
+'''
+    proc = subprocess.run(
+        [str(lua), "-"], input=script, capture_output=True, text=True, timeout=60
+    )
+    ok = (
+        proc.returncode == 0
+        and proc.stdout == "scheduler_explicit_seam_ok"
+        and not proc.stderr
+    )
+    return {
+        "ok": ok,
+        "interpreter": str(lua),
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "returncode": proc.returncode,
+        "default_off_calls": 1 if ok else None,
+        "wrapped_calls": 1 if ok else None,
+        "single_use_failure": ok,
+        "invalid_return_failure": ok,
+        "missing_hook_failure": ok,
+    }
+
+
 def static_verdict(text: str) -> dict[str, object]:
     positions = {
         "new_game": text.find('NewGame({ seed_text = "LOZL3FQr" })'),
@@ -780,45 +826,51 @@ def static_verdict(text: str) -> dict[str, object]:
 def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]:
     checks = {
         "mode_is_record_or_replay": mode in {"record", "replay"},
-        "scheduler_scoped_by_function_identity": (
-            "info.func == surface_scheduler" in text
-            and "called_by_surface_scheduler()" in text
-            and "SBM.Generation.RunSurfaceStretchIfEnabled" in text
+        "scheduler_explicit_seam_armed_fail_closed": (
+            "SBM.State.test_surface_scheduler_capture = scheduler_capture" in text
+            and "surface scheduler capture seam was already armed" in text
+            and "surface scheduler capture seam did not arm" in text
         ),
         "scheduler_census_has_executed_nonce_and_immediate_write": (
-            "schema=smr.ralph.surface_scheduler_census.v1" in text
+            "schema=smr.ralph.surface_scheduler_explicit_seam_census.v3" in text
             and "setup_executed=true" in text
             and 'write_scheduler_census("setup")' in text
             and "state.surface_scheduler_census_nonce" in text
         ),
-        "scheduler_census_wraps_global_lookup_without_changing_return": (
-            'rawset(_G, "Global", scoped_global)' in text
-            and 'if name == "CreateRealTimeThread" then' in text
-            and "returned_scoped=" in text
-            and "returned_original=" in text
-            and "return value" in text
-        ),
-        "scheduler_census_records_function_identity_stack": (
-            'pcall(debug.getinfo, level, "nSfl")' in text
-            and "tostring(info.func == surface_scheduler)" in text
-            and 'write_scheduler_census("global_lookup")' in text
+        "scheduler_seam_validates_original_and_single_use": (
+            "scheduler_seam_count ~= 0" in text
+            and "create_thread ~= original_create_real_time_thread" in text
+            and 'write_scheduler_census("seam_invoked")' in text
         ),
         "thread_identified_inside_scheduled_callback": (
             "surface_generation_thread = current_thread()" in text
             and "state.surface_generation_thread_identified" in text
+            and 'write_scheduler_census("thread_identified")' in text
         ),
-        "create_dispatcher_is_one_shot_and_restored": (
-            text.count('rawset(_G, "CreateRealTimeThread", scoped_create_real_time_thread)') == 1
-            and 'rawset(_G, "CreateRealTimeThread", original_create_real_time_thread)' in text
-            and "state.create_thread_dispatcher_restored" in text
+        "thread_wrapper_is_seam_scoped_only": (
+            'rawset(_G, "Global"' not in text
+            and 'rawset(_G, "CreateRealTimeThread"' not in text
+            and "return original_create_real_time_thread(function(...)" in text
         ),
-        "mod_private_stream_has_priority": (
+        "mod_private_stream_thread_capture_has_priority": (
             text.find("if called_by_mod_rand_int() then")
             < text.find("current_thread() == surface_generation_thread")
+            < text.find("surface_thread_rng_index = surface_thread_rng_index + 1")
         ),
-        "surface_direct_calls_scoped_by_current_thread": (
+        "surface_mod_draws_scoped_by_current_thread": (
             "surface_generation_thread and current_thread() == surface_generation_thread" in text
             and "state.surface_thread_async_rand_draw_count" in text
+            and "surface-generation thread consumed no mod-owned AsyncRand draws" in text
+        ),
+        "record_preserves_private_stream_value": (
+            'if surface_thread_rng_mode == "record" then' in text
+            and "value, async_rand_seed = BraidRandom(async_rand_seed, ...)" in text
+            and "surface_thread_rng_trace[surface_thread_rng_index]" in text
+            and "return value" in text
+        ),
+        "replay_advances_private_stream_before_recorded_return": (
+            "ignored, async_rand_seed = BraidRandom(async_rand_seed, ...)" in text
+            and "return expected.value" in text
         ),
         "unrelated_consumers_forwarded": (
             "state.foreign_async_rand_draw_count = state.foreign_async_rand_draw_count + 1\n"
@@ -835,18 +887,68 @@ def surface_thread_rng_static_verdict(text: str, mode: str) -> dict[str, object]
         ),
         "finalizer_requires_identified_thread_and_draws": (
             "surface-generation thread discriminator did not complete" in text
-            and "surface-generation thread consumed no direct AsyncRand draws" in text
+            and "surface-generation thread consumed no mod-owned AsyncRand draws" in text
+            and "scheduler_capture.used ~= true" in text
+            and "scheduler_seam_count ~= 1" in text
+        ),
+        "explicit_seam_restored_after_capture": (
+            "SBM.State.test_surface_scheduler_capture = nil" in text
+            and "state.surface_scheduler_seam_restored" in text
+            and "surface scheduler capture seam did not restore" in text
         ),
     }
     failed = sorted(name for name, passed in checks.items() if not passed)
     return {
-        "schema": "smr.ralph.surface_thread_rng_static.v1",
+        "schema": "smr.ralph.surface_thread_rng_static.v3",
         "ok": not failed,
         "mode": mode,
         "checks": checks,
         "passed": sum(checks.values()),
         "total": len(checks),
         "failed": failed,
+    }
+
+
+def production_scheduler_seam_verdict(text: str) -> dict[str, object]:
+    lookup = text.find('local create_thread = Global("CreateRealTimeThread")',
+                       text.find("local function RunSurfaceStretchIfEnabled"))
+    hook = text.find("local scheduler_capture = SuperBigMap.State.test_surface_scheduler_capture",
+                     lookup)
+    sprocall = text.find('local yield_protected_call = Global("sprocall")', hook)
+    checks = {
+        "seam_is_at_surface_scheduler_lookup": 0 <= lookup < hook < sprocall,
+        "default_off_preserves_engine_function": (
+            "if scheduler_capture ~= nil then" in text[hook:sprocall]
+            and "create_thread = captured_create_thread" in text[hook:sprocall]
+        ),
+        "armed_hook_requires_table_and_function": (
+            'type(scheduler_capture) ~= "table"' in text[hook:sprocall]
+            and 'type(scheduler_capture.wrap_create_thread) ~= "function"'
+            in text[hook:sprocall]
+        ),
+        "armed_hook_is_single_use": (
+            "scheduler_capture.used == true" in text[hook:sprocall]
+            and "scheduler_capture.used = true" in text[hook:sprocall]
+        ),
+        "armed_hook_fails_closed": (
+            "pcall(" in text[hook:sprocall]
+            and 'type(captured_create_thread) ~= "function"' in text[hook:sprocall]
+            and "surface scheduler capture hook failed" in text[hook:sprocall]
+        ),
+        "no_debug_upvalue_dependency": (
+            "debug.getupvalue" not in text[hook:sprocall]
+            and "debug.setupvalue" not in text[hook:sprocall]
+        ),
+    }
+    failed = sorted(name for name, passed in checks.items() if not passed)
+    return {
+        "schema": "smr.ralph.production_scheduler_seam_static.v1",
+        "ok": not failed,
+        "checks": checks,
+        "passed": sum(checks.values()),
+        "total": len(checks),
+        "failed": failed,
+        "positions": {"create_thread_lookup": lookup, "capture_hook": hook, "sprocall": sprocall},
     }
 
 
@@ -901,7 +1003,7 @@ def command_prepare(args: argparse.Namespace) -> int:
         "schema": (
             "smr.ralph.surface_loading_reference_manifest.v4"
             if args.surface_thread_rng_mode == "forward"
-            else "smr.ralph.surface_loading_reference_manifest.v5"
+            else "smr.ralph.surface_loading_reference_manifest.v7"
         ),
         "source_head": source_head,
         "coordinate": COORDINATE,
@@ -940,6 +1042,13 @@ def command_self_test(args: argparse.Namespace) -> int:
     compile_lua(args.luac.resolve(), probe)
     probe_sha256 = sha256_file(probe)
     dispatch_test = exercise_scoped_dispatch(args.luac.resolve().with_name("lua.exe"))
+    scheduler_seam_test = exercise_scheduler_explicit_seam(
+        args.luac.resolve().with_name("lua.exe")
+    )
+    production_text = (PROJECT / "Code" / "sbm_map_generation.lua").read_text(
+        encoding="utf-8"
+    )
+    production_seam = production_scheduler_seam_verdict(production_text)
     TMP_ROOT.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".tmp_surface_reference_selftest_", dir=TMP_ROOT) as raw:
         root = Path(raw)
@@ -990,6 +1099,30 @@ def command_self_test(args: argparse.Namespace) -> int:
         unscoped_dispatcher_red = static_verdict(unscoped_dispatcher)["ok"] is False
         missing_foreign_forward = text.replace("return original_async_rand(...)", "return 0", 1)
         missing_foreign_forward_red = static_verdict(missing_foreign_forward)["ok"] is False
+        missing_seam_arm = record_text.replace(
+            "SBM.State.test_surface_scheduler_capture = scheduler_capture",
+            "SBM.State.test_surface_scheduler_capture = nil",
+            1,
+        )
+        missing_seam_arm_red = (
+            surface_thread_rng_static_verdict(missing_seam_arm, "record")["ok"] is False
+        )
+        missing_seam_restore = record_text.replace(
+            "SBM.State.test_surface_scheduler_capture = nil",
+            "SBM.State.test_surface_scheduler_capture = scheduler_capture",
+            1,
+        )
+        missing_seam_restore_red = (
+            surface_thread_rng_static_verdict(missing_seam_restore, "record")["ok"] is False
+        )
+        production_without_fail_closed = production_text.replace(
+            "if not capture_ok or type(captured_create_thread) ~= \"function\" then",
+            "if false then",
+            1,
+        )
+        production_fail_closed_mutation_red = (
+            production_scheduler_seam_verdict(production_without_fail_closed)["ok"] is False
+        )
         verdict["lua_parse"] = True
         verdict["reference_probe_lua_parse"] = True
         verdict["reference_probe_sha256"] = probe_sha256
@@ -999,6 +1132,8 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["wrong_preset_mutation_red"] = mutation_red
         verdict["missing_finalizer_mutation_red"] = missing_finalizer_red
         verdict["scoped_dispatch_runtime"] = dispatch_test
+        verdict["scheduler_explicit_seam_runtime"] = scheduler_seam_test
+        verdict["production_scheduler_seam_static"] = production_seam
         verdict["missing_scoped_dispatcher_mutation_red"] = missing_dispatcher_red
         verdict["unscoped_dispatcher_mutation_red"] = unscoped_dispatcher_red
         verdict["missing_foreign_forward_mutation_red"] = missing_foreign_forward_red
@@ -1007,11 +1142,16 @@ def command_self_test(args: argparse.Namespace) -> int:
         verdict["surface_thread_trace_round_trip"] = trace_calls == [([], 17), ([41, 99], 7)]
         verdict["surface_thread_record_lua_parse"] = True
         verdict["surface_thread_replay_lua_parse"] = True
+        verdict["missing_scheduler_seam_arm_mutation_red"] = missing_seam_arm_red
+        verdict["missing_scheduler_seam_restore_mutation_red"] = missing_seam_restore_red
+        verdict["production_fail_closed_mutation_red"] = production_fail_closed_mutation_red
         verdict["ok"] = (
             verdict["ok"]
             and mutation_red
             and missing_finalizer_red
             and dispatch_test["ok"]
+            and scheduler_seam_test["ok"]
+            and production_seam["ok"]
             and missing_dispatcher_red
             and unscoped_dispatcher_red
             and missing_foreign_forward_red
@@ -1019,6 +1159,9 @@ def command_self_test(args: argparse.Namespace) -> int:
             and record_verdict["ok"]
             and replay_verdict["ok"]
             and verdict["surface_thread_trace_round_trip"]
+            and missing_seam_arm_red
+            and missing_seam_restore_red
+            and production_fail_closed_mutation_red
         )
     if args.out:
         write_json(args.out.resolve(), verdict)

@@ -10682,6 +10682,27 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		return true
 	end
 	local create_thread = Global("CreateRealTimeThread")
+	-- Narrow test-only seam for deterministic scheduler/RNG captures. Normal gameplay never
+	-- installs this table and retains the exact engine function. An armed capture may wrap only
+	-- this one surface scheduler dispatch; malformed or repeated use fails closed.
+	local scheduler_capture = SuperBigMap.State.test_surface_scheduler_capture
+	if scheduler_capture ~= nil then
+		if type(scheduler_capture) ~= "table"
+			or type(scheduler_capture.wrap_create_thread) ~= "function" then
+			error("armed surface scheduler capture hook is unavailable")
+		end
+		if scheduler_capture.used == true then
+			error("surface scheduler capture hook was used more than once")
+		end
+		local capture_ok, captured_create_thread = pcall(
+			scheduler_capture.wrap_create_thread, create_thread, map, readiness_source)
+		if not capture_ok or type(captured_create_thread) ~= "function" then
+			error("surface scheduler capture hook failed: "
+				.. tostring(capture_ok and captured_create_thread or captured_create_thread))
+		end
+		scheduler_capture.used = true
+		create_thread = captured_create_thread
+	end
 	local yield_protected_call = Global("sprocall")
 	if type(create_thread) ~= "function" or type(yield_protected_call) ~= "function" then
 		map.SuperBigMapStretchPipelinePending = false
