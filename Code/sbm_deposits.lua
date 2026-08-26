@@ -8148,11 +8148,6 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 							}, "|")
 						end
 					end
-					if surface_candidate_first
-						and surface_candidate_first_outer_candidates
-							>= surface_candidate_first_outer_target
-						and surface_candidate_first_inner_candidates
-							>= surface_candidate_first_inner_target then break end
 				end
 				if a.surface_quota_resource and b.surface_quota_resource
 					and type(a.q) == "number" and type(a.r) == "number"

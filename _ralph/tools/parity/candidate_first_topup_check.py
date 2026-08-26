@@ -193,10 +193,13 @@ def source_certificate() -> dict[str, bool]:
     start = deposits.index("Candidate-first mode visits perimeter sectors")
     end = deposits.index("table.sort(mountain_base_candidates", start)
     candidate = deposits[start:end]
+    audit_start = deposits.index("function DepositRules.AuditTopUpVanillaRepulsion")
+    audit_end = deposits.index("function DepositRules.CensusFinalOuterResourceTopUps", audit_start)
+    audit = deposits[audit_start:audit_end]
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_907": "'version', 907" in metadata,
+        "version_908": "'version', 908" in metadata,
         "scenario_seed_inputs": all(token in candidate for token in ("generator.Seed", "generator.GenerationHash", "RandomMapPreset")),
         "local_complete_validation_retained": all(token in candidate for token in ("CanReceiveDeposit(", "ValleyScore(map, pt)", "TerrainTypeAt(map, pt")),
         "physical_two_band_filter": all(token in candidate for token in ("surface_mountain_base_ring_sectors", "outermost_descriptor", "surface_candidate_first_inner_target")),
@@ -205,6 +208,10 @@ def source_certificate() -> dict[str, bool]:
         "downstream_three_hex_spacing_retained": "surface_quota_spacing_clear" in deposits and "TopUpEnrichmentMinimumHexDistance()" in deposits,
         "downstream_cluster_caps_retained": all(token in deposits for token in ("maximum_cluster_extractors", "resource_cluster_maximum_deposits", "cluster cap exceeded")),
         "downstream_terrain_audit_retained": "AuditOuterResourceTerrain(map)" in (ROOT / "Code" / "sbm_map_generation.lua").read_text(encoding="utf-8"),
+        "audit_has_no_candidate_sampler_locals": all(token not in audit for token in (
+            "surface_candidate_first", "surface_candidate_first_outer_candidates",
+            "surface_candidate_first_inner_candidates",
+        )),
     }
 
 
