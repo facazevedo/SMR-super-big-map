@@ -267,7 +267,13 @@ static_checks = {
     ),
     "native_raster_retains_legacy_fallback_from_raw_source": (
         "local function apply_legacy_raster()" in outer_resource_terrain
-        and "grid = grid_to_compute(raw)" in outer_resource_terrain
+        and "local working = grid:clone()" in outer_resource_terrain
+        and "native transactional clone unavailable" in outer_resource_terrain
+        and "local failed_grid = grid" in outer_resource_terrain
+        and "grid = raw" in outer_resource_terrain
+        and "local rebuilt = grid_to_compute(raw)" in outer_resource_terrain
+        and "native fallback grid unavailable" in outer_resource_terrain
+        and "grid = rebuilt" in outer_resource_terrain
         and "ok_apply, apply_error = pcall(apply_legacy_raster)"
         in outer_resource_terrain
         and "native_raster_fallback = true" in outer_resource_terrain
@@ -283,6 +289,13 @@ static_checks = {
             "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
             "native_mul_div_add(target_delta, mask, native_weight_scale, 0)",
         )
+    ),
+    "native_raster_converts_only_patch_local_grids": (
+        "local source_native = own(grid:new_instance(local_width, local_height))"
+        in outer_resource_terrain
+        and 'native_repack(source_native, "f", 32, true)' in outer_resource_terrain
+        and "native_repack(result, native_is_compute(grid))" in outer_resource_terrain
+        and 'native_repack(grid, "F"' not in outer_resource_terrain
     ),
     "native_raster_preserves_exact_cores_and_guards": (
         "native_circle_set(mask, native_weight_scale, center_x, center_y"
@@ -637,7 +650,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_910": "'version', 910" in METADATA,
+    "version_is_911": "'version', 911" in METADATA,
 }
 
 case_results = []

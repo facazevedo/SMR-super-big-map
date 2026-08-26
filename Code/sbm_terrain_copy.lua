@@ -2475,15 +2475,19 @@ local function PrepareOuterResourceTerrain(map)
 	local native_clamp = Global("GridClamp")
 	local native_abs = Global("GridAbs")
 	local native_count = Global("GridCount")
+	local native_repack = Global("GridRepack")
+	local native_is_compute = Global("IsComputeGrid")
 	local box_fn = Global("box")
 	local native_requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)
-	local native_available = native_requested and grid ~= raw
+	local native_available = native_requested
 		and type(native_new_grid) == "function" and type(native_resample) == "function"
 		and type(native_mul_div_add) == "function" and type(native_add_mul_div) == "function"
 		and type(native_add) == "function" and type(native_circle_set) == "function"
 		and type(native_clamp) == "function" and type(native_abs) == "function"
-		and type(native_count) == "function" and type(box_fn) == "function"
-		and type(grid.copyrect) == "function"
+		and type(native_count) == "function" and type(native_repack) == "function"
+		and type(native_is_compute) == "function" and type(box_fn) == "function"
+		and type(grid.copyrect) == "function" and type(grid.new_instance) == "function"
+		and (grid ~= raw or type(grid.clone) == "function")
 	local native_weight_scale, native_height_scale = 4096, 256
 	local native_tile_step = math.floor(height_tile + 0.5)
 	local native_sample_step = 4
@@ -2564,9 +2568,12 @@ local function PrepareOuterResourceTerrain(map)
 				"unaligned native mask bounds")
 			local local_box = box_fn(0, 0, local_width, local_height)
 			local source_box = box_fn(x0, y0, x1 + 1, y1 + 1)
-			local source = own(native_new_grid(local_width, local_height, "f", 32))
-			assert(source and type(source.copyrect) == "function", "native source allocation failed")
-			source:copyrect(grid, source_box, point_fn(0, 0))
+			local source_native = own(grid:new_instance(local_width, local_height))
+			assert(source_native and type(source_native.copyrect) == "function",
+				"native source allocation failed")
+			source_native:copyrect(grid, source_box, point_fn(0, 0))
+			local source = own(native_repack(source_native, "f", 32, true))
+			assert(source, "native signed source conversion failed")
 
 			local height_grid = own(source:clone())
 			native_mul_div_add(height_grid, native_height_scale, 1, 0)
@@ -2695,7 +2702,9 @@ local function PrepareOuterResourceTerrain(map)
 			native_add_mul_div(difference, source, -1)
 			native_abs(difference)
 			local changed_cells = native_count(difference, 1, 2147483647)
-			grid:copyrect(result, local_box, point_fn(x0, y0))
+			local packed_result = own(native_repack(result, native_is_compute(grid)))
+			assert(packed_result, "native result conversion failed")
+			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
 			return changed_cells, local_width * local_height, mask_samples
 		end)
 		for index = #owned, 1, -1 do
@@ -2830,7 +2839,16 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	local ok_apply, apply_error
 	if native_available then
-		local native_ok, native_error = pcall(apply_native_raster)
+		local clone_ok, clone_error = true, nil
+		if grid == raw then
+			clone_ok, clone_error = pcall(function()
+				local working = grid:clone()
+				assert(working and working ~= raw, "native transactional clone unavailable")
+				grid = working
+			end)
+		end
+		local native_ok, native_error = false, clone_error
+		if clone_ok then native_ok, native_error = pcall(apply_native_raster) end
 		if native_ok then
 			native_raster_used = true
 			ok_apply = true
@@ -2840,10 +2858,16 @@ local function PrepareOuterResourceTerrain(map)
 			modified_cells, shaped_patches = 0, 0
 			native_raster_cells, native_mask_samples = 0, 0
 			local reset_ok, reset_error = pcall(function()
-				if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
-				grid = grid_to_compute(raw)
-				assert(grid and type(grid.size) == "function" and type(grid.get) == "function"
-					and type(grid.set) == "function", "native fallback grid unavailable")
+				local failed_grid = grid
+				grid = raw
+				if failed_grid ~= raw and type(failed_grid.free) == "function" then
+					pcall(failed_grid.free, failed_grid)
+				end
+				local rebuilt = grid_to_compute(raw)
+				assert(rebuilt and type(rebuilt.size) == "function"
+					and type(rebuilt.get) == "function" and type(rebuilt.set) == "function",
+					"native fallback grid unavailable")
+				grid = rebuilt
 			end)
 			if reset_ok then
 				ok_apply, apply_error = pcall(apply_legacy_raster)
@@ -2862,7 +2886,7 @@ local function PrepareOuterResourceTerrain(map)
 	elseif ok_apply then
 		set_ok = true
 	end
-	if grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
+	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 
 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
 	map.SuperBigMapOuterResourceRocketPads = rocket_sites
