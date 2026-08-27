@@ -1593,6 +1593,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		edge_perp = primary.last_perp, rows = primary.count,
 		repairs = #selected_tracks, qualified = primary.qualified,
 		modified = modified, detected = detected,
+		candidates = #tracks,
 		min_offset = min_offset, max_offset = max_offset,
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
@@ -4180,6 +4181,8 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 						or report.destination_modified,
 					destination_rows = internal_step_repair.destination_rows
 						or report.destination_rows,
+					destination_candidates = internal_step_repair.destination_candidates
+						or report.destination_candidates,
 					destination_scan_grid_reads = report.destination_scan_grid_reads,
 					destination_legacy_scan_grid_reads =
 						report.destination_legacy_scan_grid_reads,
@@ -4336,6 +4339,7 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				report.destination_repairs = report.repairs
 				report.destination_modified = report.modified
 				report.destination_rows = report.rows
+				report.destination_candidates = report.candidates
 				report.destination_scan_grid_reads = report.scan_grid_reads
 				report.destination_legacy_scan_grid_reads = report.legacy_scan_grid_reads
 				report.destination_native_discovery_index_requested =

@@ -588,6 +588,8 @@ static_checks = {
             'report.destination_scan_grid_reads = report.scan_grid_reads',
             'report.destination_legacy_scan_grid_reads = report.legacy_scan_grid_reads',
             'report.destination_native_discovery_index_used = report.native_discovery_index_used',
+            'report.destination_candidates = report.candidates',
+            'candidates = #tracks',
             'report.height_step_point_expand_ms = phase_ms.point_expand',
             'report.height_step_apply_ms = phase_ms.apply',
         )
@@ -916,7 +918,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_942": "'version', 942" in METADATA,
+    "version_is_943": "'version', 943" in METADATA,
 }
 
 case_results = []
