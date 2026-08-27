@@ -2595,40 +2595,6 @@ local function PrepareOuterResourceTerrain(map)
 	local native_precondition_site_records = {}
 	local native_raster_used, native_raster_fallback = false, false
 	local native_raster_error = ""
-	local native_patch_journal = cfg_bool(
-		"OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_JOURNAL", true) and grid == raw and {} or false
-	local native_patch_journal_used = native_patch_journal and true or false
-	local native_patch_journal_snapshots = 0
-	local function release_native_patch_journal(restore)
-		if not native_patch_journal then return true, "" end
-		local release_ok, release_errors = true, {}
-		if restore then
-			for index = #native_patch_journal, 1, -1 do
-				local record = native_patch_journal[index]
-				local ok, err = pcall(
-					grid.copyrect, grid, record.source, record.source_box, record.destination)
-				if not ok then
-					release_ok = false
-					release_errors[#release_errors + 1] = "restore " .. tostring(index)
-						.. ": " .. tostring(err)
-				end
-			end
-		end
-		for index = #native_patch_journal, 1, -1 do
-			local source = native_patch_journal[index].source
-			if source and type(source.free) == "function" then
-				local ok, err = pcall(source.free, source)
-				if not ok then
-					release_ok = false
-					release_errors[#release_errors + 1] = "free " .. tostring(index)
-						.. ": " .. tostring(err)
-				end
-			end
-			native_patch_journal[index] = nil
-		end
-		native_patch_journal = false
-		return release_ok, table.concat(release_errors, " | ")
-	end
 
 	local function patch_sort()
 		-- Resource access first, then rocket pads. A rocket core therefore remains exactly level even
@@ -2838,21 +2804,12 @@ local function PrepareOuterResourceTerrain(map)
 			local changed_cells = native_count(difference, 1, 2147483647)
 			local packed_result = own(native_repack(result, native_is_compute(grid)))
 			assert(packed_result, "native result conversion failed")
-			if native_patch_journal then
-				native_patch_journal[#native_patch_journal + 1] = {
-					source = source_native, source_box = local_box,
-					destination = point_fn(x0, y0),
-				}
-				owned_lookup[source_native] = "journal"
-				native_patch_journal_snapshots = native_patch_journal_snapshots + 1
-			end
 			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
 			return changed_cells, local_width * local_height, mask_samples, restored_patch_cells
 		end)
 		for index = #owned, 1, -1 do
 			local value = owned[index]
-			if value and owned_lookup[value] ~= "journal"
-				and type(value.free) == "function" then pcall(value.free, value) end
+			if value and type(value.free) == "function" then pcall(value.free, value) end
 		end
 		if not ok then error(changed, 0) end
 		return changed, raster_cells, mask_samples, inner_restored_patch_cells
@@ -3012,7 +2969,7 @@ local function PrepareOuterResourceTerrain(map)
 	local ok_apply, apply_error
 	if native_available then
 		local clone_ok, clone_error = true, nil
-		if grid == raw and not native_patch_journal then
+		if grid == raw then
 			clone_ok, clone_error = pcall(function()
 				local working = grid:clone()
 				assert(working and working ~= raw, "native transactional clone unavailable")
@@ -3031,24 +2988,16 @@ local function PrepareOuterResourceTerrain(map)
 			native_raster_cells, native_mask_samples, native_inner_restored_patch_cells = 0, 0, 0
 			native_precondition_sites, native_precondition_patches, native_precondition_cells = 0, 0, 0
 			local reset_ok, reset_error = pcall(function()
-				if native_patch_journal then
-					local restored, restore_error = release_native_patch_journal(true)
-					assert(restored, "native patch-journal rollback failed: "
-						.. tostring(restore_error))
-					native_patch_journal_snapshots = 0
-					grid = raw
-				else
-					local failed_grid = grid
-					grid = raw
-					if failed_grid ~= raw and type(failed_grid.free) == "function" then
-						pcall(failed_grid.free, failed_grid)
-					end
-					local rebuilt = grid_to_compute(raw)
-					assert(rebuilt and type(rebuilt.size) == "function"
-						and type(rebuilt.get) == "function" and type(rebuilt.set) == "function",
-						"native fallback grid unavailable")
-					grid = rebuilt
+				local failed_grid = grid
+				grid = raw
+				if failed_grid ~= raw and type(failed_grid.free) == "function" then
+					pcall(failed_grid.free, failed_grid)
 				end
+				local rebuilt = grid_to_compute(raw)
+				assert(rebuilt and type(rebuilt.size) == "function"
+					and type(rebuilt.get) == "function" and type(rebuilt.set) == "function",
+					"native fallback grid unavailable")
+				grid = rebuilt
 			end)
 			if reset_ok then
 				ok_apply, apply_error = pcall(apply_legacy_raster)
@@ -3073,24 +3022,6 @@ local function PrepareOuterResourceTerrain(map)
 			site.patch_precondition_passes = native_precondition_extra_passes
 		end
 	end
-	if native_patch_journal then
-		local restore = not set_ok
-		local released, release_error = release_native_patch_journal(restore)
-		if restore then
-			local reinstall_ok, reinstall_error = false, "rollback was incomplete"
-			if released then
-				reinstall_ok, reinstall_error = pcall(terrain_api.SetHeightGrid, map, raw)
-			end
-			if not released or not reinstall_ok then
-				set_error = tostring(set_error) .. " | native patch-journal install rollback failed: "
-					.. tostring(release_error)
-					.. (released and (" | reinstall: " .. tostring(reinstall_error)) or "")
-			end
-		elseif not released then
-			set_ok = false
-			set_error = "native patch-journal release failed: " .. tostring(release_error)
-		end
-	end
 	if grid and grid ~= raw and type(grid.free) == "function" then pcall(grid.free, grid) end
 
 	map.SuperBigMapOuterResourceTerrainSites = resource_sites
@@ -3112,8 +3043,6 @@ local function PrepareOuterResourceTerrain(map)
 		native_raster_requested = native_requested,
 		native_raster_used = native_raster_used,
 		native_raster_fallback = native_raster_fallback,
-		native_patch_journal_used = native_raster_used and native_patch_journal_used,
-		native_patch_journal_snapshots = native_patch_journal_snapshots,
 		native_raster_cells = native_raster_cells,
 		native_mask_samples = native_mask_samples,
 		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
