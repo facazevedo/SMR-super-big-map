@@ -26,6 +26,15 @@ def section(text: str, start: str, end: str) -> str:
     return text[first:last]
 
 
+def appears_in_order(text: str, *needles: str) -> bool:
+    position = -1
+    for needle in needles:
+        position = text.find(needle, position + 1)
+        if position < 0:
+            return False
+    return True
+
+
 @dataclass(frozen=True)
 class Candidate:
     name: str
@@ -223,6 +232,46 @@ rocket_terrain_audit = section(
 )
 
 static_checks = {
+    "immediate_surface_final_rebuild_is_deferred": (
+        "config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true" in CONFIG
+        and "C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD" in CONFIG
+        and 'cfg_bool("OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD", false)' in GENERATION
+    ),
+    "canonical_post_pipeline_rebuild_is_retained": (
+        "SuperBigMap.GenerationGrids.RebuildFinal(map, reason)" in GENERATION
+        and '"post-pipeline scheduled revalidation"' in GENERATION
+        and "SuperBigMapSurfacePostPipelineRevalidationComplete = true" in GENERATION
+    ),
+    "deferred_surface_completion_waits_for_canonical_rebuild": (
+        appears_in_order(
+            GENERATION,
+            "deferred_surface_completion = true",
+            '"post-pipeline scheduled revalidation"',
+            "SuperBigMapSurfacePostPipelineRevalidationComplete = true",
+            "publish_deferred_surface_completion()",
+        )
+        and "Keep the loading cover and pending gate authoritative" in GENERATION
+    ),
+    "deferred_surface_revalidation_has_verified_fallbacks": (
+        '"post-pipeline revalidation failure fallback"' in GENERATION
+        and '"post-pipeline scheduling failure fallback"' in GENERATION
+        and "if fallback_ok then" in GENERATION
+        and 'SuperBigMapSurfacePostPipelineRevalidationMode = "synchronous-fallback"' in GENERATION
+        and appears_in_order(
+            GENERATION,
+            '"post-pipeline scheduling failure fallback"',
+            "if fallback_ok then",
+            "SuperBigMapSurfacePostPipelineRevalidationScheduled = true",
+            "SuperBigMapSurfacePostPipelineRevalidationComplete = true",
+            "publish_deferred_surface_completion()",
+        )
+        and "Fail closed: keep both the pending state and loading cover" in GENERATION
+    ),
+    "ordinary_failure_retains_baseline_post_pipeline_schedule": (
+        'if thread_ok\n\t\t\tand cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)\n'
+        '\t\t\tand map.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then'
+        in GENERATION
+    ),
     "anomaly_outer_ring_is_two_sectors": "config.TopUpAnomalyOuterRingSectors = 2" in CONFIG,
     "compiled_anomaly_outer_ring_uses_config": (
         "as_number(config.TopUpAnomalyOuterRingSectors, 2)" in CONFIG
@@ -735,7 +784,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_928": "'version', 928" in METADATA,
+    "version_is_931": "'version', 931" in METADATA,
 }
 
 case_results = []
