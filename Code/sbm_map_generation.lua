@@ -10628,6 +10628,151 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	return true
 end
 
+-- Resource shaping is hard-clipped to the physical outer ring. Revalidate only that ring before
+-- the resource audit and anomaly/effect selection, including two pass tiles on the untouched side so
+-- slope/passability dependencies at the clip boundary are recomputed. The later closing rebuilds
+-- remain whole-map, so T1 still carries the stock authoritative final grids. Any unavailable or
+-- failed local operation returns false and lets the caller fall back to RebuildFinal.
+function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors, stage)
+	stage = tostring(stage or "outer resource terrain")
+	ring_sectors = math.floor(tonumber(ring_sectors) or 0)
+	local prior = map and map.SuperBigMapOuterResourceRingRebuildReport
+	local report = {
+		requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD", true),
+		used = false,
+		fallback = type(prior) == "table" and prior.fallback == true,
+		boxes = 0,
+		ring_sectors = ring_sectors,
+		passability_ms = 0,
+		buildable_ms = 0,
+		total_ms = 0,
+		error = "",
+		stage = stage,
+		calls = type(prior) == "table" and (tonumber(prior.calls) or 0) + 1 or 1,
+		fallbacks = type(prior) == "table" and (tonumber(prior.fallbacks) or 0) or 0,
+		error_history = type(prior) == "table" and tostring(prior.error_history or "") or "",
+	}
+	if map then map.SuperBigMapOuterResourceRingRebuildReport = report end
+	if report.requested ~= true then
+		report.error = "outer resource ring rebuild is disabled"
+		return false, report
+	end
+	if not map or ring_sectors <= 0 or ring_sectors >= 10 then
+		report.error = "outer resource ring geometry is invalid"
+		return false, report
+	end
+	local terrain_api = Global("terrain")
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	local box_ctor = Global("box")
+	if not (type(terrain_api) == "table"
+		and type(terrain_api.InvalidateHeight) == "function"
+		and type(terrain_api.InvalidateType) == "function"
+		and type(terrain_api.RebuildPassability) == "function"
+		and type(rebuild_buildable) == "function"
+		and type(box_ctor) == "function") then
+		report.error = "outer resource ring rebuild APIs are unavailable"
+		return false, report
+	end
+	local map_w, map_h = TerrainSize(map)
+	if map_w <= 0 or map_h <= 0 then
+		report.error = "outer resource ring map dimensions are unavailable"
+		return false, report
+	end
+	local const_tbl = Global("const")
+	local pass_tile = type(const_tbl) == "table" and tonumber(const_tbl.PassTileSize) or 100
+	pass_tile = type(pass_tile) == "number" and pass_tile > 0 and pass_tile or 100
+	-- Match the stock passability brush's dependency expansion exactly.
+	local dependency_margin = math.floor(pass_tile * 2)
+	-- Ceil the near-side thickness so a non-divisible map dimension cannot omit the last
+	-- integer coordinate that still lies inside the continuous physical ring.
+	local band_x = math.ceil(map_w * ring_sectors / 20)
+	local band_y = math.ceil(map_h * ring_sectors / 20)
+	local inner_x = math.min(map_w, band_x + dependency_margin)
+	local inner_y = math.min(map_h, band_y + dependency_margin)
+	local far_x = math.max(0, map_w - band_x - dependency_margin)
+	local far_y = math.max(0, map_h - band_y - dependency_margin)
+	if inner_x >= far_x or inner_y >= far_y then
+		report.error = "outer resource ring dependency margin covers the map"
+		return false, report
+	end
+	-- Full-width top/bottom and full-height left/right strips deliberately overlap only at
+	-- the corners. That keeps each passability call independent at its long edges while still
+	-- visiting about 40 percent of a 20x20 map instead of all of it.
+	local regions = {
+		box_ctor(0, 0, map_w, inner_y),
+		box_ctor(0, far_y, map_w, map_h),
+		box_ctor(0, 0, inner_x, map_h),
+		box_ctor(far_x, 0, map_w, map_h),
+	}
+	local total_started = GetPreciseTicks()
+	local pass_started = GetPreciseTicks()
+	local passability_token = LoadingBegin(
+		"surface outer resource ring RebuildPassability (" .. stage .. ")", map,
+		{ ring_sectors = ring_sectors, boxes = #regions })
+	local pass_ok, pass_err = pcall(function()
+		for _, region in ipairs(regions) do
+			terrain_api.InvalidateHeight(map, region)
+			terrain_api.InvalidateType(map, region)
+			terrain_api.RebuildPassability(map, region)
+		end
+	end)
+	report.passability_ms = GetPreciseTicks() - pass_started
+	LoadingEnd(passability_token, {
+		error = pass_ok and "" or tostring(pass_err),
+		boxes = #regions,
+	}, pass_ok)
+	if not pass_ok then
+		report.total_ms = GetPreciseTicks() - total_started
+		report.error = "outer resource ring passability rebuild failed: " .. tostring(pass_err)
+		return false, report
+	end
+	local buildable_started = GetPreciseTicks()
+	local buildable_token = LoadingBegin(
+		"surface outer resource ring RebuildBuildableGrid (" .. stage .. ")", map)
+	local build_ok, build_err = pcall(rebuild_buildable, map)
+	report.buildable_ms = GetPreciseTicks() - buildable_started
+	LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
+	report.total_ms = GetPreciseTicks() - total_started
+	if not build_ok then
+		report.error = "outer resource ring buildable-grid rebuild failed: "
+			.. tostring(build_err)
+		return false, report
+	end
+	report.boxes = #regions
+	report.used = true
+	return true, report
+end
+
+-- Protect the complete regional helper, including box construction and diagnostics, then preserve
+-- the old whole-map behavior on every unavailable, returned-false, or thrown-error path.
+function SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map, ring_sectors, stage)
+	local call_ok, used, report = pcall(
+		SuperBigMap.GenerationGrids.RebuildOuterResourceRing, map, ring_sectors, stage)
+	if call_ok and used == true then return true, report end
+	report = type(report) == "table" and report
+		or map and map.SuperBigMapOuterResourceRingRebuildReport or nil
+	if type(report) ~= "table" then
+		report = {
+			requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD", true),
+			used = false, fallback = false, boxes = 0, calls = 1, fallbacks = 0,
+			error = "", error_history = "", stage = tostring(stage or "outer resource terrain"),
+		}
+		if map then map.SuperBigMapOuterResourceRingRebuildReport = report end
+	end
+	local failure = call_ok and tostring(report.error or "")
+		or "outer resource ring helper failed: " .. tostring(used)
+	if failure == "" then failure = "outer resource ring rebuild returned false" end
+	report.used = false
+	report.fallback = true
+	report.fallbacks = (tonumber(report.fallbacks) or 0) + 1
+	report.error = failure
+	report.error_history = report.error_history ~= ""
+		and (tostring(report.error_history) .. " | " .. failure) or failure
+	SuperBigMap.GenerationGrids.RebuildFinal(map,
+		tostring(stage or "outer resource terrain") .. " fallback")
+	return false, report
+end
+
 -- Stretch-only surface expansion readiness gate.
 local function SurfaceExpansionReadiness(map)
 	if map.SuperBigMapNativeGenerationComplete ~= true then
@@ -10994,8 +11139,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						end
 						if resource_terrain_changed == true then
 							local resource_rebuild_started = GetPreciseTicks()
-							SuperBigMap.GenerationGrids.RebuildFinal(
-								map, "after outer resource terrain preparation")
+							SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(
+								map, resource_terrain_stats and resource_terrain_stats.ring_sectors,
+								"after outer resource terrain preparation")
 							resource_rebuild_ms = GetPreciseTicks() - resource_rebuild_started
 							-- TopUpDeposits may have published candidates validated against the old grids.
 							-- Force anomaly/effect selection to observe the rebuilt terrain instead.
@@ -11038,8 +11184,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							end
 							if repair_changed ~= true then break end
 							local repair_rebuild_started = GetPreciseTicks()
-							SuperBigMap.GenerationGrids.RebuildFinal(map,
-								"after outer resource terrain repair " .. tostring(terrain_repair_attempt))
+							SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal(map,
+								repair_stats and repair_stats.ring_sectors,
+								"after outer resource terrain repair "
+									.. tostring(terrain_repair_attempt))
 							resource_repair_rebuild_ms = resource_repair_rebuild_ms
 								+ (GetPreciseTicks() - repair_rebuild_started)
 							if type(deposits.ClearTopUpPlacementPool) == "function" then
@@ -11072,6 +11220,29 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								resource_terrain_stats and resource_terrain_stats.native_raster_cells
 							final_resource_terrain_report.initial_native_mask_samples =
 								resource_terrain_stats and resource_terrain_stats.native_mask_samples
+							local ring_rebuild = map.SuperBigMapOuterResourceRingRebuildReport
+							final_resource_terrain_report.ring_rebuild_requested =
+								type(ring_rebuild) == "table" and ring_rebuild.requested == true
+							final_resource_terrain_report.ring_rebuild_used =
+								type(ring_rebuild) == "table" and ring_rebuild.used == true
+							final_resource_terrain_report.ring_rebuild_fallback =
+								type(ring_rebuild) == "table" and ring_rebuild.fallback == true
+							final_resource_terrain_report.ring_rebuild_boxes =
+								type(ring_rebuild) == "table" and ring_rebuild.boxes or 0
+							final_resource_terrain_report.ring_rebuild_passability_ms =
+								type(ring_rebuild) == "table" and ring_rebuild.passability_ms or 0
+							final_resource_terrain_report.ring_rebuild_buildable_ms =
+								type(ring_rebuild) == "table" and ring_rebuild.buildable_ms or 0
+							final_resource_terrain_report.ring_rebuild_total_ms =
+								type(ring_rebuild) == "table" and ring_rebuild.total_ms or 0
+							final_resource_terrain_report.ring_rebuild_calls =
+								type(ring_rebuild) == "table" and ring_rebuild.calls or 0
+							final_resource_terrain_report.ring_rebuild_fallbacks =
+								type(ring_rebuild) == "table" and ring_rebuild.fallbacks or 0
+							final_resource_terrain_report.ring_rebuild_error =
+								type(ring_rebuild) == "table" and ring_rebuild.error or "not requested"
+							final_resource_terrain_report.ring_rebuild_error_history =
+								type(ring_rebuild) == "table" and ring_rebuild.error_history or "not requested"
 						end
 						if resource_terrain_ok ~= true then
 							error("outer resource terrain audit failed: resource_failures="

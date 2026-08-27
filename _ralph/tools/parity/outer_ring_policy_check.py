@@ -111,6 +111,28 @@ def protected_by_any(
     )
 
 
+def outer_resource_rebuild_strips(
+    width: int, height: int, ring_sectors: int = 2, pass_tile: int = 100
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Executable model of the conservative production passability regions."""
+    margin = pass_tile * 2
+    band_x = math.ceil(width * ring_sectors / 20)
+    band_y = math.ceil(height * ring_sectors / 20)
+    inner_x, inner_y = band_x + margin, band_y + margin
+    far_x, far_y = width - band_x - margin, height - band_y - margin
+    return (
+        (0, 0, width, inner_y),
+        (0, far_y, width, height),
+        (0, 0, inner_x, height),
+        (far_x, 0, width, height),
+    )
+
+
+def point_in_half_open_box(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
+    left, top, right, bottom = bounds
+    return left <= x < right and top <= y < bottom
+
+
 def nearby_protected_guards(
     patch_x: float,
     patch_y: float,
@@ -283,6 +305,32 @@ static_checks = {
         and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER" in CONFIG
         and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)'
         in outer_resource_terrain
+    ),
+    "outer_resource_ring_rebuild_is_enabled": (
+        "config.OptimizeOuterResourceTerrainRingRebuild = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD" in CONFIG
+        and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD", true)'
+        in GENERATION
+    ),
+    "outer_resource_ring_rebuild_is_bounded_and_falls_back": all(
+        token in GENERATION
+        for token in (
+            "function SuperBigMap.GenerationGrids.RebuildOuterResourceRing",
+            "local dependency_margin = math.floor(pass_tile * 2)",
+            "local band_x = math.ceil(map_w * ring_sectors / 20)",
+            "terrain_api.RebuildPassability(map, region)",
+            "local build_ok, build_err = pcall(rebuild_buildable, map)",
+            "function SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal",
+            "local call_ok, used, report = pcall(",
+            'tostring(stage or "outer resource terrain") .. " fallback"',
+            "ring_rebuild_fallbacks",
+            "ring_rebuild_error_history",
+        )
+    ),
+    "outer_resource_ring_rebuild_keeps_final_whole_map_rebuilds": (
+        GENERATION.count("SuperBigMap.GenerationGrids.RebuildFinal(") >= 4
+        and 'map, "after last object-grid transaction"' in GENERATION
+        and 'map, "post-pipeline scheduled revalidation"' in GENERATION
     ),
     "native_outer_resource_precondition_is_enabled": (
         "config.OptimizeOuterResourceTerrainNativePrecondition = true" in CONFIG
@@ -495,10 +543,10 @@ static_checks = {
     ),
     "resource_terrain_rebuild_precedes_anomaly_effect_placement": (
         GENERATION.index('"surface prepare outer resource terrain"')
+        < GENERATION.index('"after outer resource terrain preparation")')
         < GENERATION.index('"surface top-up anomalies"')
         < GENERATION.index('"surface top-up effect deposits"')
-        and 'RebuildFinal(\n\t\t\t\t\t\t\t\tmap, "after outer resource terrain preparation")'
-        in GENERATION
+        and "RebuildOuterResourceRing(" in GENERATION
     ),
     "resource_terrain_audit_is_fail_closed": (
         "outer resource terrain audit failed" in GENERATION
@@ -735,7 +783,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_928": "'version', 928" in METADATA,
+    "version_is_934": "'version', 934" in METADATA,
 }
 
 case_results = []
@@ -1153,6 +1201,72 @@ rolling_scan_checks = {
     "destination_scan_reads_drop_by_at_least_10x": min(rolling_destination_ratios) >= 10,
 }
 
+
+ring_rebuild_geometry_cases = []
+for width, height, pass_tile in ((819200, 819200, 100), (819203, 819197, 100), (1003, 997, 1)):
+    strips = outer_resource_rebuild_strips(width, height, 2, pass_tile)
+    margin = pass_tile * 2
+    band_x = width * 2 / 20
+    band_y = height * 2 / 20
+    near_x = math.ceil(band_x) + margin
+    near_y = math.ceil(band_y) + margin
+    far_x = width - math.ceil(band_x) - margin
+    far_y = height - math.ceil(band_y) - margin
+    samples = {
+        (0, 0),
+        (width - 1, height - 1),
+        (math.ceil(band_x) - 1, height // 2),
+        (width - math.ceil(band_x), height // 2),
+        (width // 2, math.ceil(band_y) - 1),
+        (width // 2, height - math.ceil(band_y)),
+        (near_x - 1, height // 2),
+        (far_x, height // 2),
+        (width // 2, near_y - 1),
+        (width // 2, far_y),
+    }
+    required_covered = all(
+        any(point_in_half_open_box(x, y, bounds) for bounds in strips)
+        for x, y in samples
+    )
+    inward_endpoints_exact = (
+        any(point_in_half_open_box(near_x - 1, height // 2, bounds) for bounds in strips)
+        and not any(point_in_half_open_box(near_x, height // 2, bounds) for bounds in strips)
+        and any(point_in_half_open_box(far_x, height // 2, bounds) for bounds in strips)
+        and not any(point_in_half_open_box(far_x - 1, height // 2, bounds) for bounds in strips)
+    )
+    summed_area = sum((right - left) * (bottom - top) for left, top, right, bottom in strips)
+    ring_rebuild_geometry_cases.append(
+        {
+            "width": width,
+            "height": height,
+            "divisible": width % 20 == 0 and height % 20 == 0,
+            "required_boundary_samples_covered": required_covered,
+            "inward_margin_endpoints_exact": inward_endpoints_exact,
+            "all_corners_covered": all(
+                any(point_in_half_open_box(x, y, bounds) for bounds in strips)
+                for x, y in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1))
+            ),
+            "summed_area_ratio": summed_area / (width * height),
+        }
+    )
+
+ring_rebuild_geometry_checks = {
+    "divisible_and_nondivisible_dimensions_covered": (
+        any(case["divisible"] for case in ring_rebuild_geometry_cases)
+        and any(not case["divisible"] for case in ring_rebuild_geometry_cases)
+    ),
+    "physical_ring_and_exact_tangencies_are_covered": all(
+        case["required_boundary_samples_covered"] for case in ring_rebuild_geometry_cases
+    ),
+    "inward_margin_half_open_endpoints_are_exact": all(
+        case["inward_margin_endpoints_exact"] for case in ring_rebuild_geometry_cases
+    ),
+    "all_four_corners_are_covered": all(
+        case["all_corners_covered"] for case in ring_rebuild_geometry_cases
+    ),
+    "expanded_map_work_is_below_41_percent": ring_rebuild_geometry_cases[0]["summed_area_ratio"] < 0.41,
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
     "schema_version": 17,
@@ -1167,6 +1281,8 @@ report = {
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
     "rolling_scan_checks": rolling_scan_checks,
+    "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
+    "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
     "rolling_scan_metrics": {
         "cases": len(rolling_scan_cases),
         "source_minimum_read_reduction": min(rolling_source_ratios),
@@ -1205,6 +1321,8 @@ report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
 report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
+report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
+report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1217,6 +1335,7 @@ report["ok"] = (
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
+    and all(ring_rebuild_geometry_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))

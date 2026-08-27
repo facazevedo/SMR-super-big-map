@@ -307,6 +307,10 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
+-- Resource terrain edits are confined to the physical outer two-sector ring. Rebuild passability
+-- only for that ring (plus the stock two-pass-tile dependency margin) before the resource audit;
+-- later whole-map final rebuilds remain unchanged and authoritative.
+config.OptimizeOuterResourceTerrainRingRebuild = true
 -- On the initial pass, retain the broad natural feather, then settle connected components containing
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
 -- successful post-rebuild repair geometry without discarding the seamless outer blend.
@@ -916,6 +920,8 @@ C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
+C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
+	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
