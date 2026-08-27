@@ -2273,7 +2273,37 @@ local function PrepareOuterResourceTerrain(map)
 		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
 		{ 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 },
 	}
+	-- The exhaustive rocket-pad scorer evaluates heavily overlapping footprints. The height grid is
+	-- immutable throughout planning, so cache each axial hex sample exactly once instead of repeating
+	-- the same WorldToHex/grid lookup for every neighbouring candidate. A false sentinel preserves
+	-- out-of-map failures without changing candidate order, scoring, or the selected pad.
+	local rocket_height_cache = {}
+	local rocket_height_cache_hits, rocket_height_cache_misses = 0, 0
+	local rocket_candidates_scored = 0
+	local function cached_rocket_height(q, r, known_x, known_y)
+		local row = rocket_height_cache[q]
+		if not row then
+			row = {}
+			rocket_height_cache[q] = row
+		end
+		local cached = row[r]
+		if cached ~= nil then
+			rocket_height_cache_hits = rocket_height_cache_hits + 1
+			return cached ~= false and cached or nil
+		end
+		rocket_height_cache_misses = rocket_height_cache_misses + 1
+		local x, y = known_x, known_y
+		if x == nil then x, y = world_xy(q, r) end
+		if not x then
+			row[r] = false
+			return nil
+		end
+		local value = grid_value(x / height_tile, y / height_tile)
+		row[r] = value ~= nil and value or false
+		return value
+	end
 	local function candidate_score(q, r, cq, cr)
+		rocket_candidates_scored = rocket_candidates_scored + 1
 		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
 		local x, y = world_xy(q, r)
 		if not x or not in_outer_band(x, y) then return nil end
@@ -2286,13 +2316,11 @@ local function PrepareOuterResourceTerrain(map)
 		if x < edge_world or y < edge_world or x >= map_w - edge_world
 			or y >= map_h - edge_world then return nil end
 		local cx, cy = x / height_tile, y / height_tile
-		local center = grid_value(cx, cy)
+		local center = cached_rocket_height(q, r, x, y)
 		if not center then return nil end
 		local range_min, range_max = center, center
 		for _, offset in ipairs(rocket_offsets) do
-			local hx, hy = world_xy(q + offset[1], r + offset[2])
-			if not hx then return nil end
-			local z = grid_value(hx / height_tile, hy / height_tile)
+			local z = cached_rocket_height(q + offset[1], r + offset[2])
 			if not z then return nil end
 			range_min, range_max = math.min(range_min, z), math.max(range_max, z)
 		end
@@ -3062,6 +3090,9 @@ local function PrepareOuterResourceTerrain(map)
 		native_precondition_patches = native_precondition_patches,
 		native_precondition_cells = native_precondition_cells,
 		native_sample_step = native_sample_step,
+		rocket_candidates_scored = rocket_candidates_scored,
+		rocket_height_cache_hits = rocket_height_cache_hits,
+		rocket_height_cache_misses = rocket_height_cache_misses,
 		planning_ms = raster_started_ms - prepare_started_ms,
 		raster_ms = raster_finished_ms - raster_started_ms,
 		install_ms = install_finished_ms - install_started_ms,
@@ -3096,6 +3127,9 @@ local function PrepareOuterResourceTerrain(map)
 			.. " planning_ms=" .. tostring(report.planning_ms)
 			.. " raster_ms=" .. tostring(report.raster_ms)
 			.. " install_ms=" .. tostring(report.install_ms)
+			.. " rocket_candidates=" .. tostring(report.rocket_candidates_scored)
+			.. " rocket_height_hits=" .. tostring(report.rocket_height_cache_hits)
+			.. " rocket_height_misses=" .. tostring(report.rocket_height_cache_misses)
 			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " native_precondition_sites=" .. tostring(report.native_precondition_sites)
 			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)

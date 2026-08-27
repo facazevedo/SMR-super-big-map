@@ -600,6 +600,16 @@ static_checks = {
         < GENERATION.index('"surface top-up effect deposits"')
         and "RebuildOuterResourceRing(" in GENERATION
     ),
+    "rocket_pad_height_samples_are_cached_exactly": all(
+        token in outer_resource_terrain
+        for token in (
+            "local rocket_height_cache = {}",
+            "local function cached_rocket_height(q, r, known_x, known_y)",
+            "row[r] = value ~= nil and value or false",
+            "local center = cached_rocket_height(q, r, x, y)",
+            "local z = cached_rocket_height(q + offset[1], r + offset[2])",
+        )
+    ),
     "resource_terrain_audit_is_fail_closed": (
         "outer resource terrain audit failed" in GENERATION
         and "resource_failures == 0 and rocket_failures == 0" in outer_resource_terrain
@@ -835,7 +845,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_936": "'version', 936" in METADATA,
+    "version_is_937": "'version', 937" in METADATA,
 }
 
 case_results = []
@@ -1319,6 +1329,74 @@ ring_rebuild_geometry_checks = {
     "expanded_map_work_is_below_41_percent": ring_rebuild_geometry_cases[0]["summed_area_ratio"] < 0.41,
 }
 
+# Exact overlap corpus for the rocket-footprint height cache. It includes unavailable samples so
+# the false-sentinel path is covered as well as ordinary numeric heights.
+rocket_cache_centers = [
+    (q, r)
+    for q in range(-32, 33)
+    for r in range(-32, 33)
+    if max(abs(q), abs(r), abs(q + r)) <= 32
+]
+rocket_cache_offsets = [
+    (dq, dr)
+    for dq in range(-6, 7)
+    for dr in range(-6, 7)
+    if max(abs(dq), abs(dr), abs(dq + dr)) <= 6
+]
+
+
+def rocket_cache_source(q: int, r: int) -> int | None:
+    if (q * 37 + r * 61) % 97 == 0:
+        return None
+    return 32000 + q * 11 - r * 7 + ((q * q + r * r) % 19)
+
+
+rocket_direct_reads = 0
+rocket_direct_checksum = 0
+rocket_direct_missing = 0
+for center_q, center_r in rocket_cache_centers:
+    for offset_q, offset_r in rocket_cache_offsets:
+        rocket_direct_reads += 1
+        value = rocket_cache_source(center_q + offset_q, center_r + offset_r)
+        if value is None:
+            rocket_direct_missing += 1
+        else:
+            rocket_direct_checksum += value
+
+rocket_cached_reads = 0
+rocket_cached_hits = 0
+rocket_cached_checksum = 0
+rocket_cached_missing = 0
+rocket_cache: dict[int, dict[int, int | None]] = {}
+for center_q, center_r in rocket_cache_centers:
+    for offset_q, offset_r in rocket_cache_offsets:
+        q, r = center_q + offset_q, center_r + offset_r
+        row = rocket_cache.setdefault(q, {})
+        if r in row:
+            rocket_cached_hits += 1
+            value = row[r]
+        else:
+            rocket_cached_reads += 1
+            value = rocket_cache_source(q, r)
+            row[r] = value
+        if value is None:
+            rocket_cached_missing += 1
+        else:
+            rocket_cached_checksum += value
+
+rocket_height_cache_checks = {
+    "numeric_and_missing_results_are_exact": (
+        rocket_cached_checksum == rocket_direct_checksum
+        and rocket_cached_missing == rocket_direct_missing
+    ),
+    "every_repeated_query_is_accounted_for": (
+        rocket_cached_reads + rocket_cached_hits == rocket_direct_reads
+    ),
+    "overlap_reduces_source_reads_by_at_least_50x": (
+        rocket_direct_reads / rocket_cached_reads >= 50
+    ),
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
     "schema_version": 17,
@@ -1335,6 +1413,13 @@ report = {
     "rolling_scan_checks": rolling_scan_checks,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
+    "rocket_height_cache_checks": rocket_height_cache_checks,
+    "rocket_height_cache_metrics": {
+        "queries": rocket_direct_reads,
+        "source_reads": rocket_cached_reads,
+        "cache_hits": rocket_cached_hits,
+        "source_read_reduction": rocket_direct_reads / rocket_cached_reads,
+    },
     "rolling_scan_metrics": {
         "cases": len(rolling_scan_cases),
         "source_minimum_read_reduction": min(rolling_source_ratios),
@@ -1375,6 +1460,8 @@ report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
+report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
+report["rocket_height_cache_total"] = len(rocket_height_cache_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1388,6 +1475,7 @@ report["ok"] = (
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
     and all(ring_rebuild_geometry_checks.values())
+    and all(rocket_height_cache_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))

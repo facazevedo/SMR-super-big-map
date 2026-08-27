@@ -202,7 +202,7 @@ def source_certificate() -> dict[str, bool]:
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_936": "'version', 936" in metadata,
+        "version_937": "'version', 937" in metadata,
         "streaming_default_enabled": "config.OptimizeSurfaceResourceStreamingClusters = true" in config,
         "streaming_compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS" in config,
         "streaming_is_private_and_transactional": all(token in streaming for token in (
