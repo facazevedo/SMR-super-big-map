@@ -290,6 +290,16 @@ static_checks = {
         and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION", true)'
         in outer_resource_terrain
     ),
+    "native_patch_journal_replaces_full_grid_clone": (
+        "config.OptimizeOuterResourceTerrainPatchJournal = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_JOURNAL" in CONFIG
+        and 'cfg_bool(\n\t\t"OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_JOURNAL", true)'
+        in outer_resource_terrain
+        and "owned_lookup[source_native] = \"journal\"" in outer_resource_terrain
+        and "for index = #native_patch_journal, 1, -1 do" in outer_resource_terrain
+        and "grid.copyrect, grid, record.source, record.source_box, record.destination"
+        in outer_resource_terrain
+    ),
     "native_raster_retains_legacy_fallback_from_raw_source": (
         "local function apply_legacy_raster()" in outer_resource_terrain
         and "local working = grid:clone()" in outer_resource_terrain
@@ -735,7 +745,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_928": "'version', 928" in METADATA,
+    "version_is_933": "'version', 933" in METADATA,
 }
 
 case_results = []

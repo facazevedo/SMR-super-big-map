@@ -580,6 +580,10 @@ config.OptimizeSurfaceResourceCandidateFirst = true
 -- fully validated hexes around the already-selected natural mountain-base centers. The complete
 -- candidate-first perimeter scan remains a fail-closed fallback and runs before any clone is made.
 config.OptimizeSurfaceResourceStreamingClusters = true
+-- Keep patch-local preimages while the native resource-terrain raster edits the detached height
+-- grid. Replaying those small snapshots in reverse preserves the legacy fallback contract without
+-- cloning the complete 8192 x 8192 height grid before touching a few outer-ring patches.
+config.OptimizeOuterResourceTerrainPatchJournal = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
@@ -1088,6 +1092,8 @@ C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST =
 	as_bool(config.OptimizeSurfaceResourceCandidateFirst)
 C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS =
 	as_bool(config.OptimizeSurfaceResourceStreamingClusters)
+C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_JOURNAL =
+	as_bool(config.OptimizeOuterResourceTerrainPatchJournal)
 C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
 	as_bool(config.OptimizeSurfaceResourceSelectorLoadCache)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)
