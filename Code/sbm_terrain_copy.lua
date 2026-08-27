@@ -1635,17 +1635,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
 	local modified = 0
 	local shaped = 0
-	local legacy_bounding_cells = 0
-	local scanned_bounding_cells = 0
-	local span_fallback_rows = 0
-	local mask_cells = 0
-	local grid_reads = 0
-	local grid_writes = 0
-	local huge = math.huge
-	local function finite(value)
-		return type(value) == "number" and value == value
-			and value > -huge and value < huge
-	end
 	local ok_apply, apply_error = pcall(function()
 		for index, candidate in ipairs(selected) do
 			-- An already-flat mountain base is a zero-edit opportunity. Retain its original terrain
@@ -1661,53 +1650,14 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
 				local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
 				local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
-				legacy_bounding_cells = legacy_bounding_cells
-					+ (x1 - x0 + 1) * (y1 - y0 + 1)
-				-- The old circle predicate below is authoritative. Restrict its input to a
-				-- conservative per-row interval containing the rotated maximum-lobe ellipse;
-				-- two extra cells cover root-rounding at tangent rows. Invalid coefficients
-				-- deliberately fall back to the complete legacy row.
-				local inverse_short_sq = 1 / (short_radius * short_radius)
-				local inverse_long_sq = 1 / (long_radius * long_radius)
-				local mountain_x, mountain_y = candidate.mountain_x, candidate.mountain_y
-				local span_a = mountain_x * mountain_x * inverse_short_sq
-					+ mountain_y * mountain_y * inverse_long_sq
-				local span_b_per_dy = 2 * mountain_x * mountain_y
-					* (inverse_short_sq - inverse_long_sq)
-				local span_c_per_dy_sq = mountain_y * mountain_y * inverse_short_sq
-					+ mountain_x * mountain_x * inverse_long_sq
-				local outer_gate_sq = 1.12 * 1.12
 				for y = y0, y1 do
-					local row_x0, row_x1 = x0, x1
-					local row_dy = y - candidate.y
-					local span_b = span_b_per_dy * row_dy
-					local span_c = span_c_per_dy_sq * row_dy * row_dy - outer_gate_sq
-					local discriminant = span_b * span_b - 4 * span_a * span_c
-					if span_a > 0 and finite(span_a) and finite(span_b)
-						and finite(discriminant) and discriminant >= 0 then
-						local root = math.sqrt(discriminant)
-						local lower = (-span_b - root) / (2 * span_a)
-						local upper = (-span_b + root) / (2 * span_a)
-						if finite(lower) and finite(upper) then
-							row_x0 = math.max(x0, math.floor(candidate.x + lower) - 2)
-							row_x1 = math.min(x1, math.ceil(candidate.x + upper) + 2)
-						else
-							span_fallback_rows = span_fallback_rows + 1
-						end
-					else
-						span_fallback_rows = span_fallback_rows + 1
-					end
-					if row_x1 >= row_x0 then
-						scanned_bounding_cells = scanned_bounding_cells + row_x1 - row_x0 + 1
-					end
-					for x = row_x0, row_x1 do
+					for x = x0, x1 do
 						local dx, dy = x - candidate.x, y - candidate.y
 						local u = dx * candidate.mountain_x + dy * candidate.mountain_y
 						local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
 						local ru, rv = u / short_radius, v / long_radius
 						local radius = math.sqrt(ru * ru + rv * rv)
 						if radius < 1.12 then
-							mask_cells = mask_cells + 1
 							local nx, ny = 1, 0
 							if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
 							local lobe3 = nx * nx * nx - 3 * nx * ny * ny
@@ -1724,7 +1674,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 									weight = 1 - smooth
 								end
 								local old = grid:get(x, y)
-								grid_reads = grid_reads + 1
 								if type(old) == "number" then
 									local target = candidate.center
 										+ candidate.gx * dx + candidate.gy * dy
@@ -1736,7 +1685,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 									if value ~= old then
 										grid:set(x, y, value)
 										modified = modified + 1
-										grid_writes = grid_writes + 1
 									end
 								end
 							end
@@ -1770,12 +1718,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		shaped = ok_apply and shaped or 0,
 		unchanged = ok_apply and (#selected - shaped) or 0,
 		modified = ok_apply and modified or 0,
-		legacy_bounding_cells = ok_apply and legacy_bounding_cells or 0,
-		scanned_bounding_cells = ok_apply and scanned_bounding_cells or 0,
-		span_fallback_rows = ok_apply and span_fallback_rows or 0,
-		mask_cells = ok_apply and mask_cells or 0,
-		grid_reads = ok_apply and grid_reads or 0,
-		grid_writes = ok_apply and grid_writes or 0,
 		candidates = #candidates, considered = considered,
 		relief_rejections = relief_rejections, slope_rejections = slope_rejections,
 		ring_sectors = ring_sectors, error = ok_apply and "" or tostring(apply_error),
