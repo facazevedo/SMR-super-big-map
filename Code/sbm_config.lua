@@ -717,6 +717,12 @@ config.StretchRepairInternalHeightStep = true
 -- changes only how often the native grid is read; candidate order, comparisons, and writes are
 -- identical. The legacy branch remains available as a fail-closed diagnostic fallback.
 config.OptimizeHeightStepRefineRollingWindow = true
+-- Build a read-only native destination-crease candidate index. U16 operands, signed differences,
+-- doubled flanks, and thresholds are all represented exactly in f32; accepted (perp,width,jump)
+-- records are sorted back into the legacy loop order before the unchanged Lua offer/track/refine
+-- path consumes them. Any native API, allocation, or enumeration failure falls back to the
+-- unchanged rolling Lua scan before a terrain write can occur.
+config.OptimizeHeightStepNativeDiscoveryIndex = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1138,6 +1144,8 @@ C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_REPAIR_INTERNAL_HEIGHT_STEP = as_bool(config.StretchRepairInternalHeightStep)
 C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =
 	as_bool(config.OptimizeHeightStepRefineRollingWindow)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =
+	as_bool(config.OptimizeHeightStepNativeDiscoveryIndex)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"

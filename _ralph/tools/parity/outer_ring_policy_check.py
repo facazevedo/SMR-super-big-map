@@ -559,6 +559,45 @@ static_checks = {
             "C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =",
         )
     ),
+    "destination_height_step_uses_fail_closed_native_discovery_index": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX", true)',
+            'local GridForeach = Global("GridForeach")',
+            'GridAdd(signed_b, signed_a)',
+            'local predicate_value = signed_difference',
+            'GridAbs(flank0)',
+            'GridMulDivAdd(flank0, 2, 1, 0)',
+            'GridMask(predicate_value, accepted, threshold, 2147483647)',
+            'GridMask(margin, flank_ok, 0, 2147483647)',
+            'GridMulDivAdd(accepted, flank_ok, 1, 0)',
+            'local function export_records(difference, low_before)',
+            'export_records(predicate_value, before_edge)',
+            'local callback_error',
+            'if callback_error then error(callback_error, 0) end',
+            'local prepare_status = { pcall(native_discovery.prepare) }',
+            'GridForeach(difference, function(jump, x, y)',
+            'end, threshold, 2147483647)',
+            'native_discovery.fallback = true',
+            'native_discovery.indexes = nil',
+            'native_discovery.scan(row, axis, along, before_perp0, before_perp1,',
+            'return a.perp < b.perp or (a.perp == b.perp and a.width < b.width)',
+            'offer_candidate(row, axis, candidate.perp, candidate.width, edge,',
+            'if value and type(value.free) == "function" then pcall(value.free, value) end',
+            'report.native_discovery_index_exact_positions = native_discovery.exact_positions',
+            'report.destination_scan_grid_reads = report.scan_grid_reads',
+            'report.destination_legacy_scan_grid_reads = report.legacy_scan_grid_reads',
+            'report.destination_native_discovery_index_used = report.native_discovery_index_used',
+            'report.height_step_point_expand_ms = phase_ms.point_expand',
+            'report.height_step_apply_ms = phase_ms.apply',
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepNativeDiscoveryIndex = true",
+            "C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =",
+        )
+    ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
@@ -877,7 +916,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_940": "'version', 940" in METADATA,
+    "version_is_942": "'version', 942" in METADATA,
 }
 
 case_results = []
@@ -1296,6 +1335,107 @@ rolling_scan_checks = {
 }
 
 
+def modeled_native_discovery_scan(
+    values: list[int],
+    *,
+    perp0: int,
+    perp1: int,
+    edge: str,
+    threshold: int,
+) -> tuple[tuple[tuple[int, int, str, bool, int], ...], int, int, int]:
+    """Model exact f32-safe native candidate masks and restored Lua loop ordering."""
+    before_edge = edge in ("left", "top")
+    survivor_set: set[int] = set()
+    records: list[tuple[int, int, int]] = []
+    for width in range(1, 4):
+        for perp in range(perp0, perp1 + 1):
+            v0, a = values[perp - 1], values[perp]
+            b, v3 = values[perp + width], values[perp + width + 1]
+            directional_jump = b - a if before_edge else a - b
+            doubled_flank = 2 * max(abs(a - v0), abs(v3 - b), 1)
+            if directional_jump >= threshold and directional_jump >= doubled_flank:
+                records.append((perp, width, directional_jump))
+                survivor_set.add(perp)
+
+    row: list[tuple[int, int, str, bool, int]] = []
+
+    def offer(perp: int, width: int, low_before: bool, jump: int) -> None:
+        for index, candidate in enumerate(row):
+            if candidate[2] == edge and abs(candidate[0] - perp) <= 3:
+                if jump > candidate[4]:
+                    row[index] = (perp, width, edge, low_before, jump)
+                return
+        row.append((perp, width, edge, low_before, jump))
+        row.sort(key=lambda item: item[4], reverse=True)
+        del row[6:]
+
+    for perp, width, jump in sorted(records):
+        offer(perp, width, before_edge, jump)
+    return tuple(row), 0, len(survivor_set), len(records)
+
+
+native_discovery_cases = []
+for seed in range(64):
+    # Smooth realistic edge relief plus deterministic one-to-three-cell steps, exact-threshold
+    # boundaries, adjacent stronger candidates, and wrong-direction false positives.
+    base = 10000 + seed * 11
+    line = [base + index * (1 + seed % 3) + ((index + seed) % 5) for index in range(96)]
+    step_at = 18 + seed % 28
+    step_width = 1 + seed % 3
+    step_height = 256 + (seed % 7) * 41
+    for index in range(step_at + step_width, len(line)):
+        line[index] += step_height
+    if seed % 4 == 0:
+        wrong_at = 60 + seed % 8
+        for index in range(wrong_at, len(line)):
+            line[index] -= 512
+    for edge in ("left", "right", "top", "bottom"):
+        oriented = line if edge in ("left", "top") else [-value for value in line]
+        legacy, legacy_reads = modeled_height_step_scan(
+            oriented,
+            perp0=8,
+            perp1=82,
+            max_width=3,
+            edge=edge,
+            wide_ring_only=False,
+            threshold=256,
+            rolling=True,
+        )
+        indexed, indexed_reads, survivors, enumerated = modeled_native_discovery_scan(
+            oriented,
+            perp0=8,
+            perp1=82,
+            edge=edge,
+            threshold=256,
+        )
+        native_discovery_cases.append(
+            {
+                "exact": legacy == indexed,
+                "legacy_reads": legacy_reads,
+                "indexed_reads": indexed_reads,
+                "survivors": survivors,
+                "enumerated": enumerated,
+            }
+        )
+
+
+native_discovery_ratios = [
+    case["legacy_reads"] / max(1, case["indexed_reads"])
+    for case in native_discovery_cases
+]
+destination_real_band_positions = 2 * (35 + 34) * 8192
+native_discovery_checks = {
+    "all_exact_candidate_tuples_match": all(case["exact"] for case in native_discovery_cases),
+    "corpus_has_256_edge_direction_cases": len(native_discovery_cases) == 256,
+    "u16_differences_and_doubled_flanks_are_exact_in_f32": 131070 < 2**24,
+    "all_cases_exercise_sparse_survivors": all(
+        0 < case["survivors"] < 75 for case in native_discovery_cases
+    ),
+    "minimum_modeled_lua_read_reduction_is_4x": min(native_discovery_ratios) >= 4,
+    "full_8192_destination_band_geometry_is_exact": destination_real_band_positions == 1130496,
+}
+
+
 def modeled_height_step_refine(
     values: list[int | None],
     *,
@@ -1685,7 +1825,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 18,
+    "schema_version": 19,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -1697,6 +1837,7 @@ report = {
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
     "rolling_scan_checks": rolling_scan_checks,
+    "native_discovery_checks": native_discovery_checks,
     "refine_rolling_checks": refine_rolling_checks,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
@@ -1722,6 +1863,13 @@ report = {
         "cases": len(rolling_scan_cases),
         "source_minimum_read_reduction": min(rolling_source_ratios),
         "destination_minimum_read_reduction": min(rolling_destination_ratios),
+    },
+    "native_discovery_metrics": {
+        "cases": len(native_discovery_cases),
+        "minimum_lua_read_reduction": min(native_discovery_ratios),
+        "full_destination_band_positions": destination_real_band_positions,
+        "full_destination_native_difference_cells": destination_real_band_positions * 3,
+        "maximum_survivors": max(case["survivors"] for case in native_discovery_cases),
     },
     "refine_rolling_metrics": {
         "cases": len(refine_rolling_cases),
@@ -1761,6 +1909,8 @@ report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
 report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
+report["native_discovery_passed"] = sum(native_discovery_checks.values())
+report["native_discovery_total"] = len(native_discovery_checks)
 report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
 report["refine_rolling_total"] = len(refine_rolling_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
@@ -1781,6 +1931,7 @@ report["ok"] = (
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
+    and all(native_discovery_checks.values())
     and all(refine_rolling_checks.values())
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
