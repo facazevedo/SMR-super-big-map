@@ -252,6 +252,11 @@ rocket_terrain_audit = section(
     "local verified_mountain_pads, rocket_failures",
     "map.SuperBigMapVerifiedMountainRocketPads",
 )
+height_step_native_translation = section(
+    TERRAIN,
+    "local function apply_native_track(selected, rows)",
+    "local function validate_sampled_track(track)",
+)
 
 static_checks = {
     "immediate_surface_final_rebuild_is_deferred": (
@@ -558,6 +563,43 @@ static_checks = {
             "config.OptimizeHeightStepRefineRollingWindow = true",
             "C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =",
         )
+    ),
+    "height_step_destination_translation_uses_transactional_native_slabs": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION", true)',
+            "local function legacy_apply_track(selected, points)",
+            "local function plan_native_track(selected, points)",
+            "local function apply_native_track(selected, rows)",
+            'native_new_grid(local_width, local_height, "f", 32)',
+            'native_new_grid(strip_width, strip_height, "f", 32)',
+            "native_fill(offsets, 0)",
+            "native_fill(strip, row.offset)",
+            "box_fn(0, 0, interval_length, 1)",
+            "box_fn(0, 0, 1, interval_length)",
+            "offsets:copyrect(strip",
+            "native_grid_ok, native_format, native_bits = pcall(native_is_compute, grid)",
+            "native_repack(source, native_format, native_bits)",
+            "source_native = own(grid:new_instance(local_width, local_height))",
+            "copy_started = true",
+            "grid:copyrect(packed, local_box, destination_point)",
+            "grid.copyrect, grid, source_native, local_box, destination_point",
+            "legacy_apply_track(selected, points)",
+            "native_destination_translation_used = native_track.used",
+            "if report.native_destination_translation_rollback_failed then",
+            "native_destination_translation_cells = internal_step_repair",
+            "native_destination_offset_interval_copies = internal_step_repair",
+            "native_destination_translation_ms = internal_step_repair",
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepNativeTrackTranslation = true",
+            "C.OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION =",
+        )
+    ) and all(
+        token not in height_step_native_translation
+        for token in ("native_resample", "mask_seed", "offset_seed")
     ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
@@ -877,7 +919,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_940": "'version', 940" in METADATA,
+    "version_is_941": "'version', 941" in METADATA,
 }
 
 case_results = []
@@ -1449,6 +1491,122 @@ refine_rolling_checks = {
 }
 
 
+def native_interval_offsets(length: int, start: int, finish: int, offset: int) -> tuple[int, ...]:
+    """Model zero GridFill plus the production half-open strip copyrect [start, finish+1)."""
+    assert length > 0 and 0 <= start <= finish < length
+    slab = [0] * length
+    strip = [offset] * length
+    slab[start : finish + 1] = strip[0 : finish - start + 1]
+    return tuple(slab)
+
+
+native_translation_interval_cases = []
+for length in (2, 3, 7, 64, 257):
+    for boundary in range(length):
+        for before in (False, True):
+            start, finish = (0, boundary) if before else (boundary, length - 1)
+            offset = 1000 + boundary * 17
+            actual = native_interval_offsets(length, start, finish, offset)
+            expected = tuple(
+                offset if start <= position <= finish else 0
+                for position in range(length)
+            )
+            native_translation_interval_cases.append(
+                {
+                    "length": length,
+                    "boundary": boundary,
+                    "before": before,
+                    "exact": actual == expected,
+                    "half_open_length": finish - start + 1,
+                }
+            )
+
+
+def feather_row(values: list[int], lo: int, hi: int, maximum: int) -> int:
+    if hi - lo < 4:
+        return 0
+    v0, v0_previous = values[lo], values[lo - 1]
+    v1, v1_next = values[hi], values[hi + 1]
+    slope0, slope1 = v0 - v0_previous, v1_next - v1
+    span = hi - lo
+    for position in range(lo + 1, hi):
+        t = (position - lo) / span
+        smooth = t * t * t * (t * (t * 6 - 15) + 10)
+        left = v0 + slope0 * (position - lo)
+        right = v1 + slope1 * (position - hi)
+        values[position] = max(0, min(maximum, math.floor(left + (right - left) * smooth + 0.5)))
+    return hi - lo - 1
+
+
+def apply_modeled_translation_track(
+    grid: list[list[int]], axis: str, rows: tuple[tuple[int, int, int, int, int], ...],
+    maximum: int, native: bool,
+) -> tuple[int, int]:
+    """Compare literal writes to zero-fill/strip-copy intervals, retaining track order/feather."""
+    modified = translated = 0
+    for along, perp0, perp1, join_lo, join_hi in rows:
+        line = grid[along] if axis == "x" else [row[along] for row in grid]
+        offset = 97 + (along * 13) % 503
+        if native:
+            offsets = native_interval_offsets(len(line), perp0, perp1, offset)
+            for position, value in enumerate(offsets):
+                line[position] = min(maximum, line[position] + value)
+                translated += int(value != 0)
+        else:
+            for position in range(perp0, perp1 + 1):
+                line[position] = min(maximum, line[position] + offset)
+                translated += 1
+        modified += perp1 - perp0 + 1
+        modified += feather_row(line, join_lo, join_hi, maximum)
+        if axis == "y":
+            for position, value in enumerate(line):
+                grid[position][along] = value
+    return modified, translated
+
+
+native_translation_model_cases = []
+for size in (32, 65):
+    original = [
+        [min(65535, 1000 + x * 7 + y * 11 + ((x * y) % 29)) for x in range(size)]
+        for y in range(size)
+    ]
+    legacy = [row[:] for row in original]
+    native = [row[:] for row in original]
+    x_rows = tuple((along, 0, 8 + along % 4, 3, 21) for along in range(4, size - 4, 3))
+    y_rows = tuple((along, size - 12 - along % 3, size - 1, size - 22, size - 4)
+                   for along in range(5, size - 5, 4))
+    legacy_counts = (
+        apply_modeled_translation_track(legacy, "x", x_rows, 65535, False),
+        apply_modeled_translation_track(legacy, "y", y_rows, 65535, False),
+    )
+    native_counts = (
+        apply_modeled_translation_track(native, "x", x_rows, 65535, True),
+        apply_modeled_translation_track(native, "y", y_rows, 65535, True),
+    )
+    native_translation_model_cases.append(
+        {
+            "size": size,
+            "exact_grid": legacy == native,
+            "exact_counts": legacy_counts == native_counts,
+            "writes_exercised": original != legacy and original != native,
+        }
+    )
+
+
+native_translation_checks = {
+    "all_half_open_filled_strip_intervals_are_exact": all(
+        case["exact"] for case in native_translation_interval_cases
+    ),
+    "interval_corpus_covers_both_edges_and_endpoint_boundaries": (
+        len(native_translation_interval_cases) == sum((2 * length) for length in (2, 3, 7, 64, 257))
+    ),
+    "sequential_cross_axis_translation_and_feather_are_exact": all(
+        case["exact_grid"] and case["exact_counts"] for case in native_translation_model_cases
+    ),
+    "model_exercises_real_writes": all(case["writes_exercised"] for case in native_translation_model_cases),
+}
+
+
 ring_rebuild_geometry_cases = []
 for width, height, pass_tile in ((819200, 819200, 100), (819203, 819197, 100), (1003, 997, 1)):
     strips = outer_resource_rebuild_strips(width, height, 2, pass_tile)
@@ -1685,7 +1843,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 18,
+    "schema_version": 19,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -1698,6 +1856,9 @@ report = {
     "native_raster_checks": native_raster_checks,
     "rolling_scan_checks": rolling_scan_checks,
     "refine_rolling_checks": refine_rolling_checks,
+    "native_translation_checks": native_translation_checks,
+    "native_translation_interval_cases": native_translation_interval_cases,
+    "native_translation_model_cases": native_translation_model_cases,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
     "rocket_height_cache_checks": rocket_height_cache_checks,
@@ -1763,6 +1924,8 @@ report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
 report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
 report["refine_rolling_total"] = len(refine_rolling_checks)
+report["native_translation_passed"] = sum(native_translation_checks.values())
+report["native_translation_total"] = len(native_translation_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
@@ -1782,6 +1945,7 @@ report["ok"] = (
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
     and all(refine_rolling_checks.values())
+    and all(native_translation_checks.values())
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
