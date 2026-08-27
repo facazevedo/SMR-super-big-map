@@ -10691,32 +10691,6 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = false
 	map.SuperBigMapSurfaceStretchScheduled = true
 	local schedule_ok = pcall(create_thread, function()
-		local defer_immediate_final = cfg_bool(
-			"OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD", false)
-		local deferred_surface_completion = false
-		local deferred_surface_n_grids = 0
-		local deferred_surface_error = nil
-		local function publish_deferred_surface_completion()
-			if deferred_surface_completion ~= true then return false end
-			if map.SuperBigMapStretchPipelinePending == true then
-				FinalizeDeferredStretchState(map, "surface")
-			end
-			map.SuperBigMapSurfaceStretchDone = true
-			map.SuperBigMapExpanded = true
-			EndSurfaceExpansionLoading(map)
-			SignalExpansionReadinessChanged(map, "surface stretch complete")
-			LoadingFinish("surface expansion complete", map, {
-				terrain_grids = deferred_surface_n_grids,
-				error = deferred_surface_error and tostring(deferred_surface_error) or "",
-			}, deferred_surface_error == nil)
-			deferred_surface_completion = false
-			return true
-		end
-		local function rebuild_surface_final(reason)
-			return yield_protected_call(function()
-				SuperBigMap.GenerationGrids.RebuildFinal(map, reason)
-			end)
-		end
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
 		-- readiness/setup errors take the normal full-rebuild fallback.
 		local thread_ok, thread_err = yield_protected_call(function()
@@ -11328,13 +11302,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				-- 42 of 86 at-object and 323 of 706 object-free twin differences at v809-v811 and the
 				-- surface lost none. Idempotent, whole-map, same engine sequence as both other sites.
 				if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) then
-					if cfg_bool("OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD", false) then
-						map.SuperBigMapSurfaceImmediateFinalRebuildSkipped = true
-					else
-						SetLoadingPhase("Finalizing surface gameplay grids")
-						SuperBigMap.GenerationGrids.RebuildFinal(
-							map, "after last object-grid transaction")
-					end
+					SetLoadingPhase("Finalizing surface gameplay grids")
+					SuperBigMap.GenerationGrids.RebuildFinal(map, "after last object-grid transaction")
 				end
 			end)
 			-- Error-path cleanup. On the normal path the transaction was already resumed above.
@@ -11354,11 +11323,7 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
 			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
-			local hold_completion_for_revalidation = ok_branch
-				and defer_immediate_final
-				and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
-			if ok_branch and map.SuperBigMapStretchPipelinePending == true
-				and not hold_completion_for_revalidation then
+			if ok_branch and map.SuperBigMapStretchPipelinePending == true then
 				FinalizeDeferredStretchState(map, "surface")
 			end
 			-- CityInit spawned the tunnel markers, their signs, the revealed deposits, and every
@@ -11371,22 +11336,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 					SafeCall(provenance.Propagate, map, "surface stretch complete")
 				end
 			end
-			if hold_completion_for_revalidation then
-				-- Keep the loading cover and pending gate authoritative until the one canonical
-				-- post-pipeline rebuild succeeds. Gameplay must never observe the transient grids.
-				deferred_surface_completion = true
-				deferred_surface_n_grids = n_grids
-				deferred_surface_error = nil
-			else
-				-- Preserve the legacy failure exit and the non-optimized success path.
-				map.SuperBigMapSurfaceStretchDone = true
-				map.SuperBigMapExpanded = true
-				end_loading()
-				SignalExpansionReadinessChanged(map, "surface stretch complete")
-				LoadingFinish("surface expansion complete", map, {
-					terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
-				}, ok_branch)
-			end
+			-- ALWAYS mark done + expanded and close the loading box, even on error, so the game
+			-- never hangs on the loading screen.
+			map.SuperBigMapSurfaceStretchDone = true
+			map.SuperBigMapExpanded = true
+			end_loading()
+			SignalExpansionReadinessChanged(map, "surface stretch complete")
+			LoadingFinish("surface expansion complete", map, {
+				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
+			}, ok_branch)
 			return
 		end
 
@@ -11394,8 +11352,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		-- The surface aggregate is not canonical until the generation thread yields once, even
 		-- though its exposed pass grids already match stock control. Measured by t120x: the first
 		-- real-time-thread entry after this protected pipeline is the earliest stable boundary, and
-		-- one ordinary RebuildFinal there is sufficient. When the immediate call is deferred, retain
-		-- the pending/loading gate and publish completion only after this rebuild succeeds.
+		-- one ordinary RebuildFinal there is sufficient. Keep the immediate call above for ordering
+		-- and queue this surface-only revalidation exactly once after a successful pipeline return.
 		if thread_ok
 			and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
 			and map.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
@@ -11408,27 +11366,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if type(pause_ild) == "function" then
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
-				local revalidation_ok, revalidation_err = rebuild_surface_final(
-					"post-pipeline scheduled revalidation")
-				if not revalidation_ok and deferred_surface_completion then
-					-- The accepted pre-optimization behavior rebuilt at this exact point in the
-					-- original thread. Retry that full operation once; publish only on verified success.
-					local fallback_ok, fallback_err = rebuild_surface_final(
-						"post-pipeline revalidation failure fallback")
-					if fallback_ok then
-						revalidation_ok, revalidation_err = true, nil
-					else
-						revalidation_err = tostring(revalidation_err)
-							.. " | fallback failed: " .. tostring(fallback_err)
-					end
-				end
+				local revalidation_ok, revalidation_err = yield_protected_call(function()
+					SuperBigMap.GenerationGrids.RebuildFinal(
+						map, "post-pipeline scheduled revalidation")
+				end)
 				if type(resume_ild) == "function" then
 					SafeCall(resume_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
 				if revalidation_ok then
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
-					map.SuperBigMapSurfacePostPipelineRevalidationError = nil
-					publish_deferred_surface_completion()
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
@@ -11437,52 +11383,24 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				end
 			end)
 			if not revalidation_schedule_ok then
-				if deferred_surface_completion then
-					-- If a new real-time thread cannot be created, fall back synchronously to the
-					-- former immediate full rebuild before releasing the loading gate.
-					local fallback_ok, fallback_err = rebuild_surface_final(
-						"post-pipeline scheduling failure fallback")
-					if fallback_ok then
-						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
-						map.SuperBigMapSurfacePostPipelineRevalidationMode = "synchronous-fallback"
-						map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
-						map.SuperBigMapSurfacePostPipelineRevalidationError = nil
-						publish_deferred_surface_completion()
-					else
-						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
-						thread_ok = false
-						thread_err = "surface post-pipeline revalidation scheduling failed: "
-							.. tostring(revalidation_schedule_err)
-							.. " | synchronous fallback failed: " .. tostring(fallback_err)
-					end
-				else
-					map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
-					thread_ok = false
-					thread_err = "surface post-pipeline revalidation scheduling failed: "
-						.. tostring(revalidation_schedule_err)
-				end
+				map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
+				thread_ok = false
+				thread_err = "surface post-pipeline revalidation scheduling failed: "
+					.. tostring(revalidation_schedule_err)
 			end
 		end
 		if not thread_ok then
-			if deferred_surface_completion then
-				-- Fail closed: keep both the pending state and loading cover until a canonical
-				-- rebuild can be completed; never expose the transient gameplay grids.
-				map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(thread_err or thread_ok)
-				LoadingFinish("surface expansion thread failed before final revalidation", map,
-					{ error = tostring(thread_err or thread_ok) }, false)
-			else
-				if map.SuperBigMapStretchPipelinePending == true then
-					local lifecycle = SuperBigMap.Lifecycle
-					if lifecycle and type(lifecycle.Apply) == "function" then
-						SafeCall(lifecycle.Apply, map, true)
-					end
+			if map.SuperBigMapStretchPipelinePending == true then
+				local lifecycle = SuperBigMap.Lifecycle
+				if lifecycle and type(lifecycle.Apply) == "function" then
+					SafeCall(lifecycle.Apply, map, true)
 				end
-				map.SuperBigMapStretchPipelinePending = false
-				map.SuperBigMapSurfaceStretchScheduled = false
-				EndSurfaceExpansionLoading(map)
-				LoadingFinish("surface expansion thread failed", map,
-					{ error = tostring(thread_err or thread_ok) }, false)
 			end
+			map.SuperBigMapStretchPipelinePending = false
+			map.SuperBigMapSurfaceStretchScheduled = false
+			EndSurfaceExpansionLoading(map)
+			LoadingFinish("surface expansion thread failed", map,
+				{ error = tostring(thread_err or thread_ok) }, false)
 		end
 	end)
 	if not schedule_ok then

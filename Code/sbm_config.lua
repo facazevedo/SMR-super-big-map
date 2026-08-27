@@ -546,10 +546,6 @@ config.OptimizeStretchDeferredRebuilds = true
 -- performing the same low-level height/type/passability rebuilds separately. Falls back to the
 -- legacy sequence automatically if the consolidated engine call is unavailable or fails.
 config.OptimizeStretchRevalidation = true
--- The first real-time-thread boundary after the surface pipeline already performs the canonical
--- final passability/buildable rebuild required by T1. Skip the identical immediate rebuild at the
--- end of the protected pipeline; its result is otherwise overwritten before gameplay is exposed.
-config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
@@ -1080,8 +1076,6 @@ C.STRETCH_DESPAWN_OUT_OF_BOX_CONTENT = as_bool(config.StretchDespawnOutOfBoxCont
 C.STRETCH_DECOR_TOPUP = as_bool(config.StretchDecorTopUp)
 C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredRebuilds)
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
-C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD =
-	as_bool(config.OptimizeDeferImmediateSurfaceFinalGridRebuild)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
