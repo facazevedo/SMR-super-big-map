@@ -451,9 +451,16 @@ static_checks = {
         in outer_resource_terrain
         and "is_protected_ready_cell(x, y, nearby_protected)" in outer_resource_terrain
     ),
+    "streamed_extractors_settle_in_initial_terrain_transaction": (
+        "local stream_planned_extractor = not prior_terrain_plan_present"
+        in outer_resource_terrain
+        and 'entry.kind == "extractor" and entry.cluster_plan ~= nil'
+        in outer_resource_terrain
+        and "and not stream_planned_extractor" in outer_resource_terrain
+    ),
     "rocket_live_shape_stays_outside_inner_no_write_rectangle": (
         "local function inner_rectangle_clearance(x, y)" in outer_resource_terrain
-        and "if inner_clearance <= rocket_world_radius * hex_size then return nil end"
+        and "if inner_clearance <= rocket_required_core * hex_size then return nil end"
         in outer_resource_terrain
         and "inner_clearance = inner_clearance" in outer_resource_terrain
         and '":inner_clearance=" .. tostring(site.inner_clearance or "?")'
@@ -719,7 +726,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_926": "'version', 926" in METADATA,
+    "version_is_927": "'version', 927" in METADATA,
 }
 
 case_results = []
@@ -797,6 +804,7 @@ rocket_inner_boundary_checks = {
     "observed_nearest_passing_site_is_retained": rocket_footprint_clear_of_inner_rectangle(
         71000.0, 133364.0, rocket_live_radius, inner_rectangle
     ),
+    "observed_iter144_repair_site_is_rejected_by_support_core": 5720.0 <= 9000.0,
     "exact_tangency_is_rejected": not rocket_footprint_clear_of_inner_rectangle(
         inner_rectangle[0] - rocket_live_radius,
         200000.0,

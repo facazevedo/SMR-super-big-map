@@ -2160,7 +2160,15 @@ local function PrepareOuterResourceTerrain(map)
 		local grid_ready = exact_extractor_offsets
 			and exact_offsets_ready(entry.q, entry.r, exact_extractor_offsets, true)
 			or axial_disk_ready(entry.q, entry.r, radius, entry.kind == "extractor")
+		-- Streamed clusters deliberately group several footprints inside one terrain component.
+		-- Settle every planned extractor in the initial transaction even when the stale pre-rebuild
+		-- BuildableGrid calls it ready: otherwise a neighbouring cluster feather can expose that
+		-- skipped footprint only after the authoritative rebuild and force a complete repair cycle.
+		-- Retries retain their existing failure-directed scope.
+		local stream_planned_extractor = not prior_terrain_plan_present
+			and entry.kind == "extractor" and entry.cluster_plan ~= nil
 		local ready = grid_ready and entry.force_retry ~= true
+			and not stream_planned_extractor
 		local site = {
 			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
 			kind = entry.kind, resource = entry.resource, ready_before = grid_ready,
@@ -2265,7 +2273,7 @@ local function PrepareOuterResourceTerrain(map)
 		-- footprint wholly on the outer side before scoring the candidate; the broader natural
 		-- feather may approach that boundary because the raster restores all inner cells exactly.
 		local inner_clearance = inner_rectangle_clearance(x, y)
-		if inner_clearance <= rocket_world_radius * hex_size then return nil end
+		if inner_clearance <= rocket_required_core * hex_size then return nil end
 		local edge_world = (rocket_outer_radius + 1) * hex_size
 		if x < edge_world or y < edge_world or x >= map_w - edge_world
 			or y >= map_h - edge_world then return nil end
