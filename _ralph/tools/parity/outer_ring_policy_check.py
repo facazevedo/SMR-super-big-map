@@ -671,6 +671,17 @@ static_checks = {
     ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
+    "natural_aprons_skip_only_analytic_outer_ellipse_rows": all(
+        token in aprons
+        for token in (
+            "local span_a = mx * mx * inverse_short_sq + my * my * inverse_long_sq",
+            "local discriminant = span_b * span_b - 4 * span_a * span_c",
+            "elseif discriminant < -0.000000001 then",
+            "math.floor(candidate.x + (-span_b - root) / denominator) - 4",
+            "for x = row_x0 or 1, row_x1 or 0 do",
+            "if radius < 1.12 then",
+        )
+    ),
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
     ),
@@ -857,7 +868,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_938": "'version', 938" in METADATA,
+    "version_is_939": "'version', 939" in METADATA,
 }
 
 case_results = []
@@ -1510,6 +1521,90 @@ axial_clearance_mask_checks = {
     ),
 }
 
+
+def apron_active_points(
+    short_radius: float, long_radius: float, mx: float, my: float, use_spans: bool
+) -> tuple[list[tuple[int, int]], int, int, int]:
+    cx, cy = 7, -11
+    x0, x1 = math.floor(cx - long_radius - 2), math.ceil(cx + long_radius + 2)
+    y0, y1 = math.floor(cy - long_radius - 2), math.ceil(cy + long_radius + 2)
+    legacy_cells = (x1 - x0 + 1) * (y1 - y0 + 1)
+    scanned_cells = 0
+    fallback_rows = 0
+    active: list[tuple[int, int]] = []
+    inverse_short_sq = 1 / (short_radius * short_radius)
+    inverse_long_sq = 1 / (long_radius * long_radius)
+    span_a = mx * mx * inverse_short_sq + my * my * inverse_long_sq
+    span_cross = 2 * mx * my * (inverse_short_sq - inverse_long_sq)
+    span_y = my * my * inverse_short_sq + mx * mx * inverse_long_sq
+    span_limit = 1.12 * 1.12
+    for y in range(y0, y1 + 1):
+        row_x0, row_x1 = x0, x1
+        if use_spans:
+            dy = y - cy
+            span_b = span_cross * dy
+            span_c = span_y * dy * dy - span_limit
+            discriminant = span_b * span_b - 4 * span_a * span_c
+            if span_a <= 0 or math.isnan(span_a) or math.isnan(discriminant):
+                fallback_rows += 1
+            elif discriminant < -0.000000001:
+                row_x0, row_x1 = 1, 0
+            else:
+                root = math.sqrt(max(0, discriminant))
+                denominator = 2 * span_a
+                row_x0 = max(
+                    x0, math.floor(cx + (-span_b - root) / denominator) - 4
+                )
+                row_x1 = min(
+                    x1, math.ceil(cx + (-span_b + root) / denominator) + 4
+                )
+        if row_x0 <= row_x1:
+            scanned_cells += row_x1 - row_x0 + 1
+        for x in range(row_x0, row_x1 + 1):
+            dx, dy = x - cx, y - cy
+            u = dx * mx + dy * my
+            v = -dx * my + dy * mx
+            ru, rv = u / short_radius, v / long_radius
+            radius = math.sqrt(ru * ru + rv * rv)
+            if radius < 1.12:
+                nx, ny = (1.0, 0.0) if radius <= 0.0001 else (ru / radius, rv / radius)
+                lobe3 = nx * nx * nx - 3 * nx * ny * ny
+                lobe2 = nx * nx - ny * ny
+                boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+                if radius / boundary < 1:
+                    active.append((x, y))
+    return active, legacy_cells, scanned_cells, fallback_rows
+
+
+apron_span_cases = []
+apron_legacy_cells = 0
+apron_scanned_cells = 0
+apron_fallback_rows = 0
+for variant in range(-4, 5):
+    short_radius = 24 * (1 + variant * 0.012)
+    long_radius = 24 * 1.35 * (1 - variant * 0.009)
+    for angle_index in range(16):
+        angle = angle_index * math.pi / 16
+        mx, my = math.cos(angle), math.sin(angle)
+        old_active, legacy_cells, _, _ = apron_active_points(
+            short_radius, long_radius, mx, my, False
+        )
+        span_active, _, scanned_cells, fallback_rows = apron_active_points(
+            short_radius, long_radius, mx, my, True
+        )
+        apron_span_cases.append(old_active == span_active)
+        apron_legacy_cells += legacy_cells
+        apron_scanned_cells += scanned_cells
+        apron_fallback_rows += fallback_rows
+
+apron_span_reduction = 1 - apron_scanned_cells / apron_legacy_cells
+apron_span_checks = {
+    "all_144_rotated_lobed_outputs_are_exact": all(apron_span_cases),
+    "case_count_is_stable": len(apron_span_cases) == 144,
+    "normal_geometry_never_uses_fallback": apron_fallback_rows == 0,
+    "analytic_spans_skip_at_least_15_percent": apron_span_reduction >= 0.15,
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
     "schema_version": 17,
@@ -1543,6 +1638,14 @@ report = {
             (resource_direct_distance_tests + rocket_direct_distance_tests)
             / (len(clearance_queries) * 7)
         ),
+    },
+    "apron_span_checks": apron_span_checks,
+    "apron_span_metrics": {
+        "cases": len(apron_span_cases),
+        "legacy_bounding_cells": apron_legacy_cells,
+        "scanned_bounding_cells": apron_scanned_cells,
+        "scan_reduction": apron_span_reduction,
+        "fallback_rows": apron_fallback_rows,
     },
     "rolling_scan_metrics": {
         "cases": len(rolling_scan_cases),
@@ -1588,6 +1691,8 @@ report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
 report["rocket_height_cache_total"] = len(rocket_height_cache_checks)
 report["axial_clearance_mask_passed"] = sum(axial_clearance_mask_checks.values())
 report["axial_clearance_mask_total"] = len(axial_clearance_mask_checks)
+report["apron_span_passed"] = sum(apron_span_checks.values())
+report["apron_span_total"] = len(apron_span_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1603,6 +1708,7 @@ report["ok"] = (
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
+    and all(apron_span_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
