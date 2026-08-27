@@ -202,7 +202,7 @@ def source_certificate() -> dict[str, bool]:
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_928": "'version', 928" in metadata,
+        "version_930": "'version', 930" in metadata,
         "streaming_default_enabled": "config.OptimizeSurfaceResourceStreamingClusters = true" in config,
         "streaming_compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS" in config,
         "streaming_is_private_and_transactional": all(token in streaming for token in (
@@ -212,7 +212,8 @@ def source_certificate() -> dict[str, bool]:
             "surface_streaming_clusters_fallback = true",
         )),
         "streaming_stops_and_bounds_full_validation": all(token in streaming for token in (
-            "local used_centers, reserved, validation_cache", "local validation_budget",
+            "local used_centers, reserved, validation_cache",
+            "local validation_budget, validation_budget_exhausted = 1024, false",
             "if full_validations >= validation_budget", "if chosen then break end",
         )),
         "streaming_retains_complete_validation": all(token in streaming for token in (
