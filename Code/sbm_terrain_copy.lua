@@ -1794,6 +1794,13 @@ local function PrepareOuterResourceTerrain(map)
 	local world_to_hex = Global("WorldToHex")
 	local hex_to_world = Global("HexToWorld")
 	local point_fn = Global("point")
+	local precise_ticks = Global("GetPreciseTicks")
+	local function now_ms()
+		if type(precise_ticks) ~= "function" then return 0 end
+		local ok, value = pcall(precise_ticks)
+		return ok and type(value) == "number" and value or 0
+	end
+	local prepare_started_ms = now_ms()
 	if type(terrain_api) ~= "table" or type(terrain_api.GetHeightGrid) ~= "function"
 		or type(terrain_api.SetHeightGrid) ~= "function"
 		or type(grid_to_compute) ~= "function" or type(world_to_hex) ~= "function"
@@ -2581,7 +2588,7 @@ local function PrepareOuterResourceTerrain(map)
 		and (grid ~= raw or type(grid.clone) == "function")
 	local native_weight_scale, native_height_scale = 4096, 256
 	local native_tile_step = math.floor(height_tile + 0.5)
-	local native_sample_step = 4
+	local native_sample_step = 8
 	-- Grid cells are classified by their centers. The central 80% is therefore the exact
 	-- 16x16-sector no-write rectangle used by the retained raw-grid comparator.
 	local inner_x0 = math.ceil(width * 0.1 - 0.5)
@@ -2966,6 +2973,7 @@ local function PrepareOuterResourceTerrain(map)
 			end
 		end
 	end
+	local raster_started_ms = now_ms()
 	local ok_apply, apply_error
 	if native_available then
 		local clone_ok, clone_error = true, nil
@@ -3009,13 +3017,16 @@ local function PrepareOuterResourceTerrain(map)
 		if native_requested then native_raster_error = "native grid APIs unavailable" end
 		ok_apply, apply_error = pcall(apply_legacy_raster)
 	end
+	local raster_finished_ms = now_ms()
 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
 	local set_ok, set_error = false, "no terrain changes"
+	local install_started_ms = now_ms()
 	if ok_apply and modified_cells > 0 then
 		set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
 	elseif ok_apply then
 		set_ok = true
 	end
+	local install_finished_ms = now_ms()
 	if native_raster_used and set_ok then
 		for _, site in ipairs(native_precondition_site_records) do
 			site.patch_precondition_selected = true
@@ -3051,6 +3062,10 @@ local function PrepareOuterResourceTerrain(map)
 		native_precondition_patches = native_precondition_patches,
 		native_precondition_cells = native_precondition_cells,
 		native_sample_step = native_sample_step,
+		planning_ms = raster_started_ms - prepare_started_ms,
+		raster_ms = raster_finished_ms - raster_started_ms,
+		install_ms = install_finished_ms - install_started_ms,
+		prepare_total_ms = install_finished_ms - prepare_started_ms,
 		native_raster_error = native_raster_error,
 		error = not ok_apply and tostring(apply_error)
 			or not set_ok and tostring(set_error) or "",
@@ -3078,6 +3093,9 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_fallback=" .. tostring(report.native_raster_fallback)
 			.. " native_cells=" .. tostring(report.native_raster_cells)
 			.. " native_samples=" .. tostring(report.native_mask_samples)
+			.. " planning_ms=" .. tostring(report.planning_ms)
+			.. " raster_ms=" .. tostring(report.raster_ms)
+			.. " install_ms=" .. tostring(report.install_ms)
 			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " native_precondition_sites=" .. tostring(report.native_precondition_sites)
 			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)

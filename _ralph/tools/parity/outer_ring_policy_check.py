@@ -407,7 +407,7 @@ static_checks = {
         token in outer_resource_terrain
         for token in (
             "local native_weight_scale, native_height_scale = 4096, 256",
-            "local native_sample_step = 4",
+            "local native_sample_step = 8",
             "native_resample(coarse, local_width, local_height, true)",
             "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
             "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
@@ -835,7 +835,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_935": "'version', 935" in METADATA,
+    "version_is_936": "'version', 936" in METADATA,
 }
 
 case_results = []
@@ -988,12 +988,12 @@ guard_prefilter_checks = {
 }
 
 # Compact, deterministic raster corpus: one realistic broad resource transition replaces a
-# multi-million-cell map run while preserving the exact production equations and 4-cell sampler.
+# multi-million-cell map run while preserving the exact production equations and 8-cell sampler.
 native_core = 30.0
 native_transition = 140.0
 native_phase = 1.234
 native_relief = (0.6, 0.8)
-native_step = 4
+native_step = 8
 native_scale = 4096
 native_support_radius = native_core + native_transition * 1.35
 native_min = math.floor((-native_support_radius - 2) / native_step) * native_step
@@ -1112,12 +1112,12 @@ def native_precondition_enabled(previous_resource_plan, previous_rocket_plan) ->
 native_raster_checks = {
     "realistic_corpus_size_is_stable": (
         native_size * native_size == 201601
-        and native_coarse_size * native_coarse_size == 12769
+        and native_coarse_size * native_coarse_size == 3249
     ),
-    "trigonometric_samples_drop_by_at_least_15x": native_trig_reduction >= 15,
-    "coarse_mask_mean_error_below_0_00015": native_mask_mean_error < 0.00015,
-    "coarse_mask_p99_error_below_0_0008": native_mask_p99_error < 0.0008,
-    "coarse_mask_max_error_below_0_0013": native_mask_max_error < 0.0013,
+    "trigonometric_samples_drop_by_at_least_60x": native_trig_reduction >= 60,
+    "coarse_mask_mean_error_below_0_00051": native_mask_mean_error < 0.00051,
+    "coarse_mask_p99_error_below_0_00301": native_mask_p99_error < 0.00301,
+    "coarse_mask_max_error_below_0_00452": native_mask_max_error < 0.00452,
     "full_resolution_core_is_exact": native_core_exact,
     "maximum_support_boundary_is_exact": native_support_exact,
     "protected_circle_assignment_is_exact": native_guard_exact,
