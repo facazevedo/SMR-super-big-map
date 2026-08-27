@@ -717,12 +717,6 @@ config.StretchRepairInternalHeightStep = true
 -- changes only how often the native grid is read; candidate order, comparisons, and writes are
 -- identical. The legacy branch remains available as a fail-closed diagnostic fallback.
 config.OptimizeHeightStepRefineRollingWindow = true
--- Apply each already-selected destination crease track on a bounded detached grid. Exact half-open
--- row intervals are copied from one reusable filled strip into a zeroed native offset slab; native
--- arithmetic adds the measured offsets, and the unchanged integer feather runs before one
--- transactional copyback. Any unavailable primitive or successfully rolled-back failure uses the
--- literal legacy per-cell loop.
-config.OptimizeHeightStepNativeTrackTranslation = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1144,8 +1138,6 @@ C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_REPAIR_INTERNAL_HEIGHT_STEP = as_bool(config.StretchRepairInternalHeightStep)
 C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =
 	as_bool(config.OptimizeHeightStepRefineRollingWindow)
-C.OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION =
-	as_bool(config.OptimizeHeightStepNativeTrackTranslation)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
