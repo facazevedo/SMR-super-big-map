@@ -4326,6 +4326,8 @@ function DepositRules.TopUpDeposits(map)
 		local perimeter_quota_candidates = {}
 		local outermost_perimeter_quota_candidates = {}
 		local inner_band_perimeter_quota_candidates = {}
+		local streaming_outermost_plans, streaming_inner_plans = {}, {}
+		local streaming_plan_lookup = {}
 		local streaming_repulsion
 		if not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0
@@ -4514,6 +4516,8 @@ function DepositRules.TopUpDeposits(map)
 					for member_index, candidate in ipairs(chosen.candidates) do
 						candidate.center_index = chosen.center.index
 						candidate.rank = plan_count * 1000 + member_index
+						candidate.plan = plan_count
+						candidate.spec = spec
 						candidate.outermost = want_outermost
 						records[#records + 1] = candidate
 						reserved[#reserved + 1] = candidate
@@ -4548,6 +4552,28 @@ function DepositRules.TopUpDeposits(map)
 					candidate._sbm_mountain_base_natural = true
 					candidate._sbm_mountain_base_center_index = record.center_index
 					candidate._sbm_mountain_base_rank = record.rank
+					candidate._sbm_resource_cluster_plan = record.plan
+					candidate._sbm_resource_cluster_strength = record.spec.strength
+					candidate._sbm_resource_cluster_resource_target = record.spec.resource_target
+					candidate._sbm_resource_cluster_extractor_target = record.spec.extractor_target
+					candidate._sbm_resource_cluster_anomaly_capacity = record.spec.anomaly_capacity
+					candidate._sbm_resource_cluster_reward_capacity = record.spec.reward_capacity
+					local plan = streaming_plan_lookup[record.plan]
+					if not plan then
+						plan = {
+							id = record.plan, target = record.spec.resource_target,
+							extractor_target = record.spec.extractor_target,
+							strength = record.spec.strength,
+							anomaly_capacity = record.spec.anomaly_capacity,
+							reward_capacity = record.spec.reward_capacity,
+							candidates = {},
+						}
+						streaming_plan_lookup[record.plan] = plan
+						local destination = record.outermost
+							and streaming_outermost_plans or streaming_inner_plans
+						destination[#destination + 1] = plan
+					end
+					plan.candidates[#plan.candidates + 1] = candidate
 					mountain_base_candidates[#mountain_base_candidates + 1] = candidate
 					perimeter_quota_candidates[#perimeter_quota_candidates + 1] = candidate
 					surface_resource_quota_candidates = surface_resource_quota_candidates + 1
@@ -5515,12 +5541,14 @@ function DepositRules.TopUpDeposits(map)
 					inner_required = inner_required + spec.resource_target
 				end
 			end
-			local outermost_plans = build_quota_cluster_plans(
-				outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
-				outermost_specs, "outermost resource cluster")
-			local inner_plans = build_quota_cluster_plans(
-				inner_band_mountain_base_candidates, inner_band_perimeter_quota_candidates,
-				inner_specs, "inner-band resource")
+			local outermost_plans = surface_streaming_clusters_used
+				and streaming_outermost_plans or build_quota_cluster_plans(
+					outermost_mountain_base_candidates, outermost_perimeter_quota_candidates,
+					outermost_specs, "outermost resource cluster")
+			local inner_plans = surface_streaming_clusters_used
+				and streaming_inner_plans or build_quota_cluster_plans(
+					inner_band_mountain_base_candidates, inner_band_perimeter_quota_candidates,
+					inner_specs, "inner-band resource")
 			cluster_plan_diagnostic.required = required
 			cluster_plan_diagnostic.outermost_required = outermost_required
 			cluster_plan_diagnostic.inner_required = inner_required

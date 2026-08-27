@@ -202,7 +202,7 @@ def source_certificate() -> dict[str, bool]:
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_925": "'version', 925" in metadata,
+        "version_926": "'version', 926" in metadata,
         "streaming_default_enabled": "config.OptimizeSurfaceResourceStreamingClusters = true" in config,
         "streaming_compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS" in config,
         "streaming_is_private_and_transactional": all(token in streaming for token in (
@@ -231,6 +231,12 @@ def source_certificate() -> dict[str, bool]:
             "AxialHexDistance(candidate.q, candidate.r, prior.q, prior.r)",
             "<= stream_cluster_radius", "< surface_quota_minimum_hex_distance",
             "plan_count ~= desired_resource_cluster_count",
+        )),
+        "streaming_reuses_completed_plans_directly": all(token in deposits for token in (
+            "streaming_outermost_plans", "streaming_inner_plans",
+            "candidate._sbm_resource_cluster_plan = record.plan",
+            "and streaming_outermost_plans or build_quota_cluster_plans(",
+            "and streaming_inner_plans or build_quota_cluster_plans(",
         )),
         "streaming_search_has_no_global_rng": "RandInt(" not in streaming,
         "scenario_seed_inputs": all(token in candidate for token in ("generator.Seed", "generator.GenerationHash", "RandomMapPreset")),
