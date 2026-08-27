@@ -713,6 +713,10 @@ config.StretchAdaptiveZScale = true
 -- interpolation. Outer relief survives without flat shelves, caps, or synthetic smooth strips; the
 -- central 16 x 16 sectors and ordinary broken mountain cliffs are untouched.
 config.StretchRepairInternalHeightStep = true
+-- Reuse the exact four/six-value neighbourhood while refining a detected height-step row. This
+-- changes only how often the native grid is read; candidate order, comparisons, and writes are
+-- identical. The legacy branch remains available as a fail-closed diagnostic fallback.
+config.OptimizeHeightStepRefineRollingWindow = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1132,6 +1136,8 @@ C.UNDERGROUND_MARK_GRID_BACKING_SCALE = expansion_step_01
 C.STRETCH_SHIFT_HEIGHTS_DOWN = as_bool(config.StretchShiftHeightsDown)
 C.STRETCH_ADAPTIVE_Z_SCALE = as_bool(config.StretchAdaptiveZScale)
 C.STRETCH_REPAIR_INTERNAL_HEIGHT_STEP = as_bool(config.StretchRepairInternalHeightStep)
+C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =
+	as_bool(config.OptimizeHeightStepRefineRollingWindow)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"

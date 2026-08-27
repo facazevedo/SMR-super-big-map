@@ -721,6 +721,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local track_counts = { left = 0, right = 0, top = 0, bottom = 0 }
 	local selected_tracks = {}
 	local scan_grid_reads, legacy_scan_grid_reads = 0, 0
+	local refine_calls, refine_grid_reads, legacy_refine_grid_reads = 0, 0, 0
+	local rolling_refine = cfg_bool("OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW", true)
 
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
@@ -901,15 +903,62 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		local lo = math.max(1, predicted - 6)
 		local hi = math.min(track.perp_n - 3, predicted + 6)
 		local best_perp, best_width, best_distance, best_jump
+		-- Source discovery admits only the real one-cell discontinuity.  Allowing the
+		-- validation pass to widen it to three cells moved the recorded edge outward and
+		-- caused every later source-qualified repair to leave the actual wall untouched.
+		local max_width = wide_ring_only and 1 or 3
+		local positions = math.max(0, hi - lo + 1)
+		refine_calls = refine_calls + 1
+		legacy_refine_grid_reads = legacy_refine_grid_reads + positions * max_width * 4
+		if positions <= 0 then return nil end
+		if not rolling_refine then
+			refine_grid_reads = refine_grid_reads + positions * max_width * 4
+			for perp = lo, hi do
+				for width = 1, max_width do
+					local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
+					local b, v3 = at(track.axis, perp + width, along),
+						at(track.axis, perp + width + 1, along)
+					if type(v0) == "number" and type(a) == "number" and type(b) == "number"
+						and type(v3) == "number" then
+						local low_before = a < b
+						local points_to_edge = (before_edge and low_before)
+							or (not before_edge and not low_before)
+						local jump = math.abs(b - a)
+						local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
+						local distance = math.abs(perp - predicted)
+						-- Interpolated gaps must satisfy the identical directional, contrast, and flank
+						-- tests as stored candidates. Choosing an arbitrary stronger outward drop here
+						-- could extend a repaired strip to a neighbouring natural contour.
+						local direction_matches = low_before == track.low_before
+						if direction_matches and (wide_ring_only or points_to_edge)
+							and jump >= threshold and jump >= flank * 2
+							and (not best_distance or distance < best_distance
+								or (distance == best_distance and jump > best_jump)) then
+							best_perp, best_width = perp, width
+							best_distance, best_jump = distance, jump
+						end
+					end
+				end
+			end
+			return best_perp, best_width
+		end
+
+		-- The grid cannot change during one refinement call. Keep the identical legacy values in a
+		-- rolling window and fetch only the new far endpoint when the perpendicular position moves.
+		local v0 = at(track.axis, lo - 1, along)
+		local a = at(track.axis, lo, along)
+		local next1 = at(track.axis, lo + 1, along)
+		local next2 = at(track.axis, lo + 2, along)
+		local next3, next4
+		if max_width == 3 then
+			next3 = at(track.axis, lo + 3, along)
+			next4 = at(track.axis, lo + 4, along)
+		end
+		refine_grid_reads = refine_grid_reads + max_width + 3
 		for perp = lo, hi do
-			-- Source discovery admits only the real one-cell discontinuity.  Allowing the
-			-- validation pass to widen it to three cells moved the recorded edge outward and
-			-- caused every later source-qualified repair to leave the actual wall untouched.
-			local max_width = wide_ring_only and 1 or 3
 			for width = 1, max_width do
-				local v0, a = at(track.axis, perp - 1, along), at(track.axis, perp, along)
-				local b, v3 = at(track.axis, perp + width, along),
-					at(track.axis, perp + width + 1, along)
+				local b = width == 1 and next1 or width == 2 and next2 or next3
+				local v3 = width == 1 and next2 or width == 2 and next3 or next4
 				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
 					and type(v3) == "number" then
 					local low_before = a < b
@@ -918,9 +967,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 					local jump = math.abs(b - a)
 					local flank = math.max(math.abs(a - v0), math.abs(v3 - b), 1)
 					local distance = math.abs(perp - predicted)
-					-- Interpolated gaps must satisfy the identical directional, contrast, and flank
-					-- tests as stored candidates. Choosing an arbitrary stronger outward drop here
-					-- could extend a repaired strip to a neighbouring natural contour.
 					local direction_matches = low_before == track.low_before
 					if direction_matches and (wide_ring_only or points_to_edge)
 						and jump >= threshold and jump >= flank * 2
@@ -930,6 +976,17 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						best_distance, best_jump = distance, jump
 					end
 				end
+			end
+			if perp < hi then
+				if max_width == 1 then
+					v0, a, next1, next2 = a, next1, next2,
+						at(track.axis, perp + 3, along)
+				else
+					v0, a, next1, next2, next3, next4 =
+						a, next1, next2, next3, next4,
+						at(track.axis, perp + 5, along)
+				end
+				refine_grid_reads = refine_grid_reads + 1
 			end
 		end
 		return best_perp, best_width
@@ -1204,6 +1261,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return false, {
 			reason = tostring(repair_err), threshold = threshold, min = mn, max = mx,
 			scan_grid_reads = scan_grid_reads, legacy_scan_grid_reads = legacy_scan_grid_reads,
+			rolling_refine = rolling_refine, refine_calls = refine_calls,
+			refine_grid_reads = refine_grid_reads,
+			legacy_refine_grid_reads = legacy_refine_grid_reads,
 		}
 	end
 
@@ -1231,6 +1291,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 			min = mn, max = mx, scan_grid_reads = scan_grid_reads,
 			legacy_scan_grid_reads = legacy_scan_grid_reads,
+			rolling_refine = rolling_refine, refine_calls = refine_calls,
+			refine_grid_reads = refine_grid_reads,
+			legacy_refine_grid_reads = legacy_refine_grid_reads,
 		}
 	end
 	local primary = selected_tracks[1]
@@ -1250,6 +1313,9 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
 		min = mn, max = mx, scan_grid_reads = scan_grid_reads,
 		legacy_scan_grid_reads = legacy_scan_grid_reads,
+		rolling_refine = rolling_refine, refine_calls = refine_calls,
+		refine_grid_reads = refine_grid_reads,
+		legacy_refine_grid_reads = legacy_refine_grid_reads,
 	}, selected_tracks
 end
 
@@ -3765,6 +3831,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 		local measured_fw, measured_fh
 		local extraction_path = "unknown"
 		local internal_step_repair
+		local precise_ticks = Global("GetPreciseTicks")
+		local function now_ms()
+			if type(precise_ticks) ~= "function" then return 0 end
+			local ok, value = pcall(precise_ticks)
+			return ok and type(value) == "number" and value or 0
+		end
 		local function merge_step_report(report)
 			if not report then return end
 			if internal_step_repair then
@@ -3772,6 +3844,52 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					reason = tostring(internal_step_repair.reason) .. "; " .. tostring(report.reason),
 					rows = (internal_step_repair.rows or 0) + (report.rows or 0),
 					modified = (internal_step_repair.modified or 0) + (report.modified or 0),
+					rolling_refine = internal_step_repair.rolling_refine ~= false
+						and report.rolling_refine ~= false,
+					refine_calls = (internal_step_repair.refine_calls or 0)
+						+ (report.refine_calls or 0),
+					refine_grid_reads = (internal_step_repair.refine_grid_reads or 0)
+						+ (report.refine_grid_reads or 0),
+					legacy_refine_grid_reads =
+						(internal_step_repair.legacy_refine_grid_reads or 0)
+						+ (report.legacy_refine_grid_reads or 0),
+					source_scan_ms = internal_step_repair.source_scan_ms
+						or report.source_scan_ms,
+					source_detected = internal_step_repair.source_detected
+						or report.source_detected,
+					source_repairs = internal_step_repair.source_repairs
+						or report.source_repairs,
+					source_detection_rows = internal_step_repair.source_detection_rows
+						or report.source_detection_rows,
+					source_refine_calls = internal_step_repair.source_refine_calls
+						or report.source_refine_calls,
+					source_refine_grid_reads = internal_step_repair.source_refine_grid_reads
+						or report.source_refine_grid_reads,
+					source_legacy_refine_grid_reads =
+						internal_step_repair.source_legacy_refine_grid_reads
+						or report.source_legacy_refine_grid_reads,
+					destination_scan_ms = internal_step_repair.destination_scan_ms
+						or report.destination_scan_ms,
+					destination_detected = internal_step_repair.destination_detected
+						or report.destination_detected,
+					destination_repairs = internal_step_repair.destination_repairs
+						or report.destination_repairs,
+					destination_modified = internal_step_repair.destination_modified
+						or report.destination_modified,
+					destination_rows = internal_step_repair.destination_rows
+						or report.destination_rows,
+					destination_min_offset = internal_step_repair.destination_min_offset
+						or report.destination_min_offset,
+					destination_max_offset = internal_step_repair.destination_max_offset
+						or report.destination_max_offset,
+					destination_refine_calls = internal_step_repair.destination_refine_calls
+						or report.destination_refine_calls,
+					destination_refine_grid_reads =
+						internal_step_repair.destination_refine_grid_reads
+						or report.destination_refine_grid_reads,
+					destination_legacy_refine_grid_reads =
+						internal_step_repair.destination_legacy_refine_grid_reads
+						or report.destination_legacy_refine_grid_reads,
 				}
 			else
 				internal_step_repair = report
@@ -3847,7 +3965,15 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			if scale_values then ZDumpHeightGrid(map, "source-pre", src_sub) end
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local source_started_ms = now_ms()
 				local detected, report, tracks = RepairInternalHeightStep(src_sub, true)
+				report.source_scan_ms = math.max(0, now_ms() - source_started_ms)
+				report.source_detected = report.detected
+				report.source_repairs = report.repairs
+				report.source_detection_rows = report.rows
+				report.source_refine_calls = report.refine_calls
+				report.source_refine_grid_reads = report.refine_grid_reads
+				report.source_legacy_refine_grid_reads = report.legacy_refine_grid_reads
 				internal_step_repair = report
 				TerrainCreaseAudit(detected and "SOURCE_DETECTED" or "SOURCE_SKIPPED", report, map)
 				if detected and tracks then
@@ -3870,10 +3996,22 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			-- seamless exactly as before.  It runs only after the source repair has been resampled.
 			if scale_values and environment ~= "Underground"
 				and cfg_bool("STRETCH_REPAIR_INTERNAL_HEIGHT_STEP", true) then
+				local destination_started_ms = now_ms()
 				local repaired, report = RepairInternalHeightStep(stretched, false)
+				report.destination_scan_ms = math.max(0, now_ms() - destination_started_ms)
+				report.destination_detected = report.detected
+				report.destination_repairs = report.repairs
+				report.destination_modified = report.modified
+				report.destination_rows = report.rows
+				report.destination_min_offset = report.min_offset
+				report.destination_max_offset = report.max_offset
+				report.destination_refine_calls = report.refine_calls
+				report.destination_refine_grid_reads = report.refine_grid_reads
+				report.destination_legacy_refine_grid_reads = report.legacy_refine_grid_reads
 				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)
+				map.SuperBigMapHeightStepRepairReport = internal_step_repair
 			end
 			if scale_values then ZDumpHeightGrid(map, "finish-post", stretched) end
 			-- FULL 3D STRETCH (config STRETCH_SCALE_HEIGHTS): scale the HEIGHT VALUES by the same
@@ -3998,6 +4136,12 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 			internal_step_repair = internal_step_repair and internal_step_repair.reason or "not requested",
 			internal_step_rows = internal_step_repair and internal_step_repair.rows or 0,
 			internal_step_modified = internal_step_repair and internal_step_repair.modified or 0,
+			internal_step_refine_calls = internal_step_repair
+				and internal_step_repair.refine_calls or 0,
+			internal_step_refine_grid_reads = internal_step_repair
+				and internal_step_repair.refine_grid_reads or 0,
+			internal_step_legacy_refine_grid_reads = internal_step_repair
+				and internal_step_repair.legacy_refine_grid_reads or 0,
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success

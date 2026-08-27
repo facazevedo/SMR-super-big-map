@@ -539,6 +539,26 @@ static_checks = {
             "a, next1, next2, next3, next4, at(axis, perp + 5, along)",
         )
     ),
+    "height_step_refine_reuses_exact_rolling_window": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW", true)',
+            "local refine_calls, refine_grid_reads, legacy_refine_grid_reads = 0, 0, 0",
+            "legacy_refine_grid_reads = legacy_refine_grid_reads + positions * max_width * 4",
+            "v0, a, next1, next2 = a, next1, next2,",
+            "a, next1, next2, next3, next4,",
+            "legacy_refine_grid_reads = legacy_refine_grid_reads,",
+            "report.source_refine_grid_reads = report.refine_grid_reads",
+            "report.destination_refine_grid_reads = report.refine_grid_reads",
+            "map.SuperBigMapHeightStepRepairReport = internal_step_repair",
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepRefineRollingWindow = true",
+            "C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =",
+        )
+    ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
@@ -857,7 +877,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_938": "'version', 938" in METADATA,
+    "version_is_940": "'version', 940" in METADATA,
 }
 
 case_results = []
@@ -1276,6 +1296,159 @@ rolling_scan_checks = {
 }
 
 
+def modeled_height_step_refine(
+    values: list[int | None],
+    *,
+    predicted: int,
+    max_width: int,
+    edge: str,
+    track_low_before: bool,
+    wide_ring_only: bool,
+    threshold: int,
+    rolling: bool,
+) -> tuple[tuple[int, int] | None, int]:
+    """Model refine_step's exact candidate choice and native-grid read count."""
+    lo = max(1, predicted - 6)
+    hi = min(len(values) - 3, predicted + 6)
+    reads = 0
+    best: tuple[int, int] | None = None
+    best_distance: int | None = None
+    best_jump: int | None = None
+    before_edge = edge in ("left", "top")
+
+    def read(index: int) -> int | None:
+        nonlocal reads
+        reads += 1
+        return values[index]
+
+    def evaluate(
+        perp: int,
+        width: int,
+        v0: int | None,
+        a: int | None,
+        b: int | None,
+        v3: int | None,
+    ) -> None:
+        nonlocal best, best_distance, best_jump
+        if not all(isinstance(value, int) for value in (v0, a, b, v3)):
+            return
+        assert v0 is not None and a is not None and b is not None and v3 is not None
+        low_before = a < b
+        points_to_edge = (before_edge and low_before) or (
+            not before_edge and not low_before
+        )
+        jump = abs(b - a)
+        flank = max(abs(a - v0), abs(v3 - b), 1)
+        distance = abs(perp - predicted)
+        if (
+            low_before == track_low_before
+            and (wide_ring_only or points_to_edge)
+            and jump >= threshold
+            and jump >= flank * 2
+            and (
+                best_distance is None
+                or distance < best_distance
+                or (distance == best_distance and jump > best_jump)
+            )
+        ):
+            best = (perp, width)
+            best_distance = distance
+            best_jump = jump
+
+    positions = max(0, hi - lo + 1)
+    if positions == 0:
+        return None, reads
+    if not rolling:
+        for perp in range(lo, hi + 1):
+            for width in range(1, max_width + 1):
+                evaluate(
+                    perp,
+                    width,
+                    read(perp - 1),
+                    read(perp),
+                    read(perp + width),
+                    read(perp + width + 1),
+                )
+        return best, reads
+
+    v0, a = read(lo - 1), read(lo)
+    future = [read(lo + offset) for offset in range(1, max_width + 2)]
+    for perp in range(lo, hi + 1):
+        for width in range(1, max_width + 1):
+            evaluate(perp, width, v0, a, future[width - 1], future[width])
+        if perp < hi:
+            v0, a = a, future[0]
+            future = future[1:] + [read(perp + max_width + 2)]
+    return best, reads
+
+
+refine_rolling_cases = []
+for seed in range(16):
+    predicted = 18 + seed % 7
+    base_line: list[int | None] = [
+        (index * 43 + seed * 97 + ((index + 2 * seed) // 5) * 17) % 900
+        for index in range(64)
+    ]
+    for boundary, jump in (
+        (predicted - 3, 800 + seed * 7),
+        (predicted, 1200 + seed * 11),
+        (predicted + 4, 1200 + seed * 11),
+    ):
+        for index in range(boundary, len(base_line)):
+            assert base_line[index] is not None
+            base_line[index] += jump
+    if seed % 4 == 0:
+        base_line[predicted + 2] = None
+    for wide_ring_only, max_width in ((True, 1), (False, 3)):
+        for edge in ("left", "right", "top", "bottom"):
+            for track_low_before in (False, True):
+                legacy, legacy_reads = modeled_height_step_refine(
+                    base_line,
+                    predicted=predicted,
+                    max_width=max_width,
+                    edge=edge,
+                    track_low_before=track_low_before,
+                    wide_ring_only=wide_ring_only,
+                    threshold=128,
+                    rolling=False,
+                )
+                rolling, rolling_reads = modeled_height_step_refine(
+                    base_line,
+                    predicted=predicted,
+                    max_width=max_width,
+                    edge=edge,
+                    track_low_before=track_low_before,
+                    wide_ring_only=wide_ring_only,
+                    threshold=128,
+                    rolling=True,
+                )
+                refine_rolling_cases.append(
+                    {
+                        "exact": legacy == rolling,
+                        "wide": wide_ring_only,
+                        "legacy_reads": legacy_reads,
+                        "rolling_reads": rolling_reads,
+                    }
+                )
+
+refine_source_ratios = [
+    case["legacy_reads"] / case["rolling_reads"]
+    for case in refine_rolling_cases
+    if case["wide"]
+]
+refine_destination_ratios = [
+    case["legacy_reads"] / case["rolling_reads"]
+    for case in refine_rolling_cases
+    if not case["wide"]
+]
+refine_rolling_checks = {
+    "all_refined_candidates_are_exact": all(case["exact"] for case in refine_rolling_cases),
+    "compact_corpus_has_256_edge_direction_cases": len(refine_rolling_cases) == 256,
+    "source_refine_reads_drop_by_at_least_3x": min(refine_source_ratios) >= 3,
+    "destination_refine_reads_drop_by_at_least_8x": min(refine_destination_ratios) >= 8,
+}
+
+
 ring_rebuild_geometry_cases = []
 for width, height, pass_tile in ((819200, 819200, 100), (819203, 819197, 100), (1003, 997, 1)):
     strips = outer_resource_rebuild_strips(width, height, 2, pass_tile)
@@ -1512,7 +1685,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 17,
+    "schema_version": 18,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -1524,6 +1697,7 @@ report = {
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
     "rolling_scan_checks": rolling_scan_checks,
+    "refine_rolling_checks": refine_rolling_checks,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
     "rocket_height_cache_checks": rocket_height_cache_checks,
@@ -1548,6 +1722,11 @@ report = {
         "cases": len(rolling_scan_cases),
         "source_minimum_read_reduction": min(rolling_source_ratios),
         "destination_minimum_read_reduction": min(rolling_destination_ratios),
+    },
+    "refine_rolling_metrics": {
+        "cases": len(refine_rolling_cases),
+        "source_minimum_read_reduction": min(refine_source_ratios),
+        "destination_minimum_read_reduction": min(refine_destination_ratios),
     },
     "native_raster_metrics": {
         "full_cells": native_size * native_size,
@@ -1582,6 +1761,8 @@ report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
 report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
+report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
+report["refine_rolling_total"] = len(refine_rolling_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
@@ -1600,6 +1781,7 @@ report["ok"] = (
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
+    and all(refine_rolling_checks.values())
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
