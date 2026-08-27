@@ -2172,6 +2172,7 @@ local function PrepareOuterResourceTerrain(map)
 		local site = {
 			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
 			kind = entry.kind, resource = entry.resource, ready_before = grid_ready,
+			cluster_plan = entry.cluster_plan,
 			force_retry = entry.force_retry == true,
 			core_radius = radius, world_core_radius = world_radius,
 			required_core_radius = required_core, level_core_radius = level_core,
@@ -2508,7 +2509,12 @@ local function PrepareOuterResourceTerrain(map)
 	local precondition_components = {}
 	local precondition_minimum_delta = 2 * guim_v
 	for _, patch in ipairs(patches) do
-		if patch.kind ~= "surface" and patch.maximum_core_delta >= precondition_minimum_delta then
+		local site = patch.resource_site or patch.rocket_site
+		local planned_cluster_footprint = type(site) == "table"
+			and site.cluster_plan ~= nil and patch.kind ~= "surface"
+		if patch.kind ~= "surface"
+			and (planned_cluster_footprint
+				or patch.maximum_core_delta >= precondition_minimum_delta) then
 			precondition_components[patch.component] = true
 		end
 	end

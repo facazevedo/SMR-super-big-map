@@ -316,7 +316,8 @@ static_checks = {
         )
     ),
     "native_raster_preconditions_at_risk_components": (
-        'if patch.kind ~= "surface" and patch.maximum_core_delta >= precondition_minimum_delta then'
+        'if patch.kind ~= "surface"' in outer_resource_terrain
+        and "or patch.maximum_core_delta >= precondition_minimum_delta"
         in outer_resource_terrain
         and "local precondition_minimum_delta = 2 * guim_v" in outer_resource_terrain
         and "precondition_components[patch.component] = true" in outer_resource_terrain
@@ -450,6 +451,14 @@ static_checks = {
         and "local nearby_protected = protected_ready_sites_near(patch.cx, patch.cy, radius)"
         in outer_resource_terrain
         and "is_protected_ready_cell(x, y, nearby_protected)" in outer_resource_terrain
+    ),
+    "planned_cluster_footprints_precondition_before_rebuild": (
+        "cluster_plan = entry.cluster_plan" in outer_resource_terrain
+        and "local planned_cluster_footprint = type(site) == \"table\""
+        in outer_resource_terrain
+        and "and site.cluster_plan ~= nil and patch.kind ~= \"surface\""
+        in outer_resource_terrain
+        and "and (planned_cluster_footprint" in outer_resource_terrain
     ),
     "streamed_extractors_settle_in_initial_terrain_transaction": (
         "local stream_planned_extractor = not prior_terrain_plan_present"
@@ -726,7 +735,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_927": "'version', 927" in METADATA,
+    "version_is_928": "'version', 928" in METADATA,
 }
 
 case_results = []
