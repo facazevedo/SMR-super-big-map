@@ -1911,6 +1911,8 @@ local function PrepareOuterResourceTerrain(map)
 				marker.SuperBigMapResourceClusterRewardCapacity),
 			cluster_anchor = marker.SuperBigMapResourceClusterAnchor == true,
 			cluster_premium = marker.SuperBigMapResourceClusterPremium == true,
+			preconditioned_placement =
+				marker.SuperBigMapResourceClusterPreconditionedPlacement == true,
 		}
 	end)
 	table.sort(resources, function(a, b)
@@ -2167,8 +2169,10 @@ local function PrepareOuterResourceTerrain(map)
 		-- Retries retain their existing failure-directed scope.
 		local stream_planned_extractor = not prior_terrain_plan_present
 			and entry.kind == "extractor" and entry.cluster_plan ~= nil
+		local stream_preconditioned_placement = not prior_terrain_plan_present
+			and entry.cluster_plan ~= nil and entry.preconditioned_placement == true
 		local ready = grid_ready and entry.force_retry ~= true
-			and not stream_planned_extractor
+			and not stream_planned_extractor and not stream_preconditioned_placement
 		local site = {
 			marker = entry.marker, x = entry.x, y = entry.y, q = entry.q, r = entry.r,
 			kind = entry.kind, resource = entry.resource, ready_before = grid_ready,
