@@ -576,6 +576,10 @@ config.OptimizeSurfaceResourceSectorSampling = true
 -- unchanged local terrain/obstruction/repulsion predicates, and stop each of the outermost and
 -- adjacent perimeter bands once it has a bounded reserve for its already-planned cluster quotas.
 config.OptimizeSurfaceResourceCandidateFirst = true
+-- Build each guaranteed outer-ring resource cluster directly from a deterministic, bounded set of
+-- fully validated hexes around the already-selected natural mountain-base centers. The complete
+-- candidate-first perimeter scan remains a fail-closed fallback and runs before any clone is made.
+config.OptimizeSurfaceResourceStreamingClusters = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
@@ -1082,6 +1086,8 @@ C.OPTIMIZE_SURFACE_RESOURCE_SECTOR_SAMPLING =
 	as_bool(config.OptimizeSurfaceResourceSectorSampling)
 C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST =
 	as_bool(config.OptimizeSurfaceResourceCandidateFirst)
+C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS =
+	as_bool(config.OptimizeSurfaceResourceStreamingClusters)
 C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
 	as_bool(config.OptimizeSurfaceResourceSelectorLoadCache)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)

@@ -193,13 +193,46 @@ def source_certificate() -> dict[str, bool]:
     start = deposits.index("Candidate-first mode visits perimeter sectors")
     end = deposits.index("table.sort(mountain_base_candidates", start)
     candidate = deposits[start:end]
+    streaming_start = deposits.index("Use a private validation context")
+    streaming_end = deposits.index("if not surface_streaming_clusters_used", streaming_start)
+    streaming = deposits[streaming_start:streaming_end]
     audit_start = deposits.index("function DepositRules.AuditTopUpVanillaRepulsion")
     audit_end = deposits.index("function DepositRules.CensusFinalOuterResourceTopUps", audit_start)
     audit = deposits[audit_start:audit_end]
     return {
         "default_enabled": "config.OptimizeSurfaceResourceCandidateFirst = true" in config,
         "compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST" in config,
-        "version_923": "'version', 923" in metadata,
+        "version_925": "'version', 925" in metadata,
+        "streaming_default_enabled": "config.OptimizeSurfaceResourceStreamingClusters = true" in config,
+        "streaming_compiled_config": "C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS" in config,
+        "streaming_is_private_and_transactional": all(token in streaming for token in (
+            "local stream_context = NewDepositValidationContext(map)",
+            'NewTopUpRepulsionTracker(map, "resource streaming plans")',
+            "if stream_ok and type(stream_records) == \"table\"",
+            "surface_streaming_clusters_fallback = true",
+        )),
+        "streaming_stops_and_bounds_full_validation": all(token in streaming for token in (
+            "local used_centers, reserved, validation_cache", "local validation_budget",
+            "if full_validations >= validation_budget", "if chosen then break end",
+        )),
+        "streaming_retains_complete_validation": all(token in streaming for token in (
+            "CanReceiveDeposit(", "TerrainTypeAt(", "private_repulsion.CanPlaceUnique(candidate)",
+            "private_repulsion.CanPlaceMinimum(candidate, false,",
+        )),
+        "streaming_retains_ring_and_footprint_guards": all(token in streaming for token in (
+            "IsInFinalOuterResourceWorldBand(map, x, y,", "candidate_outermost == want_outermost",
+            "surface_extractor_footprint_within_map(candidate)", "not SectorIsScanned(sector)",
+        )),
+        "extractor_guard_rejects_inner_tangency": all(token in deposits for token in (
+            "SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y,",
+            "x < band_x - safe_margin", "x > map_w - band_x + safe_margin",
+        )),
+        "streaming_retains_cluster_geometry": all(token in streaming for token in (
+            "AxialHexDistance(candidate.q, candidate.r, prior.q, prior.r)",
+            "<= stream_cluster_radius", "< surface_quota_minimum_hex_distance",
+            "plan_count ~= desired_resource_cluster_count",
+        )),
+        "streaming_search_has_no_global_rng": "RandInt(" not in streaming,
         "scenario_seed_inputs": all(token in candidate for token in ("generator.Seed", "generator.GenerationHash", "RandomMapPreset")),
         "local_complete_validation_retained": all(token in candidate for token in ("CanReceiveDeposit(", "ValleyScore(map, pt)", "TerrainTypeAt(map, pt")),
         "physical_two_band_filter": all(token in candidate for token in ("surface_mountain_base_ring_sectors", "outermost_descriptor", "surface_candidate_first_inner_target")),

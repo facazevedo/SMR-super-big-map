@@ -1096,6 +1096,24 @@ local function IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors)
 		and (x < band_x or y < band_y or x >= map_w - band_x or y >= map_h - band_y)
 end
 
+-- Every planned member may later receive an extractor template, so keep its complete guarded
+-- support footprint on the same side of the hard central no-write rectangle. Strict inequalities
+-- reject exact tangency because the terrain raster's footprint predicates are inclusive.
+local function SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y,
+		safe_margin, ring_sectors)
+	if not IsInFinalOuterResourceWorldBand(map, x, y, ring_sectors) then return true end
+	local map_w, map_h = MapWorldSize(map)
+	if type(map_w) ~= "number" or type(map_h) ~= "number"
+		or type(x) ~= "number" or type(y) ~= "number" then return false end
+	ring_sectors = math.max(0, math.min(FINAL_EXPANDED_SECTORS_PER_AXIS,
+		math.floor(ring_sectors or 0)))
+	safe_margin = math.max(0, tonumber(safe_margin) or 0)
+	local band_x = map_w * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	local band_y = map_h * ring_sectors / FINAL_EXPANDED_SECTORS_PER_AXIS
+	return x < band_x - safe_margin or y < band_y - safe_margin
+		or x > map_w - band_x + safe_margin or y > map_h - band_y + safe_margin
+end
+
 local function IsMountainBaseRelief(score, maximum_rise, higher_samples)
 	return (tonumber(score) or 0) > 0
 		and (tonumber(maximum_rise) or 0) >= MountainBaseMinimumRiseWorld()
@@ -3828,6 +3846,8 @@ function DepositRules.TopUpDeposits(map)
 	surface_hex_size = type(surface_hex_size) == "number" and surface_hex_size > 0
 		and surface_hex_size or 1000
 	local surface_extractor_safe_margin = 10 * surface_hex_size
+	local surface_resource_ring_sectors = math.max(0, math.floor(
+		cfg().MOUNTAIN_BASE_APRON_OUTER_RING_SECTORS or 2))
 	local function surface_extractor_footprint_within_map(candidate)
 		if IsUndergroundMap(map) then return true end
 		local x, y = candidate and candidate.x, candidate and candidate.y
@@ -3835,6 +3855,8 @@ function DepositRules.TopUpDeposits(map)
 			and x >= surface_extractor_safe_margin and y >= surface_extractor_safe_margin
 			and x <= map_w - surface_extractor_safe_margin
 			and y <= map_h - surface_extractor_safe_margin
+			and SurfaceExtractorFootprintWithinTerrainEditableArea(map, x, y,
+				surface_extractor_safe_margin, surface_resource_ring_sectors)
 	end
 	local resource_cluster_minimum_count = not IsUndergroundMap(map)
 		and math.max(0, math.floor(cfg().OUTER_RESOURCE_CLUSTER_MINIMUM_COUNT or 6)) or 0
@@ -4074,6 +4096,15 @@ function DepositRules.TopUpDeposits(map)
 	local surface_candidate_first_outer_candidates = 0
 	local surface_candidate_first_inner_candidates = 0
 	local surface_candidate_first_sectors_visited = 0
+	local surface_streaming_clusters_requested = false
+	local surface_streaming_clusters_used = false
+	local surface_streaming_clusters_fallback = false
+	local surface_streaming_clusters_error = ""
+	local surface_streaming_cluster_centers_tested = 0
+	local surface_streaming_cluster_full_validations = 0
+	local surface_streaming_cluster_candidates = 0
+	local surface_streaming_cluster_plans = 0
+	local surface_streaming_cluster_rng_draws = 0
 
 	local added = 0
 	local validation_context = IsUndergroundMap(map)
@@ -4295,7 +4326,260 @@ function DepositRules.TopUpDeposits(map)
 		local perimeter_quota_candidates = {}
 		local outermost_perimeter_quota_candidates = {}
 		local inner_band_perimeter_quota_candidates = {}
+		local streaming_repulsion
 		if not underground and surface_mountain_base_minimum > 0
+			and surface_mountain_base_ring_sectors > 0
+			and cfg().OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS == true then
+			surface_streaming_clusters_requested = true
+			local stream_ok, stream_records, stream_error, stream_centers_tested,
+				stream_full_validations, stream_plan_count = pcall(function()
+				local centers = map.SuperBigMapNaturalMountainBaseApronCenters
+				local hex_to_world = Global("HexToWorld")
+				local world_to_hex = Global("WorldToHex")
+				if type(centers) ~= "table" or #centers == 0 then
+					return nil, "natural mountain-base centers unavailable", 0, 0, 0
+				end
+				if type(hex_to_world) ~= "function" or type(world_to_hex) ~= "function" then
+					return nil, "hex conversion APIs unavailable", 0, 0, 0
+				end
+
+				-- Use a private validation context and repulsion index until every requested cluster has a
+				-- complete plan. A failed bounded search therefore cannot publish candidates, consume game
+				-- RNG, or affect the unchanged candidate-first fallback.
+				local stream_context = NewDepositValidationContext(map)
+				local private_repulsion = NewTopUpRepulsionTracker(map, "resource streaming plans")
+				local modulus = 2147483647
+				local generator = map.RandomMapGenObject
+				local numeric_seed = type(generator) == "table" and tonumber(generator.Seed) or 0
+				local seed_material = tostring(type(generator) == "table"
+					and generator.GenerationHash or "") .. "|"
+					.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+				local stream_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
+				for index = 1, #seed_material do
+					stream_seed = (stream_seed * 48271 + string.byte(seed_material, index) + 1)
+						% modulus
+				end
+				surface_candidate_first_seed = stream_seed
+
+				local ordered_centers = {}
+				for center_index, center in ipairs(centers) do
+					if type(center) == "table" and type(center.x) == "number"
+						and type(center.y) == "number" then
+						ordered_centers[#ordered_centers + 1] = {
+							center = center, index = center_index,
+							rank = tonumber(center.pseudorandom_rank) or center_index,
+						}
+					end
+				end
+				table.sort(ordered_centers, function(a, b)
+					if a.rank == b.rank then return a.index < b.index end
+					return a.rank < b.rank
+				end)
+
+				-- Candidate hexes lie on a three-hex lattice inside the unchanged twelve-hex cluster
+				-- radius. Distance is the primary key; the scenario/center hash rotates otherwise equal
+				-- choices without touching the global random stream.
+				local offsets = {}
+				for dq = -12, 12, 3 do
+					for dr = -12, 12, 3 do
+						local distance = AxialHexDistance(0, 0, dq, dr)
+						if distance and distance <= 12 then
+							offsets[#offsets + 1] = { dq = dq, dr = dr, distance = distance }
+						end
+					end
+				end
+
+				local outer_cluster_count = math.max(1, math.ceil(desired_resource_cluster_count
+					* surface_outermost_resource_minimum_percent / 100))
+				local outer_specs, inner_specs = {}, {}
+				for index, spec in ipairs(planned_resource_cluster_specs) do
+					local list = index <= outer_cluster_count and outer_specs or inner_specs
+					list[#list + 1] = spec
+				end
+				local used_centers, reserved, validation_cache = {}, {}, {}
+				local records, centers_tested, full_validations, plan_count = {}, 0, 0, 0
+				local validation_budget, validation_budget_exhausted = 512, false
+				local stream_cluster_radius = math.max(4,
+					math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
+				local function clear_of_reserved(candidate)
+					for _, prior in ipairs(reserved) do
+						if (AxialHexDistance(candidate.q, candidate.r, prior.q, prior.r) or 0)
+							<= stream_cluster_radius then return false end
+					end
+					return true
+				end
+				local function build_band(specs, want_outermost)
+					for _, spec in ipairs(specs) do
+						local chosen
+						for _, center_entry in ipairs(ordered_centers) do
+							if validation_budget_exhausted then break end
+							if not used_centers[center_entry.index] then
+								local center = center_entry.center
+								local center_outermost = IsInFinalOuterResourceWorldBand(
+									map, center.x, center.y, 1)
+								if center_outermost == want_outermost
+									and IsInFinalOuterResourceWorldBand(map, center.x, center.y,
+										surface_mountain_base_ring_sectors) then
+									centers_tested = centers_tested + 1
+									local ok_hex, center_q, center_r = pcall(
+										world_to_hex, point(center.x, center.y))
+									if ok_hex and type(center_q) == "number"
+										and type(center_r) == "number" then
+										local ranked_offsets = {}
+										for _, offset in ipairs(offsets) do
+											ranked_offsets[#ranked_offsets + 1] = {
+												dq = offset.dq, dr = offset.dr,
+												distance = offset.distance,
+												rank = (stream_seed
+													+ (center_entry.index + 17) * 83492791
+													+ (offset.dq + 13) * 73856093
+													+ (offset.dr + 13) * 19349663) % modulus,
+											}
+										end
+										table.sort(ranked_offsets, function(a, b)
+											if a.distance == b.distance then return a.rank < b.rank end
+											return a.distance < b.distance
+										end)
+										local trial, trial_hexes = {}, {}
+										for _, offset in ipairs(ranked_offsets) do
+											local q, r = center_q + offset.dq, center_r + offset.dr
+											local hex_key = tostring(q) .. ":" .. tostring(r)
+											if not trial_hexes[hex_key] then
+												local ok_world, x, y = pcall(hex_to_world, q, r)
+												local candidate = ok_world and type(x) == "number"
+													and type(y) == "number" and {
+														x = x, y = y, q = q, r = r,
+													} or nil
+												local sector = candidate and SectorAtPoint(map, x, y) or nil
+												local candidate_outermost = candidate
+													and IsInFinalOuterResourceWorldBand(map, x, y, 1)
+												if candidate and candidate_outermost == want_outermost
+													and IsInFinalOuterResourceWorldBand(map, x, y,
+														surface_mountain_base_ring_sectors)
+													and sector and not SectorIsScanned(sector)
+													and surface_extractor_footprint_within_map(candidate)
+													and clear_of_reserved(candidate)
+													and (#trial == 0 or AxialHexDistance(q, r,
+														trial[1].q, trial[1].r) <= stream_cluster_radius) then
+													local spaced = true
+													for _, prior in ipairs(trial) do
+														if AxialHexDistance(q, r, prior.q, prior.r)
+															< surface_quota_minimum_hex_distance then
+															spaced = false
+															break
+														end
+													end
+													if spaced then
+														local validated = validation_cache[hex_key]
+														if validated == nil then
+															if full_validations >= validation_budget then
+																validation_budget_exhausted = true
+																break
+															end
+															full_validations = full_validations + 1
+															local can_receive, _, _, _, final_q, final_r =
+																CanReceiveDeposit(map, point(x, y), stream_context, false)
+															candidate.q, candidate.r = final_q, final_r
+															candidate.sector, candidate.sector_id = sector, sector.id
+															candidate.terrain_type = can_receive
+																and (TerrainTypeAt(map, point(x, y), stream_context) or -1)
+															validated = can_receive and final_q == q and final_r == r
+																and private_repulsion.CanPlaceUnique(candidate)
+																and private_repulsion.CanPlaceMinimum(candidate, false,
+																	TopUpEnrichmentMinimumHexDistance()) and candidate or false
+															validation_cache[hex_key] = validated
+														end
+														if validated then
+															trial_hexes[hex_key] = true
+															trial[#trial + 1] = validated
+															if #trial >= spec.resource_target then
+																chosen = {
+																	center = center_entry, candidates = trial, spec = spec,
+																}
+																break
+															end
+														end
+													end
+												end
+											end
+									end
+								end
+							end
+							if chosen then break end
+						end
+					end
+					if not chosen then return false end
+					used_centers[chosen.center.index] = true
+					plan_count = plan_count + 1
+					for member_index, candidate in ipairs(chosen.candidates) do
+						candidate.center_index = chosen.center.index
+						candidate.rank = plan_count * 1000 + member_index
+						candidate.outermost = want_outermost
+						records[#records + 1] = candidate
+						reserved[#reserved + 1] = candidate
+					end
+					end
+					return true
+				end
+				if not build_band(outer_specs, true) or not build_band(inner_specs, false)
+					or plan_count ~= desired_resource_cluster_count then
+					return nil, "bounded center search did not complete every cluster",
+						centers_tested, full_validations, plan_count
+				end
+				streaming_repulsion = private_repulsion
+				return records, "", centers_tested, full_validations, plan_count
+			end)
+			if stream_ok then
+				surface_streaming_cluster_centers_tested = stream_centers_tested or 0
+				surface_streaming_cluster_full_validations = stream_full_validations or 0
+				surface_streaming_cluster_plans = stream_plan_count or 0
+			end
+			if stream_ok and type(stream_records) == "table" then
+				surface_streaming_clusters_used = true
+				surface_candidate_first = true
+				surface_streaming_cluster_candidates = #stream_records
+				surface_mountain_base_centers = #map.SuperBigMapNaturalMountainBaseApronCenters
+				surface_mountain_base_sample_attempts = surface_streaming_cluster_full_validations
+				local streaming_sectors = {}
+				for _, record in ipairs(stream_records) do
+					local candidate = append_valid_candidate(record.x, record.y, record.sector,
+						record.terrain_type, record.q, record.r)
+					candidate._sbm_mountain_base_apron = true
+					candidate._sbm_mountain_base_natural = true
+					candidate._sbm_mountain_base_center_index = record.center_index
+					candidate._sbm_mountain_base_rank = record.rank
+					mountain_base_candidates[#mountain_base_candidates + 1] = candidate
+					perimeter_quota_candidates[#perimeter_quota_candidates + 1] = candidate
+					surface_resource_quota_candidates = surface_resource_quota_candidates + 1
+					surface_mountain_base_valid_candidates =
+						surface_mountain_base_valid_candidates + 1
+					surface_mountain_base_sampled_candidates =
+						surface_mountain_base_sampled_candidates + 1
+					local _, sector_key = CandidateSector(map, candidate)
+					if sector_key then streaming_sectors[sector_key] = true end
+					if record.outermost then
+						surface_candidate_first_outer_candidates =
+							surface_candidate_first_outer_candidates + 1
+					else
+						surface_candidate_first_inner_candidates =
+							surface_candidate_first_inner_candidates + 1
+					end
+				end
+				for _ in pairs(streaming_sectors) do
+					surface_candidate_first_sectors_visited =
+						surface_candidate_first_sectors_visited + 1
+				end
+				surface_candidate_first_outer_target = surface_candidate_first_outer_candidates
+				surface_candidate_first_inner_target = surface_candidate_first_inner_candidates
+			else
+				surface_streaming_clusters_fallback = true
+				surface_streaming_clusters_error = stream_ok and tostring(stream_error)
+					or tostring(stream_records)
+				streaming_repulsion = nil
+				surface_candidate_first_seed = 0
+			end
+		end
+		if not surface_streaming_clusters_used and not underground and surface_mountain_base_minimum > 0
 			and surface_mountain_base_ring_sectors > 0 then
 			local centers = map.SuperBigMapNaturalMountainBaseApronCenters
 			local mountain_base_hexes = {}
@@ -4563,7 +4847,8 @@ function DepositRules.TopUpDeposits(map)
 		if optimize_placement_pool then
 			topup_candidate_pool_by_map[map] = shared_candidates
 		end
-		local repulsion = NewTopUpRepulsionTracker(map, "resources")
+		local repulsion = surface_streaming_clusters_used and streaming_repulsion
+			or NewTopUpRepulsionTracker(map, "resources")
 		-- Planned surface clusters are intentionally narrower than the ordinary top-up planner. Their
 		-- fallback remains deterministic and conservative: globally unique hexes at least three hexes
 		-- apart, sector-load balancing, and every normal terrain gate. Only these cluster members are
@@ -4952,7 +5237,8 @@ function DepositRules.TopUpDeposits(map)
 		local next_resource_cluster_plan = 0
 		local cluster_plan_diagnostic = {
 			stage = "initializing", error = "", quota = 0, outermost = 0, inner_band = 0,
-			results = "", strategy = "selector_local_v3",
+			results = "", strategy = surface_streaming_clusters_used
+				and "streaming_center_clusters_v1" or "selector_local_v3",
 			desired_clusters = desired_resource_cluster_count, placed_clusters = 0,
 			plan_exhaustions = 0,
 		}
@@ -5390,6 +5676,15 @@ function DepositRules.TopUpDeposits(map)
 		surface_candidate_first_outer_candidates = surface_candidate_first_outer_candidates,
 		surface_candidate_first_inner_candidates = surface_candidate_first_inner_candidates,
 		surface_candidate_first_sectors_visited = surface_candidate_first_sectors_visited,
+		surface_streaming_clusters_requested = surface_streaming_clusters_requested,
+		surface_streaming_clusters_used = surface_streaming_clusters_used,
+		surface_streaming_clusters_fallback = surface_streaming_clusters_fallback,
+		surface_streaming_clusters_error = surface_streaming_clusters_error,
+		surface_streaming_cluster_centers_tested = surface_streaming_cluster_centers_tested,
+		surface_streaming_cluster_full_validations = surface_streaming_cluster_full_validations,
+		surface_streaming_cluster_candidates = surface_streaming_cluster_candidates,
+		surface_streaming_cluster_plans = surface_streaming_cluster_plans,
+		surface_streaming_cluster_rng_draws = surface_streaming_cluster_rng_draws,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats
