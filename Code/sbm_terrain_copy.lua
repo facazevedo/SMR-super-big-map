@@ -720,6 +720,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local tracks = {}
 	local track_counts = { left = 0, right = 0, top = 0, bottom = 0 }
 	local selected_tracks = {}
+	local scan_grid_reads, legacy_scan_grid_reads = 0, 0
 
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
@@ -777,17 +778,31 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 
 	local function scan_line_range(row, axis, along, perp0, perp1, edge)
 		if perp1 < perp0 then return end
+		local max_width = wide_ring_only and 1 or 3
+		local sample_count = perp1 - perp0 + 1
+		legacy_scan_grid_reads = legacy_scan_grid_reads + sample_count * max_width * 4
+		-- Grid reads cross the Lua/native boundary. The former nested width loop fetched the same
+		-- neighbouring values four or twelve times at every perpendicular position. Keep one rolling
+		-- window instead: values, candidate order, thresholds, and offered tracks remain identical.
+		local v0 = at(axis, perp0 - 1, along)
+		local a = at(axis, perp0, along)
+		local next1 = at(axis, perp0 + 1, along)
+		local next2 = at(axis, perp0 + 2, along)
+		local next3, next4
+		if max_width == 3 then
+			next3 = at(axis, perp0 + 3, along)
+			next4 = at(axis, perp0 + 4, along)
+		end
+		scan_grid_reads = scan_grid_reads + max_width + 3
 		for perp = perp0, perp1 do
 			-- Bilinear resampling spreads a one-source-cell step across two destination cells at
 			-- 6144 -> 8192. Inspect spans through three cells so two half-jumps at a resampled
 			-- x=8160/8161 boundary are evaluated as the original coherent discontinuity. Endpoint
 			-- flanks still reject an ordinary sustained slope. On the vanilla-size source pass the
 			-- discontinuity is still one cell wide, so wider probes only waste startup time.
-			local max_width = wide_ring_only and 1 or 3
 			for width = 1, max_width do
-				local v0, a = at(axis, perp - 1, along), at(axis, perp, along)
-				local b, v3 = at(axis, perp + width, along),
-					at(axis, perp + width + 1, along)
+				local b = width == 1 and next1 or width == 2 and next2 or next3
+				local v3 = width == 1 and next2 or width == 2 and next3 or next4
 				if type(v0) == "number" and type(a) == "number" and type(b) == "number"
 					and type(v3) == "number" then
 					local jump = math.abs(b - a)
@@ -804,6 +819,15 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 						offer_candidate(row, axis, perp, width, edge, low_before, jump)
 					end
 				end
+			end
+			if perp < perp1 then
+				if max_width == 1 then
+					v0, a, next1, next2 = a, next1, next2, at(axis, perp + 3, along)
+				else
+					v0, a, next1, next2, next3, next4 =
+						a, next1, next2, next3, next4, at(axis, perp + 5, along)
+				end
+				scan_grid_reads = scan_grid_reads + 1
 			end
 		end
 	end
@@ -1177,7 +1201,10 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	end)
 	if type(resume) == "function" then pcall(resume, "SBMInternalHeightStepRepair") end
 	if not ok_repair then
-		return false, { reason = tostring(repair_err), threshold = threshold, min = mn, max = mx }
+		return false, {
+			reason = tostring(repair_err), threshold = threshold, min = mn, max = mx,
+			scan_grid_reads = scan_grid_reads, legacy_scan_grid_reads = legacy_scan_grid_reads,
+		}
 	end
 
 	local modified, detected = 0, 0
@@ -1202,7 +1229,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			outer_guard = outer_guard, candidates = #tracks,
 			left_tracks = track_counts.left, right_tracks = track_counts.right,
 			top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
-			min = mn, max = mx,
+			min = mn, max = mx, scan_grid_reads = scan_grid_reads,
+			legacy_scan_grid_reads = legacy_scan_grid_reads,
 		}
 	end
 	local primary = selected_tracks[1]
@@ -1220,7 +1248,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		min_offset = min_offset, max_offset = max_offset,
 		left_tracks = track_counts.left, right_tracks = track_counts.right,
 		top_tracks = track_counts.top, bottom_tracks = track_counts.bottom,
-		min = mn, max = mx,
+		min = mn, max = mx, scan_grid_reads = scan_grid_reads,
+		legacy_scan_grid_reads = legacy_scan_grid_reads,
 	}, selected_tracks
 end
 

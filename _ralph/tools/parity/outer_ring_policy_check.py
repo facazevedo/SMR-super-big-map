@@ -429,6 +429,15 @@ static_checks = {
         and "relief_x, relief_y = relief_x / relief_length" in outer_resource_terrain
         and "local along_relief =" in outer_resource_terrain
     ),
+    "height_step_scan_reuses_exact_rolling_window": all(
+        token in TERRAIN
+        for token in (
+            "local scan_grid_reads, legacy_scan_grid_reads = 0, 0",
+            "legacy_scan_grid_reads = legacy_scan_grid_reads + sample_count * max_width * 4",
+            "v0, a, next1, next2 = a, next1, next2, at(axis, perp + 3, along)",
+            "a, next1, next2, next3, next4, at(axis, perp + 5, along)",
+        )
+    ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
@@ -710,7 +719,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_922": "'version', 922" in METADATA,
+    "version_is_923": "'version', 923" in METADATA,
 }
 
 case_results = []
@@ -1001,9 +1010,135 @@ native_raster_checks = {
     "rocket_only_retry_disables_native_precondition": not native_precondition_enabled(None, []),
 }
 
+
+def modeled_height_step_scan(
+    values: list[int],
+    *,
+    perp0: int,
+    perp1: int,
+    max_width: int,
+    edge: str,
+    wide_ring_only: bool,
+    threshold: int,
+    rolling: bool,
+) -> tuple[tuple[tuple[int, int, str, bool, int], ...], int]:
+    """Compare the legacy repeated reads with the production rolling window."""
+    reads = 0
+    row: list[tuple[int, int, str, bool, int]] = []
+
+    def read(index: int) -> int:
+        nonlocal reads
+        reads += 1
+        return values[index]
+
+    def offer(perp: int, width: int, low_before: bool, jump: int) -> None:
+        for index, candidate in enumerate(row):
+            if candidate[2] == edge and abs(candidate[0] - perp) <= 3:
+                if jump > candidate[4]:
+                    row[index] = (perp, width, edge, low_before, jump)
+                return
+        row.append((perp, width, edge, low_before, jump))
+        row.sort(key=lambda item: item[4], reverse=True)
+        del row[6:]
+
+    def evaluate(perp: int, width: int, v0: int, a: int, b: int, v3: int) -> None:
+        jump = abs(b - a)
+        flank = max(abs(a - v0), abs(v3 - b), 1)
+        low_before = a < b
+        before_edge = edge in ("left", "top")
+        low_points_to_edge = (before_edge and low_before) or (
+            not before_edge and not low_before
+        )
+        if (
+            (wide_ring_only or low_points_to_edge)
+            and jump >= threshold
+            and jump >= flank * 2
+        ):
+            offer(perp, width, low_before, jump)
+
+    if not rolling:
+        for perp in range(perp0, perp1 + 1):
+            for width in range(1, max_width + 1):
+                evaluate(
+                    perp,
+                    width,
+                    read(perp - 1),
+                    read(perp),
+                    read(perp + width),
+                    read(perp + width + 1),
+                )
+        return tuple(row), reads
+
+    v0, a = read(perp0 - 1), read(perp0)
+    future = [read(perp0 + offset) for offset in range(1, max_width + 2)]
+    for perp in range(perp0, perp1 + 1):
+        for width in range(1, max_width + 1):
+            evaluate(perp, width, v0, a, future[width - 1], future[width])
+        if perp < perp1:
+            v0, a = a, future[0]
+            future = future[1:] + [read(perp + max_width + 2)]
+    return tuple(row), reads
+
+
+rolling_scan_cases = []
+for seed in range(16):
+    line = [
+        (index * 37 + seed * 101 + ((index + seed) // 7) * 19) % 3000
+        for index in range(160)
+    ]
+    step = 24 + seed * 5
+    line = [value + (1200 if index >= step else 0) for index, value in enumerate(line)]
+    for wide_ring_only, max_width in ((True, 1), (False, 3)):
+        for edge in ("left", "right", "top", "bottom"):
+            legacy, legacy_reads = modeled_height_step_scan(
+                line,
+                perp0=8,
+                perp1=140,
+                max_width=max_width,
+                edge=edge,
+                wide_ring_only=wide_ring_only,
+                threshold=128,
+                rolling=False,
+            )
+            rolling, rolling_reads = modeled_height_step_scan(
+                line,
+                perp0=8,
+                perp1=140,
+                max_width=max_width,
+                edge=edge,
+                wide_ring_only=wide_ring_only,
+                threshold=128,
+                rolling=True,
+            )
+            rolling_scan_cases.append(
+                {
+                    "exact": legacy == rolling,
+                    "wide": wide_ring_only,
+                    "legacy_reads": legacy_reads,
+                    "rolling_reads": rolling_reads,
+                }
+            )
+
+rolling_source_ratios = [
+    case["legacy_reads"] / case["rolling_reads"]
+    for case in rolling_scan_cases
+    if case["wide"]
+]
+rolling_destination_ratios = [
+    case["legacy_reads"] / case["rolling_reads"]
+    for case in rolling_scan_cases
+    if not case["wide"]
+]
+rolling_scan_checks = {
+    "all_selected_candidates_are_exact": all(case["exact"] for case in rolling_scan_cases),
+    "compact_corpus_has_128_edge_cases": len(rolling_scan_cases) == 128,
+    "source_scan_reads_drop_by_at_least_3_5x": min(rolling_source_ratios) >= 3.5,
+    "destination_scan_reads_drop_by_at_least_10x": min(rolling_destination_ratios) >= 10,
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 16,
+    "schema_version": 17,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -1014,6 +1149,12 @@ report = {
     "feather_checks": feather_checks,
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
+    "rolling_scan_checks": rolling_scan_checks,
+    "rolling_scan_metrics": {
+        "cases": len(rolling_scan_cases),
+        "source_minimum_read_reduction": min(rolling_source_ratios),
+        "destination_minimum_read_reduction": min(rolling_destination_ratios),
+    },
     "native_raster_metrics": {
         "full_cells": native_size * native_size,
         "coarse_samples": native_coarse_size * native_coarse_size,
@@ -1045,6 +1186,8 @@ report["guard_prefilter_total"] = len(guard_prefilter_checks)
 report["guard_prefilter_samples"] = guard_samples
 report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
+report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
+report["rolling_scan_total"] = len(rolling_scan_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1056,6 +1199,7 @@ report["ok"] = (
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
+    and all(rolling_scan_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
