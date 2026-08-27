@@ -580,11 +580,6 @@ config.OptimizeSurfaceResourceCandidateFirst = true
 -- fully validated hexes around the already-selected natural mountain-base centers. The complete
 -- candidate-first perimeter scan remains a fail-closed fallback and runs before any clone is made.
 config.OptimizeSurfaceResourceStreamingClusters = true
--- Streaming cluster members are selected from the natural-apron centers and are already fed into
--- the mandatory native terrain preconditioning transaction before the first authoritative rebuild.
--- During planning, retain exact obstruction/spacing/ring checks but defer provisional terrain-grid
--- rejection to that transaction and its unchanged final engine audit.
-config.OptimizeSurfaceResourcePreconditionedPlanning = true
 -- The sequential surface resource pass changes sector loads only when it commits a clone. Keep
 -- that table live across selector rebuilds instead of rescanning every DepositMarker per clone.
 config.OptimizeSurfaceResourceSelectorLoadCache = true
@@ -1093,8 +1088,6 @@ C.OPTIMIZE_SURFACE_RESOURCE_CANDIDATE_FIRST =
 	as_bool(config.OptimizeSurfaceResourceCandidateFirst)
 C.OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS =
 	as_bool(config.OptimizeSurfaceResourceStreamingClusters)
-C.OPTIMIZE_SURFACE_RESOURCE_PRECONDITIONED_PLANNING =
-	as_bool(config.OptimizeSurfaceResourcePreconditionedPlanning)
 C.OPTIMIZE_SURFACE_RESOURCE_SELECTOR_LOAD_CACHE =
 	as_bool(config.OptimizeSurfaceResourceSelectorLoadCache)
 C.OPTIMIZE_ANOMALY_CANDIDATE_SEARCH = as_bool(config.OptimizeAnomalyCandidateSearch)

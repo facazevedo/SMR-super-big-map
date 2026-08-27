@@ -223,20 +223,6 @@ rocket_terrain_audit = section(
 )
 
 static_checks = {
-	"preconditioned_cluster_planning_is_enabled": (
-		"config.OptimizeSurfaceResourcePreconditionedPlanning = true" in CONFIG
-		and "C.OPTIMIZE_SURFACE_RESOURCE_PRECONDITIONED_PLANNING" in CONFIG
-		and "candidate._sbm_requires_terrain_precondition = true" in DEPOSITS
-		and "SuperBigMapResourceClusterPreconditionedPlacement" in DEPOSITS
-		and "stream_preconditioned_placement" in TERRAIN
-	),
-	"preconditioned_cluster_planning_retains_hard_guards": (
-		"surface_extractor_footprint_within_map(candidate)" in DEPOSITS
-		and "clear_of_reserved(candidate)" in DEPOSITS
-		and "IsUnobstructedAt(" in DEPOSITS
-		and "private_repulsion.CanPlaceUnique(candidate)" in DEPOSITS
-		and "private_repulsion.CanPlaceMinimum(candidate, false" in DEPOSITS
-	),
     "anomaly_outer_ring_is_two_sectors": "config.TopUpAnomalyOuterRingSectors = 2" in CONFIG,
     "compiled_anomaly_outer_ring_uses_config": (
         "as_number(config.TopUpAnomalyOuterRingSectors, 2)" in CONFIG
@@ -749,7 +735,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-	"version_is_932": "'version', 932" in METADATA,
+    "version_is_928": "'version', 928" in METADATA,
 }
 
 case_results = []

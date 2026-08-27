@@ -4105,8 +4105,6 @@ function DepositRules.TopUpDeposits(map)
 	local surface_streaming_cluster_candidates = 0
 	local surface_streaming_cluster_plans = 0
 	local surface_streaming_cluster_rng_draws = 0
-	local surface_streaming_cluster_plan_ms = 0
-	local surface_streaming_cluster_preconditioned_validations = 0
 
 	local added = 0
 	local validation_context = IsUndergroundMap(map)
@@ -4335,7 +4333,6 @@ function DepositRules.TopUpDeposits(map)
 			and surface_mountain_base_ring_sectors > 0
 			and cfg().OPTIMIZE_SURFACE_RESOURCE_STREAMING_CLUSTERS == true then
 			surface_streaming_clusters_requested = true
-			local streaming_plan_started = GetPreciseTicks()
 			local stream_ok, stream_records, stream_error, stream_centers_tested,
 				stream_full_validations, stream_plan_count = pcall(function()
 				local centers = map.SuperBigMapNaturalMountainBaseApronCenters
@@ -4404,8 +4401,6 @@ function DepositRules.TopUpDeposits(map)
 				local used_centers, reserved, validation_cache = {}, {}, {}
 				local records, centers_tested, full_validations, plan_count = {}, 0, 0, 0
 				local validation_budget, validation_budget_exhausted = 512, false
-				local preconditioned_planning =
-					cfg().OPTIMIZE_SURFACE_RESOURCE_PRECONDITIONED_PLANNING == true
 				local stream_cluster_radius = math.max(4,
 					math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
 				local function clear_of_reserved(candidate)
@@ -4484,25 +4479,12 @@ function DepositRules.TopUpDeposits(map)
 																break
 															end
 															full_validations = full_validations + 1
-													local candidate_point = point(x, y)
-													local can_receive, final_q, final_r
-													if preconditioned_planning then
-														surface_streaming_cluster_preconditioned_validations =
-															surface_streaming_cluster_preconditioned_validations + 1
-														can_receive = IsUnobstructedAt(
-															map, candidate_point, true, stream_context, q, r)
-														final_q, final_r = q, r
-														candidate._sbm_requires_terrain_precondition = true
-													else
-														local receive_ok, unused_passable, unused_flatness,
-															unused_buildable, receive_q, receive_r =
-															CanReceiveDeposit(map, candidate_point, stream_context, false)
-														can_receive, final_q, final_r = receive_ok, receive_q, receive_r
-													end
-													candidate.q, candidate.r = final_q, final_r
-													candidate.sector, candidate.sector_id = sector, sector.id
-													candidate.terrain_type = can_receive
-														and (TerrainTypeAt(map, candidate_point, stream_context) or -1)
+															local can_receive, _, _, _, final_q, final_r =
+																CanReceiveDeposit(map, point(x, y), stream_context, false)
+															candidate.q, candidate.r = final_q, final_r
+															candidate.sector, candidate.sector_id = sector, sector.id
+															candidate.terrain_type = can_receive
+																and (TerrainTypeAt(map, point(x, y), stream_context) or -1)
 															validated = can_receive and final_q == q and final_r == r
 																and private_repulsion.CanPlaceUnique(candidate)
 																and private_repulsion.CanPlaceMinimum(candidate, false,
@@ -4551,7 +4533,6 @@ function DepositRules.TopUpDeposits(map)
 				streaming_repulsion = private_repulsion
 				return records, "", centers_tested, full_validations, plan_count
 			end)
-			surface_streaming_cluster_plan_ms = GetPreciseTicks() - streaming_plan_started
 			if stream_ok then
 				surface_streaming_cluster_centers_tested = stream_centers_tested or 0
 				surface_streaming_cluster_full_validations = stream_full_validations or 0
@@ -4577,8 +4558,6 @@ function DepositRules.TopUpDeposits(map)
 					candidate._sbm_resource_cluster_extractor_target = record.spec.extractor_target
 					candidate._sbm_resource_cluster_anomaly_capacity = record.spec.anomaly_capacity
 					candidate._sbm_resource_cluster_reward_capacity = record.spec.reward_capacity
-					candidate._sbm_requires_terrain_precondition =
-						record._sbm_requires_terrain_precondition or nil
 					local plan = streaming_plan_lookup[record.plan]
 					if not plan then
 						plan = {
@@ -5060,8 +5039,6 @@ function DepositRules.TopUpDeposits(map)
 							c._sbm_resource_cluster_reward_capacity
 						clone.SuperBigMapResourceClusterAnchor = cluster_anchor == true or nil
 						clone.SuperBigMapResourceClusterPremium = premium_template(template) or nil
-						clone.SuperBigMapResourceClusterPreconditionedPlacement =
-							c._sbm_requires_terrain_precondition or nil
 						if selected_mountain_base then
 							surface_mountain_base_resource_added =
 								surface_mountain_base_resource_added + 1
@@ -5736,9 +5713,6 @@ function DepositRules.TopUpDeposits(map)
 		surface_streaming_cluster_candidates = surface_streaming_cluster_candidates,
 		surface_streaming_cluster_plans = surface_streaming_cluster_plans,
 		surface_streaming_cluster_rng_draws = surface_streaming_cluster_rng_draws,
-		surface_streaming_cluster_plan_ms = surface_streaming_cluster_plan_ms,
-		surface_streaming_cluster_preconditioned_validations =
-			surface_streaming_cluster_preconditioned_validations,
 		underground_density_fallback_added = density_fallback_added,
 		underground_fallback_strategy = fallback_selector_stats and fallback_selector_stats.strategy or "none",
 		underground_fallback_eligible_sectors = fallback_selector_stats
