@@ -101,6 +101,53 @@ def apron_weight(normalized_radius: float, core_fraction: float = 0.75) -> float
     return 1 - smooth
 
 
+def conservative_apron_row_span(
+    center_x: int,
+    y: int,
+    x0: int,
+    x1: int,
+    short_radius: float,
+    long_radius: float,
+    mountain_x: float,
+    mountain_y: float,
+) -> tuple[int, int, bool]:
+    """Executable model of the production conservative rotated-ellipse span."""
+    inverse_short_sq = 1 / (short_radius * short_radius)
+    inverse_long_sq = 1 / (long_radius * long_radius)
+    span_a = (
+        mountain_x * mountain_x * inverse_short_sq
+        + mountain_y * mountain_y * inverse_long_sq
+    )
+    span_b_per_dy = (
+        2
+        * mountain_x
+        * mountain_y
+        * (inverse_short_sq - inverse_long_sq)
+    )
+    span_c_per_dy_sq = (
+        mountain_y * mountain_y * inverse_short_sq
+        + mountain_x * mountain_x * inverse_long_sq
+    )
+    row_dy = y
+    span_b = span_b_per_dy * row_dy
+    span_c = span_c_per_dy_sq * row_dy * row_dy - 1.12 * 1.12
+    discriminant = span_b * span_b - 4 * span_a * span_c
+    if not all(math.isfinite(value) for value in (span_a, span_b, discriminant)):
+        return x0, x1, True
+    if span_a <= 0 or discriminant < 0:
+        return x0, x1, True
+    root = math.sqrt(discriminant)
+    lower = (-span_b - root) / (2 * span_a)
+    upper = (-span_b + root) / (2 * span_a)
+    if not (math.isfinite(lower) and math.isfinite(upper)):
+        return x0, x1, True
+    return (
+        max(x0, math.floor(center_x + lower) - 2),
+        min(x1, math.ceil(center_x + upper) + 2),
+        False,
+    )
+
+
 def protected_by_any(
     x: float, y: float, guards: tuple[tuple[float, float, float], ...]
 ) -> bool:
@@ -533,6 +580,33 @@ static_checks = {
     ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
+    "natural_aprons_use_conservative_row_spans": all(
+        token in aprons
+        for token in (
+            "local span_a = mountain_x * mountain_x * inverse_short_sq",
+            "local discriminant = span_b * span_b - 4 * span_a * span_c",
+            "math.floor(candidate.x + lower) - 2",
+            "math.ceil(candidate.x + upper) + 2",
+            "for x = row_x0, row_x1 do",
+            "local radius = math.sqrt(ru * ru + rv * rv)",
+            "if radius < 1.12 then",
+        )
+    ),
+    "natural_apron_row_span_fails_open": (
+        aprons.count("span_fallback_rows = span_fallback_rows + 1") == 2
+        and "local row_x0, row_x1 = x0, x1" in aprons
+    ),
+    "natural_apron_row_span_reports_work": all(
+        token in aprons
+        for token in (
+            "legacy_bounding_cells",
+            "scanned_bounding_cells",
+            "span_fallback_rows",
+            "mask_cells",
+            "grid_reads",
+            "grid_writes",
+        )
+    ),
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
     ),
@@ -719,7 +793,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_923": "'version', 923" in METADATA,
+    "version_is_924": "'version', 924" in METADATA,
 }
 
 case_results = []
@@ -786,6 +860,66 @@ feather_checks = {
     "outer_join_has_zero_slope": abs(
         (apron_weight(1) - apron_weight(1 - eps)) / eps
     ) < 1e-5,
+}
+
+# The row-span gate is only an iteration prefilter: the unchanged per-cell radius and
+# irregular-boundary predicates remain authoritative. Exercise every production radius
+# variant, dense orientations, every row, both computed boundaries, and deterministic
+# interior samples. Any mask cell omitted by the prefilter is a hard regression.
+apron_span_samples = 0
+apron_span_omissions = 0
+apron_span_legacy_cells = 0
+apron_span_scanned_cells = 0
+apron_span_fallback_rows = 0
+apron_span_variants: set[int] = set()
+apron_span_orientations: set[int] = set()
+for variant in range(-4, 5):
+    apron_span_variants.add(variant)
+    short_radius = 200.0 * (1 + variant * 0.012)
+    long_radius = 270.0 * (1 - variant * 0.009)
+    extent = math.ceil(long_radius + 2)
+    x0, x1 = -extent, extent
+    for degrees in range(0, 360, 5):
+        apron_span_orientations.add(degrees)
+        angle = math.radians(degrees)
+        mountain_x, mountain_y = math.cos(angle), math.sin(angle)
+        for row_dy in range(-extent, extent + 1):
+            row_x0, row_x1, fallback = conservative_apron_row_span(
+                0,
+                row_dy,
+                x0,
+                x1,
+                short_radius,
+                long_radius,
+                mountain_x,
+                mountain_y,
+            )
+            apron_span_legacy_cells += x1 - x0 + 1
+            apron_span_scanned_cells += max(0, row_x1 - row_x0 + 1)
+            apron_span_fallback_rows += int(fallback)
+            sample_xs = {x0, x1, 0}
+            sample_xs.update(range(x0, x1 + 1, 31))
+            for boundary in (row_x0, row_x1):
+                sample_xs.update(range(boundary - 4, boundary + 5))
+            for x in sample_xs:
+                if x < x0 or x > x1:
+                    continue
+                u = x * mountain_x + row_dy * mountain_y
+                v = -x * mountain_y + row_dy * mountain_x
+                ru, rv = u / short_radius, v / long_radius
+                apron_span_samples += 1
+                if math.sqrt(ru * ru + rv * rv) < 1.12 and not (
+                    row_x0 <= x <= row_x1
+                ):
+                    apron_span_omissions += 1
+
+apron_span_scan_ratio = apron_span_scanned_cells / apron_span_legacy_cells
+apron_span_checks = {
+    "no_legacy_mask_cell_is_omitted": apron_span_omissions == 0,
+    "all_nine_radius_variants_are_covered": len(apron_span_variants) == 9,
+    "seventy_two_orientations_are_covered": len(apron_span_orientations) == 72,
+    "compact_corpus_checks_over_five_million_cells": apron_span_samples > 5_000_000,
+    "modeled_scan_skips_at_least_twenty_percent": apron_span_scan_ratio <= 0.80,
 }
 
 inner_rectangle = (81920.0, 81920.0, 737280.0, 737280.0)
@@ -1147,6 +1281,15 @@ report = {
     "quota_spacing_checks": quota_spacing_checks,
     "rocket_inner_boundary_checks": rocket_inner_boundary_checks,
     "feather_checks": feather_checks,
+    "apron_span_checks": apron_span_checks,
+    "apron_span_metrics": {
+        "sampled_cells": apron_span_samples,
+        "omissions": apron_span_omissions,
+        "legacy_cells": apron_span_legacy_cells,
+        "scanned_cells": apron_span_scanned_cells,
+        "scan_ratio": apron_span_scan_ratio,
+        "fallback_rows": apron_span_fallback_rows,
+    },
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
     "rolling_scan_checks": rolling_scan_checks,
@@ -1181,6 +1324,8 @@ report["rocket_inner_boundary_passed"] = sum(rocket_inner_boundary_checks.values
 report["rocket_inner_boundary_total"] = len(rocket_inner_boundary_checks)
 report["feather_passed"] = sum(feather_checks.values())
 report["feather_total"] = len(feather_checks)
+report["apron_span_passed"] = sum(apron_span_checks.values())
+report["apron_span_total"] = len(apron_span_checks)
 report["guard_prefilter_passed"] = sum(guard_prefilter_checks.values())
 report["guard_prefilter_total"] = len(guard_prefilter_checks)
 report["guard_prefilter_samples"] = guard_samples
@@ -1197,6 +1342,7 @@ report["ok"] = (
     and all(quota_spacing_checks.values())
     and all(rocket_inner_boundary_checks.values())
     and all(feather_checks.values())
+    and all(apron_span_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
     and all(rolling_scan_checks.values())
