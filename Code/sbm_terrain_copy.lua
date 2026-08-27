@@ -1635,8 +1635,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
 	local modified = 0
 	local shaped = 0
-	local legacy_bounding_cells, scanned_bounding_cells = 0, 0
-	local span_skipped_rows, span_fallback_rows = 0, 0
 	local ok_apply, apply_error = pcall(function()
 		for index, candidate in ipairs(selected) do
 			-- An already-flat mountain base is a zero-edit opportunity. Retain its original terrain
@@ -1652,46 +1650,8 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
 				local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
 				local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
-				local bounding_width = x1 - x0 + 1
-				legacy_bounding_cells = legacy_bounding_cells
-					+ bounding_width * (y1 - y0 + 1)
-				-- Solve the rotated outer-ellipse inequality once per row. The four-cell
-				-- outward pad is deliberately conservative: every pixel that can pass the
-				-- unchanged radius < 1.12 predicate remains in the original x order, while
-				-- square-corner pixels that could never be edited are never evaluated.
-				local inverse_short_sq = 1 / (short_radius * short_radius)
-				local inverse_long_sq = 1 / (long_radius * long_radius)
-				local mx, my = candidate.mountain_x, candidate.mountain_y
-				local span_a = mx * mx * inverse_short_sq + my * my * inverse_long_sq
-				local span_cross = 2 * mx * my * (inverse_short_sq - inverse_long_sq)
-				local span_y = my * my * inverse_short_sq + mx * mx * inverse_long_sq
-				local span_limit = 1.12 * 1.12
 				for y = y0, y1 do
-					local dy = y - candidate.y
-					local row_x0, row_x1
-					local span_b = span_cross * dy
-					local span_c = span_y * dy * dy - span_limit
-					local discriminant = span_b * span_b - 4 * span_a * span_c
-					if span_a <= 0 or span_a ~= span_a or discriminant ~= discriminant then
-						row_x0, row_x1 = x0, x1
-						span_fallback_rows = span_fallback_rows + 1
-					elseif discriminant < -0.000000001 then
-						span_skipped_rows = span_skipped_rows + 1
-					else
-						local root = math.sqrt(math.max(0, discriminant))
-						local denominator = 2 * span_a
-						row_x0 = math.max(x0,
-							math.floor(candidate.x + (-span_b - root) / denominator) - 4)
-						row_x1 = math.min(x1,
-							math.ceil(candidate.x + (-span_b + root) / denominator) + 4)
-						if row_x0 > row_x1 then
-							span_skipped_rows = span_skipped_rows + 1
-						end
-					end
-					if row_x0 and row_x0 <= row_x1 then
-						scanned_bounding_cells = scanned_bounding_cells + row_x1 - row_x0 + 1
-					end
-					for x = row_x0 or 1, row_x1 or 0 do
+					for x = x0, x1 do
 						local dx, dy = x - candidate.x, y - candidate.y
 						local u = dx * candidate.mountain_x + dy * candidate.mountain_y
 						local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
@@ -1758,10 +1718,6 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		shaped = ok_apply and shaped or 0,
 		unchanged = ok_apply and (#selected - shaped) or 0,
 		modified = ok_apply and modified or 0,
-		legacy_bounding_cells = legacy_bounding_cells,
-		scanned_bounding_cells = scanned_bounding_cells,
-		span_skipped_rows = span_skipped_rows,
-		span_fallback_rows = span_fallback_rows,
 		candidates = #candidates, considered = considered,
 		relief_rejections = relief_rejections, slope_rejections = slope_rejections,
 		ring_sectors = ring_sectors, error = ok_apply and "" or tostring(apply_error),
