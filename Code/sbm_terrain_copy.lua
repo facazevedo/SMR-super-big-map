@@ -2247,6 +2247,47 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_level_core = math.ceil(rocket_world_radius + 1)
 	local rocket_required_core = math.ceil(rocket_world_radius + 3)
 	local rocket_outer_radius = rocket_required_core + rocket_extra_feather
+	-- Candidate searches revisit the same clearance neighbourhood tens of thousands of times. Build
+	-- exact axial forbidden-cell masks once, retaining the original strict-distance predicate while
+	-- replacing repeated full scans of every resource and previously selected landing pad.
+	local function mark_axial_forbidden(mask, cq, cr, radius)
+		local added = 0
+		for dq = -radius, radius do
+			local q = cq + dq
+			local row = mask[q]
+			if not row then
+				row = {}
+				mask[q] = row
+			end
+			local dr_min = math.max(-radius, -dq - radius)
+			local dr_max = math.min(radius, -dq + radius)
+			for dr = dr_min, dr_max do
+				local r = cr + dr
+				if row[r] ~= true then
+					row[r] = true
+					added = added + 1
+				end
+			end
+		end
+		return added
+	end
+	local function axial_mask_contains(mask, q, r)
+		local row = mask[q]
+		return row ~= nil and row[r] == true
+	end
+	local resource_clearance_minimum = rocket_required_core + maximum_resource_core + 1
+	local resource_clearance_radius = math.max(0, math.ceil(resource_clearance_minimum) - 1)
+	local resource_clearance_mask, resource_clearance_mask_cells = {}, 0
+	for _, entry in ipairs(resources) do
+		resource_clearance_mask_cells = resource_clearance_mask_cells
+			+ mark_axial_forbidden(resource_clearance_mask, entry.q, entry.r,
+				resource_clearance_radius)
+	end
+	local rocket_clearance_minimum = rocket_hex_radius * 2 + 4
+	local rocket_clearance_radius = math.max(0, math.ceil(rocket_clearance_minimum) - 1)
+	local rocket_clearance_mask, rocket_clearance_mask_cells = {}, 0
+	local resource_clearance_queries, resource_clearance_rejections = 0, 0
+	local rocket_clearance_queries, rocket_clearance_rejections = 0, 0
 	local function inner_rectangle_clearance(x, y)
 		local inner_left, inner_top = band_x, band_y
 		local inner_right, inner_bottom = map_w - band_x, map_h - band_y
@@ -2256,18 +2297,16 @@ local function PrepareOuterResourceTerrain(map)
 		return math.sqrt(dx * dx + dy * dy)
 	end
 	local function resource_clearance(q, r)
-		local minimum = rocket_required_core + maximum_resource_core + 1
-		for _, entry in ipairs(resources) do
-			if axial_distance(q, r, entry.q, entry.r) < minimum then return false end
-		end
-		return true
+		resource_clearance_queries = resource_clearance_queries + 1
+		local clear = not axial_mask_contains(resource_clearance_mask, q, r)
+		if not clear then resource_clearance_rejections = resource_clearance_rejections + 1 end
+		return clear
 	end
 	local function separated_from_rocket_pads(q, r)
-		local minimum = rocket_hex_radius * 2 + 4
-		for _, pad in ipairs(rocket_sites) do
-			if axial_distance(q, r, pad.q, pad.r) < minimum then return false end
-		end
-		return true
+		rocket_clearance_queries = rocket_clearance_queries + 1
+		local clear = not axial_mask_contains(rocket_clearance_mask, q, r)
+		if not clear then rocket_clearance_rejections = rocket_clearance_rejections + 1 end
+		return clear
 	end
 	local relief_directions = {
 		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
@@ -2423,6 +2462,9 @@ local function PrepareOuterResourceTerrain(map)
 						{ rocket_site = best,
 							support_cells = rocket_required_core * cells_per_hex })
 					rocket_sites[#rocket_sites + 1] = best
+					rocket_clearance_mask_cells = rocket_clearance_mask_cells
+						+ mark_axial_forbidden(rocket_clearance_mask, best.q, best.r,
+							rocket_clearance_radius)
 				end
 		end
 	end
@@ -3093,6 +3135,12 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_candidates_scored = rocket_candidates_scored,
 		rocket_height_cache_hits = rocket_height_cache_hits,
 		rocket_height_cache_misses = rocket_height_cache_misses,
+		resource_clearance_mask_cells = resource_clearance_mask_cells,
+		resource_clearance_queries = resource_clearance_queries,
+		resource_clearance_rejections = resource_clearance_rejections,
+		rocket_clearance_mask_cells = rocket_clearance_mask_cells,
+		rocket_clearance_queries = rocket_clearance_queries,
+		rocket_clearance_rejections = rocket_clearance_rejections,
 		planning_ms = raster_started_ms - prepare_started_ms,
 		raster_ms = raster_finished_ms - raster_started_ms,
 		install_ms = install_finished_ms - install_started_ms,
@@ -3130,6 +3178,10 @@ local function PrepareOuterResourceTerrain(map)
 			.. " rocket_candidates=" .. tostring(report.rocket_candidates_scored)
 			.. " rocket_height_hits=" .. tostring(report.rocket_height_cache_hits)
 			.. " rocket_height_misses=" .. tostring(report.rocket_height_cache_misses)
+			.. " resource_clearance_cells=" .. tostring(report.resource_clearance_mask_cells)
+			.. " resource_clearance_rejections=" .. tostring(report.resource_clearance_rejections)
+			.. " rocket_clearance_cells=" .. tostring(report.rocket_clearance_mask_cells)
+			.. " rocket_clearance_rejections=" .. tostring(report.rocket_clearance_rejections)
 			.. " native_inner_patch_restore=" .. tostring(report.native_inner_restored_patch_cells)
 			.. " native_precondition_sites=" .. tostring(report.native_precondition_sites)
 			.. " native_precondition_patches=" .. tostring(report.native_precondition_patches)

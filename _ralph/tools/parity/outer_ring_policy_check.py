@@ -610,6 +610,18 @@ static_checks = {
             "local z = cached_rocket_height(q + offset[1], r + offset[2])",
         )
     ),
+    "rocket_clearance_uses_exact_axial_masks": all(
+        token in outer_resource_terrain
+        for token in (
+            "local function mark_axial_forbidden(mask, cq, cr, radius)",
+            "local function axial_mask_contains(mask, q, r)",
+            "local resource_clearance_radius = math.max(0, math.ceil(resource_clearance_minimum) - 1)",
+            "local rocket_clearance_radius = math.max(0, math.ceil(rocket_clearance_minimum) - 1)",
+            "local clear = not axial_mask_contains(resource_clearance_mask, q, r)",
+            "local clear = not axial_mask_contains(rocket_clearance_mask, q, r)",
+            "+ mark_axial_forbidden(rocket_clearance_mask, best.q, best.r,",
+        )
+    ),
     "resource_terrain_audit_is_fail_closed": (
         "outer resource terrain audit failed" in GENERATION
         and "resource_failures == 0 and rocket_failures == 0" in outer_resource_terrain
@@ -845,7 +857,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_937": "'version', 937" in METADATA,
+    "version_is_938": "'version', 938" in METADATA,
 }
 
 case_results = []
@@ -1397,6 +1409,107 @@ rocket_height_cache_checks = {
     ),
 }
 
+
+def axial_distance_exact(q1: int, r1: int, q2: int, r2: int) -> int:
+    dq, dr = q1 - q2, r1 - r2
+    return max(abs(dq), abs(dr), abs(dq + dr))
+
+
+def mark_axial_forbidden_exact(
+    mask: dict[int, dict[int, bool]], cq: int, cr: int, radius: int
+) -> int:
+    added = 0
+    for dq in range(-radius, radius + 1):
+        row = mask.setdefault(cq + dq, {})
+        dr_min = max(-radius, -dq - radius)
+        dr_max = min(radius, -dq + radius)
+        for dr in range(dr_min, dr_max + 1):
+            r = cr + dr
+            if row.get(r) is not True:
+                row[r] = True
+                added += 1
+    return added
+
+
+def axial_mask_contains_exact(mask: dict[int, dict[int, bool]], q: int, r: int) -> bool:
+    return mask.get(q, {}).get(r) is True
+
+
+# Exhaustive exactness certificate for both static resource clearance and the dynamic pad mask.
+# The fractional minimum proves ceil(minimum)-1 preserves the legacy strict comparison for integer
+# axial distances; repeated/overlapping centers cover mask union and incremental-update semantics.
+clearance_resources = [
+    (-72 + (index % 7) * 23, -63 + (index // 7) * 37 + (index % 3) * 5)
+    for index in range(21)
+]
+clearance_queries = [
+    (q, r)
+    for q in range(-120, 121, 2)
+    for r in range(-120, 121, 2)
+]
+resource_clearance_minimum = 23.25
+resource_clearance_radius = math.ceil(resource_clearance_minimum) - 1
+resource_clearance_mask: dict[int, dict[int, bool]] = {}
+resource_clearance_cells = sum(
+    mark_axial_forbidden_exact(resource_clearance_mask, q, r, resource_clearance_radius)
+    for q, r in clearance_resources
+)
+resource_clearance_exact = True
+resource_direct_distance_tests = 0
+for q, r in clearance_queries:
+    direct_forbidden = False
+    for resource_q, resource_r in clearance_resources:
+        resource_direct_distance_tests += 1
+        if axial_distance_exact(q, r, resource_q, resource_r) < resource_clearance_minimum:
+            direct_forbidden = True
+            break
+    resource_clearance_exact = resource_clearance_exact and (
+        direct_forbidden == axial_mask_contains_exact(resource_clearance_mask, q, r)
+    )
+
+rocket_clearance_minimum = 18
+rocket_clearance_radius = math.ceil(rocket_clearance_minimum) - 1
+rocket_clearance_mask: dict[int, dict[int, bool]] = {}
+rocket_clearance_cells = 0
+rocket_clearance_exact = True
+rocket_direct_distance_tests = 0
+selected_pads: list[tuple[int, int]] = []
+for pad in ((-73, 54), (-19, -81), (42, 67), (91, -28), (42, 67), (8, 9)):
+    for q, r in clearance_queries:
+        direct_forbidden = False
+        for pad_q, pad_r in selected_pads:
+            rocket_direct_distance_tests += 1
+            if axial_distance_exact(q, r, pad_q, pad_r) < rocket_clearance_minimum:
+                direct_forbidden = True
+                break
+        rocket_clearance_exact = rocket_clearance_exact and (
+            direct_forbidden == axial_mask_contains_exact(rocket_clearance_mask, q, r)
+        )
+    selected_pads.append(pad)
+    rocket_clearance_cells += mark_axial_forbidden_exact(
+        rocket_clearance_mask, pad[0], pad[1], rocket_clearance_radius
+    )
+
+clearance_boundary_mask: dict[int, dict[int, bool]] = {}
+mark_axial_forbidden_exact(clearance_boundary_mask, 0, 0, 4)
+axial_clearance_mask_checks = {
+    "static_resource_mask_matches_every_legacy_query": resource_clearance_exact,
+    "dynamic_pad_mask_matches_every_legacy_query": rocket_clearance_exact,
+    "strict_fractional_boundary_uses_ceil_minus_one": (
+        resource_clearance_radius == 23
+        and axial_distance_exact(0, 0, 23, 0) < resource_clearance_minimum
+        and not (axial_distance_exact(0, 0, 24, 0) < resource_clearance_minimum)
+    ),
+    "inclusive_disk_boundary_and_outer_neighbour_are_exact": (
+        axial_mask_contains_exact(clearance_boundary_mask, 4, 0)
+        and not axial_mask_contains_exact(clearance_boundary_mask, 5, 0)
+    ),
+    "modeled_distance_checks_drop_by_at_least_4x": (
+        (resource_direct_distance_tests + rocket_direct_distance_tests)
+        / (len(clearance_queries) * 7) >= 4
+    ),
+}
+
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
     "schema_version": 17,
@@ -1419,6 +1532,17 @@ report = {
         "source_reads": rocket_cached_reads,
         "cache_hits": rocket_cached_hits,
         "source_read_reduction": rocket_direct_reads / rocket_cached_reads,
+    },
+    "axial_clearance_mask_checks": axial_clearance_mask_checks,
+    "axial_clearance_mask_metrics": {
+        "queries": len(clearance_queries) * 7,
+        "resource_mask_cells": resource_clearance_cells,
+        "rocket_mask_cells": rocket_clearance_cells,
+        "legacy_distance_tests": resource_direct_distance_tests + rocket_direct_distance_tests,
+        "modeled_distance_check_reduction": (
+            (resource_direct_distance_tests + rocket_direct_distance_tests)
+            / (len(clearance_queries) * 7)
+        ),
     },
     "rolling_scan_metrics": {
         "cases": len(rolling_scan_cases),
@@ -1462,6 +1586,8 @@ report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
 report["rocket_height_cache_total"] = len(rocket_height_cache_checks)
+report["axial_clearance_mask_passed"] = sum(axial_clearance_mask_checks.values())
+report["axial_clearance_mask_total"] = len(axial_clearance_mask_checks)
 report["ok"] = (
     all(static_checks.values())
     and all(row["ok"] for row in case_results)
@@ -1476,6 +1602,7 @@ report["ok"] = (
     and all(rolling_scan_checks.values())
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
+    and all(axial_clearance_mask_checks.values())
 )
 
 print(json.dumps(report, indent=2, sort_keys=True))
