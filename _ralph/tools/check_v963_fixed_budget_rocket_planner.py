@@ -49,7 +49,9 @@ def main() -> int:
     bounded_publish_gate = "if rocket_bounded.used then\n\t\t-- Only now publish"
     fallback_marker = "-- Literal exhaustive fallback: retain the accepted disk order"
     checks = {
-        "metadata_v963": "'version', 963," in metadata,
+        "metadata_v963_or_later": any(
+            f"'version', {version}," in metadata for version in range(963, 1000)
+        ),
         "default_on_and_compiled_fixed_budget": all(token in config for token in (
             "config.OptimizeOuterResourceRocketBoundedPlanner = true",
             "C.OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER",

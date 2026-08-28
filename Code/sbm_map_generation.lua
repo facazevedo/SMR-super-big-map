@@ -2105,6 +2105,27 @@ local function ClearPendingMap(map_name)
 	end
 end
 
+function SuperBigMap.GenerationReadiness.InitializeFreshUndergroundExpansionState(map)
+	if type(map) ~= "table" or type(map.mapdata) ~= "table"
+		or map.mapdata.Environment ~= "Underground" then
+		return false
+	end
+	-- Map instances and their MapVar-backed fields can be reused while a new game is assembled.
+	-- Allocation is not preparation: start every fresh underground transaction with explicit false
+	-- completion bits, no inherited access failure, and no commitment from the previous scenario.
+	map.SuperBigMapExpanded = false
+	map.SuperBigMapUndergroundPrepared = false
+	map.SuperBigMapUndergroundStretchDone = false
+	map.SuperBigMapUndergroundStretchPending = false
+	map.SuperBigMapUndergroundStretchRunning = false
+	map.SuperBigMapUndergroundStretchFailed = nil
+	map.SuperBigMapUndergroundPreparationFailed = false
+	map.SuperBigMapUndergroundDeferredGeometry = false
+	map.SuperBigMapPassageSurfaceFinalCommitted = nil
+	map.SuperBigMapOneToOneGenerationVersion = nil
+	return true
+end
+
 local function ClearPreparedMapInstance(map)
 	if type(map) ~= "table" then
 		return false
@@ -2119,6 +2140,7 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapCapturedClutterFill = nil
 	map.SuperBigMapClutterGridStretched = nil
 	map.SuperBigMapClutterGridStretchUnavailable = nil
+	map.SuperBigMapExpanded = nil
 	map.SuperBigMapExpansionPending = nil
 	map.SuperBigMapNativeGenerationComplete = nil
 	map.SuperBigMapNativeGenerationCompleteSource = nil
@@ -2127,6 +2149,17 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapSurfaceStretchDone = nil
 	map.SuperBigMapSurfaceStretchScheduled = nil
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
+	if type(map.mapdata) == "table" and map.mapdata.Environment == "Underground" then
+		map.SuperBigMapUndergroundPrepared = nil
+		map.SuperBigMapUndergroundStretchDone = nil
+		map.SuperBigMapUndergroundStretchPending = nil
+		map.SuperBigMapUndergroundStretchRunning = nil
+		map.SuperBigMapUndergroundStretchFailed = nil
+		map.SuperBigMapUndergroundPreparationFailed = nil
+		map.SuperBigMapUndergroundDeferredGeometry = nil
+		map.SuperBigMapPassageSurfaceFinalCommitted = nil
+		map.SuperBigMapOneToOneGenerationVersion = nil
+	end
 	map.SuperBigMapSourceWidth = nil
 	map.SuperBigMapSourceHeight = nil
 	map.SuperBigMapSourceX = nil
@@ -2333,6 +2366,10 @@ local function AttachPendingMapState(map)
 	if not pending then
 		return false
 	end
+	if map.SuperBigMapNativeGenerationComplete ~= true
+		and map.SuperBigMapPassageBootstrapComplete ~= true then
+		SuperBigMap.GenerationReadiness.InitializeFreshUndergroundExpansionState(map)
+	end
 
 	map.SuperBigMapExpansionPending = true
 	map.SuperBigMapNativeGenerationComplete = nil
@@ -2536,6 +2573,7 @@ local function PrepareMapDataForExpansion(map_slot, map_name, map_instance, sour
 	}
 	StorePendingMap(map_name, pending)
 
+	SuperBigMap.GenerationReadiness.InitializeFreshUndergroundExpansionState(map_instance)
 	map_instance.SuperBigMapExpansionPending = true
 	map_instance.SuperBigMapNativeGenerationComplete = nil
 	map_instance.SuperBigMapNativeGenerationCompleteSource = nil
@@ -9828,6 +9866,15 @@ local function PatchRandomMapGenerator()
 			params.SuperBigMapGenerationReadinessVersion =
 				SuperBigMap.GenerationReadiness.VERSION
 			for _, field in ipairs({
+				"SuperBigMapExpanded", "SuperBigMapUndergroundPrepared",
+				"SuperBigMapUndergroundStretchDone", "SuperBigMapUndergroundStretchPending",
+				"SuperBigMapUndergroundStretchRunning", "SuperBigMapUndergroundStretchFailed",
+				"SuperBigMapUndergroundPreparationFailed", "SuperBigMapUndergroundDeferredGeometry",
+				"SuperBigMapPassageSurfaceFinalCommitted", "SuperBigMapOneToOneGenerationVersion",
+			}) do
+				params[field] = instance[field]
+			end
+			for _, field in ipairs({
 				"SuperBigMapSourceWidth", "SuperBigMapSourceHeight",
 				"SuperBigMapSourceX", "SuperBigMapSourceY",
 				"SuperBigMapOriginalWidthTiles", "SuperBigMapOriginalHeightTiles",
@@ -11791,9 +11838,11 @@ function SuperBigMap.GenerationReadiness.LegacyUndergroundEvidence(map)
 		return false, "map is not a Super Big Map underground"
 	end
 
-	-- A previously completed underground is authoritative even if it predates the readiness
-	-- MapVars. This branch only normalizes the new persistence schema; it never runs terrain work.
-	if map.SuperBigMapUndergroundPrepared == true or map.SuperBigMapExpanded == true then
+	-- Prepared is the dedicated persisted completion bit and has been written alongside the
+	-- underground stretch-success path since that path was introduced. Expanded only identifies
+	-- the full-sized allocation and is deliberately insufficient: a deferred source-layout backing
+	-- is already Expanded before any terrain/object transform or final passage alignment runs.
+	if map.SuperBigMapUndergroundPrepared == true then
 		return true, "legacy underground already records completed preparation"
 	end
 
@@ -11934,6 +11983,73 @@ local function UndergroundExpansionReadiness(map)
 	return false, "surface expansion transaction has not completed"
 end
 
+-- SuperBigMapExpanded identifies an allocated/published mod map; it does NOT prove that the
+-- deferred underground transform ran. In particular, source-bootstrap deliberately keeps each
+-- live underground passage at its native coordinate while recording the shared future coordinate
+-- in its commitment stamps. Releases through v963 could nevertheless promote that backing to
+-- UndergroundPrepared solely because Expanded was true, permanently bypassing first-access
+-- stretching and the final AlignPassagePairsToSharedHex call.
+--
+-- Repair only the exact, current-protocol false-positive shape. This is intentionally narrower
+-- than a general "prepared map looks odd" recovery: a genuine completed/legacy underground must
+-- never be stretched twice. The certificate requires every expected pair to be reciprocal and
+-- locked, the surface half to occupy the shared final stamp, and the underground half to occupy
+-- its distinct source stamp. Any incomplete or mixed evidence leaves the persisted state alone.
+function SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletion(map)
+	if type(map) ~= "table" or map.SuperBigMapUndergroundPrepared ~= true
+		or map.SuperBigMapPassageBootstrapComplete ~= true
+		or map.SuperBigMapPassageSurfaceFinalCommitted ~= true then
+		return false, "not an exact deferred false-completion candidate"
+	end
+	local expected = tonumber(map.SuperBigMapPassageBootstrapCount)
+	if type(expected) ~= "number" or expected <= 0 then
+		return false, "committed passage count is unavailable"
+	end
+	local passages = ArtefactMapGet(map, "ElevatorPassage")
+	if #passages ~= expected then
+		return false, "live passage count does not match the committed bootstrap"
+	end
+	for index, underground_anchor in ipairs(passages) do
+		local surface_anchor = underground_anchor and underground_anchor.other
+		if not surface_anchor or surface_anchor.other ~= underground_anchor
+			or underground_anchor.SuperBigMapCommittedPassageLocked ~= true
+			or surface_anchor.SuperBigMapCommittedPassageLocked ~= true then
+			return false, "passage pair " .. tostring(index) .. " is not reciprocal and locked"
+		end
+		local ux, uy = PointXY(ObjectPosition(underground_anchor))
+		local sx, sy = PointXY(ObjectPosition(surface_anchor))
+		local source_x = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceX)
+		local source_y = tonumber(underground_anchor.SuperBigMapCommittedPassageSourceY)
+		local final_x = tonumber(underground_anchor.SuperBigMapCommittedPassageX)
+		local final_y = tonumber(underground_anchor.SuperBigMapCommittedPassageY)
+		local surface_final_x = tonumber(surface_anchor.SuperBigMapCommittedPassageX)
+		local surface_final_y = tonumber(surface_anchor.SuperBigMapCommittedPassageY)
+		local exact_deferred_pair = type(ux) == "number" and type(uy) == "number"
+			and type(sx) == "number" and type(sy) == "number"
+			and type(source_x) == "number" and type(source_y) == "number"
+			and type(final_x) == "number" and type(final_y) == "number"
+			and source_x == ux and source_y == uy
+			and final_x == sx and final_y == sy
+			and surface_final_x == final_x and surface_final_y == final_y
+			and (source_x ~= final_x or source_y ~= final_y)
+		if not exact_deferred_pair then
+			return false, "passage pair " .. tostring(index)
+				.. " is not the exact source-live/final-stamped deferred shape"
+		end
+	end
+
+	map.SuperBigMapUndergroundPrepared = false
+	map.SuperBigMapUndergroundStretchDone = false
+	map.SuperBigMapUndergroundStretchPending = false
+	map.SuperBigMapUndergroundStretchFailed = nil
+	map.SuperBigMapUndergroundPreparationFailed = false
+	LoadingStep("revoked false deferred underground completion", {
+		pairs = #passages,
+		reason = "expanded backing was mistaken for completed underground transform",
+	}, map)
+	return true, "exact deferred source-live/final-stamped false completion revoked"
+end
+
 local function RunUndergroundStretchIfEnabled(map, force_now)
 	if not cfg_bool("STRETCH_UNDERGROUND", false) then
 		return false, "underground stretch is disabled"
@@ -11943,11 +12059,7 @@ local function RunUndergroundStretchIfEnabled(map, force_now)
 		return false, "underground target map is missing"
 	end
 	RestoreDeferredUndergroundGeometry(map)
-	if map.SuperBigMapExpanded == true and map.SuperBigMapExpansionPending ~= true then
-		map.SuperBigMapUndergroundPrepared = true
-		map.SuperBigMapUndergroundStretchDone = true
-		map.SuperBigMapUndergroundStretchPending = false
-	end
+	SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletion(map)
 	if map.SuperBigMapUndergroundPrepared == true then
 		map.SuperBigMapUndergroundStretchDone = true
 		map.SuperBigMapUndergroundStretchPending = false
@@ -12751,6 +12863,7 @@ local function NeedsDeferredUndergroundPreparation(map)
 		return false, "underground stretch is disabled"
 	end
 	RestoreDeferredUndergroundGeometry(map)
+	SuperBigMap.GenerationReadiness.RevokeDeferredUndergroundFalseCompletion(map)
 	local desired = map.SuperBigMapDesiredWidthTiles
 	local generator = map.SuperBigMapGeneratorWidthTiles
 	if not (type(desired) == "number" and type(generator) == "number" and desired > generator) then
