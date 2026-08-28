@@ -311,6 +311,12 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
+-- Install the completed native working height field through the stock editor difference-box path.
+-- All boxes and their before/after snapshots are validated before the first write. Any unavailable
+-- API, malformed box, write failure, or whole-grid verification failure rolls back captured writes
+-- and falls back to terrain.SetHeightGrid. The later canonical whole-map gameplay-grid rebuild is
+-- deliberately retained; this flag only avoids the full setter's global cache invalidation.
+config.OptimizeOuterResourceTerrainPatchInstall = true
 -- Resource terrain edits are confined to the physical outer two-sector ring. Rebuild passability
 -- only for that ring (plus the stock two-pass-tile dependency margin) before the resource audit;
 -- later whole-map final rebuilds remain unchanged and authoritative.
@@ -946,6 +952,8 @@ C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER =
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
+C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL =
+	as_bool(config.OptimizeOuterResourceTerrainPatchInstall)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =

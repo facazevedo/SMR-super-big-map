@@ -357,6 +357,62 @@ static_checks = {
         and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER", true)'
         in outer_resource_terrain
     ),
+    "outer_resource_patch_install_is_default_on_and_compiled": (
+        "config.OptimizeOuterResourceTerrainPatchInstall = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL" in CONFIG
+        and '"OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL", true'
+        in outer_resource_terrain
+    ),
+    "outer_resource_patch_install_uses_stock_exact_difference_path": all(
+        token in outer_resource_terrain
+        for token in (
+            'editor_api.GetGridDifferenceBoxes, map, "height", grid, raw, full_box',
+            'editor_api.GetGrid, map, "height", record.box, raw',
+            'editor_api.GetGrid, map, "height", record.box, grid',
+            'editor_api.SetGrid, map, "height", record.after, record.box',
+            "height snapshot does not match its world box",
+            "stock difference boxes overlap",
+            "area_ratio > 0.20",
+            "difference-box area is outside the bounded outer-ring budget",
+        )
+    ),
+    "outer_resource_patch_install_is_transactional_and_verified": all(
+        token in outer_resource_terrain
+        for token in (
+            "Capture the entire rollback journal before the first live write.",
+            "for index = #records, 1, -1 do",
+            'editor_api.SetGrid, map, "height", record.before, record.box',
+            'editor_api.GetGrid, map, "height", record.box)',
+            'record.before, record.rollback_live, local_box',
+            "patch_install.rollback_verified = verify_ok",
+            "local equal, equality_error = grids_are_equal(",
+            ".. tostring(equality_error)",
+            "local equal, equality_error = grids_are_equal(grid, live)",
+            "patch_install.verified = true",
+            "patch_install.full_setter_used = true",
+            "pcall(terrain_api.SetHeightGrid, map, grid)",
+        )
+    ) and "grids_are_equal(raw, live)" not in outer_resource_terrain,
+    "outer_resource_patch_install_emits_no_editor_height_message": (
+        "EditorHeightChanged" not in outer_resource_terrain
+    ),
+    "outer_resource_patch_install_reports_truthful_mode_and_timing": all(
+        token in outer_resource_terrain
+        for token in (
+            "patch_install_attempted = patch_install.attempted",
+            "patch_install_used = patch_install.used",
+            "patch_install_verified = patch_install.verified",
+            "patch_install_fallback = patch_install.fallback",
+            "patch_install_full_setter_used = patch_install.full_setter_used",
+            "patch_install_boxes = patch_install.boxes",
+            "patch_install_area_ratio = patch_install.area_ratio",
+            "patch_install_prepare_ms = patch_install.prepare_ms",
+            "patch_install_apply_ms = patch_install.apply_ms",
+            "patch_install_verify_ms = patch_install.verify_ms",
+            "patch_install_rollback_verified = patch_install.rollback_verified",
+            "canonical_final_grid_rebuild_retained = true",
+        )
+    ),
     "outer_resource_ring_rebuild_is_enabled": (
         "config.OptimizeOuterResourceTerrainRingRebuild = true" in CONFIG
         and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD" in CONFIG
@@ -1017,7 +1073,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_946": "'version', 946" in METADATA,
+    "version_is_954": "'version', 954" in METADATA,
 }
 
 case_results = []
@@ -2037,7 +2093,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 19,
+    "schema_version": 20,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,

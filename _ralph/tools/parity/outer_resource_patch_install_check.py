@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""Offline transaction model and source certificate for v954 patch-local height install.
+
+This checker does not launch the game. It fault-injects discovery, snapshot, write, and verification
+failures into an executable grid model, then checks that production uses the stock editor
+difference-box/GetGrid/SetGrid path with a complete pre-write journal, reverse rollback, literal
+full-setter fallback, exact final verification, and the canonical final gameplay-grid rebuild.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+TERRAIN_PATH = ROOT / "Code" / "sbm_terrain_copy.lua"
+CONFIG_PATH = ROOT / "Code" / "sbm_config.lua"
+GENERATION_PATH = ROOT / "Code" / "sbm_map_generation.lua"
+METADATA_PATH = ROOT / "metadata.lua"
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest().upper()
+
+
+@dataclass(frozen=True, order=True)
+class Box:
+    y0: int
+    x0: int
+    y1: int
+    x1: int
+
+    @property
+    def cells(self) -> int:
+        return (self.x1 - self.x0) * (self.y1 - self.y0)
+
+
+def make_grid(width: int, height: int) -> list[list[int]]:
+    return [[1000 + x * 3 + y * 5 for x in range(width)] for y in range(height)]
+
+
+def extract(grid: list[list[int]], box: Box) -> list[list[int]]:
+    return [row[box.x0 : box.x1] for row in grid[box.y0 : box.y1]]
+
+
+def install(grid: list[list[int]], box: Box, patch: list[list[int]]) -> None:
+    for local_y, row in enumerate(patch):
+        grid[box.y0 + local_y][box.x0 : box.x1] = row
+
+
+BOXES = (
+    Box(2, 3, 7, 11),
+    Box(8, 53, 15, 60),
+    Box(49, 4, 58, 12),
+    Box(52, 47, 61, 57),
+)
+
+
+def target_grid(source: list[list[int]]) -> list[list[int]]:
+    target = [row[:] for row in source]
+    for ordinal, box in enumerate(BOXES, 1):
+        for y in range(box.y0, box.y1):
+            for x in range(box.x0, box.x1):
+                target[y][x] += ordinal * 17 + (x + y) % 5
+    return target
+
+
+def modeled_transaction(
+    *,
+    fail_snapshot_at: int | None = None,
+    fail_write_at: int | None = None,
+    corrupt_after_write: bool = False,
+    malformed_discovery: bool = False,
+    fail_rollback_at: int | None = None,
+    mutate_then_throw_at: int | None = None,
+    raw_alias_live: bool = False,
+    corrupt_rollback_at: int | None = None,
+) -> dict[str, object]:
+    source = make_grid(64, 64)
+    target = target_grid(source)
+    live = [row[:] for row in source]
+    raw = live if raw_alias_live else [row[:] for row in source]
+    boxes = list(BOXES)
+    if malformed_discovery:
+        boxes.append(Box(4, 4, 10, 10))  # overlaps the first box and must fail pre-write
+    boxes.sort()
+    records: list[tuple[Box, list[list[int]], list[list[int]]]] = []
+    applied = 0
+    patch_used = False
+    rollback_attempted = False
+    rollback_ok = True
+    rollback_verified = True
+    rollback_exact_before_fallback = True
+    raw_whole_grid_would_false_pass = False
+    rollback_mismatch_error = ""
+    failure = ""
+
+    try:
+        for index, box in enumerate(boxes):
+            for prior in boxes[:index]:
+                overlap = (
+                    box.x0 < prior.x1
+                    and prior.x0 < box.x1
+                    and box.y0 < prior.y1
+                    and prior.y0 < box.y1
+                )
+                if overlap:
+                    raise RuntimeError("overlap")
+        for index, box in enumerate(boxes, 1):
+            if fail_snapshot_at == index:
+                raise RuntimeError("snapshot")
+            records.append((box, extract(raw, box), extract(target, box)))
+        for index, (box, _before, after) in enumerate(records, 1):
+            # Production treats a started native call as potentially mutating even if it reports
+            # failure, so the current record joins the reverse rollback journal before invocation.
+            applied += 1
+            if fail_write_at == index:
+                raise RuntimeError("write")
+            install(live, box, after)
+            if mutate_then_throw_at == index:
+                raise RuntimeError("mutate-then-throw")
+        if corrupt_after_write:
+            live[BOXES[0].y0][BOXES[0].x0] += 1
+        if live != target:
+            raise RuntimeError("verify")
+        patch_used = True
+    except RuntimeError as exc:
+        failure = str(exc)
+        if applied:
+            rollback_attempted = True
+            for index, (box, before, _after) in enumerate(reversed(records[:applied]), 1):
+                if fail_rollback_at == index:
+                    rollback_ok = False
+                else:
+                    install(live, box, before)
+                if corrupt_rollback_at == index:
+                    live[box.y0][box.x0] += 1
+            rollback_verified = all(
+                extract(live, box) == before
+                for box, before, _after in records[:applied]
+            )
+            if not rollback_verified:
+                # Exact error text returned by the modeled difference comparator. Production must
+                # preserve this second Lua return instead of collapsing it through an `and`.
+                rollback_mismatch_error = "height-grid verification retained differences"
+            raw_whole_grid_would_false_pass = (
+                raw_alias_live and raw == live and not rollback_verified
+            )
+            rollback_exact_before_fallback = live == source
+        # This is the unchanged canonical terrain.SetHeightGrid fallback model.
+        live = [row[:] for row in target]
+
+    return {
+        "patch_used": patch_used,
+        "fallback_used": not patch_used,
+        "rollback_attempted": rollback_attempted,
+        "rollback_ok": rollback_ok,
+        "rollback_verified": rollback_verified,
+        "rollback_exact_before_fallback": rollback_exact_before_fallback,
+        "raw_whole_grid_would_false_pass": raw_whole_grid_would_false_pass,
+        "rollback_mismatch_error": rollback_mismatch_error,
+        "final_exact": live == target,
+        "inner_exact": all(
+            live[y][x] == source[y][x]
+            for y in range(16, 48)
+            for x in range(16, 48)
+        ),
+        "failure": failure,
+    }
+
+
+def semantic_checks() -> tuple[dict[str, bool], list[dict[str, object]]]:
+    cases = [{"case": "success", **modeled_transaction()}]
+    cases.extend(
+        {"case": f"snapshot-failure-{index}", **modeled_transaction(fail_snapshot_at=index)}
+        for index in range(1, len(BOXES) + 1)
+    )
+    cases.extend(
+        {"case": f"write-failure-{index}", **modeled_transaction(fail_write_at=index)}
+        for index in range(1, len(BOXES) + 1)
+    )
+    cases.append({"case": "verification-failure", **modeled_transaction(corrupt_after_write=True)})
+    cases.append(
+        {
+            "case": "rollback-failure",
+            **modeled_transaction(fail_write_at=4, fail_rollback_at=1),
+        }
+    )
+    cases.append(
+        {
+            "case": "setgrid-mutates-then-throws",
+            **modeled_transaction(mutate_then_throw_at=2),
+        }
+    )
+    cases.append(
+        {
+            "case": "raw-live-alias-regression",
+            **modeled_transaction(
+                mutate_then_throw_at=3,
+                raw_alias_live=True,
+                corrupt_rollback_at=1,
+            ),
+        }
+    )
+    cases.append({"case": "malformed-discovery", **modeled_transaction(malformed_discovery=True)})
+    success = cases[0]
+    failures = cases[1:]
+    checks = {
+        "success_installs_exact_target_without_full_fallback": (
+            success["patch_used"] is True
+            and success["fallback_used"] is False
+            and success["final_exact"] is True
+        ),
+        "every_failure_falls_back_to_exact_target": all(
+            case["fallback_used"] is True and case["final_exact"] is True
+            for case in failures
+        ),
+        "partial_writes_restore_exact_preimage_before_fallback": all(
+            case["rollback_exact_before_fallback"] is True
+            for case in failures
+            if case["case"] not in ("rollback-failure", "raw-live-alias-regression")
+        ),
+        "rollback_failure_still_reaches_exact_full_setter": (
+            next(case for case in cases if case["case"] == "rollback-failure")["rollback_ok"]
+            is False
+            and next(case for case in cases if case["case"] == "rollback-failure")["final_exact"]
+            is True
+        ),
+        "mutate_then_throw_is_rolled_back_from_started_write_journal": (
+            next(case for case in cases if case["case"] == "setgrid-mutates-then-throws")[
+                "rollback_verified"
+            ]
+            is True
+            and next(
+                case for case in cases if case["case"] == "setgrid-mutates-then-throws"
+            )["rollback_exact_before_fallback"]
+            is True
+        ),
+        "immutable_box_snapshots_detect_raw_live_alias_false_positive": (
+            next(case for case in cases if case["case"] == "raw-live-alias-regression")[
+                "raw_whole_grid_would_false_pass"
+            ]
+            is True
+            and next(case for case in cases if case["case"] == "raw-live-alias-regression")[
+                "rollback_verified"
+            ]
+            is False
+        ),
+        "rollback_mismatch_preserves_real_comparator_error": (
+            next(case for case in cases if case["case"] == "raw-live-alias-regression")[
+                "rollback_mismatch_error"
+            ]
+            == "height-grid verification retained differences"
+        ),
+        "prewrite_failures_never_need_rollback": all(
+            case["rollback_attempted"] is False
+            for case in cases
+            if case["case"].startswith("snapshot") or case["case"] == "malformed-discovery"
+        ),
+        "all_paths_preserve_inner_no_write_bytes": all(case["inner_exact"] for case in cases),
+    }
+    return checks, cases
+
+
+def structural_checks(terrain: str, config: str, generation: str, metadata: str) -> dict[str, bool]:
+    start = terrain.index("local function PrepareOuterResourceTerrain")
+    end = terrain.index("\n-- TEST-ONLY SEAM", start)
+    section = terrain[start:end]
+    transaction = section.index("local function install_native_height_patches")
+    discovery = section.index("editor_api.GetGridDifferenceBoxes, map, \"height\", grid, raw", transaction)
+    snapshot = section.index("editor_api.GetGrid, map, \"height\", record.box, raw", discovery)
+    write = section.index("editor_api.SetGrid, map, \"height\", record.after", snapshot)
+    verify = section.index("grids_are_equal(grid, live)", write)
+    rollback = section.index("for index = #records, 1, -1 do", write)
+    rollback_read = section.index('editor_api.GetGrid, map, "height", record.box)', rollback)
+    rollback_compare = section.index(
+        "record.before, record.rollback_live, local_box", rollback_read
+    )
+    cleanup = section.index("local cleanup_error = free_record_grids()", rollback_compare)
+    fallback = section.index("pcall(terrain_api.SetHeightGrid, map, grid)", rollback)
+    return {
+        "default_on_config_is_compiled": (
+            "config.OptimizeOuterResourceTerrainPatchInstall = true" in config
+            and "C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL" in config
+            and '"OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL", true' in section
+        ),
+        "stock_difference_snapshot_write_order_is_explicit": (
+            transaction < discovery < snapshot < write < verify < rollback < fallback
+        ),
+        "all_snapshots_precede_first_live_write": (
+            "Capture the entire rollback journal before the first live write." in section
+            and section.index("for _, record in ipairs(records) do", snapshot - 200)
+            < section.index("apply_started_ms = now_ms()", snapshot)
+            < write
+        ),
+        "geometry_and_allocation_guards_fail_closed": all(
+            token in section
+            for token in (
+                "difference entry is not a box",
+                "difference box is outside the live height grid",
+                "difference box is not height-tile aligned",
+                "difference box does not intersect the outer resource ring",
+                "stock difference discovery exceeded the bounded box budget",
+                "stock difference boxes overlap",
+                "area_ratio > 0.20",
+                "difference-box area is outside the bounded outer-ring budget",
+                "height snapshot does not match its world box",
+            )
+        ),
+        "partial_failure_rolls_back_reverse_and_verifies": all(
+            token in section
+            for token in (
+                "if not transaction_ok and applied_count > 0 then",
+                "for index = #records, 1, -1 do",
+                'editor_api.SetGrid, map, "height", record.before, record.box',
+                'editor_api.GetGrid, map, "height", record.box)',
+                'record.before, record.rollback_live, local_box',
+                "patch_install.rollback_verified = verify_ok",
+                "local equal, equality_error = grids_are_equal(",
+                ".. tostring(equality_error)",
+                "height patch snapshot cleanup failed: ",
+            )
+        ) and "grids_are_equal(raw, live)" not in section,
+        "immutable_before_snapshots_survive_until_box_verification": (
+            rollback < rollback_read < rollback_compare < cleanup < fallback
+            and 'for _, name in ipairs({ "before", "after", "rollback_live" })' in section
+            and "Keep those snapshots owned until this finishes." in section
+        ),
+        "literal_full_setter_is_the_fail_closed_fallback": (
+            "if not set_ok then" in section[fallback - 800 : fallback + 200]
+            and "patch_install.fallback = true" in section[fallback - 800 : fallback + 200]
+            and "patch_install.full_setter_used = true" in section[fallback - 800 : fallback + 200]
+        ),
+        "no_editor_height_message_is_emitted": "EditorHeightChanged" not in section,
+        "canonical_final_passability_and_buildable_rebuild_is_retained": all(
+            token in generation
+            for token in (
+                "terrain_api.RebuildPassability(map, final_pass_box)",
+                "local rebuild_buildable = Global(\"RebuildBuildableGrid\")",
+                "rebuild_buildable, map",
+                'map, "after last object-grid transaction"',
+            )
+        ),
+        "telemetry_distinguishes_patch_fallback_and_rollback": all(
+            token in section
+            for token in (
+                "patch_install_used = patch_install.used",
+                "patch_install_verified = patch_install.verified",
+                "patch_install_fallback = patch_install.fallback",
+                "patch_install_full_setter_used = patch_install.full_setter_used",
+                "patch_install_rollback_attempted = patch_install.rollback_attempted",
+                "patch_install_rollback_verified = patch_install.rollback_verified",
+                "canonical_final_grid_rebuild_retained = true",
+            )
+        ),
+        "metadata_is_v954": (
+            "'version', 954" in metadata
+            and "Install outer-resource height changes through verified stock difference boxes."
+            in metadata
+        ),
+    }
+
+
+def main() -> int:
+    terrain = TERRAIN_PATH.read_text(encoding="utf-8")
+    config = CONFIG_PATH.read_text(encoding="utf-8")
+    generation = GENERATION_PATH.read_text(encoding="utf-8")
+    metadata = METADATA_PATH.read_text(encoding="utf-8")
+    semantic, cases = semantic_checks()
+    structural = structural_checks(terrain, config, generation, metadata)
+    result = {
+        "schema": "smr.ralph.outer_resource_patch_install_check.v2",
+        "ok": all(semantic.values()) and all(structural.values()),
+        "semantic_checks": semantic,
+        "structural_checks": structural,
+        "fault_cases": cases,
+        "terrain_sha256": sha256(TERRAIN_PATH),
+        "config_sha256": sha256(CONFIG_PATH),
+        "generation_sha256": sha256(GENERATION_PATH),
+        "metadata_sha256": sha256(METADATA_PATH),
+    }
+    print(json.dumps(result, indent=2, sort_keys=True))
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (AssertionError, ValueError) as exc:
+        print(json.dumps({"ok": False, "error": repr(exc)}, sort_keys=True), file=sys.stderr)
+        raise SystemExit(1)

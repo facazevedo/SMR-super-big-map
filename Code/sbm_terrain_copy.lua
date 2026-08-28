@@ -3536,7 +3536,7 @@ local function PrepareOuterResourceTerrain(map)
 	-- one sample per four height cells, resample that bounded mask natively, and keep the exact
 	-- gameplay core/protected circles native at full resolution. The height formula itself is the
 	-- same fixed-order expression as the legacy pixel loop, but native grid arithmetic applies it to
-	-- the patch-local height data. Terrain remains untouched until the one proven SetHeightGrid below.
+	-- the patch-local height data. Terrain remains untouched until the transactional installer below.
 	local native_new_grid = Global("NewComputeGrid")
 	local native_resample = Global("GridResample")
 	local native_mul_div_add = Global("GridMulDivAdd")
@@ -3994,10 +3994,321 @@ local function PrepareOuterResourceTerrain(map)
 	end
 	local raster_finished_ms = now_ms()
 	if type(resume) == "function" then pcall(resume, "SBMOuterResourceTerrain") end
+	-- The native raster already owns a complete target grid, but its changes are sparse and confined
+	-- to the physical outer ring. Install the exact stock-editor difference boxes so the live height
+	-- grid sees identical bytes without the full setter's global invalidation. This is intentionally
+	-- only an enabling change: the canonical final whole-map passability/buildable rebuild remains.
+	-- Snapshot and validate every disjoint box before the first write. A partial failure restores all
+	-- successfully written boxes in reverse order, verifies the raw preimage when possible, and then
+	-- lets the literal full setter below install the target field.
+	local patch_install = {
+		requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL", true),
+		attempted = false,
+		used = false,
+		verified = false,
+		fallback = false,
+		full_setter_used = false,
+		boxes = 0,
+		snapshot_cells = 0,
+		area_ratio = 0,
+		prepare_ms = 0,
+		apply_ms = 0,
+		verify_ms = 0,
+		rollback_attempted = false,
+		rollback_ok = false,
+		rollback_verified = false,
+		error = "",
+	}
+	local function install_native_height_patches()
+		patch_install.attempted = true
+		local attempt_started_ms = now_ms()
+		local editor_api = Global("editor")
+		local is_box = Global("IsBox")
+		local current_map = Global("CurrentMap")
+		if not native_raster_used then
+			return false, "native working grid was not selected"
+		end
+		if current_map ~= map then
+			return false, "surface map is not the current editor grid owner"
+		end
+		if type(editor_api) ~= "table"
+			or type(editor_api.GetGridDifferenceBoxes) ~= "function"
+			or type(editor_api.GetGrid) ~= "function"
+			or type(editor_api.SetGrid) ~= "function"
+			or type(is_box) ~= "function" or type(box_fn) ~= "function" then
+			return false, "stock editor height-grid APIs unavailable"
+		end
+
+		local full_box = box_fn(0, 0, map_w, map_h)
+		if not full_box or not is_box(full_box) then
+			return false, "whole-map height box unavailable"
+		end
+		local records, applied_count, apply_started_ms = {}, 0, 0
+		local function free_record_grids()
+			local cleanup_error = ""
+			for index = #records, 1, -1 do
+				local record = records[index]
+				for _, name in ipairs({ "before", "after", "rollback_live" }) do
+					local value = record[name]
+					if value and type(value.free) == "function" then
+						local free_ok, free_error = pcall(value.free, value)
+						if not free_ok then
+							cleanup_error = cleanup_error
+								.. (cleanup_error ~= "" and "; " or "") .. tostring(free_error)
+						end
+					end
+					record[name] = nil
+				end
+			end
+			return cleanup_error
+		end
+		local function read_box_coordinates(value)
+			if not value or not is_box(value) then error("difference entry is not a box") end
+			local coordinate_ok, x0, y0, x1, y1 = pcall(function()
+				return value:minx(), value:miny(), value:maxx(), value:maxy()
+			end)
+			if not coordinate_ok then error("difference-box coordinates unavailable") end
+			for _, coordinate in ipairs({ x0, y0, x1, y1 }) do
+				if type(coordinate) ~= "number" or coordinate ~= coordinate
+					or math.abs(coordinate) > 1000000000 then
+					error("difference-box coordinate is invalid")
+				end
+			end
+			if x0 < 0 or y0 < 0 or x1 > map_w or y1 > map_h
+				or x1 <= x0 or y1 <= y0 then
+				error("difference box is outside the live height grid")
+			end
+			local ix0, iy0 = math.floor(x0 + 0.5), math.floor(y0 + 0.5)
+			local ix1, iy1 = math.floor(x1 + 0.5), math.floor(y1 + 0.5)
+			if ix0 ~= x0 or iy0 ~= y0 or ix1 ~= x1 or iy1 ~= y1
+				or ix0 % native_tile_step ~= 0 or iy0 % native_tile_step ~= 0
+				or ix1 % native_tile_step ~= 0 or iy1 % native_tile_step ~= 0 then
+				error("difference box is not height-tile aligned")
+			end
+			-- Boxes may contain unchanged halo cells, but every accepted box must touch the
+			-- physical outer ring that owns all actual resource-terrain height differences.
+			if not (x0 < band_x or y0 < band_y
+				or x1 > map_w - band_x or y1 > map_h - band_y) then
+				error("difference box does not intersect the outer resource ring")
+			end
+			return x0, y0, x1, y1
+		end
+		local function grid_dimensions(value, label)
+			if not value or type(value.size) ~= "function" then
+				error(label .. " height snapshot unavailable")
+			end
+			local size_ok, size_x, size_y = pcall(value.size, value)
+			if not size_ok or type(size_x) ~= "number" or type(size_y) ~= "number"
+				or size_x < 1 or size_y < 1 then
+				error(label .. " height snapshot dimensions unavailable")
+			end
+			return size_x, size_y
+		end
+		local function grids_are_equal(reference, actual, compare_box)
+			local compare_ok, differences = pcall(
+				editor_api.GetGridDifferenceBoxes, map, "height",
+				reference, actual, compare_box or full_box)
+			if not compare_ok then return false, tostring(differences) end
+			if differences == nil then return true, "" end
+			if type(differences) ~= "table" then
+				return false, "difference verification returned a non-table result"
+			end
+			return #differences == 0,
+				#differences == 0 and "" or "height-grid verification retained differences"
+		end
+
+		local transaction_ok, transaction_error = pcall(function()
+			local differences_ok, difference_boxes = pcall(
+				editor_api.GetGridDifferenceBoxes, map, "height", grid, raw, full_box)
+			if not differences_ok then error(tostring(difference_boxes)) end
+			if type(difference_boxes) ~= "table" or #difference_boxes < 1 then
+				error("stock difference discovery returned no boxes for modified terrain")
+			end
+			if #difference_boxes > 512 then
+				error("stock difference discovery exceeded the bounded box budget")
+			end
+			for _, difference_box in ipairs(difference_boxes) do
+				local x0, y0, x1, y1 = read_box_coordinates(difference_box)
+				records[#records + 1] = {
+					box = difference_box, x0 = x0, y0 = y0, x1 = x1, y1 = y1,
+				}
+			end
+			table.sort(records, function(a, b)
+				if a.y0 == b.y0 then
+					if a.x0 == b.x0 then
+						if a.y1 == b.y1 then return a.x1 < b.x1 end
+						return a.y1 < b.y1
+					end
+					return a.x0 < b.x0
+				end
+				return a.y0 < b.y0
+			end)
+			local area_ratio = 0
+			for index, record in ipairs(records) do
+				for prior_index = 1, index - 1 do
+					local prior = records[prior_index]
+					if record.x0 < prior.x1 and prior.x0 < record.x1
+						and record.y0 < prior.y1 and prior.y0 < record.y1 then
+						error("stock difference boxes overlap")
+					end
+				end
+				area_ratio = area_ratio
+					+ ((record.x1 - record.x0) / map_w)
+						* ((record.y1 - record.y0) / map_h)
+			end
+			if area_ratio <= 0 or area_ratio > 0.20 then
+				error("difference-box area is outside the bounded outer-ring budget")
+			end
+			patch_install.boxes = #records
+			patch_install.area_ratio = area_ratio
+
+			-- Capture the entire rollback journal before the first live write.
+			for _, record in ipairs(records) do
+				local before_ok, before = pcall(
+					editor_api.GetGrid, map, "height", record.box, raw)
+				record.before = before_ok and before or nil
+				if not before_ok then error(tostring(before)) end
+				local after_ok, after = pcall(
+					editor_api.GetGrid, map, "height", record.box, grid)
+				record.after = after_ok and after or nil
+				if not after_ok then error(tostring(after)) end
+				local before_x, before_y = grid_dimensions(record.before, "before")
+				local after_x, after_y = grid_dimensions(record.after, "after")
+				local expected_x = (record.x1 - record.x0) / native_tile_step
+				local expected_y = (record.y1 - record.y0) / native_tile_step
+				if before_x ~= after_x or before_y ~= after_y
+					or before_x ~= expected_x or before_y ~= expected_y then
+					error("height snapshot does not match its world box")
+				end
+				patch_install.snapshot_cells = patch_install.snapshot_cells
+					+ before_x * before_y
+			end
+			patch_install.prepare_ms = now_ms() - attempt_started_ms
+
+			apply_started_ms = now_ms()
+			for _, record in ipairs(records) do
+				-- Treat a started native call as potentially mutating even when it throws or
+				-- returns false; replaying its before snapshot is always safe and closes the
+				-- native-error-after-write ambiguity.
+				record.applied = true
+				applied_count = applied_count + 1
+				local write_ok, write_result = pcall(
+					editor_api.SetGrid, map, "height", record.after, record.box)
+				if not write_ok or write_result == false then
+					error(write_ok and "stock editor height write returned false"
+						or tostring(write_result))
+				end
+			end
+			patch_install.apply_ms = now_ms() - apply_started_ms
+
+			local verify_started_ms = now_ms()
+			local live = terrain_api.GetHeightGrid(map)
+			if not live then error("installed live height grid unavailable") end
+			local equal, equality_error = grids_are_equal(grid, live)
+			patch_install.verify_ms = now_ms() - verify_started_ms
+			if not equal then error(equality_error) end
+			patch_install.verified = true
+		end)
+		if patch_install.prepare_ms == 0 then
+			patch_install.prepare_ms = now_ms() - attempt_started_ms
+		end
+		if not transaction_ok and apply_started_ms > 0 and patch_install.apply_ms == 0 then
+			patch_install.apply_ms = now_ms() - apply_started_ms
+		end
+
+		if not transaction_ok and applied_count > 0 then
+			patch_install.rollback_attempted = true
+			local rollback_ok, rollback_error = true, ""
+			for index = #records, 1, -1 do
+				local record = records[index]
+				if record.applied then
+					local write_ok, write_result = pcall(
+						editor_api.SetGrid, map, "height", record.before, record.box)
+					if not write_ok or write_result == false then
+						rollback_ok = false
+						rollback_error = rollback_error .. (rollback_error ~= "" and "; " or "")
+							.. tostring(write_ok and "rollback write returned false" or write_result)
+					end
+				end
+			end
+			patch_install.rollback_ok = rollback_ok
+			if rollback_ok then
+				-- The original full-grid handle may alias the live terrain after SetGrid. Re-read
+				-- every restored live box and compare it with the immutable before snapshot that
+				-- was captured before any write. Keep those snapshots owned until this finishes.
+				local verify_ok, verify_error = pcall(function()
+					for record_index, record in ipairs(records) do
+						if record.applied then
+							local restored_ok, restored = pcall(
+								editor_api.GetGrid, map, "height", record.box)
+							record.rollback_live = restored_ok and restored or nil
+							if not restored_ok then
+								error("rollback live box " .. tostring(record_index)
+									.. " unavailable: " .. tostring(restored))
+							end
+							local before_x, before_y = grid_dimensions(record.before, "rollback before")
+							local restored_x, restored_y = grid_dimensions(
+								record.rollback_live, "rollback live")
+							if before_x ~= restored_x or before_y ~= restored_y then
+								error("rollback live box " .. tostring(record_index)
+									.. " dimensions differ from immutable before snapshot")
+							end
+							local local_box = box_fn(0, 0,
+								before_x * native_tile_step, before_y * native_tile_step)
+							if not local_box or not is_box(local_box) then
+								error("rollback comparison box unavailable")
+							end
+							local equal, equality_error = grids_are_equal(
+								record.before, record.rollback_live, local_box)
+							if not equal then
+								error("rollback live box " .. tostring(record_index)
+									.. " differs from immutable before snapshot: "
+									.. tostring(equality_error))
+							end
+						end
+					end
+				end)
+				patch_install.rollback_verified = verify_ok
+				if not verify_ok then
+					rollback_error = rollback_error .. (rollback_error ~= "" and "; " or "")
+						.. tostring(verify_error)
+				end
+			end
+			if rollback_error ~= "" then
+				transaction_error = tostring(transaction_error) .. "; " .. rollback_error
+			end
+		end
+		local cleanup_error = free_record_grids()
+		if cleanup_error ~= "" then
+			transaction_error = tostring(transaction_error or "")
+				.. (transaction_error and "; " or "")
+				.. "height patch snapshot cleanup failed: " .. cleanup_error
+			transaction_ok = false
+		end
+		if not transaction_ok then return false, tostring(transaction_error) end
+		patch_install.used = true
+		return true, ""
+	end
+
 	local set_ok, set_error = false, "no terrain changes"
 	local install_started_ms = now_ms()
 	if ok_apply and modified_cells > 0 then
-		set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
+		if patch_install.requested then
+			local patch_call_ok
+			patch_call_ok, set_ok, set_error = pcall(install_native_height_patches)
+			if not patch_call_ok then
+				set_error, set_ok = tostring(set_ok), false
+			end
+			if not set_ok then
+				patch_install.fallback = true
+				patch_install.error = tostring(set_error)
+				patch_install.full_setter_used = true
+				set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
+			end
+		else
+			patch_install.full_setter_used = true
+			set_ok, set_error = pcall(terrain_api.SetHeightGrid, map, grid)
+		end
 	elseif ok_apply then
 		set_ok = true
 	end
@@ -4036,6 +4347,23 @@ local function PrepareOuterResourceTerrain(map)
 		native_precondition_sites = native_precondition_sites,
 		native_precondition_patches = native_precondition_patches,
 		native_precondition_cells = native_precondition_cells,
+		patch_install_requested = patch_install.requested,
+		patch_install_attempted = patch_install.attempted,
+		patch_install_used = patch_install.used,
+		patch_install_verified = patch_install.verified,
+		patch_install_fallback = patch_install.fallback,
+		patch_install_full_setter_used = patch_install.full_setter_used,
+		patch_install_boxes = patch_install.boxes,
+		patch_install_snapshot_cells = patch_install.snapshot_cells,
+		patch_install_area_ratio = patch_install.area_ratio,
+		patch_install_prepare_ms = patch_install.prepare_ms,
+		patch_install_apply_ms = patch_install.apply_ms,
+		patch_install_verify_ms = patch_install.verify_ms,
+		patch_install_rollback_attempted = patch_install.rollback_attempted,
+		patch_install_rollback_ok = patch_install.rollback_ok,
+		patch_install_rollback_verified = patch_install.rollback_verified,
+		patch_install_error = patch_install.error,
+		canonical_final_grid_rebuild_retained = true,
 		native_sample_step = native_sample_step,
 		rocket_candidates_scored = rocket_candidates_scored,
 		rocket_height_cache_hits = rocket_height_cache_hits,
@@ -4093,6 +4421,20 @@ local function PrepareOuterResourceTerrain(map)
 			.. " native_precondition_cells=" .. tostring(report.native_precondition_cells)
 			.. " native_error=" .. tostring(report.native_raster_error)
 			.. " error=" .. tostring(report.error))
+		print_fn("[Super Big Map][OuterResourceTerrainPatchInstall] used="
+			.. tostring(report.patch_install_used)
+			.. " fallback=" .. tostring(report.patch_install_fallback)
+			.. " verified=" .. tostring(report.patch_install_verified)
+			.. " boxes=" .. tostring(report.patch_install_boxes)
+			.. " cells=" .. tostring(report.patch_install_snapshot_cells)
+			.. " area_ratio=" .. tostring(report.patch_install_area_ratio)
+			.. " prepare_ms=" .. tostring(report.patch_install_prepare_ms)
+			.. " apply_ms=" .. tostring(report.patch_install_apply_ms)
+			.. " verify_ms=" .. tostring(report.patch_install_verify_ms)
+			.. " rollback=" .. tostring(report.patch_install_rollback_attempted)
+			.. " rollback_ok=" .. tostring(report.patch_install_rollback_ok)
+			.. " full_setter=" .. tostring(report.patch_install_full_setter_used)
+			.. " error=" .. tostring(report.patch_install_error))
 	end
 	return set_ok and modified_cells > 0, report
 end
