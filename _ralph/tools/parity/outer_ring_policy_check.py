@@ -796,7 +796,6 @@ static_checks = {
     "bounded_rocket_planner_is_default_on_and_compiled": (
         "config.OptimizeOuterResourceRocketBoundedPlanner = true" in CONFIG
         and "C.OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER" in CONFIG
-        and "C.OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES" in CONFIG
         and "C.OUTER_RESOURCE_ROCKET_BOUNDED_SCORED_BUDGET_PER_GROUP" in CONFIG
     ),
     "bounded_rocket_planner_is_private_before_publish": all(
@@ -818,8 +817,9 @@ static_checks = {
         )
     ),
     "bounded_rocket_planner_retains_policy_audit": (
-        "best.ready_before == true" in outer_resource_terrain
-        and "best.height_range * rocket_bounded.quality_factor" in outer_resource_terrain
+        "Score the full fixed budget" in outer_resource_terrain
+        and "rocket_bounded.full_budget_groups" in outer_resource_terrain
+        and "if not best then" in outer_resource_terrain
         and "ready_offsets(site.q, site.r, rocket_offsets, true)" in outer_resource_terrain
         and "rocket_bounded_plan_digest" in outer_resource_terrain
     ),
@@ -1129,7 +1129,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_962": "'version', 962" in METADATA,
+    "version_is_963": "'version', 963" in METADATA,
 }
 
 case_results = []

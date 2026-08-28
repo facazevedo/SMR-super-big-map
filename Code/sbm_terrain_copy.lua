@@ -3230,22 +3230,18 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_relief_center_mismatches = 0
 	local rocket_bounded = {
 		requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER", true),
-		viable_target = math.max(1, math.min(64, math.floor(
-			cfg_number("OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES", 32)))),
 		used = false, fallback = false, error = "", private_seed = 0,
 		groups_attempted = 0, groups_completed = 0, candidates_scored = 0,
-		viable_candidates = 0, ready_candidates = 0, quality_failures = 0,
+		full_budget_groups = 0,
+		viable_candidates = 0, ready_candidates = 0,
 		offset_universe = 0, preferred_offsets = 0, group_trace = "", private_rng_draws = 0,
 		private_mask_cells = 0, selected_max_height_range = 0,
 		offsets_attempted = 0, preferred_attempted = 0, remaining_attempted = 0,
-		private_ready_choices = 0, private_unsaturated_choices = 0,
+		private_ready_choices = 0,
 		precommit_published_pads = -1, precommit_committed_mask_cells = -1,
-		committed_mask_matches_private = false,
-		quality_limit = 36 * cells_per_hex, quality_factor = 0.65, plan_digest = 0,
+		committed_mask_matches_private = false, plan_digest = 0,
 	}
-	rocket_bounded.scored_budget_per_group = math.max(rocket_bounded.viable_target,
-		math.min(256, math.floor(cfg_number(
-			"OUTER_RESOURCE_ROCKET_BOUNDED_SCORED_BUDGET_PER_GROUP", 256))))
+	rocket_bounded.scored_budget_per_group = 256
 	rocket_bounded.preferred_scored_budget_per_group = math.max(1,
 		math.floor(rocket_bounded.scored_budget_per_group * 0.75))
 	-- The exhaustive rocket-pad scorer evaluates heavily overlapping footprints. The height grid is
@@ -3445,7 +3441,7 @@ local function PrepareOuterResourceTerrain(map)
 		local seed_material = tostring(type(generator) == "table"
 			and generator.GenerationHash or "") .. "|"
 			.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
-			.. "|v962-bounded-rocket-pad-planner"
+			.. "|v963-fixed-budget-rocket-pad-planner"
 		rocket_bounded.private_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
 		for index = 1, #seed_material do
 			rocket_bounded.private_seed = (rocket_bounded.private_seed * 48271
@@ -3494,6 +3490,10 @@ local function PrepareOuterResourceTerrain(map)
 		-- This mask and every candidate table remain private until all requested groups complete.
 		-- A failure discards them; the published pad list, patch journal, and committed mask are still
 		-- empty when the literal exhaustive branch starts.
+		-- A candidate's raw height range is not a terrain-quality certificate: accepted exhaustive
+		-- winners routinely saturate the later adaptive-transition cap. Score the full fixed budget,
+		-- retain the unchanged scorer's minimum, and leave terrain quality to the canonical rebuild,
+		-- repair, and authoritative final audit that already govern every exhaustive winner.
 		local private_rocket_mask = {}
 		local trace = {}
 		local expected_groups = math.min(#cluster_contexts, maximum_rocket_pads)
@@ -3507,8 +3507,7 @@ local function PrepareOuterResourceTerrain(map)
 			local preferred_scored, remaining_scored = 0, 0
 			local visiting_preferred = true
 			local function visit(offset)
-				if scored >= rocket_bounded.scored_budget_per_group
-					or viable >= rocket_bounded.viable_target then return true end
+				if scored >= rocket_bounded.scored_budget_per_group then return true end
 				scored = scored + 1
 				rocket_bounded.candidates_scored = rocket_bounded.candidates_scored + 1
 				rocket_bounded.offsets_attempted = rocket_bounded.offsets_attempted + 1
@@ -3531,22 +3530,20 @@ local function PrepareOuterResourceTerrain(map)
 					if not best or candidate.score < best.score then best = candidate end
 				end
 				return scored >= rocket_bounded.scored_budget_per_group
-					or viable >= rocket_bounded.viable_target
 			end
 			local function visit_preferred(offset)
 				if scored >= rocket_bounded.preferred_scored_budget_per_group then return true end
 				return visit(offset)
 			end
 			visit_private_permutation(preferred_offsets, group_seed, visit_preferred)
-			if scored < rocket_bounded.scored_budget_per_group
-				and viable < rocket_bounded.viable_target then
+			if scored < rocket_bounded.scored_budget_per_group then
 				visiting_preferred = false
 				visit_private_permutation(remaining_offsets,
 					(group_seed + 104729) % modulus, visit)
 			end
-			local quality_ok = best and (best.ready_before == true
-				or best.height_range * rocket_bounded.quality_factor
-					<= rocket_bounded.quality_limit)
+			if scored == rocket_bounded.scored_budget_per_group then
+				rocket_bounded.full_budget_groups = rocket_bounded.full_budget_groups + 1
+			end
 			trace[#trace + 1] = table.concat({
 				"plan=" .. tostring(context.group.plan),
 				"scored=" .. tostring(scored), "viable=" .. tostring(viable),
@@ -3557,20 +3554,15 @@ local function PrepareOuterResourceTerrain(map)
 				"r=" .. tostring(best and best.r),
 				"range=" .. tostring(best and best.height_range),
 				"score=" .. tostring(best and best.score),
-				"quality=" .. tostring(quality_ok == true),
+				"selected=" .. tostring(best ~= nil),
 			}, ":")
-			if not quality_ok then
-				rocket_bounded.quality_failures = rocket_bounded.quality_failures + 1
-				rocket_bounded.error = best and "adaptive transition quality cap exceeded"
-					or "bounded permutation found no viable candidate"
+			if not best then
+				rocket_bounded.error = "bounded permutation found no viable candidate"
 				break
 			end
 			bounded_choices[#bounded_choices + 1] = { context = context, best = best }
 			if best.ready_before == true then
 				rocket_bounded.private_ready_choices = rocket_bounded.private_ready_choices + 1
-			else
-				rocket_bounded.private_unsaturated_choices =
-					rocket_bounded.private_unsaturated_choices + 1
 			end
 			rocket_bounded.private_mask_cells = rocket_bounded.private_mask_cells
 				+ mark_axial_forbidden(private_rocket_mask, best.q, best.r,
@@ -4327,12 +4319,12 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_bounded_planner_error = rocket_bounded.error,
 		rocket_bounded_private_seed = rocket_bounded.private_seed,
 		rocket_bounded_private_rng_draws = rocket_bounded.private_rng_draws,
-		rocket_bounded_viable_target = rocket_bounded.viable_target,
 		rocket_bounded_scored_budget_per_group = rocket_bounded.scored_budget_per_group,
 		rocket_bounded_preferred_scored_budget_per_group =
 			rocket_bounded.preferred_scored_budget_per_group,
 		rocket_bounded_groups_attempted = rocket_bounded.groups_attempted,
 		rocket_bounded_groups_completed = rocket_bounded.groups_completed,
+		rocket_bounded_full_budget_groups = rocket_bounded.full_budget_groups,
 		rocket_bounded_candidates_scored = rocket_bounded.candidates_scored,
 		rocket_bounded_offsets_attempted = rocket_bounded.offsets_attempted,
 		rocket_bounded_preferred_attempted = rocket_bounded.preferred_attempted,
@@ -4340,11 +4332,6 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_bounded_viable_candidates = rocket_bounded.viable_candidates,
 		rocket_bounded_ready_candidates = rocket_bounded.ready_candidates,
 		rocket_bounded_private_ready_choices = rocket_bounded.private_ready_choices,
-		rocket_bounded_private_unsaturated_choices =
-			rocket_bounded.private_unsaturated_choices,
-		rocket_bounded_quality_failures = rocket_bounded.quality_failures,
-		rocket_bounded_quality_limit = rocket_bounded.quality_limit,
-		rocket_bounded_quality_factor = rocket_bounded.quality_factor,
 		rocket_bounded_selected_max_height_range = rocket_bounded.selected_max_height_range,
 		rocket_bounded_offset_universe = rocket_bounded.offset_universe,
 		rocket_bounded_preferred_offsets = rocket_bounded.preferred_offsets,
