@@ -2908,6 +2908,10 @@ local function PrepareOuterResourceTerrain(map)
 			end
 		end
 	end
+	local function rocket_shape_ready(q, r)
+		return exact_offsets_ready(q, r, rocket_offsets, true)
+	end
+
 	local patches, resource_sites, rocket_sites = {}, {}, {}
 	local extractor_core = math.max(2,
 		cfg_number("OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES", 3))
@@ -3219,11 +3223,6 @@ local function PrepareOuterResourceTerrain(map)
 	-- out-of-map failures without changing candidate order, scoring, or the selected pad.
 	local rocket_height_cache = {}
 	local rocket_height_cache_hits, rocket_height_cache_misses = 0, 0
-	local rocket_read_cache_requested =
-		cfg_bool("OPTIMIZE_OUTER_RESOURCE_ROCKET_READ_CACHE", true)
-	local rocket_passability_cache, rocket_buildable_cache = {}, {}
-	local rocket_passability_cache_hits, rocket_passability_cache_misses = 0, 0
-	local rocket_buildable_cache_hits, rocket_buildable_cache_misses = 0, 0
 	local rocket_candidates_scored = 0
 	local function cached_rocket_height(q, r, known_x, known_y)
 		local row = rocket_height_cache[q]
@@ -3246,65 +3245,6 @@ local function PrepareOuterResourceTerrain(map)
 		local value = grid_value(x / height_tile, y / height_tile)
 		row[r] = value ~= nil and value or false
 		return value
-	end
-	-- Planning does not mutate terrain or either gameplay grid. Candidate footprints overlap by
-	-- thousands of cells, so reuse each successful passability/buildability observation while
-	-- retaining the literal candidate and rocket-offset traversal order. False is an explicit
-	-- cached verdict; engine-call exceptions are deliberately not cached, preserving the legacy
-	-- retry behavior for a transient read failure. This cache is created and consumed strictly
-	-- after post_object_transform and is discarded before any terrain write.
-	local function cached_rocket_passable(q, r)
-		if not rocket_read_cache_requested then return hex_passable(q, r) end
-		if type(terrain_api.IsPassable) ~= "function" then return true end
-		local row = rocket_passability_cache[q]
-		local cached = row and row[r]
-		if cached ~= nil then
-			rocket_passability_cache_hits = rocket_passability_cache_hits + 1
-			return cached
-		end
-		rocket_passability_cache_misses = rocket_passability_cache_misses + 1
-		local x, y = world_xy(q, r)
-		if not x then
-			if not row then row = {}; rocket_passability_cache[q] = row end
-			row[r] = false
-			return false
-		end
-		local ok, value = pcall(terrain_api.IsPassable, map, point_fn(x, y))
-		if not ok then return false end
-		if not row then row = {}; rocket_passability_cache[q] = row end
-		row[r] = value == true
-		return row[r]
-	end
-	local function cached_rocket_buildable_z(q, r)
-		if not rocket_read_cache_requested then
-			local ok_z, z = pcall(buildable_get_z, buildable, q, r)
-			return ok_z and type(z) == "number" and z ~= unbuildable and z or nil
-		end
-		local row = rocket_buildable_cache[q]
-		local cached = row and row[r]
-		if cached ~= nil then
-			rocket_buildable_cache_hits = rocket_buildable_cache_hits + 1
-			return cached ~= false and cached or nil
-		end
-		rocket_buildable_cache_misses = rocket_buildable_cache_misses + 1
-		local ok_z, z = pcall(buildable_get_z, buildable, q, r)
-		if not ok_z then return nil end
-		if not row then row = {}; rocket_buildable_cache[q] = row end
-		row[r] = type(z) == "number" and z ~= unbuildable and z or false
-		return row[r] ~= false and row[r] or nil
-	end
-	local function rocket_shape_ready(q, r)
-		local level
-		for _, offset in ipairs(rocket_offsets) do
-			local hq, hr = q + offset[1], r + offset[2]
-			if not cached_rocket_passable(hq, hr) then return false end
-			if not (buildable and type(buildable_get_z) == "function"
-				and ok_unbuildable and type(unbuildable) == "number") then return false end
-			local z = cached_rocket_buildable_z(hq, hr)
-			if z == nil then return false end
-			if level == nil then level = z elseif z ~= level then return false end
-		end
-		return #rocket_offsets > 0
 	end
 	local function candidate_score(q, r, cq, cr)
 		rocket_candidates_scored = rocket_candidates_scored + 1
@@ -4100,14 +4040,6 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_candidates_scored = rocket_candidates_scored,
 		rocket_height_cache_hits = rocket_height_cache_hits,
 		rocket_height_cache_misses = rocket_height_cache_misses,
-		rocket_read_cache_requested = rocket_read_cache_requested,
-		rocket_read_cache_used = rocket_read_cache_requested
-			and (rocket_passability_cache_hits + rocket_passability_cache_misses
-				+ rocket_buildable_cache_hits + rocket_buildable_cache_misses) > 0,
-		rocket_passability_cache_hits = rocket_passability_cache_hits,
-		rocket_passability_cache_misses = rocket_passability_cache_misses,
-		rocket_buildable_cache_hits = rocket_buildable_cache_hits,
-		rocket_buildable_cache_misses = rocket_buildable_cache_misses,
 		resource_clearance_mask_cells = resource_clearance_mask_cells,
 		resource_clearance_queries = resource_clearance_queries,
 		resource_clearance_rejections = resource_clearance_rejections,
@@ -4151,11 +4083,6 @@ local function PrepareOuterResourceTerrain(map)
 			.. " rocket_candidates=" .. tostring(report.rocket_candidates_scored)
 			.. " rocket_height_hits=" .. tostring(report.rocket_height_cache_hits)
 			.. " rocket_height_misses=" .. tostring(report.rocket_height_cache_misses)
-			.. " rocket_read_cache=" .. tostring(report.rocket_read_cache_used)
-			.. " rocket_pass_hits=" .. tostring(report.rocket_passability_cache_hits)
-			.. " rocket_pass_misses=" .. tostring(report.rocket_passability_cache_misses)
-			.. " rocket_buildable_hits=" .. tostring(report.rocket_buildable_cache_hits)
-			.. " rocket_buildable_misses=" .. tostring(report.rocket_buildable_cache_misses)
 			.. " resource_clearance_cells=" .. tostring(report.resource_clearance_mask_cells)
 			.. " resource_clearance_rejections=" .. tostring(report.resource_clearance_rejections)
 			.. " rocket_clearance_cells=" .. tostring(report.rocket_clearance_mask_cells)
