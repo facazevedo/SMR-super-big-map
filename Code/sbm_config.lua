@@ -311,17 +311,9 @@ config.PrepareOuterResourceTerrain = true
 -- Any unavailable/failed native primitive discards the working compute grid and reruns the exact
 -- legacy rasterizer from the untouched source height grid.
 config.OptimizeOuterResourceTerrainNativeRaster = true
--- Install the completed native working height field through the stock editor difference-box path.
--- All boxes and their before/after snapshots are validated before the first write. Any unavailable
--- API, malformed box, write failure, or whole-grid verification failure rolls back captured writes
--- and falls back to terrain.SetHeightGrid. Each successful synchronous patch notification is tagged;
--- only an exact verified eight-patch sequence later superseded by the four outer-ring rebuilds may
--- participate in the ownership-certified regional closing pass.
-config.OptimizeOuterResourceTerrainPatchInstall = true
 -- Resource terrain edits are confined to the physical outer two-sector ring. Rebuild passability
 -- only for that ring (plus the stock two-pass-tile dependency margin) before the resource audit;
--- the closing pass remains globally authoritative through its strict regional certificate or its
--- unchanged whole-map fallback.
+-- later whole-map final rebuilds remain unchanged and authoritative.
 config.OptimizeOuterResourceTerrainRingRebuild = true
 -- On the initial pass, retain the broad natural feather, then settle connected components containing
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
@@ -566,11 +558,6 @@ config.OptimizeStretchRevalidation = true
 -- final passability/buildable rebuild required by T1. Skip the identical immediate rebuild at the
 -- end of the protected pipeline; its result is otherwise overwritten before gameplay is exposed.
 config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true
--- After the post-object determinism boundary, journal the engine's own synchronous
--- OnPassabilityChanged clips until the canonical closing surface revalidation. Rebuild one
--- conservative union clip (plus the proven two-pass-tile dependency halo), then retain the exact
--- whole-map RebuildBuildableGrid. Missing/invalid/full/overlarge journals use RebuildFinal.
-config.OptimizeSurfaceFinalDirtyPassabilityRebuild = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
@@ -959,8 +946,6 @@ C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER =
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
-C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_PATCH_INSTALL =
-	as_bool(config.OptimizeOuterResourceTerrainPatchInstall)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
@@ -1125,8 +1110,6 @@ C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredReb
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD =
 	as_bool(config.OptimizeDeferImmediateSurfaceFinalGridRebuild)
-C.OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD =
-	as_bool(config.OptimizeSurfaceFinalDirtyPassabilityRebuild)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
