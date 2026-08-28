@@ -2933,6 +2933,8 @@ function SuperBigMap.FreeOwnedGrid(grid)
 	end
 end
 
+SuperBigMap.SURFACE_PAIRING_BUILDABLE_REUSE_PROOF_VERSION = 1
+
 -- Surface passage placement happens during underground generation, after the temporary vanilla
 -- surface map has been unloaded. Preserve the completed native buildable grid as value state so
 -- SpawnUndergroundPassage can later make the same selection as vanilla. The retained grid is
@@ -2960,6 +2962,7 @@ function SuperBigMap.CaptureNativeSurfacePassageBuildable(source, destination)
 		grid = clone,
 		width = width,
 		height = height,
+		destination = destination,
 	}
 	LoadingStep("native surface passage buildable retained", {
 		width = width, height = height,
@@ -5058,6 +5061,19 @@ local function GenerateOnTemporaryVanillaBacking(generator, destination, origina
 		destination:RebuildGrids(box_fn(0, 0, map_width, map_height))
 		LoadingEnd(rebuild_token, nil, true)
 		destination.SuperBigMapSurfaceBuildableCurrent = true
+		local proof_status = PackValues(pcall(
+			SuperBigMap.CaptureSurfacePairingBuildableReuseProof, destination))
+		local proof_ok = proof_status[1] == true and proof_status[2] == true
+		local proof_or_reason = proof_ok and proof_status[3]
+			or (proof_status[1] and proof_status[3] or proof_status[2])
+		LoadingStep("surface pairing buildable reuse proof captured", {
+			ok = tostring(proof_ok == true),
+			reason = proof_ok and proof_or_reason.stage or tostring(proof_or_reason),
+			source_width = proof_ok and proof_or_reason.source_width or 0,
+			source_height = proof_ok and proof_or_reason.source_height or 0,
+			expanded_width = proof_ok and proof_or_reason.expanded_width or 0,
+			expanded_height = proof_ok and proof_or_reason.expanded_height or 0,
+		}, destination)
 	end)
 
 	-- Always restore the real surface as current and release the temporary slot. This also keeps
@@ -10112,16 +10128,13 @@ local function PatchRandomMapGenerator()
 				end
 			end
 
-			-- DETERMINISTIC ENTRANCE PAIRING (config
-			-- PAIRING_SURFACE_BUILDABLE_REBUILD). Passage selection runs during underground
-			-- generation but searches MainMap's surface grids. A generic RebuildGrids completion
-			-- flag is not sufficient here: after temporary-source migration it described a usable
-			-- gameplay grid, yet vanilla FindPassageSpawnPos rejected both passage markers. Build
-			-- the surface Z grid once, synchronously, immediately before passage selection, against
-			-- the live surface map dimensions and object grid. Vanilla then selects a complete
-			-- naturally buildable Elevator footprint. Once the final stretched surface is available,
-			-- the plan is checked again and vanilla's normal passage-pad preparation is applied only
-			-- to that already-valid committed footprint.
+			-- DETERMINISTIC ENTRANCE PAIRING (config PAIRING_SURFACE_BUILDABLE_REBUILD).
+			-- Passage selection runs during underground generation but searches MainMap. Its buildable
+			-- answer is the padded retained-native grid installed by BootstrapPassagesAndDeferWonders,
+			-- not the expanded restore grid. Reuse the post-migration restore grid only under its exact
+			-- identity/lifecycle proof; otherwise retain the synchronous legacy rebuild here. Once the
+			-- final stretched surface is available, the committed plan is rechecked and vanilla's normal
+			-- passage-pad preparation applies only to that already-valid footprint.
 			if cfg_bool("PAIRING_SURFACE_BUILDABLE_REBUILD", true) then
 				local env = (type(mapdata) == "table" and mapdata.Environment)
 					or (template and template.Environment)
@@ -10151,18 +10164,53 @@ local function PatchRandomMapGenerator()
 					local buildable = main_map.buildable
 					local grid_missing = type(buildable) ~= "table" or not buildable.z_grid
 					if main_map.SuperBigMapSurfaceBuildablePairingReady ~= true or grid_missing then
-						local ok_rb, err_rb = pcall(rebuild, main_map)
-						if not ok_rb then
-							error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
+						local validation_ok, reuse_ok, reuse_report = pcall(
+							SuperBigMap.ValidateSurfacePairingBuildableReuse, main_map)
+						if not validation_ok or type(reuse_report) ~= "table" then
+							local validation_error = validation_ok
+								and ("invalid-report:" .. tostring(reuse_report)) or reuse_ok
+							local requested = cfg_bool(
+								"OPTIMIZE_SUPERSEDED_PAIRING_SURFACE_BUILDABLE_REBUILD", true)
+							reuse_ok = false
+							reuse_report = {
+								requested = requested,
+								used = false,
+								fallback = requested == true,
+								reason = "reuse-proof-validation-error:" .. tostring(validation_error),
+								proof_version = SuperBigMap.SURFACE_PAIRING_BUILDABLE_REUSE_PROOF_VERSION,
+								source_width = 0,
+								source_height = 0,
+								expanded_width = 0,
+								expanded_height = 0,
+								rebuild_ms = 0,
+							}
 						end
-						buildable = main_map.buildable
-						if type(buildable) ~= "table" or not buildable.z_grid then
-							error("surface passage pairing-grid rebuild produced no buildable grid")
+						if not reuse_ok then
+							local rebuild_started = GetPreciseTicks()
+							local ok_rb, err_rb = pcall(rebuild, main_map)
+							reuse_report.rebuild_ms = math.max(0,
+								GetPreciseTicks() - rebuild_started)
+							if not ok_rb then
+								error("surface passage pairing-grid rebuild failed: " .. tostring(err_rb))
+							end
+							buildable = main_map.buildable
+							if type(buildable) ~= "table" or not buildable.z_grid then
+								error("surface passage pairing-grid rebuild produced no buildable grid")
+							end
 						end
 						main_map.SuperBigMapSurfaceBuildableCurrent = true
 						main_map.SuperBigMapSurfaceBuildablePairingReady = true
 						LoadingStep("surface passage pairing grid ready", {
 							created = grid_missing,
+							optimization_requested = tostring(reuse_report.requested == true),
+							optimization_used = tostring(reuse_report.used == true),
+							optimization_fallback = tostring(reuse_report.fallback == true),
+							reason = reuse_report.reason,
+							rebuild_ms = reuse_report.rebuild_ms,
+							source_size = tostring(reuse_report.source_width)
+								.. "x" .. tostring(reuse_report.source_height),
+							expanded_size = tostring(reuse_report.expanded_width)
+								.. "x" .. tostring(reuse_report.expanded_height),
 						}, main_map)
 					end
 				end
@@ -10626,6 +10674,136 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	end
 	map.SuperBigMapRevalidationRebuiltGrids = true
 	return true
+end
+
+-- Bind the current expanded restore grid to the retained native selection grid immediately after
+-- the destination's post-migration RebuildGrids succeeds. The proof lives inside the already
+-- short-lived pending record, so it cannot survive passage bootstrap or enter a save. It contains
+-- identities, not hashes: replacement of either grid fails the later reuse check exactly.
+function SuperBigMap.CaptureSurfacePairingBuildableReuseProof(destination)
+	local pending = type(destination) == "table"
+		and destination.SuperBigMapPendingNativeSurfacePassageBuildable or nil
+	if type(pending) ~= "table" or pending.destination ~= destination or not pending.grid then
+		return false, "retained-native-buildable-unavailable"
+	end
+	local buildable = destination.buildable
+	local restore_grid = type(buildable) == "table" and buildable.z_grid or nil
+	local expanded_w, expanded_h = MigrationGridSize(restore_grid)
+	local source_w, source_h = MigrationGridSize(pending.grid)
+	if type(expanded_w) ~= "number" or type(expanded_h) ~= "number"
+		or type(source_w) ~= "number" or type(source_h) ~= "number"
+		or expanded_w <= 0 or expanded_h <= 0 or source_w <= 0 or source_h <= 0
+		or expanded_w < source_w or expanded_h < source_h then
+		return false, "surface-pairing-buildable-dimensions-invalid"
+	end
+	if source_w ~= pending.width or source_h ~= pending.height then
+		return false, "retained-native-buildable-dimensions-changed"
+	end
+	pending.restore_proof = {
+		version = SuperBigMap.SURFACE_PAIRING_BUILDABLE_REUSE_PROOF_VERSION,
+		destination = destination,
+		native_grid = pending.grid,
+		restore_grid = restore_grid,
+		source_width = source_w,
+		source_height = source_h,
+		expanded_width = expanded_w,
+		expanded_height = expanded_h,
+		stage = "post-migration-destination-RebuildGrids",
+	}
+	return true, pending.restore_proof
+end
+
+-- Passage selection is the sole surface-buildable consumer in underground generation, and
+-- BootstrapPassagesAndDeferWonders substitutes a padded copy of pending.grid before invoking it.
+-- The old expanded grid is merely held for restoration until the surface stretch invalidates it;
+-- the canonical final rebuild then replaces it. Reuse is strict only under the complete lifecycle proof
+-- below; any uncertainty returns a reason and the caller executes the legacy rebuild unchanged.
+function SuperBigMap.ValidateSurfacePairingBuildableReuse(surface_map)
+	local report = {
+		requested = cfg_bool("OPTIMIZE_SUPERSEDED_PAIRING_SURFACE_BUILDABLE_REBUILD", true),
+		used = false,
+		fallback = false,
+		reason = "",
+		proof_version = SuperBigMap.SURFACE_PAIRING_BUILDABLE_REUSE_PROOF_VERSION,
+		source_width = 0,
+		source_height = 0,
+		expanded_width = 0,
+		expanded_height = 0,
+		rebuild_ms = 0,
+	}
+	local function reject(reason)
+		report.reason = reason
+		report.fallback = report.requested == true
+		return false, report
+	end
+	if report.requested ~= true then return reject("optimization-disabled") end
+	if cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true) ~= true then
+		return reject("canonical-surface-rebuild-disabled")
+	end
+	if type(surface_map) ~= "table" or type(surface_map.mapdata) ~= "table"
+		or surface_map.mapdata.Environment ~= "Surface" then
+		return reject("surface-map-invalid")
+	end
+	if surface_map.SuperBigMapSurfaceBuildableCurrent ~= true then
+		return reject("surface-buildable-not-current")
+	end
+	if surface_map.SuperBigMapStretchPipelinePending ~= true
+		or surface_map.SuperBigMapSurfaceStretchDone == true then
+		return reject("canonical-surface-rebuild-not-pending")
+	end
+	local pending = surface_map.SuperBigMapPendingNativeSurfacePassageBuildable
+	local proof = type(pending) == "table" and pending.restore_proof or nil
+	if type(proof) ~= "table"
+		or proof.version ~= SuperBigMap.SURFACE_PAIRING_BUILDABLE_REUSE_PROOF_VERSION
+		or proof.stage ~= "post-migration-destination-RebuildGrids"
+		or pending.destination ~= surface_map or proof.destination ~= surface_map
+		or not pending.grid or proof.native_grid ~= pending.grid then
+		return reject("retained-buildable-proof-unavailable")
+	end
+	local live_grid = type(surface_map.buildable) == "table"
+		and surface_map.buildable.z_grid or nil
+	if not live_grid or live_grid ~= proof.restore_grid then
+		return reject("expanded-restore-grid-identity-changed")
+	end
+	local expanded_w, expanded_h = MigrationGridSize(live_grid)
+	local source_w, source_h = MigrationGridSize(pending.grid)
+	report.source_width, report.source_height = source_w or 0, source_h or 0
+	report.expanded_width, report.expanded_height = expanded_w or 0, expanded_h or 0
+	if expanded_w ~= proof.expanded_width or expanded_h ~= proof.expanded_height
+		or source_w ~= proof.source_width or source_h ~= proof.source_height
+		or source_w ~= pending.width or source_h ~= pending.height
+		or expanded_w ~= tonumber(surface_map.hex_width)
+		or expanded_h ~= tonumber(surface_map.hex_height) then
+		return reject("surface-buildable-proof-dimensions-changed")
+	end
+	local desired_w = tonumber(surface_map.SuperBigMapDesiredWidthTiles)
+	local desired_h = tonumber(surface_map.SuperBigMapDesiredHeightTiles)
+	local generator_w = tonumber(surface_map.SuperBigMapGeneratorWidthTiles)
+	local generator_h = tonumber(surface_map.SuperBigMapGeneratorHeightTiles)
+	if not desired_w or not desired_h or not generator_w or not generator_h
+		or desired_w <= generator_w or desired_h <= generator_h then
+		return reject("surface-source-geometry-unavailable")
+	end
+	local expected_source_w = math.max(1,
+		math.floor((expanded_w * generator_w + 0.0) / desired_w + 0.5))
+	local expected_source_h = math.max(1,
+		math.floor((expanded_h * generator_h + 0.0) / desired_h + 0.5))
+	if source_w ~= expected_source_w or source_h ~= expected_source_h then
+		return reject("retained-buildable-source-geometry-mismatch")
+	end
+	if cfg_bool("PAIRING_SOURCE_PASSABILITY_BRIDGE", true) then
+		local retention = surface_map.SuperBigMapRetainedNativeSourceMap
+		local maps = Global("Maps")
+		if type(retention) ~= "table" or not retention.map or not retention.slot
+			or type(maps) ~= "table" or maps[retention.slot] ~= retention.map
+			or retention.map == surface_map then
+			return reject("retained-native-passability-backing-unavailable")
+		end
+	end
+	report.used = true
+	report.fallback = false
+	report.reason = "retained-native-selection-grid-supersedes-expanded-rebuild"
+	return true, report
 end
 
 -- Resource shaping is hard-clipped to the physical outer ring. Revalidate only that ring before
