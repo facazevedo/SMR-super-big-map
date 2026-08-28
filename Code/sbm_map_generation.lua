@@ -10794,8 +10794,22 @@ function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace(journal)
 			.. "," .. tostring(record[3]) .. "," .. tostring(record[4])
 			.. "@" .. tostring(owner_serial)
 	end
-	local residual_area = minx and math.max(0, maxx - minx) * math.max(0, maxy - miny) or 0
-	local map_area = journal.map_w * journal.map_h
+	local residual_width = minx and math.max(0, maxx - minx) or 0
+	local residual_height = miny and math.max(0, maxy - miny) or 0
+	-- The engine keeps integral arithmetic integral. Expanded-map area products exceed 32-bit range,
+	-- and dividing those integral products collapsed iter177's real 13.1369% ratio to zero. Avoid the
+	-- products entirely and force floating point before dimension-by-dimension normalization.
+	local residual_area_ratio = journal.map_w > 0 and journal.map_h > 0
+		and ((residual_width + 0.0) / journal.map_w)
+			* ((residual_height + 0.0) / journal.map_h) or 1
+	if residual_area_ratio ~= residual_area_ratio or residual_area_ratio < 0
+		or residual_area_ratio > 1 or residual_area_ratio == math.huge then
+		report.invalid = true
+		report.error = report.error ~= "" and
+			(report.error .. " | residual dirty area ratio is invalid")
+			or "residual dirty area ratio is invalid"
+		residual_area_ratio = 1
+	end
 	local successful_parts = {}
 	for serial = 1, math.floor(tonumber(journal.owner_next_serial) or 0) do
 		if successful[serial] == true then successful_parts[#successful_parts + 1] = tostring(serial) end
@@ -10812,7 +10826,7 @@ function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace(journal)
 	report.residual_full_events = residual_full_events
 	report.residual_x0, report.residual_y0 = minx or 0, miny or 0
 	report.residual_x1, report.residual_y1 = maxx or 0, maxy or 0
-	report.residual_area_ratio = map_area > 0 and residual_area / map_area or 1
+	report.residual_area_ratio = residual_area_ratio
 	report.residual_area_ppm = math.floor(report.residual_area_ratio * 1000000 + 0.5)
 	return true
 end
@@ -11109,9 +11123,17 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	local y0 = math.max(0, math.floor((miny - halo) / pass_tile) * pass_tile)
 	local x1 = math.min(journal.map_w, math.ceil((maxx + halo) / pass_tile) * pass_tile)
 	local y1 = math.min(journal.map_h, math.ceil((maxy + halo) / pass_tile) * pass_tile)
-	local map_area = journal.map_w * journal.map_h
-	local region_area = math.max(0, x1 - x0) * math.max(0, y1 - y0)
-	local area_ratio = map_area > 0 and region_area / map_area or 1
+	local region_width = math.max(0, x1 - x0)
+	local region_height = math.max(0, y1 - y0)
+	local map_area = (journal.map_w + 0.0) * journal.map_h
+	local region_area = (region_width + 0.0) * region_height
+	local area_ratio = journal.map_w > 0 and journal.map_h > 0
+		and ((region_width + 0.0) / journal.map_w)
+			* ((region_height + 0.0) / journal.map_h) or 1
+	if area_ratio ~= area_ratio or area_ratio < 0 or area_ratio > 1
+		or area_ratio == math.huge then
+		return reject("surface final dirty region area ratio is invalid")
+	end
 	report.halo = halo
 	report.region_x0, report.region_y0 = x0, y0
 	report.region_x1, report.region_y1 = x1, y1

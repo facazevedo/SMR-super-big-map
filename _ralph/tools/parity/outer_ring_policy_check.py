@@ -560,7 +560,7 @@ static_checks = {
             "report.tagged_full_events = tagged_full_events",
             "report.owner_full_events = owner_full_events",
             "report.residual_full_events = residual_full_events",
-            "report.residual_area_ratio = map_area > 0",
+            "report.residual_area_ratio = residual_area_ratio",
             "report.residual_area_ppm = math.floor",
             "successful_owner_serials = tostring(report.successful_owner_serials or \"\")",
             "event_trace = tostring(report.event_trace or \"\")",
@@ -608,6 +608,25 @@ static_checks = {
             "math.ceil((maxx + halo) / pass_tile) * pass_tile",
             "if area_ratio >= 0.65 then",
         )
+    ),
+    "surface_final_dirty_ratios_force_float_before_large_area_arithmetic": (
+        all(
+            token in surface_final_dirty_journal
+            for token in (
+                "local map_area = (journal.map_w + 0.0) * journal.map_h",
+                "((residual_width + 0.0) / journal.map_w)",
+                "* ((residual_height + 0.0) / journal.map_h)",
+                "local region_area = (region_width + 0.0) * region_height",
+                "((region_width + 0.0) / journal.map_w)",
+                "* ((region_height + 0.0) / journal.map_h)",
+                "residual_area_ratio ~= residual_area_ratio",
+                "area_ratio ~= area_ratio",
+                "surface final dirty region area ratio is invalid",
+            )
+        )
+        and "local residual_area =" not in surface_final_dirty_journal
+        and "residual_area / map_area" not in surface_final_dirty_journal
+        and "region_area / map_area" not in surface_final_dirty_journal
     ),
     "surface_final_dirty_apply_is_one_region_plus_global_buildable": (
         surface_final_dirty_apply.count("terrain_api.RebuildPassability(map, region)") == 1
@@ -1378,7 +1397,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_952": "'version', 952" in METADATA,
+    "version_is_953": "'version', 953" in METADATA,
 }
 
 case_results = []
@@ -2355,6 +2374,21 @@ surface_owned_filtered_certificate = surface_final_dirty_certificate(
     tuple(record[:4] for record in surface_owned_filter_success["retained"]),
     pass_tile=surface_dirty_pass_tile,
 )
+iter177_residual_bounds = (312949, 316728, 633551, 591712)
+iter177_residual_width = iter177_residual_bounds[2] - iter177_residual_bounds[0]
+iter177_residual_height = iter177_residual_bounds[3] - iter177_residual_bounds[1]
+iter177_legacy_integral_ratio = (
+    (iter177_residual_width * iter177_residual_height)
+    // (surface_dirty_width * surface_dirty_height)
+)
+iter177_normalized_residual_ratio = (
+    iter177_residual_width / surface_dirty_width
+) * (iter177_residual_height / surface_dirty_height)
+iter177_region = surface_owned_filtered_certificate["region"]
+assert isinstance(iter177_region, tuple)
+iter177_normalized_region_ratio = (
+    (iter177_region[2] - iter177_region[0]) / surface_dirty_width
+) * ((iter177_region[3] - iter177_region[1]) / surface_dirty_height)
 surface_tagged_ack_records = (
     (1000, 400000, 1600, 401000, 1),
     (2000, 400000, 2600, 401000, 0),
@@ -2449,6 +2483,20 @@ surface_dirty_certificate_checks = {
     "failed_owned_call_is_never_classified_as_success_owned": (
         len(surface_owned_trace_failed_call["owned"]) == 3
         and len(surface_owned_trace_failed_call["residual"]) == 12
+    ),
+    "iter177_large_integral_area_division_reproduces_zero": (
+        iter177_residual_width * iter177_residual_height > 2**31 - 1
+        and surface_dirty_width * surface_dirty_height > 2**31 - 1
+        and iter177_legacy_integral_ratio == 0
+    ),
+    "iter177_dimension_normalized_residual_ratio_is_exact": (
+        math.isclose(iter177_normalized_residual_ratio, 0.13136926348209382)
+        and round(iter177_normalized_residual_ratio * 1_000_000) == 131369
+    ),
+    "iter177_dimension_normalized_halo_ratio_preserves_certificate": (
+        math.isclose(iter177_normalized_region_ratio, 0.1318202167749405)
+        and round(iter177_normalized_region_ratio * 1_000_000) == 131820
+        and iter177_normalized_region_ratio < 0.65
     ),
 }
 
@@ -2623,7 +2671,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 22,
+    "schema_version": 23,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
