@@ -221,7 +221,7 @@ def main() -> int:
         "pinned_lua_5_3_6_compiles_generation_chunk": (
             lua53_result is not None and lua53_result.returncode == 0
         ),
-        "metadata_retained_in_v966": "'version', 966," in metadata,
+        "metadata_retained_in_v967": "'version', 967," in metadata,
         "generator_wrapper_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "feasibility_flag_default_off": (
             "config.LazyUndergroundSourceGenerationFeasibility = false" in config
@@ -472,7 +472,7 @@ def main() -> int:
                 "report.consumer_fill_randomize_forced == true",
                 "report.consumer_generator_seed_recipe_match == true",
                 "report.consumer_callback_publication_match == true",
-                "report.used = report.used == true and report.recipe_consumer_exact == true",
+                "report.used = plan_report.planner_used == true and report.recipe_consumer_exact == true",
             )
         ),
         "fresh_map_cleanup_clears_shadow_evidence": all(

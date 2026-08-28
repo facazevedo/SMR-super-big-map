@@ -174,7 +174,7 @@ def main() -> int:
         "focused_fault_state_oracle_is_green": (
             oracle_run.returncode == 0 and oracle.get("ok") is True
         ),
-        "metadata_v966": "'version', 966," in metadata,
+        "metadata_retained_in_v967": "'version', 967," in metadata,
         "generator_patch_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "implementation_flag_is_separate_and_default_off": all(token in config for token in (
             "config.LazyUndergroundSourceGenerationFeasibility = false",
@@ -252,8 +252,8 @@ def main() -> int:
             and 'passage.SuperBigMapLazyUndergroundCapsuleIndex = index' in helper
             and 'pcall(flatten, shape, passage, "flatten unbuildable")' in helper
             and "pcall(passage.Spawn, passage)" in helper
-            and "lazy.PrepareImplementationCapsulesSafe(map)" in generation
-            and generation.index("lazy.PrepareImplementationCapsulesSafe(map)")
+            and "lazy.PrepareImplementationCapsulesAroundRebuild(map," in generation
+            and generation.index("lazy.PrepareImplementationCapsulesAroundRebuild(map,")
             < generation.index('"post-pipeline scheduled revalidation"')
         ),
         "capsules_have_final_grid_marker_and_sign_certificate": all(token in helper for token in (
@@ -264,7 +264,7 @@ def main() -> int:
             "report.final_grid_revalidation = true",
         )),
         "retained_native_surface_state_is_released_before_t1": all(token in helper for token in (
-            'ReleaseRetainedNativeSourceMap(surface, "v966 final-domain capsules published")',
+            'ReleaseRetainedNativeSourceMap(surface, "v967 final-domain capsules published")',
             "SuperBigMap.FreeOwnedGrid(retained_buildable.grid)",
             "report.native_source_retention_released_before_t1 = true",
         )),

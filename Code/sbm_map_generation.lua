@@ -8628,7 +8628,7 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	return true
 end
 
--- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY / v966 IMPLEMENTATION (both default off).
+-- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY / v966-v967 IMPLEMENTATION (both default off).
 --
 -- GenerateAdditionalMaps does not allocate the underground itself while the Surface generator is
 -- active; it publishes one GenerateNextMap parameter table that the outer GenerateRandomMap loop
@@ -8684,6 +8684,9 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		CALLBACK_TAG = "publish-generated-map-to-UndergroundMap",
 		CALLBACK_VERSION = 1,
 		IMPLEMENTATION = cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false),
+		BOUNDED_CAPSULE_PLANNER = cfg_bool(
+			"LAZY_UNDERGROUND_BOUNDED_CAPSULE_PLANNER", true),
+		CAPSULE_PLANNER_VERSION = 2,
 	}
 
 function Lazy.PrimitiveTree(value, seen)
@@ -8874,25 +8877,58 @@ function Lazy.PrivateSeed(surface, pending, next_map)
 	return state, surface_seed, reserved_seed
 end
 
-function Lazy.BuildCapsulePlan(surface, pending, next_map)
+function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
+	replay_only = replay_only == true
 	local report = {
 		schema = Lazy.SCHEMA,
-		requested = true,
-		used = false,
-		shadow_only = true,
-		literal_v964_continues = true,
-		suppression_used = false,
+		planner_requested = true,
+		planner_used = false,
 		capsules_required = 2,
 		capsules_planned = 0,
 		attempts = 0,
+		planner_version = Lazy.CAPSULE_PLANNER_VERSION,
+		bounded_requested = Lazy.BOUNDED_CAPSULE_PLANNER == true,
+		bounded_used = false,
+		replay_only = replay_only,
+		bounded_max_depth = 16,
+		bounded_search_calls = 0,
+		bounded_search_successes = 0,
+		bounded_search_margin_rejections = 0,
+		bounded_search_spacing_rejections = 0,
+		bounded_search_max_returned_depth = -1,
+		bounded_search_ms = 0,
+		full_search_calls = 0,
+		full_search_exact_centers = 0,
+		full_search_mismatches = 0,
+		full_search_cap = 2,
+		marker_scan_ms = 0,
+		full_search_ms = 0,
+		total_ms = 0,
+		full_validation_complete = false,
+		plan_safe_for_publication = false,
+		retryable_after_canonical_grid = false,
 		error = "",
 	}
+	local precise_ticks = Global("GetPreciseTicks")
+	local function now()
+		if type(precise_ticks) ~= "function" then return 0 end
+		local ok, value = pcall(precise_ticks)
+		return ok and type(value) == "number" and value or 0
+	end
+	local total_started = now()
+	local function finish_report()
+		report.total_ms = math.max(0, now() - total_started)
+	end
+	local function fail(reason)
+		report.error = tostring(reason or "capsule planning failed")
+		finish_report()
+		return nil, report
+	end
 	if type(surface) ~= "table" or type(pending) ~= "table"
 		or type(pending.seed) ~= "number" or type(next_map) ~= "table"
 		or next_map.map_slot ~= 2 or type(next_map.map_name) ~= "string"
 		or next_map.map_name == "" or type(next_map.map_preset) ~= "string" then
-		report.error = "stock underground seed/GenerateNextMap descriptor is incomplete"
-		return nil, report
+		return fail("stock underground seed/GenerateNextMap descriptor is incomplete")
 	end
 	local get_map_size = surface.GetMapSize
 	local point_fn = Global("point")
@@ -8912,25 +8948,23 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 		or type(get_shape) ~= "function" or type(world_to_hex) ~= "function"
 		or type(hex_to_world) ~= "function" or not object_grid or not buildable
 		or type(minimum_distance) ~= "number" or minimum_distance <= 0 then
-		report.error = "surface capsule planning APIs are unavailable"
-		return nil, report
+		return fail("surface capsule planning APIs are unavailable")
 	end
 	local size_ok, world_width, world_height = pcall(get_map_size, surface)
 	world_height = world_height or world_width
 	if not size_ok or type(world_width) ~= "number" or type(world_height) ~= "number"
 		or world_width <= 0 or world_height <= 0 then
-		report.error = "expanded surface extent is unavailable"
-		return nil, report
+		return fail("expanded surface extent is unavailable")
 	end
 	local shape = get_shape("Elevator")
 	if type(shape) ~= "table" or #shape <= 0 then
-		report.error = "Elevator passage footprint is unavailable"
-		return nil, report
+		return fail("Elevator passage footprint is unavailable")
 	end
 
 	-- Match the stock concrete/geyser exclusion without using FindPassageSpawnPos's random
 	-- passable-point fallback. The private permutation below simply tries another deterministic
-	-- center when FindBuildableAreaAround rejects one.
+	-- center when the bounded stock-equivalent search rejects one.
+	local marker_scan_started = now()
 	local concrete_markers = {}
 	local geyser_markers = {}
 	if type(surface.MapGet) == "function" then
@@ -8956,6 +8990,7 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 			end)
 		if geyser_ok and type(geysers) == "table" then geyser_markers = geysers end
 	end
+	report.marker_scan_ms = math.max(0, now() - marker_scan_started)
 	local deposit_filter
 	if #concrete_markers > 0 or #geyser_markers > 0 then
 		deposit_filter = function(q, r)
@@ -8991,43 +9026,166 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 	local span_x = math.floor(world_width - 2 * margin_x)
 	local span_y = math.floor(world_height - 2 * margin_y)
 	if span_x <= 0 or span_y <= 0 then
-		report.error = "expanded surface has no certified inner capsule domain"
-		return nil, report
+		return fail("expanded surface has no certified inner capsule domain")
 	end
 	local capsules = {}
 	local max_attempts = 512
-	while #capsules < report.capsules_required and report.attempts < max_attempts do
-		report.attempts = report.attempts + 1
-		local candidate_x = margin_x + (next_private() % span_x)
-		local candidate_y = margin_y + (next_private() % span_y)
-		local angle = (next_private() % 6) * 3600
-		local center = snap_world(point_fn(candidate_x, candidate_y))
-		local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
-			center, angle, shape, deposit_filter)
-		local accepted = find_ok and type(x) == "number" and type(y) == "number"
-			and x >= margin_x and x <= world_width - margin_x
-			and y >= margin_y and y <= world_height - margin_y
-		if accepted then
-			for _, capsule in ipairs(capsules) do
-				local dx, dy = x - capsule.x, y - capsule.y
-				if dx * dx + dy * dy < minimum_distance * minimum_distance then
+	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
+		report.bounded_used = true
+		local hex_find_buildable = Global("HexGridFindBuildable")
+		local validate_shape = Global("ValidateEachShapeHexPos")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		if type(hex_find_buildable) ~= "function" or type(validate_shape) ~= "function"
+			or type(unbuildable_fn) ~= "function" or type(buildable.GetZ) ~= "function"
+			or not buildable.z_grid or type(object_grid.GetBuildObstructions) ~= "function" then
+			return fail("bounded stock-equivalent capsule search APIs are unavailable")
+		end
+		local sentinel_ok, unbuildable_z = pcall(unbuildable_fn)
+		if not sentinel_ok or type(unbuildable_z) ~= "number" then
+			return fail("bounded stock-equivalent capsule search sentinel is unavailable")
+		end
+		local minimum_distance2 = minimum_distance * minimum_distance
+		local function bounded_find(center, angle)
+			-- This is the stock FindBuildableAreaAround body with the native ABI's max_depth supplied.
+			-- Preserve its slightly unusual per-search original_z lifetime, shape order, obstruction
+			-- order, deposit predicate, and `validated ~= true` continuation polarity exactly.
+			local original_z = false
+			local function shape_pos_filter(q, r)
+				local z = buildable:GetZ(q, r)
+				original_z = original_z or z
+				if z == unbuildable_z or z ~= original_z then return false end
+				local obstructions = object_grid:GetBuildObstructions(q, r)
+				if #obstructions > 0 then return false end
+				if deposit_filter and not deposit_filter(q, r) then return false end
+				return true
+			end
+			local function continue_check(q, r)
+				local x, y = hex_to_world(q, r)
+				local validated = validate_shape(shape, point_fn(x, y), angle, shape_pos_filter)
+				return validated ~= true
+			end
+			local hex_ok, q, r = pcall(world_to_hex, center)
+			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
+			local bq, br, depth = hex_find_buildable(q, r, object_grid, buildable.z_grid,
+				unbuildable_z, continue_check, report.bounded_max_depth)
+			if type(bq) ~= "number" or type(br) ~= "number" or type(depth) ~= "number" then
+				return nil
+			end
+			local x, y = hex_to_world(bq, br)
+			return x, y, depth, bq, br
+		end
+
+		local bounded_started = now()
+		while #capsules < report.capsules_required and report.attempts < max_attempts do
+			report.attempts = report.attempts + 1
+			local candidate_x = margin_x + (next_private() % span_x)
+			local candidate_y = margin_y + (next_private() % span_y)
+			local angle = (next_private() % 6) * 3600
+			local center = snap_world(point_fn(candidate_x, candidate_y))
+			report.bounded_search_calls = report.bounded_search_calls + 1
+			local search_ok, x, y, depth, q, r = pcall(bounded_find, center, angle)
+			if not search_ok then
+				report.bounded_search_ms = math.max(0, now() - bounded_started)
+				return fail("bounded stock-equivalent capsule search raised: " .. tostring(x))
+			end
+			local accepted = type(x) == "number" and type(y) == "number"
+			if accepted then
+				report.bounded_search_successes = report.bounded_search_successes + 1
+				report.bounded_search_max_returned_depth = math.max(
+					report.bounded_search_max_returned_depth, depth)
+				if x < margin_x or x > world_width - margin_x
+					or y < margin_y or y > world_height - margin_y then
+					report.bounded_search_margin_rejections =
+						report.bounded_search_margin_rejections + 1
 					accepted = false
-					break
 				end
 			end
-		end
-		if accepted then
-			local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
-			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then
-				accepted = false
-			else
+			if accepted then
+				for _, prior in ipairs(capsules) do
+					local dx, dy = x - prior.x, y - prior.y
+					if dx * dx + dy * dy < minimum_distance2 then
+						report.bounded_search_spacing_rejections =
+							report.bounded_search_spacing_rejections + 1
+						accepted = false
+						break
+					end
+				end
+			end
+			if accepted then
 				capsules[#capsules + 1] = {
 					index = #capsules + 1,
-					x = x, y = y, z = type(z) == "number" and z or 0,
-					q = q, r = r, angle = angle,
+					x = x, y = y, z = depth, q = q, r = r, angle = angle,
 				}
 			end
 		end
+		report.bounded_search_ms = math.max(0, now() - bounded_started)
+		if #capsules ~= report.capsules_required then
+			report.capsules_planned = #capsules
+			report.retryable_after_canonical_grid = true
+			return fail("bounded stock-equivalent planner did not find exactly two valid inner sites")
+		end
+
+		if not replay_only then
+			local full_started = now()
+			for _, capsule in ipairs(capsules) do
+				report.full_search_calls = report.full_search_calls + 1
+				local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
+					point_fn(capsule.x, capsule.y), capsule.angle, shape, deposit_filter)
+				if not find_ok or type(x) ~= "number" or type(y) ~= "number"
+					or x ~= capsule.x or y ~= capsule.y then
+					report.full_search_mismatches = report.full_search_mismatches + 1
+					report.full_search_ms = math.max(0, now() - full_started)
+					report.capsules_planned = #capsules
+					return fail("authoritative stock buildable search disagreed with bounded capsule center")
+				end
+				-- The saved Z field is the bounded search depth, exactly as stock
+				-- FindBuildableAreaAround returns it. The same-center proof call necessarily returns depth 0.
+				report.full_search_exact_centers = report.full_search_exact_centers + 1
+			end
+			report.full_search_ms = math.max(0, now() - full_started)
+			report.full_validation_complete = report.full_search_calls == report.capsules_required
+				and report.full_search_exact_centers == report.capsules_required
+				and report.full_search_mismatches == 0
+			report.plan_safe_for_publication = report.full_validation_complete
+		end
+	else
+		-- Literal v966 diagnostic branch. It is available only when the bounded sub-flag is explicitly
+		-- disabled; the v967 flag-on path never falls back to this unbounded search after suppression.
+		report.full_search_cap = max_attempts
+		while #capsules < report.capsules_required and report.attempts < max_attempts do
+			report.attempts = report.attempts + 1
+			local candidate_x = margin_x + (next_private() % span_x)
+			local candidate_y = margin_y + (next_private() % span_y)
+			local angle = (next_private() % 6) * 3600
+			local center = snap_world(point_fn(candidate_x, candidate_y))
+			report.full_search_calls = report.full_search_calls + 1
+			local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
+				center, angle, shape, deposit_filter)
+			local accepted = find_ok and type(x) == "number" and type(y) == "number"
+				and x >= margin_x and x <= world_width - margin_x
+				and y >= margin_y and y <= world_height - margin_y
+			if accepted then
+				for _, capsule in ipairs(capsules) do
+					local dx, dy = x - capsule.x, y - capsule.y
+					if dx * dx + dy * dy < minimum_distance * minimum_distance then
+						accepted = false
+						break
+					end
+				end
+			end
+			if accepted then
+				local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+				if hex_ok and type(q) == "number" and type(r) == "number" then
+					capsules[#capsules + 1] = {
+						index = #capsules + 1,
+						x = x, y = y, z = type(z) == "number" and z or 0,
+						q = q, r = r, angle = angle,
+					}
+				end
+			end
+		end
+		report.full_validation_complete = #capsules == report.capsules_required
+		report.plan_safe_for_publication = report.full_validation_complete
 	end
 	report.capsules_planned = #capsules
 	report.private_domain = Lazy.DOMAIN
@@ -9041,8 +9199,7 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 	report.concrete_markers = #concrete_markers
 	report.geyser_markers = #geyser_markers
 	if #capsules ~= report.capsules_required then
-		report.error = "private capsule planner did not find exactly two valid inner sites"
-		return nil, report
+		return fail("private capsule planner did not find exactly two valid inner sites")
 	end
 	local digest = private_seed
 	for _, capsule in ipairs(capsules) do
@@ -9051,8 +9208,17 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 		digest = (digest * 48271 + capsule.angle + 1) % modulus
 	end
 	report.plan_digest = digest
-	report.used = true
+	report.planner_used = true
+	finish_report()
 	return capsules, report
+end
+
+function Lazy.BuildCapsulePlan(surface, pending, next_map)
+	return Lazy.BuildCapsulePlanMode(surface, pending, next_map, false)
+end
+
+function Lazy.ReplayCapsulePlan(surface, pending, next_map)
+	return Lazy.BuildCapsulePlanMode(surface, pending, next_map, true)
 end
 
 -- v966 functional helpers. They are constructed only when either lazy-underground flag was
@@ -9367,7 +9533,8 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 	return created, nil
 end
 
-function Lazy.PrepareImplementationCapsules(surface)
+function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
+	after_canonical_grid = after_canonical_grid == true
 	if Lazy.IMPLEMENTATION ~= true then return true, "implementation disabled" end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
@@ -9393,9 +9560,40 @@ function Lazy.PrepareImplementationCapsules(surface)
 	local next_map = { map_name = descriptor.map_name, map_slot = descriptor.map_slot,
 		map_preset = descriptor.map_preset }
 	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
-	local twins, twin_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
+	if not capsules then
+		for key, value in pairs(plan_report or {}) do report[key] = value end
+		if plan_report and plan_report.retryable_after_canonical_grid == true
+			and not after_canonical_grid and Lazy.BOUNDED_CAPSULE_PLANNER == true then
+			report.pre_final_retry_requested = true
+			report.pre_final_plan_error = tostring(plan_report.error)
+			report.pre_final_attempts = tonumber(plan_report.attempts) or 0
+			report.pre_final_bounded_search_calls =
+				tonumber(plan_report.bounded_search_calls) or 0
+			report.pre_final_bounded_search_ms = tonumber(plan_report.bounded_search_ms) or 0
+			report.capsule_plan_retry_pending = true
+			LoadingStep("lazy underground capsule plan deferred to canonical grids", {
+				attempts = report.pre_final_attempts,
+				bounded_calls = report.pre_final_bounded_search_calls,
+				bounded_ms = report.pre_final_bounded_search_ms,
+				max_depth = plan_report.bounded_max_depth,
+			}, surface)
+			return false, "retry-after-canonical-grid", true
+		end
+		return Lazy.MarkBlocked(surface,
+			"bounded capsule plan failed: " .. tostring(plan_report and plan_report.error))
+	end
+	local twins, twin_report = Lazy.ReplayCapsulePlan(surface, pending, next_map)
+	local validation_contract = plan_report.plan_safe_for_publication == true
+	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
+		validation_contract = validation_contract and plan_report.full_search_calls == 2
+			and plan_report.full_search_exact_centers == 2
+			and plan_report.full_search_mismatches == 0
+			and twin_report.replay_only == true and twin_report.full_search_calls == 0
+	else
+		validation_contract = validation_contract and twin_report.plan_safe_for_publication == true
+	end
 	local repeat_exact = capsules and twins and plan_report.plan_digest == twin_report.plan_digest
-		and #capsules == 2 and #twins == 2
+		and #capsules == 2 and #twins == 2 and validation_contract
 	if repeat_exact then
 		for index, capsule in ipairs(capsules) do
 			local twin = twins[index]
@@ -9407,15 +9605,22 @@ function Lazy.PrepareImplementationCapsules(surface)
 		end
 	end
 	for key, value in pairs(plan_report or {}) do report[key] = value end
+	report.repeat_attempts = twin_report and twin_report.attempts or 0
+	report.repeat_bounded_search_calls = twin_report and twin_report.bounded_search_calls or 0
+	report.repeat_bounded_search_ms = twin_report and twin_report.bounded_search_ms or 0
+	report.repeat_full_search_calls = twin_report and twin_report.full_search_calls or -1
 	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
 	descriptor.capsules = capsules
 	descriptor.plan_digest = plan_report.plan_digest
+	descriptor.capsule_planner_version = Lazy.CAPSULE_PLANNER_VERSION
+	descriptor.capsule_planner_bounded = Lazy.BOUNDED_CAPSULE_PLANNER == true
+	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
 	descriptor.private_rng.final_state = plan_report.private_final_state
 	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	ReleaseRetainedNativeSourceMap(surface, "v966 final-domain capsules published")
+	ReleaseRetainedNativeSourceMap(surface, "v967 final-domain capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
@@ -9425,9 +9630,13 @@ function Lazy.PrepareImplementationCapsules(surface)
 	descriptor.state = "surface-capsules-published-awaiting-final-grid"
 	report.capsules_published = #created
 	report.deterministic_repeat = true
-	report.selection_grid_current = true
+	report.selection_grid_current = after_canonical_grid
 	report.final_grid_revalidation = false
-	report.plan_boundary = "immediately-before-canonical-final-surface-grid-rebuild"
+	report.plan_boundary = after_canonical_grid
+		and "after-first-canonical-grid-rebuild-before-capsule-closing-rebuild"
+		or "immediately-before-canonical-final-surface-grid-rebuild"
+	report.capsule_plan_retry_pending = false
+	report.capsule_plan_retry_used = after_canonical_grid
 	report.surface_markers_spawned = true
 	report.surface_capsule_objects_persisted = true
 	report.native_source_retention_released_before_t1 = true
@@ -9435,13 +9644,68 @@ function Lazy.PrepareImplementationCapsules(surface)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "published descriptor is not primitive")
 	end
+	LoadingStep("bounded lazy underground capsule plan published", {
+		attempts = report.attempts, bounded_calls = report.bounded_search_calls,
+		bounded_ms = report.bounded_search_ms, max_depth = report.bounded_max_depth,
+		max_returned_depth = report.bounded_search_max_returned_depth,
+		full_search_calls = report.full_search_calls,
+		full_search_ms = report.full_search_ms,
+		repeat_calls = report.repeat_bounded_search_calls,
+		retry_used = tostring(report.capsule_plan_retry_used == true),
+		total_ms = report.total_ms,
+	}, surface)
 	return true
 end
 
-function Lazy.PrepareImplementationCapsulesSafe(surface)
-	local call_ok, used, reason = pcall(Lazy.PrepareImplementationCapsules, surface)
-	if call_ok then return used == true, reason end
+function Lazy.PrepareImplementationCapsulesSafe(surface, after_canonical_grid)
+	local call_ok, used, reason, retry = pcall(
+		Lazy.PrepareImplementationCapsules, surface, after_canonical_grid)
+	if call_ok then return used == true, reason, retry == true end
 	return Lazy.MarkBlocked(surface, "pre-final capsule publication raised: " .. tostring(used))
+end
+
+function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reason, retry_rebuild)
+	if type(rebuild) ~= "function" then
+		return Lazy.MarkBlocked(surface, "canonical surface rebuild callback is unavailable")
+	end
+	local capsule_ok, capsule_err, retry_after_grid =
+		Lazy.PrepareImplementationCapsulesSafe(surface, false)
+	local rebuild_count = 0
+	local fallback_count = 0
+	local function canonical_rebuild(label)
+		rebuild_count = rebuild_count + 1
+		local ok, err = rebuild(label)
+		if ok ~= true and retry_rebuild == true then
+			fallback_count = fallback_count + 1
+			rebuild_count = rebuild_count + 1
+			local fallback_ok, fallback_err = rebuild(label .. " failure fallback")
+			if fallback_ok == true then return true, nil end
+			return false, tostring(err) .. " | fallback failed: " .. tostring(fallback_err)
+		end
+		return ok == true, err
+	end
+	local rebuild_ok, rebuild_err = canonical_rebuild(reason)
+	if rebuild_ok and retry_after_grid then
+		capsule_ok, capsule_err = Lazy.PrepareImplementationCapsulesSafe(surface, true)
+		if capsule_ok then
+			rebuild_ok, rebuild_err = canonical_rebuild(
+				reason .. " after fresh-grid capsule publication")
+		end
+	end
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(report) == "table" then
+		report.canonical_rebuilds_during_capsule_prepare = rebuild_count
+		report.canonical_rebuild_fallbacks_during_capsule_prepare = fallback_count
+		report.capsule_plan_retry_used = retry_after_grid == true and capsule_ok == true
+	end
+	if rebuild_ok ~= true then
+		Lazy.MarkBlocked(surface, "canonical Surface grid rebuild failed: " .. tostring(rebuild_err))
+		return false, rebuild_err
+	end
+	if capsule_ok ~= true then
+		return false, "lazy underground capsule publication failed: " .. tostring(capsule_err)
+	end
+	return true, nil
 end
 
 function Lazy.ValidatePublishedCapsules(surface, descriptor)
@@ -9757,7 +10021,7 @@ function Lazy.FinalizePlan(surface)
 		and reconstructed.callback_tag == Lazy.CALLBACK_TAG
 		and reconstructed.callback_version == Lazy.CALLBACK_VERSION
 	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
-	local repeat_capsules, repeat_report = Lazy.BuildCapsulePlan(
+	local repeat_capsules, repeat_report = Lazy.ReplayCapsulePlan(
 		surface, pending, next_map)
 	local repeat_exact = capsules ~= nil and repeat_capsules ~= nil
 		and plan_report.plan_digest == repeat_report.plan_digest
@@ -9777,6 +10041,10 @@ function Lazy.FinalizePlan(surface)
 	report.descriptor_captured = true
 	report.capsule_plan_pending = false
 	report.deterministic_repeat = repeat_exact
+	report.repeat_attempts = repeat_report and repeat_report.attempts or 0
+	report.repeat_bounded_search_calls = repeat_report and repeat_report.bounded_search_calls or 0
+	report.repeat_bounded_search_ms = repeat_report and repeat_report.bounded_search_ms or 0
+	report.repeat_full_search_calls = repeat_report and repeat_report.full_search_calls or -1
 	report.plan_boundary = "after-canonical-final-grid-rebuild-before-surface-publication"
 	report.selection_grid_current = surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true
 	report.final_grid_revalidation = report.selection_grid_current
@@ -9791,7 +10059,7 @@ function Lazy.FinalizePlan(surface)
 		and report.consumer_seed_match == true and report.consumer_map_match == true
 		and report.consumer_callback_tag_match == true
 		and report.consumer_callback_publication_match == true
-	report.used = report.used == true and report.recipe_consumer_exact == true
+	report.used = plan_report.planner_used == true and report.recipe_consumer_exact == true
 	report.enablement_ready = false
 	if report.recipe_consumer_exact ~= true then
 		report.enablement_blocker =
@@ -13441,19 +13709,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if type(pause_ild) == "function" then
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
-				local capsule_ok, capsule_err = true, nil
 				local lazy = SuperBigMap.LazyUndergroundFeasibility
+				local revalidation_ok, revalidation_err
 				if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
-					capsule_ok, capsule_err = lazy.PrepareImplementationCapsulesSafe(map)
+					revalidation_ok, revalidation_err =
+						lazy.PrepareImplementationCapsulesAroundRebuild(map,
+							rebuild_surface_final, "post-pipeline scheduled revalidation",
+							deferred_surface_completion)
+				else
+					revalidation_ok, revalidation_err = rebuild_surface_final(
+						"post-pipeline scheduled revalidation")
 				end
-				local revalidation_ok, revalidation_err = rebuild_surface_final(
-					"post-pipeline scheduled revalidation")
-				if capsule_ok ~= true then
-					revalidation_ok = false
-					revalidation_err = "lazy underground capsule publication failed: "
-						.. tostring(capsule_err)
-				end
-				if not revalidation_ok and capsule_ok == true and deferred_surface_completion then
+				if not revalidation_ok and not (type(lazy) == "table"
+					and lazy.IMPLEMENTATION == true) and deferred_surface_completion then
 					-- The accepted pre-optimization behavior rebuilt at this exact point in the
 					-- original thread. Retry that full operation once; publish only on verified success.
 					local fallback_ok, fallback_err = rebuild_surface_final(
@@ -13497,17 +13765,15 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if deferred_surface_completion then
 					-- If a new real-time thread cannot be created, fall back synchronously to the
 					-- former immediate full rebuild before releasing the loading gate.
-					local capsule_ok, capsule_err = true, nil
 					local lazy = SuperBigMap.LazyUndergroundFeasibility
+					local fallback_ok, fallback_err
 					if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
-						capsule_ok, capsule_err = lazy.PrepareImplementationCapsulesSafe(map)
-					end
-					local fallback_ok, fallback_err = rebuild_surface_final(
-						"post-pipeline scheduling failure fallback")
-					if capsule_ok ~= true then
-						fallback_ok = false
-						fallback_err = "lazy underground capsule publication failed: "
-							.. tostring(capsule_err)
+						fallback_ok, fallback_err =
+							lazy.PrepareImplementationCapsulesAroundRebuild(map,
+								rebuild_surface_final, "post-pipeline scheduling failure fallback", false)
+					else
+						fallback_ok, fallback_err = rebuild_surface_final(
+							"post-pipeline scheduling failure fallback")
 					end
 					if fallback_ok then
 						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
