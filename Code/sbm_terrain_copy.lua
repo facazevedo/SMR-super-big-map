@@ -1771,6 +1771,13 @@ end
 -- core into the original height field. The quintic has zero first and second derivative at both
 -- ends, so neither the core join nor the untouched outer boundary leaves a lighting scar.
 local function CreateNaturalMountainBaseBuildableAprons(map, grid)
+	local precise_ticks = Global("GetPreciseTicks")
+	local function now_ms()
+		if type(precise_ticks) ~= "function" then return 0 end
+		local ok, value = pcall(precise_ticks)
+		return ok and type(value) == "number" and value or 0
+	end
+	local total_started_ms = now_ms()
 	if not cfg_bool("CREATE_NATURAL_MOUNTAIN_BASE_BUILDABLE_APRONS", true) then
 		return false, { reason = "disabled", created = 0, modified = 0 }
 	end
@@ -1982,12 +1989,13 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 			if #selected >= maximum_count then break end
 		end
 	end
-	local pause = Global("PauseInfiniteLoopDetection")
-	local resume = Global("ResumeInfiniteLoopDetection")
-	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
+	local planning_finished_ms = now_ms()
 	local modified = 0
 	local shaped = 0
-	local ok_apply, apply_error = pcall(function()
+
+	-- Keep this literal scalar implementation as the compatibility path. Native failures may enter
+	-- it only after every already-copied patch has been restored from its exact preimage.
+	local function legacy_apply(target_grid)
 		for index, candidate in ipairs(selected) do
 			-- An already-flat mountain base is a zero-edit opportunity. Retain its original terrain
 			-- exactly; only marginal sites enter the feathered shaping loop below.
@@ -2025,7 +2033,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 									local smooth = t * t * t * (t * (t * 6 - 15) + 10)
 									weight = 1 - smooth
 								end
-								local old = grid:get(x, y)
+								local old = target_grid:get(x, y)
 								if type(old) == "number" then
 									local target = candidate.center
 										+ candidate.gx * dx + candidate.gy * dy
@@ -2035,7 +2043,7 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 										+ detail * detail_retention + 0.5)
 									value = math.max(0, math.min(65535, value))
 									if value ~= old then
-										grid:set(x, y, value)
+										target_grid:set(x, y, value)
 										modified = modified + 1
 									end
 								end
@@ -2045,8 +2053,313 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 				end
 			end
 		end
-	end)
+	end
+
+	local native_new_grid = Global("NewComputeGrid")
+	local native_resample = Global("GridResample")
+	local native_mul_div_add = Global("GridMulDivAdd")
+	local native_add_mul_div = Global("GridAddMulDiv")
+	local native_add = Global("GridAdd")
+	local native_clamp = Global("GridClamp")
+	local native_abs = Global("GridAbs")
+	local native_count = Global("GridCount")
+	local native_repack = Global("GridRepack")
+	local native_is_compute = Global("IsComputeGrid")
+	local point_fn = Global("point")
+	local box_fn = Global("box")
+	local native_requested = cfg_bool("OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER", true)
+	local native_available = native_requested
+		and type(native_new_grid) == "function" and type(native_resample) == "function"
+		and type(native_mul_div_add) == "function" and type(native_add_mul_div) == "function"
+		and type(native_add) == "function" and type(native_clamp) == "function"
+		and type(native_abs) == "function" and type(native_count) == "function"
+		and type(native_repack) == "function" and type(native_is_compute) == "function"
+		and type(point_fn) == "function" and type(box_fn) == "function"
+		and type(grid.copyrect) == "function" and type(grid.new_instance) == "function"
+	local native_weight_scale, native_height_scale, native_sample_step = 4096, 256, 4
+	local native_raster_cells, native_mask_samples, native_core_samples = 0, 0, 0
+	local native_inner_restored_patch_cells = 0
+	local native_raster_used, native_raster_fallback = false, false
+	local native_raster_error = ""
+	local native_patch_journal_used, native_patch_journal_snapshots = false, 0
+	local native_patch_journal_rollback_failed = false
+	local native_raster_ms, legacy_raster_ms = 0, 0
+	local journal = {}
+
+	-- These cell-center bounds are the exact complement of the physical perimeter ring. Native
+	-- packing is allowed to round first; then the local U16 preimage restores this rectangle.
+	local inner_x0 = math.ceil(ring_sectors * sector_w - 0.5)
+	local inner_y0 = math.ceil(ring_sectors * sector_h - 0.5)
+	local inner_x1 = math.ceil((count_x - ring_sectors) * sector_w - 0.5) - 1
+	local inner_y1 = math.ceil((count_y - ring_sectors) * sector_h - 0.5) - 1
+
+	local function apron_weight(candidate, short_radius, long_radius, dx, dy)
+		local u = dx * candidate.mountain_x + dy * candidate.mountain_y
+		local v = -dx * candidate.mountain_y + dy * candidate.mountain_x
+		local ru, rv = u / short_radius, v / long_radius
+		local radius = math.sqrt(ru * ru + rv * rv)
+		if radius >= 1.12 then return 0, false end
+		local nx, ny = 1, 0
+		if radius > 0.0001 then nx, ny = ru / radius, rv / radius end
+		local lobe3 = nx * nx * nx - 3 * nx * ny * ny
+		local lobe2 = nx * nx - ny * ny
+		local boundary = 1 + 0.055 * lobe3 + 0.035 * lobe2
+		local normalized = radius / boundary
+		if normalized >= 1 then return 0, false end
+		if normalized <= core_fraction then return 1, true end
+		local t = (normalized - core_fraction) / (1 - core_fraction)
+		local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+		return 1 - smooth, false
+	end
+
+	-- Always attempt every copy and every free. Reverse replay is required before legacy fallback;
+	-- a failed replay is fatal because the scalar path must never start from a partially edited grid.
+	local function release_native_patch_journal(restore)
+		local errors = {}
+		for journal_index = #journal, 1, -1 do
+			local record = journal[journal_index]
+			if restore and record and record.snapshot then
+				local ok_copy, copy_error = pcall(grid.copyrect, grid, record.snapshot,
+					record.local_box, record.destination)
+				if not ok_copy then errors[#errors + 1] = "restore: " .. tostring(copy_error) end
+			end
+			if record and record.snapshot and type(record.snapshot.free) == "function" then
+				local ok_free, free_error = pcall(record.snapshot.free, record.snapshot)
+				if not ok_free then errors[#errors + 1] = "free: " .. tostring(free_error) end
+			end
+			if record then record.snapshot = nil end
+			journal[journal_index] = nil
+		end
+		return #errors == 0, table.concat(errors, " | ")
+	end
+
+	local function apply_native_patch(candidate, index)
+		local owned, owned_lookup = {}, {}
+		local source_native, journaled = nil, false
+		local function own(value)
+			if value and value ~= source_native and not owned_lookup[value] then
+				owned_lookup[value] = true
+				owned[#owned + 1] = value
+			end
+			return value
+		end
+		local ok, changed, raster_cells, mask_samples, core_samples,
+			restored_patch_cells = pcall(function()
+			local variant = ((candidate.sector_x * 17 + candidate.sector_y * 31
+				+ index * 13) % 9) - 4
+			local short_radius = outer_short * (1 + variant * 0.012)
+			local long_radius = outer_long * (1 - variant * 0.009)
+			local x0 = math.max(0, math.floor(candidate.x - long_radius - 2))
+			local y0 = math.max(0, math.floor(candidate.y - long_radius - 2))
+			local x1 = math.min(width - 1, math.ceil(candidate.x + long_radius + 2))
+			local y1 = math.min(height - 1, math.ceil(candidate.y + long_radius + 2))
+			local local_width, local_height = x1 - x0 + 1, y1 - y0 + 1
+			assert(local_width > 1 and local_height > 1, "empty native apron bounds")
+			local local_box = box_fn(0, 0, local_width, local_height)
+			local source_box = box_fn(x0, y0, x1 + 1, y1 + 1)
+			source_native = grid:new_instance(local_width, local_height)
+			assert(source_native and type(source_native.copyrect) == "function",
+				"native apron source allocation failed")
+			source_native:copyrect(grid, source_box, point_fn(0, 0))
+			local source = own(native_repack(source_native, "f", 32, true))
+			local source_format, source_bits
+			if source then source_format, source_bits = native_is_compute(source) end
+			assert(source and string.lower(tostring(source_format)) == "f" and source_bits == 32,
+				"native apron f32 source conversion failed")
+			local height_grid = own(source:clone())
+			assert(height_grid, "native apron height snapshot failed")
+			native_mul_div_add(height_grid, native_height_scale, 1, 0)
+
+			local plane_seed = own(native_new_grid(2, 2, "f", 32))
+			assert(plane_seed, "native apron plane allocation failed")
+			local function scaled_plane(x, y)
+				local value = candidate.center + candidate.gx * (x - candidate.x)
+					+ candidate.gy * (y - candidate.y)
+				return math.floor(value * native_height_scale + 0.5)
+			end
+			plane_seed:set(0, 0, scaled_plane(x0, y0))
+			plane_seed:set(1, 0, scaled_plane(x1, y0))
+			plane_seed:set(0, 1, scaled_plane(x0, y1))
+			plane_seed:set(1, 1, scaled_plane(x1, y1))
+			local plane = own(native_resample(plane_seed, local_width, local_height, true))
+			assert(plane, "native apron plane resample failed")
+
+			local coarse_width = math.ceil((local_width - 1) / native_sample_step) + 1
+			local coarse_height = math.ceil((local_height - 1) / native_sample_step) + 1
+			local coarse = own(native_new_grid(coarse_width, coarse_height, "f", 32))
+			assert(coarse, "native apron coarse-mask allocation failed")
+			for coarse_y = 0, coarse_height - 1 do
+				local y = y0 + coarse_y * (local_height - 1) / (coarse_height - 1)
+				for coarse_x = 0, coarse_width - 1 do
+					local x = x0 + coarse_x * (local_width - 1) / (coarse_width - 1)
+					local weight = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
+					coarse:set(coarse_x, coarse_y,
+						math.floor(weight * native_weight_scale + 0.5))
+				end
+			end
+			local mask = own(native_resample(coarse, local_width, local_height, true))
+			assert(mask, "native apron mask resample failed")
+			native_clamp(mask, 0, native_weight_scale)
+
+			-- Re-evaluate the complete conservative core box at full resolution. The mask is forced to
+			-- one here, and the final packed U16 result is overwritten with the literal scalar plane.
+			local core_extent = math.ceil(long_radius * core_fraction * 1.12 + 2)
+			local core_x0 = math.max(x0, candidate.x - core_extent)
+			local core_y0 = math.max(y0, candidate.y - core_extent)
+			local core_x1 = math.min(x1, candidate.x + core_extent)
+			local core_y1 = math.min(y1, candidate.y + core_extent)
+			local exact_core_samples = 0
+			for y = math.floor(core_y0), math.ceil(core_y1) do
+				for x = math.floor(core_x0), math.ceil(core_x1) do
+					local _, in_core = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
+					if in_core then mask:set(x - x0, y - y0, native_weight_scale) end
+					exact_core_samples = exact_core_samples + 1
+				end
+			end
+
+			local weight_cube = own(mask:clone())
+			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
+			native_mul_div_add(weight_cube, mask, native_weight_scale, 0)
+			local inverse_cube = own(weight_cube:clone())
+			native_mul_div_add(inverse_cube, -1, 1, native_weight_scale)
+			local result = own(height_grid:clone())
+			native_mul_div_add(result, inverse_cube, native_weight_scale, 0)
+			local plane_term = own(plane:clone())
+			native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)
+			native_add(result, plane_term)
+			native_mul_div_add(result, 1, 1, 128)
+			native_mul_div_add(result, 1, native_height_scale, 0)
+			native_clamp(result, 0, 65535)
+			local packed_result = own(native_repack(result, native_is_compute(grid)))
+			assert(packed_result, "native apron result conversion failed")
+
+			for y = math.floor(core_y0), math.ceil(core_y1) do
+				for x = math.floor(core_x0), math.ceil(core_x1) do
+					local _, in_core = apron_weight(candidate, short_radius, long_radius,
+						x - candidate.x, y - candidate.y)
+					if in_core then
+						local value = math.floor(candidate.center + candidate.gx * (x - candidate.x)
+							+ candidate.gy * (y - candidate.y) + 0.5)
+						packed_result:set(x - x0, y - y0,
+							math.max(0, math.min(65535, value)))
+					end
+				end
+			end
+
+			local restore_x0, restore_y0 = math.max(x0, inner_x0), math.max(y0, inner_y0)
+			local restore_x1, restore_y1 = math.min(x1, inner_x1), math.min(y1, inner_y1)
+			local restored = 0
+			if restore_x0 <= restore_x1 and restore_y0 <= restore_y1 then
+				local restore_box = box_fn(restore_x0 - x0, restore_y0 - y0,
+					restore_x1 - x0 + 1, restore_y1 - y0 + 1)
+				packed_result:copyrect(source_native, restore_box,
+					point_fn(restore_x0 - x0, restore_y0 - y0))
+				restored = (restore_x1 - restore_x0 + 1) * (restore_y1 - restore_y0 + 1)
+			end
+
+			local result_difference = native_repack(packed_result, "f", 32, true)
+			if result_difference == packed_result then result_difference = packed_result:clone() end
+			result_difference = own(result_difference)
+			local source_difference = own(native_repack(source_native, "f", 32, true))
+			assert(result_difference and result_difference ~= packed_result and source_difference,
+				"native apron difference conversion failed")
+			native_add_mul_div(result_difference, source_difference, -1)
+			native_abs(result_difference)
+			-- GridCount uses a half-open lower bound: (minimum, maximum]. Zero therefore counts every
+			-- nonzero U16 difference, including the one-unit transition changes omitted by a bound of 1.
+			local changed_cells = native_count(result_difference, 0, 2147483647)
+
+			-- Journal ownership is established before copyback so even a partially failed copy is
+			-- covered. The snapshot deliberately stays out of the transient ownership list.
+			journal[#journal + 1] = {
+				snapshot = source_native, local_box = local_box, destination = point_fn(x0, y0),
+			}
+			journaled = true
+			native_patch_journal_used = true
+			native_patch_journal_snapshots = native_patch_journal_snapshots + 1
+			grid:copyrect(packed_result, local_box, point_fn(x0, y0))
+			return changed_cells, local_width * local_height,
+				coarse_width * coarse_height, exact_core_samples, restored
+		end)
+		local cleanup_errors = {}
+		for owned_index = #owned, 1, -1 do
+			local value = owned[owned_index]
+			if value and type(value.free) == "function" then
+				local free_ok, free_error = pcall(value.free, value)
+				if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
+			end
+		end
+		if not journaled and source_native and type(source_native.free) == "function" then
+			local free_ok, free_error = pcall(source_native.free, source_native)
+			if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
+		end
+		if not ok then error(changed, 0) end
+		if #cleanup_errors > 0 then
+			error("native apron transient cleanup failed: "
+				.. table.concat(cleanup_errors, " | "), 0)
+		end
+		return changed, raster_cells, mask_samples, core_samples, restored_patch_cells
+	end
+
+	local function native_apply()
+		for index, candidate in ipairs(selected) do
+			if candidate.requires_edit then
+				shaped = shaped + 1
+				local changed, raster_cells, mask_samples, core_samples, restored =
+					apply_native_patch(candidate, index)
+				modified = modified + changed
+				native_raster_cells = native_raster_cells + raster_cells
+				native_mask_samples = native_mask_samples + mask_samples
+				native_core_samples = native_core_samples + core_samples
+				native_inner_restored_patch_cells = native_inner_restored_patch_cells + restored
+			end
+		end
+	end
+
+	local pause = Global("PauseInfiniteLoopDetection")
+	local resume = Global("ResumeInfiniteLoopDetection")
+	if type(pause) == "function" then pcall(pause, "SBMMountainBaseAprons") end
+	local ok_apply, apply_error
+	if native_available then
+		local native_started_ms = now_ms()
+		local ok_native, native_error = pcall(native_apply)
+		native_raster_ms = now_ms() - native_started_ms
+		if ok_native then
+			local released, release_error = release_native_patch_journal(false)
+			if not released then
+				if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+				error("native apron journal cleanup failed: " .. tostring(release_error), 0)
+			end
+			native_raster_used, ok_apply = true, true
+		else
+			native_raster_fallback = true
+			native_raster_error = tostring(native_error)
+			local restored, restore_error = release_native_patch_journal(true)
+			if not restored then
+				native_patch_journal_rollback_failed = true
+				if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+				error("native apron rollback failed: " .. tostring(restore_error), 0)
+			end
+			modified, shaped = 0, 0
+			native_raster_cells, native_mask_samples, native_core_samples = 0, 0, 0
+			native_inner_restored_patch_cells = 0
+			local legacy_started_ms = now_ms()
+			ok_apply, apply_error = pcall(legacy_apply, grid)
+			legacy_raster_ms = now_ms() - legacy_started_ms
+		end
+	else
+		if native_requested then
+			native_raster_fallback = true
+			native_raster_error = "native grid APIs unavailable"
+		end
+		local legacy_started_ms = now_ms()
+		ok_apply, apply_error = pcall(legacy_apply, grid)
+		legacy_raster_ms = now_ms() - legacy_started_ms
+	end
 	if type(resume) == "function" then pcall(resume, "SBMMountainBaseAprons") end
+	local raster_finished_ms = now_ms()
 
 	local centers = {}
 	if ok_apply then
@@ -2073,6 +2386,23 @@ local function CreateNaturalMountainBaseBuildableAprons(map, grid)
 		candidates = #candidates, considered = considered,
 		relief_rejections = relief_rejections, slope_rejections = slope_rejections,
 		ring_sectors = ring_sectors, error = ok_apply and "" or tostring(apply_error),
+		native_raster_requested = native_requested,
+		native_raster_used = native_raster_used,
+		native_raster_fallback = native_raster_fallback,
+		native_raster_error = native_raster_error,
+		native_sample_step = native_sample_step,
+		native_raster_cells = native_raster_cells,
+		native_mask_samples = native_mask_samples,
+		native_core_samples = native_core_samples,
+		native_inner_restored_patch_cells = native_inner_restored_patch_cells,
+		native_patch_journal_used = native_patch_journal_used,
+		native_patch_journal_snapshots = native_patch_journal_snapshots,
+		native_patch_journal_rollback_failed = native_patch_journal_rollback_failed,
+		planning_ms = planning_finished_ms - total_started_ms,
+		native_raster_ms = native_raster_ms,
+		legacy_raster_ms = legacy_raster_ms,
+		raster_ms = raster_finished_ms - planning_finished_ms,
+		total_ms = raster_finished_ms - total_started_ms,
 	}
 	map.SuperBigMapNaturalMountainBaseApronReport = report
 	LoadingStep("natural mountain-base buildable aprons", report, map)

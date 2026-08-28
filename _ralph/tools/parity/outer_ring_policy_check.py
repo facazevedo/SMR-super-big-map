@@ -732,6 +732,77 @@ static_checks = {
     ),
     "natural_aprons_use_irregular_boundary": "lobe3" in aprons and "lobe2" in aprons,
     "natural_aprons_use_quintic_feather": "t * t * t * (t * (t * 6 - 15) + 10)" in aprons,
+    "natural_aprons_native_raster_is_default_on_and_compiled": (
+        "config.OptimizeMountainBaseApronNativeRaster = true" in CONFIG
+        and "C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER" in CONFIG
+        and 'cfg_bool("OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER", true)' in aprons
+    ),
+    "natural_aprons_native_raster_uses_bounded_step4_fixed_point": all(
+        token in aprons
+        for token in (
+            "native_weight_scale, native_height_scale, native_sample_step = 4096, 256, 4",
+            "math.ceil((local_width - 1) / native_sample_step) + 1",
+            "native_resample(coarse, local_width, local_height, true)",
+            "native_mul_div_add(weight_cube, mask, native_weight_scale, 0)",
+            "native_mul_div_add(result, inverse_cube, native_weight_scale, 0)",
+            "native_mul_div_add(plane_term, weight_cube, native_weight_scale, 0)",
+            "native_repack(result, native_is_compute(grid))",
+            "if result_difference == packed_result then result_difference = packed_result:clone() end",
+            'string.lower(tostring(source_format)) == "f" and source_bits == 32',
+            "native_count(result_difference, 0, 2147483647)",
+        )
+    ),
+    "natural_aprons_native_raster_preserves_literal_fallback_and_exact_core": (
+        "local function legacy_apply(target_grid)" in aprons
+        and "local old = target_grid:get(x, y)" in aprons
+        and "target_grid:set(x, y, value)" in aprons
+        and "local _, in_core = apron_weight" in aprons
+        and "packed_result:set(x - x0, y - y0," in aprons
+        and "math.floor(candidate.center + candidate.gx * (x - candidate.x)" in aprons
+    ),
+    "natural_aprons_native_raster_restores_inner_u16_after_rounding": appears_in_order(
+        aprons,
+        "native_mul_div_add(result, 1, native_height_scale, 0)",
+        "local packed_result = own(native_repack(result, native_is_compute(grid)))",
+        "packed_result:copyrect(source_native, restore_box",
+        "grid:copyrect(packed_result, local_box, point_fn(x0, y0))",
+    ),
+    "natural_aprons_native_raster_journals_before_copyback_and_rolls_back_reverse": (
+        appears_in_order(
+            aprons,
+            "journal[#journal + 1] = {",
+            "journaled = true",
+            "grid:copyrect(packed_result, local_box, point_fn(x0, y0))",
+        )
+        and "for journal_index = #journal, 1, -1 do" in aprons
+        and "pcall(grid.copyrect, grid, record.snapshot" in aprons
+        and "local restored, restore_error = release_native_patch_journal(true)" in aprons
+        and "if not restored then" in aprons
+        and "native_patch_journal_rollback_failed = true" in aprons
+        and "native apron rollback failed" in aprons
+        and "ok_apply, apply_error = pcall(legacy_apply, grid)" in aprons
+    ),
+    "natural_aprons_native_raster_owns_patch_snapshots_transactionally": (
+        "value ~= source_native" in aprons
+        and "if not journaled and source_native" in aprons
+        and "release_native_patch_journal(false)" in aprons
+        and "record.snapshot = nil" in aprons
+        and "journal[journal_index] = nil" in aprons
+    ),
+    "natural_aprons_native_raster_reports_operations_and_timings": all(
+        token in aprons
+        for token in (
+            "native_raster_requested = native_requested",
+            "native_raster_used = native_raster_used",
+            "native_raster_fallback = native_raster_fallback",
+            "native_patch_journal_snapshots = native_patch_journal_snapshots",
+            "native_patch_journal_rollback_failed = native_patch_journal_rollback_failed",
+            "planning_ms = planning_finished_ms - total_started_ms",
+            "native_raster_ms = native_raster_ms",
+            "legacy_raster_ms = legacy_raster_ms",
+            "total_ms = raster_finished_ms - total_started_ms",
+        )
+    ),
     "natural_aprons_have_no_scenario_special_case": (
         "14N134W" not in aprons and "A17" not in aprons
     ),
@@ -918,7 +989,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_943": "'version', 943" in METADATA,
+    "version_is_944": "'version', 944" in METADATA,
 }
 
 case_results = []
@@ -985,6 +1056,117 @@ feather_checks = {
     "outer_join_has_zero_slope": abs(
         (apron_weight(1) - apron_weight(1 - eps)) / eps
     ) < 1e-5,
+}
+
+
+def lobed_apron_weight(
+    dx: float,
+    dy: float,
+    mountain_x: float,
+    mountain_y: float,
+    short_radius: float,
+    long_radius: float,
+    core_fraction: float = 0.2,
+) -> tuple[float, bool]:
+    """Exact scalar natural-apron mask predicate used by production."""
+    u = dx * mountain_x + dy * mountain_y
+    v = -dx * mountain_y + dy * mountain_x
+    ru, rv = u / short_radius, v / long_radius
+    radius = math.hypot(ru, rv)
+    if radius >= 1.12:
+        return 0.0, False
+    nx, ny = (1.0, 0.0) if radius <= 0.0001 else (ru / radius, rv / radius)
+    boundary = 1 + 0.055 * (nx**3 - 3 * nx * ny**2) + 0.035 * (nx**2 - ny**2)
+    normalized = radius / boundary
+    if normalized >= 1:
+        return 0.0, False
+    if normalized <= core_fraction:
+        return 1.0, True
+    t = (normalized - core_fraction) / (1 - core_fraction)
+    smooth = t**3 * (t * (t * 6 - 15) + 10)
+    return 1 - smooth, False
+
+
+# Fail-closed, deterministic certificate for the v944 endpoint-aligned four-cell sampler. It
+# spans every deterministic radius variant and four rotations; exact full-resolution core cells
+# are forced to one just as production does. Cube-weight error measures the actual blend operand.
+natural_native_errors: list[float] = []
+natural_native_cases = 0
+natural_native_full_cells = 0
+natural_native_coarse_samples = 0
+natural_native_tested_cells = 0
+natural_native_core_exact = True
+for natural_variant in range(-4, 5):
+    natural_short = 200.0 * (1 + natural_variant * 0.012)
+    natural_long = 270.0 * (1 - natural_variant * 0.009)
+    natural_extent = math.ceil(natural_long + 2)
+    natural_size = natural_extent * 2 + 1
+    natural_coarse_size = math.ceil((natural_size - 1) / 4) + 1
+    for natural_angle in (0.0, 0.417, 1.113, 2.401):
+        natural_mx, natural_my = math.cos(natural_angle), math.sin(natural_angle)
+        coarse = [
+            [
+                math.floor(
+                    lobed_apron_weight(
+                        -natural_extent
+                        + cx * (natural_size - 1) / (natural_coarse_size - 1),
+                        -natural_extent
+                        + cy * (natural_size - 1) / (natural_coarse_size - 1),
+                        natural_mx,
+                        natural_my,
+                        natural_short,
+                        natural_long,
+                    )[0]
+                    * 4096
+                    + 0.5
+                )
+                / 4096
+                for cx in range(natural_coarse_size)
+            ]
+            for cy in range(natural_coarse_size)
+        ]
+        for py in range(0, natural_size, 2):
+            fy = py * (natural_coarse_size - 1) / (natural_size - 1)
+            iy = min(natural_coarse_size - 2, math.floor(fy))
+            ty = fy - iy
+            for px in range(0, natural_size, 2):
+                fx = px * (natural_coarse_size - 1) / (natural_size - 1)
+                ix = min(natural_coarse_size - 2, math.floor(fx))
+                tx = fx - ix
+                top = coarse[iy][ix] * (1 - tx) + coarse[iy][ix + 1] * tx
+                bottom = coarse[iy + 1][ix] * (1 - tx) + coarse[iy + 1][ix + 1] * tx
+                sampled = max(0.0, min(1.0, top * (1 - ty) + bottom * ty))
+                exact, in_core = lobed_apron_weight(
+                    px - natural_extent,
+                    py - natural_extent,
+                    natural_mx,
+                    natural_my,
+                    natural_short,
+                    natural_long,
+                )
+                if in_core:
+                    sampled = 1.0
+                    natural_native_core_exact = natural_native_core_exact and sampled == exact
+                natural_native_errors.append(abs(sampled**3 - exact**3))
+                natural_native_tested_cells += 1
+        natural_native_cases += 1
+        natural_native_full_cells += natural_size * natural_size
+        natural_native_coarse_samples += natural_coarse_size * natural_coarse_size
+
+natural_native_sorted = sorted(natural_native_errors)
+natural_native_mean = sum(natural_native_errors) / len(natural_native_errors)
+natural_native_p99 = natural_native_sorted[math.floor(0.99 * len(natural_native_sorted))]
+natural_native_max = max(natural_native_errors)
+natural_native_sampler_checks = {
+    "all_36_variant_rotation_cases_are_present": natural_native_cases == 36,
+    "sampled_cells_exceed_two_million": natural_native_tested_cells > 2_000_000,
+    "full_resolution_core_is_exact": natural_native_core_exact,
+    "mean_cube_weight_error_below_0_00012": natural_native_mean < 0.00012,
+    "p99_cube_weight_error_below_0_0013": natural_native_p99 < 0.0013,
+    "max_cube_weight_error_below_0_0019": natural_native_max < 0.0019,
+    "coarse_sampling_reduces_mask_evaluations_by_at_least_15x": (
+        natural_native_full_cells / natural_native_coarse_samples >= 15
+    ),
 }
 
 inner_rectangle = (81920.0, 81920.0, 737280.0, 737280.0)
@@ -1838,6 +2020,7 @@ report = {
     "feather_checks": feather_checks,
     "guard_prefilter_checks": guard_prefilter_checks,
     "native_raster_checks": native_raster_checks,
+    "natural_native_sampler_checks": natural_native_sampler_checks,
     "rolling_scan_checks": rolling_scan_checks,
     "native_discovery_checks": native_discovery_checks,
     "refine_rolling_checks": refine_rolling_checks,
@@ -1886,6 +2069,16 @@ report = {
         "mask_p99_absolute_error": native_mask_p99_error,
         "mask_max_absolute_error": native_mask_max_error,
     },
+    "natural_native_sampler_metrics": {
+        "cases": natural_native_cases,
+        "full_cells": natural_native_full_cells,
+        "tested_cells": natural_native_tested_cells,
+        "coarse_samples": natural_native_coarse_samples,
+        "sample_reduction": natural_native_full_cells / natural_native_coarse_samples,
+        "cube_weight_mean_absolute_error": natural_native_mean,
+        "cube_weight_p99_absolute_error": natural_native_p99,
+        "cube_weight_max_absolute_error": natural_native_max,
+    },
     "preferred_candidates": preferred,
 }
 report["static_passed"] = sum(static_checks.values())
@@ -1909,6 +2102,8 @@ report["guard_prefilter_total"] = len(guard_prefilter_checks)
 report["guard_prefilter_samples"] = guard_samples
 report["native_raster_passed"] = sum(native_raster_checks.values())
 report["native_raster_total"] = len(native_raster_checks)
+report["natural_native_sampler_passed"] = sum(natural_native_sampler_checks.values())
+report["natural_native_sampler_total"] = len(natural_native_sampler_checks)
 report["rolling_scan_passed"] = sum(rolling_scan_checks.values())
 report["rolling_scan_total"] = len(rolling_scan_checks)
 report["native_discovery_passed"] = sum(native_discovery_checks.values())
@@ -1932,6 +2127,7 @@ report["ok"] = (
     and all(feather_checks.values())
     and all(guard_prefilter_checks.values())
     and all(native_raster_checks.values())
+    and all(natural_native_sampler_checks.values())
     and all(rolling_scan_checks.values())
     and all(native_discovery_checks.values())
     and all(refine_rolling_checks.values())

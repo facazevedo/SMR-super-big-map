@@ -289,6 +289,10 @@ config.TopUpEnrichmentMinimumHexDistance = 3
 config.MountainBaseApronMaximumCount = 288
 config.MountainBaseApronCoreRadiusHexes = 4
 config.MountainBaseApronFeatherRadiusHexes = 20
+-- Evaluate the broad organic apron feather on bounded native grids. Each patch snapshots its
+-- exact preimage before copyback; a later failure restores those snapshots in reverse before the
+-- literal legacy raster is allowed to run.
+config.OptimizeMountainBaseApronNativeRaster = true
 
 -- Once resource top-ups have chosen their final coordinates, prepare only the terrain that their
 -- gameplay actually needs in the physical outer two-sector band.  Subsurface and terrain deposits
@@ -931,6 +935,8 @@ C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,
 C.MOUNTAIN_BASE_APRON_FEATHER_RADIUS_HEXES = math.max(
 	C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES + 2,
 	as_number(config.MountainBaseApronFeatherRadiusHexes, 20))
+C.OPTIMIZE_MOUNTAIN_BASE_APRON_NATIVE_RASTER =
+	as_bool(config.OptimizeMountainBaseApronNativeRaster)
 C.PREPARE_OUTER_RESOURCE_TERRAIN = as_bool(config.PrepareOuterResourceTerrain)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_RASTER =
 	as_bool(config.OptimizeOuterResourceTerrainNativeRaster)
