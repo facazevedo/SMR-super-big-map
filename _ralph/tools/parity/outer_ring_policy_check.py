@@ -372,10 +372,21 @@ static_checks = {
             'editor_api.SetGrid, map, "height", record.after, record.box',
             "height snapshot does not match its world box",
             "stock difference boxes overlap",
+            "local area_ratio = 0.0",
+            "local width_ratio = (box_width + 0.0) / map_w",
+            "local height_ratio = (box_height + 0.0) / map_h",
+            "value == value",
+            "value >= 0 and value <= 1",
+            "valid_area_fraction(box_area_ratio)",
+            "valid_area_fraction(area_ratio)",
+            "value ~= math.huge and value ~= -math.huge",
+            "difference-box normalized dimension ratio is invalid",
+            "difference-box normalized area ratio is invalid",
+            "cumulative difference-box area ratio is invalid",
             "area_ratio > 0.20",
             "difference-box area is outside the bounded outer-ring budget",
         )
-    ),
+    ) and "((record.x1 - record.x0) / map_w)" not in outer_resource_terrain,
     "outer_resource_patch_install_is_transactional_and_verified": all(
         token in outer_resource_terrain
         for token in (
@@ -1073,7 +1084,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_954": "'version', 954" in METADATA,
+    "version_is_955": "'version', 955" in METADATA,
 }
 
 case_results = []
@@ -2093,7 +2104,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 20,
+    "schema_version": 21,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,

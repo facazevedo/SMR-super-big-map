@@ -4143,7 +4143,19 @@ local function PrepareOuterResourceTerrain(map)
 				end
 				return a.y0 < b.y0
 			end)
-			local area_ratio = 0
+			if type(map_w) ~= "number" or type(map_h) ~= "number"
+				or map_w <= 0 or map_h <= 0 then
+				error("live height-grid dimensions are invalid for patch area normalization")
+			end
+			local function valid_area_fraction(value)
+				return type(value) == "number" and value == value
+					and value >= 0 and value <= 1
+					and value ~= math.huge and value ~= -math.huge
+			end
+			-- The engine keeps integral arithmetic integral: iter180's real 2.8168% box union
+			-- serialized as zero. Force floating point before dividing each dimension and never
+			-- form a potentially overflowing integral world-area product.
+			local area_ratio = 0.0
 			for index, record in ipairs(records) do
 				for prior_index = 1, index - 1 do
 					local prior = records[prior_index]
@@ -4152,9 +4164,22 @@ local function PrepareOuterResourceTerrain(map)
 						error("stock difference boxes overlap")
 					end
 				end
-				area_ratio = area_ratio
-					+ ((record.x1 - record.x0) / map_w)
-						* ((record.y1 - record.y0) / map_h)
+				local box_width = record.x1 - record.x0
+				local box_height = record.y1 - record.y0
+				local width_ratio = (box_width + 0.0) / map_w
+				local height_ratio = (box_height + 0.0) / map_h
+				if not valid_area_fraction(width_ratio)
+					or not valid_area_fraction(height_ratio) then
+					error("difference-box normalized dimension ratio is invalid")
+				end
+				local box_area_ratio = width_ratio * height_ratio
+				if not valid_area_fraction(box_area_ratio) then
+					error("difference-box normalized area ratio is invalid")
+				end
+				area_ratio = area_ratio + box_area_ratio
+				if not valid_area_fraction(area_ratio) then
+					error("cumulative difference-box area ratio is invalid")
+				end
 			end
 			if area_ratio <= 0 or area_ratio > 0.20 then
 				error("difference-box area is outside the bounded outer-ring budget")

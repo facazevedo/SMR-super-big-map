@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,6 +59,14 @@ BOXES = (
     Box(49, 4, 58, 12),
     Box(52, 47, 61, 57),
 )
+
+# Iter180's exact successful patch journal: eight disjoint boxes covered 1,890,334 of the
+# 8192x8192 height cells. The engine's integral division serialized this non-zero ratio as zero.
+ITER180_PATCH_BOXES = 8
+ITER180_PATCH_CELLS = 1_890_334
+ITER180_MAP_CELLS = 8_192 * 8_192
+ITER180_LEGACY_INTEGRAL_RATIO = ITER180_PATCH_CELLS // ITER180_MAP_CELLS
+ITER180_NORMALIZED_AREA_RATIO = (ITER180_PATCH_CELLS + 0.0) / ITER180_MAP_CELLS
 
 
 def target_grid(source: list[list[int]]) -> list[list[int]]:
@@ -256,6 +265,22 @@ def semantic_checks() -> tuple[dict[str, bool], list[dict[str, object]]]:
             ]
             == "height-grid verification retained differences"
         ),
+        "iter180_32bit_integral_division_reproduces_false_zero": (
+            ITER180_PATCH_BOXES == 8
+            and ITER180_PATCH_CELLS < 2**31
+            and ITER180_MAP_CELLS < 2**31
+            and ITER180_LEGACY_INTEGRAL_RATIO == 0
+        ),
+        "iter180_early_float_area_ratio_matches_exact_oracle": (
+            math.isclose(
+                ITER180_NORMALIZED_AREA_RATIO,
+                0.028168171644210815,
+                rel_tol=0,
+                abs_tol=1e-15,
+            )
+            and round(ITER180_NORMALIZED_AREA_RATIO * 1_000_000) == 28_168
+            and 0 < ITER180_NORMALIZED_AREA_RATIO < 0.20
+        ),
         "prewrite_failures_never_need_rollback": all(
             case["rollback_attempted"] is False
             for case in cases
@@ -306,11 +331,22 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "difference box does not intersect the outer resource ring",
                 "stock difference discovery exceeded the bounded box budget",
                 "stock difference boxes overlap",
+                "local area_ratio = 0.0",
+                "local width_ratio = (box_width + 0.0) / map_w",
+                "local height_ratio = (box_height + 0.0) / map_h",
+                "value == value",
+                "value >= 0 and value <= 1",
+                "valid_area_fraction(box_area_ratio)",
+                "valid_area_fraction(area_ratio)",
+                "value ~= math.huge and value ~= -math.huge",
+                "difference-box normalized dimension ratio is invalid",
+                "difference-box normalized area ratio is invalid",
+                "cumulative difference-box area ratio is invalid",
                 "area_ratio > 0.20",
                 "difference-box area is outside the bounded outer-ring budget",
                 "height snapshot does not match its world box",
             )
-        ),
+        ) and "((record.x1 - record.x0) / map_w)" not in section,
         "partial_failure_rolls_back_reverse_and_verifies": all(
             token in section
             for token in (
@@ -357,9 +393,9 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "canonical_final_grid_rebuild_retained = true",
             )
         ),
-        "metadata_is_v954": (
-            "'version', 954" in metadata
-            and "Install outer-resource height changes through verified stock difference boxes."
+        "metadata_is_v955": (
+            "'version', 955" in metadata
+            and "Compute patch-install area ratios with early floating normalization."
             in metadata
         ),
     }
@@ -373,11 +409,19 @@ def main() -> int:
     semantic, cases = semantic_checks()
     structural = structural_checks(terrain, config, generation, metadata)
     result = {
-        "schema": "smr.ralph.outer_resource_patch_install_check.v2",
+        "schema": "smr.ralph.outer_resource_patch_install_check.v3",
         "ok": all(semantic.values()) and all(structural.values()),
         "semantic_checks": semantic,
         "structural_checks": structural,
         "fault_cases": cases,
+        "iter180_area_oracle": {
+            "boxes": ITER180_PATCH_BOXES,
+            "patch_cells": ITER180_PATCH_CELLS,
+            "map_cells": ITER180_MAP_CELLS,
+            "legacy_integral_ratio": ITER180_LEGACY_INTEGRAL_RATIO,
+            "normalized_area_ratio": ITER180_NORMALIZED_AREA_RATIO,
+            "normalized_area_ppm": round(ITER180_NORMALIZED_AREA_RATIO * 1_000_000),
+        },
         "terrain_sha256": sha256(TERRAIN_PATH),
         "config_sha256": sha256(CONFIG_PATH),
         "generation_sha256": sha256(GENERATION_PATH),
