@@ -3217,17 +3217,6 @@ local function PrepareOuterResourceTerrain(map)
 		{ 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
 		{ 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 },
 	}
-	-- Relief is descriptive metadata for the selected pad and is not part of the score below.
-	-- Keep the literal eager path behind a switch, but normally defer its identical eight samples
-	-- until after each group's winner is fixed. The extra winner-center read certifies that the
-	-- immutable height grid still matches the exact center retained by the existing height cache.
-	local rocket_relief_deferral_requested =
-		cfg_bool("OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL", true)
-	local rocket_relief_deferral_used = rocket_relief_deferral_requested
-	local rocket_relief_viable_candidates = 0
-	local rocket_relief_selected_groups = 0
-	local rocket_relief_deferred_reads = 0
-	local rocket_relief_center_mismatches = 0
 	-- The exhaustive rocket-pad scorer evaluates heavily overlapping footprints. The height grid is
 	-- immutable throughout planning, so cache each axial hex sample exactly once instead of repeating
 	-- the same WorldToHex/grid lookup for every neighbouring candidate. A false sentinel preserves
@@ -3279,20 +3268,16 @@ local function PrepareOuterResourceTerrain(map)
 			if not z then return nil end
 			range_min, range_max = math.min(range_min, z), math.max(range_max, z)
 		end
-		rocket_relief_viable_candidates = rocket_relief_viable_candidates + 1
-		local maximum_rise, higher, mountain = 0, 0, false
-		if not rocket_relief_deferral_used then
-			-- Literal compatibility path: retain the accepted eager read order and predicate.
-			for _, direction in ipairs(relief_directions) do
-				local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
-					cy + direction[2] * 12 * cells_per_hex)
-				if z and z - center >= 5 * guim_v then
-					maximum_rise = math.max(maximum_rise, z - center)
-					higher = higher + 1
-				end
+		local maximum_rise, higher = 0, 0
+		for _, direction in ipairs(relief_directions) do
+			local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
+				cy + direction[2] * 12 * cells_per_hex)
+			if z and z - center >= 5 * guim_v then
+				maximum_rise = math.max(maximum_rise, z - center)
+				higher = higher + 1
 			end
-			mountain = maximum_rise >= 5 * guim_v and higher >= 2
 		end
+		local mountain = maximum_rise >= 5 * guim_v and higher >= 2
 		local ready = rocket_shape_ready(q, r)
 		return {
 			x = x, y = y, q = q, r = r, ready_before = ready,
@@ -3356,38 +3341,6 @@ local function PrepareOuterResourceTerrain(map)
 					end
 				end
 				if best then
-					rocket_relief_selected_groups = rocket_relief_selected_groups + 1
-					if rocket_relief_deferral_used then
-						local row = rocket_height_cache[best.q]
-						local center = row and row[best.r]
-						if center == false then center = nil end
-						-- This direct read plus the eight ordered direction reads below is the exact
-						-- winner-only nine-read contract. The cached value remains canonical because it
-						-- is the center observed by candidate_score before the winner was selected.
-						local cx, cy = best.x / height_tile, best.y / height_tile
-						local reloaded_center = grid_value(cx, cy)
-						rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
-						if reloaded_center ~= center then
-							rocket_relief_center_mismatches = rocket_relief_center_mismatches + 1
-						end
-						assert(type(center) == "number",
-							"deferred rocket relief center cache invariant failed")
-						assert(reloaded_center == center,
-							"deferred rocket relief immutable-grid certificate failed")
-						local maximum_rise, higher = 0, 0
-						for _, direction in ipairs(relief_directions) do
-							local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
-								cy + direction[2] * 12 * cells_per_hex)
-							rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
-							if z and z - center >= 5 * guim_v then
-								maximum_rise = math.max(maximum_rise, z - center)
-								higher = higher + 1
-							end
-						end
-						best.maximum_rise = maximum_rise
-						best.higher_samples = higher
-						best.mountain = maximum_rise >= 5 * guim_v and higher >= 2
-					end
 					best.members = #members
 					best.extractor_members = extractor_members
 					best.cluster_plan = group.plan
@@ -4087,17 +4040,6 @@ local function PrepareOuterResourceTerrain(map)
 		rocket_candidates_scored = rocket_candidates_scored,
 		rocket_height_cache_hits = rocket_height_cache_hits,
 		rocket_height_cache_misses = rocket_height_cache_misses,
-		rocket_relief_deferral_requested = rocket_relief_deferral_requested,
-		rocket_relief_deferral_used = rocket_relief_deferral_used,
-		rocket_relief_viable_candidates = rocket_relief_viable_candidates,
-		rocket_relief_selected_groups = rocket_relief_selected_groups,
-		rocket_relief_eager_equivalent_reads = rocket_relief_viable_candidates
-			* #relief_directions,
-		rocket_relief_deferred_reads = rocket_relief_deferred_reads,
-		rocket_relief_saved_reads = rocket_relief_deferral_used
-			and rocket_relief_viable_candidates * #relief_directions
-				- rocket_relief_deferred_reads or 0,
-		rocket_relief_center_mismatches = rocket_relief_center_mismatches,
 		resource_clearance_mask_cells = resource_clearance_mask_cells,
 		resource_clearance_queries = resource_clearance_queries,
 		resource_clearance_rejections = resource_clearance_rejections,
@@ -4141,20 +4083,6 @@ local function PrepareOuterResourceTerrain(map)
 			.. " rocket_candidates=" .. tostring(report.rocket_candidates_scored)
 			.. " rocket_height_hits=" .. tostring(report.rocket_height_cache_hits)
 			.. " rocket_height_misses=" .. tostring(report.rocket_height_cache_misses)
-			.. " rocket_relief_requested="
-				.. tostring(report.rocket_relief_deferral_requested)
-			.. " rocket_relief_used=" .. tostring(report.rocket_relief_deferral_used)
-			.. " rocket_relief_viable_candidates="
-				.. tostring(report.rocket_relief_viable_candidates)
-			.. " rocket_relief_selected_groups="
-				.. tostring(report.rocket_relief_selected_groups)
-			.. " rocket_relief_eager_equivalent_reads="
-				.. tostring(report.rocket_relief_eager_equivalent_reads)
-			.. " rocket_relief_deferred_reads="
-				.. tostring(report.rocket_relief_deferred_reads)
-			.. " rocket_relief_saved_reads=" .. tostring(report.rocket_relief_saved_reads)
-			.. " rocket_relief_center_mismatches="
-				.. tostring(report.rocket_relief_center_mismatches)
 			.. " resource_clearance_cells=" .. tostring(report.resource_clearance_mask_cells)
 			.. " resource_clearance_rejections=" .. tostring(report.resource_clearance_rejections)
 			.. " rocket_clearance_cells=" .. tostring(report.rocket_clearance_mask_cells)

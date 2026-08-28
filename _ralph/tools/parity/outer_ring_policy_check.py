@@ -390,52 +390,6 @@ static_checks = {
         and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION", true)'
         in outer_resource_terrain
     ),
-    "outer_resource_rocket_relief_deferral_is_enabled": (
-        "config.OptimizeOuterResourceRocketReliefDeferral = true" in CONFIG
-        and "C.OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL" in CONFIG
-        and 'cfg_bool("OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL", true)'
-        in outer_resource_terrain
-    ),
-    "rocket_relief_deferral_retains_literal_legacy_path": all(
-        token in outer_resource_terrain
-        for token in (
-            "if not rocket_relief_deferral_used then",
-            "-- Literal compatibility path: retain the accepted eager read order and predicate.",
-            "local z = grid_value(cx + direction[1] * 12 * cells_per_hex,",
-            "mountain = maximum_rise >= 5 * guim_v and higher >= 2",
-        )
-    ),
-    "rocket_relief_deferral_preserves_placeholders_and_score": all(
-        token in outer_resource_terrain
-        for token in (
-            "local maximum_rise, higher, mountain = 0, 0, false",
-            "mountain = mountain, maximum_rise = maximum_rise, higher_samples = higher,",
-            "score = (ready and -1000000000 or 0)",
-            "if candidate and (not best or candidate.score < best.score) then",
-        )
-    ),
-    "rocket_relief_deferral_samples_only_selected_winner": all(
-        token in outer_resource_terrain
-        for token in (
-            "if rocket_relief_deferral_used then",
-            "rocket_relief_selected_groups = rocket_relief_selected_groups + 1",
-            "local reloaded_center = grid_value(cx, cy)",
-            "best.maximum_rise = maximum_rise",
-            "best.higher_samples = higher",
-            "best.mountain = maximum_rise >= 5 * guim_v and higher >= 2",
-        )
-    ),
-    "rocket_relief_deferral_reports_exact_read_budget": all(
-        token in outer_resource_terrain
-        for token in (
-            "rocket_relief_viable_candidates",
-            "rocket_relief_selected_groups",
-            "rocket_relief_eager_equivalent_reads",
-            "rocket_relief_deferred_reads",
-            "rocket_relief_saved_reads",
-            "rocket_relief_center_mismatches",
-        )
-    ),
     "native_raster_retains_legacy_fallback_from_raw_source": (
         "local function apply_legacy_raster()" in outer_resource_terrain
         and "local working = grid:clone()" in outer_resource_terrain
@@ -1063,7 +1017,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_960": "'version', 960" in METADATA,
+    "version_is_946": "'version', 946" in METADATA,
 }
 
 case_results = []
@@ -2083,7 +2037,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 20,
+    "schema_version": 19,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
