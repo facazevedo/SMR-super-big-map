@@ -49,7 +49,9 @@ def main() -> int:
         oracle = json.loads(oracle_process.stdout)
 
     checks = {
-        "metadata_v961": "'version', 961," in metadata,
+        "metadata_v961_or_later": any(
+            f"'version', {version}," in metadata for version in range(961, 1000)
+        ),
         "generator_patch_identity_v272": "SuperBigMap.GENERATOR_PATCH_VERSION = 272" in version_source,
         "default_on": "config.OptimizeTopUpHardSpacingSpatialIndex = true" in config,
         "compiled_flag": "C.OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX" in config,

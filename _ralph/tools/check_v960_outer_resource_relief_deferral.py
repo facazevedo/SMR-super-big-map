@@ -138,8 +138,8 @@ def main() -> int:
     scorer_start = terrain.index("local function candidate_score")
     scorer_end = terrain.index("local cluster_groups_by_plan", scorer_start)
     scorer = terrain[scorer_start:scorer_end]
-    winner_start = terrain.index("if best then", scorer_end)
-    winner_end = terrain.index("best.members = #members", winner_start)
+    winner_start = terrain.index("local function commit_rocket_site", scorer_end)
+    winner_end = terrain.index("best.members = #context.members", winner_start)
     winner = terrain[winner_start:winner_end]
     checks = {
         "default_on": "config.OptimizeOuterResourceRocketReliefDeferral = true" in config,

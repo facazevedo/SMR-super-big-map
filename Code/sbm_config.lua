@@ -329,6 +329,13 @@ config.OptimizeOuterResourceTerrainNativePrecondition = true
 -- relief predicate only for each selected group winner. Disabling this flag restores the literal
 -- eager per-candidate sampling path.
 config.OptimizeOuterResourceRocketReliefDeferral = true
+-- Rocket-pad coordinates are policy outputs rather than vanilla content. Visit the unchanged
+-- exhaustive offset disk through a map-seeded private permutation and retain the best of a small
+-- fully validated sample. Every group must complete before any pad patch is published; otherwise
+-- the exact exhaustive scorer reruns from an untouched pad journal and clearance mask.
+config.OptimizeOuterResourceRocketBoundedPlanner = true
+config.OuterResourceRocketBoundedViableCandidates = 32
+config.OuterResourceRocketBoundedScoredBudgetPerGroup = 256
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
@@ -964,6 +971,14 @@ C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
 C.OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL =
 	as_bool(config.OptimizeOuterResourceRocketReliefDeferral)
+C.OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER =
+	as_bool(config.OptimizeOuterResourceRocketBoundedPlanner)
+C.OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES = math.max(1,
+	math.min(64, math.floor(as_number(config.OuterResourceRocketBoundedViableCandidates, 32))))
+C.OUTER_RESOURCE_ROCKET_BOUNDED_SCORED_BUDGET_PER_GROUP = math.max(
+	C.OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES,
+	math.min(256, math.floor(as_number(
+		config.OuterResourceRocketBoundedScoredBudgetPerGroup, 256))))
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
 C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(

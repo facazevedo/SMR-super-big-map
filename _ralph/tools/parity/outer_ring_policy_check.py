@@ -789,9 +789,39 @@ static_checks = {
             "local resource_clearance_radius = math.max(0, math.ceil(resource_clearance_minimum) - 1)",
             "local rocket_clearance_radius = math.max(0, math.ceil(rocket_clearance_minimum) - 1)",
             "local clear = not axial_mask_contains(resource_clearance_mask, q, r)",
-            "local clear = not axial_mask_contains(rocket_clearance_mask, q, r)",
+            "local clear = not axial_mask_contains(clearance_mask or rocket_clearance_mask, q, r)",
             "+ mark_axial_forbidden(rocket_clearance_mask, best.q, best.r,",
         )
+    ),
+    "bounded_rocket_planner_is_default_on_and_compiled": (
+        "config.OptimizeOuterResourceRocketBoundedPlanner = true" in CONFIG
+        and "C.OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER" in CONFIG
+        and "C.OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES" in CONFIG
+        and "C.OUTER_RESOURCE_ROCKET_BOUNDED_SCORED_BUDGET_PER_GROUP" in CONFIG
+    ),
+    "bounded_rocket_planner_is_private_before_publish": all(
+        token in outer_resource_terrain
+        for token in (
+            "local private_rocket_mask = {}",
+            "and #bounded_choices == expected_groups",
+            "-- Only now publish pad patches and mutate the committed clearance mask",
+            "commit_rocket_site(choice.context, choice.best)",
+        )
+    ),
+    "bounded_rocket_planner_retains_complete_fallback": all(
+        token in outer_resource_terrain
+        for token in (
+            "-- Literal exhaustive fallback: retain the accepted disk order",
+            "for dq = -search_limit, search_limit do",
+            "for dr = -search_limit, search_limit do",
+            "candidate.score < best.score",
+        )
+    ),
+    "bounded_rocket_planner_retains_policy_audit": (
+        "best.ready_before == true" in outer_resource_terrain
+        and "best.height_range * rocket_bounded.quality_factor" in outer_resource_terrain
+        and "ready_offsets(site.q, site.r, rocket_offsets, true)" in outer_resource_terrain
+        and "rocket_bounded_plan_digest" in outer_resource_terrain
     ),
     "resource_terrain_audit_is_fail_closed": (
         "outer resource terrain audit failed" in GENERATION
@@ -1099,7 +1129,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_961": "'version', 961" in METADATA,
+    "version_is_962": "'version', 962" in METADATA,
 }
 
 case_results = []

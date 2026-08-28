@@ -3207,9 +3207,9 @@ local function PrepareOuterResourceTerrain(map)
 		if not clear then resource_clearance_rejections = resource_clearance_rejections + 1 end
 		return clear
 	end
-	local function separated_from_rocket_pads(q, r)
+	local function separated_from_rocket_pads(q, r, clearance_mask)
 		rocket_clearance_queries = rocket_clearance_queries + 1
-		local clear = not axial_mask_contains(rocket_clearance_mask, q, r)
+		local clear = not axial_mask_contains(clearance_mask or rocket_clearance_mask, q, r)
 		if not clear then rocket_clearance_rejections = rocket_clearance_rejections + 1 end
 		return clear
 	end
@@ -3228,6 +3228,26 @@ local function PrepareOuterResourceTerrain(map)
 	local rocket_relief_selected_groups = 0
 	local rocket_relief_deferred_reads = 0
 	local rocket_relief_center_mismatches = 0
+	local rocket_bounded = {
+		requested = cfg_bool("OPTIMIZE_OUTER_RESOURCE_ROCKET_BOUNDED_PLANNER", true),
+		viable_target = math.max(1, math.min(64, math.floor(
+			cfg_number("OUTER_RESOURCE_ROCKET_BOUNDED_VIABLE_CANDIDATES", 32)))),
+		used = false, fallback = false, error = "", private_seed = 0,
+		groups_attempted = 0, groups_completed = 0, candidates_scored = 0,
+		viable_candidates = 0, ready_candidates = 0, quality_failures = 0,
+		offset_universe = 0, preferred_offsets = 0, group_trace = "", private_rng_draws = 0,
+		private_mask_cells = 0, selected_max_height_range = 0,
+		offsets_attempted = 0, preferred_attempted = 0, remaining_attempted = 0,
+		private_ready_choices = 0, private_unsaturated_choices = 0,
+		precommit_published_pads = -1, precommit_committed_mask_cells = -1,
+		committed_mask_matches_private = false,
+		quality_limit = 36 * cells_per_hex, quality_factor = 0.65, plan_digest = 0,
+	}
+	rocket_bounded.scored_budget_per_group = math.max(rocket_bounded.viable_target,
+		math.min(256, math.floor(cfg_number(
+			"OUTER_RESOURCE_ROCKET_BOUNDED_SCORED_BUDGET_PER_GROUP", 256))))
+	rocket_bounded.preferred_scored_budget_per_group = math.max(1,
+		math.floor(rocket_bounded.scored_budget_per_group * 0.75))
 	-- The exhaustive rocket-pad scorer evaluates heavily overlapping footprints. The height grid is
 	-- immutable throughout planning, so cache each axial hex sample exactly once instead of repeating
 	-- the same WorldToHex/grid lookup for every neighbouring candidate. A false sentinel preserves
@@ -3257,9 +3277,10 @@ local function PrepareOuterResourceTerrain(map)
 		row[r] = value ~= nil and value or false
 		return value
 	end
-	local function candidate_score(q, r, cq, cr)
+	local function candidate_score(q, r, cq, cr, clearance_mask)
 		rocket_candidates_scored = rocket_candidates_scored + 1
-		if not resource_clearance(q, r) or not separated_from_rocket_pads(q, r) then return nil end
+		if not resource_clearance(q, r)
+			or not separated_from_rocket_pads(q, r, clearance_mask) then return nil end
 		local x, y = world_xy(q, r)
 		if not x or not in_outer_band(x, y) then return nil end
 		-- The central 16x16 sectors are a hard no-write area. Keep the conservative live landing
@@ -3303,6 +3324,7 @@ local function PrepareOuterResourceTerrain(map)
 				+ axial_distance(q, r, cq, cr),
 		}
 	end
+	do
 	local cluster_groups_by_plan, cluster_groups = {}, {}
 	for index, entry in ipairs(resources) do
 		if entry.cluster_plan then
@@ -3326,8 +3348,8 @@ local function PrepareOuterResourceTerrain(map)
 		end
 	end
 	table.sort(cluster_groups, function(a, b) return a.plan < b.plan end)
+	local cluster_contexts = {}
 	for _, group in ipairs(cluster_groups) do
-		if #rocket_sites >= maximum_rocket_pads then break end
 		local members, extractor_members, sum_q, sum_r = group.members, 0, 0, 0
 		for _, index in ipairs(members) do
 			local entry = resources[index]
@@ -3339,86 +3361,287 @@ local function PrepareOuterResourceTerrain(map)
 		if #members >= cluster_minimum and #members <= cluster_maximum_resources
 			and extractor_members >= cluster_minimum_extractors
 			and extractor_members <= cluster_maximum_extractors then
-				local cq = math.floor(sum_q / #members + 0.5)
-				local cr = math.floor(sum_r / #members + 0.5)
-				local best
-				local search_limit = cluster_radius + rocket_outer_radius
-					+ maximum_resource_core + 4
-				for dq = -search_limit, search_limit do
-					for dr = -search_limit, search_limit do
-						local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
-						if distance <= search_limit then
-							local candidate = candidate_score(cq + dq, cr + dr, cq, cr)
-							if candidate and (not best or candidate.score < best.score) then
-								best = candidate
-							end
-						end
-					end
-				end
-				if best then
-					rocket_relief_selected_groups = rocket_relief_selected_groups + 1
-					if rocket_relief_deferral_used then
-						local row = rocket_height_cache[best.q]
-						local center = row and row[best.r]
-						if center == false then center = nil end
-						-- This direct read plus the eight ordered direction reads below is the exact
-						-- winner-only nine-read contract. The cached value remains canonical because it
-						-- is the center observed by candidate_score before the winner was selected.
-						local cx, cy = best.x / height_tile, best.y / height_tile
-						local reloaded_center = grid_value(cx, cy)
-						rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
-						if reloaded_center ~= center then
-							rocket_relief_center_mismatches = rocket_relief_center_mismatches + 1
-						end
-						assert(type(center) == "number",
-							"deferred rocket relief center cache invariant failed")
-						assert(reloaded_center == center,
-							"deferred rocket relief immutable-grid certificate failed")
-						local maximum_rise, higher = 0, 0
-						for _, direction in ipairs(relief_directions) do
-							local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
-								cy + direction[2] * 12 * cells_per_hex)
-							rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
-							if z and z - center >= 5 * guim_v then
-								maximum_rise = math.max(maximum_rise, z - center)
-								higher = higher + 1
-							end
-						end
-						best.maximum_rise = maximum_rise
-						best.higher_samples = higher
-						best.mountain = maximum_rise >= 5 * guim_v and higher >= 2
-					end
-					best.members = #members
-					best.extractor_members = extractor_members
-					best.cluster_plan = group.plan
-					best.strength = group.strength
-					best.resource_target = group.resource_target
-					best.extractor_target = group.extractor_target
-					best.anomaly_capacity = group.anomaly_capacity
-					best.reward_capacity = group.reward_capacity
-					best.anchor_members = group.anchors
-					best.premium_members = group.premiums
-					best.cluster_q, best.cluster_r = cq, cr
-					-- Rebuild every planned landing footprint from the finalized height field. The
-					-- engine's pre-rebuild buildable grid can report a pad ready and then invalidate an
-					-- edge hex on the authoritative rebuild, so readiness is not safe as a write skip.
-					best.modified = true
-					best.shape_radius = rocket_hex_radius
-					best.world_shape_radius = rocket_world_radius
-					add_patch("rocket", best.x, best.y, best.q, best.r,
-						-- As with extractors, the live shape is center-based but the final buildable
-						-- verdict consumes the surrounding cells of every edge hex. Keep that broad
-						-- support band gently graded; only the shape plus one hex is perfectly level.
-						rocket_level_core,
-						rocket_outer_radius,
-						{ rocket_site = best,
-							support_cells = rocket_required_core * cells_per_hex })
-					rocket_sites[#rocket_sites + 1] = best
-					rocket_clearance_mask_cells = rocket_clearance_mask_cells
-						+ mark_axial_forbidden(rocket_clearance_mask, best.q, best.r,
-							rocket_clearance_radius)
-				end
+			cluster_contexts[#cluster_contexts + 1] = {
+				group = group, members = members, extractor_members = extractor_members,
+				cq = math.floor(sum_q / #members + 0.5),
+				cr = math.floor(sum_r / #members + 0.5),
+			}
 		end
+	end
+
+	local function commit_rocket_site(context, best)
+		local group = context.group
+		rocket_relief_selected_groups = rocket_relief_selected_groups + 1
+		if rocket_relief_deferral_used then
+			local row = rocket_height_cache[best.q]
+			local center = row and row[best.r]
+			if center == false then center = nil end
+			-- This direct read plus the eight ordered direction reads below is the exact
+			-- winner-only nine-read contract. The cached value remains canonical because it
+			-- is the center observed by candidate_score before the winner was selected.
+			local cx, cy = best.x / height_tile, best.y / height_tile
+			local reloaded_center = grid_value(cx, cy)
+			rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
+			if reloaded_center ~= center then
+				rocket_relief_center_mismatches = rocket_relief_center_mismatches + 1
+			end
+			assert(type(center) == "number",
+				"deferred rocket relief center cache invariant failed")
+			assert(reloaded_center == center,
+				"deferred rocket relief immutable-grid certificate failed")
+			local maximum_rise, higher = 0, 0
+			for _, direction in ipairs(relief_directions) do
+				local z = grid_value(cx + direction[1] * 12 * cells_per_hex,
+					cy + direction[2] * 12 * cells_per_hex)
+				rocket_relief_deferred_reads = rocket_relief_deferred_reads + 1
+				if z and z - center >= 5 * guim_v then
+					maximum_rise = math.max(maximum_rise, z - center)
+					higher = higher + 1
+				end
+			end
+			best.maximum_rise = maximum_rise
+			best.higher_samples = higher
+			best.mountain = maximum_rise >= 5 * guim_v and higher >= 2
+		end
+		best.members = #context.members
+		best.extractor_members = context.extractor_members
+		best.cluster_plan = group.plan
+		best.strength = group.strength
+		best.resource_target = group.resource_target
+		best.extractor_target = group.extractor_target
+		best.anomaly_capacity = group.anomaly_capacity
+		best.reward_capacity = group.reward_capacity
+		best.anchor_members = group.anchors
+		best.premium_members = group.premiums
+		best.cluster_q, best.cluster_r = context.cq, context.cr
+		-- Rebuild every planned landing footprint from the finalized height field. The engine's
+		-- pre-rebuild buildable grid can report a pad ready and then invalidate an edge hex on the
+		-- authoritative rebuild, so readiness is not safe as a write skip.
+		best.modified = true
+		best.shape_radius = rocket_hex_radius
+		best.world_shape_radius = rocket_world_radius
+		add_patch("rocket", best.x, best.y, best.q, best.r,
+			-- As with extractors, the live shape is center-based but the final buildable verdict
+			-- consumes surrounding cells. Only the shape plus one hex is perfectly level.
+			rocket_level_core, rocket_outer_radius,
+			{ rocket_site = best, support_cells = rocket_required_core * cells_per_hex })
+		rocket_sites[#rocket_sites + 1] = best
+		if rocket_bounded.used then
+			rocket_bounded.selected_max_height_range = math.max(
+				rocket_bounded.selected_max_height_range, best.height_range or 0)
+		end
+		rocket_clearance_mask_cells = rocket_clearance_mask_cells
+			+ mark_axial_forbidden(rocket_clearance_mask, best.q, best.r,
+				rocket_clearance_radius)
+	end
+
+	local search_limit = cluster_radius + rocket_outer_radius + maximum_resource_core + 4
+	local bounded_choices = {}
+	if rocket_bounded.requested and maximum_rocket_pads > 0
+		and #cluster_contexts > 0 then
+		local modulus = 2147483647
+		local generator = map.RandomMapGenObject
+		local numeric_seed = type(generator) == "table" and tonumber(generator.Seed) or 0
+		local seed_material = tostring(type(generator) == "table"
+			and generator.GenerationHash or "") .. "|"
+			.. tostring(map.mapdata and map.mapdata.RandomMapPreset or "")
+			.. "|v962-bounded-rocket-pad-planner"
+		rocket_bounded.private_seed = math.abs(math.floor(numeric_seed or 0)) % modulus
+		for index = 1, #seed_material do
+			rocket_bounded.private_seed = (rocket_bounded.private_seed * 48271
+				+ string.byte(seed_material, index) + 1) % modulus
+		end
+		if rocket_bounded.private_seed == 0 then rocket_bounded.private_seed = 1 end
+
+		local preferred_offsets, remaining_offsets = {}, {}
+		local preferred_minimum_distance = math.min(search_limit,
+			math.ceil(cluster_radius + resource_clearance_minimum))
+		for dq = -search_limit, search_limit do
+			for dr = -search_limit, search_limit do
+				local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+				if distance <= search_limit then
+					local offset = { dq = dq, dr = dr, distance = distance }
+					local destination = distance >= preferred_minimum_distance
+						and preferred_offsets or remaining_offsets
+					destination[#destination + 1] = offset
+				end
+			end
+		end
+		rocket_bounded.offset_universe = #preferred_offsets + #remaining_offsets
+		rocket_bounded.preferred_offsets = #preferred_offsets
+
+		local function greatest_common_divisor(a, b)
+			while b ~= 0 do a, b = b, a % b end
+			return math.abs(a)
+		end
+		local function visit_private_permutation(offsets, seed, visit)
+			local count = #offsets
+			if count == 0 then return false end
+			local start = seed % count
+			local step = math.floor(seed / math.max(1, count)) % count
+			if step < 1 then step = 1 end
+			while greatest_common_divisor(step, count) ~= 1 do
+				step = step + 1
+				if step >= count then step = 1 end
+			end
+			for ordinal = 0, count - 1 do
+				local offset = offsets[(start + ordinal * step) % count + 1]
+				if visit(offset) then return true end
+			end
+			return false
+		end
+
+		-- This mask and every candidate table remain private until all requested groups complete.
+		-- A failure discards them; the published pad list, patch journal, and committed mask are still
+		-- empty when the literal exhaustive branch starts.
+		local private_rocket_mask = {}
+		local trace = {}
+		local expected_groups = math.min(#cluster_contexts, maximum_rocket_pads)
+		for context_index = 1, expected_groups do
+			local context = cluster_contexts[context_index]
+			rocket_bounded.groups_attempted = rocket_bounded.groups_attempted + 1
+			local group_seed = (rocket_bounded.private_seed
+				+ math.floor(tonumber(context.group.plan) or context_index) * 83492791
+				+ context_index * 19349663) % modulus
+			local best, scored, viable, ready = nil, 0, 0, 0
+			local preferred_scored, remaining_scored = 0, 0
+			local visiting_preferred = true
+			local function visit(offset)
+				if scored >= rocket_bounded.scored_budget_per_group
+					or viable >= rocket_bounded.viable_target then return true end
+				scored = scored + 1
+				rocket_bounded.candidates_scored = rocket_bounded.candidates_scored + 1
+				rocket_bounded.offsets_attempted = rocket_bounded.offsets_attempted + 1
+				if visiting_preferred then
+					preferred_scored = preferred_scored + 1
+					rocket_bounded.preferred_attempted = rocket_bounded.preferred_attempted + 1
+				else
+					remaining_scored = remaining_scored + 1
+					rocket_bounded.remaining_attempted = rocket_bounded.remaining_attempted + 1
+				end
+				local candidate = candidate_score(context.cq + offset.dq,
+					context.cr + offset.dr, context.cq, context.cr, private_rocket_mask)
+				if candidate then
+					viable = viable + 1
+					rocket_bounded.viable_candidates = rocket_bounded.viable_candidates + 1
+					if candidate.ready_before then
+						ready = ready + 1
+						rocket_bounded.ready_candidates = rocket_bounded.ready_candidates + 1
+					end
+					if not best or candidate.score < best.score then best = candidate end
+				end
+				return scored >= rocket_bounded.scored_budget_per_group
+					or viable >= rocket_bounded.viable_target
+			end
+			local function visit_preferred(offset)
+				if scored >= rocket_bounded.preferred_scored_budget_per_group then return true end
+				return visit(offset)
+			end
+			visit_private_permutation(preferred_offsets, group_seed, visit_preferred)
+			if scored < rocket_bounded.scored_budget_per_group
+				and viable < rocket_bounded.viable_target then
+				visiting_preferred = false
+				visit_private_permutation(remaining_offsets,
+					(group_seed + 104729) % modulus, visit)
+			end
+			local quality_ok = best and (best.ready_before == true
+				or best.height_range * rocket_bounded.quality_factor
+					<= rocket_bounded.quality_limit)
+			trace[#trace + 1] = table.concat({
+				"plan=" .. tostring(context.group.plan),
+				"scored=" .. tostring(scored), "viable=" .. tostring(viable),
+				"ready=" .. tostring(ready),
+				"preferred=" .. tostring(preferred_scored),
+				"remaining=" .. tostring(remaining_scored),
+				"q=" .. tostring(best and best.q),
+				"r=" .. tostring(best and best.r),
+				"range=" .. tostring(best and best.height_range),
+				"score=" .. tostring(best and best.score),
+				"quality=" .. tostring(quality_ok == true),
+			}, ":")
+			if not quality_ok then
+				rocket_bounded.quality_failures = rocket_bounded.quality_failures + 1
+				rocket_bounded.error = best and "adaptive transition quality cap exceeded"
+					or "bounded permutation found no viable candidate"
+				break
+			end
+			bounded_choices[#bounded_choices + 1] = { context = context, best = best }
+			if best.ready_before == true then
+				rocket_bounded.private_ready_choices = rocket_bounded.private_ready_choices + 1
+			else
+				rocket_bounded.private_unsaturated_choices =
+					rocket_bounded.private_unsaturated_choices + 1
+			end
+			rocket_bounded.private_mask_cells = rocket_bounded.private_mask_cells
+				+ mark_axial_forbidden(private_rocket_mask, best.q, best.r,
+					rocket_clearance_radius)
+			rocket_bounded.groups_completed = rocket_bounded.groups_completed + 1
+		end
+		rocket_bounded.group_trace = table.concat(trace, "|")
+		if rocket_bounded.groups_completed == expected_groups
+			and #bounded_choices == expected_groups then
+			rocket_bounded.used = true
+			local digest = rocket_bounded.private_seed
+			for _, choice in ipairs(bounded_choices) do
+				digest = (digest * 48271 + math.abs(math.floor(choice.best.q)) + 1) % modulus
+				digest = (digest * 48271 + math.abs(math.floor(choice.best.r)) + 1) % modulus
+				digest = (digest * 48271
+					+ math.abs(math.floor(choice.best.height_range or 0)) + 1) % modulus
+			end
+			rocket_bounded.plan_digest = digest
+		else
+			rocket_bounded.fallback = true
+			bounded_choices = {}
+			if rocket_bounded.error == "" then
+				rocket_bounded.error = "private group plan incomplete"
+			end
+		end
+	end
+
+	rocket_bounded.precommit_published_pads = #rocket_sites
+	rocket_bounded.precommit_committed_mask_cells = rocket_clearance_mask_cells
+	if rocket_bounded.used and (rocket_bounded.precommit_published_pads ~= 0
+		or rocket_bounded.precommit_committed_mask_cells ~= 0) then
+		rocket_bounded.used = false
+		rocket_bounded.fallback = true
+		rocket_bounded.error = "private planner observed pre-publication state mutation"
+		bounded_choices = {}
+	end
+	if rocket_bounded.used then
+		-- Only now publish pad patches and mutate the committed clearance mask, in group order.
+		for _, choice in ipairs(bounded_choices) do
+			commit_rocket_site(choice.context, choice.best)
+		end
+		rocket_bounded.committed_mask_matches_private =
+			rocket_clearance_mask_cells == rocket_bounded.private_mask_cells
+	else
+		if rocket_bounded.requested and maximum_rocket_pads > 0
+			and #cluster_contexts > 0
+			and not rocket_bounded.fallback then
+			rocket_bounded.fallback = true
+			rocket_bounded.error = rocket_bounded.error ~= ""
+				and rocket_bounded.error or "bounded planner unavailable"
+		end
+		-- Literal exhaustive fallback: retain the accepted disk order, predicates, score, strict
+		-- comparison, per-group commit order, and committed-mask timing.
+		for _, context in ipairs(cluster_contexts) do
+			if #rocket_sites >= maximum_rocket_pads then break end
+			local best
+			for dq = -search_limit, search_limit do
+				for dr = -search_limit, search_limit do
+					local distance = math.max(math.abs(dq), math.abs(dr), math.abs(dq + dr))
+					if distance <= search_limit then
+						local candidate = candidate_score(
+							context.cq + dq, context.cr + dr, context.cq, context.cr)
+						if candidate and (not best or candidate.score < best.score) then
+							best = candidate
+						end
+					end
+				end
+			end
+			if best then commit_rocket_site(context, best) end
+		end
+	end
 	end
 
 	-- If a required new core actually intersects an already-valid resource guard, preserving the old
@@ -4098,6 +4321,42 @@ local function PrepareOuterResourceTerrain(map)
 			and rocket_relief_viable_candidates * #relief_directions
 				- rocket_relief_deferred_reads or 0,
 		rocket_relief_center_mismatches = rocket_relief_center_mismatches,
+		rocket_bounded_planner_requested = rocket_bounded.requested,
+		rocket_bounded_planner_used = rocket_bounded.used,
+		rocket_bounded_planner_fallback = rocket_bounded.fallback,
+		rocket_bounded_planner_error = rocket_bounded.error,
+		rocket_bounded_private_seed = rocket_bounded.private_seed,
+		rocket_bounded_private_rng_draws = rocket_bounded.private_rng_draws,
+		rocket_bounded_viable_target = rocket_bounded.viable_target,
+		rocket_bounded_scored_budget_per_group = rocket_bounded.scored_budget_per_group,
+		rocket_bounded_preferred_scored_budget_per_group =
+			rocket_bounded.preferred_scored_budget_per_group,
+		rocket_bounded_groups_attempted = rocket_bounded.groups_attempted,
+		rocket_bounded_groups_completed = rocket_bounded.groups_completed,
+		rocket_bounded_candidates_scored = rocket_bounded.candidates_scored,
+		rocket_bounded_offsets_attempted = rocket_bounded.offsets_attempted,
+		rocket_bounded_preferred_attempted = rocket_bounded.preferred_attempted,
+		rocket_bounded_remaining_attempted = rocket_bounded.remaining_attempted,
+		rocket_bounded_viable_candidates = rocket_bounded.viable_candidates,
+		rocket_bounded_ready_candidates = rocket_bounded.ready_candidates,
+		rocket_bounded_private_ready_choices = rocket_bounded.private_ready_choices,
+		rocket_bounded_private_unsaturated_choices =
+			rocket_bounded.private_unsaturated_choices,
+		rocket_bounded_quality_failures = rocket_bounded.quality_failures,
+		rocket_bounded_quality_limit = rocket_bounded.quality_limit,
+		rocket_bounded_quality_factor = rocket_bounded.quality_factor,
+		rocket_bounded_selected_max_height_range = rocket_bounded.selected_max_height_range,
+		rocket_bounded_offset_universe = rocket_bounded.offset_universe,
+		rocket_bounded_preferred_offsets = rocket_bounded.preferred_offsets,
+		rocket_bounded_private_mask_cells = rocket_bounded.private_mask_cells,
+		rocket_bounded_committed_mask_cells = rocket_clearance_mask_cells,
+		rocket_bounded_precommit_published_pads = rocket_bounded.precommit_published_pads,
+		rocket_bounded_precommit_committed_mask_cells =
+			rocket_bounded.precommit_committed_mask_cells,
+		rocket_bounded_committed_mask_matches_private =
+			rocket_bounded.committed_mask_matches_private,
+		rocket_bounded_plan_digest = rocket_bounded.plan_digest,
+		rocket_bounded_group_trace = rocket_bounded.group_trace,
 		resource_clearance_mask_cells = resource_clearance_mask_cells,
 		resource_clearance_queries = resource_clearance_queries,
 		resource_clearance_rejections = resource_clearance_rejections,
