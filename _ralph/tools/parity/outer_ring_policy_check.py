@@ -1068,7 +1068,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_948": "'version', 948" in METADATA,
+    "version_is_949": "'version', 949" in METADATA,
 }
 
 case_results = []
@@ -2041,6 +2041,16 @@ native_translation_checks = {
         case["writes_exercised"] for case in native_translation_model_cases
     ),
     "u16_plus_u16_is_exact_in_f32": 65535 + 65535 < 2**24,
+    "failure_tuple_preserves_error_and_rollback_slots": (
+        'return false, 0, operation_error, #release_errors == 0,' in TERRAIN
+        and 'return false, 0, "native destination snapshot cleanup failed", false,'
+        in TERRAIN
+    ),
+    "translation_cell_count_is_local_and_defined": (
+        "local strip_fills, interval_copies, translated_cells = 0, 0, 0" in TERRAIN
+        and "translated_cells = translated_cells + interval_length" in TERRAIN
+        and "return translated_cells + feather_modified, translated_cells," in TERRAIN
+    ),
 }
 
 
