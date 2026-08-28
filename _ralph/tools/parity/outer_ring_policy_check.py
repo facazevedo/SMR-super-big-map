@@ -628,6 +628,31 @@ static_checks = {
             "C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =",
         )
     ),
+    "destination_height_step_uses_allocation_neutral_direct_grid_dispatch": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_DIRECT_GRID_DISPATCH", true)',
+            "local direct_get, direct_set",
+            "direct_get, direct_set = grid.get, grid.set",
+            'if selected.axis == "x" then',
+            "local original = direct_get(grid, p, along)",
+            "local original = direct_get(grid, along, p)",
+            "direct_set(grid, p, along,",
+            "direct_set(grid, along, p,",
+            "v0, v0_prev = direct_get(grid, join_lo, along)",
+            "v0, v0_prev = direct_get(grid, along, join_lo)",
+            "local original = at(selected.axis, p, along)",
+            "direct_grid_dispatch_cells = direct_dispatch_cells",
+            "direct_grid_dispatch_feather_cells = direct_dispatch_feather_cells",
+            "report.destination_direct_grid_dispatch_used = report.direct_grid_dispatch_used",
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepDirectGridDispatch = true",
+            "C.OPTIMIZE_HEIGHT_STEP_DIRECT_GRID_DISPATCH =",
+        )
+    ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
@@ -1017,7 +1042,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_946": "'version', 946" in METADATA,
+    "version_is_958": "'version', 958" in METADATA,
 }
 
 case_results = []
@@ -2037,7 +2062,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 19,
+    "schema_version": 20,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
