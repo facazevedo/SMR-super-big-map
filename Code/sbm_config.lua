@@ -319,6 +319,10 @@ config.OptimizeOuterResourceTerrainRingRebuild = true
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
 -- successful post-rebuild repair geometry without discarding the seamless outer blend.
 config.OptimizeOuterResourceTerrainNativePrecondition = true
+-- Rocket-pad candidates have heavily overlapping live footprints. During the planning pass the
+-- passability/buildable grids are immutable, so reuse successful per-hex reads without changing
+-- candidate order, footprint order, score arithmetic, or the chosen pad.
+config.OptimizeOuterResourceRocketReadCache = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
@@ -950,6 +954,8 @@ C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
+C.OPTIMIZE_OUTER_RESOURCE_ROCKET_READ_CACHE =
+	as_bool(config.OptimizeOuterResourceRocketReadCache)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
 C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(
