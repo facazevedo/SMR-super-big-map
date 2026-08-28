@@ -319,6 +319,11 @@ config.OptimizeOuterResourceTerrainRingRebuild = true
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the
 -- successful post-rebuild repair geometry without discarding the seamless outer blend.
 config.OptimizeOuterResourceTerrainNativePrecondition = true
+-- Mountain-relief samples do not participate in rocket-pad candidate scoring. Preserve the
+-- candidate table shape with neutral placeholders, then evaluate the identical eight-direction
+-- relief predicate only for each selected group winner. Disabling this flag restores the literal
+-- eager per-candidate sampling path.
+config.OptimizeOuterResourceRocketReliefDeferral = true
 config.OuterResourceExtractorCoreRadiusHexes = 3
 config.OuterResourceExtractorFeatherRadiusHexes = 7
 config.OuterResourceSurfaceCoreRadiusHexes = 1
@@ -950,6 +955,8 @@ C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_RING_REBUILD =
 	as_bool(config.OptimizeOuterResourceTerrainRingRebuild)
 C.OPTIMIZE_OUTER_RESOURCE_TERRAIN_NATIVE_PRECONDITION =
 	as_bool(config.OptimizeOuterResourceTerrainNativePrecondition)
+C.OPTIMIZE_OUTER_RESOURCE_ROCKET_RELIEF_DEFERRAL =
+	as_bool(config.OptimizeOuterResourceRocketReliefDeferral)
 C.OUTER_RESOURCE_EXTRACTOR_CORE_RADIUS_HEXES = math.max(2,
 	as_number(config.OuterResourceExtractorCoreRadiusHexes, 3))
 C.OUTER_RESOURCE_EXTRACTOR_FEATHER_RADIUS_HEXES = math.max(
