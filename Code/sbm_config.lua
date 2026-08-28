@@ -733,6 +733,12 @@ config.OptimizeHeightStepNativeDiscoveryIndex = true
 -- the existing track qualification and scalar per-row refinement. The source grid remains read-only;
 -- any allocation, native operation, enumeration, or cleanup failure falls back before repair writes.
 config.OptimizeHeightStepNativeSourceDiscoveryIndex = true
+-- Apply each already-qualified destination crease track with bounded native grid arithmetic. The
+-- exact scalar refinement still plans every row in legacy order; only its contiguous integer
+-- translation intervals are accumulated on a detached slab, after which the unchanged scalar
+-- quintic feather runs before one transactional copyback. Any unavailable primitive or failed
+-- native operation rolls the slab back and repeats the literal scalar writer.
+config.OptimizeHeightStepNativeTrackTranslation = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1160,6 +1166,8 @@ C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =
 	as_bool(config.OptimizeHeightStepNativeDiscoveryIndex)
 C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =
 	as_bool(config.OptimizeHeightStepNativeSourceDiscoveryIndex)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION =
+	as_bool(config.OptimizeHeightStepNativeTrackTranslation)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"

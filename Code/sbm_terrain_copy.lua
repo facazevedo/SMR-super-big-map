@@ -743,6 +743,45 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		bands = 0, indexed_cells = 0, enumerated = 0, survivors = 0,
 		exact_positions = 0, sampled_rows = 0, compaction_copies = 0, ms = 0,
 	}
+	local native_track = {
+		requested = not wide_ring_only
+			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION", true),
+		available = false, used = false, fallback = false, error = "",
+		rollback_failed = false, cleanup_failed = false,
+		tracks = 0, rows = 0, translation_cells = 0, legacy_translation_cells = 0,
+		slab_cells = 0, offset_slab_fills = 0, offset_strip_fills = 0,
+		offset_interval_copies = 0, planning_ms = 0, native_ms = 0, legacy_ms = 0,
+	}
+	local native_new_grid, native_fill, native_add, native_clamp, native_repack
+	local native_is_compute, point_fn, box_fn
+	local native_format, native_bits
+	if native_track.requested then
+		native_new_grid = Global("NewComputeGrid")
+		native_fill = Global("GridFill")
+		native_add = Global("GridAdd")
+		native_clamp = Global("GridClamp")
+		native_repack = Global("GridRepack")
+		native_is_compute = Global("IsComputeGrid")
+		point_fn, box_fn = Global("point"), Global("box")
+		if type(native_is_compute) == "function" then
+			local format_ok, format, bits = pcall(native_is_compute, grid)
+			if format_ok and format ~= nil and format ~= false and type(bits) == "number" then
+				native_format, native_bits = format, bits
+			end
+		end
+	end
+	native_track.available = native_track.requested
+		and type(native_new_grid) == "function" and type(native_fill) == "function"
+		and type(native_add) == "function" and type(native_clamp) == "function"
+		and type(native_repack) == "function" and native_format ~= nil
+		and type(point_fn) == "function" and type(box_fn) == "function"
+		and type(grid.copyrect) == "function" and type(grid.new_instance) == "function"
+
+	local function native_track_error(message)
+		message = tostring(message or "native destination translation failed")
+		native_track.error = native_track.error ~= ""
+			and (native_track.error .. " | " .. message) or message
+	end
 
 	local function at(axis, perp, along)
 		if axis == "x" then return grid:get(perp, along) end
@@ -1215,6 +1254,24 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		report.native_discovery_index_compaction_copies = native_discovery.compaction_copies
 		report.native_discovery_index_mode = native_discovery.mode
 		report.native_discovery_index_ms = native_discovery.ms
+		report.native_destination_translation_requested = native_track.requested
+		report.native_destination_translation_available = native_track.available
+		report.native_destination_translation_used = native_track.used
+		report.native_destination_translation_fallback = native_track.fallback
+		report.native_destination_translation_error = native_track.error
+		report.native_destination_translation_rollback_failed = native_track.rollback_failed
+		report.native_destination_translation_cleanup_failed = native_track.cleanup_failed
+		report.native_destination_translation_tracks = native_track.tracks
+		report.native_destination_translation_rows = native_track.rows
+		report.native_destination_translation_cells = native_track.translation_cells
+		report.native_destination_legacy_cells = native_track.legacy_translation_cells
+		report.native_destination_slab_cells = native_track.slab_cells
+		report.native_destination_offset_slab_fills = native_track.offset_slab_fills
+		report.native_destination_offset_strip_fills = native_track.offset_strip_fills
+		report.native_destination_offset_interval_copies = native_track.offset_interval_copies
+		report.native_destination_translation_planning_ms = native_track.planning_ms
+		report.native_destination_translation_ms = native_track.native_ms
+		report.native_destination_legacy_ms = native_track.legacy_ms
 		if wide_ring_only then
 			report.source_native_discovery_index_requested = native_discovery.requested
 			report.source_native_discovery_index_used = native_discovery.used
@@ -1477,6 +1534,262 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		return best_perp, best_width
 	end
 
+	-- Literal destination writer retained as the authoritative fallback and equivalence oracle.
+	local function legacy_apply_track(selected, points)
+		local started_ms = now_ms()
+		local modified, detected, translated = 0, 0, 0
+		local min_offset, max_offset
+		for _, point in ipairs(points) do
+			local along = point.along
+			local perp, width = refine_step(selected, along, point.perp)
+			if perp then
+				local before_edge = selected.edge == "left" or selected.edge == "top"
+				local low_perp = selected.low_before and perp or perp + width
+				local high_perp = selected.low_before and perp + width or perp
+				local low = at(selected.axis, low_perp, along)
+				local high = at(selected.axis, high_perp, along)
+				if type(low) == "number" and type(high) == "number" and high > low then
+					local offset = high - low
+					min_offset = not min_offset and offset or math.min(min_offset, offset)
+					max_offset = not max_offset and offset or math.max(max_offset, offset)
+					detected = detected + 1
+					if not wide_ring_only then
+						local perp0 = before_edge and 0 or perp + width
+						local perp1 = before_edge and perp or selected.perp_n - 1
+						for p = perp0, perp1 do
+							local original = at(selected.axis, p, along)
+							if type(original) == "number" then
+								put(selected.axis, p, along, math.min(mx, original + offset))
+								modified = modified + 1
+								translated = translated + 1
+							end
+						end
+						local join_lo, join_hi
+						if before_edge then
+							join_lo = math.max(outer_guard + 1, perp - 6)
+							join_hi = math.min(selected.perp_n - 2, perp + width + 12)
+						else
+							join_lo = math.max(1, perp - 12)
+							join_hi = math.min(selected.perp_n - outer_guard - 2,
+								perp + width + 6)
+						end
+						modified = modified
+							+ feather_join(selected.axis, along, join_lo, join_hi)
+					end
+				end
+			end
+		end
+		native_track.legacy_ms = native_track.legacy_ms + math.max(0, now_ms() - started_ms)
+		return modified, detected, min_offset, max_offset, translated
+	end
+
+	-- Preserve the scalar track/refinement order and derive only the half-open integer intervals the
+	-- legacy writer would visit. No destination cell is changed while the plan is being assembled.
+	local function plan_native_track(selected, points)
+		local rows, detected, translation_cells = {}, 0, 0
+		local min_offset, max_offset
+		local before_edge = selected.edge == "left" or selected.edge == "top"
+		local seen_along = {}
+		for _, point in ipairs(points) do
+			local along = point.along
+			local perp, width = refine_step(selected, along, point.perp)
+			if perp then
+				local low_perp = selected.low_before and perp or perp + width
+				local high_perp = selected.low_before and perp + width or perp
+				local low = at(selected.axis, low_perp, along)
+				local high = at(selected.axis, high_perp, along)
+				if type(low) == "number" and type(high) == "number" and high > low then
+					if seen_along[along] then error("duplicate native destination track row", 0) end
+					seen_along[along] = true
+					local offset = high - low
+					local perp0 = before_edge and 0 or perp + width
+					local perp1 = before_edge and perp or selected.perp_n - 1
+					local join_lo, join_hi
+					if before_edge then
+						join_lo = math.max(outer_guard + 1, perp - 6)
+						join_hi = math.min(selected.perp_n - 2, perp + width + 12)
+					else
+						join_lo = math.max(1, perp - 12)
+						join_hi = math.min(selected.perp_n - outer_guard - 2,
+							perp + width + 6)
+					end
+					rows[#rows + 1] = {
+						along = along, offset = offset, perp0 = perp0, perp1 = perp1,
+						join_lo = join_lo, join_hi = join_hi,
+					}
+					translation_cells = translation_cells + perp1 - perp0 + 1
+					min_offset = not min_offset and offset or math.min(min_offset, offset)
+					max_offset = not max_offset and offset or math.max(max_offset, offset)
+					detected = detected + 1
+				end
+			end
+		end
+		return rows, detected, min_offset, max_offset, translation_cells
+	end
+
+	-- Apply one track on a detached, same-format snapshot. Integer U16 values and offsets fit exactly
+	-- in f32, so GridAdd+GridClamp+GridRepack implements min(mx, original+offset) without rounding.
+	-- The unchanged scalar quintic feather operates on the packed detached result. Only then is one
+	-- copyback attempted; its preimage remains owned until successful release or complete rollback.
+	local function apply_native_track(selected, rows)
+		local started_ms = now_ms()
+		local owned, owned_lookup = {}, {}
+		local source_snapshot, local_box, destination_point
+		local copy_started = false
+		local function own(value)
+			if not value then error("native destination grid allocation failed", 0) end
+			if value == grid or value == source_snapshot then
+				error("native destination scratch aliases protected grid", 0)
+			end
+			if not owned_lookup[value] then
+				owned_lookup[value] = true
+				owned[#owned + 1] = value
+			end
+			return value
+		end
+		local ok, modified, translation_cells, slab_cells, offset_stats = pcall(function()
+			assert(#rows > 0, "empty native destination track")
+			local min_along, max_along, min_perp, max_perp
+			for _, row in ipairs(rows) do
+				min_along = not min_along and row.along or math.min(min_along, row.along)
+				max_along = not max_along and row.along or math.max(max_along, row.along)
+				min_perp = not min_perp and math.min(row.perp0, row.join_lo - 1)
+					or math.min(min_perp, row.perp0, row.join_lo - 1)
+				max_perp = not max_perp and math.max(row.perp1, row.join_hi + 1)
+					or math.max(max_perp, row.perp1, row.join_hi + 1)
+			end
+			min_perp = math.max(0, min_perp)
+			max_perp = math.min(selected.perp_n - 1, max_perp)
+			local x0, y0, x1, y1
+			if selected.axis == "x" then
+				x0, y0, x1, y1 = min_perp, min_along, max_perp, max_along
+			else
+				x0, y0, x1, y1 = min_along, min_perp, max_along, max_perp
+			end
+			local local_width, local_height = x1 - x0 + 1, y1 - y0 + 1
+			assert(local_width > 1 and local_height > 1, "invalid native destination slab")
+			local_box = box_fn(0, 0, local_width, local_height)
+			destination_point = point_fn(x0, y0)
+			source_snapshot = grid:new_instance(local_width, local_height)
+			assert(source_snapshot and source_snapshot ~= grid
+				and type(source_snapshot.copyrect) == "function"
+				and type(source_snapshot.free) == "function",
+				"native destination snapshot allocation failed")
+			source_snapshot:copyrect(grid, box_fn(x0, y0, x1 + 1, y1 + 1), point_fn(0, 0))
+			-- Repack a second same-format copy so even an in-place GridRepack implementation cannot
+			-- mutate the rollback preimage. This extra native copy is bounded to the selected track.
+			local source_work = own(grid:new_instance(local_width, local_height))
+			assert(type(source_work.copyrect) == "function" and type(source_work.free) == "function",
+				"native destination working-copy allocation failed")
+			source_work:copyrect(source_snapshot, local_box, point_fn(0, 0))
+			local source = own(native_repack(source_work, "f", 32, true))
+			local offsets = own(native_new_grid(local_width, local_height, "f", 32))
+			local strip_width = selected.axis == "x" and local_width or 1
+			local strip_height = selected.axis == "x" and 1 or local_height
+			local strip = own(native_new_grid(strip_width, strip_height, "f", 32))
+			assert(type(offsets.copyrect) == "function", "native destination offset grid unavailable")
+			native_fill(offsets, 0)
+			local slab_perp0 = selected.axis == "x" and x0 or y0
+			local strip_fills, interval_copies = 0, 0
+			for _, row in ipairs(rows) do
+				local local_perp0 = row.perp0 - slab_perp0
+				local interval_length = row.perp1 - row.perp0 + 1
+				assert(local_perp0 >= 0 and interval_length > 0,
+					"invalid native destination interval")
+				native_fill(strip, row.offset)
+				if selected.axis == "x" then
+					offsets:copyrect(strip, box_fn(0, 0, interval_length, 1),
+						point_fn(local_perp0, row.along - y0))
+				else
+					offsets:copyrect(strip, box_fn(0, 0, 1, interval_length),
+						point_fn(row.along - x0, local_perp0))
+				end
+				strip_fills = strip_fills + 1
+				interval_copies = interval_copies + 1
+			end
+			native_add(source, offsets)
+			native_clamp(source, 0, mx)
+			local packed = own(native_repack(source, native_format, native_bits))
+
+			local function local_at(perp, along)
+				if selected.axis == "x" then return packed:get(perp - x0, along - y0) end
+				return packed:get(along - x0, perp - y0)
+			end
+			local function local_put(perp, along, value)
+				if selected.axis == "x" then packed:set(perp - x0, along - y0, value)
+				else packed:set(along - x0, perp - y0, value) end
+			end
+			local feather_modified = 0
+			for _, row in ipairs(rows) do
+				local lo, hi = row.join_lo, row.join_hi
+				if hi - lo >= 4 then
+					local v0, v0_prev = local_at(lo, row.along), local_at(lo - 1, row.along)
+					local v1, v1_next = local_at(hi, row.along), local_at(hi + 1, row.along)
+					if type(v0) == "number" and type(v0_prev) == "number"
+						and type(v1) == "number" and type(v1_next) == "number" then
+						local slope0, slope1 = v0 - v0_prev, v1_next - v1
+						local span = hi - lo
+						for p = lo + 1, hi - 1 do
+							local t = (p - lo + 0.0) / span
+							local smooth = t * t * t * (t * (t * 6 - 15) + 10)
+							local left = v0 + slope0 * (p - lo)
+							local right = v1 + slope1 * (p - hi)
+							local value = math.floor(left + (right - left) * smooth + 0.5)
+							local_put(p, row.along, math.max(0, math.min(mx, value)))
+							feather_modified = feather_modified + 1
+						end
+					end
+				end
+			end
+			copy_started = true
+			grid:copyrect(packed, local_box, destination_point)
+			return translation_cells + feather_modified, translation_cells,
+				local_width * local_height, {
+					offset_slab_fills = 1, offset_strip_fills = strip_fills,
+					offset_interval_copies = interval_copies,
+				}
+		end)
+
+		local cleanup_errors = {}
+		for index = #owned, 1, -1 do
+			local value = owned[index]
+			owned[index] = nil
+			if value and type(value.free) == "function" then
+				local free_ok, free_error = pcall(value.free, value)
+				if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
+			end
+		end
+		local operation_error = ok and "" or tostring(modified)
+		if #cleanup_errors > 0 then
+			native_track.cleanup_failed = true
+			local cleanup_error = "native destination transient cleanup failed: "
+				.. table.concat(cleanup_errors, " | ")
+			operation_error = operation_error ~= "" and (operation_error .. " | " .. cleanup_error)
+				or cleanup_error
+			ok = false
+		end
+		local release_errors = {}
+		if not ok and copy_started and source_snapshot then
+			local restore_ok, restore_error = pcall(
+				grid.copyrect, grid, source_snapshot, local_box, destination_point)
+			if not restore_ok then release_errors[#release_errors + 1] = tostring(restore_error) end
+		end
+		if source_snapshot and type(source_snapshot.free) == "function" then
+			local free_ok, free_error = pcall(source_snapshot.free, source_snapshot)
+			if not free_ok then release_errors[#release_errors + 1] = tostring(free_error) end
+		end
+		native_track.native_ms = native_track.native_ms + math.max(0, now_ms() - started_ms)
+		if not ok then
+			return false, operation_error, #release_errors == 0, table.concat(release_errors, " | ")
+		end
+		if #release_errors > 0 then
+			native_track.cleanup_failed = true
+			return false, "native destination snapshot cleanup failed", false,
+				table.concat(release_errors, " | ")
+		end
+		return true, modified, translation_cells, slab_cells, offset_stats
+	end
+
 	local function validate_sampled_track(track)
 		if (track.sample_step or 1) <= 1 then return end
 		local predictions = {}
@@ -1705,52 +2018,101 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			phase_ms.point_expand = phase_ms.point_expand
 				+ math.max(0, now_ms() - expand_started_ms)
 
-			local modified, detected = 0, 0
-			local min_offset, max_offset
-			for _, point in ipairs(points) do
-				local along = point.along
-				local perp, width = refine_step(selected, along, point.perp)
-				if perp then
-					local before_edge = selected.edge == "left" or selected.edge == "top"
-					-- Wide discovery is sign agnostic, so derive the low/high samples from
-					-- the measured boundary direction instead of assuming the low side is
-					-- always the side facing the physical edge.  The near-edge write pass
-					-- has already admitted only that direction, making this equivalent there.
-					local low_perp = selected.low_before and perp or perp + width
-					local high_perp = selected.low_before and perp + width or perp
-					local low = at(selected.axis, low_perp, along)
-					local high = at(selected.axis, high_perp, along)
-					if type(low) == "number" and type(high) == "number" and high > low then
-						local offset = high - low
-						min_offset = not min_offset and offset or math.min(min_offset, offset)
-						max_offset = not max_offset and offset or math.max(max_offset, offset)
-						detected = detected + 1
-						-- Wide-ring discovery is read-only here.  Its qualified tracks are repaired by
-						-- RepairQualifiedSourceHeightSteps after this detector returns; the immediate
-						-- physical-edge path below retains v839's destination behavior.
-						if not wide_ring_only then
-							-- Translate the low region. The feather below then replaces the inherited
-							-- resampling ramp and a few samples on both sides with a slope-matched join.
-							local perp0 = before_edge and 0 or perp + width
-							local perp1 = before_edge and perp or selected.perp_n - 1
-							for p = perp0, perp1 do
-								local original = at(selected.axis, p, along)
-								if type(original) == "number" then
-									put(selected.axis, p, along, math.min(mx, original + offset))
-									modified = modified + 1
-								end
-							end
-							local join_lo, join_hi
-							if before_edge then
-								join_lo = math.max(outer_guard + 1, perp - 6)
-								join_hi = math.min(selected.perp_n - 2, perp + width + 12)
+			local modified, detected, min_offset, max_offset
+			if wide_ring_only then
+				-- Keep the accepted source detector's read-only row loop literal. Destination-native
+				-- allocation, timing, ownership, and fallback state never enter the source path.
+				modified, detected = 0, 0
+				for _, point in ipairs(points) do
+					local along = point.along
+					local perp, width = refine_step(selected, along, point.perp)
+					if perp then
+						local before_edge = selected.edge == "left" or selected.edge == "top"
+						local low_perp = selected.low_before and perp or perp + width
+						local high_perp = selected.low_before and perp + width or perp
+						local low = at(selected.axis, low_perp, along)
+						local high = at(selected.axis, high_perp, along)
+						if type(low) == "number" and type(high) == "number" and high > low then
+							local offset = high - low
+							min_offset = not min_offset and offset or math.min(min_offset, offset)
+							max_offset = not max_offset and offset or math.max(max_offset, offset)
+							detected = detected + 1
+							-- `before_edge` is intentionally retained above: this is the literal accepted
+							-- source observation loop, whose write branch remains destination-only.
+						end
+					end
+				end
+			else
+				local function apply_literal()
+					local translated
+					modified, detected, min_offset, max_offset, translated =
+						legacy_apply_track(selected, points)
+					native_track.legacy_translation_cells = native_track.legacy_translation_cells
+						+ (translated or 0)
+				end
+				if not native_track.requested then
+					apply_literal()
+				elseif not native_track.available then
+					if not native_track.fallback then
+						native_track.fallback = true
+						native_track_error("native destination translation APIs unavailable")
+					end
+					apply_literal()
+				else
+					local refine_calls_before = refine_calls
+					local refine_grid_reads_before = refine_grid_reads
+					local legacy_refine_grid_reads_before = legacy_refine_grid_reads
+					local planning_started_ms = now_ms()
+					local planned = { pcall(plan_native_track, selected, points) }
+					native_track.planning_ms = native_track.planning_ms
+						+ math.max(0, now_ms() - planning_started_ms)
+					if not planned[1] then
+						native_track.fallback = true
+						native_track_error(planned[2])
+						refine_calls = refine_calls_before
+						refine_grid_reads = refine_grid_reads_before
+						legacy_refine_grid_reads = legacy_refine_grid_reads_before
+						apply_literal()
+					else
+						local rows, planned_detected, planned_min_offset, planned_max_offset =
+							planned[2], planned[3], planned[4], planned[5]
+						if #rows == 0 then
+							modified, detected = 0, planned_detected
+							min_offset, max_offset = planned_min_offset, planned_max_offset
+						else
+							local native_ok, native_modified, translated_or_error,
+								slab_or_rollback, stats_or_error = apply_native_track(selected, rows)
+							if native_ok then
+								modified, detected = native_modified, planned_detected
+								min_offset, max_offset = planned_min_offset, planned_max_offset
+								native_track.used = true
+								native_track.tracks = native_track.tracks + 1
+								native_track.rows = native_track.rows + #rows
+								native_track.translation_cells = native_track.translation_cells
+									+ translated_or_error
+								native_track.slab_cells = native_track.slab_cells + slab_or_rollback
+								native_track.offset_slab_fills = native_track.offset_slab_fills
+									+ stats_or_error.offset_slab_fills
+								native_track.offset_strip_fills = native_track.offset_strip_fills
+									+ stats_or_error.offset_strip_fills
+								native_track.offset_interval_copies =
+									native_track.offset_interval_copies
+									+ stats_or_error.offset_interval_copies
 							else
-								join_lo = math.max(1, perp - 12)
-								join_hi = math.min(selected.perp_n - outer_guard - 2,
-									perp + width + 6)
+								native_track.fallback = true
+								native_track_error(translated_or_error)
+								if slab_or_rollback ~= true then
+									native_track.rollback_failed = true
+									error("native destination rollback failed: "
+										.. tostring(stats_or_error), 0)
+								end
+								-- The failed native attempt restored the exact pre-track slab. Repeat the
+								-- literal path and count its scalar refinement once, as if native were off.
+								refine_calls = refine_calls_before
+								refine_grid_reads = refine_grid_reads_before
+								legacy_refine_grid_reads = legacy_refine_grid_reads_before
+								apply_literal()
 							end
-							modified = modified
-								+ feather_join(selected.axis, along, join_lo, join_hi)
 						end
 					end
 				end
@@ -4803,6 +5165,42 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					destination_height_step_point_expand_ms =
 						report.destination_height_step_point_expand_ms,
 					destination_height_step_apply_ms = report.destination_height_step_apply_ms,
+					native_destination_translation_requested =
+						report.native_destination_translation_requested,
+					native_destination_translation_available =
+						report.native_destination_translation_available,
+					native_destination_translation_used =
+						report.native_destination_translation_used,
+					native_destination_translation_fallback =
+						report.native_destination_translation_fallback,
+					native_destination_translation_error =
+						report.native_destination_translation_error,
+					native_destination_translation_rollback_failed =
+						report.native_destination_translation_rollback_failed,
+					native_destination_translation_cleanup_failed =
+						report.native_destination_translation_cleanup_failed,
+					native_destination_translation_tracks =
+						report.native_destination_translation_tracks,
+					native_destination_translation_rows =
+						report.native_destination_translation_rows,
+					native_destination_translation_cells =
+						report.native_destination_translation_cells,
+					native_destination_legacy_cells =
+						report.native_destination_legacy_cells,
+					native_destination_slab_cells =
+						report.native_destination_slab_cells,
+					native_destination_offset_slab_fills =
+						report.native_destination_offset_slab_fills,
+					native_destination_offset_strip_fills =
+						report.native_destination_offset_strip_fills,
+					native_destination_offset_interval_copies =
+						report.native_destination_offset_interval_copies,
+					native_destination_translation_planning_ms =
+						report.native_destination_translation_planning_ms,
+					native_destination_translation_ms =
+						report.native_destination_translation_ms,
+					native_destination_legacy_ms =
+						report.native_destination_legacy_ms,
 					destination_min_offset = internal_step_repair.destination_min_offset
 						or report.destination_min_offset,
 					destination_max_offset = internal_step_repair.destination_max_offset
@@ -4966,6 +5364,10 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				report.destination_refine_calls = report.refine_calls
 				report.destination_refine_grid_reads = report.refine_grid_reads
 				report.destination_legacy_refine_grid_reads = report.legacy_refine_grid_reads
+				if report.native_destination_translation_rollback_failed then
+					error("native destination terrain rollback failed: "
+						.. tostring(report.native_destination_translation_error), 0)
+				end
 				TerrainCreaseAudit(repaired and "DESTINATION_REPAIRED"
 					or "DESTINATION_SKIPPED", report, map)
 				merge_step_report(report)
@@ -5100,6 +5502,42 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				and internal_step_repair.refine_grid_reads or 0,
 			internal_step_legacy_refine_grid_reads = internal_step_repair
 				and internal_step_repair.legacy_refine_grid_reads or 0,
+			native_destination_translation_requested = internal_step_repair
+				and internal_step_repair.native_destination_translation_requested or false,
+			native_destination_translation_available = internal_step_repair
+				and internal_step_repair.native_destination_translation_available or false,
+			native_destination_translation_used = internal_step_repair
+				and internal_step_repair.native_destination_translation_used or false,
+			native_destination_translation_fallback = internal_step_repair
+				and internal_step_repair.native_destination_translation_fallback or false,
+			native_destination_translation_error = internal_step_repair
+				and internal_step_repair.native_destination_translation_error or "",
+			native_destination_translation_rollback_failed = internal_step_repair
+				and internal_step_repair.native_destination_translation_rollback_failed or false,
+			native_destination_translation_cleanup_failed = internal_step_repair
+				and internal_step_repair.native_destination_translation_cleanup_failed or false,
+			native_destination_translation_tracks = internal_step_repair
+				and internal_step_repair.native_destination_translation_tracks or 0,
+			native_destination_translation_rows = internal_step_repair
+				and internal_step_repair.native_destination_translation_rows or 0,
+			native_destination_translation_cells = internal_step_repair
+				and internal_step_repair.native_destination_translation_cells or 0,
+			native_destination_legacy_cells = internal_step_repair
+				and internal_step_repair.native_destination_legacy_cells or 0,
+			native_destination_slab_cells = internal_step_repair
+				and internal_step_repair.native_destination_slab_cells or 0,
+			native_destination_offset_slab_fills = internal_step_repair
+				and internal_step_repair.native_destination_offset_slab_fills or 0,
+			native_destination_offset_strip_fills = internal_step_repair
+				and internal_step_repair.native_destination_offset_strip_fills or 0,
+			native_destination_offset_interval_copies = internal_step_repair
+				and internal_step_repair.native_destination_offset_interval_copies or 0,
+			native_destination_translation_planning_ms = internal_step_repair
+				and internal_step_repair.native_destination_translation_planning_ms or 0,
+			native_destination_translation_ms = internal_step_repair
+				and internal_step_repair.native_destination_translation_ms or 0,
+			native_destination_legacy_ms = internal_step_repair
+				and internal_step_repair.native_destination_legacy_ms or 0,
 			source_native_discovery_requested = internal_step_repair
 				and internal_step_repair.source_native_discovery_index_requested or false,
 			source_native_discovery_used = internal_step_repair

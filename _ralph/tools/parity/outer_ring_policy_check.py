@@ -252,6 +252,11 @@ rocket_terrain_audit = section(
     "local verified_mountain_pads, rocket_failures",
     "map.SuperBigMapVerifiedMountainRocketPads",
 )
+height_step_native_translation = section(
+    TERRAIN,
+    "local function apply_native_track(selected, rows)",
+    "local function validate_sampled_track(track)",
+)
 
 static_checks = {
     "immediate_surface_final_rebuild_is_deferred": (
@@ -627,6 +632,52 @@ static_checks = {
             "config.OptimizeHeightStepNativeSourceDiscoveryIndex = true",
             "C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =",
         )
+    ),
+    "height_step_destination_translation_uses_transactional_exact_native_slabs": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION", true)',
+            "requested = not wide_ring_only",
+            "local function legacy_apply_track(selected, points)",
+            "local function plan_native_track(selected, points)",
+            "local function apply_native_track(selected, rows)",
+            "value == grid or value == source_snapshot",
+            "source_snapshot and source_snapshot ~= grid",
+            "local source_work = own(grid:new_instance(local_width, local_height))",
+            "source_work:copyrect(source_snapshot, local_box, point_fn(0, 0))",
+            'native_repack(source_work, "f", 32, true)',
+            'native_new_grid(local_width, local_height, "f", 32)',
+            'native_new_grid(strip_width, strip_height, "f", 32)',
+            "native_fill(offsets, 0)",
+            "native_fill(strip, row.offset)",
+            "box_fn(0, 0, interval_length, 1)",
+            "box_fn(0, 0, 1, interval_length)",
+            "native_add(source, offsets)",
+            "native_clamp(source, 0, mx)",
+            "native_repack(source, native_format, native_bits)",
+            "copy_started = true",
+            "grid:copyrect(packed, local_box, destination_point)",
+            "grid.copyrect, grid, source_snapshot, local_box, destination_point",
+            "native destination transient cleanup failed",
+            "native_track.rollback_failed = true",
+            "apply_literal()",
+            "refine_calls = refine_calls_before",
+            "report.native_destination_translation_cleanup_failed = native_track.cleanup_failed",
+            "native_destination_translation_rows = internal_step_repair",
+            "native_destination_offset_interval_copies = internal_step_repair",
+            "native_destination_translation_planning_ms = internal_step_repair",
+            "native_destination_translation_ms = internal_step_repair",
+            'ZDumpHeightGrid(map, "finish-post", stretched)',
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepNativeTrackTranslation = true",
+            "C.OPTIMIZE_HEIGHT_STEP_NATIVE_TRACK_TRANSLATION =",
+        )
+    ) and all(
+        token not in height_step_native_translation
+        for token in ("native_resample", "mask_seed", "offset_seed", "AsyncRand")
     ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
@@ -1017,7 +1068,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_946": "'version', 946" in METADATA,
+    "version_is_948": "'version', 948" in METADATA,
 }
 
 case_results = []
@@ -1801,6 +1852,198 @@ refine_rolling_checks = {
 }
 
 
+def native_interval_offsets(length: int, start: int, finish: int, offset: int) -> tuple[int, ...]:
+    """Model GridFill(0) plus the production half-open strip copy [start, finish+1)."""
+    assert length > 0 and 0 <= start <= finish < length
+    slab = [0] * length
+    strip = [offset] * length
+    slab[start : finish + 1] = strip[0 : finish - start + 1]
+    return tuple(slab)
+
+
+native_translation_interval_cases = []
+for interval_length in (2, 3, 7, 64, 257):
+    for interval_boundary in range(interval_length):
+        for interval_before in (False, True):
+            interval_start, interval_finish = (
+                (0, interval_boundary)
+                if interval_before
+                else (interval_boundary, interval_length - 1)
+            )
+            interval_offset = 1000 + interval_boundary * 17
+            interval_actual = native_interval_offsets(
+                interval_length, interval_start, interval_finish, interval_offset
+            )
+            interval_expected = tuple(
+                interval_offset if interval_start <= position <= interval_finish else 0
+                for position in range(interval_length)
+            )
+            native_translation_interval_cases.append(
+                {
+                    "length": interval_length,
+                    "boundary": interval_boundary,
+                    "before": interval_before,
+                    "exact": interval_actual == interval_expected,
+                }
+            )
+
+
+def feather_modeled_row(values: list[int], lo: int, hi: int, maximum: int) -> int:
+    """Literal Lua quintic feather, including endpoint samples and integer rounding."""
+    if hi - lo < 4:
+        return 0
+    v0, v0_previous = values[lo], values[lo - 1]
+    v1, v1_next = values[hi], values[hi + 1]
+    slope0, slope1 = v0 - v0_previous, v1_next - v1
+    span = hi - lo
+    for position in range(lo + 1, hi):
+        t = (position - lo) / span
+        smooth = t * t * t * (t * (t * 6 - 15) + 10)
+        left = v0 + slope0 * (position - lo)
+        right = v1 + slope1 * (position - hi)
+        values[position] = max(
+            0, min(maximum, math.floor(left + (right - left) * smooth + 0.5))
+        )
+    return hi - lo - 1
+
+
+def modeled_axis_line(grid: list[list[int]], axis: str, along: int) -> list[int]:
+    return grid[along] if axis == "x" else [row[along] for row in grid]
+
+
+def store_modeled_axis_line(
+    grid: list[list[int]], axis: str, along: int, values: list[int]
+) -> None:
+    if axis == "y":
+        for position, value in enumerate(values):
+            grid[position][along] = value
+
+
+def apply_modeled_translation_track(
+    grid: list[list[int]],
+    axis: str,
+    rows: tuple[tuple[int, int, int, int, int, int], ...],
+    maximum: int,
+    native: bool,
+) -> tuple[int, int]:
+    """Compare per-cell legacy writes with one detached offset slab and scalar feather."""
+    modified = translated = 0
+    if native:
+        # Native GridAdd applies every distinct along-row interval before the scalar feather loop.
+        # Rows are independent within one axis/track, so this must equal legacy row-at-a-time writes.
+        for along, perp0, perp1, _join_lo, _join_hi, offset in rows:
+            line = modeled_axis_line(grid, axis, along)
+            offsets = native_interval_offsets(len(line), perp0, perp1, offset)
+            for position, value in enumerate(offsets):
+                line[position] = min(maximum, line[position] + value)
+                translated += int(value != 0)
+            store_modeled_axis_line(grid, axis, along, line)
+        for along, perp0, perp1, join_lo, join_hi, _offset in rows:
+            line = modeled_axis_line(grid, axis, along)
+            modified += perp1 - perp0 + 1
+            modified += feather_modeled_row(line, join_lo, join_hi, maximum)
+            store_modeled_axis_line(grid, axis, along, line)
+    else:
+        for along, perp0, perp1, join_lo, join_hi, offset in rows:
+            line = modeled_axis_line(grid, axis, along)
+            for position in range(perp0, perp1 + 1):
+                line[position] = min(maximum, line[position] + offset)
+                translated += 1
+            modified += perp1 - perp0 + 1
+            modified += feather_modeled_row(line, join_lo, join_hi, maximum)
+            store_modeled_axis_line(grid, axis, along, line)
+    return modified, translated
+
+
+native_translation_model_cases = []
+for model_size in (32, 65, 97):
+    model_original = [
+        [
+            min(65535, 61000 + x * 37 + y * 43 + ((x * y) % 29))
+            for x in range(model_size)
+        ]
+        for y in range(model_size)
+    ]
+    model_legacy = [row[:] for row in model_original]
+    model_native = [row[:] for row in model_original]
+    model_x_rows = tuple(
+        (
+            along,
+            0,
+            8 + along % 4,
+            3,
+            min(model_size - 2, 21),
+            97 + (along * 13) % 503,
+        )
+        for along in range(4, model_size - 4, 3)
+    )
+    model_y_rows = tuple(
+        (
+            along,
+            model_size - 12 - along % 3,
+            model_size - 1,
+            max(1, model_size - 22),
+            model_size - 4,
+            151 + (along * 17) % 401,
+        )
+        for along in range(5, model_size - 5, 4)
+    )
+    model_legacy_counts = (
+        apply_modeled_translation_track(model_legacy, "x", model_x_rows, 65535, False),
+        apply_modeled_translation_track(model_legacy, "y", model_y_rows, 65535, False),
+    )
+    model_native_counts = (
+        apply_modeled_translation_track(model_native, "x", model_x_rows, 65535, True),
+        apply_modeled_translation_track(model_native, "y", model_y_rows, 65535, True),
+    )
+    # A later-track native failure must restore only its pre-track snapshot, retain the already
+    # committed earlier track, then produce the same output through the literal fallback.
+    model_rollback = [row[:] for row in model_original]
+    model_rollback_x = apply_modeled_translation_track(
+        model_rollback, "x", model_x_rows, 65535, True
+    )
+    model_y_snapshot = [row[:] for row in model_rollback]
+    apply_modeled_translation_track(model_rollback, "y", model_y_rows, 65535, True)
+    model_rollback = [row[:] for row in model_y_snapshot]
+    model_rollback_y = apply_modeled_translation_track(
+        model_rollback, "y", model_y_rows, 65535, False
+    )
+    native_translation_model_cases.append(
+        {
+            "size": model_size,
+            "exact_grid": model_legacy == model_native,
+            "exact_counts": model_legacy_counts == model_native_counts,
+            "rollback_then_literal_exact": (
+                model_rollback == model_legacy
+                and (model_rollback_x, model_rollback_y) == model_legacy_counts
+            ),
+            "writes_exercised": model_original != model_legacy and model_original != model_native,
+        }
+    )
+
+
+native_translation_checks = {
+    "all_half_open_filled_strip_intervals_are_exact": all(
+        case["exact"] for case in native_translation_interval_cases
+    ),
+    "interval_corpus_covers_both_edges_and_every_boundary": (
+        len(native_translation_interval_cases)
+        == sum(2 * length for length in (2, 3, 7, 64, 257))
+    ),
+    "sequential_cross_axis_translation_clamp_and_feather_are_exact": all(
+        case["exact_grid"] and case["exact_counts"]
+        for case in native_translation_model_cases
+    ),
+    "later_track_rollback_then_literal_fallback_is_exact": all(
+        case["rollback_then_literal_exact"] for case in native_translation_model_cases
+    ),
+    "modeled_corpus_exercises_real_writes": all(
+        case["writes_exercised"] for case in native_translation_model_cases
+    ),
+    "u16_plus_u16_is_exact_in_f32": 65535 + 65535 < 2**24,
+}
+
+
 ring_rebuild_geometry_cases = []
 for width, height, pass_tile in ((819200, 819200, 100), (819203, 819197, 100), (1003, 997, 1)):
     strips = outer_resource_rebuild_strips(width, height, 2, pass_tile)
@@ -2037,7 +2280,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 19,
+    "schema_version": 20,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -2052,6 +2295,9 @@ report = {
     "rolling_scan_checks": rolling_scan_checks,
     "native_discovery_checks": native_discovery_checks,
     "refine_rolling_checks": refine_rolling_checks,
+    "native_translation_checks": native_translation_checks,
+    "native_translation_interval_cases": native_translation_interval_cases,
+    "native_translation_model_cases": native_translation_model_cases,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
     "rocket_height_cache_checks": rocket_height_cache_checks,
@@ -2138,6 +2384,8 @@ report["native_discovery_passed"] = sum(native_discovery_checks.values())
 report["native_discovery_total"] = len(native_discovery_checks)
 report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
 report["refine_rolling_total"] = len(refine_rolling_checks)
+report["native_translation_passed"] = sum(native_translation_checks.values())
+report["native_translation_total"] = len(native_translation_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
@@ -2159,6 +2407,7 @@ report["ok"] = (
     and all(rolling_scan_checks.values())
     and all(native_discovery_checks.values())
     and all(refine_rolling_checks.values())
+    and all(native_translation_checks.values())
     and all(ring_rebuild_geometry_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
