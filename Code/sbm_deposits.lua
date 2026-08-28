@@ -4400,7 +4400,10 @@ function DepositRules.TopUpDeposits(map)
 				end
 				local used_centers, reserved, validation_cache = {}, {}, {}
 				local records, centers_tested, full_validations, plan_count = {}, 0, 0, 0
-				local validation_budget, validation_budget_exhausted = 512, false
+				-- Native apron transitions can leave the final streamed cluster just beyond the original
+				-- 512-check envelope. Stay bounded, but finish that private plan instead of paying for the
+				-- complete legacy pool and a second terrain transaction.
+				local validation_budget, validation_budget_exhausted = 1024, false
 				local stream_cluster_radius = math.max(4,
 					math.floor(cfg().OUTER_RESOURCE_CLUSTER_RADIUS_HEXES or 12))
 				local function clear_of_reserved(candidate)
