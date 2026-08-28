@@ -137,6 +137,56 @@ def outer_resource_rebuild_strips(
     )
 
 
+def surface_final_dirty_certificate(
+    width: int,
+    height: int,
+    records: tuple[tuple[int, int, int, int], ...],
+    *,
+    acknowledged: tuple[tuple[int, int, int, int], ...] = (),
+    invalid: bool = False,
+    pass_tile: int = 100,
+) -> dict[str, object]:
+    """Executable model of the conservative closing-pass certificate."""
+    outstanding = tuple(
+        record
+        for record in records
+        if not any(
+            record[0] >= region[0]
+            and record[1] >= region[1]
+            and record[2] <= region[2]
+            and record[3] <= region[3]
+            for region in acknowledged
+        )
+    )
+    if invalid or not outstanding:
+        return {
+            "accepted": False,
+            "outstanding": outstanding,
+            "region": None,
+            "area_ratio": 1.0,
+        }
+    halo = pass_tile * 2
+    min_x = min(record[0] for record in outstanding)
+    min_y = min(record[1] for record in outstanding)
+    max_x = max(record[2] for record in outstanding)
+    max_y = max(record[3] for record in outstanding)
+    region = (
+        max(0, math.floor((min_x - halo) / pass_tile) * pass_tile),
+        max(0, math.floor((min_y - halo) / pass_tile) * pass_tile),
+        min(width, math.ceil((max_x + halo) / pass_tile) * pass_tile),
+        min(height, math.ceil((max_y + halo) / pass_tile) * pass_tile),
+    )
+    area = max(0, region[2] - region[0]) * max(0, region[3] - region[1])
+    area_ratio = area / (width * height)
+    accepted = region[2] > region[0] and region[3] > region[1] and area_ratio < 0.65
+    return {
+        "accepted": accepted,
+        "outstanding": outstanding,
+        "region": region,
+        "area_ratio": area_ratio,
+    }
+
+
 def point_in_half_open_box(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
     left, top, right, bottom = bounds
     return left <= x < right and top <= y < bottom
@@ -252,6 +302,21 @@ rocket_terrain_audit = section(
     "local verified_mountain_pads, rocket_failures",
     "map.SuperBigMapVerifiedMountainRocketPads",
 )
+surface_final_dirty_journal = section(
+    GENERATION,
+    "function OnMsg.OnPassabilityChanged(event_map, changed_box)",
+    "function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)",
+)
+surface_final_dirty_apply = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal",
+    "-- Resource shaping is hard-clipped",
+)
+surface_pipeline = section(
+    GENERATION,
+    "local function RunSurfaceStretchIfEnabled",
+    "local function SyncMapDataToGrids",
+)
 
 static_checks = {
     "immediate_surface_final_rebuild_is_deferred": (
@@ -264,6 +329,103 @@ static_checks = {
         "SuperBigMap.GenerationGrids.RebuildFinal(map, reason)" in GENERATION
         and '"post-pipeline scheduled revalidation"' in GENERATION
         and "SuperBigMapSurfacePostPipelineRevalidationComplete = true" in GENERATION
+    ),
+    "surface_final_dirty_rebuild_is_default_on": (
+        "config.OptimizeSurfaceFinalDirtyPassabilityRebuild = true" in CONFIG
+        and "C.OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD" in CONFIG
+        and 'cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true)'
+        in GENERATION
+    ),
+    "surface_final_journal_arms_only_after_post_object_capture": appears_in_order(
+        surface_pipeline,
+        'NotifyDeterminismCaptureForTest("post_object_transform", map',
+        "BeginSurfaceFinalPassJournal(",
+        '"post-pipeline scheduled revalidation"',
+    ),
+    "surface_final_journal_uses_sanctioned_dormant_engine_handler": (
+        "function OnMsg.OnPassabilityChanged(event_map, changed_box)"
+        in surface_final_dirty_journal
+        and "SurfaceFinalPassObserverInstalled = true" in surface_final_dirty_journal
+        and appears_in_order(
+            surface_final_dirty_journal,
+            "local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal",
+            'if type(journal) ~= "table" or journal.active ~= true then return end',
+            "RecordSurfaceFinalPassChange(event_map, changed_box)",
+        )
+        and 'rawset(_G, "Msg"' not in surface_final_dirty_journal
+        and 'Global("Msg")' not in surface_final_dirty_journal
+        and "setmetatable(" not in section(
+            surface_final_dirty_journal,
+            "function OnMsg.OnPassabilityChanged(event_map, changed_box)",
+            "SuperBigMap.GenerationGrids.SurfaceFinalPassObserverInstalled = true",
+        )
+    ),
+    "surface_final_journal_copies_and_bounds_every_engine_clip": all(
+        token in surface_final_dirty_journal
+        for token in (
+            'type(is_box) ~= "function" or is_box(changed_box) ~= true',
+            "changed_box:minx(), changed_box:miny(), changed_box:maxx(), changed_box:maxy()",
+            "x0 ~= x0 or y0 ~= y0 or x1 ~= x1 or y1 ~= y1",
+            "math.max(0, math.floor(x0))",
+            "math.min(journal.map_w, math.ceil(x1))",
+            "if #journal.records >= 512 then",
+            "journal.records[#journal.records + 1] = { x0, y0, x1, y1 }",
+        )
+    ),
+    "surface_final_journal_detaches_active_state_and_cleans_failures": (
+        "SuperBigMap.State.surface_final_pass_journal = nil"
+        in surface_final_dirty_journal
+        and "journal.report.observer_inactive = inactive == true"
+        in surface_final_dirty_journal
+        and "if detached ~= true or report.observer_inactive ~= true"
+        in surface_final_dirty_journal
+        and "CancelSurfaceFinalPassJournal(" in surface_pipeline
+        and "surface expansion thread failed before closing revalidation" in surface_pipeline
+        and "surface pipeline failed after journal arm" in surface_pipeline
+        and "surface final dirty candidate fallback" in surface_final_dirty_apply
+        and "State.surface_final_pass_journal = nil" in GENERATION
+    ),
+    "surface_final_journal_acknowledges_only_proven_successful_regions": (
+        "function SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions"
+        in surface_final_dirty_journal
+        and "record[1] >= region[1] and record[2] >= region[2]" in surface_final_dirty_journal
+        and "record[3] <= region[3] and record[4] <= region[4]" in surface_final_dirty_journal
+        and "map.SuperBigMapSurfaceFinalDirtyPassJournalActive == true" in GENERATION
+        and appears_in_order(
+            GENERATION,
+            "terrain_api.RebuildPassability(map, region)",
+            "AcknowledgeSurfaceFinalPassRegions(",
+            "local buildable_started = GetPreciseTicks()",
+        )
+    ),
+    "surface_final_dirty_certificate_is_conservative_and_bounded": all(
+        token in surface_final_dirty_journal
+        for token in (
+            "SafeCall(map.IsPassEditSuspended, map) ~= false",
+            'cfg_bool("FINAL_PASSABILITY_INVALIDATE", true) ~= true',
+            "current_w ~= journal.map_w or current_h ~= journal.map_h",
+            "local halo = math.floor(pass_tile * 2)",
+            "math.floor((minx - halo) / pass_tile) * pass_tile",
+            "math.ceil((maxx + halo) / pass_tile) * pass_tile",
+            "if area_ratio >= 0.65 then",
+        )
+    ),
+    "surface_final_dirty_apply_is_one_region_plus_global_buildable": (
+        surface_final_dirty_apply.count("terrain_api.RebuildPassability(map, region)") == 1
+        and "terrain_api.InvalidateHeight(map, region)" in surface_final_dirty_apply
+        and "terrain_api.InvalidateType(map, region)" in surface_final_dirty_apply
+        and "local build_ok, build_err = pcall(rebuild_buildable, map)"
+        in surface_final_dirty_apply
+        and "SuperBigMap.GenerationGrids.RebuildFinal(map, stage)"
+        in surface_final_dirty_apply
+        and 'LoadingStep("surface final dirty passability verdict"'
+        in surface_final_dirty_apply
+        and 'publish_report("canonical full fallback")' in surface_final_dirty_apply
+        and 'publish_report("certified dirty region")' in surface_final_dirty_apply
+    ),
+    "surface_final_dirty_path_has_no_rng_traversal_or_native_allocation": not any(
+        token in surface_final_dirty_journal + surface_final_dirty_apply
+        for token in ("AsyncRand", "MapForEach", "NewComputeGrid", "GridToCompute")
     ),
     "deferred_surface_completion_waits_for_canonical_rebuild": (
         appears_in_order(
@@ -1017,7 +1179,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_946": "'version', 946" in METADATA,
+    "version_is_950": "'version', 950" in METADATA,
 }
 
 case_results = []
@@ -1866,6 +2028,100 @@ ring_rebuild_geometry_checks = {
     "expanded_map_work_is_below_41_percent": ring_rebuild_geometry_cases[0]["summed_area_ratio"] < 0.41,
 }
 
+surface_dirty_width = 819200
+surface_dirty_height = 819200
+surface_dirty_pass_tile = 100
+surface_dirty_compact_records = (
+    (200031, 300047, 201119, 301263),
+    (209977, 305011, 211083, 306307),
+)
+surface_dirty_compact = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_compact_records,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_ring_regions = outer_resource_rebuild_strips(
+    surface_dirty_width, surface_dirty_height, 2, surface_dirty_pass_tile
+)
+surface_dirty_ack_records = (
+    (1000, 400000, 1600, 401000),
+    (350031, 360047, 351119, 361263),
+)
+surface_dirty_after_ack = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_ack_records,
+    acknowledged=surface_dirty_ring_regions,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_invalid = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_compact_records,
+    invalid=True,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_empty = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    (),
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_overlarge = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    ((1000, 1000, 2000, 2000), (817000, 817000, 818000, 818000)),
+    pass_tile=surface_dirty_pass_tile,
+)
+
+
+def certificate_covers_every_record(certificate: dict[str, object]) -> bool:
+    region = certificate["region"]
+    if not certificate["accepted"] or not isinstance(region, tuple):
+        return False
+    return all(
+        record[0] >= region[0]
+        and record[1] >= region[1]
+        and record[2] <= region[2]
+        and record[3] <= region[3]
+        for record in certificate["outstanding"]
+    )
+
+
+surface_dirty_certificate_checks = {
+    "compact_dirty_union_is_accepted_and_fully_covered": (
+        surface_dirty_compact["accepted"]
+        and certificate_covers_every_record(surface_dirty_compact)
+    ),
+    "accepted_region_is_outward_aligned_with_two_tile_halo": (
+        surface_dirty_compact["region"]
+        == (
+            math.floor((200031 - 200) / 100) * 100,
+            math.floor((300047 - 200) / 100) * 100,
+            math.ceil((211083 + 200) / 100) * 100,
+            math.ceil((306307 + 200) / 100) * 100,
+        )
+    ),
+    "ring_ack_removes_only_contained_records": (
+        surface_dirty_after_ack["accepted"]
+        and surface_dirty_after_ack["outstanding"] == (surface_dirty_ack_records[1],)
+        and certificate_covers_every_record(surface_dirty_after_ack)
+    ),
+    "invalid_and_empty_epochs_are_rejected": (
+        not surface_dirty_invalid["accepted"]
+        and not surface_dirty_empty["accepted"]
+    ),
+    "distributed_overlarge_union_is_rejected": (
+        not surface_dirty_overlarge["accepted"]
+        and surface_dirty_overlarge["area_ratio"] >= 0.65
+    ),
+    "accepted_cases_are_materially_bounded": (
+        surface_dirty_compact["area_ratio"] < 0.01
+        and surface_dirty_after_ack["area_ratio"] < 0.01
+    ),
+}
+
 # Exact overlap corpus for the rocket-footprint height cache. It includes unavailable samples so
 # the false-sentinel path is covered as well as ordinary numeric heights.
 rocket_cache_centers = [
@@ -2037,7 +2293,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 19,
+    "schema_version": 20,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -2054,6 +2310,14 @@ report = {
     "refine_rolling_checks": refine_rolling_checks,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
+    "surface_dirty_certificate_checks": surface_dirty_certificate_checks,
+    "surface_dirty_certificate_cases": {
+        "compact": surface_dirty_compact,
+        "after_ring_ack": surface_dirty_after_ack,
+        "invalid": surface_dirty_invalid,
+        "empty": surface_dirty_empty,
+        "overlarge": surface_dirty_overlarge,
+    },
     "rocket_height_cache_checks": rocket_height_cache_checks,
     "rocket_height_cache_metrics": {
         "queries": rocket_direct_reads,
@@ -2140,6 +2404,8 @@ report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
 report["refine_rolling_total"] = len(refine_rolling_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
+report["surface_dirty_certificate_passed"] = sum(surface_dirty_certificate_checks.values())
+report["surface_dirty_certificate_total"] = len(surface_dirty_certificate_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
 report["rocket_height_cache_total"] = len(rocket_height_cache_checks)
 report["axial_clearance_mask_passed"] = sum(axial_clearance_mask_checks.values())
@@ -2160,6 +2426,7 @@ report["ok"] = (
     and all(native_discovery_checks.values())
     and all(refine_rolling_checks.values())
     and all(ring_rebuild_geometry_checks.values())
+    and all(surface_dirty_certificate_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
 )

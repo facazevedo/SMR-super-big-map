@@ -10536,6 +10536,301 @@ end
 -- It hangs on the module namespace rather than being a file local because this chunk already
 -- sits at Lua's 200-local-per-function ceiling.
 SuperBigMap.GenerationGrids = SuperBigMap.GenerationGrids or {}
+
+-- The closing surface rebuild is needed only because later object-grid transactions overwrite the
+-- already-canonical terrain passability inside their changed clips. Arm its journal only AFTER
+-- post_object_transform so accepted pre-object allocation identity remains untouched. The
+-- engine emits OnPassabilityChanged(map, box) synchronously for ResumePassEdits and explicit
+-- RebuildPassability. Mod globals are sandboxed, so the only engine-visible observer is a
+-- sanctioned load-time OnMsg registration. Its dormant path performs no allocation and only a
+-- nil state check; numeric copies after arming keep the journal independent of box lifetimes.
+function OnMsg.OnPassabilityChanged(event_map, changed_box)
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	if type(journal) ~= "table" or journal.active ~= true then return end
+	if event_map == journal.map then
+		SuperBigMap.GenerationGrids.RecordSurfaceFinalPassChange(event_map, changed_box)
+	else
+		journal.report.foreign_events = journal.report.foreign_events + 1
+	end
+end
+SuperBigMap.GenerationGrids.SurfaceFinalPassObserverInstalled = true
+
+function SuperBigMap.GenerationGrids.BeginSurfaceFinalPassJournal(map, stage)
+	local report = {
+		requested = cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true),
+		armed = false, used = false, fallback = false, certificate = false,
+		observer_registered = false, observer_inactive = false,
+		invalid = false, error = "", stage = tostring(stage or ""),
+		events = 0, foreign_events = 0, boxes = 0, acknowledged_boxes = 0,
+		acknowledged_rebuilds = 0, halo = 0, region_area = 0, map_area = 0,
+		area_ratio = 0, passability_ms = 0, buildable_ms = 0, total_ms = 0,
+	}
+	if map then map.SuperBigMapSurfaceFinalDirtyPassReport = report end
+	if report.requested ~= true then
+		report.error = "surface final dirty passability rebuild is disabled"
+		return false, report
+	end
+	if not map or not map.mapdata or map.mapdata.Environment ~= "Surface" then
+		report.error = "surface final dirty passability journal requires a surface map"
+		return false, report
+	end
+	if type(SuperBigMap.State) ~= "table"
+		or SuperBigMap.GenerationGrids.SurfaceFinalPassObserverInstalled ~= true then
+		report.error = "surface final dirty passability journal state is unavailable"
+		return false, report
+	end
+	if SuperBigMap.State.surface_final_pass_journal ~= nil then
+		report.error = "surface final dirty passability journal is already active"
+		return false, report
+	end
+	local map_w, map_h = TerrainSize(map)
+	if type(map_w) ~= "number" or map_w <= 0
+		or type(map_h) ~= "number" or map_h <= 0
+		or map_w ~= map_w or map_h ~= map_h
+		or map_w == math.huge or map_h == math.huge then
+		report.error = "surface final dirty passability map dimensions are unavailable"
+		return false, report
+	end
+	local journal = {
+		active = true, map = map, map_w = map_w, map_h = map_h, records = {},
+		report = report,
+	}
+	SuperBigMap.State.surface_final_pass_journal = journal
+	report.armed = true
+	report.observer_registered = true
+	map.SuperBigMapSurfaceFinalDirtyPassJournalActive = true
+	return true, report
+end
+
+function SuperBigMap.GenerationGrids.RecordSurfaceFinalPassChange(map, changed_box)
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	if type(journal) ~= "table" or journal.active ~= true or journal.map ~= map then
+		return false
+	end
+	local report = journal.report
+	report.events = report.events + 1
+	local is_box = Global("IsBox")
+	local box_ok, x0, y0, x1, y1 = pcall(function()
+		if type(is_box) ~= "function" or is_box(changed_box) ~= true then
+			error("OnPassabilityChanged clip is not a box", 0)
+		end
+		return changed_box:minx(), changed_box:miny(), changed_box:maxx(), changed_box:maxy()
+	end)
+	if not box_ok or type(x0) ~= "number" or type(y0) ~= "number"
+		or type(x1) ~= "number" or type(y1) ~= "number" then
+		report.invalid = true
+		report.error = report.error ~= "" and (report.error .. " | " .. tostring(x0))
+			or tostring(x0)
+		return false
+	end
+	if x0 ~= x0 or y0 ~= y0 or x1 ~= x1 or y1 ~= y1
+		or x0 == math.huge or y0 == math.huge or x1 == math.huge or y1 == math.huge
+		or x0 == -math.huge or y0 == -math.huge
+		or x1 == -math.huge or y1 == -math.huge then
+		report.invalid = true
+		report.error = report.error ~= "" and (report.error .. " | non-finite changed clip")
+			or "non-finite changed clip"
+		return false
+	end
+	x0, y0 = math.max(0, math.floor(x0)), math.max(0, math.floor(y0))
+	x1, y1 = math.min(journal.map_w, math.ceil(x1)), math.min(journal.map_h, math.ceil(y1))
+	if x1 <= x0 or y1 <= y0 then
+		report.invalid = true
+		report.error = report.error ~= "" and (report.error .. " | empty changed clip")
+			or "empty changed clip"
+		return false
+	end
+	if #journal.records >= 512 then
+		report.invalid = true
+		report.error = report.error ~= "" and (report.error .. " | journal record limit exceeded")
+			or "journal record limit exceeded"
+		return false
+	end
+	journal.records[#journal.records + 1] = { x0, y0, x1, y1 }
+	report.boxes = #journal.records
+	return true
+end
+
+-- An explicit region/full revalidation makes all prior journal entries inside its clip canonical.
+-- v934 established these exact four ring regions and the two-pass-tile dependency margin. Unknown
+-- clips remain in the journal; only a successful full-map rebuild can clear an invalid epoch.
+function SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions(
+		map, regions, stage, full_map)
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	if type(journal) ~= "table" or journal.active ~= true or journal.map ~= map then
+		return false
+	end
+	local report = journal.report
+	if full_map == true then
+		report.acknowledged_boxes = report.acknowledged_boxes + #journal.records
+		journal.records = {}
+		report.boxes = 0
+		report.invalid = false
+		report.error = ""
+		report.acknowledged_rebuilds = report.acknowledged_rebuilds + 1
+		report.last_acknowledged_stage = tostring(stage or "")
+		return true
+	end
+	if type(regions) ~= "table" or #regions == 0 then return false end
+	local is_box = Global("IsBox")
+	local numeric_regions = {}
+	for _, region in ipairs(regions) do
+		local ok_region, x0, y0, x1, y1 = pcall(function()
+			if type(is_box) ~= "function" or is_box(region) ~= true then
+				error("acknowledgement region is not a box", 0)
+			end
+			return region:minx(), region:miny(), region:maxx(), region:maxy()
+		end)
+		if not ok_region then return false end
+		numeric_regions[#numeric_regions + 1] = { x0, y0, x1, y1 }
+	end
+	local retained, removed = {}, 0
+	for _, record in ipairs(journal.records) do
+		local covered = false
+		for _, region in ipairs(numeric_regions) do
+			if record[1] >= region[1] and record[2] >= region[2]
+				and record[3] <= region[3] and record[4] <= region[4] then
+				covered = true
+				break
+			end
+		end
+		if covered then removed = removed + 1 else retained[#retained + 1] = record end
+	end
+	journal.records = retained
+	report.boxes = #retained
+	report.acknowledged_boxes = report.acknowledged_boxes + removed
+	report.acknowledged_rebuilds = report.acknowledged_rebuilds + 1
+	report.last_acknowledged_stage = tostring(stage or "")
+	return true
+end
+
+-- Detach the runtime journal before any candidate pass call. The registered OnMsg handler remains
+-- dormant, allocation-free module infrastructure; a failure to clear its sole active state makes
+-- the certificate unusable and therefore selects the canonical whole-map fallback.
+function SuperBigMap.GenerationGrids.CloseSurfaceFinalPassJournal(map, reason)
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	if type(journal) ~= "table" then return false, nil end
+	if journal.map ~= map then
+		journal.report.invalid = true
+		journal.report.error = journal.report.error ~= ""
+			and (journal.report.error .. " | active journal map identity mismatch")
+			or "active journal map identity mismatch"
+		return false, journal
+	end
+	journal.active = false
+	SuperBigMap.State.surface_final_pass_journal = nil
+	local inactive = SuperBigMap.State.surface_final_pass_journal == nil
+	journal.report.observer_inactive = inactive == true
+	journal.report.armed = false
+	journal.report.close_reason = tostring(reason or "")
+	if not inactive then
+		journal.report.invalid = true
+		journal.report.error = journal.report.error ~= ""
+			and (journal.report.error .. " | passability observer did not detach")
+			or "passability observer did not detach"
+	end
+	if map then map.SuperBigMapSurfaceFinalDirtyPassJournalActive = nil end
+	return inactive, journal
+end
+
+function SuperBigMap.GenerationGrids.CancelSurfaceFinalPassJournal(map, reason)
+	local detached, journal = SuperBigMap.GenerationGrids.CloseSurfaceFinalPassJournal(map, reason)
+	local report = journal and journal.report
+	if report then
+		report.fallback = true
+		report.error = report.error ~= "" and report.error
+			or "surface final dirty passability journal cancelled"
+	end
+	return detached, report
+end
+
+-- Consume the complete post-object journal into ONE conservative aligned clip. One regional
+-- RebuildPassability therefore emits the same number of pass-change messages as the old one full
+-- rebuild. Empty, invalid, suspended, API-incomplete, or >=65%-map certificates fall back.
+function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage)
+	local detached, journal = SuperBigMap.GenerationGrids.CloseSurfaceFinalPassJournal(
+		map, "closing surface passability certificate")
+	local report = journal and journal.report or map and map.SuperBigMapSurfaceFinalDirtyPassReport
+	if type(report) ~= "table" then
+		report = {
+			requested = cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true),
+			armed = false, used = false, fallback = false, certificate = false,
+			observer_registered = false, observer_inactive = true,
+			invalid = true, error = "journal was not armed",
+			events = 0, boxes = 0, stage = tostring(stage or ""),
+		}
+		if map then map.SuperBigMapSurfaceFinalDirtyPassReport = report end
+	end
+	report.final_stage = tostring(stage or "")
+	local function reject(reason)
+		report.certificate = false
+		report.error = report.error ~= "" and (report.error .. " | " .. tostring(reason))
+			or tostring(reason)
+		return false, report
+	end
+	if report.requested ~= true then return reject("optimization disabled") end
+	if not journal then return reject("surface final passability journal unavailable") end
+	if not map or not map.mapdata or map.mapdata.Environment ~= "Surface" then
+		return reject("surface final dirty certificate requires a surface map")
+	end
+	if detached ~= true or report.observer_inactive ~= true or report.invalid == true then
+		return reject("surface final passability journal is invalid")
+	end
+	if type(map.IsPassEditSuspended) ~= "function"
+		or SafeCall(map.IsPassEditSuspended, map) ~= false then
+		return reject("surface pass edits are suspended or cannot be verified")
+	end
+	if #journal.records <= 0 then
+		return reject("no outstanding changed passability clip")
+	end
+	if cfg_bool("FINAL_PASSABILITY_INVALIDATE", true) ~= true then
+		return reject("canonical final passability invalidation is disabled")
+	end
+	local current_w, current_h = TerrainSize(map)
+	if current_w ~= journal.map_w or current_h ~= journal.map_h then
+		return reject("surface map dimensions changed after journal arm")
+	end
+	local terrain_api = Global("terrain")
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	local box_ctor = Global("box")
+	if not (type(terrain_api) == "table"
+		and type(terrain_api.InvalidateHeight) == "function"
+		and type(terrain_api.InvalidateType) == "function"
+		and type(terrain_api.RebuildPassability) == "function"
+		and type(rebuild_buildable) == "function" and type(box_ctor) == "function") then
+		return reject("surface final dirty passability APIs are unavailable")
+	end
+	local minx, miny, maxx, maxy
+	for _, record in ipairs(journal.records) do
+		minx = not minx and record[1] or math.min(minx, record[1])
+		miny = not miny and record[2] or math.min(miny, record[2])
+		maxx = not maxx and record[3] or math.max(maxx, record[3])
+		maxy = not maxy and record[4] or math.max(maxy, record[4])
+	end
+	local const_tbl = Global("const")
+	local pass_tile = type(const_tbl) == "table" and tonumber(const_tbl.PassTileSize) or 100
+	pass_tile = type(pass_tile) == "number" and pass_tile > 0 and pass_tile == pass_tile
+		and pass_tile ~= math.huge and pass_tile or 100
+	local halo = math.floor(pass_tile * 2)
+	local x0 = math.max(0, math.floor((minx - halo) / pass_tile) * pass_tile)
+	local y0 = math.max(0, math.floor((miny - halo) / pass_tile) * pass_tile)
+	local x1 = math.min(journal.map_w, math.ceil((maxx + halo) / pass_tile) * pass_tile)
+	local y1 = math.min(journal.map_h, math.ceil((maxy + halo) / pass_tile) * pass_tile)
+	local map_area = journal.map_w * journal.map_h
+	local region_area = math.max(0, x1 - x0) * math.max(0, y1 - y0)
+	local area_ratio = map_area > 0 and region_area / map_area or 1
+	report.halo = halo
+	report.region_x0, report.region_y0 = x0, y0
+	report.region_x1, report.region_y1 = x1, y1
+	report.region_area, report.map_area, report.area_ratio = region_area, map_area, area_ratio
+	report.outstanding_boxes = #journal.records
+	if x1 <= x0 or y1 <= y0 then return reject("surface final dirty region is empty") end
+	if area_ratio >= 0.65 then return reject("surface final dirty region is not materially bounded") end
+	report.certificate = true
+	report.error = ""
+	return true, report, box_ctor(x0, y0, x1, y1)
+end
+
 function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	stage = tostring(stage or "final")
 	local environment = map and map.mapdata and map.mapdata.Environment
@@ -10607,6 +10902,11 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	if not pass_ok then
 		error("final " .. label .. " passability rebuild failed: " .. tostring(pass_err))
 	end
+	if environment == "Surface"
+		and map.SuperBigMapSurfaceFinalDirtyPassJournalActive == true then
+		SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions(
+			map, final_pass_box and { final_pass_box } or nil, stage, true)
+	end
 	-- The stock rebuild is the authoritative final terrain-property verdict. PassBorder
 	-- remains zero for full-map placement bounds; do not replay source-border overrides
 	-- afterward, because that would leave shipped passability different from a fresh
@@ -10626,6 +10926,137 @@ function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
 	end
 	map.SuperBigMapRevalidationRebuiltGrids = true
 	return true
+end
+
+-- Surface-only closing fast path. The certificate has already detached the active journal, so this
+-- call has no active observer during the rebuild itself. Any failure after a partial regional operation
+-- immediately runs the unchanged whole-map RebuildFinal before the loading gate can open.
+function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
+	stage = tostring(stage or "final")
+	local total_started = GetPreciseTicks()
+	local certified, report, region
+	local attempted = false
+	local function publish_report(verdict)
+		if type(report) ~= "table" then return end
+		LoadingStep("surface final dirty passability verdict", {
+			verdict = tostring(verdict or ""),
+			used = tostring(report.used == true),
+			fallback = tostring(report.fallback == true),
+			certificate = tostring(report.certificate == true),
+			observer_registered = tostring(report.observer_registered == true),
+			observer_inactive = tostring(report.observer_inactive == true),
+			invalid = tostring(report.invalid == true),
+			events = tonumber(report.events) or 0,
+			foreign_events = tonumber(report.foreign_events) or 0,
+			outstanding_boxes = tonumber(report.outstanding_boxes) or 0,
+			acknowledged_boxes = tonumber(report.acknowledged_boxes) or 0,
+			region_x0 = tonumber(report.region_x0) or 0,
+			region_y0 = tonumber(report.region_y0) or 0,
+			region_x1 = tonumber(report.region_x1) or 0,
+			region_y1 = tonumber(report.region_y1) or 0,
+			area_ratio = tonumber(report.area_ratio) or 0,
+			passability_ms = tonumber(report.passability_ms) or 0,
+			buildable_ms = tonumber(report.buildable_ms) or 0,
+			total_ms = tonumber(report.total_ms) or 0,
+			error = tostring(report.error or ""),
+		}, map)
+	end
+	local function fallback(reason)
+		-- A certificate exception can occur before it detaches the journal. Always close any still-live
+		-- state before the canonical rebuild so the fallback itself is never added to the dirty set.
+		local _, cancelled_report =
+			SuperBigMap.GenerationGrids.CancelSurfaceFinalPassJournal(
+				map, "surface final dirty candidate fallback")
+		if type(report) ~= "table" and type(cancelled_report) == "table" then
+			report = cancelled_report
+		end
+		report = type(report) == "table" and report or {}
+		report.used = false
+		report.fallback = true
+		report.certificate = report.certificate == true
+		local failure = tostring(reason or "")
+		local earlier = type(report.error) == "string" and report.error or ""
+		report.error = earlier ~= "" and failure ~= "" and earlier ~= failure
+			and (earlier .. " | " .. failure) or (earlier ~= "" and earlier or failure)
+		report.fallback_reason = failure ~= "" and failure
+			or (report.error ~= "" and report.error or "certificate unavailable")
+		if attempted then
+			map.SuperBigMapFinalPassCount = math.max(0,
+				(tonumber(map.SuperBigMapFinalPassCount) or 1) - 1)
+		end
+		map.SuperBigMapSurfaceFinalDirtyPassReport = report
+		SuperBigMap.GenerationGrids.RebuildFinal(map, stage)
+		report.total_ms = GetPreciseTicks() - total_started
+		publish_report("canonical full fallback")
+		return true, report
+	end
+	local certificate_call_ok, certificate_result, certificate_report, certificate_region = pcall(
+		SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate, map, stage)
+	if certificate_call_ok then
+		certified, report, region = certificate_result, certificate_report, certificate_region
+	else
+		report = map and map.SuperBigMapSurfaceFinalDirtyPassReport or nil
+		return fallback("surface final dirty certificate failed: "
+			.. tostring(certificate_result))
+	end
+	if certified ~= true or not region then
+		return fallback(report and report.error or "surface final dirty certificate unavailable")
+	end
+	local terrain_api = Global("terrain")
+	local rebuild_buildable = Global("RebuildBuildableGrid")
+	local function pass_hash()
+		if type(terrain_api.HashPassability) ~= "function" then return "unavailable" end
+		local ok_h, h = pcall(terrain_api.HashPassability, map)
+		return ok_h and tostring(h) or "error"
+	end
+	map.SuperBigMapFinalPassStage = stage
+	map.SuperBigMapFinalPassCount = (map.SuperBigMapFinalPassCount or 0) + 1
+	map.SuperBigMapFinalPassBranch = "dirty_region"
+	map.SuperBigMapFinalPassHashBefore = pass_hash()
+	attempted = true
+	local pass_started = GetPreciseTicks()
+	local passability_token = LoadingBegin(
+		"surface final dirty-region RebuildPassability (" .. stage .. ")", map, {
+			boxes = report.outstanding_boxes,
+			area_ratio = report.area_ratio,
+			halo = report.halo,
+		})
+	local pass_ok, pass_err = pcall(function()
+		terrain_api.InvalidateHeight(map, region)
+		terrain_api.InvalidateType(map, region)
+		terrain_api.RebuildPassability(map, region)
+	end)
+	report.passability_ms = GetPreciseTicks() - pass_started
+	LoadingEnd(passability_token, {
+		error = pass_ok and "" or tostring(pass_err),
+		boxes = report.outstanding_boxes,
+		area_ratio = report.area_ratio,
+	}, pass_ok)
+	map.SuperBigMapFinalPassMs = report.passability_ms
+	if not pass_ok then
+		report.error = "surface final dirty passability rebuild failed: " .. tostring(pass_err)
+		return fallback(report.error)
+	end
+	map.SuperBigMapFinalPassHashAfter = pass_hash()
+	SetLoadingPhase("Rebuilding the final surface build grid")
+	local buildable_started = GetPreciseTicks()
+	local buildable_token = LoadingBegin(
+		"surface final RebuildBuildableGrid (" .. stage .. ")", map)
+	local build_ok, build_err = pcall(rebuild_buildable, map)
+	report.buildable_ms = GetPreciseTicks() - buildable_started
+	LoadingEnd(buildable_token, { error = build_ok and "" or tostring(build_err) }, build_ok)
+	if not build_ok then
+		report.error = "surface final buildable-grid rebuild failed: " .. tostring(build_err)
+		return fallback(report.error)
+	end
+	report.total_ms = GetPreciseTicks() - total_started
+	report.used = true
+	report.fallback = false
+	report.error = ""
+	map.SuperBigMapSurfaceFinalDirtyPassReport = report
+	map.SuperBigMapRevalidationRebuiltGrids = true
+	publish_report("certified dirty region")
+	return true, report
 end
 
 -- Resource shaping is hard-clipped to the physical outer ring. Revalidate only that ring before
@@ -10726,6 +11157,8 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors,
 		report.error = "outer resource ring passability rebuild failed: " .. tostring(pass_err)
 		return false, report
 	end
+	SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions(
+		map, regions, stage, false)
 	local buildable_started = GetPreciseTicks()
 	local buildable_token = LoadingBegin(
 		"surface outer resource ring RebuildBuildableGrid (" .. stage .. ")", map)
@@ -10859,7 +11292,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 		end
 		local function rebuild_surface_final(reason)
 			return yield_protected_call(function()
-				SuperBigMap.GenerationGrids.RebuildFinal(map, reason)
+				if cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true) then
+					SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, reason)
+				else
+					SuperBigMap.GenerationGrids.RebuildFinal(map, reason)
+				end
 			end)
 		end
 		-- Protect the entire asynchronous pipeline, not only its central stretch block, so
@@ -11065,6 +11502,14 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				SuperBigMap.NotifyDeterminismCaptureForTest("post_object_transform", map, {
 					pass_edits_suspended = pass_batch_active == true,
 				})
+				-- Arm only after the immutable post-object capture. The permanent engine message handler's
+				-- earlier path is allocation-free and dormant; records begin only beyond this checkpoint.
+				if defer_immediate_final
+					and cfg_bool("EXPANSION_STEP_11_REBUILD_GAMEPLAY_GRIDS", true)
+					and cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true) then
+					SuperBigMap.GenerationGrids.BeginSurfaceFinalPassJournal(
+						map, "after post_object_transform")
+				end
 				-- Entrance visuals are finalized after the authoritative surface buildable-grid pass.
 				-- Moving them here would anchor the badge to the provisional pre-validation coordinate.
 				-- Step 4: consume the native-source start annotation after marker recreation. Every
@@ -11522,6 +11967,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			LoadingEnd(surface_pipeline_token, {
 				terrain_grids = n_grids, error = ok_branch and "" or tostring(branch_err),
 			}, ok_branch)
+			if not ok_branch then
+				SuperBigMap.GenerationGrids.CancelSurfaceFinalPassJournal(
+					map, "surface pipeline failed after journal arm")
+			end
 			-- Balanced resume (always, even on error) so the loop detector is restored.
 			if type(resume_ild) == "function" then SafeCall(resume_ild, "SuperBigMapStretch") end
 			if type(ClearDecorRelief) == "function" then ClearDecorRelief(map) end
@@ -11635,6 +12084,8 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 			end
 		end
 		if not thread_ok then
+			SuperBigMap.GenerationGrids.CancelSurfaceFinalPassJournal(
+				map, "surface expansion thread failed before closing revalidation")
 			if deferred_surface_completion then
 				-- Fail closed: keep both the pending state and loading cover until a canonical
 				-- rebuild can be completed; never expose the transient gameplay grids.
@@ -13911,6 +14362,14 @@ end
 -- Restoring only affects future generation; already-expanded maps retain their terrain.
 function MapGeneration.RestoreVanillaBehavior()
 	local State = SuperBigMap.State or {}
+	local surface_final_journal = State.surface_final_pass_journal
+	if type(surface_final_journal) == "table" then
+		surface_final_journal.active = false
+		if surface_final_journal.map then
+			surface_final_journal.map.SuperBigMapSurfaceFinalDirtyPassJournalActive = nil
+		end
+	end
+	State.surface_final_pass_journal = nil
 	ReleaseSharedBuriedWonderTexturePins()
 	RestoreDeferredVehicleNightLights(Global("CurrentMap"))
 	for target, record in pairs(offscreen_vehicle_light_suppressions) do
