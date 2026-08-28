@@ -137,6 +137,293 @@ def outer_resource_rebuild_strips(
     )
 
 
+def surface_final_dirty_certificate(
+    width: int,
+    height: int,
+    records: tuple[tuple[int, int, int, int], ...],
+    *,
+    acknowledged: tuple[tuple[int, int, int, int], ...] = (),
+    invalid: bool = False,
+    pass_tile: int = 100,
+) -> dict[str, object]:
+    """Executable model of the conservative closing-pass certificate."""
+    outstanding = tuple(
+        record
+        for record in records
+        if not (
+            (len(record) < 5 or record[4] == 0)
+            and any(
+                record[0] >= region[0]
+                and record[1] >= region[1]
+                and record[2] <= region[2]
+                and record[3] <= region[3]
+                for region in acknowledged
+            )
+        )
+    )
+    if invalid or not outstanding:
+        return {
+            "accepted": False,
+            "outstanding": outstanding,
+            "region": None,
+            "area_ratio": 1.0,
+        }
+    halo = pass_tile * 2
+    min_x = min(record[0] for record in outstanding)
+    min_y = min(record[1] for record in outstanding)
+    max_x = max(record[2] for record in outstanding)
+    max_y = max(record[3] for record in outstanding)
+    region = (
+        max(0, math.floor((min_x - halo) / pass_tile) * pass_tile),
+        max(0, math.floor((min_y - halo) / pass_tile) * pass_tile),
+        min(width, math.ceil((max_x + halo) / pass_tile) * pass_tile),
+        min(height, math.ceil((max_y + halo) / pass_tile) * pass_tile),
+    )
+    area = max(0, region[2] - region[0]) * max(0, region[3] - region[1])
+    area_ratio = area / (width * height)
+    accepted = region[2] > region[0] and region[3] > region[1] and area_ratio < 0.65
+    return {
+        "accepted": accepted,
+        "outstanding": outstanding,
+        "region": region,
+        "area_ratio": area_ratio,
+    }
+
+
+def surface_final_owned_trace_summary(
+    width: int,
+    height: int,
+    records: tuple[tuple[int, int, int, int, int], ...],
+    successful_owner_serials: frozenset[int],
+) -> dict[str, object]:
+    """Model the retained v951 trace discriminator independently of the certificate."""
+    residual = tuple(
+        record
+        for record in records
+        if record[4] <= 0 or record[4] not in successful_owner_serials
+    )
+    owned = tuple(record for record in records if record not in residual)
+    full = tuple(
+        record
+        for record in records
+        if record[:4] == (0, 0, width, height)
+    )
+    if residual:
+        x0 = min(record[0] for record in residual)
+        y0 = min(record[1] for record in residual)
+        x1 = max(record[2] for record in residual)
+        y1 = max(record[3] for record in residual)
+        ratio = (x1 - x0) * (y1 - y0) / (width * height)
+        region = (x0, y0, x1, y1)
+    else:
+        ratio, region = 0.0, (0, 0, 0, 0)
+    return {
+        "owned": owned,
+        "residual": residual,
+        "full": full,
+        "residual_region": region,
+        "residual_area_ratio": ratio,
+        "owned_full": tuple(record for record in owned if record in full),
+        "residual_full": tuple(record for record in residual if record in full),
+    }
+
+
+def surface_final_owned_record_filter(
+    records: tuple[tuple[int, int, int, int, int], ...],
+    *,
+    next_serial: int,
+    started: int,
+    completed: int,
+    failed: int,
+    successful_owner_serials: frozenset[int],
+) -> dict[str, object]:
+    """Executable model of the strict v952 successful-call ownership certificate."""
+    counters = (next_serial, started, completed, failed)
+    if any(type(value) is not int or value < 0 for value in counters):
+        return {"accepted": False, "reason": "invalid counters", "retained": records}
+    expected = frozenset(range(1, next_serial + 1))
+    if failed != 0 or started != next_serial or completed != next_serial:
+        return {"accepted": False, "reason": "incomplete call", "retained": records}
+    if successful_owner_serials != expected:
+        return {"accepted": False, "reason": "stale or missing serial", "retained": records}
+    if any(
+        len(record) != 5
+        or type(record[4]) is not int
+        or record[4] < 0
+        or record[4] > next_serial
+        or (record[4] > 0 and record[4] not in successful_owner_serials)
+        for record in records
+    ):
+        return {"accepted": False, "reason": "invalid record tag", "retained": records}
+    owner_serials_with_events, last_owner_serial = 0, 0
+    closed_owner_serials: set[int] = set()
+    for record in records:
+        serial = record[4]
+        if serial > 0:
+            if serial in closed_owner_serials or serial < last_owner_serial:
+                return {"accepted": False, "reason": "stale owner tag", "retained": records}
+            if serial != last_owner_serial:
+                if serial != owner_serials_with_events + 1:
+                    return {"accepted": False, "reason": "non-contiguous owner order", "retained": records}
+                last_owner_serial = serial
+                owner_serials_with_events += 1
+        elif last_owner_serial > 0:
+            closed_owner_serials.add(last_owner_serial)
+    if owner_serials_with_events != next_serial:
+        return {"accepted": False, "reason": "missing call notification", "retained": records}
+    retained = tuple(record for record in records if record[4] == 0)
+    excluded = tuple(record for record in records if record[4] > 0)
+    # v956 deliberately recognizes only the accepted v953 normal-run discriminator shape.
+    # Different counts are safe, but unproven, and therefore must use the full rebuild.
+    if (
+        next_serial != 4
+        or owner_serials_with_events != 4
+        or len(excluded) != 4
+        or len(retained) != 11
+    ):
+        return {"accepted": False, "reason": "unexpected event shape", "retained": records}
+    return {
+        "accepted": True,
+        "reason": "",
+        "retained": retained,
+        "excluded": excluded,
+        "exact_four": next_serial == 4,
+        "owner_serials_with_events": owner_serials_with_events,
+    }
+
+
+def valid_nonnegative_integer(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+        and value >= 0
+        and value == math.floor(value)
+    )
+
+
+def surface_final_resource_patch_epoch(
+    attempts: tuple[dict[str, object], ...],
+) -> dict[str, object] | None:
+    """Accumulate the sticky patch-install proof across initial preparation and repairs."""
+    if not attempts:
+        return None
+    counters = {
+        "attempts": 0,
+        "reports_verified": 0,
+        "modified_attempts": 0,
+        "zero_change_attempts": 0,
+        "safe_modified_attempts": 0,
+        "unsafe_modified_attempts": 0,
+        "modified_cells": 0,
+    }
+    safe = True
+    identity_verified = True
+    for attempt in attempts:
+        counters["attempts"] += 1
+        exact_published_report = attempt.get("_exact_published_report", True) is True
+        modified_cells = attempt.get("modified_cells")
+        if not exact_published_report:
+            identity_verified = False
+            safe = False
+            continue
+        if not valid_nonnegative_integer(modified_cells):
+            safe = False
+            continue
+        assert isinstance(modified_cells, (int, float))
+        counters["reports_verified"] += 1
+        counters["modified_cells"] += modified_cells
+        if modified_cells == 0:
+            counters["zero_change_attempts"] += 1
+            continue
+        counters["modified_attempts"] += 1
+        attempt_safe = (
+            attempt.get("patch_install_used") is True
+            and attempt.get("patch_install_verified") is True
+            and attempt.get("patch_install_fallback") is False
+            and attempt.get("patch_install_full_setter_used") is False
+        )
+        if attempt_safe:
+            counters["safe_modified_attempts"] += 1
+        else:
+            counters["unsafe_modified_attempts"] += 1
+            safe = False
+    final_report = dict(attempts[-1])
+    final_report.update(
+        {
+            "repair_attempts": len(attempts) - 1,
+            "patch_install_epoch_attempts": counters["attempts"],
+            "patch_install_epoch_reports_verified": counters["reports_verified"],
+            "patch_install_epoch_modified_attempts": counters["modified_attempts"],
+            "patch_install_epoch_zero_change_attempts": counters["zero_change_attempts"],
+            "patch_install_epoch_safe_modified_attempts": counters[
+                "safe_modified_attempts"
+            ],
+            "patch_install_epoch_unsafe_modified_attempts": counters[
+                "unsafe_modified_attempts"
+            ],
+            "patch_install_epoch_modified_cells": counters["modified_cells"],
+            "patch_install_epoch_safe": safe,
+            "patch_install_epoch_report_identity_verified": identity_verified,
+        }
+    )
+    return final_report
+
+
+def surface_final_resource_patch_gate(resource_report: object) -> dict[str, object]:
+    """Model v956's cumulative prerequisite for a regional closing pass."""
+    fallback = {"accepted": False, "branch": "canonical_rebuild_final"}
+    if not isinstance(resource_report, dict):
+        return fallback | {"reason": "missing report"}
+    modified_cells = resource_report.get("modified_cells")
+    if not valid_nonnegative_integer(modified_cells):
+        return fallback | {"reason": "invalid modified cells"}
+    epoch_keys = (
+        "patch_install_epoch_attempts",
+        "patch_install_epoch_reports_verified",
+        "patch_install_epoch_modified_attempts",
+        "patch_install_epoch_zero_change_attempts",
+        "patch_install_epoch_safe_modified_attempts",
+        "patch_install_epoch_unsafe_modified_attempts",
+        "patch_install_epoch_modified_cells",
+        "repair_attempts",
+    )
+    if not all(valid_nonnegative_integer(resource_report.get(key)) for key in epoch_keys):
+        return fallback | {"reason": "invalid epoch counters"}
+    attempts = resource_report["patch_install_epoch_attempts"]
+    reports_verified = resource_report["patch_install_epoch_reports_verified"]
+    modified_attempts = resource_report["patch_install_epoch_modified_attempts"]
+    zero_change_attempts = resource_report["patch_install_epoch_zero_change_attempts"]
+    safe_modified_attempts = resource_report[
+        "patch_install_epoch_safe_modified_attempts"
+    ]
+    unsafe_modified_attempts = resource_report[
+        "patch_install_epoch_unsafe_modified_attempts"
+    ]
+    epoch_modified_cells = resource_report["patch_install_epoch_modified_cells"]
+    repair_attempts = resource_report["repair_attempts"]
+    if not (
+        attempts >= 1
+        and reports_verified == attempts
+        and attempts == repair_attempts + 1
+        and modified_attempts + zero_change_attempts == attempts
+        and safe_modified_attempts + unsafe_modified_attempts == modified_attempts
+        and epoch_modified_cells >= modified_cells
+        and resource_report.get("patch_install_epoch_report_identity_verified") is True
+        and resource_report.get("patch_install_epoch_safe") is True
+        and unsafe_modified_attempts == 0
+    ):
+        return fallback | {"reason": "unsafe or incomplete epoch"}
+    if modified_cells > 0 and not (
+        resource_report.get("patch_install_used") is True
+        and resource_report.get("patch_install_verified") is True
+        and resource_report.get("patch_install_fallback") is False
+        and resource_report.get("patch_install_full_setter_used") is False
+    ):
+        return fallback | {"reason": "unverified patch install"}
+    return {"accepted": True, "branch": "dirty_region", "reason": ""}
+
+
 def point_in_half_open_box(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
     left, top, right, bottom = bounds
     return left <= x < right and top <= y < bottom
@@ -252,6 +539,36 @@ rocket_terrain_audit = section(
     "local verified_mountain_pads, rocket_failures",
     "map.SuperBigMapVerifiedMountainRocketPads",
 )
+surface_final_dirty_journal = section(
+    GENERATION,
+    "function OnMsg.OnPassabilityChanged(event_map, changed_box)",
+    "function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)",
+)
+surface_final_dirty_apply = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal",
+    "-- Resource shaping is hard-clipped",
+)
+surface_final_dirty_certificate_lua = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate",
+    "function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)",
+)
+outer_resource_ring_rebuild = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors, stage)",
+    "function SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal",
+)
+surface_pipeline = section(
+    GENERATION,
+    "local function RunSurfaceStretchIfEnabled",
+    "local function SyncMapDataToGrids",
+)
+resource_patch_epoch_lua = section(
+    surface_pipeline,
+    "local resource_patch_epoch = {",
+    "-- TopUpAnomalies: post-gen replacement",
+)
 
 static_checks = {
     "immediate_surface_final_rebuild_is_deferred": (
@@ -264,6 +581,289 @@ static_checks = {
         "SuperBigMap.GenerationGrids.RebuildFinal(map, reason)" in GENERATION
         and '"post-pipeline scheduled revalidation"' in GENERATION
         and "SuperBigMapSurfacePostPipelineRevalidationComplete = true" in GENERATION
+    ),
+    "surface_final_dirty_rebuild_is_default_on": (
+        "config.OptimizeSurfaceFinalDirtyPassabilityRebuild = true" in CONFIG
+        and "C.OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD" in CONFIG
+        and 'cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true)'
+        in GENERATION
+    ),
+    "surface_final_journal_arms_only_after_post_object_capture": appears_in_order(
+        surface_pipeline,
+        'NotifyDeterminismCaptureForTest("post_object_transform", map',
+        "BeginSurfaceFinalPassJournal(",
+        '"post-pipeline scheduled revalidation"',
+    ),
+    "surface_final_modified_terrain_requires_verified_patch_install": (
+        all(
+            token in surface_final_dirty_certificate_lua
+            for token in (
+                "local resource_terrain_report = map.SuperBigMapOuterResourceTerrainReport",
+                'type(resource_terrain_report) ~= "table"',
+                "local modified_cells = resource_terrain_report.modified_cells",
+                'type(modified_cells) ~= "number"',
+                "modified_cells ~= math.floor(modified_cells)",
+                "resource_terrain_report.patch_install_used == true",
+                "resource_terrain_report.patch_install_verified == true",
+                "resource_terrain_report.patch_install_fallback == false",
+                "resource_terrain_report.patch_install_full_setter_used == false",
+                "if patch_install_safe ~= true then",
+                "modified outer resource terrain was not installed by the verified patch path",
+            )
+        )
+        and appears_in_order(
+            surface_final_dirty_certificate_lua,
+            "local resource_terrain_report = map.SuperBigMapOuterResourceTerrainReport",
+            "if patch_install_safe ~= true then",
+            "FilterSurfaceFinalOwnedPassRecords(journal)",
+        )
+        and appears_in_order(
+            surface_final_dirty_apply,
+            "local function fallback(reason)",
+            "SuperBigMap.GenerationGrids.RebuildFinal(map, stage)",
+            "if certified ~= true or not region then",
+            "return fallback(report and report.error",
+        )
+    ),
+    "surface_final_patch_install_proof_is_sticky_across_every_attempt": (
+        all(
+            token in resource_patch_epoch_lua
+            for token in (
+                "local resource_patch_epoch = {",
+                "local function record_resource_patch_attempt(attempt_report, attempt_stage)",
+                "attempt_report ~= map.SuperBigMapOuterResourceTerrainReport",
+                "epoch.report_identity_verified = false",
+                "epoch.unsafe_modified_attempts = epoch.unsafe_modified_attempts + 1",
+                "epoch.safe = false",
+                "record_resource_patch_attempt(\n\t\t\t\t\t\t\tresource_terrain_stats",
+                "record_resource_patch_attempt(\n\t\t\t\t\t\t\t\trepair_stats",
+                "final_resource_terrain_report ~= resource_patch_epoch.last_report",
+                "resource_patch_epoch.attempts ~= terrain_repair_attempt + 1",
+                "patch_install_epoch_unsafe_modified_attempts",
+                "patch_install_epoch_report_identity_verified",
+            )
+        )
+        and appears_in_order(
+            resource_patch_epoch_lua,
+            'TimedSafeCall(\n\t\t\t\t\t\t\t"surface prepare outer resource terrain"',
+            "record_resource_patch_attempt(\n\t\t\t\t\t\t\tresource_terrain_stats",
+            'TimedSafeCall(\n\t\t\t\t\t\t\t\t"surface repair failed outer resource terrain"',
+            "record_resource_patch_attempt(\n\t\t\t\t\t\t\t\trepair_stats",
+            "local final_resource_terrain_report",
+            "patch_install_epoch_safe =",
+        )
+        and all(
+            token in surface_final_dirty_certificate_lua
+            for token in (
+                "local epoch_attempts = resource_terrain_report.patch_install_epoch_attempts",
+                "epoch_reports_verified == epoch_attempts",
+                "epoch_attempts == repair_attempts + 1",
+                "epoch_modified_attempts + epoch_zero_change_attempts == epoch_attempts",
+                "epoch_safe_modified_attempts + epoch_unsafe_modified_attempts",
+                "resource_terrain_report.patch_install_epoch_report_identity_verified ~= true",
+                "resource_terrain_report.patch_install_epoch_safe ~= true",
+                "epoch_unsafe_modified_attempts ~= 0",
+                "outer resource terrain patch-install epoch is unsafe or incomplete",
+            )
+        )
+    ),
+    "surface_final_journal_uses_sanctioned_dormant_engine_handler": (
+        "function OnMsg.OnPassabilityChanged(event_map, changed_box)"
+        in surface_final_dirty_journal
+        and "SurfaceFinalPassObserverInstalled = true" in surface_final_dirty_journal
+        and appears_in_order(
+            surface_final_dirty_journal,
+            "local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal",
+            'if type(journal) ~= "table" or journal.active ~= true then return end',
+            "RecordSurfaceFinalPassChange(event_map, changed_box)",
+        )
+        and 'rawset(_G, "Msg"' not in surface_final_dirty_journal
+        and 'Global("Msg")' not in surface_final_dirty_journal
+        and "setmetatable(" not in section(
+            surface_final_dirty_journal,
+            "function OnMsg.OnPassabilityChanged(event_map, changed_box)",
+            "SuperBigMap.GenerationGrids.SurfaceFinalPassObserverInstalled = true",
+        )
+    ),
+    "surface_final_journal_copies_and_bounds_every_engine_clip": all(
+        token in surface_final_dirty_journal
+        for token in (
+            'type(is_box) ~= "function" or is_box(changed_box) ~= true',
+            "changed_box:minx(), changed_box:miny(), changed_box:maxx(), changed_box:maxy()",
+            "x0 ~= x0 or y0 ~= y0 or x1 ~= x1 or y1 ~= y1",
+            "math.max(0, math.floor(x0))",
+            "math.min(journal.map_w, math.ceil(x1))",
+            "if #journal.records >= 512 then",
+            "local record = { x0, y0, x1, y1, owner_serial or 0, ordinal }",
+            "journal.records[#journal.records + 1] = record",
+            "journal.trace[#journal.trace + 1] = record",
+        )
+    ),
+    "surface_final_owned_rebuild_tags_only_the_synchronous_engine_call": (
+        "function SuperBigMap.GenerationGrids.BeginSurfaceFinalOwnedPassRebuild"
+        in surface_final_dirty_journal
+        and "function SuperBigMap.GenerationGrids.EndSurfaceFinalOwnedPassRebuild"
+        in surface_final_dirty_journal
+        and appears_in_order(
+            outer_resource_ring_rebuild,
+            "terrain_api.InvalidateHeight(map, region)",
+            "terrain_api.InvalidateType(map, region)",
+            "BeginSurfaceFinalOwnedPassRebuild(",
+            "pcall(terrain_api.RebuildPassability, map, region)",
+            "EndSurfaceFinalOwnedPassRebuild(",
+            "if rebuild_ok ~= true then",
+        )
+    ),
+    "surface_final_owned_serial_is_unique_and_cleared_on_every_return": (
+        all(
+            token in surface_final_dirty_journal
+            for token in (
+                "local serial = (tonumber(journal.owner_next_serial) or 0) + 1",
+                "journal.owner_next_serial = serial",
+                "local matches = journal.owner_active_serial == serial",
+                "journal.owner_active_serial = nil",
+                "owned pass rebuild tag still active at close",
+            )
+        )
+        and "surface_final_journal.owner_active_serial = nil" in GENERATION
+    ),
+    "surface_final_owned_mismatch_is_sticky_and_fail_closed": (
+        "report.owner_mismatch = true" in surface_final_dirty_journal
+        and "or report.owner_mismatch == true" in surface_final_dirty_journal
+        and "foreign pass event during owned rebuild" in surface_final_dirty_journal
+        and "report.owner_mismatch = false" not in surface_final_dirty_journal
+    ),
+    "surface_final_owned_trace_filters_only_exact_successful_call_records": (
+        "function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace"
+        in surface_final_dirty_journal
+        and "function SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords"
+        in surface_final_dirty_journal
+        and "successful[owner_serial] == true" in surface_final_dirty_journal
+        and "report.event_trace = table.concat(trace_parts, \";\")"
+        in surface_final_dirty_journal
+        and "event_trace = tostring(report.event_trace or \"\")" in surface_final_dirty_apply
+        and "for _, record in ipairs(journal.records) do" in surface_final_dirty_journal
+        and all(
+            token in surface_final_dirty_journal
+            for token in (
+                "failed ~= 0 or started ~= next_serial or completed ~= next_serial",
+                "successful_count ~= next_serial",
+                "successful[serial] ~= true",
+                "type(event_count) ~= \"number\"",
+                "#trace ~= event_count",
+                "if serial > 0 and successful[serial] ~= true",
+                "closed_owner_serials[serial] == true or serial < last_owner_serial",
+                "owner_serials_with_events ~= next_serial",
+                "excluded ~= 4 or #retained ~= 11",
+                "if serial > 0 then",
+                "retained[#retained + 1] = record",
+                "report.ownership_certificate = true",
+            )
+        )
+        and appears_in_order(
+            surface_final_dirty_certificate_lua,
+            "FilterSurfaceFinalOwnedPassRecords(journal)",
+            "if ownership_ok ~= true then return reject(ownership_error) end",
+            "if #journal.records <= 0 then",
+            "for _, record in ipairs(journal.records) do",
+        )
+    ),
+    "surface_final_owned_trace_persists_complete_discriminator_telemetry": all(
+        token in surface_final_dirty_journal + surface_final_dirty_apply
+        for token in (
+            'report.successful_owner_serials = table.concat(successful_parts, ",")',
+            "report.tagged_events = tagged_events",
+            "report.owner_events = owner_events",
+            "report.failed_owner_events = failed_owner_events",
+            "report.residual_events = residual_events",
+            "report.full_events = full_events",
+            "report.tagged_full_events = tagged_full_events",
+            "report.owner_full_events = owner_full_events",
+            "report.residual_full_events = residual_full_events",
+            "report.residual_area_ratio = residual_area_ratio",
+            "report.residual_area_ppm = math.floor",
+            "successful_owner_serials = tostring(report.successful_owner_serials or \"\")",
+            "event_trace = tostring(report.event_trace or \"\")",
+            "residual_area_ratio = tostring(report.residual_area_ratio or 0)",
+            "residual_area_ppm = tonumber(report.residual_area_ppm) or 0",
+            "area_ratio = tostring(report.area_ratio or 0)",
+            "area_ppm = tonumber(report.area_ppm) or 0",
+        )
+    ),
+    "surface_final_journal_detaches_active_state_and_cleans_failures": (
+        "SuperBigMap.State.surface_final_pass_journal = nil"
+        in surface_final_dirty_journal
+        and "journal.report.observer_inactive = inactive == true"
+        in surface_final_dirty_journal
+        and "if detached ~= true or report.observer_inactive ~= true"
+        in surface_final_dirty_journal
+        and "CancelSurfaceFinalPassJournal(" in surface_pipeline
+        and "surface expansion thread failed before closing revalidation" in surface_pipeline
+        and "surface pipeline failed after journal arm" in surface_pipeline
+        and "surface final dirty candidate fallback" in surface_final_dirty_apply
+        and "State.surface_final_pass_journal = nil" in GENERATION
+    ),
+    "surface_final_journal_acknowledges_only_proven_successful_regions": (
+        "function SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions"
+        in surface_final_dirty_journal
+        and "if record[5] == nil or record[5] == 0 then" in surface_final_dirty_journal
+        and "record[1] >= region[1] and record[2] >= region[2]" in surface_final_dirty_journal
+        and "record[3] <= region[3] and record[4] <= region[4]" in surface_final_dirty_journal
+        and "map.SuperBigMapSurfaceFinalDirtyPassJournalActive == true" in GENERATION
+        and appears_in_order(
+            GENERATION,
+            "terrain_api.RebuildPassability(map, region)",
+            "AcknowledgeSurfaceFinalPassRegions(",
+            "local buildable_started = GetPreciseTicks()",
+        )
+    ),
+    "surface_final_dirty_certificate_is_conservative_and_bounded": all(
+        token in surface_final_dirty_journal
+        for token in (
+            "SafeCall(map.IsPassEditSuspended, map) ~= false",
+            'cfg_bool("FINAL_PASSABILITY_INVALIDATE", true) ~= true',
+            "current_w ~= journal.map_w or current_h ~= journal.map_h",
+            "local halo = math.floor(pass_tile * 2)",
+            "math.floor((minx - halo) / pass_tile) * pass_tile",
+            "math.ceil((maxx + halo) / pass_tile) * pass_tile",
+            "if area_ratio >= 0.65 then",
+        )
+    ),
+    "surface_final_dirty_ratios_force_float_before_large_area_arithmetic": (
+        all(
+            token in surface_final_dirty_journal
+            for token in (
+                "local map_area = (journal.map_w + 0.0) * journal.map_h",
+                "((residual_width + 0.0) / journal.map_w)",
+                "* ((residual_height + 0.0) / journal.map_h)",
+                "local region_area = (region_width + 0.0) * region_height",
+                "((region_width + 0.0) / journal.map_w)",
+                "* ((region_height + 0.0) / journal.map_h)",
+                "residual_area_ratio ~= residual_area_ratio",
+                "area_ratio ~= area_ratio",
+                "surface final dirty region area ratio is invalid",
+            )
+        )
+        and "local residual_area =" not in surface_final_dirty_journal
+        and "residual_area / map_area" not in surface_final_dirty_journal
+        and "region_area / map_area" not in surface_final_dirty_journal
+    ),
+    "surface_final_dirty_apply_is_one_region_plus_global_buildable": (
+        surface_final_dirty_apply.count("terrain_api.RebuildPassability(map, region)") == 1
+        and "terrain_api.InvalidateHeight(map, region)" in surface_final_dirty_apply
+        and "terrain_api.InvalidateType(map, region)" in surface_final_dirty_apply
+        and "local build_ok, build_err = pcall(rebuild_buildable, map)"
+        in surface_final_dirty_apply
+        and "SuperBigMap.GenerationGrids.RebuildFinal(map, stage)"
+        in surface_final_dirty_apply
+        and 'LoadingStep("surface final dirty passability verdict"'
+        in surface_final_dirty_apply
+        and 'publish_report("canonical full fallback")' in surface_final_dirty_apply
+        and 'publish_report("certified dirty region")' in surface_final_dirty_apply
+    ),
+    "surface_final_dirty_path_has_no_rng_traversal_or_native_allocation": not any(
+        token in surface_final_dirty_journal + surface_final_dirty_apply
+        for token in ("AsyncRand", "MapForEach", "NewComputeGrid", "GridToCompute")
     ),
     "deferred_surface_completion_waits_for_canonical_rebuild": (
         appears_in_order(
@@ -1084,7 +1684,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_955": "'version', 955" in METADATA,
+    "version_is_956": "'version', 956" in METADATA,
 }
 
 case_results = []
@@ -1933,6 +2533,361 @@ ring_rebuild_geometry_checks = {
     "expanded_map_work_is_below_41_percent": ring_rebuild_geometry_cases[0]["summed_area_ratio"] < 0.41,
 }
 
+surface_dirty_width = 819200
+surface_dirty_height = 819200
+surface_dirty_pass_tile = 100
+surface_resource_verified_attempt = {
+    "modified_cells": 1_890_334,
+    "patch_install_used": True,
+    "patch_install_verified": True,
+    "patch_install_fallback": False,
+    "patch_install_full_setter_used": False,
+}
+surface_resource_zero_change_attempt = {"modified_cells": 0}
+surface_resource_full_setter_attempt = {
+    "modified_cells": 1_890_334,
+    "patch_install_used": False,
+    "patch_install_verified": False,
+    "patch_install_fallback": True,
+    "patch_install_full_setter_used": True,
+}
+surface_resource_fallback_attempt = {
+    "modified_cells": 1_890_334,
+    "patch_install_used": True,
+    "patch_install_verified": True,
+    "patch_install_fallback": True,
+    "patch_install_full_setter_used": False,
+}
+surface_resource_patch_verified = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch((surface_resource_verified_attempt,))
+)
+surface_resource_patch_no_changes = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch((surface_resource_zero_change_attempt,))
+)
+surface_resource_patch_full_setter = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch((surface_resource_full_setter_attempt,))
+)
+surface_resource_patch_fallback = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch((surface_resource_fallback_attempt,))
+)
+surface_resource_full_setter_then_zero = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch(
+        (surface_resource_full_setter_attempt, surface_resource_zero_change_attempt)
+    )
+)
+surface_resource_full_setter_then_verified = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch(
+        (surface_resource_full_setter_attempt, surface_resource_verified_attempt)
+    )
+)
+surface_resource_identity_mismatch = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch(
+        (
+            surface_resource_verified_attempt,
+            {**surface_resource_zero_change_attempt, "_exact_published_report": False},
+        )
+    )
+)
+surface_resource_patch_missing = surface_final_resource_patch_gate(None)
+surface_resource_patch_nonnumeric = surface_final_resource_patch_gate(
+    {"modified_cells": "1890334"}
+)
+surface_dirty_compact_records = (
+    (200031, 300047, 201119, 301263),
+    (209977, 305011, 211083, 306307),
+)
+surface_dirty_compact = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_compact_records,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_ring_regions = outer_resource_rebuild_strips(
+    surface_dirty_width, surface_dirty_height, 2, surface_dirty_pass_tile
+)
+surface_dirty_ack_records = (
+    (1000, 400000, 1600, 401000),
+    (350031, 360047, 351119, 361263),
+)
+surface_dirty_after_ack = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_ack_records,
+    acknowledged=surface_dirty_ring_regions,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_invalid = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_dirty_compact_records,
+    invalid=True,
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_empty = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    (),
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_dirty_overlarge = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    ((1000, 1000, 2000, 2000), (817000, 817000, 818000, 818000)),
+    pass_tile=surface_dirty_pass_tile,
+)
+
+surface_owned_trace_records = (
+    (0, 0, surface_dirty_width, 82120, 1),
+    (0, 737080, surface_dirty_width, surface_dirty_height, 2),
+    (0, 0, 82120, surface_dirty_height, 3),
+    (737080, 0, surface_dirty_width, surface_dirty_height, 4),
+    (312949, 316728, 313949, 317728, 0),
+    (350000, 340000, 351000, 341000, 0),
+    (375000, 390000, 376000, 391000, 0),
+    (410000, 420000, 411000, 421000, 0),
+    (450000, 460000, 451000, 461000, 0),
+    (500000, 480000, 501000, 481000, 0),
+    (525000, 510000, 526000, 511000, 0),
+    (550000, 540000, 551000, 541000, 0),
+    (575000, 560000, 576000, 561000, 0),
+    (600000, 575000, 601000, 576000, 0),
+    (632551, 590712, 633551, 591712, 0),
+)
+surface_owned_trace_success = surface_final_owned_trace_summary(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_owned_trace_records,
+    frozenset((1, 2, 3, 4)),
+)
+surface_owned_trace_failed_call = surface_final_owned_trace_summary(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_owned_trace_records,
+    frozenset((1, 2, 3)),
+)
+surface_owned_filter_success = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_filter_failed_call = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=3,
+    failed=1,
+    successful_owner_serials=frozenset((1, 2, 3)),
+)
+surface_owned_filter_stale_serial = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4, 5)),
+)
+surface_owned_filter_stale_tag = surface_final_owned_record_filter(
+    surface_owned_trace_records + ((400000, 400000, 401000, 401000, 1),),
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_filter_missing_notification = surface_final_owned_record_filter(
+    tuple(record for record in surface_owned_trace_records if record[4] != 4),
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_filter_missing_residual = surface_final_owned_record_filter(
+    surface_owned_trace_records[:-1],
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_unfiltered_certificate = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    tuple(record[:4] for record in surface_owned_trace_records),
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_owned_filtered_certificate = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    tuple(record[:4] for record in surface_owned_filter_success["retained"]),
+    pass_tile=surface_dirty_pass_tile,
+)
+iter177_residual_bounds = (312949, 316728, 633551, 591712)
+iter177_residual_width = iter177_residual_bounds[2] - iter177_residual_bounds[0]
+iter177_residual_height = iter177_residual_bounds[3] - iter177_residual_bounds[1]
+iter177_legacy_integral_ratio = (
+    (iter177_residual_width * iter177_residual_height)
+    // (surface_dirty_width * surface_dirty_height)
+)
+iter177_normalized_residual_ratio = (
+    iter177_residual_width / surface_dirty_width
+) * (iter177_residual_height / surface_dirty_height)
+iter177_region = surface_owned_filtered_certificate["region"]
+assert isinstance(iter177_region, tuple)
+iter177_normalized_region_ratio = (
+    (iter177_region[2] - iter177_region[0]) / surface_dirty_width
+) * ((iter177_region[3] - iter177_region[1]) / surface_dirty_height)
+surface_tagged_ack_records = (
+    (1000, 400000, 1600, 401000, 1),
+    (2000, 400000, 2600, 401000, 0),
+    (350031, 360047, 351119, 361263, 0),
+)
+surface_tagged_after_ack = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_tagged_ack_records,
+    acknowledged=surface_dirty_ring_regions,
+    pass_tile=surface_dirty_pass_tile,
+)
+
+
+def certificate_covers_every_record(certificate: dict[str, object]) -> bool:
+    region = certificate["region"]
+    if not certificate["accepted"] or not isinstance(region, tuple):
+        return False
+    return all(
+        record[0] >= region[0]
+        and record[1] >= region[1]
+        and record[2] <= region[2]
+        and record[3] <= region[3]
+        for record in certificate["outstanding"]
+    )
+
+
+surface_dirty_certificate_checks = {
+    "verified_patch_install_allows_modified_terrain_certificate": (
+        surface_resource_patch_verified["accepted"]
+        and surface_resource_patch_verified["branch"] == "dirty_region"
+        and surface_resource_patch_no_changes["accepted"]
+    ),
+    "full_setter_or_patch_fallback_forces_canonical_rebuild_final": (
+        not surface_resource_patch_full_setter["accepted"]
+        and not surface_resource_patch_fallback["accepted"]
+        and surface_resource_patch_full_setter["branch"] == "canonical_rebuild_final"
+        and surface_resource_patch_fallback["branch"] == "canonical_rebuild_final"
+    ),
+    "full_setter_then_zero_change_remains_sticky_canonical_fallback": (
+        not surface_resource_full_setter_then_zero["accepted"]
+        and surface_resource_full_setter_then_zero["branch"]
+        == "canonical_rebuild_final"
+    ),
+    "full_setter_then_verified_patch_remains_sticky_canonical_fallback": (
+        not surface_resource_full_setter_then_verified["accepted"]
+        and surface_resource_full_setter_then_verified["branch"]
+        == "canonical_rebuild_final"
+    ),
+    "nonidentical_map_published_report_breaks_epoch_certificate": (
+        not surface_resource_identity_mismatch["accepted"]
+        and surface_resource_identity_mismatch["branch"] == "canonical_rebuild_final"
+    ),
+    "missing_or_nonnumeric_resource_report_fails_closed": (
+        not surface_resource_patch_missing["accepted"]
+        and not surface_resource_patch_nonnumeric["accepted"]
+        and surface_resource_patch_missing["branch"] == "canonical_rebuild_final"
+        and surface_resource_patch_nonnumeric["branch"] == "canonical_rebuild_final"
+    ),
+    "compact_dirty_union_is_accepted_and_fully_covered": (
+        surface_dirty_compact["accepted"]
+        and certificate_covers_every_record(surface_dirty_compact)
+    ),
+    "accepted_region_is_outward_aligned_with_two_tile_halo": (
+        surface_dirty_compact["region"]
+        == (
+            math.floor((200031 - 200) / 100) * 100,
+            math.floor((300047 - 200) / 100) * 100,
+            math.ceil((211083 + 200) / 100) * 100,
+            math.ceil((306307 + 200) / 100) * 100,
+        )
+    ),
+    "ring_ack_removes_only_contained_records": (
+        surface_dirty_after_ack["accepted"]
+        and surface_dirty_after_ack["outstanding"] == (surface_dirty_ack_records[1],)
+        and certificate_covers_every_record(surface_dirty_after_ack)
+    ),
+    "ring_geometry_ack_never_removes_owned_records": (
+        surface_tagged_after_ack["outstanding"]
+        == (surface_tagged_ack_records[0], surface_tagged_ack_records[2])
+    ),
+    "invalid_and_empty_epochs_are_rejected": (
+        not surface_dirty_invalid["accepted"]
+        and not surface_dirty_empty["accepted"]
+    ),
+    "distributed_overlarge_union_is_rejected": (
+        not surface_dirty_overlarge["accepted"]
+        and surface_dirty_overlarge["area_ratio"] >= 0.65
+    ),
+    "accepted_cases_are_materially_bounded": (
+        surface_dirty_compact["area_ratio"] < 0.01
+        and surface_dirty_after_ack["area_ratio"] < 0.01
+    ),
+    "owned_trace_excludes_only_successfully_completed_call_serials": (
+        len(surface_owned_trace_success["owned"]) == 4
+        and len(surface_owned_trace_success["residual"]) == 11
+        and len(surface_owned_trace_success["full"]) == 0
+        and len(surface_owned_trace_success["owned_full"]) == 0
+        and len(surface_owned_trace_success["residual_full"]) == 0
+        and 0.13 < surface_owned_trace_success["residual_area_ratio"] < 0.14
+    ),
+    "four_owned_edge_strips_alone_explain_the_original_full_union": (
+        not surface_owned_unfiltered_certificate["accepted"]
+        and surface_owned_unfiltered_certificate["area_ratio"] == 1.0
+    ),
+    "strict_successful_owner_filter_retains_all_eleven_residual_records": (
+        surface_owned_filter_success["accepted"]
+        and surface_owned_filter_success["exact_four"]
+        and len(surface_owned_filter_success["excluded"]) == 4
+        and len(surface_owned_filter_success["retained"]) == 11
+        and surface_owned_filtered_certificate["accepted"]
+        and certificate_covers_every_record(surface_owned_filtered_certificate)
+        and 0.13 < surface_owned_filtered_certificate["area_ratio"] < 0.14
+    ),
+    "failed_or_stale_owner_proof_is_rejected_before_filtering": (
+        not surface_owned_filter_failed_call["accepted"]
+        and not surface_owned_filter_stale_serial["accepted"]
+        and not surface_owned_filter_stale_tag["accepted"]
+        and not surface_owned_filter_missing_notification["accepted"]
+        and surface_owned_filter_failed_call["retained"] == surface_owned_trace_records
+        and surface_owned_filter_stale_serial["retained"] == surface_owned_trace_records
+    ),
+    "certificate_requires_exact_four_owned_and_eleven_residual_events": (
+        surface_owned_filter_success["accepted"]
+        and not surface_owned_filter_missing_residual["accepted"]
+        and surface_owned_filter_missing_residual["retained"]
+        == surface_owned_trace_records[:-1]
+    ),
+    "failed_owned_call_is_never_classified_as_success_owned": (
+        len(surface_owned_trace_failed_call["owned"]) == 3
+        and len(surface_owned_trace_failed_call["residual"]) == 12
+    ),
+    "iter177_large_integral_area_division_reproduces_zero": (
+        iter177_residual_width * iter177_residual_height > 2**31 - 1
+        and surface_dirty_width * surface_dirty_height > 2**31 - 1
+        and iter177_legacy_integral_ratio == 0
+    ),
+    "iter177_dimension_normalized_residual_ratio_is_exact": (
+        math.isclose(iter177_normalized_residual_ratio, 0.13136926348209382)
+        and round(iter177_normalized_residual_ratio * 1_000_000) == 131369
+    ),
+    "iter177_dimension_normalized_halo_ratio_preserves_certificate": (
+        math.isclose(iter177_normalized_region_ratio, 0.1318202167749405)
+        and round(iter177_normalized_region_ratio * 1_000_000) == 131820
+        and iter177_normalized_region_ratio < 0.65
+    ),
+}
+
 # Exact overlap corpus for the rocket-footprint height cache. It includes unavailable samples so
 # the false-sentinel path is covered as well as ordinary numeric heights.
 rocket_cache_centers = [
@@ -2104,7 +3059,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 21,
+    "schema_version": 27,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -2121,6 +3076,34 @@ report = {
     "refine_rolling_checks": refine_rolling_checks,
     "ring_rebuild_geometry_checks": ring_rebuild_geometry_checks,
     "ring_rebuild_geometry_cases": ring_rebuild_geometry_cases,
+    "surface_dirty_certificate_checks": surface_dirty_certificate_checks,
+    "surface_dirty_certificate_cases": {
+        "resource_patch_verified": surface_resource_patch_verified,
+        "resource_patch_no_changes": surface_resource_patch_no_changes,
+        "resource_patch_full_setter": surface_resource_patch_full_setter,
+        "resource_patch_fallback": surface_resource_patch_fallback,
+        "resource_full_setter_then_zero": surface_resource_full_setter_then_zero,
+        "resource_full_setter_then_verified": surface_resource_full_setter_then_verified,
+        "resource_identity_mismatch": surface_resource_identity_mismatch,
+        "resource_patch_missing": surface_resource_patch_missing,
+        "resource_patch_nonnumeric": surface_resource_patch_nonnumeric,
+        "compact": surface_dirty_compact,
+        "after_ring_ack": surface_dirty_after_ack,
+        "invalid": surface_dirty_invalid,
+        "empty": surface_dirty_empty,
+        "overlarge": surface_dirty_overlarge,
+        "owned_trace_success": surface_owned_trace_success,
+        "owned_trace_failed_call": surface_owned_trace_failed_call,
+        "owned_filter_success": surface_owned_filter_success,
+        "owned_filter_failed_call": surface_owned_filter_failed_call,
+        "owned_filter_stale_serial": surface_owned_filter_stale_serial,
+        "owned_filter_stale_tag": surface_owned_filter_stale_tag,
+        "owned_filter_missing_notification": surface_owned_filter_missing_notification,
+        "owned_filter_missing_residual": surface_owned_filter_missing_residual,
+        "owned_unfiltered_certificate": surface_owned_unfiltered_certificate,
+        "owned_filtered_certificate": surface_owned_filtered_certificate,
+        "tagged_after_geometry_ack": surface_tagged_after_ack,
+    },
     "rocket_height_cache_checks": rocket_height_cache_checks,
     "rocket_height_cache_metrics": {
         "queries": rocket_direct_reads,
@@ -2207,6 +3190,8 @@ report["refine_rolling_passed"] = sum(refine_rolling_checks.values())
 report["refine_rolling_total"] = len(refine_rolling_checks)
 report["ring_rebuild_geometry_passed"] = sum(ring_rebuild_geometry_checks.values())
 report["ring_rebuild_geometry_total"] = len(ring_rebuild_geometry_checks)
+report["surface_dirty_certificate_passed"] = sum(surface_dirty_certificate_checks.values())
+report["surface_dirty_certificate_total"] = len(surface_dirty_certificate_checks)
 report["rocket_height_cache_passed"] = sum(rocket_height_cache_checks.values())
 report["rocket_height_cache_total"] = len(rocket_height_cache_checks)
 report["axial_clearance_mask_passed"] = sum(axial_clearance_mask_checks.values())
@@ -2227,6 +3212,7 @@ report["ok"] = (
     and all(native_discovery_checks.values())
     and all(refine_rolling_checks.values())
     and all(ring_rebuild_geometry_checks.values())
+    and all(surface_dirty_certificate_checks.values())
     and all(rocket_height_cache_checks.values())
     and all(axial_clearance_mask_checks.values())
 )

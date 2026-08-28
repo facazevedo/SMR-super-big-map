@@ -393,9 +393,9 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "canonical_final_grid_rebuild_retained = true",
             )
         ),
-        "metadata_is_v955": (
-            "'version', 955" in metadata
-            and "Compute patch-install area ratios with early floating normalization."
+        "metadata_is_v956": (
+            "'version', 956" in metadata
+            and "Rebuild closing surface passability from an ownership-certified dirty region."
             in metadata
         ),
     }
@@ -409,7 +409,7 @@ def main() -> int:
     semantic, cases = semantic_checks()
     structural = structural_checks(terrain, config, generation, metadata)
     result = {
-        "schema": "smr.ralph.outer_resource_patch_install_check.v3",
+        "schema": "smr.ralph.outer_resource_patch_install_check.v4",
         "ok": all(semantic.values()) and all(structural.values()),
         "semantic_checks": semantic,
         "structural_checks": structural,
