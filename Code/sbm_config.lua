@@ -558,11 +558,6 @@ config.OptimizeStretchRevalidation = true
 -- final passability/buildable rebuild required by T1. Skip the identical immediate rebuild at the
 -- end of the protected pipeline; its result is otherwise overwritten before gameplay is exposed.
 config.OptimizeDeferImmediateSurfaceFinalGridRebuild = true
--- After the post-object determinism boundary, journal the engine's own synchronous
--- OnPassabilityChanged clips until the canonical closing surface revalidation. Rebuild one
--- conservative union clip (plus the proven two-pass-tile dependency halo), then retain the exact
--- whole-map RebuildBuildableGrid. Missing/invalid/full/overlarge journals use RebuildFinal.
-config.OptimizeSurfaceFinalDirtyPassabilityRebuild = true
 -- Reuse the object list collected while recording pre-stretch decoration relief, avoiding a
 -- second full MapForEach traversal immediately after the terrain stretch.
 config.OptimizeStretchDecorTraversal = true
@@ -1115,8 +1110,6 @@ C.OPTIMIZE_STRETCH_DEFERRED_REBUILDS = as_bool(config.OptimizeStretchDeferredReb
 C.OPTIMIZE_STRETCH_REVALIDATION = as_bool(config.OptimizeStretchRevalidation)
 C.OPTIMIZE_DEFER_IMMEDIATE_SURFACE_FINAL_GRID_REBUILD =
 	as_bool(config.OptimizeDeferImmediateSurfaceFinalGridRebuild)
-C.OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD =
-	as_bool(config.OptimizeSurfaceFinalDirtyPassabilityRebuild)
 C.OPTIMIZE_STRETCH_DECOR_TRAVERSAL = as_bool(config.OptimizeStretchDecorTraversal)
 C.OPTIMIZE_POSTLOAD_DEFERRED_BOUNDS = as_bool(config.OptimizePostLoadDeferredBounds)
 C.OPTIMIZE_MAP_GRID_DIRECT_COPY = as_bool(config.OptimizeMapGridDirectCopy)
