@@ -221,8 +221,8 @@ def main() -> int:
         "pinned_lua_5_3_6_compiles_generation_chunk": (
             lua53_result is not None and lua53_result.returncode == 0
         ),
-        "metadata_v965": "'version', 965," in metadata,
-        "generator_wrapper_identity_v274": "SuperBigMap.GENERATOR_PATCH_VERSION = 274" in version,
+        "metadata_retained_in_v966": "'version', 966," in metadata,
+        "generator_wrapper_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "feasibility_flag_default_off": (
             "config.LazyUndergroundSourceGenerationFeasibility = false" in config
             and "C.LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY" in config
@@ -250,7 +250,7 @@ def main() -> int:
             )
         ),
         "default_off_constructs_no_v965_helper_closures_or_test_exports": (
-            helper.index('if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then')
+            helper.index('if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false')
             < helper.index("local Lazy = {")
             < helper.index("function Lazy.PrimitiveTree")
             < helper.index("SuperBigMap.LazyUndergroundFeasibility = Lazy")
@@ -260,7 +260,7 @@ def main() -> int:
                 generation.index("MapGeneration.NotifyGenerationMilestone"):
             ]
             and generation.index(
-                'if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)',
+                'if (cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)',
                 generation.index("MapGeneration.NotifyGenerationMilestone"),
             )
             < generation.index("MapGeneration.BuildLazyUndergroundCapsulePlanForTest")

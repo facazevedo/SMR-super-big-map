@@ -52,7 +52,7 @@ def main() -> int:
         "metadata_v961_or_later": any(
             f"'version', {version}," in metadata for version in range(961, 1000)
         ),
-        "generator_patch_identity_v274": "SuperBigMap.GENERATOR_PATCH_VERSION = 274" in version_source,
+        "generator_patch_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version_source,
         "default_on": "config.OptimizeTopUpHardSpacingSpatialIndex = true" in config,
         "compiled_flag": "C.OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX" in config,
         "surface_only_guard": (

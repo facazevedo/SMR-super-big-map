@@ -91,7 +91,8 @@ do
 	-- intentionally forbidden so an immediate surface save/load can reproduce the same descriptor.
 	-- Do not even enlarge the per-map persistence schema in ordinary/default-off gameplay. A probe
 	-- build enables this static config before modules load; only that build registers these fields.
-	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+		or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false) then
 		registry = Global("MapVarValues")
 		if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapLazyUndergroundDescriptor"] == nil) then
 			register("SuperBigMapLazyUndergroundDescriptor", false)

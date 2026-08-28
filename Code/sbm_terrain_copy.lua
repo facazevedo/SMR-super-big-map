@@ -7904,6 +7904,8 @@ end
 local function AlignPassagePairsToSharedHex(underground_map, options)
 	options = type(options) == "table" and options or {}
 	local source_bootstrap = options.source_bootstrap == true
+	local fixed_surface_capsules = source_bootstrap
+		and options.fixed_surface_capsules == true
 	local surface_map = Global("MainMap")
 	if not underground_map or not surface_map or underground_map == surface_map then
 		return false, { error = "surface/underground maps unavailable", pairs = 0 }
@@ -8623,6 +8625,23 @@ local function AlignPassagePairsToSharedHex(underground_map, options)
 				return false, { error = "true underground source hex unavailable", pairs = stats.pairs }
 			end
 			plan = scaled_final_hex(source_q, source_r)
+			if fixed_surface_capsules and plan then
+				-- v966 has already published the final-domain Surface endpoint before T1. Preserve
+				-- that immutable private-plan coordinate while retaining the generated underground
+				-- marker as the authoritative SOURCE coordinate. Deferred final alignment below will
+				-- move only the stretched underground partner to this saved Surface hex.
+				local fixed_ok, fixed_q, fixed_r = pcall(world_to_hex, point_fn(sx, sy))
+				local world_ok, fixed_x, fixed_y = false, nil, nil
+				if fixed_ok then
+					world_ok, fixed_x, fixed_y = pcall(hex_to_world, fixed_q, fixed_r)
+				end
+				if not fixed_ok or not world_ok or fixed_x ~= sx or fixed_y ~= sy then
+					return false, { error = "fixed lazy Surface capsule is not hex-centered",
+						pairs = stats.pairs }
+				end
+				plan.final_q, plan.final_r = fixed_q, fixed_r
+				plan.final_x, plan.final_y = fixed_x, fixed_y
+			end
 		else
 			if not committed then
 				return false, { error = "final underground alignment has no committed plan", pairs = stats.pairs }

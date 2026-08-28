@@ -2149,7 +2149,8 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapSurfaceStretchDone = nil
 	map.SuperBigMapSurfaceStretchScheduled = nil
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
-	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+		or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false) then
 		map.SuperBigMapLazyUndergroundDescriptor = false
 		map.SuperBigMapLazyUndergroundFeasibilityReport = false
 	end
@@ -5873,12 +5874,38 @@ local function BootstrapPassagesAndDeferWonders(env)
 			return passage, shape
 		end
 	end
+	-- v966 first-access generation binds the stock artefact loop to two already-persisted Surface
+	-- capsules. The binder deliberately bypasses FindPassageSpawnPos: passage coordinates are the
+	-- private descriptor's domain, and deferred access must not consume the live Surface RNG. Marker
+	-- shuffle/order, underground marker creation, linkage, obstruction clearing, and every later UG
+	-- generator operation remain in this canonical bootstrap loop.
+	local lazy_binding = SuperBigMap.State.lazy_underground_passage_binding
+	if type(lazy_binding) == "table" and lazy_binding.surface == surface_map
+		and type(lazy_binding.wrapper) == "function" then
+		spawn_surface_anchor = lazy_binding.wrapper
+	end
 	local get_shape = Global("GetExtendedSpawnShape")
 	local for_each_hex = Global("HexShapeForEach")
 	local hex_to_world = Global("HexToWorld")
 	local world_to_hex = Global("WorldToHex")
 	local unbuildable_z = Global("buildUnbuildableZ")()
 	local done_object = Global("DoneObject")
+	local RestoreSurfaceBuildableBridge
+	if type(lazy_binding) == "table" then
+		-- The descriptor capsules were selected and flattened against the authoritative final Surface
+		-- before T1. They need neither the retained source buildable grid nor the temporary native-map
+		-- passability bridge. This is also the save/load-safe path: neither native grid is serialized.
+		RestoreSurfaceBuildableBridge = function()
+			ReleaseRetainedNativeSourceMap(surface_map,
+				"lazy passage capsules bypassed source selection")
+			local retained = surface_map.SuperBigMapPendingNativeSurfacePassageBuildable
+			if type(retained) == "table" and retained.grid then
+				SuperBigMap.FreeOwnedGrid(retained.grid)
+				retained.grid = nil
+			end
+			surface_map.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+		end
+	else
 	local pending_surface_buildable =
 		surface_map.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(pending_surface_buildable) ~= "table"
@@ -5932,7 +5959,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 	surface_map.buildable.z_grid = padded_surface_grid
 	local restore_fallback_radius
 	local restore_passability_bridge
-	local function RestoreSurfaceBuildableBridge()
+	RestoreSurfaceBuildableBridge = function()
 		if restore_fallback_radius then
 			restore_fallback_radius()
 			restore_fallback_radius = nil
@@ -6084,6 +6111,7 @@ local function BootstrapPassagesAndDeferWonders(env)
 			source_slot = tostring(retention.slot),
 		}, surface_map)
 	end
+	end
 	local successful = {}
 	map:SuspendPassEdits("SuperBigMap_PassageBootstrap")
 	local ok, err = pcall(function()
@@ -6154,7 +6182,10 @@ local function BootstrapPassagesAndDeferWonders(env)
 	if type(AlignPassagePairsToSharedHex) ~= "function" then
 		error("passage bootstrap common-hex planner is unavailable")
 	end
-	local plan_ok, plan_stats = AlignPassagePairsToSharedHex(map, { source_bootstrap = true })
+	local plan_ok, plan_stats = AlignPassagePairsToSharedHex(map, {
+		source_bootstrap = true,
+		fixed_surface_capsules = type(lazy_binding) == "table",
+	})
 	if plan_ok ~= true then
 		error("passage bootstrap common-hex planning failed: "
 			.. tostring(plan_stats and plan_stats.error or "unknown error"))
@@ -8597,23 +8628,62 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	return true
 end
 
--- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY (default off).
+-- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY / v966 IMPLEMENTATION (both default off).
 --
 -- GenerateAdditionalMaps does not allocate the underground itself while the Surface generator is
 -- active; it publishes one GenerateNextMap parameter table that the outer GenerateRandomMap loop
 -- consumes immediately afterwards. That is the only safe suppression boundary for a truly lazy
 -- underground. Before changing that boundary, capture a saveable value-only descriptor and prove
 -- that two Surface passage capsules can be selected from the already-published Surface grids by a
--- private deterministic stream. This probe deliberately leaves GenerateNextMap, UndergroundMap,
--- Maps[2], Cities, and every passage untouched. A failed probe records evidence and falls through
--- to the literal v964 path; it can never create an absent/partial underground state.
-SuperBigMap.LazyUndergroundFeasibility = nil
-if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+-- private deterministic stream. With only the feasibility flag, the probe deliberately leaves
+-- GenerateNextMap, UndergroundMap, Maps[2], Cities, and every passage untouched. The separate v966
+-- implementation flag commits suppression only after that value-only capture, then persists the
+-- capsules and materializes the complete map synchronously at the first guarded access.
+-- A config-on -> config-off hot reload reaches this boundary before RestoreVanillaBehavior. Restore
+-- through the process-stable State callback first; otherwise clearing the helper table would strand
+-- its construction wrappers or an in-flight engine-global transaction. If cleanup is incomplete,
+-- retain both the old helper and callback so a later lifecycle teardown can retry exactly.
+do
+	local State = SuperBigMap.State
+	local previous = SuperBigMap.LazyUndergroundFeasibility
+	local restore = State.lazy_underground_runtime_restore
+	local restored = true
+	if type(restore) == "function" then
+		local call_ok, result = pcall(restore, "helper reload before table clear")
+		restored = call_ok and result == true
+	elseif type(previous) == "table" then
+		local construction_call, construction_result = true, true
+		if type(previous.RestoreConstructionRoutePatches) == "function" then
+			construction_call, construction_result =
+				pcall(previous.RestoreConstructionRoutePatches)
+		end
+		local binding_call, binding_result = true, true
+		if type(previous.RestoreTransientPassageBinding) == "function" then
+			binding_call, binding_result = pcall(previous.RestoreTransientPassageBinding)
+		end
+		local construction_ok = construction_call and construction_result == true
+		local binding_ok = binding_call and binding_result == true
+		restored = construction_ok and binding_ok
+	end
+	State.lazy_underground_reload_restore_ok = restored
+	if restored then
+		State.lazy_underground_runtime_restore = nil
+		State.lazy_underground_runtime_restore_error = nil
+		SuperBigMap.LazyUndergroundFeasibility = nil
+	else
+		State.lazy_underground_runtime_restore_error =
+			"lazy-underground runtime teardown remains retryable"
+	end
+end
+if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
+	and (cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+		or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)) then
 	local Lazy = {
 		SCHEMA = 1,
 		DOMAIN = "SuperBigMap/v965/lazy-underground-surface-passage-capsules",
 		CALLBACK_TAG = "publish-generated-map-to-UndergroundMap",
 		CALLBACK_VERSION = 1,
+		IMPLEMENTATION = cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false),
 	}
 
 function Lazy.PrimitiveTree(value, seen)
@@ -8713,6 +8783,11 @@ function Lazy.ReconstructRecipeValues(descriptor)
 		or recipe.generator_seed.injection
 			~= "RandomMapGenerator.FillParams.Seed-before-original-fill" then
 		return nil, "MapData/generator seed authority is incomplete"
+	end
+	local ui_colony = Global("UIColony")
+	if type(ui_colony) ~= "table" or tonumber(ui_colony.map_seed)
+		~= recipe.mapdata.seed_authority_value then
+		return nil, "live UIColony map seed no longer matches the captured authority"
 	end
 	local map_data_table = Global("MapData")
 	local preset = type(map_data_table) == "table" and map_data_table[recipe.mapdata.preset_id]
@@ -8980,6 +9055,420 @@ function Lazy.BuildCapsulePlan(surface, pending, next_map)
 	return capsules, report
 end
 
+-- v966 functional helpers. They are constructed only when either lazy-underground flag was
+-- compiled on; ordinary/default-off sessions retain the v964 closure and persistence footprint.
+function Lazy.StateSurface()
+	local surface = Global("MainMap")
+	if surface and surface.mapdata and surface.mapdata.Environment == "Surface" then return surface end
+	local maps = Global("Maps")
+	surface = type(maps) == "table" and maps[1] or nil
+	if surface and surface.mapdata and surface.mapdata.Environment == "Surface" then return surface end
+	return nil
+end
+
+function Lazy.TargetRead(record, name)
+	if type(record) ~= "table" then return nil, false end
+	if type(record.reader) == "function" then
+		local call_ok, value = pcall(record.reader, name)
+		return value, call_ok
+	end
+	if type(record.env) ~= "table" then return nil, false end
+	return rawget(record.env, name), true
+end
+
+function Lazy.TargetWrite(record, name, value)
+	if type(record) ~= "table" then return false, false end
+	local call_ok, acknowledged
+	if type(record.writer) == "function" then
+		call_ok, acknowledged = pcall(record.writer, name, value)
+	elseif type(record.env) == "table" then
+		call_ok, acknowledged = pcall(rawset, record.env, name, value)
+		acknowledged = call_ok and acknowledged == record.env
+	else
+		return false, false
+	end
+	local current, read_ok = Lazy.TargetRead(record, name)
+	return read_ok and current == value, call_ok and acknowledged == true
+end
+
+-- Replace every engine environment that currently resolves one exact value. Multiple records may
+-- bridge the same owner; after the first write the remaining aliases simply observe the replacement.
+-- A failed transaction restores every attempted write before returning. Mutate-then-throw writers
+-- are deliberately considered failed even when their live value changed; that record is tracked and
+-- rolled back. An incomplete rollback is retained in process-stable State for exact later retry.
+function Lazy.RememberEngineRestoreToken(token)
+	if type(token) ~= "table" then return false end
+	local State = SuperBigMap.State
+	local pending = State.lazy_underground_engine_restore_tokens
+	if type(pending) ~= "table" then pending = {} end
+	for _, existing in ipairs(pending) do
+		if existing == token then return true end
+	end
+	pending[#pending + 1] = token
+	State.lazy_underground_engine_restore_tokens = pending
+	return true
+end
+
+function Lazy.ReplaceEngineGlobal(name, expected, replacement)
+	local records = SuperBigMap.State.additional_map_seed_patch_targets
+	local token = {
+		name = name, expected = expected, replacement = replacement, changed = {}, restored = false,
+	}
+	local observed = 0
+	for _, record in ipairs(type(records) == "table" and records or {}) do
+		local current, readable = Lazy.TargetRead(record, name)
+		if readable and current == expected then
+			observed = observed + 1
+			token.changed[#token.changed + 1] = record
+			local exact, acknowledged = Lazy.TargetWrite(record, name, replacement)
+			if not exact or not acknowledged then
+				local restored = Lazy.RestoreEngineGlobal(token)
+				if not restored then Lazy.RememberEngineRestoreToken(token) end
+				return nil, "engine-global writer rejected " .. tostring(name), restored
+			end
+		end
+	end
+	-- The mod sandbox can own a direct shadow in diagnostic builds. Include it only when it is the
+	-- exact expected object, never as a substitute for the shipped owner transaction above.
+	if rawget(_G, name) == expected then
+		observed = observed + 1
+		rawset(_G, name, replacement)
+		token.changed[#token.changed + 1] = { env = _G, direct_shadow = true }
+	end
+	if observed == 0 then return nil, "engine global was not observed: " .. tostring(name), true end
+	if Global(name) == expected then
+		local restored = Lazy.RestoreEngineGlobal(token)
+		if not restored then Lazy.RememberEngineRestoreToken(token) end
+		return nil, "engine global remained unchanged: " .. tostring(name), restored
+	end
+	return token, nil, true
+end
+
+function Lazy.RestoreEngineGlobal(token)
+	if type(token) ~= "table" or type(token.changed) ~= "table" then return false end
+	if token.restored == true then return true end
+	local exact = true
+	for index = #token.changed, 1, -1 do
+		local record = token.changed[index]
+		if record.direct_shadow then
+			local current = rawget(_G, token.name)
+			if current == token.expected then
+				-- A prior partial cleanup already restored this target; retry is idempotent.
+			elseif current == token.replacement then
+				rawset(_G, token.name, token.expected)
+				exact = rawget(_G, token.name) == token.expected and exact
+			else
+				exact = false
+			end
+		else
+			local current, readable = Lazy.TargetRead(record, token.name)
+			if readable and current == token.expected then
+				-- Already restored is success, not an ownership mismatch.
+			elseif readable and current == token.replacement then
+				local wrote = Lazy.TargetWrite(record, token.name, token.expected)
+				local verified, verify_ok = Lazy.TargetRead(record, token.name)
+				exact = wrote and verify_ok and verified == token.expected and exact
+			else
+				exact = false
+			end
+		end
+	end
+	if exact then token.restored = true end
+	return exact
+end
+
+function Lazy.RestorePendingEngineGlobals()
+	local State = SuperBigMap.State
+	local pending = State.lazy_underground_engine_restore_tokens
+	if type(pending) ~= "table" then return true end
+	local exact = true
+	for index = #pending, 1, -1 do
+		local token = pending[index]
+		if Lazy.RestoreEngineGlobal(token) then
+			table.remove(pending, index)
+		else
+			exact = false
+		end
+	end
+	if #pending == 0 then State.lazy_underground_engine_restore_tokens = nil end
+	return exact
+end
+
+function Lazy.MarkBlocked(surface, reason)
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) == "table" then
+		descriptor.state = "blocked"
+		descriptor.failure = tostring(reason or "unknown lazy-underground failure")
+		descriptor.failure_sticky = true
+	end
+	if type(report) == "table" then
+		report.enablement_ready = false
+		report.access_blocked = true
+		report.failure_sticky = true
+		report.materialization_running = false
+		report.error = tostring(reason or "unknown lazy-underground failure")
+	end
+	LoadingStep("lazy underground access blocked", { error = tostring(reason) }, surface)
+	return false, tostring(reason)
+end
+
+function Lazy.SuppressGenerateNextMap(surface, next_map)
+	if Lazy.IMPLEMENTATION ~= true then return false, "functional implementation is disabled" end
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) ~= "table" or type(report) ~= "table"
+		or descriptor.state ~= "captured-before-underground-allocation"
+		or report.recipe_capture_complete ~= true then
+		return false, "captured primitive recipe is not suppression-ready"
+	end
+	local token, reason, rollback_complete =
+		Lazy.ReplaceEngineGlobal("GenerateNextMap", next_map, false)
+	if not token then
+		if rollback_complete == false then
+			descriptor.suppression_rollback_incomplete = true
+			descriptor.suppression_state_uncertain = true
+			descriptor.suppression_committed = true
+			descriptor.literal_v964_continues = false
+			report.suppression_rollback_incomplete = true
+			report.suppression_state_uncertain = true
+			report.suppression_committed = true
+			report.literal_v964_continues = false
+			return Lazy.MarkBlocked(surface,
+				"GenerateNextMap suppression rollback incomplete: " .. tostring(reason))
+		end
+		return false, reason
+	end
+	descriptor.state = "suppressed-awaiting-surface-capsules"
+	descriptor.suppression_used = true
+	descriptor.literal_v964_continues = false
+	descriptor.suppression_committed = true
+	report.shadow_only = false
+	report.literal_v964_continues = false
+	report.suppression_used = true
+	report.suppression_committed = true
+	report.enablement_blocker = "surface capsules and final-grid certificate are pending"
+	SuperBigMap.State.pending_vanilla_underground_seed = nil
+	SuperBigMap.State.underground_seed_reservation_trace = nil
+	LoadingStep("lazy underground stock source generation suppressed", {
+		map_slot = descriptor.map_slot, map_name = descriptor.map_name,
+		reserved_seed = tostring(descriptor.reserved_seed),
+	}, surface)
+	return true
+end
+
+function Lazy.FindSurfaceCapsules(surface, descriptor)
+	if type(surface) ~= "table" or type(descriptor) ~= "table"
+		or type(descriptor.capsules) ~= "table" then
+		return nil, "surface descriptor/capsules are unavailable"
+	end
+	local found = {}
+	if type(surface.MapForEach) ~= "function" then return nil, "surface object scan is unavailable" end
+	local scan_ok = pcall(surface.MapForEach, surface, "map", "UndergroundPassageBase", function(obj)
+		local index = tonumber(obj and obj.SuperBigMapLazyUndergroundCapsuleIndex)
+		if not index and obj and type(obj.GetPos) == "function" then
+			local x, y = PointXY(SafeCall(obj.GetPos, obj))
+			local angle = type(obj.GetAngle) == "function" and SafeCall(obj.GetAngle, obj) or nil
+			for candidate_index, capsule in ipairs(descriptor.capsules) do
+				if x == capsule.x and y == capsule.y and angle == capsule.angle then
+					index = candidate_index
+					obj.SuperBigMapLazyUndergroundCapsuleIndex = candidate_index
+					break
+				end
+			end
+		end
+		if index and descriptor.capsules[index] then
+			if found[index] then found[index] = false else found[index] = obj end
+		end
+	end)
+	if not scan_ok then return nil, "surface capsule scan raised" end
+	local result = {}
+	for index = 1, #descriptor.capsules do
+		local object = found[index]
+		if not object then return nil, "surface capsule " .. tostring(index) .. " is absent/duplicate" end
+		local position = type(object.GetPos) == "function" and SafeCall(object.GetPos, object) or nil
+		local x, y = PointXY(position)
+		local expected = descriptor.capsules[index]
+		if x ~= expected.x or y ~= expected.y then
+			return nil, "surface capsule " .. tostring(index) .. " moved"
+		end
+		result[index] = object
+	end
+	return result, nil
+end
+
+function Lazy.PublishSurfaceCapsules(surface, descriptor)
+	local place = Global("PlaceBuildingIn")
+	local point_fn = Global("point")
+	local get_shape = Global("GetExtendedSpawnShape")
+	local flatten = Global("FlattenTerrainInBuildShape")
+	local clear = Global("ClearObstructions")
+	local done = Global("DoneObject")
+	local const_tbl = Global("const")
+	if type(place) ~= "function" or type(point_fn) ~= "function"
+		or type(get_shape) ~= "function" or type(flatten) ~= "function"
+		or type(clear) ~= "function" or type(const_tbl) ~= "table" then
+		return nil, "surface capsule publication APIs are unavailable"
+	end
+	local shape = get_shape("Elevator")
+	if type(shape) ~= "table" or #shape == 0 then return nil, "Elevator shape is unavailable" end
+	local created = {}
+	local function rollback(reason)
+		if type(done) == "function" then
+			if type(surface.MapForEach) == "function" then
+				pcall(surface.MapForEach, surface, "map", "UndergroundTunnelMarker", function(marker)
+					for _, passage in ipairs(created) do
+						if marker and marker.spawner == passage then
+							if marker.tunnel_sign then pcall(done, marker.tunnel_sign) end
+							pcall(done, marker)
+							break
+						end
+					end
+				end)
+			end
+			for index = #created, 1, -1 do pcall(done, created[index]) end
+		end
+		return nil, reason
+	end
+	for index, capsule in ipairs(descriptor.capsules or {}) do
+		local call_ok, passage = pcall(place, "UndergroundPassage", surface)
+		if not call_ok or not passage then return rollback("could not create surface capsule " .. index) end
+		created[#created + 1] = passage
+		local position = point_fn(capsule.x, capsule.y, capsule.z)
+		if type(surface.SnapToTerrain) == "function" then
+			local snapped = SafeCall(surface.SnapToTerrain, surface, position)
+			if snapped then position = snapped end
+		end
+		if type(passage.SetPos) ~= "function" or not pcall(passage.SetPos, passage, position)
+			or type(passage.SetAngle) ~= "function"
+			or not pcall(passage.SetAngle, passage, capsule.angle) then
+			return rollback("could not position surface capsule " .. index)
+		end
+		if type(passage.SetGameFlags) == "function" and const_tbl.gofPermanent then
+			pcall(passage.SetGameFlags, passage, const_tbl.gofPermanent)
+		end
+		passage.SuperBigMapLazyUndergroundCapsuleIndex = index
+		local flatten_ok = pcall(flatten, shape, passage, "flatten unbuildable")
+		local clear_ok = pcall(clear, surface, passage:GetPos(), passage:GetAngle(),
+			surface.obj_prefab_marker, passage:GetPos(), shape)
+		if not flatten_ok or not clear_ok then
+			return rollback("surface capsule terrain/obstruction preparation failed at " .. index)
+		end
+		-- CityInitialized already ran for the Surface. Reproduce only this new object's canonical
+		-- SpawnsOnCityInit effect so its tunnel marker and sign exist before T1.
+		if type(passage.Spawn) ~= "function" or not pcall(passage.Spawn, passage) then
+			return rollback("surface capsule tunnel marker spawn failed at " .. index)
+		end
+		local actual = passage:GetPos()
+		capsule.x, capsule.y = PointXY(actual)
+		capsule.z = type(actual.z) == "function" and actual:z() or capsule.z
+		capsule.published = true
+	end
+	return created, nil
+end
+
+function Lazy.PrepareImplementationCapsules(surface)
+	if Lazy.IMPLEMENTATION ~= true then return true, "implementation disabled" end
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) ~= "table" or type(report) ~= "table" then
+		return true, "no eligible lazy-underground descriptor"
+	end
+	if descriptor.state == "fallback-eager-after-precommit-failure"
+		or report.literal_v964_continues == true and report.suppression_used ~= true then
+		return true, "literal eager fallback remained authoritative"
+	end
+	if descriptor.state == "surface-capsules-published-awaiting-final-grid" then return true end
+	if descriptor.state == "ready-for-first-access" or descriptor.state == "complete" then return true end
+	if descriptor.state == "blocked" then return false, descriptor.failure end
+	if descriptor.state ~= "suppressed-awaiting-surface-capsules" then
+		return Lazy.MarkBlocked(surface, "unexpected pre-final lazy state: " .. tostring(descriptor.state))
+	end
+	local maps = Global("Maps")
+	if Global("UndergroundMap") or type(maps) == "table" and maps[descriptor.map_slot] then
+		return Lazy.MarkBlocked(surface, "underground allocation exists after suppression")
+	end
+	local pending = { seed = descriptor.reserved_seed, boundary = descriptor.reservation_boundary,
+		authority_tag = descriptor.authority_tag }
+	local next_map = { map_name = descriptor.map_name, map_slot = descriptor.map_slot,
+		map_preset = descriptor.map_preset }
+	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
+	local twins, twin_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
+	local repeat_exact = capsules and twins and plan_report.plan_digest == twin_report.plan_digest
+		and #capsules == 2 and #twins == 2
+	if repeat_exact then
+		for index, capsule in ipairs(capsules) do
+			local twin = twins[index]
+			if not twin or capsule.x ~= twin.x or capsule.y ~= twin.y or capsule.z ~= twin.z
+				or capsule.q ~= twin.q or capsule.r ~= twin.r or capsule.angle ~= twin.angle then
+				repeat_exact = false
+				break
+			end
+		end
+	end
+	for key, value in pairs(plan_report or {}) do report[key] = value end
+	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
+	descriptor.capsules = capsules
+	descriptor.plan_digest = plan_report.plan_digest
+	descriptor.private_rng.final_state = plan_report.private_final_state
+	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
+	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
+	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
+	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
+	ReleaseRetainedNativeSourceMap(surface, "v966 final-domain capsules published")
+	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
+	if type(retained_buildable) == "table" and retained_buildable.grid then
+		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
+		retained_buildable.grid = nil
+	end
+	surface.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+	descriptor.state = "surface-capsules-published-awaiting-final-grid"
+	report.capsules_published = #created
+	report.deterministic_repeat = true
+	report.selection_grid_current = true
+	report.final_grid_revalidation = false
+	report.plan_boundary = "immediately-before-canonical-final-surface-grid-rebuild"
+	report.surface_markers_spawned = true
+	report.surface_capsule_objects_persisted = true
+	report.native_source_retention_released_before_t1 = true
+	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+	if not report.descriptor_primitive then
+		return Lazy.MarkBlocked(surface, "published descriptor is not primitive")
+	end
+	return true
+end
+
+function Lazy.PrepareImplementationCapsulesSafe(surface)
+	local call_ok, used, reason = pcall(Lazy.PrepareImplementationCapsules, surface)
+	if call_ok then return used == true, reason end
+	return Lazy.MarkBlocked(surface, "pre-final capsule publication raised: " .. tostring(used))
+end
+
+function Lazy.ValidatePublishedCapsules(surface, descriptor)
+	local objects, reason = Lazy.FindSurfaceCapsules(surface, descriptor)
+	if not objects then return false, reason end
+	local markers, signs = 0, 0
+	for index, passage in ipairs(objects) do
+		if passage.other then return false, "surface capsule linked before first access: " .. index end
+		if type(passage.IsValidPlacement) ~= "function"
+			or SafeCall(passage.IsValidPlacement, passage) ~= true then
+			return false, "surface capsule is not valid on final grids: " .. index
+		end
+		if type(surface.MapForEach) == "function" then
+			pcall(surface.MapForEach, surface, "map", "UndergroundTunnelMarker", function(marker)
+				if marker and marker.spawner == passage then
+					markers = markers + 1
+					if marker.tunnel_sign then signs = signs + 1 end
+				end
+			end)
+		end
+	end
+	if markers ~= 2 or signs ~= 2 then
+		return false, "surface capsule marker/sign count mismatch: " .. markers .. "/" .. signs
+	end
+	return true
+end
+
 function Lazy.Capture(surface, pending, next_map)
 	-- This boundary precedes GenerateRandomMapsFinishing/CityInitialized, which is what schedules
 	-- RunSurfaceStretchIfEnabled. Capture values only here; the source-layout buildable grid is not a
@@ -9004,15 +9493,19 @@ function Lazy.Capture(surface, pending, next_map)
 		and type(ui_map_seed) == "number" and mapdata.Seed == ui_map_seed
 	local callback_present = type(next_map) == "table"
 		and type(next_map.on_map_generated) == "function"
+	local implementation_prerequisites = Lazy.IMPLEMENTATION ~= true
+		or (cfg_bool("STRETCH_UNDERGROUND", false)
+			and cfg_bool("DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS", false)
+			and cfg_bool("EXPANSION_STEP_02_STRETCH_AND_TRANSFORM_VANILLA_SOURCE", false))
 	local recipe_identity_exact = type(next_map) == "table" and next_map.map_slot == 2
 		and type(next_map.map_name) == "string" and next_map.map_name ~= ""
 		and type(next_map.map_preset) == "string"
 	local recipe_capture_complete = #params_unsupported == 0 and recipe_identity_exact
 		and recipe_flags_exact
-		and mapdata_seed_exact and callback_present
+		and mapdata_seed_exact and callback_present and implementation_prerequisites
 	local report = {
 		schema = Lazy.SCHEMA,
-		requested = true, used = false, shadow_only = true,
+		requested = true, used = false, shadow_only = Lazy.IMPLEMENTATION ~= true,
 		literal_v964_continues = true, suppression_used = false,
 		descriptor_captured = true, capsule_plan_pending = true,
 		capsules_required = 2, capsules_planned = 0,
@@ -9039,12 +9532,15 @@ function Lazy.Capture(surface, pending, next_map)
 		and mapdata.map_randomizeseed == false
 	report.recipe_map_seed_matches_ui_colony = mapdata_seed_exact
 	report.recipe_callback_present = callback_present
+	report.implementation_requested = Lazy.IMPLEMENTATION == true
+	report.implementation_prerequisites = implementation_prerequisites
 	report.enablement_ready = false
 	report.enablement_blocker =
 		"route execution coverage, final-domain capsule, save-load, access, and RNG proof are incomplete"
 	local construction_controller = Engine.ClassTable and Engine.ClassTable("ConstructionController")
 	local elevator_base = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
 	local unit_class = Engine.ClassTable and Engine.ClassTable("Unit")
+	local hud_class = Engine.ClassTable and Engine.ClassTable("HUDButtonMapSwitch")
 	report.route_change_current_map_slot_api_present = type(Global("ChangeCurrentMapSlot")) == "function"
 	report.route_construction_activate_api_present = type(construction_controller) == "table"
 		and type(construction_controller.Activate) == "function"
@@ -9052,10 +9548,13 @@ function Lazy.Capture(surface, pending, next_map)
 		and type(elevator_base.PlaceConstructionSite) == "function"
 	report.route_unit_use_elevator_api_present = type(unit_class) == "table"
 		and type(unit_class.UseElevator) == "function"
+	report.route_hud_map_switch_api_present = type(hud_class) == "table"
+		and type(hud_class.Init) == "function"
 	report.route_presence_complete = report.route_change_current_map_slot_api_present
 		and report.route_construction_activate_api_present
 		and report.route_elevator_place_construction_api_present
 		and report.route_unit_use_elevator_api_present
+		and report.route_hud_map_switch_api_present
 	-- v965 only inventories entry-point APIs. No route has been executed through a lazy state
 	-- machine, so presence must never be reported as behavioral coverage.
 	report.route_execution_coverage_proven = false
@@ -9064,7 +9563,9 @@ function Lazy.Capture(surface, pending, next_map)
 
 	local descriptor = {
 		schema = Lazy.SCHEMA,
-		state = "shadow-descriptor-captured-before-underground-allocation",
+		state = Lazy.IMPLEMENTATION == true and "captured-before-underground-allocation"
+			or "shadow-descriptor-captured-before-underground-allocation",
+		implementation = Lazy.IMPLEMENTATION == true,
 		surface_name = tostring(surface and surface.name or ""),
 		map_name = tostring(next_map and next_map.map_name or ""),
 		map_slot = tonumber(next_map and next_map.map_slot) or 0,
@@ -9112,6 +9613,11 @@ function Lazy.Capture(surface, pending, next_map)
 		plan_digest = 0,
 		literal_v964_continues = true,
 		suppression_used = false,
+		suppression_committed = false,
+		materialization_attempts = 0,
+		generation_count = 0,
+		failure = "",
+		failure_sticky = false,
 	}
 	-- Do not instantiate a second MapData at this pre-underground boundary. Reconstruction is
 	-- deliberately deferred to FinalizePlan, after the eager v964 lifecycle and the canonical final
@@ -9141,12 +9647,75 @@ function Lazy.Capture(surface, pending, next_map)
 		recipe_reconstruction_pending = "true",
 		route_presence_complete = tostring(report.route_presence_complete == true),
 		route_execution_coverage_proven = "false",
+		implementation_requested = tostring(Lazy.IMPLEMENTATION == true),
 		suppression_used = "false", error = tostring(report.error),
 	}, surface)
 	return report.descriptor_primitive == true and report.recipe_capture_complete == true, report
 end
 
+function Lazy.FinalizeImplementation(surface)
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) ~= "table" or type(report) ~= "table" then
+		return true, report
+	end
+	if descriptor.state == "fallback-eager-after-precommit-failure"
+		or report.literal_v964_continues == true and report.suppression_used ~= true then
+		report.enablement_ready = false
+		report.used = false
+		report.fallback_eager_completed = true
+		return true, report
+	end
+	if descriptor.state == "blocked" then return false, descriptor.failure end
+	if descriptor.state ~= "surface-capsules-published-awaiting-final-grid" then
+		return Lazy.MarkBlocked(surface, "unexpected post-final lazy state: " .. tostring(descriptor.state))
+	end
+	local valid, reason = Lazy.ValidatePublishedCapsules(surface, descriptor)
+	if not valid then return Lazy.MarkBlocked(surface, reason) end
+	report.capsule_plan_pending = false
+	report.final_grid_revalidation = true
+	report.selection_grid_current = true
+	report.shadow_contains_eager_passage_obstructions = false
+	report.recipe_reconstruction_pending = true
+	report.recipe_reconstruction_exact = false
+	report.recipe_consumer_exact = false
+	report.shared_rng_isolation_designed = true
+	report.shared_rng_isolation_proven = false
+	report.route_map_slot_gate_installed =
+		SuperBigMap.State.change_current_map_slot_wrapper ~= nil
+	report.route_hud_gate_installed = SuperBigMap.State.underground_hud_init_wrapper ~= nil
+	report.route_unit_gate_installed =
+		type(SuperBigMap.State.deferred_elevator_access_patches) == "table"
+		and #SuperBigMap.State.deferred_elevator_access_patches > 0
+	report.route_construction_gates_installed =
+		type(SuperBigMap.State.lazy_underground_construction_patches) == "table"
+		and #SuperBigMap.State.lazy_underground_construction_patches == 2
+	report.access_gate_installed = report.route_map_slot_gate_installed
+		and report.route_hud_gate_installed and report.route_unit_gate_installed
+		and report.route_construction_gates_installed
+	report.route_execution_coverage_proven = false
+	report.enablement_ready = report.route_presence_complete == true
+		and report.access_gate_installed == true and report.capsules_published == 2
+	report.enablement_blocker = report.enablement_ready and ""
+		or "required access-route API/gate is unavailable"
+	report.used = report.enablement_ready
+	descriptor.state = report.enablement_ready and "ready-for-first-access" or "blocked"
+	descriptor.failure = report.enablement_ready and "" or report.enablement_blocker
+	descriptor.failure_sticky = not report.enablement_ready
+	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+	if not report.descriptor_primitive then
+		return Lazy.MarkBlocked(surface, "ready descriptor is not primitive")
+	end
+	LoadingStep("lazy underground surface capsules ready for first access", {
+		ready = tostring(report.enablement_ready == true), capsules = report.capsules_published,
+		digest = descriptor.plan_digest, final_grid_revalidation = "true",
+		access_gate_installed = tostring(report.access_gate_installed == true),
+	}, surface)
+	return report.enablement_ready == true, report
+end
+
 function Lazy.FinalizePlan(surface)
+	if Lazy.IMPLEMENTATION == true then return Lazy.FinalizeImplementation(surface) end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) ~= "table" or type(report) ~= "table"
@@ -9267,6 +9836,9 @@ end
 function Lazy.FinalizePlanSafe(surface)
 	local call_ok, used, report = pcall(Lazy.FinalizePlan, surface)
 	if call_ok then return used == true, report end
+	if Lazy.IMPLEMENTATION == true then
+		return Lazy.MarkBlocked(surface, "final-domain lazy plan raised: " .. tostring(used))
+	end
 	report = type(surface.SuperBigMapLazyUndergroundFeasibilityReport) == "table"
 		and surface.SuperBigMapLazyUndergroundFeasibilityReport or {}
 	report.schema = Lazy.SCHEMA
@@ -9280,6 +9852,445 @@ function Lazy.FinalizePlanSafe(surface)
 	return false, report
 end
 
+function Lazy.PendingForSlot(map_slot)
+	if Lazy.IMPLEMENTATION ~= true or tonumber(map_slot) ~= 2 then return false, nil end
+	local surface = Lazy.StateSurface()
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	if type(descriptor) ~= "table" or descriptor.implementation ~= true
+		or tonumber(descriptor.map_slot) ~= tonumber(map_slot) then
+		return false, nil
+	end
+	if descriptor.state == "blocked" then return true, surface end
+	if descriptor.state == "ready-for-first-access" or descriptor.state == "generating"
+		or descriptor.state == "surface-capsules-published-awaiting-final-grid"
+		or descriptor.state == "suppressed-awaiting-surface-capsules" then
+		return true, surface
+	end
+	return false, surface
+end
+
+function Lazy.PendingForElevator(elevator)
+	if Lazy.IMPLEMENTATION ~= true or not elevator then return false, nil end
+	local index = tonumber(elevator.SuperBigMapLazyUndergroundCapsuleIndex)
+	if not index then return false, nil end
+	local surface = Lazy.StateSurface()
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	if type(descriptor) ~= "table" or type(descriptor.capsules) ~= "table"
+		or not descriptor.capsules[index] then return false, nil end
+	return descriptor.state ~= "complete", surface
+end
+
+function Lazy.ValidatePersistedState(surface)
+	if Lazy.IMPLEMENTATION ~= true then return true end
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	if type(descriptor) ~= "table" or descriptor.implementation ~= true then return true end
+	local maps = Global("Maps")
+	local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
+	if descriptor.state == "generating" then
+		return Lazy.MarkBlocked(surface,
+			"save/load observed an interrupted lazy-underground generation transaction")
+	end
+	if descriptor.state == "ready-for-first-access" then
+		if underground or Global("UndergroundMap") then
+			return Lazy.MarkBlocked(surface,
+				"ready descriptor conflicts with an already allocated underground map")
+		end
+		local valid, reason = Lazy.ValidatePublishedCapsules(surface, descriptor)
+		if not valid then return Lazy.MarkBlocked(surface, "persisted capsule invalid: " .. reason) end
+		return true
+	end
+	if descriptor.state == "complete" then
+		if not underground or Global("UndergroundMap") ~= underground
+			or underground.SuperBigMapUndergroundPrepared ~= true
+			or underground.SuperBigMapUndergroundStretchDone ~= true then
+			return Lazy.MarkBlocked(surface, "completed descriptor lost its prepared underground map")
+		end
+		return true
+	end
+	if descriptor.state == "blocked" then return false, descriptor.failure end
+	-- These states are valid only while the Surface completion cover is still owned. A loaded game
+	-- cannot resume that pre-publication transaction safely, so it remains blocked rather than
+	-- fabricating an eager fallback after suppression.
+	return Lazy.MarkBlocked(surface, "persisted incomplete lazy state: " .. tostring(descriptor.state))
+end
+
+function Lazy.InstallPassageBinding(surface, descriptor)
+	if type(SuperBigMap.State.lazy_underground_passage_binding) == "table" then
+		if not Lazy.RestoreTransientPassageBinding() then
+			return nil, "a prior passage binding remains unrestored"
+		end
+	end
+	local passages, reason = Lazy.FindSurfaceCapsules(surface, descriptor)
+	if not passages then return nil, reason end
+	local original = Global("SpawnUndergroundPassage")
+	local get_shape = Global("GetExtendedSpawnShape")
+	if type(original) ~= "function" or type(get_shape) ~= "function" then
+		return nil, "stock passage binding APIs are unavailable"
+	end
+	local shape = get_shape("Elevator")
+	if type(shape) ~= "table" or #shape == 0 then return nil, "Elevator shape is unavailable" end
+	local binding = {
+		calls = 0, passages = passages, shape = shape, original = original, surface = surface,
+	}
+	local wrapper = function(map, pos, angle, min_dist, successful)
+		if map ~= surface then error("lazy passage binder received a non-Surface map") end
+		binding.calls = binding.calls + 1
+		local passage = passages[binding.calls]
+		if not passage or passage.other then
+			error("lazy passage binder exceeded/unexpectedly linked its two-capsule budget")
+		end
+		return passage, shape
+	end
+	local token, replace_reason = Lazy.ReplaceEngineGlobal(
+		"SpawnUndergroundPassage", original, wrapper)
+	if not token then return nil, replace_reason end
+	binding.token = token
+	binding.wrapper = wrapper
+	SuperBigMap.State.lazy_underground_passage_binding = binding
+	return binding, nil
+end
+
+function Lazy.PublishGeneratedUnderground(map)
+	local current = Global("UndergroundMap")
+	if current and current ~= map then return false, "UndergroundMap already points elsewhere" end
+	if current == map then return true end
+	local token, reason = Lazy.ReplaceEngineGlobal("UndergroundMap", current, map)
+	if not token then return false, reason end
+	return Global("UndergroundMap") == map, Global("UndergroundMap") == map and nil
+		or "UndergroundMap callback publication was not visible"
+end
+
+function Lazy.ValidateCompletedPairs(surface, underground, descriptor)
+	local passages, reason = Lazy.FindSurfaceCapsules(surface, descriptor)
+	if not passages then return false, reason end
+	local count = 0
+	for index, passage in ipairs(passages) do
+		local other = passage.other
+		if not other or other.other ~= passage then
+			return false, "passage reciprocity failed at capsule " .. index
+		end
+		local other_map = type(other.GetMap) == "function" and SafeCall(other.GetMap, other) or nil
+		if other_map ~= underground then return false, "passage target map mismatch at capsule " .. index end
+		local sx, sy = PointXY(type(passage.GetPos) == "function" and passage:GetPos())
+		local ux, uy = PointXY(type(other.GetPos) == "function" and other:GetPos())
+		if sx ~= ux or sy ~= uy then return false, "passage coordinates differ at capsule " .. index end
+		count = count + 1
+	end
+	return count == 2, count == 2 and nil or "completed passage count is not two"
+end
+
+function Lazy.MaterializeTransaction(surface, descriptor, route)
+	local reconstructed, reconstruct_error = Lazy.ReconstructRecipeValues(descriptor)
+	if not reconstructed then return nil, "recipe reconstruction failed: " .. tostring(reconstruct_error) end
+	local params = reconstructed.params
+	local binding, bind_reason = Lazy.InstallPassageBinding(surface, descriptor)
+	if not binding then return nil, "passage binder install failed: " .. tostring(bind_reason) end
+	local callback_count, callback_map = 0, nil
+	params.on_map_generated = function(map)
+		callback_count = callback_count + 1
+		callback_map = map
+		local published, reason = Lazy.PublishGeneratedUnderground(map)
+		if not published then error(reason) end
+	end
+	local State = SuperBigMap.State
+	State.pending_vanilla_underground_seed = {
+		seed = reconstructed.generator_seed,
+		surface = surface,
+		boundary = "v966_lazy_first_access_replay",
+		authority_tag = descriptor.authority_tag,
+	}
+	State.underground_seed_reservation_trace = {
+		boundary = "v966_lazy_first_access_replay",
+		reserved_seed = reconstructed.generator_seed,
+	}
+	local generate = Global("GenerateRandomMap")
+	local generated = type(generate) == "function"
+		and PackValues(pcall(generate, descriptor.map_name, descriptor.map_preset, params))
+		or { false, "GenerateRandomMap is unavailable", n = 2 }
+	local restored = Lazy.RestoreTransientPassageBinding(binding)
+	State.pending_vanilla_underground_seed = nil
+	if not generated[1] then
+		return nil, "deferred GenerateRandomMap failed: " .. tostring(generated[2])
+	end
+	if not restored then return nil, "SpawnUndergroundPassage wrapper restoration failed" end
+	local maps = Global("Maps")
+	local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
+	if callback_count ~= 1 or callback_map ~= underground or Global("UndergroundMap") ~= underground then
+		return nil, "generated underground callback/publication cardinality mismatch"
+	end
+	if binding.calls ~= 2 then return nil, "stock passage binder call count is " .. binding.calls end
+	descriptor.generation_count = (tonumber(descriptor.generation_count) or 0) + 1
+	if descriptor.generation_count ~= 1 then return nil, "underground generated more than once" end
+	local report = surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(report) == "table" then
+		report.recipe_reconstruction_pending = false
+		report.recipe_reconstruction_exact = true
+		report.consumer_callback_publication_match = true
+		report.passage_binding_calls = binding.calls
+		report.shared_rng_isolation_proven = true
+		report.generation_count = descriptor.generation_count
+		report.materialization_route = tostring(route)
+	end
+	if not underground or not underground.mapdata
+		or underground.mapdata.Environment ~= "Underground" or not underground.City
+		or underground.SuperBigMapNativeGenerationComplete ~= true
+		or underground.SuperBigMapCityInitializationComplete ~= true then
+		return nil, "generated underground did not complete native/City lifecycle"
+	end
+	local pipeline = Lazy.RunDeferredPipeline
+	if type(pipeline) ~= "function" then return nil, "deferred underground pipeline is unavailable" end
+	local pipeline_ok, pipeline_reason = pipeline(underground, true)
+	if pipeline_ok ~= true then
+		return nil, "deferred underground completion failed: " .. tostring(pipeline_reason)
+	end
+	if underground.SuperBigMapUndergroundPrepared ~= true
+		or underground.SuperBigMapUndergroundStretchDone ~= true
+		or underground.SuperBigMapUndergroundStretchPending == true
+		or underground.SuperBigMapUndergroundStretchFailed then
+		return nil, "underground completion state is not authoritative"
+	end
+	local pairs_ok, pairs_reason = Lazy.ValidateCompletedPairs(surface, underground, descriptor)
+	if not pairs_ok then return nil, pairs_reason end
+	return underground, nil
+end
+
+function Lazy.Materialize(surface, route)
+	if Lazy.IMPLEMENTATION ~= true then return nil, "functional implementation is disabled" end
+	surface = surface or Lazy.StateSurface()
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	if type(descriptor) ~= "table" or descriptor.implementation ~= true then
+		return nil, "lazy underground descriptor is unavailable"
+	end
+	if descriptor.state == "complete" then
+		local maps = Global("Maps")
+		return type(maps) == "table" and maps[descriptor.map_slot] or nil
+	end
+	if descriptor.state == "blocked" then return nil, descriptor.failure end
+	if descriptor.state == "generating" then
+		local wait_msg = Global("WaitMsg")
+		if type(wait_msg) == "function" then
+			wait_msg("SuperBigMapLazyUndergroundMaterializationDone", 300000)
+		end
+		if descriptor.state == "complete" then
+			local maps = Global("Maps")
+			return type(maps) == "table" and maps[descriptor.map_slot] or nil
+		end
+		return nil, descriptor.failure ~= "" and descriptor.failure
+			or "concurrent materialization did not complete"
+	end
+	if descriptor.state ~= "ready-for-first-access" then
+		return Lazy.MarkBlocked(surface, "first access observed state " .. tostring(descriptor.state))
+	end
+	descriptor.materialization_attempts = (tonumber(descriptor.materialization_attempts) or 0) + 1
+	if descriptor.materialization_attempts ~= 1 then
+		return Lazy.MarkBlocked(surface, "lazy underground materialization attempted more than once")
+	end
+	descriptor.state = "generating"
+	local report = surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(report) == "table" then
+		report.materialization_attempts = descriptor.materialization_attempts
+		report.materialization_route = tostring(route)
+		report.materialization_running = true
+	end
+	LoadingStep("lazy underground first-access materialization started", {
+		route = tostring(route), attempt = descriptor.materialization_attempts,
+		map_name = descriptor.map_name, reserved_seed = tostring(descriptor.reserved_seed),
+	}, surface)
+	local call_ok, underground, reason = pcall(
+		Lazy.MaterializeTransaction, surface, descriptor, route)
+	if not call_ok or not underground then
+		Lazy.MarkBlocked(surface, call_ok and reason or underground)
+	else
+		descriptor.state = "complete"
+		descriptor.failure = ""
+		descriptor.failure_sticky = false
+		report = surface.SuperBigMapLazyUndergroundFeasibilityReport
+		if type(report) == "table" then
+			report.materialization_complete = true
+			report.materialization_running = false
+			report.access_blocked = false
+			report.route_execution_coverage_proven = true
+			report.error = ""
+			report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+		end
+		if type(report) == "table" and report.descriptor_primitive ~= true then
+			Lazy.MarkBlocked(surface, "completed lazy descriptor is not primitive")
+			underground = nil
+		else
+			LoadingStep("lazy underground first-access materialization complete", {
+				route = tostring(route), generation_count = descriptor.generation_count,
+				passages = 2, prepared = "true",
+			}, underground)
+		end
+	end
+	if type(report) == "table" and descriptor.state ~= "complete" then
+		report.materialization_running = false
+	end
+	local msg = Global("Msg")
+	if type(msg) == "function" then pcall(msg, "SuperBigMapLazyUndergroundMaterializationDone", surface) end
+	if descriptor.state ~= "complete" then return nil, descriptor.failure end
+	return underground, nil
+end
+
+function Lazy.ShowAccessFailure(reason)
+	local create_box = Global("CreateMessageBox")
+	if type(create_box) ~= "function" then return end
+	local untranslated = Global("Untranslated")
+	local wrap = type(untranslated) == "function" and untranslated or function(value) return value end
+	pcall(create_box, nil, wrap("Super Big Map"), wrap(
+		"The underground could not be generated safely, so access remains blocked."
+		.. "\n\n" .. tostring(reason or "Unknown error")))
+end
+
+function Lazy.MaterializeWithForegroundCover(route)
+	local surface = Lazy.StateSurface()
+	local begin_cover = SuperBigMap.ExpansionLoadingBegin
+	local end_cover = SuperBigMap.ExpansionLoadingEnd
+	local started, visible = false, false
+	if type(begin_cover) == "function" then
+		local call_ok, result = pcall(begin_cover, "underground")
+		started, visible = call_ok, call_ok and result == true
+	end
+	local fallback_id = "idSuperBigMapLazyUndergroundFirstAccess"
+	local fallback_open = false
+	local open_screen = Global("LoadingScreenOpen")
+	local close_screen = Global("LoadingScreenClose")
+	if not visible and type(open_screen) == "function" then
+		fallback_open = pcall(open_screen, fallback_id, 2)
+	end
+	SetLoadingPhase("Generating the underground map for first access")
+	local underground, reason = Lazy.Materialize(surface, route)
+	if fallback_open and type(close_screen) == "function" then
+		pcall(close_screen, fallback_id, 2)
+	end
+	if started and type(end_cover) == "function" then pcall(end_cover, true) end
+	if not underground then Lazy.ShowAccessFailure(reason) end
+	return underground, reason
+end
+
+function Lazy.RestoreConstructionRoutePatches()
+	local State = SuperBigMap.State
+	local patches = State.lazy_underground_construction_patches
+	local exact = true
+	if type(patches) == "table" then
+		for index = #patches, 1, -1 do
+			local patch = patches[index]
+			local current = patch.target and patch.target[patch.method] or nil
+			if current == patch.original then
+				-- A prior partial teardown already restored this method.
+			elseif current == patch.wrapper then
+				local write_ok = pcall(function()
+					patch.target[patch.method] = patch.original
+				end)
+				exact = write_ok and patch.target[patch.method] == patch.original and exact
+			else
+				exact = false
+			end
+		end
+	end
+	if exact then
+		State.lazy_underground_construction_patches = nil
+		State.lazy_underground_construction_patch_version = nil
+	end
+	return exact
+end
+
+function Lazy.RestoreTransientPassageBinding(expected_binding)
+	local State = SuperBigMap.State
+	local binding = State.lazy_underground_passage_binding
+	if type(binding) ~= "table" then return expected_binding == nil end
+	if expected_binding ~= nil and binding ~= expected_binding then return false end
+	local restored = Lazy.RestoreEngineGlobal(binding.token)
+	if restored and State.lazy_underground_passage_binding == binding then
+		State.lazy_underground_passage_binding = nil
+	else
+		restored = false
+	end
+	return restored
+end
+
+function Lazy.RestoreRuntimeState(reason)
+	local State = SuperBigMap.State
+	local binding_ok = Lazy.RestoreTransientPassageBinding()
+	local globals_ok = Lazy.RestorePendingEngineGlobals()
+	local construction_ok = Lazy.RestoreConstructionRoutePatches()
+	local exact = binding_ok and globals_ok and construction_ok
+	if exact then
+		State.lazy_underground_runtime_restore_error = nil
+	elseif type(reason) == "string" then
+		State.lazy_underground_runtime_restore_error = reason
+	end
+	return exact
+end
+
+function Lazy.PatchConstructionRoutes()
+	if Lazy.IMPLEMENTATION ~= true then return false end
+	local State = SuperBigMap.State
+	local installed = State.lazy_underground_construction_patches
+	if State.lazy_underground_construction_patch_version == GENERATOR_PATCH_VERSION
+		and type(installed) == "table" and #installed == 2 then
+		local intact = true
+		for _, patch in ipairs(installed) do
+			intact = intact and patch.target[patch.method] == patch.wrapper
+		end
+		if intact then return true end
+	end
+	if not Lazy.RestoreConstructionRoutePatches() then return false end
+	local patches = {}
+	local controller = Engine.ClassTable("ConstructionController")
+	local activate = controller and controller.Activate
+	if type(activate) == "function" then
+		local wrapper = function(self, template, ...)
+			local pending = tostring(template) == "Elevator" and Lazy.PendingForSlot(2)
+			if pending then
+				local underground = Lazy.MaterializeWithForegroundCover("construction-activate")
+				if not underground then return false end
+			end
+			return activate(self, template, ...)
+		end
+		controller.Activate = wrapper
+		patches[#patches + 1] = {
+			target = controller, method = "Activate", original = activate, wrapper = wrapper,
+		}
+	end
+	local elevator = Engine.ClassTable("ElevatorBase")
+	local place_site = elevator and elevator.PlaceConstructionSite
+	if type(place_site) == "function" then
+		local wrapper = function(self, city, class_name, position, angle, params,
+			no_block_pass, no_flatten)
+			local map = city and type(city.GetMap) == "function" and SafeCall(city.GetMap, city) or nil
+			local passage = map and type(map.MapFindNearest) == "function"
+				and SafeCall(map.MapFindNearest, map, position, "map",
+					"SurfacePassageBase", "UndergroundPassageBase") or nil
+			local pending = Lazy.PendingForElevator(passage)
+			if pending then
+				local underground = Lazy.MaterializeWithForegroundCover(
+					"elevator-place-construction-site")
+				if not underground then return false end
+			end
+			-- Only now may stock evaluate passage.other:GetMap().
+			if tonumber(passage and passage.SuperBigMapLazyUndergroundCapsuleIndex)
+				and not passage.other then
+				Lazy.ShowAccessFailure("the lazy passage pair is not linked")
+				return false
+			end
+			return place_site(self, city, class_name, position, angle, params,
+				no_block_pass, no_flatten)
+		end
+		elevator.PlaceConstructionSite = wrapper
+		patches[#patches + 1] = {
+			target = elevator, method = "PlaceConstructionSite", original = place_site,
+			wrapper = wrapper,
+		}
+	end
+	State.lazy_underground_construction_patches = patches
+	State.lazy_underground_construction_patch_version = GENERATOR_PATCH_VERSION
+	return #patches == 2
+end
+
+	-- Keep teardown callable even after a config-off reload stops constructing this helper table.
+	-- The callback and every unresolved engine token live in process-stable State until exact cleanup.
+	SuperBigMap.State.lazy_underground_runtime_restore = Lazy.RestoreRuntimeState
 	SuperBigMap.LazyUndergroundFeasibility = Lazy
 end
 
@@ -9475,7 +10486,8 @@ local function PatchAdditionalMapSeedReservation()
 		if pending then
 			local next_map = Global("GenerateNextMap")
 			if type(next_map) == "table" and next_map.map_slot == 2
-				and cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+				and (cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+					or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false)) then
 				local lazy = SuperBigMap.LazyUndergroundFeasibility
 				local capture_ok, capture_result, capture_report = pcall(
 					lazy and lazy.Capture, map, pending, next_map)
@@ -9492,6 +10504,43 @@ local function PatchAdditionalMapSeedReservation()
 					-- The report was already published by the helper. Literal generation proceeds.
 					capture_report.literal_v964_continues = true
 					capture_report.suppression_used = false
+				elseif capture_ok and capture_result == true and lazy and lazy.IMPLEMENTATION == true then
+					-- This is the only commit point. Before it, every validation error leaves the literal
+					-- v964 GenerateNextMap table untouched. After it, failures are sticky/blocked and never
+					-- try to regenerate eagerly over a persisted lazy descriptor.
+					local suppress_ok, suppressed, suppress_reason = pcall(
+						lazy.SuppressGenerateNextMap, map, next_map)
+					if not suppress_ok or suppressed ~= true then
+						local report = map and map.SuperBigMapLazyUndergroundFeasibilityReport
+						local descriptor = map and map.SuperBigMapLazyUndergroundDescriptor
+						local rollback_incomplete = type(descriptor) == "table"
+							and descriptor.suppression_rollback_incomplete == true
+						if rollback_incomplete then
+							-- ReplaceEngineGlobal proved that at least one owner may still publish false.
+							-- Never relabel this as the literal eager path; capsule finalization keeps T1
+							-- blocked while the stable restore token remains available for teardown retry.
+							if type(report) == "table" then
+								report.literal_v964_continues = false
+								report.suppression_committed = true
+								report.enablement_ready = false
+							end
+						else
+							if type(report) == "table" then
+								report.literal_v964_continues = true
+								report.suppression_used = false
+								report.suppression_committed = false
+								report.enablement_ready = false
+								report.error = "precommit suppression failed: "
+									.. tostring(suppress_ok and suppress_reason or suppressed)
+							end
+							if type(descriptor) == "table" then
+								descriptor.state = "fallback-eager-after-precommit-failure"
+								descriptor.literal_v964_continues = true
+								descriptor.suppression_used = false
+								descriptor.suppression_committed = false
+							end
+						end
+					end
 				end
 			end
 			if type(next_map) ~= "table" or next_map.map_slot ~= 2 then
@@ -9553,7 +10602,8 @@ local function PatchAdditionalMapSeedReservation()
 		local results = PackValues(pcall(original_fill, gen, map_name, seeded_params))
 		map_data.map_randomizeseed = previous_randomize
 		trace.consumer_seed = gen and gen.Seed
-		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+			or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false) then
 			local surface = Global("MainMap")
 			local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 			local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
@@ -10574,7 +11624,8 @@ local function PatchRandomMapGenerator()
 
 	local generate_wrapper = function(self, params)
 		params = type(params) == "table" and params or {}
-		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+			or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false) then
 			local feasibility = SuperBigMap.LazyUndergroundFeasibility
 			if type(feasibility) == "table"
 				and type(feasibility.ObserveGenerateParameters) == "function" then
@@ -12390,9 +13441,19 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if type(pause_ild) == "function" then
 					SafeCall(pause_ild, "SuperBigMapSurfacePostPipelineRevalidation")
 				end
+				local capsule_ok, capsule_err = true, nil
+				local lazy = SuperBigMap.LazyUndergroundFeasibility
+				if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
+					capsule_ok, capsule_err = lazy.PrepareImplementationCapsulesSafe(map)
+				end
 				local revalidation_ok, revalidation_err = rebuild_surface_final(
 					"post-pipeline scheduled revalidation")
-				if not revalidation_ok and deferred_surface_completion then
+				if capsule_ok ~= true then
+					revalidation_ok = false
+					revalidation_err = "lazy underground capsule publication failed: "
+						.. tostring(capsule_err)
+				end
+				if not revalidation_ok and capsule_ok == true and deferred_surface_completion then
 					-- The accepted pre-optimization behavior rebuilt at this exact point in the
 					-- original thread. Retry that full operation once; publish only on verified success.
 					local fallback_ok, fallback_err = rebuild_surface_final(
@@ -12410,10 +13471,21 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if revalidation_ok then
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
 					map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+					local lazy_plan_ok = true
 					if SuperBigMap.LazyUndergroundFeasibility then
-						SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
+						lazy_plan_ok = SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
 					end
-					publish_deferred_surface_completion()
+					if lazy_plan_ok == true
+						or SuperBigMap.LazyUndergroundFeasibility.IMPLEMENTATION ~= true then
+						publish_deferred_surface_completion()
+					else
+						map.SuperBigMapSurfacePostPipelineRevalidationComplete = nil
+						map.SuperBigMapSurfacePostPipelineRevalidationError =
+							"lazy underground final capsule certificate failed"
+						LoadingFinish("surface lazy-underground capsule finalization failed", map, {
+							error = map.SuperBigMapSurfacePostPipelineRevalidationError,
+						}, false)
+					end
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
 					LoadingFinish("surface post-pipeline revalidation failed", map, {
@@ -12425,17 +13497,38 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if deferred_surface_completion then
 					-- If a new real-time thread cannot be created, fall back synchronously to the
 					-- former immediate full rebuild before releasing the loading gate.
+					local capsule_ok, capsule_err = true, nil
+					local lazy = SuperBigMap.LazyUndergroundFeasibility
+					if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
+						capsule_ok, capsule_err = lazy.PrepareImplementationCapsulesSafe(map)
+					end
 					local fallback_ok, fallback_err = rebuild_surface_final(
 						"post-pipeline scheduling failure fallback")
+					if capsule_ok ~= true then
+						fallback_ok = false
+						fallback_err = "lazy underground capsule publication failed: "
+							.. tostring(capsule_err)
+					end
 					if fallback_ok then
 						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = true
 						map.SuperBigMapSurfacePostPipelineRevalidationMode = "synchronous-fallback"
 						map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
 						map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+						local lazy_plan_ok = true
 						if SuperBigMap.LazyUndergroundFeasibility then
-							SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
+							lazy_plan_ok = SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
 						end
-						publish_deferred_surface_completion()
+						if lazy_plan_ok == true
+							or SuperBigMap.LazyUndergroundFeasibility.IMPLEMENTATION ~= true then
+							publish_deferred_surface_completion()
+						else
+							map.SuperBigMapSurfacePostPipelineRevalidationComplete = nil
+							map.SuperBigMapSurfacePostPipelineRevalidationError =
+								"lazy underground final capsule certificate failed"
+							LoadingFinish("surface lazy-underground capsule finalization failed", map, {
+								error = map.SuperBigMapSurfacePostPipelineRevalidationError,
+							}, false)
+						end
 					else
 						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
 						thread_ok = false
@@ -13576,7 +14669,8 @@ local function NotifyGenerationMilestone(map, milestone, source)
 	if milestone == "MapGenerated" then
 		map.SuperBigMapNativeGenerationComplete = true
 		map.SuperBigMapNativeGenerationCompleteSource = tostring(source or milestone)
-		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+			or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false) then
 			local feasibility = SuperBigMap.LazyUndergroundFeasibility
 			if type(feasibility) == "table"
 				and type(feasibility.ObservePublishedUnderground) == "function" then
@@ -13604,6 +14698,10 @@ local function NotifyGenerationMilestone(map, milestone, source)
 		return RunUndergroundStretchIfEnabled(map)
 	end
 	return true
+end
+
+if type(SuperBigMap.LazyUndergroundFeasibility) == "table" then
+	SuperBigMap.LazyUndergroundFeasibility.RunDeferredPipeline = RunUndergroundStretchIfEnabled
 end
 
 local function NeedsDeferredUndergroundPreparation(map)
@@ -14031,6 +15129,9 @@ end
 
 local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	local State = SuperBigMap.State
+	local lazy = SuperBigMap.LazyUndergroundFeasibility
+	local lazy_pending = type(lazy) == "table" and lazy.PendingForElevator(elevator) == true
+	local target_slot = target and target.slot or (lazy_pending and 2 or nil)
 	local gate = State.change_current_map_slot_wrapper
 	local create_thread = Global("CreateRealTimeThread")
 	local wait_msg = Global("WaitMsg")
@@ -14040,7 +15141,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		or type(wait_msg) ~= "function" or type(msg) ~= "function" then
 		return false, "required first-access engine functions are unavailable"
 	end
-	if not target or target.slot == nil then
+	if target_slot == nil then
 		return false, "the linked underground map slot is unavailable"
 	end
 	if not return_map or return_map.slot == nil then
@@ -14055,7 +15156,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	local request = { done = false, ok = false }
 	ElevatorTraversalAudit("FIRST_ACCESS_BEGIN", {
 		request = request_id, unit = tostring(unit), elevator = tostring(elevator),
-		target = tostring(target), target_slot = tostring(target.slot),
+		target = tostring(target), target_slot = tostring(target_slot),
 		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
 	}, TraversalObjectMap(unit))
 
@@ -14103,11 +15204,13 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		end
 		-- Our persistent custom dialog already covers both internal switches, so suppress the
 		-- vanilla map-switch artwork that would otherwise replace it for a frame.
-		local call_ok, call_result = pcall(gate, target.slot, false, "idChangeCurrentMapSlot")
+		local call_ok, call_result = pcall(gate, target_slot, false, "idChangeCurrentMapSlot")
 		request.call_ok = call_ok
 		request.call_result = call_result
+		local maps = Global("Maps")
+		target = type(maps) == "table" and maps[target_slot] or target
 		local target_ready = call_ok and call_result ~= false
-			and target.SuperBigMapUndergroundPrepared == true
+			and target and target.SuperBigMapUndergroundPrepared == true
 			and target.SuperBigMapUndergroundStretchDone == true
 			and Global("CurrentMap") == target
 		local return_ok, return_result = false, nil
@@ -14142,7 +15245,7 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 		request.ok = target_ready and return_ok and return_darkness_ok and camera_ok
 		request.reason = request.ok and "prepared underground and restored original view"
 			or (not call_ok and tostring(call_result))
-			or target.SuperBigMapUndergroundStretchFailed
+			or (target and target.SuperBigMapUndergroundStretchFailed)
 			or (target_ready and not return_darkness_ok and tostring(return_darkness_reason))
 			or (return_ok and not camera_ok and tostring(camera_reason))
 			or (target_ready and "the original map view could not be restored")
@@ -14183,10 +15286,10 @@ local function PrepareDeferredUndergroundForElevator(unit, elevator, target)
 	end
 	ElevatorTraversalAudit("FIRST_ACCESS_END", {
 		request = request_id, unit = tostring(unit), elevator = tostring(elevator),
-		target = tostring(target), target_slot = tostring(target.slot),
+		target = tostring(target), target_slot = tostring(target_slot),
 		ok = tostring(request.ok == true), done = tostring(request.done == true),
 		current_map = tostring(Global("CurrentMap")),
-		prepared = tostring(target.SuperBigMapUndergroundPrepared == true),
+		prepared = tostring(target and target.SuperBigMapUndergroundPrepared == true),
 		view_restored = tostring(Global("CurrentMap") == return_map),
 		return_map = tostring(return_map), return_slot = tostring(return_map.slot),
 		camera_restored = tostring(request.camera_ok == true),
@@ -14265,7 +15368,11 @@ local function PatchDeferredUndergroundElevatorAccess(source)
 					return UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
 				end
 				local target = DeferredUndergroundTargetForElevator(elevator)
-				local needs_prepare = target and NeedsDeferredUndergroundPreparation(target)
+				local lazy = SuperBigMap.LazyUndergroundFeasibility
+				local lazy_pending = type(lazy) == "table"
+					and lazy.PendingForElevator(elevator) == true
+				local needs_prepare = lazy_pending
+					or (target and NeedsDeferredUndergroundPreparation(target))
 				if needs_prepare ~= true then
 					return UseElevatorWithRoverCloseRangeFallback(original, unit, elevator, ...)
 				end
@@ -14374,7 +15481,13 @@ local function PatchDeferredUndergroundHudAccess(source)
 		local original_press = frame.OnPress
 		frame.OnPress = function(button, gamepad)
 			local target, entry, entry_source = ResolveHudUndergroundTarget(button)
+			local requested_slot = target and target.slot
+				or entry and (entry.map_slot or entry.slot or entry.MapSlot)
+			local lazy = SuperBigMap.LazyUndergroundFeasibility
+			local lazy_pending = type(lazy) == "table"
+				and lazy.PendingForSlot(requested_slot) == true
 			local needs_prepare, reason = NeedsDeferredUndergroundPreparation(target)
+			needs_prepare = lazy_pending or needs_prepare
 			if not needs_prepare then
 				return original_press(button, gamepad)
 			end
@@ -14388,8 +15501,8 @@ local function PatchDeferredUndergroundHudAccess(source)
 			button.SuperBigMapUndergroundAccessClickRunning = true
 			create_thread(function()
 				local gate = State.change_current_map_slot_wrapper
-				if type(gate) == "function" and target and target.slot then
-					gate(target.slot, true, "idChangeCurrentMapSlot")
+				if type(gate) == "function" and requested_slot then
+					gate(requested_slot, true, "idChangeCurrentMapSlot")
 				end
 				button.SuperBigMapUndergroundAccessClickRunning = false
 			end)
@@ -14422,6 +15535,11 @@ local function PatchDeferredUndergroundAccess(source)
 		end
 	end
 	local State = SuperBigMap.State
+	local lazy = SuperBigMap.LazyUndergroundFeasibility
+	if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
+		lazy.ValidatePersistedState(lazy.StateSurface())
+		lazy.PatchConstructionRoutes()
+	end
 	local current = Global("ChangeCurrentMapSlot")
 	if type(current) ~= "function" then
 		PatchDeferredUndergroundHudAccess(source)
@@ -14433,6 +15551,9 @@ local function PatchDeferredUndergroundAccess(source)
 		and State.underground_access_patch_version == GENERATOR_PATCH_VERSION then
 		PatchDeferredUndergroundHudAccess(source)
 		PatchDeferredUndergroundElevatorAccess(source)
+		if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
+			lazy.PatchConstructionRoutes()
+		end
 		reapply_removed_diagnostics()
 		return true
 	end
@@ -14455,14 +15576,20 @@ local function PatchDeferredUndergroundAccess(source)
 		local target = type(maps) == "table" and maps[map_slot] or nil
 		RestoreDeferredUndergroundGeometry(target)
 		local env = target and target.mapdata and target.mapdata.Environment
+		local lazy = SuperBigMap.LazyUndergroundFeasibility
+		local lazy_pending, lazy_surface = false, nil
+		if type(lazy) == "table" then
+			lazy_pending, lazy_surface = lazy.PendingForSlot(map_slot)
+		end
 		local needs_prepare, decision = NeedsDeferredUndergroundPreparation(target)
+		needs_prepare = lazy_pending or needs_prepare
 		if not needs_prepare then
 			return original(map_slot, loading_screen, loading_screen_id)
 		end
 
 		-- A second switch request can arrive while the first caller is preparing the map. Wait for
 		-- that authoritative run rather than launching a second one over partially changed grids.
-		if target.SuperBigMapUndergroundStretchRunning == true then
+		if target and target.SuperBigMapUndergroundStretchRunning == true then
 			local wait_msg = Global("WaitMsg")
 			if type(wait_msg) == "function" then
 				wait_msg("SuperBigMapUndergroundExpansionDone", 120000)
@@ -14483,8 +15610,8 @@ local function PatchDeferredUndergroundAccess(source)
 			end
 		end
 
-		if target.SuperBigMapUndergroundStretchFailed
-			or target.SuperBigMapUndergroundPreparationFailed == true then
+		if target and (target.SuperBigMapUndergroundStretchFailed
+			or target.SuperBigMapUndergroundPreparationFailed == true) then
 			show_failure(target.SuperBigMapUndergroundStretchFailed
 				or "A previous underground preparation attempt failed")
 			return false
@@ -14525,16 +15652,23 @@ local function PatchDeferredUndergroundAccess(source)
 		end
 
 		SetLoadingPhase("Preparing the underground map for first access")
-		local ok, err = RunUndergroundStretchIfEnabled(target, true)
+		local ok, err = true, nil
+		if lazy_pending then
+			target, err = lazy.Materialize(lazy_surface, "change-current-map-slot")
+			ok = target ~= nil
+		else
+			ok, err = RunUndergroundStretchIfEnabled(target, true)
+		end
 		if ok ~= true then
 			if screen_open then
 				if type(close_screen) == "function" then close_screen(screen_id, map_slot) end
 				if type(wait_render) == "function" then wait_render("scene") end
 			end
 			release_first_access_cover()
-			show_failure(err or target.SuperBigMapUndergroundStretchFailed or "Preparation did not complete")
+			show_failure(err or (target and target.SuperBigMapUndergroundStretchFailed)
+				or "Preparation did not complete")
 			LoadingFinish("underground first-access preparation failed", target,
-				{ error = tostring(err or target.SuperBigMapUndergroundStretchFailed) }, false)
+				{ error = tostring(err or (target and target.SuperBigMapUndergroundStretchFailed)) }, false)
 			return false
 		end
 		-- The loading cover is already owned. Make the destination's vanilla blanket state a
@@ -14628,6 +15762,9 @@ local function PatchDeferredUndergroundAccess(source)
 	State.underground_access_patch_version = GENERATOR_PATCH_VERSION
 	PatchDeferredUndergroundHudAccess(source)
 	PatchDeferredUndergroundElevatorAccess(source)
+	if type(lazy) == "table" and lazy.IMPLEMENTATION == true then
+		lazy.PatchConstructionRoutes()
+	end
 	reapply_removed_diagnostics()
 	return true
 end
@@ -14763,7 +15900,8 @@ MapGeneration.RecoverLoadedUndergroundReadiness =
 	SuperBigMap.GenerationReadiness.RecoverLoadedUnderground
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
-if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+if (cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+	or cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false))
 	and type(SuperBigMap.LazyUndergroundFeasibility) == "table" then
 	MapGeneration.BuildLazyUndergroundCapsulePlanForTest =
 		SuperBigMap.LazyUndergroundFeasibility.BuildCapsulePlan
@@ -14820,6 +15958,14 @@ function MapGeneration.RestoreVanillaBehavior()
 	end
 	RestoreElevatorTraversalDiagnostics()
 	RestoreDeferredUndergroundElevatorAccess()
+	local lazy_restore = State.lazy_underground_runtime_restore
+	if type(lazy_restore) == "function" then
+		local restore_ok, restored = pcall(lazy_restore, "RestoreVanillaBehavior")
+		if not restore_ok or restored ~= true then
+			State.lazy_underground_runtime_restore_error =
+				"RestoreVanillaBehavior could not complete lazy runtime teardown"
+		end
+	end
 	RestoreExpandedElevatorPowerGate()
 	-- Restore process-shared MapData presets as part of the domain teardown too,
 	-- not only through the main-menu convenience path. This covers config disable,

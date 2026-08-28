@@ -500,6 +500,13 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- GenerateNextMap or alter the v964 lifecycle. Runtime seed/capsule/save-load/access-route proof is
 -- required before a separate compiled implementation flag may exist.
 config.LazyUndergroundSourceGenerationFeasibility = false
+-- v966 functional lazy-underground implementation. This remains a separate default-off switch so
+-- the v965 descriptor/capsule probe can still be run without suppressing the stock second map.
+-- When enabled before module load, the Surface persists the exact primitive GenerateNextMap recipe,
+-- publishes two deterministic passage capsules, and materializes the complete Underground map under
+-- the foreground first-access cover. Once stock GenerateNextMap has been suppressed, any failure is
+-- sticky and access remains blocked; the implementation never exposes a partial map.
+config.LazyUndergroundSourceGeneration = false
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1125,6 +1132,7 @@ C.STRETCH_UNDERGROUND = expansion_step_07
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
 C.LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY =
 	as_bool(config.LazyUndergroundSourceGenerationFeasibility)
+C.LAZY_UNDERGROUND_SOURCE_GENERATION = as_bool(config.LazyUndergroundSourceGeneration)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)
