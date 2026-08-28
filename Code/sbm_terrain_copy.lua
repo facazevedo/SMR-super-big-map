@@ -733,11 +733,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local scan_grid_reads, legacy_scan_grid_reads = 0, 0
 	local refine_calls, refine_grid_reads, legacy_refine_grid_reads = 0, 0, 0
 	local rolling_refine = cfg_bool("OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW", true)
-	local direct_dispatch_requested = not wide_ring_only
-		and cfg_bool("OPTIMIZE_HEIGHT_STEP_DIRECT_GRID_DISPATCH", true)
-	local direct_dispatch_used = false
-	local direct_dispatch_tracks, direct_dispatch_rows, direct_dispatch_cells = 0, 0, 0
-	local direct_dispatch_translation_cells, direct_dispatch_feather_cells = 0, 0
 	local native_discovery = {
 		requested = wide_ring_only
 			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX", true)
@@ -1220,13 +1215,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		report.native_discovery_index_compaction_copies = native_discovery.compaction_copies
 		report.native_discovery_index_mode = native_discovery.mode
 		report.native_discovery_index_ms = native_discovery.ms
-		report.direct_grid_dispatch_requested = direct_dispatch_requested
-		report.direct_grid_dispatch_used = direct_dispatch_used
-		report.direct_grid_dispatch_tracks = direct_dispatch_tracks
-		report.direct_grid_dispatch_rows = direct_dispatch_rows
-		report.direct_grid_dispatch_cells = direct_dispatch_cells
-		report.direct_grid_dispatch_translation_cells = direct_dispatch_translation_cells
-		report.direct_grid_dispatch_feather_cells = direct_dispatch_feather_cells
 		if wide_ring_only then
 			report.source_native_discovery_index_requested = native_discovery.requested
 			report.source_native_discovery_index_used = native_discovery.used
@@ -1719,11 +1707,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 
 			local modified, detected = 0, 0
 			local min_offset, max_offset
-			local direct_get, direct_set
-			local selected_direct_cells = 0
-			if direct_dispatch_requested then
-				direct_get, direct_set = grid.get, grid.set
-			end
 			for _, point in ipairs(points) do
 				local along = point.along
 				local perp, width = refine_step(selected, along, point.perp)
@@ -1750,44 +1733,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 							-- resampling ramp and a few samples on both sides with a slope-matched join.
 							local perp0 = before_edge and 0 or perp + width
 							local perp1 = before_edge and perp or selected.perp_n - 1
-							if direct_dispatch_requested then
-								local before_modified = modified
-								-- This is the literal scalar loop with only the invariant method/axis
-								-- dispatch hoisted. Native call order and values remain byte-for-byte
-								-- identical; importantly, no destination-native slab is allocated.
-								if selected.axis == "x" then
-									for p = perp0, perp1 do
-										local original = direct_get(grid, p, along)
-										if type(original) == "number" then
-											direct_set(grid, p, along,
-												math.min(mx, original + offset))
-											modified = modified + 1
-										end
-									end
-								else
-									for p = perp0, perp1 do
-										local original = direct_get(grid, along, p)
-										if type(original) == "number" then
-											direct_set(grid, along, p,
-												math.min(mx, original + offset))
-											modified = modified + 1
-										end
-									end
-								end
-								local translated = modified - before_modified
-								direct_dispatch_rows = direct_dispatch_rows + 1
-								direct_dispatch_cells = direct_dispatch_cells + translated
-								direct_dispatch_translation_cells =
-									direct_dispatch_translation_cells + translated
-								selected_direct_cells = selected_direct_cells + translated
-							else
-								for p = perp0, perp1 do
-									local original = at(selected.axis, p, along)
-									if type(original) == "number" then
-										put(selected.axis, p, along,
-											math.min(mx, original + offset))
-										modified = modified + 1
-									end
+							for p = perp0, perp1 do
+								local original = at(selected.axis, p, along)
+								if type(original) == "number" then
+									put(selected.axis, p, along, math.min(mx, original + offset))
+									modified = modified + 1
 								end
 							end
 							local join_lo, join_hi
@@ -1799,50 +1749,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 								join_hi = math.min(selected.perp_n - outer_guard - 2,
 									perp + width + 6)
 							end
-							if direct_dispatch_requested then
-								local feather_changed = 0
-								if join_hi - join_lo >= 4 then
-									local v0, v0_prev, v1, v1_next
-									if selected.axis == "x" then
-										v0, v0_prev = direct_get(grid, join_lo, along),
-											direct_get(grid, join_lo - 1, along)
-										v1, v1_next = direct_get(grid, join_hi, along),
-											direct_get(grid, join_hi + 1, along)
-									else
-										v0, v0_prev = direct_get(grid, along, join_lo),
-											direct_get(grid, along, join_lo - 1)
-										v1, v1_next = direct_get(grid, along, join_hi),
-											direct_get(grid, along, join_hi + 1)
-									end
-									if type(v0) == "number" and type(v0_prev) == "number"
-										and type(v1) == "number" and type(v1_next) == "number" then
-										local slope0, slope1 = v0 - v0_prev, v1_next - v1
-										local span = join_hi - join_lo
-										for p = join_lo + 1, join_hi - 1 do
-											local t = (p - join_lo + 0.0) / span
-											local smooth = t * t * t * (t * (t * 6 - 15) + 10)
-											local left = v0 + slope0 * (p - join_lo)
-											local right = v1 + slope1 * (p - join_hi)
-											local value = math.floor(left + (right - left) * smooth + 0.5)
-											value = math.max(0, math.min(mx, value))
-											if selected.axis == "x" then
-												direct_set(grid, p, along, value)
-											else
-												direct_set(grid, along, p, value)
-											end
-											feather_changed = feather_changed + 1
-										end
-									end
-								end
-								modified = modified + feather_changed
-								direct_dispatch_cells = direct_dispatch_cells + feather_changed
-								direct_dispatch_feather_cells =
-									direct_dispatch_feather_cells + feather_changed
-								selected_direct_cells = selected_direct_cells + feather_changed
-							else
-								modified = modified
-									+ feather_join(selected.axis, along, join_lo, join_hi)
-							end
+							modified = modified
+								+ feather_join(selected.axis, along, join_lo, join_hi)
 						end
 					end
 				end
@@ -1851,10 +1759,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			selected.detected = detected
 			selected.min_offset = min_offset
 			selected.max_offset = max_offset
-			if selected_direct_cells > 0 then
-				direct_dispatch_used = true
-				direct_dispatch_tracks = direct_dispatch_tracks + 1
-			end
 		end
 		phase_ms.apply = math.max(0, now_ms() - apply_started_ms)
 		selected_tracks[1].qualified = #qualified
@@ -4899,20 +4803,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					destination_height_step_point_expand_ms =
 						report.destination_height_step_point_expand_ms,
 					destination_height_step_apply_ms = report.destination_height_step_apply_ms,
-					destination_direct_grid_dispatch_requested =
-						report.destination_direct_grid_dispatch_requested,
-					destination_direct_grid_dispatch_used =
-						report.destination_direct_grid_dispatch_used,
-					destination_direct_grid_dispatch_tracks =
-						report.destination_direct_grid_dispatch_tracks,
-					destination_direct_grid_dispatch_rows =
-						report.destination_direct_grid_dispatch_rows,
-					destination_direct_grid_dispatch_cells =
-						report.destination_direct_grid_dispatch_cells,
-					destination_direct_grid_dispatch_translation_cells =
-						report.destination_direct_grid_dispatch_translation_cells,
-					destination_direct_grid_dispatch_feather_cells =
-						report.destination_direct_grid_dispatch_feather_cells,
 					destination_min_offset = internal_step_repair.destination_min_offset
 						or report.destination_min_offset,
 					destination_max_offset = internal_step_repair.destination_max_offset
@@ -5071,16 +4961,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				report.destination_height_step_qualify_ms = report.height_step_qualify_ms
 				report.destination_height_step_point_expand_ms = report.height_step_point_expand_ms
 				report.destination_height_step_apply_ms = report.height_step_apply_ms
-				report.destination_direct_grid_dispatch_requested =
-					report.direct_grid_dispatch_requested
-				report.destination_direct_grid_dispatch_used = report.direct_grid_dispatch_used
-				report.destination_direct_grid_dispatch_tracks = report.direct_grid_dispatch_tracks
-				report.destination_direct_grid_dispatch_rows = report.direct_grid_dispatch_rows
-				report.destination_direct_grid_dispatch_cells = report.direct_grid_dispatch_cells
-				report.destination_direct_grid_dispatch_translation_cells =
-					report.direct_grid_dispatch_translation_cells
-				report.destination_direct_grid_dispatch_feather_cells =
-					report.direct_grid_dispatch_feather_cells
 				report.destination_min_offset = report.min_offset
 				report.destination_max_offset = report.max_offset
 				report.destination_refine_calls = report.refine_calls
@@ -5254,20 +5134,6 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				and internal_step_repair.source_height_step_point_expand_ms or 0,
 			source_height_step_apply_ms = internal_step_repair
 				and internal_step_repair.source_height_step_apply_ms or 0,
-			destination_direct_grid_dispatch_requested = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_requested or false,
-			destination_direct_grid_dispatch_used = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_used or false,
-			destination_direct_grid_dispatch_tracks = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_tracks or 0,
-			destination_direct_grid_dispatch_rows = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_rows or 0,
-			destination_direct_grid_dispatch_cells = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_cells or 0,
-			destination_direct_grid_dispatch_translation_cells = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_translation_cells or 0,
-			destination_direct_grid_dispatch_feather_cells = internal_step_repair
-				and internal_step_repair.destination_direct_grid_dispatch_feather_cells or 0,
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success
