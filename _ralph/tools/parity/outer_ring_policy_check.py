@@ -150,12 +150,15 @@ def surface_final_dirty_certificate(
     outstanding = tuple(
         record
         for record in records
-        if not any(
-            record[0] >= region[0]
-            and record[1] >= region[1]
-            and record[2] <= region[2]
-            and record[3] <= region[3]
-            for region in acknowledged
+        if not (
+            (len(record) < 5 or record[4] == 0)
+            and any(
+                record[0] >= region[0]
+                and record[1] >= region[1]
+                and record[2] <= region[2]
+                and record[3] <= region[3]
+                for region in acknowledged
+            )
         )
     )
     if invalid or not outstanding:
@@ -193,7 +196,7 @@ def surface_final_owned_trace_summary(
     records: tuple[tuple[int, int, int, int, int], ...],
     successful_owner_serials: frozenset[int],
 ) -> dict[str, object]:
-    """Model v951's telemetry-only discriminator, never the production certificate."""
+    """Model the retained v951 trace discriminator independently of the certificate."""
     residual = tuple(
         record
         for record in records
@@ -222,6 +225,61 @@ def surface_final_owned_trace_summary(
         "residual_area_ratio": ratio,
         "owned_full": tuple(record for record in owned if record in full),
         "residual_full": tuple(record for record in residual if record in full),
+    }
+
+
+def surface_final_owned_record_filter(
+    records: tuple[tuple[int, int, int, int, int], ...],
+    *,
+    next_serial: int,
+    started: int,
+    completed: int,
+    failed: int,
+    successful_owner_serials: frozenset[int],
+) -> dict[str, object]:
+    """Executable model of the strict v952 successful-call ownership certificate."""
+    counters = (next_serial, started, completed, failed)
+    if any(type(value) is not int or value < 0 for value in counters):
+        return {"accepted": False, "reason": "invalid counters", "retained": records}
+    expected = frozenset(range(1, next_serial + 1))
+    if failed != 0 or started != next_serial or completed != next_serial:
+        return {"accepted": False, "reason": "incomplete call", "retained": records}
+    if successful_owner_serials != expected:
+        return {"accepted": False, "reason": "stale or missing serial", "retained": records}
+    if any(
+        len(record) != 5
+        or type(record[4]) is not int
+        or record[4] < 0
+        or record[4] > next_serial
+        or (record[4] > 0 and record[4] not in successful_owner_serials)
+        for record in records
+    ):
+        return {"accepted": False, "reason": "invalid record tag", "retained": records}
+    owner_serials_with_events, last_owner_serial = 0, 0
+    closed_owner_serials: set[int] = set()
+    for record in records:
+        serial = record[4]
+        if serial > 0:
+            if serial in closed_owner_serials or serial < last_owner_serial:
+                return {"accepted": False, "reason": "stale owner tag", "retained": records}
+            if serial != last_owner_serial:
+                if serial != owner_serials_with_events + 1:
+                    return {"accepted": False, "reason": "non-contiguous owner order", "retained": records}
+                last_owner_serial = serial
+                owner_serials_with_events += 1
+        elif last_owner_serial > 0:
+            closed_owner_serials.add(last_owner_serial)
+    if owner_serials_with_events != next_serial:
+        return {"accepted": False, "reason": "missing call notification", "retained": records}
+    retained = tuple(record for record in records if record[4] == 0)
+    excluded = tuple(record for record in records if record[4] > 0)
+    return {
+        "accepted": True,
+        "reason": "",
+        "retained": retained,
+        "excluded": excluded,
+        "exact_four": next_serial == 4,
+        "owner_serials_with_events": owner_serials_with_events,
     }
 
 
@@ -456,15 +514,39 @@ static_checks = {
         and "foreign pass event during owned rebuild" in surface_final_dirty_journal
         and "report.owner_mismatch = false" not in surface_final_dirty_journal
     ),
-    "surface_final_owned_trace_is_observational_only": (
+    "surface_final_owned_trace_filters_only_exact_successful_call_records": (
         "function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace"
+        in surface_final_dirty_journal
+        and "function SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords"
         in surface_final_dirty_journal
         and "successful[owner_serial] == true" in surface_final_dirty_journal
         and "report.event_trace = table.concat(trace_parts, \";\")"
         in surface_final_dirty_journal
         and "event_trace = tostring(report.event_trace or \"\")" in surface_final_dirty_apply
         and "for _, record in ipairs(journal.records) do" in surface_final_dirty_journal
-        and "successful_owner_serials" not in surface_final_dirty_certificate_lua
+        and all(
+            token in surface_final_dirty_journal
+            for token in (
+                "failed ~= 0 or started ~= next_serial or completed ~= next_serial",
+                "successful_count ~= next_serial",
+                "successful[serial] ~= true",
+                "type(event_count) ~= \"number\"",
+                "#trace ~= event_count",
+                "if serial > 0 and successful[serial] ~= true",
+                "closed_owner_serials[serial] == true or serial < last_owner_serial",
+                "owner_serials_with_events ~= next_serial",
+                "if serial > 0 then",
+                "retained[#retained + 1] = record",
+                "report.ownership_certificate = true",
+            )
+        )
+        and appears_in_order(
+            surface_final_dirty_certificate_lua,
+            "FilterSurfaceFinalOwnedPassRecords(journal)",
+            "if ownership_ok ~= true then return reject(ownership_error) end",
+            "if #journal.records <= 0 then",
+            "for _, record in ipairs(journal.records) do",
+        )
     ),
     "surface_final_owned_trace_persists_complete_discriminator_telemetry": all(
         token in surface_final_dirty_journal + surface_final_dirty_apply
@@ -479,8 +561,13 @@ static_checks = {
             "report.owner_full_events = owner_full_events",
             "report.residual_full_events = residual_full_events",
             "report.residual_area_ratio = map_area > 0",
+            "report.residual_area_ppm = math.floor",
             "successful_owner_serials = tostring(report.successful_owner_serials or \"\")",
             "event_trace = tostring(report.event_trace or \"\")",
+            "residual_area_ratio = tostring(report.residual_area_ratio or 0)",
+            "residual_area_ppm = tonumber(report.residual_area_ppm) or 0",
+            "area_ratio = tostring(report.area_ratio or 0)",
+            "area_ppm = tonumber(report.area_ppm) or 0",
         )
     ),
     "surface_final_journal_detaches_active_state_and_cleans_failures": (
@@ -499,6 +586,7 @@ static_checks = {
     "surface_final_journal_acknowledges_only_proven_successful_regions": (
         "function SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions"
         in surface_final_dirty_journal
+        and "if record[5] == nil or record[5] == 0 then" in surface_final_dirty_journal
         and "record[1] >= region[1] and record[2] >= region[2]" in surface_final_dirty_journal
         and "record[3] <= region[3] and record[4] <= region[4]" in surface_final_dirty_journal
         and "map.SuperBigMapSurfaceFinalDirtyPassJournalActive == true" in GENERATION
@@ -1290,7 +1378,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_951": "'version', 951" in METADATA,
+    "version_is_952": "'version', 952" in METADATA,
 }
 
 case_results = []
@@ -2187,12 +2275,21 @@ surface_dirty_overlarge = surface_final_dirty_certificate(
 )
 
 surface_owned_trace_records = (
-    (0, 0, surface_dirty_width, surface_dirty_height, 1),
-    (0, 0, surface_dirty_width, surface_dirty_height, 2),
-    (0, 0, surface_dirty_width, surface_dirty_height, 3),
-    (0, 0, surface_dirty_width, surface_dirty_height, 4),
-    (200031, 300047, 201119, 301263, 0),
-    (209977, 305011, 211083, 306307, 0),
+    (0, 0, surface_dirty_width, 82120, 1),
+    (0, 737080, surface_dirty_width, surface_dirty_height, 2),
+    (0, 0, 82120, surface_dirty_height, 3),
+    (737080, 0, surface_dirty_width, surface_dirty_height, 4),
+    (312949, 316728, 313949, 317728, 0),
+    (350000, 340000, 351000, 341000, 0),
+    (375000, 390000, 376000, 391000, 0),
+    (410000, 420000, 411000, 421000, 0),
+    (450000, 460000, 451000, 461000, 0),
+    (500000, 480000, 501000, 481000, 0),
+    (525000, 510000, 526000, 511000, 0),
+    (550000, 540000, 551000, 541000, 0),
+    (575000, 560000, 576000, 561000, 0),
+    (600000, 575000, 601000, 576000, 0),
+    (632551, 590712, 633551, 591712, 0),
 )
 surface_owned_trace_success = surface_final_owned_trace_summary(
     surface_dirty_width,
@@ -2205,6 +2302,70 @@ surface_owned_trace_failed_call = surface_final_owned_trace_summary(
     surface_dirty_height,
     surface_owned_trace_records,
     frozenset((1, 2, 3)),
+)
+surface_owned_filter_success = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_filter_failed_call = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=3,
+    failed=1,
+    successful_owner_serials=frozenset((1, 2, 3)),
+)
+surface_owned_filter_stale_serial = surface_final_owned_record_filter(
+    surface_owned_trace_records,
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4, 5)),
+)
+surface_owned_filter_stale_tag = surface_final_owned_record_filter(
+    surface_owned_trace_records + ((400000, 400000, 401000, 401000, 1),),
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_filter_missing_notification = surface_final_owned_record_filter(
+    tuple(record for record in surface_owned_trace_records if record[4] != 4),
+    next_serial=4,
+    started=4,
+    completed=4,
+    failed=0,
+    successful_owner_serials=frozenset((1, 2, 3, 4)),
+)
+surface_owned_unfiltered_certificate = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    tuple(record[:4] for record in surface_owned_trace_records),
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_owned_filtered_certificate = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    tuple(record[:4] for record in surface_owned_filter_success["retained"]),
+    pass_tile=surface_dirty_pass_tile,
+)
+surface_tagged_ack_records = (
+    (1000, 400000, 1600, 401000, 1),
+    (2000, 400000, 2600, 401000, 0),
+    (350031, 360047, 351119, 361263, 0),
+)
+surface_tagged_after_ack = surface_final_dirty_certificate(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_tagged_ack_records,
+    acknowledged=surface_dirty_ring_regions,
+    pass_tile=surface_dirty_pass_tile,
 )
 
 
@@ -2240,6 +2401,10 @@ surface_dirty_certificate_checks = {
         and surface_dirty_after_ack["outstanding"] == (surface_dirty_ack_records[1],)
         and certificate_covers_every_record(surface_dirty_after_ack)
     ),
+    "ring_geometry_ack_never_removes_owned_records": (
+        surface_tagged_after_ack["outstanding"]
+        == (surface_tagged_ack_records[0], surface_tagged_ack_records[2])
+    ),
     "invalid_and_empty_epochs_are_rejected": (
         not surface_dirty_invalid["accepted"]
         and not surface_dirty_empty["accepted"]
@@ -2254,16 +2419,36 @@ surface_dirty_certificate_checks = {
     ),
     "owned_trace_excludes_only_successfully_completed_call_serials": (
         len(surface_owned_trace_success["owned"]) == 4
-        and len(surface_owned_trace_success["residual"]) == 2
-        and len(surface_owned_trace_success["owned_full"]) == 4
+        and len(surface_owned_trace_success["residual"]) == 11
+        and len(surface_owned_trace_success["full"]) == 0
+        and len(surface_owned_trace_success["owned_full"]) == 0
         and len(surface_owned_trace_success["residual_full"]) == 0
-        and surface_owned_trace_success["residual_area_ratio"] < 0.01
+        and 0.13 < surface_owned_trace_success["residual_area_ratio"] < 0.14
     ),
-    "failed_owned_call_stays_in_residual_and_forces_full_union": (
+    "four_owned_edge_strips_alone_explain_the_original_full_union": (
+        not surface_owned_unfiltered_certificate["accepted"]
+        and surface_owned_unfiltered_certificate["area_ratio"] == 1.0
+    ),
+    "strict_successful_owner_filter_retains_all_eleven_residual_records": (
+        surface_owned_filter_success["accepted"]
+        and surface_owned_filter_success["exact_four"]
+        and len(surface_owned_filter_success["excluded"]) == 4
+        and len(surface_owned_filter_success["retained"]) == 11
+        and surface_owned_filtered_certificate["accepted"]
+        and certificate_covers_every_record(surface_owned_filtered_certificate)
+        and 0.13 < surface_owned_filtered_certificate["area_ratio"] < 0.14
+    ),
+    "failed_or_stale_owner_proof_is_rejected_before_filtering": (
+        not surface_owned_filter_failed_call["accepted"]
+        and not surface_owned_filter_stale_serial["accepted"]
+        and not surface_owned_filter_stale_tag["accepted"]
+        and not surface_owned_filter_missing_notification["accepted"]
+        and surface_owned_filter_failed_call["retained"] == surface_owned_trace_records
+        and surface_owned_filter_stale_serial["retained"] == surface_owned_trace_records
+    ),
+    "failed_owned_call_is_never_classified_as_success_owned": (
         len(surface_owned_trace_failed_call["owned"]) == 3
-        and len(surface_owned_trace_failed_call["residual"]) == 3
-        and len(surface_owned_trace_failed_call["residual_full"]) == 1
-        and surface_owned_trace_failed_call["residual_area_ratio"] == 1.0
+        and len(surface_owned_trace_failed_call["residual"]) == 12
     ),
 }
 
@@ -2438,7 +2623,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 21,
+    "schema_version": 22,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -2464,6 +2649,14 @@ report = {
         "overlarge": surface_dirty_overlarge,
         "owned_trace_success": surface_owned_trace_success,
         "owned_trace_failed_call": surface_owned_trace_failed_call,
+        "owned_filter_success": surface_owned_filter_success,
+        "owned_filter_failed_call": surface_owned_filter_failed_call,
+        "owned_filter_stale_serial": surface_owned_filter_stale_serial,
+        "owned_filter_stale_tag": surface_owned_filter_stale_tag,
+        "owned_filter_missing_notification": surface_owned_filter_missing_notification,
+        "owned_unfiltered_certificate": surface_owned_unfiltered_certificate,
+        "owned_filtered_certificate": surface_owned_filtered_certificate,
+        "tagged_after_geometry_ack": surface_tagged_after_ack,
     },
     "rocket_height_cache_checks": rocket_height_cache_checks,
     "rocket_height_cache_metrics": {

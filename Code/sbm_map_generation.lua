@@ -10567,11 +10567,13 @@ function SuperBigMap.GenerationGrids.BeginSurfaceFinalPassJournal(map, stage)
 		requested = cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true),
 		armed = false, used = false, fallback = false, certificate = false,
 		observer_registered = false, observer_inactive = false,
-		invalid = false, owner_mismatch = false, error = "", stage = tostring(stage or ""),
+		invalid = false, owner_mismatch = false, ownership_certificate = false,
+		error = "", stage = tostring(stage or ""),
 		events = 0, foreign_events = 0, boxes = 0, acknowledged_boxes = 0,
 		acknowledged_rebuilds = 0, halo = 0, region_area = 0, map_area = 0,
 		area_ratio = 0, owner_calls_started = 0, owner_calls_completed = 0,
-		owner_calls_failed = 0, tagged_events = 0, owner_events = 0, failed_owner_events = 0,
+		owner_calls_failed = 0, owner_serials_with_events = 0,
+		tagged_events = 0, owner_events = 0, failed_owner_events = 0,
 		residual_events = 0, full_events = 0, tagged_full_events = 0,
 		owner_full_events = 0, residual_full_events = 0, residual_area_ratio = 0,
 		event_trace = "", successful_owner_serials = "",
@@ -10811,6 +10813,115 @@ function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace(journal)
 	report.residual_x0, report.residual_y0 = minx or 0, miny or 0
 	report.residual_x1, report.residual_y1 = maxx or 0, maxy or 0
 	report.residual_area_ratio = map_area > 0 and residual_area / map_area or 1
+	report.residual_area_ppm = math.floor(report.residual_area_ratio * 1000000 + 0.5)
+	return true
+end
+
+-- Turn the v951 discriminator into a strict v952 certificate input. The ordinary event trace is
+-- retained in full, but a record may leave the closing dirty set only when its positive serial was
+-- active during the exact synchronous owned RebuildPassability call AND that call returned success.
+-- Untagged events always survive this filter. Failed, missing, extra, stale, non-integral, or
+-- otherwise inconsistent ownership fails closed to the canonical whole-map rebuild.
+function SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords(journal)
+	if type(journal) ~= "table" or type(journal.report) ~= "table" then
+		return false, "owned pass certificate state is unavailable"
+	end
+	local report = journal.report
+	report.ownership_certificate = false
+	if report.owner_mismatch == true or journal.owner_active_serial ~= nil then
+		return false, "owned pass certificate has an active or mismatched owner"
+	end
+	local next_serial = journal.owner_next_serial
+	local started = report.owner_calls_started
+	local completed = report.owner_calls_completed
+	local failed = report.owner_calls_failed
+	if type(next_serial) ~= "number" or next_serial < 0 or next_serial ~= math.floor(next_serial)
+		or type(started) ~= "number" or started < 0 or started ~= math.floor(started)
+		or type(completed) ~= "number" or completed < 0 or completed ~= math.floor(completed)
+		or type(failed) ~= "number" or failed < 0 or failed ~= math.floor(failed) then
+		return false, "owned pass certificate counters are invalid"
+	end
+	if failed ~= 0 or started ~= next_serial or completed ~= next_serial then
+		return false, "owned pass certificate has an incomplete or failed call"
+	end
+	local successful = journal.successful_owner_serials
+	if type(successful) ~= "table" then
+		return false, "owned pass certificate successful-serial set is unavailable"
+	end
+	local successful_count = 0
+	for serial, value in pairs(successful) do
+		if type(serial) ~= "number" or serial <= 0 or serial ~= math.floor(serial)
+			or serial > next_serial or value ~= true then
+			return false, "owned pass certificate contains a stale successful serial"
+		end
+		successful_count = successful_count + 1
+	end
+	if successful_count ~= next_serial then
+		return false, "owned pass certificate is missing a successful serial"
+	end
+	for serial = 1, next_serial do
+		if successful[serial] ~= true then
+			return false, "owned pass certificate successful serials are not contiguous"
+		end
+	end
+	local trace = journal.trace
+	local event_count = report.events
+	if type(event_count) ~= "number" or event_count < 0 or event_count ~= math.floor(event_count)
+		or type(trace) ~= "table" or #trace ~= event_count then
+		return false, "owned pass certificate trace is incomplete"
+	end
+	local function validated_serial(record)
+		if type(record) ~= "table" then return false, nil end
+		local serial = record[5]
+		if type(serial) ~= "number" or serial < 0 or serial ~= math.floor(serial)
+			or serial > next_serial then
+			return false, nil
+		end
+		if serial > 0 and successful[serial] ~= true then return false, nil end
+		return true, serial
+	end
+	local owner_serials_with_events, last_owner_serial = 0, 0
+	local closed_owner_serials = {}
+	for _, record in ipairs(trace) do
+		local valid, serial = validated_serial(record)
+		if valid ~= true then return false, "owned pass certificate trace has an invalid tag" end
+		if serial > 0 then
+			if closed_owner_serials[serial] == true or serial < last_owner_serial then
+				return false, "owned pass certificate trace contains a stale owner tag"
+			end
+			if serial ~= last_owner_serial then
+				if serial ~= owner_serials_with_events + 1 then
+					return false, "owned pass certificate trace owner order is not contiguous"
+				end
+				last_owner_serial = serial
+				owner_serials_with_events = owner_serials_with_events + 1
+			end
+		elseif last_owner_serial > 0 then
+			closed_owner_serials[last_owner_serial] = true
+		end
+	end
+	if owner_serials_with_events ~= next_serial then
+		return false, "owned pass certificate is missing a call notification"
+	end
+	local retained, excluded = {}, 0
+	for _, record in ipairs(journal.records) do
+		local valid, serial = validated_serial(record)
+		if valid ~= true then
+			return false, "owned pass certificate dirty set has an invalid tag"
+		end
+		if serial > 0 then
+			excluded = excluded + 1
+		else
+			retained[#retained + 1] = record
+		end
+	end
+	journal.records = retained
+	report.excluded_owned_boxes = excluded
+	report.certificate_input_boxes = #retained
+	report.owner_serials_with_events = owner_serials_with_events
+	report.boxes = #retained
+	report.owner_exact_four = next_serial == 4
+	report.ownership_certificate = true
 	return true
 end
 
@@ -10850,11 +10961,15 @@ function SuperBigMap.GenerationGrids.AcknowledgeSurfaceFinalPassRegions(
 	local retained, removed = {}, 0
 	for _, record in ipairs(journal.records) do
 		local covered = false
-		for _, region in ipairs(numeric_regions) do
-			if record[1] >= region[1] and record[2] >= region[2]
-				and record[3] <= region[3] and record[4] <= region[4] then
-				covered = true
-				break
+		-- A tagged notification must be discharged only by the exact successful-call ownership
+		-- certificate above. Geometry acknowledgement remains available solely to untagged dirt.
+		if record[5] == nil or record[5] == 0 then
+			for _, region in ipairs(numeric_regions) do
+				if record[1] >= region[1] and record[2] >= region[2]
+					and record[3] <= region[3] and record[4] <= region[4] then
+					covered = true
+					break
+				end
 			end
 		end
 		if covered then removed = removed + 1 else retained[#retained + 1] = record end
@@ -10955,6 +11070,9 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 		or SafeCall(map.IsPassEditSuspended, map) ~= false then
 		return reject("surface pass edits are suspended or cannot be verified")
 	end
+	local ownership_ok, ownership_error =
+		SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords(journal)
+	if ownership_ok ~= true then return reject(ownership_error) end
 	if #journal.records <= 0 then
 		return reject("no outstanding changed passability clip")
 	end
@@ -10998,6 +11116,7 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	report.region_x0, report.region_y0 = x0, y0
 	report.region_x1, report.region_y1 = x1, y1
 	report.region_area, report.map_area, report.area_ratio = region_area, map_area, area_ratio
+	report.area_ppm = math.floor(area_ratio * 1000000 + 0.5)
 	report.outstanding_boxes = #journal.records
 	if x1 <= x0 or y1 <= y0 then return reject("surface final dirty region is empty") end
 	if area_ratio >= 0.65 then return reject("surface final dirty region is not materially bounded") end
@@ -11122,6 +11241,7 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 			observer_inactive = tostring(report.observer_inactive == true),
 			invalid = tostring(report.invalid == true),
 			owner_mismatch = tostring(report.owner_mismatch == true),
+			ownership_certificate = tostring(report.ownership_certificate == true),
 			events = tonumber(report.events) or 0,
 			foreign_events = tonumber(report.foreign_events) or 0,
 			outstanding_boxes = tonumber(report.outstanding_boxes) or 0,
@@ -11129,6 +11249,7 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 			owner_calls_started = tonumber(report.owner_calls_started) or 0,
 			owner_calls_completed = tonumber(report.owner_calls_completed) or 0,
 			owner_calls_failed = tonumber(report.owner_calls_failed) or 0,
+			owner_serials_with_events = tonumber(report.owner_serials_with_events) or 0,
 			tagged_events = tonumber(report.tagged_events) or 0,
 			owner_events = tonumber(report.owner_events) or 0,
 			failed_owner_events = tonumber(report.failed_owner_events) or 0,
@@ -11137,18 +11258,23 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 			tagged_full_events = tonumber(report.tagged_full_events) or 0,
 			owner_full_events = tonumber(report.owner_full_events) or 0,
 			residual_full_events = tonumber(report.residual_full_events) or 0,
+			excluded_owned_boxes = tonumber(report.excluded_owned_boxes) or 0,
+			certificate_input_boxes = tonumber(report.certificate_input_boxes) or 0,
+			owner_exact_four = tostring(report.owner_exact_four == true),
 			residual_x0 = tonumber(report.residual_x0) or 0,
 			residual_y0 = tonumber(report.residual_y0) or 0,
 			residual_x1 = tonumber(report.residual_x1) or 0,
 			residual_y1 = tonumber(report.residual_y1) or 0,
-			residual_area_ratio = tonumber(report.residual_area_ratio) or 0,
+			residual_area_ratio = tostring(report.residual_area_ratio or 0),
+			residual_area_ppm = tonumber(report.residual_area_ppm) or 0,
 			event_trace = tostring(report.event_trace or ""),
 			successful_owner_serials = tostring(report.successful_owner_serials or ""),
 			region_x0 = tonumber(report.region_x0) or 0,
 			region_y0 = tonumber(report.region_y0) or 0,
 			region_x1 = tonumber(report.region_x1) or 0,
 			region_y1 = tonumber(report.region_y1) or 0,
-			area_ratio = tonumber(report.area_ratio) or 0,
+			area_ratio = tostring(report.area_ratio or 0),
+			area_ppm = tonumber(report.area_ppm) or 0,
 			passability_ms = tonumber(report.passability_ms) or 0,
 			buildable_ms = tonumber(report.buildable_ms) or 0,
 			total_ms = tonumber(report.total_ms) or 0,
