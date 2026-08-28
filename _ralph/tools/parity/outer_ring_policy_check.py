@@ -187,6 +187,44 @@ def surface_final_dirty_certificate(
     }
 
 
+def surface_final_owned_trace_summary(
+    width: int,
+    height: int,
+    records: tuple[tuple[int, int, int, int, int], ...],
+    successful_owner_serials: frozenset[int],
+) -> dict[str, object]:
+    """Model v951's telemetry-only discriminator, never the production certificate."""
+    residual = tuple(
+        record
+        for record in records
+        if record[4] <= 0 or record[4] not in successful_owner_serials
+    )
+    owned = tuple(record for record in records if record not in residual)
+    full = tuple(
+        record
+        for record in records
+        if record[:4] == (0, 0, width, height)
+    )
+    if residual:
+        x0 = min(record[0] for record in residual)
+        y0 = min(record[1] for record in residual)
+        x1 = max(record[2] for record in residual)
+        y1 = max(record[3] for record in residual)
+        ratio = (x1 - x0) * (y1 - y0) / (width * height)
+        region = (x0, y0, x1, y1)
+    else:
+        ratio, region = 0.0, (0, 0, 0, 0)
+    return {
+        "owned": owned,
+        "residual": residual,
+        "full": full,
+        "residual_region": region,
+        "residual_area_ratio": ratio,
+        "owned_full": tuple(record for record in owned if record in full),
+        "residual_full": tuple(record for record in residual if record in full),
+    }
+
+
 def point_in_half_open_box(x: int, y: int, bounds: tuple[int, int, int, int]) -> bool:
     left, top, right, bottom = bounds
     return left <= x < right and top <= y < bottom
@@ -312,6 +350,16 @@ surface_final_dirty_apply = section(
     "function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal",
     "-- Resource shaping is hard-clipped",
 )
+surface_final_dirty_certificate_lua = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate",
+    "function SuperBigMap.GenerationGrids.RebuildFinal(map, stage)",
+)
+outer_resource_ring_rebuild = section(
+    GENERATION,
+    "function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors, stage)",
+    "function SuperBigMap.GenerationGrids.RebuildOuterResourceRingOrFinal",
+)
 surface_pipeline = section(
     GENERATION,
     "local function RunSurfaceStretchIfEnabled",
@@ -369,7 +417,70 @@ static_checks = {
             "math.max(0, math.floor(x0))",
             "math.min(journal.map_w, math.ceil(x1))",
             "if #journal.records >= 512 then",
-            "journal.records[#journal.records + 1] = { x0, y0, x1, y1 }",
+            "local record = { x0, y0, x1, y1, owner_serial or 0, ordinal }",
+            "journal.records[#journal.records + 1] = record",
+            "journal.trace[#journal.trace + 1] = record",
+        )
+    ),
+    "surface_final_owned_rebuild_tags_only_the_synchronous_engine_call": (
+        "function SuperBigMap.GenerationGrids.BeginSurfaceFinalOwnedPassRebuild"
+        in surface_final_dirty_journal
+        and "function SuperBigMap.GenerationGrids.EndSurfaceFinalOwnedPassRebuild"
+        in surface_final_dirty_journal
+        and appears_in_order(
+            outer_resource_ring_rebuild,
+            "terrain_api.InvalidateHeight(map, region)",
+            "terrain_api.InvalidateType(map, region)",
+            "BeginSurfaceFinalOwnedPassRebuild(",
+            "pcall(terrain_api.RebuildPassability, map, region)",
+            "EndSurfaceFinalOwnedPassRebuild(",
+            "if rebuild_ok ~= true then",
+        )
+    ),
+    "surface_final_owned_serial_is_unique_and_cleared_on_every_return": (
+        all(
+            token in surface_final_dirty_journal
+            for token in (
+                "local serial = (tonumber(journal.owner_next_serial) or 0) + 1",
+                "journal.owner_next_serial = serial",
+                "local matches = journal.owner_active_serial == serial",
+                "journal.owner_active_serial = nil",
+                "owned pass rebuild tag still active at close",
+            )
+        )
+        and "surface_final_journal.owner_active_serial = nil" in GENERATION
+    ),
+    "surface_final_owned_mismatch_is_sticky_and_fail_closed": (
+        "report.owner_mismatch = true" in surface_final_dirty_journal
+        and "or report.owner_mismatch == true" in surface_final_dirty_journal
+        and "foreign pass event during owned rebuild" in surface_final_dirty_journal
+        and "report.owner_mismatch = false" not in surface_final_dirty_journal
+    ),
+    "surface_final_owned_trace_is_observational_only": (
+        "function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace"
+        in surface_final_dirty_journal
+        and "successful[owner_serial] == true" in surface_final_dirty_journal
+        and "report.event_trace = table.concat(trace_parts, \";\")"
+        in surface_final_dirty_journal
+        and "event_trace = tostring(report.event_trace or \"\")" in surface_final_dirty_apply
+        and "for _, record in ipairs(journal.records) do" in surface_final_dirty_journal
+        and "successful_owner_serials" not in surface_final_dirty_certificate_lua
+    ),
+    "surface_final_owned_trace_persists_complete_discriminator_telemetry": all(
+        token in surface_final_dirty_journal + surface_final_dirty_apply
+        for token in (
+            'report.successful_owner_serials = table.concat(successful_parts, ",")',
+            "report.tagged_events = tagged_events",
+            "report.owner_events = owner_events",
+            "report.failed_owner_events = failed_owner_events",
+            "report.residual_events = residual_events",
+            "report.full_events = full_events",
+            "report.tagged_full_events = tagged_full_events",
+            "report.owner_full_events = owner_full_events",
+            "report.residual_full_events = residual_full_events",
+            "report.residual_area_ratio = map_area > 0",
+            "successful_owner_serials = tostring(report.successful_owner_serials or \"\")",
+            "event_trace = tostring(report.event_trace or \"\")",
         )
     ),
     "surface_final_journal_detaches_active_state_and_cleans_failures": (
@@ -1179,7 +1290,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_950": "'version', 950" in METADATA,
+    "version_is_951": "'version', 951" in METADATA,
 }
 
 case_results = []
@@ -2075,6 +2186,27 @@ surface_dirty_overlarge = surface_final_dirty_certificate(
     pass_tile=surface_dirty_pass_tile,
 )
 
+surface_owned_trace_records = (
+    (0, 0, surface_dirty_width, surface_dirty_height, 1),
+    (0, 0, surface_dirty_width, surface_dirty_height, 2),
+    (0, 0, surface_dirty_width, surface_dirty_height, 3),
+    (0, 0, surface_dirty_width, surface_dirty_height, 4),
+    (200031, 300047, 201119, 301263, 0),
+    (209977, 305011, 211083, 306307, 0),
+)
+surface_owned_trace_success = surface_final_owned_trace_summary(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_owned_trace_records,
+    frozenset((1, 2, 3, 4)),
+)
+surface_owned_trace_failed_call = surface_final_owned_trace_summary(
+    surface_dirty_width,
+    surface_dirty_height,
+    surface_owned_trace_records,
+    frozenset((1, 2, 3)),
+)
+
 
 def certificate_covers_every_record(certificate: dict[str, object]) -> bool:
     region = certificate["region"]
@@ -2119,6 +2251,19 @@ surface_dirty_certificate_checks = {
     "accepted_cases_are_materially_bounded": (
         surface_dirty_compact["area_ratio"] < 0.01
         and surface_dirty_after_ack["area_ratio"] < 0.01
+    ),
+    "owned_trace_excludes_only_successfully_completed_call_serials": (
+        len(surface_owned_trace_success["owned"]) == 4
+        and len(surface_owned_trace_success["residual"]) == 2
+        and len(surface_owned_trace_success["owned_full"]) == 4
+        and len(surface_owned_trace_success["residual_full"]) == 0
+        and surface_owned_trace_success["residual_area_ratio"] < 0.01
+    ),
+    "failed_owned_call_stays_in_residual_and_forces_full_union": (
+        len(surface_owned_trace_failed_call["owned"]) == 3
+        and len(surface_owned_trace_failed_call["residual"]) == 3
+        and len(surface_owned_trace_failed_call["residual_full"]) == 1
+        and surface_owned_trace_failed_call["residual_area_ratio"] == 1.0
     ),
 }
 
@@ -2293,7 +2438,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 20,
+    "schema_version": 21,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -2317,6 +2462,8 @@ report = {
         "invalid": surface_dirty_invalid,
         "empty": surface_dirty_empty,
         "overlarge": surface_dirty_overlarge,
+        "owned_trace_success": surface_owned_trace_success,
+        "owned_trace_failed_call": surface_owned_trace_failed_call,
     },
     "rocket_height_cache_checks": rocket_height_cache_checks,
     "rocket_height_cache_metrics": {

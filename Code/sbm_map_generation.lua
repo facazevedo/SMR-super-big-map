@@ -10551,6 +10551,13 @@ function OnMsg.OnPassabilityChanged(event_map, changed_box)
 		SuperBigMap.GenerationGrids.RecordSurfaceFinalPassChange(event_map, changed_box)
 	else
 		journal.report.foreign_events = journal.report.foreign_events + 1
+		if journal.owner_active_serial ~= nil then
+			journal.report.invalid = true
+			journal.report.owner_mismatch = true
+			journal.report.error = journal.report.error ~= "" and
+				(journal.report.error .. " | foreign pass event during owned rebuild")
+				or "foreign pass event during owned rebuild"
+		end
 	end
 end
 SuperBigMap.GenerationGrids.SurfaceFinalPassObserverInstalled = true
@@ -10560,10 +10567,15 @@ function SuperBigMap.GenerationGrids.BeginSurfaceFinalPassJournal(map, stage)
 		requested = cfg_bool("OPTIMIZE_SURFACE_FINAL_DIRTY_PASSABILITY_REBUILD", true),
 		armed = false, used = false, fallback = false, certificate = false,
 		observer_registered = false, observer_inactive = false,
-		invalid = false, error = "", stage = tostring(stage or ""),
+		invalid = false, owner_mismatch = false, error = "", stage = tostring(stage or ""),
 		events = 0, foreign_events = 0, boxes = 0, acknowledged_boxes = 0,
 		acknowledged_rebuilds = 0, halo = 0, region_area = 0, map_area = 0,
-		area_ratio = 0, passability_ms = 0, buildable_ms = 0, total_ms = 0,
+		area_ratio = 0, owner_calls_started = 0, owner_calls_completed = 0,
+		owner_calls_failed = 0, tagged_events = 0, owner_events = 0, failed_owner_events = 0,
+		residual_events = 0, full_events = 0, tagged_full_events = 0,
+		owner_full_events = 0, residual_full_events = 0, residual_area_ratio = 0,
+		event_trace = "", successful_owner_serials = "",
+		passability_ms = 0, buildable_ms = 0, total_ms = 0,
 	}
 	if map then map.SuperBigMapSurfaceFinalDirtyPassReport = report end
 	if report.requested ~= true then
@@ -10592,8 +10604,9 @@ function SuperBigMap.GenerationGrids.BeginSurfaceFinalPassJournal(map, stage)
 		return false, report
 	end
 	local journal = {
-		active = true, map = map, map_w = map_w, map_h = map_h, records = {},
-		report = report,
+		active = true, map = map, map_w = map_w, map_h = map_h, records = {}, trace = {},
+		owner_next_serial = 0, owner_active_serial = nil, owner_active_stage = nil,
+		owner_active_region = nil, successful_owner_serials = {}, report = report,
 	}
 	SuperBigMap.State.surface_final_pass_journal = journal
 	report.armed = true
@@ -10646,8 +10659,158 @@ function SuperBigMap.GenerationGrids.RecordSurfaceFinalPassChange(map, changed_b
 			or "journal record limit exceeded"
 		return false
 	end
-	journal.records[#journal.records + 1] = { x0, y0, x1, y1 }
+	local owner_serial = journal.owner_active_serial
+	if owner_serial ~= nil and (type(owner_serial) ~= "number" or owner_serial <= 0
+			or owner_serial ~= math.floor(owner_serial)) then
+		report.invalid = true
+		report.owner_mismatch = true
+		report.error = report.error ~= "" and (report.error .. " | invalid active owner serial")
+			or "invalid active owner serial"
+		owner_serial = nil
+	end
+	local ordinal = report.events
+	local record = { x0, y0, x1, y1, owner_serial or 0, ordinal }
+	journal.records[#journal.records + 1] = record
+	journal.trace[#journal.trace + 1] = record
 	report.boxes = #journal.records
+	return true
+end
+
+-- Diagnostic ownership is active only across the synchronous engine call itself. It does not
+-- suppress or acknowledge any event in v951: the ordinary journal records the event exactly as in
+-- v950, while the unique serial lets the next runtime distinguish self-notifications from later
+-- object-grid dirt. Any overlap, stale serial, or lost journal is sticky and makes the certificate
+-- fail closed.
+function SuperBigMap.GenerationGrids.BeginSurfaceFinalOwnedPassRebuild(map, stage, region_index)
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	if type(journal) ~= "table" or journal.active ~= true then
+		if map and map.SuperBigMapSurfaceFinalDirtyPassJournalActive == true then
+			local report = map.SuperBigMapSurfaceFinalDirtyPassReport
+			if type(report) == "table" then
+				report.invalid = true
+				report.owner_mismatch = true
+				report.error = report.error ~= "" and
+					(report.error .. " | owned pass rebuild lost active journal")
+					or "owned pass rebuild lost active journal"
+			end
+			return false, 0, "owned pass rebuild lost active journal"
+		end
+		return true, 0
+	end
+	local report = journal.report
+	if journal.map ~= map or journal.owner_active_serial ~= nil then
+		report.invalid = true
+		report.owner_mismatch = true
+		report.error = report.error ~= "" and
+			(report.error .. " | owned pass rebuild ownership overlap")
+			or "owned pass rebuild ownership overlap"
+		journal.owner_active_serial = nil
+		journal.owner_active_stage = nil
+		journal.owner_active_region = nil
+		return false, 0, "owned pass rebuild ownership overlap"
+	end
+	local serial = (tonumber(journal.owner_next_serial) or 0) + 1
+	journal.owner_next_serial = serial
+	journal.owner_active_serial = serial
+	journal.owner_active_stage = tostring(stage or "")
+	journal.owner_active_region = math.floor(tonumber(region_index) or 0)
+	report.owner_calls_started = (tonumber(report.owner_calls_started) or 0) + 1
+	report.owner_serial_max = serial
+	return true, serial
+end
+
+function SuperBigMap.GenerationGrids.EndSurfaceFinalOwnedPassRebuild(map, serial, succeeded)
+	serial = tonumber(serial) or 0
+	if serial == 0 then return true end
+	local journal = SuperBigMap.State and SuperBigMap.State.surface_final_pass_journal
+	local report = type(journal) == "table" and journal.report
+		or map and map.SuperBigMapSurfaceFinalDirtyPassReport
+	if type(journal) ~= "table" or journal.active ~= true or journal.map ~= map then
+		if type(report) == "table" then
+			report.invalid = true
+			report.owner_mismatch = true
+			report.error = report.error ~= "" and
+				(report.error .. " | owned pass rebuild completion lost journal")
+				or "owned pass rebuild completion lost journal"
+		end
+		return false, "owned pass rebuild completion lost journal"
+	end
+	local matches = journal.owner_active_serial == serial
+	journal.owner_active_serial = nil
+	journal.owner_active_stage = nil
+	journal.owner_active_region = nil
+	if not matches then
+		report.invalid = true
+		report.owner_mismatch = true
+		report.error = report.error ~= "" and
+			(report.error .. " | owned pass rebuild serial mismatch")
+			or "owned pass rebuild serial mismatch"
+		return false, "owned pass rebuild serial mismatch"
+	end
+	if succeeded == true then
+		journal.successful_owner_serials[serial] = true
+		report.owner_calls_completed = (tonumber(report.owner_calls_completed) or 0) + 1
+	else
+		report.owner_calls_failed = (tonumber(report.owner_calls_failed) or 0) + 1
+	end
+	return true
+end
+
+function SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace(journal)
+	if type(journal) ~= "table" or type(journal.report) ~= "table" then return false end
+	local report = journal.report
+	local successful = type(journal.successful_owner_serials) == "table"
+		and journal.successful_owner_serials or {}
+	local trace, trace_parts = type(journal.trace) == "table" and journal.trace or {}, {}
+	local tagged_events, owner_events, failed_owner_events, residual_events, full_events = 0, 0, 0, 0, 0
+	local tagged_full_events, owner_full_events, residual_full_events = 0, 0, 0
+	local minx, miny, maxx, maxy
+	for trace_index, record in ipairs(trace) do
+		local owner_serial = tonumber(record[5]) or 0
+		local owned = owner_serial > 0 and successful[owner_serial] == true
+		local full = record[1] == 0 and record[2] == 0
+			and record[3] == journal.map_w and record[4] == journal.map_h
+		if owner_serial > 0 then
+			tagged_events = tagged_events + 1
+			if full then tagged_full_events = tagged_full_events + 1 end
+		end
+		if owned then
+			owner_events = owner_events + 1
+			if full then owner_full_events = owner_full_events + 1 end
+		else
+			residual_events = residual_events + 1
+			if owner_serial > 0 then failed_owner_events = failed_owner_events + 1 end
+			if full then residual_full_events = residual_full_events + 1 end
+			minx = minx and math.min(minx, record[1]) or record[1]
+			miny = miny and math.min(miny, record[2]) or record[2]
+			maxx = maxx and math.max(maxx, record[3]) or record[3]
+			maxy = maxy and math.max(maxy, record[4]) or record[4]
+		end
+		if full then full_events = full_events + 1 end
+		trace_parts[#trace_parts + 1] = tostring(tonumber(record[6]) or trace_index)
+			.. ":" .. tostring(record[1]) .. "," .. tostring(record[2])
+			.. "," .. tostring(record[3]) .. "," .. tostring(record[4])
+			.. "@" .. tostring(owner_serial)
+	end
+	local residual_area = minx and math.max(0, maxx - minx) * math.max(0, maxy - miny) or 0
+	local map_area = journal.map_w * journal.map_h
+	local successful_parts = {}
+	for serial = 1, math.floor(tonumber(journal.owner_next_serial) or 0) do
+		if successful[serial] == true then successful_parts[#successful_parts + 1] = tostring(serial) end
+	end
+	report.event_trace = table.concat(trace_parts, ";")
+	report.successful_owner_serials = table.concat(successful_parts, ",")
+	report.tagged_events = tagged_events
+	report.owner_events = owner_events
+	report.failed_owner_events = failed_owner_events
+	report.residual_events = residual_events
+	report.full_events = full_events
+	report.tagged_full_events = tagged_full_events
+	report.owner_full_events = owner_full_events
+	report.residual_full_events = residual_full_events
+	report.residual_x0, report.residual_y0 = minx or 0, miny or 0
+	report.residual_x1, report.residual_y1 = maxx or 0, maxy or 0
+	report.residual_area_ratio = map_area > 0 and residual_area / map_area or 1
 	return true
 end
 
@@ -10717,6 +10880,17 @@ function SuperBigMap.GenerationGrids.CloseSurfaceFinalPassJournal(map, reason)
 			or "active journal map identity mismatch"
 		return false, journal
 	end
+	if journal.owner_active_serial ~= nil then
+		journal.report.invalid = true
+		journal.report.owner_mismatch = true
+		journal.report.error = journal.report.error ~= ""
+			and (journal.report.error .. " | owned pass rebuild tag still active at close")
+			or "owned pass rebuild tag still active at close"
+		journal.owner_active_serial = nil
+		journal.owner_active_stage = nil
+		journal.owner_active_region = nil
+	end
+	SuperBigMap.GenerationGrids.SummarizeSurfaceFinalPassTrace(journal)
 	journal.active = false
 	SuperBigMap.State.surface_final_pass_journal = nil
 	local inactive = SuperBigMap.State.surface_final_pass_journal == nil
@@ -10773,7 +10947,8 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	if not map or not map.mapdata or map.mapdata.Environment ~= "Surface" then
 		return reject("surface final dirty certificate requires a surface map")
 	end
-	if detached ~= true or report.observer_inactive ~= true or report.invalid == true then
+	if detached ~= true or report.observer_inactive ~= true or report.invalid == true
+		or report.owner_mismatch == true then
 		return reject("surface final passability journal is invalid")
 	end
 	if type(map.IsPassEditSuspended) ~= "function"
@@ -10946,10 +11121,29 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 			observer_registered = tostring(report.observer_registered == true),
 			observer_inactive = tostring(report.observer_inactive == true),
 			invalid = tostring(report.invalid == true),
+			owner_mismatch = tostring(report.owner_mismatch == true),
 			events = tonumber(report.events) or 0,
 			foreign_events = tonumber(report.foreign_events) or 0,
 			outstanding_boxes = tonumber(report.outstanding_boxes) or 0,
 			acknowledged_boxes = tonumber(report.acknowledged_boxes) or 0,
+			owner_calls_started = tonumber(report.owner_calls_started) or 0,
+			owner_calls_completed = tonumber(report.owner_calls_completed) or 0,
+			owner_calls_failed = tonumber(report.owner_calls_failed) or 0,
+			tagged_events = tonumber(report.tagged_events) or 0,
+			owner_events = tonumber(report.owner_events) or 0,
+			failed_owner_events = tonumber(report.failed_owner_events) or 0,
+			residual_events = tonumber(report.residual_events) or 0,
+			full_events = tonumber(report.full_events) or 0,
+			tagged_full_events = tonumber(report.tagged_full_events) or 0,
+			owner_full_events = tonumber(report.owner_full_events) or 0,
+			residual_full_events = tonumber(report.residual_full_events) or 0,
+			residual_x0 = tonumber(report.residual_x0) or 0,
+			residual_y0 = tonumber(report.residual_y0) or 0,
+			residual_x1 = tonumber(report.residual_x1) or 0,
+			residual_y1 = tonumber(report.residual_y1) or 0,
+			residual_area_ratio = tonumber(report.residual_area_ratio) or 0,
+			event_trace = tostring(report.event_trace or ""),
+			successful_owner_serials = tostring(report.successful_owner_serials or ""),
 			region_x0 = tonumber(report.region_x0) or 0,
 			region_y0 = tonumber(report.region_y0) or 0,
 			region_x1 = tonumber(report.region_x1) or 0,
@@ -11141,10 +11335,19 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors,
 		"surface outer resource ring RebuildPassability (" .. stage .. ")", map,
 		{ ring_sectors = ring_sectors, boxes = #regions })
 	local pass_ok, pass_err = pcall(function()
-		for _, region in ipairs(regions) do
+		for region_index, region in ipairs(regions) do
 			terrain_api.InvalidateHeight(map, region)
 			terrain_api.InvalidateType(map, region)
-			terrain_api.RebuildPassability(map, region)
+			local owner_ok, owner_serial, owner_error =
+				SuperBigMap.GenerationGrids.BeginSurfaceFinalOwnedPassRebuild(
+					map, stage, region_index)
+			if owner_ok ~= true then error(tostring(owner_error), 0) end
+			local rebuild_ok, rebuild_error = pcall(terrain_api.RebuildPassability, map, region)
+			local owner_end_ok, owner_end_error =
+				SuperBigMap.GenerationGrids.EndSurfaceFinalOwnedPassRebuild(
+					map, owner_serial, rebuild_ok)
+			if rebuild_ok ~= true then error(tostring(rebuild_error), 0) end
+			if owner_end_ok ~= true then error(tostring(owner_end_error), 0) end
 		end
 	end)
 	report.passability_ms = GetPreciseTicks() - pass_started
@@ -14365,6 +14568,9 @@ function MapGeneration.RestoreVanillaBehavior()
 	local surface_final_journal = State.surface_final_pass_journal
 	if type(surface_final_journal) == "table" then
 		surface_final_journal.active = false
+		surface_final_journal.owner_active_serial = nil
+		surface_final_journal.owner_active_stage = nil
+		surface_final_journal.owner_active_region = nil
 		if surface_final_journal.map then
 			surface_final_journal.map.SuperBigMapSurfaceFinalDirtyPassJournalActive = nil
 		end
