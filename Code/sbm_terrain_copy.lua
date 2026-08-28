@@ -734,11 +734,14 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 	local refine_calls, refine_grid_reads, legacy_refine_grid_reads = 0, 0, 0
 	local rolling_refine = cfg_bool("OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW", true)
 	local native_discovery = {
-		requested = not wide_ring_only
-			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX", true),
+		requested = wide_ring_only
+			and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX", true)
+			or not wide_ring_only
+				and cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX", true),
+		mode = wide_ring_only and "source_sampled_wide_ring" or "destination_near_edge",
 		used = false, fallback = false, error = "", indexes = nil,
 		bands = 0, indexed_cells = 0, enumerated = 0, survivors = 0,
-		exact_positions = 0, ms = 0,
+		exact_positions = 0, sampled_rows = 0, compaction_copies = 0, ms = 0,
 	}
 
 	local function at(axis, perp, along)
@@ -831,6 +834,179 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 
 		local indexes = {}
+		-- Source discovery is deliberately sampled along the track axis. Copy exactly those legacy
+		-- rows into a compact U16 slab, evaluate the identical one-cell jump and doubled-flank
+		-- predicate with native grid arithmetic, then serialize survivors back under their original
+		-- along coordinate. The original grid is never a native destination, so every failure remains
+		-- fallback-safe before RepairQualifiedSourceHeightSteps can write anything.
+		local function build_sampled_source_band(axis, along_n, perp0, perp1, edge, sample_step)
+			local positions = perp1 - perp0 + 1
+			if positions <= 0 then return {}, 0, 0, 0, 0, 0 end
+			sample_step = math.max(1, math.floor(sample_step or 1))
+			local sampled_rows = math.floor((along_n - 1) / sample_step) + 1
+			local local_w = axis == "x" and positions or sampled_rows
+			local local_h = axis == "x" and sampled_rows or positions
+			local rows, seen, enumerated, survivor_count = {}, {}, 0, 0
+			local max_survivors = math.max(4096, math.floor(local_w * local_h / 2))
+			local max_records = math.max(8192, local_w * local_h * 2)
+			local owned, owned_set = {}, {}
+			local function own(value)
+				if not value then error("native source discovery grid allocation failed", 0) end
+				if not owned_set[value] then
+					owned_set[value] = true
+					owned[#owned + 1] = value
+				end
+				return value
+			end
+			local compaction_copies = 0
+			local ok, err = pcall(function()
+				-- Candidate p needs p-1, p, p+1 and p+2. Include those three extra cells
+				-- once, then derive the four aligned operands with bounded local copyrects.
+				local sampled_span = positions + 3
+				local sampled_w = axis == "x" and sampled_span or sampled_rows
+				local sampled_h = axis == "x" and sampled_rows or sampled_span
+				local sampled = own(grid:new_instance(sampled_w, sampled_h))
+				assert(sampled and type(sampled.copyrect) == "function",
+					"native source sampled-slab allocation failed")
+				for sample_index = 0, sampled_rows - 1 do
+					local along = sample_index * sample_step
+					if axis == "x" then
+						sampled:copyrect(grid,
+							box_fn(perp0 - 1, along, perp1 + 3, along + 1),
+							point_fn(0, sample_index))
+					else
+						sampled:copyrect(grid,
+							box_fn(along, perp0 - 1, along + 1, perp1 + 3),
+							point_fn(sample_index, 0))
+					end
+					compaction_copies = compaction_copies + 1
+				end
+
+				local function operand(offset)
+					local result = own(grid:new_instance(local_w, local_h))
+					local source_box = axis == "x"
+						and box_fn(offset, 0, offset + positions, sampled_rows)
+						or box_fn(0, offset, sampled_rows, offset + positions)
+					result:copyrect(sampled, source_box, point_fn(0, 0))
+					return result
+				end
+
+				local source_v0 = operand(0)
+				local source_a = operand(1)
+				local source_b = operand(2)
+				local source_v3 = operand(3)
+				local signed_v0 = own(GridRepack(source_v0, "f", 32, true))
+				local signed_a = own(GridRepack(source_a, "f", 32, true))
+				local signed_b = own(GridRepack(source_b, "f", 32, true))
+				local signed_v3 = own(GridRepack(source_v3, "f", 32, true))
+
+				-- U16 differences and doubled flanks have magnitude at most 131070 and are
+				-- therefore represented exactly in f32. Source discovery is sign-agnostic.
+				local flank0 = own(signed_a:clone())
+				GridMulDivAdd(signed_v0, -1, 1, 0)
+				GridAdd(flank0, signed_v0)
+				GridAbs(flank0)
+				GridMulDivAdd(flank0, 2, 1, 0)
+				local flank1 = own(signed_v3:clone())
+				local negative_b = own(signed_b:clone())
+				GridMulDivAdd(negative_b, -1, 1, 0)
+				GridAdd(flank1, negative_b)
+				GridAbs(flank1)
+				GridMulDivAdd(flank1, 2, 1, 0)
+				GridMulDivAdd(signed_a, -1, 1, 0)
+				GridAdd(signed_b, signed_a)
+				local signed_difference = signed_b
+				local magnitude = own(signed_difference:clone())
+				GridAbs(magnitude)
+				local accepted = own(NewComputeGrid(local_w, local_h, "f", 32))
+				GridMask(magnitude, accepted, threshold, 2147483647)
+				for _, flank in ipairs({ flank0, flank1 }) do
+					local margin = own(magnitude:clone())
+					GridMulDivAdd(flank, -1, 1, 0)
+					GridAdd(margin, flank)
+					local flank_ok = own(NewComputeGrid(local_w, local_h, "f", 32))
+					GridMask(margin, flank_ok, 0, 2147483647)
+					GridMulDivAdd(accepted, flank_ok, 1, 0)
+				end
+
+				local callback_error
+				local function export_records(difference, low_before)
+					GridMulDivAdd(difference, accepted, 1, 0)
+					GridForeach(difference, function(jump, x, y)
+						if callback_error then return end
+						if type(jump) ~= "number" or type(x) ~= "number"
+							or type(y) ~= "number" then
+							callback_error = "native source discovery returned invalid coordinates"
+							return
+						end
+						jump, x, y = math.floor(jump + 0.5), math.floor(x), math.floor(y)
+						local compact_along = axis == "x" and y or x
+						local local_perp = axis == "x" and x or y
+						local along = compact_along * sample_step
+						if compact_along < 0 or compact_along >= sampled_rows
+							or local_perp < 0 or local_perp >= positions
+							or along < 0 or along >= along_n then
+							callback_error = "native source discovery coordinate escaped sampled slab"
+							return
+						end
+						enumerated = enumerated + 1
+						if enumerated > max_records then
+							callback_error = "native source discovery candidate-record limit exceeded"
+							return
+						end
+						local perp = perp0 + local_perp
+						local row_seen = seen[along]
+						if not row_seen then row_seen = {}; seen[along] = row_seen end
+						if not row_seen[perp] then
+							row_seen[perp] = true
+							survivor_count = survivor_count + 1
+							if survivor_count > max_survivors then
+								callback_error = "native source discovery survivor limit exceeded"
+								return
+							end
+						end
+						local row = rows[along]
+						if not row then row = {}; rows[along] = row end
+						row[#row + 1] = {
+							perp = perp, width = 1, jump = jump, low_before = low_before,
+						}
+					end, threshold, 2147483647)
+				end
+				local positive = own(signed_difference:clone())
+				local negative = own(signed_difference:clone())
+				GridMulDivAdd(negative, -1, 1, 0)
+				export_records(positive, true)
+				export_records(negative, false)
+				if callback_error then error(callback_error, 0) end
+			end)
+			local cleanup_errors = {}
+			for index = #owned, 1, -1 do
+				local value = owned[index]
+				owned[index] = nil
+				if value and type(value.free) == "function" then
+					local free_ok, free_error = pcall(value.free, value)
+					if not free_ok then cleanup_errors[#cleanup_errors + 1] = tostring(free_error) end
+				end
+			end
+			if not ok or #cleanup_errors > 0 then
+				local failure = ok and "" or tostring(err)
+				if #cleanup_errors > 0 then
+					local cleanup_failure = "native source discovery cleanup failed: "
+						.. table.concat(cleanup_errors, " | ")
+					failure = failure ~= "" and (failure .. " | " .. cleanup_failure)
+						or cleanup_failure
+				end
+				error(failure, 0)
+			end
+			for _, row in pairs(rows) do
+				table.sort(row, function(a, b)
+					return a.perp < b.perp or (a.perp == b.perp and a.width < b.width)
+				end)
+			end
+			return rows, local_w * local_h, enumerated, survivor_count,
+				sampled_rows, compaction_copies
+		end
+
 		local function build_band(axis, along_n, perp0, perp1, edge)
 			local positions = perp1 - perp0 + 1
 			if positions <= 0 then return {}, 0, 0, 0 end
@@ -962,20 +1138,44 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 
 		local ok, err = pcall(function()
-			local specs = {
-				{ "x", h, outer_guard, math.min(near_margin, w - 3), "left" },
-				{ "x", h, math.max(1, w - near_margin - 2), w - outer_guard - 3, "right" },
-				{ "y", w, outer_guard, math.min(near_margin, h - 3), "top" },
-				{ "y", w, math.max(1, h - near_margin - 2), h - outer_guard - 3, "bottom" },
-			}
+			local specs
+			if wide_ring_only then
+				specs = {
+					{ "x", h, near_margin + 1, math.min(edge_margin, w - 3), "left" },
+					{ "x", h, math.max(1, w - edge_margin - 2),
+						w - near_margin - 3, "right" },
+					{ "y", w, near_margin + 1, math.min(edge_margin, h - 3), "top" },
+					{ "y", w, math.max(1, h - edge_margin - 2),
+						h - near_margin - 3, "bottom" },
+				}
+			else
+				specs = {
+					{ "x", h, outer_guard, math.min(near_margin, w - 3), "left" },
+					{ "x", h, math.max(1, w - near_margin - 2),
+						w - outer_guard - 3, "right" },
+					{ "y", w, outer_guard, math.min(near_margin, h - 3), "top" },
+					{ "y", w, math.max(1, h - near_margin - 2),
+						h - outer_guard - 3, "bottom" },
+				}
+			end
 			for _, spec in ipairs(specs) do
-				local rows, cells, enumerated, survivors =
-					build_band(spec[1], spec[2], spec[3], spec[4], spec[5])
+				local rows, cells, enumerated, survivors, sampled_rows, compaction_copies
+				if wide_ring_only then
+					rows, cells, enumerated, survivors, sampled_rows, compaction_copies =
+						build_sampled_source_band(
+							spec[1], spec[2], spec[3], spec[4], spec[5], wide_sample_step)
+				else
+					rows, cells, enumerated, survivors =
+						build_band(spec[1], spec[2], spec[3], spec[4], spec[5])
+				end
 				indexes[spec[1] .. ":" .. spec[5]] = rows
 				native_discovery.bands = native_discovery.bands + 1
 				native_discovery.indexed_cells = native_discovery.indexed_cells + cells
 				native_discovery.enumerated = native_discovery.enumerated + enumerated
 				native_discovery.survivors = native_discovery.survivors + survivors
+				native_discovery.sampled_rows = native_discovery.sampled_rows + (sampled_rows or 0)
+				native_discovery.compaction_copies = native_discovery.compaction_copies
+					+ (compaction_copies or 0)
 			end
 		end)
 		if not ok then
@@ -986,6 +1186,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			native_discovery.indexed_cells = 0
 			native_discovery.enumerated = 0
 			native_discovery.survivors = 0
+			native_discovery.sampled_rows = 0
+			native_discovery.compaction_copies = 0
 			finish_timing()
 			return
 		end
@@ -1009,14 +1211,33 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		report.native_discovery_index_enumerated = native_discovery.enumerated
 		report.native_discovery_index_survivors = native_discovery.survivors
 		report.native_discovery_index_exact_positions = native_discovery.exact_positions
+		report.native_discovery_index_sampled_rows = native_discovery.sampled_rows
+		report.native_discovery_index_compaction_copies = native_discovery.compaction_copies
+		report.native_discovery_index_mode = native_discovery.mode
 		report.native_discovery_index_ms = native_discovery.ms
+		if wide_ring_only then
+			report.source_native_discovery_index_requested = native_discovery.requested
+			report.source_native_discovery_index_used = native_discovery.used
+			report.source_native_discovery_index_fallback = native_discovery.fallback
+			report.source_native_discovery_index_error = native_discovery.error
+			report.source_native_discovery_index_bands = native_discovery.bands
+			report.source_native_discovery_index_cells = native_discovery.indexed_cells
+			report.source_native_discovery_index_enumerated = native_discovery.enumerated
+			report.source_native_discovery_index_survivors = native_discovery.survivors
+			report.source_native_discovery_index_exact_positions = native_discovery.exact_positions
+			report.source_native_discovery_index_sampled_rows = native_discovery.sampled_rows
+			report.source_native_discovery_index_compaction_copies =
+				native_discovery.compaction_copies
+			report.source_native_discovery_index_ms = native_discovery.ms
+		end
 		return report
 	end
 
 	function native_discovery.scan(row, axis, along, perp0, perp1, edge, indexed_rows)
 		if perp1 < perp0 then return end
 		local sample_count = perp1 - perp0 + 1
-		legacy_scan_grid_reads = legacy_scan_grid_reads + sample_count * 3 * 4
+		local legacy_widths = wide_ring_only and 1 or 3
+		legacy_scan_grid_reads = legacy_scan_grid_reads + sample_count * legacy_widths * 4
 		local candidates = indexed_rows[along]
 		if not candidates then return end
 		for _, candidate in ipairs(candidates) do
@@ -1359,6 +1580,8 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		native_discovery.indexed_cells = 0
 		native_discovery.enumerated = 0
 		native_discovery.survivors = 0
+		native_discovery.sampled_rows = 0
+		native_discovery.compaction_copies = 0
 	end
 	local ok_repair, repair_err = pcall(function()
 		-- X scans catch left/right edge-facing walls; transposed Y scans catch top/bottom walls.
@@ -4480,7 +4703,45 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 					native_discovery_index_survivors = report.native_discovery_index_survivors,
 					native_discovery_index_exact_positions =
 						report.native_discovery_index_exact_positions,
+					native_discovery_index_sampled_rows =
+						report.native_discovery_index_sampled_rows,
+					native_discovery_index_compaction_copies =
+						report.native_discovery_index_compaction_copies,
+					native_discovery_index_mode = report.native_discovery_index_mode,
 					native_discovery_index_ms = report.native_discovery_index_ms,
+					source_native_discovery_index_requested =
+						internal_step_repair.source_native_discovery_index_requested,
+					source_native_discovery_index_used =
+						internal_step_repair.source_native_discovery_index_used,
+					source_native_discovery_index_fallback =
+						internal_step_repair.source_native_discovery_index_fallback,
+					source_native_discovery_index_error =
+						internal_step_repair.source_native_discovery_index_error,
+					source_native_discovery_index_bands =
+						internal_step_repair.source_native_discovery_index_bands,
+					source_native_discovery_index_cells =
+						internal_step_repair.source_native_discovery_index_cells,
+					source_native_discovery_index_enumerated =
+						internal_step_repair.source_native_discovery_index_enumerated,
+					source_native_discovery_index_survivors =
+						internal_step_repair.source_native_discovery_index_survivors,
+					source_native_discovery_index_exact_positions =
+						internal_step_repair.source_native_discovery_index_exact_positions,
+					source_native_discovery_index_sampled_rows =
+						internal_step_repair.source_native_discovery_index_sampled_rows,
+					source_native_discovery_index_compaction_copies =
+						internal_step_repair.source_native_discovery_index_compaction_copies,
+					source_native_discovery_index_ms =
+						internal_step_repair.source_native_discovery_index_ms,
+					source_height_step_total_ms = internal_step_repair.source_height_step_total_ms,
+					source_height_step_collect_ms =
+						internal_step_repair.source_height_step_collect_ms,
+					source_height_step_qualify_ms =
+						internal_step_repair.source_height_step_qualify_ms,
+					source_height_step_point_expand_ms =
+						internal_step_repair.source_height_step_point_expand_ms,
+					source_height_step_apply_ms =
+						internal_step_repair.source_height_step_apply_ms,
 					source_scan_ms = internal_step_repair.source_scan_ms
 						or report.source_scan_ms,
 					source_detected = internal_step_repair.source_detected
@@ -4640,6 +4901,11 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				report.source_refine_calls = report.refine_calls
 				report.source_refine_grid_reads = report.refine_grid_reads
 				report.source_legacy_refine_grid_reads = report.legacy_refine_grid_reads
+				report.source_height_step_total_ms = report.height_step_total_ms
+				report.source_height_step_collect_ms = report.height_step_collect_ms
+				report.source_height_step_qualify_ms = report.height_step_qualify_ms
+				report.source_height_step_point_expand_ms = report.height_step_point_expand_ms
+				report.source_height_step_apply_ms = report.height_step_apply_ms
 				internal_step_repair = report
 				TerrainCreaseAudit(detected and "SOURCE_DETECTED" or "SOURCE_SKIPPED", report, map)
 				if detected and tracks then
@@ -4834,6 +5100,40 @@ local function StretchSourceToFull(map, source_map, terrain_only)
 				and internal_step_repair.refine_grid_reads or 0,
 			internal_step_legacy_refine_grid_reads = internal_step_repair
 				and internal_step_repair.legacy_refine_grid_reads or 0,
+			source_native_discovery_requested = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_requested or false,
+			source_native_discovery_used = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_used or false,
+			source_native_discovery_fallback = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_fallback or false,
+			source_native_discovery_error = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_error or "",
+			source_native_discovery_bands = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_bands or 0,
+			source_native_discovery_cells = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_cells or 0,
+			source_native_discovery_enumerated = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_enumerated or 0,
+			source_native_discovery_survivors = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_survivors or 0,
+			source_native_discovery_sampled_rows = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_sampled_rows or 0,
+			source_native_discovery_compaction_copies = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_compaction_copies or 0,
+			source_native_discovery_exact_positions = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_exact_positions or 0,
+			source_native_discovery_ms = internal_step_repair
+				and internal_step_repair.source_native_discovery_index_ms or 0,
+			source_height_step_total_ms = internal_step_repair
+				and internal_step_repair.source_height_step_total_ms or 0,
+			source_height_step_collect_ms = internal_step_repair
+				and internal_step_repair.source_height_step_collect_ms or 0,
+			source_height_step_qualify_ms = internal_step_repair
+				and internal_step_repair.source_height_step_qualify_ms or 0,
+			source_height_step_point_expand_ms = internal_step_repair
+				and internal_step_repair.source_height_step_point_expand_ms or 0,
+			source_height_step_apply_ms = internal_step_repair
+				and internal_step_repair.source_height_step_apply_ms or 0,
 			error = ok_all and "" or tostring(res),
 		}, success)
 		return success

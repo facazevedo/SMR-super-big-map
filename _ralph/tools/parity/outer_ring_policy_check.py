@@ -600,6 +600,34 @@ static_checks = {
             "C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =",
         )
     ),
+    "source_height_step_uses_fail_closed_sampled_native_discovery_index": all(
+        token in TERRAIN
+        for token in (
+            'cfg_bool("OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX", true)',
+            'mode = wide_ring_only and "source_sampled_wide_ring"',
+            "local function build_sampled_source_band(",
+            "local sampled_rows = math.floor((along_n - 1) / sample_step) + 1",
+            "sampled:copyrect(grid,",
+            "local along = compact_along * sample_step",
+            "GridMask(magnitude, accepted, threshold, 2147483647)",
+            "export_records(positive, true)",
+            "export_records(negative, false)",
+            "perp = perp, width = 1, jump = jump, low_before = low_before",
+            "native source discovery candidate-record limit exceeded",
+            "native source discovery survivor limit exceeded",
+            "native source discovery cleanup failed",
+            "report.source_native_discovery_index_used = native_discovery.used",
+            "report.source_native_discovery_index_fallback = native_discovery.fallback",
+            "report.source_native_discovery_index_sampled_rows = native_discovery.sampled_rows",
+            "source_native_discovery_compaction_copies = internal_step_repair",
+        )
+    ) and all(
+        token in CONFIG
+        for token in (
+            "config.OptimizeHeightStepNativeSourceDiscoveryIndex = true",
+            "C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =",
+        )
+    ),
     "resource_terrain_irregularity_never_shrinks_level_core": (
         "patch.core_cells + base_transition * width_scale" in outer_resource_terrain
         and "if distance <= patch.core_cells then" in outer_resource_terrain
@@ -989,7 +1017,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_945": "'version', 945" in METADATA,
+    "version_is_946": "'version', 946" in METADATA,
 }
 
 case_results = []

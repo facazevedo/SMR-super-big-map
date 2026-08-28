@@ -727,6 +727,12 @@ config.OptimizeHeightStepRefineRollingWindow = true
 -- path consumes them. Any native API, allocation, or enumeration failure falls back to the
 -- unchanged rolling Lua scan before a terrain write can occur.
 config.OptimizeHeightStepNativeDiscoveryIndex = true
+-- The source crease detector visits only every eighth row in the two-sector perimeter and accepts
+-- either jump direction. Compact exactly those sampled rows into bounded native slabs, apply the
+-- unchanged U16 difference/flank predicate there, then restore the legacy perpendicular order before
+-- the existing track qualification and scalar per-row refinement. The source grid remains read-only;
+-- any allocation, native operation, enumeration, or cleanup failure falls back before repair writes.
+config.OptimizeHeightStepNativeSourceDiscoveryIndex = true
 -- INVALIDATE BEFORE EVERY FINAL PASSABILITY REBUILD, on the surface and the underground alike
 -- (sbm_map_generation, expansion step 11). The engine rebuilds passability only over regions that
 -- were INVALIDATED first -- its own generator always calls terrain.InvalidateHeight +
@@ -1152,6 +1158,8 @@ C.OPTIMIZE_HEIGHT_STEP_REFINE_ROLLING_WINDOW =
 	as_bool(config.OptimizeHeightStepRefineRollingWindow)
 C.OPTIMIZE_HEIGHT_STEP_NATIVE_DISCOVERY_INDEX =
 	as_bool(config.OptimizeHeightStepNativeDiscoveryIndex)
+C.OPTIMIZE_HEIGHT_STEP_NATIVE_SOURCE_DISCOVERY_INDEX =
+	as_bool(config.OptimizeHeightStepNativeSourceDiscoveryIndex)
 C.FINAL_PASSABILITY_INVALIDATE = expansion_step_11
 	and as_bool(config.FinalPassabilityInvalidate)
 C.STRETCH_HEIGHT_GRID_DUMP_PATH = type(config.StretchHeightGridDumpPath) == "string"
