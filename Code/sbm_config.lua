@@ -654,18 +654,10 @@ config.StretchVanillaExactPassBorder = true
 config.FlattenSkipWhenUnbuildable = true
 -- DETERMINISTIC PAIRING, the no-terrain-touching way (sbm_map_generation, DoGenerate). The
 -- entrance pairing searches the SURFACE buildable grid during the UNDERGROUND generation.
--- When true, the surface Z grid is guaranteed current immediately before that search. The legacy
--- path rebuilds it synchronously; the optimization below may reuse only a specifically bound
--- post-migration grid. This restores vanilla's complete-footprint selection without editing terrain.
+-- When true, the surface Z grid is synchronously rebuilt once immediately before that search;
+-- generic migration/RebuildGrids completion flags are deliberately not reused as proof. This
+-- restores vanilla's complete-footprint selection without editing terrain.
 config.PairingSurfaceBuildableRebuild = true
--- The temporary-source transaction already rebuilt the destination surface grids, and passage
--- bootstrap replaces that live surface z-grid with an unbuildable-padded copy of its retained
--- native source clone before the only surface-buildable consumer in underground generation. Skip
--- the otherwise superseded
--- pre-underground rebuild only when a short-lived proof binds both exact grid identities and
--- dimensions, the surface grid is still current, the native passability backing is still owned,
--- and the later canonical surface rebuild is pending. Every failed guard retains the rebuild.
-config.OptimizeSupersededPairingSurfaceBuildableRebuild = true
 -- SOURCE-SIZED FALLBACK SEARCH RADIUS (sbm_map_generation, passage bootstrap). When the first
 -- buildable search around an underground passage marker fails, vanilla FindPassageSpawnPos
 -- (Lua/Buildings/SurfacePassage.lua:119) retries from GetRandomPassableAroundOnMap(map, pos) with
@@ -1149,8 +1141,6 @@ C.STRETCH_VANILLA_EXACT_PASSBORDER = expansion_step_01
 C.FLATTEN_SKIP_WHEN_UNBUILDABLE = as_bool(config.FlattenSkipWhenUnbuildable)
 C.PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
 	and as_bool(config.PairingSurfaceBuildableRebuild)
-C.OPTIMIZE_SUPERSEDED_PAIRING_SURFACE_BUILDABLE_REBUILD = expansion_step_11
-	and as_bool(config.OptimizeSupersededPairingSurfaceBuildableRebuild)
 C.PAIRING_SOURCE_FALLBACK_RADIUS = expansion_step_11
 	and as_bool(config.PairingSourceFallbackRadius)
 C.PAIRING_SOURCE_PASSABILITY_BRIDGE = expansion_step_11
