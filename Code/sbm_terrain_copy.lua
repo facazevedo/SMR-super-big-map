@@ -1690,7 +1690,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			assert(type(offsets.copyrect) == "function", "native destination offset grid unavailable")
 			native_fill(offsets, 0)
 			local slab_perp0 = selected.axis == "x" and x0 or y0
-			local strip_fills, interval_copies, translated_cells = 0, 0, 0
+			local strip_fills, interval_copies = 0, 0
 			for _, row in ipairs(rows) do
 				local local_perp0 = row.perp0 - slab_perp0
 				local interval_length = row.perp1 - row.perp0 + 1
@@ -1706,7 +1706,6 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 				end
 				strip_fills = strip_fills + 1
 				interval_copies = interval_copies + 1
-				translated_cells = translated_cells + interval_length
 			end
 			native_add(source, offsets)
 			native_clamp(source, 0, mx)
@@ -1744,7 +1743,7 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 			end
 			copy_started = true
 			grid:copyrect(packed, local_box, destination_point)
-			return translated_cells + feather_modified, translated_cells,
+			return translation_cells + feather_modified, translation_cells,
 				local_width * local_height, {
 					offset_slab_fills = 1, offset_strip_fills = strip_fills,
 					offset_interval_copies = interval_copies,
@@ -1781,14 +1780,11 @@ local function RepairInternalHeightStep(grid, wide_ring_only)
 		end
 		native_track.native_ms = native_track.native_ms + math.max(0, now_ms() - started_ms)
 		if not ok then
-			-- Keep the failure tuple aligned with the success tuple consumed below:
-			-- ok, modified, error-or-cells, rollback-ok-or-slab, cleanup-or-stats.
-			return false, 0, operation_error, #release_errors == 0,
-				table.concat(release_errors, " | ")
+			return false, operation_error, #release_errors == 0, table.concat(release_errors, " | ")
 		end
 		if #release_errors > 0 then
 			native_track.cleanup_failed = true
-			return false, 0, "native destination snapshot cleanup failed", false,
+			return false, "native destination snapshot cleanup failed", false,
 				table.concat(release_errors, " | ")
 		end
 		return true, modified, translation_cells, slab_cells, offset_stats
