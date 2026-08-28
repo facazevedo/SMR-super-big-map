@@ -493,6 +493,13 @@ config.StretchUnderground = true
 -- completes the proportional transformation, wonders, passages, markers, and decorations only
 -- when the player presses Place Elevator.
 config.DeferUndergroundExpansionUntilFirstAccess = true
+-- v965 feasibility seam for deferring the *native underground allocation and source generation*
+-- as well as its existing stretch. This is deliberately diagnostic-only and default-off: it
+-- captures a saveable primitive generation descriptor and computes the two deterministic surface
+-- passage capsules that a future lazy transaction would publish, but it does not suppress
+-- GenerateNextMap or alter the v964 lifecycle. Runtime seed/capsule/save-load/access-route proof is
+-- required before a separate compiled implementation flag may exist.
+config.LazyUndergroundSourceGenerationFeasibility = false
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1116,6 +1123,8 @@ C.STRETCH_RELOCATE_START_SECTOR = as_bool(config.StretchRelocateStartSector)
 C.STRETCH_UNDERGROUND = expansion_step_07
 	and as_bool(config.StretchUnderground)
 C.DEFER_UNDERGROUND_EXPANSION_UNTIL_FIRST_ACCESS = as_bool(config.DeferUndergroundExpansionUntilFirstAccess)
+C.LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY =
+	as_bool(config.LazyUndergroundSourceGenerationFeasibility)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)

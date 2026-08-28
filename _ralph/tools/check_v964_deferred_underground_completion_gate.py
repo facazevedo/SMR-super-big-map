@@ -178,8 +178,8 @@ def main() -> int:
         "\t\tmap.SuperBigMapUndergroundPrepared = true"
     )
     checks = {
-        "metadata_v964": "'version', 964," in metadata,
-        "hot_reload_patch_identity_v273": "SuperBigMap.GENERATOR_PATCH_VERSION = 273" in version,
+        "metadata_retained_in_v965": "'version', 965," in metadata,
+        "hot_reload_patch_identity_v274": "SuperBigMap.GENERATOR_PATCH_VERSION = 274" in version,
         "expanded_completion_shortcut_removed": obsolete_shortcut not in generation,
         "fresh_underground_initializer_is_environment_scoped": (
             'map.mapdata.Environment ~= "Underground"' in fresh

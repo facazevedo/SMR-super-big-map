@@ -85,6 +85,22 @@ do
 	if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapVanillaRepulsionProfiles"] == nil) then
 		register("SuperBigMapVanillaRepulsionProfiles", false)
 	end
+	-- v965 lazy-underground feasibility evidence is stored on the Surface because the candidate's
+	-- defining invariant is that no underground Map/City exists yet. Keep only primitive values and
+	-- primitive arrays in this MapVar; engine objects, closures, grids, and MapData instances are
+	-- intentionally forbidden so an immediate surface save/load can reproduce the same descriptor.
+	-- Do not even enlarge the per-map persistence schema in ordinary/default-off gameplay. A probe
+	-- build enables this static config before modules load; only that build registers these fields.
+	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+		registry = Global("MapVarValues")
+		if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapLazyUndergroundDescriptor"] == nil) then
+			register("SuperBigMapLazyUndergroundDescriptor", false)
+		end
+		registry = Global("MapVarValues")
+		if type(register) == "function" and (type(registry) ~= "table" or registry["SuperBigMapLazyUndergroundFeasibilityReport"] == nil) then
+			register("SuperBigMapLazyUndergroundFeasibilityReport", false)
+		end
+	end
 end
 
 local function MapData(map)

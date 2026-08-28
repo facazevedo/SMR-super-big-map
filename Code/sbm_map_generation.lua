@@ -2149,6 +2149,10 @@ local function ClearPreparedMapInstance(map)
 	map.SuperBigMapSurfaceStretchDone = nil
 	map.SuperBigMapSurfaceStretchScheduled = nil
 	map.SuperBigMapSurfaceStretchAwaitingReadiness = nil
+	if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+		map.SuperBigMapLazyUndergroundDescriptor = false
+		map.SuperBigMapLazyUndergroundFeasibilityReport = false
+	end
 	if type(map.mapdata) == "table" and map.mapdata.Environment == "Underground" then
 		map.SuperBigMapUndergroundPrepared = nil
 		map.SuperBigMapUndergroundStretchDone = nil
@@ -8593,6 +8597,692 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	return true
 end
 
+-- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY (default off).
+--
+-- GenerateAdditionalMaps does not allocate the underground itself while the Surface generator is
+-- active; it publishes one GenerateNextMap parameter table that the outer GenerateRandomMap loop
+-- consumes immediately afterwards. That is the only safe suppression boundary for a truly lazy
+-- underground. Before changing that boundary, capture a saveable value-only descriptor and prove
+-- that two Surface passage capsules can be selected from the already-published Surface grids by a
+-- private deterministic stream. This probe deliberately leaves GenerateNextMap, UndergroundMap,
+-- Maps[2], Cities, and every passage untouched. A failed probe records evidence and falls through
+-- to the literal v964 path; it can never create an absent/partial underground state.
+SuperBigMap.LazyUndergroundFeasibility = nil
+if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+	local Lazy = {
+		SCHEMA = 1,
+		DOMAIN = "SuperBigMap/v965/lazy-underground-surface-passage-capsules",
+		CALLBACK_TAG = "publish-generated-map-to-UndergroundMap",
+		CALLBACK_VERSION = 1,
+	}
+
+function Lazy.PrimitiveTree(value, seen)
+	local value_type = type(value)
+	if value_type == "nil" or value_type == "boolean" or value_type == "number"
+		or value_type == "string" then
+		return true
+	end
+	if value_type ~= "table" then return false end
+	seen = seen or {}
+	if seen[value] then return false end
+	seen[value] = true
+	for key, child in pairs(value) do
+		local key_type = type(key)
+		if key_type ~= "string" and key_type ~= "number" then
+			seen[value] = nil
+			return false
+		end
+		if not Lazy.PrimitiveTree(child, seen) then
+			seen[value] = nil
+			return false
+		end
+	end
+	seen[value] = nil
+	return true
+end
+
+function Lazy.CaptureScalarState(source, excluded)
+	local state, count, unsupported = {}, 0, {}
+	if type(source) ~= "table" then return state, count, { "<source-not-table>" } end
+	for key, value in pairs(source) do
+		if not (type(excluded) == "table" and excluded[key] == true) then
+			local key_type, value_type = type(key), type(value)
+			if (key_type == "string" or key_type == "number")
+				and (value_type == "boolean" or value_type == "number"
+					or value_type == "string") then
+				state[key] = value
+				count = count + 1
+			elseif value ~= nil then
+				unsupported[#unsupported + 1] = tostring(key) .. ":" .. value_type
+			end
+		end
+	end
+	table.sort(unsupported)
+	return state, count, unsupported
+end
+
+function Lazy.CompareScalarState(expected, actual)
+	if type(expected) ~= "table" or type(actual) ~= "table" then
+		return false, 0, "state-not-table"
+	end
+	local compared = 0
+	for key, value in pairs(expected) do
+		compared = compared + 1
+		if actual[key] ~= value or type(actual[key]) ~= type(value) then
+			return false, compared, tostring(key)
+		end
+	end
+	for key, value in pairs(actual) do
+		local value_type = type(value)
+		if value_type == "boolean" or value_type == "number" or value_type == "string" then
+			if expected[key] ~= value or type(expected[key]) ~= value_type then
+				return false, compared, "+" .. tostring(key)
+			end
+		end
+	end
+	return true, compared, ""
+end
+
+function Lazy.ReconstructRecipeValues(descriptor)
+	local recipe = type(descriptor) == "table" and descriptor.recipe or nil
+	if type(recipe) ~= "table" or recipe.schema ~= Lazy.SCHEMA
+		or type(recipe.parameters) ~= "table" or type(recipe.mapdata) ~= "table"
+		or type(recipe.generator_seed) ~= "table" or type(recipe.callback) ~= "table" then
+		return nil, "recipe schema is incomplete"
+	end
+	if recipe.callback.tag ~= Lazy.CALLBACK_TAG
+		or recipe.callback.version ~= Lazy.CALLBACK_VERSION
+		or recipe.callback.target_gamevar ~= "UndergroundMap"
+		or recipe.callback.value_semantics ~= "generated-map" then
+		return nil, "callback semantics tag is unsupported"
+	end
+	if recipe.parameters.map_slot ~= 2
+		or type(recipe.parameters.map_name) ~= "string" or recipe.parameters.map_name == ""
+		or type(recipe.parameters.map_preset) ~= "string"
+		or recipe.parameters.dont_gen_additional ~= true
+		or recipe.parameters.no_new_game ~= true then
+		return nil, "GenerateNextMap identity/recursion flags are incomplete"
+	end
+	if recipe.mapdata.map_randomizeseed ~= false
+		or recipe.mapdata.primitive_state.map_randomizeseed ~= false
+		or type(recipe.mapdata.Seed) ~= "number"
+		or recipe.mapdata.Seed ~= recipe.mapdata.seed_authority_value
+		or recipe.mapdata.primitive_state.Seed ~= recipe.mapdata.Seed
+		or recipe.mapdata.seed_authority ~= "UIColony.map_seed"
+		or type(recipe.generator_seed.value) ~= "number"
+		or recipe.generator_seed.injection
+			~= "RandomMapGenerator.FillParams.Seed-before-original-fill" then
+		return nil, "MapData/generator seed authority is incomplete"
+	end
+	local map_data_table = Global("MapData")
+	local preset = type(map_data_table) == "table" and map_data_table[recipe.mapdata.preset_id]
+	local create_instance = type(preset) == "table" and preset.CreateInstance
+	if type(create_instance) ~= "function" then
+		return nil, "MapData instance constructor is unavailable"
+	end
+	local instance_ok, instance = pcall(create_instance, preset)
+	if not instance_ok or type(instance) ~= "table" then
+		return nil, "MapData instance reconstruction failed: " .. tostring(instance)
+	end
+	local primitive_state = type(recipe.mapdata.primitive_state) == "table"
+		and recipe.mapdata.primitive_state or {}
+	for key, value in pairs(primitive_state) do
+		instance[key] = value
+	end
+	local params = {}
+	for key, value in pairs(recipe.parameters) do params[key] = value end
+	params.mapdata = instance
+	return {
+		params = params,
+		generator_seed = recipe.generator_seed.value,
+		seed_injection = recipe.generator_seed.injection,
+		callback_tag = recipe.callback.tag,
+		callback_version = recipe.callback.version,
+	}, nil
+end
+
+function Lazy.ObserveGenerateParameters(params)
+	local surface = Global("MainMap")
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local recipe = type(descriptor) == "table" and descriptor.recipe or nil
+	if type(report) ~= "table" or type(recipe) ~= "table" or type(params) ~= "table"
+		or tonumber(params.map_slot) ~= 2 then return false end
+	local params_match, params_compared, params_first =
+		Lazy.CompareScalarState(recipe.parameters, params)
+	local mapdata_match, mapdata_compared, mapdata_first =
+		Lazy.CompareScalarState(recipe.mapdata.primitive_state, params.mapdata)
+	report.consumer_parameters_match = params_match
+	report.consumer_parameters_compared = params_compared
+	report.consumer_parameters_first_mismatch = params_first
+	report.consumer_mapdata_match = mapdata_match
+	report.consumer_mapdata_compared = mapdata_compared
+	report.consumer_mapdata_first_mismatch = mapdata_first
+	report.consumer_callback_function_present = type(params.on_map_generated) == "function"
+	report.consumer_recipe_match = params_match and mapdata_match
+		and report.consumer_callback_function_present
+	return report.consumer_recipe_match
+end
+
+function Lazy.ObservePublishedUnderground(map)
+	if type(map) ~= "table" or not map.mapdata or map.mapdata.Environment ~= "Underground" then
+		return false
+	end
+	local surface = Global("MainMap")
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) ~= "table" or type(report) ~= "table" then return false end
+	local callback = type(descriptor.recipe) == "table" and descriptor.recipe.callback or nil
+	report.consumer_callback_tag_match = type(callback) == "table"
+		and callback.tag == Lazy.CALLBACK_TAG and callback.version == Lazy.CALLBACK_VERSION
+	report.consumer_callback_publication_match = Global("UndergroundMap") == map
+	return report.consumer_callback_tag_match and report.consumer_callback_publication_match
+end
+
+function Lazy.PrivateSeed(surface, pending, next_map)
+	local modulus = 2147483647
+	local generator = surface and surface.RandomMapGenObject
+	local surface_seed = type(generator) == "table" and tonumber(generator.Seed) or 0
+	local reserved_seed = type(pending) == "table" and tonumber(pending.seed) or 0
+	local state = (math.abs(math.floor(surface_seed or 0))
+		+ math.abs(math.floor(reserved_seed or 0))) % modulus
+	local material = table.concat({
+		Lazy.DOMAIN,
+		tostring(surface and surface.name or ""),
+		tostring(next_map and next_map.map_name or ""),
+		tostring(next_map and next_map.map_preset or ""),
+	}, "|")
+	for index = 1, #material do
+		state = (state * 48271 + string.byte(material, index) + 1) % modulus
+	end
+	if state == 0 then state = 1 end
+	return state, surface_seed, reserved_seed
+end
+
+function Lazy.BuildCapsulePlan(surface, pending, next_map)
+	local report = {
+		schema = Lazy.SCHEMA,
+		requested = true,
+		used = false,
+		shadow_only = true,
+		literal_v964_continues = true,
+		suppression_used = false,
+		capsules_required = 2,
+		capsules_planned = 0,
+		attempts = 0,
+		error = "",
+	}
+	if type(surface) ~= "table" or type(pending) ~= "table"
+		or type(pending.seed) ~= "number" or type(next_map) ~= "table"
+		or next_map.map_slot ~= 2 or type(next_map.map_name) ~= "string"
+		or next_map.map_name == "" or type(next_map.map_preset) ~= "string" then
+		report.error = "stock underground seed/GenerateNextMap descriptor is incomplete"
+		return nil, report
+	end
+	local get_map_size = surface.GetMapSize
+	local point_fn = Global("point")
+	local snap_world = Global("SnapWorldToHex")
+	local find_buildable = Global("FindBuildableAreaAround")
+	local get_shape = Global("GetExtendedSpawnShape")
+	local world_to_hex = Global("WorldToHex")
+	local hex_to_world = Global("HexToWorld")
+	local const_tbl = Global("const")
+	local object_grid = surface.object_hex_grid
+	local buildable = surface.buildable
+	local minimum_distance = type(const_tbl) == "table"
+		and type(const_tbl.RandomMap) == "table"
+		and tonumber(const_tbl.RandomMap.UndergroundPassagesMinDistance) or nil
+	if type(get_map_size) ~= "function" or type(point_fn) ~= "function"
+		or type(snap_world) ~= "function" or type(find_buildable) ~= "function"
+		or type(get_shape) ~= "function" or type(world_to_hex) ~= "function"
+		or type(hex_to_world) ~= "function" or not object_grid or not buildable
+		or type(minimum_distance) ~= "number" or minimum_distance <= 0 then
+		report.error = "surface capsule planning APIs are unavailable"
+		return nil, report
+	end
+	local size_ok, world_width, world_height = pcall(get_map_size, surface)
+	world_height = world_height or world_width
+	if not size_ok or type(world_width) ~= "number" or type(world_height) ~= "number"
+		or world_width <= 0 or world_height <= 0 then
+		report.error = "expanded surface extent is unavailable"
+		return nil, report
+	end
+	local shape = get_shape("Elevator")
+	if type(shape) ~= "table" or #shape <= 0 then
+		report.error = "Elevator passage footprint is unavailable"
+		return nil, report
+	end
+
+	-- Match the stock concrete/geyser exclusion without using FindPassageSpawnPos's random
+	-- passable-point fallback. The private permutation below simply tries another deterministic
+	-- center when FindBuildableAreaAround rejects one.
+	local concrete_markers = {}
+	local geyser_markers = {}
+	if type(surface.MapGet) == "function" then
+		local concrete_ok, concrete = pcall(surface.MapGet, surface, "map",
+			"TerrainDepositMarker", function(marker) return marker.resource == "Concrete" end)
+		if concrete_ok and type(concrete) == "table" then concrete_markers = concrete end
+		local feature_presets = Global("PrefabFeaturePresets")
+		local char_presets = Global("PrefabFeatureCharPresets")
+		local is_kind_of = Global("IsKindOf")
+		local geyser_ok, geysers = pcall(surface.MapGet, surface, "map",
+			"PrefabFeatureMarker", function(marker)
+				local feature = type(feature_presets) == "table"
+					and feature_presets[marker.FeatureType] or nil
+				if type(feature) ~= "table" or type(feature.chars) ~= "table" then return false end
+				for _, char_name in ipairs(feature.chars) do
+					local preset = type(char_presets) == "table" and char_presets[char_name] or nil
+					if type(is_kind_of) == "function"
+						and is_kind_of(preset, "PrefabFeatureCharPreset_Geyser") then
+						return true
+					end
+				end
+				return false
+			end)
+		if geyser_ok and type(geysers) == "table" then geyser_markers = geysers end
+	end
+	local deposit_filter
+	if #concrete_markers > 0 or #geyser_markers > 0 then
+		deposit_filter = function(q, r)
+			local wx, wy = hex_to_world(q, r)
+			local position = point_fn(wx, wy)
+			for _, marker in ipairs(concrete_markers) do
+				if type(marker.GetObstructionRadius) == "function"
+					and position:Dist2D(marker) <= marker:GetObstructionRadius() then
+					return false
+				end
+			end
+			for _, marker in ipairs(geyser_markers) do
+				if type(marker.FeatureRadius) == "number"
+					and position:Dist2D(marker) <= marker.FeatureRadius then
+					return false
+				end
+			end
+			return true
+		end
+	end
+
+	local private_seed, surface_seed, reserved_seed =
+		Lazy.PrivateSeed(surface, pending, next_map)
+	local private_state = private_seed
+	local modulus = 2147483647
+	local function next_private()
+		private_state = (private_state * 48271 + 1) % modulus
+		if private_state == 0 then private_state = 1 end
+		return private_state
+	end
+	local margin_x = math.floor(world_width / 10)
+	local margin_y = math.floor(world_height / 10)
+	local span_x = math.floor(world_width - 2 * margin_x)
+	local span_y = math.floor(world_height - 2 * margin_y)
+	if span_x <= 0 or span_y <= 0 then
+		report.error = "expanded surface has no certified inner capsule domain"
+		return nil, report
+	end
+	local capsules = {}
+	local max_attempts = 512
+	while #capsules < report.capsules_required and report.attempts < max_attempts do
+		report.attempts = report.attempts + 1
+		local candidate_x = margin_x + (next_private() % span_x)
+		local candidate_y = margin_y + (next_private() % span_y)
+		local angle = (next_private() % 6) * 3600
+		local center = snap_world(point_fn(candidate_x, candidate_y))
+		local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
+			center, angle, shape, deposit_filter)
+		local accepted = find_ok and type(x) == "number" and type(y) == "number"
+			and x >= margin_x and x <= world_width - margin_x
+			and y >= margin_y and y <= world_height - margin_y
+		if accepted then
+			for _, capsule in ipairs(capsules) do
+				local dx, dy = x - capsule.x, y - capsule.y
+				if dx * dx + dy * dy < minimum_distance * minimum_distance then
+					accepted = false
+					break
+				end
+			end
+		end
+		if accepted then
+			local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then
+				accepted = false
+			else
+				capsules[#capsules + 1] = {
+					index = #capsules + 1,
+					x = x, y = y, z = type(z) == "number" and z or 0,
+					q = q, r = r, angle = angle,
+				}
+			end
+		end
+	end
+	report.capsules_planned = #capsules
+	report.private_domain = Lazy.DOMAIN
+	report.private_seed = private_seed
+	report.private_final_state = private_state
+	report.surface_seed = surface_seed
+	report.reserved_underground_seed = reserved_seed
+	report.inner_margin_x = margin_x
+	report.inner_margin_y = margin_y
+	report.minimum_distance = minimum_distance
+	report.concrete_markers = #concrete_markers
+	report.geyser_markers = #geyser_markers
+	if #capsules ~= report.capsules_required then
+		report.error = "private capsule planner did not find exactly two valid inner sites"
+		return nil, report
+	end
+	local digest = private_seed
+	for _, capsule in ipairs(capsules) do
+		digest = (digest * 48271 + math.abs(math.floor(capsule.q)) + 1) % modulus
+		digest = (digest * 48271 + math.abs(math.floor(capsule.r)) + 1) % modulus
+		digest = (digest * 48271 + capsule.angle + 1) % modulus
+	end
+	report.plan_digest = digest
+	report.used = true
+	return capsules, report
+end
+
+function Lazy.Capture(surface, pending, next_map)
+	-- This boundary precedes GenerateRandomMapsFinishing/CityInitialized, which is what schedules
+	-- RunSurfaceStretchIfEnabled. Capture values only here; the source-layout buildable grid is not a
+	-- valid capsule oracle. Final-domain planning is performed by
+	-- Lazy.FinalizePlan only after the scheduled canonical closing rebuild has
+	-- succeeded and before the Surface completion/loading gate is published.
+	local private_seed, surface_seed, reserved_seed =
+		Lazy.PrivateSeed(surface, pending, next_map)
+	local params_state, params_count, params_unsupported = Lazy.CaptureScalarState(next_map, {
+		mapdata = true,
+		on_map_generated = true,
+	})
+	local mapdata = type(next_map) == "table" and next_map.mapdata or nil
+	local mapdata_state, mapdata_count, mapdata_nonprimitive =
+		Lazy.CaptureScalarState(mapdata)
+	local ui_colony = Global("UIColony")
+	local ui_map_seed = type(ui_colony) == "table" and tonumber(ui_colony.map_seed) or nil
+	local recipe_flags_exact = type(next_map) == "table"
+		and next_map.dont_gen_additional == true and next_map.no_new_game == true
+	local mapdata_seed_exact = type(mapdata) == "table"
+		and mapdata.map_randomizeseed == false and type(mapdata.Seed) == "number"
+		and type(ui_map_seed) == "number" and mapdata.Seed == ui_map_seed
+	local callback_present = type(next_map) == "table"
+		and type(next_map.on_map_generated) == "function"
+	local recipe_identity_exact = type(next_map) == "table" and next_map.map_slot == 2
+		and type(next_map.map_name) == "string" and next_map.map_name ~= ""
+		and type(next_map.map_preset) == "string"
+	local recipe_capture_complete = #params_unsupported == 0 and recipe_identity_exact
+		and recipe_flags_exact
+		and mapdata_seed_exact and callback_present
+	local report = {
+		schema = Lazy.SCHEMA,
+		requested = true, used = false, shadow_only = true,
+		literal_v964_continues = true, suppression_used = false,
+		descriptor_captured = true, capsule_plan_pending = true,
+		capsules_required = 2, capsules_planned = 0,
+		private_domain = Lazy.DOMAIN,
+		private_seed = private_seed,
+		surface_seed = surface_seed,
+		reserved_underground_seed = reserved_seed,
+		error = "",
+	}
+	report.recipe_capture_complete = recipe_capture_complete
+	report.recipe_parameters_count = params_count
+	report.recipe_parameters_unsupported = #params_unsupported
+	report.recipe_parameters_unsupported_first = params_unsupported[1] or ""
+	report.recipe_mapdata_primitive_count = mapdata_count
+	report.recipe_mapdata_nonprimitive_count = #mapdata_nonprimitive
+	report.recipe_mapdata_nonprimitive_first = mapdata_nonprimitive[1] or ""
+	report.recipe_nonprimitive_defaults_source = "same-MapData-preset-constructor"
+	report.recipe_nonprimitive_equivalence_proven = false
+	report.recipe_full_state_reconstruction_proven = false
+	report.recipe_reconstruction_exact_scope = "primitive-own-fields-only"
+	report.recipe_flags_exact = recipe_flags_exact
+	report.recipe_identity_exact = recipe_identity_exact
+	report.recipe_map_randomizeseed_false = type(mapdata) == "table"
+		and mapdata.map_randomizeseed == false
+	report.recipe_map_seed_matches_ui_colony = mapdata_seed_exact
+	report.recipe_callback_present = callback_present
+	report.enablement_ready = false
+	report.enablement_blocker =
+		"route execution coverage, final-domain capsule, save-load, access, and RNG proof are incomplete"
+	local construction_controller = Engine.ClassTable and Engine.ClassTable("ConstructionController")
+	local elevator_base = Engine.ClassTable and Engine.ClassTable("ElevatorBase")
+	local unit_class = Engine.ClassTable and Engine.ClassTable("Unit")
+	report.route_change_current_map_slot_api_present = type(Global("ChangeCurrentMapSlot")) == "function"
+	report.route_construction_activate_api_present = type(construction_controller) == "table"
+		and type(construction_controller.Activate) == "function"
+	report.route_elevator_place_construction_api_present = type(elevator_base) == "table"
+		and type(elevator_base.PlaceConstructionSite) == "function"
+	report.route_unit_use_elevator_api_present = type(unit_class) == "table"
+		and type(unit_class.UseElevator) == "function"
+	report.route_presence_complete = report.route_change_current_map_slot_api_present
+		and report.route_construction_activate_api_present
+		and report.route_elevator_place_construction_api_present
+		and report.route_unit_use_elevator_api_present
+	-- v965 only inventories entry-point APIs. No route has been executed through a lazy state
+	-- machine, so presence must never be reported as behavioral coverage.
+	report.route_execution_coverage_proven = false
+	report.access_gate_installed = false
+	report.shared_rng_isolation_proven = false
+
+	local descriptor = {
+		schema = Lazy.SCHEMA,
+		state = "shadow-descriptor-captured-before-underground-allocation",
+		surface_name = tostring(surface and surface.name or ""),
+		map_name = tostring(next_map and next_map.map_name or ""),
+		map_slot = tonumber(next_map and next_map.map_slot) or 0,
+		map_preset = tostring(next_map and next_map.map_preset or ""),
+		reserved_seed = type(pending) == "table" and tonumber(pending.seed) or 0,
+		reservation_boundary = tostring(type(pending) == "table" and pending.boundary or ""),
+		authority_tag = tostring(type(pending) == "table" and pending.authority_tag or "production"),
+		recipe = {
+			schema = Lazy.SCHEMA,
+			parameters = params_state,
+			parameters_primitive_count = params_count,
+			mapdata = {
+				constructor_tag = "MapData[preset_id]:CreateInstance",
+				preset_id = tostring(next_map and next_map.map_name or ""),
+				primitive_state = mapdata_state,
+				primitive_count = mapdata_count,
+				primitive_mutable_overrides_exact = true,
+				nonprimitive_defaults_source = "same-MapData-preset-constructor",
+				nonprimitive_defaults_captured = false,
+				map_randomizeseed = false,
+				Seed = type(mapdata) == "table" and tonumber(mapdata.Seed) or 0,
+				seed_authority = "UIColony.map_seed",
+				seed_authority_value = tonumber(ui_map_seed) or 0,
+			},
+			generator_seed = {
+				value = type(pending) == "table" and tonumber(pending.seed) or 0,
+				authority = "reserved-vanilla-underground-seed",
+				injection = "RandomMapGenerator.FillParams.Seed-before-original-fill",
+			},
+			callback = {
+				tag = Lazy.CALLBACK_TAG,
+				version = Lazy.CALLBACK_VERSION,
+				target_gamevar = "UndergroundMap",
+				value_semantics = "generated-map",
+			},
+			capture_complete = recipe_capture_complete,
+		},
+		private_rng = {
+			domain = Lazy.DOMAIN,
+			algorithm = "lcg-48271-mod-2147483647",
+			seed = private_seed,
+			final_state = private_seed,
+		},
+		capsules = {},
+		plan_digest = 0,
+		literal_v964_continues = true,
+		suppression_used = false,
+	}
+	-- Do not instantiate a second MapData at this pre-underground boundary. Reconstruction is
+	-- deliberately deferred to FinalizePlan, after the eager v964 lifecycle and the canonical final
+	-- Surface grid publication, so the diagnostic cannot perturb pre-object allocation ordering.
+	report.recipe_reconstruction_pending = true
+	report.recipe_reconstruction_exact = false
+	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+	if report.descriptor_primitive ~= true then
+		report.used = false
+		report.error = report.error ~= "" and report.error
+			or "descriptor contains a non-primitive/cyclic value"
+		descriptor = false
+	elseif report.recipe_capture_complete ~= true then
+		report.used = false
+		report.error = report.error ~= "" and report.error
+			or "GenerateNextMap primitive recipe capture is incomplete"
+	end
+	if surface then
+		surface.SuperBigMapLazyUndergroundDescriptor = descriptor
+		surface.SuperBigMapLazyUndergroundFeasibilityReport = report
+	end
+	LoadingStep("lazy underground source-generation feasibility captured", {
+		descriptor_captured = tostring(report.descriptor_captured == true),
+		capsule_plan_pending = tostring(report.capsule_plan_pending == true),
+		descriptor_primitive = tostring(report.descriptor_primitive == true),
+		recipe_capture_complete = tostring(report.recipe_capture_complete == true),
+		recipe_reconstruction_pending = "true",
+		route_presence_complete = tostring(report.route_presence_complete == true),
+		route_execution_coverage_proven = "false",
+		suppression_used = "false", error = tostring(report.error),
+	}, surface)
+	return report.descriptor_primitive == true and report.recipe_capture_complete == true, report
+end
+
+function Lazy.FinalizePlan(surface)
+	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	if type(descriptor) ~= "table" or type(report) ~= "table"
+		or descriptor.state ~= "shadow-descriptor-captured-before-underground-allocation" then
+		return false, "captured lazy underground descriptor is unavailable"
+	end
+	local pending = {
+		seed = descriptor.reserved_seed,
+		boundary = descriptor.reservation_boundary,
+		authority_tag = descriptor.authority_tag,
+	}
+	local next_map = {
+		map_name = descriptor.map_name,
+		map_slot = descriptor.map_slot,
+		map_preset = descriptor.map_preset,
+	}
+	-- This is the first descriptor reconstruction. It is intentionally post-underground-generation
+	-- and post-canonical-Surface-finalization in the v965 shadow path.
+	local reconstructed, reconstruct_error = Lazy.ReconstructRecipeValues(descriptor)
+	report.recipe_reconstruction_pending = false
+	report.recipe_reconstruction_available = type(reconstructed) == "table"
+	report.recipe_reconstruction_error = tostring(reconstruct_error or "")
+	local reconstructed_params_match, reconstructed_params_count = false, 0
+	local reconstructed_mapdata_match, reconstructed_mapdata_count = false, 0
+	if type(reconstructed) == "table" then
+		reconstructed_params_match, reconstructed_params_count =
+			Lazy.CompareScalarState(descriptor.recipe.parameters, reconstructed.params)
+		reconstructed_mapdata_match, reconstructed_mapdata_count = Lazy.CompareScalarState(
+			descriptor.recipe.mapdata.primitive_state, reconstructed.params.mapdata)
+	end
+	report.recipe_reconstruction_parameters_match = reconstructed_params_match
+	report.recipe_reconstruction_parameters_compared = reconstructed_params_count
+	report.recipe_reconstruction_mapdata_match = reconstructed_mapdata_match
+	report.recipe_reconstruction_mapdata_compared = reconstructed_mapdata_count
+	report.recipe_reconstruction_exact = report.recipe_capture_complete == true
+		and reconstructed_params_match and reconstructed_mapdata_match
+		and type(reconstructed) == "table"
+		and reconstructed.generator_seed == descriptor.reserved_seed
+		and reconstructed.callback_tag == Lazy.CALLBACK_TAG
+		and reconstructed.callback_version == Lazy.CALLBACK_VERSION
+	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
+	local repeat_capsules, repeat_report = Lazy.BuildCapsulePlan(
+		surface, pending, next_map)
+	local repeat_exact = capsules ~= nil and repeat_capsules ~= nil
+		and plan_report.plan_digest == repeat_report.plan_digest
+		and #capsules == #repeat_capsules
+	if repeat_exact then
+		for index, capsule in ipairs(capsules) do
+			local twin = repeat_capsules[index]
+			if not twin or capsule.x ~= twin.x or capsule.y ~= twin.y
+				or capsule.z ~= twin.z or capsule.q ~= twin.q or capsule.r ~= twin.r
+				or capsule.angle ~= twin.angle then
+				repeat_exact = false
+				break
+			end
+		end
+	end
+	for key, value in pairs(plan_report) do report[key] = value end
+	report.descriptor_captured = true
+	report.capsule_plan_pending = false
+	report.deterministic_repeat = repeat_exact
+	report.plan_boundary = "after-canonical-final-grid-rebuild-before-surface-publication"
+	report.selection_grid_current = surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true
+	report.final_grid_revalidation = report.selection_grid_current
+	-- The shadow run intentionally retains v964's eager passage pair, so its object-grid obstruction
+	-- set is a conservative superset of the future absent-underground run. A phase-2 probe must prove
+	-- the same planner on the no-eager-passage branch before these sites may be published.
+	report.shadow_contains_eager_passage_obstructions = true
+	report.recipe_consumer_exact = report.recipe_reconstruction_exact == true
+		and report.consumer_recipe_match == true
+		and report.consumer_fill_randomize_forced == true
+		and report.consumer_generator_seed_recipe_match == true
+		and report.consumer_seed_match == true and report.consumer_map_match == true
+		and report.consumer_callback_tag_match == true
+		and report.consumer_callback_publication_match == true
+	report.used = report.used == true and report.recipe_consumer_exact == true
+	report.enablement_ready = false
+	if report.recipe_consumer_exact ~= true then
+		report.enablement_blocker =
+			"captured GenerateNextMap recipe did not match every eager consumer/publication boundary"
+	elseif not repeat_exact or capsules == nil then
+		report.enablement_blocker = "final-domain capsule plan did not repeat exactly"
+	else
+		report.enablement_blocker =
+			"nonprimitive constructor equivalence, route execution coverage, suppression, access, save-load, and RNG isolation are not implemented"
+	end
+	report.access_gate_installed = false
+	report.shared_rng_isolation_proven = false
+	descriptor.capsules = capsules or {}
+	descriptor.plan_digest = tonumber(plan_report.plan_digest) or 0
+	descriptor.private_rng.final_state = tonumber(plan_report.private_final_state)
+		or descriptor.private_rng.seed
+	descriptor.state = capsules and repeat_exact
+		and "shadow-final-domain-capsules-planned" or "shadow-final-domain-capsule-plan-failed"
+	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
+	if report.descriptor_primitive ~= true then
+		report.used = false
+		report.error = report.error ~= "" and report.error
+			or "final descriptor contains a non-primitive/cyclic value"
+		descriptor.capsules = {}
+		descriptor.plan_digest = 0
+		descriptor.state = "shadow-final-domain-capsule-plan-failed"
+	end
+	LoadingStep("lazy underground final-domain capsule feasibility planned", {
+		used = tostring(report.used == true), capsules = report.capsules_planned,
+		digest = tostring(report.plan_digest), repeat_exact = tostring(repeat_exact),
+		selection_grid_current = tostring(report.selection_grid_current == true),
+		final_grid_revalidation = tostring(report.final_grid_revalidation == true),
+		descriptor_primitive = tostring(report.descriptor_primitive == true),
+		shadow_eager_passage_obstructions = "true", suppression_used = "false",
+		error = tostring(report.error),
+	}, surface)
+	return report.used == true and repeat_exact == true
+		and report.selection_grid_current == true and report.final_grid_revalidation == true
+		and report.descriptor_primitive == true, report
+end
+
+function Lazy.FinalizePlanSafe(surface)
+	local call_ok, used, report = pcall(Lazy.FinalizePlan, surface)
+	if call_ok then return used == true, report end
+	report = type(surface.SuperBigMapLazyUndergroundFeasibilityReport) == "table"
+		and surface.SuperBigMapLazyUndergroundFeasibilityReport or {}
+	report.schema = Lazy.SCHEMA
+	report.requested = true
+	report.used = false
+	report.literal_v964_continues = true
+	report.suppression_used = false
+	report.enablement_ready = false
+	report.error = "final-domain feasibility plan raised: " .. tostring(used)
+	surface.SuperBigMapLazyUndergroundFeasibilityReport = report
+	return false, report
+end
+
+	SuperBigMap.LazyUndergroundFeasibility = Lazy
+end
+
 local function PatchAdditionalMapSeedReservation()
 	local State = SuperBigMap.State
 	local generator_class = Global("RandomMapGenerator")
@@ -8784,6 +9474,26 @@ local function PatchAdditionalMapSeedReservation()
 		local pending = State.pending_vanilla_underground_seed
 		if pending then
 			local next_map = Global("GenerateNextMap")
+			if type(next_map) == "table" and next_map.map_slot == 2
+				and cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+				local lazy = SuperBigMap.LazyUndergroundFeasibility
+				local capture_ok, capture_result, capture_report = pcall(
+					lazy and lazy.Capture, map, pending, next_map)
+				if not capture_ok and map then
+					map.SuperBigMapLazyUndergroundDescriptor = false
+					map.SuperBigMapLazyUndergroundFeasibilityReport = {
+						schema = lazy and lazy.SCHEMA or 1,
+						requested = true, used = false, shadow_only = true,
+						literal_v964_continues = true, suppression_used = false,
+						error = "feasibility capture raised: " .. tostring(capture_result),
+						enablement_ready = false,
+					}
+				elseif capture_ok and capture_result ~= true and type(capture_report) == "table" then
+					-- The report was already published by the helper. Literal generation proceeds.
+					capture_report.literal_v964_continues = true
+					capture_report.suppression_used = false
+				end
+			end
 			if type(next_map) ~= "table" or next_map.map_slot ~= 2 then
 				State.pending_vanilla_underground_seed = nil
 				State.underground_seed_reservation_trace = nil
@@ -8838,10 +9548,31 @@ local function PatchAdditionalMapSeedReservation()
 		trace.consumer_status = "pending_injected"
 		local previous_randomize = map_data.map_randomizeseed
 		map_data.map_randomizeseed = false
+		local consumer_randomize_forced = map_data.map_randomizeseed == false
 		State.pending_vanilla_underground_seed = nil
 		local results = PackValues(pcall(original_fill, gen, map_name, seeded_params))
 		map_data.map_randomizeseed = previous_randomize
 		trace.consumer_seed = gen and gen.Seed
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+			local surface = Global("MainMap")
+			local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
+			local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+			if type(descriptor) == "table" and type(report) == "table" then
+				local recipe = type(descriptor.recipe) == "table" and descriptor.recipe or nil
+				report.consumer_map_name = tostring(map_name or "")
+				report.consumer_seed = tonumber(trace.consumer_seed) or 0
+				report.consumer_seed_match = report.consumer_seed == descriptor.reserved_seed
+				report.consumer_map_match = report.consumer_map_name == descriptor.map_name
+				report.consumer_fill_randomize_forced = consumer_randomize_forced
+				report.consumer_generator_seed_recipe_match = type(recipe) == "table"
+					and type(recipe.generator_seed) == "table"
+					and report.consumer_seed == recipe.generator_seed.value
+				report.literal_fill_completed = results[1] == true
+				descriptor.shadow_consumer_seed = report.consumer_seed
+				descriptor.shadow_consumer_seed_match = report.consumer_seed_match
+				descriptor.shadow_consumer_map_match = report.consumer_map_match
+			end
+		end
 		SuperBigMap.TraceUndergroundSeedReservation("CONSUMER", {
 			boundary = tostring(trace.boundary),
 			reserved_seed = tostring(trace.reserved_seed),
@@ -9843,6 +10574,13 @@ local function PatchRandomMapGenerator()
 
 	local generate_wrapper = function(self, params)
 		params = type(params) == "table" and params or {}
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+			local feasibility = SuperBigMap.LazyUndergroundFeasibility
+			if type(feasibility) == "table"
+				and type(feasibility.ObserveGenerateParameters) == "function" then
+				pcall(feasibility.ObserveGenerateParameters, params)
+			end
+		end
 		local blank_map = self and self.BlankMap
 		local map_name = params.map_name or blank_map
 		if blank_map and blank_map ~= "" then
@@ -11672,6 +12410,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 				if revalidation_ok then
 					map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
 					map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+					if SuperBigMap.LazyUndergroundFeasibility then
+						SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
+					end
 					publish_deferred_surface_completion()
 				else
 					map.SuperBigMapSurfacePostPipelineRevalidationError = tostring(revalidation_err)
@@ -11691,6 +12432,9 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 						map.SuperBigMapSurfacePostPipelineRevalidationMode = "synchronous-fallback"
 						map.SuperBigMapSurfacePostPipelineRevalidationComplete = true
 						map.SuperBigMapSurfacePostPipelineRevalidationError = nil
+						if SuperBigMap.LazyUndergroundFeasibility then
+							SuperBigMap.LazyUndergroundFeasibility.FinalizePlanSafe(map)
+						end
 						publish_deferred_surface_completion()
 					else
 						map.SuperBigMapSurfacePostPipelineRevalidationScheduled = nil
@@ -12832,6 +13576,13 @@ local function NotifyGenerationMilestone(map, milestone, source)
 	if milestone == "MapGenerated" then
 		map.SuperBigMapNativeGenerationComplete = true
 		map.SuperBigMapNativeGenerationCompleteSource = tostring(source or milestone)
+		if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false) then
+			local feasibility = SuperBigMap.LazyUndergroundFeasibility
+			if type(feasibility) == "table"
+				and type(feasibility.ObservePublishedUnderground) == "function" then
+				pcall(feasibility.ObservePublishedUnderground, map)
+			end
+		end
 	elseif milestone == "CityInitialized" then
 		map.SuperBigMapCityInitializationComplete = true
 	else
@@ -14012,6 +14763,15 @@ MapGeneration.RecoverLoadedUndergroundReadiness =
 	SuperBigMap.GenerationReadiness.RecoverLoadedUnderground
 MapGeneration.ReinvalidateExpandedTerrain = ReinvalidateExpandedTerrain
 MapGeneration.RestorePreparedMapDataForVanillaSession = RestorePreparedMapDataForVanillaSession
+if cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION_FEASIBILITY", false)
+	and type(SuperBigMap.LazyUndergroundFeasibility) == "table" then
+	MapGeneration.BuildLazyUndergroundCapsulePlanForTest =
+		SuperBigMap.LazyUndergroundFeasibility.BuildCapsulePlan
+	MapGeneration.LazyUndergroundDescriptorIsPrimitiveForTest =
+		SuperBigMap.LazyUndergroundFeasibility.PrimitiveTree
+	MapGeneration.ReconstructLazyUndergroundRecipeValuesForTest =
+		SuperBigMap.LazyUndergroundFeasibility.ReconstructRecipeValues
+end
 
 function MapGeneration.ApplyModBehavior()
 	local generate_source = cfg_bool("EXPANSION_STEP_01_GENERATE_AND_CAPTURE_VANILLA_SOURCE", false)
