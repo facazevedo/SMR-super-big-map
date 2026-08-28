@@ -11335,6 +11335,32 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								and repulsion_stats.surface_quota_topups,
 							surface_quota_spacing_violations = repulsion_stats
 								and repulsion_stats.surface_quota_spacing_violations,
+							spatial_index_requested = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_requested,
+							spatial_index_used = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_used,
+							spatial_index_fallback = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_fallback_reason,
+							spatial_index_checked_pairs = repulsion_stats
+								and repulsion_stats.checked_pairs,
+							spatial_index_native_pairs_skipped = repulsion_stats
+								and repulsion_stats.native_pairs_skipped,
+							spatial_index_candidate_pairs = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_candidate_pairs,
+							spatial_index_pruned_pairs = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_pruned_pairs,
+							spatial_index_nearby_pairs = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_nearby_pairs,
+							spatial_index_world_bucket_size = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_world_bucket_size,
+							spatial_index_hex_bucket_size = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_hex_bucket_size,
+							spatial_index_maximum_world_radius = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_maximum_world_radius,
+							spatial_index_world_buckets = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_world_buckets,
+							spatial_index_hex_buckets = repulsion_stats
+								and repulsion_stats.hard_spacing_spatial_index_hex_buckets,
 						}, repulsion_ok == true)
 						if repulsion_ok ~= true then
 							error("surface top-up spacing audit failed: density_failures="

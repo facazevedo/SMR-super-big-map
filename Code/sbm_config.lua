@@ -283,6 +283,11 @@ config.MountainBaseOutermostResourceMinimumPercent = 60
 -- the eventual resource type is not known yet.
 config.MountainBaseQuotaMinimumHexDistance = 3
 config.TopUpEnrichmentMinimumHexDistance = 3
+-- The final surface spacing audit retains the exact marker order, pair counters, predicates, and
+-- first-violation order while a conservative dual spatial index omits pairs that are provably too
+-- far apart to affect any rule. Underground retains the literal quadratic audit, and any failed
+-- coverage certificate falls back to it on the surface as well.
+config.OptimizeTopUpHardSpacingSpatialIndex = true
 -- A two-sector ring has materially less natural flat foothill area than the prior three-sector
 -- policy. Retain only the smallest extra set of deterministic low-slope foothills needed to
 -- satisfy vanilla's unchanged resource clearance, never broad terrain shelves.
@@ -939,6 +944,8 @@ C.MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE = math.max(1,
 	math.floor(as_number(config.MountainBaseQuotaMinimumHexDistance, 3)))
 C.TOPUP_ENRICHMENT_MINIMUM_HEX_DISTANCE = math.max(1,
 	math.floor(as_number(config.TopUpEnrichmentMinimumHexDistance, 3)))
+C.OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX =
+	as_bool(config.OptimizeTopUpHardSpacingSpatialIndex)
 C.MOUNTAIN_BASE_APRON_MAXIMUM_COUNT = math.max(0,
 	math.floor(as_number(config.MountainBaseApronMaximumCount, 288)))
 C.MOUNTAIN_BASE_APRON_CORE_RADIUS_HEXES = math.max(2,

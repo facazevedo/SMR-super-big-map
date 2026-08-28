@@ -436,6 +436,42 @@ static_checks = {
             "rocket_relief_center_mismatches",
         )
     ),
+    "surface_hard_spacing_spatial_index_is_enabled": (
+        "config.OptimizeTopUpHardSpacingSpatialIndex = true" in CONFIG
+        and "C.OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX" in CONFIG
+        and "cfg().OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX == true" in DEPOSITS
+    ),
+    "surface_hard_spacing_spatial_index_is_dual_and_surface_only": all(
+        token in DEPOSITS
+        for token in (
+            "local function BuildSurfaceHardSpacingCandidateRows",
+            "local world_buckets, hex_buckets = {}, {}",
+            "maximum_world_radius = 2 * max_component",
+            "if spatial_index_requested and not underground then",
+            '"underground literal path"',
+        )
+    ),
+    "surface_hard_spacing_spatial_index_preserves_order_and_fallback": all(
+        token in DEPOSITS
+        for token in (
+            "table.sort(nearby)",
+            "for _, j in ipairs(candidate_rows[i] or {}) do",
+            "audit_checked_pair(a, entries[j])",
+            "-- Literal exact fallback: preserve the original full pair order",
+            "for j = i + 1, #entries do",
+            "audit_checked_pair(a, b)",
+        )
+    ),
+    "surface_hard_spacing_spatial_index_reports_pair_budget": all(
+        token in DEPOSITS + GENERATION
+        for token in (
+            "hard_spacing_spatial_index_requested",
+            "hard_spacing_spatial_index_used",
+            "hard_spacing_spatial_index_fallback_reason",
+            "hard_spacing_spatial_index_candidate_pairs",
+            "hard_spacing_spatial_index_pruned_pairs",
+        )
+    ),
     "native_raster_retains_legacy_fallback_from_raw_source": (
         "local function apply_legacy_raster()" in outer_resource_terrain
         and "local working = grid:clone()" in outer_resource_terrain
@@ -1063,7 +1099,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_960": "'version', 960" in METADATA,
+    "version_is_961": "'version', 961" in METADATA,
 }
 
 case_results = []

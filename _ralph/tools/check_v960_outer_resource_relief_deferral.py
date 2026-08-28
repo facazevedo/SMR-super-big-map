@@ -190,7 +190,9 @@ def main() -> int:
             token not in scorer + winner
             for token in ("AsyncRand", "InteractionRand", "BraidRandom")
         ),
-        "metadata_v960": "'version', 960," in metadata,
+        "metadata_v960_or_later": any(
+            f"'version', {version}," in metadata for version in range(960, 1000)
+        ),
     }
     corpus = semantic_corpus()
     checks.update({

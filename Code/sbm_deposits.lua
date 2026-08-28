@@ -1930,6 +1930,145 @@ local function PairRepulsionRadius(a, b)
 	return a.repulse_same + b.repulse_same
 end
 
+-- Build an exact, conservative candidate journal for the final SURFACE spacing audit. The
+-- journal is only an acceleration structure: every selected pair is later evaluated by the
+-- unchanged predicates in the original lexicographic (i,j) order. Two independent indexes are
+-- required. World buckets cover vanilla profile radii, while axial buckets cover duplicate-hex,
+-- enrichment, quota, and outer-anomaly rules even when those extend beyond vanilla repulsion.
+-- Any value that prevents a finite coverage proof fails closed to the literal quadratic walk.
+local function BuildSurfaceHardSpacingCandidateRows(entries, minimum_enrichment_hex_distance,
+	minimum_outer_ring_anomaly_hex_distance, minimum_quota_hex_distance)
+	local function finite_number(value)
+		return type(value) == "number" and value == value
+			and value ~= math.huge and value ~= -math.huge
+	end
+	local minimum_hex_distance = math.max(minimum_enrichment_hex_distance,
+		minimum_outer_ring_anomaly_hex_distance, minimum_quota_hex_distance)
+	if not finite_number(minimum_hex_distance) or minimum_hex_distance < 1 then
+		return nil, "invalid maximum hex distance"
+	end
+	minimum_hex_distance = math.ceil(minimum_hex_distance)
+
+	local max_component = 0
+	for i, entry in ipairs(entries) do
+		if not finite_number(entry.x) or not finite_number(entry.y) then
+			return nil, "non-finite world position at entry " .. tostring(i)
+		end
+		if entry.density_fallback == true or entry.well_spaced_fallback == true then
+			return nil, "underground fallback entry in surface certificate"
+		end
+		if entry.q ~= nil or entry.r ~= nil then
+			if not finite_number(entry.q) or not finite_number(entry.r) then
+				return nil, "non-finite partial axial position at entry " .. tostring(i)
+			end
+		end
+		local profile = entry.profile
+		if profile ~= nil then
+			for _, field in ipairs({ "repulse_same", "repulse_layer", "repulse_all" }) do
+				local value = profile[field]
+				if not finite_number(value) or value < 0 then
+					return nil, "invalid " .. field .. " at entry " .. tostring(i)
+				end
+				max_component = math.max(max_component, value)
+			end
+		end
+	end
+	local maximum_world_radius = 2 * max_component
+	if not finite_number(maximum_world_radius) or maximum_world_radius < 0 then
+		return nil, "invalid maximum world radius"
+	end
+	local world_bucket_size = math.max(1, math.ceil(maximum_world_radius))
+	if not finite_number(world_bucket_size) then
+		return nil, "invalid world bucket size"
+	end
+
+	local world_buckets, hex_buckets = {}, {}
+	local world_bucket_count, hex_bucket_count = 0, 0
+	local function bucket_coordinate(value, size)
+		return math.floor((value + 0.0) / size)
+	end
+	local function add_to_bucket(buckets, bx, by, index)
+		local column = buckets[bx]
+		if not column then
+			column = {}
+			buckets[bx] = column
+		end
+		local bucket = column[by]
+		if not bucket then
+			bucket = {}
+			column[by] = bucket
+		end
+		bucket[#bucket + 1] = index
+		return #bucket == 1
+	end
+	for i, entry in ipairs(entries) do
+		if add_to_bucket(world_buckets,
+			bucket_coordinate(entry.x, world_bucket_size),
+			bucket_coordinate(entry.y, world_bucket_size), i) then
+			world_bucket_count = world_bucket_count + 1
+		end
+		if entry.q ~= nil and entry.r ~= nil
+			and add_to_bucket(hex_buckets,
+				bucket_coordinate(entry.q, minimum_hex_distance),
+				bucket_coordinate(entry.r, minimum_hex_distance), i) then
+			hex_bucket_count = hex_bucket_count + 1
+		end
+	end
+
+	local function append_neighbourhood(buckets, bx, by, current, serial, marks, nearby)
+		for offset_x = -1, 1 do
+			local column = buckets[bx + offset_x]
+			if column then
+				for offset_y = -1, 1 do
+					local bucket = column[by + offset_y]
+					if bucket then
+						for _, other in ipairs(bucket) do
+							if other > current and marks[other] ~= serial then
+								marks[other] = serial
+								nearby[#nearby + 1] = other
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	local rows, marks = {}, {}
+	local candidate_pairs, nearby_pairs = 0, 0
+	for i = 1, #entries - 1 do
+		local entry = entries[i]
+		local nearby, serial = {}, i
+		append_neighbourhood(world_buckets,
+			bucket_coordinate(entry.x, world_bucket_size),
+			bucket_coordinate(entry.y, world_bucket_size), i, serial, marks, nearby)
+		if entry.q ~= nil and entry.r ~= nil then
+			append_neighbourhood(hex_buckets,
+				bucket_coordinate(entry.q, minimum_hex_distance),
+				bucket_coordinate(entry.r, minimum_hex_distance), i, serial, marks, nearby)
+		end
+		table.sort(nearby)
+		local row = {}
+		for _, j in ipairs(nearby) do
+			nearby_pairs = nearby_pairs + 1
+			if entry.topup == true or entries[j].topup == true then
+				row[#row + 1] = j
+				candidate_pairs = candidate_pairs + 1
+			end
+		end
+		rows[i] = row
+	end
+	return rows, {
+		candidate_pairs = candidate_pairs,
+		nearby_pairs = nearby_pairs,
+		world_bucket_size = world_bucket_size,
+		hex_bucket_size = minimum_hex_distance,
+		maximum_world_radius = maximum_world_radius,
+		world_bucket_count = world_bucket_count,
+		hex_bucket_count = hex_bucket_count,
+	}
+end
+
 -- Vanilla applies the family repulsion fields while selecting each new enrichment location.
 -- Native resource deposits may contain several adjacent marker objects in one generated cluster,
 -- so those preserved native/native pairs are intentionally not rewritten. Every NEW top-up is,
@@ -8294,6 +8433,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	local underground = IsUndergroundMap(map)
 	local MIN_OUTER_RING_ANOMALY_HEX_DISTANCE = 10
 	local MIN_ENRICHMENT_HEX_DISTANCE = TopUpEnrichmentMinimumHexDistance()
+	local spatial_index_requested = cfg().OPTIMIZE_TOPUP_HARD_SPACING_SPATIAL_INDEX == true
 	local stats = {
 		reason = tostring(reason or "final"), markers = 0, topups = 0,
 		checked_pairs = 0, native_pairs_skipped = 0, missing_positions = 0,
@@ -8320,6 +8460,17 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 		density_failures = 0, density_status = "", resource_shortfall = 0,
 		anomaly_shortfall = 0, effect_shortfall = 0,
 		resource_ignored_rubble_walls = 0, wall_aware_shared_candidates = 0,
+		hard_spacing_spatial_index_requested = spatial_index_requested,
+		hard_spacing_spatial_index_used = false,
+		hard_spacing_spatial_index_fallback_reason = "",
+		hard_spacing_spatial_index_candidate_pairs = 0,
+		hard_spacing_spatial_index_pruned_pairs = 0,
+		hard_spacing_spatial_index_nearby_pairs = 0,
+		hard_spacing_spatial_index_world_bucket_size = 0,
+		hard_spacing_spatial_index_hex_bucket_size = 0,
+		hard_spacing_spatial_index_maximum_world_radius = 0,
+		hard_spacing_spatial_index_world_buckets = 0,
+		hard_spacing_spatial_index_hex_buckets = 0,
 	}
 	do
 		local density = map.SuperBigMapEnrichmentTopUpStatus
@@ -8427,14 +8578,7 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 	end
 	stats.underground_fallback_min_selected_spacing_world = fallback_selected_spacing_min or 0
 	local fallback_actual_min_spacing_sq, fallback_actual_min_hex_distance
-	for i = 1, #entries - 1 do
-		local a = entries[i]
-		for j = i + 1, #entries do
-			local b = entries[j]
-			if not a.topup and not b.topup then
-				stats.native_pairs_skipped = stats.native_pairs_skipped + 1
-			else
-				stats.checked_pairs = stats.checked_pairs + 1
+	local function audit_checked_pair(a, b)
 				local duplicate_hex = a.hex and b.hex and a.hex == b.hex
 				if duplicate_hex then
 					stats.duplicate_hex_pairs = stats.duplicate_hex_pairs + 1
@@ -8561,6 +8705,79 @@ function DepositRules.AuditTopUpVanillaRepulsion(map, reason)
 							}, "|")
 						end
 					end
+				end
+	end
+
+	local candidate_rows, index_report
+	if spatial_index_requested and not underground then
+		local minimum_quota_hex_distance = math.max(1, math.floor(
+			cfg().MOUNTAIN_BASE_QUOTA_MINIMUM_HEX_DISTANCE or 3))
+		local build_ok, build_rows, build_report = pcall(
+			BuildSurfaceHardSpacingCandidateRows, entries,
+			MIN_ENRICHMENT_HEX_DISTANCE, MIN_OUTER_RING_ANOMALY_HEX_DISTANCE,
+			minimum_quota_hex_distance)
+		if build_ok and type(build_rows) == "table" and type(build_report) == "table" then
+			candidate_rows, index_report = build_rows, build_report
+		else
+			stats.hard_spacing_spatial_index_fallback_reason = build_ok
+				and tostring(build_report or "certificate unavailable")
+				or ("certificate error: " .. tostring(build_rows))
+		end
+	elseif not spatial_index_requested then
+		stats.hard_spacing_spatial_index_fallback_reason = "disabled"
+	else
+		stats.hard_spacing_spatial_index_fallback_reason = "underground literal path"
+	end
+
+	local native_entries, checked_pair_budget = 0, 0
+	if candidate_rows then
+		for _, entry in ipairs(entries) do
+			if entry.topup ~= true then native_entries = native_entries + 1 end
+		end
+		local total_pairs = #entries * (#entries - 1) / 2
+		local native_pair_budget = native_entries * (native_entries - 1) / 2
+		checked_pair_budget = total_pairs - native_pair_budget
+		local candidate_pair_budget = index_report.candidate_pairs
+		if type(candidate_pair_budget) ~= "number" or candidate_pair_budget ~= candidate_pair_budget
+			or candidate_pair_budget < 0 or candidate_pair_budget > checked_pair_budget
+			or #candidate_rows ~= math.max(0, #entries - 1) then
+			candidate_rows, index_report = nil, nil
+			stats.hard_spacing_spatial_index_fallback_reason =
+				"certificate pair accounting mismatch"
+		end
+	end
+
+	if candidate_rows then
+		stats.native_pairs_skipped = native_entries * (native_entries - 1) / 2
+		stats.checked_pairs = checked_pair_budget
+		stats.hard_spacing_spatial_index_used = true
+		stats.hard_spacing_spatial_index_candidate_pairs = index_report.candidate_pairs
+		stats.hard_spacing_spatial_index_pruned_pairs =
+			stats.checked_pairs - index_report.candidate_pairs
+		stats.hard_spacing_spatial_index_nearby_pairs = index_report.nearby_pairs
+		stats.hard_spacing_spatial_index_world_bucket_size = index_report.world_bucket_size
+		stats.hard_spacing_spatial_index_hex_bucket_size = index_report.hex_bucket_size
+		stats.hard_spacing_spatial_index_maximum_world_radius =
+			index_report.maximum_world_radius
+		stats.hard_spacing_spatial_index_world_buckets = index_report.world_bucket_count
+		stats.hard_spacing_spatial_index_hex_buckets = index_report.hex_bucket_count
+		for i = 1, #entries - 1 do
+			local a = entries[i]
+			for _, j in ipairs(candidate_rows[i] or {}) do
+				audit_checked_pair(a, entries[j])
+			end
+		end
+	else
+		-- Literal exact fallback: preserve the original full pair order and pair accounting.
+		for i = 1, #entries - 1 do
+			local a = entries[i]
+			for j = i + 1, #entries do
+				local b = entries[j]
+				if not a.topup and not b.topup then
+					stats.native_pairs_skipped = stats.native_pairs_skipped + 1
+				else
+					stats.checked_pairs = stats.checked_pairs + 1
+					audit_checked_pair(a, b)
 				end
 			end
 		end
@@ -10499,6 +10716,18 @@ function DepositRules.DebugAuditFinalEnrichments(map, reason)
 		repulsion_first_duplicate_hex_pair = tostring(
 			repulsion_stats and repulsion_stats.first_duplicate_hex_pair),
 		repulsion_violations = tostring(repulsion_stats and repulsion_stats.repulsion_violations),
+		repulsion_spatial_index_requested = tostring(repulsion_stats
+			and repulsion_stats.hard_spacing_spatial_index_requested),
+		repulsion_spatial_index_used = tostring(repulsion_stats
+			and repulsion_stats.hard_spacing_spatial_index_used),
+		repulsion_spatial_index_fallback = tostring(repulsion_stats
+			and repulsion_stats.hard_spacing_spatial_index_fallback_reason),
+		repulsion_spatial_index_checked_pairs = tostring(repulsion_stats
+			and repulsion_stats.checked_pairs),
+		repulsion_spatial_index_candidate_pairs = tostring(repulsion_stats
+			and repulsion_stats.hard_spacing_spatial_index_candidate_pairs),
+		repulsion_spatial_index_pruned_pairs = tostring(repulsion_stats
+			and repulsion_stats.hard_spacing_spatial_index_pruned_pairs),
 		ring_ok = tostring(ring_ok), ring_violations = tostring(ring_stats and ring_stats.violations),
 		resource_status = type(density.resources) == "table" and tostring(density.resources.complete) or "missing",
 		resource_shortfall = type(density.resources) == "table" and density.resources.remaining_shortfall or "missing",
