@@ -314,12 +314,14 @@ config.OptimizeOuterResourceTerrainNativeRaster = true
 -- Install the completed native working height field through the stock editor difference-box path.
 -- All boxes and their before/after snapshots are validated before the first write. Any unavailable
 -- API, malformed box, write failure, or whole-grid verification failure rolls back captured writes
--- and falls back to terrain.SetHeightGrid. The later canonical whole-map gameplay-grid rebuild is
--- deliberately retained; this flag only avoids the full setter's global cache invalidation.
+-- and falls back to terrain.SetHeightGrid. Each successful synchronous patch notification is tagged;
+-- only an exact verified eight-patch sequence later superseded by the four outer-ring rebuilds may
+-- participate in the ownership-certified regional closing pass.
 config.OptimizeOuterResourceTerrainPatchInstall = true
 -- Resource terrain edits are confined to the physical outer two-sector ring. Rebuild passability
 -- only for that ring (plus the stock two-pass-tile dependency margin) before the resource audit;
--- later whole-map final rebuilds remain unchanged and authoritative.
+-- the closing pass remains globally authoritative through its strict regional certificate or its
+-- unchanged whole-map fallback.
 config.OptimizeOuterResourceTerrainRingRebuild = true
 -- On the initial pass, retain the broad natural feather, then settle connected components containing
 -- a high-relief extractor or landing pad once with the minimum transition width. This mirrors the

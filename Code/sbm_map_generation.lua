@@ -10884,6 +10884,9 @@ function SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords(journal)
 		or type(trace) ~= "table" or #trace ~= event_count then
 		return false, "owned pass certificate trace is incomplete"
 	end
+	if event_count ~= 23 then
+		return false, "owned pass certificate expected exactly twenty-three notifications"
+	end
 	local function validated_serial(record)
 		if type(record) ~= "table" then return false, nil end
 		local serial = record[5]
@@ -10929,20 +10932,21 @@ function SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords(journal)
 			retained[#retained + 1] = record
 		end
 	end
-	-- The accepted v953 discriminator shape is part of this optimization's proof: four
-	-- synchronous owned edge-strip rebuilds, each emitting exactly one notification, followed
-	-- by eleven unowned notifications. Any lifecycle drift retains correctness by taking the
-	-- canonical whole-map fallback instead of weakening the ownership certificate.
-	if next_serial ~= 4 or owner_serials_with_events ~= 4
-		or excluded ~= 4 or #retained ~= 11 then
-		return false, "owned pass certificate expected exactly four owned and eleven residual notifications"
+	-- v957's accepted shape causally owns eight verified editor height-patch notifications
+	-- (serials 1..8), then four successful outer-ring rebuild notifications (serials 9..12).
+	-- The later ring strips contain every patch box and therefore supersede those earlier writes;
+	-- eleven genuinely residual events remain for the closing regional pass. Any shape drift takes
+	-- the canonical whole-map fallback rather than weakening the certificate.
+	if next_serial ~= 12 or owner_serials_with_events ~= 12
+		or excluded ~= 12 or #retained ~= 11 then
+		return false, "owned pass certificate expected exactly twelve owned and eleven residual notifications"
 	end
 	journal.records = retained
 	report.excluded_owned_boxes = excluded
 	report.certificate_input_boxes = #retained
 	report.owner_serials_with_events = owner_serials_with_events
 	report.boxes = #retained
-	report.owner_exact_four = true
+	report.owner_exact_twelve = true
 	report.ownership_certificate = true
 	return true
 end
@@ -11117,6 +11121,15 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	local epoch_unsafe_modified_attempts =
 		resource_terrain_report.patch_install_epoch_unsafe_modified_attempts
 	local epoch_modified_cells = resource_terrain_report.patch_install_epoch_modified_cells
+	local epoch_patch_boxes = resource_terrain_report.patch_install_epoch_patch_boxes
+	local epoch_owner_started =
+		resource_terrain_report.patch_install_epoch_owner_calls_started
+	local epoch_owner_completed =
+		resource_terrain_report.patch_install_epoch_owner_calls_completed
+	local epoch_owner_failed =
+		resource_terrain_report.patch_install_epoch_owner_calls_failed
+	local epoch_owner_first = resource_terrain_report.patch_install_epoch_owner_first_serial
+	local epoch_owner_last = resource_terrain_report.patch_install_epoch_owner_last_serial
 	local repair_attempts = resource_terrain_report.repair_attempts
 	local function valid_nonnegative_integer(value)
 		return type(value) == "number" and value == value and value >= 0
@@ -11129,6 +11142,12 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 		or not valid_nonnegative_integer(epoch_safe_modified_attempts)
 		or not valid_nonnegative_integer(epoch_unsafe_modified_attempts)
 		or not valid_nonnegative_integer(epoch_modified_cells)
+		or not valid_nonnegative_integer(epoch_patch_boxes)
+		or not valid_nonnegative_integer(epoch_owner_started)
+		or not valid_nonnegative_integer(epoch_owner_completed)
+		or not valid_nonnegative_integer(epoch_owner_failed)
+		or not valid_nonnegative_integer(epoch_owner_first)
+		or not valid_nonnegative_integer(epoch_owner_last)
 		or not valid_nonnegative_integer(repair_attempts) then
 		return reject("outer resource terrain patch-install epoch counters are invalid")
 	end
@@ -11139,6 +11158,18 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	report.resource_patch_install_epoch_safe_modified_attempts = epoch_safe_modified_attempts
 	report.resource_patch_install_epoch_unsafe_modified_attempts = epoch_unsafe_modified_attempts
 	report.resource_patch_install_epoch_modified_cells = epoch_modified_cells
+	report.resource_patch_install_epoch_patch_boxes = epoch_patch_boxes
+	report.resource_patch_install_epoch_owner_calls_started = epoch_owner_started
+	report.resource_patch_install_epoch_owner_calls_completed = epoch_owner_completed
+	report.resource_patch_install_epoch_owner_calls_failed = epoch_owner_failed
+	report.resource_patch_install_epoch_owner_first_serial = epoch_owner_first
+	report.resource_patch_install_epoch_owner_last_serial = epoch_owner_last
+	report.resource_patch_install_epoch_owner_counters_valid =
+		resource_terrain_report.patch_install_epoch_owner_counters_valid == true
+	report.resource_patch_install_epoch_ring_supersession_verified =
+		resource_terrain_report.patch_install_epoch_ring_supersession_verified == true
+	report.resource_patch_install_epoch_native_inner_restore_exact =
+		resource_terrain_report.patch_install_epoch_native_inner_restore_exact == true
 	report.resource_patch_install_epoch_safe =
 		resource_terrain_report.patch_install_epoch_safe == true
 	report.resource_patch_install_epoch_report_identity_verified =
@@ -11149,9 +11180,15 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 		and epoch_safe_modified_attempts + epoch_unsafe_modified_attempts
 			== epoch_modified_attempts
 		and epoch_modified_cells >= modified_cells
+		and epoch_patch_boxes == 8 and epoch_owner_started == 8
+		and epoch_owner_completed == 8 and epoch_owner_failed == 0
+		and epoch_owner_first == 1 and epoch_owner_last == 8
 	if epoch_counts_consistent ~= true
 		or resource_terrain_report.patch_install_epoch_report_identity_verified ~= true
 		or resource_terrain_report.patch_install_epoch_safe ~= true
+		or resource_terrain_report.patch_install_epoch_owner_counters_valid ~= true
+		or resource_terrain_report.patch_install_epoch_ring_supersession_verified ~= true
+		or resource_terrain_report.patch_install_epoch_native_inner_restore_exact ~= true
 		or epoch_unsafe_modified_attempts ~= 0 then
 		return reject("outer resource terrain patch-install epoch is unsafe or incomplete")
 	end
@@ -11170,6 +11207,18 @@ function SuperBigMap.GenerationGrids.BuildSurfaceFinalPassCertificate(map, stage
 	if patch_install_safe ~= true then
 		return reject("modified outer resource terrain was not installed by the verified patch path")
 	end
+	local ring_report = map.SuperBigMapOuterResourceRingRebuildReport
+	if type(ring_report) ~= "table" or ring_report.used ~= true or ring_report.fallback == true
+		or ring_report.boxes ~= 4 or ring_report.owner_calls_started ~= 4
+		or ring_report.owner_calls_completed ~= 4 or ring_report.owner_calls_failed ~= 0
+		or ring_report.owner_first_serial ~= 9 or ring_report.owner_last_serial ~= 12 then
+		return reject("outer resource ring ownership did not exactly supersede patch writes")
+	end
+	report.resource_ring_owner_calls_started = ring_report.owner_calls_started
+	report.resource_ring_owner_calls_completed = ring_report.owner_calls_completed
+	report.resource_ring_owner_calls_failed = ring_report.owner_calls_failed
+	report.resource_ring_owner_first_serial = ring_report.owner_first_serial
+	report.resource_ring_owner_last_serial = ring_report.owner_last_serial
 	local ownership_ok, ownership_error =
 		SuperBigMap.GenerationGrids.FilterSurfaceFinalOwnedPassRecords(journal)
 	if ownership_ok ~= true then return reject(ownership_error) end
@@ -11368,7 +11417,7 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 			residual_full_events = tonumber(report.residual_full_events) or 0,
 			excluded_owned_boxes = tonumber(report.excluded_owned_boxes) or 0,
 			certificate_input_boxes = tonumber(report.certificate_input_boxes) or 0,
-			owner_exact_four = tostring(report.owner_exact_four == true),
+			owner_exact_twelve = tostring(report.owner_exact_twelve == true),
 			residual_x0 = tonumber(report.residual_x0) or 0,
 			residual_y0 = tonumber(report.residual_y0) or 0,
 			residual_x1 = tonumber(report.residual_x1) or 0,
@@ -11406,10 +11455,38 @@ function SuperBigMap.GenerationGrids.RebuildFinalSurfaceDirtyOrFinal(map, stage)
 				tonumber(report.resource_patch_install_epoch_unsafe_modified_attempts) or 0,
 			resource_patch_install_epoch_modified_cells =
 				tonumber(report.resource_patch_install_epoch_modified_cells) or 0,
+			resource_patch_install_epoch_patch_boxes =
+				tonumber(report.resource_patch_install_epoch_patch_boxes) or 0,
+			resource_patch_install_epoch_owner_calls_started =
+				tonumber(report.resource_patch_install_epoch_owner_calls_started) or 0,
+			resource_patch_install_epoch_owner_calls_completed =
+				tonumber(report.resource_patch_install_epoch_owner_calls_completed) or 0,
+			resource_patch_install_epoch_owner_calls_failed =
+				tonumber(report.resource_patch_install_epoch_owner_calls_failed) or 0,
+			resource_patch_install_epoch_owner_first_serial =
+				tonumber(report.resource_patch_install_epoch_owner_first_serial) or 0,
+			resource_patch_install_epoch_owner_last_serial =
+				tonumber(report.resource_patch_install_epoch_owner_last_serial) or 0,
+			resource_patch_install_epoch_owner_counters_valid =
+				tostring(report.resource_patch_install_epoch_owner_counters_valid == true),
+			resource_patch_install_epoch_ring_supersession_verified =
+				tostring(report.resource_patch_install_epoch_ring_supersession_verified == true),
+			resource_patch_install_epoch_native_inner_restore_exact =
+				tostring(report.resource_patch_install_epoch_native_inner_restore_exact == true),
 			resource_patch_install_epoch_safe =
 				tostring(report.resource_patch_install_epoch_safe == true),
 			resource_patch_install_epoch_report_identity_verified =
 				tostring(report.resource_patch_install_epoch_report_identity_verified == true),
+			resource_ring_owner_calls_started =
+				tonumber(report.resource_ring_owner_calls_started) or 0,
+			resource_ring_owner_calls_completed =
+				tonumber(report.resource_ring_owner_calls_completed) or 0,
+			resource_ring_owner_calls_failed =
+				tonumber(report.resource_ring_owner_calls_failed) or 0,
+			resource_ring_owner_first_serial =
+				tonumber(report.resource_ring_owner_first_serial) or 0,
+			resource_ring_owner_last_serial =
+				tonumber(report.resource_ring_owner_last_serial) or 0,
 			passability_ms = tonumber(report.passability_ms) or 0,
 			buildable_ms = tonumber(report.buildable_ms) or 0,
 			total_ms = tonumber(report.total_ms) or 0,
@@ -11533,6 +11610,11 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors,
 		passability_ms = 0,
 		buildable_ms = 0,
 		total_ms = 0,
+		owner_calls_started = 0,
+		owner_calls_completed = 0,
+		owner_calls_failed = 0,
+		owner_first_serial = 0,
+		owner_last_serial = 0,
 		error = "",
 		stage = stage,
 		calls = type(prior) == "table" and (tonumber(prior.calls) or 0) + 1 or 1,
@@ -11604,10 +11686,23 @@ function SuperBigMap.GenerationGrids.RebuildOuterResourceRing(map, ring_sectors,
 				SuperBigMap.GenerationGrids.BeginSurfaceFinalOwnedPassRebuild(
 					map, stage, region_index)
 			if owner_ok ~= true then error(tostring(owner_error), 0) end
+			owner_serial = tonumber(owner_serial) or 0
+			if owner_serial > 0 then
+				report.owner_calls_started = report.owner_calls_started + 1
+				if report.owner_first_serial == 0 then report.owner_first_serial = owner_serial end
+				report.owner_last_serial = owner_serial
+			end
 			local rebuild_ok, rebuild_error = pcall(terrain_api.RebuildPassability, map, region)
 			local owner_end_ok, owner_end_error =
 				SuperBigMap.GenerationGrids.EndSurfaceFinalOwnedPassRebuild(
 					map, owner_serial, rebuild_ok)
+			if owner_serial > 0 then
+				if rebuild_ok == true and owner_end_ok == true then
+					report.owner_calls_completed = report.owner_calls_completed + 1
+				else
+					report.owner_calls_failed = report.owner_calls_failed + 1
+				end
+			end
 			if rebuild_ok ~= true then error(tostring(rebuild_error), 0) end
 			if owner_end_ok ~= true then error(tostring(owner_end_error), 0) end
 		end
@@ -12071,6 +12166,11 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							attempts = 0, reports_verified = 0, modified_attempts = 0,
 							zero_change_attempts = 0, safe_modified_attempts = 0,
 							unsafe_modified_attempts = 0, modified_cells = 0,
+							patch_boxes = 0, owner_calls_started = 0,
+							owner_calls_completed = 0, owner_calls_failed = 0,
+							owner_first_serial = 0, owner_last_serial = 0,
+							owner_counters_valid = true, ring_supersession_verified = true,
+							native_inner_restore_exact = true,
 							safe = true, report_identity_verified = true, last_report = false,
 						}
 						local function record_resource_patch_attempt(attempt_report, attempt_stage)
@@ -12094,12 +12194,49 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 							epoch.reports_verified = epoch.reports_verified + 1
 							epoch.last_report = attempt_report
 							epoch.modified_cells = epoch.modified_cells + modified
+							local patch_boxes = attempt_report.patch_install_boxes
+							local owner_started = attempt_report.patch_install_owner_calls_started
+							local owner_completed = attempt_report.patch_install_owner_calls_completed
+							local owner_failed = attempt_report.patch_install_owner_calls_failed
+							local owner_first = attempt_report.patch_install_owner_first_serial
+							local owner_last = attempt_report.patch_install_owner_last_serial
+							local function valid_owner_counter(value)
+								return type(value) == "number" and value == value and value >= 0
+									and value ~= math.huge and value ~= -math.huge
+									and value == math.floor(value)
+							end
+							local ownership_valid = valid_owner_counter(patch_boxes)
+								and valid_owner_counter(owner_started)
+								and valid_owner_counter(owner_completed)
+								and valid_owner_counter(owner_failed)
+								and valid_owner_counter(owner_first)
+								and valid_owner_counter(owner_last)
+							if ownership_valid then
+								epoch.patch_boxes = epoch.patch_boxes + patch_boxes
+								epoch.owner_calls_started = epoch.owner_calls_started + owner_started
+								epoch.owner_calls_completed =
+									epoch.owner_calls_completed + owner_completed
+								epoch.owner_calls_failed = epoch.owner_calls_failed + owner_failed
+								if owner_first > 0 and epoch.owner_first_serial == 0 then
+									epoch.owner_first_serial = owner_first
+								end
+								if owner_last > 0 then epoch.owner_last_serial = owner_last end
+							else
+								epoch.owner_counters_valid = false
+								epoch.safe = false
+							end
 							if modified == 0 then
 								epoch.zero_change_attempts = epoch.zero_change_attempts + 1
 								return true
 							end
 							epoch.modified_attempts = epoch.modified_attempts + 1
-							local attempt_safe = attempt_report.patch_install_used == true
+							local attempt_safe = ownership_valid
+								and patch_boxes == 8 and owner_started == 8
+								and owner_completed == 8 and owner_failed == 0
+								and owner_first == 1 and owner_last == 8
+								and attempt_report.patch_install_ring_supersession_verified == true
+								and attempt_report.patch_install_native_inner_restore_exact == true
+								and attempt_report.patch_install_used == true
 								and attempt_report.patch_install_verified == true
 								and attempt_report.patch_install_fallback == false
 								and attempt_report.patch_install_full_setter_used == false
@@ -12109,6 +12246,10 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								epoch.unsafe_modified_attempts = epoch.unsafe_modified_attempts + 1
 								epoch.safe = false
 							end
+							epoch.ring_supersession_verified = epoch.ring_supersession_verified
+								and attempt_report.patch_install_ring_supersession_verified == true
+							epoch.native_inner_restore_exact = epoch.native_inner_restore_exact
+								and attempt_report.patch_install_native_inner_restore_exact == true
 							return true
 						end
 						local resource_prepare_started = GetPreciseTicks()
@@ -12220,6 +12361,24 @@ local function RunSurfaceStretchIfEnabled(map, readiness_source)
 								resource_patch_epoch.unsafe_modified_attempts
 							final_resource_terrain_report.patch_install_epoch_modified_cells =
 								resource_patch_epoch.modified_cells
+							final_resource_terrain_report.patch_install_epoch_patch_boxes =
+								resource_patch_epoch.patch_boxes
+							final_resource_terrain_report.patch_install_epoch_owner_calls_started =
+								resource_patch_epoch.owner_calls_started
+							final_resource_terrain_report.patch_install_epoch_owner_calls_completed =
+								resource_patch_epoch.owner_calls_completed
+							final_resource_terrain_report.patch_install_epoch_owner_calls_failed =
+								resource_patch_epoch.owner_calls_failed
+							final_resource_terrain_report.patch_install_epoch_owner_first_serial =
+								resource_patch_epoch.owner_first_serial
+							final_resource_terrain_report.patch_install_epoch_owner_last_serial =
+								resource_patch_epoch.owner_last_serial
+							final_resource_terrain_report.patch_install_epoch_owner_counters_valid =
+								resource_patch_epoch.owner_counters_valid == true
+							final_resource_terrain_report.patch_install_epoch_ring_supersession_verified =
+								resource_patch_epoch.ring_supersession_verified == true
+							final_resource_terrain_report.patch_install_epoch_native_inner_restore_exact =
+								resource_patch_epoch.native_inner_restore_exact == true
 							final_resource_terrain_report.patch_install_epoch_safe =
 								resource_patch_epoch.safe == true
 							final_resource_terrain_report.patch_install_epoch_report_identity_verified =

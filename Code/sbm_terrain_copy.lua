@@ -4017,6 +4017,13 @@ local function PrepareOuterResourceTerrain(map)
 		rollback_attempted = false,
 		rollback_ok = false,
 		rollback_verified = false,
+		owner_calls_started = 0,
+		owner_calls_completed = 0,
+		owner_calls_failed = 0,
+		owner_first_serial = 0,
+		owner_last_serial = 0,
+		ring_supersession_verified = false,
+		native_inner_restore_exact = false,
 		error = "",
 	}
 	local function install_native_height_patches()
@@ -4025,6 +4032,7 @@ local function PrepareOuterResourceTerrain(map)
 		local editor_api = Global("editor")
 		local is_box = Global("IsBox")
 		local current_map = Global("CurrentMap")
+		local generation_grids = SuperBigMap.GenerationGrids
 		if not native_raster_used then
 			return false, "native working grid was not selected"
 		end
@@ -4038,6 +4046,19 @@ local function PrepareOuterResourceTerrain(map)
 			or type(is_box) ~= "function" or type(box_fn) ~= "function" then
 			return false, "stock editor height-grid APIs unavailable"
 		end
+		if type(generation_grids) ~= "table"
+			or type(generation_grids.BeginSurfaceFinalOwnedPassRebuild) ~= "function"
+			or type(generation_grids.EndSurfaceFinalOwnedPassRebuild) ~= "function" then
+			return false, "surface final pass-change ownership APIs unavailable"
+		end
+		local pass_tile = type(const_tbl) == "table" and tonumber(const_tbl.PassTileSize) or 100
+		pass_tile = type(pass_tile) == "number" and pass_tile > 0 and pass_tile == pass_tile
+			and pass_tile ~= math.huge and pass_tile or 100
+		local dependency_margin = math.floor(pass_tile * 2)
+		local ring_inner_x = math.min(map_w, math.ceil(band_x) + dependency_margin)
+		local ring_inner_y = math.min(map_h, math.ceil(band_y) + dependency_margin)
+		local ring_far_x = math.max(0, map_w - math.ceil(band_x) - dependency_margin)
+		local ring_far_y = math.max(0, map_h - math.ceil(band_y) - dependency_margin)
 
 		local full_box = box_fn(0, 0, map_w, map_h)
 		if not full_box or not is_box(full_box) then
@@ -4091,6 +4112,15 @@ local function PrepareOuterResourceTerrain(map)
 				or x1 > map_w - band_x or y1 > map_h - band_y) then
 				error("difference box does not intersect the outer resource ring")
 			end
+			-- The native raster restores the exact inner rectangle from its source snapshot before
+			-- difference discovery, so actual changed cells remain outer-ring-only. Every editor
+			-- notification may then be excluded only because the four later RebuildOuterResourceRing
+			-- strips supersede it. Require the complete difference box, including unchanged editor
+			-- halo cells, to lie inside at least one exact strip.
+			if not (y1 <= ring_inner_y or y0 >= ring_far_y
+				or x1 <= ring_inner_x or x0 >= ring_far_x) then
+				error("difference box is not contained by the later ring rebuild")
+			end
 			return x0, y0, x1, y1
 		end
 		local function grid_dimensions(value, label)
@@ -4118,6 +4148,23 @@ local function PrepareOuterResourceTerrain(map)
 		end
 
 		local transaction_ok, transaction_error = pcall(function()
+			-- Prove the native target retained the exact hard no-write rectangle before any
+			-- editor write can affect the live/raw relationship. This is a byte comparator, not
+			-- an inference from the number of restored interpolation cells.
+			local inner_restore_box = box_fn(
+				inner_x0 * native_tile_step, inner_y0 * native_tile_step,
+				(inner_x1 + 1) * native_tile_step, (inner_y1 + 1) * native_tile_step)
+			if not inner_restore_box or not is_box(inner_restore_box) then
+				error("native inner restore comparison box unavailable")
+			end
+			local inner_ok, inner_differences = pcall(
+				editor_api.GetGridDifferenceBoxes, map, "height", grid, raw, inner_restore_box)
+			if not inner_ok then error(tostring(inner_differences)) end
+			if inner_differences ~= nil
+				and (type(inner_differences) ~= "table" or #inner_differences ~= 0) then
+				error("native target modified the exact inner no-write rectangle")
+			end
+			patch_install.native_inner_restore_exact = true
 			local differences_ok, difference_boxes = pcall(
 				editor_api.GetGridDifferenceBoxes, map, "height", grid, raw, full_box)
 			if not differences_ok then error(tostring(difference_boxes)) end
@@ -4186,6 +4233,7 @@ local function PrepareOuterResourceTerrain(map)
 			end
 			patch_install.boxes = #records
 			patch_install.area_ratio = area_ratio
+			patch_install.ring_supersession_verified = true
 
 			-- Capture the entire rollback journal before the first live write.
 			for _, record in ipairs(records) do
@@ -4211,17 +4259,45 @@ local function PrepareOuterResourceTerrain(map)
 			patch_install.prepare_ms = now_ms() - attempt_started_ms
 
 			apply_started_ms = now_ms()
-			for _, record in ipairs(records) do
+			for record_index, record in ipairs(records) do
 				-- Treat a started native call as potentially mutating even when it throws or
 				-- returns false; replaying its before snapshot is always safe and closes the
 				-- native-error-after-write ambiguity.
+				local owner_ok, owner_serial, owner_error =
+					generation_grids.BeginSurfaceFinalOwnedPassRebuild(
+						map, "outer resource height patch install", record_index)
+				if owner_ok ~= true then error(tostring(owner_error), 0) end
+				owner_serial = tonumber(owner_serial) or 0
+				if owner_serial > 0 then
+					patch_install.owner_calls_started = patch_install.owner_calls_started + 1
+					if patch_install.owner_first_serial == 0 then
+						patch_install.owner_first_serial = owner_serial
+					end
+					patch_install.owner_last_serial = owner_serial
+				end
 				record.applied = true
 				applied_count = applied_count + 1
 				local write_ok, write_result = pcall(
 					editor_api.SetGrid, map, "height", record.after, record.box)
-				if not write_ok or write_result == false then
+				local write_succeeded = write_ok and write_result ~= false
+				local owner_end_call_ok, owner_end_ok, owner_end_error = pcall(
+					generation_grids.EndSurfaceFinalOwnedPassRebuild,
+					map, owner_serial, write_succeeded)
+				local ownership_completed = owner_end_call_ok and owner_end_ok == true
+				if owner_serial > 0 then
+					if write_succeeded and ownership_completed then
+						patch_install.owner_calls_completed = patch_install.owner_calls_completed + 1
+					else
+						patch_install.owner_calls_failed = patch_install.owner_calls_failed + 1
+					end
+				end
+				if not write_succeeded then
 					error(write_ok and "stock editor height write returned false"
 						or tostring(write_result))
+				end
+				if not ownership_completed then
+					error(owner_end_call_ok and tostring(owner_end_error)
+						or tostring(owner_end_ok), 0)
 				end
 			end
 			patch_install.apply_ms = now_ms() - apply_started_ms
@@ -4233,6 +4309,8 @@ local function PrepareOuterResourceTerrain(map)
 			patch_install.verify_ms = now_ms() - verify_started_ms
 			if not equal then error(equality_error) end
 			patch_install.verified = true
+			-- Whole-grid equality now carries the independently proven inner no-write bytes into
+			-- the live terrain along with every outer patch byte.
 		end)
 		if patch_install.prepare_ms == 0 then
 			patch_install.prepare_ms = now_ms() - attempt_started_ms
@@ -4387,6 +4465,13 @@ local function PrepareOuterResourceTerrain(map)
 		patch_install_rollback_attempted = patch_install.rollback_attempted,
 		patch_install_rollback_ok = patch_install.rollback_ok,
 		patch_install_rollback_verified = patch_install.rollback_verified,
+		patch_install_owner_calls_started = patch_install.owner_calls_started,
+		patch_install_owner_calls_completed = patch_install.owner_calls_completed,
+		patch_install_owner_calls_failed = patch_install.owner_calls_failed,
+		patch_install_owner_first_serial = patch_install.owner_first_serial,
+		patch_install_owner_last_serial = patch_install.owner_last_serial,
+		patch_install_ring_supersession_verified = patch_install.ring_supersession_verified,
+		patch_install_native_inner_restore_exact = patch_install.native_inner_restore_exact,
 		patch_install_error = patch_install.error,
 		canonical_final_grid_rebuild_retained = true,
 		native_sample_step = native_sample_step,
@@ -4458,6 +4543,15 @@ local function PrepareOuterResourceTerrain(map)
 			.. " verify_ms=" .. tostring(report.patch_install_verify_ms)
 			.. " rollback=" .. tostring(report.patch_install_rollback_attempted)
 			.. " rollback_ok=" .. tostring(report.patch_install_rollback_ok)
+			.. " owner_started=" .. tostring(report.patch_install_owner_calls_started)
+			.. " owner_completed=" .. tostring(report.patch_install_owner_calls_completed)
+			.. " owner_failed=" .. tostring(report.patch_install_owner_calls_failed)
+			.. " owner_first=" .. tostring(report.patch_install_owner_first_serial)
+			.. " owner_last=" .. tostring(report.patch_install_owner_last_serial)
+			.. " ring_supersession="
+				.. tostring(report.patch_install_ring_supersession_verified)
+			.. " inner_restore="
+				.. tostring(report.patch_install_native_inner_restore_exact)
 			.. " full_setter=" .. tostring(report.patch_install_full_setter_used)
 			.. " error=" .. tostring(report.patch_install_error))
 	end

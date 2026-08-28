@@ -237,7 +237,7 @@ def surface_final_owned_record_filter(
     failed: int,
     successful_owner_serials: frozenset[int],
 ) -> dict[str, object]:
-    """Executable model of the strict v952 successful-call ownership certificate."""
+    """Executable model of the strict v957 successful-call ownership certificate."""
     counters = (next_serial, started, completed, failed)
     if any(type(value) is not int or value < 0 for value in counters):
         return {"accepted": False, "reason": "invalid counters", "retained": records}
@@ -273,12 +273,12 @@ def surface_final_owned_record_filter(
         return {"accepted": False, "reason": "missing call notification", "retained": records}
     retained = tuple(record for record in records if record[4] == 0)
     excluded = tuple(record for record in records if record[4] > 0)
-    # v956 deliberately recognizes only the accepted v953 normal-run discriminator shape.
+    # v957 recognizes eight verified patch writes, four superseding ring calls, and eleven residuals.
     # Different counts are safe, but unproven, and therefore must use the full rebuild.
     if (
-        next_serial != 4
-        or owner_serials_with_events != 4
-        or len(excluded) != 4
+        next_serial != 12
+        or owner_serials_with_events != 12
+        or len(excluded) != 12
         or len(retained) != 11
     ):
         return {"accepted": False, "reason": "unexpected event shape", "retained": records}
@@ -287,7 +287,7 @@ def surface_final_owned_record_filter(
         "reason": "",
         "retained": retained,
         "excluded": excluded,
-        "exact_four": next_serial == 4,
+        "exact_twelve": next_serial == 12,
         "owner_serials_with_events": owner_serials_with_events,
     }
 
@@ -316,9 +316,18 @@ def surface_final_resource_patch_epoch(
         "safe_modified_attempts": 0,
         "unsafe_modified_attempts": 0,
         "modified_cells": 0,
+        "patch_boxes": 0,
+        "owner_calls_started": 0,
+        "owner_calls_completed": 0,
+        "owner_calls_failed": 0,
+        "owner_first_serial": 0,
+        "owner_last_serial": 0,
     }
     safe = True
     identity_verified = True
+    owner_counters_valid = True
+    ring_supersession_verified = True
+    native_inner_restore_exact = True
     for attempt in attempts:
         counters["attempts"] += 1
         exact_published_report = attempt.get("_exact_published_report", True) is True
@@ -333,12 +342,46 @@ def surface_final_resource_patch_epoch(
         assert isinstance(modified_cells, (int, float))
         counters["reports_verified"] += 1
         counters["modified_cells"] += modified_cells
+        owner_fields = (
+            attempt.get("patch_install_boxes"),
+            attempt.get("patch_install_owner_calls_started"),
+            attempt.get("patch_install_owner_calls_completed"),
+            attempt.get("patch_install_owner_calls_failed"),
+            attempt.get("patch_install_owner_first_serial"),
+            attempt.get("patch_install_owner_last_serial"),
+        )
+        ownership_valid = all(valid_nonnegative_integer(value) for value in owner_fields)
+        if ownership_valid:
+            patch_boxes, owner_started, owner_completed, owner_failed, owner_first, owner_last = owner_fields
+            assert all(isinstance(value, (int, float)) for value in owner_fields)
+            counters["patch_boxes"] += patch_boxes
+            counters["owner_calls_started"] += owner_started
+            counters["owner_calls_completed"] += owner_completed
+            counters["owner_calls_failed"] += owner_failed
+            if owner_first > 0 and counters["owner_first_serial"] == 0:
+                counters["owner_first_serial"] = owner_first
+            if owner_last > 0:
+                counters["owner_last_serial"] = owner_last
+        else:
+            patch_boxes = owner_started = owner_completed = owner_failed = -1
+            owner_first = owner_last = -1
+            owner_counters_valid = False
+            safe = False
         if modified_cells == 0:
             counters["zero_change_attempts"] += 1
             continue
         counters["modified_attempts"] += 1
         attempt_safe = (
-            attempt.get("patch_install_used") is True
+            ownership_valid
+            and patch_boxes == 8
+            and owner_started == 8
+            and owner_completed == 8
+            and owner_failed == 0
+            and owner_first == 1
+            and owner_last == 8
+            and attempt.get("patch_install_ring_supersession_verified") is True
+            and attempt.get("patch_install_native_inner_restore_exact") is True
+            and attempt.get("patch_install_used") is True
             and attempt.get("patch_install_verified") is True
             and attempt.get("patch_install_fallback") is False
             and attempt.get("patch_install_full_setter_used") is False
@@ -348,6 +391,14 @@ def surface_final_resource_patch_epoch(
         else:
             counters["unsafe_modified_attempts"] += 1
             safe = False
+        ring_supersession_verified = (
+            ring_supersession_verified
+            and attempt.get("patch_install_ring_supersession_verified") is True
+        )
+        native_inner_restore_exact = (
+            native_inner_restore_exact
+            and attempt.get("patch_install_native_inner_restore_exact") is True
+        )
     final_report = dict(attempts[-1])
     final_report.update(
         {
@@ -363,6 +414,15 @@ def surface_final_resource_patch_epoch(
                 "unsafe_modified_attempts"
             ],
             "patch_install_epoch_modified_cells": counters["modified_cells"],
+            "patch_install_epoch_patch_boxes": counters["patch_boxes"],
+            "patch_install_epoch_owner_calls_started": counters["owner_calls_started"],
+            "patch_install_epoch_owner_calls_completed": counters["owner_calls_completed"],
+            "patch_install_epoch_owner_calls_failed": counters["owner_calls_failed"],
+            "patch_install_epoch_owner_first_serial": counters["owner_first_serial"],
+            "patch_install_epoch_owner_last_serial": counters["owner_last_serial"],
+            "patch_install_epoch_owner_counters_valid": owner_counters_valid,
+            "patch_install_epoch_ring_supersession_verified": ring_supersession_verified,
+            "patch_install_epoch_native_inner_restore_exact": native_inner_restore_exact,
             "patch_install_epoch_safe": safe,
             "patch_install_epoch_report_identity_verified": identity_verified,
         }
@@ -386,6 +446,12 @@ def surface_final_resource_patch_gate(resource_report: object) -> dict[str, obje
         "patch_install_epoch_safe_modified_attempts",
         "patch_install_epoch_unsafe_modified_attempts",
         "patch_install_epoch_modified_cells",
+        "patch_install_epoch_patch_boxes",
+        "patch_install_epoch_owner_calls_started",
+        "patch_install_epoch_owner_calls_completed",
+        "patch_install_epoch_owner_calls_failed",
+        "patch_install_epoch_owner_first_serial",
+        "patch_install_epoch_owner_last_serial",
         "repair_attempts",
     )
     if not all(valid_nonnegative_integer(resource_report.get(key)) for key in epoch_keys):
@@ -401,6 +467,12 @@ def surface_final_resource_patch_gate(resource_report: object) -> dict[str, obje
         "patch_install_epoch_unsafe_modified_attempts"
     ]
     epoch_modified_cells = resource_report["patch_install_epoch_modified_cells"]
+    epoch_patch_boxes = resource_report["patch_install_epoch_patch_boxes"]
+    epoch_owner_started = resource_report["patch_install_epoch_owner_calls_started"]
+    epoch_owner_completed = resource_report["patch_install_epoch_owner_calls_completed"]
+    epoch_owner_failed = resource_report["patch_install_epoch_owner_calls_failed"]
+    epoch_owner_first = resource_report["patch_install_epoch_owner_first_serial"]
+    epoch_owner_last = resource_report["patch_install_epoch_owner_last_serial"]
     repair_attempts = resource_report["repair_attempts"]
     if not (
         attempts >= 1
@@ -409,6 +481,15 @@ def surface_final_resource_patch_gate(resource_report: object) -> dict[str, obje
         and modified_attempts + zero_change_attempts == attempts
         and safe_modified_attempts + unsafe_modified_attempts == modified_attempts
         and epoch_modified_cells >= modified_cells
+        and epoch_patch_boxes == 8
+        and epoch_owner_started == 8
+        and epoch_owner_completed == 8
+        and epoch_owner_failed == 0
+        and epoch_owner_first == 1
+        and epoch_owner_last == 8
+        and resource_report.get("patch_install_epoch_owner_counters_valid") is True
+        and resource_report.get("patch_install_epoch_ring_supersession_verified") is True
+        and resource_report.get("patch_install_epoch_native_inner_restore_exact") is True
         and resource_report.get("patch_install_epoch_report_identity_verified") is True
         and resource_report.get("patch_install_epoch_safe") is True
         and unsafe_modified_attempts == 0
@@ -667,6 +748,46 @@ static_checks = {
             )
         )
     ),
+    "surface_patch_writes_are_causally_owned_and_superseded_by_ring": (
+        all(
+            token in outer_resource_terrain
+            for token in (
+                'generation_grids.BeginSurfaceFinalOwnedPassRebuild(\n\t\t\t\t\t\tmap, "outer resource height patch install", record_index)',
+                'editor_api.SetGrid, map, "height", record.after, record.box',
+                "generation_grids.EndSurfaceFinalOwnedPassRebuild,",
+                "map, owner_serial, write_succeeded",
+                "patch_install.owner_calls_started",
+                "patch_install.owner_calls_completed",
+                "patch_install.owner_calls_failed",
+                "difference box is not contained by the later ring rebuild",
+                "patch_install.ring_supersession_verified = true",
+                "native target modified the exact inner no-write rectangle",
+                "patch_install.native_inner_restore_exact = true",
+                "patch_install_owner_calls_started = patch_install.owner_calls_started",
+                "patch_install_ring_supersession_verified = patch_install.ring_supersession_verified",
+                "patch_install_native_inner_restore_exact = patch_install.native_inner_restore_exact",
+            )
+        )
+        and appears_in_order(
+            outer_resource_terrain,
+            "BeginSurfaceFinalOwnedPassRebuild(",
+            'editor_api.SetGrid, map, "height", record.after, record.box',
+            "EndSurfaceFinalOwnedPassRebuild,",
+            "if not write_succeeded then",
+        )
+        and all(
+            token in surface_final_dirty_certificate_lua
+            for token in (
+                "epoch_patch_boxes == 8 and epoch_owner_started == 8",
+                "epoch_owner_completed == 8 and epoch_owner_failed == 0",
+                "epoch_owner_first == 1 and epoch_owner_last == 8",
+                "patch_install_epoch_ring_supersession_verified ~= true",
+                "patch_install_epoch_native_inner_restore_exact ~= true",
+                "ring_report.owner_first_serial ~= 9 or ring_report.owner_last_serial ~= 12",
+                "outer resource ring ownership did not exactly supersede patch writes",
+            )
+        )
+    ),
     "surface_final_journal_uses_sanctioned_dormant_engine_handler": (
         "function OnMsg.OnPassabilityChanged(event_map, changed_box)"
         in surface_final_dirty_journal
@@ -754,7 +875,8 @@ static_checks = {
                 "if serial > 0 and successful[serial] ~= true",
                 "closed_owner_serials[serial] == true or serial < last_owner_serial",
                 "owner_serials_with_events ~= next_serial",
-                "excluded ~= 4 or #retained ~= 11",
+                "event_count ~= 23",
+                "excluded ~= 12 or #retained ~= 11",
                 "if serial > 0 then",
                 "retained[#retained + 1] = record",
                 "report.ownership_certificate = true",
@@ -1684,7 +1806,7 @@ static_checks = {
         "14N134W" not in resources and "A17" not in resources
         and "14N134W" not in census and "A17" not in census
     ),
-    "version_is_956": "'version', 956" in METADATA,
+    "version_is_957": "'version', 957" in METADATA,
 }
 
 case_results = []
@@ -2542,14 +2664,38 @@ surface_resource_verified_attempt = {
     "patch_install_verified": True,
     "patch_install_fallback": False,
     "patch_install_full_setter_used": False,
+    "patch_install_boxes": 8,
+    "patch_install_owner_calls_started": 8,
+    "patch_install_owner_calls_completed": 8,
+    "patch_install_owner_calls_failed": 0,
+    "patch_install_owner_first_serial": 1,
+    "patch_install_owner_last_serial": 8,
+    "patch_install_ring_supersession_verified": True,
+    "patch_install_native_inner_restore_exact": True,
 }
-surface_resource_zero_change_attempt = {"modified_cells": 0}
+surface_resource_zero_change_attempt = {
+    "modified_cells": 0,
+    "patch_install_boxes": 0,
+    "patch_install_owner_calls_started": 0,
+    "patch_install_owner_calls_completed": 0,
+    "patch_install_owner_calls_failed": 0,
+    "patch_install_owner_first_serial": 0,
+    "patch_install_owner_last_serial": 0,
+}
 surface_resource_full_setter_attempt = {
     "modified_cells": 1_890_334,
     "patch_install_used": False,
     "patch_install_verified": False,
     "patch_install_fallback": True,
     "patch_install_full_setter_used": True,
+    "patch_install_boxes": 8,
+    "patch_install_owner_calls_started": 0,
+    "patch_install_owner_calls_completed": 0,
+    "patch_install_owner_calls_failed": 0,
+    "patch_install_owner_first_serial": 0,
+    "patch_install_owner_last_serial": 0,
+    "patch_install_ring_supersession_verified": False,
+    "patch_install_native_inner_restore_exact": False,
 }
 surface_resource_fallback_attempt = {
     "modified_cells": 1_890_334,
@@ -2557,6 +2703,21 @@ surface_resource_fallback_attempt = {
     "patch_install_verified": True,
     "patch_install_fallback": True,
     "patch_install_full_setter_used": False,
+    "patch_install_boxes": 8,
+    "patch_install_owner_calls_started": 8,
+    "patch_install_owner_calls_completed": 7,
+    "patch_install_owner_calls_failed": 1,
+    "patch_install_owner_first_serial": 1,
+    "patch_install_owner_last_serial": 8,
+    "patch_install_ring_supersession_verified": True,
+    "patch_install_native_inner_restore_exact": False,
+}
+surface_resource_failed_owner_attempt = {
+    **surface_resource_verified_attempt,
+    "patch_install_owner_calls_completed": 7,
+    "patch_install_owner_calls_failed": 1,
+    "patch_install_fallback": True,
+    "patch_install_full_setter_used": True,
 }
 surface_resource_patch_verified = surface_final_resource_patch_gate(
     surface_final_resource_patch_epoch((surface_resource_verified_attempt,))
@@ -2569,6 +2730,9 @@ surface_resource_patch_full_setter = surface_final_resource_patch_gate(
 )
 surface_resource_patch_fallback = surface_final_resource_patch_gate(
     surface_final_resource_patch_epoch((surface_resource_fallback_attempt,))
+)
+surface_resource_failed_owner = surface_final_resource_patch_gate(
+    surface_final_resource_patch_epoch((surface_resource_failed_owner_attempt,))
 )
 surface_resource_full_setter_then_zero = surface_final_resource_patch_gate(
     surface_final_resource_patch_epoch(
@@ -2637,10 +2801,18 @@ surface_dirty_overlarge = surface_final_dirty_certificate(
 )
 
 surface_owned_trace_records = (
-    (0, 0, surface_dirty_width, 82120, 1),
-    (0, 737080, surface_dirty_width, surface_dirty_height, 2),
-    (0, 0, 82120, surface_dirty_height, 3),
-    (737080, 0, surface_dirty_width, surface_dirty_height, 4),
+    (1000, 1000, 50000, 15000, 1),
+    (210000, 1500, 260000, 16000, 2),
+    (500000, 2000, 560000, 17000, 3),
+    (120000, 800000, 180000, 818000, 4),
+    (600000, 799000, 660000, 817000, 5),
+    (1000, 250000, 18000, 310000, 6),
+    (801000, 400000, 818000, 460000, 7),
+    (802000, 650000, 818000, 710000, 8),
+    (0, 0, surface_dirty_width, 82120, 9),
+    (0, 737080, surface_dirty_width, surface_dirty_height, 10),
+    (0, 0, 82120, surface_dirty_height, 11),
+    (737080, 0, surface_dirty_width, surface_dirty_height, 12),
     (312949, 316728, 313949, 317728, 0),
     (350000, 340000, 351000, 341000, 0),
     (375000, 390000, 376000, 391000, 0),
@@ -2653,65 +2825,67 @@ surface_owned_trace_records = (
     (600000, 575000, 601000, 576000, 0),
     (632551, 590712, 633551, 591712, 0),
 )
+surface_patch_owned_records = surface_owned_trace_records[:8]
+surface_ring_owned_records = surface_owned_trace_records[8:12]
 surface_owned_trace_success = surface_final_owned_trace_summary(
     surface_dirty_width,
     surface_dirty_height,
     surface_owned_trace_records,
-    frozenset((1, 2, 3, 4)),
+    frozenset(range(1, 13)),
 )
 surface_owned_trace_failed_call = surface_final_owned_trace_summary(
     surface_dirty_width,
     surface_dirty_height,
     surface_owned_trace_records,
-    frozenset((1, 2, 3)),
+    frozenset(range(1, 12)),
 )
 surface_owned_filter_success = surface_final_owned_record_filter(
     surface_owned_trace_records,
-    next_serial=4,
-    started=4,
-    completed=4,
+    next_serial=12,
+    started=12,
+    completed=12,
     failed=0,
-    successful_owner_serials=frozenset((1, 2, 3, 4)),
+    successful_owner_serials=frozenset(range(1, 13)),
 )
 surface_owned_filter_failed_call = surface_final_owned_record_filter(
     surface_owned_trace_records,
-    next_serial=4,
-    started=4,
-    completed=3,
+    next_serial=12,
+    started=12,
+    completed=11,
     failed=1,
-    successful_owner_serials=frozenset((1, 2, 3)),
+    successful_owner_serials=frozenset(range(1, 12)),
 )
 surface_owned_filter_stale_serial = surface_final_owned_record_filter(
     surface_owned_trace_records,
-    next_serial=4,
-    started=4,
-    completed=4,
+    next_serial=12,
+    started=12,
+    completed=12,
     failed=0,
-    successful_owner_serials=frozenset((1, 2, 3, 4, 5)),
+    successful_owner_serials=frozenset(range(1, 14)),
 )
 surface_owned_filter_stale_tag = surface_final_owned_record_filter(
     surface_owned_trace_records + ((400000, 400000, 401000, 401000, 1),),
-    next_serial=4,
-    started=4,
-    completed=4,
+    next_serial=12,
+    started=12,
+    completed=12,
     failed=0,
-    successful_owner_serials=frozenset((1, 2, 3, 4)),
+    successful_owner_serials=frozenset(range(1, 13)),
 )
 surface_owned_filter_missing_notification = surface_final_owned_record_filter(
-    tuple(record for record in surface_owned_trace_records if record[4] != 4),
-    next_serial=4,
-    started=4,
-    completed=4,
+    tuple(record for record in surface_owned_trace_records if record[4] != 12),
+    next_serial=12,
+    started=12,
+    completed=12,
     failed=0,
-    successful_owner_serials=frozenset((1, 2, 3, 4)),
+    successful_owner_serials=frozenset(range(1, 13)),
 )
 surface_owned_filter_missing_residual = surface_final_owned_record_filter(
     surface_owned_trace_records[:-1],
-    next_serial=4,
-    started=4,
-    completed=4,
+    next_serial=12,
+    started=12,
+    completed=12,
     failed=0,
-    successful_owner_serials=frozenset((1, 2, 3, 4)),
+    successful_owner_serials=frozenset(range(1, 13)),
 )
 surface_owned_unfiltered_certificate = surface_final_dirty_certificate(
     surface_dirty_width,
@@ -2771,13 +2945,34 @@ surface_dirty_certificate_checks = {
     "verified_patch_install_allows_modified_terrain_certificate": (
         surface_resource_patch_verified["accepted"]
         and surface_resource_patch_verified["branch"] == "dirty_region"
-        and surface_resource_patch_no_changes["accepted"]
+    ),
+    "zero_change_attempt_without_eight_patch_events_falls_back": (
+        not surface_resource_patch_no_changes["accepted"]
+        and surface_resource_patch_no_changes["branch"] == "canonical_rebuild_final"
+    ),
+    "all_eight_patch_notifications_are_contained_by_a_later_ring_strip": (
+        tuple(record[4] for record in surface_patch_owned_records) == tuple(range(1, 9))
+        and tuple(record[4] for record in surface_ring_owned_records) == tuple(range(9, 13))
+        and all(
+            any(
+                patch[0] >= ring[0]
+                and patch[1] >= ring[1]
+                and patch[2] <= ring[2]
+                and patch[3] <= ring[3]
+                for ring in surface_ring_owned_records
+            )
+            for patch in surface_patch_owned_records
+        )
     ),
     "full_setter_or_patch_fallback_forces_canonical_rebuild_final": (
         not surface_resource_patch_full_setter["accepted"]
         and not surface_resource_patch_fallback["accepted"]
         and surface_resource_patch_full_setter["branch"] == "canonical_rebuild_final"
         and surface_resource_patch_fallback["branch"] == "canonical_rebuild_final"
+    ),
+    "failed_patch_owner_sequence_forces_canonical_rebuild_final": (
+        not surface_resource_failed_owner["accepted"]
+        and surface_resource_failed_owner["branch"] == "canonical_rebuild_final"
     ),
     "full_setter_then_zero_change_remains_sticky_canonical_fallback": (
         not surface_resource_full_setter_then_zero["accepted"]
@@ -2834,21 +3029,21 @@ surface_dirty_certificate_checks = {
         and surface_dirty_after_ack["area_ratio"] < 0.01
     ),
     "owned_trace_excludes_only_successfully_completed_call_serials": (
-        len(surface_owned_trace_success["owned"]) == 4
+        len(surface_owned_trace_success["owned"]) == 12
         and len(surface_owned_trace_success["residual"]) == 11
         and len(surface_owned_trace_success["full"]) == 0
         and len(surface_owned_trace_success["owned_full"]) == 0
         and len(surface_owned_trace_success["residual_full"]) == 0
         and 0.13 < surface_owned_trace_success["residual_area_ratio"] < 0.14
     ),
-    "four_owned_edge_strips_alone_explain_the_original_full_union": (
+    "twelve_owned_patch_and_ring_events_explain_the_original_full_union": (
         not surface_owned_unfiltered_certificate["accepted"]
         and surface_owned_unfiltered_certificate["area_ratio"] == 1.0
     ),
     "strict_successful_owner_filter_retains_all_eleven_residual_records": (
         surface_owned_filter_success["accepted"]
-        and surface_owned_filter_success["exact_four"]
-        and len(surface_owned_filter_success["excluded"]) == 4
+        and surface_owned_filter_success["exact_twelve"]
+        and len(surface_owned_filter_success["excluded"]) == 12
         and len(surface_owned_filter_success["retained"]) == 11
         and surface_owned_filtered_certificate["accepted"]
         and certificate_covers_every_record(surface_owned_filtered_certificate)
@@ -2862,14 +3057,14 @@ surface_dirty_certificate_checks = {
         and surface_owned_filter_failed_call["retained"] == surface_owned_trace_records
         and surface_owned_filter_stale_serial["retained"] == surface_owned_trace_records
     ),
-    "certificate_requires_exact_four_owned_and_eleven_residual_events": (
+    "certificate_requires_exact_twelve_owned_and_eleven_residual_events": (
         surface_owned_filter_success["accepted"]
         and not surface_owned_filter_missing_residual["accepted"]
         and surface_owned_filter_missing_residual["retained"]
         == surface_owned_trace_records[:-1]
     ),
     "failed_owned_call_is_never_classified_as_success_owned": (
-        len(surface_owned_trace_failed_call["owned"]) == 3
+        len(surface_owned_trace_failed_call["owned"]) == 11
         and len(surface_owned_trace_failed_call["residual"]) == 12
     ),
     "iter177_large_integral_area_division_reproduces_zero": (
@@ -3059,7 +3254,7 @@ axial_clearance_mask_checks = {
 
 report = {
     "schema": "smr.ralph.mountain_base_enrichment_policy_check",
-    "schema_version": 27,
+    "schema_version": 28,
     "static_checks": static_checks,
     "synthetic_cases": case_results,
     "preference_checks": preference_checks,
@@ -3082,6 +3277,7 @@ report = {
         "resource_patch_no_changes": surface_resource_patch_no_changes,
         "resource_patch_full_setter": surface_resource_patch_full_setter,
         "resource_patch_fallback": surface_resource_patch_fallback,
+        "resource_failed_owner": surface_resource_failed_owner,
         "resource_full_setter_then_zero": surface_resource_full_setter_then_zero,
         "resource_full_setter_then_verified": surface_resource_full_setter_then_verified,
         "resource_identity_mismatch": surface_resource_identity_mismatch,

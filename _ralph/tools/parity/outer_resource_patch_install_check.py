@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Offline transaction model and source certificate for v954 patch-local height install.
+"""Offline transaction and ownership certificate for v957 patch-local height install.
 
 This checker does not launch the game. It fault-injects discovery, snapshot, write, and verification
 failures into an executable grid model, then checks that production uses the stock editor
 difference-box/GetGrid/SetGrid path with a complete pre-write journal, reverse rollback, literal
-full-setter fallback, exact final verification, and the canonical final gameplay-grid rebuild.
+full-setter fallback, exact final verification, and the certified-or-canonical final grid path.
 """
 
 from __future__ import annotations
@@ -182,6 +182,43 @@ def modeled_transaction(
     }
 
 
+def modeled_owner_sequence(
+    *, fail_write_at: int | None = None, fail_end_at: int | None = None,
+    verification_succeeds: bool = True,
+) -> dict[str, object]:
+    """Model the eight exact synchronous patch-owner brackets and fail-closed acceptance."""
+    started = completed = failed = 0
+    first_serial = last_serial = 0
+    for index in range(1, ITER180_PATCH_BOXES + 1):
+        serial = index
+        started += 1
+        first_serial = first_serial or serial
+        last_serial = serial
+        write_ok = index != fail_write_at
+        end_ok = index != fail_end_at
+        if write_ok and end_ok:
+            completed += 1
+        else:
+            failed += 1
+            break
+    accepted = (
+        verification_succeeds
+        and started == ITER180_PATCH_BOXES
+        and completed == ITER180_PATCH_BOXES
+        and failed == 0
+        and first_serial == 1
+        and last_serial == 8
+    )
+    return {
+        "accepted": accepted,
+        "started": started,
+        "completed": completed,
+        "failed": failed,
+        "first_serial": first_serial,
+        "last_serial": last_serial,
+    }
+
+
 def semantic_checks() -> tuple[dict[str, bool], list[dict[str, object]]]:
     cases = [{"case": "success", **modeled_transaction()}]
     cases.extend(
@@ -218,6 +255,10 @@ def semantic_checks() -> tuple[dict[str, bool], list[dict[str, object]]]:
     cases.append({"case": "malformed-discovery", **modeled_transaction(malformed_discovery=True)})
     success = cases[0]
     failures = cases[1:]
+    owner_success = modeled_owner_sequence()
+    owner_write_failure = modeled_owner_sequence(fail_write_at=5)
+    owner_end_failure = modeled_owner_sequence(fail_end_at=6)
+    owner_verify_failure = modeled_owner_sequence(verification_succeeds=False)
     checks = {
         "success_installs_exact_target_without_full_fallback": (
             success["patch_used"] is True
@@ -287,6 +328,20 @@ def semantic_checks() -> tuple[dict[str, bool], list[dict[str, object]]]:
             if case["case"].startswith("snapshot") or case["case"] == "malformed-discovery"
         ),
         "all_paths_preserve_inner_no_write_bytes": all(case["inner_exact"] for case in cases),
+        "exact_eight_owner_sequence_is_accepted": (
+            owner_success["accepted"] is True
+            and owner_success["started"] == owner_success["completed"] == 8
+            and owner_success["failed"] == 0
+            and owner_success["first_serial"] == 1
+            and owner_success["last_serial"] == 8
+        ),
+        "write_end_or_verification_failure_rejects_owner_sequence": (
+            owner_write_failure["accepted"] is False
+            and owner_end_failure["accepted"] is False
+            and owner_verify_failure["accepted"] is False
+            and owner_write_failure["failed"] == 1
+            and owner_end_failure["failed"] == 1
+        ),
     }
     return checks, cases
 
@@ -329,6 +384,7 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "difference box is outside the live height grid",
                 "difference box is not height-tile aligned",
                 "difference box does not intersect the outer resource ring",
+                "difference box is not contained by the later ring rebuild",
                 "stock difference discovery exceeded the bounded box budget",
                 "stock difference boxes overlap",
                 "local area_ratio = 0.0",
@@ -347,6 +403,38 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "height snapshot does not match its world box",
             )
         ) and "((record.x1 - record.x0) / map_w)" not in section,
+        "each_patch_write_has_exact_causal_owner_bracket": (
+            all(
+                token in section
+                for token in (
+                    'generation_grids.BeginSurfaceFinalOwnedPassRebuild(',
+                    'map, "outer resource height patch install", record_index',
+                    'editor_api.SetGrid, map, "height", record.after, record.box',
+                    "generation_grids.EndSurfaceFinalOwnedPassRebuild,",
+                    "map, owner_serial, write_succeeded",
+                    "patch_install.owner_calls_started",
+                    "patch_install.owner_calls_completed",
+                    "patch_install.owner_calls_failed",
+                    "patch_install_owner_first_serial = patch_install.owner_first_serial",
+                    "patch_install_owner_last_serial = patch_install.owner_last_serial",
+                )
+            )
+            and section.index("BeginSurfaceFinalOwnedPassRebuild(", write - 1200) < write
+            < section.index("EndSurfaceFinalOwnedPassRebuild,", write)
+        ),
+        "ring_supersession_and_native_inner_restore_are_verified": all(
+            token in section
+            for token in (
+                "y1 <= ring_inner_y or y0 >= ring_far_y",
+                "x1 <= ring_inner_x or x0 >= ring_far_x",
+                "patch_install.ring_supersession_verified = true",
+                "grids_are_equal(grid, live)",
+                "native target modified the exact inner no-write rectangle",
+                "patch_install.native_inner_restore_exact = true",
+                "patch_install_ring_supersession_verified = patch_install.ring_supersession_verified",
+                "patch_install_native_inner_restore_exact = patch_install.native_inner_restore_exact",
+            )
+        ),
         "partial_failure_rolls_back_reverse_and_verifies": all(
             token in section
             for token in (
@@ -390,12 +478,15 @@ def structural_checks(terrain: str, config: str, generation: str, metadata: str)
                 "patch_install_full_setter_used = patch_install.full_setter_used",
                 "patch_install_rollback_attempted = patch_install.rollback_attempted",
                 "patch_install_rollback_verified = patch_install.rollback_verified",
+                "patch_install_owner_calls_started = patch_install.owner_calls_started",
+                "patch_install_owner_calls_completed = patch_install.owner_calls_completed",
+                "patch_install_owner_calls_failed = patch_install.owner_calls_failed",
                 "canonical_final_grid_rebuild_retained = true",
             )
         ),
-        "metadata_is_v956": (
-            "'version', 956" in metadata
-            and "Rebuild closing surface passability from an ownership-certified dirty region."
+        "metadata_is_v957": (
+            "'version', 957" in metadata
+            and "Causally certify patch-install passability notifications for the closing regional rebuild."
             in metadata
         ),
     }
@@ -409,7 +500,7 @@ def main() -> int:
     semantic, cases = semantic_checks()
     structural = structural_checks(terrain, config, generation, metadata)
     result = {
-        "schema": "smr.ralph.outer_resource_patch_install_check.v4",
+        "schema": "smr.ralph.outer_resource_patch_install_check.v6",
         "ok": all(semantic.values()) and all(structural.values()),
         "semantic_checks": semantic,
         "structural_checks": structural,
