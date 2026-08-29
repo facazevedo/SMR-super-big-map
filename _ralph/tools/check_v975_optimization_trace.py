@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static/executable gate for the v976 default-off-safe optimization trace."""
+"""Fail-closed static/executable gate for the v977 default-off-safe optimization trace."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ DIAGNOSTICS = ROOT / "Code" / "sbm_diagnostics.lua"
 VERSION = ROOT / "Code" / "sbm_version.lua"
 METADATA = ROOT / "metadata.lua"
 DEFAULT_OFF_ORACLE = ROOT / "_ralph" / "tools" / "optimization_trace_default_off_oracle.lua"
+YIELD_WRITER_ORACLE = ROOT / "_ralph" / "tools" / "optimization_trace_yield_writer_oracle.lua"
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
 LUA53_RUN = LUA53.with_name("lua.exe")
@@ -135,20 +136,24 @@ def main() -> int:
     path_token = "g_SmrRalphOptimizationTracePath"
 
     compile_results: dict[str, bool] = {}
-    for path in (GENERATION, TERRAIN, DIAGNOSTICS, VERSION, METADATA, DEFAULT_OFF_ORACLE):
+    for path in (GENERATION, TERRAIN, DIAGNOSTICS, VERSION, METADATA, DEFAULT_OFF_ORACLE,
+                 YIELD_WRITER_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     default_off_run = subprocess.run(
         [str(LUA53_RUN), str(DEFAULT_OFF_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    yield_writer_run = subprocess.run(
+        [str(LUA53_RUN), str(YIELD_WRITER_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v976_v282": (
-            "'version', 976," in metadata
-            and "explicit-path-only Surface optimization trace" in metadata
-            and "default-off no-op API" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 282" in version
+        "metadata_and_generator_identity_v977_v283": (
+            "'version', 977," in metadata
+            and "owned pre-pipeline lazy Surface re-entry" in metadata
+            and "yield-safe protected writer" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 283" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
@@ -192,7 +197,8 @@ def main() -> int:
             "MAX_RECORDS = 1024", "MAX_BYTES = 524288",
             "runtime.write_disabled == true then return false",
             'local write = Global("AsyncStringToFile")',
-            "local call_ok, write_error = pcall(write, runtime.path, payload)",
+            'local protected_write = Global("sprocall") or pcall',
+            "local call_ok, write_error = protected_write(write, runtime.path, payload)",
             "runtime.write_ms = (runtime.write_ms or 0) + elapsed",
             "if runtime.write_failures >= 3 then runtime.write_disabled = true end",
             "pcall(print_fn,", "runtime.console_ms = (runtime.console_ms or 0)",
@@ -200,7 +206,10 @@ def main() -> int:
             "runtime.emit_ms = (runtime.emit_ms or 0) + emit_elapsed",
             "SuperBigMapOptimizationTraceComputeMs",
             "SuperBigMapOptimizationTraceOverheadMs",
-        )),
+        )) and yield_writer_run.returncode == 0
+            and all(token in yield_writer_run.stdout for token in (
+                "ok=true", "uses_sprocall=true", "success_write=true",
+                "error_return_fail_open=true", "thrown_write_fail_open=true")),
         "trace_schema_has_sequence_raw_net_delta_map_and_counters": all(
             token in trace for token in (
                 'SCHEMA = "smr.sbm.optimization-trace.v1"',
@@ -281,13 +290,14 @@ def main() -> int:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     output = {
-        "schema": "smr.ralph.v976.optimization-trace-check.v1",
+        "schema": "smr.ralph.v977.optimization-trace-check.v1",
         "ok": not failed,
         "failed": failed,
         "checks": checks,
         "pair_counts": pair_counts,
         "compile": compile_results,
         "default_off_oracle": default_off_run.stdout.strip(),
+        "yield_writer_oracle": yield_writer_run.stdout.strip(),
         "required_literal_phases": len(REQUIRED_PAIRED_PHASES),
     }
     print(json.dumps(output, indent=2, sort_keys=True))

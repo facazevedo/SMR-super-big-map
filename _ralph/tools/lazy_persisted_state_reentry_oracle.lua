@@ -1,6 +1,7 @@
--- Deterministic Lua 5.3 model for the v974 persisted-state/live-rebuild distinction.
--- Process-local weak ownership permits only the two canonical Surface rebuild re-entries; the
--- same persisted fields without that ownership model a loaded interrupted save and must block.
+-- Deterministic Lua 5.3 model for the v977 persisted-state/live-rebuild distinction.
+-- Process-local weak ownership permits the pre-pipeline install plus the two canonical Surface
+-- rebuild re-entries; the same persisted fields without that ownership model a loaded interrupted
+-- save and must block.
 local live_transactions = setmetatable({}, { __mode = "k" })
 local loading_refs = setmetatable({}, { __mode = "k" })
 local globals = { Maps = {}, UndergroundMap = nil, restore_tokens = nil, visible = true }
@@ -22,18 +23,22 @@ local function owned_in_flight(surface, descriptor, report)
 		or globals.UndergroundMap ~= nil or globals.Maps[descriptor.map_slot] ~= nil
 		or type(globals.restore_tokens) == "table" and #globals.restore_tokens > 0
 		or surface.stretch_pipeline_pending ~= true or surface.surface_stretch_done == true
-		or surface.surface_stretch_scheduled ~= true
-		or surface.post_pipeline_revalidation_scheduled ~= true
 		or surface.post_pipeline_revalidation_complete == true
 		or surface.post_pipeline_revalidation_error ~= nil
 		or loading_refs[surface] ~= true or globals.visible ~= true then return false end
 	if descriptor.state == "suppressed-awaiting-surface-capsules" then
-		return #descriptor.capsules == 0 and descriptor.plan_digest == 0
-			and report.capsule_plan_pending == true and report.capsules_published == 0,
-			"first-canonical-rebuild"
+		local exact = #descriptor.capsules == 0 and descriptor.plan_digest == 0
+			and report.capsule_plan_pending == true and report.capsules_published == 0
+		if not exact then return false end
+		if surface.post_pipeline_revalidation_scheduled ~= true then
+			return true, "pre-surface-pipeline"
+		end
+		return surface.surface_stretch_scheduled == true, "first-canonical-rebuild"
 	end
 	if descriptor.state == "surface-capsules-published-awaiting-final-grid" then
-		return #descriptor.capsules == 2 and descriptor.plan_digest > 0
+		return surface.surface_stretch_scheduled == true
+			and surface.post_pipeline_revalidation_scheduled == true
+			and #descriptor.capsules == 2 and descriptor.plan_digest > 0
 			and report.capsules_published == 2 and report.deterministic_repeat == true
 			and report.final_grid_revalidation ~= true,
 			"closing-canonical-rebuild"
@@ -70,7 +75,7 @@ local function new_surface()
 	return {
 		environment = "Surface", descriptor = descriptor, report = report,
 		stretch_pipeline_pending = true, surface_stretch_done = false,
-		surface_stretch_scheduled = true, post_pipeline_revalidation_scheduled = true,
+		surface_stretch_scheduled = false, post_pipeline_revalidation_scheduled = false,
 		post_pipeline_revalidation_complete = false,
 	}
 end
@@ -81,6 +86,12 @@ live_transactions[live] = {
 	map_slot = live.descriptor.map_slot, reserved_seed = live.descriptor.reserved_seed,
 }
 loading_refs[live] = true
+local pre_ok, pre_phase = validate(live)
+local pre_pipeline_reentry_exact = pre_ok and pre_phase == "pre-surface-pipeline"
+	and live.descriptor.state == "suppressed-awaiting-surface-capsules"
+
+live.surface_stretch_scheduled = true
+live.post_pipeline_revalidation_scheduled = true
 local first_ok, first_phase = validate(live)
 local first_reentry_exact = first_ok and first_phase == "first-canonical-rebuild"
 	and live.descriptor.state == "suppressed-awaiting-surface-capsules"
@@ -124,9 +135,11 @@ globals.restore_tokens = nil
 local no_restore_tokens_required = restore_ok == false
 	and pending_restore.descriptor.state == "blocked"
 
-local ok = first_reentry_exact and closing_reentry_exact and loaded_incomplete_rejected
+local ok = pre_pipeline_reentry_exact and first_reentry_exact
+	and closing_reentry_exact and loaded_incomplete_rejected
 	and cover_required and no_restore_tokens_required
 print("ok=" .. tostring(ok))
+print("pre_pipeline_reentry_exact=" .. tostring(pre_pipeline_reentry_exact))
 print("first_reentry_exact=" .. tostring(first_reentry_exact))
 print("closing_reentry_exact=" .. tostring(closing_reentry_exact))
 print("loaded_incomplete_rejected=" .. tostring(loaded_incomplete_rejected))

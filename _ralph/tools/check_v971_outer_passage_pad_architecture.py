@@ -73,10 +73,10 @@ def main() -> int:
     pipeline_end = generation.index("if type(deposits.ClearTopUpPlacementPool)", pipeline_start)
     pipeline = generation[pipeline_start:pipeline_end]
     checks = {
-        "metadata_v971_architecture_retained_forward": "'version', 976," in metadata
-            and "explicit-path-only Surface optimization trace" in metadata
-            and "default-off no-op API" in metadata,
-        "generator_identity_v282": "SuperBigMap.GENERATOR_PATCH_VERSION = 282" in version,
+        "metadata_v971_architecture_retained_forward": "'version', 977," in metadata
+            and "owned pre-pipeline lazy Surface re-entry" in metadata
+            and "yield-safe protected writer" in metadata,
+        "generator_identity_v283": "SuperBigMap.GENERATOR_PATCH_VERSION = 283" in version,
         "implementation_default_off_subflag_default_on_compiled": all(token in config for token in (
             "config.LazyUndergroundSourceGeneration = false",
             "config.LazyUndergroundOuterPassagePads = true",

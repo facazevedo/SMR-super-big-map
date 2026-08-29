@@ -70,11 +70,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v976_truthfully_retains_v972": "'version', 976," in metadata
-            and "explicit-path-only Surface optimization trace" in metadata
-            and "default-off no-op API" in metadata,
-        "generator_identity_v282": "SuperBigMap.GENERATOR_PATCH_VERSION = 282" in version,
-        "v976_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v977_truthfully_retains_v972": "'version', 977," in metadata
+            and "owned pre-pipeline lazy Surface re-entry" in metadata
+            and "yield-safe protected writer" in metadata,
+        "generator_identity_v283": "SuperBigMap.GENERATOR_PATCH_VERSION = 283" in version,
+        "v977_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -93,6 +93,7 @@ def main() -> int:
         "owned_live_rebuild_reentry_is_distinct_from_loaded_incomplete_state": (
             persisted_reentry_run.returncode == 0
             and "ok=true" in persisted_reentry_run.stdout
+            and "pre_pipeline_reentry_exact=true" in persisted_reentry_run.stdout
             and "first_reentry_exact=true" in persisted_reentry_run.stdout
             and "closing_reentry_exact=true" in persisted_reentry_run.stdout
             and "loaded_incomplete_rejected=true" in persisted_reentry_run.stdout
@@ -102,10 +103,11 @@ def main() -> int:
                 "owner.descriptor ~= descriptor or owner.report ~= report",
                 "surface_loading_ref_maps[surface] ~= true",
                 "surface.SuperBigMapStretchPipelinePending ~= true",
-                "surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true",
                 "Global(\"UndergroundMap\") ~= nil",
                 "lazy_underground_engine_restore_tokens",
                 'descriptor.state == "suppressed-awaiting-surface-capsules"',
+                'if surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then',
+                '"pre-surface-pipeline"',
                 '"first-canonical-rebuild"',
                 'descriptor.state == "surface-capsules-published-awaiting-final-grid"',
                 '"closing-canonical-rebuild"',

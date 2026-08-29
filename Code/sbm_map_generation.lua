@@ -11175,8 +11175,6 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 	if type(pending_restore) == "table" and #pending_restore > 0 then return false end
 	if surface.SuperBigMapStretchPipelinePending ~= true
 		or surface.SuperBigMapSurfaceStretchDone == true
-		or surface.SuperBigMapSurfaceStretchScheduled ~= true
-		or surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true
 		or surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true
 		or surface.SuperBigMapSurfacePostPipelineRevalidationError ~= nil
 		or surface_loading_ref_maps[surface] ~= true then
@@ -11187,14 +11185,25 @@ function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 	local visible_ok, visible_now = pcall(visible)
 	if not visible_ok or visible_now ~= true then return false end
 	if descriptor.state == "suppressed-awaiting-surface-capsules" then
-		return type(descriptor.capsules) == "table" and #descriptor.capsules == 0
+		local exact = type(descriptor.capsules) == "table" and #descriptor.capsules == 0
 			and (tonumber(descriptor.plan_digest) or 0) == 0
 			and report.capsule_plan_pending == true
-			and (tonumber(report.capsules_published) or 0) == 0,
+			and (tonumber(report.capsules_published) or 0) == 0
+		if not exact then return false end
+		-- PatchDeferredUndergroundAccess is first installed after suppression commits but before
+		-- RunSurfaceStretchIfEnabled schedules the post-pipeline canonical rebuild. The weak owner
+		-- and loading-cover tokens above are process-local and cannot survive save/load, so this
+		-- precise pre-schedule state is owned live work rather than persisted incomplete state.
+		if surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
+			return true, "pre-surface-pipeline"
+		end
+		return surface.SuperBigMapSurfaceStretchScheduled == true,
 			"first-canonical-rebuild"
 	end
 	if descriptor.state == "surface-capsules-published-awaiting-final-grid" then
-		return type(descriptor.capsules) == "table" and #descriptor.capsules == 2
+		return surface.SuperBigMapSurfaceStretchScheduled == true
+			and surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true
+			and type(descriptor.capsules) == "table" and #descriptor.capsules == 2
 			and (tonumber(descriptor.plan_digest) or 0) > 0
 			and tonumber(report.capsules_published) == 2
 			and report.deterministic_repeat == true
@@ -11285,7 +11294,11 @@ function SuperBigMap.OptimizationTrace.Publish()
 		return false
 	end
 	local started = trace.Now()
-	local call_ok, write_error = pcall(write, runtime.path, payload)
+	-- AsyncStringToFile may yield on the generation real-time thread. Ordinary pcall rejects that
+	-- engine yield and silently disabled the iter211 file after three attempts; sprocall is the
+	-- engine's yield-safe protected-call boundary and preserves the diagnostic fail-open contract.
+	local protected_write = Global("sprocall") or pcall
+	local call_ok, write_error = protected_write(write, runtime.path, payload)
 	local elapsed = math.max(0, trace.Now() - started)
 	runtime.write_ms = (runtime.write_ms or 0) + elapsed
 	runtime.last_publish_ms = elapsed
