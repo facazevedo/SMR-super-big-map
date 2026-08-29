@@ -18,8 +18,11 @@ VERSION = ROOT / "Code" / "sbm_version.lua"
 METADATA = ROOT / "metadata.lua"
 ORACLE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_oracle.py"
 ENGINE_PROBE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_engine_probe.lua"
+FALSE_GLOBAL_ORACLE = (ROOT / "_ralph" / "tools"
+                       / "lazy_engine_global_false_transaction_oracle.lua")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
+LUA53_RUN = LUA53.with_name("lua.exe")
 
 
 def ordered(text: str, *tokens: str) -> bool:
@@ -43,26 +46,37 @@ def main() -> int:
     plan = terrain[start:end]
     oracle_run = subprocess.run([sys.executable, str(ORACLE)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
+    false_global_run = subprocess.run([str(LUA53_RUN), str(FALSE_GLOBAL_ORACLE)], cwd=ROOT,
+                                      capture_output=True, text=True, timeout=30, check=False)
     try:
         oracle = json.loads(oracle_run.stdout)
     except json.JSONDecodeError:
         oracle = {"ok": False, "error": oracle_run.stderr or oracle_run.stdout}
     compile_results = {}
     engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
-    for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE):
+    for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
+                 FALSE_GLOBAL_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v972_truthful": "'version', 972," in metadata
-            and "directly inside certified outer-ring strips" in metadata
-            and "four viable footprints per site" in metadata,
-        "generator_identity_v278": "SuperBigMap.GENERATOR_PATCH_VERSION = 278" in version,
+        "metadata_v973_truthfully_retains_v972": "'version', 973," in metadata
+            and "literal false engine-global values" in metadata
+            and "bounded direct-pad plan and replay" in metadata,
+        "generator_identity_v279": "SuperBigMap.GENERATOR_PATCH_VERSION = 279" in version,
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
             "config.LazyUndergroundSourceGeneration = false",
             "config.LazyUndergroundOuterPassagePads = true")),
         "pinned_lua53_compiles_production": all(compile_results.values()),
         "v972_oracle_green": oracle_run.returncode == 0 and oracle.get("ok") is True,
+        "literal_false_engine_global_transaction_round_trips": (
+            false_global_run.returncode == 0 and false_global_run.stdout.strip() == "ok=true"
+            and "return read_ok and value or nil" not in generation[
+                generation.index("local function add_environment_bridge"):
+                generation.index("local function parent_environment")]
+            and "if read_ok then return value end" in generation[
+                generation.index("local function add_environment_bridge"):
+                generation.index("local function parent_environment")]),
         "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
             token in engine_probe for token in (
                 'schema = "smr.ralph.v972.direct-outer-passage-pad-engine-probe.v1"',
@@ -112,6 +126,38 @@ def main() -> int:
             and generation.count("passage_pad_attempts) or 65) > 64") == 2
             and generation.count("passage_pad_replay_viable) ~= 8") == 2
             and generation.count("passage_pad_plan_ms) or 2001) > 2000") == 2),
+        "capsule_gate_matches_bounded_direct_pad_journal": all(
+            token in generation for token in (
+                "candidate.outer_passage_pad_direct_sampling == true",
+                "candidate.outer_passage_pad_attempt_cap_per_site == 32",
+                "candidate.outer_passage_pad_viable_target_per_site == 4",
+                "candidate.attempts >= 8 and candidate.attempts <= 64",
+                "candidate.outer_passage_pad_viable == 8",
+                "candidate.outer_passage_pad_replay_attempts == candidate.attempts",
+                "candidate.outer_passage_pad_replay_viable == 8",
+                "candidate.outer_passage_pad_replay_exact == true",
+                "candidate.outer_passage_pad_shape_checks >= 8",
+                "candidate.outer_passage_pad_shape_checks <= candidate.attempts",
+                "candidate.outer_passage_pad_plan_ms <= 2000",
+                "candidate.outer_passage_pad_private_draws == candidate.attempts * 3",
+                "outer_plan_contract(plan_report, 2)", "outer_plan_contract(twin_report, 0)",
+                "candidate.bounded_max_depth == 0",
+                "candidate.publication_validation_calls == publication_calls",
+                "candidate.full_search_calls == 0", "candidate.full_search_mismatches == 0"))
+            and "plan_report.attempts == 512" not in generation,
+        "planner_telemetry_carries_direct_pad_contract": all(
+            token in generation for token in (
+                "outer_passage_pad_direct_sampling = false",
+                "outer_passage_pad_attempt_cap_per_site = 0",
+                "outer_passage_pad_viable_target_per_site = 0",
+                "outer_passage_pad_attempts = 0",
+                "outer_passage_pad_viable = 0",
+                "outer_passage_pad_replay_attempts = 0",
+                "outer_passage_pad_replay_viable = 0",
+                "outer_passage_pad_replay_exact = false",
+                "outer_passage_pad_shape_checks = 0",
+                "outer_passage_pad_plan_ms = 0",
+                "outer_passage_pad_private_draws = 0")),
         "two_exact_depth_zero_publication_validations_retained": all(
             token in generation for token in (
                 "report.publication_validation_calls == 2",

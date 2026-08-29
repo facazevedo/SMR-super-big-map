@@ -137,6 +137,49 @@ def plan(seed: int, corpus: dict) -> dict:
             "draws": attempts * 3, "digest": digest, "partial": False}
 
 
+def capsule_contract(result: dict, publication_calls: int) -> bool:
+    attempts = result.get("attempts", -1)
+    shape_checks = result.get("shape_checks", -1)
+    return result.get("ok") is True \
+        and result.get("direct_sampling") is True \
+        and result.get("attempt_cap_per_site") == ATTEMPT_CAP \
+        and result.get("viable_target_per_site") == VIABLE_TARGET \
+        and 8 <= attempts <= 64 \
+        and result.get("journal_attempts") == attempts \
+        and result.get("viable") == 8 \
+        and result.get("replay_attempts") == attempts \
+        and result.get("replay_viable") == 8 \
+        and result.get("replay_exact") is True \
+        and 8 <= shape_checks <= attempts \
+        and 0 <= result.get("plan_ms", -1) <= 2_000 \
+        and result.get("draws") == attempts * 3 \
+        and result.get("publication_calls") == publication_calls \
+        and result.get("publication_exact_centers") == publication_calls \
+        and result.get("bounded_max_depth") == 0 \
+        and result.get("bounded_search_calls") == 0 \
+        and result.get("full_search_calls") == 0 \
+        and result.get("full_search_mismatches") == 0
+
+
+def planner_report(result: dict, publication_calls: int) -> dict:
+    return result | {
+        "direct_sampling": True,
+        "attempt_cap_per_site": ATTEMPT_CAP,
+        "viable_target_per_site": VIABLE_TARGET,
+        "journal_attempts": result["attempts"],
+        "replay_attempts": result["attempts"],
+        "replay_viable": result["viable"],
+        "replay_exact": True,
+        "plan_ms": 61,
+        "publication_calls": publication_calls,
+        "publication_exact_centers": publication_calls,
+        "bounded_max_depth": 0,
+        "bounded_search_calls": 0,
+        "full_search_calls": 0,
+        "full_search_mismatches": 0,
+    }
+
+
 def main() -> int:
     started = time.perf_counter()
     corpora = []
@@ -160,6 +203,12 @@ def main() -> int:
                                for mx, my, radius in corpus["markers"])
                        for corpus, result, _ in corpora if result["ok"]
                        for site in result["sites"])
+    representative_main = planner_report(successes[0], 2) if successes else {}
+    representative_replay = planner_report(successes[0], 0) if successes else {}
+    retired_512 = representative_main | {
+        "attempts": 512, "journal_attempts": 512, "replay_attempts": 512,
+        "draws": 1_536,
+    }
     checks = {
         "all_64_corpora_select_exactly_two": len(successes) == 64
             and all(len(result["sites"]) == 2 for result in successes),
@@ -173,6 +222,10 @@ def main() -> int:
         "no_shape_marker_cartesian_product": max_marker_checks <= 64 * 80,
         "three_private_draws_per_attempt": all(result["draws"] == result["attempts"] * 3
                                                 for result in successes),
+        "bounded_capsule_runtime_contract_accepts_main_and_replay": (
+            capsule_contract(representative_main, 2)
+            and capsule_contract(representative_replay, 0)),
+        "retired_512_attempt_contract_is_rejected": not capsule_contract(retired_512, 2),
         "no_partial_publication_model": all(result["partial"] is False
                                              for _, result, _ in corpora),
         "oracle_runtime_bounded": elapsed_ms < 1_000,

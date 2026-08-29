@@ -8933,6 +8933,17 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		outer_passage_pad_requested = Lazy.OUTER_PASSAGE_PADS == true,
 		outer_passage_pad_used = false,
 		outer_passage_pad_report_exact = false,
+		outer_passage_pad_direct_sampling = false,
+		outer_passage_pad_attempt_cap_per_site = 0,
+		outer_passage_pad_viable_target_per_site = 0,
+		outer_passage_pad_attempts = 0,
+		outer_passage_pad_viable = 0,
+		outer_passage_pad_replay_attempts = 0,
+		outer_passage_pad_replay_viable = 0,
+		outer_passage_pad_replay_exact = false,
+		outer_passage_pad_shape_checks = 0,
+		outer_passage_pad_plan_ms = 0,
+		outer_passage_pad_private_draws = 0,
 		outer_passage_pad_plan_digest = 0,
 		outer_passage_pad_terrain_modified_cells = 0,
 		outer_passage_pad_native_raster_cells = 0,
@@ -9362,6 +9373,25 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		report.bounded_max_depth = 0
 		report.outer_passage_pad_used = true
 		report.outer_passage_pad_report_exact = true
+		report.outer_passage_pad_direct_sampling =
+			terrain_report.passage_pad_direct_outer_sampling == true
+		report.outer_passage_pad_attempt_cap_per_site = tonumber(
+			terrain_report.passage_pad_attempt_cap_per_site) or 0
+		report.outer_passage_pad_viable_target_per_site = tonumber(
+			terrain_report.passage_pad_viable_target_per_site) or 0
+		report.outer_passage_pad_attempts = tonumber(
+			terrain_report.passage_pad_attempts) or 0
+		report.outer_passage_pad_viable = tonumber(terrain_report.passage_pad_viable) or 0
+		report.outer_passage_pad_replay_attempts = tonumber(
+			terrain_report.passage_pad_replay_attempts) or 0
+		report.outer_passage_pad_replay_viable = tonumber(
+			terrain_report.passage_pad_replay_viable) or 0
+		report.outer_passage_pad_replay_exact = terrain_report.passage_pad_replay_exact == true
+		report.outer_passage_pad_shape_checks = tonumber(
+			terrain_report.passage_pad_shape_checks) or 0
+		report.outer_passage_pad_plan_ms = tonumber(terrain_report.passage_pad_plan_ms) or 0
+		report.outer_passage_pad_private_draws = tonumber(
+			terrain_report.passage_pad_private_draws) or 0
 		report.outer_passage_pad_plan_digest = tonumber(
 			terrain_report.passage_pad_plan_digest) or 0
 		report.outer_passage_pad_terrain_modified_cells = tonumber(
@@ -10184,31 +10214,43 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	end
 	local validation_contract = plan_report.plan_safe_for_publication == true
 	if outer_passage_active then
-		validation_contract = validation_contract
-			and after_canonical_grid == true
-			and plan_report.outer_passage_pad_used == true
-			and plan_report.outer_passage_pad_report_exact == true
-			and plan_report.outer_passage_pad_native_fallback == false
-			and plan_report.outer_passage_pad_plan_digest > 0
-			and plan_report.attempts == 512
-			and plan_report.private_draws == plan_report.attempts * 3
-			and plan_report.bounded_max_depth == 0
-			and plan_report.bounded_search_calls == 0
-			and plan_report.exact_center_shape_checks == 0
-			and plan_report.publication_validation_calls == 2
-			and plan_report.publication_validation_exact_centers == 2
-			and plan_report.full_search_calls == 0
-			and plan_report.full_search_mismatches == 0
-			and twin_report and twin_report.replay_only == true
-			and twin_report.outer_passage_pad_used == true
-			and twin_report.outer_passage_pad_report_exact == true
+		local function outer_plan_contract(candidate, publication_calls)
+			return type(candidate) == "table"
+				and candidate.outer_passage_pad_used == true
+				and candidate.outer_passage_pad_report_exact == true
+				and candidate.outer_passage_pad_direct_sampling == true
+				and candidate.outer_passage_pad_attempt_cap_per_site == 32
+				and candidate.outer_passage_pad_viable_target_per_site == 4
+				and candidate.attempts >= 8 and candidate.attempts <= 64
+				and candidate.outer_passage_pad_attempts == candidate.attempts
+				and candidate.outer_passage_pad_viable == 8
+				and candidate.outer_passage_pad_replay_attempts == candidate.attempts
+				and candidate.outer_passage_pad_replay_viable == 8
+				and candidate.outer_passage_pad_replay_exact == true
+				and candidate.outer_passage_pad_shape_checks >= 8
+				and candidate.outer_passage_pad_shape_checks <= candidate.attempts
+				and candidate.outer_passage_pad_plan_ms >= 0
+				and candidate.outer_passage_pad_plan_ms <= 2000
+				and candidate.outer_passage_pad_private_draws == candidate.attempts * 3
+				and candidate.private_draws == candidate.outer_passage_pad_private_draws
+				and candidate.outer_passage_pad_native_fallback == false
+				and candidate.outer_passage_pad_plan_digest > 0
+				and candidate.bounded_max_depth == 0
+				and candidate.bounded_search_calls == 0
+				and candidate.publication_validation_calls == publication_calls
+				and candidate.publication_validation_exact_centers == publication_calls
+				and candidate.full_search_calls == 0
+				and candidate.full_search_mismatches == 0
+		end
+		validation_contract = validation_contract and after_canonical_grid == true
+			and outer_plan_contract(plan_report, 2)
+			and outer_plan_contract(twin_report, 0)
+			and twin_report.plan_safe_for_publication == true
+			and twin_report.replay_only == true
 			and twin_report.outer_passage_pad_plan_digest
 				== plan_report.outer_passage_pad_plan_digest
 			and twin_report.attempts == plan_report.attempts
 			and twin_report.private_draws == plan_report.private_draws
-			and twin_report.publication_validation_calls == 0
-			and twin_report.full_search_calls == 0
-			and twin_report.full_search_mismatches == 0
 	elseif stock_search_active then
 		validation_contract = validation_contract and plan_report.stock_search_used == true
 			and plan_report.stock_search_after_canonical_grid == true
@@ -11424,7 +11466,11 @@ local function PatchAdditionalMapSeedReservation()
 			rawset(env, name, nil)
 			local read_ok, value = pcall(function() return env[name] end)
 			rawset(env, name, direct)
-			return read_ok and value or nil
+			-- `false` is the committed lazy GenerateNextMap suppression value. Preserve it as a
+			-- successful read; the compact and/or idiom collapses false to nil, which makes the
+			-- transaction misclassify a successful inherited write and prevents exact rollback.
+			if read_ok then return value end
+			return nil
 		end
 		local function write(name, value)
 			local direct = rawget(env, name)
