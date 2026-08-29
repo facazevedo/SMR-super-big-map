@@ -8692,6 +8692,9 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
 		OUTER_PASSAGE_PADS = cfg_bool("LAZY_UNDERGROUND_OUTER_PASSAGE_PADS", true),
 		CAPSULE_PLANNER_VERSION = 6,
+		-- Process-local ownership, never saved state. Weak map keys disappear across reloads, letting
+		-- validation distinguish lifecycle re-entry from a genuinely interrupted saved game.
+		LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = "k" }),
 	}
 
 function Lazy.Now()
@@ -9915,6 +9918,7 @@ function Lazy.RestorePendingEngineGlobals()
 end
 
 function Lazy.MarkBlocked(surface, reason)
+	if surface ~= nil then Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	if type(descriptor) == "table" then
@@ -9927,6 +9931,7 @@ function Lazy.MarkBlocked(surface, reason)
 		report.access_blocked = true
 		report.failure_sticky = true
 		report.materialization_running = false
+		report.persisted_state_live_reentry_allowed = false
 		report.error = tostring(reason or "unknown lazy-underground failure")
 	end
 	LoadingStep("lazy underground access blocked", { error = tostring(reason) }, surface)
@@ -9968,6 +9973,14 @@ function Lazy.SuppressGenerateNextMap(surface, next_map)
 	report.suppression_used = true
 	report.suppression_committed = true
 	report.enablement_blocker = "surface capsules and final-grid certificate are pending"
+	-- This is the only creation point for live incomplete-state ownership. Do not persist the token
+	-- on the map, descriptor, report, or shared State: a reload must be unable to recreate it.
+	Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {
+		descriptor = descriptor,
+		report = report,
+		map_slot = descriptor.map_slot,
+		reserved_seed = descriptor.reserved_seed,
+	}
 	SuperBigMap.State.pending_vanilla_underground_seed = nil
 	SuperBigMap.State.underground_seed_reservation_trace = nil
 	LoadingStep("lazy underground stock source generation suppressed", {
@@ -10692,6 +10705,9 @@ function Lazy.Capture(surface, pending, next_map)
 	report.route_execution_coverage_proven = false
 	report.access_gate_installed = false
 	report.shared_rng_isolation_proven = false
+	report.persisted_state_live_reentry_allowed = false
+	report.persisted_state_live_reentry_phase = ""
+	report.persisted_state_live_reentry_count = 0
 
 	local descriptor = {
 		schema = Lazy.SCHEMA,
@@ -10834,6 +10850,9 @@ function Lazy.FinalizeImplementation(surface)
 	descriptor.state = report.enablement_ready and "ready-for-first-access" or "blocked"
 	descriptor.failure = report.enablement_ready and "" or report.enablement_blocker
 	descriptor.failure_sticky = not report.enablement_ready
+	-- Final-grid validation ends the only legitimate incomplete live transaction. Ready/blocked state
+	-- is persisted normally from here; neither may inherit the process-local prepublication owner.
+	Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil
 	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "ready descriptor is not primitive")
@@ -11016,10 +11035,74 @@ function Lazy.PendingForElevator(elevator)
 	return descriptor.state ~= "complete", surface
 end
 
+function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
+	if type(surface) ~= "table" or type(descriptor) ~= "table" or type(report) ~= "table" then
+		return false
+	end
+	local owner = Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface]
+	if type(owner) ~= "table" or owner.descriptor ~= descriptor or owner.report ~= report
+		or owner.map_slot ~= descriptor.map_slot
+		or owner.reserved_seed ~= descriptor.reserved_seed then
+		return false
+	end
+	if Lazy.StateSurface() ~= surface
+		or type(surface.mapdata) ~= "table" or surface.mapdata.Environment ~= "Surface"
+		or tonumber(descriptor.map_slot) ~= 2
+		or descriptor.implementation ~= true
+		or descriptor.suppression_committed ~= true
+		or descriptor.suppression_used ~= true
+		or descriptor.literal_v964_continues ~= false
+		or descriptor.failure_sticky == true or tostring(descriptor.failure or "") ~= ""
+		or report.suppression_committed ~= true or report.suppression_used ~= true
+		or report.literal_v964_continues ~= false or report.shadow_only ~= false
+		or report.materialization_running == true
+		or tonumber(descriptor.materialization_attempts) ~= 0
+		or tonumber(descriptor.generation_count) ~= 0 then
+		return false
+	end
+	local maps = Global("Maps")
+	if Global("UndergroundMap") ~= nil
+		or type(maps) == "table" and maps[descriptor.map_slot] ~= nil then
+		return false
+	end
+	local pending_restore = SuperBigMap.State.lazy_underground_engine_restore_tokens
+	if type(pending_restore) == "table" and #pending_restore > 0 then return false end
+	if surface.SuperBigMapStretchPipelinePending ~= true
+		or surface.SuperBigMapSurfaceStretchDone == true
+		or surface.SuperBigMapSurfaceStretchScheduled ~= true
+		or surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true
+		or surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true
+		or surface.SuperBigMapSurfacePostPipelineRevalidationError ~= nil
+		or surface_loading_ref_maps[surface] ~= true then
+		return false
+	end
+	local visible = SuperBigMap.ExpansionLoadingVisible
+	if type(visible) ~= "function" then return false end
+	local visible_ok, visible_now = pcall(visible)
+	if not visible_ok or visible_now ~= true then return false end
+	if descriptor.state == "suppressed-awaiting-surface-capsules" then
+		return type(descriptor.capsules) == "table" and #descriptor.capsules == 0
+			and (tonumber(descriptor.plan_digest) or 0) == 0
+			and report.capsule_plan_pending == true
+			and (tonumber(report.capsules_published) or 0) == 0,
+			"first-canonical-rebuild"
+	end
+	if descriptor.state == "surface-capsules-published-awaiting-final-grid" then
+		return type(descriptor.capsules) == "table" and #descriptor.capsules == 2
+			and (tonumber(descriptor.plan_digest) or 0) > 0
+			and tonumber(report.capsules_published) == 2
+			and report.deterministic_repeat == true
+			and report.final_grid_revalidation ~= true,
+			"closing-canonical-rebuild"
+	end
+	return false
+end
+
 function Lazy.ValidatePersistedState(surface)
 	if Lazy.IMPLEMENTATION ~= true then return true end
 	local descriptor = surface and surface.SuperBigMapLazyUndergroundDescriptor
 	if type(descriptor) ~= "table" or descriptor.implementation ~= true then return true end
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
 	local maps = Global("Maps")
 	local underground = type(maps) == "table" and maps[descriptor.map_slot] or nil
 	if descriptor.state == "generating" then
@@ -11044,6 +11127,15 @@ function Lazy.ValidatePersistedState(surface)
 		return true
 	end
 	if descriptor.state == "blocked" then return false, descriptor.failure end
+	local owned_live, live_phase =
+		Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
+	if owned_live then
+		report.persisted_state_live_reentry_allowed = true
+		report.persisted_state_live_reentry_phase = live_phase
+		report.persisted_state_live_reentry_count =
+			(tonumber(report.persisted_state_live_reentry_count) or 0) + 1
+		return true, "owned live Surface generation transaction"
+	end
 	-- These states are valid only while the Surface completion cover is still owned. A loaded game
 	-- cannot resume that pre-publication transaction safely, so it remains blocked rather than
 	-- fabricating an eager fallback after suppression.

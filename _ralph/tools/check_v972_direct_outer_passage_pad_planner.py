@@ -20,6 +20,8 @@ ORACLE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_oracle.py"
 ENGINE_PROBE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_engine_probe.lua"
 FALSE_GLOBAL_ORACLE = (ROOT / "_ralph" / "tools"
                        / "lazy_engine_global_false_transaction_oracle.lua")
+PERSISTED_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
+                            / "lazy_persisted_state_reentry_oracle.lua")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
 LUA53_RUN = LUA53.with_name("lua.exe")
@@ -48,6 +50,9 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
     false_global_run = subprocess.run([str(LUA53_RUN), str(FALSE_GLOBAL_ORACLE)], cwd=ROOT,
                                       capture_output=True, text=True, timeout=30, check=False)
+    persisted_reentry_run = subprocess.run(
+        [str(LUA53_RUN), str(PERSISTED_REENTRY_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     try:
         oracle = json.loads(oracle_run.stdout)
     except json.JSONDecodeError:
@@ -55,15 +60,15 @@ def main() -> int:
     compile_results = {}
     engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
     for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
-                 FALSE_GLOBAL_ORACLE):
+                 FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v973_truthfully_retains_v972": "'version', 973," in metadata
-            and "literal false engine-global values" in metadata
-            and "bounded direct-pad plan and replay" in metadata,
-        "generator_identity_v279": "SuperBigMap.GENERATOR_PATCH_VERSION = 279" in version,
+        "metadata_v974_truthfully_retains_v972": "'version', 974," in metadata
+            and "same-session Surface rebuild re-entry" in metadata
+            and "interrupted saved states" in metadata,
+        "generator_identity_v280": "SuperBigMap.GENERATOR_PATCH_VERSION = 280" in version,
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
             "config.LazyUndergroundSourceGeneration = false",
             "config.LazyUndergroundOuterPassagePads = true")),
@@ -77,6 +82,31 @@ def main() -> int:
             and "if read_ok then return value end" in generation[
                 generation.index("local function add_environment_bridge"):
                 generation.index("local function parent_environment")]),
+        "owned_live_rebuild_reentry_is_distinct_from_loaded_incomplete_state": (
+            persisted_reentry_run.returncode == 0
+            and "ok=true" in persisted_reentry_run.stdout
+            and "first_reentry_exact=true" in persisted_reentry_run.stdout
+            and "closing_reentry_exact=true" in persisted_reentry_run.stdout
+            and "loaded_incomplete_rejected=true" in persisted_reentry_run.stdout
+            and all(token in generation for token in (
+                "LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = \"k\" })",
+                "function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
+                "owner.descriptor ~= descriptor or owner.report ~= report",
+                "surface_loading_ref_maps[surface] ~= true",
+                "surface.SuperBigMapStretchPipelinePending ~= true",
+                "surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true",
+                "Global(\"UndergroundMap\") ~= nil",
+                "lazy_underground_engine_restore_tokens",
+                'descriptor.state == "suppressed-awaiting-surface-capsules"',
+                '"first-canonical-rebuild"',
+                'descriptor.state == "surface-capsules-published-awaiting-final-grid"',
+                '"closing-canonical-rebuild"',
+                "Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
+                "report.persisted_state_live_reentry_allowed = true",
+                "report.persisted_state_live_reentry_count =",
+                '"persisted incomplete lazy state: "'))
+            and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {") == 1
+            and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil") >= 2),
         "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
             token in engine_probe for token in (
                 'schema = "smr.ralph.v972.direct-outer-passage-pad-engine-probe.v1"',
@@ -179,6 +209,7 @@ def main() -> int:
         "checks": checks,
         "compile": compile_results,
         "oracle": oracle,
+        "persisted_state_reentry_oracle": persisted_reentry_run.stdout.strip(),
     }, indent=2, sort_keys=True))
     return 0 if not failed else 1
 
