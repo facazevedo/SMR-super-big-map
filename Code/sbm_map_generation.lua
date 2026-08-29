@@ -10030,7 +10030,7 @@ function Lazy.FindSurfaceCapsules(surface, descriptor)
 		or type(descriptor.capsules) ~= "table" then
 		return nil, "surface descriptor/capsules are unavailable"
 	end
-	local found = {}
+	local found, counts = {}, {}
 	if type(surface.MapForEach) ~= "function" then return nil, "surface object scan is unavailable" end
 	local scan_ok = pcall(surface.MapForEach, surface, "map", "UndergroundPassageBase", function(obj)
 		local index = tonumber(obj and obj.SuperBigMapLazyUndergroundCapsuleIndex)
@@ -10046,19 +10046,27 @@ function Lazy.FindSurfaceCapsules(surface, descriptor)
 			end
 		end
 		if index and descriptor.capsules[index] then
-			if found[index] then found[index] = false else found[index] = obj end
+			counts[index] = (counts[index] or 0) + 1
+			if counts[index] == 1 then found[index] = obj end
 		end
 	end)
 	if not scan_ok then return nil, "surface capsule scan raised" end
 	local result = {}
 	for index = 1, #descriptor.capsules do
 		local object = found[index]
-		if not object then return nil, "surface capsule " .. tostring(index) .. " is absent/duplicate" end
+		if counts[index] ~= 1 or not object then
+			return nil, "surface capsule " .. tostring(index) .. " is absent/duplicate"
+		end
 		local position = type(object.GetPos) == "function" and SafeCall(object.GetPos, object) or nil
 		local x, y = PointXY(position)
+		local angle = type(object.GetAngle) == "function"
+			and SafeCall(object.GetAngle, object) or nil
 		local expected = descriptor.capsules[index]
 		if x ~= expected.x or y ~= expected.y then
 			return nil, "surface capsule " .. tostring(index) .. " moved"
+		end
+		if angle ~= expected.angle then
+			return nil, "surface capsule " .. tostring(index) .. " angle changed"
 		end
 		result[index] = object
 	end
@@ -10421,6 +10429,32 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		twin_report and twin_report.marker_index_stream_complete == true
 	report.repeat_marker_exclusion_exact =
 		twin_report and twin_report.marker_exclusion_exact == true
+	report.repeat_plan_safe_for_publication =
+		twin_report and twin_report.plan_safe_for_publication == true
+	report.repeat_full_validation_complete =
+		twin_report and twin_report.full_validation_complete == true
+	report.repeat_publication_validation_calls =
+		twin_report and twin_report.publication_validation_calls or -1
+	report.repeat_publication_validation_exact_centers =
+		twin_report and twin_report.publication_validation_exact_centers or -1
+	report.repeat_publication_validation_depth =
+		twin_report and twin_report.publication_validation_depth or -1
+	report.capsule_validation_contract_exact = validation_contract == true
+	report.main_depth_zero_validation_exact = validation_contract == true
+		and plan_report.plan_safe_for_publication == true
+		and plan_report.full_validation_complete == true
+		and plan_report.publication_validation_calls == 2
+		and plan_report.publication_validation_exact_centers == 2
+		and plan_report.publication_validation_depth == 0
+		and plan_report.full_search_mismatches == 0
+	report.replay_depth_zero_validation_exact = validation_contract == true
+		and type(twin_report) == "table"
+		and twin_report.plan_safe_for_publication == true
+		and twin_report.full_validation_complete == true
+		and twin_report.publication_validation_calls == 0
+		and twin_report.publication_validation_exact_centers == 0
+		and twin_report.publication_validation_depth == 0
+		and twin_report.full_search_mismatches == 0
 	report.stock_search_replay_exact = stock_search_active and repeat_exact == true
 	report.outer_passage_pad_capsule_repeat_exact =
 		outer_passage_active and repeat_exact == true
@@ -10708,27 +10742,132 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 	return true, nil
 end
 
-function Lazy.ValidatePublishedCapsules(surface, descriptor)
-	local objects, reason = Lazy.FindSurfaceCapsules(surface, descriptor)
-	if not objects then return false, reason end
-	local markers, signs = 0, 0
-	for index, passage in ipairs(objects) do
-		if passage.other then return false, "surface capsule linked before first access: " .. index end
-		if type(passage.IsValidPlacement) ~= "function"
-			or SafeCall(passage.IsValidPlacement, passage) ~= true then
-			return false, "surface capsule is not valid on final grids: " .. index
-		end
-		if type(surface.MapForEach) == "function" then
-			pcall(surface.MapForEach, surface, "map", "UndergroundTunnelMarker", function(marker)
-				if marker and marker.spawner == passage then
-					markers = markers + 1
-					if marker.tunnel_sign then signs = signs + 1 end
-				end
-			end)
+function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
+	if type(surface) ~= "table" or type(descriptor) ~= "table" or type(report) ~= "table" then
+		return false, "published capsule certificate inputs are unavailable"
+	end
+	if descriptor.state ~= "surface-capsules-published-awaiting-final-grid"
+		and descriptor.state ~= "ready-for-first-access" then
+		return false, "published capsule descriptor state is invalid: "
+			.. tostring(descriptor.state)
+	end
+	if type(descriptor.capsules) ~= "table" or #descriptor.capsules ~= 2
+		or (tonumber(descriptor.plan_digest) or 0) <= 0 then
+		return false, "published capsule descriptor count/digest certificate is invalid"
+	end
+	for index, capsule in ipairs(descriptor.capsules) do
+		if type(capsule) ~= "table"
+			or capsule.index ~= nil and tonumber(capsule.index) ~= index
+			or type(capsule.x) ~= "number" or type(capsule.y) ~= "number"
+			or type(capsule.angle) ~= "number" or capsule.published ~= true then
+			return false, "published capsule descriptor entry is invalid: " .. tostring(index)
 		end
 	end
-	if markers ~= 2 or signs ~= 2 then
-		return false, "surface capsule marker/sign count mismatch: " .. markers .. "/" .. signs
+	local publication_exact = tonumber(report.capsules_published) == 2
+		and report.surface_capsule_objects_persisted == true
+		and report.native_source_retention_released_before_t1 == true
+		and report.deterministic_repeat == true
+		and report.capsule_validation_contract_exact == true
+		and tonumber(report.plan_digest) == tonumber(descriptor.plan_digest)
+	if not publication_exact then
+		return false, "published capsule object/plan certificate is incomplete"
+	end
+	local main_exact = report.main_depth_zero_validation_exact == true
+		and report.plan_safe_for_publication == true
+		and report.full_validation_complete == true
+		and tonumber(report.publication_validation_calls) == 2
+		and tonumber(report.publication_validation_exact_centers) == 2
+		and tonumber(report.publication_validation_depth) == 0
+		and tonumber(report.full_search_mismatches) == 0
+	local replay_exact = report.replay_depth_zero_validation_exact == true
+		and report.repeat_plan_safe_for_publication == true
+		and report.repeat_full_validation_complete == true
+		and tonumber(report.repeat_publication_validation_calls) == 0
+		and tonumber(report.repeat_publication_validation_exact_centers) == 0
+		and tonumber(report.repeat_publication_validation_depth) == 0
+	if not main_exact or not replay_exact then
+		return false, "published capsule main/replay depth-zero certificate is incomplete"
+	end
+	local closing_exact = report.fresh_grid_architecture_used == true
+		and tonumber(report.fresh_grid_expected_rebuilds) == 2
+		and report.fresh_grid_first_rebuild_complete == true
+		and report.fresh_grid_closing_rebuild_complete == true
+		and report.fresh_grid_rebuild_shape_exact == true
+		and tonumber(report.canonical_rebuilds_during_capsule_prepare) == 2
+		and tonumber(report.canonical_rebuild_fallbacks_during_capsule_prepare) == 0
+	if not closing_exact then
+		return false, "published capsule closing rebuild certificate is incomplete"
+	end
+	return true
+end
+
+function Lazy.ValidatePublishedCapsules(surface, descriptor)
+	local report = surface and surface.SuperBigMapLazyUndergroundFeasibilityReport
+	local certified, certificate_reason =
+		Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)
+	if not certified then return false, certificate_reason end
+	local objects, reason = Lazy.FindSurfaceCapsules(surface, descriptor)
+	if not objects then return false, reason end
+	local is_valid = Global("IsValid")
+	if type(is_valid) ~= "function" or type(surface.MapForEach) ~= "function" then
+		return false, "published capsule object validation APIs are unavailable"
+	end
+	local function engine_valid(object)
+		local call_ok, valid = pcall(is_valid, object)
+		return call_ok and valid == true
+	end
+	local markers_by_passage = {}
+	for index, passage in ipairs(objects) do
+		if passage.other then return false, "surface capsule linked before first access: " .. index end
+		if not engine_valid(passage) then
+			return false, "surface capsule engine object is invalid: " .. index
+		end
+		if type(passage.GetMap) ~= "function" or SafeCall(passage.GetMap, passage) ~= surface then
+			return false, "surface capsule map ownership is invalid: " .. index
+		end
+		markers_by_passage[passage] = {}
+	end
+	local marker_scan_ok = pcall(surface.MapForEach, surface, "map",
+		"UndergroundTunnelMarker", function(marker)
+			local passage = marker and marker.spawner
+			local markers = passage and markers_by_passage[passage]
+			if markers then markers[#markers + 1] = marker end
+		end)
+	if not marker_scan_ok then return false, "surface capsule marker scan raised" end
+	local signs_by_marker = {}
+	local sign_scan_ok = pcall(surface.MapForEach, surface, "map",
+		"SurfaceUndergroundTunnelSign", function(sign)
+			local marker = sign and sign.tunnel_marker
+			if marker then
+				local signs = signs_by_marker[marker]
+				if not signs then signs = {}; signs_by_marker[marker] = signs end
+				signs[#signs + 1] = sign
+			end
+		end)
+	if not sign_scan_ok then return false, "surface capsule sign scan raised" end
+	local marker_count, sign_count = 0, 0
+	for index, passage in ipairs(objects) do
+		local markers = markers_by_passage[passage]
+		if #markers ~= 1 then
+			return false, "surface capsule marker count mismatch at " .. tostring(index)
+		end
+		local marker = markers[1]
+		if not engine_valid(marker) or marker.spawner ~= passage then
+			return false, "surface capsule marker association is invalid at " .. tostring(index)
+		end
+		local signs = signs_by_marker[marker] or {}
+		if #signs ~= 1 then
+			return false, "surface capsule sign count mismatch at " .. tostring(index)
+		end
+		local sign = signs[1]
+		if not engine_valid(sign) or marker.tunnel_sign ~= sign or sign.tunnel_marker ~= marker then
+			return false, "surface capsule sign association is invalid at " .. tostring(index)
+		end
+		marker_count, sign_count = marker_count + 1, sign_count + 1
+	end
+	if marker_count ~= 2 or sign_count ~= 2 then
+		return false, "surface capsule marker/sign total mismatch: "
+			.. marker_count .. "/" .. sign_count
 	end
 	return true
 end
@@ -11523,12 +11662,17 @@ end
 function SuperBigMap.OptimizationTrace.Error(phase, map, reason, data)
 	local trace = SuperBigMap.OptimizationTrace
 	if not trace.IsActive() then return false end
+	-- Console output omits the tabular counter payload. Include a bounded error reason in the phase
+	-- only after the explicit-path trace is active so live diagnostic failures remain visible even
+	-- when file publication is unavailable, with zero formatting/allocation in default-off sessions.
+	local bounded_reason = tostring(reason or "unknown"):sub(1, 112)
+	local visible_phase = tostring(phase or "error") .. ": " .. bounded_reason
 	-- Never annotate an authoritative report table in place: the trace is observational only.
 	local fields = { error = tostring(reason or "unknown") }
 	if type(data) == "table" then
 		for key, value in pairs(data) do fields[key] = value end
 	end
-	return trace.Emit("ERROR", phase, map, fields)
+	return trace.Emit("ERROR", visible_phase, map, fields)
 end
 
 function SuperBigMap.OptimizationTrace.EarlyReturn(phase, map, reason)

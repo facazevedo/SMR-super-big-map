@@ -24,6 +24,8 @@ PERSISTED_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
                             / "lazy_persisted_state_reentry_oracle.lua")
 CAPSULE_RELEASE_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
                                   / "lazy_capsule_release_reentry_oracle.lua")
+PUBLISHED_CAPSULE_CERTIFICATE_ORACLE = (ROOT / "_ralph" / "tools"
+                                        / "lazy_published_capsule_certificate_oracle.lua")
 OPTIMIZATION_TRACE_CHECK = (ROOT / "_ralph" / "tools"
                             / "check_v975_optimization_trace.py")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
@@ -67,6 +69,9 @@ def main() -> int:
     capsule_release_reentry_run = subprocess.run(
         [str(LUA53_RUN), str(CAPSULE_RELEASE_REENTRY_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    published_capsule_certificate_run = subprocess.run(
+        [str(LUA53_RUN), str(PUBLISHED_CAPSULE_CERTIFICATE_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     optimization_trace_run = subprocess.run(
         [sys.executable, str(OPTIMIZATION_TRACE_CHECK)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
@@ -78,16 +83,16 @@ def main() -> int:
     engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
     for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
                  FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE,
-                 CAPSULE_RELEASE_REENTRY_ORACLE):
+                 CAPSULE_RELEASE_REENTRY_ORACLE, PUBLISHED_CAPSULE_CERTIFICATE_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v982_truthfully_retains_v972": "'version', 982," in metadata
-            and "complete lazy capsule closing contract" in metadata
-            and "certify release only after success" in metadata,
-        "generator_identity_v288": "SuperBigMap.GENERATOR_PATCH_VERSION = 288" in version,
-        "v982_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v983_truthfully_retains_v972": "'version', 983," in metadata
+            and "exact planner, closing-rebuild, object, marker, and sign certificates" in metadata
+            and "without self-obstruction false blockers" in metadata,
+        "generator_identity_v289": "SuperBigMap.GENERATOR_PATCH_VERSION = 289" in version,
+        "v983_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -189,6 +194,43 @@ def main() -> int:
             ].count('descriptor.state = "surface-capsules-published-awaiting-final-grid"') == 0
             and generation.count(
                 'report.native_source_retention_released_before_t1 = true') == 1),
+        "published_capsule_certificate_rejects_drift_without_self_obstruction_false_block": (
+            published_capsule_certificate_run.returncode == 0
+            and "ok=true" in published_capsule_certificate_run.stdout
+            and "healthy_exact_certificate_accepted=true"
+                in published_capsule_certificate_run.stdout
+            and "self_obstructed_is_valid_placement_not_called=true"
+                in published_capsule_certificate_run.stdout
+            and "moved_passage_rejected=true" in published_capsule_certificate_run.stdout
+            and "duplicate_passage_rejected=true" in published_capsule_certificate_run.stdout
+            and "linked_passage_rejected=true" in published_capsule_certificate_run.stdout
+            and "invalid_passage_rejected=true" in published_capsule_certificate_run.stdout
+            and "missing_marker_rejected=true" in published_capsule_certificate_run.stdout
+            and "duplicate_marker_rejected=true" in published_capsule_certificate_run.stdout
+            and "missing_sign_rejected=true" in published_capsule_certificate_run.stdout
+            and "duplicate_sign_rejected=true" in published_capsule_certificate_run.stdout
+            and "missing_planner_certificate_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and "missing_closing_rebuild_certificate_rejected=true"
+                in published_capsule_certificate_run.stdout
+            and all(token in generation for token in (
+                "function Lazy.ValidatePublishedCapsuleCertificate(surface, descriptor, report)",
+                "report.main_depth_zero_validation_exact == true",
+                "report.replay_depth_zero_validation_exact == true",
+                "report.fresh_grid_closing_rebuild_complete == true",
+                "report.canonical_rebuilds_during_capsule_prepare) == 2",
+                "counts[index] = (counts[index] or 0) + 1",
+                "if counts[index] ~= 1 or not object then",
+                'return nil, "surface capsule " .. tostring(index) .. " angle changed"',
+                'local is_valid = Global("IsValid")',
+                '"UndergroundTunnelMarker", function(marker)',
+                '"SurfaceUndergroundTunnelSign", function(sign)',
+                "if #markers ~= 1 then", "if #signs ~= 1 then",
+                "marker.tunnel_sign ~= sign or sign.tunnel_marker ~= marker"))
+            and "IsValidPlacement" not in generation[
+                generation.index("function Lazy.ValidatePublishedCapsules(surface, descriptor)"):
+                generation.index("function Lazy.Capture(surface, pending, next_map)")
+            ]),
         "pipeline_markers_are_phase_specific_not_common_guards": (
             "SuperBigMapStretchPipelinePending" not in common_guard
             and "SuperBigMapSurfaceStretchScheduled" not in common_guard
@@ -322,6 +364,8 @@ def main() -> int:
         "oracle": oracle,
         "persisted_state_reentry_oracle": persisted_reentry_run.stdout.strip(),
         "capsule_release_reentry_oracle": capsule_release_reentry_run.stdout.strip(),
+        "published_capsule_certificate_oracle":
+            published_capsule_certificate_run.stdout.strip(),
         "optimization_trace_check_returncode": optimization_trace_run.returncode,
     }, indent=2, sort_keys=True))
     return 0 if not failed else 1

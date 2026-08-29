@@ -17,4 +17,4 @@ end
 SuperBigMap.State = SuperBigMap.State or {}
 -- Patch identities for the current sector/exploration and map-generation wrappers.
 SuperBigMap.SECTOR_PATCH_VERSION = 74
-SuperBigMap.GENERATOR_PATCH_VERSION = 288
+SuperBigMap.GENERATOR_PATCH_VERSION = 289

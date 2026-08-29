@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static/executable gate for the v982 default-off-safe optimization trace."""
+"""Fail-closed static/executable gate for the v983 default-off-safe optimization trace."""
 
 from __future__ import annotations
 
@@ -149,11 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v982_v288": (
-            "'version', 982," in metadata
-            and "complete lazy capsule closing contract" in metadata
-            and "certify release only after success" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 288" in version
+        "metadata_and_generator_identity_v983_v289": (
+            "'version', 983," in metadata
+            and "exact planner, closing-rebuild, object, marker, and sign certificates" in metadata
+            and "without self-obstruction false blockers" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 289" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
@@ -180,6 +180,18 @@ def main() -> int:
             and f'rawget(_G, "{path_token}")' in trace
             and f'rawset(_G, "{path_token}"' not in code_text
             and not re.search(rf"\b{re.escape(path_token)}\s*=", code_text)
+        ),
+        "active_error_console_phase_includes_bounded_reason_after_default_off_guard": (
+            all(token in generation for token in (
+                'function SuperBigMap.OptimizationTrace.Error(phase, map, reason, data)',
+                'if not trace.IsActive() then return false end',
+                'local bounded_reason = tostring(reason or "unknown"):sub(1, 112)',
+                'local visible_phase = tostring(phase or "error") .. ": " .. bounded_reason',
+                'return trace.Emit("ERROR", visible_phase, map, fields)'))
+            and generation.index('if not trace.IsActive() then return false end',
+                generation.index('function SuperBigMap.OptimizationTrace.Error'))
+                < generation.index('local bounded_reason = tostring(reason or "unknown")',
+                    generation.index('function SuperBigMap.OptimizationTrace.Error'))
         ),
         "trace_start_requires_nonempty_bounded_explicit_path": all(token in trace for token in (
             "local path = trace.ConfiguredPath()",
@@ -290,7 +302,7 @@ def main() -> int:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     output = {
-        "schema": "smr.ralph.v982.optimization-trace-check.v1",
+        "schema": "smr.ralph.v983.optimization-trace-check.v1",
         "ok": not failed,
         "failed": failed,
         "checks": checks,
