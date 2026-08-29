@@ -8688,7 +8688,9 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 			"LAZY_UNDERGROUND_BOUNDED_CAPSULE_PLANNER", true),
 		FRESH_GRID_CAPSULE_PLANNING = cfg_bool(
 			"LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING", true),
-		CAPSULE_PLANNER_VERSION = 4,
+		POST_CANONICAL_STOCK_CAPSULE_SEARCH = cfg_bool(
+			"LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH", true),
+		CAPSULE_PLANNER_VERSION = 5,
 	}
 
 function Lazy.Now()
@@ -8915,8 +8917,21 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		full_search_exact_centers = 0,
 		full_search_mismatches = 0,
 		full_search_cap = 0,
+		stock_search_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true,
+		stock_search_used = false,
+		stock_search_start_attempts = 0,
+		stock_search_selected = 0,
+		stock_search_replay_exact = false,
+		stock_search_after_canonical_grid = false,
+		stock_search_trace = {},
+		stock_search_pause_requested = false,
+		stock_search_pause_used = false,
+		stock_search_resume_ok = false,
+		publication_validation_ms = 0,
 		marker_scan_ms = 0,
-		marker_index_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true,
+		marker_index_requested = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+			and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH ~= true,
 		marker_index_used = false,
 		marker_index_fallback = false,
 		marker_index_fallback_reason = "",
@@ -8996,7 +9011,8 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		or type(get_shape) ~= "function" or type(world_to_hex) ~= "function"
 		or type(hex_to_world) ~= "function" or not object_grid or not buildable
 		or type(minimum_distance) ~= "number" or minimum_distance <= 0
-		or Lazy.BOUNDED_CAPSULE_PLANNER ~= true and type(find_buildable) ~= "function" then
+		or (Lazy.BOUNDED_CAPSULE_PLANNER ~= true or report.stock_search_requested == true)
+			and type(find_buildable) ~= "function" then
 		return fail("surface capsule planning APIs are unavailable")
 	end
 	local size_ok, world_width, world_height = pcall(get_map_size, surface)
@@ -9042,7 +9058,7 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	report.marker_scan_ms = math.max(0, now() - marker_scan_started)
 	local deposit_filter
-	if Lazy.FRESH_GRID_CAPSULE_PLANNING == true then
+	if report.marker_index_requested == true then
 		local marker_index_started = now()
 		local marker_index = { concrete = {}, geyser = {} }
 		local empty_markers = {}
@@ -9250,7 +9266,156 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	local capsules = {}
 	local max_attempts = 512
-	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
+	if report.stock_search_requested == true then
+		-- v970: fresh canonical grids make stock nearest-buildable search sparse and cheap (the
+		-- iter200 corpus found both sites in three starts). Preserve the exact stock footprint/Z,
+		-- obstruction, and literal deposit/geyser predicates; only the private start/angle stream and
+		-- strict call cap are new. Main and replay run the same capped searches before publication.
+		local stock_search_cap = 8
+		local minimum_distance2 = minimum_distance * minimum_distance
+		local hex_find_buildable = Global("HexGridFindBuildable")
+		local validate_shape = Global("ValidateEachShapeHexPos")
+		local unbuildable_fn = Global("buildUnbuildableZ")
+		local pause_ild = Global("PauseInfiniteLoopDetection")
+		local resume_ild = Global("ResumeInfiniteLoopDetection")
+		if type(hex_find_buildable) ~= "function" or type(validate_shape) ~= "function"
+			or type(unbuildable_fn) ~= "function" or type(buildable.GetZ) ~= "function"
+			or not buildable.z_grid or type(object_grid.GetBuildObstructions) ~= "function"
+			or type(pause_ild) ~= "function" or type(resume_ild) ~= "function" then
+			return fail("capped stock capsule search/validation APIs are unavailable")
+		end
+		local sentinel_ok, unbuildable_z = pcall(unbuildable_fn)
+		if not sentinel_ok or type(unbuildable_z) ~= "number" then
+			return fail("capped stock capsule validation sentinel is unavailable")
+		end
+		local function validate_selected_center(capsule)
+			local original_z = false
+			local function shape_pos_filter(q, r)
+				local z = buildable:GetZ(q, r)
+				original_z = original_z or z
+				if z == unbuildable_z or z ~= original_z then return false end
+				local obstructions = object_grid:GetBuildObstructions(q, r)
+				if #obstructions > 0 then return false end
+				if deposit_filter and not deposit_filter(q, r) then return false end
+				return true
+			end
+			local function continue_check(q, r)
+				local x, y = hex_to_world(q, r)
+				local validated = validate_shape(
+					shape, point_fn(x, y), capsule.angle, shape_pos_filter)
+				return validated ~= true
+			end
+			local bq, br, depth = hex_find_buildable(capsule.q, capsule.r,
+				object_grid, buildable.z_grid, unbuildable_z, continue_check, 0)
+			return bq == capsule.q and br == capsule.r and depth == 0
+		end
+		report.stock_search_used = true
+		report.full_search_cap = stock_search_cap
+		local full_started = now()
+		report.stock_search_pause_requested = true
+		local pause_ok, pause_error = pcall(pause_ild, "SBMV970CappedStockCapsuleSearch")
+		if not pause_ok then return fail("could not pause capped stock search: " .. tostring(pause_error)) end
+		report.stock_search_pause_used = true
+		local search_ok, search_error = pcall(function()
+			while #capsules < report.capsules_required and report.attempts < stock_search_cap do
+				report.attempts = report.attempts + 1
+				local candidate_x = margin_x + (next_private() % span_x)
+				local candidate_y = margin_y + (next_private() % span_y)
+				local angle = (next_private() % 6) * 3600
+				local center = snap_world(point_fn(candidate_x, candidate_y))
+				local center_x, center_y = PointXY(center)
+				if type(center_x) ~= "number" or type(center_y) ~= "number" then
+					error("private stock-search start did not snap to a numeric center")
+				end
+				local trace = { ordinal = report.attempts, candidate_x = candidate_x,
+					candidate_y = candidate_y, center_x = center_x, center_y = center_y,
+					angle = angle, result_x = false, result_y = false, result_z = false,
+					accepted = false, outcome = "no-result" }
+				report.stock_search_trace[#report.stock_search_trace + 1] = trace
+				report.full_search_calls = report.full_search_calls + 1
+				local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
+					center, angle, shape, deposit_filter)
+				if not find_ok then error("stock-call-raised: " .. tostring(x)) end
+				local no_result = x == nil and y == nil and z == nil
+				local finite_result = type(x) == "number" and x == x
+					and x > -2147483648 and x < 2147483648
+					and type(y) == "number" and y == y
+					and y > -2147483648 and y < 2147483648
+					and type(z) == "number" and z == z
+					and z > -2147483648 and z < 2147483648
+				if not no_result and not finite_result then error("stock-call-returned-malformed-position") end
+				if not no_result then
+					trace.result_x, trace.result_y = x, y
+					trace.result_z = z
+					local accepted = x >= margin_x and x <= world_width - margin_x
+						and y >= margin_y and y <= world_height - margin_y
+					trace.outcome = accepted and "candidate" or "outside-inner-margin"
+					if accepted then
+						for _, prior in ipairs(capsules) do
+							local dx, dy = x - prior.x, y - prior.y
+							if dx * dx + dy * dy < minimum_distance2 then
+								report.bounded_search_spacing_rejections =
+									report.bounded_search_spacing_rejections + 1
+								accepted = false
+								trace.outcome = "minimum-distance-rejection"
+								break
+							end
+						end
+					end
+					if accepted then
+						local hex_ok, q, r = pcall(world_to_hex, point_fn(x, y))
+						local world_ok, world_x, world_y = false, nil, nil
+						if hex_ok and type(q) == "number" and type(r) == "number" then
+							world_ok, world_x, world_y = pcall(hex_to_world, q, r)
+						end
+						if not world_ok or world_x ~= x or world_y ~= y then
+							error("stock-call-returned-world-hex-mismatch")
+						end
+						trace.accepted, trace.outcome, trace.q, trace.r = true, "selected", q, r
+						capsules[#capsules + 1] = {
+							index = #capsules + 1,
+							x = x, y = y, z = z,
+							q = q, r = r, angle = angle,
+						}
+					end
+				end
+			end
+		end)
+		local resume_ok, resume_error = pcall(
+			resume_ild, "SBMV970CappedStockCapsuleSearch")
+		report.stock_search_resume_ok = resume_ok == true
+		report.full_search_ms = math.max(0, now() - full_started)
+		if not resume_ok then return fail("could not resume capped stock search: " .. tostring(resume_error)) end
+		if not search_ok then return fail("capped stock capsule search failed: " .. tostring(search_error)) end
+		report.stock_search_start_attempts = report.attempts
+		report.stock_search_selected = #capsules
+		if #capsules ~= report.capsules_required then
+			report.capsules_planned = #capsules
+			return fail("capped stock capsule search did not find exactly two valid inner sites")
+		end
+		if not replay_only then
+			local validation_started = now()
+			for _, capsule in ipairs(capsules) do
+				report.publication_validation_calls = report.publication_validation_calls + 1
+				local validate_ok, exact = pcall(validate_selected_center, capsule)
+				if not validate_ok or exact ~= true then
+					report.full_search_mismatches = report.full_search_mismatches + 1
+					report.publication_validation_ms = math.max(0, now() - validation_started)
+					return fail("stock-selected capsule failed fresh depth-zero validation")
+				end
+				report.publication_validation_exact_centers =
+					report.publication_validation_exact_centers + 1
+			end
+			report.publication_validation_ms = math.max(0, now() - validation_started)
+			report.full_validation_complete = report.publication_validation_calls
+				== report.capsules_required and report.publication_validation_exact_centers
+				== report.capsules_required and report.full_search_mismatches == 0
+			report.plan_safe_for_publication = report.full_validation_complete
+		else
+			report.full_validation_complete = true
+			report.plan_safe_for_publication = true
+		end
+	elseif Lazy.BOUNDED_CAPSULE_PLANNER == true then
 		report.bounded_used = true
 		local hex_find_buildable = Global("HexGridFindBuildable")
 		local validate_shape = Global("ValidateEachShapeHexPos")
@@ -9694,29 +9859,76 @@ function Lazy.PublishSurfaceCapsules(surface, descriptor)
 	local flatten = Global("FlattenTerrainInBuildShape")
 	local clear = Global("ClearObstructions")
 	local done = Global("DoneObject")
+	local is_valid = Global("IsValid")
 	local const_tbl = Global("const")
 	if type(place) ~= "function" or type(point_fn) ~= "function"
 		or type(get_shape) ~= "function" or type(flatten) ~= "function"
-		or type(clear) ~= "function" or type(const_tbl) ~= "table" then
+		or type(clear) ~= "function" or type(done) ~= "function"
+		or type(is_valid) ~= "function" or type(surface.MapForEach) ~= "function"
+		or type(const_tbl) ~= "table" then
 		return nil, "surface capsule publication APIs are unavailable"
 	end
 	local shape = get_shape("Elevator")
 	if type(shape) ~= "table" or #shape == 0 then return nil, "Elevator shape is unavailable" end
+	local publication_classes = {
+		"UndergroundPassage", "UndergroundTunnelMarker", "SurfaceUndergroundTunnelSign" }
+	local baseline = { UndergroundPassage = {}, UndergroundTunnelMarker = {},
+		SurfaceUndergroundTunnelSign = {} }
+	for _, class_name in ipairs(publication_classes) do
+		local objects = baseline[class_name]
+		local baseline_ok = pcall(surface.MapForEach, surface, "map", class_name,
+			function(object) objects[object] = true end)
+		if not baseline_ok then
+			return nil, "could not capture pre-publication " .. class_name .. " baseline"
+		end
+	end
 	local created = {}
 	local function rollback(reason)
-		if type(done) == "function" then
-			if type(surface.MapForEach) == "function" then
-				pcall(surface.MapForEach, surface, "map", "UndergroundTunnelMarker", function(marker)
-					for _, passage in ipairs(created) do
-						if marker and marker.spawner == passage then
-							if marker.tunnel_sign then pcall(done, marker.tunnel_sign) end
-							pcall(done, marker)
-							break
-						end
-					end
+		local new_objects = { UndergroundPassage = {}, UndergroundTunnelMarker = {},
+			SurfaceUndergroundTunnelSign = {} }
+		local scan_ok = true
+		for _, class_name in ipairs(publication_classes) do
+			local objects = new_objects[class_name]
+			local class_ok = pcall(surface.MapForEach, surface, "map", class_name,
+				function(object)
+					if not baseline[class_name][object] then objects[#objects + 1] = object end
+				end)
+			scan_ok = scan_ok and class_ok
+		end
+		local cleanup_calls_ok = scan_ok == true
+		for index = #new_objects.SurfaceUndergroundTunnelSign, 1, -1 do
+			cleanup_calls_ok = pcall(done,
+				new_objects.SurfaceUndergroundTunnelSign[index]) and cleanup_calls_ok
+		end
+		for index = #new_objects.UndergroundTunnelMarker, 1, -1 do
+			cleanup_calls_ok = pcall(done,
+				new_objects.UndergroundTunnelMarker[index]) and cleanup_calls_ok
+		end
+		for index = #new_objects.UndergroundPassage, 1, -1 do
+			cleanup_calls_ok = pcall(done,
+				new_objects.UndergroundPassage[index]) and cleanup_calls_ok
+		end
+		local cleanup_verified = cleanup_calls_ok
+		for _, class_name in ipairs(publication_classes) do
+			local objects = new_objects[class_name]
+			for _, object in ipairs(objects) do
+				local valid_ok, valid = pcall(is_valid, object)
+				if not valid_ok or valid == true then cleanup_verified = false end
+			end
+		end
+		local residual_ok, residual_count = pcall(function()
+			local count = 0
+			for _, class_name in ipairs(publication_classes) do
+				local original = baseline[class_name]
+				surface:MapForEach("map", class_name, function(object)
+					if not original[object] then count = count + 1 end
 				end)
 			end
-			for index = #created, 1, -1 do pcall(done, created[index]) end
+			return count
+		end)
+		cleanup_verified = cleanup_verified and residual_ok and residual_count == 0
+		if not cleanup_verified then
+			return nil, tostring(reason) .. " | capsule object rollback could not prove zero passages/markers/signs"
 		end
 		return nil, reason
 	end
@@ -9783,6 +9995,12 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		authority_tag = descriptor.authority_tag }
 	local next_map = { map_name = descriptor.map_name, map_slot = descriptor.map_slot,
 		map_preset = descriptor.map_preset }
+	local stock_search_active = Lazy.FRESH_GRID_CAPSULE_PLANNING == true
+		and Lazy.POST_CANONICAL_STOCK_CAPSULE_SEARCH == true
+	if stock_search_active and not after_canonical_grid then
+		return Lazy.MarkBlocked(surface,
+			"v970 stock capsule search was invoked before canonical Surface grids")
+	end
 	if report.fresh_grid_architecture_used == true then
 		report.fresh_grid_main_plan_invocations =
 			(tonumber(report.fresh_grid_main_plan_invocations) or 0) + 1
@@ -9790,6 +10008,9 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	local main_plan_started = Lazy.Now()
 	local capsules, plan_report = Lazy.BuildCapsulePlan(surface, pending, next_map)
 	local main_plan_ms = math.max(0, Lazy.Now() - main_plan_started)
+	if type(plan_report) == "table" then
+		plan_report.stock_search_after_canonical_grid = after_canonical_grid
+	end
 	if not capsules then
 		for key, value in pairs(plan_report or {}) do report[key] = value end
 		report.fresh_grid_main_plan_ms = main_plan_ms
@@ -9811,7 +10032,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			return false, "retry-after-canonical-grid", true
 		end
 		return Lazy.MarkBlocked(surface,
-			"bounded capsule plan failed: " .. tostring(plan_report and plan_report.error))
+			"capsule plan failed: " .. tostring(plan_report and plan_report.error))
 	end
 	if report.fresh_grid_architecture_used == true then
 		report.fresh_grid_replay_invocations =
@@ -9820,8 +10041,46 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	local replay_started = Lazy.Now()
 	local twins, twin_report = Lazy.ReplayCapsulePlan(surface, pending, next_map)
 	local replay_ms = math.max(0, Lazy.Now() - replay_started)
+	if type(twin_report) == "table" then
+		twin_report.stock_search_after_canonical_grid = after_canonical_grid
+	end
 	local validation_contract = plan_report.plan_safe_for_publication == true
-	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
+	if stock_search_active then
+		validation_contract = validation_contract and plan_report.stock_search_used == true
+			and plan_report.stock_search_after_canonical_grid == true
+			and plan_report.full_search_cap == 8
+			and plan_report.attempts >= 2 and plan_report.attempts <= 8
+			and plan_report.full_search_calls == plan_report.attempts
+			and plan_report.unbounded_search_calls == plan_report.full_search_calls
+			and plan_report.private_draws == plan_report.attempts * 3
+			and plan_report.stock_search_selected == 2
+			and plan_report.stock_search_pause_used == true
+			and plan_report.stock_search_resume_ok == true
+			and #plan_report.stock_search_trace == plan_report.attempts
+			and plan_report.marker_index_requested == false
+			and plan_report.marker_index_used == false
+			and plan_report.marker_exclusion_exact == true
+			and plan_report.publication_validation_calls == 2
+			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.full_search_mismatches == 0
+			and twin_report and twin_report.plan_safe_for_publication == true
+			and twin_report.replay_only == true and twin_report.stock_search_used == true
+			and twin_report.stock_search_after_canonical_grid == true
+			and twin_report.full_search_cap == 8
+			and twin_report.attempts >= 2 and twin_report.attempts <= 8
+			and twin_report.full_search_calls == twin_report.attempts
+			and twin_report.unbounded_search_calls == twin_report.full_search_calls
+			and twin_report.private_draws == twin_report.attempts * 3
+			and twin_report.stock_search_selected == 2
+			and twin_report.stock_search_pause_used == true
+			and twin_report.stock_search_resume_ok == true
+			and #twin_report.stock_search_trace == twin_report.attempts
+			and twin_report.marker_index_requested == false
+			and twin_report.marker_index_used == false
+			and twin_report.marker_exclusion_exact == true
+			and twin_report.publication_validation_calls == 0
+			and twin_report.full_search_mismatches == 0
+	elseif Lazy.BOUNDED_CAPSULE_PLANNER == true then
 		validation_contract = validation_contract and plan_report.bounded_max_depth == 0
 			and plan_report.exact_center_shape_checks == plan_report.attempts
 			and plan_report.marker_exclusion_exact == true
@@ -9838,8 +10097,29 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	else
 		validation_contract = validation_contract and twin_report.plan_safe_for_publication == true
 	end
+	local trace_exact = true
+	if stock_search_active then
+		trace_exact = type(plan_report.stock_search_trace) == "table"
+			and type(twin_report.stock_search_trace) == "table"
+			and #plan_report.stock_search_trace == #twin_report.stock_search_trace
+		local trace_fields = { "ordinal", "candidate_x", "candidate_y", "center_x", "center_y",
+			"angle", "result_x", "result_y", "result_z", "accepted", "outcome", "q", "r" }
+		if trace_exact then
+			for index, trace in ipairs(plan_report.stock_search_trace) do
+				local twin_trace = twin_report.stock_search_trace[index]
+				if type(twin_trace) ~= "table" then trace_exact = false; break end
+				for _, field in ipairs(trace_fields) do
+					if trace[field] ~= twin_trace[field] then trace_exact = false; break end
+				end
+				if not trace_exact then break end
+			end
+		end
+	end
 	local repeat_exact = capsules and twins and plan_report.plan_digest == twin_report.plan_digest
-		and #capsules == 2 and #twins == 2 and validation_contract
+		and plan_report.private_final_state == twin_report.private_final_state
+		and plan_report.attempts == twin_report.attempts
+		and plan_report.full_search_calls == twin_report.full_search_calls
+		and trace_exact and #capsules == 2 and #twins == 2 and validation_contract
 	if repeat_exact then
 		for index, capsule in ipairs(capsules) do
 			local twin = twins[index]
@@ -9857,6 +10137,12 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	report.repeat_bounded_search_calls = twin_report and twin_report.bounded_search_calls or 0
 	report.repeat_bounded_search_ms = twin_report and twin_report.bounded_search_ms or 0
 	report.repeat_full_search_calls = twin_report and twin_report.full_search_calls or -1
+	report.repeat_full_search_ms = twin_report and twin_report.full_search_ms or -1
+	report.repeat_full_search_cap = twin_report and twin_report.full_search_cap or -1
+	report.repeat_stock_search_used = twin_report and twin_report.stock_search_used == true
+	report.repeat_stock_search_selected = twin_report and twin_report.stock_search_selected or 0
+	report.repeat_private_final_state = twin_report and twin_report.private_final_state or -1
+	report.stock_search_trace_exact = trace_exact
 	report.repeat_marker_index_used = twin_report and twin_report.marker_index_used == true
 	report.repeat_marker_index_fallback = twin_report and twin_report.marker_index_fallback == true
 	report.repeat_marker_index_stream_comparisons =
@@ -9867,12 +10153,15 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		twin_report and twin_report.marker_index_stream_complete == true
 	report.repeat_marker_exclusion_exact =
 		twin_report and twin_report.marker_exclusion_exact == true
+	report.stock_search_replay_exact = stock_search_active and repeat_exact == true
 	if not repeat_exact then return Lazy.MarkBlocked(surface, "capsule plan did not repeat exactly") end
 	descriptor.capsules = capsules
 	descriptor.plan_digest = plan_report.plan_digest
 	descriptor.capsule_planner_version = Lazy.CAPSULE_PLANNER_VERSION
 	descriptor.capsule_planner_bounded = Lazy.BOUNDED_CAPSULE_PLANNER == true
 	descriptor.capsule_planner_max_depth = plan_report.bounded_max_depth
+	descriptor.capsule_planner_stock_search = stock_search_active
+	descriptor.capsule_planner_stock_search_cap = plan_report.full_search_cap
 	descriptor.private_rng.final_state = plan_report.private_final_state
 	local publication_started = Lazy.Now()
 	local created, publish_reason = Lazy.PublishSurfaceCapsules(surface, descriptor)
@@ -9880,7 +10169,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	ReleaseRetainedNativeSourceMap(surface, "v969 fresh-grid capsules published")
+	ReleaseRetainedNativeSourceMap(surface, "v970 capped-stock capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
@@ -9907,15 +10196,18 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "published descriptor is not primitive")
 	end
-	LoadingStep("bounded lazy underground capsule plan published", {
+	LoadingStep("capped-stock lazy underground capsule plan published", {
 		attempts = report.attempts, bounded_calls = report.bounded_search_calls,
 		bounded_ms = report.bounded_search_ms, max_depth = report.bounded_max_depth,
 		max_returned_depth = report.bounded_search_max_returned_depth,
 		exact_center_checks = report.exact_center_shape_checks,
 		publication_validations = report.publication_validation_calls,
-		publication_validation_ms = report.full_search_ms,
-		unbounded_calls = report.full_search_calls,
-		repeat_calls = report.repeat_bounded_search_calls,
+		publication_validation_ms = report.publication_validation_ms,
+		stock_used = tostring(report.stock_search_used == true),
+		stock_cap = report.full_search_cap, unbounded_calls = report.full_search_calls,
+		stock_search_ms = report.full_search_ms,
+		repeat_calls = report.repeat_full_search_calls,
+		repeat_search_ms = report.repeat_full_search_ms,
 		retry_used = tostring(report.capsule_plan_retry_used == true),
 		total_ms = report.total_ms,
 	}, surface)
@@ -9959,9 +10251,9 @@ function Lazy.PrepareImplementationCapsulesAroundRebuild(surface, rebuild, reaso
 		report.fresh_grid_architecture_used = fresh_grid_architecture
 	end
 	if fresh_grid_architecture then
-		-- v969: the pre-final pass/buildable grids are known stale. Do not even invoke the planner
-		-- against them. Publish canonical grids, run one fresh depth-zero plan and deterministic
-		-- replay, publish both capsules transactionally, then close their terrain/object changes.
+		-- v969+: the pre-final pass/buildable grids are known stale. Do not even invoke the planner
+		-- against them. Publish canonical grids, run one fresh plan and deterministic replay (v970's
+		-- common path uses capped stock searches), publish both capsules transactionally, then close.
 		local orchestration_started = Lazy.Now()
 		report.stale_plan_skipped = true
 		report.pre_final_retry_requested = false

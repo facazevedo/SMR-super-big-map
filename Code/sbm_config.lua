@@ -500,7 +500,7 @@ config.DeferUndergroundExpansionUntilFirstAccess = true
 -- GenerateNextMap or alter the v964 lifecycle. Runtime seed/capsule/save-load/access-route proof is
 -- required before a separate compiled implementation flag may exist.
 config.LazyUndergroundSourceGenerationFeasibility = false
--- v966-v969 functional lazy-underground implementation. This remains a separate default-off switch so
+-- v966-v970 functional lazy-underground implementation. This remains a separate default-off switch so
 -- the v965 descriptor/capsule probe can still be run without suppressing the stock second map.
 -- When enabled before module load, the Surface persists the exact primitive GenerateNextMap recipe,
 -- publishes two deterministic passage capsules, and materializes the complete Underground map under
@@ -512,11 +512,17 @@ config.LazyUndergroundSourceGeneration = false
 -- depth 0: its snapped center is either accepted or rejected and neighbours are never searched.
 -- Each selected center receives one fresh depth-0 publication validation before any object is created.
 config.LazyUndergroundBoundedCapsulePlanner = true
--- v969 fresh-grid capsule publication order. The lazy implementation remains default-off; when it
+-- v969-v970 fresh-grid capsule publication order. The lazy implementation remains default-off; when it
 -- is explicitly enabled, never spend capsule-planner work against the known stale pre-final grids.
 -- Publish one canonical Surface pass/buildable epoch first, plan and publish the two capsules on
 -- those fresh grids, then close their terrain/object mutations with one final canonical rebuild.
 config.LazyUndergroundFreshGridCapsulePlanning = true
+-- v970 post-canonical stock capsule search. The enclosing lazy implementation remains default-off;
+-- when enabled with fresh-grid planning, use the engine's unchanged nearest-buildable search only
+-- after the first canonical Surface pass/buildable publication. A private start/angle stream is
+-- capped at eight stock calls per deterministic main/replay plan, so the prior 512-footprint scan
+-- cannot recur. Failure at the cap is sticky and publishes no capsule.
+config.LazyUndergroundPostCanonicalStockCapsuleSearch = true
 -- TEMP test aid: remove the underground darkness blanket on any underground gameplay map,
 -- including vanilla-mode tests, and restore the previous value on surface/menu transitions.
 config.UndergroundRevealAllDarkness = false
@@ -1147,6 +1153,8 @@ C.LAZY_UNDERGROUND_BOUNDED_CAPSULE_PLANNER =
 	as_bool(config.LazyUndergroundBoundedCapsulePlanner)
 C.LAZY_UNDERGROUND_FRESH_GRID_CAPSULE_PLANNING =
 	as_bool(config.LazyUndergroundFreshGridCapsulePlanning)
+C.LAZY_UNDERGROUND_POST_CANONICAL_STOCK_CAPSULE_SEARCH =
+	as_bool(config.LazyUndergroundPostCanonicalStockCapsuleSearch)
 C.UNDERGROUND_REVEAL_ALL_DARKNESS = as_bool(config.UndergroundRevealAllDarkness)
 C.UNDERGROUND_REVEAL_ALL_ENRICHMENTS_FOR_TESTING =
 	as_bool(config.RevealAllUndergroundEnrichmentsForTesting)

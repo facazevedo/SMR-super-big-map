@@ -67,7 +67,7 @@ def main() -> int:
     generation = GENERATION.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
-    if "'version', 969," in metadata:
+    if "'version', 969," in metadata or "'version', 970," in metadata:
         successor = ROOT / "_ralph" / "tools" / "check_v969_fresh_grid_capsule_publication.py"
         forwarded = subprocess.run(
             [sys.executable, str(successor)], cwd=ROOT, capture_output=True, text=True,
@@ -81,7 +81,7 @@ def main() -> int:
         print(json.dumps({
             "schema": "smr.ralph.v968.exact-center-forward-gate.v1",
             "ok": ok,
-            "successor": "v969 fresh-grid capsule publication",
+            "successor": "v969+ fresh-grid capsule publication",
             "successor_result": payload,
         }, indent=2, sort_keys=True))
         return 0 if ok else 1
