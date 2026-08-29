@@ -10449,21 +10449,11 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 			publish_reason)
 	end
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
-	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
-	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	SuperBigMap.OptimizationTrace.Before("lazy release retained native source", surface)
-	ReleaseRetainedNativeSourceMap(surface, outer_passage_active
-		and "v972 bounded direct-ring passage capsules published"
-		or "v970 capped-stock capsules published")
-	SuperBigMap.OptimizationTrace.After("lazy release retained native source", surface)
-	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
-	if type(retained_buildable) == "table" and retained_buildable.grid then
-		SuperBigMap.OptimizationTrace.Before("lazy free retained native buildable grid", surface)
-		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
-		retained_buildable.grid = nil
-		SuperBigMap.OptimizationTrace.After("lazy free retained native buildable grid", surface)
-	end
-	surface.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+	-- Publish the complete closing-rebuild contract before releasing the retained source. The
+	-- engine unload can synchronously re-enter PatchDeferredUndergroundAccess; once the two
+	-- capsule objects are observable, that callback must see the matching descriptor/report state
+	-- rather than the earlier empty suppressed contract. This block contains no yielding or engine
+	-- calls, so the object publication and its persisted contract become one Lua transaction.
 	descriptor.state = "surface-capsules-published-awaiting-final-grid"
 	report.capsules_published = #created
 	report.deterministic_repeat = true
@@ -10479,11 +10469,50 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		and report.fresh_grid_architecture_used == true
 	report.surface_markers_spawned = true
 	report.surface_capsule_objects_persisted = true
-	report.native_source_retention_released_before_t1 = true
+	-- This certificate is deliberately false until the re-entrant unload has returned successfully.
+	report.native_source_retention_released_before_t1 = false
 	report.descriptor_primitive = Lazy.PrimitiveTree(descriptor)
 	if not report.descriptor_primitive then
 		return Lazy.MarkBlocked(surface, "published descriptor is not primitive")
 	end
+	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
+	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
+	-- Do not assign descriptor publication state after this call: ChangeMapInSlot can re-enter and
+	-- sticky-block this same transaction, and no later write may regress or conceal that failure.
+	SuperBigMap.OptimizationTrace.Before("lazy release retained native source", surface)
+	local release_ok = ReleaseRetainedNativeSourceMap(surface, outer_passage_active
+		and "v972 bounded direct-ring passage capsules published"
+		or "v970 capped-stock capsules published")
+	if release_ok then
+		SuperBigMap.OptimizationTrace.After("lazy release retained native source", surface)
+	else
+		SuperBigMap.OptimizationTrace.Error("lazy release retained native source", surface,
+			surface.SuperBigMapRetainedNativeSourceUnloadFailed
+				or "retained source release returned false")
+	end
+	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
+	if type(retained_buildable) == "table" and retained_buildable.grid then
+		SuperBigMap.OptimizationTrace.Before("lazy free retained native buildable grid", surface)
+		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
+		retained_buildable.grid = nil
+		SuperBigMap.OptimizationTrace.After("lazy free retained native buildable grid", surface)
+	end
+	surface.SuperBigMapPendingNativeSurfacePassageBuildable = nil
+	-- A synchronous callback may have sticky-blocked the descriptor. Preserve that exact failure and
+	-- never certify retention or overwrite state even if the engine unload itself returned success.
+	if descriptor.state == "blocked" or descriptor.failure_sticky == true then
+		return false, tostring(descriptor.failure or report.error
+			or "retained source release callback blocked capsule publication")
+	end
+	if not release_ok then
+		return Lazy.MarkBlocked(surface, "retained native source release failed: "
+			.. tostring(surface.SuperBigMapRetainedNativeSourceUnloadFailed or "returned false"))
+	end
+	if descriptor.state ~= "surface-capsules-published-awaiting-final-grid" then
+		return Lazy.MarkBlocked(surface,
+			"capsule publication state changed during retained native source release")
+	end
+	report.native_source_retention_released_before_t1 = true
 	LoadingStep(outer_passage_active and "conditioned outer lazy underground capsule plan published"
 		or "capped-stock lazy underground capsule plan published", {
 		attempts = report.attempts, bounded_calls = report.bounded_search_calls,

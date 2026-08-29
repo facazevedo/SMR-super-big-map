@@ -22,6 +22,8 @@ FALSE_GLOBAL_ORACLE = (ROOT / "_ralph" / "tools"
                        / "lazy_engine_global_false_transaction_oracle.lua")
 PERSISTED_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
                             / "lazy_persisted_state_reentry_oracle.lua")
+CAPSULE_RELEASE_REENTRY_ORACLE = (ROOT / "_ralph" / "tools"
+                                  / "lazy_capsule_release_reentry_oracle.lua")
 OPTIMIZATION_TRACE_CHECK = (ROOT / "_ralph" / "tools"
                             / "check_v975_optimization_trace.py")
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
@@ -62,6 +64,9 @@ def main() -> int:
     persisted_reentry_run = subprocess.run(
         [str(LUA53_RUN), str(PERSISTED_REENTRY_ORACLE)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
+    capsule_release_reentry_run = subprocess.run(
+        [str(LUA53_RUN), str(CAPSULE_RELEASE_REENTRY_ORACLE)], cwd=ROOT,
+        capture_output=True, text=True, timeout=30, check=False)
     optimization_trace_run = subprocess.run(
         [sys.executable, str(OPTIMIZATION_TRACE_CHECK)], cwd=ROOT,
         capture_output=True, text=True, timeout=30, check=False)
@@ -72,16 +77,17 @@ def main() -> int:
     compile_results = {}
     engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
     for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE,
-                 FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE):
+                 FALSE_GLOBAL_ORACLE, PERSISTED_REENTRY_ORACLE,
+                 CAPSULE_RELEASE_REENTRY_ORACLE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v981_truthfully_retains_v972": "'version', 981," in metadata
-            and "exact owned 100 lazy readiness-wait phase" in metadata
-            and "cover-gated 111 canonical rebuild phases" in metadata,
-        "generator_identity_v287": "SuperBigMap.GENERATOR_PATCH_VERSION = 287" in version,
-        "v981_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v982_truthfully_retains_v972": "'version', 982," in metadata
+            and "complete lazy capsule closing contract" in metadata
+            and "certify release only after success" in metadata,
+        "generator_identity_v288": "SuperBigMap.GENERATOR_PATCH_VERSION = 288" in version,
+        "v982_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -153,6 +159,36 @@ def main() -> int:
                 '"persisted incomplete lazy state: "'))
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {") == 1
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil") >= 2),
+        "capsule_contract_published_before_reentrant_release_and_failure_is_monotonic": (
+            capsule_release_reentry_run.returncode == 0
+            and "ok=true" in capsule_release_reentry_run.stdout
+            and "closing_reentry_before_release_passed=true" in capsule_release_reentry_run.stdout
+            and "retention_certified_only_after_success=true" in capsule_release_reentry_run.stdout
+            and "release_failure_blocked=true" in capsule_release_reentry_run.stdout
+            and "release_failure_not_certified=true" in capsule_release_reentry_run.stdout
+            and "callback_block_preserved=true" in capsule_release_reentry_run.stdout
+            and "callback_block_not_overwritten=true" in capsule_release_reentry_run.stdout
+            and "blocked_reason_preserved=true" in capsule_release_reentry_run.stdout
+            and "publication_never_regressed=true" in capsule_release_reentry_run.stdout
+            and "legacy_release_before_publication_rejected=true"
+                in capsule_release_reentry_run.stdout
+            and ordered(generation,
+                'if not created or #created ~= 2 then return Lazy.MarkBlocked',
+                'descriptor.state = "surface-capsules-published-awaiting-final-grid"',
+                'report.capsules_published = #created',
+                'report.deterministic_repeat = true',
+                'report.final_grid_revalidation = false',
+                'report.native_source_retention_released_before_t1 = false',
+                'local release_ok = ReleaseRetainedNativeSourceMap(surface',
+                'if descriptor.state == "blocked" or descriptor.failure_sticky == true then',
+                'if not release_ok then',
+                'report.native_source_retention_released_before_t1 = true')
+            and generation[
+                generation.index('local release_ok = ReleaseRetainedNativeSourceMap(surface'):
+                generation.index('function Lazy.PrepareImplementationCapsulesSafe')
+            ].count('descriptor.state = "surface-capsules-published-awaiting-final-grid"') == 0
+            and generation.count(
+                'report.native_source_retention_released_before_t1 = true') == 1),
         "pipeline_markers_are_phase_specific_not_common_guards": (
             "SuperBigMapStretchPipelinePending" not in common_guard
             and "SuperBigMapSurfaceStretchScheduled" not in common_guard
@@ -285,6 +321,7 @@ def main() -> int:
         "compile": compile_results,
         "oracle": oracle,
         "persisted_state_reentry_oracle": persisted_reentry_run.stdout.strip(),
+        "capsule_release_reentry_oracle": capsule_release_reentry_run.stdout.strip(),
         "optimization_trace_check_returncode": optimization_trace_run.returncode,
     }, indent=2, sort_keys=True))
     return 0 if not failed else 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static/executable gate for the v981 default-off-safe optimization trace."""
+"""Fail-closed static/executable gate for the v982 default-off-safe optimization trace."""
 
 from __future__ import annotations
 
@@ -149,11 +149,11 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v981_v287": (
-            "'version', 981," in metadata
-            and "exact owned 100 lazy readiness-wait phase" in metadata
-            and "111 canonical rebuild phases" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 287" in version
+        "metadata_and_generator_identity_v982_v288": (
+            "'version', 982," in metadata
+            and "complete lazy capsule closing contract" in metadata
+            and "certify release only after success" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 288" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
@@ -290,7 +290,7 @@ def main() -> int:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     output = {
-        "schema": "smr.ralph.v981.optimization-trace-check.v1",
+        "schema": "smr.ralph.v982.optimization-trace-check.v1",
         "ok": not failed,
         "failed": failed,
         "checks": checks,
