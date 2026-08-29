@@ -8628,7 +8628,7 @@ local function PatchPersistentBuiltUndergroundPassageMarker()
 	return true
 end
 
--- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY / v966-v967 IMPLEMENTATION (both default off).
+-- v965 LAZY UNDERGROUND SOURCE-GENERATION FEASIBILITY / v966-v968 IMPLEMENTATION (both default off).
 --
 -- GenerateAdditionalMaps does not allocate the underground itself while the Surface generator is
 -- active; it publishes one GenerateNextMap parameter table that the outer GenerateRandomMap loop
@@ -8686,7 +8686,7 @@ if SuperBigMap.State.lazy_underground_reload_restore_ok ~= false
 		IMPLEMENTATION = cfg_bool("LAZY_UNDERGROUND_SOURCE_GENERATION", false),
 		BOUNDED_CAPSULE_PLANNER = cfg_bool(
 			"LAZY_UNDERGROUND_BOUNDED_CAPSULE_PLANNER", true),
-		CAPSULE_PLANNER_VERSION = 2,
+		CAPSULE_PLANNER_VERSION = 3,
 	}
 
 function Lazy.PrimitiveTree(value, seen)
@@ -8890,17 +8890,22 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		bounded_requested = Lazy.BOUNDED_CAPSULE_PLANNER == true,
 		bounded_used = false,
 		replay_only = replay_only,
-		bounded_max_depth = 16,
+		bounded_max_depth = 0,
 		bounded_search_calls = 0,
 		bounded_search_successes = 0,
 		bounded_search_margin_rejections = 0,
 		bounded_search_spacing_rejections = 0,
 		bounded_search_max_returned_depth = -1,
 		bounded_search_ms = 0,
+		exact_center_shape_checks = 0,
+		exact_center_selection_check_cap = 512,
+		publication_validation_calls = 0,
+		publication_validation_exact_centers = 0,
+		publication_validation_depth = 0,
 		full_search_calls = 0,
 		full_search_exact_centers = 0,
 		full_search_mismatches = 0,
-		full_search_cap = 2,
+		full_search_cap = 0,
 		marker_scan_ms = 0,
 		full_search_ms = 0,
 		total_ms = 0,
@@ -8917,6 +8922,10 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 	end
 	local total_started = now()
 	local function finish_report()
+		report.private_draws = report.attempts * 3
+		report.exact_center_total_shape_checks = report.exact_center_shape_checks
+			+ report.publication_validation_calls
+		report.unbounded_search_calls = report.full_search_calls
 		report.total_ms = math.max(0, now() - total_started)
 	end
 	local function fail(reason)
@@ -8944,10 +8953,11 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		and type(const_tbl.RandomMap) == "table"
 		and tonumber(const_tbl.RandomMap.UndergroundPassagesMinDistance) or nil
 	if type(get_map_size) ~= "function" or type(point_fn) ~= "function"
-		or type(snap_world) ~= "function" or type(find_buildable) ~= "function"
+		or type(snap_world) ~= "function"
 		or type(get_shape) ~= "function" or type(world_to_hex) ~= "function"
 		or type(hex_to_world) ~= "function" or not object_grid or not buildable
-		or type(minimum_distance) ~= "number" or minimum_distance <= 0 then
+		or type(minimum_distance) ~= "number" or minimum_distance <= 0
+		or Lazy.BOUNDED_CAPSULE_PLANNER ~= true and type(find_buildable) ~= "function" then
 		return fail("surface capsule planning APIs are unavailable")
 	end
 	local size_ok, world_width, world_height = pcall(get_map_size, surface)
@@ -9045,10 +9055,10 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			return fail("bounded stock-equivalent capsule search sentinel is unavailable")
 		end
 		local minimum_distance2 = minimum_distance * minimum_distance
-		local function bounded_find(center, angle)
-			-- This is the stock FindBuildableAreaAround body with the native ABI's max_depth supplied.
-			-- Preserve its slightly unusual per-search original_z lifetime, shape order, obstruction
-			-- order, deposit predicate, and `validated ~= true` continuation polarity exactly.
+		local function validate_exact_center(center, angle)
+			-- This is the stock FindBuildableAreaAround predicate with native max_depth fixed at zero.
+			-- Preserve its per-call original_z lifetime, shape/Z/obstruction/deposit order, and
+			-- `validated ~= true` continuation polarity. The returned cell must be the input cell.
 			local original_z = false
 			local function shape_pos_filter(q, r)
 				local z = buildable:GetZ(q, r)
@@ -9068,11 +9078,13 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			if not hex_ok or type(q) ~= "number" or type(r) ~= "number" then return nil end
 			local bq, br, depth = hex_find_buildable(q, r, object_grid, buildable.z_grid,
 				unbuildable_z, continue_check, report.bounded_max_depth)
-			if type(bq) ~= "number" or type(br) ~= "number" or type(depth) ~= "number" then
-				return nil
+			if bq == nil and br == nil and depth == nil then return nil end
+			if type(bq) ~= "number" or type(br) ~= "number" or depth ~= 0
+				or bq ~= q or br ~= r then
+				error("depth-zero HexGridFindBuildable returned a contrary ABI tuple")
 			end
-			local x, y = hex_to_world(bq, br)
-			return x, y, depth, bq, br
+			local x, y = hex_to_world(q, r)
+			return x, y, depth, q, r
 		end
 
 		local bounded_started = now()
@@ -9083,10 +9095,11 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 			local angle = (next_private() % 6) * 3600
 			local center = snap_world(point_fn(candidate_x, candidate_y))
 			report.bounded_search_calls = report.bounded_search_calls + 1
-			local search_ok, x, y, depth, q, r = pcall(bounded_find, center, angle)
+			report.exact_center_shape_checks = report.exact_center_shape_checks + 1
+			local search_ok, x, y, depth, q, r = pcall(validate_exact_center, center, angle)
 			if not search_ok then
 				report.bounded_search_ms = math.max(0, now() - bounded_started)
-				return fail("bounded stock-equivalent capsule search raised: " .. tostring(x))
+				return fail("depth-zero exact-center capsule validation raised: " .. tostring(x))
 			end
 			local accepted = type(x) == "number" and type(y) == "number"
 			if accepted then
@@ -9122,35 +9135,36 @@ function Lazy.BuildCapsulePlanMode(surface, pending, next_map, replay_only)
 		if #capsules ~= report.capsules_required then
 			report.capsules_planned = #capsules
 			report.retryable_after_canonical_grid = true
-			return fail("bounded stock-equivalent planner did not find exactly two valid inner sites")
+			return fail("depth-zero exact-center planner did not find exactly two valid inner sites")
 		end
 
 		if not replay_only then
 			local full_started = now()
 			for _, capsule in ipairs(capsules) do
-				report.full_search_calls = report.full_search_calls + 1
-				local find_ok, x, y, z = pcall(find_buildable, object_grid, buildable,
-					point_fn(capsule.x, capsule.y), capsule.angle, shape, deposit_filter)
-				if not find_ok or type(x) ~= "number" or type(y) ~= "number"
-					or x ~= capsule.x or y ~= capsule.y then
+				report.publication_validation_calls =
+					report.publication_validation_calls + 1
+				local validate_ok, x, y, depth, q, r = pcall(validate_exact_center,
+					point_fn(capsule.x, capsule.y), capsule.angle)
+				if not validate_ok or x ~= capsule.x or y ~= capsule.y or depth ~= 0
+					or q ~= capsule.q or r ~= capsule.r then
 					report.full_search_mismatches = report.full_search_mismatches + 1
 					report.full_search_ms = math.max(0, now() - full_started)
 					report.capsules_planned = #capsules
-					return fail("authoritative stock buildable search disagreed with bounded capsule center")
+					return fail("fresh depth-zero publication validation disagreed with selected center")
 				end
-				-- The saved Z field is the bounded search depth, exactly as stock
-				-- FindBuildableAreaAround returns it. The same-center proof call necessarily returns depth 0.
-				report.full_search_exact_centers = report.full_search_exact_centers + 1
+				report.publication_validation_exact_centers =
+					report.publication_validation_exact_centers + 1
 			end
 			report.full_search_ms = math.max(0, now() - full_started)
-			report.full_validation_complete = report.full_search_calls == report.capsules_required
-				and report.full_search_exact_centers == report.capsules_required
+			report.full_validation_complete = report.publication_validation_calls
+				== report.capsules_required and report.publication_validation_exact_centers
+				== report.capsules_required and report.full_search_calls == 0
 				and report.full_search_mismatches == 0
 			report.plan_safe_for_publication = report.full_validation_complete
 		end
 	else
 		-- Literal v966 diagnostic branch. It is available only when the bounded sub-flag is explicitly
-		-- disabled; the v967 flag-on path never falls back to this unbounded search after suppression.
+		-- disabled; the v968 flag-on path never falls back to this unbounded search after suppression.
 		report.full_search_cap = max_attempts
 		while #capsules < report.capsules_required and report.attempts < max_attempts do
 			report.attempts = report.attempts + 1
@@ -9585,10 +9599,17 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	local twins, twin_report = Lazy.ReplayCapsulePlan(surface, pending, next_map)
 	local validation_contract = plan_report.plan_safe_for_publication == true
 	if Lazy.BOUNDED_CAPSULE_PLANNER == true then
-		validation_contract = validation_contract and plan_report.full_search_calls == 2
-			and plan_report.full_search_exact_centers == 2
+		validation_contract = validation_contract and plan_report.bounded_max_depth == 0
+			and plan_report.exact_center_shape_checks == plan_report.attempts
+			and plan_report.publication_validation_calls == 2
+			and plan_report.publication_validation_exact_centers == 2
+			and plan_report.publication_validation_depth == 0
+			and plan_report.full_search_calls == 0
 			and plan_report.full_search_mismatches == 0
-			and twin_report.replay_only == true and twin_report.full_search_calls == 0
+			and twin_report.replay_only == true
+			and twin_report.exact_center_shape_checks == twin_report.attempts
+			and twin_report.publication_validation_calls == 0
+			and twin_report.full_search_calls == 0
 	else
 		validation_contract = validation_contract and twin_report.plan_safe_for_publication == true
 	end
@@ -9620,7 +9641,7 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 	if not created or #created ~= 2 then return Lazy.MarkBlocked(surface, publish_reason) end
 	-- Capsule publication permanently removes the only consumer of the retained native Surface view.
 	-- Release its non-serializable map/grid now, before T1 and before an immediate save can occur.
-	ReleaseRetainedNativeSourceMap(surface, "v967 final-domain capsules published")
+	ReleaseRetainedNativeSourceMap(surface, "v968 final-domain capsules published")
 	local retained_buildable = surface.SuperBigMapPendingNativeSurfacePassageBuildable
 	if type(retained_buildable) == "table" and retained_buildable.grid then
 		SuperBigMap.FreeOwnedGrid(retained_buildable.grid)
@@ -9648,8 +9669,10 @@ function Lazy.PrepareImplementationCapsules(surface, after_canonical_grid)
 		attempts = report.attempts, bounded_calls = report.bounded_search_calls,
 		bounded_ms = report.bounded_search_ms, max_depth = report.bounded_max_depth,
 		max_returned_depth = report.bounded_search_max_returned_depth,
-		full_search_calls = report.full_search_calls,
-		full_search_ms = report.full_search_ms,
+		exact_center_checks = report.exact_center_shape_checks,
+		publication_validations = report.publication_validation_calls,
+		publication_validation_ms = report.full_search_ms,
+		unbounded_calls = report.full_search_calls,
 		repeat_calls = report.repeat_bounded_search_calls,
 		retry_used = tostring(report.capsule_plan_retry_used == true),
 		total_ms = report.total_ms,

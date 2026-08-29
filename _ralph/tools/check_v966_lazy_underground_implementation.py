@@ -174,7 +174,7 @@ def main() -> int:
         "focused_fault_state_oracle_is_green": (
             oracle_run.returncode == 0 and oracle.get("ok") is True
         ),
-        "metadata_retained_in_v967": "'version', 967," in metadata,
+        "metadata_retained_in_v968": "'version', 968," in metadata,
         "generator_patch_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "implementation_flag_is_separate_and_default_off": all(token in config for token in (
             "config.LazyUndergroundSourceGenerationFeasibility = false",
@@ -264,7 +264,7 @@ def main() -> int:
             "report.final_grid_revalidation = true",
         )),
         "retained_native_surface_state_is_released_before_t1": all(token in helper for token in (
-            'ReleaseRetainedNativeSourceMap(surface, "v967 final-domain capsules published")',
+            'ReleaseRetainedNativeSourceMap(surface, "v968 final-domain capsules published")',
             "SuperBigMap.FreeOwnedGrid(retained_buildable.grid)",
             "report.native_source_retention_released_before_t1 = true",
         )),

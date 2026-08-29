@@ -221,7 +221,7 @@ def main() -> int:
         "pinned_lua_5_3_6_compiles_generation_chunk": (
             lua53_result is not None and lua53_result.returncode == 0
         ),
-        "metadata_retained_in_v967": "'version', 967," in metadata,
+        "metadata_retained_in_v968": "'version', 968," in metadata,
         "generator_wrapper_identity_v275": "SuperBigMap.GENERATOR_PATCH_VERSION = 275" in version,
         "feasibility_flag_default_off": (
             "config.LazyUndergroundSourceGenerationFeasibility = false" in config
@@ -371,7 +371,7 @@ def main() -> int:
                 "private capsule planner did not find exactly two valid inner sites",
                 "minimum_distance * minimum_distance",
                 'get_shape("Elevator")',
-                "FindBuildableAreaAround",
+                "HexGridFindBuildable",
             )
         ),
         "capsule_plan_avoids_stock_deposit_and_geyser_exclusions": all(
