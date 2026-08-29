@@ -1,4 +1,4 @@
--- Deterministic Lua 5.3 model for the v981 persisted-state/live-rebuild distinction.
+-- Deterministic Lua 5.3 model for the v984 persisted-state/live-rebuild distinction.
 -- A process-local owner proves the exact awaiting-readiness pre-cover 100 phase. The canonical 111 phases also
 -- require the Surface loading cover. Identical serialized state after reload remains fail-closed.
 local live_transactions = setmetatable({}, { __mode = "k" })
@@ -97,7 +97,16 @@ end
 local function validate(surface)
 	local descriptor, report = surface.descriptor, surface.report
 	local owned, phase, guard = owned_in_flight(surface, descriptor, report)
-	if owned then return true, phase, nil end
+	if owned then
+		report.persisted_state_live_reentry_allowed = true
+		report.persisted_state_live_reentry_phase = phase
+		report.persisted_state_live_reentry_count =
+			(tonumber(report.persisted_state_live_reentry_count) or 0) + 1
+		local sequence = tostring(report.persisted_state_live_reentry_phase_sequence or "")
+		report.persisted_state_live_reentry_phase_sequence = sequence == ""
+			and phase or sequence .. ">" .. phase
+		return true, phase, nil
+	end
 	descriptor.state = "blocked"
 	descriptor.failure_sticky = true
 	descriptor.failure = "persisted incomplete lazy state"
@@ -116,6 +125,10 @@ local function new_surface()
 		suppression_committed = true, suppression_used = true,
 		literal_v964_continues = false, shadow_only = false,
 		materialization_running = false, capsule_plan_pending = true, capsules_published = 0,
+		persisted_state_live_reentry_allowed = false,
+		persisted_state_live_reentry_phase = "",
+		persisted_state_live_reentry_count = 0,
+		persisted_state_live_reentry_phase_sequence = "",
 	}
 	return {
 		environment = "Surface", descriptor = descriptor, report = report,
@@ -334,6 +347,37 @@ own(errored)
 local error_rejected = rejected(errored, "post_pipeline_revalidation_error")
 local pre_done_or_error_rejected = done_rejected and error_rejected
 
+-- The observed production lifecycle re-enters only while awaiting readiness and while releasing
+-- the retained source during the closing rebuild. Record that exact successful order as a
+-- primitive string. Failed owner/guard checks must never contribute a phase or a count.
+local sequence_live = new_surface()
+sequence_live.stretch_pipeline_pending = true
+sequence_live.surface_stretch_awaiting_readiness = true
+own(sequence_live, false)
+local sequence_pre_ok = validate(sequence_live)
+loading_refs[sequence_live] = true
+sequence_live.surface_stretch_scheduled = true
+sequence_live.post_pipeline_revalidation_scheduled = true
+sequence_live.surface_stretch_awaiting_readiness = false
+publish_capsules(sequence_live)
+local sequence_closing_ok = validate(sequence_live)
+local exact_observed_phase_sequence = sequence_pre_ok and sequence_closing_ok
+	and sequence_live.report.persisted_state_live_reentry_allowed == true
+	and sequence_live.report.persisted_state_live_reentry_phase == "closing-canonical-rebuild"
+	and sequence_live.report.persisted_state_live_reentry_count == 2
+	and sequence_live.report.persisted_state_live_reentry_phase_sequence
+		== "pre-surface-pipeline>closing-canonical-rebuild"
+
+local rejected_sequence = new_surface()
+rejected_sequence.stretch_pipeline_pending = true
+rejected_sequence.surface_stretch_awaiting_readiness = true
+local rejected_before = rejected_sequence.report.persisted_state_live_reentry_phase_sequence
+local rejected_count_before = rejected_sequence.report.persisted_state_live_reentry_count
+local rejected_sequence_result = rejected(rejected_sequence, "process_local_owner")
+local failed_guard_does_not_append_sequence = rejected_sequence_result
+	and rejected_sequence.report.persisted_state_live_reentry_phase_sequence == rejected_before
+	and rejected_sequence.report.persisted_state_live_reentry_count == rejected_count_before
+
 local ok = pre_pipeline_reentry_exact and first_reentry_exact and closing_reentry_exact
 	and nil_sentinels_all_phases_accepted and false_sentinels_all_phases_accepted
 	and real_underground_map_rejected and occupied_maps_slot_rejected
@@ -344,6 +388,7 @@ local ok = pre_pipeline_reentry_exact and first_reentry_exact and closing_reentr
 	and pre_without_awaiting_rejected and zero_tuple_rejected
 	and no_restore_tokens_required and invalid_suppressed_phase_mixtures_rejected
 	and invalid_closing_phase_mixtures_rejected and pre_done_or_error_rejected
+	and exact_observed_phase_sequence and failed_guard_does_not_append_sequence
 print("ok=" .. tostring(ok))
 print("pre_pipeline_reentry_exact=" .. tostring(pre_pipeline_reentry_exact))
 print("first_reentry_exact=" .. tostring(first_reentry_exact))
@@ -372,4 +417,11 @@ print("invalid_closing_phase_mixtures_rejected="
 	.. tostring(invalid_closing_phase_mixtures_rejected))
 print("invalid_closing_phase_mixture_cases=" .. invalid_closing_phase_mixture_cases)
 print("pre_done_or_error_rejected=" .. tostring(pre_done_or_error_rejected))
+print("exact_observed_phase_sequence=" .. tostring(exact_observed_phase_sequence))
+print("observed_phase_sequence="
+	.. tostring(sequence_live.report.persisted_state_live_reentry_phase_sequence))
+print("observed_phase_count="
+	.. tostring(sequence_live.report.persisted_state_live_reentry_count))
+print("failed_guard_does_not_append_sequence="
+	.. tostring(failed_guard_does_not_append_sequence))
 if not ok then os.exit(1) end

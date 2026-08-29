@@ -10966,6 +10966,7 @@ function Lazy.Capture(surface, pending, next_map)
 	report.persisted_state_live_reentry_allowed = false
 	report.persisted_state_live_reentry_phase = ""
 	report.persisted_state_live_reentry_count = 0
+	report.persisted_state_live_reentry_phase_sequence = ""
 
 	local descriptor = {
 		schema = Lazy.SCHEMA,
@@ -11738,6 +11739,10 @@ function Lazy.ValidatePersistedState(surface)
 		report.persisted_state_live_reentry_phase = live_phase
 		report.persisted_state_live_reentry_count =
 			(tonumber(report.persisted_state_live_reentry_count) or 0) + 1
+		local phase_sequence = tostring(
+			report.persisted_state_live_reentry_phase_sequence or "")
+		report.persisted_state_live_reentry_phase_sequence = phase_sequence == ""
+			and live_phase or phase_sequence .. ">" .. live_phase
 		return true, "owned live Surface generation transaction"
 	end
 	-- Trace-only staging diagnostic: retain the first exact failed invariant in the console phase

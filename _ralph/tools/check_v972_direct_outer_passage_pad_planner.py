@@ -88,11 +88,11 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v983_truthfully_retains_v972": "'version', 983," in metadata
-            and "exact planner, closing-rebuild, object, marker, and sign certificates" in metadata
-            and "without self-obstruction false blockers" in metadata,
-        "generator_identity_v289": "SuperBigMap.GENERATOR_PATCH_VERSION = 289" in version,
-        "v983_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v984_truthfully_retains_v972": "'version', 984," in metadata
+            and "exact successful same-session lazy-state re-entry phase sequence" in metadata
+            and "fail-closed lifecycle validation" in metadata,
+        "generator_identity_v290": "SuperBigMap.GENERATOR_PATCH_VERSION = 290" in version,
+        "v984_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -132,6 +132,11 @@ def main() -> int:
             and "invalid_closing_phase_mixtures_rejected=true" in persisted_reentry_run.stdout
             and "invalid_closing_phase_mixture_cases=7" in persisted_reentry_run.stdout
             and "pre_done_or_error_rejected=true" in persisted_reentry_run.stdout
+            and "exact_observed_phase_sequence=true" in persisted_reentry_run.stdout
+            and ("observed_phase_sequence=pre-surface-pipeline>"
+                 "closing-canonical-rebuild") in persisted_reentry_run.stdout
+            and "observed_phase_count=2" in persisted_reentry_run.stdout
+            and "failed_guard_does_not_append_sequence=true" in persisted_reentry_run.stdout
             and all(token in generation for token in (
                 "LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = \"k\" })",
                 "function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
@@ -160,6 +165,8 @@ def main() -> int:
                 "Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
                 "report.persisted_state_live_reentry_allowed = true",
                 "report.persisted_state_live_reentry_count =",
+                'report.persisted_state_live_reentry_phase_sequence = ""',
+                'phase_sequence .. ">" .. live_phase',
                 '"lazy persisted-state guard failed: "',
                 '"persisted incomplete lazy state: "'))
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {") == 1
