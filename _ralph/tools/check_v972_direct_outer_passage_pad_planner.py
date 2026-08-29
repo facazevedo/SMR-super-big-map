@@ -45,6 +45,13 @@ def main() -> int:
     deposits = DEPOSITS.read_text(encoding="utf-8")
     version = VERSION.read_text(encoding="utf-8")
     metadata = METADATA.read_text(encoding="utf-8")
+    owned_start = generation.index(
+        "function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)")
+    owned_end = generation.index("-- Ralph-only, process-local optimization trace.", owned_start)
+    owned_guard = generation[owned_start:owned_end]
+    phase_start = owned_guard.index(
+        'if descriptor.state == "suppressed-awaiting-surface-capsules" then')
+    common_guard = owned_guard[:phase_start]
     start = terrain.index("-- v972 lazy-underground pad reservation")
     end = terrain.index("-- If a required new core", start)
     plan = terrain[start:end]
@@ -70,11 +77,12 @@ def main() -> int:
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
     checks = {
-        "metadata_v977_truthfully_retains_v972": "'version', 977," in metadata
-            and "owned pre-pipeline lazy Surface re-entry" in metadata
-            and "yield-safe protected writer" in metadata,
-        "generator_identity_v283": "SuperBigMap.GENERATOR_PATCH_VERSION = 283" in version,
-        "v977_default_off_safe_optimization_trace_gate_green": (
+        "metadata_v978_truthfully_retains_v972": "'version', 978," in metadata
+            and "exact owned lazy Surface state before pipeline scheduling" in metadata
+            and "rejecting invalid phase mixtures" in metadata
+            and "failed diagnostic guard invariant" in metadata,
+        "generator_identity_v284": "SuperBigMap.GENERATOR_PATCH_VERSION = 284" in version,
+        "v978_default_off_safe_optimization_trace_gate_green": (
             optimization_trace_run.returncode == 0
             and '"ok": true' in optimization_trace_run.stdout),
         "lazy_architecture_default_off_direct_pad_subflag_on": all(token in config for token in (
@@ -97,26 +105,47 @@ def main() -> int:
             and "first_reentry_exact=true" in persisted_reentry_run.stdout
             and "closing_reentry_exact=true" in persisted_reentry_run.stdout
             and "loaded_incomplete_rejected=true" in persisted_reentry_run.stdout
+            and "ownerless_rejected=true" in persisted_reentry_run.stdout
+            and "invalid_suppressed_phase_mixtures_rejected=true" in persisted_reentry_run.stdout
+            and "invalid_suppressed_phase_mixture_cases=6" in persisted_reentry_run.stdout
+            and "invalid_closing_phase_mixtures_rejected=true" in persisted_reentry_run.stdout
+            and "invalid_closing_phase_mixture_cases=7" in persisted_reentry_run.stdout
+            and "pre_done_or_error_rejected=true" in persisted_reentry_run.stdout
             and all(token in generation for token in (
                 "LIVE_SURFACE_GENERATION_TRANSACTIONS = setmetatable({}, { __mode = \"k\" })",
                 "function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
-                "owner.descriptor ~= descriptor or owner.report ~= report",
+                'local function failed(invariant, actual)',
+                'owner.descriptor ~= descriptor',
+                'owner.report ~= report',
                 "surface_loading_ref_maps[surface] ~= true",
-                "surface.SuperBigMapStretchPipelinePending ~= true",
                 "Global(\"UndergroundMap\") ~= nil",
                 "lazy_underground_engine_restore_tokens",
                 'descriptor.state == "suppressed-awaiting-surface-capsules"',
-                'if surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then',
+                'if not pipeline_pending and not stretch_scheduled and not post_scheduled then',
+                'if pipeline_pending and stretch_scheduled and post_scheduled then',
                 '"pre-surface-pipeline"',
                 '"first-canonical-rebuild"',
+                '"suppressed_phase_markers"',
                 'descriptor.state == "surface-capsules-published-awaiting-final-grid"',
+                '"closing_phase_markers"',
                 '"closing-canonical-rebuild"',
                 "Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)",
                 "report.persisted_state_live_reentry_allowed = true",
                 "report.persisted_state_live_reentry_count =",
+                '"lazy persisted-state guard failed: "',
                 '"persisted incomplete lazy state: "'))
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = {") == 1
             and generation.count("Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface] = nil") >= 2),
+        "pipeline_markers_are_phase_specific_not_common_guards": (
+            "SuperBigMapStretchPipelinePending" not in common_guard
+            and "SuperBigMapSurfaceStretchScheduled" not in common_guard
+            and "SuperBigMapSurfacePostPipelineRevalidationScheduled" not in common_guard
+            and owned_guard.count("if not pipeline_pending and not stretch_scheduled"
+                                  " and not post_scheduled then") == 1
+            and owned_guard.count("if pipeline_pending and stretch_scheduled"
+                                  " and post_scheduled then") == 1
+            and owned_guard.count('failed("suppressed_phase_markers"') == 1
+            and owned_guard.count('failed("closing_phase_markers"') == 1),
         "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
             token in engine_probe for token in (
                 'schema = "smr.ralph.v972.direct-outer-passage-pad-engine-probe.v1"',

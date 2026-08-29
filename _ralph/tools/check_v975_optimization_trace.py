@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail-closed static/executable gate for the v977 default-off-safe optimization trace."""
+"""Fail-closed static/executable gate for the v978 default-off-safe optimization trace."""
 
 from __future__ import annotations
 
@@ -149,11 +149,12 @@ def main() -> int:
         capture_output=True, text=True, timeout=30, check=False)
 
     checks = {
-        "metadata_and_generator_identity_v977_v283": (
-            "'version', 977," in metadata
-            and "owned pre-pipeline lazy Surface re-entry" in metadata
-            and "yield-safe protected writer" in metadata
-            and "SuperBigMap.GENERATOR_PATCH_VERSION = 283" in version
+        "metadata_and_generator_identity_v978_v284": (
+            "'version', 978," in metadata
+            and "exact owned lazy Surface state before pipeline scheduling" in metadata
+            and "rejecting invalid phase mixtures" in metadata
+            and "failed diagnostic guard invariant" in metadata
+            and "SuperBigMap.GENERATOR_PATCH_VERSION = 284" in version
         ),
         "pinned_lua53_compiles_touched_production": all(compile_results.values()),
         "default_off_api_is_outside_lazy_gate_and_precedes_ordinary_calls": (
@@ -290,7 +291,7 @@ def main() -> int:
     }
     failed = sorted(name for name, ok in checks.items() if not ok)
     output = {
-        "schema": "smr.ralph.v977.optimization-trace-check.v1",
+        "schema": "smr.ralph.v978.optimization-trace-check.v1",
         "ok": not failed,
         "failed": failed,
         "checks": checks,

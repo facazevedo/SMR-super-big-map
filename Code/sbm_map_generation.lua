@@ -11142,75 +11142,134 @@ function Lazy.PendingForElevator(elevator)
 end
 
 function Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
-	if type(surface) ~= "table" or type(descriptor) ~= "table" or type(report) ~= "table" then
-		return false
+	local function failed(invariant, actual)
+		return false, nil, tostring(invariant) .. "=" .. tostring(actual)
 	end
+	if type(surface) ~= "table" then return failed("surface_table", type(surface)) end
+	if type(descriptor) ~= "table" then
+		return failed("descriptor_table", type(descriptor))
+	end
+	if type(report) ~= "table" then return failed("report_table", type(report)) end
 	local owner = Lazy.LIVE_SURFACE_GENERATION_TRANSACTIONS[surface]
-	if type(owner) ~= "table" or owner.descriptor ~= descriptor or owner.report ~= report
-		or owner.map_slot ~= descriptor.map_slot
-		or owner.reserved_seed ~= descriptor.reserved_seed then
-		return false
+	if type(owner) ~= "table" then return failed("process_local_owner", type(owner)) end
+	if owner.descriptor ~= descriptor then return failed("owner_descriptor_identity", false) end
+	if owner.report ~= report then return failed("owner_report_identity", false) end
+	if owner.map_slot ~= descriptor.map_slot then return failed("owner_map_slot", owner.map_slot) end
+	if owner.reserved_seed ~= descriptor.reserved_seed then
+		return failed("owner_reserved_seed", owner.reserved_seed)
 	end
-	if Lazy.StateSurface() ~= surface
-		or type(surface.mapdata) ~= "table" or surface.mapdata.Environment ~= "Surface"
-		or tonumber(descriptor.map_slot) ~= 2
-		or descriptor.implementation ~= true
-		or descriptor.suppression_committed ~= true
-		or descriptor.suppression_used ~= true
-		or descriptor.literal_v964_continues ~= false
-		or descriptor.failure_sticky == true or tostring(descriptor.failure or "") ~= ""
-		or report.suppression_committed ~= true or report.suppression_used ~= true
-		or report.literal_v964_continues ~= false or report.shadow_only ~= false
-		or report.materialization_running == true
-		or tonumber(descriptor.materialization_attempts) ~= 0
-		or tonumber(descriptor.generation_count) ~= 0 then
-		return false
+	if Lazy.StateSurface() ~= surface then return failed("state_surface_identity", false) end
+	if type(surface.mapdata) ~= "table" then
+		return failed("surface_mapdata", type(surface.mapdata))
+	end
+	if surface.mapdata.Environment ~= "Surface" then
+		return failed("surface_environment", surface.mapdata.Environment)
+	end
+	if tonumber(descriptor.map_slot) ~= 2 then
+		return failed("descriptor_map_slot", descriptor.map_slot)
+	end
+	if descriptor.implementation ~= true then
+		return failed("descriptor_implementation", descriptor.implementation)
+	end
+	if descriptor.suppression_committed ~= true then
+		return failed("descriptor_suppression_committed", descriptor.suppression_committed)
+	end
+	if descriptor.suppression_used ~= true then
+		return failed("descriptor_suppression_used", descriptor.suppression_used)
+	end
+	if descriptor.literal_v964_continues ~= false then
+		return failed("descriptor_literal_v964_continues", descriptor.literal_v964_continues)
+	end
+	if descriptor.failure_sticky == true then
+		return failed("descriptor_failure_sticky", descriptor.failure_sticky)
+	end
+	if tostring(descriptor.failure or "") ~= "" then
+		return failed("descriptor_failure", descriptor.failure)
+	end
+	if report.suppression_committed ~= true then
+		return failed("report_suppression_committed", report.suppression_committed)
+	end
+	if report.suppression_used ~= true then
+		return failed("report_suppression_used", report.suppression_used)
+	end
+	if report.literal_v964_continues ~= false then
+		return failed("report_literal_v964_continues", report.literal_v964_continues)
+	end
+	if report.shadow_only ~= false then return failed("report_shadow_only", report.shadow_only) end
+	if report.materialization_running == true then
+		return failed("report_materialization_running", report.materialization_running)
+	end
+	if tonumber(descriptor.materialization_attempts) ~= 0 then
+		return failed("descriptor_materialization_attempts", descriptor.materialization_attempts)
+	end
+	if tonumber(descriptor.generation_count) ~= 0 then
+		return failed("descriptor_generation_count", descriptor.generation_count)
 	end
 	local maps = Global("Maps")
-	if Global("UndergroundMap") ~= nil
-		or type(maps) == "table" and maps[descriptor.map_slot] ~= nil then
-		return false
+	if Global("UndergroundMap") ~= nil then return failed("underground_map_absent", false) end
+	if type(maps) == "table" and maps[descriptor.map_slot] ~= nil then
+		return failed("maps_slot_absent", false)
 	end
 	local pending_restore = SuperBigMap.State.lazy_underground_engine_restore_tokens
-	if type(pending_restore) == "table" and #pending_restore > 0 then return false end
-	if surface.SuperBigMapStretchPipelinePending ~= true
-		or surface.SuperBigMapSurfaceStretchDone == true
-		or surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true
-		or surface.SuperBigMapSurfacePostPipelineRevalidationError ~= nil
-		or surface_loading_ref_maps[surface] ~= true then
-		return false
+	if type(pending_restore) == "table" and #pending_restore > 0 then
+		return failed("pending_engine_restore_tokens", #pending_restore)
 	end
+	if surface.SuperBigMapSurfaceStretchDone == true then
+		return failed("surface_stretch_done", surface.SuperBigMapSurfaceStretchDone)
+	end
+	if surface.SuperBigMapSurfacePostPipelineRevalidationComplete == true then
+		return failed("post_pipeline_revalidation_complete",
+			surface.SuperBigMapSurfacePostPipelineRevalidationComplete)
+	end
+	if surface.SuperBigMapSurfacePostPipelineRevalidationError ~= nil then
+		return failed("post_pipeline_revalidation_error",
+			surface.SuperBigMapSurfacePostPipelineRevalidationError)
+	end
+	if surface_loading_ref_maps[surface] ~= true then return failed("loading_cover", false) end
 	local visible = SuperBigMap.ExpansionLoadingVisible
-	if type(visible) ~= "function" then return false end
+	if type(visible) ~= "function" then return failed("loading_visible_function", type(visible)) end
 	local visible_ok, visible_now = pcall(visible)
-	if not visible_ok or visible_now ~= true then return false end
+	if not visible_ok then return failed("loading_visible_call", false) end
+	if visible_now ~= true then return failed("loading_visible", visible_now) end
 	if descriptor.state == "suppressed-awaiting-surface-capsules" then
 		local exact = type(descriptor.capsules) == "table" and #descriptor.capsules == 0
 			and (tonumber(descriptor.plan_digest) or 0) == 0
 			and report.capsule_plan_pending == true
 			and (tonumber(report.capsules_published) or 0) == 0
-		if not exact then return false end
+		if not exact then return failed("suppressed_capsule_contract", false) end
 		-- PatchDeferredUndergroundAccess is first installed after suppression commits but before
 		-- RunSurfaceStretchIfEnabled schedules the post-pipeline canonical rebuild. The weak owner
 		-- and loading-cover tokens above are process-local and cannot survive save/load, so this
 		-- precise pre-schedule state is owned live work rather than persisted incomplete state.
-		if surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
+		local pipeline_pending = surface.SuperBigMapStretchPipelinePending == true
+		local stretch_scheduled = surface.SuperBigMapSurfaceStretchScheduled == true
+		local post_scheduled =
+			surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true
+		if not pipeline_pending and not stretch_scheduled and not post_scheduled then
 			return true, "pre-surface-pipeline"
 		end
-		return surface.SuperBigMapSurfaceStretchScheduled == true,
-			"first-canonical-rebuild"
+		if pipeline_pending and stretch_scheduled and post_scheduled then
+			return true, "first-canonical-rebuild"
+		end
+		return failed("suppressed_phase_markers",
+			tostring(pipeline_pending) .. "/" .. tostring(stretch_scheduled)
+				.. "/" .. tostring(post_scheduled))
 	end
 	if descriptor.state == "surface-capsules-published-awaiting-final-grid" then
-		return surface.SuperBigMapSurfaceStretchScheduled == true
-			and surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true
-			and type(descriptor.capsules) == "table" and #descriptor.capsules == 2
+		if surface.SuperBigMapStretchPipelinePending ~= true
+			or surface.SuperBigMapSurfaceStretchScheduled ~= true
+			or surface.SuperBigMapSurfacePostPipelineRevalidationScheduled ~= true then
+			return failed("closing_phase_markers", false)
+		end
+		local exact = type(descriptor.capsules) == "table" and #descriptor.capsules == 2
 			and (tonumber(descriptor.plan_digest) or 0) > 0
 			and tonumber(report.capsules_published) == 2
 			and report.deterministic_repeat == true
-			and report.final_grid_revalidation ~= true,
-			"closing-canonical-rebuild"
+			and report.final_grid_revalidation ~= true
+		if not exact then return failed("closing_capsule_contract", false) end
+		return true, "closing-canonical-rebuild"
 	end
-	return false
+	return failed("descriptor_state", descriptor.state)
 end
 
 -- Ralph-only, process-local optimization trace. Production pays no timer, formatting, console, or
@@ -11480,7 +11539,7 @@ function Lazy.ValidatePersistedState(surface)
 		return true
 	end
 	if descriptor.state == "blocked" then return false, descriptor.failure end
-	local owned_live, live_phase =
+	local owned_live, live_phase, live_guard_failure =
 		Lazy.OwnedSurfaceGenerationInFlight(surface, descriptor, report)
 	if owned_live then
 		report.persisted_state_live_reentry_allowed = true
@@ -11489,6 +11548,19 @@ function Lazy.ValidatePersistedState(surface)
 			(tonumber(report.persisted_state_live_reentry_count) or 0) + 1
 		return true, "owned live Surface generation transaction"
 	end
+	-- Trace-only staging diagnostic: retain the first exact failed invariant in the console phase
+	-- even if file publication fails. The default-off API is an allocation-free no-op, and normal
+	-- production never arms the trace path.
+	SuperBigMap.OptimizationTrace.Error(
+		"lazy persisted-state guard failed: " .. tostring(live_guard_failure or "unknown"),
+		surface, live_guard_failure or "unknown", {
+			descriptor_state = tostring(descriptor.state),
+			pipeline_pending = tostring(surface.SuperBigMapStretchPipelinePending == true),
+			stretch_scheduled = tostring(surface.SuperBigMapSurfaceStretchScheduled == true),
+			post_pipeline_scheduled = tostring(
+				surface.SuperBigMapSurfacePostPipelineRevalidationScheduled == true),
+			stretch_done = tostring(surface.SuperBigMapSurfaceStretchDone == true),
+		})
 	-- These states are valid only while the Surface completion cover is still owned. A loaded game
 	-- cannot resume that pre-publication transaction safely, so it remains blocked rather than
 	-- fabricating an eager fallback after suppression.
