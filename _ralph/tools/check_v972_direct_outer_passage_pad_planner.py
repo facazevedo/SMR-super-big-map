@@ -17,6 +17,7 @@ DEPOSITS = ROOT / "Code" / "sbm_deposits.lua"
 VERSION = ROOT / "Code" / "sbm_version.lua"
 METADATA = ROOT / "metadata.lua"
 ORACLE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_oracle.py"
+ENGINE_PROBE = ROOT / "_ralph" / "tools" / "v972_direct_outer_passage_pad_engine_probe.lua"
 LUA53 = (ROOT / "_ralph" / "tmp" / ".tmp_surface_loading_rough_iter109_lua53"
          / "lua-5.3.6" / "src" / "luac.exe")
 
@@ -47,7 +48,8 @@ def main() -> int:
     except json.JSONDecodeError:
         oracle = {"ok": False, "error": oracle_run.stderr or oracle_run.stdout}
     compile_results = {}
-    for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA):
+    engine_probe = ENGINE_PROBE.read_text(encoding="utf-8")
+    for path in (CONFIG, TERRAIN, GENERATION, DEPOSITS, VERSION, METADATA, ENGINE_PROBE):
         result = subprocess.run([str(LUA53), "-p", str(path)], cwd=ROOT,
                                 capture_output=True, text=True, timeout=30, check=False)
         compile_results[path.relative_to(ROOT).as_posix()] = result.returncode == 0
@@ -61,6 +63,17 @@ def main() -> int:
             "config.LazyUndergroundOuterPassagePads = true")),
         "pinned_lua53_compiles_production": all(compile_results.values()),
         "v972_oracle_green": oracle_run.returncode == 0 and oracle.get("ok") is True,
+        "flat_read_only_engine_probe_gates_v972_budget_and_exact_geometry": all(
+            token in engine_probe for token in (
+                'schema = "smr.ralph.v972.direct-outer-passage-pad-engine-probe.v1"',
+                "passage_pad_direct_outer_sampling ~= true",
+                "passage_pad_attempt_cap_per_site) ~= 32",
+                "passage_pad_viable_target_per_site) ~= 4",
+                "passage_pad_plan_ms) or 2001) > 2000",
+                "depth0_calls == 2", "depth0_accepts == 2",
+                "enrichment_spacing_failures", "rocket_spacing_failures"))
+            and all(token not in engine_probe for token in (
+                "rawset(", "AsyncStringToFile", "StringToFile", "io.open", "assert(", "error(")),
         "direct_four_strip_sampling_not_whole_map": all(token in plan for token in (
             "attempt_cap_per_site = 32", "viable_target_per_site = 4",
             "local side = side_draw % 4", "local depth = safe_edge +",
